@@ -12,11 +12,9 @@
 // The batched-buffer drain (StepResult -> per-actor RequestPhysicsterseUpdate / collision dispatch)
 // is M6.4/M6.6 and is deliberately NOT here.
 //
-// Registration mirrors BSScene: a region module that self-selects when [Startup] physics == Name.
-// No [Startup] edit - the operator picks `physics = Jolt`; this module recognises its own name.
-// NGC develop dropped Mono.Addins for the IPluginRegistryProvider host, so discovery is via the
-// sibling PluginRegistration.cs (registers this class under /OpenSim/RegionModules) rather than a
-// [Extension] attribute. The class itself is unchanged.
+// Registration mirrors BSScene: a Mono.Addins region module that self-selects when [Startup]
+// physics == Name. No [Startup] edit - the operator picks `physics = Jolt`; this module recognises
+// its own name.
 // =========================================================================
 
 using System;
@@ -39,6 +37,7 @@ using SQuaternion = System.Numerics.Quaternion;
 
 namespace OpenSim.Region.PhysicsModules.LegionJolt
 {
+    // Registration via PluginRegistration.cs (IPluginRegistryProvider); NGC develop dropped Mono.Addins.
     public sealed class LegionJoltScene : PhysicsScene, INonSharedRegionModule
     {
         internal static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
@@ -65,6 +64,32 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         private int _regionSizeX;
         private int _regionSizeY;
         private Scene _scene;
+
+        // Vehicle-controller world inputs (M8): the region water plane, the last cooked terrain
+        // sample field (for height-at-XY without a per-frame raycast), the world gravity handed to
+        // the backend, and the last Simulate dt (BulletSim's LastTimeStep, used by AddForce).
+        internal float WaterLevel { get; private set; }
+        internal SVector3 DefaultGravity { get; private set; } = new SVector3(0f, 0f, -9.80665f);
+        internal float LastTimeStep = 0.0909f;
+        private float[] _terrainField;   // the (N+1)-square field SetTerrain cooked (row = y * _terrainFieldM)
+        private int _terrainFieldM;
+
+        // Bilinear terrain height at region XY, from the same samples the collision heightfield was
+        // cooked from (1 m spacing, origin at the region corner). Clamps outside the field.
+        internal float TerrainHeightAt(float x, float y)
+        {
+            float[] f = _terrainField;
+            int m = _terrainFieldM;
+            if (f == null || m < 2)
+                return 0f;
+            x = Math.Clamp(x, 0f, m - 1.001f);
+            y = Math.Clamp(y, 0f, m - 1.001f);
+            int x0 = (int)x, y0 = (int)y;
+            float fx = x - x0, fy = y - y0;
+            float h00 = f[y0 * m + x0], h10 = f[y0 * m + x0 + 1];
+            float h01 = f[(y0 + 1) * m + x0], h11 = f[(y0 + 1) * m + x0 + 1];
+            return h00 * (1 - fx) * (1 - fy) + h10 * fx * (1 - fy) + h01 * (1 - fx) * fy + h11 * fx * fy;
+        }
 
         // M6.2 Task 2: radial-cone hill parameters (set by `jolt terrainhill`) so `jolt hilltest` can
         // print hand-computable expected Z. z = base + amp*max(0, 1 - dist((x,y),(cx,cy))/R).
@@ -206,6 +231,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
             _backend = new LegionJoltBackend();
             _backend.Initialize(settings);
+            DefaultGravity = settings.Gravity;   // the vehicle controller applies this manually
 
             EngineType = Name;                              // osGetPhysicsEngineType
             EngineName = $"{_backend.Name} {_backend.Version}"; // osGetPhysicsEngineName
@@ -250,7 +276,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             {
                 _consoleRegistered = true;
                 MainConsole.Instance.Commands.AddCommand("Physics", false, "jolt",
-                    "jolt linktest | unlinktest | collidetest | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | clearprims",
+                    "jolt linktest | unlinktest | collidetest | boattest [linear|hover|attract|steer] | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | clearprims",
                     "Legion Jolt proofs (M6.2 terrain / M6.3 prims): raycast the cooked collision surfaces and report hits.",
                     HandleJoltConsole);
             }
@@ -269,6 +295,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             if (cmd.Length >= 2 && cmd[1] == "unlinktest") { JoltUnlinkTest(); return; }
             if (cmd.Length >= 2 && cmd[1] == "collidetest") { JoltCollideTest(); return; }
             if (cmd.Length >= 2 && cmd[1] == "collidelinktest") { JoltCollideLinkTest(); return; }
+            if (cmd.Length >= 2 && cmd[1] == "boattest") { JoltBoatTest(cmd.Length >= 3 ? cmd[2] : "linear"); return; }
 
             if (cmd.Length >= 2 && cmd[1] == "terraintest")
             {
@@ -554,7 +581,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 return;
             }
 
-            MainConsole.Instance.Output("Usage: jolt linktest | unlinktest | collidetest | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | clearprims");
+            MainConsole.Instance.Output("Usage: jolt linktest | unlinktest | collidetest | boattest [linear|hover|attract|steer] | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | clearprims");
         }
 
         // M7 Task 1 proof: rez a root + 2 children at offsets, make the root physical, then run the OpenSim
@@ -648,6 +675,296 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
             _scene.DeleteSceneObject(box, false);
             _scene.DeleteSceneObject(plat, false);
+        }
+
+        // M8 Task 2 boat proofs. `jolt boattest [linear|hover|attract|steer]` (default linear).
+        // Each cooks a physics-only water basin if the region has no open water, rezzes a physical
+        // VEHICLE_TYPE_BOAT, drives ONE aspect of the extracted Halcyon controller and asserts it.
+        //   linear  (slice a): held linear motor -> forward speed ramps to target
+        //   hover   (slice b): settle from above, rise from below, hold at rest
+        //   attract (slice c): tilt -> self-rights; yaw stays free
+        //   steer   (slice d): angular motor -> yaws, friction stops it, stays upright
+        private void JoltBoatTest(string scenario)
+        {
+            if (_scene == null) { MainConsole.Instance.Output($"{LogHeader} no scene."); return; }
+            switch (scenario)
+            {
+                case "hover":   BoatHoverTest();   break;
+                case "attract": BoatAttractTest(); break;
+                case "steer":   BoatSteerTest();   break;
+                default:        BoatLinearTest();  break;
+            }
+        }
+
+        // Ensure there is deep water at the test spot. Grid-scans the terrain field for the deepest
+        // spot; if the region is a plateau above the water plane (no open water), cooks a PHYSICS-ONLY
+        // 48 m basin (scene heightmap untouched -> no taint -> the terrain tick won't re-push it mid
+        // test). Returns the restore heightmap (null if real water was found); caller SetTerrain()s it
+        // back at teardown. bx/by/water are the chosen spot + water plane.
+        private float[] EnsureBoatWater(out float bx, out float by, out float water)
+        {
+            water = WaterLevel;
+            bx = 128f; by = 128f;
+            float bestDepth = float.MinValue;
+            for (int gy = 24; gy <= _regionSizeY - 24; gy += 8)
+                for (int gx = 24; gx <= _regionSizeX - 24; gx += 8)
+                {
+                    float depth = water - TerrainHeightAt(gx, gy);
+                    if (depth > bestDepth) { bestDepth = depth; bx = gx; by = gy; }
+                }
+
+            if (bestDepth >= 2f)
+                return null;
+
+            bx = 128f; by = 128f;
+            float[] hm = _scene.Heightmap.GetFloatsSerialised();
+            float[] restoreHm = (float[])hm.Clone();
+            for (int gy = (int)by - 24; gy <= (int)by + 24; gy++)
+                for (int gx = (int)bx - 24; gx <= (int)bx + 24; gx++)
+                    if (gx >= 0 && gx < _regionSizeX && gy >= 0 && gy < _regionSizeY)
+                        hm[gy * _regionSizeX + gx] = water - 6f;
+            SetTerrain(hm);
+            MainConsole.Instance.Output($"{LogHeader} [boattest] no open water in this region (deepest spot {bestDepth:0.0} m) - cooked a physics-only 48 m basin at ({bx:0},{by:0}), terrain there now {TerrainHeightAt(bx, by):0.00}, restored after the test.");
+            return restoreHm;
+        }
+
+        // Rez a physical VEHICLE_TYPE_BOAT box at (x,y,z). Returns the SOG + its PhysActor + JoltPrim +
+        // id, or (null,...) on failure (caller checks pa).
+        private (SceneObjectGroup sog, PhysicsActor pa, JoltPrim jp, uint id) RezBoat(float x, float y, float z, Quaternion rot)
+        {
+            SceneObjectGroup boat = RezTestPrim("box", new Vector3(x, y, z), new Vector3(2f, 1f, 0.5f));
+            if (rot != Quaternion.Identity)
+                boat.UpdateGroupRotationR(rot);   // born tilted: ApplyPhysics below cooks the body at this rot
+            boat.ScriptSetPhysicsStatus(true);
+            PhysicsActor pa = boat.RootPart.PhysActor;
+            if (pa == null) { _scene.DeleteSceneObject(boat, false); return (null, null, null, 0); }
+            if (rot != Quaternion.Identity) pa.Orientation = rot;   // belt-and-braces: ensure the body carries it
+            uint id = boat.RootPart.LocalId;
+            pa.VehicleType = (int)Vehicle.TYPE_BOAT;
+            JoltPrim jp;
+            lock (_prims) _prims.TryGetValue(id, out jp);
+            return (boat, pa, jp, id);
+        }
+
+        // Tilt (deg) of the body's local +Z from world up, and world Z-position, from the live body.
+        private bool BoatState(JoltPrim jp, out float tiltDeg, out float posZ, out SVector3 linVel, out SVector3 angVel, out SQuaternion orient)
+        {
+            tiltDeg = 0f; posZ = float.NaN; linVel = default; angVel = default; orient = SQuaternion.Identity;
+            if (jp == null || !_backend.TryGetBodyState(jp.BodyHandle, out BodyState st))
+                return false;
+            var up = SVector3.Transform(new SVector3(0f, 0f, 1f), st.Orientation);
+            tiltDeg = (float)(Math.Acos(Math.Clamp(up.Z, -1f, 1f)) * 180.0 / Math.PI);
+            posZ = st.Position.Z; linVel = st.LinearVelocity; angVel = st.AngularVelocity; orient = st.Orientation;
+            return true;
+        }
+
+        // ---- slice (a): linear motor ----------------------------------------------------------
+        private void BoatLinearTest()
+        {
+            float[] restoreHm = EnsureBoatWater(out float bx, out float by, out float water);
+            var (boat, pa, jp, id) = RezBoat(bx, by, water + 0.4f, Quaternion.Identity);
+            if (pa == null) { MainConsole.Instance.Output($"{LogHeader} boattest: boat has no PhysActor."); if (restoreHm != null) SetTerrain(restoreHm); return; }
+
+            MainConsole.Instance.Output($"{LogHeader} [boattest:linear] boat id={id} at ({bx:0},{by:0}) water={water:0.00} mass={pa.Mass:0.00} type={pa.VehicleType} (expect 3)");
+            var motor = new Vector3(4f, 0f, 0f);   // hold forward at 4 m/s (local +X)
+            MainConsole.Instance.Output($"{LogHeader} [boattest:linear] holding LINEAR_MOTOR_DIRECTION={motor} (re-set every 0.5 s)");
+            MainConsole.Instance.Output($"     t   |  fwdSpeed |   speedXY |  z-water  |  tiltDeg");
+
+            float first = float.NaN, last = float.NaN;
+            for (int i = 0; i <= 8; i++)
+            {
+                pa.VehicleVectorParam((int)Vehicle.LINEAR_MOTOR_DIRECTION, motor);
+                System.Threading.Thread.Sleep(500);
+                if (!BoatState(jp, out float tilt, out float posZ, out SVector3 lv, out _, out SQuaternion o))
+                { MainConsole.Instance.Output($"  {i * 0.5f,4:0.0}s | (no body state)"); continue; }
+                var fwd = SVector3.Transform(new SVector3(1f, 0f, 0f), o);
+                float fwdSpeed = lv.X * fwd.X + lv.Y * fwd.Y + lv.Z * fwd.Z;
+                float speedXY = (float)Math.Sqrt(lv.X * lv.X + lv.Y * lv.Y);
+                if (i == 1) first = fwdSpeed;
+                last = fwdSpeed;
+                MainConsole.Instance.Output($"  {i * 0.5f,4:0.0}s | {fwdSpeed,9:0.000} | {speedXY,9:0.000} | {posZ - water,9:0.000} | {tilt,8:0.0}");
+            }
+
+            bool pass = last > 1.5f && (float.IsNaN(first) || last >= first - 0.25f);
+            MainConsole.Instance.Output($"{LogHeader} [boattest:linear] {(pass ? "PASS" : "FAIL")}: reached {last:0.00} m/s forward (target 4).");
+            _scene.DeleteSceneObject(boat, false);
+            if (restoreHm != null) SetTerrain(restoreHm);
+        }
+
+        // ---- slice (b): hover -----------------------------------------------------------------
+        // Boat preset: HOVER_HEIGHT 0.5, HOVER_EFFICIENCY 0.8, HOVER_TIMESCALE 0.2, HoverWaterOnly.
+        // Target rest position Z = water + 0.5. Three sub-scenarios, fresh boat each: settle from
+        // above, rise from below, hold at rest. No motor - pure Z-balance.
+        private void BoatHoverTest()
+        {
+            float[] restoreHm = EnsureBoatWater(out float bx, out float by, out float water);
+            const float target = 0.5f;   // HOVER_HEIGHT for the boat preset
+            MainConsole.Instance.Output($"{LogHeader} [boattest:hover] target rest z-water = +{target:0.00} (HoverWaterOnly, water={water:0.00})");
+
+            bool allPass = true;
+            // (start z-water offset, label, expected trend)
+            var cases = new (float z0, string label)[] { (3.0f, "settle-from-above"), (-3.0f, "rise-from-below"), (0.5f, "hold-at-rest") };
+            foreach (var (z0, label) in cases)
+            {
+                var (boat, pa, jp, id) = RezBoat(bx, by, water + z0, Quaternion.Identity);
+                if (pa == null) { MainConsole.Instance.Output($"{LogHeader} [boattest:hover] {label}: no PhysActor."); allPass = false; continue; }
+
+                MainConsole.Instance.Output($"{LogHeader} [boattest:hover] {label}: start z-water={z0:+0.00;-0.00}, id={id}");
+                MainConsole.Instance.Output($"     t   |  z-water  |    vZ     |  tiltDeg");
+                float lastZ = float.NaN, minZ = float.MaxValue, maxZ = float.MinValue;
+                for (int i = 0; i <= 10; i++)
+                {
+                    System.Threading.Thread.Sleep(400);
+                    if (!BoatState(jp, out float tilt, out float posZ, out SVector3 lv, out _, out _))
+                    { MainConsole.Instance.Output($"  {i * 0.4f,4:0.0}s | (no body state)"); continue; }
+                    lastZ = posZ - water;
+                    if (i >= 5) { minZ = Math.Min(minZ, lastZ); maxZ = Math.Max(maxZ, lastZ); }   // steady-state band (last ~2 s)
+                    MainConsole.Instance.Output($"  {i * 0.4f,4:0.0}s | {lastZ,9:0.000} | {lv.Z,9:0.000} | {tilt,8:0.0}");
+                }
+                // settled near target and steady-state band tight (not oscillating/drifting)
+                bool settled = Math.Abs(lastZ - target) < 0.25f;
+                bool steady = (maxZ - minZ) < 0.30f;
+                bool pass = settled && steady;
+                allPass &= pass;
+                MainConsole.Instance.Output($"{LogHeader} [boattest:hover] {label}: {(pass ? "PASS" : "FAIL")} (final z-water={lastZ:0.000}, target+{target:0.00}; steady-band={(maxZ - minZ):0.000})");
+                _scene.DeleteSceneObject(boat, false);
+            }
+
+            MainConsole.Instance.Output($"{LogHeader} [boattest:hover] {(allPass ? "ALL PASS" : "CHECK")}: boat settles to water+{target:0.00} from above & below and holds (HoverWaterOnly Z-balance).");
+            if (restoreHm != null) SetTerrain(restoreHm);
+        }
+
+        // ---- slice (c): vertical attractor ----------------------------------------------------
+        // Rez the boat rolled 40 deg; with the vertical attractor (eff 0.5, TS 0.2) it must roll back
+        // upright over a couple of seconds (not instant-snap, not never). Then a YAW check: spin it in
+        // yaw and confirm the attractor lets the heading change freely while still holding it level.
+        private void BoatAttractTest()
+        {
+            float[] restoreHm = EnsureBoatWater(out float bx, out float by, out float water);
+
+            // -- self-right from a 30 deg roll (a realistic wave/wake tilt, not a capsize) --
+            // Sampled at 0.25 s so a fast recovery isn't aliased; 24 samples = 6 s. The boat preset's
+            // VERTICAL_ATTRACTION_TIMESCALE is a stiff 0.2 s, so recovery is snappy and can ring a
+            // little on a hard tilt - we assert it RECOVERS and HOLDS near level (mean of the last 2 s),
+            // not that it's critically damped. A/B vs BulletSim (same math) characterizes any ringing.
+            float roll0 = 30f;
+            Quaternion tilt = Quaternion.CreateFromEulers((float)(roll0 * Math.PI / 180.0), 0f, 0f);
+            var (boat, pa, jp, id) = RezBoat(bx, by, water + 0.5f, tilt);
+            if (pa == null) { MainConsole.Instance.Output($"{LogHeader} [boattest:attract] no PhysActor."); if (restoreHm != null) SetTerrain(restoreHm); return; }
+
+            MainConsole.Instance.Output($"{LogHeader} [boattest:attract] self-right: rezzed rolled {roll0:0}deg, id={id} (sample 0.25s x 24)");
+            MainConsole.Instance.Output($"     t   |  tiltDeg  |  z-water  | rollRate(deg/s)");
+            float firstPeak = 0f;          // worst tilt in the first 1 s (the initial swing)
+            float lateSum = 0f, lateMax = 0f; int lateN = 0;   // last 2 s (settled band)
+            float timeToLevel = -1f;
+            for (int i = 0; i <= 24; i++)
+            {
+                System.Threading.Thread.Sleep(250);
+                if (!BoatState(jp, out float td, out float posZ, out _, out SVector3 av, out _))
+                { MainConsole.Instance.Output($"  {i * 0.25f,4:0.0}s | (no body state)"); continue; }
+                float t = i * 0.25f;
+                if (t <= 1.0f) firstPeak = Math.Max(firstPeak, td);
+                if (timeToLevel < 0 && td < 8f) timeToLevel = t;
+                if (t >= 4.0f) { lateSum += td; lateMax = Math.Max(lateMax, td); lateN++; }
+                float rollRateDeg = (float)(av.X * 180.0 / Math.PI);
+                MainConsole.Instance.Output($"  {t,4:0.0}s | {td,8:0.0} | {posZ - water,9:0.000} | {rollRateDeg,8:0.0}");
+            }
+            float lateMean = lateN > 0 ? lateSum / lateN : float.NaN;
+            // Recovered = reached near-level at least once; holds = last-2s mean stays near level even
+            // if it rings a bit; started genuinely tilted.
+            bool recovered = timeToLevel >= 0f;
+            bool holdsLevel = lateMean < 12f && lateMax < 22f;
+            bool startedTilted = firstPeak > 15f;
+            bool selfRightPass = recovered && holdsLevel && startedTilted;
+            MainConsole.Instance.Output($"{LogHeader} [boattest:attract] self-right: {(selfRightPass ? "PASS" : "CHECK")} (peak {firstPeak:0}deg -> reached <8deg at {(timeToLevel < 0 ? "never" : timeToLevel.ToString("0.0") + "s")}; last-2s mean {lateMean:0.0}deg max {lateMax:0.0}deg)");
+            _scene.DeleteSceneObject(boat, false);
+
+            // -- yaw is free: attractor must NOT cancel a heading change. Drive yaw with a repeated
+            // angular-velocity nudge; the boat's heavy Z angular friction (preset TS 0.1) fights an
+            // imposed spin down, so the SIGNAL is "heading still moves AND tilt stays ~0", not a big
+            // yaw rate. If the attractor were fighting yaw, tilt would spike or heading would freeze.
+            var (boat2, pa2, jp2, id2) = RezBoat(bx, by, water + 0.5f, Quaternion.Identity);
+            bool yawPass = false;
+            if (pa2 != null)
+            {
+                MainConsole.Instance.Output($"{LogHeader} [boattest:attract] yaw-free: nudging yaw (1 rad/s each 0.4s), id={id2} (heading must change, tilt must stay ~0)");
+                MainConsole.Instance.Output($"     t   |  yawDeg   |  tiltDeg");
+                float yaw0 = float.NaN, yawLast = 0f, maxTilt = 0f;
+                for (int i = 0; i <= 8; i++)
+                {
+                    pa2.RotationalVelocity = new Vector3(0f, 0f, 1.0f);   // nudge a yaw spin (friction fights it down)
+                    System.Threading.Thread.Sleep(400);
+                    if (!BoatState(jp2, out float td, out _, out _, out _, out SQuaternion o)) continue;
+                    var e = QuatYawDeg(o);
+                    if (float.IsNaN(yaw0)) yaw0 = e;
+                    yawLast = e; maxTilt = Math.Max(maxTilt, td);
+                    MainConsole.Instance.Output($"  {i * 0.4f,4:0.0}s | {e,8:0.0} | {td,8:0.0}");
+                }
+                float yawChange = Math.Abs(YawDelta(yaw0, yawLast));
+                yawPass = yawChange > 12f && maxTilt < 8f;   // heading moved despite friction, boat stayed level
+                MainConsole.Instance.Output($"{LogHeader} [boattest:attract] yaw-free: {(yawPass ? "PASS" : "CHECK")} (yaw moved {yawChange:0}deg, max tilt {maxTilt:0.0}deg - attractor holds level without fighting yaw)");
+                _scene.DeleteSceneObject(boat2, false);
+            }
+
+            MainConsole.Instance.Output($"{LogHeader} [boattest:attract] {(selfRightPass && yawPass ? "ALL PASS" : "CHECK")}: boat self-rights from tilt and turns freely in yaw.");
+            if (restoreHm != null) SetTerrain(restoreHm);
+        }
+
+        // ---- slice (d): angular motor (steering) ----------------------------------------------
+        private void BoatSteerTest()
+        {
+            float[] restoreHm = EnsureBoatWater(out float bx, out float by, out float water);
+            var (boat, pa, jp, id) = RezBoat(bx, by, water + 0.5f, Quaternion.Identity);
+            if (pa == null) { MainConsole.Instance.Output($"{LogHeader} [boattest:steer] no PhysActor."); if (restoreHm != null) SetTerrain(restoreHm); return; }
+
+            MainConsole.Instance.Output($"{LogHeader} [boattest:steer] boat id={id}. Phase 1: hold ANGULAR_MOTOR yaw=1.0 (turn); Phase 2: release (friction must stop the spin).");
+            MainConsole.Instance.Output($"     t   |  yawDeg   | yawRate(deg/s) |  tiltDeg  | phase");
+
+            var steer = new Vector3(0f, 0f, 1.0f);   // yaw motor
+            float yaw0 = float.NaN, yawAtRelease = 0f, yawLast = 0f, maxTilt = 0f, rateAtRelease = 0f, rateAtEnd = 0f;
+            for (int i = 0; i <= 14; i++)
+            {
+                bool turning = i < 7;               // first ~2.8 s: hold the turn; then release
+                if (turning) pa.VehicleVectorParam((int)Vehicle.ANGULAR_MOTOR_DIRECTION, steer);
+                System.Threading.Thread.Sleep(400);
+                if (!BoatState(jp, out float td, out _, out _, out SVector3 av, out SQuaternion o))
+                { MainConsole.Instance.Output($"  {i * 0.4f,4:0.0}s | (no body state)"); continue; }
+                float yaw = QuatYawDeg(o);
+                if (float.IsNaN(yaw0)) yaw0 = yaw;
+                float yawRate = (float)(av.Z * 180.0 / Math.PI);
+                maxTilt = Math.Max(maxTilt, td);
+                yawLast = yaw;
+                if (i == 6) { yawAtRelease = yaw; rateAtRelease = yawRate; }
+                if (i == 14) rateAtEnd = yawRate;
+                MainConsole.Instance.Output($"  {i * 0.4f,4:0.0}s | {yaw,8:0.0} | {yawRate,8:0.0}       | {td,8:0.0} | {(turning ? "TURN" : "coast")}");
+            }
+
+            float turnedWhileDriven = Math.Abs(YawDelta(yaw0, yawAtRelease));
+            bool turns = turnedWhileDriven > 30f;                       // motor produced real yaw
+            bool stops = Math.Abs(rateAtEnd) < Math.Abs(rateAtRelease) * 0.35f + 5f;   // friction damped the spin
+            bool upright = maxTilt < 12f;                              // stayed level through the turn
+            bool pass = turns && stops && upright;
+            MainConsole.Instance.Output($"{LogHeader} [boattest:steer] {(pass ? "PASS" : "FAIL")}: turned {turnedWhileDriven:0}deg under motor (rate {rateAtRelease:0}deg/s), coasted to {rateAtEnd:0}deg/s after release (friction), max tilt {maxTilt:0.0}deg.");
+            MainConsole.Instance.Output($"{LogHeader} [boattest:steer] (turns={turns} frictionStops={stops} stayedUpright={upright})");
+            _scene.DeleteSceneObject(boat, false);
+            if (restoreHm != null) SetTerrain(restoreHm);
+        }
+
+        // Yaw (deg) of a body orientation about world Z.
+        private static float QuatYawDeg(SQuaternion q)
+        {
+            double siny = 2.0 * (q.W * q.Z + q.X * q.Y);
+            double cosy = 1.0 - 2.0 * (q.Y * q.Y + q.Z * q.Z);
+            return (float)(Math.Atan2(siny, cosy) * 180.0 / Math.PI);
+        }
+
+        // Signed shortest-arc delta between two yaw angles (deg), in [-180,180].
+        private static float YawDelta(float a, float b)
+        {
+            float d = b - a;
+            while (d > 180f) d -= 360f;
+            while (d < -180f) d += 360f;
+            return d;
         }
 
         // M7 Task 3 (landing 2) proof: per-child collision identity. Build a REAL scene linkset (root=link1 +
@@ -2083,6 +2400,43 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // Simulate. link()/unlink() add to this instead of rebuilding inline (which hung the boot-load).
         private readonly HashSet<JoltPrim> _dirtyLinksets = new HashSet<JoltPrim>();
 
+        // ---------------------------------------------------------------------
+        // Vehicles (M8): active vehicle prims, driven per-frame from Simulate BEFORE the physics
+        // step (the Jolt equivalent of BulletSim's BeforeStep event). JoltPrim registers itself when
+        // its controller's type is set and unregisters on TYPE_NONE/destroy.
+        // ---------------------------------------------------------------------
+        private readonly HashSet<JoltPrim> _vehicles = new HashSet<JoltPrim>();
+
+        internal void RegisterVehicle(JoltPrim prim)
+        {
+            lock (_vehicles) _vehicles.Add(prim);
+        }
+
+        internal void UnregisterVehicle(JoltPrim prim)
+        {
+            lock (_vehicles) _vehicles.Remove(prim);
+        }
+
+        private void StepVehicles(float timeStep)
+        {
+            JoltPrim[] vehicles;
+            lock (_vehicles)
+            {
+                if (_vehicles.Count == 0) return;
+                vehicles = new JoltPrim[_vehicles.Count];
+                _vehicles.CopyTo(vehicles);
+            }
+            foreach (JoltPrim v in vehicles)
+            {
+                try { v.StepVehicle(timeStep); }
+                catch (Exception e)
+                {
+                    // Never let one vehicle's math wedge the heartbeat.
+                    m_log.Error($"{LogHeader} vehicle step EXCEPTION for prim {v.LocalID}: {e}");
+                }
+            }
+        }
+
         internal void MarkLinksetDirty(JoltPrim root)
         {
             lock (_dirtyLinksets) _dirtyLinksets.Add(root);
@@ -2116,6 +2470,11 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             // coalesces a whole linkset's worth of child-links into a single rebuild - the boot-load of a
             // persisted physical linkset used to hang because every child's link() churned the live root.
             DrainDirtyLinksets();
+
+            // M8: run each active vehicle's Halcyon controller BEFORE the physics step, so its
+            // velocity changes/forces/torques are consumed by THIS step (BulletSim's BeforeStep model).
+            LastTimeStep = timeStep;
+            StepVehicles(timeStep);
 
             // ONE backend Step per frame at OpenSim's ~11 fps cadence (Scene.FrameTime 0.0909 s). The
             // character is stepped exactly once per frame - the known-good path (M6.5 Task 1: stood + ran
@@ -2338,6 +2697,11 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             ShapeId newShape = _backend.CreateHeightFieldShape(field, m, m, new SVector3(1f, 1f, 1f));
             _backend.SetTerrain(newShape, SVector3.Zero);
 
+            // Retain the cooked samples for TerrainHeightAt (vehicle hover/ground inputs) - the
+            // exact field the collision surface was built from, so heights agree with contacts.
+            _terrainField = field;
+            _terrainFieldM = m;
+
             // Release the previous terrain shape: SetTerrain already replaced its body (dropping that
             // native ref), so releasing our handle frees it.
             if (_terrainShape.IsValid)
@@ -2353,6 +2717,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
         public override void SetWaterLevel(float baseheight)
         {
+            WaterLevel = baseheight;   // vehicle hover (HoverWaterOnly) reads this
             _backend?.SetWaterHeight(baseheight);
         }
 

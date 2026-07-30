@@ -1,8 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    LegionJolt - the Jolt physics region module (M6 core + M7 linksets; NO vehicles - that is the
-    jolt/vehicles branch). Adapts Legion.Physics to the OpenSim PhysicsScene/PhysicsActor contract
+    LegionJolt - the Jolt physics region module (M6 core + M7 linksets + M8 vehicles). The vehicle
+    wiring (JoltVehicleBody + JoltPrim Vehicle* overrides driving the Legion.Vehicles controller)
+    arrives on the jolt/vehicles branch atop jolt/physics-backend.
+    Adapts Legion.Physics to the OpenSim PhysicsScene/PhysicsActor contract
     and self-selects on [Startup] physics = Jolt. Registration is via PluginRegistration.cs
     (IPluginRegistryProvider) since NGC develop dropped Mono.Addins. SDK-style, mirroring
     Source/OpenSim.Region.PhysicsModules.BulletS. TargetFramework net8.0 from Directory.Build.props.
@@ -28,6 +30,7 @@
     <ProjectReference Include="../../Source/OpenSim.Region.Framework/OpenSim.Region.Framework.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.SharedBase/OpenSim.Region.PhysicsModules.SharedBase.csproj" />
     <ProjectReference Include="../../Source/Legion.Physics/Legion.Physics.csproj" />
+    <ProjectReference Include="../../Source/Legion.Vehicles/Legion.Vehicles.csproj" />
   </ItemGroup>
 
   <ItemGroup>

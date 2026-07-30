@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Legion.Vehicles - the backend-agnostic Halcyon vehicle controller (M8), extracted VERBATIM from
+    BulletSim's LegionVehicleDynamics.cs. Links NEITHER OpenSim NOR any physics engine - only the
+    OpenMetaverse math types (Vector3/Quaternion/Utils). Drives physics through IVehicleBody; the
+    Jolt impl (JoltVehicleBody) lives in the LegionJolt module. Portable to Tranquillity/Legion alike.
+    SDK-style for NGC develop; TargetFramework net8.0 from the repo Directory.Build.props. ImplicitUsings
+    disabled to match how the extracted port was authored (explicit usings, byte-identical switches).
+  -->
+  <PropertyGroup>
+    <AssemblyTitle>Legion.Vehicles</AssemblyTitle>
+    <RootNamespace>Legion.Vehicles</RootNamespace>
+    <Product>OpenSim</Product>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenMetaverse.Types" Version="1.2.13" />
+  </ItemGroup>
+
+</Project>

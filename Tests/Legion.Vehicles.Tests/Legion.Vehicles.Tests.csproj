@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Legion.Vehicles.Tests - xunit tests for the backend-agnostic vehicle controller (M8 boat slices).
+    PURE MATH, NO NATIVE: references Legion.Vehicles only; FakeVehicleBody drives the real controller
+    through IVehicleBody. Runs in ~25 ms on any CI agent, no Jolt/native/scene.
+
+    FRAMEWORK NOTE: these are xunit (Mike requested it) and coexist with NGC develop's NUnit 4.x test
+    house (e.g. OpenSim.Region.PhysicsModules.BulletS.Tests) - both run under Microsoft.NET.Test.Sdk /
+    VSTest. Kept xunit per John; flagged for Mike's call on the mixed-framework convention.
+
+    SDK-style; TargetFramework net8.0 from Directory.Build.props. ImplicitUsings disabled + Nullable
+    enabled to match how the tests + FakeVehicleBody were authored. Not packable; not a shipped assembly.
+  -->
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../Source/Legion.Vehicles/Legion.Vehicles.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.5.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+
+</Project>

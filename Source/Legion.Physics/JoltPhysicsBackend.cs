@@ -1004,6 +1004,29 @@ namespace Legion.Physics.Jolt
             return TryResolve(body, out JoltBodyRecord rec, out _) ? rec.Mass : 0f;
         }
 
+        // Local principal moments of inertia (diagonal), read from the live MotionProperties.
+        // Jolt stores the INVERSE diagonal; invert per component (0 stays 0 - a locked/infinite axis).
+        public Vector3 GetBodyInertiaDiagonal(BodyId body)
+        {
+            if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid) ||
+                rec.MotionType != BodyMotionType.Dynamic)
+                return Vector3.Zero;
+
+            BodyLockInterface bli = _system!.BodyLockInterface;
+            bli.LockRead(jid, out BodyLockRead lockRead);
+            try
+            {
+                if (!lockRead.Succeeded)
+                    return Vector3.Zero;
+                Vector3 inv = lockRead.Body.MotionProperties.InverseInertiaDiagonal;
+                return new Vector3(
+                    inv.X > 0f ? 1f / inv.X : 0f,
+                    inv.Y > 0f ? 1f / inv.Y : 0f,
+                    inv.Z > 0f ? 1f / inv.Z : 0f);
+            }
+            finally { bli.UnlockRead(lockRead); }
+        }
+
         // Recompute the dynamic mass from the shape's geometric volume and a PHYSICAL density (kg/m^3),
         // then apply it via the same mass-property scaling path as SetBodyMass. Used so the module can
         // honour SceneObjectPart.Density (x DensityScaleFactor) for BulletSim mass parity.
@@ -1137,6 +1160,24 @@ namespace Legion.Physics.Jolt
         {
             if (TryResolve(body, out _, out BodyID jid))
                 _bodyInterface.DeactivateBody(jid);
+        }
+
+        // Allow/forbid sleeping (vehicles forbid it while active - Bullet's DISABLE_DEACTIVATION).
+        // Needs a body write-lock: AllowSleeping lives on the Body, not the BodyInterface.
+        public void SetBodyAllowSleeping(BodyId body, bool allow)
+        {
+            if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid) ||
+                rec.MotionType == BodyMotionType.Static)
+                return; // static bodies have no MotionProperties and never sleep/wake.
+
+            BodyLockInterface bli = _system!.BodyLockInterface;
+            bli.LockWrite(jid, out BodyLockWrite lockWrite);
+            try
+            {
+                if (lockWrite.Succeeded)
+                    lockWrite.Body.SetAllowSleeping(allow);
+            }
+            finally { bli.UnlockWrite(lockWrite); }
         }
 
         // Toggle the Persist gate for a LIVE body (subscription happens after CreateBody). Begin/End always

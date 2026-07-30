@@ -15,8 +15,10 @@ using OpenSim.Framework;
 using OpenSim.Region.PhysicsModules.SharedBase;
 using OpenMetaverse;
 using Legion.Physics;
+using Legion.Vehicles;
 using SVector3 = System.Numerics.Vector3;
 using SQuaternion = System.Numerics.Quaternion;
+using LVehicle = Legion.Vehicles.Vehicle;   // Legion.Vehicles' copy of the LSL wire codes (SharedBase also has a Vehicle enum)
 
 namespace OpenSim.Region.PhysicsModules.LegionJolt
 {
@@ -61,6 +63,20 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
         internal BodyId BodyHandle => _body;
         internal string ShapeKind => _shapeKind;
+
+        // Vehicles (M8): the backend-agnostic Halcyon controller + its Jolt seam. Created lazily on
+        // the first Vehicle* call; ACTIVE (stepped per-frame, body params applied) only while the
+        // controller's type != NONE and the prim is physical. Setting TYPE_NONE destroys it (spec).
+        private LegionVehicleController _vehicle;
+        private JoltVehicleBody _vehicleBody;
+
+        // Body orientation -> PRIM orientation (undo the cylinder axis-correction; identity for
+        // box/sphere/mesh). Same conversion the drain does in ApplyStepState.
+        internal Quaternion PrimOrientationOf(SQuaternion bodyOrient)
+        {
+            SQuaternion prim = SQuaternion.Multiply(SQuaternion.Conjugate(_axisCorrection), bodyOrient);
+            return new Quaternion(prim.X, prim.Y, prim.Z, prim.W);
+        }
 
         internal JoltPrim(LegionJoltScene module, ILegionPhysicsBackend backend, uint localid, string name,
                           PrimitiveBaseShape pbs, Vector3 position, Vector3 size, Quaternion rotation, bool isPhysical)
@@ -131,6 +147,11 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 if (_backend.TryGetBodyState(_body, out BodyState st))
                     LegionJoltScene.m_log.Debug(
                         $"{LegionJoltScene.LogHeader} physical body id={LocalID} created: active={((st.Flags & BodyStateFlags.Active) != 0)} posZ={st.Position.Z:0.00} shape={_shapeKind}");
+
+                // A recreate (reposition/reshape/weld/physical-toggle) makes a FRESH body with default
+                // params; an active vehicle must re-assert its no-friction/no-damping/manual-gravity/
+                // never-sleep setup on it (M8).
+                ApplyVehicleBodyParams();
             }
         }
 
@@ -179,6 +200,8 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // our handle-ref then frees the shape - no leak, no premature free.
         internal void Destroy()
         {
+            // Drop out of the scene's per-frame vehicle drive (no-op if never a vehicle).
+            if (_vehicle != null) { _module.UnregisterVehicle(this); _vehicle = null; _vehicleBody = null; }
             // If welded into a parent compound, detach first (parent rebuilds without us).
             if (_linkRoot != null) { JoltPrim r = _linkRoot; _linkRoot = null; r.UnlinkChild(this); }
             // If we are a compound root, orphan our welded children (group teardown removes them anyway).
@@ -440,8 +463,24 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         }
         public override void LockAngularMotion(byte axislocks) { }
 
-        public override void AddForce(Vector3 force, bool pushforce) { }
-        public override void AddAngularForce(Vector3 force, bool pushforce) { }
+        // Forces (M8): wired to the backend's accumulate-until-next-Step Apply* (Jolt AddForce/AddTorque
+        // == Bullet ApplyCentralForce/ApplyTorque; both auto-activate a sleeping body). BulletSim treats
+        // a NON-push AddForce as force-per-second and divides by the frame dt before applying - mirror
+        // that so llApplyImpulse/llPushObject land with the same magnitude on both engines.
+        public override void AddForce(Vector3 force, bool pushforce)
+        {
+            if (!_body.IsValid || !_isPhysical || !force.IsFinite())
+                return;
+            Vector3 f = pushforce ? force : force / _module.LastTimeStep;
+            _backend.ApplyForce(_body, ToS(f));
+        }
+
+        public override void AddAngularForce(Vector3 force, bool pushforce)
+        {
+            if (!_body.IsValid || !_isPhysical || !force.IsFinite())
+                return;
+            _backend.ApplyTorque(_body, ToS(force));   // BulletSim ignores pushforce for angular
+        }
         public override void AvatarJump(float forceZ) { }
         public override void SetMomentum(Vector3 momentum) { }
 
@@ -462,12 +501,104 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         }
         public override bool SubscribedEvents() => _subscribedMs > 0;
 
-        // Vehicles - not applicable to a static prim (M7).
-        public override int VehicleType { get => 0; set { } }
-        public override void VehicleFloatParam(int param, float value) { }
-        public override void VehicleVectorParam(int param, Vector3 value) { }
-        public override void VehicleRotationParam(int param, Quaternion rotation) { }
-        public override void VehicleFlags(int param, bool remove) { }
+        // Vehicles (M8): forward the LSL wire params into the backend-agnostic controller. OpenSim's
+        // SOP hands us raw ints; the controller keeps the exact Halcyon routing/clamping. Setting a
+        // type registers with the scene's per-frame drive + applies the vehicle body params; setting
+        // TYPE_NONE unwinds both and destroys the controller.
+        public override int VehicleType
+        {
+            get => _vehicle == null ? 0 : (int)_vehicle.Type;
+            set
+            {
+                EnsureVehicle();
+                _vehicle.ProcessTypeChange((LVehicle)value);
+                if (_vehicle.IsActive)
+                {
+                    _module.RegisterVehicle(this);
+                    ApplyVehicleBodyParams();
+                }
+                else
+                {
+                    _module.UnregisterVehicle(this);
+                    RestoreVehicleBodyParams();
+                    _vehicle = null;
+                    _vehicleBody = null;
+                }
+            }
+        }
+
+        public override void VehicleFloatParam(int param, float value)
+        {
+            EnsureVehicle();
+            _vehicle.ProcessFloatVehicleParam((LVehicle)param, value);
+        }
+
+        public override void VehicleVectorParam(int param, Vector3 value)
+        {
+            EnsureVehicle();
+            _vehicle.ProcessVectorVehicleParam((LVehicle)param, value);
+        }
+
+        public override void VehicleRotationParam(int param, Quaternion rotation)
+        {
+            EnsureVehicle();
+            _vehicle.ProcessRotationVehicleParam((LVehicle)param, rotation);
+        }
+
+        public override void VehicleFlags(int param, bool remove)
+        {
+            EnsureVehicle();
+            _vehicle.ProcessVehicleFlags(param, remove);
+        }
+
+        private void EnsureVehicle()
+        {
+            if (_vehicle == null)
+            {
+                _vehicleBody = new JoltVehicleBody(_module, _backend, this);
+                _vehicle = new LegionVehicleController(_vehicleBody);
+            }
+        }
+
+        // Per-frame drive, called by LegionJoltScene.Simulate BEFORE the physics step (the Jolt
+        // equivalent of BulletSim's BeforeStep event): snapshot the live body, run the Halcyon math,
+        // which pushes velocity changes/forces/torques back through the backend for this step.
+        internal void StepVehicle(float timeStep)
+        {
+            if (_vehicle == null || !_vehicle.IsActive || !_isPhysical || !_body.IsValid)
+                return;
+            if (_vehicleBody.BeginFrame())
+                _vehicle.Step(timeStep);
+        }
+
+        // The BulletSim vehicle body setup (LegionVehicleDynamics.SetPhysicalParameters), translated:
+        // the vehicle controls its own friction/damping (BSParam.VehicleFriction/Restitution/
+        // AngularDamping all default 0; Jolt's default 0.05 damping would fight the motor math),
+        // applies gravity MANUALLY (engine gravity off), and must never sleep (DISABLE_DEACTIVATION).
+        // Re-applied after every body recreate (reposition/reshape/weld) while the vehicle is active.
+        private void ApplyVehicleBodyParams()
+        {
+            if (_vehicle == null || !_vehicle.IsActive || !_isPhysical || !_body.IsValid)
+                return;
+            _backend.SetBodyFriction(_body, 0f);
+            _backend.SetBodyRestitution(_body, 0f);
+            _backend.SetBodyDamping(_body, 0f, 0f);
+            _backend.SetBodyGravityFactor(_body, 0f);
+            _backend.SetBodyAllowSleeping(_body, false);
+            _backend.ActivateBody(_body);
+        }
+
+        private void RestoreVehicleBodyParams()
+        {
+            if (!_body.IsValid)
+                return;
+            BodyDesc d = BodyDesc.Default;
+            _backend.SetBodyFriction(_body, d.Friction);
+            _backend.SetBodyRestitution(_body, d.Restitution);
+            _backend.SetBodyDamping(_body, d.LinearDamping, d.AngularDamping);
+            _backend.SetBodyGravityFactor(_body, 1f);
+            _backend.SetBodyAllowSleeping(_body, true);
+        }
 
         // PID / hover / RotLookAt - physical-motion features (M6.4+).
         public override Vector3 PIDTarget { set { } }

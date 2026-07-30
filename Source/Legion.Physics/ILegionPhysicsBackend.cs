@@ -521,6 +521,10 @@ namespace Legion.Physics
         void SetBodyMass(BodyId body, float mass);
         /// <summary>Read the body's assigned mass (explicit, or shape Volume x Density). 0 if unknown/static.</summary>
         float GetBodyMass(BodyId body);
+        /// <summary>Local principal moments of inertia (diagonal), kg*m^2. Zero for non-dynamic bodies.
+        /// The vehicle controller's vertical attractor scales its restoring torque by this (the
+        /// BulletSim equivalent is the prim's CalculateLocalInertia result).</summary>
+        Vector3 GetBodyInertiaDiagonal(BodyId body);
         /// <summary>Recompute + apply the dynamic mass as (shape geometric Volume x physicalDensity kg/m^3).
         /// Lets the module honour a prim's SceneObjectPart.Density instead of the BodyDesc default.</summary>
         void SetBodyDensity(BodyId body, float physicalDensity);
@@ -548,6 +552,11 @@ namespace Legion.Physics
 
         void ActivateBody(BodyId body);
         void DeactivateBody(BodyId body);
+
+        /// <summary>Allow/forbid the engine to sleep this body. Vehicles disable sleeping while
+        /// active (Bullet's DISABLE_DEACTIVATION) - their controller must run every frame even when
+        /// the body is momentarily at rest. No-op on static bodies.</summary>
+        void SetBodyAllowSleeping(BodyId body, bool allow);
 
         /// <summary>Toggle the Persist (ongoing-contact) gate for a live body - a prim's collision-script
         /// subscription flips this so the script `collision` event streams while touching.</summary>
