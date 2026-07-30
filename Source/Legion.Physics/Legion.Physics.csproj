@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Legion.Physics - the engine-agnostic physics backend (ILegionPhysicsBackend + the Jolt impl).
+    Links NEITHER OpenSim NOR any grid type; carries only the JoltPhysicsSharp binding. Portable
+    to Tranquillity/Legion alike. SDK-style for NGC develop (TargetFramework net8.0 comes from the
+    repo Directory.Build.props). Nullable + no-implicit-usings + AllowUnsafeBlocks are overridden
+    here to preserve exactly how the backend was authored (the HeightFieldShape cook uses float*).
+  -->
+  <PropertyGroup>
+    <AssemblyTitle>Legion.Physics</AssemblyTitle>
+    <RootNamespace>Legion.Physics</RootNamespace>
+    <Product>OpenSim</Product>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);CS0168</NoWarn>
+  </PropertyGroup>
+
+  <!-- net8.0 support runs through JoltPhysicsSharp 2.19.1 (2.19.2+ is net9/net10 only); it pulls
+       the matching native JoltPhysics.Native 1.0.4 (single-precision joltc.dll). Native runtime
+       deploy to the OpenSim bin is a run-time concern (John's smoke test), not a compile input. -->
+  <ItemGroup>
+    <PackageReference Include="JoltPhysicsSharp" Version="2.19.1" />
+  </ItemGroup>
+
+</Project>

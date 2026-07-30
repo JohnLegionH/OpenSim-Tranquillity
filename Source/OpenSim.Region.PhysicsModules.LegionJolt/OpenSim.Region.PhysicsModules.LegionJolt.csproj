@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    LegionJolt - the Jolt physics region module (M6 core + M7 linksets; NO vehicles - that is the
+    jolt/vehicles branch). Adapts Legion.Physics to the OpenSim PhysicsScene/PhysicsActor contract
+    and self-selects on [Startup] physics = Jolt. Registration is via PluginRegistration.cs
+    (IPluginRegistryProvider) since NGC develop dropped Mono.Addins. SDK-style, mirroring
+    Source/OpenSim.Region.PhysicsModules.BulletS. TargetFramework net8.0 from Directory.Build.props.
+    Nullable/ImplicitUsings overridden to match how the module was authored.
+  -->
+  <PropertyGroup>
+    <AssemblyTitle>OpenSim.Region.PhysicsModules.LegionJolt</AssemblyTitle>
+    <RootNamespace>OpenSim.Region.PhysicsModules.LegionJolt</RootNamespace>
+    <Company>http://opensimulator.org</Company>
+    <Product>OpenSim</Product>
+    <Copyright>Legion Grid developers</Copyright>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Nini.dll" HintPath="../../Library/Nini.dll" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../Source/OpenSim.Framework/OpenSim.Framework.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Framework.Console/OpenSim.Framework.Console.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Region.Framework/OpenSim.Region.Framework.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.SharedBase/OpenSim.Region.PhysicsModules.SharedBase.csproj" />
+    <ProjectReference Include="../../Source/Legion.Physics/Legion.Physics.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenMetaverse.Types" Version="1.2.13" />
+    <PackageReference Include="OpenMetaverse" Version="1.2.13" />
+    <PackageReference Include="log4net" Version="3.3.1" />
+  </ItemGroup>
+
+</Project>
