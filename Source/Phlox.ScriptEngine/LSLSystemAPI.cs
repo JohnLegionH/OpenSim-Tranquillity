@@ -8683,18 +8683,21 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             Vector3 dir = end - start;
             float dist = dir.Length();
 
-            // RC_* constants
-            const int RC_MAX_HITS = 2;
-            const int RC_DETECT_PHANTOM = 3;
-            const int RC_DATA_FLAGS = 4;
-            const int RC_REJECT_TYPES = 1;
-            const int RC_GET_ROOT_KEY = 1;
-            const int RC_GET_LINK_NUM = 2;
-            const int RC_GET_NORMAL = 4;
-            const int RC_REJECT_AGENTS = 2;
-            const int RC_REJECT_PHYSICAL = 4;
-            const int RC_REJECT_NONPHYSICAL = 8;
-            const int RC_REJECT_LAND = 16;
+            // RC_* constants - MUST match DefaultConstants.cs (SL-correct) values.
+            // Previously these disagreed with the LSL constants scripts actually send,
+            // so options were mis-parsed (dataFlags/reject/max_hits scrambled) and
+            // llCastRay dropped the normal and mangled reject flags for every script.
+            const int RC_REJECT_TYPES = 0;
+            const int RC_DETECT_PHANTOM = 1;
+            const int RC_DATA_FLAGS = 2;
+            const int RC_MAX_HITS = 3;
+            const int RC_GET_NORMAL = 1;
+            const int RC_GET_ROOT_KEY = 2;
+            const int RC_GET_LINK_NUM = 4;
+            const int RC_REJECT_AGENTS = 1;
+            const int RC_REJECT_PHYSICAL = 2;
+            const int RC_REJECT_NONPHYSICAL = 4;
+            const int RC_REJECT_LAND = 8;
 
             int count = 1;
             int dataFlags = 0;
