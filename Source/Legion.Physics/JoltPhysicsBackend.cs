@@ -953,7 +953,17 @@ namespace Legion.Physics.Jolt
 
         public void SetBodyLayer(BodyId body, PhysicsLayer layer) => throw new NotImplementedException();
 
-        public void SetBodyTransform(BodyId body, Vector3 position, Quaternion orientation, bool activate) => throw new NotImplementedException();
+        // Move a body IN PLACE - Jolt's BodyInterface repositions the existing body (velocity, contacts,
+        // BodyID all preserved); it does NOT destroy/recreate. This is the real reposition (JoltPhysicsSharp
+        // 2.19.1 exposes SetPositionAndRotation - the earlier stub was deferred, not a native gap). A no-op
+        // on an inert body just sets its transform; activate:true wakes it (used when a live/vehicle body is
+        // repositioned so it keeps stepping). Resolve failure (destroyed body) is a safe no-op.
+        public void SetBodyTransform(BodyId body, Vector3 position, Quaternion orientation, bool activate)
+        {
+            if (TryResolve(body, out _, out BodyID jid))
+                _bodyInterface.SetPositionAndRotation(jid, position, orientation,
+                    activate ? Activation.Activate : Activation.DontActivate);
+        }
 
         public void SetBodyLinearVelocity(BodyId body, Vector3 velocity)
         {

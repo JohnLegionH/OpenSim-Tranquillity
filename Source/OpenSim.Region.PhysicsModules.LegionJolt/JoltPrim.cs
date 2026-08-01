@@ -309,15 +309,23 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             }
         }
 
-        // Move the body to the current cached transform. The backend's SetBodyTransform is unimplemented
-        // (throws NotImplementedException) in 2.18.6, so the only way to reposition is remove + recreate
-        // (CreateBody sets the transform in its BodyCreationSettings). Reuses the existing shape handle -
-        // no re-cook, no shape-ref leak. Guarded by the setters so a passive physics-driven update (which
-        // writes _position via the drain, not the setter) never triggers a recreate.
+        // Move the body IN PLACE to the current cached transform via the backend's real reposition
+        // (BodyInterface.SetPositionAndRotation, JoltPhysicsSharp 2.19.1). This preserves velocity,
+        // contacts, and the BodyID - it does NOT destroy+recreate. That recreate was the root of the
+        // every-frame rebuild loop: OpenSim's SOP->physics sync pushes the transform each frame for a
+        // moving object, and the old remove+recreate zeroed a never-settling vehicle's velocity + re-inerted
+        // it every ~30 ms (the plane became uncontrollable / fell through). Only PURE position/orientation
+        // moves reach here (Size/Shape -> Rebuild, physical toggle -> RecreateBody still do full rebuilds).
+        //
+        // activate:false is deliberate. Jolt's DontActivate leaves an already-active body active (a moving/
+        // vehicle body keeps stepping) but does NOT wake an inert one - so a load-time body created inert
+        // (deferred activation) stays inert until DrainPendingActivation, preserving the configure-before-
+        // step barrier (a reloaded vehicle never free-falls before its gravity-cancel is asserted). Orientation
+        // goes through BodyOrientationOf (axis-correction applied), matching CreateBodyInternal.
         private void RepositionBody()
         {
-            if (_body.IsValid) _backend.RemoveBody(_body);
-            CreateBodyInternal();
+            if (!_body.IsValid) { Build(); return; }
+            _backend.SetBodyTransform(_body, ToS(_position), BodyOrientationOf(_orientation), activate: false);
         }
 
         public override Vector3 Size
