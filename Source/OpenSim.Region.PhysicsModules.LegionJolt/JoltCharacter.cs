@@ -203,6 +203,20 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             }
         }
 
+        // Un-bury: snap the capsule to `pos` (region coords, capsule centre) and clear velocity, so a live
+        // terrain raise that left this avatar below the new surface lifts it back onto the ground without
+        // carrying the accumulated fall speed into the next step. Routed through the gated backend
+        // (ReGroundCharacter) so it can't race the per-step CharacterVirtual update. Called only from
+        // LegionJoltScene's post-SetTerrain re-ground pass. The next drain reads the new position back.
+        internal void ReGround(Vector3 pos)
+        {
+            _position = pos;
+            _velocity = Vector3.Zero;
+            _targetVelocity = Vector3.Zero;
+            if (_character.IsValid)
+                _backend.ReGroundCharacter(_character, ToS(pos));
+        }
+
         // Facing is radially symmetric for a vertical capsule, so orientation does not change collision.
         // Cache it (the viewer's display rotation comes from the client's body-rot, not physics) and avoid
         // pushing a transform on every turn, which would re-seat position and fight the drain.

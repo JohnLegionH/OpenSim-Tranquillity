@@ -573,6 +573,15 @@ namespace Legion.Physics
         void SetCharacterShape(CharacterId character, float capsuleHalfHeight, float capsuleRadius);
 
         /// <summary>
+        /// Atomically (under the character gate, so it cannot race the per-step CharacterVirtual update)
+        /// move a character to <paramref name="position"/> AND clear its linear velocity. Used to un-bury a
+        /// standing/flying avatar after a live terrain raise swaps the heightfield body out from under it:
+        /// the snap lifts it onto the new surface; zeroing velocity stops the accumulated fall speed from
+        /// lurching it back down / re-penetrating on the next step.
+        /// </summary>
+        void ReGroundCharacter(CharacterId character, Vector3 position);
+
+        /// <summary>
         /// Desired horizontal velocity plus explicit vertical control. Called once
         /// per step from the movement layer. The backend resolves stepping, slopes
         /// and moving platforms; it does not know about avatar animation state.

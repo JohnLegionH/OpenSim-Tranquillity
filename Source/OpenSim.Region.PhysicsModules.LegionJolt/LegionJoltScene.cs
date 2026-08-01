@@ -108,6 +108,21 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // the heartbeat thread (the backend permits concurrent Create/Remove with Step).
         private readonly Dictionary<uint, JoltPrim> _prims = new Dictionary<uint, JoltPrim>();
 
+        // True only before the first Simulate (the region-reload window). Used by JoltPrim to drop a restored
+        // physical prim's horizontal velocity on load (so a reloaded body doesn't inherit a stale coast).
+        internal bool IsRegionLoading => _stepCount == 0;
+
+        // STRUCTURAL PORT of BulletSim's taint-deferred body creation: physical bodies are created INERT and
+        // their activation is deferred to the top of the next Simulate (step thread), so a body is never
+        // stepped by the engine before all its load-time state (incl. the vehicle's gravity-cancellation) is
+        // applied - it cannot free-fall during the load or the reload stall. Drained in Simulate.
+        private readonly List<JoltPrim> _pendingActivation = new List<JoltPrim>();
+        internal void RegisterPendingActivation(JoltPrim p)
+        {
+            lock (_pendingActivation)
+                if (!_pendingActivation.Contains(p)) _pendingActivation.Add(p);
+        }
+
         // M6.5: the logged-in avatars, keyed by their CharacterId handle (the value the character drain
         // echoes back). Keyed by handle rather than LocalID so the drain mapping is independent of when
         // ScenePresence assigns LocalID after AddAvatar returns.
@@ -276,7 +291,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             {
                 _consoleRegistered = true;
                 MainConsole.Instance.Commands.AddCommand("Physics", false, "jolt",
-                    "jolt linktest | unlinktest | collidetest | boattest [linear|hover|attract|steer] | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | clearprims",
+                    "jolt linktest | unlinktest | collidetest | boattest [linear|hover|attract|steer] | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | reloadcheck | vehiclestatus | clearprims",
                     "Legion Jolt proofs (M6.2 terrain / M6.3 prims): raycast the cooked collision surfaces and report hits.",
                     HandleJoltConsole);
             }
@@ -498,6 +513,24 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 return;
             }
 
+            // Console proof tool (`jolt reloadcheck`): snapshot every physical prim's
+            // saved (birth) pos vs where it is NOW, plus terrain/water under it, and classify. Run a few
+            // seconds after a region reload to SEE which physical objects were displaced (SANK/FLUNG) and
+            // by how much - the "before" evidence.
+            if (cmd.Length >= 2 && cmd[1] == "reloadcheck")
+            {
+                ReloadCheck();
+                return;
+            }
+
+            // Console proof tool (`jolt vehiclestatus`): dump the LIVE vehicle state of every prim so you can CONFIRM a
+            // boat is actually TYPE_BOAT + buoyancy=1 + active BEFORE testing reload (the missing confirmation).
+            if (cmd.Length >= 2 && cmd[1] == "vehiclestatus")
+            {
+                VehicleStatus();
+                return;
+            }
+
             if (cmd.Length >= 2 && cmd[1] == "charframe")
             {
                 // Toggle the per-frame avatar trace for a window (default ~20 s at 11 fps). Also enables the
@@ -581,7 +614,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 return;
             }
 
-            MainConsole.Instance.Output("Usage: jolt linktest | unlinktest | collidetest | boattest [linear|hover|attract|steer] | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | clearprims");
+            MainConsole.Instance.Output("Usage: jolt linktest | unlinktest | collidetest | boattest [linear|hover|attract|steer] | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | reloadcheck | vehiclestatus | clearprims");
         }
 
         // M7 Task 1 proof: rez a root + 2 children at offsets, make the root physical, then run the OpenSim
@@ -1472,6 +1505,59 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             MainConsole.Instance.Output($"  PASS = supported=Y, not NaN, |dZ|<0.5 (capsule centre ~ terrain + standHalf). After walking: pos tracks, supported stays Y on flat terrain.");
         }
 
+        // `jolt reloadcheck`: after a region reload, print each
+        // PHYSICAL prim's DB-saved (birth) pos vs where it is NOW, the terrain/water under it, the drift,
+        // and a verdict (OK / SANK / SANK-BELOW-TERRAIN / FLUNG). This is the "before" evidence: a physical
+        // object that reads e.g. saved z=25.0 -> now z=-40.2 SANK-BELOW-TERRAIN is the silent loss - that
+        // now-position is what OpenSim persists back, so it is invisible on the next reload.
+        // `jolt vehiclestatus`: live vehicle-state dump - confirms a
+        // boat is a working vehicle (TYPE_BOAT, buoyancy=1, active) LIVE, before we ever test reload.
+        private void VehicleStatus()
+        {
+            System.Collections.Generic.List<JoltPrim> ps;
+            lock (_prims)
+                ps = new System.Collections.Generic.List<JoltPrim>(_prims.Values);
+            var vs = ps.FindAll(p => p.IsVehicle);
+            MainConsole.Instance.Output($"{LogHeader} vehiclestatus: {ps.Count} prims, {vs.Count} with a vehicle controller (water={WaterLevel:0.0}):");
+            if (vs.Count == 0)
+                MainConsole.Instance.Output($"  NO prim has a vehicle. If you set llSetVehicleType and see this, the vehicle did NOT reach physics (script/plumbing) - reset the script to re-run state_entry.");
+            foreach (JoltPrim p in vs)
+                MainConsole.Instance.Output($"  id={p.LocalID,-6} '{p.Name}' physical={(p.IsPhysicalBody ? "Y" : "N")}  {p.VehicleInfo()}");
+            MainConsole.Instance.Output($"  EXPECT for a live boat: type=Boat active=Y buoyancy=1.00 physical=Y. Then it should HOVER at water+0.5, not fall/sink.");
+        }
+
+        private void ReloadCheck()
+        {
+            System.Collections.Generic.List<JoltPrim> ps;
+            lock (_prims)
+                ps = new System.Collections.Generic.List<JoltPrim>(_prims.Values);
+
+            var phys = ps.FindAll(p => p.IsPhysicalBody);
+            MainConsole.Instance.Output($"{LogHeader} reloadcheck: {ps.Count} prims in scene, {phys.Count} PHYSICAL (step {_stepCount}, water={WaterLevel:0.0}):");
+            if (phys.Count == 0) { MainConsole.Instance.Output($"  (no physical prims - rez one physical, reload the region, then re-run.)"); return; }
+
+            int displaced = 0;
+            foreach (JoltPrim p in phys)
+            {
+                Vector3 b = p.BirthPos, c = p.CurrentPos;
+                float dz = c.Z - b.Z;
+                float dh = MathF.Sqrt((c.X - b.X) * (c.X - b.X) + (c.Y - b.Y) * (c.Y - b.Y));
+                float terrZ = TerrainHeightAt(c.X, c.Y);
+                bool belowTerrain = c.Z < terrZ - 0.5f;
+                bool bad = belowTerrain || MathF.Abs(dz) > 2f || dh > 5f;
+                if (bad) displaced++;
+                string verdict = belowTerrain ? "SANK-BELOW-TERRAIN (hidden)"
+                    : dz < -2f ? "SANK"
+                    : dh > 5f ? "FLUNG"
+                    : "OK (survived at saved pos)";
+                MainConsole.Instance.Output(
+                    $"  id={p.LocalID,-6} '{p.Name}' vehicle={(p.IsVehicle ? "Y" : "N")} kind={p.ShapeKind}");
+                MainConsole.Instance.Output(
+                    $"        saved=({b.X:0.0},{b.Y:0.0},{b.Z:0.0}) -> now=({c.X:0.0},{c.Y:0.0},{c.Z:0.0}) dz={dz:0.0} dh={dh:0.0} terrainZ={terrZ:0.0}  [{verdict}]");
+            }
+            MainConsole.Instance.Output($"  => {displaced}/{phys.Count} physical prims DISPLACED from their saved position. Any 'now' below terrain/at seabed is the silent loss (Return recovers it).");
+        }
+
         // ---------------------------------------------------------------------
         // M6.6 sit / unsit. The physics core is the CHARACTER LIFECYCLE: OpenSim SITS by REMOVING the
         // physics actor (ScenePresence.RemoveFromPhysicalScene -> RemoveAvatar -> the CharacterVirtual +
@@ -2143,7 +2229,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             if (MainConsole.Instance == null || s_parityRegistered) return;
             s_parityRegistered = true;
             MainConsole.Instance.Commands.AddCommand("Physics", false, "parity",
-                "parity drop | core",
+                "parity drop | core | boat",
                 "M6.8 engine-agnostic A/B parity harness. Drops a box + a mesher-forced prism through the STANDARD "
                 + "physics surface and reports rest position / settle frames / mass, so BulletSim and Jolt can be "
                 + "compared by booting each with physics= and running the same command. 'core' also writes parity-<engine>.txt.",
@@ -2161,7 +2247,8 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 case "ramp": ParityRampTest(scene); break;
                 case "drop": ParityRunCore(scene, false); break;
                 case "core": ParityRunCore(scene, true); break;
-                default: MainConsole.Instance.Output("Usage: parity terrain (gradient proof) | ramp (steep-slope slide test) | drop | core (writes parity-<engine>.txt)"); break;
+                case "boat": ParityBoat(scene, true); break;
+                default: MainConsole.Instance.Output("Usage: parity terrain (gradient proof) | ramp (steep-slope slide test) | drop | core (writes parity-<engine>.txt) | boat (M8 boat A/B, writes parity-boat-<engine>.txt)"); break;
             }
         }
 
@@ -2251,6 +2338,226 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             {
                 if (sog != null) { try { scene.DeleteSceneObject(sog, false); } catch { } }
             }
+        }
+
+        // ===================================================================================
+        // M8 boat A/B parity. ENGINE-AGNOSTIC: drives the boat through the STANDARD PhysicsActor
+        // vehicle surface (VehicleType / VehicleVectorParam) and reads state through the standard
+        // getters (Position / Orientation / Velocity / RotationalVelocity / Mass), so the SAME code
+        // runs under physics=BulletSim (-> LegionVehicleDynamics) and physics=Jolt (-> the extracted
+        // Legion.Vehicles controller). Both run the SAME Halcyon math, so the numbers should match;
+        // any difference localizes to force APPLICATION (Bullet vs Jolt), not the math. Writes
+        // parity-boat-<engine>.txt for a two-boot diff. Uses scene.PhysicsScene.SetTerrain to cook a
+        // PHYSICS-ONLY water basin (this region is a plateau above the water plane) - the scene
+        // heightmap is untouched, so nothing taints the viewer and the terrain tick won't re-push.
+        // ===================================================================================
+        private void ParityBoat(Scene scene, bool toFile)
+        {
+            string engine = scene.PhysicsScene != null ? scene.PhysicsScene.EngineType : "unknown";
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"# M8 boat parity  engine={engine}  region={scene.RegionInfo.RegionName}");
+
+            float[] restoreHm = ParityEnsureBoatWater(scene, out float bx, out float by, out float water);
+            sb.AppendLine($"# spot <{bx:0},{by:0}> water={water:0.00}  (all z are z-water; tilt/yaw in deg)");
+            try
+            {
+                ParityBoatLinear(scene, sb, bx, by, water);
+                ParityBoatHover(scene, sb, bx, by, water);
+                ParityBoatAttract(scene, sb, bx, by, water);
+                ParityBoatSteer(scene, sb, bx, by, water);
+            }
+            catch (Exception e) { sb.AppendLine($"EXCEPTION: {e}"); }
+            finally { if (restoreHm != null) scene.PhysicsScene.SetTerrain(restoreHm); }
+
+            string outText = sb.ToString();
+            MainConsole.Instance.Output(outText);
+            if (toFile)
+            {
+                string path = $"parity-boat-{engine}.txt";
+                try { System.IO.File.WriteAllText(path, outText); MainConsole.Instance.Output($"[parity] wrote {System.IO.Path.GetFullPath(path)}"); }
+                catch (Exception e) { MainConsole.Instance.Output($"[parity] file write FAILED: {e.Message}"); }
+            }
+        }
+
+        // Deepest spot; if none deep enough, cook a physics-only basin at region centre. Returns the
+        // restore heightmap (null if real water existed). Agnostic: scene heightmap + PhysicsScene.SetTerrain.
+        private float[] ParityEnsureBoatWater(Scene scene, out float bx, out float by, out float water)
+        {
+            water = (float)scene.RegionInfo.RegionSettings.WaterHeight;
+            int rx = (int)scene.RegionInfo.RegionSizeX, ry = (int)scene.RegionInfo.RegionSizeY;
+            bx = rx / 2f; by = ry / 2f;
+            float bestDepth = float.MinValue;
+            for (int gy = 24; gy <= ry - 24; gy += 8)
+                for (int gx = 24; gx <= rx - 24; gx += 8)
+                {
+                    float depth = water - TerrainH(scene, gx, gy);
+                    if (depth > bestDepth) { bestDepth = depth; bx = gx; by = gy; }
+                }
+            if (bestDepth >= 2f)
+                return null;
+
+            bx = rx / 2f; by = ry / 2f;
+            float[] hm = scene.Heightmap.GetFloatsSerialised();
+            float[] restoreHm = (float[])hm.Clone();
+            for (int gy = (int)by - 24; gy <= (int)by + 24; gy++)
+                for (int gx = (int)bx - 24; gx <= (int)bx + 24; gx++)
+                    if (gx >= 0 && gx < rx && gy >= 0 && gy < ry)
+                        hm[gy * rx + gx] = water - 6f;
+            scene.PhysicsScene.SetTerrain(hm);
+            System.Threading.Thread.Sleep(600);   // let a taint-queued SetTerrain (BulletSim) take effect
+            MainConsole.Instance.Output($"[parity:boat] no open water (deepest {bestDepth:0.0} m) - cooked a physics-only basin at ({bx:0},{by:0}); restored after.");
+            return restoreHm;
+        }
+
+        // Rez a physical VEHICLE_TYPE_BOAT box (2x1x0.5) at (x,y,z) with rotation rot, agnostically.
+        private SceneObjectGroup ParityRezBoat(Scene scene, float x, float y, float z, Quaternion rot, out PhysicsActor pa)
+        {
+            pa = null;
+            var pbs = PrimitiveBaseShape.CreateBox();
+            UUID owner = scene.RegionInfo.EstateSettings.EstateOwner;
+            var sog = new SceneObjectGroup(owner, new Vector3(x, y, z), rot, pbs);
+            sog.RootPart.Scale = new Vector3(2f, 1f, 0.5f);
+            scene.AddNewSceneObject(sog, false);
+            sog.ScriptSetPhysicsStatus(true);
+            for (int i = 0; i < 40 && pa == null; i++) { pa = sog.RootPart.PhysActor; if (pa == null) System.Threading.Thread.Sleep(50); }
+            if (pa != null)
+            {
+                if (rot != Quaternion.Identity) pa.Orientation = rot;
+                pa.VehicleType = (int)Vehicle.TYPE_BOAT;
+            }
+            return sog;
+        }
+
+        // Tilt of local +Z from world up, and yaw about world Z (deg), from a live PhysicsActor.
+        private static void BoatTiltYaw(PhysicsActor pa, out float tiltDeg, out float yawDeg)
+        {
+            Quaternion q = pa.Orientation;
+            Vector3 up = Vector3.UnitZ * q;
+            tiltDeg = (float)(Math.Acos(Math.Clamp(up.Z, -1f, 1f)) * 180.0 / Math.PI);
+            double siny = 2.0 * (q.W * q.Z + q.X * q.Y);
+            double cosy = 1.0 - 2.0 * (q.Y * q.Y + q.Z * q.Z);
+            yawDeg = (float)(Math.Atan2(siny, cosy) * 180.0 / Math.PI);
+        }
+
+        private void ParityBoatLinear(Scene scene, System.Text.StringBuilder sb, float bx, float by, float water)
+        {
+            SceneObjectGroup boat = ParityRezBoat(scene, bx, by, water + 0.4f, Quaternion.Identity, out PhysicsActor pa);
+            try
+            {
+                if (pa == null) { sb.AppendLine("linear\tERROR: no PhysActor"); return; }
+                sb.AppendLine($"# linear: hold LINEAR_MOTOR <4,0,0>, re-set each 0.5s (mass={pa.Mass:0.00})");
+                sb.AppendLine("# linear\tt\tfwdSpeed\tzWater\ttilt");
+                var motor = new Vector3(4f, 0f, 0f);
+                for (int i = 0; i <= 8; i++)
+                {
+                    pa.VehicleVectorParam((int)Vehicle.LINEAR_MOTOR_DIRECTION, motor);
+                    System.Threading.Thread.Sleep(500);
+                    Vector3 v = pa.Velocity; Quaternion o = pa.Orientation;
+                    Vector3 fwd = Vector3.UnitX * o;
+                    float fwdSpeed = v.X * fwd.X + v.Y * fwd.Y + v.Z * fwd.Z;
+                    BoatTiltYaw(pa, out float tilt, out _);
+                    sb.AppendLine($"linear\t{i * 0.5f:0.0}\t{fwdSpeed:0.000}\t{pa.Position.Z - water:0.000}\t{tilt:0.0}");
+                }
+            }
+            finally { try { scene.DeleteSceneObject(boat, false); } catch { } }
+        }
+
+        private void ParityBoatHover(Scene scene, System.Text.StringBuilder sb, float bx, float by, float water)
+        {
+            sb.AppendLine("# hover: no motor; target z-water = +0.50 (HoverWaterOnly)");
+            sb.AppendLine("# hover\tcase\tfinalZWater\tsteadyBand");
+            var cases = new (float z0, string label)[] { (3.0f, "settle-above"), (-3.0f, "rise-below"), (0.5f, "hold-rest") };
+            foreach (var (z0, label) in cases)
+            {
+                SceneObjectGroup boat = ParityRezBoat(scene, bx, by, water + z0, Quaternion.Identity, out PhysicsActor pa);
+                try
+                {
+                    if (pa == null) { sb.AppendLine($"hover\t{label}\tERROR"); continue; }
+                    float lastZ = float.NaN, minZ = float.MaxValue, maxZ = float.MinValue;
+                    for (int i = 0; i <= 10; i++)
+                    {
+                        System.Threading.Thread.Sleep(400);
+                        lastZ = pa.Position.Z - water;
+                        if (i >= 5) { minZ = Math.Min(minZ, lastZ); maxZ = Math.Max(maxZ, lastZ); }
+                    }
+                    sb.AppendLine($"hover\t{label}\t{lastZ:0.000}\t{(maxZ - minZ):0.000}");
+                }
+                finally { try { scene.DeleteSceneObject(boat, false); } catch { } }
+            }
+        }
+
+        private void ParityBoatAttract(Scene scene, System.Text.StringBuilder sb, float bx, float by, float water)
+        {
+            // self-right from 30 deg roll; sample 0.25s x 24 (6s)
+            Quaternion tilt0 = Quaternion.CreateFromEulers((float)(30.0 * Math.PI / 180.0), 0f, 0f);
+            SceneObjectGroup boat = ParityRezBoat(scene, bx, by, water + 0.5f, tilt0, out PhysicsActor pa);
+            try
+            {
+                if (pa == null) { sb.AppendLine("attract\tERROR"); return; }
+                sb.AppendLine("# attract self-right from 30deg roll; sample 0.25s x24");
+                sb.AppendLine("# attract\tt\ttilt\tzWater\trollRate");
+                float firstPeak = 0f, lateSum = 0f, lateMax = 0f; int lateN = 0; float timeToLevel = -1f;
+                for (int i = 0; i <= 24; i++)
+                {
+                    System.Threading.Thread.Sleep(250);
+                    BoatTiltYaw(pa, out float td, out _);
+                    float t = i * 0.25f;
+                    if (t <= 1.0f) firstPeak = Math.Max(firstPeak, td);
+                    if (timeToLevel < 0 && td < 8f) timeToLevel = t;
+                    if (t >= 4.0f) { lateSum += td; lateMax = Math.Max(lateMax, td); lateN++; }
+                    float rollRate = (float)(pa.RotationalVelocity.X * 180.0 / Math.PI);
+                    sb.AppendLine($"attract\t{t:0.00}\t{td:0.0}\t{pa.Position.Z - water:0.000}\t{rollRate:0.0}");
+                }
+                float lateMean = lateN > 0 ? lateSum / lateN : float.NaN;
+                sb.AppendLine($"# attract.summary\tpeak={firstPeak:0.0}\ttimeToLevel={(timeToLevel < 0 ? "never" : timeToLevel.ToString("0.0"))}\tlate2sMean={lateMean:0.0}\tlate2sMax={lateMax:0.0}");
+            }
+            finally { try { scene.DeleteSceneObject(boat, false); } catch { } }
+
+            // yaw-free: nudge a yaw spin; heading must move, tilt must stay ~0
+            SceneObjectGroup boat2 = ParityRezBoat(scene, bx, by, water + 0.5f, Quaternion.Identity, out PhysicsActor pa2);
+            try
+            {
+                if (pa2 == null) { sb.AppendLine("attract.yawfree\tERROR"); return; }
+                float yaw0 = float.NaN, yawLast = 0f, maxTilt = 0f;
+                for (int i = 0; i <= 8; i++)
+                {
+                    pa2.RotationalVelocity = new Vector3(0f, 0f, 1.0f);
+                    System.Threading.Thread.Sleep(400);
+                    BoatTiltYaw(pa2, out float td, out float yaw);
+                    if (float.IsNaN(yaw0)) yaw0 = yaw;
+                    yawLast = yaw; maxTilt = Math.Max(maxTilt, td);
+                }
+                sb.AppendLine($"# attract.yawfree\tyawMoved={Math.Abs(YawDelta(yaw0, yawLast)):0.0}\tmaxTilt={maxTilt:0.0}");
+            }
+            finally { try { scene.DeleteSceneObject(boat2, false); } catch { } }
+        }
+
+        private void ParityBoatSteer(Scene scene, System.Text.StringBuilder sb, float bx, float by, float water)
+        {
+            SceneObjectGroup boat = ParityRezBoat(scene, bx, by, water + 0.5f, Quaternion.Identity, out PhysicsActor pa);
+            try
+            {
+                if (pa == null) { sb.AppendLine("steer\tERROR"); return; }
+                sb.AppendLine("# steer: hold ANGULAR_MOTOR yaw=1.0 for ~2.8s then release (friction must stop it)");
+                sb.AppendLine("# steer\tt\tyaw\tyawRate\ttilt\tphase");
+                var steer = new Vector3(0f, 0f, 1.0f);
+                float yaw0 = float.NaN, yawAtRelease = 0f, maxTilt = 0f, rateAtRelease = 0f, rateAtEnd = 0f;
+                for (int i = 0; i <= 14; i++)
+                {
+                    bool turning = i < 7;
+                    if (turning) pa.VehicleVectorParam((int)Vehicle.ANGULAR_MOTOR_DIRECTION, steer);
+                    System.Threading.Thread.Sleep(400);
+                    BoatTiltYaw(pa, out float td, out float yaw);
+                    if (float.IsNaN(yaw0)) yaw0 = yaw;
+                    float yawRate = (float)(pa.RotationalVelocity.Z * 180.0 / Math.PI);
+                    maxTilt = Math.Max(maxTilt, td);
+                    if (i == 6) { yawAtRelease = yaw; rateAtRelease = yawRate; }
+                    if (i == 14) rateAtEnd = yawRate;
+                    sb.AppendLine($"steer\t{i * 0.4f:0.0}\t{yaw:0.0}\t{yawRate:0.0}\t{td:0.0}\t{(turning ? "TURN" : "coast")}");
+                }
+                sb.AppendLine($"# steer.summary\tturnedUnderMotor={Math.Abs(YawDelta(yaw0, yawAtRelease)):0.0}\trateAtRelease={rateAtRelease:0.0}\trateAtEnd={rateAtEnd:0.0}\tmaxTilt={maxTilt:0.0}");
+            }
+            finally { try { scene.DeleteSceneObject(boat, false); } catch { } }
         }
 
         // Engine-agnostic terrain height (ITerrainChannel), clamped to region bounds.
@@ -2442,6 +2749,26 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             lock (_dirtyLinksets) _dirtyLinksets.Add(root);
         }
 
+        // Wake the physical bodies created inert since the last Simulate (deferred activation - the BulletSim
+        // configure-before-step barrier). Runs on the step thread so ActivateBody reliably reaches the active
+        // set. A body only created inert becomes a normal live body here; a vehicle wakes with gravity already
+        // cancelled, so it never free-falls. Errors are swallowed so one bad body can't wedge the heartbeat.
+        private void DrainPendingActivation()
+        {
+            JoltPrim[] pend;
+            lock (_pendingActivation)
+            {
+                if (_pendingActivation.Count == 0) return;
+                pend = _pendingActivation.ToArray();
+                _pendingActivation.Clear();
+            }
+            foreach (JoltPrim p in pend)
+            {
+                try { p.ActivatePending(); }
+                catch (Exception e) { m_log.Error($"{LogHeader} pending-activation EXCEPTION for prim {p.LocalID}: {e}"); }
+            }
+        }
+
         private void DrainDirtyLinksets()
         {
             // WELD AT LOAD: rebuild dirty linkset roots at the TOP of Simulate, BEFORE StepOnce - so a
@@ -2470,6 +2797,14 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             // coalesces a whole linkset's worth of child-links into a single rebuild - the boot-load of a
             // persisted physical linkset used to hang because every child's link() churned the live root.
             DrainDirtyLinksets();
+
+            // STRUCTURAL PORT of BulletSim's taint-deferred creation: activate physical bodies that were
+            // created INERT (asleep) now, AFTER the linkset weld and any load-time property/vehicle setup have
+            // completed, and BEFORE StepVehicles/StepOnce. So a body enters the engine step already fully
+            // configured - a reloaded vehicle wakes with its gravity already cancelled (StepVehicles asserts it
+            // just below, before StepOnce), so it can NEVER free-fall during load or the reload stall. Mirrors
+            // BulletSim draining ALL taints before PE.PhysicsStep().
+            DrainPendingActivation();
 
             // M8: run each active vehicle's Halcyon controller BEFORE the physics step, so its
             // velocity changes/forces/torques are consumed by THIS step (BulletSim's BeforeStep model).
@@ -2708,11 +3043,92 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 _backend.ReleaseShape(_terrainShape);
             _terrainShape = newShape;
 
+            // Un-bury any avatar the raise left below the new surface (the terrain body was swapped out
+            // from under its CharacterVirtual, which keeps its old Z). Runs only here, on a real terrain
+            // edit (~5 s tainted cadence), and only lifts avatars now below the surface - a lowered terrain
+            // leaves them above, to settle by normal gravity.
+            ReGroundAvatarsOnTerrainChange();
+
             // Step-stamp + a couple of height samples so a [charframe] session can see whether SetTerrain
             // is re-firing during a walk (it should NOT - TerrainModule only ticks it every ~5 s when the
             // heightmap is tainted) and whether the heights it re-cooks are drifting downward.
             m_log.Info($"{LogHeader} terrain set: step={_stepCount} {sx}x{sy} region -> {m}x{m} heightfield " +
                        $"(spans {m - 1} m/side; sample[centre]={heightMap[(sy / 2) * sx + (sx / 2)]:0.000} sample[0]={heightMap[0]:0.000}).");
+        }
+
+        // Distance (m) a capsule centre must be below its seat before we treat it as buried and lift it.
+        // Small enough that any real raise lifts, large enough to ignore float noise / a normal grounded
+        // avatar sitting exactly at seatZ. Only ever lifts UP, so a modest value is safe either way.
+        private const float TerrainUnburyEps = 0.05f;
+
+        /// <summary>
+        /// Pure un-bury decision (no physics state), isolated so it is unit-testable and shared by the
+        /// live pass and the `jolt terrain-unbury` console assert. Given a capsule centre Z, the new terrain
+        /// surface at its XY, and its seat geometry, returns true + the seat Z it should snap to when the
+        /// avatar is below the new surface (buried); false (leave it) when it is at or above the surface -
+        /// so a LOWERED terrain never triggers a snap (avatar settles by gravity), and a prim-stander high
+        /// above ground is never yanked down.
+        /// </summary>
+        internal static bool TryComputeUnbury(float currentCentreZ, float terrainZ, float standHalf, float feetOffset, float buriedEps, out float seatZ)
+        {
+            seatZ = terrainZ + standHalf + feetOffset;   // capsule centre that seats the feet ON the surface
+            return currentCentreZ < seatZ - buriedEps;
+        }
+
+        /// <summary>
+        /// Cause-A load-time position sanity (prim analog of <see cref="TryComputeUnbury"/>). A PHYSICAL prim
+        /// whose centre is BELOW where it would rest on the terrain surface (terrainZ + halfHeightZ) is buried;
+        /// return true + the rest Z to snap it to. A prim resting on the surface, or FLOATING above it (a boat
+        /// on water), is at/above restZ, so this returns false and leaves it exactly where it is - the land
+        /// box (control) and a floating boat are never touched. Pure (no physics state) so it is unit-testable.
+        /// </summary>
+        internal static bool TryComputeUnburyPrim(float currentCentreZ, float terrainZ, float halfHeightZ, float buriedEps, out float restZ)
+        {
+            restZ = terrainZ + halfHeightZ;   // prim centre resting ON the surface
+            return currentCentreZ < restZ - buriedEps;
+        }
+
+        /// <summary>
+        /// Cause-A entry used by JoltPrim just before a physical body goes active: if <paramref name="pos"/> is
+        /// below the terrain surface for a prim of <paramref name="size"/>, hand back the lifted position so the
+        /// body is created RESTING on terrain instead of penetrating it. Applying this BEFORE the body is created
+        /// stops (1) the bad position ever draining back to the SOP + persisting, and (2) the native solver
+        /// churning on a deep-penetration load (the ~5.8s reload watchdog stall). No terrain yet -> no lift.
+        /// </summary>
+        internal bool TryUnburyPhysicalLoad(Vector3 pos, Vector3 size, out Vector3 lifted)
+        {
+            lifted = pos;
+            if (_terrainField == null || _terrainFieldM < 2)
+                return false;
+            float terrainZ = TerrainHeightAt(pos.X, pos.Y);
+            if (!TryComputeUnburyPrim(pos.Z, terrainZ, size.Z * 0.5f, TerrainUnburyEps, out float restZ))
+                return false;
+            lifted = new Vector3(pos.X, pos.Y, restZ);
+            return true;
+        }
+
+        // After a live terrain edit, lift any avatar now below the new surface onto it (see SetTerrain).
+        // Flying avatars are lifted too - a buried flyer can't rise through the solid heightfield above it
+        // (John's exact case). Uses the same seat formula as spawn (groundZ + StandHalf + FeetOffset) and
+        // the just-cooked _terrainField (via TerrainHeightAt), so the avatar lands exactly on the contact
+        // surface. The reposition is gated in the backend, so it cannot race the per-step character update.
+        private void ReGroundAvatarsOnTerrainChange()
+        {
+            List<JoltCharacter> avs;
+            lock (_avatars)
+                avs = new List<JoltCharacter>(_avatars.Values);
+
+            foreach (JoltCharacter a in avs)
+            {
+                Vector3 p = a.Position;
+                float terrainZ = TerrainHeightAt(p.X, p.Y);
+                if (TryComputeUnbury(p.Z, terrainZ, a.StandHalf, a.FeetOffset, TerrainUnburyEps, out float seatZ))
+                {
+                    a.ReGround(new Vector3(p.X, p.Y, seatZ));
+                    m_log.Info($"{LogHeader} terrain-unbury: avatar {a.LocalID} lifted z={p.Z:0.000} -> seatZ={seatZ:0.000} " +
+                               $"(terrain now {terrainZ:0.000}, flying={a.Flying}).");
+                }
+            }
         }
 
         public override void SetWaterLevel(float baseheight)

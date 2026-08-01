@@ -1439,6 +1439,22 @@ namespace Legion.Physics.Jolt
             }
         }
 
+        public void ReGroundCharacter(CharacterId character, Vector3 position)
+        {
+            // Same gate StepCharacter runs under, so the position + velocity write is atomic against the
+            // per-step CharacterVirtual update (no half-applied state, no race). Zeroing LinearVelocity is
+            // what stops a just-lifted avatar from carrying its accumulated downward fall speed into the
+            // next step (which would sink it back into the surface for a frame).
+            lock (_characterGate)
+            {
+                if (_characters.TryGet(character.Value, out JoltCharacterRecord rec) && rec.Character != null)
+                {
+                    rec.Character.Position = position;
+                    rec.Character.LinearVelocity = Vector3.Zero;
+                }
+            }
+        }
+
         public void SetCharacterShape(CharacterId character, float capsuleHalfHeight, float capsuleRadius)
         {
             lock (_characterGate)

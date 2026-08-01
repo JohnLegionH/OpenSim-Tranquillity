@@ -116,6 +116,10 @@ namespace Legion.Vehicles
             get { return (_props.Type == LegionVehicleType.Car || _props.Type == LegionVehicleType.Sled); }
         }
 
+        /// <summary>Read a current float vehicle param (preset default + any llSetVehicleFloatParam override).
+        /// Introspection for the host / tests - e.g. asserting the boat preset's buoyancy.</summary>
+        public float GetFloatParam(VehFloatParam key) => _props.GetFloat(key, 0f);
+
         #region Vehicle Parameter Setting — routes from LSL Vehicle wire codes to internal enums
 
         // =================================================================
@@ -379,9 +383,25 @@ namespace Legion.Vehicles
             }
 
             // -------------------------------------------------------
-            // Angular deflection / linear deflection / sled movement: DEFERRED slices
-            // (SimulateAngularDeflection, SimulateLinearDeflection, SimulateSledMovement land here,
-            // in this order, exactly as in the BulletSim reference Step()).
+            // Deflection + sled run in the reference order Angular -> Linear -> Sled, BEFORE hover.
+            // Angular deflection — swings the nose toward the velocity direction (weathervane).
+            if (LegionVehicleLimits.DoAngularDeflection)
+            {
+                SimulateAngularDeflection(timeStep);
+            }
+
+            // Linear deflection — changing velocity toward the forward axis (the "tracking" bite).
+            if (LegionVehicleLimits.DoLinearDeflection)
+            {
+                SimulateLinearDeflection(timeStep);
+            }
+
+            // Sled movement — gravity-assisted slope force, gated on Type == Sled (NEVER a boat). Wired
+            // for A/B parity completeness; inert for every non-sled vehicle.
+            if (_props.Type == LegionVehicleType.Sled)
+            {
+                SimulateSledMovement(timeStep);
+            }
 
             // -------------------------------------------------------
             // Hover — maintain target height above terrain/water/global
@@ -396,8 +416,9 @@ namespace Legion.Vehicles
                 bool inverted;
 
                 SimulateVerticalAttractor(timeStep, m_frameNum, out attractionForces, out angle, out inverted);
-                // SimulateBankingToYaw(timeStep, angle, inverted): DEFERRED slice. Until it lands,
-                // Dynamics.BankingDirection stays 0 and the banking-turn motor below is inert.
+                // Banking runs AFTER the attractor (uses its angle/inverted) and BEFORE the motors: it sets
+                // Dynamics.BankingDirection, which the banking-turn block inside SimulateMotors consumes.
+                SimulateBankingToYaw(timeStep, angle, inverted);
             }
 
             // -------------------------------------------------------
@@ -745,6 +766,167 @@ namespace Legion.Vehicles
 
         #endregion
 
+        #region Deflection (Angular + Linear) + Sled movement (gated Type==Sled)
+
+        /// <summary>
+        /// Rotates vehicle toward direction of movement (weathervane: swings the NOSE toward the velocity,
+        /// complementary to linear deflection which rotates the velocity toward the nose).
+        /// Ported VERBATIM from the BulletSim reference (LegionVehicleDynamics.SimulateAngularDeflection).
+        /// Seam table: all symbols map 1:1 here - _worldLinearVel/_localLinearVel/_worldAngularVel/_rotation,
+        /// the limits, the QuatToEuler/RotBetween/AngleBetween utilities, and AddTorqueVelocityChange (the
+        /// reference's torque-as-velocity-change seam) already exist on this controller.
+        /// </summary>
+        private void SimulateAngularDeflection(float timeStep)
+        {
+            if (Math.Abs(_worldLinearVel.X) >= LegionVehicleLimits.ThresholdDeflectionSpeed ||
+                Math.Abs(_worldLinearVel.Y) >= LegionVehicleLimits.ThresholdDeflectionSpeed ||
+                Math.Abs(_worldLinearVel.Z) >= LegionVehicleLimits.ThresholdDeflectionSpeed)
+            {
+                float timescale = Math.Max(_props.GetFloat(VehFloatParam.AngularDeflectionTimescale, 1000f), timeStep);
+
+                if (timescale < LegionVehicleLimits.MaxTimescale)
+                {
+                    float timepct = timeStep / timescale;
+                    float efficiency = _props.GetFloat(VehFloatParam.AngularDeflectionEfficiency, 0f);
+                    float speed = Utils.Clamp(Vector3.Mag(_localLinearVel), 0, LegionVehicleLimits.MaxLegacyLinearVelocity);
+                    float speedpct = speed / LegionVehicleLimits.MaxLegacyLinearVelocity;
+
+                    // Compute the rotation between the x axis pointing vector and the linear direction
+                    Vector3 ahead = new Vector3(1, 0, 0) * _rotation;
+                    Quaternion tween = RotBetween(ahead, Vector3.Normalize(_worldLinearVel));
+                    float angle = AngleBetween(tween, Quaternion.Identity);
+                    Vector3 vtwix = QuatToEuler(tween);
+
+                    // Cheat: if the local X movement is negative, flip the angle
+                    if (_localLinearVel.X < 0)
+                    {
+                        angle = (float)Math.PI - angle;
+                    }
+
+                    // Scale the force
+                    vtwix = Vector3.Normalize(vtwix) * speedpct * (float)Math.PI * timepct * efficiency * (float)Math.Log(1.0 + angle);
+
+                    // Compute damping
+                    Vector3 remvel = Vector3.Zero;
+                    if (angle < LegionVehicleLimits.ThresholdDeflectionAngle)
+                    {
+                        remvel = _worldAngularVel * timepct * efficiency * (float)(Math.Log(1.0 + Math.PI - angle) / Math.Log(1.0 + Math.PI));
+                    }
+
+                    vtwix -= remvel;
+
+                    if (IsLinearMotorStalled())
+                    {
+                        vtwix = Vector3.Zero;
+                    }
+
+                    if (Math.Abs(vtwix.X) >= LegionVehicleLimits.ThresholdAngularMotorDeltaV ||
+                        Math.Abs(vtwix.Y) >= LegionVehicleLimits.ThresholdAngularMotorDeltaV ||
+                        Math.Abs(vtwix.Z) >= LegionVehicleLimits.ThresholdAngularMotorDeltaV)
+                    {
+                        AddTorqueVelocityChange(vtwix);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Changes velocity toward forward axis.
+        /// Ported VERBATIM from the BulletSim reference (LegionVehicleDynamics.SimulateLinearDeflection),
+        /// itself the Halcyon port. Seam table: reference symbols map 1:1 here - _worldLinearVel, _rotation,
+        /// _props, the limits, and ApplyLinearVelocityChange are the same names on this controller, so no
+        /// substitution is needed inside the body (ApplyLinearVelocityChange already writes _body.LinearVelocity).
+        /// </summary>
+        private void SimulateLinearDeflection(float timeStep)
+        {
+            if (Math.Abs(_worldLinearVel.X) >= LegionVehicleLimits.ThresholdLinearMotorDeltaV ||
+                Math.Abs(_worldLinearVel.Y) >= LegionVehicleLimits.ThresholdLinearMotorDeltaV ||
+                Math.Abs(_worldLinearVel.Z) >= LegionVehicleLimits.ThresholdLinearMotorDeltaV)
+            {
+                float timescale = Math.Max(_props.GetFloat(VehFloatParam.LinearDeflectionTimescale, 1000f), timeStep);
+
+                if (timescale < LegionVehicleLimits.MaxTimescale)
+                {
+                    float timePct = timeStep / timescale;
+                    float efficiency = _props.GetFloat(VehFloatParam.LinearDeflectionEfficiency, 0f);
+
+                    // Determine the amount of velocity to shift
+                  // SL behavior: linear deflection rotates the velocity vector toward
+                    // the forward axis, preserving speed. This is what generates lift —
+                    // when pitched up, horizontal velocity is redirected upward along
+                    // the forward axis.
+                    float speed = Vector3.Mag(_worldLinearVel);
+                    if (speed < LegionVehicleLimits.ThresholdDeflectionSpeed) return;
+
+                    Vector3 currentDir = Vector3.Normalize(_worldLinearVel);
+                    Vector3 forwardDir = new Vector3(1, 0, 0) * _rotation;
+
+                    // Blend current direction toward forward direction
+                    float blend = Math.Min(timePct * efficiency, 1.0f);
+                    Vector3 newDir = Vector3.Normalize(currentDir * (1.0f - blend) + forwardDir * blend);
+
+                    // New velocity = same speed, redirected direction
+                    Vector3 worldvel = newDir * speed - _worldLinearVel;
+
+                    // Stop any upward deflection
+                    if ((_props.Flags & LegionVehicleFlags.NoDeflectionUp) != 0)
+                    {
+                        if (worldvel.Z > 0) worldvel.Z = 0;
+                    }
+
+                    if (Math.Abs(worldvel.X) > LegionVehicleLimits.ThresholdLinearMotorDeltaV ||
+                        Math.Abs(worldvel.Y) > LegionVehicleLimits.ThresholdLinearMotorDeltaV ||
+                        Math.Abs(worldvel.Z) > LegionVehicleLimits.ThresholdLinearMotorDeltaV)
+                    {
+                        ApplyLinearVelocityChange(worldvel);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gravity-assisted force on slopes for the SLED vehicle type. Ported VERBATIM from the BulletSim
+        /// reference (LegionVehicleDynamics.SimulateSledMovement). Wired here for A/B PARITY COMPLETENESS
+        /// only - it is gated Type==Sled in Step, so it NEVER runs for a boat (or any non-sled). Seam table:
+        /// BSParam.Gravity -> _body.Gravity.Z, ApplyLinearForce(f) -> _body.AddForce(f); everything else
+        /// (_rotation, the limits, IsLinearMotorStalled, m_vehicleMass) maps 1:1.
+        /// </summary>
+        private void SimulateSledMovement(float timeStep)
+        {
+            Vector3 force = Vector3.Zero;
+
+            // Compute the percentage of declination -1 (down) to +1 (up)
+            Vector3 probe = new Vector3(1f, 0f, 0f);
+            probe *= _rotation;
+
+            // If the nose (z-axis) points downward, add some force along the X-axis
+            if (Math.Abs(probe.Z) > LegionVehicleLimits.ThresholdDeflectionAngle)
+            {
+                force = new Vector3(-_body.Gravity.Z * 3.0f, 0f, 0f);   // seam: BSParam.Gravity -> _body.Gravity.Z
+
+                // The sled has a lower force assist going backwards
+                if (probe.Z > 0)
+                    force *= -0.1f;
+
+                if (!IsLinearMotorStalled())
+                {
+                    // Modulate the force based on the amount of declination
+                    force = force * timeStep * (float)Math.Sqrt(Math.Abs(probe.Z));
+
+                    if (Math.Abs(force.X) >= LegionVehicleLimits.ThresholdLinearMotorDeltaV ||
+                        Math.Abs(force.Y) >= LegionVehicleLimits.ThresholdLinearMotorDeltaV ||
+                        Math.Abs(force.Z) >= LegionVehicleLimits.ThresholdLinearMotorDeltaV)
+                    {
+                        force *= _rotation;
+                        force *= m_vehicleMass;
+                        _body.AddForce(force);   // seam: ApplyLinearForce(f) -> _body.AddForce(f)
+                    }
+                }
+            }
+        }
+
+        #endregion
+
         #region Hover
 
         /// <summary>
@@ -922,6 +1104,65 @@ namespace Legion.Vehicles
                         AddTorqueVelocityChange(-remvel);
                     }
                     _props.Dynamics.LastVerticalAngle = angle;
+                }
+            }
+        }
+
+        #endregion
+
+        #region Banking (roll -> yaw driver; the consumer is the banking-turn block in SimulateMotors)
+
+        /// <summary>
+        /// Converts roll to yaw rotation. Ported VERBATIM from the BulletSim reference
+        /// (LegionVehicleDynamics.SimulateBankingToYaw). Runs AFTER the vertical attractor (whose angle/
+        /// inverted it takes) and BEFORE SimulateMotors: it sets Dynamics.BankingDirection, which the
+        /// already-present banking-turn block inside SimulateMotors consumes and blends into the angular-Z
+        /// torque. Seam table: _localLinearVel/_rotation, the limits, Utils.Clamp and _props.Dynamics are
+        /// the same names here, so the body is unchanged.
+        /// </summary>
+        private void SimulateBankingToYaw(float timeStep, float angle, bool inverted)
+        {
+            float timescale = Math.Max(_props.GetFloat(VehFloatParam.BankingTimescale, 1000f), timeStep);
+
+            if (timescale < LegionVehicleLimits.MaxAttractTimescale)
+            {
+                float efficiency = _props.GetFloat(VehFloatParam.BankingEfficiency, 0f);
+                float bmodifier = _props.GetFloat(VehFloatParam.InvertedBankingModifier, 1f);
+
+                if (LegionVehicleLimits.DoBanking && timescale < LegionVehicleLimits.MaxTimescale)
+                {
+                    float bankingmix = _props.GetFloat(VehFloatParam.BankingMix, 0.5f);
+                    float xspeed = 0.0f;
+
+                    // Legacy support: use velocity as an on/off switch, proportional and capped
+                    if (Math.Abs(_localLinearVel.X) > LegionVehicleLimits.ThresholdAngularMotorDeltaV)
+                        xspeed = Utils.Clamp(Math.Abs(_localLinearVel.X), 0, LegionVehicleLimits.MaxLegacyLinearVelocity);
+                    float xspeedpct = xspeed / LegionVehicleLimits.MaxLegacyLinearVelocity;
+
+                    // Compute percentage of roll
+                    Vector3 erot = new Vector3(0f, 1f, 0f);
+                    erot *= _rotation;
+                    float xangle = erot.Z;
+                    float attitude = (angle > Math.PI / 2.0) ? -1 : 1;
+
+                    // Clamp to current banking range
+                    float xmax = _props.GetFloat(VehFloatParam.BankingAzimuth, (float)Math.PI / 2f);
+                    xangle = Utils.Clamp(xangle * (float)Math.PI * 0.5f / xmax, -1, 1);
+
+                    // Apply inverted banking modifier
+                    if (inverted)
+                        efficiency = efficiency * bmodifier;
+
+                    // Apply torque only when above threshold
+                    if (Math.Abs(xangle) > LegionVehicleLimits.ThresholdBankAngle)
+                    {
+                        _props.Dynamics.BankingDirection = -xangle * attitude * efficiency * (1.0f - bankingmix) * (float)Math.PI; // static
+                        _props.Dynamics.BankingDirection += -xangle * attitude * efficiency * bankingmix * xspeedpct * (float)Math.PI; // dynamic
+                    }
+                    else
+                    {
+                        _props.Dynamics.BankingDirection = 0;
+                    }
                 }
             }
         }
@@ -1741,7 +1982,12 @@ namespace Legion.Vehicles
                     _props.ParamsFloat[VehFloatParam.HoverHeight]                   = 0.5f;
                     _props.ParamsFloat[VehFloatParam.HoverEfficiency]               = 0.8f;
                     _props.ParamsFloat[VehFloatParam.HoverTimescale]                = 0.2f;
-                    _props.ParamsFloat[VehFloatParam.Buoyancy]                      = 0f;
+                    // Cause-B: buoyancy 1.0 (matches BulletSim's TYPE_BOAT, BSDynamics buoyancy=1.0). Gravity
+                    // is fully cancelled (ApplyGravity = gravity*(1-buoyancy) = 0), so a boat CANNOT sink even
+                    // on a frame where hover has not run yet - e.g. right after a region reload, before the
+                    // controller re-activates. Hover still trims it to the water surface (HoverWaterOnly,
+                    // height 0.5); buoyancy holds the baseline, hover positions - the same compose BulletSim uses.
+                    _props.ParamsFloat[VehFloatParam.Buoyancy]                      = 1f;
                     _props.ParamsFloat[VehFloatParam.LinearDeflectionEfficiency]    = 0.5f;
                     _props.ParamsFloat[VehFloatParam.LinearDeflectionTimescale]     = 3f;
                     _props.ParamsFloat[VehFloatParam.AngularDeflectionEfficiency]   = 0.5f;

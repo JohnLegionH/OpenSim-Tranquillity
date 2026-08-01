@@ -22,6 +22,13 @@ namespace Legion.Vehicles.Tests
         [Fact]
         public void BoatAttractor_RightsFrom30DegRoll_WithoutYaw()
         {
+            // Isolate the attractor from banking: once banking (term 3) is active it deliberately couples
+            // roll -> yaw, so a rolled boat DOES yaw. The attractor ITSELF is yaw-free - which is what this
+            // test proves - so turn banking off here (banking's own roll->yaw is covered by BankingTests).
+            bool prevBanking = LegionVehicleLimits.DoBanking;
+            LegionVehicleLimits.DoBanking = false;
+            try
+            {
             // Rez rolled 30 deg about the body X axis (a roll, not a yaw).
             Quaternion rolled = Quaternion.CreateFromAxisAngle(Vector3.UnitX, Utils.DEG_TO_RAD * 30f);
             FakeVehicleBody body = BoatScenario.NewFloatingBoat(orientation: rolled);
@@ -58,6 +65,8 @@ namespace Legion.Vehicles.Tests
             // The attractor rights roll without turning the boat: yaw barely moves.
             Assert.True(System.Math.Abs(yaw[frames - 1] - startYaw) < 2f,
                 $"attractor should not induce yaw: {startYaw:0.00} -> {yaw[frames - 1]:0.00}");
+            }
+            finally { LegionVehicleLimits.DoBanking = prevBanking; }
         }
     }
 }

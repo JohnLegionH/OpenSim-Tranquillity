@@ -29,6 +29,9 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
         private PrimitiveBaseShape _pbs;
         private Vector3 _position;
+        // The position this prim was CONSTRUCTED at; on a region load that is the DB-saved position. Read by
+        // the `jolt reloadcheck` console command to report load-time displacement (saved vs settled).
+        private readonly Vector3 _birthPos;
         private Vector3 _size;
         private Quaternion _orientation;
         private bool _isPhysical;
@@ -44,6 +47,14 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
         private ShapeId _shape = ShapeId.Invalid;   // one handle-ref held for the prim's life
         private BodyId _body = BodyId.Invalid;
+        // Assert-buoyancy-on-restart (Balpien): re-assert the vehicle's body params (gravity-cancellation,
+        // no-sleep, ...) on this many upcoming LIVE StepVehicle frames. The load-path assertion in the
+        // VehicleType restore can be lost because the body was created (GravityFactor=1) with its activation
+        // DEFERRED to the step thread, which drains the creation settings AFTER the load-thread SetGravityFactor
+        // - so the body starts stepping under full gravity and sinks. Re-asserting from the step thread, on the
+        // live body, makes it stick. Set when the vehicle becomes active; runtime llSetVehicleType sets it too
+        // (harmless - the body is already live so it sticks first time).
+        private int _reassertVehicleFrames;
 
         // Maps the cooked shape's local axis onto SL's convention. Identity for box/sphere; a +90 deg
         // rotation about X for a cylinder (Jolt's CylinderShape axis is Y, SL cylinders are Z-height).
@@ -63,6 +74,20 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
         internal BodyId BodyHandle => _body;
         internal string ShapeKind => _shapeKind;
+        // Read by the `jolt reloadcheck` / `jolt vehiclestatus` console commands.
+        internal Vector3 BirthPos => _birthPos;
+        internal Vector3 CurrentPos => _position;
+        internal bool IsPhysicalBody => _isPhysical;
+        internal bool IsVehicle => _vehicle != null;
+
+        // Live vehicle state for the `jolt vehiclestatus` console command (type / buoyancy / active).
+        internal string VehicleInfo()
+        {
+            if (_vehicle == null) return "no-vehicle";
+            return $"type={_vehicle.Type} active={(_vehicle.IsActive ? "Y" : "N")} " +
+                   $"buoyancy={_vehicle.GetFloatParam(VehFloatParam.Buoyancy):0.00} " +
+                   $"hoverHeight={_vehicle.GetFloatParam(VehFloatParam.HoverHeight):0.00}";
+        }
 
         // Vehicles (M8): the backend-agnostic Halcyon controller + its Jolt seam. Created lazily on
         // the first Vehicle* call; ACTIVE (stepped per-frame, body params applied) only while the
@@ -87,6 +112,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             Name = name;
             _pbs = pbs;
             _position = position;
+            _birthPos = position;   // saved pos on load; read by `jolt reloadcheck`
             _size = size;
             _orientation = rotation;
             _isPhysical = isPhysical;
@@ -110,6 +136,21 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // physical (delta #15: Static-born can't be promoted - the toggle recreates instead).
         private void CreateBodyInternal()
         {
+            // Cause-A load-time position sanity: never bring a PHYSICAL body up penetrating the terrain. If
+            // the saved/current centre is below where it rests on the surface, lift it there and zero its
+            // velocity BEFORE the body goes active - so (1) the bad position never drains back + persists, and
+            // (2) the native solver doesn't churn resolving a deep penetration (the ~5.8s reload watchdog
+            // stall). Only lifts BELOW-terrain bodies: a resting box or a boat FLOATING on water (above the
+            // surface) is left exactly where it is. Zeroing velocity also stops the post-lift slide (the boat's
+            // 26.5 m horizontal drift). The compound root lifts its whole welded set uniformly (sub-shape
+            // offsets are relative to the body origin), so a linkset keeps its shape.
+            if (_isPhysical && _module.TryUnburyPhysicalLoad(_position, _size, out Vector3 lifted))
+            {
+                _position = lifted;
+                _velocity = Vector3.Zero;
+                _rotationalVelocity = Vector3.Zero;
+            }
+
             BodyDesc desc = BodyDesc.Default;
             desc.Shape = _compoundShape.IsValid ? _compoundShape : _shape;   // linkset root -> the compound
             desc.Position = ToS(_position);
@@ -125,7 +166,15 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 desc.Mass = 0f;                        // <=0 -> backend computes Volume*Density
                 if (_simDensity > 0f)                  // honour the SOP density (BulletSim mass parity, M6.8)
                     desc.Density = _simDensity * DensityScaleFactor;
-                desc.StartActive = true;               // wake so it falls immediately on going physical
+                // STRUCTURAL PORT of BulletSim's taint-deferred creation: create the body INERT (asleep), never
+                // active-on-insert. BulletSim never lets a body be stepped by the engine until ALL taints
+                // (create + MakeDynamic + SetVehicle/SetPhysicalGravity) have drained (ProcessTaints runs
+                // BEFORE PE.PhysicsStep). Our equivalent barrier: create asleep, then ACTIVATE at the TOP of the
+                // next Simulate (RegisterPendingActivation) - by which point AddToPhysics has fully run
+                // (AddPrimShape + SetVehicle are synchronous) AND StepVehicles has asserted the vehicle's
+                // gravity-cancellation for this frame. So a reloaded boat is NEVER a live gravity body before
+                // its buoyancy is in force -> it cannot free-fall during the load / the reload stall.
+                desc.StartActive = false;
             }
             else
             {
@@ -138,21 +187,32 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
             if (_isPhysical)
             {
-                // Force the activation LISTENER to fire so the backend's active-set (what the drain and
-                // ActiveBodyCount track) picks up this body. A body created via AddBody(Activate) on a
-                // NON-step thread does not reliably reach the step-thread active-set on its own; an
-                // explicit ActivateBody enqueues the activation delta the next Step drains. Without this
-                // a freshly-physical prim sits untracked and never streams to the viewer (M6.4 finding).
-                _backend.ActivateBody(_body);
+                // Defer activation to the top of the next Simulate (step thread). ActivateBody on a NON-step
+                // thread does not reliably reach the step-thread active-set; enqueuing it via the pending set
+                // (drained in Simulate before StepVehicles/StepOnce) both fixes that AND gives us BulletSim's
+                // configure-before-step barrier - the body is asleep until every load-time property (incl. the
+                // vehicle) is applied, so it never free-falls before its buoyancy is asserted.
+                _module.RegisterPendingActivation(this);
                 if (_backend.TryGetBodyState(_body, out BodyState st))
                     LegionJoltScene.m_log.Debug(
-                        $"{LegionJoltScene.LogHeader} physical body id={LocalID} created: active={((st.Flags & BodyStateFlags.Active) != 0)} posZ={st.Position.Z:0.00} shape={_shapeKind}");
+                        $"{LegionJoltScene.LogHeader} physical body id={LocalID} created (deferred activation): active={((st.Flags & BodyStateFlags.Active) != 0)} posZ={st.Position.Z:0.00} shape={_shapeKind}");
 
                 // A recreate (reposition/reshape/weld/physical-toggle) makes a FRESH body with default
                 // params; an active vehicle must re-assert its no-friction/no-damping/manual-gravity/
                 // never-sleep setup on it (M8).
                 ApplyVehicleBodyParams();
             }
+        }
+
+        // Called by LegionJoltScene at the top of Simulate (step thread) to activate a physical body that was
+        // created inert (deferred activation - the BulletSim configure-before-step barrier). By now every
+        // load-time property is applied and the vehicle drive is about to run this frame, so waking the body
+        // here means it enters the engine step already configured (gravity cancelled for a vehicle) - it never
+        // free-falls. No-op for a non-physical/destroyed body or one already awake.
+        internal void ActivatePending()
+        {
+            if (_body.IsValid && _isPhysical)
+                _backend.ActivateBody(_body);
         }
 
         // Drain: the backend reports this body's post-step transform + velocity. Update the cached values
@@ -338,7 +398,23 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         public override Vector3 Velocity
         {
             get => _velocity;
-            set { _velocity = value; if (_body.IsValid && _isPhysical) _backend.SetBodyLinearVelocity(_body, ToS(value)); }
+            set
+            {
+                Vector3 v = value;
+                // Fix-3 (slide): drop restored HORIZONTAL velocity on region LOAD. OpenSim's AddToPhysics
+                // replays the DB-saved velocity onto the actor; a vehicle body runs frictionless + never-
+                // sleep, so a small saved X/Y coast never bleeds off and drifts the boat metres (the 0.95 m/s
+                // slide) - and compounds, since that drift is persisted and replayed next reload. Zeroing it
+                // only while the region is LOADING (before the first Simulate) leaves a runtime llSetVelocity
+                // untouched. Vertical is left alone (a genuinely falling load body keeps its descent).
+                if (_isPhysical && _module.IsRegionLoading)
+                {
+                    v.X = 0f;
+                    v.Y = 0f;
+                }
+                _velocity = v;
+                if (_body.IsValid && _isPhysical) _backend.SetBodyLinearVelocity(_body, ToS(v));
+            }
         }
         public override Vector3 RotationalVelocity
         {
@@ -516,6 +592,10 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 {
                     _module.RegisterVehicle(this);
                     ApplyVehicleBodyParams();
+                    // Assert-buoyancy-on-restart (Balpien): the assertion just above can be lost on the load
+                    // path (body created GravityFactor=1 with deferred activation drained on the step thread
+                    // AFTER this set) - so re-assert it on the next few LIVE step-thread frames, where it sticks.
+                    _reassertVehicleFrames = 3;
                 }
                 else
                 {
@@ -567,6 +647,26 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         {
             if (_vehicle == null || !_vehicle.IsActive || !_isPhysical || !_body.IsValid)
                 return;
+            // Assert-buoyancy-on-restart (Balpien): re-assert the vehicle body params on the first live
+            // step-thread frames after (re)activation, so the gravity-cancellation that the load-path restore
+            // set (but that the deferred body activation clobbered back to GravityFactor=1) actually takes -
+            // otherwise a restored boat steps under full engine gravity and sinks despite vehicle=True.
+            if (_reassertVehicleFrames > 0)
+            {
+                _reassertVehicleFrames--;
+                ApplyVehicleBodyParams();
+                // ★ ZERO the accumulated velocity when buoyancy is (re)asserted. A boat reloaded into the
+                // region is born ACTIVE with gravity and can FREE-FALL for the whole load window (incl. the
+                // multi-second reload stall) before the controller first steps here - reaching ~60 m/s. Buoyancy
+                // only cancels gravity; it does NOT remove that already-accumulated velocity, so without this the
+                // boat keeps plunging to the seabed despite vehicle=True. Zeroing (before BeginFrame/hover below)
+                // arrests the fall; hover then lifts it from rest to the water surface. A live boat re-activated
+                // at runtime is at rest anyway, so zeroing is a no-op for it.
+                _backend.SetBodyLinearVelocity(_body, SVector3.Zero);
+                _backend.SetBodyAngularVelocity(_body, SVector3.Zero);
+                _velocity = Vector3.Zero;
+                _rotationalVelocity = Vector3.Zero;
+            }
             if (_vehicleBody.BeginFrame())
                 _vehicle.Step(timeStep);
         }

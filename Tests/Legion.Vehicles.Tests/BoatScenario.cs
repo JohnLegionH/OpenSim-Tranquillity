@@ -19,10 +19,12 @@ namespace Legion.Vehicles.Tests
         // with the slice a-d proofs.
         public const float Dt = 1f / 11f;
 
-        // Boat preset hovers to water + HoverHeight(0.5); the gravity/hover balance settles it a
-        // hair below the target, which is the in-world "water + 0.449" equilibrium.
+        // Boat preset (Cause-B) uses buoyancy=1.0, which fully cancels gravity, so hover (HoverWaterOnly,
+        // HoverHeight 0.5) settles the boat AT its setpoint - water + ~0.5 - with no gravity sag. (Under the
+        // old buoyancy=0 the gravity/hover balance sat a hair below, at ~water+0.449; buoyancy=1.0 raises it
+        // ~5 cm to the true target and, crucially, makes it impossible to sink on a frame hover misses.)
         public const float WaterLevel = 20f;
-        public const float HoverEquilibriumZ = 20.449f;
+        public const float HoverEquilibriumZ = 20.5f;
 
         /// <summary>A boat floating at the given height (default = its hover equilibrium), level.</summary>
         public static FakeVehicleBody NewFloatingBoat(float? z = null, Quaternion? orientation = null)
