@@ -48,6 +48,13 @@ namespace Legion.Vehicles.Tests.Fakes
         public float TerrainHeight { get; set; } = 0f;
         public float WaterLevel { get; set; } = 20f;
 
+        // ---- opt-in ground collision (models Jolt's terrain contact for non-buoyant vehicles) ----
+        // OFF by default so the buoyant/free-body boat tests are unaffected. When ON, Integrate clamps
+        // the body to rest at TerrainHeight + RideHeight, kills any downward velocity, and reports
+        // HasCollision - the same floor the real physics engine gives a car that isn't held up by buoyancy.
+        public bool GroundCollision { get; set; }
+        public float RideHeight { get; set; } = 0f;
+
         // ---- diagnostics a test may assert on ----
         public int KeepAwakeCount { get; private set; }
 
@@ -92,6 +99,24 @@ namespace Legion.Vehicles.Tests.Fakes
                 q.W += 0.5f * dq.W * dt;
                 q.Normalize();
                 Orientation = q;
+            }
+
+            // Ground contact: a non-buoyant vehicle falls under gravity until the terrain stops it.
+            // Model that floor so the car rests deterministically instead of falling forever.
+            if (GroundCollision)
+            {
+                float floor = TerrainHeight + RideHeight;
+                if (Position.Z <= floor)
+                {
+                    Position = new Vector3(Position.X, Position.Y, floor);
+                    if (LinearVelocity.Z < 0f)
+                        LinearVelocity = new Vector3(LinearVelocity.X, LinearVelocity.Y, 0f);
+                    HasCollision = true;
+                }
+                else
+                {
+                    HasCollision = false;
+                }
             }
 
             _forceAccum = Vector3.Zero;

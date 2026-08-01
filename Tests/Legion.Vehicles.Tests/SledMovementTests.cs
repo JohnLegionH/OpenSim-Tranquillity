@@ -45,14 +45,17 @@ namespace Legion.Vehicles.Tests
         }
 
         // World-X velocity after N frames of a vehicle of `type` pitched 30 deg nose-DOWN (from rest).
+        // Free-body (groundCollision off) high above terrain: the glide is driven purely by orientation +
+        // gravity, independent of staging - so the sled comes from SledScenario, the controller type varies
+        // (the boat case proves the Type==Sled gate).
         private static float RunPitchedNoseDown(Vehicle type)
         {
             Quaternion pitch = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 30f * Utils.DEG_TO_RAD);   // nose down
-            FakeVehicleBody body = BoatScenario.NewFloatingBoat(orientation: pitch);                    // gravity (0,0,-9.80665)
+            FakeVehicleBody body = SledScenario.NewGroundedSled(z: SledScenario.GroundLevel + 20f, orientation: pitch, groundCollision: false);
             var v = new LegionVehicleController(body);
             v.ProcessTypeChange(type);
             body.LinearVelocity = Vector3.Zero;
-            for (int i = 0; i < 20; i++) { v.Step(BoatScenario.Dt); body.Integrate(BoatScenario.Dt); }
+            for (int i = 0; i < 20; i++) { v.Step(SledScenario.Dt); body.Integrate(SledScenario.Dt); }
             return body.LinearVelocity.X;
         }
 
@@ -82,11 +85,10 @@ namespace Legion.Vehicles.Tests
             try
             {
                 IsolateSled();
-                FakeVehicleBody body = BoatScenario.NewFloatingBoat();   // level (identity) -> probe.Z ~0
-                var v = new LegionVehicleController(body);
-                v.ProcessTypeChange(Vehicle.TYPE_SLED);
+                FakeVehicleBody body = SledScenario.NewGroundedSled(z: SledScenario.GroundLevel + 20f, groundCollision: false);   // level (identity) -> probe.Z ~0
+                var v = SledScenario.NewController(body);
                 body.LinearVelocity = Vector3.Zero;
-                for (int i = 0; i < 20; i++) { v.Step(BoatScenario.Dt); body.Integrate(BoatScenario.Dt); }
+                for (int i = 0; i < 20; i++) { v.Step(SledScenario.Dt); body.Integrate(SledScenario.Dt); }
                 _out.WriteLine($"level sled worldX={body.LinearVelocity.X:0.000}");
                 // No declination -> below ThresholdDeflectionAngle -> no glide.
                 Assert.True(Math.Abs(body.LinearVelocity.X) < 0.05f, $"a level sled should not glide, worldX={body.LinearVelocity.X:0.000}");

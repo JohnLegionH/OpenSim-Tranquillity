@@ -120,6 +120,10 @@ namespace Legion.Vehicles
         /// Introspection for the host / tests - e.g. asserting the boat preset's buoyancy.</summary>
         public float GetFloatParam(VehFloatParam key) => _props.GetFloat(key, 0f);
 
+        /// <summary>Read a current vector vehicle param (preset default + any llSetVehicleVectorParam override).
+        /// Introspection for the host / tests - e.g. asserting the car preset's friction/motor timescales.</summary>
+        public Vector3 GetVecParam(VehVectorParam key) => _props.GetVec(key);
+
         #region Vehicle Parameter Setting — routes from LSL Vehicle wire codes to internal enums
 
         // =================================================================
@@ -1929,14 +1933,14 @@ namespace Legion.Vehicles
 
                 case LegionVehicleType.Car:
                     _props.ParamsVec[VehVectorParam.LinearFrictionTimescale]     = new Vector3(100f, 0.1f, 10f);
-                    _props.ParamsVec[VehVectorParam.AngularFrictionTimescale]    = new Vector3(100f, 100f, 1.0f);
+                    _props.ParamsVec[VehVectorParam.AngularFrictionTimescale]    = new Vector3(100f, 100f, 0.3f);
                     _props.ParamsVec[VehVectorParam.LinearMotorDirection]        = Vector3.Zero;
                     _props.ParamsVec[VehVectorParam.AngularMotorDirection]       = Vector3.Zero;
                     _props.ParamsVec[VehVectorParam.LinearMotorOffset]           = Vector3.Zero;
                     _props.ParamsVec[VehVectorParam.LinearMotorTimescale]        = new Vector3(0.5f, 1f, 1f);
                     _props.ParamsVec[VehVectorParam.AngularMotorTimescale]       = new Vector3(0.2f, 0.2f, 0.05f);
                     _props.ParamsVec[VehVectorParam.LinearMotorDecayTimescale]   = new Vector3(10f, 2f, 2f);
-                    _props.ParamsVec[VehVectorParam.AngularMotorDecayTimescale]  = new Vector3(0.8f, 0.8f, 0.8f);
+                    _props.ParamsVec[VehVectorParam.AngularMotorDecayTimescale]  = new Vector3(0.3f, 0.3f, 0.1f);
                     _props.ParamsVec[VehVectorParam.LinearWindEfficiency]        = Vector3.Zero;
                     _props.ParamsVec[VehVectorParam.AngularWindEfficiency]       = Vector3.Zero;
 
