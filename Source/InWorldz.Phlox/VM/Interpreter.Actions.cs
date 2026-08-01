@@ -216,7 +216,7 @@ namespace InWorldz.Phlox.VM
                             subScriptValue = vlocal.X - 1;
                         }
 
-                        destList[destIndex] = new Vector3((float)subScriptValue, vlocal.Y, vlocal.Z);
+                        destList[destIndex] = new Vector3(ConvToFloat(subScriptValue), vlocal.Y, vlocal.Z);
                         return vlocal.X;
 
                     case 1:
@@ -229,7 +229,7 @@ namespace InWorldz.Phlox.VM
                             subScriptValue = vlocal.Y - 1;
                         }
 
-                        destList[destIndex] = new Vector3(vlocal.X, (float)subScriptValue, vlocal.Z);
+                        destList[destIndex] = new Vector3(vlocal.X, ConvToFloat(subScriptValue), vlocal.Z);
                         return vlocal.Y;
 
                     case 2:
@@ -242,7 +242,7 @@ namespace InWorldz.Phlox.VM
                             subScriptValue = vlocal.Z - 1;
                         }
 
-                        destList[destIndex] = new Vector3(vlocal.X, vlocal.Y, (float)subScriptValue);
+                        destList[destIndex] = new Vector3(vlocal.X, vlocal.Y, ConvToFloat(subScriptValue));
                         return vlocal.Z;
 
                     default:
@@ -264,7 +264,7 @@ namespace InWorldz.Phlox.VM
                             subScriptValue = qlocal.X - 1;
                         }
 
-                        destList[destIndex] = new Quaternion((float)subScriptValue, qlocal.Y, qlocal.Z, qlocal.W);
+                        destList[destIndex] = new Quaternion(ConvToFloat(subScriptValue), qlocal.Y, qlocal.Z, qlocal.W);
                         return qlocal.X;
 
                     case 1:
@@ -277,7 +277,7 @@ namespace InWorldz.Phlox.VM
                             subScriptValue = qlocal.Y - 1;
                         }
 
-                        destList[destIndex] = new Quaternion(qlocal.X, (float)subScriptValue, qlocal.Z, qlocal.W);
+                        destList[destIndex] = new Quaternion(qlocal.X, ConvToFloat(subScriptValue), qlocal.Z, qlocal.W);
                         return qlocal.Y;
 
                     case 2:
@@ -290,7 +290,7 @@ namespace InWorldz.Phlox.VM
                             subScriptValue = qlocal.Z - 1;
                         }
 
-                        destList[destIndex] = new Quaternion(qlocal.X, qlocal.Y, (float)subScriptValue, qlocal.W);
+                        destList[destIndex] = new Quaternion(qlocal.X, qlocal.Y, ConvToFloat(subScriptValue), qlocal.W);
                         return qlocal.Z;
 
                     case 3:
@@ -303,7 +303,7 @@ namespace InWorldz.Phlox.VM
                             subScriptValue = qlocal.W - 1;
                         }
 
-                        destList[destIndex] = new Quaternion(qlocal.X, qlocal.Y, qlocal.Z, (float)subScriptValue);
+                        destList[destIndex] = new Quaternion(qlocal.X, qlocal.Y, qlocal.Z, ConvToFloat(subScriptValue));
                         return qlocal.W;
 
                     default:
