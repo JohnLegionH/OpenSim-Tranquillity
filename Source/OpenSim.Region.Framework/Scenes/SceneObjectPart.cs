@@ -3694,6 +3694,14 @@ public class SceneObjectPart : EntityBase, IDisposable
     {
         m_vehicleParams = null;
 
+        // Mark the group dirty so the changed vehicle state actually persists to the region DB.
+        // Without this a script's llSetVehicleType only lives in memory: the vehicle params reach
+        // the DB only if the group happens to be dirtied by something else (a position change)
+        // before a backup - so vehicle state restores INTERMITTENTLY across a region reload, and a
+        // boat that reloads without its vehicle sinks (no buoyancy). See the vehicle setters below.
+        if (ParentGroup != null)
+            ParentGroup.HasGroupChanged = true;
+
         if (type == (int)Vehicle.TYPE_NONE)
         {
             if (_parentID == 0 && PhysActor != null)
@@ -3716,6 +3724,9 @@ public class SceneObjectPart : EntityBase, IDisposable
 
         m_vehicleParams.ProcessVehicleFlags(param, remove);
 
+        if (ParentGroup != null)                 // persist the change (see SetVehicleType)
+            ParentGroup.HasGroupChanged = true;
+
         if (_parentID == 0 && PhysActor != null)
         {
             PhysActor.VehicleFlags(param, remove);
@@ -3728,6 +3739,9 @@ public class SceneObjectPart : EntityBase, IDisposable
             return;
 
         m_vehicleParams.ProcessFloatVehicleParam((Vehicle)param, value);
+
+        if (ParentGroup != null)                 // persist the change (see SetVehicleType)
+            ParentGroup.HasGroupChanged = true;
 
         if (_parentID == 0 && PhysActor != null)
         {
@@ -3742,6 +3756,9 @@ public class SceneObjectPart : EntityBase, IDisposable
 
         m_vehicleParams.ProcessVectorVehicleParam((Vehicle)param, value);
 
+        if (ParentGroup != null)                 // persist the change (see SetVehicleType)
+            ParentGroup.HasGroupChanged = true;
+
         if (_parentID == 0 && PhysActor != null)
         {
             PhysActor.VehicleVectorParam(param, value);
@@ -3754,6 +3771,9 @@ public class SceneObjectPart : EntityBase, IDisposable
             return;
 
         m_vehicleParams.ProcessRotationVehicleParam((Vehicle)param, rotation);
+
+        if (ParentGroup != null)                 // persist the change (see SetVehicleType)
+            ParentGroup.HasGroupChanged = true;
 
         if (_parentID == 0 && PhysActor != null)
         {
