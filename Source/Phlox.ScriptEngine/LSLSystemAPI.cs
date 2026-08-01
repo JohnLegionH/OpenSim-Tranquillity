@@ -934,49 +934,37 @@ namespace Phlox.ScriptEngine
         public void llSetVehicleType(int type)
         {
             if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-            PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-            if (pa == null) return;
-            pa.VehicleType = type;
+            m_host.ParentGroup.RootPart.SetVehicleType(type);
         }
 
         public void llSetVehicleFloatParam(int param, float value)
         {
             if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-            PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-            if (pa == null) return;
-            pa.VehicleFloatParam(param, value);
+            m_host.ParentGroup.RootPart.SetVehicleFloatParam(param, value);
         }
 
         public void llSetVehicleVectorParam(int param, Vector3 vec)
         {
             if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-            PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-            if (pa == null) return;
-            pa.VehicleVectorParam(param, vec);
+            m_host.ParentGroup.RootPart.SetVehicleVectorParam(param, vec);
         }
 
         public void llSetVehicleRotationParam(int param, Quaternion rot)
         {
             if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-            PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-            if (pa == null) return;
-            pa.VehicleRotationParam(param, rot);
+            m_host.ParentGroup.RootPart.SetVehicleRotationParam(param, rot);
         }
 
         public void llSetVehicleFlags(int flags)
         {
             if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-            PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-            if (pa == null) return;
-            pa.VehicleFlags(flags, false);
+            m_host.ParentGroup.RootPart.SetVehicleFlags(flags, false);
         }
 
         public void llRemoveVehicleFlags(int flags)
         {
             if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-            PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-            if (pa == null) return;
-            pa.VehicleFlags(flags, true);
+            m_host.ParentGroup.RootPart.SetVehicleFlags(flags, true);
         }
         public LSLList llGetPhysicsMaterial()
         {
