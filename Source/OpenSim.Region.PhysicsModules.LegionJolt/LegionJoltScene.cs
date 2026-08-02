@@ -286,10 +286,17 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             scene.PhysicsEnabled = true;
 
             // M6.2 proof hook: a console command that raycasts straight down onto the cooked terrain and
-            // reports the hit Z - the rigorous, viewer-free gate. Registered once (global console).
-            if (MainConsole.Instance != null && !_consoleRegistered)
+            // reports the hit Z - the rigorous, viewer-free gate.
+            //
+            // REGISTERED PER REGION (was: once, behind a static _consoleRegistered gate).
+            // The old static gate meant the FIRST region to boot registered the command and the delegate
+            // captured ITS `this` forever - so on a multi-region sim every `jolt ...` command ran against
+            // that one region no matter what the console prompt said. On Legion (Ebony boots first, 256x256,
+            // flat terrain) `jolt heights 512 512` reported "no terrain" for Elm's 1024x1024 region because
+            // it was silently measuring EBONY. Registering per region + the WrongConsoleScene() check in
+            // HandleJoltConsole makes `change region <name>` actually select the target. (2026-08-01)
+            if (MainConsole.Instance != null)
             {
-                _consoleRegistered = true;
                 MainConsole.Instance.Commands.AddCommand("Physics", false, "jolt",
                     "jolt linktest | unlinktest | collidetest | boattest [linear|hover|attract|steer] | cartest [linear|steer|attract] | sledtest [slide|nosteer|grip] | planetest [thrust|bank|climb] | balloontest [hover|lift|drift] | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | reloadcheck | vehiclestatus | clearprims",
                     "Legion Jolt proofs (M6.2 terrain / M6.3 prims): raycast the cooked collision surfaces and report hits.",
@@ -297,14 +304,40 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             }
         }
 
-        private static bool _consoleRegistered;
+        /// <summary>
+        /// True when the console is scoped to a DIFFERENT region than this instance, so this handler
+        /// should stay quiet. Mirrors the house idiom (ExperienceModule.WrongConsoleScene).
+        ///
+        /// ConsoleScene == null means the ROOT prompt ("Regions #"), which addresses ALL regions - every
+        /// region's handler runs. That is standard OpenSim behaviour and is what makes a root-scoped
+        /// command a whole-sim sweep. See the note in HandleJoltConsole about which commands you actually
+        /// want to run that way.
+        /// </summary>
+        private bool WrongConsoleScene()
+            => !(MainConsole.Instance.ConsoleScene is null || MainConsole.Instance.ConsoleScene == _scene);
 
         // Raycast straight down at XY (from well above the region) and report the hit Z - proves the
         // heightfield's ACTUAL collision surface, not "it booted". `jolt terraintest` sweeps the extent
         // probes (interior + the far edge that the (N+1) field must now cover); `jolt probe x y` is ad hoc.
         private void HandleJoltConsole(string module, string[] cmd)
         {
+            // Region scoping. Every region registers this command, so without this check all of them
+            // would answer every invocation. `change region Elm` -> only Elm's handler proceeds.
+            if (WrongConsoleScene())
+                return;
+
             if (_backend == null) { MainConsole.Instance.Output($"{LogHeader} no backend."); return; }
+
+            // At the ROOT prompt every region runs the command, so stamp whose output follows - otherwise
+            // three regions' results interleave with no way to tell them apart. When the console is scoped
+            // to one region this is redundant, so it is skipped.
+            //
+            // NOTE: a root-scoped `jolt ...` is a SIM-WIDE sweep. That is useful for read-only probes
+            // (heights / dropstatus / reloadcheck / vehiclestatus), but the world-mutating helpers
+            // (rezprims / rezmesh / droptest / clearprims / linktest / sittest ...) will then act in EVERY
+            // region. Use `change region <name>` before those.
+            if (MainConsole.Instance.ConsoleScene is null)
+                MainConsole.Instance.Output($"{LogHeader} --- region '{RegionName}' ---");
 
             if (cmd.Length >= 2 && cmd[1] == "linktest") { JoltLinkTest(); return; }
             if (cmd.Length >= 2 && cmd[1] == "unlinktest") { JoltUnlinkTest(); return; }
@@ -2483,8 +2516,16 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             // feetOffset (M6.5 Task 1) sank the avatar by exactly that gap, so the feet clipped INTO terrain.
             float standHalf = JoltCharacter.StandHalfFor(size);
             float groundZ = position.Z - standHalf - feetOffset;
-            if (_backend.RayCast(new SVector3(position.X, position.Y, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.Terrain, out RayHit th))
-                groundZ = th.Point.Z;
+            // THREAD SAFETY (2026-08-01): this used to raycast the Jolt heightfield. CreateAvatar runs on
+            // the LOGIN/TELEPORT thread, so that native query could land inside a running _system.Update
+            // and corrupt Jolt's LIFO TempAllocator -> "Freeing in the wrong order" -> std::abort(). That
+            // killed the simulator when John teleported into Elm. TerrainHeightAt reads the SAME cooked
+            // sample field the collision heightfield was built from, but it is a plain managed float[]
+            // (bilinear interpolation, no native call), so it is safe from any thread and needs no lock.
+            // Heights agree with the collision surface because both come from that one field.
+            float terrainZ = TerrainHeightAt(position.X, position.Y);
+            if (float.IsFinite(terrainZ))
+                groundZ = terrainZ;
             // +1 cm so StickToFloor settles from just above rather than starting in penetration (which would
             // resolve as a shove on frame 1).
             var spawn = new Vector3(position.X, position.Y, groundZ + standHalf + feetOffset + 0.01f);
@@ -2731,6 +2772,13 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // shapes. (Full query family - RaycastActor, Sphere/BoxProbe for llSensor - remains M6.7.)
         // ---------------------------------------------------------------------
 
+        // llCastRay runs on SCRIPT threads, so routing it here issues a native Jolt NarrowPhaseQuery off
+        // the heartbeat thread, concurrent with _system.Update. That is SAFE: the backend's RayCast/
+        // RayCastAll take _simLock, the same gate that wraps the whole Step (Update + ExtendedUpdate), so a
+        // script raycast and the physics step can never be inside Jolt's non-thread-safe LIFO TempAllocator
+        // at once. (This was briefly `=> false` on 2026-08-01 as a stopgap BEFORE the lock existed - that
+        // window is closed; the lock, not disabling the feature, is the fix.) Returning true keeps llCastRay
+        // testing Jolt's real cooked shapes rather than falling back to OpenSim's own geometry intersection.
         public override bool SupportsRaycastWorldFiltered() => true;
 
         // TWO llCastRay entry points route here, and BOTH must be overridden or llCastRay returns 0:
