@@ -60,9 +60,29 @@ namespace Legion.Physics.Jolt
         // NOTE (delta #4): 2.18.6 has NO TempAllocator - temp allocation is internal
         // to PhysicsSystem.Update. There is deliberately no _tempAllocator field.
 
-        // Cached LOCKING BodyInterface - safe to call from any thread. This is what lets Legion
-        // drop the taint-queue pattern (Create/Remove/Set* run straight from the scene thread).
-        // Valid for the PhysicsSystem's lifetime.
+        // Cached BodyInterface, valid for the PhysicsSystem's lifetime.
+        //
+        // ⚠️ CORRECTED RULE (2026-08-02): the original design assumed this LOCKING BodyInterface was "safe
+        // to call from any thread" so the taint queue could be dropped and Create/Remove/Set* run straight
+        // from the scene thread. That assumption has now been proven WRONG FOUR times:
+        //   1. NarrowPhaseQuery races Update   -> TempAllocator abort (fixed: queries take _simLock)
+        //   2. Dispose races Step              -> use-after-free      (fixed: Dispose takes _simLock + _disposed)
+        //   3. body Create/Remove races Update -> TempAllocator abort on login-with-physical-object
+        //      (fixed: EVERY body op takes _simLock)
+        //   4. Update races Update ACROSS REGIONS -> TempAllocator abort with 3 regions stepping at once
+        //      (fixed: _simLock is now STATIC - see its comment; joltc's TempAllocator is process-shared,
+        //       so a per-instance lock could never protect it).
+        // The per-body locking BodyInterface protects per-body DATA, but structural broadphase mutation
+        // (add/remove) and the shared LIFO TempAllocator are NOT safe concurrent with _system.Update.
+        //
+        // THE RULE, no exceptions: every native call that touches ANY PhysicsSystem - Step, the queries,
+        // and ALL body ops below - is serialised through the STATIC _simLock (one lock, all regions).
+        // Character ops use _characterGate (per-instance), always taken INSIDE _simLock; the CharacterVirtual
+        // is serialised against the character step, and its ExtendedUpdate/TempAllocator use happens inside
+        // Step which already holds _simLock. Shape Create* are the one exception: they build immutable
+        // ref-counted Shapes independently of any live system (no broadphase/TempAllocator touch), so they
+        // stay off _simLock to keep cooking off the hot lock. (Verified 2026-08-02: the [jolt-entry] trace
+        // showed ONLY Step on three tids before the abort - no Create*/character op was the racer.)
         private BodyInterface _bodyInterface;
 
         // --- Active-body tracking (Task 4; delta #8 mechanism) ---
@@ -96,32 +116,53 @@ namespace Legion.Physics.Jolt
             new ConcurrentDictionary<QueryFilter, LayerQueryFilter>();
 
         // =====================================================================
-        // _simLock - the ONE gate serialising native Jolt calls that share the
-        // PhysicsSystem's INTERNAL TempAllocator.
+        // _simLock - the ONE gate serialising native Jolt calls that share joltc's
+        // TempAllocator. It is STATIC: one lock for EVERY backend / region.
         //
-        // WHY THIS EXISTS (a process-killer, found on Legion 2026-08-01):
-        // PhysicsSystem.Update and CharacterVirtual.ExtendedUpdate both allocate
-        // from an internal TempAllocatorImpl. That allocator is a LIFO STACK and is
-        // NOT thread-safe: if two threads allocate/free against it concurrently the
-        // frees come back out of order, Jolt prints
-        //     "TempAllocator: Freeing in the wrong order"
-        // and calls std::abort() - the whole simulator dies, no managed exception.
-        // JoltPhysicsSharp does not expose the allocator, so we cannot size or
-        // replace it; the only fix is to never let two threads inside Jolt at once.
+        // WHY STATIC (the root cause, found on Legion 2026-08-02 after three
+        // per-instance fixes failed to stop the crash):
+        // PhysicsSystem.Update / CharacterVirtual.ExtendedUpdate / NarrowPhaseQuery
+        // all allocate from a TempAllocatorImpl - a LIFO STACK that is NOT
+        // thread-safe. joltc does not create one PER PhysicsSystem; it supplies a
+        // SINGLE shared/internal allocator to every JPH_PhysicsSystem_Update call
+        // (JoltPhysicsSharp 2.19.1 exposes no TempAllocator type, no 4-arg Update,
+        // and joltc has no JPH_TempAllocator export - so we cannot give each system
+        // its own). Proof it is shared: three regions' heartbeats (three different
+        // tids) stepping concurrently produced "TempAllocator: Freeing in the wrong
+        // order" -> std::abort(); a per-system allocator physically cannot free
+        // out-of-order across threads. So the allocator is process-global and a
+        // PER-INSTANCE lock cannot protect it - two regions each holding their OWN
+        // _simLock still hammer the one allocator. It MUST be static.
         //
-        // The old code assumed "NarrowPhaseQuery is safe concurrent with Step".
-        // It is not - queries also walk the broadphase Update is mutating. Two
-        // off-heartbeat callers proved it: the avatar spawn probe (login/teleport
-        // thread) and llCastRay (script threads).
+        // History (all real, all needed - but all INTRA-region until #4):
+        //   1. NarrowPhaseQuery races Update   -> queries take _simLock
+        //   2. Dispose races Step              -> Dispose takes _simLock + _disposed
+        //   3. body Create/Remove races Update -> all body ops take _simLock
+        //   4. Update races Update ACROSS REGIONS on the shared allocator -> _simLock
+        //      made STATIC (this change). #1-3 fixed one-backend races; only a static
+        //      lock fixes the cross-backend race.
         //
-        // LOCK ORDER - always _simLock FIRST, then _characterGate. Never the
-        // reverse, or Step and an avatar operation can deadlock each other. C#
-        // Monitor is re-entrant per thread, so a nested take of _simLock on the
-        // same thread is harmless; only ORDER inversion between the two locks is
-        // fatal. _gate (HandleTable) is a leaf lock - it calls nothing - so it can
-        // be taken under either without risk.
+        // COST / known limitation: a single static lock serialises ALL Jolt native
+        // work across ALL regions - physics no longer runs in parallel across cores.
+        // On a few regions each Step is a few ms vs the ~90ms (11fps) budget, so it
+        // fits with headroom; but it is a throughput ceiling as regions/load grow.
+        // The parallel fix (a TempAllocatorImpl per backend passed to Update) needs a
+        // binding capability we do not have on net8: revisit if JoltPhysicsSharp gains
+        // a per-system TempAllocator API (2.19.2+ is net9/net10-only today).
+        //
+        // LOCK ORDER - always _simLock FIRST, then _characterGate. _characterGate is
+        // still PER-INSTANCE and is only ever taken INSIDE _simLock, so the order holds
+        // globally: a region waiting on the static _simLock holds no other Jolt lock,
+        // so there is no cross-region inversion. Monitor is re-entrant per thread, so a
+        // nested take of _simLock on the same thread is harmless. _gate (HandleTable)
+        // is a leaf lock - it calls nothing - so it can be taken under either.
+        //
+        // NOTE (2026-08-03): Legion runs a PATCHED joltc (per-system TempAllocator; see
+        // legion-grid-source native/joltc/) and uses a PER-INSTANCE lock there. Porting
+        // that revert here requires vendoring the patched native FIRST - stock NuGet
+        // joltc.dll + instance locks = the cross-region abort this static lock prevents.
         // =====================================================================
-        private readonly object _simLock = new object();
+        private static readonly object _simLock = new object();
 
         // Set true (under _simLock) by Dispose. Step and every native query check it under _simLock and
         // bail out, so a heartbeat Step that races region shutdown does NOTHING rather than touching a
@@ -611,10 +652,14 @@ namespace Legion.Physics.Jolt
         }
 
         public ShapeId CreateSphereShape(float radius)
-            => RegisterShape(new SphereShape(MathF.Max(0.001f, radius)));
+        {
+            return RegisterShape(new SphereShape(MathF.Max(0.001f, radius)));
+        }
 
         public ShapeId CreateCapsuleShape(float halfHeight, float radius)
-            => RegisterShape(new CapsuleShape(MathF.Max(0.001f, halfHeight), MathF.Max(0.001f, radius)));
+        {
+            return RegisterShape(new CapsuleShape(MathF.Max(0.001f, halfHeight), MathF.Max(0.001f, radius)));
+        }
 
         public ShapeId CreateCylinderShape(float halfHeight, float radius)
         {
@@ -850,6 +895,9 @@ namespace Legion.Physics.Jolt
 
         public BodyId CreateBody(in BodyDesc desc)
         {
+            lock (_simLock)
+            {
+            if (_disposed) return BodyId.Invalid;
             if (_system == null)
                 throw new InvalidOperationException("CreateBody before Initialize.");
             if (!_shapes.TryGet(desc.Shape.Value, out JoltShapeRecord shapeRec) || shapeRec.NativeShape == null)
@@ -927,6 +975,7 @@ namespace Legion.Physics.Jolt
                 // CreateAndAddBody copies the settings; the managed settings object is ours to free.
                 bcs.Dispose();
             }
+            }   // _simLock
         }
 
         private static MotionType ToJoltMotion(BodyMotionType t) => t switch
@@ -978,6 +1027,9 @@ namespace Legion.Physics.Jolt
 
         public void RemoveBody(BodyId body)
         {
+            lock (_simLock)
+            {
+            if (_disposed) return;
             if (!_bodies.TryGet(body.Value, out JoltBodyRecord rec))
                 return; // stale/invalid handle - idempotent no-op.
             if (rec.IsCharacterMarker)
@@ -989,12 +1041,16 @@ namespace Legion.Physics.Jolt
             _bodies.Remove(body.Value); // bumps the generation so the stale handle fails validation.
             // _activeBodies is step-thread-owned; if this body happened to be active, the stale
             // id is self-healed at the top of Step (it no longer resolves via _joltToRecord).
+            }   // _simLock
         }
 
         public bool IsBodyValid(BodyId body) => _bodies.IsValid(body.Value);
 
         public void SetBodyShape(BodyId body, ShapeId shape, bool recomputeMass)
         {
+            lock (_simLock)
+            {
+            if (_disposed) return;
             if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid))
                 return;
             if (!_shapes.TryGet(shape.Value, out JoltShapeRecord shapeRec) || shapeRec.NativeShape == null)
@@ -1002,6 +1058,7 @@ namespace Legion.Physics.Jolt
             // Do not wake the body just because its shape changed (activation stays the caller's call).
             _bodyInterface.SetShape(jid, shapeRec.NativeShape, recomputeMass, Activation.DontActivate);
             rec.Shape = shape;
+            }   // _simLock
         }
 
         // Map a hit's SubShapeID to the struck child's UserData for a compound (linkset) body. Jolt puts
@@ -1022,6 +1079,9 @@ namespace Legion.Physics.Jolt
 
         public void SetBodyMotionType(BodyId body, BodyMotionType motionType, bool activate)
         {
+            lock (_simLock)
+            {
+            if (_disposed) return;
             if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid))
                 return;
             if (motionType != BodyMotionType.Static && !rec.AllowMotionChange)
@@ -1032,6 +1092,7 @@ namespace Legion.Physics.Jolt
             _bodyInterface.SetMotionType(jid, ToJoltMotion(motionType),
                 activate ? Activation.Activate : Activation.DontActivate);
             rec.MotionType = motionType;
+            }   // _simLock
         }
 
         public void SetBodyLayer(BodyId body, PhysicsLayer layer) => throw new NotImplementedException();
@@ -1043,9 +1104,13 @@ namespace Legion.Physics.Jolt
         // repositioned so it keeps stepping). Resolve failure (destroyed body) is a safe no-op.
         public void SetBodyTransform(BodyId body, Vector3 position, Quaternion orientation, bool activate)
         {
-            if (TryResolve(body, out _, out BodyID jid))
-                _bodyInterface.SetPositionAndRotation(jid, position, orientation,
-                    activate ? Activation.Activate : Activation.DontActivate);
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolve(body, out _, out BodyID jid))
+                    _bodyInterface.SetPositionAndRotation(jid, position, orientation,
+                        activate ? Activation.Activate : Activation.DontActivate);
+            }
         }
 
         public void SetBodyLinearVelocity(BodyId body, Vector3 velocity)
@@ -1053,18 +1118,29 @@ namespace Legion.Physics.Jolt
             // Thin seam: this does NOT wake a sleeping body (Jolt-native behaviour - only Apply*
             // impulses activate). A velocity set on a sleeping body takes effect only once something
             // else activates it; that activation policy belongs to the layer above, not here.
-            if (TryResolve(body, out _, out BodyID jid))
-                _bodyInterface.SetLinearVelocity(jid, velocity);
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolve(body, out _, out BodyID jid))
+                    _bodyInterface.SetLinearVelocity(jid, velocity);
+            }
         }
 
         public void SetBodyAngularVelocity(BodyId body, Vector3 velocity)
         {
-            if (TryResolve(body, out _, out BodyID jid))
-                _bodyInterface.SetAngularVelocity(jid, velocity);
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolve(body, out _, out BodyID jid))
+                    _bodyInterface.SetAngularVelocity(jid, velocity);
+            }
         }
 
         public void SetBodyMass(BodyId body, float mass)
         {
+            lock (_simLock)
+            {
+            if (_disposed) return;
             if (mass <= 0f || !TryResolve(body, out JoltBodyRecord rec, out BodyID jid))
                 return;
             rec.Mass = mass;
@@ -1088,6 +1164,7 @@ namespace Legion.Physics.Jolt
                 }
             }
             finally { bli.UnlockWrite(lockWrite); }
+            }   // _simLock
         }
 
         // Read the recorded body mass (set at creation to explicit Mass or ComputeMass = Volume x Density,
@@ -1101,6 +1178,9 @@ namespace Legion.Physics.Jolt
         // Jolt stores the INVERSE diagonal; invert per component (0 stays 0 - a locked/infinite axis).
         public Vector3 GetBodyInertiaDiagonal(BodyId body)
         {
+            lock (_simLock)
+            {
+            if (_disposed) return Vector3.Zero;
             if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid) ||
                 rec.MotionType != BodyMotionType.Dynamic)
                 return Vector3.Zero;
@@ -1118,6 +1198,7 @@ namespace Legion.Physics.Jolt
                     inv.Z > 0f ? 1f / inv.Z : 0f);
             }
             finally { bli.UnlockRead(lockRead); }
+            }   // _simLock
         }
 
         // Recompute the dynamic mass from the shape's geometric volume and a PHYSICAL density (kg/m^3),
@@ -1125,6 +1206,9 @@ namespace Legion.Physics.Jolt
         // honour SceneObjectPart.Density (x DensityScaleFactor) for BulletSim mass parity.
         public void SetBodyDensity(BodyId body, float physicalDensity)
         {
+            lock (_simLock)
+            {
+            if (_disposed) return;
             if (physicalDensity <= 0f || !TryResolve(body, out JoltBodyRecord rec, out BodyID jid))
                 return;
             BodyLockInterface bli = _system!.BodyLockInterface;
@@ -1146,22 +1230,34 @@ namespace Legion.Physics.Jolt
                 }
             }
             finally { bli.UnlockWrite(lockWrite); }
+            }   // _simLock
         }
 
         public void SetBodyFriction(BodyId body, float friction)
         {
-            if (TryResolve(body, out _, out BodyID jid))
-                _bodyInterface.SetFriction(jid, friction);
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolve(body, out _, out BodyID jid))
+                    _bodyInterface.SetFriction(jid, friction);
+            }
         }
 
         public void SetBodyRestitution(BodyId body, float restitution)
         {
-            if (TryResolve(body, out _, out BodyID jid))
-                _bodyInterface.SetRestitution(jid, restitution);
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolve(body, out _, out BodyID jid))
+                    _bodyInterface.SetRestitution(jid, restitution);
+            }
         }
 
         public void SetBodyDamping(BodyId body, float linear, float angular)
         {
+            lock (_simLock)
+            {
+            if (_disposed) return;
             if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid) ||
                 rec.MotionType == BodyMotionType.Static)
                 return; // no MotionProperties on a static body.
@@ -1178,14 +1274,19 @@ namespace Legion.Physics.Jolt
                 }
             }
             finally { bli.UnlockWrite(lockWrite); }
+            }   // _simLock
         }
 
         public void SetBodyGravityFactor(BodyId body, float factor)
         {
-            if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid) ||
-                rec.MotionType == BodyMotionType.Static)
-                return; // static bodies never feel gravity; SetGravityFactor would touch null motion props.
-            _bodyInterface.SetGravityFactor(jid, factor);
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid) ||
+                    rec.MotionType == BodyMotionType.Static)
+                    return; // static bodies never feel gravity; SetGravityFactor would touch null motion props.
+                _bodyInterface.SetGravityFactor(jid, factor);
+            }
         }
 
         public void SetBodyAxisLocks(BodyId body, Vector3 allowedTranslation, Vector3 allowedRotation)
@@ -1202,32 +1303,52 @@ namespace Legion.Physics.Jolt
         // AddImpulse/AddAngularImpulse change velocity instantly (delta v = impulse / mass).
         public void ApplyForce(BodyId body, Vector3 force)
         {
-            if (TryResolveDynamic(body, out BodyID jid))
-                _bodyInterface.AddForce(jid, force);
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolveDynamic(body, out BodyID jid))
+                    _bodyInterface.AddForce(jid, force);
+            }
         }
 
         public void ApplyTorque(BodyId body, Vector3 torque)
         {
-            if (TryResolveDynamic(body, out BodyID jid))
-                _bodyInterface.AddTorque(jid, torque);
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolveDynamic(body, out BodyID jid))
+                    _bodyInterface.AddTorque(jid, torque);
+            }
         }
 
         public void ApplyImpulse(BodyId body, Vector3 impulse)
         {
-            if (TryResolveDynamic(body, out BodyID jid))
-                _bodyInterface.AddImpulse(jid, impulse);
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolveDynamic(body, out BodyID jid))
+                    _bodyInterface.AddImpulse(jid, impulse);
+            }
         }
 
         public void ApplyImpulseAtPoint(BodyId body, Vector3 impulse, Vector3 worldPoint)
         {
-            if (TryResolveDynamic(body, out BodyID jid))
-                _bodyInterface.AddImpulse(jid, impulse, worldPoint);
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolveDynamic(body, out BodyID jid))
+                    _bodyInterface.AddImpulse(jid, impulse, worldPoint);
+            }
         }
 
         public void ApplyAngularImpulse(BodyId body, Vector3 angularImpulse)
         {
-            if (TryResolveDynamic(body, out BodyID jid))
-                _bodyInterface.AddAngularImpulse(jid, angularImpulse);
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolveDynamic(body, out BodyID jid))
+                    _bodyInterface.AddAngularImpulse(jid, angularImpulse);
+            }
         }
 
         public void ApplyBuoyancy(
@@ -1244,21 +1365,32 @@ namespace Legion.Physics.Jolt
 
         public void ActivateBody(BodyId body)
         {
-            // Static bodies are never active; skip so we don't touch a body with no MotionProperties.
-            if (TryResolve(body, out JoltBodyRecord rec, out BodyID jid) && rec.MotionType != BodyMotionType.Static)
-                _bodyInterface.ActivateBody(jid);
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                // Static bodies are never active; skip so we don't touch a body with no MotionProperties.
+                if (TryResolve(body, out JoltBodyRecord rec, out BodyID jid) && rec.MotionType != BodyMotionType.Static)
+                    _bodyInterface.ActivateBody(jid);
+            }
         }
 
         public void DeactivateBody(BodyId body)
         {
-            if (TryResolve(body, out _, out BodyID jid))
-                _bodyInterface.DeactivateBody(jid);
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolve(body, out _, out BodyID jid))
+                    _bodyInterface.DeactivateBody(jid);
+            }
         }
 
         // Allow/forbid sleeping (vehicles forbid it while active - Bullet's DISABLE_DEACTIVATION).
         // Needs a body write-lock: AllowSleeping lives on the Body, not the BodyInterface.
         public void SetBodyAllowSleeping(BodyId body, bool allow)
         {
+            lock (_simLock)
+            {
+            if (_disposed) return;
             if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid) ||
                 rec.MotionType == BodyMotionType.Static)
                 return; // static bodies have no MotionProperties and never sleep/wake.
@@ -1271,6 +1403,7 @@ namespace Legion.Physics.Jolt
                     lockWrite.Body.SetAllowSleeping(allow);
             }
             finally { bli.UnlockWrite(lockWrite); }
+            }   // _simLock
         }
 
         // Toggle the Persist gate for a LIVE body (subscription happens after CreateBody). Begin/End always
@@ -1284,7 +1417,9 @@ namespace Legion.Physics.Jolt
 
         public bool TryGetBodyState(BodyId body, out BodyState state)
         {
-            if (!_bodies.TryGet(body.Value, out JoltBodyRecord rec))
+            lock (_simLock)
+            {
+            if (_disposed || !_bodies.TryGet(body.Value, out JoltBodyRecord rec))
             {
                 state = default;
                 return false;
@@ -1301,6 +1436,7 @@ namespace Legion.Physics.Jolt
                 Flags = _bodyInterface.IsActive(joltId) ? BodyStateFlags.Active : BodyStateFlags.None,
             };
             return true;
+            }   // _simLock
         }
 
         // =====================================================================
@@ -1735,6 +1871,12 @@ namespace Legion.Physics.Jolt
 
         public void SetTerrain(ShapeId heightFieldShape, Vector3 position)
         {
+            // _simLock: SetTerrain swaps the terrain BODY (RemoveBody + a direct CreateAndAddBody), a
+            // broadphase mutation. It runs on the SCENE thread on a live terrain edit, so it must not race
+            // the heartbeat's Update. RemoveBody re-enters _simLock (re-entrant Monitor - fine).
+            lock (_simLock)
+            {
+            if (_disposed) return;
             if (_system == null)
                 throw new InvalidOperationException("SetTerrain before Initialize.");
             if (!_shapes.TryGet(heightFieldShape.Value, out JoltShapeRecord shapeRec) || shapeRec.NativeShape == null)
@@ -1772,6 +1914,7 @@ namespace Legion.Physics.Jolt
                 _terrainBody = new BodyId(handle);
             }
             finally { bcs.Dispose(); }
+            }   // _simLock
         }
 
         public void SetWaterHeight(float height) => _waterHeight = height;
