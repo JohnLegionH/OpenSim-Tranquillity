@@ -10,8 +10,22 @@
       <Version>3.9.50</Version>
     </PackageReference>
     <PackageReference Include="nini-core" Version="0.9.2.16" />
-    <PackageReference Include="OpenMetaverse" Version="1.0.6" />
-    <PackageReference Include="OpenMetaverse.Types" Version="1.0.6" />
-    <PackageReference Include="OpenMetaverse.StructuredData" Version="1.0.6" />
+    <!-- LOCAL FORK BUILD ONLY (see Docs/fork-build-notes.md). OpenMetaverse vendored in Library/
+         (1.2.13, the version this fork has always built against). NGC centralizes OMV 1.0.6 from an
+         authenticated private GitHub Packages feed unreachable to non-members of the OpenSim-NGC org;
+         vendoring keeps this fork feed-independent. DO NOT send this override upstream — an NGC PR
+         should keep the centralized 1.0.6 PackageReferences above. -->
+    <Reference Include="OpenMetaverse">
+      <HintPath>$(MSBuildThisFileDirectory)Library/OpenMetaverse.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="OpenMetaverse.Types">
+      <HintPath>$(MSBuildThisFileDirectory)Library/OpenMetaverse.Types.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="OpenMetaverse.StructuredData">
+      <HintPath>$(MSBuildThisFileDirectory)Library/OpenMetaverse.StructuredData.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
   </ItemGroup>
 </Project>
