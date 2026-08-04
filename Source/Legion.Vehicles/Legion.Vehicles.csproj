@@ -15,8 +15,7 @@
     <ImplicitUsings>disable</ImplicitUsings>
   </PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="OpenMetaverse.Types" Version="1.2.13" />
-  </ItemGroup>
+  <!-- OpenMetaverse.Types is provided centrally (Directory.Build.props): NGC's 1.0.6 upstream,
+       or this fork's vendored 1.2.13 locally. No inline reference so the project stays PR-safe. -->
 
 </Project>
