@@ -165,6 +165,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Legion.Physics", "Source\Le
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Region.PhysicsModules.LegionJolt", "Source\OpenSim.Region.PhysicsModules.LegionJolt\OpenSim.Region.PhysicsModules.LegionJolt.csproj", "{A98144D3-A5F3-47E8-B9A7-777BF2A61F77}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Server.Base.Tests", "Tests\OpenSim.Server.Base.Tests\OpenSim.Server.Base.Tests.csproj", "{3D7E8E30-A56E-46E5-95F8-2D17DA4AB082}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -483,6 +485,10 @@ Global
 		{A98144D3-A5F3-47E8-B9A7-777BF2A61F77}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A98144D3-A5F3-47E8-B9A7-777BF2A61F77}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A98144D3-A5F3-47E8-B9A7-777BF2A61F77}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3D7E8E30-A56E-46E5-95F8-2D17DA4AB082}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3D7E8E30-A56E-46E5-95F8-2D17DA4AB082}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3D7E8E30-A56E-46E5-95F8-2D17DA4AB082}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3D7E8E30-A56E-46E5-95F8-2D17DA4AB082}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -566,6 +572,7 @@ Global
 		{A7C3D34F-AC32-4379-866A-FE585AF2B6FB} = {7F5EC7C6-FD99-4084-8530-5D3F28D6D7C0}
 		{CAC361C6-32EC-4008-BB57-7D4ABC5826DD} = {E886CEB5-B01D-411F-A7A0-72AA1B71761D}
 		{A98144D3-A5F3-47E8-B9A7-777BF2A61F77} = {E886CEB5-B01D-411F-A7A0-72AA1B71761D}
+		{3D7E8E30-A56E-46E5-95F8-2D17DA4AB082} = {7F5EC7C6-FD99-4084-8530-5D3F28D6D7C0}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {A40AD54B-8BC7-41E4-B241-19B59EA65D2A}

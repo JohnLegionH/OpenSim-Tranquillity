@@ -19,10 +19,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Reference Include="Nini.dll" HintPath="../../Library/Nini.dll" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="../../Source/OpenSim.Framework/OpenSim.Framework.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Framework.Console/OpenSim.Framework.Console.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Region.Framework/OpenSim.Region.Framework.csproj" />
@@ -31,8 +27,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="OpenMetaverse.Types" Version="1.2.13" />
-    <PackageReference Include="OpenMetaverse" Version="1.2.13" />
     <PackageReference Include="log4net" Version="3.3.1" />
   </ItemGroup>
 
