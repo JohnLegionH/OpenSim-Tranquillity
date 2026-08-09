@@ -1586,25 +1586,36 @@ namespace Phlox.ScriptEngine
         }
         public void llManageEstateAccess(int action, string avatar)
         {
-            if (!World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID))
+            const int delay = 0;   // Halcyon
+            int rc = 0;            // SL: 1 on success, 0 on failure; pushed raw (ConvToLSLType(int)=identity)
+            try
             {
-                ShoutError("llManageEstateAccess: object owner must manage estate.");
-                return;
+                if (!World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID))
+                {
+                    ShoutError("llManageEstateAccess: object owner must manage estate.");
+                    return;   // rc = 0
+                }
+                if (!UUID.TryParse(avatar, out UUID key)) return;   // rc = 0
+                // action constants: ESTATE_ACCESS_ALLOWED_AGENT_ADD=0, REMOVE=1,
+                //   ALLOWED_GROUP_ADD=2, REMOVE=3, BANNED_AGENT_ADD=4, REMOVE=5
+                var es = World.RegionInfo.EstateSettings;
+                switch (action)
+                {
+                    case 0: es.AddEstateUser(key); rc = 1; break;
+                    case 1: es.RemoveEstateUser(key); rc = 1; break;
+                    case 2: es.AddEstateGroup(key); rc = 1; break;
+                    case 3: es.RemoveEstateGroup(key); rc = 1; break;
+                    case 4: es.AddBan(new EstateBan { BannedUserID = key, EstateID = es.EstateID }); rc = 1; break;
+                    case 5: es.RemoveBan(key); rc = 1; break;
+                    // unknown action -> rc stays 0
+                }
+                if (rc == 1)
+                    World.EstateDataService?.StoreEstateSettings(es);
             }
-            if (!UUID.TryParse(avatar, out UUID key)) return;
-            // action constants: ESTATE_ACCESS_ALLOWED_AGENT_ADD=0, REMOVE=1,
-            //   ALLOWED_GROUP_ADD=2, REMOVE=3, BANNED_AGENT_ADD=4, REMOVE=5
-            var es = World.RegionInfo.EstateSettings;
-            switch (action)
+            finally
             {
-                case 0: es.AddEstateUser(key); break;
-                case 1: es.RemoveEstateUser(key); break;
-                case 2: es.AddEstateGroup(key); break;
-                case 3: es.RemoveEstateGroup(key); break;
-                case 4: es.AddBan(new EstateBan { BannedUserID = key, EstateID = es.EstateID }); break;
-                case 5: es.RemoveBan(key); break;
+                m_ScriptEngine.SysReturn(m_itemID, rc, delay);
             }
-            World.EstateDataService?.StoreEstateSettings(es);
         }
 
         // ── Avatar ─────────────────────────────────────────────────────────────
@@ -2269,26 +2280,37 @@ namespace Phlox.ScriptEngine
 
         public void llRequestUsername(string id)
         {
-            if (!UUID.TryParse(id, out UUID key)) return;
-            UUID requestID = UUID.Random();
-
-            // Fire the dataserver event with the name (synchronous in Phlox)
-            string name = string.Empty;
-            ScenePresence sp = World?.GetScenePresence(key);
-            if (sp != null && !sp.IsChildAgent)
+            const int delay = 100;   // Halcyon; retValue = query handle (our requestID)
+            UUID requestID = UUID.Random();   // hoisted so finally can return it
+            try
             {
-                name = sp.Name;
-            }
-            else
-            {
-                UserAccount acct = World?.UserAccountService?.GetUserAccount(World.RegionInfo.ScopeID, key);
-                if (acct != null) name = acct.FirstName + " " + acct.LastName;
-            }
+                // SL contract: a malformed key still returns a handle and fires dataserver with
+                // empty data (Zero -> not found). (Halcyon casts (UUID)id, which THROWS on garbage
+                // before its SysReturn -> wedges; we resume regardless.)
+                UUID.TryParse(id, out UUID key);
 
-            m_ScriptEngine.PostObjectEvent(m_host.LocalId,
-                new EventParams("dataserver",
-                    new object[] { requestID.ToString(), name },
-                    new DetectParams[0]));
+                // Fire the dataserver event with the name (synchronous in Phlox)
+                string name = string.Empty;
+                ScenePresence sp = World?.GetScenePresence(key);
+                if (sp != null && !sp.IsChildAgent)
+                {
+                    name = sp.Name;
+                }
+                else
+                {
+                    UserAccount acct = World?.UserAccountService?.GetUserAccount(World.RegionInfo.ScopeID, key);
+                    if (acct != null) name = acct.FirstName + " " + acct.LastName;
+                }
+
+                m_ScriptEngine.PostObjectEvent(m_host.LocalId,
+                    new EventParams("dataserver",
+                        new object[] { requestID.ToString(), name },
+                        new DetectParams[0]));
+            }
+            finally
+            {
+                m_ScriptEngine.SysReturn(m_itemID, requestID.ToString(), delay);
+            }
         }
         public string iwGetAgentData(string id, int data)
         {
@@ -2420,41 +2442,43 @@ namespace Phlox.ScriptEngine
         public string iwGetLastOwner() { return m_host.LastOwnerID.ToString(); }
         public void iwAvatarName2Key(string firstName, string lastName)
         {
-            // Faithful port from Halcyon — fires dataserver event with agent UUID
-            if (m_host == null) return;
-            if (string.IsNullOrWhiteSpace(firstName)) return;
-            if (string.IsNullOrWhiteSpace(lastName)) lastName = "Resident";
-            firstName = firstName.Trim();
-            lastName = lastName.Trim();
-
-            UUID queryID = UUID.Random();
-            string fn = firstName, ln = lastName;
-
-            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            // DELIBERATE CONTRACT CHANGE: the previous design returned a query handle and answered
+            // via a dataserver event, but it never resumed (async-syscall wedge) so nothing depended
+            // on it. Adopt Halcyon's SYNCHRONOUS iwAvatarName2Key contract: resolve on the
+            // async-syscall thread and return the resolved avatar key directly (NULL_KEY if not
+            // found). No dataserver event. This matches InWorldz content expectations.
+            const int SHORT_DELAY = 100;    // avatar in region (Halcyon Mantis #2263)
+            const int LONG_DELAY = 1000;    // name-lookup path
+            int delay = LONG_DELAY;
+            UUID agentID = UUID.Zero;       // NULL_KEY on not-found, matching Halcyon
+            try
             {
-                try
+                if (!string.IsNullOrWhiteSpace(firstName))
                 {
-                    UUID agentID = UUID.Zero;
-                    // Check if avatar is in region first (fast path)
-                    World?.ForEachScenePresence(sp =>
-                    {
-                        if (agentID == UUID.Zero && !sp.IsChildAgent &&
-                            sp.Firstname.Equals(fn, StringComparison.InvariantCultureIgnoreCase) &&
-                            sp.Lastname.Equals(ln, StringComparison.InvariantCultureIgnoreCase))
-                            agentID = sp.UUID;
-                    });
+                    if (string.IsNullOrWhiteSpace(lastName))
+                        lastName = "Resident";
+                    else
+                        lastName = lastName.Trim();
+                    firstName = firstName.Trim();
 
-                    if (agentID == UUID.Zero)
+                    ScenePresence sp = World?.GetScenePresence(firstName, lastName);
+                    if (sp != null)
+                    {
+                        agentID = sp.UUID;
+                        delay = SHORT_DELAY;
+                    }
+                    else
                     {
                         UserAccount acct = World?.UserAccountService?.GetUserAccount(
-                            World.RegionInfo.ScopeID, fn, ln);
+                            World.RegionInfo.ScopeID, firstName, lastName);
                         if (acct != null) agentID = acct.PrincipalID;
                     }
-                    PostDataserverEvent(queryID, agentID.ToString());
                 }
-                catch { PostDataserverEvent(queryID, UUID.Zero.ToString()); }
-            });
-            ScriptSleep(100);
+            }
+            finally
+            {
+                m_ScriptEngine.SysReturn(m_itemID, agentID.ToString(), delay);
+            }
         }
 
         public string llName2Key(string name)
@@ -3361,28 +3385,48 @@ namespace Phlox.ScriptEngine
 
         // ── Object manipulation ────────────────────────────────────────────────
 
-public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion rot, int param)
-            => RezObjectInternal(inventory, pos, vel, rot, param, false);
+        public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion rot, int param)
+        {
+            int delay = 0;   // Halcyon: 100 on success, 0 on failure (set by RezObjectInternal)
+            try { RezObjectInternal(inventory, pos, vel, rot, param, false, out delay); }
+            finally { m_ScriptEngine.SysReturn(m_itemID, null, delay); }   // Void return
+        }
 
         public void llRezAtRoot(string inventory, Vector3 pos, Vector3 vel, Quaternion rot, int param)
-            => RezObjectInternal(inventory, pos, vel, rot, param, true);
-
-        private void RezObjectInternal(string inventory, Vector3 pos, Vector3 vel, Quaternion rot, int param, bool atRoot)
         {
-            ScriptSleep(100);
-            if (m_host == null || World == null) return;
+            int delay = 0;
+            try { RezObjectInternal(inventory, pos, vel, rot, param, true, out delay); }
+            finally { m_ScriptEngine.SysReturn(m_itemID, null, delay); }   // Void return
+        }
+
+        // Shared core for the whole rez family. Returns the rezzed root key (UUID.Zero on failure)
+        // and, via `out delay`, the ScriptSleep the caller must apply on resume. NEVER calls
+        // SysReturn itself — the public entry points own the resume so a shared helper can't
+        // double-resume. Callers wrap this in try/finally and pass `delay` to SysReturn.
+        //
+        // Multi-object (coalesced) rez: the returned key is the LAST group's root, matching
+        // Halcyon (iwRezAt overwrites `result` per group in its loop). object_rez fires per group.
+        //
+        // delay: Halcyon uses 100 on success and 0 on every failure path (distance / wrong-type /
+        // rez-failed). We match that. (Halcyon additionally returns 100 for two edge failures —
+        // bad-user and item-name-not-found — which our structure doesn't distinguish; we use 0
+        // uniformly for failures. Immaterial: it only affects the delay on an error return.)
+        private UUID RezObjectInternal(string inventory, Vector3 pos, Vector3 vel, Quaternion rot, int param, bool atRoot, out int delay)
+        {
+            delay = 0;   // failure delay unless we reach success below
+            if (m_host == null || World == null) return UUID.Zero;
 
             if (Util.GetDistanceTo(pos, m_host.AbsolutePosition) > 10f)
             {
                 ShoutError("Unable to create requested object. Position exceeds 10m distance limit.");
-                return;
+                return UUID.Zero;
             }
 
             TaskInventoryItem item = FindInventoryItem(inventory, (int)InventoryType.Object);
             if (item == null)
             {
                 ShoutError("Unable to create requested object. Inventory item '" + inventory + "' not found or is not an object.");
-                return;
+                return UUID.Zero;
             }
 
             List<SceneObjectGroup> rezzed = World.RezObject(
@@ -3393,62 +3437,49 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (rezzed == null || rezzed.Count == 0)
             {
                 ShoutError("Unable to create requested object '" + inventory + "'.");
-                return;
+                return UUID.Zero;
             }
 
+            UUID key = UUID.Zero;
             foreach (SceneObjectGroup grp in rezzed)
             {
+                key = grp.RootPart.UUID;   // last group wins — matches Halcyon
                 m_ScriptEngine.PostObjectEvent(m_host.LocalId,
                     new EventParams("object_rez",
-                        new object[] { grp.RootPart.UUID.ToString() },
+                        new object[] { key.ToString() },
                         new DetectParams[0]));
             }
+
+            delay = 100;   // success
+            return key;
         }
         public void iwRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion rot, int param)
-            => RezObjectInternal(inventory, pos, vel, rot, param, false);
+        {
+            int delay = 0;
+            UUID k = UUID.Zero;
+            try { k = RezObjectInternal(inventory, pos, vel, rot, param, false, out delay); }
+            finally { m_ScriptEngine.SysReturn(m_itemID, k.ToString(), delay); }   // Key return
+        }
+
         public void iwRezAtRoot(string inventory, Vector3 pos, Vector3 vel, Quaternion rot, int param)
-            => RezObjectInternal(inventory, pos, vel, rot, param, true);
+        {
+            int delay = 0;
+            UUID k = UUID.Zero;
+            try { k = RezObjectInternal(inventory, pos, vel, rot, param, true, out delay); }
+            finally { m_ScriptEngine.SysReturn(m_itemID, k.ToString(), delay); }   // Key return
+        }
 
         public string iwRezAt(string inventory, int rezAtRoot, Vector3 pos, Vector3 vel, Quaternion rot, int param)
         {
-            ScriptSleep(100);
-            if (m_host == null || World == null) return UUID.Zero.ToString();
+            int delay = 0;
+            UUID k = UUID.Zero;
+            try { k = RezObjectInternal(inventory, pos, vel, rot, param, rezAtRoot != 0, out delay); }
+            finally { m_ScriptEngine.SysReturn(m_itemID, k.ToString(), delay); }   // Key return
 
-            if (Util.GetDistanceTo(pos, m_host.AbsolutePosition) > 10f)
-            {
-                ShoutError("Unable to create requested object. Position exceeds 10m distance limit.");
-                return UUID.Zero.ToString();
-            }
-
-            TaskInventoryItem item = FindInventoryItem(inventory, (int)InventoryType.Object);
-            if (item == null)
-            {
-                ShoutError("Unable to create requested object. Inventory item '" + inventory + "' not found or is not an object.");
-                return UUID.Zero.ToString();
-            }
-
-            bool atRoot = (rezAtRoot != 0);
-            List<SceneObjectGroup> rezzed = World.RezObject(
-                m_host, item,
-                m_host.OwnerID, m_host.GroupID,
-                pos, rot, vel, param, atRoot, false, false);
-
-            if (rezzed == null || rezzed.Count == 0)
-            {
-                ShoutError("Unable to create requested object '" + inventory + "'.");
-                return UUID.Zero.ToString();
-            }
-
-            string result = UUID.Zero.ToString();
-            foreach (SceneObjectGroup grp in rezzed)
-            {
-                result = grp.RootPart.UUID.ToString();
-                m_ScriptEngine.PostObjectEvent(m_host.LocalId,
-                    new EventParams("object_rez",
-                        new object[] { result },
-                        new DetectParams[0]));
-            }
-            return result;
+            // Dead C# return. The async shim discards this method's C# return value; the real
+            // Key flows to the script through SysReturn in the finally above. This line exists
+            // only to satisfy the `string` signature — do not "simplify" it away.
+            return k.ToString();
         }
 
         public string iwRezPrim(LSLList primParams, LSLList particleSystem, LSLList inventory, Vector3 pos, Vector3 vel, Quaternion rot, int param) { /* InWorldz-specific — no OpenSim equivalent */ return UUID.Zero.ToString(); }
