@@ -1,0 +1,100 @@
+================================================================================
+PR REOPEN COMMENTS — Phlox stack (#181 / #182 / #183 / #184)
+Two versions per PR:
+  [A] PRE-VERIFICATION  — no build claim; SAFE to paste on reopen, before dotnet build.
+  [B] POST-VERIFICATION — includes "builds clean"; paste (or edit A) after §4 confirms
+                          that branch builds feed-free.
+Ready to paste. Factual. Saved here because /mnt/user-data/uploads/ is not mounted
+on this Windows host. Path: D:/tranquillity-develop/pr-comments.txt
+================================================================================
+
+Shared context (true for all four): each branch was merged forward from the
+pre-v1.0 merge-base (e1b0a31795) onto upstream/develop @ #185 (NGC v1.1). Conflict
+surface confirmed via git merge-tree: only Tranquillity.sln (union) and
+OptionalModules.csproj (OMV centralization) — zero source (.cs) conflicts in
+Bot / Phlox / Experience.
+
+################################################################################
+#181  feature/bot-npc-framework
+################################################################################
+
+----- [A] PRE-VERIFICATION (safe pre-build) -----
+This PR auto-closed when develop advanced through v1.0. The branch is now merged
+forward to NGC v1.1 (upstream/develop @ #185); the only conflict was OMV
+centralization in OpenSim.Region.OptionalModules.csproj (dropped the local
+OpenMetaverse/Nini refs now provided centrally, kept the bot framework's
+Microsoft.Data.Sqlite ref) — no Tranquillity.sln conflict and zero source
+conflicts. As the base of the stack this adds IBotManager to OpenSim.Region.Framework
+and should merge first (#181 -> #182 -> #183 -> #184).
+
+----- [B] POST-VERIFICATION (after build passes) -----
+This PR auto-closed when develop advanced through v1.0. The branch is now merged
+forward to NGC v1.1 (upstream/develop @ #185); the only conflict was OMV
+centralization in OpenSim.Region.OptionalModules.csproj (dropped the local
+OpenMetaverse/Nini refs now provided centrally, kept the bot framework's
+Microsoft.Data.Sqlite ref) — no Tranquillity.sln conflict and zero source
+conflicts. Builds clean. As the base of the stack this adds IBotManager to
+OpenSim.Region.Framework and should merge first (#181 -> #182 -> #183 -> #184).
+
+################################################################################
+#182  phlox/engine
+################################################################################
+
+----- [A] PRE-VERIFICATION (safe pre-build) -----
+This PR auto-closed when develop advanced through v1.0; it is now merged forward
+to NGC v1.1 (upstream/develop @ #185). The only conflicts were Tranquillity.sln
+(union — kept both the Phlox/SluaProofRunner projects and upstream's new test
+project) and OMV centralization in OptionalModules.csproj; zero source conflicts.
+Depends on #181 for IBotManager (referenced in 71 places), so please merge after
+#181 and before #183.
+
+----- [B] POST-VERIFICATION (after build passes) -----
+This PR auto-closed when develop advanced through v1.0; it is now merged forward
+to NGC v1.1 (upstream/develop @ #185). The only conflicts were Tranquillity.sln
+(union — kept both the Phlox/SluaProofRunner projects and upstream's new test
+project) and OMV centralization in OptionalModules.csproj; zero source conflicts,
+and it builds clean. Depends on #181 for IBotManager (referenced in 71 places),
+so please merge after #181 and before #183.
+
+################################################################################
+#183  phlox/stats-suspend   (already open — updated by push, not reopened)
+################################################################################
+
+----- [A] PRE-VERIFICATION (safe pre-build) -----
+Refreshed: this branch is now merged forward to NGC v1.1 (upstream/develop @ #185),
+with the same mechanical conflicts as the rest of the stack — Tranquillity.sln
+(union) and OMV centralization in OptionalModules.csproj — zero source conflicts.
+It sits on phlox/engine, so it should merge after #181 and #182 are in
+(#181 -> #182 -> #183 -> #184).
+
+----- [B] POST-VERIFICATION (after build passes) -----
+Refreshed: this branch is now merged forward to NGC v1.1 (upstream/develop @ #185),
+with the same mechanical conflicts as the rest of the stack — Tranquillity.sln
+(union) and OMV centralization in OptionalModules.csproj — zero source conflicts,
+and it builds clean. It sits on phlox/engine, so it should merge after #181 and
+#182 are in (#181 -> #182 -> #183 -> #184).
+
+################################################################################
+#184  experience/port
+################################################################################
+
+----- [A] PRE-VERIFICATION (safe pre-build) -----
+This PR auto-closed when develop advanced through v1.0; it is now merged forward
+to NGC v1.1 (upstream/develop @ #185). Conflicts were limited to Tranquillity.sln
+(union) and OMV centralization in OptionalModules.csproj — the Experience source
+(ExperienceModule.cs, ExperienceService.cs, EstateManagementModule.cs) was
+untouched by the v1.0/v1.1 delta, so zero source conflicts. Top of the stack —
+please merge last, after #181 -> #182 -> #183.
+
+----- [B] POST-VERIFICATION (after build passes) -----
+This PR auto-closed when develop advanced through v1.0; it is now merged forward
+to NGC v1.1 (upstream/develop @ #185). Conflicts were limited to Tranquillity.sln
+(union) and OMV centralization in OptionalModules.csproj — the Experience source
+(ExperienceModule.cs, ExperienceService.cs, EstateManagementModule.cs) was
+untouched by the v1.0/v1.1 delta, so zero source conflicts; builds clean. Top of
+the stack — please merge last, after #181 -> #182 -> #183.
+================================================================================
+DIFF BETWEEN A AND B: version B adds exactly one clause — "Builds clean." (#181),
+"and it builds clean" (#182/#183), "builds clean" (#184). Everything else is
+identical. To upgrade a pasted [A] comment after §4, just add that clause.
+================================================================================

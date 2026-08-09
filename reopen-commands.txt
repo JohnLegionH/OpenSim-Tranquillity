@@ -1,0 +1,255 @@
+================================================================================
+REOPEN COMMAND SHEET — Phlox dependency stack (#181 / #182 / #183 / #184)
+Merge-forward onto upstream/develop (NGC v1.1), 2-commit vendoring pattern,
+reopen closed PRs.  JOHN RUNS EVERYTHING.  ORIGIN ONLY.  NO UPSTREAM PUSH.
+================================================================================
+Repo:   /d/tranquillity-develop   (Windows / Git-Bash)
+Author: this sheet was drafted read-only; every command below is for John to run.
+Note:   requested output path /mnt/user-data/uploads/ is not mounted on this host,
+        so this file was saved in the repo working dir instead (same as omv-vendor-fix.txt).
+
+--------------------------------------------------------------------------------
+0.  WHAT YOU'RE DOING (why the sequence is shaped this way)
+--------------------------------------------------------------------------------
+The 4 branches form a TRUE dependency stack (each is a git ancestor of the next):
+
+    feature/bot-npc-framework   (#181, base)   1 ahead / 9 behind
+      -> phlox/engine           (#182)         9 ahead / 9 behind   [needs IBotManager]
+        -> phlox/stats-suspend  (#183, OPEN)  11 ahead / 9 behind
+          -> experience/port    (#184)        20 ahead / 9 behind
+
+All four are exactly 9 behind upstream/develop (merge-base e1b0a31795).
+Merging upstream/develop into each is MECHANICAL — the ONLY conflicts are:
+    A) Source/OpenSim.Region.OptionalModules/OpenSim.Region.OptionalModules.csproj
+       (OMV: upstream centralized OMV into Directory.Build.props; branch had local refs)
+    B) Tranquillity.sln  (union: keep both project sets)
+ZERO .cs source conflicts in Bot / Phlox / Experience. v1.0/v1.1 did NOT touch
+those files. (#181 does NOT touch the .sln, so #181 has ONLY conflict A.)
+
+KEY SIMPLIFICATION — each branch builds SELF-CONTAINED:
+    IBotManager.cs lives at Source/OpenSim.Region.Framework/Interfaces/IBotManager.cs
+    and is ALREADY in all four branch trees (bot is an ancestor of each). So Phlox's
+    71 IBotManager references (across 5 files) resolve locally. You do NOT need to
+    temp-merge #181 to build/verify #182 — dotnet build works on each merged branch
+    as-is. The "needs #181 first" rule is purely the GitHub MERGE-TO-DEVELOP order
+    (so develop has the interface before Phlox merges), NOT a local-build requirement.
+
+2-COMMIT PATTERN per branch (same as jolt):
+    Commit 1 = PR-SAFE MERGE  -> resolve A toward upstream + B as union.  PUSH THIS.
+    Commit 2 = LOCAL-FORK-BUILD-ONLY vendoring (OMV 1.2.13 HintPath + Library DLLs).
+               For your feed-free build only.  DO NOT PUSH to the PR branch.
+
+Do the merge-forward on ALL FOUR first (order among them doesn't affect the local
+build since each is self-contained), THEN reopen, THEN merge to develop in stack order.
+
+--------------------------------------------------------------------------------
+1.  ONE-TIME PREP
+--------------------------------------------------------------------------------
+cd /d/tranquillity-develop
+
+# Refresh upstream ref locally (READ-ONLY fetch; no push). Confirm the tip is #185.
+git fetch upstream
+git log -1 --oneline upstream/develop        # expect: 2efcee5a0e Bf/binaryformatter removal (#185)
+
+# (optional) keep a rescue tag on each current tip before you touch anything:
+git tag rescue/bot-181        feature/bot-npc-framework
+git tag rescue/engine-182     phlox/engine
+git tag rescue/stats-183      phlox/stats-suspend
+git tag rescue/experience-184 experience/port
+
+--------------------------------------------------------------------------------
+2.  CONFLICT-RESOLUTION REFERENCE (identical for all 4 branches)
+--------------------------------------------------------------------------------
+========== A) OpenSim.Region.OptionalModules.csproj ==========
+Upstream (centralization) REMOVED, in this file:
+    - <Reference Include="Nini" HintPath="../../Library/Nini.dll" />           (Reference ItemGroup)
+    - <PackageReference Include="OpenMetaverse" Version="1.2.13" />            (PackageReference ItemGroup)
+    - <PackageReference Include="OpenMetaverse.Types" Version="1.2.13" />
+    - <PackageReference Include="OpenMetaverse.StructuredData" Version="1.2.13" />
+The branch side ADDED (bot framework, genuinely needed):
+    - <!-- Phlox bot framework: BotPersistenceManager keeps its isolated local bot DB via Microsoft.Data.Sqlite -->
+    - <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.7" />
+
+RESOLUTION = take upstream's removals, but KEEP the branch's Microsoft.Data.Sqlite:
+  * DROP the 3 OpenMetaverse* PackageReferences  (now centralized in Directory.Build.props)
+  * DROP the Nini <Reference>                    (now centralized)
+  * KEEP  Microsoft.Data.Sqlite + its comment    <-- ★ BRANCH-NEEDED, NOT an OMV artifact.
+        Upstream never had/removed it; BotManager/BotPersistenceManager
+        (Source/OpenSim.Region.OptionalModules/World/NPC/) require it for the
+        isolated local bot SQLite DB. Preserve it.
+  * KEEP  log4net, System.Configuration.ConfigurationManager, System.Data.SQLite (unchanged)
+
+Final state of the two ItemGroups after resolution:
+  <ItemGroup>
+    <Reference Include="NDesk.Options" HintPath="../../Library/NDesk.Options.dll" />
+    <Reference Include="netcd" HintPath="../../Library/netcd.dll" />
+    <Reference Include="xmlrpc" HintPath="../../Library/xmlrpc.dll" />
+  </ItemGroup>
+  ...
+  <ItemGroup>
+    <PackageReference Include="log4net" Version="3.3.1" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.8" />
+    <PackageReference Include="System.Data.SQLite" Version="2.0.3" />
+    <!-- Phlox bot framework: BotPersistenceManager keeps its isolated local bot DB via Microsoft.Data.Sqlite -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.7" />
+  </ItemGroup>
+(In short: accept upstream's version of this file, then re-add ONLY the
+ Microsoft.Data.Sqlite line + its comment.)
+
+========== B) Tranquillity.sln  (union — keep BOTH project sets) ==========
+Branch side adds these Project(...)/EndProject blocks:
+    InWorldz.Phlox        -> Source\InWorldz.Phlox\InWorldz.Phlox.csproj        {FC4C33F7-DFAC-4882-98BC-4984D3A16405}
+    Phlox.ScriptEngine    -> Source\Phlox.ScriptEngine\Phlox.ScriptEngine.csproj {2E20D7BA-B743-48D1-9B61-4F168DC17D9E}
+    SluaProofRunner       -> Tests\SluaProofRunner\SluaProofRunner.csproj       {BA920564-AEDE-4B49-A31B-096C145B1BD9}
+Upstream side adds:
+    OpenSim.Server.Base.Tests -> Tests\OpenSim.Server.Base.Tests\...            {3D7E8E30-A56E-46E5-95F8-2D17DA4AB082}
+RESOLUTION: keep ALL of them. At each <<<<<<< / ======= / >>>>>>> marker, delete
+the marker lines and retain BOTH sides' Project/EndProject blocks AND both sides'
+matching GUID lines in GlobalSection(ProjectConfigurationPlatforms). No entry is
+dropped; it's a pure additive union. (#181 has NO .sln conflict — skip B for bot.)
+
+--------------------------------------------------------------------------------
+3.  VENDORING (Commit 2) — reusable verbatim across all 4 branches
+--------------------------------------------------------------------------------
+The jolt vendoring commit 3234b4ed4d is directly reusable: none of these 4 branches
+touch Directory.Build.props, so after each merge-forward the file equals upstream's
+exactly, and the vendoring's OMV hunk (Directory.Build.props lines ~14-16) is isolated
+from any jolt-specific content -> cherry-pick applies CLEANLY.
+
+  PRIMARY (one step):   git cherry-pick 3234b4ed4d
+    -> adds Directory.Build.props OMV 1.0.6-feed -> Library/ HintPath override,
+       the 3 Library/OpenMetaverse*.dll (1.2.13), and Docs/fork-build-notes.md,
+       with the "LOCAL FORK BUILD ONLY ... DO NOT include in NGC PRs" message.
+
+  FALLBACK (if cherry-pick ever balks): apply by hand —
+    # bring the vendored DLLs from the jolt branch:
+    git checkout jolt/vehicle-types -- Library/OpenMetaverse.dll \
+        Library/OpenMetaverse.Types.dll Library/OpenMetaverse.StructuredData.dll \
+        Docs/fork-build-notes.md
+    # then edit Directory.Build.props: replace the three
+    #   <PackageReference Include="OpenMetaverse*"        Version="1.0.6" />
+    # lines with the <Reference Include="OpenMetaverse*"><HintPath>
+    #   $(MSBuildThisFileDirectory)Library/OpenMetaverse*.dll</HintPath><Private>true</Private></Reference>
+    # block (verbatim from jolt commit 3234b4ed4d), then:
+    git add Directory.Build.props Library/OpenMetaverse*.dll Docs/fork-build-notes.md
+    git commit -m "LOCAL FORK BUILD ONLY - vendored OMV 1.2.13 (non-org-member build); DO NOT include in NGC PRs"
+
+★ POSSIBLE EXTRA LOCAL FIX (watch for it): jolt's merge-forward also added
+    <EnableUnsafeBinaryFormatterSerialization>true</EnableUnsafeBinaryFormatterSerialization>
+  to Directory.Build.props (PropertyGroup) because upstream #185 removed BinaryFormatter.
+  Phlox serializes script state, so if a phlox branch FAILS to build with a
+  BinaryFormatter/serialization error, add that same line locally (fold it into the
+  Commit-2 vendoring / local-only set — do NOT push it in the PR-safe Commit 1).
+  If the build is green without it, leave it out.
+
+================================================================================
+4.  PER-BRANCH RUNBOOK
+================================================================================
+
+########## #181  feature/bot-npc-framework  (base; ONLY conflict A) ##########
+git checkout feature/bot-npc-framework
+git merge upstream/develop            # conflict: OptionalModules.csproj only (no .sln)
+
+# --- resolve A (see section 2A): accept upstream, re-add Microsoft.Data.Sqlite ---
+#     edit Source/OpenSim.Region.OptionalModules/OpenSim.Region.OptionalModules.csproj
+git add Source/OpenSim.Region.OptionalModules/OpenSim.Region.OptionalModules.csproj
+git commit                            # Commit 1 = PR-SAFE MERGE (accept default merge msg)
+
+# --- Commit 2: local-only vendoring (feed-free build) ---
+git cherry-pick 3234b4ed4d
+
+# --- build-verify (self-contained; IBotManager already present) ---
+dotnet build Tranquillity.sln         # expect success, feed-free
+
+# --- PUSH ONLY the PR-safe merge, NOT the vendoring commit ---
+#     HEAD~1 is the vendoring commit; HEAD~2 is Commit 1 (the merge). Push the merge SHA:
+git rev-parse HEAD~1                   # <- this is your PR-safe merge commit SHA (call it MERGE_SHA)
+git push origin +${_}:                 # (don't use this line literally; use the explicit form below)
+#   Explicit, safe form (fast-forward only, no force):
+git push origin $(git rev-parse HEAD~1):feature/bot-npc-framework
+#   ^ pushes the merge commit (parent of the local-only vendoring) to the branch on origin.
+#     This fast-forwards origin's tip 2e3a496783 -> MERGE_SHA. Never use --force.
+
+########## #182  phlox/engine  (conflicts A + B) ##########
+git checkout phlox/engine
+git merge upstream/develop            # conflicts: OptionalModules.csproj  AND  Tranquillity.sln
+
+# resolve A (section 2A) and B (section 2B):
+#   edit Source/OpenSim.Region.OptionalModules/OpenSim.Region.OptionalModules.csproj
+#   edit Tranquillity.sln  (union: keep InWorldz.Phlox + Phlox.ScriptEngine + SluaProofRunner
+#                            AND upstream's OpenSim.Server.Base.Tests, plus their config GUID lines)
+git add Source/OpenSim.Region.OptionalModules/OpenSim.Region.OptionalModules.csproj Tranquillity.sln
+git commit                            # Commit 1 = PR-SAFE MERGE
+
+git cherry-pick 3234b4ed4d            # Commit 2 = local-only vendoring
+
+dotnet build Tranquillity.sln         # ★ builds WITHOUT temp-merging #181: IBotManager.cs is
+                                      #   already in this tree. If a BinaryFormatter error appears,
+                                      #   add EnableUnsafeBinaryFormatterSerialization (section 3).
+
+git push origin $(git rev-parse HEAD~1):phlox/engine    # push ONLY the merge commit; no force
+
+########## #183  phlox/stats-suspend  (OPEN PR; conflicts A + B) ##########
+git checkout phlox/stats-suspend
+git merge upstream/develop            # conflicts: OptionalModules.csproj  AND  Tranquillity.sln
+#   resolve A + B exactly as #182
+git add Source/OpenSim.Region.OptionalModules/OpenSim.Region.OptionalModules.csproj Tranquillity.sln
+git commit                            # Commit 1 = PR-SAFE MERGE
+git cherry-pick 3234b4ed4d            # Commit 2 = local-only vendoring
+dotnet build Tranquillity.sln         # self-contained
+git push origin $(git rev-parse HEAD~1):phlox/stats-suspend   # updates the ALREADY-OPEN PR #183; no force
+
+########## #184  experience/port  (conflicts A + B) ##########
+git checkout experience/port
+git merge upstream/develop            # conflicts: OptionalModules.csproj  AND  Tranquillity.sln
+#   resolve A + B exactly as #182. (experience/port also edits ExperienceModule.cs /
+#   ExperienceService.cs / EstateManagementModule.cs, but upstream did NOT touch those,
+#   so they will NOT conflict.)
+git add Source/OpenSim.Region.OptionalModules/OpenSim.Region.OptionalModules.csproj Tranquillity.sln
+git commit                            # Commit 1 = PR-SAFE MERGE
+git cherry-pick 3234b4ed4d            # Commit 2 = local-only vendoring
+dotnet build Tranquillity.sln         # self-contained
+git push origin $(git rev-parse HEAD~1):experience/port       # push ONLY the merge commit; no force
+
+--------------------------------------------------------------------------------
+5.  REOPEN THE PRs  (branches intact + closed-not-merged => reopen, don't recreate)
+--------------------------------------------------------------------------------
+# Do this AFTER the PR-safe merge commits are pushed to origin (step 4).
+# Because you pushed a MERGE commit on top (never force-pushed the old tip), the
+# original head commits are preserved and GitHub keeps the reopen valid.
+
+gh pr reopen 181      # feature/bot-npc-framework
+gh pr reopen 182      # phlox/engine
+#  183 is ALREADY OPEN — do NOT reopen; the push above just updated it.
+gh pr reopen 184      # experience/port
+
+# Verify they're open and pointing at the new merge tips:
+for n in 181 182 183 184; do
+  gh pr view $n --json number,state,headRefName,headRefOid | cat
+done
+
+# If GitHub ever refuses a reopen (branch shows as deleted / diverged), FALL BACK to
+# recreate with the SAME head branch:
+#   gh pr create --repo OpenSim-NGC/OpenSim-Tranquillity --base develop \
+#     --head JohnLegionH:feature/bot-npc-framework --title "..." --body "..."
+
+--------------------------------------------------------------------------------
+6.  MERGE-TO-DEVELOP ORDER  (strict; enforces the compile dependency on develop)
+--------------------------------------------------------------------------------
+Merge the reopened PRs into upstream/develop in STACK ORDER, each only after the
+previous is merged (so develop has IBotManager before Phlox merges, and each PR
+stays non-empty):
+
+    #181 feature/bot-npc-framework   (adds IBotManager to OpenSim.Region.Framework)
+      -> #182 phlox/engine           (71 IBotManager refs; needs #181 in develop)
+        -> #183 phlox/stats-suspend  (sits on engine; needs #182 in develop)
+          -> #184 experience/port    (sits on the phlox line; needs #183 in develop)
+
+Merging is done via the NGC PR UI / maintainers as usual; you only drive the branch
+pushes + reopens above. NEVER push to upstream directly.
+
+================================================================================
+GUARDRAILS RECAP: John runs every command. Fetch upstream is read-only. Push to
+ORIGIN only, and only the PR-safe MERGE commit (parent of the local vendoring
+commit) — never --force, never the vendoring commit, never a push to upstream.
+================================================================================

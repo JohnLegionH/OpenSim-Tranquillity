@@ -1,0 +1,125 @@
+OMV VENDOR FIX — Tranquillity fork jolt branches (build-verify feed-free)
+=========================================================================
+Date: 2026-08-04
+Repo: /d/tranquillity-develop
+Branch worked: jolt/physics-backend (merged with upstream/develop = NGC v1.1)
+Requested output path /mnt/user-data/uploads/omv-vendor-fix.txt did not exist on this
+Windows/Git-Bash host (/mnt not mounted); saved here in the repo working dir instead.
+
+
+1. PROBLEM
+----------
+NGC's v1.0/v1.1 refactor centralized OpenMetaverse (OMV) into Directory.Build.props
+pinned to version 1.0.6, served from the AUTHENTICATED private GitHub Packages feed
+nuget.pkg.github.com/OpenSim-NGC. John is NOT a member of the OpenSim-NGC org, so that
+feed returns HTTP 403 for him — no token/PAT can fix it (verified: fresh PAT still 403s;
+"could not be authenticated ... valid and appropriate scopes"). After merging v1.1, the
+whole tree tried to inherit 1.0.6 => unrestorable for John => build blocked.
+
+
+2. ROOT CAUSE (why no token helps, and why 1.2.13 is the answer)
+----------------------------------------------------------------
+The three-package OMV split the code needs — OpenMetaverse, OpenMetaverse.Types,
+OpenMetaverse.StructuredData — is NOT fully on public nuget.org:
+  - public nuget.org: OpenMetaverse + OpenMetaverse.StructuredData only at 0.9.3.3318,
+    and OpenMetaverse.Types does NOT exist there at all (BlobNotFound).
+  - the 1.x split with a separate OpenMetaverse.Types exists ONLY on:
+       * NGC private feed  -> 1.0.6  (unreachable for John)
+       * John's machine    -> 1.2.13 (see §3)
+NGC's 1.0.6 and public/local 1.2.13 are the SAME lineage (identical package IDs and DLL
+names: OpenMetaverse.Types.dll). 1.2.13 is what this fork ALWAYS built against and what
+the Jolt code was authored against. So the correct fix for a non-member fork maintainer
+is: keep OMV on 1.2.13, feed-independent — do NOT chase the unreachable 1.0.6.
+
+
+3. ASSESSMENT — where OMV 1.2.13 resolves from (durability)
+-----------------------------------------------------------
+  - Global NuGet cache: C:\Users\jarno\.nuget\packages\openmetaverse{,.types,
+    .structureddata}\1.2.13\lib\net8.0\*.dll  (all present)
+  - Origin of those: John's MACHINE-LOCAL directory feed D:\local-nuget\ which holds
+    OpenMetaverse.1.2.13.nupkg, OpenMetaverse.Types.1.2.13.nupkg,
+    OpenMetaverse.StructuredData.1.2.13.nupkg (+ snupkg, + 1.2.8-beta).
+  Conclusion: 1.2.13 is durable ON JOHN'S MACHINE (cache + D:\local-nuget) but NOT on a
+  clean/other machine (not public). => vendoring the DLLs INTO THE REPO makes it durable
+  everywhere (clone-and-build), which is the sdk-migration-plan §1.1 model.
+
+  OMV assembly versions found on disk:
+    - 1.2.13 nuget set (with-dot OpenMetaverse.Types.dll): asmVer 1.2.0.0, file 1.2.13.10055  <- USED
+    - Legion vendored /d/legion-grid-source/bin (no-dot OpenMetaverseTypes.dll): OpenMetaverse.dll
+      asmVer 0.9.4.0, the rest 0.0.0.0  -> DIFFERENT (older) lineage, NOT used for Tranquillity.
+
+
+4. ASSESSMENT — ProjectReference graph (what builds feed-free)
+--------------------------------------------------------------
+  Legion.Physics        -> only JoltPhysicsSharp (public). No OpenSim, no OMV. STANDALONE, feed-free.
+  Legion.Vehicles       -> OpenMetaverse.Types 1.2.13 only. No OpenSim refs.     STANDALONE, feed-free.
+  Legion.Vehicles.Tests -> Legion.Vehicles + xunit.  The 38 vehicle tests run with NO OpenSim/feed dep.
+  LegionJolt (module)   -> ProjectReferences OpenSim.Framework/.Console/.Region.Framework/.SharedBase
+                           + Legion.Physics.  Pulls the FULL OpenSim chain, which inherits central OMV.
+                           => cannot be isolated from the tree; central OMV must be 1.2.13 (it now is).
+
+  So: the vehicles/physics/tests unit verifies entirely feed-free; the physics MODULE needs the
+  central OMV pin to be reachable (1.2.13), which the fix below provides.
+
+
+5. THE FIX (implemented on jolt/physics-backend)
+------------------------------------------------
+Vendored OMV 1.2.13 into the fork's existing Library/ HintPath convention and pointed the
+centralized reference at it, so every project (Jolt module + its OpenSim chain) resolves OMV
+from in-repo DLLs with zero feed and zero cache dependency.
+
+  a) Copied 3 DLLs into Library/ :
+        Library/OpenMetaverse.dll
+        Library/OpenMetaverse.Types.dll
+        Library/OpenMetaverse.StructuredData.dll
+     (from the cached 1.2.13 net8.0 assemblies; asmVer 1.2.0.0)
+
+  b) Directory.Build.props: replaced the 3 central OMV <PackageReference> (which upstream
+     pinned to 1.0.6 from the NGC feed) with vendored <Reference><HintPath> entries using
+     $(MSBuildThisFileDirectory)Library/... + <Private>true</Private>. nini-core (public on
+     nuget.org) and Nerdbank.GitVersioning stay as normal PackageReferences.
+
+  c) LegionJolt.csproj: inline OMV/Nini refs already removed during the merge resolution; it
+     now inherits the vendored central OMV (still 1.2.13 — goal met).
+
+  Also part of the same merge resolution (from the prior step):
+     - Tranquillity.sln conflict resolved as a UNION (kept John's Legion.Physics + LegionJolt
+       project entries AND upstream's new OpenSim.Server.Base.Tests).
+
+
+6. BUILD-VERIFY RESULTS
+-----------------------
+  dotnet build LegionJolt.csproj (Debug, --no-incremental), against VENDORED OMV:
+        27 Warning(s)   0 Error(s)
+  All 27 warnings pre-existing/unrelated (obsolete BinaryFormatter / WebRequest / Skia APIs,
+  CS0649 unassigned Jolt constraint fields) — none OMV-related.
+  Confirmed OpenMetaverse{,.Types,.StructuredData}.dll copied into the module's bin output.
+  => The merge is sound and the Jolt module compiles feed-free on vendored OMV 1.2.13.
+
+
+7. REMAINING / PROPAGATION PLAN
+-------------------------------
+  - Commit the base (jolt/physics-backend): merge resolution + Library/ OMV DLLs +
+    Directory.Build.props vendoring. LOCAL commit only; NOT pushed (standing rule: John pushes).
+  - Propagate up the stack (merge-forward), each inheriting the vendored OMV + resolution:
+        physics-backend -> vehicles -> reload-robustness -> body-transform-fix -> vehicle-types
+    On jolt/vehicles: strip Legion.Vehicles' inline OpenMetaverse.Types 1.2.13 ref so it inherits
+    the vendored central (avoids a duplicate Reference+PackageReference), then run the 38 vehicle
+    tests (feed-free) as the verify gate.
+  - Per-branch: build + (vehicles+) 38/38 vehicle tests.
+
+  NOTE — Addons (out of Jolt scope): Gloebit/Groups/OfflineIM/Mutelist/Search csprojs still carry
+  inline OpenMetaverse* PackageReferences. They are not in the Jolt build path. With the vendored
+  central Reference they may emit duplicate-reference warnings if built; cleaning them is a
+  separate fork-wide task, not required for the Jolt verify.
+
+  NOTE — PR cleanliness: the Directory.Build.props vendoring is a deliberate FORK divergence
+  (John's fork can never use the NGC feed). If/when upstreaming Jolt to NGC, exclude this
+  Directory.Build.props change (NGC keeps 1.0.6 from their feed) — it is a private-fork build
+  accommodation, matching sdk-migration-plan.md §1.1's zero-auth principle.
+
+
+8. PUSH — DO NOT (standing rule)
+--------------------------------
+  Nothing pushed. Push target, when John chooses, is origin ONLY (John's fork), never
+  upstream/tranquillity (NGC). No PR.
