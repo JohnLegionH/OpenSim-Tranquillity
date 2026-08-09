@@ -71,6 +71,10 @@ namespace Phlox.ScriptEngine
         protected void ScriptSleep(int ms)
         {
             if (m_thisScript == null || ms <= 0) return;
+            // Ported from Halcyon: never clobber a script that is mid-Syscall. Async syscalls
+            // carry their delay via SysReturn's delay param; a ScriptSleep during Syscall would
+            // set Sleeping and make ProcessSyscallReturns' `!= Syscall` guard drop the resume.
+            if (m_thisScript.ScriptState.RunState == RuntimeState.Status.Syscall) return;
             m_thisScript.ScriptState.NextWakeup = (ulong)OpenSim.Framework.Util.EnvironmentTickCount() + (ulong)ms;
             m_thisScript.ScriptState.RunState = RuntimeState.Status.Sleeping;
         }
@@ -341,33 +345,40 @@ namespace Phlox.ScriptEngine
 
 		public void llInstantMessage(string user, string message)
         {
-            ScriptSleep(2000);
-            if (!UUID.TryParse(user, out UUID targetID) || targetID == UUID.Zero)
-                return;
-
-            IMessageTransferModule tr = World?.RequestModuleInterface<IMessageTransferModule>();
-            if (tr == null)
-                return;
-
-            GridInstantMessage msg = new GridInstantMessage()
+            const int delay = 2000;   // Halcyon
+            try
             {
-                fromAgentID    = m_host.OwnerID.Guid,
-                toAgentID      = targetID.Guid,
-                imSessionID    = m_host.UUID.Guid,
-                timestamp      = (uint)Util.UnixTimeSinceEpoch(),
-                fromAgentName  = m_host.Name,
-                message        = message ?? string.Empty,
-                dialog         = (byte)InstantMessageDialog.MessageFromObject,
-                fromGroup      = false,
-                offline        = 0,
-                ParentEstateID = World.RegionInfo.EstateSettings.ParentEstateID,
-                Position       = m_host.AbsolutePosition,
-                RegionID       = World.RegionInfo.RegionID.Guid,
-                binaryBucket   = new byte[0]
-            };
+                if (!UUID.TryParse(user, out UUID targetID) || targetID == UUID.Zero)
+                    return;
 
-            tr.SendInstantMessage(msg, success => {});
-        } 
+                IMessageTransferModule tr = World?.RequestModuleInterface<IMessageTransferModule>();
+                if (tr == null)
+                    return;
+
+                GridInstantMessage msg = new GridInstantMessage()
+                {
+                    fromAgentID    = m_host.OwnerID.Guid,
+                    toAgentID      = targetID.Guid,
+                    imSessionID    = m_host.UUID.Guid,
+                    timestamp      = (uint)Util.UnixTimeSinceEpoch(),
+                    fromAgentName  = m_host.Name,
+                    message        = message ?? string.Empty,
+                    dialog         = (byte)InstantMessageDialog.MessageFromObject,
+                    fromGroup      = false,
+                    offline        = 0,
+                    ParentEstateID = World.RegionInfo.EstateSettings.ParentEstateID,
+                    Position       = m_host.AbsolutePosition,
+                    RegionID       = World.RegionInfo.RegionID.Guid,
+                    binaryBucket   = new byte[0]
+                };
+
+                tr.SendInstantMessage(msg, success => {});
+            }
+            finally
+            {
+                m_ScriptEngine.SysReturn(m_itemID, null, delay);
+            }
+        }
 		public void llDialog(string avatar, string message, LSLList buttons, int chat_channel)
 		{
 			if (m_host == null) return;
@@ -1939,6 +1950,9 @@ namespace Phlox.ScriptEngine
 
         public void llTeleportAgentHome(string agent)
         {
+            const int delay = 5000;   // Halcyon
+            try
+            {
             if (!UUID.TryParse(agent, out UUID agentId)) return;
 
             ScenePresence presence = World?.GetScenePresence(agentId);
@@ -1949,11 +1963,18 @@ namespace Phlox.ScriptEngine
 
             presence.ControllingClient.SendTeleportStart((uint)OpenMetaverse.TeleportFlags.DisableCancel);
             World.TeleportClientHome(agentId, presence.ControllingClient);
-            ScriptSleep(5000);
+            }
+            finally
+            {
+                m_ScriptEngine.SysReturn(m_itemID, null, delay);
+            }
         }
 
         public void iwTeleportAgent(string agent, string region, Vector3 pos, Vector3 lookAt)
         {
+            const int delay = 0;   // Halcyon
+            try
+            {
             if (!UUID.TryParse(agent, out UUID agentId)) return;
 
             ScenePresence targetSP = World?.GetScenePresence(agentId);
@@ -1969,6 +1990,11 @@ namespace Phlox.ScriptEngine
 
             World.RequestTeleportLocation(targetSP.ControllingClient,
                 region, pos, lookAt, (uint)OpenMetaverse.TeleportFlags.ViaLocation);
+            }
+            finally
+            {
+                m_ScriptEngine.SysReturn(m_itemID, null, delay);
+            }
         }
         public void osTeleportAgent(string agent, string region, Vector3 pos, Vector3 lookAt)
         {
@@ -2650,7 +2676,9 @@ namespace Phlox.ScriptEngine
         }
         public void llGiveInventory(string destination, string inventory)
         {
-            ScriptSleep(2000);
+            const int delay = 2000;   // Halcyon
+            try
+            {
             if (m_host == null || World == null) return;
 
             if (!UUID.TryParse(destination, out UUID destId) || destId == UUID.Zero)
@@ -2702,9 +2730,17 @@ namespace Phlox.ScriptEngine
 
             IMessageTransferModule tr = World.RequestModuleInterface<IMessageTransferModule>();
             tr?.SendInstantMessage(msg, success => {});
+            }
+            finally
+            {
+                m_ScriptEngine.SysReturn(m_itemID, null, delay);
+            }
         }
         public void llGiveInventoryList(string target, string folder, LSLList inventory)
         {
+            const int delay = 3000;   // Halcyon
+            try
+            {
             if (m_host == null || World == null) return;
             if (!UUID.TryParse(target, out UUID destId) || destId == UUID.Zero) return;
 
@@ -2727,7 +2763,11 @@ namespace Phlox.ScriptEngine
             if (itemIDs.Count == 0) return;
 
             World.MoveTaskInventoryItems(destId, folder, m_host, itemIDs);
-            ScriptSleep(3000);
+            }
+            finally
+            {
+                m_ScriptEngine.SysReturn(m_itemID, null, delay);
+            }
         }
 
         public void llRemoveInventory(string item)
@@ -2755,6 +2795,9 @@ namespace Phlox.ScriptEngine
         }
         public void iwMakeNotecard(string name, LSLList data)
         {
+            const int delay = 5000;   // Halcyon
+            try
+            {
             // Faithful port from Halcyon: create a notecard in this prim's inventory
             if (m_host == null || World == null || string.IsNullOrEmpty(name)) return;
 
@@ -2806,7 +2849,11 @@ namespace Phlox.ScriptEngine
             {
                 m_log.LogWarning("[PhloxAPI]: iwMakeNotecard exception: {0}", e.Message);
             }
-            ScriptSleep(5000);
+            }
+            finally
+            {
+                m_ScriptEngine.SysReturn(m_itemID, null, delay);
+            }
         }
         public string llGetNumberOfNotecardLines(string name)
         {
@@ -3086,7 +3133,9 @@ namespace Phlox.ScriptEngine
         }
         public void iwGiveLinkInventory(int linknumber, string destination, string inventory)
         {
-            ScriptSleep(2000);
+            const int delay = 2000;   // Halcyon
+            try
+            {
             if (World == null) return;
             if (!UUID.TryParse(destination, out UUID destId) || destId == UUID.Zero)
             {
@@ -3134,9 +3183,17 @@ namespace Phlox.ScriptEngine
                 bucket, true);
             if (World.TryGetScenePresence(destId, out ScenePresence recipient))
                 recipient.ControllingClient.SendInstantMessage(msg);
+            }
+            finally
+            {
+                m_ScriptEngine.SysReturn(m_itemID, null, delay);
+            }
         }
         public void iwGiveLinkInventoryList(int linknumber, string target, string folder, LSLList inventory)
         {
+            const int delay = 3000;   // Halcyon
+            try
+            {
             // Faithful port: give inventory items from a specific link prim
             if (m_host == null || World == null) return;
             if (!UUID.TryParse(target, out UUID destId) || destId == UUID.Zero) return;
@@ -3161,7 +3218,11 @@ namespace Phlox.ScriptEngine
                 if (itemIDs.Count > 0)
                     World.MoveTaskInventoryItems(destId, folder, part, itemIDs);
             }
-            ScriptSleep(3000);
+            }
+            finally
+            {
+                m_ScriptEngine.SysReturn(m_itemID, null, delay);
+            }
         }
         public string iwGetLinkInventoryDesc(int linknumber, string name)
         {
@@ -6978,28 +7039,38 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         public void llEmail(string address, string subject, string message)
         {
-            // Faithful port from Halcyon
+            // Ported from Halcyon (LSLSystemAPI.cs:3942): resume the script via SysReturn in a
+            // FINALLY (delay 20000) so it un-parks from Syscall even if the body throws. No catch
+            // here — PerformAsyncCall's async wrapper logs any exception; the finally still resumes.
+            const int delay = 20000;
             try
             {
                 IEmailModule emailModule = World?.RequestModuleInterface<IEmailModule>();
-                if (emailModule == null) return;
+                if (emailModule == null)
+                    return;
+
                 emailModule.SendEmail(m_host.UUID, m_host.OwnerID, address, subject, message);
             }
-            catch (Exception e)
+            finally
             {
-                m_log.LogWarning("[PhloxAPI]: llEmail exception: {0}", e.Message);
+                m_ScriptEngine.SysReturn(m_itemID, null, delay);
             }
-            ScriptSleep(20000);
         }
         public void llGetNextEmail(string address, string subject)
         {
-            // Faithful port from Halcyon
+            // Ported from Halcyon (LSLSystemAPI.cs:3960): resume via SysReturn in a FINALLY
+            // (delay 0). No catch — the finally resumes even if the body throws; PerformAsyncCall
+            // logs any exception.
+            int delay = 0;
             try
             {
                 IEmailModule emailModule = World?.RequestModuleInterface<IEmailModule>();
-                if (emailModule == null) return;
+                if (emailModule == null)
+                    return;
+
                 Email email = emailModule.GetNextEmail(m_host.UUID, address, subject);
-                if (email == null) return;
+                if (email == null)
+                    return;
 
                 m_ScriptEngine.PostObjectEvent(m_host.LocalId,
                     new EventParams("email",
@@ -7012,9 +7083,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         },
                         new DetectParams[0]));
             }
-            catch (Exception e)
+            finally
             {
-                m_log.LogWarning("[PhloxAPI]: llGetNextEmail exception: {0}", e.Message);
+                m_ScriptEngine.SysReturn(m_itemID, null, delay);
             }
         }
         public void llOpenRemoteDataChannel()
@@ -8137,10 +8208,13 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         public void llRequestAgentData(string id, int data)
         {
+            const int delay = 100;   // Halcyon; retValue = query handle (our queryID, not Halcyon's synchronous value)
+            UUID queryID = UUID.Random();
+            try
+            {
             if (m_host == null) return;
             if (!UUID.TryParse(id, out UUID agentId)) return;
 
-            UUID queryID = UUID.Random();
             UUID capturedQuery = queryID;
             UUID capturedAgent = agentId;
             int capturedData = data;
@@ -8201,8 +8275,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     PostDataserverEvent(capturedQuery, string.Empty);
                 }
             });
-
-            ScriptSleep(100);
+            }
+            finally
+            {
+                m_ScriptEngine.SysReturn(m_itemID, queryID.ToString(), delay);
+            }
         }
         public string llRequestSimulatorData(string simulator, int data)
         {
