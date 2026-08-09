@@ -8,6 +8,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using OpenMetaverse;
@@ -53,6 +54,18 @@ namespace Phlox.ScriptEngine
         private readonly SysLinkedList m_RunQueue = new();
         private SysLinkedListNode m_NextScript;
         private readonly System.Collections.Generic.Dictionary<UUID, SysLinkedListNode> m_RunIndex = new();
+
+        // Wedge detection. When a script parks in Syscall we record the tick here;
+        // ProcessSyscallReturns clears it on resume. A throttled sweep in DoWork
+        // (CheckSyscallTimeouts) warns ONCE about any script still parked past
+        // SYSCALL_TIMEOUT_MS with no SysReturn — the class of bug where an async API body
+        // forgot to resume and the script wedges silently. Both maps are guarded by
+        // m_AllScriptsLock (also read by the 'phlox scripts' snapshot on the console thread).
+        private readonly System.Collections.Generic.Dictionary<UUID, ulong> m_SyscallEntered = new();
+        private readonly System.Collections.Generic.HashSet<UUID> m_SyscallWarned = new();
+        private ulong m_LastSyscallSweepTick;
+        private const int SYSCALL_TIMEOUT_MS = 30000;
+        private const int SYSCALL_SWEEP_INTERVAL_MS = 5000;
 
         // Sleeping scripts priority queue
         private struct SleepEntry : IComparable<SleepEntry>
@@ -393,6 +406,78 @@ namespace Phlox.ScriptEngine
             return list;
         }
 
+        // Per-script run-state snapshot for the 'phlox scripts' console command. Taken under
+        // m_AllScriptsLock so it is safe to enumerate from the console thread. SyscallMs is the
+        // time the script has been parked in Syscall (ms), or -1 when not parked — a large value
+        // is the visible signature of a wedge.
+        internal struct ScriptRunStateSnapshot
+        {
+            public UUID ItemId;
+            public uint HostLocalId;
+            public string State;
+            public UUID AssetId;
+            public long SyscallMs;
+            public bool Enabled;
+        }
+
+        internal List<ScriptRunStateSnapshot> SnapshotRunStates()
+        {
+            ulong now = (ulong)Util.EnvironmentTickCount();
+            List<ScriptRunStateSnapshot> list;
+            lock (m_AllScriptsLock)
+            {
+                list = new List<ScriptRunStateSnapshot>(m_AllScripts.Count);
+                foreach (var kvp in m_AllScripts)
+                {
+                    Interpreter interp = kvp.Value;
+                    long ms = -1;
+                    if (interp.ScriptState.RunState == RuntimeState.Status.Syscall
+                        && m_SyscallEntered.TryGetValue(kvp.Key, out var entered))
+                        ms = (long)(now - entered);
+                    list.Add(new ScriptRunStateSnapshot
+                    {
+                        ItemId = kvp.Key,
+                        HostLocalId = interp.HostLocalId,
+                        State = interp.ScriptState.RunState.ToString(),
+                        AssetId = interp.Script.AssetId,
+                        SyscallMs = ms,
+                        Enabled = interp.ScriptState.Enabled
+                    });
+                }
+            }
+            return list;
+        }
+
+        // Throttled wedge sweep (scheduler thread, from DoWork). Warns once per park about any
+        // script stuck in Syscall past SYSCALL_TIMEOUT_MS with no SysReturn. This is the audible
+        // half of the fix: before, a body that forgot SysReturn wedged the script in total
+        // silence; now the console says so within a few seconds.
+        private void CheckSyscallTimeouts()
+        {
+            ulong now = (ulong)Util.EnvironmentTickCount();
+            if (now - m_LastSyscallSweepTick < SYSCALL_SWEEP_INTERVAL_MS) return;
+            m_LastSyscallSweepTick = now;
+
+            List<(UUID item, ulong ms, UUID asset)> stale = null;
+            lock (m_AllScriptsLock)
+            {
+                if (m_SyscallEntered.Count == 0) return;
+                foreach (var kvp in m_SyscallEntered)
+                {
+                    if (m_SyscallWarned.Contains(kvp.Key)) continue;
+                    if (now - kvp.Value < SYSCALL_TIMEOUT_MS) continue;
+                    m_SyscallWarned.Add(kvp.Key);
+                    UUID asset = m_AllScripts.TryGetValue(kvp.Key, out var s) ? s.Script.AssetId : UUID.Zero;
+                    (stale ??= new()).Add((kvp.Key, now - kvp.Value, asset));
+                }
+            }
+            if (stale == null) return;
+            foreach (var e in stale)
+                m_log.LogWarning(
+                    "[PhloxExe]: Script {ItemId} (asset {AssetId}) has been parked in Syscall for {ParkedMs}ms with no SysReturn — likely a wedged async syscall (an API body that failed to resume). Run 'phlox scripts syscall' to inspect.",
+                    e.item, e.asset, e.ms);
+        }
+
         // ── Syscall returns ────────────────────────────────────────────────────
 
         public void PostSyscallReturn(UUID itemId, object retValue, int delay)
@@ -440,7 +525,11 @@ namespace Phlox.ScriptEngine
            script.OnUnload(ScriptUnloadReason.Unloaded, RuntimeState.LocalDisableFlag.None);
             m_Engine.StateManager?.ScriptUnloaded(script);
             lock (m_AllScriptsLock)
+            {
                 m_AllScripts.Remove(itemId);
+                m_SyscallEntered.Remove(itemId);
+                m_SyscallWarned.Remove(itemId);
+            }
         }
 
         // ── Main work loop ─────────────────────────────────────────────────────
@@ -453,6 +542,7 @@ namespace Phlox.ScriptEngine
             ProcessSuspendResume();
             ProcessResets();
             ProcessSyscallReturns();
+            CheckSyscallTimeouts();
 
             bool hadRunnable = m_NextScript != null;
             DoTimeslices();
@@ -461,8 +551,31 @@ namespace Phlox.ScriptEngine
             {
                 WorkWasDone = hadRunnable,
                 WorkIsPending = HasWork(),
-                NextWakeUpTime = m_SleepHeap.Count > 0 ? m_SleepHeap.FindMin().ReadyOn : ulong.MaxValue
+                NextWakeUpTime = ComputeNextWakeUp()
             };
+        }
+
+        // Next master-loop wake time. Normally the earliest sleep-heap wakeup. But a script
+        // wedged in Syscall is off the run queue AND out of the sleep heap, so on an idle
+        // region nothing else would wake the loop and the wedge sweep would never run — the
+        // MaxValue-indefinite-wait defect. While ANY parked syscall is still un-warned, pull the
+        // wake forward to the sweep cadence so CheckSyscallTimeouts actually fires. Once every
+        // parked script has been warned (or resumed) this reverts to the sleep-heap wake, so a
+        // permanent wedge does not force perpetual wakeups. A LATER park re-arms this: parking
+        // happens inside DoWork and NextWakeUpTime is recomputed at the end of that same pass,
+        // and the event that caused the park already signaled the loop.
+        private ulong ComputeNextWakeUp()
+        {
+            ulong wake = m_SleepHeap.Count > 0 ? m_SleepHeap.FindMin().ReadyOn : ulong.MaxValue;
+            lock (m_AllScriptsLock)
+            {
+                if (m_SyscallEntered.Keys.Any(k => !m_SyscallWarned.Contains(k)))
+                {
+                    ulong sweepWake = (ulong)Util.EnvironmentTickCount() + (ulong)SYSCALL_SWEEP_INTERVAL_MS;
+                    if (sweepWake < wake) wake = sweepWake;
+                }
+            }
+            return wake;
         }
 
         internal void Stop() { }
@@ -540,11 +653,18 @@ namespace Phlox.ScriptEngine
                 case RuntimeState.Status.Killed:
                     m_RunIndex.Remove(m_NextScript.Value.ItemId);
                     m_RunQueue.Remove(m_NextScript);
+                    lock (m_AllScriptsLock)
+                    {
+                        m_SyscallEntered.Remove(m_NextScript.Value.ItemId);
+                        m_SyscallWarned.Remove(m_NextScript.Value.ItemId);
+                    }
                     break;
 
                 case RuntimeState.Status.Syscall:
                     m_RunQueue.Remove(m_NextScript);
                     m_RunIndex.Remove(m_NextScript.Value.ItemId);
+                    lock (m_AllScriptsLock)
+                        m_SyscallEntered[m_NextScript.Value.ItemId] = (ulong)Util.EnvironmentTickCount();
                     break;
             }
             return true;
@@ -832,6 +952,12 @@ namespace Phlox.ScriptEngine
                 Interpreter script;
                 if (!m_AllScripts.TryGetValue(ret.ItemId, out script)) continue;
                 if (script.ScriptState.RunState != RuntimeState.Status.Syscall) continue;
+
+                lock (m_AllScriptsLock)
+                {
+                    m_SyscallEntered.Remove(ret.ItemId);
+                    m_SyscallWarned.Remove(ret.ItemId);
+                }
 
                 if (ret.RetValue != null)
                     script.ScriptState.Operands.Push(ret.RetValue);

@@ -176,6 +176,11 @@ namespace Phlox.ScriptEngine
                     "phlox resume <script-item-uuid | object-name>",
                     "Resume script(s) paused by 'phlox suspend' (accumulated events then deliver).",
                     HandleResumeCommand);
+                MainConsole.Instance.Commands.AddCommand("Phlox", false,
+                    "phlox scripts",
+                    "phlox scripts [syscall]",
+                    "List Phlox scripts in this region with their scheduler RunState. Add 'syscall' to show only scripts parked in a syscall (potential wedges) and how long they have been parked. A large SYSCALL_MS is a script wedged by an async API body that never resumed.",
+                    HandleScriptsCommand);
             }
 
             m_log.LogInformation("[PhloxEngine]: Region loaded {0}", scene.RegionInfo.RegionName);
@@ -251,6 +256,58 @@ namespace Phlox.ScriptEngine
             if (m_ExeScheduler.FindScript(itemId) == null) return false;
             m_ExeScheduler.RequestResume(itemId);
             return true;
+        }
+
+        // 'phlox scripts [syscall]' — dump every Phlox script in this region and its scheduler
+        // RunState so a wedge is visible rather than inferred from a script that stopped talking.
+        // A script parked in Syscall is one that called an async API and is waiting for SysReturn;
+        // a large SYSCALL_MS means the resume never came (the bug this branch fixes).
+        private void HandleScriptsCommand(string module, string[] args)
+        {
+            if (WrongConsoleScene()) return;
+            if (m_ExeScheduler == null)
+            {
+                MainConsole.Instance.Output("Script engine not running.");
+                return;
+            }
+            bool syscallOnly = args.Length >= 3
+                && string.Equals(args[2], "syscall", StringComparison.OrdinalIgnoreCase);
+
+            var snap = m_ExeScheduler.SnapshotRunStates();
+            var counts = new SortedDictionary<string, int>();
+            int parked = 0, shown = 0;
+
+            var rows = new System.Text.StringBuilder();
+            rows.AppendFormat("{0,-10} {1,11}  {2,-36}  {3}\n", "STATE", "SYSCALL_MS", "SCRIPT-ITEM", "OBJECT / SCRIPT");
+            foreach (var s in snap)
+            {
+                counts[s.State] = counts.TryGetValue(s.State, out var c) ? c + 1 : 1;
+                if (s.State == "Syscall") parked++;
+                if (syscallOnly && s.State != "Syscall") continue;
+
+                string name = "<not in this region / unresolved>";
+                var part = m_Scene.GetSceneObjectPart(s.HostLocalId);
+                if (part != null)
+                {
+                    string scriptName = part.Inventory.GetInventoryItem(s.ItemId)?.Name ?? "?";
+                    name = part.ParentGroup.Name + " / " + scriptName;
+                }
+                rows.AppendFormat("{0,-10} {1,11}  {2}  {3}\n",
+                    s.State,
+                    s.SyscallMs >= 0 ? s.SyscallMs.ToString() : "-",
+                    s.ItemId,
+                    name);
+                shown++;
+            }
+
+            var summary = new System.Text.StringBuilder();
+            summary.AppendFormat("Phlox scripts in {0}: {1} total", m_Scene.RegionInfo.RegionName, snap.Count);
+            foreach (var kv in counts) summary.AppendFormat(", {0}={1}", kv.Key, kv.Value);
+            if (parked > 0) summary.AppendFormat("  [{0} parked in Syscall — potential wedge(s)]", parked);
+            MainConsole.Instance.Output(summary.ToString());
+
+            if (shown > 0) MainConsole.Instance.Output(rows.ToString().TrimEnd());
+            else if (syscallOnly) MainConsole.Instance.Output("No scripts currently parked in a syscall.");
         }
 
         public void RemoveRegion(Scene scene)
