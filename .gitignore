@@ -267,3 +267,6 @@ packages/
 Source/OpenSim.Server.RegionServer/AppData/config-include/GridCommon.ini
 Source/OpenSim.Server.RegionServer/AppData/config-include/StandaloneCommon.ini
 Source/OpenSim.Server.RegionServer/AppData/config-include/storage/SQLiteStandalone.ini
+
+# Email inbound IMAP credentials — real secret, never commit; keep the .example template.
+Source/OpenSim.Server.RegionServer/AppData/config-include/EmailInbound-secret.ini

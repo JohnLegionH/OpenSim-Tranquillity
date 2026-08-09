@@ -64,6 +64,19 @@ public class EmailModule : ISharedRegionModule, IEmailModule
     private string SMTP_SERVER_LOGIN = null;
     private string SMTP_SERVER_PASSWORD = null;
 
+    // Inbound IMAP fetcher (external -> object). Password comes from a gitignored include
+    // (config-include/EmailInbound-secret.ini via Include-EmailInbound), never a tracked .ini.
+    private bool m_IMAP_inbound_enabled = false;
+    private string m_IMAP_HOSTNAME = "localhost";
+    private int m_IMAP_PORT = 143;
+    private bool m_IMAP_TLS = false;
+    private string m_IMAP_LOGIN = null;
+    private string m_IMAP_PASSWORD = null;
+    private int m_IMAP_PollInterval = 15;
+    private string m_IMAP_Folder = "INBOX";
+    private bool m_IMAP_DeleteRouted = true;
+    private EmailInboundFetcher m_inboundFetcher = null;
+
     private bool m_enableEmailToExternalObjects = true;
     private bool m_enableEmailToSMTP = true;
 
@@ -194,6 +207,22 @@ public class EmailModule : ISharedRegionModule, IEmailModule
                 m_MaxEmailSize = 4096;
             }
 
+            // Inbound IMAP fetcher config (external -> object). Independent of the outbound
+            // SMTP switch. IMAP_SERVER_PASSWORD is expected to come from the gitignored
+            // include (config-include/EmailInbound-secret.ini), not from a tracked .ini.
+            m_IMAP_inbound_enabled = SMTPConfig.GetBoolean("IMAP_inbound_enabled", m_IMAP_inbound_enabled);
+            if (m_IMAP_inbound_enabled)
+            {
+                m_IMAP_HOSTNAME = SMTPConfig.GetString("IMAP_SERVER_HOSTNAME", m_IMAP_HOSTNAME);
+                m_IMAP_PORT = SMTPConfig.GetInt("IMAP_SERVER_PORT", m_IMAP_PORT);
+                m_IMAP_TLS = SMTPConfig.GetBoolean("IMAP_SERVER_TLS", m_IMAP_TLS);
+                m_IMAP_LOGIN = SMTPConfig.GetString("IMAP_SERVER_LOGIN", m_IMAP_LOGIN);
+                m_IMAP_PASSWORD = SMTPConfig.GetString("IMAP_SERVER_PASSWORD", m_IMAP_PASSWORD);
+                m_IMAP_PollInterval = SMTPConfig.GetInt("IMAP_PollInterval", m_IMAP_PollInterval);
+                m_IMAP_Folder = SMTPConfig.GetString("IMAP_Folder", m_IMAP_Folder);
+                m_IMAP_DeleteRouted = SMTPConfig.GetBoolean("IMAP_DeleteRouted", m_IMAP_DeleteRouted);
+            }
+
         }
         catch (Exception e)
         {
@@ -237,10 +266,21 @@ public class EmailModule : ISharedRegionModule, IEmailModule
 
     public void PostInitialise()
     {
+        // One inbound fetcher per simulator process (EmailModule is shared).
+        if (m_Enabled && m_IMAP_inbound_enabled && m_inboundFetcher == null)
+        {
+            m_inboundFetcher = new EmailInboundFetcher(this,
+                m_IMAP_HOSTNAME, m_IMAP_PORT, m_IMAP_TLS,
+                m_IMAP_LOGIN, m_IMAP_PASSWORD,
+                m_IMAP_PollInterval, m_IMAP_Folder, m_IMAP_DeleteRouted);
+            m_inboundFetcher.Start();
+        }
     }
 
     public void Close()
     {
+        m_inboundFetcher?.Stop();
+        m_inboundFetcher = null;
     }
 
     public string Name
@@ -311,6 +351,19 @@ public class EmailModule : ISharedRegionModule, IEmailModule
                 m_LastGetEmailCall[to] = Util.GetTimeStamp() + m_QueueTimeout;
             }
         }
+    }
+
+    // Accessors for the inbound IMAP fetcher (same process/assembly).
+    internal string InterObjectHostname => m_InterObjectHostname;
+    internal int MaxEmailSize => m_MaxEmailSize;
+
+    // A mailbox is "registered" once a script with an email() handler calls AddPartMailBox,
+    // which inserts the key with a NULL list (the null-value trap). ContainsKey is therefore
+    // the correct registration test; InsertEmail materialises the list on first mail.
+    internal bool HasRegisteredMailbox(UUID objectID)
+    {
+        lock (m_queuesLock)
+            return m_MailQueues.ContainsKey(objectID);
     }
 
     private bool IsLocal(UUID objectID)
