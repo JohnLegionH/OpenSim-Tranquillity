@@ -17,7 +17,7 @@ RUN --mount=type=secret,id=github_actor \
     export GITHUB_ACTOR=$(cat /run/secrets/github_actor) && \
     export GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
     dotnet restore "Source/OpenSim.Server.RegionServer/OpenSim.Server.RegionServer.csproj"
-RUN dotnet build "Source/OpenSim.Server.RegionServer/OpenSim.Server.RegionServer.csproj" --skip-restore -c $configuration -o /app/build
+RUN dotnet build "Source/OpenSim.Server.RegionServer/OpenSim.Server.RegionServer.csproj" --no-restore -c $configuration -o /app/build
 
 FROM build AS publish
 ARG configuration=Release

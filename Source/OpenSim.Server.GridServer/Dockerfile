@@ -19,7 +19,7 @@ RUN --mount=type=secret,id=github_actor \
     dotnet restore "Source/OpenSim.Server.GridServer/OpenSim.Server.GridServer.csproj"
 #COPY . .
 # WORKDIR "/src/Source/OpenSim.Server.GridServer"
-RUN dotnet build "Source/OpenSim.Server.GridServer/OpenSim.Server.GridServer.csproj" --skip-restore -c $configuration -o /app/build
+RUN dotnet build "Source/OpenSim.Server.GridServer/OpenSim.Server.GridServer.csproj" --no-restore -c $configuration -o /app/build
 
 FROM build AS publish
 ARG configuration=Release
