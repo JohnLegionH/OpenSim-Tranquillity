@@ -45,7 +45,7 @@ services:
     volumes:
       - legiongrid_mysql_data:/var/lib/mysql
     ports:
-      - "3307:3306"        # host 3307 to avoid clashing with opensim_mysql's 3306  # <<REVIEW>> drop if no host access needed
+      - "3308:3306"        # host 3308: 3306=live opensim_mysql, 3307=pre-existing tranquillity_mysql (both off-limits). Internal grid access is via the docker network on 3306 regardless.
     networks: [legiongrid_net]
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${LEGIONGRID_DB_ROOT_PW}"]
@@ -68,12 +68,17 @@ services:
     volumes:
       - ${LEGIONGRID_ROOT}/config/gridserver:/app/config
       - ${LEGIONGRID_ROOT}/data/gridserver:/app/data
-    # Entrypoint is `dotnet OpenSim.Server.GridServer.dll` with no args; supply config here.
-    command: ["-inifile=/app/config/Robust.ini", "-console=local", "--background"]   # <<REVIEW>> ini name + flags
+    # RESOLVED (Gate 3): hosted GridServer uses System.CommandLine — double-dash options,
+    # --console one of basic|local|rest|mock, and NO --background (GridServer has no such flag).
+    # missing --inimaster default is non-fatal; --inidirectory defaults to "config" (=/app/config,
+    # deduped so Robust.ini isn't double-loaded).
+    command: ["--inifile=/app/config/Robust.ini", "--console=local"]
+    tty: true            # local console reads stdin; a pseudo-TTY keeps it blocked (alive), not EOF-looping
+    stdin_open: true
     networks: [legiongrid_net]
     healthcheck:
-      # Robust answers HTTP on 8002 once up; get-grid-info is a cheap liveness probe.
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8002/get_grid_info || exit 1"]  # <<REVIEW>> confirm probe path
+      # image has no curl/wget/nc — use bash /dev/tcp to confirm Robust is listening on 8002.
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/8002' 2>/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
@@ -88,19 +93,34 @@ services:
       gridserver:
         condition: service_healthy      # region waits for Robust to be live
     ports:
-      - "9000:9000"        # Ebony
-      - "9001:9001"        # Transylvania
-      - "9002:9002"        # Elm
+      # Viewers reach region scenes over UDP (per-region InternalPort); the region http/seed-cap
+      # listener is TCP. Map BOTH for each region or logins won't connect.
+      - "9000:9000/udp"    # Ebony  (UDP sim)
+      - "9000:9000/tcp"    # Ebony  (http/seed cap; shared region http listener)
+      - "9001:9001/udp"    # Transylvania (UDP sim)
+      - "9001:9001/tcp"    # Transylvania
+      - "9002:9002/udp"    # Elm (UDP sim)
+      - "9002:9002/tcp"    # Elm
     volumes:
       - ${LEGIONGRID_ROOT}/config/regionserver:/app/config
-      - ${LEGIONGRID_ROOT}/data/regionserver:/app/data
-    # inimaster (defaults, ships in image at /app) → inifile (our OpenSim.ini) → inidirectory (per-region)
+      # NOTE: do NOT bind-mount /app/data — the image SHIPS static content there
+      # (data/avataranimations.xml [required by DefaultAvatarAnimations at login], sim.html/css/js).
+      # An empty host mount shadows it -> FileNotFoundException -> TypeInitializationException on login.
+      # Durable state lives in MySQL; nothing user-persistent belongs in /app/data.
+      # RESOLVED (Gate 3): OpenSim.ini's Include-Architecture resolves relative to WORKDIR /app
+      # (Util.configDir()=="."), so the nested config-include/GridCommon.ini include lands at
+      # /app/config-include/GridCommon.ini. The image ships only GridCommon.ini.example there, so
+      # override just that one file (leaving the shipped GridHypergrid.ini/Grid.ini/ossl* intact).
+      - ${LEGIONGRID_ROOT}/config/regionserver/config-include/GridCommon.ini:/app/config-include/GridCommon.ini:ro
+    # RESOLVED (Gate 3): hosted RegionServer uses System.CommandLine (double-dash). It DOES have
+    # --background (headless: omits the interactive console runner). --console one of basic|local|rest.
     command: >
-      -inimaster=/app/OpenSimDefaults.ini
-      -inifile=/app/config/OpenSim.ini
-      -inidirectory=/app/config/regions
-      -console=local --background
-    # <<REVIEW>> confirm OpenSimDefaults.ini path in publish output; confirm regions dir layout
+      --inimaster=/app/OpenSimDefaults.ini
+      --inifile=/app/config/OpenSim.ini
+      --inidirectory=/app/config/regions
+      --console=local --background
+    tty: true
+    stdin_open: true
     networks: [legiongrid_net]
     restart: unless-stopped
 
