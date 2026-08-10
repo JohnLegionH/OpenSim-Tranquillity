@@ -267,3 +267,7 @@ packages/
 Source/OpenSim.Server.RegionServer/AppData/config-include/GridCommon.ini
 Source/OpenSim.Server.RegionServer/AppData/config-include/StandaloneCommon.ini
 Source/OpenSim.Server.RegionServer/AppData/config-include/storage/SQLiteStandalone.ini
+
+# Legion Market DirectDelivery shared secret — never commit
+DirectDeliverySecret.ini
+**/DirectDeliverySecret.ini
