@@ -78,6 +78,7 @@
          no manual DLL copying, no compile/runtime identity splits. -->
     <ProjectReference Include="../../Source/Phlox.ScriptEngine/Phlox.ScriptEngine.csproj" />
     <ProjectReference Include="../../Addons/os-webrtc-janus/WebRtcVoiceRegionModule/WebRtcVoiceRegionModule.csproj" />
+    <ProjectReference Include="../../Addons/OpenSim.Addons.Groups/OpenSim.Addons.Groups.csproj" />
   </ItemGroup>
 
   <ItemGroup>
