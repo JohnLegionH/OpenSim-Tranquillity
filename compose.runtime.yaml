@@ -1,0 +1,118 @@
+# ============================================================================
+# compose.runtime.yaml — Legion Grid on Tranquillity (RUNTIME orchestration)
+#
+# This is NOT upstream's compose.yaml (that one is BUILD-ONLY). This file RUNS
+# the images that compose.yaml builds. Written for the migration; no upstream
+# prior art exists (only build-only compose + the hosted-service docs).
+#
+# ⚠️ NOTHING here has been started yet. This is for review at Gate 2.
+# NOTE: moneyserver is intentionally NOT included (economy service not needed by
+#   the grid runtime; its image build is deferred — see plan Phase 2). Add later
+#   if the economy service is wanted.
+#
+# ⚠️ It stands ENTIRELY separate from the existing Legion containers
+#    (opensim_mysql, opensim_apache) — different container names, different
+#    volume, different host ports. It does not touch them.
+#
+# Assumptions flagged with  # <<REVIEW>>  need confirmation at first run (Gate 3):
+#   - exact ini filenames/paths the hosted servers expect under /app/config
+#   - whether the hosted servers need `--background` (no interactive console)
+#   - the host config path (${LEGIONGRID_ROOT}) — see .env note at bottom
+# ============================================================================
+
+name: legiongrid
+
+networks:
+  legiongrid_net:
+    driver: bridge
+
+volumes:
+  legiongrid_mysql_data:          # dedicated volume — NOT opensim_mysql's
+
+services:
+
+  # ---- Database (its own container + volume; independent of opensim_mysql) ----
+  mysql:
+    image: mysql:8.0
+    container_name: legiongrid_mysql
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${LEGIONGRID_DB_ROOT_PW}   # set in .env, NOT hardcoded
+      MYSQL_DATABASE: legiongrid                       # fresh grid DB (utf8mb4 via server charset args).
+                                                       # NO underscore in the name -> avoids MySQL's
+                                                       # LIKE-wildcard grant bug that historically forced root.
+                                                       # A dedicated non-root user is created separately (Phase 3.1).
+    volumes:
+      - legiongrid_mysql_data:/var/lib/mysql
+    ports:
+      - "3307:3306"        # host 3307 to avoid clashing with opensim_mysql's 3306  # <<REVIEW>> drop if no host access needed
+    networks: [legiongrid_net]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${LEGIONGRID_DB_ROOT_PW}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12          # ~2 min for first-boot init
+      start_period: 30s
+    restart: unless-stopped
+
+  # ---- Robust grid services (login/asset/inventory/grid/etc.) ----
+  gridserver:
+    image: opensim.server.gridserver
+    container_name: legiongrid_gridserver
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "8002:8002"        # Robust public
+      - "8003:8003"        # Robust private
+    volumes:
+      - ${LEGIONGRID_ROOT}/config/gridserver:/app/config
+      - ${LEGIONGRID_ROOT}/data/gridserver:/app/data
+    # Entrypoint is `dotnet OpenSim.Server.GridServer.dll` with no args; supply config here.
+    command: ["-inifile=/app/config/Robust.ini", "-console=local", "--background"]   # <<REVIEW>> ini name + flags
+    networks: [legiongrid_net]
+    healthcheck:
+      # Robust answers HTTP on 8002 once up; get-grid-info is a cheap liveness probe.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8002/get_grid_info || exit 1"]  # <<REVIEW>> confirm probe path
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
+  # ---- Region simulator (Ebony 9000, Transylvania 9001, Elm 9002) ----
+  regionserver:
+    image: opensim.server.regionserver
+    container_name: legiongrid_regionserver
+    depends_on:
+      gridserver:
+        condition: service_healthy      # region waits for Robust to be live
+    ports:
+      - "9000:9000"        # Ebony
+      - "9001:9001"        # Transylvania
+      - "9002:9002"        # Elm
+    volumes:
+      - ${LEGIONGRID_ROOT}/config/regionserver:/app/config
+      - ${LEGIONGRID_ROOT}/data/regionserver:/app/data
+    # inimaster (defaults, ships in image at /app) → inifile (our OpenSim.ini) → inidirectory (per-region)
+    command: >
+      -inimaster=/app/OpenSimDefaults.ini
+      -inifile=/app/config/OpenSim.ini
+      -inidirectory=/app/config/regions
+      -console=local --background
+    # <<REVIEW>> confirm OpenSimDefaults.ini path in publish output; confirm regions dir layout
+    networks: [legiongrid_net]
+    restart: unless-stopped
+
+# ----------------------------------------------------------------------------
+# .env (create alongside this file — do NOT commit real secrets):
+#   LEGIONGRID_ROOT=D:/legiongrid-runtime        # CONFIRMED with John 2026-08-09
+#   LEGIONGRID_DB_ROOT_PW=<choose a NEW password for the new grid DB>
+#
+# Host layout to pre-create under ${LEGIONGRID_ROOT} (outside both source trees
+# and outside the live Legion bin):
+#   config/gridserver/     -> Robust.ini (+ includes)         -> /app/config
+#   config/regionserver/   -> OpenSim.ini, regions/*.ini      -> /app/config
+#   data/gridserver/       -> runtime data                    -> /app/data
+#   data/regionserver/     -> maptiles, caches, etc.          -> /app/data
+# ----------------------------------------------------------------------------
