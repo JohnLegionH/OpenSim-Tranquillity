@@ -271,3 +271,23 @@ Source/OpenSim.Server.RegionServer/AppData/config-include/storage/SQLiteStandalo
 # Legion Market DirectDelivery shared secret — never commit
 DirectDeliverySecret.ini
 **/DirectDeliverySecret.ini
+
+# --- Secrets, pattern-based (belt-and-suspenders; real secrets live OUTSIDE the tree) ---
+# Deliberately extension-scoped for the secret/credential globs so legitimate source
+# (Token.cs, TokenBucket.cs, XMRObjectTokens.cs, *.tokens) is NOT caught. Do NOT add
+# blanket *secret* / *token* / *.key here.
+*.env
+.env
+.env.*
+!*.env.example
+*.pem
+*.p12
+*.pkcs12
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*secret*.ini
+*secret*.json
+*credential*.ini
+*credential*.json
