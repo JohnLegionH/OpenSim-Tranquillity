@@ -53,7 +53,14 @@ namespace Legion.Physics.Jolt
         // order (delta #6): the PhysicsSystem retains the filter interfaces and the
         // job system for its lifetime, so the system MUST be torn down first.
         private PhysicsSystem? _system;
-        private JobSystemThreadPool? _jobSystem;
+        // Design item #1 (2026-08-11): ONE shared, process-capped JobSystemThreadPool for ALL regions,
+        // created with Foundation (first region in) and disposed with it (last region out). Replaces the
+        // per-region pool of ProcessorCount-1 threads — N regions cost N*(cores-1) threads (measured
+        // ~36/region, 78 for two). InWorldz ran ~1 thread/region in production; a single capped process
+        // pool is the target shape. Sized once by the first region's settings (ThreadCount /
+        // DeterministicMode) under s_foundationGate, then shared. This is the ONE deliberate divergence
+        // from the byte-faithful donor port — the measured scaling fix (design item #1).
+        private static JobSystemThreadPool? s_jobSystem;
         private ObjectLayerPairFilterTable? _objectLayerPairFilter;
         private BroadPhaseLayerInterfaceTable? _broadPhaseInterface;
         private ObjectVsBroadPhaseLayerFilterTable? _objectVsBroadPhaseFilter;
@@ -345,6 +352,15 @@ namespace Legion.Physics.Jolt
                 {
                     if (!Foundation.Init(false))
                         throw new InvalidOperationException("Jolt Foundation.Init(false) failed (native joltc.dll not loaded).");
+
+                    // Design item #1: create the ONE shared, process-capped job pool here (first region
+                    // in), sized by THIS region's settings. Jolt's canonical limits: 2048 jobs, 8 barriers.
+                    s_jobSystem = new JobSystemThreadPool(new JobSystemThreadPoolConfig
+                    {
+                        maxJobs = 2048,
+                        maxBarriers = 8,
+                        numThreads = threads,
+                    });
                 }
                 s_foundationRefCount++;
             }
@@ -414,16 +430,9 @@ namespace Legion.Physics.Jolt
             _system.OnContactPersisted += HandleContactPersisted;
             _system.OnContactRemoved += HandleContactRemoved;
 
-            // Worker pool (delta #4: Update takes this JobSystem; no TempAllocator).
-            // Jolt's canonical limits: 2048 jobs, 8 barriers. DeterministicMode / an
-            // explicit ThreadCount collapse the pool to a single worker.
-            var jobConfig = new JobSystemThreadPoolConfig
-            {
-                maxJobs = 2048,
-                maxBarriers = 8,
-                numThreads = threads,
-            };
-            _jobSystem = new JobSystemThreadPool(jobConfig);
+            // Worker pool (delta #4: Update takes this JobSystem; no TempAllocator). Now ONE shared,
+            // process-capped pool created once under s_foundationGate above (design item #1), NOT one per
+            // region; Update() takes it via s_jobSystem in Step. `threads` (above) sizes it on first region.
 
             // Avatar-vs-avatar collision registry (characters add themselves on create).
             _charVsChar = new CharacterVsCharacterCollisionSimple();
@@ -459,7 +468,12 @@ namespace Legion.Physics.Jolt
             lock (s_foundationGate)
             {
                 if (s_foundationRefCount > 0 && --s_foundationRefCount == 0)
+                {
+                    // Last region out: dispose the shared job pool (design item #1) BEFORE Foundation.
+                    s_jobSystem?.Dispose();
+                    s_jobSystem = null;
                     Foundation.Shutdown();
+                }
             }
         }
 
@@ -516,8 +530,8 @@ namespace Legion.Physics.Jolt
             _system?.Dispose();
             _system = null;
 
-            _jobSystem?.Dispose();
-            _jobSystem = null;
+            // Shared job pool is process-wide (design item #1): disposed by the LAST region out in
+            // Dispose()'s s_foundationGate block, NOT per-region here.
 
             _objectVsBroadPhaseFilter?.Dispose();
             _objectVsBroadPhaseFilter = null;
@@ -2258,10 +2272,11 @@ namespace Legion.Physics.Jolt
             }
 
             // 2. Advance the simulation (delta #4: 3-arg Update, temp allocation internal).
-            if (_system != null && _jobSystem != null)
+            //    Uses the ONE shared, process-capped job pool (design item #1), not a per-region one.
+            if (_system != null && s_jobSystem != null)
             {
                 int collisionSteps = Math.Max(1, _settings.CollisionSteps);
-                _system.Update(deltaTime, collisionSteps, _jobSystem);
+                _system.Update(deltaTime, collisionSteps, s_jobSystem);
             }
 
             // 3. Fold this frame's queued activation deltas into the step-thread-owned active
