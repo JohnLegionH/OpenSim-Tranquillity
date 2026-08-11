@@ -120,6 +120,8 @@
     MapGetServiceConnector = "${Const|PublicPort}/OpenSim.Server.Handlers.dll:MapGetServiceConnector"
     ;; Uncomment this if you want experience tools to work
     ; ExperienceServiceConnector = "${Const|PrivatePort}/OpenSim.Server.Handlers.dll:ExperienceServiceConnector"
+    ;; Uncomment this if you want membership tiers to work
+    ; MembershipServiceConnector = "${Const|PrivatePort}/OpenSim.Server.Handlers.dll:MembershipServiceConnector"
     ;; Uncomment this if you want offline IM to work
     ; OfflineIMServiceConnector = "${Const|PrivatePort}/OpenSim.Addons.OfflineIM.dll:OfflineIMServiceRobustConnector"
     ;; Uncomment this if you want Groups V2 to work
@@ -664,6 +666,13 @@
     
 [ExperienceService]
     LocalServiceModule = "OpenSim.Services.ExperienceService.dll:ExperienceService"
+    ;; ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"
+
+    UserAccountService = "OpenSim.Services.UserAccountService.dll:UserAccountService"
+
+;; Membership tiers. Inert unless MembershipServiceConnector is uncommented in [ServiceList] above.
+[MembershipService]
+    LocalServiceModule = "OpenSim.Services.MembershipService.dll:MembershipService"
     ;; ConnectionString = "Data Source=localhost;Database=robust;User ID=robust;Password=*****;Old Guids=true;CharSet=utf8mb4;"
 
     UserAccountService = "OpenSim.Services.UserAccountService.dll:UserAccountService"
