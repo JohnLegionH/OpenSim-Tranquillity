@@ -1,0 +1,123 @@
+diff --git a/src/joltc.cpp b/src/joltc.cpp
+index 3d9537a..f0cb149 100644
+--- a/src/joltc.cpp
++++ b/src/joltc.cpp
+@@ -621,9 +621,7 @@ static JPH::IndexedTriangle ToIndexedTriangle(const JPH_IndexedTriangle& triangl
+ 	return JPH::IndexedTriangle(triangle.i1, triangle.i2, triangle.i3, triangle.materialIndex, triangle.userData);
+ }
+ 
+-// 10 MB was not enough for large simulation, let's use TempAllocatorMalloc
+ static bool s_initialized = false;
+-static TempAllocator* s_TempAllocator = nullptr;
+ 
+ class JobSystemCallback final : public JPH::JobSystemWithBarrier
+ {
+@@ -736,8 +734,6 @@ bool JPH_Init()
+ 	// Register all Jolt physics types
+ 	JPH::RegisterTypes();
+ 
+-	// Init temp allocator
+-	s_TempAllocator = new TempAllocatorImplWithMallocFallback(8 * 1024 * 1024);
+ 	s_initialized = true;
+ 
+ 	return true;
+@@ -748,8 +744,6 @@ void JPH_Shutdown(void)
+ 	if (!s_initialized)
+ 		return;
+ 
+-	delete s_TempAllocator; s_TempAllocator = nullptr;
+-
+ 	// Unregisters all types with the factory and cleans up the default material
+ 	JPH::UnregisterTypes();
+ 
+@@ -931,6 +925,9 @@ struct JPH_PhysicsSystem final
+ 	JPH::ObjectLayerPairFilter* objectLayerPairFilter = nullptr;
+ 	JPH::ObjectVsBroadPhaseLayerFilter* objectVsBroadPhaseLayerFilter = nullptr;
+ 	JPH::PhysicsSystem* physicsSystem = nullptr;
++	// Per-system temp allocator so concurrent updates of independent systems never share scratch memory.
++	// 10 MB was not enough for large simulation, let's use TempAllocatorMalloc
++	JPH::TempAllocator* tempAllocator = nullptr;
+ };
+ static JPH::UnorderedMap<JPH::PhysicsSystem*, JPH_PhysicsSystem*> s_PhysicsSystems;
+ 
+@@ -955,6 +952,9 @@ JPH_PhysicsSystem* JPH_PhysicsSystem_Create(const JPH_PhysicsSystemSettings* set
+ 		*system->objectVsBroadPhaseLayerFilter,
+ 		*system->objectLayerPairFilter);
+ 
++	// Init temp allocator
++	system->tempAllocator = new TempAllocatorImplWithMallocFallback(8 * 1024 * 1024);
++
+ 	s_PhysicsSystems[system->physicsSystem] = system;
+ 	return system;
+ }
+@@ -964,6 +964,7 @@ void JPH_PhysicsSystem_Destroy(JPH_PhysicsSystem* system)
+ 	if (system)
+ 	{
+ 		s_PhysicsSystems.erase(system->physicsSystem);
++		delete system->tempAllocator;
+ 		delete system->physicsSystem;
+ 		delete system->broadPhaseLayerInterface;
+ 		delete system->objectVsBroadPhaseLayerFilter;
+@@ -1046,7 +1047,7 @@ void JPH_PhysicsSystem_OptimizeBroadPhase(JPH_PhysicsSystem* system)
+ JPH_PhysicsUpdateError JPH_PhysicsSystem_Update(JPH_PhysicsSystem* system, float deltaTime, int collisionSteps, JPH_JobSystem* jobSystem)
+ {
+ 	JPH::JobSystem* joltJobSystem = reinterpret_cast<JPH::JobSystem*>(jobSystem);
+-	return static_cast<JPH_PhysicsUpdateError>(system->physicsSystem->Update(deltaTime, collisionSteps, s_TempAllocator, joltJobSystem));
++	return static_cast<JPH_PhysicsUpdateError>(system->physicsSystem->Update(deltaTime, collisionSteps, system->tempAllocator, joltJobSystem));
+ }
+ 
+ JPH_BodyInterface* JPH_PhysicsSystem_GetBodyInterface(JPH_PhysicsSystem* system)
+@@ -8103,7 +8104,7 @@ void JPH_CharacterVirtual_Update(JPH_CharacterVirtual* character,
+ 		system->physicsSystem->GetDefaultLayerFilter(joltLayer),
+ 		ToJolt(bodyFilter),
+ 		ToJolt(shapeFilter),
+-		*s_TempAllocator
++		*system->tempAllocator
+ 	);
+ }
+ 
+@@ -8131,7 +8132,7 @@ void JPH_CharacterVirtual_ExtendedUpdate(JPH_CharacterVirtual* character, float
+ 		system->physicsSystem->GetDefaultLayerFilter(joltLayer),
+ 		ToJolt(bodyFilter),
+ 		ToJolt(shapeFilter),
+-		*s_TempAllocator
++		*system->tempAllocator
+ 	);
+ }
+ 
+@@ -8147,7 +8148,7 @@ void JPH_CharacterVirtual_RefreshContacts(JPH_CharacterVirtual* character,
+ 		system->physicsSystem->GetDefaultLayerFilter(joltLayer),
+ 		ToJolt(bodyFilter),
+ 		ToJolt(shapeFilter),
+-		*s_TempAllocator
++		*system->tempAllocator
+ 	);
+ }
+ 
+@@ -8178,7 +8179,7 @@ bool JPH_CharacterVirtual_WalkStairs(JPH_CharacterVirtual* character, float delt
+ 		system->physicsSystem->GetDefaultLayerFilter(joltLayer),
+ 		ToJolt(bodyFilter),
+ 		ToJolt(shapeFilter),
+-		*s_TempAllocator
++		*system->tempAllocator
+ 	);
+ }
+ 
+@@ -8194,7 +8195,7 @@ bool JPH_CharacterVirtual_StickToFloor(JPH_CharacterVirtual* character, const JP
+ 		system->physicsSystem->GetDefaultLayerFilter(joltLayer),
+ 		ToJolt(bodyFilter),
+ 		ToJolt(shapeFilter),
+-		*s_TempAllocator
++		*system->tempAllocator
+ 	);
+ }
+ 
+@@ -8219,7 +8220,7 @@ bool JPH_CharacterVirtual_SetShape(JPH_CharacterVirtual* character,
+ 		system->physicsSystem->GetDefaultLayerFilter(joltLayer),
+ 		ToJolt(bodyFilter),
+ 		ToJolt(shapeFilter),
+-		*s_TempAllocator
++		*system->tempAllocator
+ 	);
+ }
+ 
