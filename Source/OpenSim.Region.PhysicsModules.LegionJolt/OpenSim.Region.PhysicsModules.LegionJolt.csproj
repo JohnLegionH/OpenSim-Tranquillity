@@ -43,6 +43,9 @@
     <!-- SLICE 2: the engine-agnostic Jolt backend (per-instance _simLock; requires the patched joltc
          shipped via runtimes/win-x64/native above). -->
     <ProjectReference Include="../../Addons/LegionPhysics/Legion.Physics/Legion.Physics.csproj" />
+    <!-- SLICE 3: the backend-agnostic Halcyon vehicle controller. Independent of Legion.Physics (no
+         cycle); slice 4's JoltVehicleBody will implement its IVehicleBody onto the backend. -->
+    <ProjectReference Include="../../Addons/LegionPhysics/Legion.Vehicles/Legion.Vehicles.csproj" />
   </ItemGroup>
 
   <ItemGroup>
