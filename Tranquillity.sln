@@ -177,6 +177,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Legion.Physics", "Addons\Le
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Legion.Vehicles", "Addons\LegionPhysics\Legion.Vehicles\Legion.Vehicles.csproj", "{94A4C9FC-C159-4192-A0ED-5043832F856B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Services.MembershipService", "Source\OpenSim.Services.MembershipService\OpenSim.Services.MembershipService.csproj", "{D5FA8313-186B-4B52-99A9-368BE247ECE2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -515,6 +517,10 @@ Global
 		{94A4C9FC-C159-4192-A0ED-5043832F856B}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{94A4C9FC-C159-4192-A0ED-5043832F856B}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{94A4C9FC-C159-4192-A0ED-5043832F856B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D5FA8313-186B-4B52-99A9-368BE247ECE2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D5FA8313-186B-4B52-99A9-368BE247ECE2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D5FA8313-186B-4B52-99A9-368BE247ECE2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D5FA8313-186B-4B52-99A9-368BE247ECE2}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -604,6 +610,7 @@ Global
 		{A3053928-D83A-4129-9B4B-82B40D6FA09D} = {E1748B93-FA13-C50B-BD89-C3B777E73FCB}
 		{7654D02B-7B9B-4524-865F-14B06929F9C8} = {A3053928-D83A-4129-9B4B-82B40D6FA09D}
 		{94A4C9FC-C159-4192-A0ED-5043832F856B} = {A3053928-D83A-4129-9B4B-82B40D6FA09D}
+		{D5FA8313-186B-4B52-99A9-368BE247ECE2} = {E886CEB5-B01D-411F-A7A0-72AA1B71761D}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {A40AD54B-8BC7-41E4-B241-19B59EA65D2A}
