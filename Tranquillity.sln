@@ -173,6 +173,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Region.Framework.Te
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Tests", "Tests\OpenSim.Tests\OpenSim.Tests.csproj", "{5F82E524-3295-4ADD-AABF-0630E8B23EFE}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Region.PhysicsModules.LegionJolt", "Source\OpenSim.Region.PhysicsModules.LegionJolt\OpenSim.Region.PhysicsModules.LegionJolt.csproj", "{BE055BD7-D00E-4F99-A878-66F80B7567BE}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "LegionPhysics", "LegionPhysics", "{A3053928-D83A-4129-9B4B-82B40D6FA09D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Legion.Physics", "Addons\LegionPhysics\Legion.Physics\Legion.Physics.csproj", "{7654D02B-7B9B-4524-865F-14B06929F9C8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -1167,6 +1173,14 @@ Global
 		{5F82E524-3295-4ADD-AABF-0630E8B23EFE}.Release|x64.Build.0 = Release|Any CPU
 		{5F82E524-3295-4ADD-AABF-0630E8B23EFE}.Release|x86.ActiveCfg = Release|Any CPU
 		{5F82E524-3295-4ADD-AABF-0630E8B23EFE}.Release|x86.Build.0 = Release|Any CPU
+		{BE055BD7-D00E-4F99-A878-66F80B7567BE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BE055BD7-D00E-4F99-A878-66F80B7567BE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BE055BD7-D00E-4F99-A878-66F80B7567BE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BE055BD7-D00E-4F99-A878-66F80B7567BE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7654D02B-7B9B-4524-865F-14B06929F9C8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7654D02B-7B9B-4524-865F-14B06929F9C8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7654D02B-7B9B-4524-865F-14B06929F9C8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7654D02B-7B9B-4524-865F-14B06929F9C8}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -1254,6 +1268,9 @@ Global
 		{3D7E8E30-A56E-46E5-95F8-2D17DA4AB082} = {7F5EC7C6-FD99-4084-8530-5D3F28D6D7C0}
 		{739DA041-246C-4525-A518-E6906D56F232} = {7F5EC7C6-FD99-4084-8530-5D3F28D6D7C0}
 		{5F82E524-3295-4ADD-AABF-0630E8B23EFE} = {7F5EC7C6-FD99-4084-8530-5D3F28D6D7C0}
+		{BE055BD7-D00E-4F99-A878-66F80B7567BE} = {E886CEB5-B01D-411F-A7A0-72AA1B71761D}
+		{A3053928-D83A-4129-9B4B-82B40D6FA09D} = {E1748B93-FA13-C50B-BD89-C3B777E73FCB}
+		{7654D02B-7B9B-4524-865F-14B06929F9C8} = {A3053928-D83A-4129-9B4B-82B40D6FA09D}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {A40AD54B-8BC7-41E4-B241-19B59EA65D2A}

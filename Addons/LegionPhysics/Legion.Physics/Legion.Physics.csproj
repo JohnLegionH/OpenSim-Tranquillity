@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Legion.Physics — the engine-agnostic physics backend (ILegionPhysicsBackend) + its Jolt
+    implementation (JoltPhysicsBackend). SLICE 2 of the Jolt port.
+
+    Ported BYTE-FOR-BYTE from Legion's donor tree (the code is RC-compatible per recon; only THIS
+    csproj is rewritten to RC conventions — SDK-style, EnableDefaultItems on, no Mono.Addins, no
+    shared-bin redirect). The forensic comment block above `_simLock` in JoltPhysicsBackend.cs — the
+    record of WHY the lock is per-instance and why it REQUIRES the patched native — is preserved
+    verbatim in the copied source.
+
+    ★ THE COUPLING (do not separate from the native): the per-instance `_simLock` REQUIRES the PATCHED
+    joltc (per-system TempAllocator). Stock joltc + instance locks = "TempAllocator: Freeing in the
+    wrong order" -> std::abort() the moment two regions step at once. The patched native ships from the
+    LegionJolt module (runtimes/win-x64/native, via its <Content> glob). Here we take JoltPhysicsSharp
+    for the MANAGED binding but EXCLUDE the JoltPhysics.Native package's STOCK joltc so it can never
+    land in the output and clobber the patched one. `assert-patched-joltc.ps1` is the post-publish
+    backstop. Provenance + rebuild recipe: native/joltc/README.md.
+
+    DO NOT apply the shared-thread-pool fix here (design item #1) — this is a byte-faithful port of
+    known-good code; that fix lands after slice 4, measured.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <AssemblyName>Legion.Physics</AssemblyName>
+    <RootNamespace>Legion.Physics</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks><!-- 2.19.x HeightFieldShapeSettings takes float* -->
+    <Deterministic>true</Deterministic>
+    <NoWarn>$(NoWarn);CS0168</NoWarn>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Managed Jolt binding. 2.19.1 is the newest net8.0-compatible release (2.19.2+ = net9/net10). -->
+    <PackageReference Include="JoltPhysicsSharp" Version="2.19.1" />
+    <!-- Suppress the STOCK native. JoltPhysicsSharp pulls JoltPhysics.Native 1.0.4 (stock joltc);
+         ExcludeAssets="all" keeps the dependency satisfied for restore but ships NONE of its assets,
+         so the ONLY joltc in the published output is the PATCHED build vendored by the LegionJolt
+         module. The hash-guard verifies this after publish. -->
+    <PackageReference Include="JoltPhysics.Native" Version="1.0.4" ExcludeAssets="all" />
+  </ItemGroup>
+
+</Project>

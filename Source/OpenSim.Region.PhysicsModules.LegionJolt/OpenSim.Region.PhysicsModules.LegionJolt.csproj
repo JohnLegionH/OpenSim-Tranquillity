@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Legion Grid Jolt physics region module — SLICE 1 SKELETON.
+
+    RC-native project (NOT a verbatim lift of Legion's csproj): discovery is DotNetCorePlugins +
+    IPluginRegistryProvider (see PluginRegistration.cs), NOT Mono.Addins. Do not add a Mono.Addins
+    reference or an [assembly: Addin] manifest — they are dead in this tree and fail discovery silently.
+
+    Native joltc.dll is shipped the RC way — runtimes/<rid>/native/ + the <Content> glob below — exactly
+    like ubODE (ubode.dll) and BulletSim (BulletSim.dll). Under a PORTABLE publish (no -r) this copies the
+    native into the output automatically, the same reason SkiaSharp's native lands. This is an IMPROVEMENT
+    over Legion, where the csproj pulled the STOCK NuGet joltc and deploy-jolt-legion.ps1 overwrote it with
+    the patched build post-build; here the patched native is a first-class, checked-in build artifact.
+
+    ★ The vendored joltc.dll is the PATCHED build (per-system TempAllocator, SHA-256 16AF7638…). The
+    per-instance _simLock in the backend (slice 2) REQUIRES it — stock joltc + instance locks =
+    "TempAllocator: Freeing in the wrong order" -> abort the moment two regions step. assert-patched-joltc.ps1
+    guards the published copy so a stray NuGet restore can never reintroduce stock. Provenance +
+    rebuild recipe: legion-grid-source/native/joltc/README.md.
+
+    SLICE 2: the module now drives the real backend (ProjectReference to Legion.Physics below). It still
+    takes NO direct JoltPhysicsSharp/JoltPhysics.Native PackageReference — the managed binding flows
+    transitively through Legion.Physics, and the PATCHED native ships from the runtimes/ glob here while
+    Legion.Physics excludes the STOCK native. So this project still adds zero NuGet-native surface of its
+    own (no NU1605 RID-restore trap); it just owns the one real joltc.dll.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>OpenSim.Region.PhysicsModules.LegionJolt</AssemblyName>
+    <RootNamespace>OpenSim.Region.PhysicsModules.LegionJolt</RootNamespace>
+    <AssemblyTitle>OpenSim.Region.PhysicsModules.LegionJolt</AssemblyTitle>
+    <Company>Legion Grid</Company>
+    <Product>OpenSim</Product>
+    <Description>Legion Grid Jolt physics region module</Description>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../Source/OpenSim.Framework/OpenSim.Framework.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Region.Framework/OpenSim.Region.Framework.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.SharedBase/OpenSim.Region.PhysicsModules.SharedBase.csproj" />
+    <!-- SLICE 2: the engine-agnostic Jolt backend (per-instance _simLock; requires the patched joltc
+         shipped via runtimes/win-x64/native above). -->
+    <ProjectReference Include="../../Addons/LegionPhysics/Legion.Physics/Legion.Physics.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Ship the native the RC way: runtimes/<rid>/native/joltc.dll, copied to output by this glob.
+         Portable publish carries all present RIDs; today only win-x64 exists (Legion never built a
+         linux .so). Adding runtimes/linux-x64/native/libjoltc.so later is a drop-in for a Linux grid. -->
+    <Content Include="runtimes\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="log4net" Version="3.3.1" />
+  </ItemGroup>
+
+</Project>

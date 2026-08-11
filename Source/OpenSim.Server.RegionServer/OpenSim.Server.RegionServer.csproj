@@ -70,6 +70,7 @@
     <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.POS/OpenSim.Region.PhysicsModules.POS.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.ubODE/OpenSim.Region.PhysicsModules.ubODE.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.ubODEMeshing/OpenSim.Region.PhysicsModules.ubODEMeshing.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.LegionJolt/OpenSim.Region.PhysicsModules.LegionJolt.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Region.ScriptEngine.Shared/OpenSim.Region.ScriptEngine.Shared.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Region.ScriptEngine.YEngine/OpenSim.Region.ScriptEngine.YEngine.csproj" />
     <!-- Phlox flows to output like YEngine so its full dependency closure (InWorldz.Phlox,
