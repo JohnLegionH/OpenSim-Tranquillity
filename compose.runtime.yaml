@@ -112,6 +112,9 @@ services:
       # /app/config-include/GridCommon.ini. The image ships only GridCommon.ini.example there, so
       # override just that one file (leaving the shipped GridHypergrid.ini/Grid.ini/ossl* intact).
       - ${LEGIONGRID_ROOT}/config/regionserver/config-include/GridCommon.ini:/app/config-include/GridCommon.ini:ro
+      # OSSL: osslDefaultEnable.ini includes config-include/osslEnable.ini (missing — image ships only
+      # .example). Wire the tree's .example (== Legion's, VeryLow threat) so the include resolves.
+      - ${LEGIONGRID_ROOT}/config/regionserver/config-include/osslEnable.ini:/app/config-include/osslEnable.ini:ro
     # RESOLVED (Gate 3): hosted RegionServer uses System.CommandLine (double-dash). It DOES have
     # --background (headless: omits the interactive console runner). --console one of basic|local|rest.
     command: >
