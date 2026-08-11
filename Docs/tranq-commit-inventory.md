@@ -49,6 +49,13 @@ thin wiring into two shared files (see flags).
 | `91ee099737` | Jolt slice 4: real region module (JoltPrim/JoltCharacter/JoltVehicleBody + full scene) + instrumentation | `Source/OpenSim.Region.PhysicsModules.LegionJolt/{JoltCharacter,JoltMetrics,JoltPrim,JoltVehicleBody,LegionJoltScene}.cs` |
 | `c0ba4088ae` | Jolt design item #1: one shared, process-capped JobSystemThreadPool | `Addons/LegionPhysics/Legion.Physics/JoltPhysicsBackend.cs` |
 
+> ⚠️ **Framework-bump debt:** the three Jolt csprojs — `Addons/LegionPhysics/Legion.Physics/Legion.Physics.csproj`,
+> `Addons/LegionPhysics/Legion.Vehicles/Legion.Vehicles.csproj`, and
+> `Source/OpenSim.Region.PhysicsModules.LegionJolt/OpenSim.Region.PhysicsModules.LegionJolt.csproj` — **pin
+> `<TargetFramework>net8.0</TargetFramework>` explicitly** and will **not** follow a `Directory.Build.props`
+> framework bump automatically. When this tree rebases onto upstream's net10, these three need manual fixing.
+> (New projects should inherit the framework from `Directory.Build.props`, not repeat this pin.)
+
 ## REPO HYGIENE
 | SHA | Summary | Files |
 |---|---|---|
