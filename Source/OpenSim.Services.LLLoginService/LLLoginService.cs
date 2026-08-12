@@ -80,6 +80,7 @@ public class LLLoginService : ILoginService
     protected string m_Currency;
     protected string m_ClassifiedFee;
     protected int m_MaxAgentGroups = 42;
+    protected IMembershipService m_MembershipService = null;   // PART B: optional per-account group limits
     protected string m_DestinationGuide;
     protected string m_AvatarPicker;
     protected Regex m_AllowedClientsRegex;
@@ -232,6 +233,13 @@ public class LLLoginService : ILoginService
             m_RemoteSimulationService = ServerUtils.LoadPlugin<ISimulationService>(simulationService, args);
         if (!string.IsNullOrWhiteSpace(agentService))
             m_UserAgentService = ServerUtils.LoadPlugin<IUserAgentService>(agentService, args);
+
+        // PART B: optional per-account group limits. When [LoginService] names a MembershipService the
+        // login response advertises the account's resolved tier max_groups; otherwise the grid-wide value
+        // stands. Absent -> null -> unchanged behaviour.
+        string membershipService = m_LoginServerConfig.GetString("MembershipService", string.Empty);
+        if (!string.IsNullOrWhiteSpace(membershipService))
+            m_MembershipService = ServerUtils.LoadPlugin<IMembershipService>(membershipService, args);
 
         // Get the Hypergrid inventory service (exists only if Hypergrid is enabled)
         string hgInvServicePlugin = m_LoginServerConfig.GetString("HGInventoryServicePlugin", string.Empty);
@@ -629,6 +637,14 @@ public class LLLoginService : ILoginService
                     where, startLocation, position, lookAt, gestures, processedMessage, home, clientIP,
                     m_MapTileURL, m_ProfileURL, m_OpenIDURL, m_SearchURL, m_Currency, m_DSTZone,
                     m_DestinationGuide, m_AvatarPicker, realID, m_ClassifiedFee,m_MaxAgentGroups);
+
+                // PART B: per-account override of the grid-wide max-agent-groups. GetMembership never
+                // returns null (its Basic fallback == the grid-wide constant), so an empty tiers table
+                // leaves this identical to before. Firestorm treats 0 as UNLIMITED, and a tier's
+                // max_groups of 0 is passed through unchanged. NOTE: SimulatorFeatures still advertises the
+                // grid-wide value until M3 -- the two are intentionally inconsistent in the interim.
+                if (m_MembershipService is not null)
+                    response.MaxAgentGroups = m_MembershipService.GetMembership(account.PrincipalID).max_groups;
 
                 m_log.LogDebug("[LLOGIN SERVICE]: All clear. Sending login response to {0} {1}", firstName, lastName);
 

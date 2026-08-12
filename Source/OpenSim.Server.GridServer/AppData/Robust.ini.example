@@ -475,6 +475,10 @@
     SimulationService ="OpenSim.Services.Connectors.dll:SimulationServiceConnector"
     LibraryService = "OpenSim.Services.InventoryService.dll:LibraryService"
     FriendsService = "OpenSim.Services.FriendsService.dll:FriendsService"
+    ;; Uncomment to advertise a PER-ACCOUNT max-agent-groups from the membership tier at login (requires
+    ;; the [MembershipService] section + connector enabled). Absent -> the grid-wide MaxAgentGroups stands.
+    ;; NOTE: SimulatorFeatures still advertises the grid-wide number until M3 -> the two disagree meanwhile.
+    ; MembershipService = "OpenSim.Services.MembershipService.dll:MembershipService"
 
     ; The minimum user level required for a user to be able to login.  0 by default
     ; If you disable a particular user's account then you can set their login level below this number.

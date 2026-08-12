@@ -202,3 +202,34 @@ This is the architectural template to mirror for a new membership/tier service.
 | 6 | UserTitle/CharterMember | **CONFIRMED** flow; **PARTIAL** on safe-to-write (contended field + profile cache + flag-byte alternative) |
 | 7 | Experience inventory | **CONFIRMED** layout (handler class `ExperienceServiceConnector`) |
 | 8 | Experience data layer | **CONFIRMED** MySQL-only; grid runs MySQL |
+
+---
+
+## Implemented — M2 user-visible changes (2026-08-11)
+
+Both are **inert when membership is unconfigured** (byte-identical to before).
+
+### Part A — profile tier badge (field = **UserTitle**, decided)
+- On membership change (`MembershipService.SetMembership` / `RemoveMembership`) the resolved tier's
+  `display_title` is written to the account's `UserTitle` via `IUserAccountService.StoreUserAccount`.
+  Verified: that is a real `REPLACE INTO` write (not a stub), preserves `DisplayName`, and needs no
+  `AllowSetAccount` gate (that gate is only on the admin HTTP endpoint; we call the service in-process).
+- Badged **only** for LOCAL accounts (`GetUserAccount` succeeds); HG visitors have no local row so are
+  never written — the "HG Visitor" transient stand-in (`UserProfileModule.cs:1865`) is untouched.
+- An empty `display_title` (Basic / no tier) writes `UserTitle=""`; `StoreUserAccount` omits it and the
+  REPLACE resets the column to `''`, so the account falls back to the `UserFlags & 0x0f00` byte path.
+- **★ 5-minute staleness, by design.** The region-side profile cache (`PROFILECACHEEXPIRE = 300s`,
+  `UserProfileModule.cs`) has no per-user eviction and lives in a different process, so a title change is
+  visible after **≤5 min** (next profile fetch after TTL) or a relog. We deliberately do **not** build
+  cross-process cache invalidation — it self-heals on TTL. Operator repair for an admin-clobbered title:
+  console `membership resync <first> <last>`.
+
+### Part B — per-account group limit at login
+- `LLLoginService` optionally loads `IMembershipService` (`[LoginService] MembershipService`, commented by
+  default) and, after building the response, sets `response.MaxAgentGroups = GetMembership(id).max_groups`.
+  Absent service → the grid-wide value stands (unchanged). Empty tiers table → Basic fallback == grid-wide
+  → still unchanged.
+- **★ Wire semantics:** Firestorm treats login `max-agent-groups = 0` as **UNLIMITED**; a tier's
+  `max_groups` of 0 is passed through as 0 unchanged (so an "unlimited" tier = `max_groups 0`).
+- **★ Interim inconsistency:** this is the LOGIN path only. **SimulatorFeatures still advertises the
+  grid-wide constant until M3**, so the two advertising paths disagree for non-default tiers meanwhile.
