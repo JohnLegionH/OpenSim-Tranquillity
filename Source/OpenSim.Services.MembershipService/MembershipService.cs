@@ -43,6 +43,11 @@ public class MembershipService : MembershipServiceBase, IMembershipService
                     "membership list tiers",
                     "membership list tiers",
                     "List the configured membership tiers.", HandleListTiers);
+
+            MainConsole.Instance.Commands.AddCommand("Membership", false,
+                    "membership resync",
+                    "membership resync <first> <last>",
+                    "Rewrite a user's UserTitle from their current tier (repairs a title the admin API overwrote).", HandleResync);
         }
     }
 
@@ -91,12 +96,51 @@ public class MembershipService : MembershipServiceBase, IMembershipService
             granted_by = grantedBy,
             notes = string.Empty,
         };
-        return m_Database.StoreUserMembership(m);
+        bool ok = m_Database.StoreUserMembership(m);
+        if (ok)
+            ApplyTitle(agentID);   // PART A: sync the profile badge to the new tier
+        return ok;
     }
 
     public bool RemoveMembership(UUID agentID)
     {
-        return m_Database.RemoveUserMembership(agentID);
+        bool ok = m_Database.RemoveUserMembership(agentID);
+        // PART A: with the row gone the agent resolves to Basic (empty display_title) -> clear the badge.
+        // Run regardless of `ok` (idempotent), so a redundant remove still normalises the title.
+        ApplyTitle(agentID);
+        return ok;
+    }
+
+    // PART A — profile tier badge (Docs/membership-findings.md §6; field = UserTitle, decided).
+    // Write the RESOLVED tier's display_title to the account's UserTitle so the viewer profile "account
+    // type" line shows the tier. Rules:
+    //  - Badge ONLY local accounts: GetUserAccount must succeed. HG visitors have no local account row
+    //    (their profile module builds a transient "HG Visitor" stand-in), so they are never written.
+    //  - An empty display_title (Basic / no tier) writes UserTitle="" which StoreUserAccount omits, and
+    //    the REPLACE resets the column to '' -> the account falls through to the existing UserFlags byte
+    //    path. (Verified: StoreUserAccount is a real REPLACE-INTO write, not a stub, and preserves
+    //    DisplayName.)
+    //  - Inert when no UserAccountService is configured.
+    //  - We do NOT invalidate the region-side profile cache (PROFILECACHEEXPIRE = 300s). The change is
+    //    visible after <=5 minutes (next profile fetch after TTL) or a relog; cross-process eviction is
+    //    not worth the complexity. See Docs/membership-CLAUDE.md.
+    private void ApplyTitle(UUID agentID)
+    {
+        if (m_UserService == null)
+            return;   // inert: no account service wired
+
+        UserAccount acc = m_UserService.GetUserAccount(UUID.Zero, agentID);
+        if (acc == null)
+            return;   // not a local account (e.g. an HG visitor) -> never badge
+
+        MembershipTier tier = GetMembership(agentID);   // resolved, never null
+        string title = tier.display_title ?? string.Empty;
+        if (string.Equals(acc.UserTitle ?? string.Empty, title, StringComparison.Ordinal))
+            return;   // no change
+
+        acc.UserTitle = title;   // "" clears it -> byte-path fallback via REPLACE default
+        if (!m_UserService.StoreUserAccount(acc))
+            m_log.WarnFormat("[MEMBERSHIP SERVICE]: failed to store UserTitle for {0}", agentID);
     }
 
     // ---------------------------------------------------------------------
@@ -183,5 +227,27 @@ public class MembershipService : MembershipServiceBase, IMembershipService
         foreach (MembershipTier t in tiers)
             MainConsole.Instance.Output("  {0,-16} groups={1} attach={2} animesh={3} picks={4} upload={5} groupcreate={6} stipend={7}/{8}d",
                 t.tier_name, t.max_groups, t.max_attachments, t.max_animesh, t.max_picks, t.upload_cost, t.group_create_cost, t.stipend_amount, t.stipend_period_days);
+    }
+
+    private void HandleResync(string module, string[] cmd)
+    {
+        // membership resync <first> <last>
+        if (cmd.Length < 4)
+        {
+            MainConsole.Instance.Output("Usage: membership resync <first> <last>");
+            return;
+        }
+        UserAccount account = ResolveAccount(cmd[2], cmd[3]);
+        if (account == null)
+            return;
+        if (m_UserService == null)
+        {
+            MainConsole.Instance.Output("No UserAccountService configured; cannot write UserTitle.");
+            return;
+        }
+        ApplyTitle(account.PrincipalID);
+        UserAccount after = m_UserService.GetUserAccount(UUID.Zero, account.PrincipalID);
+        MainConsole.Instance.Output("Resynced {0} {1}: UserTitle now '{2}' (resolved tier '{3}').",
+            cmd[2], cmd[3], after?.UserTitle ?? string.Empty, GetMembership(account.PrincipalID).tier_name);
     }
 }
