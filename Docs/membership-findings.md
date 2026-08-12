@@ -233,3 +233,16 @@ Both are **inert when membership is unconfigured** (byte-identical to before).
   `max_groups` of 0 is passed through as 0 unchanged (so an "unlimited" tier = `max_groups 0`).
 - **★ Interim inconsistency:** this is the LOGIN path only. **SimulatorFeatures still advertises the
   grid-wide constant until M3**, so the two advertising paths disagree for non-default tiers meanwhile.
+
+## Known issues
+
+Observed on the live grid after the M1+M2+M3 deploy (2026-08-12). Not yet fixed.
+
+1. **Stale tier cache.** After seeding a tier row directly in SQL, `membership show` kept resolving to
+   Basic even though the row existed; it only picked up the new tier after a `membership set`. Something
+   caches the tier list without invalidation, so an operator who adds tiers via SQL won't see them take
+   effect. Candidate fix: a `membership reload` console command, or a short TTL on the tier cache.
+2. **Console commands echo twice.** Every `membership` command prints its output twice on the GridServer
+   console. Cosmetic, but suggests a doubled command registration. Before assuming it's ours, check
+   whether other console commands in this tree also double-print (rule out a shared console/registration
+   quirk vs. a duplicate `AddCommand` in the membership service).
