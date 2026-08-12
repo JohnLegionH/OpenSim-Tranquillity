@@ -33,6 +33,13 @@ fork.)
   `Source/OpenSim.Data.MySQL/*`** (e.g. `Source/OpenSim.Data.MySQL/MySQLExperienceData.cs`). New data
   classes go under `Source/OpenSim.Data.MySQL/`, with the interface in `Source/OpenSim.Data/`.
   > Correction: the retired-fork path `OpenSim/Data/MySQL/*` does **not** exist here — do not use it.
+- **Region modules are registered EXPLICITLY, not discovered.** This tree uses DotNetCorePlugins with an
+  explicit `PluginRegistration.cs` registry per assembly (`IPluginRegistryProvider`), **NOT** Mono.Addins.
+  There is **no reflection scan** and **no `addin-db` cache to clear.** Every new region module MUST be
+  added to its assembly's `PluginRegistration.cs` (e.g.
+  `Source/OpenSim.Region.CoreModules/PluginRegistration.cs`) or it **silently never loads** — and **no
+  config change can compensate.** Check this whenever adding a region-side module. (M1's membership
+  connectors shipped unregistered and were dead region-side until M3 caught it.)
 
 ## Data layer
 - Experience is **MySQL-only** in this tree and **the grid runs MySQL** (findings §8).
