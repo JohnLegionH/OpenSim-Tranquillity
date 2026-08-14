@@ -179,6 +179,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Legion.Vehicles", "Addons\L
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Services.MembershipService", "Source\OpenSim.Services.MembershipService\OpenSim.Services.MembershipService.csproj", "{D5FA8313-186B-4B52-99A9-368BE247ECE2}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WebRtcJanusService.Tests", "Tests\WebRtcJanusService.Tests\WebRtcJanusService.Tests.csproj", "{6A07ADFE-5AD9-4C29-AD47-DD7DF138B502}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -521,6 +523,10 @@ Global
 		{D5FA8313-186B-4B52-99A9-368BE247ECE2}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D5FA8313-186B-4B52-99A9-368BE247ECE2}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D5FA8313-186B-4B52-99A9-368BE247ECE2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6A07ADFE-5AD9-4C29-AD47-DD7DF138B502}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6A07ADFE-5AD9-4C29-AD47-DD7DF138B502}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6A07ADFE-5AD9-4C29-AD47-DD7DF138B502}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6A07ADFE-5AD9-4C29-AD47-DD7DF138B502}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -611,6 +617,7 @@ Global
 		{7654D02B-7B9B-4524-865F-14B06929F9C8} = {A3053928-D83A-4129-9B4B-82B40D6FA09D}
 		{94A4C9FC-C159-4192-A0ED-5043832F856B} = {A3053928-D83A-4129-9B4B-82B40D6FA09D}
 		{D5FA8313-186B-4B52-99A9-368BE247ECE2} = {E886CEB5-B01D-411F-A7A0-72AA1B71761D}
+		{6A07ADFE-5AD9-4C29-AD47-DD7DF138B502} = {7F5EC7C6-FD99-4084-8530-5D3F28D6D7C0}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {A40AD54B-8BC7-41E4-B241-19B59EA65D2A}
