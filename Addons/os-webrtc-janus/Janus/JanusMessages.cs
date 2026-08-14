@@ -127,8 +127,9 @@ public class JanusMessage
     }
     // Utility function to convert an OSD object to an long. The OSD object can be an OSDInteger
     //    or an OSDArray of 4 or 8 integers. 
-    // This exists because the JSON to OSD parser can return an OSDArray for a long number
-    //    since there is not an OSDLong type.
+    // This exists because the JSON to OSD parser can encode a long number in several
+    //    ways: OSDType.Long on the ported libOMV (the common case for Janus ids), or
+    //    historically an OSDArray/OSDBinary of 4 or 8 bytes on older libOMV builds.
     // The design of the OSD conversion functions kinda needs one to know how the number
     //    is stored in order to extract it. Like, if it's stored as a long value (8 bytes)
     //    and one fetches it with .AsInteger(), it will return the first 4 bytes as an integer
@@ -141,6 +142,14 @@ public class JanusMessage
         {
             case OSDType.Integer:
                 ret = (long)(pIn as OSDInteger).AsInteger();
+                break;
+            case OSDType.Long:
+                // The ported libOMV (GH NuGet, PR #172) added OSDType.Long, and the
+                // JSON->OSD parser now returns it for any number that exceeds int32
+                // (e.g. Janus session/handle ids). AsInteger() would truncate to the
+                // low 32 bits (yielding a wrong/negative value, or 0 here via the
+                // default), so extract the full value with AsLong().
+                ret = pIn.AsLong();
                 break;
             case OSDType.Binary:
                 byte[] value = (pIn as OSDBinary).value;
