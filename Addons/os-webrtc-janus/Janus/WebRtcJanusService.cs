@@ -51,6 +51,10 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     private string _JanusAdminURI = string.Empty;
     private string _JanusAdminToken = string.Empty;
 
+    // Janus plugin (mixer) to attach handles to. Configurable via
+    // [JanusWebRtcVoice] PluginName; defaults to the stock audiobridge.
+    private string _JanusPluginName = "janus.plugin.audiobridge";
+
     private bool _MessageDetails = false;
 
     // An extra "viewer session" that is created initially. Used to verify the service
@@ -76,6 +80,11 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 _JanusAPIToken = janusConfig.GetString("APIToken", string.Empty);
                 _JanusAdminURI = janusConfig.GetString("JanusGatewayAdminURI", string.Empty);
                 _JanusAdminToken = janusConfig.GetString("AdminAPIToken", string.Empty);
+                // Which Janus plugin (mixer) to attach handles to. Read the same
+                // way as the other [JanusWebRtcVoice] keys; default preserves the
+                // original hardcoded behaviour when the key is absent.
+                _JanusPluginName = janusConfig.GetString("PluginName", "janus.plugin.audiobridge");
+                _log.Info($"{LogHeader} Janus plugin (mixer) = {_JanusPluginName}");
                 // Debugging options
                 _MessageDetails = janusConfig.GetBoolean("MessageDetails", false);
 
@@ -130,7 +139,7 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
             _log.DebugFormat("{0} JanusSession created", LogHeader);
 
             // Once the session is created, create a handle to the plugin for rooms
-            JanusAudioBridge audioBridge = new JanusAudioBridge(janusSession);
+            JanusAudioBridge audioBridge = new JanusAudioBridge(janusSession, _JanusPluginName);
 
             if (await audioBridge.Activate(_Config).ConfigureAwait(false))
             {

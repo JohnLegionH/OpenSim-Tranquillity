@@ -37,10 +37,14 @@ public class JanusAudioBridge : JanusPlugin
     private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
     private static readonly string LogHeader = "[JANUS AUDIO BRIDGE]";
 
-    // Wrapper around the session connection to Janus-gateway
-    public JanusAudioBridge(JanusSession pSession) : base(pSession, "janus.plugin.audiobridge")
+    // Wrapper around the session connection to Janus-gateway. The Janus plugin
+    // name is supplied by the caller (from [JanusWebRtcVoice] PluginName) rather
+    // than hardcoded, so a config-compatible mixer (e.g. janus.plugin.slvoice)
+    // can be selected without a code change. Defaults to janus.plugin.audiobridge
+    // where it is read (WebRtcJanusService), so behaviour is unchanged if unset.
+    public JanusAudioBridge(JanusSession pSession, string pPluginName) : base(pSession, pPluginName)
     {
-        // m_log.DebugFormat("{0} JanusAudioBridge constructor", LogHeader);
+        // m_log.DebugFormat("{0} JanusAudioBridge constructor (plugin={1})", LogHeader, pPluginName);
     }
 
     public override void Dispose()
