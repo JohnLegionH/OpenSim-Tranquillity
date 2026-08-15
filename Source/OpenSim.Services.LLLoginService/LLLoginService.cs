@@ -76,6 +76,7 @@ public class LLLoginService : ILoginService
     protected string m_ProfileURL;
     protected string m_OpenIDURL;
     protected string m_SearchURL;
+    protected string m_VoiceServerType;
     protected string m_Currency;
     protected string m_ClassifiedFee;
     protected int m_MaxAgentGroups = 42;
@@ -125,6 +126,7 @@ public class LLLoginService : ILoginService
         m_ProfileURL = m_LoginServerConfig.GetString("ProfileServerURL", string.Empty);
         m_OpenIDURL = m_LoginServerConfig.GetString("OpenIDServerURL", string.Empty);
         m_SearchURL = m_LoginServerConfig.GetString("SearchURL", string.Empty);
+        m_VoiceServerType = m_LoginServerConfig.GetString("VoiceServerType", string.Empty);
         m_Currency = m_LoginServerConfig.GetString("Currency", string.Empty);
         m_ClassifiedFee = m_LoginServerConfig.GetString("ClassifiedFee", string.Empty);
         m_DestinationGuide = m_LoginServerConfig.GetString ("DestinationGuide", string.Empty);
@@ -644,6 +646,10 @@ public class LLLoginService : ILoginService
                 // grid-wide value until M3 -- the two are intentionally inconsistent in the interim.
                 if (m_MembershipService is not null)
                     response.MaxAgentGroups = m_MembershipService.GetMembership(account.PrincipalID).max_groups;
+
+                // Advertise the grid voice backend in the login response so viewers select WebRTC
+                // before SimulatorFeatures arrive (avoids the Vivox/SLVoice default). Empty => omitted.
+                response.VoiceServerType = m_VoiceServerType;
 
                 m_log.DebugFormat("[LLOGIN SERVICE]: All clear. Sending login response to {0} {1}", firstName, lastName);
 

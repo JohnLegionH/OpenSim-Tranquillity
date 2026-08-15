@@ -179,6 +179,9 @@ public class LLLoginResponse : OpenSim.Services.Interfaces.LoginResponse
 
     private string searchURL;
 
+    // Voice backend advertised to the viewer in the login response (pre-SimulatorFeatures)
+    private string voiceServerType;
+
     // Error Flags
     private string errorReason;
     private string errorMessage;
@@ -463,6 +466,7 @@ public class LLLoginResponse : OpenSim.Services.Interfaces.LoginResponse
         profileURL = String.Empty;
         openIDURL = String.Empty;
         searchURL = String.Empty;
+        voiceServerType = String.Empty;
 
         currency = String.Empty;
         ClassifiedFee = "0";
@@ -540,6 +544,16 @@ public class LLLoginResponse : OpenSim.Services.Interfaces.LoginResponse
 
             if (mapTileURL != String.Empty)
                 responseData["map-server-url"] = mapTileURL;
+
+            // Advertise the grid voice backend before SimulatorFeatures arrive so the viewer
+            // doesn't default to Vivox and launch SLVoice. BARE struct (NOT ArrayList-wrapped):
+            // the viewer reads response["voice-config"].has("VoiceServerType") as a plain map.
+            if (voiceServerType != String.Empty)
+            {
+                Hashtable voiceConfig = new();
+                voiceConfig["VoiceServerType"] = voiceServerType;
+                responseData["voice-config"] = voiceConfig;
+            }
 
             if (profileURL != String.Empty)
                 responseData["profile-server-url"] = profileURL;
@@ -666,6 +680,14 @@ public class LLLoginResponse : OpenSim.Services.Interfaces.LoginResponse
 
             if (mapTileURL != String.Empty)
                 map["map-server-url"] = OSD.FromString(mapTileURL);
+
+            // See ToHashtable(): bare OSDMap (NOT WrapOSDMap) so the viewer reads it as a plain map.
+            if (voiceServerType != String.Empty)
+            {
+                OSDMap vc = new();
+                vc["VoiceServerType"] = OSD.FromString(voiceServerType);
+                map["voice-config"] = vc;
+            }
 
             if (profileURL != String.Empty)
                 map["profile-server-url"] = OSD.FromString(profileURL);
@@ -1049,6 +1071,12 @@ public class LLLoginResponse : OpenSim.Services.Interfaces.LoginResponse
     {
         get { return mapTileURL; }
         set { mapTileURL = value; }
+    }
+
+    public string VoiceServerType
+    {
+        get { return voiceServerType; }
+        set { voiceServerType = value; }
     }
 
     public string ProfileURL
