@@ -199,22 +199,42 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
     // =====================================================================
     // IWebRtcVoiceService
 
+    // A viewer_session that is absent, empty, or the zero UUID indicates an INITIAL
+    // provision request (no session created yet), NOT a lookup of an existing session.
+    // NOTE: OSDMap.TryGetString returns true for a *present* OSDUUID(UUID.Zero), yielding
+    // "00000000-0000-0000-0000-000000000000" -- so a present-but-zero value must be
+    // treated as "no session yet", otherwise the first provision is routed to the lookup
+    // branch and fails with "viewer session 00000000-... not found". Registered session
+    // ids are UUID strings (see VoiceViewerSession ctor), so parse and reject UUID.Zero.
+    public static bool HasRealViewerSession(OSDMap pRequest, out string viewerSessionId)
+    {
+        viewerSessionId = null;
+        if (!pRequest.TryGetString("viewer_session", out string vs))
+            return false;                                      // absent
+        if (string.IsNullOrEmpty(vs))
+            return false;                                      // empty
+        if (UUID.TryParse(vs, out UUID vsid) && vsid == UUID.Zero)
+            return false;                                      // zero UUID
+        viewerSessionId = vs;
+        return true;
+    }
+
     // IWebRtcVoiceService.ProvisionVoiceAccountRequest
         public OSDMap ProvisionVoiceAccountRequest(OSDMap pRequest, UUID pUserID, UUID pSceneID)
     {
         OSDMap response = null;
         IVoiceViewerSession vSession = null;
-        if (pRequest.TryGetString("viewer_session", out string viewerSessionId))
+        if (HasRealViewerSession(pRequest, out string viewerSessionId))
         {
-            // request has a viewer session. Use that to find the voice service
+            // request has a real viewer session. Use that to find the voice service
             if (!VoiceViewerSession.TryGetViewerSession(viewerSessionId, out vSession))
             {
-                m_log.Error($"{0} ProvisionVoiceAccountRequest: viewer session {viewerSessionId} not found");
+                m_log.Error($"{LogHeader} ProvisionVoiceAccountRequest: viewer session {viewerSessionId} not found");
             }
-        }   
+        }
         else
         {
-            // the request does not have a viewer session. See if it's an initial request
+            // no (usable) viewer session -> this is an initial request
             if (pRequest.TryGetString("channel_type", out string channelType))
             {
                 if (channelType == "local")
