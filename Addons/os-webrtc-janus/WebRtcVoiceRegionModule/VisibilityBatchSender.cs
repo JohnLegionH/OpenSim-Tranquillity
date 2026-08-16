@@ -16,8 +16,11 @@
  *    tick up to PendingJoinMaxAttempts, then one loud give-up log (the silent-drop failure, made
  *    loud on our side). replace is listener-scoped + idempotent, so re-sends are safe.
  *
- * A ProtocolError from the sink is a config/format error (e.g. wrong AdminAPIToken), not transient:
- * it stops emission (latched) with one loud log — it must NOT enter the snapshot-retry loop.
+ * A ProtocolError from the sink is a config/format error (e.g. wrong AdminAPIToken / wrong plugin
+ * name / broken transport in front). It latches emission off (per-region, cleared only by a service
+ * rebuild / region-server restart) with one loud log — but only after ProtocolErrorLatchThreshold
+ * CONSECUTIVE ProtocolErrors, not the first. Any Ok resets the run to zero; a persistent fault trips
+ * all K within a second, while a lone transient stray-200 no longer permanently disables a region.
  */
 
 using System;
@@ -38,13 +41,20 @@ namespace osWebRtcVoice
         /// query exists to confirm presence, so we re-send this many ticks then give up loudly.</summary>
         public const int PendingJoinMaxAttempts = 6;
 
+        /// <summary>Consecutive ProtocolErrors before emission latches off. Not the first: a single
+        /// transient stray-200 must not permanently disable a region. Every fault that actually
+        /// reaches ProtocolError (wrong admin_secret / wrong plugin name / broken transport in front)
+        /// is persistent, so it trips all K within a second (a few ticks); a one-off does not.</summary>
+        public const int ProtocolErrorLatchThreshold = 3;
+
         private readonly IVisibilityFeed _feed;
         private readonly IPeerCtlBatchSink _sink;   // null => no sink registered; no-op (logged once)
         private readonly bool _enabled;
 
         private int _sendInFlight;                  // Interlocked single-flight (0/1)
         private volatile bool _synced;
-        private volatile bool _protocolFailed;      // latched on ProtocolError; stops emission
+        private volatile bool _protocolFailed;      // latched after K consecutive ProtocolErrors; stops emission
+        private int _consecutiveProtocolErrors;     // touched only on RunAsync's thread (single-flight), like _knownListeners
         private bool _loggedNoSink;
 
         private readonly HashSet<UUID> _knownListeners = new HashSet<UUID>();   // touched only on RunAsync's thread
@@ -125,9 +135,11 @@ namespace osWebRtcVoice
                 PeerCtlSendResult r = await _sink.SendAsync(VisOp.Replace, one).ConfigureAwait(false);
                 if (r == PeerCtlSendResult.ProtocolError)
                 {
-                    LatchProtocolFailure("per-listener join replace");
-                    return;
+                    NoteProtocolError("per-listener join replace");   // may or may not latch (K consecutive)
+                    return;   // stop this tick's drain either way; do not count the attempt down (it did not apply)
                 }
+                if (r == PeerCtlSendResult.Ok)
+                    NoteOk();
                 bool giveUp = false;
                 lock (_pendingLock)
                 {
@@ -198,6 +210,7 @@ namespace osWebRtcVoice
             switch (r)
             {
                 case PeerCtlSendResult.Ok:
+                    NoteOk();
                     _synced = true;
                     _knownListeners.Clear();
                     foreach (UUID l in nowListeners)
@@ -208,7 +221,8 @@ namespace osWebRtcVoice
                     break;
                 case PeerCtlSendResult.ProtocolError:
                 default:
-                    LatchProtocolFailure("snapshot replace");
+                    NoteProtocolError("snapshot replace");   // latches only on the Kth consecutive
+                    _synced = false;   // until latched, retry next tick so consecutive faults accrue
                     break;
             }
         }
@@ -220,13 +234,15 @@ namespace osWebRtcVoice
             switch (r)
             {
                 case PeerCtlSendResult.Ok:
+                    NoteOk();
                     return true;
                 case PeerCtlSendResult.TransportError:
                     _synced = false;
                     return false;
                 case PeerCtlSendResult.ProtocolError:
                 default:
-                    LatchProtocolFailure("delta " + PeerCtlBatchSerializer.OpString(op));
+                    NoteProtocolError("delta " + PeerCtlBatchSerializer.OpString(op));   // latches only on the Kth consecutive
+                    _synced = false;   // until latched, snapshot next tick so consecutive faults accrue
                     return false;
             }
         }
@@ -246,14 +262,30 @@ namespace osWebRtcVoice
                 _knownListeners.Add(l);
         }
 
-        private void LatchProtocolFailure(string where)
+        // A successful send clears the consecutive-ProtocolError run. Called on every Ok, on any path.
+        private void NoteOk() => _consecutiveProtocolErrors = 0;
+
+        // Count a ProtocolError; latch only once K have arrived back-to-back. TransportError does NOT
+        // call this AND does NOT reset the counter — it LEAVES it unchanged: transport has its own
+        // snapshot-recovery path, and a persistent config fault that only surfaces when transport
+        // briefly works (P, T, P, T, P) must still accrue toward the latch rather than be masked by
+        // flapping transport. So only an actual Ok resets the run.
+        private void NoteProtocolError(string where)
+        {
+            _consecutiveProtocolErrors++;
+            if (_consecutiveProtocolErrors >= ProtocolErrorLatchThreshold)
+                LatchProtocolFailure(where, _consecutiveProtocolErrors);
+        }
+
+        private void LatchProtocolFailure(string where, int consecutive)
         {
             if (_protocolFailed)
                 return;
-            _protocolFailed = true;   // stop emission — a config/format error is not transient
-            m_log.ErrorFormat("{0} {1} rejected as ProtocolError (config/format — e.g. wrong AdminAPIToken " +
-                "or a malformed batch). Emission DISABLED for this region until fixed and the region " +
-                "server is restarted. NOT entering the snapshot-retry loop.", LogHeader, where);
+            _protocolFailed = true;   // stop emission — K consecutive config/format errors are not transient
+            m_log.ErrorFormat("{0} {1} rejected as ProtocolError {2}x consecutively (config/format — e.g. wrong " +
+                "AdminAPIToken, wrong plugin name, or broken transport in front). Emission DISABLED for this " +
+                "region until fixed and the region server is restarted. NOT entering an unbounded snapshot-retry loop.",
+                LogHeader, where, consecutive);
         }
 
         private void LogNoSinkOnce()

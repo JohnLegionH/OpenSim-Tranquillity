@@ -236,22 +236,47 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
-        public async Task ProtocolError_LatchesAndStopsAllEmission()
+        public async Task ProtocolError_TwoThenOk_DoesNotLatch()
         {
             UUID a = Id(1), b = Id(2);
             var feed = new FakeFeed { Current = BannedPairMatrix(a, b) };
             var sink = new FakeSink { NextResult = PeerCtlSendResult.ProtocolError };
             var sender = new VisibilityBatchSender(feed, sink, enabled: true);
 
-            await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));   // snapshot send -> ProtocolError -> latch
-            Assert.That(sink.Count, Is.EqualTo(1));
+            await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));   // ProtocolError #1 (snapshot, stays unsynced)
+            await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));   // ProtocolError #2
+            sink.NextResult = PeerCtlSendResult.Ok;
+            await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));   // Ok -> resets the consecutive run
+            Assert.That(sink.Count, Is.EqualTo(3));
 
-            // Everything is latched off now: further pumps and even a fresh provision do nothing.
+            // Not latched: a further send still reaches the sink (a latch would block it).
+            sink.NextResult = PeerCtlSendResult.ProtocolError;
+            await sender.PumpAsync(VisibilityBatch.Delta(Room, Excl((1, new[] { 2 })), null));
+            Assert.That(sink.Count, Is.EqualTo(4),
+                "two ProtocolErrors then an Ok must NOT latch — the Ok reset the run, emission continues");
+        }
+
+        [Test]
+        public async Task ProtocolError_ThreeConsecutive_Latches()
+        {
+            Assert.That(VisibilityBatchSender.ProtocolErrorLatchThreshold, Is.EqualTo(3), "guard: the test assumes K=3");
+
+            UUID a = Id(1), b = Id(2);
+            var feed = new FakeFeed { Current = BannedPairMatrix(a, b) };
+            var sink = new FakeSink { NextResult = PeerCtlSendResult.ProtocolError };
+            var sender = new VisibilityBatchSender(feed, sink, enabled: true);
+
+            await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));   // ProtocolError #1
+            await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));   // ProtocolError #2
+            await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));   // ProtocolError #3 -> LATCH
+            Assert.That(sink.Count, Is.EqualTo(3));
+
+            // Latched off: further pumps and even a fresh provision do nothing.
             sink.NextResult = PeerCtlSendResult.Ok;
             sender.OnListenerProvisioned(Id(9));
             await sender.PumpAsync(VisibilityBatch.Delta(Room, Excl((1, new[] { 2 })), null));
             await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
-            Assert.That(sink.Count, Is.EqualTo(1), "ProtocolError is latched — emission stays disabled");
+            Assert.That(sink.Count, Is.EqualTo(3), "three consecutive ProtocolErrors latch — emission stays disabled");
         }
 
         // ---- disjoint-bug guard ------------------------------------------------------------------
