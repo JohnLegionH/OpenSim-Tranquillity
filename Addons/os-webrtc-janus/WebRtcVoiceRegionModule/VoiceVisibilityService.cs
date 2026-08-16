@@ -32,19 +32,26 @@ namespace osWebRtcVoice
         private readonly Scene m_scene;
         private readonly int m_cadenceMs;
         private readonly bool m_emitEnabled;
+        private readonly IPeerCtlBatchSink m_sink;   // injected by the region module (option c-new); may be null
         private readonly VoiceStateFeeder m_feeder;
         private readonly ManualResetEventSlim m_wake = new ManualResetEventSlim(false);
 
         private Thread m_thread;
         private volatile bool m_running;
         private IEstateModule m_estateModule;
-        private VisibilityBatchSender m_sender;   // built in StartLoop once the sink is resolvable
+        private VisibilityBatchSender m_sender;   // built in StartLoop from the injected sink
 
-        public VoiceVisibilityService(Scene scene, int cadenceMs, bool emitEnabled = false)
+        // The sink is passed in directly (NOT resolved via scene.RequestModuleInterface): the sink
+        // and the sender live in this module's AssemblyLoadContext, so IPeerCtlBatchSink identity
+        // matches. Routing it through the scene module-interface registry crossed an ALC boundary
+        // with a non-shared type (VoiceVisibility.dll) and the two Types never matched. A null sink
+        // is tolerated — the sender runs matrix-only and logs once.
+        public VoiceVisibilityService(Scene scene, int cadenceMs, bool emitEnabled = false, IPeerCtlBatchSink sink = null)
         {
             m_scene = scene;
             m_cadenceMs = cadenceMs;
             m_emitEnabled = emitEnabled;
+            m_sink = sink;
             m_feeder = new VoiceStateFeeder(new FeederWorldFromScene(scene), EstateRoomPlaceholder, OnDerivationError);
             m_feeder.BatchProduced += OnBatch;
         }
@@ -75,12 +82,10 @@ namespace osWebRtcVoice
 
         public void StartLoop()
         {
-            // Resolve the peer_ctl_batch sink (registered by the Janus-side service module in
-            // AddRegion, which runs before this RegionLoaded-phase call). Null-tolerant: if no sink
-            // is registered, the sender runs matrix-only and logs once (never throws). The sender's
-            // own VisibilityEmitEnabled gate decides whether it emits at all.
-            IPeerCtlBatchSink sink = m_scene.RequestModuleInterface<IPeerCtlBatchSink>();
-            m_sender = new VisibilityBatchSender(m_feeder, sink, m_emitEnabled);
+            // Build the sender from the injected sink (same ALC — no registry resolve). Null-tolerant:
+            // a null sink makes the sender run matrix-only and log once. The sender's own
+            // VisibilityEmitEnabled gate decides whether it emits at all.
+            m_sender = new VisibilityBatchSender(m_feeder, m_sink, m_emitEnabled);
 
             m_running = true;
             m_thread = new Thread(RunLoop)
@@ -109,6 +114,10 @@ namespace osWebRtcVoice
             m_thread = null;
             if (t != null && !t.Join(JoinTimeoutMs))
                 m_log.Warn($"{logHeader} feeder thread for {m_scene.RegionInfo.RegionName} did not stop within {JoinTimeoutMs}ms");
+
+            // The service owns the injected sink's lifetime (it holds a JanusAdminClient/HttpClient).
+            // Dispose AFTER the tick thread has joined so no in-flight send races the dispose.
+            (m_sink as IDisposable)?.Dispose();
         }
 
         private void UnwireEvents()

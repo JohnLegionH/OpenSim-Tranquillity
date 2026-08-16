@@ -81,6 +81,12 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     // Emit the matrix to the mixer (peer_ctl_batch) — separate from running the matrix. Default
     // FALSE: the feeder can run matrix-only for diagnostics without emitting.
     private bool m_VisibilityEmitEnabled = false;
+    // [JanusWebRtcVoice] admin endpoint/secret for the peer_ctl_batch sink this module now OWNS
+    // (option c-new): the sink is constructed here and handed directly to the feeder's sender, so
+    // sink and sender share one ALC and IPeerCtlBatchSink identity matches.
+    private string m_JanusAdminUri = string.Empty;
+    private string m_JanusAdminToken = string.Empty;
+    private int m_AdminTimeoutMs = 5000;
     private readonly Dictionary<Scene, VoiceVisibilityService> m_visibilityServices = new();
 
     // ISharedRegionModule.Initialize
@@ -97,6 +103,15 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 m_VisibilityFeederEnabled = m_Config.GetBoolean("VisibilityFeederEnabled", false);
                 m_VisibilityTickMs = m_Config.GetInt("VisibilityTickMs", 250);
                 m_VisibilityEmitEnabled = m_Config.GetBoolean("VisibilityEmitEnabled", false);
+
+                // Sink endpoint from [JanusWebRtcVoice] (the same section the Janus service reads).
+                IConfig janusCfg = config.Configs["JanusWebRtcVoice"];
+                if (janusCfg is not null)
+                {
+                    m_JanusAdminUri = janusCfg.GetString("JanusGatewayAdminURI", string.Empty);
+                    m_JanusAdminToken = janusCfg.GetString("AdminAPIToken", string.Empty);
+                    m_AdminTimeoutMs = janusCfg.GetInt("AdminTimeoutMs", 5000);
+                }
 
                 m_log.LogInformation($"{logHeader}: enabled");
             }
@@ -153,12 +168,36 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             // Phase-3a: start the per-listener visibility feeder for this region (opt-in).
             if (m_VisibilityFeederEnabled)
             {
-                VoiceVisibilityService svc = new VoiceVisibilityService(scene, m_VisibilityTickMs, m_VisibilityEmitEnabled);
+                // Build the sink HERE and hand it directly to the service — same ALC, no scene
+                // registry (option c-new). Null when emission is off or admin config is missing;
+                // the service/sender then runs matrix-only and logs once.
+                IPeerCtlBatchSink sink = BuildPeerCtlSinkOrNull(scene);
+                VoiceVisibilityService svc = new VoiceVisibilityService(scene, m_VisibilityTickMs, m_VisibilityEmitEnabled, sink);
                 svc.Start();
                 lock (m_visibilityServices)
                     m_visibilityServices[scene] = svc;
             }
         }
+    }
+
+    // Construct the Janus peer_ctl_batch sink for this scene, or null to run matrix-only.
+    // Null when emission is disabled (no log — intentional) or when [JanusWebRtcVoice] admin
+    // endpoint/secret is absent (one loud WARN — the config saved us before, keep it loud).
+    private IPeerCtlBatchSink BuildPeerCtlSinkOrNull(Scene scene)
+    {
+        if (!m_VisibilityEmitEnabled)
+            return null;
+
+        if (string.IsNullOrEmpty(m_JanusAdminUri) || string.IsNullOrEmpty(m_JanusAdminToken))
+        {
+            m_log.Warn($"{logHeader}[Visibility]: VisibilityEmitEnabled but [JanusWebRtcVoice] " +
+                $"JanusGatewayAdminURI/AdminAPIToken missing; region \"{scene.RegionInfo.RegionName}\" runs matrix-only (no emission)");
+            return null;
+        }
+
+        // The sink logs its computed room number once at Info (unchanged).
+        return new JanusPeerCtlBatchSink(m_JanusAdminUri, m_JanusAdminToken,
+            TimeSpan.FromMilliseconds(m_AdminTimeoutMs), scene.RegionInfo.RegionID, scene.RegionInfo.RegionName);
     }
 
     // ISharedRegionModule.Close
