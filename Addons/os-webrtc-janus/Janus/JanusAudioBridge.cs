@@ -25,6 +25,7 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+using System.Collections.Concurrent;
 using System.Reflection;
 
 using log4net;
@@ -81,7 +82,41 @@ public class JanusAudioBridge : JanusPlugin
     /// <param name="pSpatial">boolean on whether room will be spatial or non-spatial</param>
     /// <param name="pRoomDesc">added as "description" to the created room</param>
     /// <returns></returns>
+    // Create room 'pRoomId', treating an already-existing room (Janus error 486) as
+    // reuse. If the first attempt is inconclusive (non-486 error, unexpected return
+    // code, or an exception), re-attempt ONCE: under a cross-PROCESS race (another
+    // regionserver created the room in the same instant) the room now exists and the
+    // re-attempt returns 486 -> reuse. No in-process lock can cover that cross-process
+    // case, so this re-check is the load-bearing correctness. Janus keys rooms by
+    // number, so re-attempting create cannot produce a duplicate room.
     public async Task<JanusRoom> CreateRoom(int pRoomId, bool pSpatial, string pRoomDesc)
+    {
+        JanusRoom ret = await CreateWithRecheck(() => TryCreateRoomOnce(pRoomId, pSpatial, pRoomDesc)).ConfigureAwait(false);
+        if (ret is null)
+        {
+            m_log.ErrorFormat("{0} CreateRoom. Room {1} creation failed after re-check", LogHeader, pRoomId);
+        }
+        return ret;
+    }
+
+    // Run a create attempt; if it comes back null (inconclusive), run it once more.
+    // Pure orchestration (no Janus dependency) so the retry policy is unit-testable.
+    public static async Task<JanusRoom> CreateWithRecheck(Func<Task<JanusRoom>> pAttempt)
+    {
+        JanusRoom ret = await pAttempt().ConfigureAwait(false);
+        if (ret is null)
+        {
+            // Inconclusive first attempt -> the room may already exist (a cross-process
+            // create won the race). Re-attempt; a now-existing room returns 486 -> reuse.
+            ret = await pAttempt().ConfigureAwait(false);
+        }
+        return ret;
+    }
+
+    // A single create attempt. Returns a JanusRoom on "created" or 486 (already exists
+    // -> reuse); null on any other error / unexpected return / exception (the caller
+    // may re-check for a cross-process create).
+    private async Task<JanusRoom> TryCreateRoomOnce(int pRoomId, bool pSpatial, string pRoomDesc)
     {
         JanusRoom ret = null;
         try
@@ -104,13 +139,13 @@ public class JanusAudioBridge : JanusPlugin
                     }
                     else
                     {
-                        m_log.ErrorFormat("{0} CreateRoom. XX Room creation failed: {1}", LogHeader, abResp.ToString());
+                        m_log.ErrorFormat("{0} CreateRoom. XX Room creation inconclusive: {1}", LogHeader, abResp.ToString());
                     }
                     break;
                 default:
-                    m_log.ErrorFormat("{0} CreateRoom. YY Room creation failed: {1}", LogHeader, abResp.ToString());
+                    m_log.ErrorFormat("{0} CreateRoom. YY Room creation inconclusive: {1}", LogHeader, abResp.ToString());
                     break;
-            }   
+            }
         }
         catch (Exception e)
         {
@@ -126,6 +161,8 @@ public class JanusAudioBridge : JanusPlugin
         {
             JanusMessageResp resp = await SendPluginMsg(new AudioBridgeDestroyRoomReq(janusRoom.RoomId));
             ret = true;
+            // Keep the process-wide existence hint consistent if a room is ever destroyed.
+            ForgetRoom(janusRoom.RoomId);
         }
         catch (Exception e)
         {
@@ -136,7 +173,19 @@ public class JanusAudioBridge : JanusPlugin
 
     // Constant used to denote that this is a spatial audio room for the region (as opposed to parcels)
     public const int REGION_ROOM_ID = -999;
-    private Dictionary<int, JanusRoom> _rooms = new Dictionary<int, JanusRoom>();
+
+    // Room EXISTENCE is grid-global (Janus is the source of truth), so it is tracked
+    // PROCESS-WIDE, not per session. Per-session AudioBridge instances keep only handle
+    // state (each builds its own JanusRoom bound to its plugin handle to join with).
+    // These statics coalesce concurrent creation of the same room number in this process
+    // so N same-process racers collapse to ONE Janus create; the cross-PROCESS race is
+    // covered by CreateRoom's 486 re-check. Limits: coalescing is per-process only, and
+    // _knownRooms is a best-effort hint, invalidated on DestroyRoom and on a JoinRoom
+    // failure (see ForgetRoom). If a room is destroyed out-of-band the join fails,
+    // ForgetRoom clears the hint, and the viewer's provision retry re-creates the room
+    // rather than looping forever skipping the create on a stale hint.
+    private static readonly ConcurrentDictionary<int, SemaphoreSlim> _roomCreateLocks = new();
+    private static readonly ConcurrentDictionary<int, bool> _knownRooms = new();
 
     // Calculate a room number for the given parameters. The room number is a hash of the parameters.
     // The attempt is to deterministicly create a room number so all regions will generate the
@@ -172,58 +221,54 @@ public class JanusAudioBridge : JanusPlugin
     public async Task<JanusRoom> SelectRoom(string pRegionId, string pChannelType, bool pSpatial, int pParcelLocalID, string pChannelID)
     {
         int roomNumber = CalcRoomNumber(pRegionId, pChannelType, pParcelLocalID, pChannelID);
-
-        // Should be unique for the given use and channel type
         m_log.DebugFormat("{0} SelectRoom: roomNumber={1}", LogHeader, roomNumber);
 
-        // Check to see if the room has already been created
-        lock (_rooms)
-        {
-            if (_rooms.ContainsKey(roomNumber))
-            {
-                return _rooms[roomNumber];
-            }
-        }
-
-        // The room doesn't exist. Create it.
         string roomDesc = pRegionId + "/" + pChannelType + "/" + pParcelLocalID + "/" + pChannelID;
-        JanusRoom ret = await CreateRoom(roomNumber, pSpatial, roomDesc);
-
-        JanusRoom existingRoom = null;
-        if (ret is not null)
-        {
-            lock (_rooms)
-            {
-                if (_rooms.ContainsKey(roomNumber))
-                {
-                    // If the room was created while we were waiting, 
-                    existingRoom = _rooms[roomNumber];
-                }
-                else
-                {
-                    // Our room is the first one created. Save it.
-                    _rooms[roomNumber] = ret;
-                }
-            }
-        }
-        if (existingRoom is not null)
-        {
-            // The room we created was already created by someone else. Delete ours and use the existing one
-            await DestroyRoom(ret);
-            ret = existingRoom;
-        }
-        return ret;
+        // Coalesce concurrent creates of this room number across all per-session bridges
+        // in this process. Each session still gets its OWN JanusRoom, bound to this
+        // session's plugin handle, to join the (shared) Janus room with.
+        return await SelectRoomCoalesced(
+            roomNumber,
+            () => CreateRoom(roomNumber, pSpatial, roomDesc),
+            () => new JanusRoom(this, roomNumber)).ConfigureAwait(false);
     }
 
-    // Return the room with the given room ID or 'null' if no such room
-    public JanusRoom GetRoom(int pRoomId)
+    // Process-wide coalescing of room creation by room number. Under the per-room lock:
+    // if the room is already known to exist in this process, skip the create and let the
+    // caller build a join object (pMakeExistingJoinObject); otherwise create exactly once
+    // (pCreate) and record it. Func-based and static so it is unit-testable without Janus.
+    public static async Task<JanusRoom> SelectRoomCoalesced(
+        int pRoomNumber,
+        Func<Task<JanusRoom>> pCreate,
+        Func<JanusRoom> pMakeExistingJoinObject)
     {
-        JanusRoom ret = null;
-        lock (_rooms)
+        SemaphoreSlim gate = _roomCreateLocks.GetOrAdd(pRoomNumber, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync().ConfigureAwait(false);
+        try
         {
-            _rooms.TryGetValue(pRoomId, out ret);
+            if (_knownRooms.ContainsKey(pRoomNumber))
+            {
+                return pMakeExistingJoinObject();
+            }
+            JanusRoom created = await pCreate().ConfigureAwait(false);
+            if (created is not null)
+            {
+                _knownRooms[pRoomNumber] = true;
+            }
+            return created;
         }
-        return ret;
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    // Drop the process-wide "exists" hint for a room number. Called when a join fails
+    // (e.g. the room was destroyed out-of-band) so the next SelectRoom re-creates the
+    // room instead of repeatedly trying to join a gone one.
+    public static void ForgetRoom(int pRoomNumber)
+    {
+        _knownRooms.TryRemove(pRoomNumber, out _);
     }
 
     public override void Handle_Event(JanusMessageResp pResp)
