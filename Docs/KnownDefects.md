@@ -48,3 +48,30 @@ here would unblock a genuine presence-based real-`Scene` automated test.
 finalizer-path field access against null, split managed-only teardown into the
 `disposing == true` branch, and ensure explicit `Dispose`/`Close` calls
 `GC.SuppressFinalize`.
+
+## WebRTC voice: OnRemovePresence teardown is unwired — room stays joined on child-agent removal
+
+**Status:** not started — resource-leak candidate, independent of Phase 3a. Candidate for a Mike
+report.
+
+**Symptom.** The presence-side voice teardown hook is commented out:
+`scene.EventManager.OnRemovePresence += Event_OnRemovePresence;` at
+`Addons/os-webrtc-janus/WebRtcVoiceServiceModule/WebRtcVoiceServiceModule.cs:206`, and its handler
+`Event_OnRemovePresence` (`:242`) is therefore never invoked. The only live teardown path is
+viewer-hangup-driven — `WebRtcJanusService.cs:154`–`155` (`OnDisconnect`/`OnHangup`) →
+`Handle_Hangup` (`:164`) → `DisconnectViewerSession` (`:183`) → `Room.LeaveRoom` (`:225`).
+
+**Consequence.** An **OpenSim-side** presence removal — notably a **child agent** being torn down
+when a neighbour region stops being adjacent — does not leave the Janus room. Nothing on the sim
+side proactively hangs up or leaves; the room membership persists until the *viewer* drops that
+WebRTC session (logout or its own connection teardown) or Janus times it out. Stale/leaked room
+memberships are the expected accumulation.
+
+**Why it may matter.** Neighbour-region voice means an avatar joins a room per adjacent region (see
+`Docs/voice/parcel-voice-semantics.md` §G). If those rooms are only ever cleaned by viewer hangup,
+churn (crossings, draw-distance changes) can leave orphaned participants in rooms the sim believes
+the avatar has left — a slow resource leak and a possible source of phantom roster/mix entries.
+
+**Suggested first step.** Decide whether `Event_OnRemovePresence` should be wired (and made
+idempotent/root-child-aware) so an OpenSim presence removal issues the corresponding `LeaveRoom`,
+rather than relying solely on viewer hangup.
