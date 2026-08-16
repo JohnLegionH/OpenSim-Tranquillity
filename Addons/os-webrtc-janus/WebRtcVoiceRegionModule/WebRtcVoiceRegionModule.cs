@@ -25,6 +25,7 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+using System.Collections.Generic;
 using System.Net;
 using System.Reflection;
 
@@ -73,6 +74,12 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     // "stun-servers"; empty => the key is not emitted.
     private string m_StunServers = string.Empty;
 
+    // Phase-3a per-listener visibility feeder. Off by default (no Janus sender consumes it yet);
+    // enable for the in-world DEBUG smoke check. One service per region.
+    private bool m_VisibilityFeederEnabled = false;
+    private int m_VisibilityTickMs = 250;
+    private readonly Dictionary<Scene, VoiceVisibilityService> m_visibilityServices = new();
+
     // ISharedRegionModule.Initialize
     public void Initialise(IConfigSource config)
     {
@@ -84,6 +91,8 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             {
                 _MessageDetails = m_Config.GetBoolean("MessageDetails", false);
                 m_StunServers = m_Config.GetString("StunServers", string.Empty);
+                m_VisibilityFeederEnabled = m_Config.GetBoolean("VisibilityFeederEnabled", false);
+                m_VisibilityTickMs = m_Config.GetInt("VisibilityTickMs", 250);
 
                 m_log.LogInformation($"{logHeader}: enabled");
             }
@@ -104,6 +113,14 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     // ISharedRegionModule.RemoveRegion
     public void RemoveRegion(Scene scene)
     {
+        lock (m_visibilityServices)
+        {
+            if (m_visibilityServices.TryGetValue(scene, out VoiceVisibilityService svc))
+            {
+                svc.Stop();
+                m_visibilityServices.Remove(scene);
+            }
+        }
     }
 
     // ISharedRegionModule.RegionLoaded
@@ -128,12 +145,27 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             {
                 simFeatures?.AddFeature("stun-servers", OSD.FromString(m_StunServers));
             }
+
+            // Phase-3a: start the per-listener visibility feeder for this region (opt-in).
+            if (m_VisibilityFeederEnabled)
+            {
+                VoiceVisibilityService svc = new VoiceVisibilityService(scene, m_VisibilityTickMs);
+                svc.Start();
+                lock (m_visibilityServices)
+                    m_visibilityServices[scene] = svc;
+            }
         }
     }
 
     // ISharedRegionModule.Close
     public void Close()
     {
+        lock (m_visibilityServices)
+        {
+            foreach (VoiceVisibilityService svc in m_visibilityServices.Values)
+                svc.Stop();
+            m_visibilityServices.Clear();
+        }
     }
 
     // ISharedRegionModule.Name
