@@ -13,6 +13,17 @@
     ;WebRtcVoiceServerURI = ${Const|PrivURL}:${Const|PrivatePort}
     ; Debugging: output to log file messages sent and received from the viewer. Very verbose.
     MessageDetails = false
+    ; Comma-separated STUN server URIs advertised to viewers as SimulatorFeatures
+    ; "stun-servers". Each entry MUST be a full ICE URI with scheme, e.g. stun:host:port.
+    ; STOCK viewers REQUIRE a non-empty valid entry or WebRTC voice fails at
+    ; CreatePeerConnection ("ICE server parsing failed: Empty uri"). Leave unset to omit
+    ; the key (host candidates only; safe only on a patched viewer).
+    ; On a LAN, reachability is irrelevant -- host candidates carry the media, so any
+    ; well-formed entry satisfies the viewer. Internet-exposed grids MUST use a reachable
+    ; STUN (this one, or their own coturn), since remote viewers need it for ICE.
+    ; NOTE: value is unquoted (matches this addon's other keys); the emitted URI must
+    ; have no surrounding quotes or libwebrtc rejects it.
+    StunServers = stun:stun.l.google.com:19302
 
 [JanusWebRtcVoice]
     ; URI to access the Janus Gateway
