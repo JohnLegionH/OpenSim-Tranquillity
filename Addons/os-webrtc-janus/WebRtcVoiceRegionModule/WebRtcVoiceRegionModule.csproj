@@ -15,6 +15,7 @@
     <Compile Include="FeederWorldFromScene.cs" />
     <Compile Include="VoiceVisibilityService.cs" />
     <Compile Include="VisibilityBatchSender.cs" />
+    <Compile Include="JanusPeerCtlBatchSink.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -28,6 +29,12 @@
     <ProjectReference Include="../../../Source/OpenSim.Services.Interfaces/OpenSim.Services.Interfaces.csproj" />
     <ProjectReference Include="../../../Addons/os-webrtc-janus/WebRtcVoice/WebRtcVoice.csproj" />
     <ProjectReference Include="../../../Addons/os-webrtc-janus/Visibility/Visibility.csproj" />
+    <!-- Phase 3a option (c-new): the region module OWNS the peer_ctl_batch sink so construction
+         and use live in ONE plugin ALC. JanusAdminClient + CalcRoomNumber come from
+         WebRtcJanusService.dll (already in the default context via ServerUtils.LoadPlugin ->
+         Assembly.LoadFrom, so PreferSharedTypes shares it — no private copy). Acyclic:
+         WebRtcJanusService does not reference this module. -->
+    <ProjectReference Include="../../../Addons/os-webrtc-janus/Janus/WebRtcJanusService.csproj" />
   </ItemGroup>
 
   <ItemGroup>
