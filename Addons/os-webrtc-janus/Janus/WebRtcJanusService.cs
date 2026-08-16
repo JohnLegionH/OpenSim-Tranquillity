@@ -274,6 +274,10 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                         {
                             errorMsg = "JoinRoom failed";
                             _log.LogError($"{LogHeader} ProvisionVoiceAccountRequest: JoinRoom failed");
+                            // The join failed (e.g. the room was destroyed out-of-band while our
+                            // _knownRooms hint still said it existed). Drop the hint so the viewer's
+                            // provision retry re-creates the room instead of looping on a stale skip.
+                            JanusAudioBridge.ForgetRoom(viewerSession.Room.RoomId);
                         }
                     }
                 }
