@@ -272,6 +272,19 @@ set of **excluded source** UUIDs:
 The mixer folds `excl` into each listener's `peer_ctl` entry as a `has_vis`/`visible=false` flag
 (§4), independent of `has_mute`/`has_gain`.
 
+**Wire invariant — empty is reason-free.** Because reason codes are off the wire (above), an
+**empty per-listener set carries no cause**: an empty `add`/`remove` delta means "nothing changed,"
+and an empty `replace` snapshot means "this listener excludes no one." That empty state is
+**deliberately ambiguous between "no exclusions" (voice on, nothing hidden) and "voice denied"** —
+the mixer **treats them identically**, because it only ever applies the exclusions it is handed, and
+in the deny-voice case there is no audible room to mix regardless (the outcome turns on whether the
+room/audio exists, not on the visibility feed). *(The current feeder does not exercise the
+ambiguity: whole-room deny-voice is emitted as a **full** per-listener exclusion set, not an empty
+one — `VisibilityRules` rule (1) excludes every source. The empty-means-deny reading is reserved so
+a future feeder may drop those redundant exclusions without a wire change.)* If a consumer ever
+needs to distinguish the two — e.g. to drive a "voice disabled" UI — add a **room-level flag in
+v1.1** rather than overloading the empty set.
+
 ---
 
 ## 4. Mixer side — folding visibility into the existing per-listener map
