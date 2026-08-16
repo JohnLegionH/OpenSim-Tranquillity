@@ -69,6 +69,10 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
 
     private IConfig m_Config;
 
+    // Comma-separated STUN URIs advertised to viewers as SimulatorFeatures
+    // "stun-servers"; empty => the key is not emitted.
+    private string m_StunServers = string.Empty;
+
     // ISharedRegionModule.Initialize
     public void Initialise(IConfigSource config)
     {
@@ -79,6 +83,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             if (m_Enabled)
             {
                 _MessageDetails = m_Config.GetBoolean("MessageDetails", false);
+                m_StunServers = m_Config.GetString("StunServers", string.Empty);
 
                 m_log.LogInformation($"{logHeader}: enabled");
             }
@@ -113,6 +118,16 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
 
             ISimulatorFeaturesModule simFeatures = scene.RequestModuleInterface<ISimulatorFeaturesModule>();
             simFeatures?.AddFeature("VoiceServerType", OSD.FromString("webrtc"));
+
+            // Advertise STUN servers to viewers so their WebRTC ICE config is non-empty.
+            // The viewer's OpenSim path reads SimulatorFeatures["stun-servers"] as a
+            // comma-separated string of full ICE URIs (llviewerregion.cpp). Absent config
+            // => omit the key. Stock viewers REQUIRE a non-empty valid entry or
+            // CreatePeerConnection fails "ICE server parsing failed: Empty uri".
+            if (!string.IsNullOrWhiteSpace(m_StunServers))
+            {
+                simFeatures?.AddFeature("stun-servers", OSD.FromString(m_StunServers));
+            }
         }
     }
 
