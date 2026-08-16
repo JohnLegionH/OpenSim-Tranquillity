@@ -24,6 +24,8 @@
     <Compile Include="DeltaComputer.cs" />
     <Compile Include="IVisibilityFeed.cs" />
     <Compile Include="VoiceStateFeeder.cs" />
+    <Compile Include="PeerCtlBatchSink.cs" />
+    <Compile Include="PeerCtlBatchSerializer.cs" />
   </ItemGroup>
 
 </Project>

@@ -14,6 +14,7 @@
     <Compile Include="LandBan.cs" />
     <Compile Include="FeederWorldFromScene.cs" />
     <Compile Include="VoiceVisibilityService.cs" />
+    <Compile Include="VisibilityBatchSender.cs" />
   </ItemGroup>
 
   <ItemGroup>

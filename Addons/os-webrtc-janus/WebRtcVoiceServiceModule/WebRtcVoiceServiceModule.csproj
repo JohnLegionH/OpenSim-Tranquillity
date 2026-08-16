@@ -17,6 +17,11 @@
     <ProjectReference Include="../../../Source/OpenSim.Services.Connectors/OpenSim.Services.Connectors.csproj" />
     <ProjectReference Include="../../../Source/OpenSim.Services.Interfaces/OpenSim.Services.Interfaces.csproj" />
     <ProjectReference Include="../../../Addons/os-webrtc-janus/WebRtcVoice/WebRtcVoice.csproj" />
+    <!-- Phase 3a option (C): construct the Janus-side peer_ctl_batch sink (JanusAdminClient +
+         CalcRoomNumber, WebRtcJanusService.dll — already deployed, loaded by name) implementing
+         IPeerCtlBatchSink (Visibility.dll — already deployed). Both edges acyclic; no new dll. -->
+    <ProjectReference Include="../../../Addons/os-webrtc-janus/Janus/WebRtcJanusService.csproj" />
+    <ProjectReference Include="../../../Addons/os-webrtc-janus/Visibility/Visibility.csproj" />
   </ItemGroup>
 
   <ItemGroup>
