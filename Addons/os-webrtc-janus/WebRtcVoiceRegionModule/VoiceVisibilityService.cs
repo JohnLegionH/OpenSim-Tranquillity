@@ -31,17 +31,20 @@ namespace osWebRtcVoice
 
         private readonly Scene m_scene;
         private readonly int m_cadenceMs;
+        private readonly bool m_emitEnabled;
         private readonly VoiceStateFeeder m_feeder;
         private readonly ManualResetEventSlim m_wake = new ManualResetEventSlim(false);
 
         private Thread m_thread;
         private volatile bool m_running;
         private IEstateModule m_estateModule;
+        private VisibilityBatchSender m_sender;   // built in StartLoop once the sink is resolvable
 
-        public VoiceVisibilityService(Scene scene, int cadenceMs)
+        public VoiceVisibilityService(Scene scene, int cadenceMs, bool emitEnabled = false)
         {
             m_scene = scene;
             m_cadenceMs = cadenceMs;
+            m_emitEnabled = emitEnabled;
             m_feeder = new VoiceStateFeeder(new FeederWorldFromScene(scene), EstateRoomPlaceholder, OnDerivationError);
             m_feeder.BatchProduced += OnBatch;
         }
@@ -72,6 +75,13 @@ namespace osWebRtcVoice
 
         public void StartLoop()
         {
+            // Resolve the peer_ctl_batch sink (registered by the Janus-side service module in
+            // AddRegion, which runs before this RegionLoaded-phase call). Null-tolerant: if no sink
+            // is registered, the sender runs matrix-only and logs once (never throws). The sender's
+            // own VisibilityEmitEnabled gate decides whether it emits at all.
+            IPeerCtlBatchSink sink = m_scene.RequestModuleInterface<IPeerCtlBatchSink>();
+            m_sender = new VisibilityBatchSender(m_feeder, sink, m_emitEnabled);
+
             m_running = true;
             m_thread = new Thread(RunLoop)
             {
@@ -79,8 +89,14 @@ namespace osWebRtcVoice
                 IsBackground = true
             };
             m_thread.Start();
-            m_log.Info($"{logHeader} feeder started for {m_scene.RegionInfo.RegionName} @ {m_cadenceMs}ms");
+            m_log.Info($"{logHeader} feeder started for {m_scene.RegionInfo.RegionName} @ {m_cadenceMs}ms (emit={m_emitEnabled})");
         }
+
+        /// Forward a WebRTC provisioning-success for a listener to the sender's pending-join path
+        /// (correction 1). Called from the region module's provisioning handler; safe if the sender
+        /// is not yet built or emission is disabled.
+        public void OnListenerProvisioned(UUID listener)
+            => m_sender?.OnListenerProvisioned(listener);
 
         public void Stop()
         {
@@ -108,9 +124,10 @@ namespace osWebRtcVoice
         {
             while (m_running)
             {
+                VisibilityBatch batch = null;
                 try
                 {
-                    m_feeder.Tick();
+                    batch = m_feeder.Tick();
                 }
                 catch (Exception e)
                 {
@@ -118,6 +135,12 @@ namespace osWebRtcVoice
                     // itself never dies.
                     m_log.Error($"{logHeader} tick failed", e);
                 }
+
+                // Drive emission off the tick: fire-and-forget, never awaited here, never throws.
+                // Pump runs every tick (even an empty batch) so the pending-join path and a
+                // snapshot-on-a-quiet-tick still get a chance.
+                if (batch != null)
+                    m_sender?.Pump(batch);
 
                 m_wake.Wait(m_cadenceMs);
                 m_wake.Reset();

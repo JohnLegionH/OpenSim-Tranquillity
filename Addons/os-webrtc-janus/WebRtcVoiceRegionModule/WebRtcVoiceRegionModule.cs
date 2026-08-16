@@ -78,6 +78,9 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     // enable for the in-world DEBUG smoke check. One service per region.
     private bool m_VisibilityFeederEnabled = false;
     private int m_VisibilityTickMs = 250;
+    // Emit the matrix to the mixer (peer_ctl_batch) — separate from running the matrix. Default
+    // FALSE: the feeder can run matrix-only for diagnostics without emitting.
+    private bool m_VisibilityEmitEnabled = false;
     private readonly Dictionary<Scene, VoiceVisibilityService> m_visibilityServices = new();
 
     // ISharedRegionModule.Initialize
@@ -93,6 +96,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 m_StunServers = m_Config.GetString("StunServers", string.Empty);
                 m_VisibilityFeederEnabled = m_Config.GetBoolean("VisibilityFeederEnabled", false);
                 m_VisibilityTickMs = m_Config.GetInt("VisibilityTickMs", 250);
+                m_VisibilityEmitEnabled = m_Config.GetBoolean("VisibilityEmitEnabled", false);
 
                 m_log.LogInformation($"{logHeader}: enabled");
             }
@@ -149,7 +153,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             // Phase-3a: start the per-listener visibility feeder for this region (opt-in).
             if (m_VisibilityFeederEnabled)
             {
-                VoiceVisibilityService svc = new VoiceVisibilityService(scene, m_VisibilityTickMs);
+                VoiceVisibilityService svc = new VoiceVisibilityService(scene, m_VisibilityTickMs, m_VisibilityEmitEnabled);
                 svc.Start();
                 lock (m_visibilityServices)
                     m_visibilityServices[scene] = svc;
@@ -356,6 +360,16 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             string xmlResp = OSDParser.SerializeLLSDXmlString(resp);
             response.RawBuffer = Util.UTF8.GetBytes(xmlResp);
             response.StatusCode = (int)HttpStatusCode.OK;
+
+            // Phase-3a (correction 1): a successful provision means this agent will join the mixer
+            // room — hand it to the visibility sender's pending-join path so its full exclusion
+            // column is (re)sent once it is present (the mixer silently drops a batch for a listener
+            // not yet in the room). Estate-channel scoped; harmless for a per-parcel-channel agent
+            // (its replace targets the estate room and the bounded re-send simply gives up loudly).
+            VoiceVisibilityService svc;
+            lock (m_visibilityServices)
+                m_visibilityServices.TryGetValue(scene, out svc);
+            svc?.OnListenerProvisioned(agentID);
         }
         else
         {

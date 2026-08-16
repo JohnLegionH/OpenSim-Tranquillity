@@ -61,6 +61,14 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
     private IWebRtcVoiceService m_spatialVoiceService;
     private IWebRtcVoiceService m_nonSpatialVoiceService;
 
+    // Phase-3a option (C): the Janus-side peer_ctl_batch sink, registered per scene as
+    // IPeerCtlBatchSink so the region-module orchestrator can resolve it without referencing Janus.
+    private bool m_visibilityEmitEnabled = false;
+    private string m_janusAdminUri = string.Empty;
+    private string m_janusAdminToken = string.Empty;
+    private int m_adminTimeoutMs = 5000;
+    private readonly Dictionary<Scene, JanusPeerCtlBatchSink> m_peerCtlSinks = new();
+
     // =====================================================================
 
     // ISharedRegionModule.Initialize
@@ -116,6 +124,18 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
                 if (m_Enabled)
                 {
                     m_log.LogInformation($"{LogHeader} WebRtcVoiceService enabled");
+
+                    // Phase-3a: peer_ctl_batch emission config. VisibilityEmitEnabled gates whether
+                    // a sink is registered at all (default off); the Janus admin endpoint + secret
+                    // come from [JanusWebRtcVoice], the same section the Janus service reads.
+                    m_visibilityEmitEnabled = moduleConfig.GetBoolean("VisibilityEmitEnabled", false);
+                    IConfig janusCfg = m_Config.Configs["JanusWebRtcVoice"];
+                    if (janusCfg is not null)
+                    {
+                        m_janusAdminUri = janusCfg.GetString("JanusGatewayAdminURI", string.Empty);
+                        m_janusAdminToken = janusCfg.GetString("AdminAPIToken", string.Empty);
+                        m_adminTimeoutMs = janusCfg.GetInt("AdminTimeoutMs", 5000);
+                    }
                 }
             }
         }
@@ -129,6 +149,12 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
     // ISharedRegionModule.Close
     public void Close()
     {
+        lock (m_peerCtlSinks)
+        {
+            foreach (JanusPeerCtlBatchSink sink in m_peerCtlSinks.Values)
+                sink.Dispose();
+            m_peerCtlSinks.Clear();
+        }
     }
 
     // ISharedRegionModule.ReplaceableInterface
@@ -150,6 +176,27 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         {
             m_log.LogDebug($"{LogHeader} Adding WebRtcVoiceService to region {scene.Name}");
             scene.RegisterModuleInterface<IWebRtcVoiceService>(this);
+
+            // Phase-3a: register the peer_ctl_batch sink for this scene (before RegionLoaded, where
+            // the orchestrator resolves it). Only when emission is on AND the admin endpoint/secret
+            // are configured — otherwise the region-module sender logs "no sink" and runs matrix-only.
+            if (m_visibilityEmitEnabled)
+            {
+                if (!string.IsNullOrEmpty(m_janusAdminUri) && !string.IsNullOrEmpty(m_janusAdminToken))
+                {
+                    var sink = new JanusPeerCtlBatchSink(m_janusAdminUri, m_janusAdminToken,
+                        TimeSpan.FromMilliseconds(m_adminTimeoutMs),
+                        scene.RegionInfo.RegionID, scene.RegionInfo.RegionName);
+                    scene.RegisterModuleInterface<IPeerCtlBatchSink>(sink);
+                    lock (m_peerCtlSinks)
+                        m_peerCtlSinks[scene] = sink;
+                    m_log.Info($"{LogHeader} registered peer_ctl_batch sink for {scene.RegionInfo.RegionName}");
+                }
+                else
+                {
+                    m_log.Warn($"{LogHeader} VisibilityEmitEnabled but [JanusWebRtcVoice] JanusGatewayAdminURI/AdminAPIToken missing; no peer_ctl_batch sink registered");
+                }
+            }
 
             // TODO: figure out what events we care about
             // When new client (child or root) is added to scene, before OnClientLogin
@@ -173,6 +220,16 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         if (m_Enabled)
         {
             scene.UnregisterModuleInterface<IWebRtcVoiceService>(this);
+
+            lock (m_peerCtlSinks)
+            {
+                if (m_peerCtlSinks.TryGetValue(scene, out JanusPeerCtlBatchSink sink))
+                {
+                    scene.UnregisterModuleInterface<IPeerCtlBatchSink>(sink);
+                    sink.Dispose();
+                    m_peerCtlSinks.Remove(scene);
+                }
+            }
         }
     }
 

@@ -72,21 +72,26 @@ namespace osWebRtcVoice
         /// <summary>Called once per feeder tick with that tick's batch. Fire-and-forget; never blocks
         /// or throws on the tick thread. Single-flight: while a send is in flight, skip this tick and
         /// force a snapshot next (a skipped delta must not cause drift).</summary>
-        public void Pump(VisibilityBatch batch)
+        public void Pump(VisibilityBatch batch) => _ = PumpAsync(batch);   // fire-and-forget on the tick thread
+
+        /// <summary>The awaitable core of Pump — production uses the fire-and-forget void overload;
+        /// tests await this for determinism. Returns a completed task when it no-ops or is skipped by
+        /// single-flight; otherwise the send task (which clears the in-flight flag in its finally).</summary>
+        public Task PumpAsync(VisibilityBatch batch)
         {
             if (!_enabled || _protocolFailed)
-                return;
+                return Task.CompletedTask;
             if (_sink == null)
             {
                 LogNoSinkOnce();
-                return;
+                return Task.CompletedTask;
             }
             if (Interlocked.CompareExchange(ref _sendInFlight, 1, 0) != 0)
             {
                 _synced = false;   // a skipped tick -> snapshot next
-                return;
+                return Task.CompletedTask;
             }
-            _ = RunAsync(batch);   // fire-and-forget; NOT awaited on the tick thread
+            return RunAsync(batch);   // NOT awaited by Pump (the void wrapper); tests may await it
         }
 
         private async Task RunAsync(VisibilityBatch batch)
