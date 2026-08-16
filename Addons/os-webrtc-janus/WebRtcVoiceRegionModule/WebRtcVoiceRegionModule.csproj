@@ -3,9 +3,14 @@
   <PropertyGroup>
     <Version>2.1.1</Version>
     <AssemblyName>WebRtcVoiceRegionModule</AssemblyName>
+    <!-- Manual source items: a new .cs that is not listed below will NOT compile.
+         Deliberate (the silent-absence footgun made loud) - add every new file here. -->
+    <EnableDefaultItems>false</EnableDefaultItems>
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="PluginRegistration.cs" />
+    <Compile Include="WebRtcVoiceRegionModule.cs" />
   </ItemGroup>
 
   <ItemGroup>
