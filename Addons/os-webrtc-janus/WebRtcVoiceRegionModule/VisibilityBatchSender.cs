@@ -47,25 +47,47 @@ namespace osWebRtcVoice
         /// is persistent, so it trips all K within a second (a few ticks); a one-off does not.</summary>
         public const int ProtocolErrorLatchThreshold = 3;
 
+        /// <summary>Self-heal a send stuck in-flight after this many admin-timeouts. Set to 8x so it
+        /// sits strictly beyond JanusAdminClient's 4x HttpClient backstop — a send still in flight at
+        /// 8x means the completion path itself failed (the finally never ran), not just a slow send.
+        /// This turns the permanent silent wedge into a bounded, logged hiccup.</summary>
+        public const int StaleInFlightMultiple = 8;
+
         private readonly IVisibilityFeed _feed;
         private readonly IPeerCtlBatchSink _sink;   // null => no sink registered; no-op (logged once)
         private readonly bool _enabled;
 
-        private int _sendInFlight;                  // Interlocked single-flight (0/1)
+        // Single-flight is now epoch-based: 0 = idle; otherwise the epoch id of the in-flight send.
+        // The finally clears the flag via CAS-against-its-own-epoch, so a late-completing abandoned
+        // send (force-cleared by the staleness guard) can never clear a NEWER send's ownership.
+        private long _sendInFlight;                 // 0 or the in-flight send's epoch (Interlocked)
+        private long _sendEpochSeq;                 // monotonic; each acquire claims ++ as its epoch id
+        private long _sendStartedAtMs;              // clock when the current send acquired (advisory; see guard)
         private volatile bool _synced;
         private volatile bool _protocolFailed;      // latched after K consecutive ProtocolErrors; stops emission
         private int _consecutiveProtocolErrors;     // touched only on RunAsync's thread (single-flight), like _knownListeners
         private bool _loggedNoSink;
 
+        private readonly long _staleThresholdMs;    // force-heal an in-flight send after this long (StaleInFlightMultiple x admin)
+        private readonly long _adminTimeoutMs;      // for the guard log
+        private readonly string _region;            // for the guard log
+        private readonly Func<long> _nowMs;         // monotonic clock (injectable for tests)
+
         private readonly HashSet<UUID> _knownListeners = new HashSet<UUID>();   // touched only on RunAsync's thread
         private readonly object _pendingLock = new object();
         private readonly Dictionary<UUID, int> _pending = new Dictionary<UUID, int>();   // listener -> attempts left
 
-        public VisibilityBatchSender(IVisibilityFeed feed, IPeerCtlBatchSink sink, bool enabled)
+        public VisibilityBatchSender(IVisibilityFeed feed, IPeerCtlBatchSink sink, bool enabled,
+            TimeSpan? adminTimeout = null, string region = null, Func<long> nowMs = null)
         {
             _feed = feed;
             _sink = sink;
             _enabled = enabled;
+            _region = region ?? "?";
+            _nowMs = nowMs ?? (() => Environment.TickCount64);
+            TimeSpan admin = (adminTimeout is TimeSpan t && t > TimeSpan.Zero) ? t : TimeSpan.FromSeconds(5);
+            _adminTimeoutMs = (long)admin.TotalMilliseconds;
+            _staleThresholdMs = _adminTimeoutMs * StaleInFlightMultiple;
         }
 
         /// <summary>Trigger (correction 1): call on WebRTC provisioning-success for a listener. Adds
@@ -96,15 +118,22 @@ namespace osWebRtcVoice
                 LogNoSinkOnce();
                 return Task.CompletedTask;
             }
-            if (Interlocked.CompareExchange(ref _sendInFlight, 1, 0) != 0)
+            long myEpoch = Interlocked.Increment(ref _sendEpochSeq);   // >=1, unique to this attempt
+            if (Interlocked.CompareExchange(ref _sendInFlight, myEpoch, 0L) != 0L)
             {
+                // A send is already in flight. Self-heal if it has been stuck far longer than
+                // possible (FIX 2) — neither the per-call token nor the HttpClient backstop resolved it.
+                ForceClearStalledSend();
                 _synced = false;   // a skipped tick -> snapshot next
                 return Task.CompletedTask;
             }
-            return RunAsync(batch);   // NOT awaited by Pump (the void wrapper); tests may await it
+            // Acquired this epoch. Record the start AFTER claiming the flag (still on the pump/tick
+            // thread, so no other Pump interleaves before this write).
+            Volatile.Write(ref _sendStartedAtMs, _nowMs());
+            return RunAsync(batch, myEpoch);   // NOT awaited by Pump (the void wrapper); tests may await it
         }
 
-        private async Task RunAsync(VisibilityBatch batch)
+        private async Task RunAsync(VisibilityBatch batch, long epoch)
         {
             try
             {
@@ -119,8 +148,39 @@ namespace osWebRtcVoice
             }
             finally
             {
-                Interlocked.Exchange(ref _sendInFlight, 0);
+                // Release ONLY if we still own the flag. If the staleness guard force-cleared us and a
+                // newer send took over, _sendInFlight holds a different epoch and this CAS no-ops — so
+                // a late completion of an abandoned send cannot clear a newer send's ownership.
+                Interlocked.CompareExchange(ref _sendInFlight, 0L, epoch);
             }
+        }
+
+        // FIX 2: self-heal a send stuck in-flight far longer than possible. Called on a skipped Pump
+        // (a send is already in flight). Logs once per stall episode — the CAS-clear resolves the
+        // stall, so the next detection is a fresh episode — never once per tick.
+        private void ForceClearStalledSend()
+        {
+            long inflight = Interlocked.Read(ref _sendInFlight);
+            if (inflight == 0L)
+                return;   // raced to idle; nothing in flight
+            long elapsed = _nowMs() - Volatile.Read(ref _sendStartedAtMs);
+            if (elapsed <= _staleThresholdMs)
+                return;   // slow but within budget; a normal single-flight skip
+
+            // Torn-read safety: the timestamp read above may belong to a NEWER send if the in-flight
+            // send rotated between our two reads. We neutralise that by force-clearing with a CAS
+            // against the epoch we measured — if the epoch moved, the CAS fails and we do nothing (no
+            // erroneous clear, no log). The flag+epoch is a single Interlocked long, so there is no
+            // torn STATE; the separate timestamp is advisory and any staleness is caught by this CAS.
+            if (Interlocked.CompareExchange(ref _sendInFlight, 0L, inflight) != inflight)
+                return;
+
+            m_log.ErrorFormat("{0} region {1}: peer_ctl_batch send stuck in-flight {2}ms (self-heal " +
+                "threshold {3}ms = {4}x the {5}ms admin timeout). Emission was STALLED — neither the " +
+                "per-call token nor the HttpClient backstop resolved it. Force-clearing the in-flight " +
+                "flag and re-syncing (snapshot next); the abandoned send is left to complete or hang " +
+                "harmlessly.", LogHeader, _region, elapsed, _staleThresholdMs, StaleInFlightMultiple, _adminTimeoutMs);
+            _synced = false;   // abandoned send's applied-state is unknown -> full snapshot next
         }
 
         // ---- per-listener JOIN path (bounded blind re-send; distinct from _synced/_knownListeners) ----

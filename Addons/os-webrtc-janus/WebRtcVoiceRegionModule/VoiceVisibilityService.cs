@@ -33,6 +33,7 @@ namespace osWebRtcVoice
         private readonly int m_cadenceMs;
         private readonly bool m_emitEnabled;
         private readonly IPeerCtlBatchSink m_sink;   // injected by the region module (option c-new); may be null
+        private readonly TimeSpan m_adminTimeout;    // for the sender's in-flight staleness self-heal
         private readonly VoiceStateFeeder m_feeder;
         private readonly ManualResetEventSlim m_wake = new ManualResetEventSlim(false);
 
@@ -46,12 +47,14 @@ namespace osWebRtcVoice
         // matches. Routing it through the scene module-interface registry crossed an ALC boundary
         // with a non-shared type (VoiceVisibility.dll) and the two Types never matched. A null sink
         // is tolerated — the sender runs matrix-only and logs once.
-        public VoiceVisibilityService(Scene scene, int cadenceMs, bool emitEnabled = false, IPeerCtlBatchSink sink = null)
+        public VoiceVisibilityService(Scene scene, int cadenceMs, bool emitEnabled = false,
+            IPeerCtlBatchSink sink = null, TimeSpan? adminTimeout = null)
         {
             m_scene = scene;
             m_cadenceMs = cadenceMs;
             m_emitEnabled = emitEnabled;
             m_sink = sink;
+            m_adminTimeout = adminTimeout ?? TimeSpan.FromSeconds(5);
             m_feeder = new VoiceStateFeeder(new FeederWorldFromScene(scene), EstateRoomPlaceholder, OnDerivationError);
             m_feeder.BatchProduced += OnBatch;
         }
@@ -85,7 +88,8 @@ namespace osWebRtcVoice
             // Build the sender from the injected sink (same ALC — no registry resolve). Null-tolerant:
             // a null sink makes the sender run matrix-only and log once. The sender's own
             // VisibilityEmitEnabled gate decides whether it emits at all.
-            m_sender = new VisibilityBatchSender(m_feeder, m_sink, m_emitEnabled);
+            m_sender = new VisibilityBatchSender(m_feeder, m_sink, m_emitEnabled,
+                m_adminTimeout, m_scene.RegionInfo.RegionName);
 
             m_running = true;
             m_thread = new Thread(RunLoop)

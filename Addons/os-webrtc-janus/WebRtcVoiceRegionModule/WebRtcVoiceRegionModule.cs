@@ -172,7 +172,8 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 // registry (option c-new). Null when emission is off or admin config is missing;
                 // the service/sender then runs matrix-only and logs once.
                 IPeerCtlBatchSink sink = BuildPeerCtlSinkOrNull(scene);
-                VoiceVisibilityService svc = new VoiceVisibilityService(scene, m_VisibilityTickMs, m_VisibilityEmitEnabled, sink);
+                VoiceVisibilityService svc = new VoiceVisibilityService(scene, m_VisibilityTickMs, m_VisibilityEmitEnabled, sink,
+                    TimeSpan.FromMilliseconds(m_AdminTimeoutMs));
                 svc.Start();
                 lock (m_visibilityServices)
                     m_visibilityServices[scene] = svc;

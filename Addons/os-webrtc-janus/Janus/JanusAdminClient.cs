@@ -74,8 +74,24 @@ namespace osWebRtcVoice
             _adminUri = adminUri;
             _adminSecret = adminSecret;
             _timeout = timeout;
-            _httpClient = new HttpClient();
+            // This is JanusAdminClient's OWN HttpClient (constructed and disposed here), NOT
+            // JanusSession's shared _HttpClient. The absolute Timeout below is a coarse BACKSTOP to
+            // the per-call CancellationTokenSource in SendWithTimeoutAsync: the CTS (1x admin timeout)
+            // is the normal deadline; this fires only if the token failed to cancel (e.g. a half-dead
+            // pooled connection stalling the response-body read). Set well beyond the per-call
+            // deadline so it never pre-empts the normal cancellation path.
+            _httpClient = new HttpClient { Timeout = ComputeClientTimeout(timeout) };
         }
+
+        /// <summary>The absolute <see cref="HttpClient.Timeout"/> backstop: 4x the admin timeout. The
+        /// per-call token (1x) is the normal cancellation path; this only fires when it didn't. 4x
+        /// leaves clear headroom so a legitimately slow request the CTS would already have bounded
+        /// never trips it. Falls back to 20s if the admin timeout is non-positive.</summary>
+        public static TimeSpan ComputeClientTimeout(TimeSpan adminTimeout)
+            => adminTimeout > TimeSpan.Zero ? TimeSpan.FromTicks(adminTimeout.Ticks * 4) : TimeSpan.FromSeconds(20);
+
+        /// <summary>Test-observability: the absolute timeout set on the owned HttpClient.</summary>
+        public TimeSpan ClientTimeout => _httpClient.Timeout;
 
         public void Dispose() => _httpClient?.Dispose();
 
