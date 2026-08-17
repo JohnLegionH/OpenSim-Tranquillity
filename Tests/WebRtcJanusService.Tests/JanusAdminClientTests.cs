@@ -149,5 +149,30 @@ namespace osWebRtcVoice.Tests
             Assert.That(sw.Elapsed, Is.LessThan(TimeSpan.FromSeconds(5)),
                 "returned on the ~50ms deadline, not after the 30s hang");
         }
+
+        // ---- FIX 1: absolute HttpClient.Timeout backstop -------------------------------------
+        [Test]
+        public void ComputeClientTimeout_IsFourTimesTheAdminTimeout()
+        {
+            Assert.That(JanusAdminClient.ComputeClientTimeout(TimeSpan.FromSeconds(5)),
+                Is.EqualTo(TimeSpan.FromSeconds(20)));
+            Assert.That(JanusAdminClient.ComputeClientTimeout(TimeSpan.FromMilliseconds(250)),
+                Is.EqualTo(TimeSpan.FromMilliseconds(1000)));
+        }
+
+        [Test]
+        public void ComputeClientTimeout_NonPositive_FallsBackTo20s()
+        {
+            Assert.That(JanusAdminClient.ComputeClientTimeout(TimeSpan.Zero), Is.EqualTo(TimeSpan.FromSeconds(20)));
+            Assert.That(JanusAdminClient.ComputeClientTimeout(TimeSpan.FromSeconds(-1)), Is.EqualTo(TimeSpan.FromSeconds(20)));
+        }
+
+        [Test]
+        public void Ctor_SetsAbsoluteTimeoutOnItsOwnHttpClient()
+        {
+            using var client = new JanusAdminClient("http://localhost/voiceAdmin", "secret", TimeSpan.FromSeconds(5));
+            Assert.That(client.ClientTimeout, Is.EqualTo(TimeSpan.FromSeconds(20)),
+                "JanusAdminClient's own HttpClient must carry the 4x backstop timeout (not JanusSession's shared client)");
+        }
     }
 }

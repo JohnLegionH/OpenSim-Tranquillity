@@ -350,5 +350,199 @@ namespace osWebRtcVoice.Tests
             Assert.That(sink.Count, Is.EqualTo(2), "only the two join re-sends; the main path emitted nothing");
             Assert.That(sink.Calls.All(c => c.op == VisOp.Replace && c.excl.ContainsKey(listener)), Is.True);
         }
+
+        // ==== FIX 2: in-flight staleness self-heal ========================================
+
+        // A sink whose SendAsync never completes until the test releases it — models a send stuck
+        // in flight (the CTS + HttpClient backstop both failed) so _sendInFlight stays claimed.
+        private sealed class HangingSink : IPeerCtlBatchSink
+        {
+            public volatile bool Hang;
+            public readonly List<VisOp> Ops = new();
+            private readonly object _lock = new object();
+            public TaskCompletionSource<PeerCtlSendResult> LastPending;
+
+            public Task<PeerCtlSendResult> SendAsync(VisOp op, IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> excl)
+            {
+                lock (_lock) Ops.Add(op);
+                if (Hang)
+                {
+                    var tcs = new TaskCompletionSource<PeerCtlSendResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    LastPending = tcs;
+                    return tcs.Task;   // never completes until the test SetResult's it
+                }
+                return Task.FromResult(PeerCtlSendResult.Ok);
+            }
+
+            public int Count { get { lock (_lock) return Ops.Count; } }
+            public VisOp LastOp { get { lock (_lock) return Ops[Ops.Count - 1]; } }
+        }
+
+        // Capture the sender's log4net Error output so "logs once" is asserted against the real log.
+        private static (log4net.Appender.MemoryAppender appender, Action detach) CaptureVisibilityLog()
+        {
+            var appender = new log4net.Appender.MemoryAppender();
+            appender.ActivateOptions();
+            var repo = (log4net.Repository.Hierarchy.Hierarchy)log4net.LogManager.GetRepository(typeof(VisibilityBatchSender).Assembly);
+            repo.Root.AddAppender(appender);
+            repo.Root.Level = log4net.Core.Level.All;
+            repo.Configured = true;
+            return (appender, () => repo.Root.RemoveAppender(appender));
+        }
+
+        private static int StallLogCount(log4net.Appender.MemoryAppender appender)
+            => appender.GetEvents().Count(e => e.Level == log4net.Core.Level.Error
+                && e.RenderedMessage.Contains("stuck in-flight") && e.RenderedMessage.Contains("region Ebony"));
+
+        private static VisibilityBatchSender NewStallSender(FakeFeed feed, IPeerCtlBatchSink sink, long[] now)
+            => new VisibilityBatchSender(feed, sink, enabled: true,
+                   adminTimeout: TimeSpan.FromMilliseconds(100), region: "Ebony",
+                   nowMs: () => System.Threading.Volatile.Read(ref now[0]));   // stale threshold = 8 x 100 = 800ms
+
+        // Hardening note: these tests NEVER await an uncompleted gate. Time is advanced via the fake
+        // clock (now[]) so the guard fires without any real wait, and every hung send's gate is
+        // completed and its task drained in `finally` — so a leaked never-completing task can't wedge
+        // the runner. The assembly-level [CancelAfter] (AssemblyInfo.cs) is the last-resort backstop.
+
+        [Test]
+        public async Task StalledSend_GuardFiresAfterThreshold_ClearsFlag_NextPumpSnapshots()
+        {
+            UUID a = Id(1), b = Id(2);
+            long[] now = { 0 };
+            var feed = new FakeFeed { Current = BannedPairMatrix(a, b) };
+            var sink = new HangingSink { Hang = true };
+            var sender = NewStallSender(feed, sink, now);
+            var (appender, detach) = CaptureVisibilityLog();
+            Task hung1 = null;
+            TaskCompletionSource<PeerCtlSendResult> gate1 = null;
+            try
+            {
+                // Send #1 (bootstrap snapshot Replace) hangs. Capture its task/gate — do NOT await it.
+                hung1 = sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
+                gate1 = sink.LastPending;
+                Assert.That(sink.Count, Is.EqualTo(1));
+                Assert.That(sink.LastOp, Is.EqualTo(VisOp.Replace));
+
+                // Before the threshold: a pump skips (returns a COMPLETED task); the guard does NOT fire.
+                System.Threading.Volatile.Write(ref now[0], 500);          // < 800
+                await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
+                Assert.That(sink.Count, Is.EqualTo(1), "still in flight; no new send");
+                Assert.That(StallLogCount(appender), Is.EqualTo(0), "guard must not fire before the threshold");
+
+                // Past the threshold: the guard fires — force-clears, logs once, forces snapshot next.
+                System.Threading.Volatile.Write(ref now[0], 900);          // > 800
+                await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
+                Assert.That(sink.Count, Is.EqualTo(1), "the guard itself sends nothing");
+                Assert.That(StallLogCount(appender), Is.EqualTo(1), "guard logs exactly once");
+
+                // Next pump: flag cleared -> acquires; _synced=false -> SNAPSHOT (not a delta). Completes.
+                sink.Hang = false;
+                await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
+                Assert.That(sink.Count, Is.EqualTo(2), "emission resumed after self-heal");
+                Assert.That(sink.LastOp, Is.EqualTo(VisOp.Replace), "recovery send is a snapshot, not a delta");
+                Assert.That(StallLogCount(appender), Is.EqualTo(1), "still exactly one stall log (once per episode)");
+            }
+            finally
+            {
+                gate1?.TrySetResult(PeerCtlSendResult.Ok);   // drain the abandoned send -> no leaked task
+                if (hung1 != null) await hung1;
+                detach();
+            }
+        }
+
+        [Test]
+        public async Task SlowButCompletingSend_DoesNotTripGuard()
+        {
+            UUID a = Id(1), b = Id(2);
+            long[] now = { 0 };
+            var feed = new FakeFeed { Current = BannedPairMatrix(a, b) };
+            var sink = new HangingSink { Hang = true };
+            var sender = NewStallSender(feed, sink, now);
+            var (appender, detach) = CaptureVisibilityLog();
+            Task s1 = null;
+            TaskCompletionSource<PeerCtlSendResult> gate = null;
+            try
+            {
+                s1 = sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));   // snapshot send is slow (gated)
+                gate = sink.LastPending;
+
+                // Advance repeatedly but stay UNDER the threshold: skips, guard never fires.
+                foreach (int t in new[] { 100, 300, 500, 700 })
+                {
+                    System.Threading.Volatile.Write(ref now[0], t);
+                    await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
+                }
+                Assert.That(StallLogCount(appender), Is.EqualTo(0), "a slow send within budget must not trip the guard");
+                Assert.That(sink.Count, Is.EqualTo(1), "no force-clear, no extra sends");
+
+                // The send now completes normally -> its finally releases the flag.
+                gate.SetResult(PeerCtlSendResult.Ok);
+                await s1;
+
+                // Emission works normally afterwards (synced now -> a non-empty delta emits an add).
+                // Un-hang the sink FIRST so this awaited delta send completes rather than gating.
+                sink.Hang = false;
+                System.Threading.Volatile.Write(ref now[0], 750);
+                await sender.PumpAsync(VisibilityBatch.Delta(Room, Excl((3, new[] { 4 })), null));
+                Assert.That(sink.Count, Is.EqualTo(2), "emission resumed via the normal single-flight release");
+                Assert.That(sink.LastOp, Is.EqualTo(VisOp.Add));
+                Assert.That(StallLogCount(appender), Is.EqualTo(0), "guard never fired for a completing send");
+            }
+            finally
+            {
+                gate?.TrySetResult(PeerCtlSendResult.Ok);   // idempotent if an assert failed pre-completion
+                if (s1 != null) await s1;
+                detach();
+            }
+        }
+
+        [Test]
+        public async Task AbandonedSendLateCompletion_DoesNotClearANewerSendsFlag()
+        {
+            UUID a = Id(1), b = Id(2);
+            long[] now = { 0 };
+            var feed = new FakeFeed { Current = BannedPairMatrix(a, b) };
+            var sink = new HangingSink { Hang = true };
+            var sender = NewStallSender(feed, sink, now);
+            var (appender, detach) = CaptureVisibilityLog();
+            Task hung1 = null, hung2 = null;
+            TaskCompletionSource<PeerCtlSendResult> gate1 = null, gate2 = null;
+            try
+            {
+                // Send #1 (epoch1) hangs; capture its task + gate.
+                hung1 = sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
+                gate1 = sink.LastPending;
+
+                // Guard fires -> force-clears epoch1.
+                System.Threading.Volatile.Write(ref now[0], 900);
+                await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
+                Assert.That(StallLogCount(appender), Is.EqualTo(1));
+
+                // A NEW send (epoch2) acquires and ALSO hangs; it now owns the flag.
+                hung2 = sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
+                gate2 = sink.LastPending;
+                Assert.That(sink.Count, Is.EqualTo(2), "epoch2 started a fresh snapshot while epoch1 is abandoned");
+
+                // The ABANDONED epoch1 now completes late (while epoch2 is still gated, so no concurrent
+                // shared-state mutation). Its finally must NOT clear epoch2's flag — CAS-against-its-own
+                // -epoch no-ops because epoch2 owns the flag now.
+                gate1.SetResult(PeerCtlSendResult.Ok);
+                await hung1;
+
+                // Proof epoch2 still holds single-flight: a pump within epoch2's budget SKIPS (no send).
+                System.Threading.Volatile.Write(ref now[0], 950);   // epoch2 started at 900; 50ms elapsed, not stale
+                await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
+                Assert.That(sink.Count, Is.EqualTo(2),
+                    "epoch2 still owns the flag; the abandoned late completion did not corrupt single-flight");
+            }
+            finally
+            {
+                gate1?.TrySetResult(PeerCtlSendResult.Ok);
+                gate2?.TrySetResult(PeerCtlSendResult.Ok);
+                if (hung1 != null) await hung1;
+                if (hung2 != null) await hung2;
+                detach();
+            }
+        }
     }
 }
