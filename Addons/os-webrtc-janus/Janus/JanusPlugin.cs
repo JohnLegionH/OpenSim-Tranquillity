@@ -129,6 +129,12 @@ public class JanusPlugin : IDisposable
             {
                 m_log.LogDebug("{0} Detach. Detached", LogHeader);
                 ret = true;
+                // Clear the handle id so IsConnected (:50) becomes false and a second
+                // Detach short-circuits at the guard above instead of re-sending a detach
+                // for an already-detached handle (which Janus rejects and we log at ERROR).
+                // Cleared ONLY after Janus confirms success: on a failed detach PluginId is
+                // left intact so IsConnected stays true and the caller can retry.
+                PluginId = null;
             }
             else
             {
