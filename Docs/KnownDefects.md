@@ -170,18 +170,33 @@ Phase 3a session.
 successful update at Debug, and raise an alert to the requesting client on the
 permission-denied and requiredPowers branches.
 
-## Voice visibility feeder threads are not registered with the Watchdog
+## Voice visibility feeder thread death is not detected by the Watchdog
 
-**Status:** not started — **Legion-side (our code), not Tranquillity core.** Fix is
-scoped and queued.
+**Status:** registration implemented (uncommitted) — **Legion-side (our code), not
+Tranquillity core.** Partial fix: a blocked or non-heartbeating `RunLoop` is now
+reported; thread death and a wedged fire-and-forget sender remain undetected.
 
-**Symptom.** If a feeder thread dies or blocks, OpenSim neither detects nor reports
-it. The failure is completely silent.
+**Symptom.** A feeder thread that *dies* (terminates outright) is neither detected
+nor reported — the failure is completely silent. A thread that blocks or otherwise
+stops heartbeating *without* dying is now caught by the Watchdog alarm after this fix
+(see Mechanism); before it, that too was silent.
 
-**Mechanism.** `Addons/os-webrtc-janus/WebRtcVoiceRegionModule/VoiceVisibilityService.cs:95`
-constructs `m_thread = new Thread(RunLoop)` and `:100` starts it, with no
-`Watchdog.StartThread` registration and no `Watchdog.UpdateThread` heartbeat anywhere
-in `RunLoop` (`:136`).
+**On thread death (what registration does *not* cover).** Registration catches a
+thread that is alive but no longer calling `UpdateThread` — blocked, wedged, or
+spinning — which is the realistic failure here (`RunLoop`'s try/catch keeps the loop
+alive across a `Tick()` exception, so outright death is unlikely). It does **not**
+catch the thread *dying*: per `Watchdog.cs:357` and `:386-388`, a thread that reaches
+`ThreadState.Stopped` is reaped from the tracker silently — the alarm callback on
+that branch is commented out — so a feeder thread that terminates outright is still
+not reported.
+
+**Mechanism.** `Addons/os-webrtc-janus/WebRtcVoiceRegionModule/VoiceVisibilityService.cs`
+now registers the tick thread with `WorkManager.StartThread` (`:100`–`:107`), passing
+`alarmIfTimeout: true` (`:105`) and `timeout: 5000` (`:107`); it heartbeats on the
+always-executed path via `Watchdog.UpdateThread()` inside `RunLoop` (`:170`, after the
+`m_wake` wait/reset so an idle tick still beats) and deregisters with
+`Watchdog.RemoveThread()` on loop exit (`:174`). 5000 ms is 20x the 250 ms cadence, and
+`Pump` never blocks the tick thread, so that headroom holds.
 
 Note this file is owned by `WebRtcVoiceRegionModule.csproj` and builds into
 **`WebRtcVoiceRegionModule.dll`**, not `VoiceVisibility.dll`. The sibling
@@ -189,20 +204,27 @@ Note this file is owned by `WebRtcVoiceRegionModule.csproj` and builds into
 (`Visibility.csproj`, `AssemblyName = VoiceVisibility`) and does not contain the
 feeder service. Deploy sets keyed on the wrong dll will ship nothing.
 
-**Consequence.** This directly enabled the 8.5-hour silent emission stall of
-2026-08-16/17: the feeder produced nothing, with no latch, no error, no exception,
-and no watchdog report, until a restart cleared it. The stall's proximate cause (a
-wedged single-flight send) has since been fixed, but the **invisibility** of a dead
-or blocked feeder thread has not.
+**Consequence.** During the 8.5-hour silent emission stall of 2026-08-16/17 the
+feeder produced nothing — no latch, no error, no exception, and no watchdog report —
+until a restart cleared it. That stall's proximate cause (a wedged single-flight
+send) has since been fixed. Registration would **not** have caught that particular
+stall: `Pump` is fire-and-forget (`VoiceVisibilityService.cs:159`), so a wedged
+sender runs off the tick thread and leaves `RunLoop` heartbeating normally. What
+remains uncovered — and what this fix does address — is a **blocked or
+non-heartbeating `RunLoop` itself**, which is currently completely invisible.
 
 **Note on log volume.** Registering does not add log lines. `Watchdog.UpdateThread`
 is a heartbeat *call*, not a log statement, and the watchdog is silent until a thread
 misses its timeout, then logs once. Normal operation is unchanged.
 
-**Suggested first step.** `Watchdog.StartThread` at creation, `Watchdog.UpdateThread`
-inside `RunLoop`, and confirm the 250 ms tick cadence sits comfortably inside the
-watchdog timeout. Scope is this file only; the deploy artifact is
-`WebRtcVoiceRegionModule.dll`.
+**Remaining work.** Thread *death* is still undetected: `Watchdog.cs:357` /
+`:386-388` reap a `ThreadState.Stopped` thread with the alarm callback commented out,
+so a feeder thread that exits outright is removed silently (see *On thread death*
+above). Closing that needs a liveness check that does not depend on the
+Stopped-thread alarm path. A wedged fire-and-forget sender is likewise outside
+`RunLoop`'s heartbeat and would need sender-side instrumentation, not thread
+registration. The registration change was scoped to this one file; the deploy
+artifact is `WebRtcVoiceRegionModule.dll`.
 
 ## ALC split identity — non-shared types crossing a plugin AssemblyLoadContext boundary fail Type-keyed lookup silently
 

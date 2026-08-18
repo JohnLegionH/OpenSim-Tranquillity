@@ -15,6 +15,7 @@ using System;
 using System.Threading;
 using log4net;
 using OpenMetaverse;
+using OpenSim.Framework.Monitoring;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 
@@ -92,12 +93,18 @@ namespace osWebRtcVoice
                 m_adminTimeout, m_scene.RegionInfo.RegionName);
 
             m_running = true;
-            m_thread = new Thread(RunLoop)
-            {
-                Name = "VoiceVisibilityFeeder:" + m_scene.RegionInfo.RegionName,
-                IsBackground = true
-            };
-            m_thread.Start();
+            // Register with the OpenSim Watchdog so a dead or non-heartbeating tick thread is
+            // reported instead of failing silently. StartThread creates, names, registers, and
+            // starts the thread. 5000ms timeout = 20x the 250ms cadence; Pump is fire-and-forget
+            // so the tick thread never blocks on a send, leaving that headroom safe.
+            m_thread = WorkManager.StartThread(
+                RunLoop,
+                "VoiceVisibilityFeeder:" + m_scene.RegionInfo.RegionName,
+                ThreadPriority.Normal,
+                isBackground: true,
+                alarmIfTimeout: true,
+                alarmMethod: null,
+                timeout: 5000);
             m_log.Info($"{logHeader} feeder started for {m_scene.RegionInfo.RegionName} @ {m_cadenceMs}ms (emit={m_emitEnabled})");
         }
 
@@ -157,7 +164,14 @@ namespace osWebRtcVoice
 
                 m_wake.Wait(m_cadenceMs);
                 m_wake.Reset();
+
+                // Heartbeat on the always-executed path (even an idle tick with a null batch), so
+                // the Watchdog only alarms when this loop truly stops ticking.
+                Watchdog.UpdateThread();
             }
+
+            // Deregister on clean exit so shutdown does not leave a stale tracked thread.
+            Watchdog.RemoveThread();
         }
 
         // --- Event handlers: run on sim threads. Only flip the feeder's dirty flag (NOT the
