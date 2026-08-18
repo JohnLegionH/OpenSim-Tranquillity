@@ -90,8 +90,12 @@ Observed 2026-08-18 surviving a full avatar relog — not a brief teardown windo
 its handler `Event_OnRemovePresence` (`:185`) is never invoked. The only live teardown
 path is viewer-hangup-driven — `WebRtcJanusService.cs:154`–`:155`
 (`OnDisconnect`/`OnHangup`) → `Handle_Hangup` (`:164`) → `DisconnectViewerSession`
-(`:183`) → `Room.LeaveRoom` (`:225`). (Line numbers verified against source 2026-08-18;
-the previous revision of this entry cited :206/:242, which had drifted.)
+(`:183`) → `Shutdown` (`:191`) → `JanusViewerSession.Shutdown` → `LeaveRoom`
+(`JanusViewerSession.cs:91`). (Line numbers verified against source 2026-08-18; earlier
+revisions cited :206/:242 for the hook/handler, since corrected to :159/:185, and
+`WebRtcJanusService.cs:225` for the chain's `LeaveRoom` — but :225 is `LeaveRoom` inside
+the logout branch of `ProvisionVoiceAccountRequestBAD`, a different path; the hangup
+chain reaches `LeaveRoom` via `Shutdown` at `JanusViewerSession.cs:91`.)
 
 An OpenSim-side presence removal — notably a child agent torn down when a neighbour
 region stops being adjacent — issues no `LeaveRoom`. Membership persists until the
@@ -114,11 +118,36 @@ Neighbour-region voice makes this routine rather than exotic: an avatar joins on
 per adjacent region (`Docs/voice/parcel-voice-semantics.md` §G), so crossings and
 draw-distance changes generate exactly the child-agent teardowns this path misses.
 
-**Suggested first step.** Wire `Event_OnRemovePresence` — idempotent and
-root/child-aware — so an OpenSim presence removal issues the corresponding
-`LeaveRoom`. This closes the common cause but not the underlying mixer assumption: a
-transient double-join during a reconnect race reopens the same hole while both handles
-coexist.
+**Suggested first step.** Do **not** wire `Event_OnRemovePresence` as-is. Recon
+2026-08-18 found four prerequisites, and only three are addon-local:
+
+- **Ignore child removals.** The handler cannot self-distinguish a child teardown from
+  a real logout: `isChildAgent` is known at the fire site (`Scene.cs:3832`) but is not
+  carried by the delegate (`EventManager.cs:158`), and `TriggerOnRemovePresence` fires
+  for both root and child (`Scene.cs:3865`). Propagating it is a **CORE CHANGE** — an
+  upstream `EventManager` API break; needs discussion with Mike.
+- **Region-scope the teardown.** The session registry is static and simulator-wide
+  (`VoiceViewerSession.cs:56`–`:58`) and the handler never consults `RegionId` (`:52`),
+  so it would tear down the agent's sessions in *every* region, not just the one that
+  fired. **Addon-local.**
+- **Locked, idempotent `Shutdown`.** The check-then-null in `JanusViewerSession.Shutdown`
+  is unlocked (`JanusViewerSession.cs:87`–`:105`) and the hangup path already runs
+  `Shutdown` fire-and-forget (`WebRtcJanusService.cs:187`–`:192`), so a second concurrent
+  entry double-leaves / double-destroys. **Addon-local.**
+- **Handle the non-Janus `Shutdown`.** `VoiceViewerSession.Shutdown` throws
+  `NotImplementedException` (`VoiceViewerSession.cs:122`–`:125`); any non-Janus session
+  in the registry would throw on removal. **Addon-local.**
+
+**History.** The hook was never active in this repo. It was introduced already commented
+inside a `// TODO: figure out what events we care about` scaffold
+(`WebRtcVoiceServiceModule.cs:152`) listing six candidate event subscriptions, with an
+explicit note (`:183`–`:184`) that hangup-driven teardown was chosen instead. This is a
+deferred design decision, not a disabled feature.
+
+**Sharpest risk.** Wired as-is, a single child-agent removal — routine on any border
+crossing — would destroy the agent's live voice session in *every* region, and the
+viewer's re-provision that follows could manufacture the very §M duplicate-handle
+condition this fix was meant to relieve.
 
 ## Estate CAP save silently flips TaxFree when override_public_access is absent
 
