@@ -49,32 +49,76 @@ finalizer-path field access against null, split managed-only teardown into the
 `disposing == true` branch, and ensure explicit `Dispose`/`Close` calls
 `GC.SuppressFinalize`.
 
-## WebRTC voice: OnRemovePresence teardown is unwired — room stays joined on child-agent removal
+## Mixer applies peer_ctl_batch exclusions by display string, silently misapplying on collision
 
-**Status:** not started — resource-leak candidate, independent of Phase 3a. Candidate for a Mike
-report.
+**Status:** not started — mixer-side defect (`legion-voice-mixer`, our code).
+**Observed live 2026-08-18 defeating parcel ban enforcement in one direction.**
+Candidate for a Mike report as a protocol-application correctness issue.
 
-**Symptom.** The presence-side voice teardown hook is commented out:
+**Symptom.** A parcel ban is enforced against one party but not the other. Mixer
+counters agree with the audio and all read healthy — `excluded_entries=1` on one
+handle, `0` on the other, same epoch, same batch.
+
+**Mechanism, evidence, and the observed failure** are recorded in full in
+`Docs/voice/parcel-voice-semantics.md` §M (ADDENDUM 3, 2026-08-18). In brief: the
+mixer resolves each exclusion entry's listener through a hash keyed on the avatar
+UUID string rather than participant identity, and the insert replaces on duplicate
+key — so two handles for one avatar collapse to one, non-deterministically, and the
+loser silently receives nothing.
+
+**Why it is engine-relevant** despite being mixer-side: it converts the
+`OnRemovePresence` teardown defect below from a resource leak into a silent
+enforcement failure. Neither defect alone is severe; together a parcel ban can fail
+to enforce after any unclean voice teardown.
+
+**Suggested first step.** See §M. The minimum is detecting the collision and logging
+it — a silent overwrite in an enforcement path should never be silent.
+
+## WebRTC voice: OnRemovePresence teardown is unwired — orphaned memberships defeat ban enforcement
+
+**Status:** not started. **Severity raised 2026-08-18** — previously logged as a
+resource-leak candidate; now observed to silently defeat parcel ban enforcement.
+Candidate for a Mike report.
+
+**Symptom.** Orphaned participants accumulate in Janus rooms: handles with
+`ice_state: disconnected` and `rtp_in_count: 0` still listed as room members.
+Observed 2026-08-18 surviving a full avatar relog — not a brief teardown window.
+
+**Mechanism.** The presence-side voice teardown hook is commented out:
 `scene.EventManager.OnRemovePresence += Event_OnRemovePresence;` at
-`Addons/os-webrtc-janus/WebRtcVoiceServiceModule/WebRtcVoiceServiceModule.cs:206`, and its handler
-`Event_OnRemovePresence` (`:242`) is therefore never invoked. The only live teardown path is
-viewer-hangup-driven — `WebRtcJanusService.cs:154`–`155` (`OnDisconnect`/`OnHangup`) →
-`Handle_Hangup` (`:164`) → `DisconnectViewerSession` (`:183`) → `Room.LeaveRoom` (`:225`).
+`Addons/os-webrtc-janus/WebRtcVoiceServiceModule/WebRtcVoiceServiceModule.cs:159`, so
+its handler `Event_OnRemovePresence` (`:185`) is never invoked. The only live teardown
+path is viewer-hangup-driven — `WebRtcJanusService.cs:154`–`:155`
+(`OnDisconnect`/`OnHangup`) → `Handle_Hangup` (`:164`) → `DisconnectViewerSession`
+(`:183`) → `Room.LeaveRoom` (`:225`). (Line numbers verified against source 2026-08-18;
+the previous revision of this entry cited :206/:242, which had drifted.)
 
-**Consequence.** An **OpenSim-side** presence removal — notably a **child agent** being torn down
-when a neighbour region stops being adjacent — does not leave the Janus room. Nothing on the sim
-side proactively hangs up or leaves; the room membership persists until the *viewer* drops that
-WebRTC session (logout or its own connection teardown) or Janus times it out. Stale/leaked room
-memberships are the expected accumulation.
+An OpenSim-side presence removal — notably a child agent torn down when a neighbour
+region stops being adjacent — issues no `LeaveRoom`. Membership persists until the
+viewer drops that WebRTC session or Janus times it out.
 
-**Why it may matter.** Neighbour-region voice means an avatar joins a room per adjacent region (see
-`Docs/voice/parcel-voice-semantics.md` §G). If those rooms are only ever cleaned by viewer hangup,
-churn (crossings, draw-distance changes) can leave orphaned participants in rooms the sim believes
-the avatar has left — a slow resource leak and a possible source of phantom roster/mix entries.
+**Why it matters — enforcement, not only resources.** An orphaned handle carries the
+same display (avatar UUID) as the avatar's live handle. The mixer resolves
+per-listener exclusions through a display-keyed index that silently drops one
+participant on collision (see the `by_display` entry above, and
+`Docs/voice/parcel-voice-semantics.md` §M). An orphaned membership can therefore
+capture the avatar's exclusion column, leaving the live handle unexcluded and a parcel
+ban unenforced in one direction, non-deterministically.
 
-**Suggested first step.** Decide whether `Event_OnRemovePresence` should be wired (and made
-idempotent/root-child-aware) so an OpenSim presence removal issues the corresponding `LeaveRoom`,
-rather than relying solely on viewer hangup.
+Observed 2026-08-18 on Ebony: a banned pair failed to hide symmetrically while an
+orphaned handle held the exclusion at `excluded_entries=1` with `rtp_in_count=0`.
+Clearing mixer session state so each avatar held one handle restored correct symmetric
+enforcement with no change to the sim, the feeder, or the matrix.
+
+Neighbour-region voice makes this routine rather than exotic: an avatar joins one room
+per adjacent region (`Docs/voice/parcel-voice-semantics.md` §G), so crossings and
+draw-distance changes generate exactly the child-agent teardowns this path misses.
+
+**Suggested first step.** Wire `Event_OnRemovePresence` — idempotent and
+root/child-aware — so an OpenSim presence removal issues the corresponding
+`LeaveRoom`. This closes the common cause but not the underlying mixer assumption: a
+transient double-join during a reconnect race reopens the same hole while both handles
+coexist.
 
 ## Estate CAP save silently flips TaxFree when override_public_access is absent
 
