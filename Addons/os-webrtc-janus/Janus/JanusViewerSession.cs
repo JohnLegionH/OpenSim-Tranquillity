@@ -61,6 +61,13 @@ public class JanusViewerSession : IVoiceViewerSession
     public JanusAudioBridge AudioBridge { get; set; }
     public JanusRoom Room { get; set; }
 
+    // Serializes Shutdown against concurrent invocation (the hangup path and, if wired,
+    // presence removal), so the teardown steps below cannot double-invoke
+    // LeaveRoom/Detach/DestroySession. House pattern: SemaphoreSlim(1,1)
+    // (cf. JanusAudioBridge.SelectRoomCoalesced). It serializes rather than latches, so
+    // the returned Task completes only after teardown has actually run.
+    private readonly SemaphoreSlim _shutdownGate = new SemaphoreSlim(1, 1);
+
     // This keeps copies of the offer/answer incase we need to resend
     public string OfferOrig { get; set; }
     public string Offer { get; set; }
@@ -84,25 +91,33 @@ public class JanusViewerSession : IVoiceViewerSession
     // IVoiceViewerSession.Shutdown
     public async Task Shutdown()
     {
-        m_log.LogDebug($"{LogHeader} JanusViewerSession shutdown {ViewerSessionID}");
-        if (Room is not null)
+        await _shutdownGate.WaitAsync().ConfigureAwait(false);
+        try
         {
-            var rm = Room;
-            Room = null;
-            await rm.LeaveRoom(this);
+            m_log.DebugFormat($"{LogHeader} JanusViewerSession shutdown {ViewerSessionID}");
+            if (Room is not null)
+            {
+                var rm = Room;
+                Room = null;
+                await rm.LeaveRoom(this);
+            }
+            if (AudioBridge is not null)
+            {
+                var ab = AudioBridge;
+                AudioBridge = null;
+                await ab.Detach();
+            }
+            if (Session is not null)
+            {
+                var s = Session;
+                Session = null;
+                _ = await s.DestroySession().ConfigureAwait(false);
+                s.Dispose();
+            }
         }
-        if (AudioBridge is not null)
+        finally
         {
-            var ab = AudioBridge;
-            AudioBridge = null;
-            await ab.Detach();
-        }   
-        if (Session is not null)
-        {
-            var s = Session;
-            Session = null;
-            _ = await s.DestroySession().ConfigureAwait(false);
-            s.Dispose();
+            _shutdownGate.Release();
         }
     }
 }
