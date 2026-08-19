@@ -202,12 +202,56 @@ complete and correct — the write is simply never triggered from this path. Ent
 survive only incidentally, when a later dwell store or other parcel write flushes the
 object.
 
+**The observed outcome is three-way, not binary.** A ban entry can be *lost* (the common
+case above), *persisted correctly*, or *persisted broken*. The incidental store that
+flushes the parcel can itself be a properties update (`UpdateLandProperties`), which
+persists the ban **entry** but with `UseBanList` **cleared** — a `landaccesslist` row that
+reads as an enforced ban yet does not enforce after restart. So "never persisted"
+understates it: the entry may reach the database in a non-enforcing half-state. That
+flag-recompute has a distinct root cause and its own fix; see *Parcel properties save
+clears UseBanList when the viewer omits it, dropping ban enforcement on restart*, below.
+
 **Existing fix.** The old Legion fork added the missing store at
 `/d/legion-grid-source/…/LandManagementModule.cs:744`–`:749`, with the comment
 *"Without this a crash before the next dwell store loses the change."*
 
 **Suggested first step.** Port the Legion fix, confirming it lands after
 `UpdateAccessList` and is not duplicated by any newer Tranquillity store path.
+
+## Parcel properties save clears UseBanList when the viewer omits it, dropping ban enforcement on restart
+
+**Status:** not started — core Tranquillity defect. Observed live on Legion Grid,
+2026-08-18 (not derived from code alone). Candidate for a Mike report.
+
+**Symptom.** A parcel ban enforces normally until the region restarts, then silently
+stops. The entry is still visible in About Land and present in `landaccesslist`;
+`land.LandFlags` has `UseBanList` clear.
+
+**Mechanism.** `UpdateLandProperties` recomputes the parcel flags as
+`preserve | (args.ParcelFlags & allowedDelta)`
+(`Source/OpenSim.Region.CoreModules/World/Land/LandObject.cs:671`) with `UseBanList` in
+`allowedDelta` (`:649`). The viewer's properties update does not carry `UseBanList` —
+that bit is driven by the ban list, not an Options control — so the recompute clears it.
+`newData` starts as `LandData.Copy()` (`:533`), which deep-copies `ParcelAccessList`, so
+the ban entry survives into the same snapshot. `UpdateLandObject` (`:679`) then persists
+entry-without-flag. On reload, `BuildLandData` restores `Flags` from the row
+(`Source/OpenSim.Data.MySQL/MySQLSimulationData.cs:1349`) and `IsBannedFromLand_inner`
+gates on the bit (`LandObject.cs:828`), returning false without consulting the entry.
+
+**Independent of the missing-persist defect** (*Parcel access/ban list updates are never
+persisted*, above): fixing that one so `UpdateAccessList` stores with the flag set would
+not help here, because a later properties update would still clear the persisted flag.
+
+**Why it matters.** This is the third instance in this codebase of a viewer message
+omitting a field and the server treating absence as "set to zero" rather than
+"unchanged" — see *Estate CAP save silently flips TaxFree when override_public_access is
+absent*. The failure is silent, deferred to restart, and leaves a database row that looks
+like an enforced ban.
+
+**Suggested first step.** Make the recompute preserve `UseBanList` when the ban list is
+non-empty, or treat an omitted bit as unchanged rather than cleared — matching the fix
+shape the TaxFree entry proposes (`:186`: leave the flag unmodified when the field is not
+supplied).
 
 ## Parcel ban-add path is silent on every outcome, success and failure alike
 
