@@ -378,3 +378,31 @@ finds nothing, and adds nothing. It fails without complaint.
 
 **Filed here, not in `PhloxKnownDefects.md`,** because this is a property of the
 plugin loader and applies engine-wide, despite the first instance being in Phlox.
+
+## WebRTC voice: OnListenerProvisioned runs on failed provisions, queuing a doomed re-send
+
+**Status:** not started — benign, low priority. Observation, not a live failure; newly
+reachable by the ROOM_FULL / HTTP 409 capacity-rejection route.
+
+**Symptom.** A viewer whose voice provision FAILS is still registered with the region's
+visibility sender as a pending listener, which schedules a bounded exclusion-column
+re-send that never lands — the listener is not, and will not be, in the mixer room — and
+exhausts its retries before giving up.
+
+**Mechanism.** The provisioning CAP handler hands the agent to the visibility sender's
+pending-join path (`Addons/os-webrtc-janus/WebRtcVoiceRegionModule/WebRtcVoiceRegionModule.cs:408`–`:411`,
+`svc?.OnListenerProvisioned(agentID)`) inside `if (resp is not null)`, which is true for
+the failure maps as well as the success map. The sender then treats the agent as a
+pending listener whose full exclusion column should be (re)sent once it is present in the
+mixer room; since it never becomes present, the bounded re-send exhausts.
+
+**Why it matters.** Benign per the pending-join path's own comment ("the bounded re-send
+simply gives up loudly") — no correctness impact, no unbounded work. But it is now
+reachable by a NEW route: a ROOM_FULL capacity rejection returns a non-null failure map
+(and HTTP 409), so every capacity-rejected joiner also queues one doomed re-send. This is
+pre-existing for all five provision-failure paths; the 409 change did not create it, only
+added a route to it.
+
+**Suggested first step.** Gate `OnListenerProvisioned` on a *successful* provision — call
+it only when the response carries a `jsep` answer (or `viewer_session`), not merely when
+`resp is not null`. One condition, in the CAP handler.

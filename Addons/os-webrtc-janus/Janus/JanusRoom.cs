@@ -53,9 +53,15 @@ public class JanusRoom : IDisposable
         // Close the room
     }
 
-    public async Task<bool> JoinRoom(JanusViewerSession pVSession)
+    // Returns (Joined, ErrorCode). ErrorCode is the mixer's error_code on failure (0 if
+    // none/success), so the caller can distinguish a capacity rejection (ROOM_FULL=495)
+    // from every other join failure. A tuple rather than an out-parameter because async
+    // methods cannot have out params, and rather than a field because JanusRoom is shared
+    // across joiners (a mutable field would race). JoinRoom stays policy-free.
+    public async Task<(bool Joined, int ErrorCode)> JoinRoom(JanusViewerSession pVSession)
     {
-        bool ret = false;
+        bool joined = false;
+        int errorCode = 0;
         try
         {
             // m_log.LogDebug("{0} JoinRoom. New joinReq for room {1}", LogHeader, RoomId);
@@ -75,19 +81,23 @@ public class JanusRoom : IDisposable
             {
                 pVSession.ParticipantId = joinResp.ParticipantId;
                 pVSession.Answer = joinResp.Jsep;
-                ret = true;
+                joined = true;
                 m_log.LogDebug("{0} JoinRoom. Joined room {1}. Participant={2}", LogHeader, RoomId, pVSession.ParticipantId);
             }
             else
             {
-                m_log.LogError("{0} JoinRoom. Failed to join room {1}. Resp={2}", LogHeader, RoomId, joinResp.ToString());
+                // Surface the mixer's error_code (0 if absent; ROOM_FULL=495 on a capacity
+                // rejection). AudioBridgeErrorCode already parses it — it was just discarded.
+                errorCode = joinResp?.AudioBridgeErrorCode ?? 0;
+                m_log.LogError("{LogHeader} JoinRoom. Failed to join room {RoomId} (error_code={JoinErrorCode}). Resp={JoinResponse}",
+                    LogHeader, RoomId, errorCode, joinResp?.ToString());
             }
         }
         catch (Exception e)
         {
             m_log.LogError("{0} JoinRoom. Exception {1}", LogHeader, e);
         }
-        return ret;
+        return (joined, errorCode);
     }
 
     // TODO: this doesn't work.

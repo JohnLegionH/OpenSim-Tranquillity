@@ -394,12 +394,18 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         {
             if (_MessageDetails) m_log.LogDebug($"{logHeader}[ProvisionVoice]: response: {resp}");
 
-            // TODO: check for errors and package the response
-
             // Convert the OSD to LLSDXml for the response
             string xmlResp = OSDParser.SerializeLLSDXmlString(resp);
             response.RawBuffer = Util.UTF8.GetBytes(xmlResp);
-            response.StatusCode = (int)HttpStatusCode.OK;
+            // A capacity rejection carries the mixer's ROOM_FULL code; return HTTP 409 Conflict,
+            // which the viewer maps to ERROR_CHANNEL_FULL (llvoicewebrtc.cpp:2901). Closes the
+            // pre-existing "check for errors" TODO for the capacity case ONLY — every other
+            // failure map carries no error_code and keeps its OK status. Referencing the service
+            // constant keeps the 495 in one place (WebRtcJanusService.JANUS_ROOM_FULL_ERROR_CODE).
+            if (resp.TryGetInt("error_code", out int provErrorCode) && provErrorCode == WebRtcJanusService.JANUS_ROOM_FULL_ERROR_CODE)
+                response.StatusCode = (int)HttpStatusCode.Conflict;
+            else
+                response.StatusCode = (int)HttpStatusCode.OK;
 
             // Phase-3a (correction 1): a successful provision means this agent will join the mixer
             // room — hand it to the visibility sender's pending-join path so its full exclusion

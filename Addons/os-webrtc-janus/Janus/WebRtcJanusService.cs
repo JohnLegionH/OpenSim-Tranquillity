@@ -43,6 +43,12 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     private static readonly ILogger _log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
     private static readonly string LogHeader = "[JANUS WEBRTC SERVICE]";
 
+    // Mixer's JANUS_SLVOICE_ERROR_ROOM_FULL (janus_slvoice.c). ONLY this join-failure code
+    // becomes an HTTP 409 / ERROR_CHANNEL_FULL downstream; every other failure stays generic.
+    // Public so the region CAP handler references it (same namespace; a const is compile-time-
+    // inlined, so no runtime assembly/ALC crossing) instead of duplicating the 495 literal.
+    public const int JANUS_ROOM_FULL_ERROR_CODE = 495;
+
     private readonly IConfigSource _Config;
     private bool _Enabled = false;
 
@@ -206,6 +212,7 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     {
         OSDMap ret = null;
         string errorMsg = null;
+        int errorCode = 0;   // mixer error_code to propagate on failure (0 = none); only ROOM_FULL is acted on downstream
         JanusViewerSession viewerSession = pSession as JanusViewerSession;
         if (viewerSession is not null)
         {
@@ -262,7 +269,8 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                         viewerSession.Offer = jsepSdp;
                         viewerSession.OfferOrig = jsepSdp;
                         viewerSession.AgentId = pUserID;
-                        if (await viewerSession.Room.JoinRoom(viewerSession).ConfigureAwait(false))
+                        var joinResult = await viewerSession.Room.JoinRoom(viewerSession).ConfigureAwait(false);
+                        if (joinResult.Joined)
                         {
                             ret = new OSDMap
                             {
@@ -270,10 +278,21 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                                 { "viewer_session", viewerSession.ViewerSessionID }
                             };
                         }
+                        else if (joinResult.ErrorCode == JANUS_ROOM_FULL_ERROR_CODE)
+                        {
+                            // Capacity rejection: carry the code so the CAP handler returns HTTP
+                            // 409 Conflict (viewer -> ERROR_CHANNEL_FULL). Distinct from every
+                            // other JoinRoom failure below, which stay generic (no error_code).
+                            // Do NOT ForgetRoom: the room is fine, just full — forgetting it would
+                            // make the viewer's retry re-create and re-join, looping on the full room.
+                            errorMsg = "room is full";
+                            errorCode = joinResult.ErrorCode;
+                            _log.Warn($"{LogHeader} ProvisionVoiceAccountRequest: room full (ROOM_FULL {joinResult.ErrorCode})");
+                        }
                         else
                         {
                             errorMsg = "JoinRoom failed";
-                            _log.LogError($"{LogHeader} ProvisionVoiceAccountRequest: JoinRoom failed");
+                            _log.LogError($"{LogHeader} ProvisionVoiceAccountRequest: JoinRoom failed (error_code={joinResult.ErrorCode})");
                             // The join failed (e.g. the room was destroyed out-of-band while our
                             // _knownRooms hint still said it existed). Drop the hint so the viewer's
                             // provision retry re-creates the room instead of looping on a stale skip.
@@ -301,12 +320,16 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
 
         if (!string.IsNullOrEmpty(errorMsg) && ret is null)
         {
-            // The provision failed so build an error messgage to return
+            // The provision failed so build an error message to return.
             ret = new OSDMap
             {
                 { "response", "failed" },
                 { "error", errorMsg }
             };
+            // Only a capacity rejection sets errorCode; the CAP handler maps 495 -> HTTP 409.
+            // Every other failure leaves it 0 (no error_code field) and keeps its status.
+            if (errorCode != 0)
+                ret["error_code"] = errorCode;
         }
 
         return ret;
