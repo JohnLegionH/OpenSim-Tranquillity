@@ -249,6 +249,58 @@ namespace osWebRtcVoice.Tests
         }
 
         // ======================================================================================
+        // §E fix under TaxFree: a parcel ban MUST still be enforced when the estate is TaxFree.
+        // TaxFree voiding parcel bans in voice was the §E defect; IsBannedIgnoringTaxFree fixes it
+        // at the adapter (LandBanTests), and VisibilityRules must not re-introduce the void — its
+        // parcel-ban step (VisibilityRules.cs:34) carries no TaxFree guard. The banned cross-parcel
+        // pair can only be excluded by that ban rule (voice is on, no estate ban, SeeAVs on both,
+        // different parcels), so this pins that TaxFree does not suppress it.
+        [Test]
+        public void ParcelBanUnderTaxFree_StillMutuallyExcluded_TaxFreeDoesNotVoidTheBan()
+        {
+            var w = new FakeWorld();
+            w.EstateVal = new EstateView(allowVoice: true, taxFree: true, isBanned: _ => false);
+            ParcelView P = w.AddZone(1, Parcel(Id(101), banned: new HashSet<UUID> { Id(1) }));
+            ParcelView Q = w.AddZone(2, Parcel(Id(102)));
+            UUID a = Id(1), b = Id(2), c = Id(3);
+            w.Agents.Add(Root(a, Q));   // A: banned from P
+            w.Agents.Add(Root(b, P));   // B: occupant of P
+            w.Agents.Add(Root(c, Q));   // C: third avatar, not banned
+
+            VisibilityMatrix m = VisibilityMatrix.Build(w);
+
+            Assert.That(m.IsExcluded(b, a), Is.True, "under TaxFree the parcel ban still excludes: occupant B must not hear banned A");
+            Assert.That(m.IsExcluded(a, b), Is.True, "symmetric under TaxFree");
+            Assert.That(m.IsExcluded(c, a), Is.False, "unbanned third avatar still hears A under TaxFree");
+            Assert.That(m.IsExcluded(a, c), Is.False);
+        }
+
+        // ======================================================================================
+        // Voice-ENABLE override under TaxFree (deliberate, retained - VisibilityRules.cs:46):
+        // TaxFree overrides the parcel voice-ENABLE flag, so a parcel with AllowVoiceChat OFF is
+        // still audible. This is NOT the §E ban void and must not be "fixed" by generalising the
+        // ban test above. The contrast build pins the override as the differentiator: with the SAME
+        // voice-off parcel, TaxFree keeps the source audible, and dropping TaxFree excludes it.
+        [Test]
+        public void VoiceEnableOverrideUnderTaxFree_VoiceOffParcelStillAudible()
+        {
+            var w = new FakeWorld();
+            w.AddZone(1, Parcel(Id(101), allowVoice: false));   // parcel voice-chat OFF
+            UUID a = Id(1), b = Id(2);
+            w.Agents.Add(Root(a, w.Zones[1]));
+            w.Agents.Add(Root(b, w.Zones[1]));
+
+            w.EstateVal = new EstateView(allowVoice: true, taxFree: true, isBanned: _ => false);
+            VisibilityMatrix taxFree = VisibilityMatrix.Build(w);
+            Assert.That(taxFree.IsExcluded(a, b), Is.False, "TaxFree overrides the parcel voice-off flag: source still audible");
+            Assert.That(taxFree.IsExcluded(b, a), Is.False, "symmetric");
+
+            w.EstateVal = new EstateView(allowVoice: true, taxFree: false, isBanned: _ => false);
+            VisibilityMatrix noTaxFree = VisibilityMatrix.Build(w);
+            Assert.That(noTaxFree.IsExcluded(a, b), Is.True, "without TaxFree the voice-off parcel excludes the source - the override is the differentiator");
+        }
+
+        // ======================================================================================
         // Hardening (item 2): a derivation exception on a tick is reported and swallowed - the
         // last good matrix is kept and the next tick re-derives (the timer is never killed).
         [Test]
