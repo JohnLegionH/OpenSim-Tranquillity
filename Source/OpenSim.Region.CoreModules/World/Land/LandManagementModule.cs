@@ -687,10 +687,20 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
         // Todo: update the actual AccessList enum!
 
         if ((flags & (uint)0x1Bu) == 0)
+        {
+            m_log.DebugFormat(
+                "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {0} for local land {1} ignored: flags 0x{2:X} are neither access nor ban",
+                agentID, landLocalID, flags);
             return; // we only have access and ban
+        }
 
         if(m_scene.RegionInfo.EstateSettings.TaxFree)
+        {
+            m_log.DebugFormat(
+                "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {0} for local land {1} ignored: estate is TaxFree",
+                agentID, landLocalID);
             return;
+        }
 
         ILandObject land;
         lock (m_landList)
@@ -711,12 +721,30 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
                 requiredPowers |= GroupPowers.LandManageBanned;
 
             if (requiredPowers == GroupPowers.None)
+            {
+                m_log.DebugFormat(
+                    "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {0} for local land {1} ignored: flags 0x{2:X} map to no access/ban manage power",
+                    agentID, landLocalID, flags);
+                remote_client.SendAgentAlertMessage(
+                    "Parcel access update ignored: no access or ban change was specified.", false);
                 return;
+            }
 
             if (m_scene.Permissions.CanEditParcelProperties(agentID,
                     land, requiredPowers, false))
             {
                 land.UpdateAccessList(flags, transactionID, entries);
+                m_log.DebugFormat(
+                    "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {0} applied to local land {1} (\"{2}\"): flags 0x{3:X}, {4} entries",
+                    agentID, landLocalID, land.LandData.Name, flags, entries.Count);
+            }
+            else
+            {
+                m_log.DebugFormat(
+                    "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {0} for local land {1} denied: lacks required powers {2}",
+                    agentID, landLocalID, requiredPowers);
+                remote_client.SendAgentAlertMessage(
+                    "You do not have permission to change the access or ban list for this parcel.", false);
             }
         }
         else
