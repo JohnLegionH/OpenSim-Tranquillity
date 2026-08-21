@@ -95,15 +95,28 @@ namespace osWebRtcVoice
             // LandObject.IsBannedFromLand returns false (defect §E: the legacy provision path at
             // WebRtcVoiceRegionModule.cs:301 never even ran on the estate channel), so we
             // re-evaluate ban-list membership minus the TaxFree short-circuit. Reads live LandData.
-            Func<UUID, bool> banned = avatar =>
-                estate.TaxFree
-                    ? LandBan.IsBannedIgnoringTaxFree(
-                        ld,
-                        a => m_scene.Permissions.IsAdministrator(a),
-                        a => estate.IsEstateManagerOrOwner(a),
-                        avatar,
-                        Util.UnixTimeSinceEpoch())
-                    : parcel.IsBannedFromLand(avatar);
+            //
+            // The TaxFree branch is chosen HERE, once per parcel, rather than inside the closure, so
+            // the two exemption delegates are built ONCE instead of on every invocation. They capture
+            // only m_scene and estate — both stable for the tick — so hoisting them is semantically
+            // identical. The old closure allocated both on EVERY call; since the matrix build invokes
+            // the ban delegate across all pairs, that made allocation O(N^2) on the TaxFree path (the
+            // scaling assessment's item 3 named the O(N) outer-closure churn and missed this). The
+            // live-LandData contract is unchanged: the ban-list scan still runs at invocation. A
+            // (parcel, avatar) result memo is deliberately NOT taken — it pays only when agents
+            // cluster onto few parcels, and it would break the read-live-LandData-per-call contract.
+            Func<UUID, bool> banned;
+            if (estate.TaxFree)
+            {
+                Func<UUID, bool> isAdministrator = a => m_scene.Permissions.IsAdministrator(a);
+                Func<UUID, bool> isEstateManagerOrOwner = a => estate.IsEstateManagerOrOwner(a);
+                banned = avatar => LandBan.IsBannedIgnoringTaxFree(
+                    ld, isAdministrator, isEstateManagerOrOwner, avatar, Util.UnixTimeSinceEpoch());
+            }
+            else
+            {
+                banned = parcel.IsBannedFromLand;
+            }
 
             // Restrict delegate — DELIBERATE divergence from the ban fix: use the real predicate
             // unconditionally, so access-restriction keeps the sim's TaxFree self-nullify. The §E
