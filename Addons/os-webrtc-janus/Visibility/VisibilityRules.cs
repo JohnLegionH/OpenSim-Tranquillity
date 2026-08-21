@@ -10,8 +10,8 @@ namespace osWebRtcVoice
 {
     public static class VisibilityRules
     {
-        /// True if listener must NOT hear source. Order: voice-enable, estate ban, parcel
-        /// ban/restrict (symmetric), SeeAVs hide (symmetric).
+        /// True if listener must NOT hear source. Order: voice-enable, estate ban, voice
+        /// moderation (source-side), parcel ban/restrict (symmetric), SeeAVs hide (symmetric).
         public static bool IsExcluded(
             in AgentView listener, in ParcelView listenerParcel,
             in AgentView source, in ParcelView sourceParcel,
@@ -25,6 +25,16 @@ namespace osWebRtcVoice
 
             // (2) Estate ban - symmetric: an estate-banned party neither hears nor is heard.
             if (estate.IsEstateBanned(source.Id) || estate.IsEstateBanned(listener.Id))
+                return true;
+
+            // (2b) Voice moderation - SOURCE-SIDE: a parcel moderator has muted this source, so it is
+            //      inaudible to everyone. Reads only the source and the source's parcel — simpler than
+            //      the pairwise ban. PARCEL-STICKY, not avatar-sticky: sourceParcel is the source's
+            //      CURRENT parcel, so a moderated avatar who leaves the parcel is no longer moderated
+            //      and an arriving one is (mute-everyone is parcel state). That matches SL and is NOT a
+            //      bug — do not "fix" it into avatar-stickiness. Exemptions (owner / estate manager /
+            //      group moderator) live inside the delegate, like the ban delegate.
+            if (sourceParcel.ExcludesByModeration(source.Id))
                 return true;
 
             // (3) Parcel ban/restrict - SYMMETRIC (#13 fix): excluded if the source is barred

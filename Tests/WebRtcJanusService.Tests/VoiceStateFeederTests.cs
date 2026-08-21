@@ -56,10 +56,12 @@ namespace osWebRtcVoice.Tests
             }
         }
 
-        private static ParcelView Parcel(UUID gid, bool seeAVs = true, bool allowVoice = true, HashSet<UUID> banned = null)
+        private static ParcelView Parcel(UUID gid, bool seeAVs = true, bool allowVoice = true,
+            HashSet<UUID> banned = null, HashSet<UUID> moderated = null, bool muteEveryone = false)
             => new ParcelView(gid, seeAVs, allowVoice,
                    isBannedFromLand: a => banned != null && banned.Contains(a),
-                   isRestrictedFromLand: _ => false);
+                   isRestrictedFromLand: _ => false,
+                   isVoiceModerated: a => muteEveryone || (moderated != null && moderated.Contains(a)));
 
         private static AgentView Root(UUID id, ParcelView parcel, bool god = false)
             => new AgentView(id, false, Vector3.Zero, parcel.GlobalId, god);
@@ -298,6 +300,85 @@ namespace osWebRtcVoice.Tests
             w.EstateVal = new EstateView(allowVoice: true, taxFree: false, isBanned: _ => false);
             VisibilityMatrix noTaxFree = VisibilityMatrix.Build(w);
             Assert.That(noTaxFree.IsExcluded(a, b), Is.True, "without TaxFree the voice-off parcel excludes the source - the override is the differentiator");
+        }
+
+        // ======================================================================================
+        // Voice moderation (slice 1): mute-everyone on a parcel makes every speaker on it inaudible
+        // to ALL listeners. Source-side, so a muted speaker still HEARS others.
+        [Test]
+        public void ModerationMuteEveryone_ExcludesSpeakerForAllListeners()
+        {
+            var w = new FakeWorld();
+            ParcelView M = w.AddZone(1, Parcel(Id(201), muteEveryone: true));   // moderated parcel
+            ParcelView Q = w.AddZone(2, Parcel(Id(202)));                       // normal
+            UUID s = Id(1), l1 = Id(2), l2 = Id(3);
+            w.Agents.Add(Root(s, M));    // speaker on the moderated parcel
+            w.Agents.Add(Root(l1, Q));   // listener on another parcel
+            w.Agents.Add(Root(l2, M));   // listener co-located with the speaker
+
+            VisibilityMatrix m = VisibilityMatrix.Build(w);
+
+            Assert.That(m.IsExcluded(l1, s), Is.True, "moderated speaker is inaudible to a listener on another parcel");
+            Assert.That(m.IsExcluded(l2, s), Is.True, "moderated speaker is inaudible even to a co-located listener");
+            Assert.That(m.IsExcluded(s, l1), Is.False, "source-side: the muted speaker still hears others");
+        }
+
+        // ======================================================================================
+        // An individually-muted agent is excluded; an un-muted co-occupant of the same parcel is not.
+        [Test]
+        public void ModerationIndividualMute_ExcludesOnlyThatAgent()
+        {
+            var w = new FakeWorld();
+            UUID muted = Id(1), other = Id(2), listener = Id(3);
+            ParcelView M = w.AddZone(1, Parcel(Id(201), moderated: new HashSet<UUID> { muted }));
+            w.Agents.Add(Root(muted, M));
+            w.Agents.Add(Root(other, M));      // same parcel, NOT muted
+            w.Agents.Add(Root(listener, M));
+
+            VisibilityMatrix m = VisibilityMatrix.Build(w);
+
+            Assert.That(m.IsExcluded(listener, muted), Is.True, "individually-muted agent is inaudible");
+            Assert.That(m.IsExcluded(listener, other), Is.False, "an un-muted co-occupant is still audible");
+        }
+
+        // ======================================================================================
+        // A parcel with no moderation excludes nobody by moderation.
+        [Test]
+        public void ModerationAbsent_NoOneExcluded()
+        {
+            var w = new FakeWorld();
+            ParcelView P = w.AddZone(1, Parcel(Id(201)));   // no moderation
+            UUID a = Id(1), b = Id(2);
+            w.Agents.Add(Root(a, P));
+            w.Agents.Add(Root(b, P));
+
+            VisibilityMatrix m = VisibilityMatrix.Build(w);
+
+            Assert.That(m.IsExcluded(a, b), Is.False);
+            Assert.That(m.IsExcluded(b, a), Is.False);
+        }
+
+        // ======================================================================================
+        // PARCEL-STICKY, not avatar-sticky: the rule reads the source's CURRENT parcel, so a
+        // moderated avatar who moves off the moderated parcel is no longer moderated. (Uses a child
+        // agent, whose parcel is position-derived, to move between ticks.)
+        [Test]
+        public void ModerationParcelSticky_MoverLeavingModeratedParcelIsAudibleAgain()
+        {
+            var w = new FakeWorld();
+            UUID mover = Id(1), listener = Id(2);
+            w.AddZone(1, Parcel(Id(201), moderated: new HashSet<UUID> { mover }));   // M: mover muted here
+            ParcelView Q = w.AddZone(2, Parcel(Id(202)));                            // Q: clean
+            w.Agents.Add(Root(listener, Q));
+            int mi = w.Agents.Count;
+            w.Agents.Add(Child(mover, zone: 1));   // mover starts ON the moderated parcel M
+
+            VisibilityMatrix m1 = VisibilityMatrix.Build(w);
+            Assert.That(m1.IsExcluded(listener, mover), Is.True, "muted while on the moderated parcel");
+
+            w.Agents[mi] = Child(mover, zone: 2);  // mover walks onto Q
+            VisibilityMatrix m2 = VisibilityMatrix.Build(w);
+            Assert.That(m2.IsExcluded(listener, mover), Is.False, "parcel-sticky: no longer moderated after leaving the parcel");
         }
 
         // ======================================================================================

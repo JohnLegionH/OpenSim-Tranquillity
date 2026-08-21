@@ -52,21 +52,32 @@ namespace osWebRtcVoice
         public readonly bool AllowVoiceChat;    // ParcelFlags.AllowVoiceChat off land.Flags
         public readonly Func<UUID, bool> IsBannedFromLand;
         public readonly Func<UUID, bool> IsRestrictedFromLand;
+        // Source-side voice moderation (slice 1): true if this avatar is muted on THIS parcel — the
+        // mute-everyone flag OR the individual muted set, with moderators exempt. The adapter folds
+        // the store lookup and the exemption into this one delegate; the engine only asks the
+        // question. Null (e.g. UnknownParcel, or a non-moderating fake) means "never moderated".
+        public readonly Func<UUID, bool> IsVoiceModerated;
 
         public ParcelView(UUID globalId, bool seeAVs, bool allowVoiceChat,
-                          Func<UUID, bool> isBannedFromLand, Func<UUID, bool> isRestrictedFromLand)
+                          Func<UUID, bool> isBannedFromLand, Func<UUID, bool> isRestrictedFromLand,
+                          Func<UUID, bool> isVoiceModerated = null)
         {
             GlobalId = globalId;
             SeeAVs = seeAVs;
             AllowVoiceChat = allowVoiceChat;
             IsBannedFromLand = isBannedFromLand;
             IsRestrictedFromLand = isRestrictedFromLand;
+            IsVoiceModerated = isVoiceModerated;
         }
 
         /// True if this parcel bans or access-restricts the given avatar.
         public bool ExcludesByBan(UUID avatar)
             => (IsBannedFromLand != null && IsBannedFromLand(avatar))
             || (IsRestrictedFromLand != null && IsRestrictedFromLand(avatar));
+
+        /// True if the given avatar is voice-moderated (muted) on this parcel. Source-side.
+        public bool ExcludesByModeration(UUID avatar)
+            => IsVoiceModerated != null && IsVoiceModerated(avatar);
     }
 
     /// Estate-level facts. TaxFree overrides the parcel voice-ENABLE flag only (semantics doc

@@ -77,6 +77,19 @@ namespace osWebRtcVoice
                 m_byParcel.Remove(parcelGlobalId);
         }
 
+        /// True if the given avatar is moderated (muted) on the given parcel — the parcel-wide
+        /// mute-everyone flag OR the individual muted set. Takes the SAME lock as the writers, so a
+        /// read never observes a torn set. Moderator EXEMPTION is not decided here (this class knows
+        /// only state, not permissions) — the adapter applies it, see FeederWorldFromScene.
+        public bool IsModerated(UUID parcelGlobalId, UUID agentId)
+        {
+            lock (m_lock)
+            {
+                return m_byParcel.TryGetValue(parcelGlobalId, out ParcelModeration p)
+                    && (p.MuteEveryone || p.MutedAgents.Contains(agentId));
+            }
+        }
+
         private ParcelModeration GetOrCreate(UUID parcelGlobalId)
         {
             if (!m_byParcel.TryGetValue(parcelGlobalId, out ParcelModeration p))

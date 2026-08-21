@@ -26,10 +26,14 @@ namespace osWebRtcVoice
             new ParcelView(UUID.Zero, seeAVs: true, allowVoiceChat: true, null, null);
 
         private readonly Scene m_scene;
+        // Slice-1 voice moderation state (in-memory, per-region). Optional: the real-scene tests
+        // construct this adapter without it, in which case no source is ever moderated.
+        private readonly VoiceModerationStore m_moderation;
 
-        public FeederWorldFromScene(Scene scene)
+        public FeederWorldFromScene(Scene scene, VoiceModerationStore moderation = null)
         {
             m_scene = scene;
+            m_moderation = moderation;
         }
 
         public IReadOnlyList<AgentView> SnapshotAgents()
@@ -124,7 +128,17 @@ namespace osWebRtcVoice
             // (Diverges from the legacy :301 path only for bans, not restrict.)
             Func<UUID, bool> restricted = avatar => parcel.IsRestrictedFromLand(avatar);
 
-            return new ParcelView(ld.GlobalID, ld.SeeAVs, allowVoiceChat, banned, restricted);
+            // Voice moderation delegate (slice 1). A source is excluded when the store says this
+            // avatar is muted on THIS parcel (mute-everyone or the individual set) AND the avatar is
+            // NOT itself a moderator — owner / estate manager / group moderator are exempt, via the
+            // SAME composition (VoiceModerationAuth) the CAP handler authorises with. Source-side;
+            // reads live store state per call. Null store (real-scene tests) => never moderated.
+            Func<UUID, bool> voiceModerated = avatar =>
+                m_moderation != null
+                && m_moderation.IsModerated(ld.GlobalID, avatar)
+                && !VoiceModerationAuth.MayModerate(m_scene, ld, avatar);
+
+            return new ParcelView(ld.GlobalID, ld.SeeAVs, allowVoiceChat, banned, restricted, voiceModerated);
         }
     }
 }

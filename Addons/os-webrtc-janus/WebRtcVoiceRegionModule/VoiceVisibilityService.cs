@@ -56,7 +56,10 @@ namespace osWebRtcVoice
             m_emitEnabled = emitEnabled;
             m_sink = sink;
             m_adminTimeout = adminTimeout ?? TimeSpan.FromSeconds(5);
-            m_feeder = new VoiceStateFeeder(new FeederWorldFromScene(scene), EstateRoomPlaceholder, OnDerivationError);
+            // Pass the moderation store to the adapter so ToParcelView can populate the source-side
+            // moderation predicate. Moderation is an auto-property initialiser, so it is already set
+            // before this constructor body runs.
+            m_feeder = new VoiceStateFeeder(new FeederWorldFromScene(scene, Moderation), EstateRoomPlaceholder, OnDerivationError);
             m_feeder.BatchProduced += OnBatch;
         }
 

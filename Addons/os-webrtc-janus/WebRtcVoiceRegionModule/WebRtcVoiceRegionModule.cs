@@ -387,25 +387,12 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         response.StatusCode = (int)HttpStatusCode.OK;
     }
 
-    // Compose SL's three authorisation cases: land owner, estate manager/owner, or a member with
-    // GroupPowers.ModerateChat on a group-owned parcel. Server-side only — the viewer's own gate is
-    // UI and spoofable. No combined helper exists in core; this is the same composition the ban
-    // path uses (owner / estate-manager / admin exemptions).
+    // SL's three authorisation cases: land owner, estate manager/owner, or a member with
+    // GroupPowers.ModerateChat on a group-owned parcel. The composition now lives in the shared
+    // VoiceModerationAuth so the matrix's moderator-exemption uses exactly the same rule; behaviour
+    // is unchanged. Server-side only — the viewer's own gate is UI and spoofable.
     private bool MayModerateVoice(Scene scene, LandData land, UUID agentID)
-    {
-        if (agentID.Equals(land.OwnerID))
-            return true;
-        if (scene.RegionInfo.EstateSettings.IsEstateManagerOrOwner(agentID))
-            return true;
-        if (land.IsGroupOwned && land.GroupID.IsNotZero())
-        {
-            IGroupsModule groups = scene.RequestModuleInterface<IGroupsModule>();
-            GroupMembershipData gmd = groups?.GetMembershipData(land.GroupID, agentID);
-            if (gmd is not null && (gmd.GroupPowers & (ulong)GroupPowers.ModerateChat) != 0)
-                return true;
-        }
-        return false;
-    }
+        => VoiceModerationAuth.MayModerate(scene, land, agentID);
 
     /// <summary>
     /// Callback for a client request for Voice Account Details
