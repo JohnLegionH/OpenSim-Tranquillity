@@ -255,27 +255,34 @@ supplied).
 
 ## Parcel ban-add path is silent on every outcome, success and failure alike
 
-**Status:** not started — core Tranquillity defect. Diagnosability, not correctness.
-Candidate for a Mike report.
+**Status:** implemented — core Tranquillity defect. Diagnosability, not correctness.
+See the parcel ban-add instrumentation commit on this branch.
 
-**Symptom.** An operator adding a ban entry sees the entry fail to appear, with no
-log line, no console output, and no user-facing alert — and sees exactly the same
-nothing when it *succeeds*.
+**Symptom (was).** An operator adding a ban entry saw the entry fail to appear, with no
+log line, no console output, and no user-facing alert — and saw exactly the same
+nothing when it *succeeded*.
 
-**Mechanism.** Four exit points in
-`Source/OpenSim.Region.CoreModules/World/Land/LandManagementModule.cs` produce no log
-and no alert. Three are literal returns; :716 is a permission guard that silently
-falls through when it fails.
+**Mechanism (now instrumented).** Four exit points in
+`Source/OpenSim.Region.CoreModules/World/Land/LandManagementModule.cs` previously produced
+no log and no alert. Three are literal returns; the permission guard silently fell through
+when it failed. Each now logs its specific reason at Debug:
 
 | Line | Condition |
 |---|---|
-| `:690` | flags mask |
-| `:693` | `TaxFree` |
-| `:714` | `requiredPowers` |
+| `:689` | flags mask |
+| `:692` | `TaxFree` |
+| `:713` | `requiredPowers` (see note below) |
 | `:716` | permission denied |
 
-The **successful** path is equally silent: `UpdateAccessList` contains no logging at
-all.
+The accepted path now logs the written LocalID and the entry count after
+`UpdateAccessList`; the LocalID is what makes the two-parcel duplication diagnosable —
+two packets produce two "applied" lines with different LocalIDs.
+
+**Note — unreachable branch.** The `requiredPowers == GroupPowers.None` return at `:713`
+is unreachable under the current flags mask: `0x1B` at `:689` is exactly the four bits
+(access / ban / `8` / `0x10`) that each set a required power, so any request passing `:689`
+sets a power. It is instrumented anyway as a drift detector for those two masks, not an
+expected log line.
 
 **Why it matters.** Five distinct outcomes are indistinguishable from outside. This
 compounds with the missing-persist defect above: "the entry vanished" has at least
