@@ -294,6 +294,8 @@ Phase 3a session.
 successful update at Debug, and raise an alert to the requesting client on the
 permission-denied and requiredPowers branches.
 
+**Instrument's first use, 2026-08-21.** A ban appearing on both Ebony parcels when only one was targeted was suspected to be a viewer double-send or a server fan-out. The new logging resolved it in one step: two `applied to local land` lines 61 seconds apart, one per parcel — operator action across two About Land sessions, not a defect. The server applied exactly what each packet specified.
+
 ## Voice visibility feeder thread death is not detected by the Watchdog
 
 **Status:** registration implemented (uncommitted) — **Legion-side (our code), not
