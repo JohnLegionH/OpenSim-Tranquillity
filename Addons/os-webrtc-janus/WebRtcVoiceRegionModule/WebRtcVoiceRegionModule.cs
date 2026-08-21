@@ -264,6 +264,147 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 {
                     ChatSessionRequest(httpRequest, httpResponse, agentID, scene);
                 }));
+
+        // Parcel voice moderation (parity with SL viewer 26.1). RegisterSimpleHandler both
+        // ADVERTISES the capability in the seed set (the viewer's getCapability resolves it) and
+        // routes the POST — identical to the three above, so the viewer will actually send here.
+        caps.RegisterSimpleHandler("SpatialVoiceModerationRequest",
+                new SimpleStreamHandler("/" + UUID.Random(), (IOSHttpRequest httpRequest, IOSHttpResponse httpResponse) =>
+                {
+                    SpatialVoiceModerationRequest(httpRequest, httpResponse, agentID, scene);
+                }));
+    }
+
+    /// <summary>
+    /// Handles the viewer's SpatialVoiceModerationRequest CAP (parity with SL viewer 26.1 parcel
+    /// voice moderation). Slice 1, first half: authorise and record sticky per-parcel moderation
+    /// state in memory. NOTHING consumes the store yet — the matrix enforcement rule is a separate
+    /// commit. The body shape is fixed by the viewer (llnearbyvoicemoderation.cpp):
+    ///   individual: { "operand": "mute" | "unmute", "agent_id": &lt;uuid&gt; }
+    ///   everyone:   { "operand": "mute_all" | "unmute_all" }
+    /// The body carries NO parcel id, so scope is resolved from the requester's position — this is
+    /// what makes moderation parcel-bound rather than viewer-declared.
+    /// </summary>
+    public void SpatialVoiceModerationRequest(IOSHttpRequest request, IOSHttpResponse response, UUID agentID, Scene scene)
+    {
+        if (request.HttpMethod != "POST")
+        {
+            m_log.Debug($"{logHeader}[Moderation]: not a POST request. Agent={agentID}");
+            response.StatusCode = (int)HttpStatusCode.NotFound;
+            return;
+        }
+
+        OSDMap map = BodyToMap(request, "SpatialVoiceModerationRequest");
+        if (map is null)
+        {
+            m_log.Error($"{logHeader}[Moderation]: no request data. Agent={agentID}");
+            response.StatusCode = (int)HttpStatusCode.NoContent;
+            return;
+        }
+
+        // (2) Operand — conform to the viewer's shape exactly; reject anything else. mute/unmute
+        // carry an agent_id; mute_all/unmute_all do not. No other fields are read.
+        if (!map.TryGetString("operand", out string operand))
+        {
+            m_log.Warn($"{logHeader}[Moderation]: missing 'operand'. Agent={agentID}");
+            response.StatusCode = (int)HttpStatusCode.BadRequest;
+            return;
+        }
+        bool everyoneOp   = operand == "mute_all" || operand == "unmute_all";
+        bool individualOp = operand == "mute" || operand == "unmute";
+        if (!everyoneOp && !individualOp)
+        {
+            m_log.Warn($"{logHeader}[Moderation]: unknown operand \"{operand}\". Agent={agentID}");
+            response.StatusCode = (int)HttpStatusCode.BadRequest;
+            return;
+        }
+        UUID targetAgent = UUID.Zero;
+        if (individualOp)
+        {
+            if (!map.ContainsKey("agent_id") || (targetAgent = map["agent_id"].AsUUID()).IsZero())
+            {
+                m_log.Warn($"{logHeader}[Moderation]: operand \"{operand}\" without a valid agent_id. Agent={agentID}");
+                response.StatusCode = (int)HttpStatusCode.BadRequest;
+                return;
+            }
+        }
+
+        // (3) Resolve the target parcel from the REQUESTER's position. The body names no parcel,
+        // so this is the only trustworthy scope and it pins mute_all to the moderator's own parcel
+        // rather than a viewer-declared region.
+        if (scene.LandChannel is null || !scene.TryGetScenePresence(agentID, out ScenePresence sp))
+        {
+            m_log.Warn($"{logHeader}[Moderation]: cannot resolve requester presence/land in region \"{scene.Name}\". Agent={agentID}");
+            response.StatusCode = (int)HttpStatusCode.NotFound;
+            return;
+        }
+        ILandObject parcel = scene.LandChannel.GetLandObject(sp.AbsolutePosition.X, sp.AbsolutePosition.Y);
+        LandData land = parcel?.LandData;
+        if (land is null)
+        {
+            m_log.Warn($"{logHeader}[Moderation]: could not resolve a parcel at the requester's position. Agent={agentID}");
+            response.StatusCode = (int)HttpStatusCode.NotFound;
+            return;
+        }
+
+        // (4) Authorise server-side; never trust the viewer's own isNearbyChatModerator() gate.
+        // Compose owner / estate-manager / group-ModerateChat, the pieces the ban path uses.
+        if (!MayModerateVoice(scene, land, agentID))
+        {
+            m_log.Warn($"{logHeader}[Moderation]: DENIED {operand} on parcel {land.GlobalID} (\"{land.Name}\") for {agentID}: not owner, estate manager, or group moderator");
+            response.StatusCode = (int)HttpStatusCode.Forbidden;
+            return;
+        }
+
+        // (5) The store lives on the per-region visibility service. The matrix is the single
+        // enforcement point, so if the feeder is disabled there is no way to enforce a mute —
+        // refuse loudly rather than silently accept an unenforceable one.
+        VoiceVisibilityService svc;
+        lock (m_visibilityServices)
+            m_visibilityServices.TryGetValue(scene, out svc);
+        if (svc is null)
+        {
+            m_log.Warn($"{logHeader}[Moderation]: {operand} authorised on parcel {land.GlobalID} but the visibility feeder is disabled in region \"{scene.Name}\"; cannot enforce, not recorded.");
+            response.StatusCode = (int)HttpStatusCode.NotImplemented;
+            return;
+        }
+
+        switch (operand)
+        {
+            case "mute_all":   svc.Moderation.SetMuteEveryone(land.GlobalID, true);  break;
+            case "unmute_all": svc.Moderation.SetMuteEveryone(land.GlobalID, false); break;
+            case "mute":       svc.Moderation.MuteAgent(land.GlobalID, targetAgent);   break;
+            case "unmute":     svc.Moderation.UnmuteAgent(land.GlobalID, targetAgent); break;
+        }
+
+        // (6) Diagnosable from day one — accepted op with parcel GlobalID, operand, requester.
+        if (individualOp)
+            m_log.Info($"{logHeader}[Moderation]: {operand} agent {targetAgent} on parcel {land.GlobalID} (\"{land.Name}\") by {agentID}");
+        else
+            m_log.Info($"{logHeader}[Moderation]: {operand} on parcel {land.GlobalID} (\"{land.Name}\") by {agentID}");
+
+        response.RawBuffer = llsdUndefAnswerBytes;
+        response.StatusCode = (int)HttpStatusCode.OK;
+    }
+
+    // Compose SL's three authorisation cases: land owner, estate manager/owner, or a member with
+    // GroupPowers.ModerateChat on a group-owned parcel. Server-side only — the viewer's own gate is
+    // UI and spoofable. No combined helper exists in core; this is the same composition the ban
+    // path uses (owner / estate-manager / admin exemptions).
+    private bool MayModerateVoice(Scene scene, LandData land, UUID agentID)
+    {
+        if (agentID.Equals(land.OwnerID))
+            return true;
+        if (scene.RegionInfo.EstateSettings.IsEstateManagerOrOwner(agentID))
+            return true;
+        if (land.IsGroupOwned && land.GroupID.IsNotZero())
+        {
+            IGroupsModule groups = scene.RequestModuleInterface<IGroupsModule>();
+            GroupMembershipData gmd = groups?.GetMembershipData(land.GroupID, agentID);
+            if (gmd is not null && (gmd.GroupPowers & (ulong)GroupPowers.ModerateChat) != 0)
+                return true;
+        }
+        return false;
     }
 
     /// <summary>

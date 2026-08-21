@@ -63,6 +63,12 @@ namespace osWebRtcVoice
         /// The produced feed — the boundary the later Janus sender will consume.
         public IVisibilityFeed Feed => m_feeder;
 
+        /// Sticky per-parcel voice-moderation state (slice 1, in-memory / NON-PERSISTENT). Written
+        /// by the region module's SpatialVoiceModerationRequest CAP handler via this per-region
+        /// service; purged here on parcel removal (OnLandObjectRemoved). Nothing reads it yet — the
+        /// matrix enforcement rule is a later commit.
+        public VoiceModerationStore Moderation { get; } = new VoiceModerationStore();
+
         /// Observability for the event→dirty wiring (used by tests).
         public bool HasPendingInvalidation => m_feeder.HasPendingInvalidation;
 
@@ -192,6 +198,9 @@ namespace osWebRtcVoice
 
         private void OnLandObjectRemoved(UUID globalID)
         {
+            // Slice 1: purge any moderation state for a parcel that no longer exists (join /
+            // delete) so orphaned GlobalIDs self-heal. Reuses this existing subscription.
+            Moderation.Remove(globalID);
             m_feeder.OnLandChanged();
             m_wake.Set();
         }
