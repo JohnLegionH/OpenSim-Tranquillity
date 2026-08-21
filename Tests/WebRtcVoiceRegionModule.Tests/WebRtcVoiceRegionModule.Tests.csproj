@@ -19,6 +19,7 @@
   <ItemGroup>
     <Compile Include="LandBanTests.cs" />
     <Compile Include="FeederWorldFromSceneTests.cs" />
+    <Compile Include="VoiceMembershipIndexTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

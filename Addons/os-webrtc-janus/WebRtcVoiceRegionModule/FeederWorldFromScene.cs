@@ -35,12 +35,32 @@ namespace osWebRtcVoice
         public IReadOnlyList<AgentView> SnapshotAgents()
         {
             var agents = new List<AgentView>();
-            // ForEachScenePresence copies each presence's fields into our list here (the "copied
-            // snapshot"); root AND child are included. If the enumeration itself throws, Tick()
-            // catches it and keeps the last matrix.
+            UUID regionId = m_scene.RegionInfo.RegionID;
+            // ForEachScenePresence copies each present avatar's fields into our list here (the
+            // "copied snapshot"). If the enumeration itself throws, Tick() catches it and keeps the
+            // last matrix.
+            //
+            // The IsAgentInRegion gate admits a presence only if it holds a voice session in THIS
+            // region. Two constraints drive this shape:
+            //   1. We must NEVER iterate VoiceViewerSession.ViewerSessions to build the matrix: that
+            //      registry leaks unbounded over process uptime (ghost sessions that never get
+            //      removed accumulate), so any scan of it is an O(leak) cost that grows without
+            //      bound and would drag every tick down as the process ages.
+            //   2. So the filter is anchored to presences, not to sessions: we walk the live scene
+            //      population (bounded by avatars actually here) and ask the index an O(1) question
+            //      per presence. A ghost/stale index entry for an agent that has left the region
+            //      matches no presence and contributes nothing, so the matrix stays bounded by
+            //      population no matter how much the registry has leaked.
+            // RegionId-scoped is deliberate: a child agent of an adjacent region shows up in this
+            // scene but is voiced in its home region, not here, so it is correctly excluded rather
+            // than emitted as a spurious column the mixer would have to drop.
             m_scene.ForEachScenePresence(sp =>
+            {
+                if (!VoiceViewerSession.IsAgentInRegion(regionId, sp.UUID))
+                    return;
                 agents.Add(new AgentView(
-                    sp.UUID, sp.IsChildAgent, sp.AbsolutePosition, sp.currentParcelUUID, sp.IsViewerUIGod)));
+                    sp.UUID, sp.IsChildAgent, sp.AbsolutePosition, sp.currentParcelUUID, sp.IsViewerUIGod));
+            });
             return agents;
         }
 

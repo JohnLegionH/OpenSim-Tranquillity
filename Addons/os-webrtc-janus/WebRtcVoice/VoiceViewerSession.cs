@@ -56,6 +56,62 @@ public class VoiceViewerSession : IVoiceViewerSession
     // ViewerSessions hold the connection information for the client connection through to the voice service.
     // This collection is static and is simulator wide so there will be sessions for all regions and all clients.
     public static Dictionary<string, IVoiceViewerSession> ViewerSessions = new Dictionary<string, IVoiceViewerSession>();
+
+    // Agent-keyed membership index: region -> (agent -> refcount). Maintained alongside
+    // ViewerSessions in AddViewerSession/RemoveViewerSession under the SAME lock, so it never
+    // diverges from the session collection.
+    //
+    // Why refcounted rather than a bare set: an agent can momentarily hold two sessions in a
+    // region (a reconnect/handoff overlaps the old teardown). A set would drop the agent the
+    // instant the first session is removed, blinking it out of the matrix while it is still
+    // voiced. The refcount keeps the agent a member until the LAST of its sessions leaves.
+    //
+    // Scoped by RegionId, not global: the query is asked per-region during matrix derivation, and
+    // a global "is this agent voiced anywhere" answer would wrongly admit child agents of adjacent
+    // regions (common) into this region's matrix.
+    private static readonly Dictionary<UUID, Dictionary<UUID, int>> AgentMembershipByRegion
+        = new Dictionary<UUID, Dictionary<UUID, int>>();
+
+    // Per-region membership query. O(1), lock-consistent with the session collection. Callers on
+    // the matrix-derivation path use this to admit a presence WITHOUT ever iterating ViewerSessions.
+    public static bool IsAgentInRegion(UUID pRegionId, UUID pAgentId)
+    {
+        lock (ViewerSessions)
+        {
+            return AgentMembershipByRegion.TryGetValue(pRegionId, out Dictionary<UUID, int> agents)
+                && agents.ContainsKey(pAgentId);
+        }
+    }
+
+    // Index maintenance helpers. Both assume the ViewerSessions lock is already held.
+    private static void IndexAdd(UUID pRegionId, UUID pAgentId)
+    {
+        if (!AgentMembershipByRegion.TryGetValue(pRegionId, out Dictionary<UUID, int> agents))
+        {
+            agents = new Dictionary<UUID, int>();
+            AgentMembershipByRegion[pRegionId] = agents;
+        }
+        agents.TryGetValue(pAgentId, out int count);
+        agents[pAgentId] = count + 1;
+    }
+
+    private static void IndexRemove(UUID pRegionId, UUID pAgentId)
+    {
+        if (!AgentMembershipByRegion.TryGetValue(pRegionId, out Dictionary<UUID, int> agents))
+            return;
+        if (!agents.TryGetValue(pAgentId, out int count))
+            return;
+        if (count <= 1)
+        {
+            agents.Remove(pAgentId);
+            if (agents.Count == 0)
+                AgentMembershipByRegion.Remove(pRegionId);
+        }
+        else
+        {
+            agents[pAgentId] = count - 1;
+        }
+    }
     // Get a viewer session by the viewer session ID
     public static bool TryGetViewerSession(string pViewerSessionId, out IVoiceViewerSession pViewerSession)
     {
@@ -93,13 +149,21 @@ public class VoiceViewerSession : IVoiceViewerSession
         lock (ViewerSessions)
         {
             ViewerSessions[pSession.ViewerSessionID] = pSession;
+            IndexAdd(pSession.RegionId, pSession.AgentId);
         }
     }
     public static void RemoveViewerSession(string pSessionId)
     {
         lock (ViewerSessions)
         {
-            ViewerSessions.Remove(pSessionId);
+            // Decrement the membership index using the removed session's own region/agent — done
+            // before the dictionary removal so the lookup still resolves. A session ID with no
+            // entry (double-remove) leaves the index untouched.
+            if (ViewerSessions.TryGetValue(pSessionId, out IVoiceViewerSession session))
+            {
+                ViewerSessions.Remove(pSessionId);
+                IndexRemove(session.RegionId, session.AgentId);
+            }
         }
     }
 
