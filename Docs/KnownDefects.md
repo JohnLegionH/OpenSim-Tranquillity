@@ -414,6 +414,70 @@ permission-denied and requiredPowers branches.
 
 **Instrument's first use, 2026-08-21.** A ban appearing on both Ebony parcels when only one was targeted was suspected to be a viewer double-send or a server fan-out. The new logging resolved it in one step: two `applied to local land` lines 61 seconds apart, one per parcel — operator action across two About Land sessions, not a defect. The server applied exactly what each packet specified.
 
+## About Land access list rendering empty on reopen — RESOLVED, viewer-side, no server change
+
+**Status:** resolved 2026-08-22 — not a server defect. Recorded here because it was
+observed live alongside the parcel-ban defects above and consumed a diagnosis pass.
+
+**Observed (old viewer).** With a ban entry present and enforcing, closing About Land
+and reopening it showed an empty Banned list; the database was unchanged across the
+close/reopen and enforcement continued throughout.
+
+**Resolution.** Does not reproduce on a current Firestorm master-tracking build — the
+ban entry renders correctly on reopen. The viewer-side `mAccessList.clear()` /
+LocalID-discard analysis was accurate about the source tree; the previously-installed
+viewer predated the fix. Same root cause family as the voice-moderation menu
+investigation (`Docs/voice/voice-moderation-design-brief.md`, RESOLVED section): the
+running binary was months older than the tree being analysed.
+
+**Server behaviour confirmed CORRECT, do not "fix" it.** `SendLandAccessListData`
+sends `SequenceID = 0` on both list replies (`LLClientView.cs:6758`). That is correct,
+not a workaround: non-zero values would trigger the current viewer's `resetSequence()`
+handling and clear the previously-received list when the second reply arrives — making
+it worse. The two-packet shape (one Access reply, one Ban reply,
+`LandObject.cs:1071`–`:1084`) is likewise correct: the viewer clears once at request
+time and merges per packet into per-flag lists. No server change is needed or wanted.
+
+## Parcel ban does not eject an already-present avatar
+
+**Status:** not started — core Tranquillity defect, core parcel enforcement, not
+voice. Affects every parcel ban regardless of whether voice is in use. Observed
+2026-08-22. Candidate for a Mike report.
+
+**Symptom.** An operator adds a resident to the parcel Banned list; the resident
+remains standing on the parcel indefinitely. The ban takes visible effect only when
+the banned avatar attempts to move, at which point the movement path's ban-line check
+blocks them; a stationary avatar remains indefinitely. Voice exclusion applies
+correctly and immediately — this is presence only.
+
+**Mechanism.** The ban-add path (`ClientOnParcelAccessListUpdateRequest` →
+`UpdateAccessList` → store, `LandManagementModule.cs:683`–`:749`) never scans for or
+ejects present avatars. Enforcement is entry-time only: `EnforceBans`
+(`LandManagementModule.cs:358`–`:432`) is invoked solely from the parcel-crossing
+event (`EventManagerOnAvatarEnteringNewParcel` at `:464`), so it fires when an avatar
+*moves onto* a parcel, never when a ban lands on the parcel they already occupy. Note
+also its built-in limits: it is a no-op above `BanLineSafeHeight` (`:361`–`:368`), and
+with `m_allowedForcefulBans` off it only alerts "please leave by your own will"
+(`:385`–`:392`). (An earlier citation placed a `TODO: FIXME: If agent is in flight,
+refuse to land!` at `Scene.cs:5623` — that comment does not exist anywhere in this
+tree's `Source/`; the mechanism above is cited against the code that does.)
+
+**Why it matters.** It differs from SL, where a ban ejects. An operator who bans a
+griefer and watches them stay put reasonably concludes the ban failed. Voice IS
+enforced, so the failure is partial and confusing rather than total.
+
+**The estate-ban path already does this correctly** and is the in-tree template: on an
+estate ban add, the handler resolves the present `ScenePresence` and calls
+`Scene.TeleportClientHome`, falling back to `Kick` + `CloseAgent` if the teleport
+fails (`EstateManagementModule.cs:1135`–`:1146`).
+
+**Suggested first step.** On a successful ban add (the instrumented success branch of
+`ClientOnParcelAccessListUpdateRequest`), scan avatars present on the parcel against
+the new entry and eject those now banned, matching the estate-ban path's
+teleport-home-with-fallback shape. Decide explicitly how it composes with
+`m_allowedForcefulBans` and the `BanLineSafeHeight` exemption, and reuse the existing
+exemptions (`ForceAvatarToPosition` is already God-exempt, `:436`).
+
 ## Voice visibility feeder thread death is not detected by the Watchdog
 
 **Status:** registration implemented (uncommitted) — **Legion-side (our code), not
