@@ -133,7 +133,9 @@ draw-distance changes generate exactly the child-agent teardowns this path misse
 - **Locked, idempotent `Shutdown`.** The check-then-null in `JanusViewerSession.Shutdown`
   is unlocked (`JanusViewerSession.cs:87`–`:105`) and the hangup path already runs
   `Shutdown` fire-and-forget (`WebRtcJanusService.cs:187`–`:192`), so a second concurrent
-  entry double-leaves / double-destroys. **Addon-local.**
+  entry double-leaves / double-destroys. **Addon-local.** *(Implemented since — added
+  after this entry was written: `JanusViewerSession.Shutdown` now carries the
+  SemaphoreSlim serialization at `:63`–`:65`.)*
 - **Handle the non-Janus `Shutdown`.** `VoiceViewerSession.Shutdown` throws
   `NotImplementedException` (`VoiceViewerSession.cs:122`–`:125`); any non-Janus session
   in the registry would throw on removal. **Addon-local.**
@@ -148,6 +150,104 @@ deferred design decision, not a disabled feature.
 crossing — would destroy the agent's live voice session in *every* region, and the
 viewer's re-provision that follows could manufacture the very §M duplicate-handle
 condition this fix was meant to relieve.
+
+**External review, 2026-08-22 — two findings change the approach.**
+
+**1. The core change is not required. Use `OnClientClosed`.**
+
+The entry's Suggested first step lists four prerequisites, one of which — propagating
+`isChildAgent` through `TriggerOnRemovePresence` — is a core `EventManager` delegate
+change. That is no longer the recommended path.
+
+`OnClientClosed(UUID clientID, Scene scene)` fires immediately before `OnRemovePresence`,
+and OpenSim's own documentation states that at the point of firing the scene still
+contains the client's ScenePresence. It also passes the `Scene` directly, so the handler
+need not rely on a captured module-level scene to know which region fired.
+
+A synchronous handler can therefore resolve the presence and read `IsChildAgent` itself:
+
+    ScenePresence sp = scene.GetScenePresence(agentId);
+    if (sp == null || sp.IsChildAgent) return;
+
+**This must happen before the handler returns.** Asynchronous work cannot rely on the
+presence remaining resolvable — `Scene.RemoveClient` removes it in its final cleanup,
+after the events fire.
+
+Correct the entry's problem 1 wording accordingly: the information is not carried by the
+event payload, but it IS available from the Scene while the event is dispatched. "The
+information does not exist at the event boundary" is too strong.
+
+`OnClientClosed` is documented as running under the per-agent lock, with a warning that
+lengthy work belongs elsewhere. That suits the design: classify synchronously, tear down
+asynchronously.
+
+**2. Region scoping is insufficient. Session generation must be part of the identity.**
+
+The entry proposes filtering the registry lookup by `RegionId`. That fixes the
+cross-region case — B's teardown reaching into A — but not the case actually observed.
+
+After a relog, an orphaned session and a live session can coexist for the same avatar in
+the SAME region. A lookup keyed on `AgentId + RegionId` matches both, so a late-arriving
+teardown for the orphan destroys the live session as well. That converts a leak into an
+outage.
+
+**The voice session must carry a generation token** captured at creation — the OpenSim
+SessionID, circuit identity, or another immutable value — so teardown targets
+`AgentId + RegionId + SessionId`. Given that orphans surviving a full relog are already
+observed, this is part of the fix, not a refinement.
+
+The asynchronous portion must operate on the exact session captured synchronously. It
+must not re-query "all sessions for this avatar."
+
+**Also raised by the review:**
+
+- **Do not make the base `VoiceViewerSession.Shutdown` a silent no-op.**
+  `NotImplementedException` is wrong for a path that can legitimately reach those
+  instances, but a no-op hides a different leak. If every concrete session must support
+  shutdown, make it abstract; otherwise distinguish disposable from non-disposable
+  session types explicitly.
+- **The registry needs its own synchronisation review**, independent of the
+  `SemaphoreSlim` added to `JanusViewerSession.Shutdown`. Enumeration, lookup, insertion
+  and removal must be synchronised against one another — a hangup removing an entry while
+  the teardown handler enumerates is a separate race.
+- **Teardown ordering:** the session should become atomically unavailable to registry and
+  policy operations before the Janus calls run, or the policy engine can keep discovering
+  a session whose network cleanup is in flight. But a failed remote cleanup must not make
+  the orphan permanently invisible — that argues for a Closing state or reconciliation
+  logging rather than remove-and-forget.
+- **Do not launch unobserved `Task.Run` work.** OpenSim's event dispatch isolates
+  subscriber exceptions, but independent work must observe and log its own failures.
+
+**Revised ordering:**
+
+1. **Mixer-side duplicate protection first, independently.** Fixing teardown removes one
+   source of duplicate handles; it does not prove there is no other. A `by_display`
+   collapse that silently picks one handle is a dangerous invariant for something
+   enforcing parcel privacy. Detecting the condition loudly, or enforcing
+   one-handle-per-avatar at join, converts an orphan from a policy-enforcement bypass
+   into a cleanup bug. This is worth doing before the teardown work, not after.
+2. Region scoping plus session-generation identity in the registry.
+3. `Shutdown` concurrency and the base-class semantics.
+4. Wire `OnClientClosed` with synchronous classification and asynchronous, idempotent
+   teardown.
+
+The core `EventManager` change is no longer required by this plan.
+
+*(Citation refresh, 2026-08-22, verified while recording this review. In-tree
+confirmation of the review's premise: `ClientClosed(UUID clientID, Scene scene)` is
+declared at `EventManager.cs:425`–`:426`, and `Scene.RemoveClient` fires
+`TriggerClientClosed(agentID, this)` at `Scene.cs:3863` immediately before
+`TriggerOnRemovePresence` at `:3865`, with the presence removed later at `:3899` — so the
+presence is resolvable during dispatch as stated. Drift in this entry's earlier cites,
+the file having changed since 2026-08-18: `WebRtcJanusService.cs` `:154`–`:155` →
+`:160`–`:161` (OnDisconnect/OnHangup), `:164` → `:170` (Handle_Hangup), `:183` → `:189`
+(DisconnectViewerSession), and the fire-and-forget `Shutdown` `:187`–`:192` →
+`:189`–`:197` (`_ = pViewerSession.Shutdown()` at `:197`); `JanusViewerSession.cs`
+`Shutdown` `:87`–`:105` → declared at `:91` with `LeaveRoom` at `:101`, and the method now
+carries the SemaphoreSlim serialization the review references (`:63`–`:65`);
+`VoiceViewerSession.cs` `Shutdown` `NotImplementedException` `:122`–`:125` →
+`:186`–`:188`. Still landing as cited: `WebRtcVoiceServiceModule.cs:152`/`:159`/`:183`–`:185`,
+`VoiceViewerSession.cs:52`/`:56`–`:58`, `Scene.cs:3832`/`:3865`, `EventManager.cs:158`.)*
 
 ## Estate CAP save silently flips TaxFree when override_public_access is absent
 
