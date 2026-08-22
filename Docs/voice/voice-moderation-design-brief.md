@@ -1,7 +1,9 @@
 # Design Brief — Voice Moderation
 
-**Status:** DRAFT. Slice 1 complete and deployed; end-to-end verification BLOCKED on the
-viewer — see the verification note at the end. Two open questions remain unanswered.
+**Status:** Slice 1 complete and VERIFIED end to end (2026-08-22) — see the resolution at
+the end, including the viewer requirement: the feature needs a Firestorm master-tracking
+build, not any release as of 7.2.4. Open Question 1 unanswered; Open Question 2 partially
+answered by the verification run.
 **Date:** 2026-08-21.
 **Basis:** CC recon 2026-08-21 against `tranquillity-develop @ e2444037d7` and
 `D:\phoenix-firestorm` (read-only reference); SL viewer release notes 26.1.0 and 26.2.0.
@@ -243,3 +245,56 @@ this flag has a real source, a real default, and a real operator control, unlike
 One caveat, an observation rather than a defect: because the default is `true`, a region advertises
 voice-enabled whether or not a voice backend is actually wired up. That is pre-existing OpenSim
 behaviour, orthogonal to this work, and not introduced by the moderation slice.
+
+---
+
+## RESOLVED 2026-08-22 — verified end to end.
+
+**The blocked note's diagnosis was wrong.** It concluded the submenu existed in the file and
+was hidden at runtime by a gate returning false, and six rounds of analysis interrogated that
+gate. Every one of those conclusions was correct about the source tree at `D:\phoenix-firestorm`
+and irrelevant to the running viewer, which did not contain the feature at all.
+
+**The tell was an absence.** Copy Mention URI and Mention User in Chat have no hiding path in
+the source — they render unconditionally — yet were absent from the observed menu. That is only
+possible if the running binary is not built from that source. Git dates it: the Mention entries
+were added 2025-11-21 (`2a6b5cbde5`) and nearby-voice moderation was transplanted 2026-02-12
+(`621009dc42`). A menu without the Mention entries predates the moderation transplant.
+Independently confirmed by the floater showing a Voice Morphing dropdown, removed 2026-03-04
+(`9e2585cbc0`).
+
+**The viewer requirement, stated precisely:** the feature is NOT in any Firestorm release as of
+7.2.4 (80712, built 2026-06-01, parity with LL 26.1.1). It requires a build tracking Firestorm
+master — a nightly, an Early Access build, or a local build. Updating to the newest release does
+not help.
+
+**Working lesson:** when analysing viewer behaviour against a source tree, first establish that
+the tree is what is running. An observable that should be unconditionally present, and is
+absent, is the cheapest possible check and would have saved six rounds.
+
+**Verification, on a master-tracking build:**
+
+The Moderator Options submenu appears in Comm → Nearby Voice on right-clicking a participant,
+containing Mute this participant, Mute everyone, and Unmute everyone, with Eject from Group
+correctly greyed as a non-group session.
+
+Mute everyone produced an accepted CAP with the parcel GlobalID, operand, and requester logged;
+the matrix advanced epoch 30 to 31 with `last_mode add`; `excluded_entries` rose to 1 on the
+moderator's handle, naming the muted source. Unmute everyone advanced to epoch 32 with
+`last_mode remove` and `excluded_entries` back to 0. Confirmed by ear: the muted avatar was
+inaudible while the exempt moderator remained audible.
+
+**Stickiness demonstrated incidentally:** the mute was issued while the target stood on a
+different parcel and applied the moment they walked onto the moderated one, with no re-issue.
+That is the behaviour SL documents for late-joining avatars.
+
+**Open Question 2 partially answered.** The exemption set behaved as designed — the issuing
+estate owner remained audible, which is what a moderator expects. Whether blanket
+estate-manager exemption is too generous on a grid with several managers remains open; on this
+grid the manager list is empty, so it was not exercised.
+
+**One diagnostic detour worth recording:** an early test showed a mute accepted with no
+exclusions produced. The cause was that the target stood on a different parcel from the one the
+mute was issued on. The rule tests the source's own parcel, so this was correct parcel-sticky
+behaviour, not a defect. Prior test state — a parcel ban whose ban lines had pushed the target
+off the moderated parcel — created the condition. Clear ban entries between moderation tests.

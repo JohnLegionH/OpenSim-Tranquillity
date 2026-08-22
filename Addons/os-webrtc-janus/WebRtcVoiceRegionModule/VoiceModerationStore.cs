@@ -5,9 +5,9 @@
  * purged on parcel removal by VoiceVisibilityService.OnLandObjectRemoved so join/delete orphans
  * self-heal.
  *
- * NOTHING reads this yet. The matrix enforcement rule (a source-side ParcelView predicate) is a
- * later commit; this class deliberately exposes only writes and a purge, no query, so "nothing
- * consumes the store yet" is provable by its surface.
+ * Read by the matrix: FeederWorldFromScene folds IsModerated plus the moderator exemption
+ * (VoiceModerationAuth) into the source-side ParcelView.IsVoiceModerated delegate, which
+ * VisibilityRules evaluates as rule 2b on every matrix build.
  *
  * Thread-safe: the CAP handler writes on an HTTP worker thread, the purge runs on a sim thread,
  * and the future feeder will read on the tick thread — all under one lock.

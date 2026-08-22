@@ -68,8 +68,9 @@ namespace osWebRtcVoice
 
         /// Sticky per-parcel voice-moderation state (slice 1, in-memory / NON-PERSISTENT). Written
         /// by the region module's SpatialVoiceModerationRequest CAP handler via this per-region
-        /// service; purged here on parcel removal (OnLandObjectRemoved). Nothing reads it yet — the
-        /// matrix enforcement rule is a later commit.
+        /// service; purged here on parcel removal (OnLandObjectRemoved). Read by the matrix via the
+        /// FeederWorldFromScene constructed below — ToParcelView folds IsModerated plus the
+        /// moderator exemption into ParcelView.IsVoiceModerated (rule 2b, source-side).
         public VoiceModerationStore Moderation { get; } = new VoiceModerationStore();
 
         /// Observability for the event→dirty wiring (used by tests).
