@@ -225,3 +225,21 @@ which describe SL's own viewer.
 is unverified. Nothing currently observed depends on it — Talk works, so it is presumably set —
 but it is the same shape as the parcel-flag defects already documented: a flag the viewer reads
 that the server may never populate, invisible until something depends on it.
+
+**RESOLVED (2026-08-22) — not a defect; the characterisation above is corrected.** A server-side
+recon settled this. Bit 28 derives from `EstateSettings.AllowVoice`, which defaults to `true`
+(`EstateSettings.cs:139`), and is set at all three flag-assembly sites:
+`LLClientView.GetRegionFlags()` for RegionHandshake (`LLClientView.cs:855`-`:856`, sent at
+`:885`), `EstateManagementModule.GetRegionFlags()` for RegionInfo (`EstateManagementModule.cs:165`-`:166`,
+used at `:1852`), and `EstateManagementModule.GetEstateFlags()` for the detailed estate data
+(`EstateManagementModule.cs:2341`-`:2342`). The operator control is the Estate tab's **Allow Voice**
+checkbox — parsed inbound from estate-flags bit `0x10000000` (`EstateManagementModule.cs:2204`-`:2207`)
+and persisted — which is the *same* `EstateSettings.AllowVoice` the visibility matrix already reads
+(`VisibilityRules.cs:56`) and the legacy Vivox/FreeSwitch modules read (`VivoxVoiceModule.cs:684`,
+`FreeSwitchVoiceModule.cs:456`). So the "same shape as the parcel-flag defects" line above is wrong:
+this flag has a real source, a real default, and a real operator control, unlike the parcel
+`AllowVoiceChat` clobber. "Talk works, so it is presumably set" is confirmed by construction, not luck.
+
+One caveat, an observation rather than a defect: because the default is `true`, a region advertises
+voice-enabled whether or not a voice backend is actually wired up. That is pre-existing OpenSim
+behaviour, orthogonal to this work, and not introduced by the moderation slice.
