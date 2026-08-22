@@ -737,6 +737,13 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
                 m_log.DebugFormat(
                     "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {0} applied to local land {1} (\"{2}\"): flags 0x{3:X}, {4} entries",
                     agentID, landLocalID, land.LandData.Name, flags, entries.Count);
+
+                // Persist immediately. UpdateAccessList mutates the in-memory access/ban list
+                // and its UseAccessList/UseBanList flags but does not itself store; without
+                // this the change is lost on restart, or on any crash before an unrelated
+                // parcel write happens to flush it. UpdateLandObject fires
+                // TriggerLandObjectUpdated -> TriggerLandObjectAdded -> StoreLandObject.
+                UpdateLandObject(land.LandData.LocalID, land.LandData);
             }
             else
             {

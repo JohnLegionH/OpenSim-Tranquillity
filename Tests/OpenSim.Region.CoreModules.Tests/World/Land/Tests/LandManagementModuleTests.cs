@@ -77,6 +77,56 @@ public class LandManagementModuleTests : OpenSimTestCase
     }
 
     /// <summary>
+    /// A parcel properties save that omits UseBanList (every non-Access tab does - the viewer
+    /// ships the whole flag word at its cached value, and that bit has no authoritative control)
+    /// must not clear the flag while a ban entry is present. Otherwise the ban persists as a
+    /// non-enforcing half-state and silently stops working after restart.
+    /// </summary>
+    [Fact]
+    public void TestPropertiesSaveOmittingUseBanListPreservesBanFlag()
+    {
+        TestHelpers.InMethod();
+
+        UUID userId = TestHelpers.ParseTail(0x1);
+        UUID bannedId = TestHelpers.ParseTail(0x2);
+
+        LandManagementModule lmm = new LandManagementModule();
+        Scene scene = new SceneHelpers().SetupScene();
+        SceneHelpers.SetupSceneModules(scene, lmm);
+        // No PermissionsModule loaded, so CanEditParcelProperties returns true and the
+        // LandManageBanned branch runs - UseBanList is in allowedDelta, the path under test.
+
+        TestClient client = new TestClient(SceneHelpers.GenerateAgentData(userId), scene);
+
+        ILandObject lo = new LandObject(userId, false, scene);
+        lo.SetLandBitmap(
+            lo.GetSquareLandBitmap(0, 0, (int)Constants.RegionSize, (int)Constants.RegionSize));
+        lo = lmm.AddLandObject(lo);
+
+        // A ban exists, exactly as the access path leaves it: entry present, flag set.
+        lo.LandData.ParcelAccessList.Add(
+            new LandAccessEntry { AgentID = bannedId, Flags = AccessList.Ban, Expires = 0 });
+        lo.LandData.Flags |= (uint)ParcelFlags.UseBanList;
+
+        // A properties save from a non-Access tab: full flag word with UseBanList cleared.
+        LandUpdateArgs args = new LandUpdateArgs
+        {
+            ParcelFlags = lo.LandData.Flags & ~(uint)ParcelFlags.UseBanList,
+            Name = lo.LandData.Name,
+            Desc = lo.LandData.Description,
+            MediaURL = lo.LandData.MediaURL,
+            MusicURL = lo.LandData.MusicURL,
+            MediaType = lo.LandData.MediaType,
+        };
+
+        lo.UpdateLandProperties(args, client, out _, out _);
+
+        Assert.True(
+            (lmm.GetLandObject(0, 0).LandData.Flags & (uint)ParcelFlags.UseBanList) != 0,
+            "UseBanList must survive a properties save that omits it, so the ban keeps enforcing after restart.");
+    }
+
+    /// <summary>
     /// Test parcels on region when no land data exists to be loaded.
     /// </summary>
     [Fact]

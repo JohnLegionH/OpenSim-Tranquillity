@@ -35,6 +35,10 @@ using OpenSim.Region.Framework.Scenes;
 using Microsoft.Extensions.Logging;
 using RegionFlags = OpenMetaverse.RegionFlags;
 
+// Exposes internal helpers (HasBanEntry) to the unit-test assembly so the ban-flag
+// re-assert can be pinned without standing up a full Scene.
+[assembly: InternalsVisibleTo("OpenSim.Region.CoreModules.Tests")]
+
 namespace OpenSim.Region.CoreModules.World.Land;
 
 /// <summary>
@@ -667,8 +671,7 @@ public class LandObject : ILandObject
 
         if (allowedDelta != (uint)ParcelFlags.None)
         {
-            uint preserve = LandData.Flags & ~allowedDelta;
-            newData.Flags = preserve | (args.ParcelFlags & allowedDelta);
+            newData.Flags = ComputeSavedFlags(LandData.Flags, args.ParcelFlags, allowedDelta, newData);
 
             uint curdelta = LandData.Flags ^ newData.Flags;
             curdelta &= (uint)(ParcelFlags.SoundLocal);
@@ -678,6 +681,39 @@ public class LandObject : ILandObject
 
             m_scene.LandChannel.UpdateLandObject(LandData.LocalID, newData);
             return true;
+        }
+        return false;
+    }
+
+    // The parcel flags to persist for a properties save: preserve the bits the client may not
+    // change, take the allowed bits from the client word, then re-assert UseBanList from ban-list
+    // membership rather than trusting the client. The viewer has no authoritative control for that
+    // bit: the Access tab hard-codes it true, every other tab merely retransmits the whole flag
+    // word at its cached value, and after a restart with the flag already zero in the database the
+    // server sends zero, the viewer caches zero, and the next properties save writes zero back - a
+    // self-sustaining loop. Trusting the client word here clears the flag while LandData.Copy()
+    // carries the ban ENTRY along, persisting a ban that no longer enforces. Scoped to UseBanList
+    // ONLY: UseAccessList stays viewer-authoritative, since a non-empty access list with public
+    // access on is a valid "flag off" state and auto-managing it would force restriction the owner
+    // did not ask for. Pure (no Scene) so the preservation is unit-testable.
+    internal static uint ComputeSavedFlags(uint currentFlags, uint clientFlags, uint allowedDelta, LandData data)
+    {
+        uint preserve = currentFlags & ~allowedDelta;
+        uint flags = preserve | (clientFlags & allowedDelta);
+        if (HasBanEntry(data))
+            flags |= (uint)ParcelFlags.UseBanList;
+        return flags;
+    }
+
+    // True if the parcel holds any ban entry. Mirrors how UseBanList is managed elsewhere
+    // (set when a ban is added, cleared only on a delete-all) - membership, not expiry:
+    // an expired entry still keeps the gate set until it is explicitly removed.
+    internal static bool HasBanEntry(LandData data)
+    {
+        foreach (LandAccessEntry e in data.ParcelAccessList)
+        {
+            if ((e.Flags & AccessList.Ban) != 0)
+                return true;
         }
         return false;
     }
