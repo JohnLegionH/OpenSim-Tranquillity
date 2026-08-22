@@ -1,6 +1,7 @@
 # Design Brief — Voice Moderation
 
-**Status:** DRAFT. Two open questions must be answered in-world before slice 1 freezes.
+**Status:** DRAFT. Slice 1 complete and deployed; end-to-end verification BLOCKED on the
+viewer — see the verification note at the end. Two open questions remain unanswered.
 **Date:** 2026-08-21.
 **Basis:** CC recon 2026-08-21 against `tranquillity-develop @ e2444037d7` and
 `D:\phoenix-firestorm` (read-only reference); SL viewer release notes 26.1.0 and 26.2.0.
@@ -168,3 +169,59 @@ Verifiable end to end in Firestorm 26.2.0 with no viewer change:
    and the parcel owner exempt? SL's exact exemption set is not documented in the release
    notes and should be confirmed in-world. The ban delegate's exemption pattern is the
    model, but the answer is a behaviour question, not a code one.
+
+---
+
+## Status: slice 1 complete and deployed; end-to-end verification BLOCKED on the viewer (2026-08-21)
+
+The moderation menu could not be made to appear in Firestorm 26.2.0 despite every documented
+gate condition being satisfied. Recorded here so the next attempt does not repeat today's
+investigation.
+
+**The submenu exists and is being hidden at runtime, not missing.** The menu is
+`menu_participant_list.xml`, which does contain a Moderator Options submenu with Mute everyone,
+Unmute everyone, and individual mute. It is confirmed present in the file, and confirmed to be
+the menu the user sees — the observed entries (View Profile, IM, Call, Share, Zoom In, Block
+Voice, Block Text, Add Friend) match that file. So the submenu is hidden at runtime by
+`fsparticipantlist.cpp:557`, not absent.
+
+**The surface is the Voice Controls floater, not the nearby chat text floater.** The nearby
+chat text floater has no participant list. `FSParticipantList` (which builds
+`menu_participant_list.xml`) is instantiated only by `FSFloaterVoiceControls` and the group IM
+panel. Firestorm renamed the floater: it is **Comm → Nearby Voice**, registered as
+`fs_voice_controls`, not "Voice Controls".
+
+**Every condition of `isNearbyChatModerator()`** (`llnearbyvoicemoderation.cpp:196`-`:219`) was
+verified satisfied on the test grid:
+
+- `isRegionWebRTCEnabled()` — voice connects, so `VoiceServerType=webrtc` is being sent.
+- proximal channel with null session ID — in nearby voice, not a group call.
+- `isActionAllowed("speak")` — confirmed via the free observable: the same predicate drives the
+  Talk button, and both toggle and push-to-talk work.
+- The ownership branch — `UseEstateVoiceChannel` bit is 0 on both parcels, so `isVoiceRestricted()`
+  is true and the gate takes `allowVoiceModeration()`, which needs parcel ownership. Both parcels
+  are owned outright by the tester, not group-owned, so `isParcelOwnedByAgent` returns true at its
+  direct-owner check before the group-power fallback is reached.
+- `canManageEstate()` is also true (Estate tab editable, tester is estate owner), though this
+  branch is not the one taken.
+
+**So the predicate should return true and the menu should appear. It does not.** The remaining
+unverified assumption is `isNearbyChatSession()`, the second term of the `:557` expression, which
+was assumed true throughout rather than checked.
+
+**Next attempt should instrument rather than read.** A single log line at `fsparticipantlist.cpp:557`
+printing each term of the visibility expression would resolve in one run what six rounds of source
+reading did not. That requires a local Firestorm build.
+
+**Testing prerequisites the brief originally omitted.** The moderator must be actively connected
+to proximal voice, and must either own the parcel (when it is on its own voice channel) or hold
+`canManageEstate()` (when it is on the estate channel). Neither is obvious from SL's release notes,
+which describe SL's own viewer.
+
+**One server-side item surfaced, worth checking independently of this.**
+`LLViewerRegion::isVoiceEnabled()` reads `REGION_FLAGS_ALLOW_VOICE`, bit 28 of the region flags
+(`llviewerregion.cpp:922`, `llregionflags.h:87`). This is distinct from `VoiceServerType`, from
+`EstateSettings.AllowVoice`, and from the parcel's `AllowVoiceChat`. Whether the sim populates it
+is unverified. Nothing currently observed depends on it — Talk works, so it is presumably set —
+but it is the same shape as the parcel-flag defects already documented: a flag the viewer reads
+that the server may never populate, invisible until something depends on it.
