@@ -35,12 +35,23 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Managed Jolt binding. 2.19.1 is the newest net8.0-compatible release (2.19.2+ = net9/net10). -->
+    <!-- Managed Jolt binding. 2.19.1 is the newest net8.0-compatible release (2.19.2+ = net9/net10).
+         NOTE: the tree is net10.0 now, so that is no longer the binding constraint - under net10
+         NuGet resolves this package's lib/net9.0 asset. The pin stays for ABI: the PATCHED joltc
+         is built from the joltc commit behind JoltPhysics.Native 1.0.4. Bumping the managed binding
+         without rebuilding the patch per native/joltc/README.md breaks the native ABI. -->
     <PackageReference Include="JoltPhysicsSharp" Version="2.19.1" />
     <!-- Suppress the STOCK native. JoltPhysicsSharp pulls JoltPhysics.Native 1.0.4 (stock joltc);
          ExcludeAssets="all" keeps the dependency satisfied for restore but ships NONE of its assets,
          so the ONLY joltc in the published output is the PATCHED build vendored by the LegionJolt
-         module. The hash-guard verifies this after publish. -->
+         module. The hash-guard verifies this after publish.
+         DO NOT change ExcludeAssets to PrivateAssets. Native RESOLUTION depends on this package
+         staying in the dependency graph: its deps.json runtimeTarget maps
+         runtimes/win-x64/native/joltc.dll, and LegionJolt's Content glob overwrites the file at
+         that path with the PATCHED build. ExcludeAssets suppresses the stock FILES but keeps the
+         MAPPING; PrivateAssets drops the mapping, the directory falls off the native probe path,
+         and joltc fails to load at FIRST PHYSICS USE, not at startup. LegionJolt's own deps entry
+         declares no native, so nothing else supplies that path. -->
     <PackageReference Include="JoltPhysics.Native" Version="1.0.4" ExcludeAssets="all" />
   </ItemGroup>
 
