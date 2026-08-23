@@ -52,6 +52,9 @@ public class JanusViewerSession : IVoiceViewerSession
     public OMV.UUID RegionId { get; set; }
     // IVoiceViewerSession.AgentId
     public OMV.UUID AgentId { get; set; }
+    // IVoiceViewerSession.ClientSessionId - generation token (client login SessionID), set once
+    // at provision by WebRtcVoiceServiceModule.CaptureGenerationToken; see the interface doc.
+    public OMV.UUID ClientSessionId { get; set; }
 
     // Janus keeps track of the user by this ID
     public int ParticipantId { get; set; }

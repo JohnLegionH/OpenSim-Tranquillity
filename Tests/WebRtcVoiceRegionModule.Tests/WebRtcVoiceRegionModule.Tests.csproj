@@ -20,6 +20,7 @@
     <Compile Include="LandBanTests.cs" />
     <Compile Include="FeederWorldFromSceneTests.cs" />
     <Compile Include="VoiceMembershipIndexTests.cs" />
+    <Compile Include="VoiceSessionCloseCaptureTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -76,10 +76,9 @@ namespace osWebRtcVoice.Tests
                 "a second remove must not resurrect or corrupt membership");
         }
 
-        // A remove for a session id the index never saw. Because ViewerSessions leaks unbounded
-        // (Event_OnRemovePresence unwired, no reconciliation), removes arrive for entries that were
-        // already cleared or never existed. That must be a no-op on the teardown path, not an
-        // exception.
+        // A remove for a session id the index never saw. Removes genuinely re-arrive for entries
+        // already cleared (a hangup racing a close-time capture) or never registered. That must be
+        // a no-op on the teardown path, not an exception.
         [Test]
         public void RemoveNeverAdded_IsNoOp()
         {

@@ -51,26 +51,38 @@ public class VoiceViewerSession : IVoiceViewerSession
     }
     public UUID RegionId { get; set; }
     public UUID AgentId { get; set; }
+    public UUID ClientSessionId { get; set; }
 
     // =====================================================================
     // ViewerSessions hold the connection information for the client connection through to the voice service.
     // This collection is static and is simulator wide so there will be sessions for all regions and all clients.
     public static Dictionary<string, IVoiceViewerSession> ViewerSessions = new Dictionary<string, IVoiceViewerSession>();
 
-    // Agent-keyed membership index: region -> (agent -> refcount). Maintained alongside
+    // Agent-keyed membership index: region -> (agent -> live session list). Maintained alongside
     // ViewerSessions in AddViewerSession/RemoveViewerSession under the SAME lock, so it never
     // diverges from the session collection.
     //
-    // Why refcounted rather than a bare set: an agent can momentarily hold two sessions in a
-    // region (a reconnect/handoff overlaps the old teardown). A set would drop the agent the
-    // instant the first session is removed, blinking it out of the matrix while it is still
-    // voiced. The refcount keeps the agent a member until the LAST of its sessions leaves.
+    // Why a list rather than a bare set or a count: an agent can momentarily hold two sessions
+    // in a region (a reconnect/handoff overlaps the old teardown). Membership is the list being
+    // non-empty, so the agent stays a member until the LAST of its sessions leaves - the old
+    // refcount semantics, with the count now derived from the list. The references themselves
+    // exist for close-time teardown: CaptureSessionsForClose selects the dying login's sessions
+    // here by (region, agent, ClientSessionId) without ever scanning ViewerSessions.
     //
     // Scoped by RegionId, not global: the query is asked per-region during matrix derivation, and
     // a global "is this agent voiced anywhere" answer would wrongly admit child agents of adjacent
     // regions (common) into this region's matrix.
-    private static readonly Dictionary<UUID, Dictionary<UUID, int>> AgentMembershipByRegion
-        = new Dictionary<UUID, Dictionary<UUID, int>>();
+    private static readonly Dictionary<UUID, Dictionary<UUID, List<IVoiceViewerSession>>> AgentMembershipByRegion
+        = new Dictionary<UUID, Dictionary<UUID, List<IVoiceViewerSession>>>();
+
+    // Sessions removed from the registry whose voice-service teardown is in flight or has FAILED.
+    // The remove-and-forget guard from the teardown review: a failed Janus cleanup must not make
+    // the orphan undiscoverable from the sim, so the session parks here - out of every policy,
+    // provision, and matrix read, but visible and retryable - instead of vanishing. Entries leave
+    // on successful shutdown (CloseCompleted); retries are re-driven by the provision/close hooks
+    // in WebRtcVoiceServiceModule. Value = Environment.TickCount64 at capture, for age logging.
+    private static readonly Dictionary<IVoiceViewerSession, long> ClosingSessions
+        = new Dictionary<IVoiceViewerSession, long>();
 
     // Per-region membership query. O(1), lock-consistent with the session collection. Callers on
     // the matrix-derivation path use this to admit a presence WITHOUT ever iterating ViewerSessions.
@@ -78,39 +90,108 @@ public class VoiceViewerSession : IVoiceViewerSession
     {
         lock (ViewerSessions)
         {
-            return AgentMembershipByRegion.TryGetValue(pRegionId, out Dictionary<UUID, int> agents)
-                && agents.ContainsKey(pAgentId);
+            return AgentMembershipByRegion.TryGetValue(pRegionId, out Dictionary<UUID, List<IVoiceViewerSession>> agents)
+                && agents.TryGetValue(pAgentId, out List<IVoiceViewerSession> sessions)
+                && sessions.Count > 0;
         }
     }
 
     // Index maintenance helpers. Both assume the ViewerSessions lock is already held.
-    private static void IndexAdd(UUID pRegionId, UUID pAgentId)
+    private static void IndexAdd(IVoiceViewerSession pSession)
     {
-        if (!AgentMembershipByRegion.TryGetValue(pRegionId, out Dictionary<UUID, int> agents))
+        if (!AgentMembershipByRegion.TryGetValue(pSession.RegionId, out Dictionary<UUID, List<IVoiceViewerSession>> agents))
         {
-            agents = new Dictionary<UUID, int>();
-            AgentMembershipByRegion[pRegionId] = agents;
+            agents = new Dictionary<UUID, List<IVoiceViewerSession>>();
+            AgentMembershipByRegion[pSession.RegionId] = agents;
         }
-        agents.TryGetValue(pAgentId, out int count);
-        agents[pAgentId] = count + 1;
+        if (!agents.TryGetValue(pSession.AgentId, out List<IVoiceViewerSession> sessions))
+        {
+            sessions = new List<IVoiceViewerSession>();
+            agents[pSession.AgentId] = sessions;
+        }
+        // Reference-idempotent, matching the dictionary insert above (idempotent by key): a
+        // double AddViewerSession of the same object must not double-count membership.
+        if (!sessions.Contains(pSession))
+            sessions.Add(pSession);
     }
 
-    private static void IndexRemove(UUID pRegionId, UUID pAgentId)
+    private static void IndexRemove(IVoiceViewerSession pSession)
     {
-        if (!AgentMembershipByRegion.TryGetValue(pRegionId, out Dictionary<UUID, int> agents))
+        if (!AgentMembershipByRegion.TryGetValue(pSession.RegionId, out Dictionary<UUID, List<IVoiceViewerSession>> agents))
             return;
-        if (!agents.TryGetValue(pAgentId, out int count))
+        if (!agents.TryGetValue(pSession.AgentId, out List<IVoiceViewerSession> sessions))
             return;
-        if (count <= 1)
+        sessions.Remove(pSession);
+        if (sessions.Count == 0)
         {
-            agents.Remove(pAgentId);
+            agents.Remove(pSession.AgentId);
             if (agents.Count == 0)
-                AgentMembershipByRegion.Remove(pRegionId);
+                AgentMembershipByRegion.Remove(pSession.RegionId);
         }
-        else
+    }
+
+    /// Close-time teardown selection (OnClientClosed). Under the one registry lock, removes every
+    /// session for this agent in this region whose generation token matches the dying login - or
+    /// is UUID.Zero, a failed capture, which can only belong to an already-dead or now-dying login
+    /// and is swept rather than stranded - from BOTH the registry and the membership index, parks
+    /// it in ClosingSessions, and returns the captured references for the caller's asynchronous
+    /// shutdown. After this returns no provision, hangup, or matrix read can find the captured
+    /// sessions, and a provision racing the close cannot lose its NEW session to it: a successor
+    /// login carries a different ClientSessionId and is never selected.
+    public static List<IVoiceViewerSession> CaptureSessionsForClose(UUID pRegionId, UUID pAgentId, UUID pClientSessionId)
+    {
+        List<IVoiceViewerSession> captured = new List<IVoiceViewerSession>();
+        lock (ViewerSessions)
         {
-            agents[pAgentId] = count - 1;
+            if (!AgentMembershipByRegion.TryGetValue(pRegionId, out Dictionary<UUID, List<IVoiceViewerSession>> agents)
+                || !agents.TryGetValue(pAgentId, out List<IVoiceViewerSession> sessions))
+                return captured;
+
+            for (int i = sessions.Count - 1; i >= 0; i--)
+            {
+                IVoiceViewerSession s = sessions[i];
+                if (s.ClientSessionId != pClientSessionId && s.ClientSessionId != UUID.Zero)
+                    continue;   // a different login's session (e.g. a racing successor) - never touch it
+                sessions.RemoveAt(i);
+                ViewerSessions.Remove(s.ViewerSessionID);
+                ClosingSessions[s] = Environment.TickCount64;
+                captured.Add(s);
+            }
+
+            if (sessions.Count == 0)
+            {
+                agents.Remove(pAgentId);
+                if (agents.Count == 0)
+                    AgentMembershipByRegion.Remove(pRegionId);
+            }
         }
+        return captured;
+    }
+
+    /// A captured session's voice-service teardown succeeded - forget it.
+    public static void CloseCompleted(IVoiceViewerSession pSession)
+    {
+        lock (ViewerSessions)
+            ClosingSessions.Remove(pSession);
+    }
+
+    /// Retry hook: sessions for this agent still parked in ClosingSessions (teardown failed, or
+    /// is still in flight). Returns a snapshot with each entry's age in milliseconds; entries
+    /// stay parked until CloseCompleted. Callers (the provision/close hooks) re-drive Shutdown on
+    /// these - the Janus shutdown gate serializes a retry racing an in-flight first attempt.
+    public static List<(IVoiceViewerSession Session, long AgeMs)> GetClosingSessions(UUID pAgentId)
+    {
+        List<(IVoiceViewerSession Session, long AgeMs)> result = new List<(IVoiceViewerSession, long)>();
+        long now = Environment.TickCount64;
+        lock (ViewerSessions)
+        {
+            foreach (KeyValuePair<IVoiceViewerSession, long> kvp in ClosingSessions)
+            {
+                if (kvp.Key.AgentId == pAgentId)
+                    result.Add((kvp.Key, now - kvp.Value));
+            }
+        }
+        return result;
     }
     // Get a viewer session by the viewer session ID
     public static bool TryGetViewerSession(string pViewerSessionId, out IVoiceViewerSession pViewerSession)
@@ -120,15 +201,12 @@ public class VoiceViewerSession : IVoiceViewerSession
             return ViewerSessions.TryGetValue(pViewerSessionId, out pViewerSession);
         }
     }
-    // public static bool TryGetViewerSessionByAgentId(UUID pAgentId, out IVoiceViewerSession pViewerSession)
-    public static bool TryGetViewerSessionByAgentId(UUID pAgentId, out IEnumerable<KeyValuePair<string, IVoiceViewerSession>> pViewerSessions)
-    {
-        lock (ViewerSessions)
-        {
-            pViewerSessions = ViewerSessions.Where(v => v.Value.AgentId == pAgentId);
-            return pViewerSessions.Count() > 0;
-        }
-    }
+    // TryGetViewerSessionByAgentId was DELETED here: it returned a DEFERRED LINQ query that
+    // callers enumerated outside the lock (a torn read / InvalidOperationException waiting to
+    // happen), matched across all regions and all generations, and its only caller was the
+    // dormant Event_OnRemovePresence handler. Close-time teardown uses CaptureSessionsForClose
+    // instead - materialized under the lock, scoped by region and generation.
+
     // Get a viewer session by the VoiceService session ID
     public static bool TryGetViewerSessionByVSSessionId(string pVSSessionId, out IVoiceViewerSession pViewerSession)
     {
@@ -149,20 +227,20 @@ public class VoiceViewerSession : IVoiceViewerSession
         lock (ViewerSessions)
         {
             ViewerSessions[pSession.ViewerSessionID] = pSession;
-            IndexAdd(pSession.RegionId, pSession.AgentId);
+            IndexAdd(pSession);
         }
     }
     public static void RemoveViewerSession(string pSessionId)
     {
         lock (ViewerSessions)
         {
-            // Decrement the membership index using the removed session's own region/agent — done
-            // before the dictionary removal so the lookup still resolves. A session ID with no
-            // entry (double-remove) leaves the index untouched.
+            // Remove the session's reference from the membership index — resolved before the
+            // dictionary removal so the lookup still succeeds. A session ID with no entry
+            // (double-remove, or a close-capture racing a hangup) leaves the index untouched.
             if (ViewerSessions.TryGetValue(pSessionId, out IVoiceViewerSession session))
             {
                 ViewerSessions.Remove(pSessionId);
-                IndexRemove(session.RegionId, session.AgentId);
+                IndexRemove(session);
             }
         }
     }
