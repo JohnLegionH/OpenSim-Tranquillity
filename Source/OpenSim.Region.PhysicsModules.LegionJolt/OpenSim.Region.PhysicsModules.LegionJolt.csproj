@@ -26,7 +26,7 @@
     own (no NU1605 RID-restore trap); it just owns the one real joltc.dll.
   -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>OpenSim.Region.PhysicsModules.LegionJolt</AssemblyName>
     <RootNamespace>OpenSim.Region.PhysicsModules.LegionJolt</RootNamespace>
     <AssemblyTitle>OpenSim.Region.PhysicsModules.LegionJolt</AssemblyTitle>
@@ -58,7 +58,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="log4net" Version="3.3.1" />
+    <PackageReference Include="log4net" Version="3.3.2" />
   </ItemGroup>
 
 </Project>

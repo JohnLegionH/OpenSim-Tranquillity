@@ -22,7 +22,7 @@
     known-good code; that fix lands after slice 4, measured.
   -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <OutputType>Library</OutputType>
     <AssemblyName>Legion.Physics</AssemblyName>
     <RootNamespace>Legion.Physics</RootNamespace>
