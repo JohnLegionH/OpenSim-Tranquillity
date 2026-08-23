@@ -308,6 +308,37 @@ join-time duplicate detection is the instrument that will show it working over t
 wired teardown should make that WARN progressively rarer, and any occurrence it still
 logs carries the liveness data to say why.
 
+**First live run, 2026-08-22 — worked end to end; two findings and one self-inflicted
+WARN.** A voice logout captured, shut down, and completed one session in 17ms with the
+neighbour-region session correctly cleaned by the hangup path. Findings, mechanisms
+verified against source (both were initially described with different mechanisms; the
+corrected versions below are what the code shows):
+
+- **`Shutdown` cannot report failure — every Janus fault below it is swallowed.** Not an
+  unobserved in-flight task: the chain awaits each step serially, but `JanusPlugin.Detach`
+  catches all exceptions internally and returns a bool (`JanusPlugin.cs:143`–`:146`) that
+  `Shutdown` ignores (`JanusViewerSession.cs:110`), `LeaveRoom` does the same and returns
+  false unconditionally (`JanusRoom.cs:119`–`:133`), and `DestroySession`'s result is
+  explicitly discarded (`JanusViewerSession.cs:117`). So a failed Janus cleanup logs at
+  ERROR from the plugin layer but reads as "teardown complete" to the caller — the
+  parked-session machinery only sees exceptions from elsewhere. **Fix deferred to its own
+  scoped change**: propagating those results alters teardown semantics at every logout
+  and deserves separate review.
+- **The suspected double `OnClientClosed` fire does not exist.** A single trigger site
+  exists (`Scene.RemoveClient`, `Scene.cs:3863`); the apparent duplicate in the live run
+  was this handler observing its own just-parked capture, fixed by the
+  snapshot-before-capture reorder below. What is true and useful: the event fires once
+  per scene holding a presence (the root region plus each neighbour holding a child
+  agent); the voice handler classifies and bails on child closes, so neighbour-region
+  voice sessions are cleaned only by the hangup path — which worked here, and the
+  mixer's join-time duplicate WARN is the instrument if it ever does not.
+- **The false "prior teardown pending/failed (age 0s)" WARN** on a clean logout: the
+  handler read the closing-set AFTER capturing, observing its own just-parked work.
+  Fixed by snapshot-before-capture (stateless — no suppression window that could swallow
+  a genuine second close of a different generation), together with full-exception
+  logging in the teardown catch and a read-only `show voice closing` console command
+  exposing the closing-set (agent, session, age, last failure reason).
+
 ## Estate CAP save silently flips TaxFree when override_public_access is absent
 
 **Status:** not started — core Tranquillity defect, reachable from modern Firestorm.

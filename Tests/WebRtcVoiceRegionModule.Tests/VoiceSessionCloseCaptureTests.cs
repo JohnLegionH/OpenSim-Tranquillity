@@ -130,6 +130,30 @@ namespace osWebRtcVoice.Tests
                 Is.Empty);
         }
 
+        // The console snapshot ("show voice closing") records WHY a parked teardown failed.
+        // RecordCloseFailure on a parked session surfaces in GetClosingSnapshot with the reason;
+        // after CloseCompleted it is a silent no-op (a racing retry may complete first).
+        [Test]
+        public void RecordCloseFailure_SurfacesInSnapshot()
+        {
+            UUID region = UUID.Random(), agent = UUID.Random(), login = UUID.Random();
+            VoiceViewerSession s = NewSession(region, agent, login);
+            VoiceViewerSession.CaptureSessionsForClose(region, agent, login);
+
+            VoiceViewerSession.RecordCloseFailure(s, "TestException: boom");
+
+            List<(UUID AgentId, string SessionId, long AgeMs, string LastFailure)> snap =
+                VoiceViewerSession.GetClosingSnapshot().Where(e => e.AgentId == agent).ToList();
+            Assert.That(snap, Has.Count.EqualTo(1));
+            Assert.That(snap[0].SessionId, Is.EqualTo(s.ViewerSessionID));
+            Assert.That(snap[0].LastFailure, Is.EqualTo("TestException: boom"));
+
+            VoiceViewerSession.CloseCompleted(s);
+            Assert.DoesNotThrow(() => VoiceViewerSession.RecordCloseFailure(s, "late"),
+                "recording a failure for an already-completed session must be a no-op");
+            Assert.That(VoiceViewerSession.GetClosingSnapshot().Where(e => e.AgentId == agent), Is.Empty);
+        }
+
         // A hangup arriving after a close-time capture (the two teardown paths racing) must be a
         // silent no-op: the capture already removed the session, and RemoveViewerSession tolerates
         // a missing id.

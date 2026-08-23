@@ -80,9 +80,14 @@ public class VoiceViewerSession : IVoiceViewerSession
     // the orphan undiscoverable from the sim, so the session parks here - out of every policy,
     // provision, and matrix read, but visible and retryable - instead of vanishing. Entries leave
     // on successful shutdown (CloseCompleted); retries are re-driven by the provision/close hooks
-    // in WebRtcVoiceServiceModule. Value = Environment.TickCount64 at capture, for age logging.
-    private static readonly Dictionary<IVoiceViewerSession, long> ClosingSessions
-        = new Dictionary<IVoiceViewerSession, long>();
+    // in WebRtcVoiceServiceModule; the "show voice closing" console command reads the snapshot.
+    private sealed class ClosingInfo
+    {
+        public long ParkedTick;      // Environment.TickCount64 at capture, for age reporting
+        public string LastFailure;   // "<ExceptionType>: <message>" of the last failed attempt; null while in flight
+    }
+    private static readonly Dictionary<IVoiceViewerSession, ClosingInfo> ClosingSessions
+        = new Dictionary<IVoiceViewerSession, ClosingInfo>();
 
     // Per-region membership query. O(1), lock-consistent with the session collection. Callers on
     // the matrix-derivation path use this to admit a presence WITHOUT ever iterating ViewerSessions.
@@ -154,7 +159,7 @@ public class VoiceViewerSession : IVoiceViewerSession
                     continue;   // a different login's session (e.g. a racing successor) - never touch it
                 sessions.RemoveAt(i);
                 ViewerSessions.Remove(s.ViewerSessionID);
-                ClosingSessions[s] = Environment.TickCount64;
+                ClosingSessions[s] = new ClosingInfo { ParkedTick = Environment.TickCount64 };
                 captured.Add(s);
             }
 
@@ -185,11 +190,37 @@ public class VoiceViewerSession : IVoiceViewerSession
         long now = Environment.TickCount64;
         lock (ViewerSessions)
         {
-            foreach (KeyValuePair<IVoiceViewerSession, long> kvp in ClosingSessions)
+            foreach (KeyValuePair<IVoiceViewerSession, ClosingInfo> kvp in ClosingSessions)
             {
                 if (kvp.Key.AgentId == pAgentId)
-                    result.Add((kvp.Key, now - kvp.Value));
+                    result.Add((kvp.Key, now - kvp.Value.ParkedTick));
             }
+        }
+        return result;
+    }
+
+    /// Record why a parked session's teardown attempt failed, for the console snapshot and any
+    /// later diagnosis. No-op if the session is no longer parked (a racing retry completed it).
+    public static void RecordCloseFailure(IVoiceViewerSession pSession, string pReason)
+    {
+        lock (ViewerSessions)
+        {
+            if (ClosingSessions.TryGetValue(pSession, out ClosingInfo info))
+                info.LastFailure = pReason;
+        }
+    }
+
+    /// Full read-only snapshot of the closing-set for the "show voice closing" console command:
+    /// every parked session across all agents, with age and the last recorded failure (null while
+    /// the first attempt is still in flight).
+    public static List<(UUID AgentId, string SessionId, long AgeMs, string LastFailure)> GetClosingSnapshot()
+    {
+        List<(UUID, string, long, string)> result = new List<(UUID, string, long, string)>();
+        long now = Environment.TickCount64;
+        lock (ViewerSessions)
+        {
+            foreach (KeyValuePair<IVoiceViewerSession, ClosingInfo> kvp in ClosingSessions)
+                result.Add((kvp.Key.AgentId, kvp.Key.ViewerSessionID, now - kvp.Value.ParkedTick, kvp.Value.LastFailure));
         }
         return result;
     }

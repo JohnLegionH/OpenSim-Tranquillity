@@ -27,6 +27,7 @@
 
 using System.Reflection;
 
+using OpenSim.Framework;
 using OpenSim.Region.Framework.Scenes;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Server.Base;
@@ -120,6 +121,7 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
                 if (m_Enabled)
                 {
                     m_log.LogInformation($"{LogHeader} WebRtcVoiceService enabled");
+                    RegisterConsoleCommands();
                 }
             }
         }
@@ -208,15 +210,25 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         // even if that provision races this close.
         UUID generation = sp.ControllingClient is not null ? sp.ControllingClient.SessionId : UUID.Zero;
 
-        List<IVoiceViewerSession> toShutdown = VoiceViewerSession.CaptureSessionsForClose(
-            pScene.RegionInfo.RegionID, pClientID, generation);
-
-        // Retry hook: anything for this agent still parked from an earlier FAILED teardown gets
-        // re-driven on the same observed task. The Janus shutdown gate serializes overlap.
+        // Retry hook FIRST, capture SECOND — deliberate and load-bearing. CaptureSessionsForClose
+        // parks its captures in ClosingSessions in the same locked statement, so reading the
+        // closing-set AFTER capturing observes this handler's own just-parked work and logs a
+        // false "prior teardown pending/failed (age 0s)" WARN on every clean logout (observed
+        // live 2026-08-22). Snapshot-before-capture is stateless and race-free: genuinely stale
+        // entries (parked by an earlier failed close) still surface with honest ages, the
+        // just-captured set cannot appear, and no per-agent suppression window exists to
+        // wrongly swallow a genuine second close of a different session generation.
+        List<IVoiceViewerSession> toShutdown = new List<IVoiceViewerSession>();
         foreach ((IVoiceViewerSession s, long ageMs) in VoiceViewerSession.GetClosingSessions(pClientID))
         {
             m_log.WarnFormat("{0} Event_OnClientClosed: prior teardown for {1} still pending/failed (session {2}, age {3:F0}s) - retrying",
                 LogHeader, pClientID, s.ViewerSessionID, ageMs / 1000.0);
+            toShutdown.Add(s);
+        }
+
+        foreach (IVoiceViewerSession s in VoiceViewerSession.CaptureSessionsForClose(
+            pScene.RegionInfo.RegionID, pClientID, generation))
+        {
             if (!toShutdown.Contains(s))
                 toShutdown.Add(s);
         }
@@ -248,10 +260,41 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
             }
             catch (Exception e)
             {
-                m_log.LogWarning("{LogHeader} voice-session teardown FAILED ({TeardownReason}): session {ViewerSessionId} agent {AgentId} region {RegionId} - retained for retry. {ErrorMessage}",
-                    LogHeader, pReason, s.ViewerSessionID, s.AgentId, s.RegionId, e.Message);
+                // Record the cause on the parked entry (console: "show voice closing") and log the
+                // FULL exception - type, message, stack, inners - via the (Exception, message)
+                // overload. A parked session with no recorded cause was the gap this closes.
+                VoiceViewerSession.RecordCloseFailure(s, $"{e.GetType().Name}: {e.Message}");
+                m_log.LogWarning(e, $"{LogHeader} voice-session teardown FAILED ({pReason}): session {s.ViewerSessionID} agent {s.AgentId} region {s.RegionId} - retained for retry");
             }
         }
+    }
+
+    // Read-only console observability for the closing-set: "show voice closing" lists every
+    // parked session with agent, session id, age, and the last recorded failure. Closes the gap
+    // that ClosingSessions was otherwise inspectable only by log-accounting inference.
+    private void RegisterConsoleCommands()
+    {
+        if (MainConsole.Instance == null)
+            return;   // unit tests / embedded hosts have no console
+        MainConsole.Instance.Commands.AddCommand("Voice", false, "show voice closing",
+            "show voice closing",
+            "Show voice sessions parked in the closing-set (teardown in flight or failed), with age and last failure reason",
+            HandleShowVoiceClosing);
+    }
+
+    private void HandleShowVoiceClosing(string module, string[] args)
+    {
+        List<(UUID AgentId, string SessionId, long AgeMs, string LastFailure)> snap =
+            VoiceViewerSession.GetClosingSnapshot();
+        if (snap.Count == 0)
+        {
+            MainConsole.Instance.Output("No voice sessions in closing state.");
+            return;
+        }
+        MainConsole.Instance.Output("{0} voice session(s) in closing state:", snap.Count);
+        foreach ((UUID agentId, string sessionId, long ageMs, string lastFailure) in snap)
+            MainConsole.Instance.Output("  agent {0} session {1} age {2:F0}s failure: {3}",
+                agentId, sessionId, ageMs / 1000.0, lastFailure ?? "(none - first attempt in flight)");
     }
 
     // Capture the generation token onto a freshly-created session: the provisioning client's
