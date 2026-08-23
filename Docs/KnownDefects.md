@@ -341,8 +341,15 @@ corrected versions below are what the code shows):
 
 ## Estate CAP save silently flips TaxFree when override_public_access is absent
 
-**Status:** not started — core Tranquillity defect, reachable from modern Firestorm.
-Candidate for a Mike report.
+**Status:** implemented 2026-08-23 (`b5e3472247`) — core Tranquillity defect, was reachable
+from modern Firestorm. Candidate for a Mike report. The fix went wider than this entry: a
+sweep found five MORE fields in the same CAP handler treating absence as false
+(`is_externally_visible`, `allow_direct_teleport`, `deny_anonymous`, `deny_age_unverified`,
+`allow_voice_chat` — bare `AsBoolean()` reads on possibly-absent keys). All seven CAP-carried
+booleans are now parsed nullable and applied only when present
+(`ApplyEstateChangeInfo`, pure and unit-tested with a mutation-verified absent-vs-false
+contract, including the carried-false-applies-false case and the region-flags cascade).
+The UDP path was always correct and is untouched.
 
 **Symptom.** Any estate save through the CAP path that omits `override_public_access`
 inverts the `TaxFree` flag, silently, with no relation to what the operator changed.
@@ -374,6 +381,38 @@ The field name hides this, and the DB column deliberately kept the old name
 
 **Suggested first step.** Make the CAP handler distinguish *absent* from *false* and
 leave `TaxFree` unmodified when the field is not supplied, matching the UDP path.
+*(Done, and wider — see the Status line above.)*
+
+## Five estate toggles are advertised to viewers but have no write path at all
+
+**Status:** not started — core Tranquillity defect (likely inherited from upstream).
+Found by the 2026-08-23 omission-pattern sweep; the opposite failure shape from the
+entry above: not a setting silently cleared, but a setting that silently cannot change.
+
+**Symptom.** An operator toggles Allow Landmark (or Allow Set Home) in the estate
+dialog and saves; the setting reverts. No error, no log.
+
+**Mechanism.** Five `EstateSettings` fields are packed into the region flags viewers
+receive (`PackEstateFlags`, `EstateManagementModule.cs:2344`) and rendered as estate
+controls, but NO write path exists for any of them: `AllowLandmark`, `AllowSetHome`,
+`ResetHomeOnTeleport`, `BlockDwell`, `AllowParcelChanges`. The EstateChangeInfo CAP
+carries no wire key for them (`EstateChangeInfo.cs:160-196`), the UDP
+`HandleEstateChangeInfo` bit-writes do not include them
+(`EstateManagementModule.cs:2166-2213`), and the only assigning code —
+`EstateSettings.SetFromFlags` (`EstateSettings.cs:461-469`) — is dead: zero callers
+anywhere in `Source/` or `Addons/`. The fields sit permanently at their constructor
+defaults (`AllowLandmark`/`AllowSetHome`/`AllowParcelChanges` true;
+`ResetHomeOnTeleport`/`BlockDwell` false) or whatever the DB row carries.
+
+**Why it matters.** Less than the silent-clear family — a control that never works
+gets noticed and worked around, while one that lies once per save does not — but it
+is a standing operator-facing lie: the dialog offers five toggles the server ignores.
+
+**Deliberately NOT fixed in `b5e3472247`:** the nullable-parse fix cannot reach a
+field the wire does not carry. Fixing this means deciding which message should carry
+these fields (wiring `SetFromFlags` into the UDP estate-flags path is the natural
+candidate — the viewer's full bitmask already contains the bits) — a wire-behaviour
+decision worth checking against upstream intent before implementing.
 
 ## Parcel access/ban list updates are never persisted
 
