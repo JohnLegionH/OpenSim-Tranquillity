@@ -383,30 +383,39 @@ The field name hides this, and the DB column deliberately kept the old name
 leave `TaxFree` unmodified when the field is not supplied, matching the UDP path.
 *(Done, and wider — see the Status line above.)*
 
-## Five estate toggles are advertised to viewers but have no write path at all
+## Five estate toggles are packed into region flags but have no write path at all
 
 **Status:** not started — core Tranquillity defect (likely inherited from upstream).
-Found by the 2026-08-23 omission-pattern sweep; the opposite failure shape from the
-entry above: not a setting silently cleared, but a setting that silently cannot change.
+Found by the 2026-08-23 omission-pattern sweep. Distinct from the absent-vs-false
+family above: those fields had a write path that applied the wrong value; these have
+no write path at all, so the CAP nullable fix does not change their behaviour.
 
-**Symptom.** An operator toggles Allow Landmark (or Allow Set Home) in the estate
-dialog and saves; the setting reverts. No error, no log.
+**Symptom — none an operator can trigger, and that is the finding.** These flags reach
+viewers and affect behaviour (`AllowSetHome`/`AllowLandmark` gate Set Home / landmark
+creation client-side via the packed RegionFlags), but they are pinned on BOTH ends:
+no operator action can change them, and no viewer control was found to try —
+verified against `D:\phoenix-firestorm` at Firestorm_Beta_7.2.5.81383-7-g26e74c311f: zero hits for any accessor in
+`llestateinfomodel.h/.cpp`, zero checkboxes across `panel_region*.xml`. NOT
+searched: `floater_region_info.xml` or other XUI outside that glob, and no other
+viewer or revision. Dormant dead wiring rather than a lying toggle, on that
+evidence.
 
 **Mechanism.** Five `EstateSettings` fields are packed into the region flags viewers
-receive (`PackEstateFlags`, `EstateManagementModule.cs:2344`) and rendered as estate
-controls, but NO write path exists for any of them: `AllowLandmark`, `AllowSetHome`,
-`ResetHomeOnTeleport`, `BlockDwell`, `AllowParcelChanges`. The EstateChangeInfo CAP
-carries no wire key for them (`EstateChangeInfo.cs:160-196`), the UDP
-`HandleEstateChangeInfo` bit-writes do not include them
-(`EstateManagementModule.cs:2166-2213`), and the only assigning code —
-`EstateSettings.SetFromFlags` (`EstateSettings.cs:461-469`) — is dead: zero callers
+receive (`PackEstateFlags`, `EstateManagementModule.cs:2344`), but NO write path
+exists for any of them: `AllowLandmark`, `AllowSetHome`, `ResetHomeOnTeleport`,
+`BlockDwell`, `AllowParcelChanges`. The EstateChangeInfo CAP carries no wire key for
+them (`EstateChangeInfo.cs:160-196`), the UDP `HandleEstateChangeInfo` bit-writes do
+not include them (`EstateManagementModule.cs:2166-2213`), and the only assigning code
+— `EstateSettings.SetFromFlags` (`EstateSettings.cs:461-469`) — is dead: zero callers
 anywhere in `Source/` or `Addons/`. The fields sit permanently at their constructor
-defaults (`AllowLandmark`/`AllowSetHome`/`AllowParcelChanges` true;
-`ResetHomeOnTeleport`/`BlockDwell` false) or whatever the DB row carries.
+defaults — verified: `AllowLandmark`/`AllowSetHome`/`AllowParcelChanges` true
+(`EstateSettings.cs:57`/`:71`/`:64`), `ResetHomeOnTeleport`/`BlockDwell` false
+(`:197`/`:183`) — or whatever the DB row carries.
 
-**Why it matters.** Less than the silent-clear family — a control that never works
-gets noticed and worked around, while one that lies once per save does not — but it
-is a standing operator-facing lie: the dialog offers five toggles the server ignores.
+**Why it matters — least of the sweep's findings.** With defaults matching SL's
+permissive norm and no control on either end, nothing is currently lied about; the
+cost is latent: any future viewer that grows the control, or any operator expecting
+`ResetHomeOnTeleport`/`BlockDwell` to be settable, meets a silently immovable flag.
 
 **Deliberately NOT fixed in `b5e3472247`:** the nullable-parse fix cannot reach a
 field the wire does not carry. Fixing this means deciding which message should carry
