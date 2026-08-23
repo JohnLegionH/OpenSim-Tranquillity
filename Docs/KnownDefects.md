@@ -76,9 +76,9 @@ it — a silent overwrite in an enforcement path should never be silent.
 
 ## WebRTC voice: OnRemovePresence teardown is unwired — orphaned memberships defeat ban enforcement
 
-**Status:** not started. **Severity raised 2026-08-18** — previously logged as a
-resource-leak candidate; now observed to silently defeat parcel ban enforcement.
-Candidate for a Mike report.
+**Status:** implemented 2026-08-22 — see the resolution at the end of this entry.
+**Severity raised 2026-08-18** — previously logged as a resource-leak candidate; then
+observed to silently defeat parcel ban enforcement. Candidate for a Mike report.
 
 **Symptom.** Orphaned participants accumulate in Janus rooms: handles with
 `ice_state: disconnected` and `rtp_in_count: 0` still listed as room members.
@@ -248,6 +248,65 @@ carries the SemaphoreSlim serialization the review references (`:63`–`:65`);
 `VoiceViewerSession.cs` `Shutdown` `NotImplementedException` `:122`–`:125` →
 `:186`–`:188`. Still landing as cited: `WebRtcVoiceServiceModule.cs:152`/`:159`/`:183`–`:185`,
 `VoiceViewerSession.cs:52`/`:56`–`:58`, `Scene.cs:3832`/`:3865`, `EventManager.cs:158`.)*
+
+**RESOLUTION (2026-08-22) — the revised plan is implemented.** Commit
+`bc86d292b2` (sim side), with the mixer-side items landed first per the revised ordering.
+
+**What shipped:**
+
+- **Mixer-side duplicate protection first** (`legion-voice-mixer`): exclusion fan-out to
+  every session matching the listener display (`b1669dc`), join-time duplicate detection
+  logging both user_ids plus the existing session's liveness triple, and the
+  deterministic dot-batch merge — live handle beats downed, max-power/OR-vad among
+  equals (`7bfd4b7`).
+- **`OnClientClosed` subscribed** (`WebRtcVoiceServiceModule.cs:163`, unsubscribed
+  `:177`), replacing the never-wired `OnRemovePresence` hook. The handler
+  (`Event_OnClientClosed`, `:198`) reads root/child synchronously from the
+  still-resolvable presence and bails on child closes before any capture.
+- **Teardown targets a generation token** — the provisioning client's login SessionId,
+  captured onto the session before it enters the registry
+  (`CaptureGenerationToken`, `:259`, called at `:329`) — so an orphan and its live
+  successor after a relog are distinguishable and only the departing generation is torn
+  down (`CaptureSessionsForClose`, `VoiceViewerSession.cs:141`: one-lock select by
+  region + agent + token, with a UUID.Zero sweep for failed captures).
+- **`TryGetViewerSessionByAgentId` deleted**, its three defects recorded in a tombstone
+  (`VoiceViewerSession.cs:204`): deferred query enumerated outside the lock, registry
+  mutated inside that enumeration by its only caller, and no region or generation
+  filtering.
+- **Failed shutdowns parked, not dropped**: `ClosingSessions` (`:84`) holds them with an
+  age, out of every policy/provision/matrix read but discoverable; retried at the next
+  provision or close for the same agent (`CloseCompleted` `:172`,
+  `GetClosingSessions` `:182`; hooks at `WebRtcVoiceServiceModule.cs:214` and in
+  `ProvisionVoiceAccountRequest`).
+
+**What did NOT ship, and why:**
+
+- **The core `EventManager` delegate change** (propagating `isChildAgent` through
+  `TriggerOnRemovePresence`) — the original prerequisite list called for it; it was not
+  made and is not needed. `OnClientClosed` fires while the presence is still in the
+  scene (`Scene.cs:3863` vs removal at `:3899`), so the handler reads `IsChildAgent`
+  itself. The review predicted this; the implementation confirms it.
+- **The Closing state, as reviewed.** `ClosingSessions` implements it for the FAILURE
+  case, not the in-flight case the review proposed — because the in-flight window does
+  not exist: `RemoveViewerSession` (and the capture path) removes atomically under the
+  registry lock, so a session is already unavailable to every policy read before any
+  Janus cleanup starts. The parked set addresses the different problem of a cleanup
+  that fails.
+- **Registry synchronisation, precisely:** the UNLOCKED enumeration defect is gone — it
+  was the deleted method's deferred return, removed with it. What remains is LINQ in
+  `TryGetViewerSessionByVSSessionId` (`VoiceViewerSession.cs:215`–`:218`) that runs
+  entirely inside the lock and materialises before returning — a harmless
+  double-enumeration (`Count()` then `First()`), an inefficiency and not a race.
+  Recorded as a residual style item, not an open synchronisation defect.
+
+**What remains unverified.** The orphan condition arises from unclean teardowns that
+cannot be reliably provoked, so this is verified by unit test (seven capture-semantics
+tests pinning orphan-plus-live coexistence, the Zero-token sweep, atomic
+registry+membership removal, park-until-complete, and hangup racing capture) and by
+absence of regression — not by observing a live orphan being cleaned up. The mixer's
+join-time duplicate detection is the instrument that will show it working over time: a
+wired teardown should make that WARN progressively rarer, and any occurrence it still
+logs carries the liveness data to say why.
 
 ## Estate CAP save silently flips TaxFree when override_public_access is absent
 
