@@ -2224,32 +2224,61 @@ public class EstateManagementModule : IEstateModule, INonSharedRegionModule
     }
 
     public bool handleEstateChangeInfoCap(string estateName, UUID invoice,
-        bool externallyVisible,
-        bool allowDirectTeleport,
-        bool denyAnonymous, bool denyAgeUnverified,
-        bool alloVoiceChat, bool overridePublicAccess,
-        bool allowEnvironmentOverride)
+        bool? externallyVisible,
+        bool? allowDirectTeleport,
+        bool? denyAnonymous, bool? denyAgeUnverified,
+        bool? alloVoiceChat, bool? overridePublicAccess,
+        bool? allowEnvironmentOverride)
     {
         bool lastallowEnvOvr = Scene.RegionInfo.EstateSettings.AllowEnvironmentOverride;
 
-        Scene.RegionInfo.EstateSettings.PublicAccess = externallyVisible;
-        Scene.RegionInfo.EstateSettings.AllowDirectTeleport = allowDirectTeleport;
-
-        Scene.RegionInfo.EstateSettings.DenyAnonymous = denyAnonymous;
-        Scene.RegionInfo.EstateSettings.AllowVoice = alloVoiceChat;
-
-        // taxfree is now !AllowAccessOverride
-        Scene.RegionInfo.EstateSettings.TaxFree = overridePublicAccess;
-        Scene.RegionInfo.EstateSettings.DenyMinors = denyAgeUnverified;
-        Scene.RegionInfo.EstateSettings.AllowEnvironmentOverride = allowEnvironmentOverride;
+        ApplyEstateChangeInfo(Scene.RegionInfo.EstateSettings,
+            externallyVisible, allowDirectTeleport, denyAnonymous, denyAgeUnverified,
+            alloVoiceChat, overridePublicAccess, allowEnvironmentOverride);
 
         Scene.EstateDataService.StoreEstateSettings(Scene.RegionInfo.EstateSettings);
-        if(lastallowEnvOvr && !allowEnvironmentOverride)
+        // Environment clear keys off the EFFECTIVE new value, so an omitted field (null,
+        // unchanged) never triggers it.
+        if (lastallowEnvOvr && !Scene.RegionInfo.EstateSettings.AllowEnvironmentOverride)
             Scene.ClearAllParcelEnvironments();
 
         TriggerEstateInfoChange();
 
         return true;
+    }
+
+    // Applies an EstateChangeInfo CAP save to a settings object. NULLABLE parameters are
+    // load-bearing, not convenience: the viewer does not carry every field in every save
+    // (the observed TaxFree flip proved omission happens on this exact message), and the
+    // server owns every one of these values — so absent (null) means "leave unchanged"
+    // and must stay distinguishable from a carried false, which is applied as false.
+    // Do NOT collapse these back to plain bools: that reintroduces the silent-clear
+    // defect family in Docs/KnownDefects.md. The UDP path (HandleEstateChangeInfo) is
+    // unaffected — its full-bitmask message genuinely carries every field.
+    // Pure over EstateSettings (no Scene) so the absent-vs-false semantics are pinned by
+    // unit tests without a live region.
+    internal static void ApplyEstateChangeInfo(EstateSettings settings,
+        bool? externallyVisible,
+        bool? allowDirectTeleport,
+        bool? denyAnonymous, bool? denyAgeUnverified,
+        bool? alloVoiceChat, bool? overridePublicAccess,
+        bool? allowEnvironmentOverride)
+    {
+        if (externallyVisible.HasValue)
+            settings.PublicAccess = externallyVisible.Value;
+        if (allowDirectTeleport.HasValue)
+            settings.AllowDirectTeleport = allowDirectTeleport.Value;
+        if (denyAnonymous.HasValue)
+            settings.DenyAnonymous = denyAnonymous.Value;
+        if (alloVoiceChat.HasValue)
+            settings.AllowVoice = alloVoiceChat.Value;
+        // taxfree is now !AllowAccessOverride
+        if (overridePublicAccess.HasValue)
+            settings.TaxFree = overridePublicAccess.Value;
+        if (denyAgeUnverified.HasValue)
+            settings.DenyMinors = denyAgeUnverified.Value;
+        if (allowEnvironmentOverride.HasValue)
+            settings.AllowEnvironmentOverride = allowEnvironmentOverride.Value;
     }
 
     #endregion
@@ -2305,46 +2334,55 @@ public class EstateManagementModule : IEstateModule, INonSharedRegionModule
 
     public uint GetEstateFlags()
     {
+        return PackEstateFlags(Scene.RegionInfo.EstateSettings);
+    }
+
+    // Pure flags packing over EstateSettings (no Scene) — extracted so the estate-CAP
+    // absent-vs-false tests can pin the full cascade: a setting an operator disabled must
+    // survive an unrelated save AND still read disabled in the flags viewers receive.
+    // Behaviour-identical to the previous inline GetEstateFlags body.
+    internal static uint PackEstateFlags(EstateSettings settings)
+    {
         RegionFlags flags = RegionFlags.None;
 
-        if (Scene.RegionInfo.EstateSettings.AllowLandmark)
+        if (settings.AllowLandmark)
             flags |= RegionFlags.AllowLandmark;
-        if (Scene.RegionInfo.EstateSettings.AllowSetHome)
+        if (settings.AllowSetHome)
             flags |= RegionFlags.AllowSetHome;
-        if (Scene.RegionInfo.EstateSettings.ResetHomeOnTeleport)
+        if (settings.ResetHomeOnTeleport)
             flags |= RegionFlags.ResetHomeOnTeleport;
-        //if (Scene.RegionInfo.EstateSettings.FixedSun)
+        //if (settings.FixedSun)
         //    flags |= RegionFlags.SunFixed;
-        if (!Scene.RegionInfo.EstateSettings.TaxFree) // this is now wrong means !ALLOW_ACCESS_OVERRIDE
+        if (!settings.TaxFree) // this is now wrong means !ALLOW_ACCESS_OVERRIDE
             flags |= RegionFlags.AllowParcelAccessOverride;
 
-        if (Scene.RegionInfo.EstateSettings.PublicAccess) //??
+        if (settings.PublicAccess) //??
             flags |= (RegionFlags.PublicAllowed | RegionFlags.ExternallyVisible);
 
-        if (Scene.RegionInfo.EstateSettings.BlockDwell)
+        if (settings.BlockDwell)
             flags |= RegionFlags.BlockDwell;
-        if (Scene.RegionInfo.EstateSettings.AllowDirectTeleport)
+        if (settings.AllowDirectTeleport)
             flags |= RegionFlags.AllowDirectTeleport;
-        if (Scene.RegionInfo.EstateSettings.EstateSkipScripts)
+        if (settings.EstateSkipScripts)
             flags |= RegionFlags.EstateSkipScripts;
 
-        if (Scene.RegionInfo.EstateSettings.DenyAnonymous)
+        if (settings.DenyAnonymous)
             flags |= RegionFlags.DenyAnonymous;
-        if (Scene.RegionInfo.EstateSettings.DenyIdentified) // unused?
+        if (settings.DenyIdentified) // unused?
             flags |= RegionFlags.DenyIdentified;
-        if (Scene.RegionInfo.EstateSettings.DenyTransacted) // unused?
+        if (settings.DenyTransacted) // unused?
             flags |= RegionFlags.DenyTransacted;
-        if (Scene.RegionInfo.EstateSettings.AllowParcelChanges)
+        if (settings.AllowParcelChanges)
             flags |= RegionFlags.AllowParcelChanges;
-        if (Scene.RegionInfo.EstateSettings.AbuseEmailToEstateOwner) // now is block fly
+        if (settings.AbuseEmailToEstateOwner) // now is block fly
             flags |= RegionFlags.AbuseEmailToEstateOwner;
-        if (Scene.RegionInfo.EstateSettings.AllowVoice)
+        if (settings.AllowVoice)
             flags |= RegionFlags.AllowVoice;
 
-        if (Scene.RegionInfo.EstateSettings.DenyMinors)
+        if (settings.DenyMinors)
             flags |= RegionFlags.DenyAgeUnverified;
 
-        if (Scene.RegionInfo.EstateSettings.AllowEnvironmentOverride)
+        if (settings.AllowEnvironmentOverride)
             flags |= RegionFlags.AllowEnvironmentOverride;
 
         return (uint)flags;
