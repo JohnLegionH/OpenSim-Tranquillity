@@ -191,7 +191,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
 
         if (string.IsNullOrEmpty(m_JanusAdminUri) || string.IsNullOrEmpty(m_JanusAdminToken))
         {
-            m_log.Warn($"{logHeader}[Visibility]: VisibilityEmitEnabled but [JanusWebRtcVoice] " +
+            m_log.LogWarning($"{logHeader}[Visibility]: VisibilityEmitEnabled but [JanusWebRtcVoice] " +
                 $"JanusGatewayAdminURI/AdminAPIToken missing; region \"{scene.RegionInfo.RegionName}\" runs matrix-only (no emission)");
             return null;
         }
@@ -289,7 +289,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     {
         if (request.HttpMethod != "POST")
         {
-            m_log.Debug($"{logHeader}[Moderation]: not a POST request. Agent={agentID}");
+            m_log.LogDebug($"{logHeader}[Moderation]: not a POST request. Agent={agentID}");
             response.StatusCode = (int)HttpStatusCode.NotFound;
             return;
         }
@@ -297,7 +297,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         OSDMap map = BodyToMap(request, "SpatialVoiceModerationRequest");
         if (map is null)
         {
-            m_log.Error($"{logHeader}[Moderation]: no request data. Agent={agentID}");
+            m_log.LogError($"{logHeader}[Moderation]: no request data. Agent={agentID}");
             response.StatusCode = (int)HttpStatusCode.NoContent;
             return;
         }
@@ -306,7 +306,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         // carry an agent_id; mute_all/unmute_all do not. No other fields are read.
         if (!map.TryGetString("operand", out string operand))
         {
-            m_log.Warn($"{logHeader}[Moderation]: missing 'operand'. Agent={agentID}");
+            m_log.LogWarning($"{logHeader}[Moderation]: missing 'operand'. Agent={agentID}");
             response.StatusCode = (int)HttpStatusCode.BadRequest;
             return;
         }
@@ -314,7 +314,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         bool individualOp = operand == "mute" || operand == "unmute";
         if (!everyoneOp && !individualOp)
         {
-            m_log.Warn($"{logHeader}[Moderation]: unknown operand \"{operand}\". Agent={agentID}");
+            m_log.LogWarning($"{logHeader}[Moderation]: unknown operand \"{operand}\". Agent={agentID}");
             response.StatusCode = (int)HttpStatusCode.BadRequest;
             return;
         }
@@ -323,7 +323,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         {
             if (!map.ContainsKey("agent_id") || (targetAgent = map["agent_id"].AsUUID()).IsZero())
             {
-                m_log.Warn($"{logHeader}[Moderation]: operand \"{operand}\" without a valid agent_id. Agent={agentID}");
+                m_log.LogWarning($"{logHeader}[Moderation]: operand \"{operand}\" without a valid agent_id. Agent={agentID}");
                 response.StatusCode = (int)HttpStatusCode.BadRequest;
                 return;
             }
@@ -334,7 +334,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         // rather than a viewer-declared region.
         if (scene.LandChannel is null || !scene.TryGetScenePresence(agentID, out ScenePresence sp))
         {
-            m_log.Warn($"{logHeader}[Moderation]: cannot resolve requester presence/land in region \"{scene.Name}\". Agent={agentID}");
+            m_log.LogWarning($"{logHeader}[Moderation]: cannot resolve requester presence/land in region \"{scene.Name}\". Agent={agentID}");
             response.StatusCode = (int)HttpStatusCode.NotFound;
             return;
         }
@@ -342,7 +342,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         LandData land = parcel?.LandData;
         if (land is null)
         {
-            m_log.Warn($"{logHeader}[Moderation]: could not resolve a parcel at the requester's position. Agent={agentID}");
+            m_log.LogWarning($"{logHeader}[Moderation]: could not resolve a parcel at the requester's position. Agent={agentID}");
             response.StatusCode = (int)HttpStatusCode.NotFound;
             return;
         }
@@ -351,7 +351,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         // Compose owner / estate-manager / group-ModerateChat, the pieces the ban path uses.
         if (!MayModerateVoice(scene, land, agentID))
         {
-            m_log.Warn($"{logHeader}[Moderation]: DENIED {operand} on parcel {land.GlobalID} (\"{land.Name}\") for {agentID}: not owner, estate manager, or group moderator");
+            m_log.LogWarning($"{logHeader}[Moderation]: DENIED {operand} on parcel {land.GlobalID} (\"{land.Name}\") for {agentID}: not owner, estate manager, or group moderator");
             response.StatusCode = (int)HttpStatusCode.Forbidden;
             return;
         }
@@ -364,7 +364,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             m_visibilityServices.TryGetValue(scene, out svc);
         if (svc is null)
         {
-            m_log.Warn($"{logHeader}[Moderation]: {operand} authorised on parcel {land.GlobalID} but the visibility feeder is disabled in region \"{scene.Name}\"; cannot enforce, not recorded.");
+            m_log.LogWarning($"{logHeader}[Moderation]: {operand} authorised on parcel {land.GlobalID} but the visibility feeder is disabled in region \"{scene.Name}\"; cannot enforce, not recorded.");
             response.StatusCode = (int)HttpStatusCode.NotImplemented;
             return;
         }
@@ -379,9 +379,9 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
 
         // (6) Diagnosable from day one — accepted op with parcel GlobalID, operand, requester.
         if (individualOp)
-            m_log.Info($"{logHeader}[Moderation]: {operand} agent {targetAgent} on parcel {land.GlobalID} (\"{land.Name}\") by {agentID}");
+            m_log.LogInformation($"{logHeader}[Moderation]: {operand} agent {targetAgent} on parcel {land.GlobalID} (\"{land.Name}\") by {agentID}");
         else
-            m_log.Info($"{logHeader}[Moderation]: {operand} on parcel {land.GlobalID} (\"{land.Name}\") by {agentID}");
+            m_log.LogInformation($"{logHeader}[Moderation]: {operand} on parcel {land.GlobalID} (\"{land.Name}\") by {agentID}");
 
         response.RawBuffer = llsdUndefAnswerBytes;
         response.StatusCode = (int)HttpStatusCode.OK;

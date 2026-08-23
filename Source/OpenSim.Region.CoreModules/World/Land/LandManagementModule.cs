@@ -688,16 +688,16 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
 
         if ((flags & (uint)0x1Bu) == 0)
         {
-            m_log.DebugFormat(
-                "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {0} for local land {1} ignored: flags 0x{2:X} are neither access nor ban",
+            m_log.LogDebug(
+                "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {AgentId} for local land {LandLocalId} ignored: flags 0x{AccessFlags:X} are neither access nor ban",
                 agentID, landLocalID, flags);
             return; // we only have access and ban
         }
 
         if(m_scene.RegionInfo.EstateSettings.TaxFree)
         {
-            m_log.DebugFormat(
-                "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {0} for local land {1} ignored: estate is TaxFree",
+            m_log.LogDebug(
+                "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {AgentId} for local land {LandLocalId} ignored: estate is TaxFree",
                 agentID, landLocalID);
             return;
         }
@@ -722,8 +722,8 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
 
             if (requiredPowers == GroupPowers.None)
             {
-                m_log.DebugFormat(
-                    "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {0} for local land {1} ignored: flags 0x{2:X} map to no access/ban manage power",
+                m_log.LogDebug(
+                    "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {AgentId} for local land {LandLocalId} ignored: flags 0x{AccessFlags:X} map to no access/ban manage power",
                     agentID, landLocalID, flags);
                 remote_client.SendAgentAlertMessage(
                     "Parcel access update ignored: no access or ban change was specified.", false);
@@ -734,8 +734,8 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
                     land, requiredPowers, false))
             {
                 land.UpdateAccessList(flags, transactionID, entries);
-                m_log.DebugFormat(
-                    "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {0} applied to local land {1} (\"{2}\"): flags 0x{3:X}, {4} entries",
+                m_log.LogDebug(
+                    "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {AgentId} applied to local land {LandLocalId} (\"{LandName}\"): flags 0x{AccessFlags:X}, {EntryCount} entries",
                     agentID, landLocalID, land.LandData.Name, flags, entries.Count);
 
                 // Persist immediately. UpdateAccessList mutates the in-memory access/ban list
@@ -747,8 +747,8 @@ public class LandManagementModule : INonSharedRegionModule , ILandChannel
             }
             else
             {
-                m_log.DebugFormat(
-                    "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {0} for local land {1} denied: lacks required powers {2}",
+                m_log.LogDebug(
+                    "[LAND MANAGEMENT MODULE]: ParcelAccessListUpdate from {AgentId} for local land {LandLocalId} denied: lacks required powers {RequiredPowers}",
                     agentID, landLocalID, requiredPowers);
                 remote_client.SendAgentAlertMessage(
                     "You do not have permission to change the access or ban list for this parcel.", false);

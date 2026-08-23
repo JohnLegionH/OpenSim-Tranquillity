@@ -97,7 +97,7 @@ public class JanusViewerSession : IVoiceViewerSession
         await _shutdownGate.WaitAsync().ConfigureAwait(false);
         try
         {
-            m_log.DebugFormat($"{LogHeader} JanusViewerSession shutdown {ViewerSessionID}");
+            m_log.LogDebug($"{LogHeader} JanusViewerSession shutdown {ViewerSessionID}");
             if (Room is not null)
             {
                 var rm = Room;

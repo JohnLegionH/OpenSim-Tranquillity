@@ -90,7 +90,7 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 // way as the other [JanusWebRtcVoice] keys; default preserves the
                 // original hardcoded behaviour when the key is absent.
                 _JanusPluginName = janusConfig.GetString("PluginName", "janus.plugin.audiobridge");
-                _log.Info($"{LogHeader} Janus plugin (mixer) = {_JanusPluginName}");
+                _log.LogInformation($"{LogHeader} Janus plugin (mixer) = {_JanusPluginName}");
                 // Debugging options
                 _MessageDetails = janusConfig.GetBoolean("MessageDetails", false);
 
@@ -287,7 +287,7 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                             // make the viewer's retry re-create and re-join, looping on the full room.
                             errorMsg = "room is full";
                             errorCode = joinResult.ErrorCode;
-                            _log.Warn($"{LogHeader} ProvisionVoiceAccountRequest: room full (ROOM_FULL {joinResult.ErrorCode})");
+                            _log.LogWarning($"{LogHeader} ProvisionVoiceAccountRequest: room full (ROOM_FULL {joinResult.ErrorCode})");
                         }
                         else
                         {

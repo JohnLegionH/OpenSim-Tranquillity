@@ -38,7 +38,6 @@ using OpenMetaverse.StructuredData;
 using Nini.Config;
 
 using Microsoft.Extensions.Logging;
-using OpenSim.Framework;
 
 namespace osWebRtcVoice;
 
@@ -221,7 +220,7 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         List<IVoiceViewerSession> toShutdown = new List<IVoiceViewerSession>();
         foreach ((IVoiceViewerSession s, long ageMs) in VoiceViewerSession.GetClosingSessions(pClientID))
         {
-            m_log.WarnFormat("{0} Event_OnClientClosed: prior teardown for {1} still pending/failed (session {2}, age {3:F0}s) - retrying",
+            m_log.LogWarning("{LogHeader} Event_OnClientClosed: prior teardown for {ClientId} still pending/failed (session {ViewerSessionId}, age {AgeSeconds:F0}s) - retrying",
                 LogHeader, pClientID, s.ViewerSessionID, ageMs / 1000.0);
             toShutdown.Add(s);
         }
@@ -236,7 +235,7 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         if (toShutdown.Count == 0)
             return;
 
-        m_log.DebugFormat("{0} Event_OnClientClosed: captured {1} voice session(s) for {2} in {3}",
+        m_log.LogDebug("{LogHeader} Event_OnClientClosed: captured {CapturedSessionCount} voice session(s) for {ClientId} in {SceneName}",
             LogHeader, toShutdown.Count, pClientID, pScene.Name);
 
         // Asynchronous, on the captured references only — never a re-query by avatar, so a
@@ -309,7 +308,7 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         ScenePresence sp = scene?.GetScenePresence(pUserID);
         pSession.ClientSessionId = sp?.ControllingClient?.SessionId ?? UUID.Zero;
         if (pSession.ClientSessionId == UUID.Zero)
-            m_log.WarnFormat("{0} provision for {1}: could not capture client SessionId (scene {2}, presence {3}) - session sweepable by any close for this agent",
+            m_log.LogWarning("{LogHeader} provision for {UserId}: could not capture client SessionId (scene {SceneState}, presence {PresenceState}) - session sweepable by any close for this agent",
                 LogHeader, pUserID, scene is null ? "unresolved" : "resolved", sp is null ? "absent" : "present");
     }
     // =====================================================================
@@ -346,7 +345,7 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         if (stale.Count > 0)
         {
             foreach ((IVoiceViewerSession s, long ageMs) in stale)
-                m_log.WarnFormat("{0} provision for {1}: prior voice-session teardown still pending/failed (session {2}, age {3:F0}s) - retrying",
+                m_log.LogWarning("{LogHeader} provision for {UserId}: prior voice-session teardown still pending/failed (session {ViewerSessionId}, age {AgeSeconds:F0}s) - retrying",
                     LogHeader, pUserID, s.ViewerSessionID, ageMs / 1000.0);
             List<IVoiceViewerSession> retry = stale.Select(t => t.Session).ToList();
             _ = Task.Run(() => ShutdownCapturedSessions(retry, $"provision retry {pUserID}"));

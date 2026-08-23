@@ -95,7 +95,7 @@ public class JanusAudioBridge : JanusPlugin
         JanusRoom ret = await CreateWithRecheck(() => TryCreateRoomOnce(pRoomId, pSpatial, pRoomDesc)).ConfigureAwait(false);
         if (ret is null)
         {
-            m_log.ErrorFormat("{0} CreateRoom. Room {1} creation failed after re-check", LogHeader, pRoomId);
+            m_log.LogError("{LogHeader} CreateRoom. Room {RoomId} creation failed after re-check", LogHeader, pRoomId);
         }
         return ret;
     }
