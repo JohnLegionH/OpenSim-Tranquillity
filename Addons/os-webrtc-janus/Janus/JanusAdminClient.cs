@@ -17,8 +17,9 @@ using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using log4net;
+using Microsoft.Extensions.Logging;
 using OpenMetaverse.StructuredData;
+using OpenSim.Framework;
 
 namespace osWebRtcVoice
 {
@@ -57,7 +58,7 @@ namespace osWebRtcVoice
     /// </summary>
     public sealed class JanusAdminClient : IDisposable
     {
-        private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+        private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
         private const string LogHeader = "[JANUS ADMIN CLIENT]";
 
         private readonly string _adminUri;

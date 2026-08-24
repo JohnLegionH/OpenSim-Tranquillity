@@ -13,15 +13,16 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Threading.Tasks;
-using log4net;
+using Microsoft.Extensions.Logging;
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
+using OpenSim.Framework;
 
 namespace osWebRtcVoice
 {
     public sealed class JanusPeerCtlBatchSink : IPeerCtlBatchSink, IDisposable
     {
-        private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+        private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
         private const string LogHeader = "[JANUS PEERCTL SINK]";
         private const string SlvoicePlugin = "janus.plugin.slvoice";
 
@@ -36,7 +37,7 @@ namespace osWebRtcVoice
             // the identical CalcRoomNumber the mixer computes on the Janus side.
             _room = JanusAudioBridge.CalcRoomNumber(
                 regionId.ToString(), "local", JanusAudioBridge.REGION_ROOM_ID, string.Empty);
-            m_log.InfoFormat("{0} region {1} ({2}) -> estate peer_ctl_batch room {3} (compare vs handle_info)",
+            m_log.LogInformation("{LogHeader} region {RegionName} ({RegionId}) -> estate peer_ctl_batch room {RoomNumber} (compare vs handle_info)",
                 LogHeader, regionName, regionId, _room);
         }
 

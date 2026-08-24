@@ -25,16 +25,18 @@
 
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
-using log4net;
+using Microsoft.Extensions.Logging;
 using OpenMetaverse;
+using OpenSim.Framework;
 
 namespace osWebRtcVoice
 {
     public sealed class VisibilityBatchSender
     {
-        private static readonly ILog m_log = LogManager.GetLogger(typeof(VisibilityBatchSender));
+        private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
         private const string LogHeader = "[VISIBILITY SENDER]";
 
         /// <summary>Bounded blind re-sends of a joining listener's replace — no admin membership
@@ -144,7 +146,7 @@ namespace osWebRtcVoice
             {
                 // Never throw into the tick. EnsureDisjoint's feeder-bug throw lands here too — its
                 // message names the offending (listener, source).
-                m_log.Error($"{LogHeader} emit failed (matrix kept, will re-derive)", e);
+                m_log.LogError(e, $"{LogHeader} emit failed (matrix kept, will re-derive)");
             }
             finally
             {
@@ -175,8 +177,8 @@ namespace osWebRtcVoice
             if (Interlocked.CompareExchange(ref _sendInFlight, 0L, inflight) != inflight)
                 return;
 
-            m_log.ErrorFormat("{0} region {1}: peer_ctl_batch send stuck in-flight {2}ms (self-heal " +
-                "threshold {3}ms = {4}x the {5}ms admin timeout). Emission was STALLED — neither the " +
+            m_log.LogError("{LogHeader} region {RegionName}: peer_ctl_batch send stuck in-flight {InFlightMs}ms (self-heal " +
+                "threshold {StaleThresholdMs}ms = {StaleMultiple}x the {AdminTimeoutMs}ms admin timeout). Emission was STALLED — neither the " +
                 "per-call token nor the HttpClient backstop resolved it. Force-clearing the in-flight " +
                 "flag and re-syncing (snapshot next); the abandoned send is left to complete or hang " +
                 "harmlessly.", LogHeader, _region, elapsed, _staleThresholdMs, StaleInFlightMultiple, _adminTimeoutMs);
@@ -218,7 +220,7 @@ namespace osWebRtcVoice
                     }
                 }
                 if (giveUp)
-                    m_log.WarnFormat("{0} listener {1}: full column re-sent {2}x but never confirmed in the room; " +
+                    m_log.LogWarning("{LogHeader} listener {ListenerId}: full column re-sent {ReSendAttempts}x but never confirmed in the room; " +
                         "GIVING UP — its exclusions may be absent at the mixer (silent-drop, made loud here)",
                         LogHeader, listener, PendingJoinMaxAttempts);
             }
@@ -342,7 +344,7 @@ namespace osWebRtcVoice
             if (_protocolFailed)
                 return;
             _protocolFailed = true;   // stop emission — K consecutive config/format errors are not transient
-            m_log.ErrorFormat("{0} {1} rejected as ProtocolError {2}x consecutively (config/format — e.g. wrong " +
+            m_log.LogError("{LogHeader} {SendStage} rejected as ProtocolError {ConsecutiveFailures}x consecutively (config/format — e.g. wrong " +
                 "AdminAPIToken, wrong plugin name, or broken transport in front). Emission DISABLED for this " +
                 "region until fixed and the region server is restarted. NOT entering an unbounded snapshot-retry loop.",
                 LogHeader, where, consecutive);
@@ -353,7 +355,7 @@ namespace osWebRtcVoice
             if (_loggedNoSink)
                 return;
             _loggedNoSink = true;
-            m_log.WarnFormat("{0} no IPeerCtlBatchSink registered for this region; feeder runs matrix-only " +
+            m_log.LogWarning("{LogHeader} no IPeerCtlBatchSink registered for this region; feeder runs matrix-only " +
                 "(no emission). Is the Janus service module enabled?", LogHeader);
         }
     }

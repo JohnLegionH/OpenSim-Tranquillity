@@ -12,9 +12,11 @@
  */
 
 using System;
+using System.Reflection;
 using System.Threading;
-using log4net;
+using Microsoft.Extensions.Logging;
 using OpenMetaverse;
+using OpenSim.Framework;
 using OpenSim.Framework.Monitoring;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
@@ -23,7 +25,7 @@ namespace osWebRtcVoice
 {
     public sealed class VoiceVisibilityService
     {
-        private static readonly ILog m_log = LogManager.GetLogger(typeof(VoiceVisibilityService));
+        private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
         private const string logHeader = "[VOICE VISIBILITY]";
 
         // Matrix scope placeholder until the (later) sender wires real Janus room numbers.
@@ -115,7 +117,7 @@ namespace osWebRtcVoice
                 alarmIfTimeout: true,
                 alarmMethod: null,
                 timeout: 5000);
-            m_log.Info($"{logHeader} feeder started for {m_scene.RegionInfo.RegionName} @ {m_cadenceMs}ms (emit={m_emitEnabled})");
+            m_log.LogInformation($"{logHeader} feeder started for {m_scene.RegionInfo.RegionName} @ {m_cadenceMs}ms (emit={m_emitEnabled})");
         }
 
         /// Forward a WebRTC provisioning-success for a listener to the sender's pending-join path
@@ -134,7 +136,7 @@ namespace osWebRtcVoice
             Thread t = m_thread;
             m_thread = null;
             if (t != null && !t.Join(JoinTimeoutMs))
-                m_log.Warn($"{logHeader} feeder thread for {m_scene.RegionInfo.RegionName} did not stop within {JoinTimeoutMs}ms");
+                m_log.LogWarning($"{logHeader} feeder thread for {m_scene.RegionInfo.RegionName} did not stop within {JoinTimeoutMs}ms");
 
             // The service owns the injected sink's lifetime (it holds a JanusAdminClient/HttpClient).
             // Dispose AFTER the tick thread has joined so no in-flight send races the dispose.
@@ -163,7 +165,7 @@ namespace osWebRtcVoice
                 {
                     // Tick already hardens derivation; this is a last-resort guard so the loop
                     // itself never dies.
-                    m_log.Error($"{logHeader} tick failed", e);
+                    m_log.LogError(e, $"{logHeader} tick failed");
                 }
 
                 // Drive emission off the tick: fire-and-forget, never awaited here, never throws.
@@ -220,11 +222,11 @@ namespace osWebRtcVoice
         private void OnBatch(VisibilityBatch b)
         {
             if (!b.IsEmpty)
-                m_log.DebugFormat("{0} {1}: +{2} listeners / -{3} listeners",
+                m_log.LogDebug("{LogHeader} {RegionName}: +{AddedListenerCount} listeners / -{RemovedListenerCount} listeners",
                     logHeader, m_scene.RegionInfo.RegionName, b.Added.Count, b.Removed.Count);
         }
 
         private void OnDerivationError(Exception e)
-            => m_log.Error($"{logHeader} matrix derivation error (kept last matrix)", e);
+            => m_log.LogError(e, $"{logHeader} matrix derivation error (kept last matrix)");
     }
 }
