@@ -735,3 +735,33 @@ added a route to it.
 **Suggested first step.** Gate `OnListenerProvisioned` on a *successful* provision — call
 it only when the response carries a `jsep` answer (or `viewer_session`), not merely when
 `resp is not null`. One condition, in the CAP handler.
+
+## Parcel access-list persistence is non-atomic - delete-then-reinsert under a process lock
+
+**Status:** not started - pre-existing, exposure increased by the access-list persist fix.
+Found by the 2026-08-23 upstream-audit sweep.
+
+**Symptom.** A crash, process kill, or concurrent read during a parcel access-list save
+can leave the parcel with an empty or partial `landaccesslist` - every allow and ban
+entry gone - with no error and no log line. On restart the parcel enforces nothing.
+
+**Mechanism.** `StoreLandObject` deletes the parcel's `landaccesslist` rows and reinserts
+them. The two statements are guarded by a process-level lock, NOT a database transaction,
+so the delete is committed before the reinsert runs. Anything that observes the DB inside
+that window - another process, a replica, a backup, or a restart - sees the parcel with no
+access list. The lock only excludes other threads in THIS process.
+
+**Why it matters.** The window has always existed, but it used to open rarely because
+`UpdateAccessList` never persisted at all (see the entry above). Fixing that means the
+delete-then-reinsert now fires on EVERY access-list edit, so the window opens routinely
+rather than almost never. The fix was correct and should stay; this is the second-order
+consequence of making the path work.
+
+**Also relevant to voice moderation slice 2**, which plans a `landvoicemoderation` table
+mirroring `landaccesslist`. Mirroring the schema is fine; mirroring the write pattern
+would inherit this defect. Worth settling before that table is written, not after.
+
+**Suggested first step.** Wrap the delete and the reinsert in a single DB transaction and
+assign it to both commands' `cmd.Transaction`. Note the code currently relies on implicit
+per-command transaction behaviour, which differs between providers - so this needs
+checking on MySQL, PGSQL and SQLite rather than just the one in front of you.
