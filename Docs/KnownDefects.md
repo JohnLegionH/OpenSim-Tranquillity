@@ -765,3 +765,59 @@ would inherit this defect. Worth settling before that table is written, not afte
 assign it to both commands' `cmd.Transaction`. Note the code currently relies on implicit
 per-command transaction behaviour, which differs between providers - so this needs
 checking on MySQL, PGSQL and SQLite rather than just the one in front of you.
+
+## Region crossing leaves a live voice handle in the previous region's room
+
+**Status:** not started — observed 2026-08-24 on net10 with two avatars.
+
+**Symptom.** After crossing a region boundary, an avatar holds voice handles in BOTH
+regions' estate rooms simultaneously. Both are fully alive: ICE and DTLS connected,
+datachannel open, and both decoding incoming audio (`rtp_in_count` climbing on each). Two
+avatars produced four handles across two rooms, and each room reported
+`room_participants: 2`.
+
+**Mechanism.** Crossing triggers a fresh `ProvisionVoiceAccountRequest` → `SelectRoom` →
+`JoinRoom` for the new region. Nothing leaves the old room. The mixer has no close or kick
+primitive, so it cannot drop the orphan on its own, and the sim does not appear to issue a
+leave.
+
+**Why it matters.** The visibility feeder for a region emits only to that region's room. A
+handle parked in a room whose scene no longer contains the avatar receives no further
+batches — observed frozen at a stale epoch with `last_batch_age_ms` climbing past 20
+minutes while the current room advanced normally. Any exclusion computed for that avatar is
+never applied there. Since the orphan is still decoding audio, this is a room where audio
+is present and moderation rules are not.
+
+**Not observed:** whether audio from an orphan handle is audible to anyone. `rtp_out_count`
+was 0 on all handles throughout, and no listener in the stale room was tested. That
+distinction decides whether this is bookkeeping or a moderation bypass, and it is the first
+thing to establish.
+
+## Pending-join confirmation gives up for every listener, even when the batch lands
+
+**Status:** not started — observed 2026-08-24; noise, not a correctness failure.
+
+**Symptom.** Every listener that joins a voice room produces a `[VISIBILITY SENDER]`
+warning stating the full column was re-sent 6x, was never confirmed in the room, and is
+being given up on. Four of four listeners across two sessions, twice each per join, roughly
+300 ms after `webrtcup`. No exceptions observed.
+
+**Mechanism.** Not established. What IS established is that the warning's premise is false:
+exclusions demonstrably do reach the mixer for listeners that produced it. A moderation
+mute applied to an avatar whose listener had already "given up" was delivered, appeared as
+`excluded_entries: 1` in `handle_info`, silenced the source audibly, and tracked the
+target's parcel position live across six boundary crossings. So either the confirmation
+check reads the wrong signal, or the retry budget expires before confirmation can arrive —
+six attempts complete within ~300 ms of the WebRTC connection coming up, which is a narrow
+window for a join to be observed and acknowledged.
+
+**Why it matters.** The guard was built to make a silent drop loud, and it works — but it
+fires on every join regardless of outcome. A warning that always fires carries no
+information, and a real silent-drop would be indistinguishable from the background. This is
+the instrument, not the failure; a broken instrument is worth fixing before it is needed.
+
+**Suggested first step.** Establish what the sender treats as confirmation and where that
+signal comes from. If it is presence in a room roster, compare against what the mixer
+publishes and when. The `visibility.have_batch` field in `handle_info` reports true for a
+room that has A batch, not that a given handle received one — if the sender relies on
+anything with that shape, it is asking a question the answer cannot satisfy.

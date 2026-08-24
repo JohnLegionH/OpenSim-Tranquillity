@@ -298,3 +298,39 @@ exclusions produced. The cause was that the target stood on a different parcel f
 mute was issued on. The rule tests the source's own parcel, so this was correct parcel-sticky
 behaviour, not a defect. Prior test state — a parcel ban whose ban lines had pushed the target
 off the moderated parcel — created the condition. Clear ban entries between moderation tests.
+
+## Moderation state is reported to no client — SL parity gap (2026-08-24)
+
+Slice 1 applies moderation correctly end to end: CAP → store → feeder → sender → mixer
+exclusion → audible silence, tracking the target's parcel position live. All of that was
+re-verified on net10 after the develop rebase.
+
+**What it does not do is tell any client that it happened.** The exclusion exists only at the
+mixer. No viewer — not the moderator's, not the target's, not a second moderator's — receives
+any indication of who is currently moderated.
+
+**How this surfaced.** Firestorm's participant-list moderation menu decides whether to offer
+"Mute" or "Unmute" from `LLSpeaker::mStatus == STATUS_MUTED`. For nearby voice that status is
+never set, because nothing sets it. The menu therefore only ever offered "Mute", and an
+individually-muted agent could not be released through the UI at all — the server implements the
+`unmute` operand correctly and nothing sent it.
+
+Worked around viewer-side (phoenix-firestorm, branch `fix/voice-webrtc-fixes`, commit
+`3c48a93f7a`) by giving the two menu items distinct parameters and showing both
+unconditionally, so the operator chooses and the server authorises. That makes unmute
+reachable. It does not close the parity gap: clicking Unmute on an unmuted agent is a no-op, a
+second moderator cannot see the first's actions, and no participant list anywhere shows
+moderation state.
+
+**In SL**, moderation state rides in the speaker/agent list, so every client's participant list
+reflects who is muted, and the mute/unmute control is correct by construction.
+
+**Relationship to slice 2.** Slice 2 plans persistence — a scalar on the `land` row plus a
+`landvoicemoderation` table mirroring `landaccesslist`. Reporting state to clients needs the
+same underlying query: what is the current moderation state for this parcel. Worth designing
+them together rather than sequentially; the persistence work will otherwise be repeated when the
+reporting work arrives.
+
+**Open:** which channel carries it. The moderation CAP is per-agent, per-region, per-session and
+request-scoped — it has no push path. Whether this rides on the existing voice data channel, the
+speaker list, or something else is undecided.
