@@ -10,10 +10,19 @@
  *   - types:      Luau `number` == double  -> Phlox Float; coerce to a function's declared
  *                 param type at the call boundary using the EXISTING cast opcodes (icast/fcast).
  *
- * Scope: locals, number arithmetic + coercion, if/elseif/else, while, comparison, event-named
- * global functions, top-level code, ll.* calls. Everything else (tables, closures, LLEvents:on
- * object model, metatables, multiple states, user functions) is Tier-2 and intentionally rejected
- * with a clear error rather than mis-compiled.
+ * Scope: Tier-1 is locals, number arithmetic + coercion, if/elseif/else, while, comparison,
+ * event-named global functions, top-level code, ll.* calls.
+ *
+ * Tier-2 IS IMPLEMENTED, not rejected - this header previously said otherwise and was stale.
+ * Table literals, indexing and length, for-in, table.insert, setmetatable/getmetatable, user
+ * functions and closures all compile. Each has documented edges that throw SLuaException rather
+ * than mis-compile: for-in requires pairs/ipairs/string.gmatch; table.insert requires a simple
+ * variable as its first argument and only table.insert is supported; LLEvents:on requires a
+ * literal event name; capturing a loop variable in a nested function, and multi-assignment to a
+ * captured variable, are not supported. Unknown stdlib functions and unsupported type annotations
+ * also throw. Grep SLuaException in this file for the current authoritative list.
+ *
+ * NOTE: the SLUA_SURFACE.md referenced above does not exist in this tree.
  *
  * NO VM/opcode change: this is pure front-end codegen, mirroring what the LSL GenVisitor emits.
  */
