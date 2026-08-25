@@ -2,6 +2,13 @@
 
 > General log for cross-cutting defects. Phlox-specific items live in
 > `PhloxKnownDefects.md`. Add new entries as `## <title>` with Status + symptom.
+>
+> **Cite commit subjects, not bare SHAs.** This branch rebases onto upstream regularly,
+> which rewrites our commits: the original object survives but is unreachable from HEAD,
+> so `git show` on a SHA quoted in a long-lived document quietly finds nothing. Subjects
+> survive rebasing and are greppable — `git log --format='%s' | grep -F '<subject>'`.
+> Where a SHA genuinely helps (naming a tree state, say), pair it with the subject so a
+> dangling SHA is still resolvable by search.
 
 ## ScenePresence finalizer throws NRE under GC (crashes test host; possible production risk)
 
@@ -249,8 +256,9 @@ carries the SemaphoreSlim serialization the review references (`:63`–`:65`);
 `:186`–`:188`. Still landing as cited: `WebRtcVoiceServiceModule.cs:152`/`:159`/`:183`–`:185`,
 `VoiceViewerSession.cs:52`/`:56`–`:58`, `Scene.cs:3832`/`:3865`, `EventManager.cs:158`.)*
 
-**RESOLUTION (2026-08-22) — the revised plan is implemented.** Commit
-`bc86d292b2` (sim side), with the mixer-side items landed first per the revised ordering.
+**RESOLUTION (2026-08-22) — the revised plan is implemented.** Commit *webrtc-voice:
+presence-close teardown with generation-token capture* (`bba776fd40`, sim side), with the
+mixer-side items landed first per the revised ordering.
 
 **What shipped:**
 
@@ -341,9 +349,10 @@ corrected versions below are what the code shows):
 
 ## Estate CAP save silently flips TaxFree when override_public_access is absent
 
-**Status:** implemented 2026-08-23 (`b5e3472247`) — core Tranquillity defect, was reachable
-from modern Firestorm. Candidate for a Mike report. The fix went wider than this entry: a
-sweep found five MORE fields in the same CAP handler treating absence as false
+**Status:** implemented 2026-08-23 by commit *Estate CAP: make server-managed booleans
+nullable to preserve absent-vs-false* (`1f4b09814e`) — core Tranquillity defect, was
+reachable from modern Firestorm. Candidate for a Mike report. The fix went wider than this
+entry: a sweep found five MORE fields in the same CAP handler treating absence as false
 (`is_externally_visible`, `allow_direct_teleport`, `deny_anonymous`, `deny_age_unverified`,
 `allow_voice_chat` — bare `AsBoolean()` reads on possibly-absent keys). All seven CAP-carried
 booleans are now parsed nullable and applied only when present
@@ -417,11 +426,11 @@ permissive norm and no control on either end, nothing is currently lied about; t
 cost is latent: any future viewer that grows the control, or any operator expecting
 `ResetHomeOnTeleport`/`BlockDwell` to be settable, meets a silently immovable flag.
 
-**Deliberately NOT fixed in `b5e3472247`:** the nullable-parse fix cannot reach a
-field the wire does not carry. Fixing this means deciding which message should carry
-these fields (wiring `SetFromFlags` into the UDP estate-flags path is the natural
-candidate — the viewer's full bitmask already contains the bits) — a wire-behaviour
-decision worth checking against upstream intent before implementing.
+**Deliberately NOT fixed by the Estate CAP nullable-parse fix** (see the TaxFree entry
+above): it cannot reach a field the wire does not carry. Fixing this means deciding which
+message should carry these fields (wiring `SetFromFlags` into the UDP estate-flags path is
+the natural candidate — the viewer's full bitmask already contains the bits) — a
+wire-behaviour decision worth checking against upstream intent before implementing.
 
 ## Parcel access/ban list updates are never persisted
 

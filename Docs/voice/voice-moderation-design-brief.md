@@ -5,8 +5,9 @@ the end, including the viewer requirement: the feature needs a Firestorm master-
 build, not any release as of 7.2.4. Open Question 1 unanswered; Open Question 2 partially
 answered by the verification run.
 **Date:** 2026-08-21.
-**Basis:** CC recon 2026-08-21 against `tranquillity-develop @ e2444037d7` and
-`D:\phoenix-firestorm` (read-only reference); SL viewer release notes 26.1.0 and 26.2.0.
+**Basis:** CC recon 2026-08-21 against `tranquillity-develop` at `392c0efc1d` (*test(voice):
+engine coverage for the §E TaxFree ban path*) and `D:\phoenix-firestorm` (read-only
+reference); SL viewer release notes 26.1.0 and 26.2.0.
 **Target:** parity with the voice moderation LL shipped in viewer 26.1, Dec 2025.
 
 ## Purpose
@@ -257,7 +258,8 @@ and irrelevant to the running viewer, which did not contain the feature at all.
 
 **The tell was an absence.** Copy Mention URI and Mention User in Chat have no hiding path in
 the source — they render unconditionally — yet were absent from the observed menu. That is only
-possible if the running binary is not built from that source. Git dates it: the Mention entries
+possible if the running binary is not built from that source. Git dates it — the three SHAs
+in this paragraph are phoenix-firestorm commits, not this repo: the Mention entries
 were added 2025-11-21 (`2a6b5cbde5`) and nearby-voice moderation was transplanted 2026-02-12
 (`621009dc42`). A menu without the Mention entries predates the moderation transplant.
 Independently confirmed by the floater showing a Voice Morphing dropdown, removed 2026-03-04

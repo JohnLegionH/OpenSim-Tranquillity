@@ -35,9 +35,12 @@ because the provider questions are runtime ones. Anything not established is mar
 
 Branch commits in scope, confirmed by `git log` on each file:
 
-- `b5e3472247` — Estate CAP nullable fix (`EstateChangeInfo.cs`, `EstateManagementModule.cs`)
-- `b4f4947286` — parcel persist fixes (`LandManagementModule.cs`, `LandObject.cs`)
-- `eb74343dc5` — ban-add instrumentation (`LandManagementModule.cs`)
+- *Estate CAP: make server-managed booleans nullable to preserve absent-vs-false*
+  (`1f4b09814e`) — `EstateChangeInfo.cs`, `EstateManagementModule.cs`
+- *fix(land): persist access/ban list edits and preserve UseBanList on properties save*
+  (`3c79b5c75e`) — `LandManagementModule.cs`, `LandObject.cs`
+- *land: instrument the parcel ban-add path, silent on every outcome*
+  (`9f8ba4cc2d`) — `LandManagementModule.cs`
 
 ---
 
@@ -79,7 +82,7 @@ because the two changes are in **different methods roughly 700 lines apart**:
   `(currentParcelLandData.Flags & (uint)ParcelFlags.ForSale) != 0` when selecting
   `LandChannel.LAND_TYPE_IS_FOR_SALE` for the parcel-overlay byte, plus a seven-line explanatory
   comment.
-- **Branch (`b4f4947286`, `eb74343dc5`)** — inside
+- **Branch (the parcel-persist and ban-add-instrumentation commits listed above)** — inside
   `ClientOnParcelAccessListUpdateRequest(...)` (method begins line 683). Five `DebugFormat`
   diagnostics covering every early-return outcome (flags neither access nor ban; estate TaxFree;
   flags map to no manage power; applied; denied), two `SendAgentAlertMessage` calls, and the
