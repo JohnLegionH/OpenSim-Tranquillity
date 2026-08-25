@@ -1,16 +1,19 @@
 // Legion Grid - Jolt physics as an OpenSim region module (PhysicsScene).
 //
 // ============================ READ THIS FIRST ============================
-// M6.1 SKELETON ONLY. This is the seam between OpenSim's PhysicsScene contract and the
-// engine-agnostic ILegionPhysicsBackend (whose Jolt implementation we proved across M1-M4.5 in a
-// clean-room harness). This slice proves ONE thing: the module registers, boots under
-// `physics = Jolt`, steps an empty world, and shuts down cleanly. It has ZERO physics behaviour:
-//   - AddPrimShape / AddAvatar return PhysicsActor.Null (accept-and-ignore, so a region with
-//     content still boots).
-//   - SetTerrain accepts-and-ignores (real terrain is M6.2).
-//   - Simulate steps the backend over an empty active set and returns.
+// This is the seam between OpenSim's PhysicsScene contract and the engine-agnostic
+// ILegionPhysicsBackend (whose Jolt implementation we proved across M1-M4.5 in a clean-room
+// harness). The module registers, boots under `physics = Jolt`, and drives real physics:
+//   - AddPrimShape cooks a shape (fixed-shape fast path, IMesher mesh/hull, or bbox fallback) and
+//     creates a JoltPrim - STATIC when non-physical, dynamic when physical - tracked in _prims.
+//   - AddAvatar has three overloads (no-localID, localID, feetOffset); the avatar gets a Jolt
+//     CharacterVirtual carrying its M4.5 query marker (M6.5).
+//   - SetTerrain cooks the real (N+1)-square heightfield and swaps it in (M6.2); SetWaterLevel
+//     pushes the water height to the backend.
+//   - Simulate rebuilds dirty linkset compounds (M7), activates bodies created inert, runs the
+//     Halcyon vehicle controllers (M8), steps the backend once per frame, then drains.
 // The batched-buffer drain (StepResult -> per-actor RequestPhysicsterseUpdate / collision dispatch)
-// is M6.4/M6.6 and is deliberately NOT here.
+// IS here, at the tail of Simulate.
 //
 // Registration mirrors BSScene: an RC region module (DotNetCorePlugins; see PluginRegistration.cs)
 // that self-selects when [Startup]
@@ -53,7 +56,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // The engine-agnostic backend (the deliverable proven in the clean-room harness).
         private ILegionPhysicsBackend _backend;
 
-        // Held for M6.3 shape cooking; NOT used this slice.
+        // The region's IMesher, driving the M6.3 cook path for cut/hollow/sculpt/mesh prims.
         private IMesher m_mesher;
 
         public string RegionName { get; private set; }
@@ -169,8 +172,8 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         private long _logStepsUntil = -1;   // window: log per-frame dt/ActiveBodyCount/liveZ after a drop
         private long _charFrameUntil = -1;  // window: log per-frame avatar Z/support/vZ ([charframe] toggle)
 
-        // Caller-owned step buffers (M1 contract: nothing allocates per frame). Empty world drains
-        // nothing; sized modestly for the skeleton and revisited when real actors arrive (M6.4).
+        // Caller-owned step buffers (M1 contract: nothing allocates per frame). Simulate drains all
+        // three every step; they are fixed-size, and an overflow is reported rather than grown.
         private BodyState[] _bodyBuf = new BodyState[1024];
         private CharacterState[] _charBuf = new CharacterState[256];
         private ContactReport[] _contactBuf = new ContactReport[2048];
@@ -256,8 +259,9 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             EngineType = Name;                              // osGetPhysicsEngineType
             EngineName = $"{_backend.Name} {_backend.Version}"; // osGetPhysicsEngineName
 
-            // Terrain/water are accepted-and-ignored this slice (real terrain is M6.2). The base
-            // Initialise wires the request-asset delegate and calls our (stub) SetTerrain/SetWaterLevel.
+            // The base Initialise wires the request-asset delegate and calls our SetTerrain - which
+            // cooks the real M6.2 heightfield - and SetWaterLevel, which pushes the water height down
+            // to the backend for vehicle hover.
             base.Initialise(scene.PhysicsRequestAsset,
                 (scene.Heightmap != null ? scene.Heightmap.GetFloatsSerialised() : new float[sizeX * sizeY]),
                 (float)scene.RegionInfo.RegionSettings.WaterHeight);
@@ -283,7 +287,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             if (!m_Enabled)
                 return;
 
-            // Held for M6.3 shape cooking; unused this slice.
+            // The IMesher the M6.3 cook path needs; without one, prims fall back to bounding boxes.
             m_mesher = scene.RequestModuleInterface<IMesher>();
             if (m_mesher == null)
                 m_log.LogWarning($"{LogHeader} no IMesher available - shape cooking (M6.3) will need it.");
@@ -516,7 +520,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 MainConsole.Instance.Output($"    local AABB min=({s.Min.X:0.00},{s.Min.Y:0.00},{s.Min.Z:0.00}) max=({s.Max.X:0.00},{s.Max.Y:0.00},{s.Max.Z:0.00})");
 
                 // Decision-point check (physical -> convex hull, delta #31): cook the SAME prism physical,
-                // inline, purely to confirm routing (cook+release, no body). Real physical dynamics is M6.4.
+                // inline, purely to confirm routing (cook+release, no body - the proof is the shape choice).
                 ShapeId hull = CookPrimShape(GetPrismPbs(), size, true, out _, out string hullKind);
                 MainConsole.Instance.Output($"  decision-point: physical prism cooks to '{hullKind}' (expect 'hull(mesher)' - a mesh's Volume=0 would rez a physical prim mass-0; hull avoids it).");
                 if (hull.IsValid) _backend.ReleaseShape(hull);
@@ -2502,7 +2506,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         }
 
         // ---------------------------------------------------------------------
-        // PhysicsScene - M6.1 stubs (accept-and-ignore so a populated region still boots)
+        // PhysicsScene - actor creation (avatars M6.5; prims M6.3 cook / M6.4 dynamics)
         // ---------------------------------------------------------------------
 
         // M6.5: the avatar finally gets a physics body - a Jolt CharacterVirtual. ScenePresence calls the
@@ -2583,7 +2587,8 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
         // The real OpenSim delivery boundary: SceneObjectPart.AddToPhysics -> (via the base
         // isPhantom/shapetype overloads) -> this. A non-physical, non-phantom prim becomes a STATIC
-        // Jolt body. (Pure phantoms never reach here - ApplyPhysics skips them; physical dynamics is M6.4.)
+        // Jolt body; a physical one becomes a dynamic body, created INERT and woken in Simulate (M6.4).
+        // (Pure phantoms never reach here - ApplyPhysics skips them.)
         public override PhysicsActor AddPrimShape(string primName, PrimitiveBaseShape pbs, Vector3 position,
                                                   Vector3 size, Quaternion rotation, bool isPhysical, uint localid)
         {
@@ -2612,8 +2617,10 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // Jolt primitive with NO meshmerizer. Classification matches what a real viewer/OAR prim
         // carries (canonical ProfileShape+Extrusion), NOT PrimitiveBaseShape.CreateCylinder() - whose
         // factory emits Square+Curve1 (an SL "tube"), a known OpenSim quirk. Anything else (cut/hollow/
-        // twisted, sculpt/mesh, non-uniform sphere/cylinder) falls back to a bounding box for now; the
-        // real IMesher path is M6.3 Task 2. `axisCorrection` (System.Numerics) is folded into the body
+        // twisted, sculpt/mesh, non-uniform sphere/cylinder) goes to the M6.3 Task 2 IMesher path - a
+        // triangle mesh when static, a convex hull when physical - with a bounding box as the fallback
+        // when there is no mesher or the geometry is unusable. `axisCorrection` (System.Numerics) is
+        // folded into the body
         // orientation by JoltPrim; `kind` is for the proof read-out.
         internal ShapeId CookPrimShape(PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out SQuaternion axisCorrection, out string kind)
         {
