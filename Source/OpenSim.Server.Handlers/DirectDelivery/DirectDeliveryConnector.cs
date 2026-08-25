@@ -28,7 +28,7 @@
 using System;
 using System.Reflection;
 using Nini.Config;
-using log4net;
+using Microsoft.Extensions.Logging;
 using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Framework.ServiceAuth;
@@ -54,7 +54,7 @@ namespace OpenSim.Server.Handlers.DirectDelivery
     // after it — it refuses to start unless a shared secret is configured.
     public class DirectDeliveryConnector : ServiceConnector
     {
-        private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+        private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
         private string m_ConfigName = "DirectDeliveryService";
 
@@ -73,7 +73,7 @@ namespace OpenSim.Server.Handlers.DirectDelivery
 
             if (!cfg.GetBoolean("Enabled", false))
             {
-                m_log.InfoFormat("[DirectDelivery]: disabled (set Enabled=true in [{0}] to enable)", m_ConfigName);
+                m_log.LogInformation("[DirectDelivery]: disabled (set Enabled=true in [{ConfigSection}] to enable)", m_ConfigName);
                 return;
             }
 
@@ -97,9 +97,9 @@ namespace OpenSim.Server.Handlers.DirectDelivery
             string imModule = cfg.GetString("NotifyIMService", "OpenSim.Services.HypergridService.dll:HGInstantMessageService");
             IInstantMessage im = null;
             try { im = ServerUtils.LoadPlugin<IInstantMessage>(imModule, new object[] { config }); }
-            catch (Exception e) { m_log.Warn("[DirectDelivery]: live-notify IM service failed to load; deliveries will file silently", e); }
+            catch (Exception e) { m_log.LogWarning(e, "[DirectDelivery]: live-notify IM service failed to load; deliveries will file silently"); }
             if (im == null)
-                m_log.Warn("[DirectDelivery]: no IM service — online buyers see deliveries only after relog");
+                m_log.LogWarning("[DirectDelivery]: no IM service — online buyers see deliveries only after relog");
 
             // Fail-closed authentication. ServiceAuth.Create alone can return a non-null auth that
             // only blocks LL-viewer requests (DisallowLlHttpRequest) without requiring the secret,
@@ -117,7 +117,7 @@ namespace OpenSim.Server.Handlers.DirectDelivery
 
             server.AddStreamHandler(new DirectDeliveryPostHandler(users, asset, inventory, creatorID, im, auth));
 
-            m_log.InfoFormat("[DirectDelivery]: enabled — POST /delivery (authenticated), CreatorID {0}", creatorID);
+            m_log.LogInformation("[DirectDelivery]: enabled — POST /delivery (authenticated), CreatorID {CreatorId}", creatorID);
         }
     }
 }

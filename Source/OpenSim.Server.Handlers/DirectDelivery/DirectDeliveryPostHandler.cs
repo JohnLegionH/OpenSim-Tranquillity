@@ -32,7 +32,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using log4net;
+using Microsoft.Extensions.Logging;
 using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Framework.ServiceAuth;
@@ -60,7 +60,7 @@ namespace OpenSim.Server.Handlers.DirectDelivery
     //           401 handled by BaseStreamHandler (auth fails before this runs)
     public class DirectDeliveryPostHandler : BaseStreamHandler
     {
-        private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+        private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
         private readonly IUserAccountService m_Users;
         private readonly IAssetService m_Assets;
@@ -182,7 +182,7 @@ namespace OpenSim.Server.Handlers.DirectDelivery
                 if (!m_Inventory.AddItem(item))
                     return Json(httpResponse, 500, "{\"status\":\"error\",\"reason\":\"inventory add failed\"}");
 
-                m_log.InfoFormat("[DirectDelivery]: delivered notecard item {0} (asset {1}) to {2} {3} [{4}] in folder {5}",
+                m_log.LogInformation("[DirectDelivery]: delivered notecard item {ItemId} (asset {AssetId}) to {FirstName} {LastName} [{BuyerId}] in folder {FolderId}",
                     item.ID, item.AssetID, first, last, buyer, folder.ID);
 
                 // Additive live notification — must never affect the delivery result (item is already filed).
@@ -195,7 +195,7 @@ namespace OpenSim.Server.Handlers.DirectDelivery
             }
             catch (Exception e)
             {
-                m_log.Error("[DirectDelivery]: delivery failed", e);
+                m_log.LogError(e, "[DirectDelivery]: delivery failed");
                 return Json(httpResponse, 500, "{\"status\":\"error\",\"reason\":\"internal error\"}");
             }
         }
@@ -242,7 +242,7 @@ namespace OpenSim.Server.Handlers.DirectDelivery
                 }
                 if (missing.Count > 0)
                 {
-                    m_log.WarnFormat("[DirectDelivery]: closure INCOMPLETE for object asset {0} — {1} of {2} refs missing: {3}",
+                    m_log.LogWarning("[DirectDelivery]: closure INCOMPLETE for object asset {AssetId} — {MissingCount} of {TotalRefCount} refs missing: {MissingAssetIds}",
                         src.AssetID, missing.Count, refs.Count, string.Join(",", missing));
                     string mbody = "{\"status\":\"closure_incomplete\",\"reason\":\"referenced assets missing from store\",\"missing\":[\""
                         + string.Join("\",\"", missing) + "\"]}";
@@ -290,7 +290,7 @@ namespace OpenSim.Server.Handlers.DirectDelivery
                 if (!m_Inventory.AddItem(item))
                     return Json(httpResponse, 500, "{\"status\":\"error\",\"reason\":\"inventory add failed\"}");
 
-                m_log.InfoFormat("[DirectDelivery]: delivered OBJECT item {0} (asset {1}, closure {2} refs verified) to {3} {4} [{5}] in folder {6}",
+                m_log.LogInformation("[DirectDelivery]: delivered OBJECT item {ItemId} (asset {AssetId}, closure {VerifiedRefCount} refs verified) to {FirstName} {LastName} [{BuyerId}] in folder {FolderId}",
                     item.ID, item.AssetID, refs.Count, first, last, buyer, folder.ID);
 
                 // Live notification — asset type Object so the region fetches the right kind.
@@ -303,7 +303,7 @@ namespace OpenSim.Server.Handlers.DirectDelivery
             }
             catch (Exception e)
             {
-                m_log.Error("[DirectDelivery]: object delivery failed", e);
+                m_log.LogError(e, "[DirectDelivery]: object delivery failed");
                 return Json(httpResponse, 500, "{\"status\":\"error\",\"reason\":\"internal error\"}");
             }
         }
@@ -338,7 +338,7 @@ namespace OpenSim.Server.Handlers.DirectDelivery
                 }
                 catch (Exception e)
                 {
-                    m_log.Warn("[DirectDelivery]: could not parse a TextureEntry during closure walk", e);
+                    m_log.LogWarning(e, "[DirectDelivery]: could not parse a TextureEntry during closure walk");
                 }
             }
 
@@ -411,7 +411,7 @@ namespace OpenSim.Server.Handlers.DirectDelivery
             catch (Exception e)
             {
                 // Non-fatal: item is already filed; it appears on relog even if this notification fails.
-                m_log.Warn("[DirectDelivery]: live-notify IM failed (item already delivered)", e);
+                m_log.LogWarning(e, "[DirectDelivery]: live-notify IM failed (item already delivered)");
             }
         }
 
