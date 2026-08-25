@@ -26,7 +26,7 @@ using OpenSim.Region.Framework.Scenes;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.PhysicsModules.SharedBase;
 using Nini.Config;
-using log4net;
+using Microsoft.Extensions.Logging;
 using OpenMetaverse;
 
 using Legion.Physics;
@@ -40,7 +40,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 {
     public sealed class LegionJoltScene : PhysicsScene, INonSharedRegionModule
     {
-        internal static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+        internal static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
         internal const string LogHeader = "[LEGION JOLT]";
 
         // Gate for JoltCharacter's [charjump] path trace; toggled by `jolt charframe` and kept in sync with
@@ -202,13 +202,13 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                     string mesher = config.GetString("meshing", string.Empty);
                     if (string.IsNullOrEmpty(mesher) || !mesher.Equals("Meshmerizer"))
                     {
-                        m_log.Error($"{LogHeader} [Startup] meshing must be set to \"Meshmerizer\" for the Jolt physics module.");
+                        m_log.LogError($"{LogHeader} [Startup] meshing must be set to \"Meshmerizer\" for the Jolt physics module.");
                         throw new System.Exception("Invalid physics meshing option for Jolt");
                     }
 
                     m_Enabled = true;
                     m_Config = source;
-                    m_log.Info($"{LogHeader} enabled (physics = {Name}).");
+                    m_log.LogInformation($"{LogHeader} enabled (physics = {Name}).");
                 }
             }
         }
@@ -262,7 +262,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 (scene.Heightmap != null ? scene.Heightmap.GetFloatsSerialised() : new float[sizeX * sizeY]),
                 (float)scene.RegionInfo.RegionSettings.WaterHeight);
 
-            m_log.Info($"{LogHeader} region '{RegionName}' {sizeX}x{sizeY}m: backend initialised, MaxBodies={settings.MaxBodies}. {EngineName}");
+            m_log.LogInformation($"{LogHeader} region '{RegionName}' {sizeX}x{sizeY}m: backend initialised, MaxBodies={settings.MaxBodies}. {EngineName}");
         }
 
         public void RemoveRegion(Scene scene)
@@ -286,7 +286,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             // Held for M6.3 shape cooking; unused this slice.
             m_mesher = scene.RequestModuleInterface<IMesher>();
             if (m_mesher == null)
-                m_log.Warn($"{LogHeader} no IMesher available - shape cooking (M6.3) will need it.");
+                m_log.LogWarning($"{LogHeader} no IMesher available - shape cooking (M6.3) will need it.");
 
             scene.PhysicsEnabled = true;
 
@@ -301,7 +301,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 DropOne("box", new Vector3(2f, 2f, 2f), 118f, 128f);
                 DropOne("box", new Vector3(2f, 2f, 2f), 124f, 128f);
                 DropOne("box", new Vector3(2f, 2f, 2f), 130f, 128f);
-                m_log.Info($"{LogHeader} JoltAutoDropTest: dropped 3 physical boxes in '{RegionName}' (watch [dropframe] / `jolt dropstatus`).");
+                m_log.LogInformation($"{LogHeader} JoltAutoDropTest: dropped 3 physical boxes in '{RegionName}' (watch [dropframe] / `jolt dropstatus`).");
             }
 
             // M6.2 proof hook: a console command that raycasts straight down onto the cooked terrain and
@@ -2557,7 +2557,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             lock (_avatars)
                 _avatars[jc.CharacterHandle.Value] = jc;
 
-            m_log.Info($"{LogHeader} avatar '{avName}' id={localID} spawned at ({position.X:0},{position.Y:0}) terrainZ={groundZ:0.00} centreZ={spawn.Z:0.000} standHalf={standHalf:0.000} feetOffset={feetOffset:0.000} flying={isFlying}.");
+            m_log.LogInformation($"{LogHeader} avatar '{avName}' id={localID} spawned at ({position.X:0},{position.Y:0}) terrainZ={groundZ:0.00} centreZ={spawn.Z:0.000} standHalf={standHalf:0.000} feetOffset={feetOffset:0.000} flying={isFlying}.");
             return jc;
         }
 
@@ -2568,7 +2568,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             lock (_avatars)
                 _avatars.Remove(jc.CharacterHandle.Value);
             jc.Destroy();   // RemoveCharacter also tears down the M4.5 query marker
-            m_log.Info($"{LogHeader} avatar '{jc.Name}' id={jc.LocalID} removed.");
+            m_log.LogInformation($"{LogHeader} avatar '{jc.Name}' id={jc.LocalID} removed.");
         }
 
         public override void RemovePrim(PhysicsActor prim)
@@ -2600,7 +2600,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             }
             catch (Exception e)
             {
-                m_log.Warn($"{LogHeader} AddPrimShape failed for '{primName}' (localid {localid}): {e.GetType().Name}: {e.Message}; prim has no physics.");
+                m_log.LogWarning($"{LogHeader} AddPrimShape failed for '{primName}' (localid {localid}): {e.GetType().Name}: {e.Message}; prim has no physics.");
                 return PhysicsActor.Null;
             }
             lock (_prims)
@@ -2676,7 +2676,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             kind = "bbox(fallback)";
             if (m_mesher == null)
             {
-                m_log.Warn($"{LogHeader} no IMesher - cannot cook mesh; bounding-box fallback.");
+                m_log.LogWarning($"{LogHeader} no IMesher - cannot cook mesh; bounding-box fallback.");
                 return ShapeId.Invalid;
             }
 
@@ -2700,7 +2700,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 {
                     // A sculpt whose asset (texture) has not been fetched meshes to null - it needs the
                     // async asset path (M6 request-asset delegate) first. Bounding box for now.
-                    m_log.Debug($"{LogHeader} IMesher returned null (unfetched sculpt asset or empty geometry); bounding-box fallback.");
+                    m_log.LogDebug($"{LogHeader} IMesher returned null (unfetched sculpt asset or empty geometry); bounding-box fallback.");
                     return ShapeId.Invalid;
                 }
 
@@ -2708,7 +2708,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 float[] verts = mesh.getVertexListAsFloat(); // fresh copy (flattened x,y,z,...)
                 if (verts == null || indices == null || verts.Length < 12 || indices.Length < 3 || (indices.Length % 3) != 0)
                 {
-                    m_log.Warn($"{LogHeader} mesher geometry unusable (verts={verts?.Length ?? 0}, indices={indices?.Length ?? 0}); bounding-box fallback.");
+                    m_log.LogWarning($"{LogHeader} mesher geometry unusable (verts={verts?.Length ?? 0}, indices={indices?.Length ?? 0}); bounding-box fallback.");
                     return ShapeId.Invalid;
                 }
 
@@ -2718,7 +2718,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             }
             catch (Exception e)
             {
-                m_log.Warn($"{LogHeader} mesher geometry extraction threw ({e.GetType().Name}: {e.Message}); bounding-box fallback.");
+                m_log.LogWarning($"{LogHeader} mesher geometry extraction threw ({e.GetType().Name}: {e.Message}); bounding-box fallback.");
                 return ShapeId.Invalid;
             }
 
@@ -2736,7 +2736,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             }
             catch (Exception e)
             {
-                m_log.Warn($"{LogHeader} backend cook of mesher output threw ({e.GetType().Name}: {e.Message}); bounding-box fallback.");
+                m_log.LogWarning($"{LogHeader} backend cook of mesher output threw ({e.GetType().Name}: {e.Message}); bounding-box fallback.");
                 return ShapeId.Invalid;   // kind stays "bbox(fallback)"
             }
         }
@@ -3385,7 +3385,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 catch (Exception e)
                 {
                     // Never let one vehicle's math wedge the heartbeat.
-                    m_log.Error($"{LogHeader} vehicle step EXCEPTION for prim {v.LocalID}: {e}");
+                    m_log.LogError($"{LogHeader} vehicle step EXCEPTION for prim {v.LocalID}: {e}");
                 }
             }
         }
@@ -3411,7 +3411,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             foreach (JoltPrim p in pend)
             {
                 try { p.ActivatePending(); }
-                catch (Exception e) { m_log.Error($"{LogHeader} pending-activation EXCEPTION for prim {p.LocalID}: {e}"); }
+                catch (Exception e) { m_log.LogError($"{LogHeader} pending-activation EXCEPTION for prim {p.LocalID}: {e}"); }
             }
         }
 
@@ -3496,9 +3496,9 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                     float cx = _regionSizeX * 0.5f, cy = _regionSizeY * 0.5f;
                     if (_backend.RayCast(new SVector3(cx, cy, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.Terrain, out RayHit fh))
                         fixZ = fh.Point.Z;
-                    m_log.Debug($"{LogHeader} [charframe] step={_stepCount} id={a.LocalID} XY=({p.X:0.00},{p.Y:0.00}) Z={p.Z:0.000} " +
-                                $"sup={(a.IsSupported ? "Y" : "N")} sliding={(a.IsSliding ? "Y" : "N")} vZ={a.Velocity.Z:0.000} flying={(a.Flying ? "Y" : "N")} ground={ground} " +
-                                $"terrainZ@avatar={terrZ:0.000} terrainZ@centre({cx:0},{cy:0})={fixZ:0.000} feetAboveTerrain={p.Z - a.StandHalf - a.FeetOffset - terrZ:0.000}");
+                    m_log.LogDebug($"{LogHeader} [charframe] step={_stepCount} id={a.LocalID} XY=({p.X:0.00},{p.Y:0.00}) Z={p.Z:0.000} " +
+                                   $"sup={(a.IsSupported ? "Y" : "N")} sliding={(a.IsSliding ? "Y" : "N")} vZ={a.Velocity.Z:0.000} flying={(a.Flying ? "Y" : "N")} ground={ground} " +
+                                   $"terrainZ@avatar={terrZ:0.000} terrainZ@centre({cx:0},{cy:0})={fixZ:0.000} feetAboveTerrain={p.Z - a.StandHalf - a.FeetOffset - terrZ:0.000}");
                 }
             }
             else if (CharJumpTrace)
@@ -3530,11 +3530,11 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 lock (_prims)
                     if (_prims.TryGetValue(td.LocalId, out JoltPrim jd) && _backend.TryGetBodyState(jd.BodyHandle, out BodyState sd))
                     { lz = sd.Position.Z; vz = sd.LinearVelocity.Z; ja = (sd.Flags & BodyStateFlags.Active) != 0; }
-                m_log.Debug($"{LogHeader} [dropframe] step={_stepCount} dt={timeStep:0.0000} active={r.ActiveBodyCount} updates={r.BodyUpdateCount} box(id={td.LocalId}) liveZ={lz:0.000} vZ={vz:0.000} joltActive={ja}");
+                m_log.LogDebug($"{LogHeader} [dropframe] step={_stepCount} dt={timeStep:0.0000} active={r.ActiveBodyCount} updates={r.BodyUpdateCount} box(id={td.LocalId}) liveZ={lz:0.000} vZ={vz:0.000} joltActive={ja}");
             }
 
             if (r.BodyBufferOverflowed)
-                m_log.Warn($"{LogHeader} body update buffer overflowed ({_bodyBuf.Length}); some terse updates dropped this step.");
+                m_log.LogWarning($"{LogHeader} body update buffer overflowed ({_bodyBuf.Length}); some terse updates dropped this step.");
 
             int n = r.BodyUpdateCount;
             for (int i = 0; i < n; i++)
@@ -3652,7 +3652,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             int sx = _regionSizeX, sy = _regionSizeY;
             if (sx <= 0 || sy <= 0 || heightMap.Length < sx * sy)
             {
-                m_log.Warn($"{LogHeader} SetTerrain: heightMap length {heightMap?.Length ?? 0} < {sx}x{sy}; ignoring.");
+                m_log.LogWarning($"{LogHeader} SetTerrain: heightMap length {heightMap?.Length ?? 0} < {sx}x{sy}; ignoring.");
                 return;
             }
 
@@ -3699,8 +3699,8 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             // Step-stamp + a couple of height samples so a [charframe] session can see whether SetTerrain
             // is re-firing during a walk (it should NOT - TerrainModule only ticks it every ~5 s when the
             // heightmap is tainted) and whether the heights it re-cooks are drifting downward.
-            m_log.Info($"{LogHeader} terrain set: step={_stepCount} {sx}x{sy} region -> {m}x{m} heightfield " +
-                       $"(spans {m - 1} m/side; sample[centre]={heightMap[(sy / 2) * sx + (sx / 2)]:0.000} sample[0]={heightMap[0]:0.000}).");
+            m_log.LogInformation($"{LogHeader} terrain set: step={_stepCount} {sx}x{sy} region -> {m}x{m} heightfield " +
+                                 $"(spans {m - 1} m/side; sample[centre]={heightMap[(sy / 2) * sx + (sx / 2)]:0.000} sample[0]={heightMap[0]:0.000}).");
         }
 
         // Distance (m) a capsule centre must be below its seat before we treat it as buried and lift it.
@@ -3772,8 +3772,8 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 if (TryComputeUnbury(p.Z, terrainZ, a.StandHalf, a.FeetOffset, TerrainUnburyEps, out float seatZ))
                 {
                     a.ReGround(new Vector3(p.X, p.Y, seatZ));
-                    m_log.Info($"{LogHeader} terrain-unbury: avatar {a.LocalID} lifted z={p.Z:0.000} -> seatZ={seatZ:0.000} " +
-                               $"(terrain now {terrainZ:0.000}, flying={a.Flying}).");
+                    m_log.LogInformation($"{LogHeader} terrain-unbury: avatar {a.LocalID} lifted z={p.Z:0.000} -> seatZ={seatZ:0.000} " +
+                                         $"(terrain now {terrainZ:0.000}, flying={a.Flying}).");
                 }
             }
         }

@@ -11,6 +11,7 @@
 // cylinder axis-correction ordering must be unambiguous (left operand applied first).
 
 using System;
+using Microsoft.Extensions.Logging;
 using OpenSim.Framework;
 using OpenSim.Region.PhysicsModules.SharedBase;
 using OpenMetaverse;
@@ -194,7 +195,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 // vehicle) is applied, so it never free-falls before its buoyancy is asserted.
                 _module.RegisterPendingActivation(this);
                 if (_backend.TryGetBodyState(_body, out BodyState st))
-                    LegionJoltScene.m_log.Debug(
+                    LegionJoltScene.m_log.LogDebug(
                         $"{LegionJoltScene.LogHeader} physical body id={LocalID} created (deferred activation): active={((st.Flags & BodyStateFlags.Active) != 0)} posZ={st.Position.Z:0.00} shape={_shapeKind}");
 
                 // A recreate (reposition/reshape/weld/physical-toggle) makes a FRESH body with default
@@ -233,7 +234,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             if (!(float.IsFinite(newPos.X) && float.IsFinite(newPos.Y) && float.IsFinite(newPos.Z))
                 || MathF.Abs(newPos.X) > 1e5f || MathF.Abs(newPos.Y) > 1e5f || MathF.Abs(newPos.Z) > 1e5f)
             {
-                LegionJoltScene.m_log.Warn($"{LegionJoltScene.LogHeader} [physglitch] body {LocalID} implausible pos {newPos} vel {s.LinearVelocity} - update dropped (no crossing)");
+                LegionJoltScene.m_log.LogWarning($"{LegionJoltScene.LogHeader} [physglitch] body {LocalID} implausible pos {newPos} vel {s.LinearVelocity} - update dropped (no crossing)");
                 return;
             }
             _position = newPos;
@@ -561,7 +562,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             catch (Exception e)
             {
                 // Never let a linkset rebuild propagate into the heartbeat and wedge the region.
-                LegionJoltScene.m_log.Error($"{LegionJoltScene.LogHeader} linkset rebuild EXCEPTION for root {LocalID}: {e}");
+                LegionJoltScene.m_log.LogError($"{LegionJoltScene.LogHeader} linkset rebuild EXCEPTION for root {LocalID}: {e}");
             }
             finally { _rebuilding = false; }
         }

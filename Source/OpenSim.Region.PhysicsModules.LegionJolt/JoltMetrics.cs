@@ -22,13 +22,14 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text;
 using System.Threading;
-using log4net;
+using Microsoft.Extensions.Logging;
+using OpenSim.Framework;
 
 namespace OpenSim.Region.PhysicsModules.LegionJolt
 {
     internal static class JoltMetrics
     {
-        private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+        private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
         private const string LogHeader = "[LEGION JOLT METRICS]";
 
         private sealed class RegionStat
@@ -48,7 +49,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         {
             RegionStat st = s_regions.GetOrAdd(region, _ => new RegionStat());
             st.InitRssDeltaMB = rssDeltaBytes / (1024.0 * 1024.0);
-            m_log.Info($"{LogHeader} region '{region}': backend-init RSS delta = {st.InitRssDeltaMB:0.0} MB; process threads now = {ThreadCount()}.");
+            m_log.LogInformation($"{LogHeader} region '{region}': backend-init RSS delta = {st.InitRssDeltaMB:0.0} MB; process threads now = {ThreadCount()}.");
         }
 
         public static void RecordStep(string region, float physicsMs, int activeBodies)
@@ -68,7 +69,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             if (now - last > 30000 &&
                 Interlocked.CompareExchange(ref s_lastLogTick, now, last) == last)
             {
-                m_log.Info(Report());
+                m_log.LogInformation(Report());
             }
         }
 

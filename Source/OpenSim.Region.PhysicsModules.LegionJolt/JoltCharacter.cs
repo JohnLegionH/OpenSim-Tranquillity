@@ -17,6 +17,7 @@
 // System.Numerics (SVector3/SQuaternion).
 
 using System;
+using Microsoft.Extensions.Logging;
 using OpenSim.Framework;
 using OpenSim.Region.PhysicsModules.SharedBase;
 using OpenMetaverse;
@@ -156,7 +157,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             {
                 _jumpLatched = false;
                 if (LegionJoltScene.CharJumpTrace)
-                    LegionJoltScene.m_log.Debug($"{LegionJoltScene.LogHeader} [charjump] id={LocalID} TAKEOFF vZ={_velocity.Z:0.000} supported={s.IsSupported} -> latch cleared");
+                    LegionJoltScene.m_log.LogDebug($"{LegionJoltScene.LogHeader} [charjump] id={LocalID} TAKEOFF vZ={_velocity.Z:0.000} supported={s.IsSupported} -> latch cleared");
             }
 
             RequestPhysicsterseUpdate();
@@ -173,7 +174,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             // clears its own request every step; the drain releases our latch on takeoff.
             _backend.SetCharacterMovement(_character, ToS(_targetVelocity), _jumpLatched, _flying);
             if (_jumpLatched && LegionJoltScene.CharJumpTrace)
-                LegionJoltScene.m_log.Debug($"{LegionJoltScene.LogHeader} [charjump] id={LocalID} sent jump=true to backend (target={_targetVelocity} flying={_flying})");
+                LegionJoltScene.m_log.LogDebug($"{LegionJoltScene.LogHeader} [charjump] id={LocalID} sent jump=true to backend (target={_targetVelocity} flying={_flying})");
         }
 
         internal void Destroy()
@@ -250,7 +251,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         {
             _jumpLatched = true;   // held until takeoff (see ApplyCharacterState); jump height is the JumpSpeed knob
             if (LegionJoltScene.CharJumpTrace)
-                LegionJoltScene.m_log.Debug($"{LegionJoltScene.LogHeader} [charjump] id={LocalID} AvatarJump(forceZ={forceZ:0.00}) fired -> latch set (supported={_isSupported} flying={_flying})");
+                LegionJoltScene.m_log.LogDebug($"{LegionJoltScene.LogHeader} [charjump] id={LocalID} AvatarJump(forceZ={forceZ:0.00}) fired -> latch set (supported={_isSupported} flying={_flying})");
             PushMovement();
         }
 
