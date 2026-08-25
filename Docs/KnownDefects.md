@@ -887,3 +887,54 @@ is on the same save path as the race documented above. Growth is slow but unboun
 
 **Open:** what `be0701d8…` is, and what is still driving saves for it. That is the thread
 to pull first — it may be the same mechanism as the missing reap, or something separate.
+
+## Parcel local IDs are hashed as `float`, not as an integer
+
+**Status:** filed 2026-08-25, not fixed — benign on the live grid today. Filed because it
+silently constrains any future edit to `BHasher`.
+
+**Symptom.** None observable. Room numbers are stable, and every caller of `CalcRoomNumber`
+hashes the same way, so nothing misbehaves at present parcel counts.
+
+**Mechanism.** `CalcRoomNumber` (`JanusAudioBridge.cs:195`) folds the parcel local ID into
+the hash with `hasher.Add(pParcelLocalID)` (`JanusAudioBridge.cs:205`), passing an `int`.
+`IBHasher` declares no `Add(int)` and no `Add(long)` — the whole overload set is `byte`,
+`ushort`, `uint`, `ulong`, `float`, `byte[]`, `string`, `BHash` (`BHasher.cs:56`–`:63`).
+`int` has no implicit conversion to any of the integer overloads (`int`→`uint` and
+`int`→`ulong` are both explicit in C#), so overload resolution falls to the one implicit
+numeric conversion that does exist: **`Add(float)`** (`BHasher.cs:255`). The parcel ID is
+therefore hashed as its four IEEE-754 single-precision bytes rather than as an integer.
+
+Established by replication, not by reading the overload set. Re-implementing the djb2-64 of
+`ComputeMdjb2Hash` (`BHasher.cs:341`) over UTF-8 region ID + UTF-8 `"local"` + the parcel
+ID's little-endian `float` bytes, folded by `BHashULong.GetHashCode()` (`BHasher.cs:128`)
+and passed through `Math.Abs` (`JanusAudioBridge.cs:219`), reproduces two room numbers
+observed on the live grid exactly, on region Elm
+(`806332b8-7294-4101-842d-e6e2d5385e55`): parcel `-999` → `1967062692`, parcel `1` →
+`1966197062`. No integer encoding of the parcel ID reproduces either number.
+
+**Why it matters.** Two consequences, and the second is the reason this is worth filing.
+
+*Precision.* A `float` significand carries 24 bits, so integers above 2^24 (16,777,216) are
+no longer exactly representable. Two distinct parcels whose local IDs differ only below that
+precision hash to the same `float`, therefore to the same room number, and their occupants
+would be silently merged into one voice room with no error on either side. OpenSim parcel
+local IDs are per-region and start at 1, so no live region is remotely near this. It is a
+latent bound, not a live fault.
+
+*The encoding is frozen by accident.* Adding a proper `Add(int)` or `Add(long)` overload to
+`IBHasher` — an obviously correct-looking tidy-up, and the kind of change nobody would think
+to gate — would silently re-bind this call site and change **every room number on the grid**.
+Nothing would fail to compile and nothing would log. Regions and the mixer would simply
+compute different rooms until every one of them ran the same build, so a rolling upgrade
+would split voice mid-flight. The current binding is load-bearing precisely because it is
+accidental, and neither `BHasher.cs` nor `JanusAudioBridge.cs` says so anywhere.
+
+**If it is ever changed** it is a grid-wide room renumbering, not a local edit: every region
+and the mixer must cut over together, or the hash needs an explicit version that both sides
+agree on. Adding the overload on its own is the failure mode to guard against.
+
+**Related, and not filed here.** `JanusPeerCtlBatchSink.cs:38` and the provision path at
+`WebRtcJanusService.cs:243` pass *different* parcel local IDs into this same function, which
+is why `peer_ctl_batch` messages address a room that no participant ever joins. That is a
+separate defect with its own cause; this entry covers only the encoding.
