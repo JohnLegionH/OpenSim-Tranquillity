@@ -821,3 +821,60 @@ signal comes from. If it is presence in a room roster, compare against what the 
 publishes and when. The `visibility.have_batch` field in `handle_info` reports true for a
 room that has A batch, not that a given handle received one — if the sender relies on
 anything with that shape, it is asking a question the answer cannot satisfy.
+
+## Phlox script-state save fails under concurrent script/physics load
+
+**Status:** not started — pre-existing, amplified by Jolt. Characterised 2026-08-24.
+
+**Symptom.** `[PhloxState]: Failed to save "<item>"` with one of two messages: "Collection
+was modified after the enumerator was instantiated" (the large majority) or "An element of
+type `InWorldz.Phlox.Serialization.SerializedStackFrame` was null; this might be as contents
+in a list/array". Both are the same concurrent-modification race caught at different points.
+
+**Mechanism.** Not established beyond the message: state serialization enumerates a
+collection that another thread mutates concurrently. Which collection, and which thread, is
+unidentified.
+
+**Frequency is load-dependent, and that is the useful part.** Under ubODE the net8 log
+records ONE occurrence in a full day. Under Jolt, with ten `llCastRay` load-test scripts
+running on Elm, 200 occurrences in roughly an hour, distributed across all ten instances
+(9-32 each). The harness (`jolt-llcastray-loadtest.lsl`, asset
+`7cad3fff-d443-45a4-88dd-57fa55b7632c`) exists specifically to contend script-thread
+`llCastRay` against the heartbeat's `_system.Update`, which is what `_simLock` guards — so
+the amplification is the harness doing its job.
+
+**Why it matters, and why it is not urgent.** The failures are retried, and the retry
+succeeds once contention drops: all ten scripts' final save on delete landed within three
+seconds, timestamps 00:49:36-38. So state is not lost in practice under this workload.
+What is unquantified is whether a save can fail AT SHUTDOWN with no later opportunity to
+retry — that is the case that would lose state, and it has not been observed or ruled out.
+
+**Reproduction.** Rez the llcastray Load Test harness on a region with `physics = Jolt`. The
+failures begin within seconds.
+
+## Phlox script_state rows are never reaped, and are written for scripts with no live instance
+
+**Status:** not started — observed 2026-08-24, slow unbounded growth.
+
+**Symptom.** `ScriptEngines/Phlox/state/script_state.db` accumulates rows indefinitely.
+Observed at 86 rows across 7 distinct `asset_id` values, on a grid running roughly a dozen
+live scripts.
+
+**Mechanism.** Two behaviours, and the second is the more surprising.
+
+Deleting a scripted object does not remove its `script_state` row. Ten load-test instances
+were deleted; all ten rows remain, each carrying a final save written at deletion time.
+
+More significantly, rows are written for scripts with no inventory item at all. Asset
+`be0701d8-1d38-41ce-b0bd-952d8ab853c0` holds 71 of the 86 rows — the majority of the
+table — while `SELECT COUNT(*) FROM primitems WHERE assetID='be0701d8…'` returns ZERO.
+Its oldest row dates to 2026-08-10 and its newest was written at 00:49:52 on 2026-08-25,
+minutes after the query that found no live instances. So something is still saving state
+for it.
+
+**Why it matters.** At present scale this is a curiosity — 86 rows in a local SQLite file.
+But there is no reaping path, writes continue for objects that no longer exist, and the file
+is on the same save path as the race documented above. Growth is slow but unbounded.
+
+**Open:** what `be0701d8…` is, and what is still driving saves for it. That is the thread
+to pull first — it may be the same mechanism as the missing reap, or something separate.
