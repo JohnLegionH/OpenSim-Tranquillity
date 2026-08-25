@@ -503,7 +503,14 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                     {
                         map.Remove("parcel_local_id"); // estate channel
                     }
-                    else if(parcel.IsRestrictedFromLand(agentID) || parcel.IsBannedFromLand(agentID))
+
+                    // Defect #13 (Docs/voice/parcel-voice-semantics.md, OPEN items): this
+                    // check used to be chained as the "else" of the UseEstateVoiceChan branch
+                    // above, so setting the estate-channel flag skipped ban/restrict enforcement
+                    // entirely. Room selection (which Janus room to route to) and access control
+                    // (may this agent have voice here at all) are independent decisions, so the
+                    // check now runs on both the estate-channel and per-parcel paths.
+                    if(parcel.IsRestrictedFromLand(agentID) || parcel.IsBannedFromLand(agentID))
                     {
                         // check Z distance?
                         m_log.LogDebug($"{logHeader}[ProvisionVoice]:agent not allowed on parcel");
