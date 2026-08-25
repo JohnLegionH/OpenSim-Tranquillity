@@ -1,6 +1,6 @@
 using System;
 using System.Reflection;
-using log4net;
+using Microsoft.Extensions.Logging;
 using Nini.Config;
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
@@ -27,7 +27,7 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Membership;
 // section is absent, or when no IMembershipService is registered in the region.
 public class MembershipFeaturesModule : INonSharedRegionModule
 {
-    private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+    private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
     private bool m_enabled = false;
     private IMembershipService m_membership;
@@ -43,7 +43,7 @@ public class MembershipFeaturesModule : INonSharedRegionModule
         IConfig cfg = source.Configs["SimulatorFeaturesMembership"];
         m_enabled = cfg != null && cfg.GetBoolean("Enabled", false);
         if (m_enabled)
-            m_log.Info("[MEMBERSHIP FEATURES]: Enabled — will advertise membership-tier caps in SimulatorFeatures");
+            m_log.LogInformation("[MEMBERSHIP FEATURES]: Enabled — will advertise membership-tier caps in SimulatorFeatures");
     }
 
     public void AddRegion(Scene scene) { }
@@ -58,8 +58,8 @@ public class MembershipFeaturesModule : INonSharedRegionModule
 
         if (m_membership == null)
         {
-            m_log.WarnFormat(
-                "[MEMBERSHIP FEATURES]: no IMembershipService registered in region {0} — tier caps will NOT be advertised (inert).",
+            m_log.LogWarning(
+                "[MEMBERSHIP FEATURES]: no IMembershipService registered in region {RegionName} — tier caps will NOT be advertised (inert).",
                 scene.RegionInfo.RegionName);
             return;
         }
@@ -67,8 +67,8 @@ public class MembershipFeaturesModule : INonSharedRegionModule
         ISimulatorFeaturesModule featuresModule = scene.RequestModuleInterface<ISimulatorFeaturesModule>();
         if (featuresModule == null)
         {
-            m_log.WarnFormat(
-                "[MEMBERSHIP FEATURES]: no ISimulatorFeaturesModule in region {0} — cannot advertise tier caps.",
+            m_log.LogWarning(
+                "[MEMBERSHIP FEATURES]: no ISimulatorFeaturesModule in region {RegionName} — cannot advertise tier caps.",
                 scene.RegionInfo.RegionName);
             return;
         }
@@ -143,7 +143,7 @@ public class MembershipFeaturesModule : INonSharedRegionModule
         }
         catch (Exception e)
         {
-            m_log.WarnFormat("[MEMBERSHIP FEATURES]: failed to apply tier caps for {0}: {1}", agentID, e);
+            m_log.LogWarning("[MEMBERSHIP FEATURES]: failed to apply tier caps for {AgentId}: {Error}", agentID, e);
         }
     }
 }

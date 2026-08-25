@@ -1,4 +1,4 @@
-using log4net;
+using Microsoft.Extensions.Logging;
 using Nini.Config;
 using System.Reflection;
 using OpenSim.Server.Base;
@@ -14,7 +14,7 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Membership;
 // [Modules] key quirk: the LOCAL connector is selected by the SINGULAR key "MembershipService".
 public class LocalMembershipServicesConnector : ISharedRegionModule, IMembershipService
 {
-    private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+    private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
     private List<Scene> m_Scenes = new List<Scene>();
     protected IMembershipService m_service = null;
@@ -46,14 +46,14 @@ public class LocalMembershipServicesConnector : ISharedRegionModule, IMembership
         IConfig svcConfig = source.Configs["MembershipService"];
         if (svcConfig == null)
         {
-            m_log.Error("[MEMBERSHIP LOCALCONNECTOR]: MembershipService missing from configuration");
+            m_log.LogError("[MEMBERSHIP LOCALCONNECTOR]: MembershipService missing from configuration");
             return;
         }
 
         string serviceDll = svcConfig.GetString("LocalServiceModule", String.Empty);
         if (serviceDll == String.Empty)
         {
-            m_log.Error("[MEMBERSHIP LOCALCONNECTOR]: No MembershipModule named in section MembershipService");
+            m_log.LogError("[MEMBERSHIP LOCALCONNECTOR]: No MembershipModule named in section MembershipService");
             return;
         }
 
@@ -64,18 +64,18 @@ public class LocalMembershipServicesConnector : ISharedRegionModule, IMembership
         }
         catch
         {
-            m_log.Error("[MEMBERSHIP LOCALCONNECTOR]: Failed to load membership service");
+            m_log.LogError("[MEMBERSHIP LOCALCONNECTOR]: Failed to load membership service");
             return;
         }
 
         if (m_service == null)
         {
-            m_log.Error("[MEMBERSHIP LOCALCONNECTOR]: Can't load membership service");
+            m_log.LogError("[MEMBERSHIP LOCALCONNECTOR]: Can't load membership service");
             return;
         }
 
         m_Enabled = true;
-        m_log.Info("[MEMBERSHIP LOCALCONNECTOR]: Enabled!");
+        m_log.LogInformation("[MEMBERSHIP LOCALCONNECTOR]: Enabled!");
     }
 
     public void Close()

@@ -1,4 +1,4 @@
-using log4net;
+using Microsoft.Extensions.Logging;
 using System.Reflection;
 using Nini.Config;
 using OpenSim.Framework;
@@ -12,7 +12,7 @@ namespace OpenSim.Services.Connectors;
 // query-string form, POSTs to <uri>/membership, parses the XML <ServerResponse>.
 public class MembershipServicesConnector : BaseServiceConnector, IMembershipService
 {
-    private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+    private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
     private string m_ServerURI = String.Empty;
 
@@ -35,14 +35,14 @@ public class MembershipServicesConnector : BaseServiceConnector, IMembershipServ
         IConfig gridConfig = source.Configs["MembershipService"];
         if (gridConfig == null)
         {
-            m_log.Error("[MEMBERSHIP CONNECTOR]: MembershipService missing from configuration");
+            m_log.LogError("[MEMBERSHIP CONNECTOR]: MembershipService missing from configuration");
             throw new Exception("Membership connector init error");
         }
 
         string serviceURI = gridConfig.GetString("MembershipServerURI", String.Empty);
         if (serviceURI == String.Empty)
         {
-            m_log.Error("[MEMBERSHIP CONNECTOR]: No MembershipServerURI named in section MembershipService");
+            m_log.LogError("[MEMBERSHIP CONNECTOR]: No MembershipServerURI named in section MembershipService");
             throw new Exception("Membership connector init error");
         }
         m_ServerURI = serviceURI + "/membership";
@@ -118,14 +118,14 @@ public class MembershipServicesConnector : BaseServiceConnector, IMembershipServ
                     ServerUtils.BuildQueryString(sendData), m_Auth);
             if (reply == string.Empty)
             {
-                m_log.DebugFormat("[MEMBERSHIP CONNECTOR]: {0} received empty reply", meth);
+                m_log.LogDebug("[MEMBERSHIP CONNECTOR]: {Method} received empty reply", meth);
                 return null;
             }
             return ServerUtils.ParseXmlResponse(reply);
         }
         catch (Exception e)
         {
-            m_log.DebugFormat("[MEMBERSHIP CONNECTOR]: Exception on {0}: {1}", meth, e.Message);
+            m_log.LogDebug("[MEMBERSHIP CONNECTOR]: Exception on {Method}: {ErrorMessage}", meth, e.Message);
             return null;
         }
     }

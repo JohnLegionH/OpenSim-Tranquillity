@@ -6,7 +6,7 @@ using OpenSim.Services.Connectors;
 using OpenSim.Framework;
 
 using OpenMetaverse;
-using log4net;
+using Microsoft.Extensions.Logging;
 using Nini.Config;
 
 namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Membership;
@@ -15,7 +15,7 @@ namespace OpenSim.Region.CoreModules.ServiceConnectorsOut.Membership;
 // [Modules] key quirk: the REMOTE connector is selected by the PLURAL key "MembershipServices".
 public class RemoteMembershipServicesConnector : ISharedRegionModule, IMembershipService
 {
-    private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+    private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
     #region ISharedRegionModule
 
@@ -44,7 +44,7 @@ public class RemoteMembershipServicesConnector : ISharedRegionModule, IMembershi
                 m_remoteConnector = new MembershipServicesConnector(source);
                 m_Enabled = true;
 
-                m_log.Info("[MEMBERSHIP CONNECTOR]: Remote MembershipService enabled");
+                m_log.LogInformation("[MEMBERSHIP CONNECTOR]: Remote MembershipService enabled");
             }
         }
     }
@@ -63,7 +63,7 @@ public class RemoteMembershipServicesConnector : ISharedRegionModule, IMembershi
             return;
 
         scene.RegisterModuleInterface<IMembershipService>(this);
-        m_log.InfoFormat("[MEMBERSHIP CONNECTOR]: Enabled for region {0}", scene.RegionInfo.RegionName);
+        m_log.LogInformation("[MEMBERSHIP CONNECTOR]: Enabled for region {RegionName}", scene.RegionInfo.RegionName);
     }
 
     public void RemoveRegion(Scene scene)

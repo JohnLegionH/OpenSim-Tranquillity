@@ -1,6 +1,6 @@
 using System.Reflection;
 using Nini.Config;
-using log4net;
+using Microsoft.Extensions.Logging;
 using OpenSim.Framework;
 using OpenSim.Services.Interfaces;
 using OpenMetaverse;
@@ -9,15 +9,15 @@ namespace OpenSim.Services.MembershipService;
 
 public class MembershipService : MembershipServiceBase, IMembershipService
 {
-    private static readonly ILog m_log =
-            LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+    private static readonly ILogger m_log =
+            LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
     private IUserAccountService m_UserService = null;
 
     public MembershipService(IConfigSource config)
         : base(config)
     {
-        m_log.Debug("[MEMBERSHIP SERVICE]: Starting membership service");
+        m_log.LogDebug("[MEMBERSHIP SERVICE]: Starting membership service");
 
         IConfig svcConfig = config.Configs["MembershipService"];
         if (svcConfig == null)
@@ -140,7 +140,7 @@ public class MembershipService : MembershipServiceBase, IMembershipService
 
         acc.UserTitle = title;   // "" clears it -> byte-path fallback via REPLACE default
         if (!m_UserService.StoreUserAccount(acc))
-            m_log.WarnFormat("[MEMBERSHIP SERVICE]: failed to store UserTitle for {0}", agentID);
+            m_log.LogWarning("[MEMBERSHIP SERVICE]: failed to store UserTitle for {AgentId}", agentID);
     }
 
     // ---------------------------------------------------------------------

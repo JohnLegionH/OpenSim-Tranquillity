@@ -1,4 +1,4 @@
-using log4net;
+using Microsoft.Extensions.Logging;
 using System.Reflection;
 using OpenSim.Server.Base;
 using OpenSim.Services.Interfaces;
@@ -13,7 +13,7 @@ namespace OpenSim.Server.Handlers.Membership;
 // shape as the Experience handler. METHOD selects the verb.
 public class MembershipServerPostHandler : BaseStreamHandler
 {
-    private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+    private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
     private IMembershipService m_service;
 
@@ -55,11 +55,11 @@ public class MembershipServerPostHandler : BaseStreamHandler
                 case "removemembership":
                     return RemoveMembership(request);
             }
-            m_log.DebugFormat("[MEMBERSHIP HANDLER]: unknown method request: {0}", method);
+            m_log.LogDebug("[MEMBERSHIP HANDLER]: unknown method request: {Method}", method);
         }
         catch (Exception e)
         {
-            m_log.DebugFormat("[MEMBERSHIP HANDLER]: Exception in method {0}: {1}", method, e);
+            m_log.LogDebug("[MEMBERSHIP HANDLER]: Exception in method {Method}: {Error}", method, e);
         }
 
         return FailureResult();
