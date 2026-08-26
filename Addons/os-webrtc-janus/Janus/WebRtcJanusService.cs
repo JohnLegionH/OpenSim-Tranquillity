@@ -272,10 +272,14 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                         var joinResult = await viewerSession.Room.JoinRoom(viewerSession).ConfigureAwait(false);
                         if (joinResult.Joined)
                         {
+                            // Additive: the joined room number, so the region can record which mixer room this
+                            // agent is actually in (per-room-visibility-emission-design-brief.md OQ1(a), step S1).
+                            // Success branch only; failure maps carry no room.
                             ret = new OSDMap
                             {
                                 { "jsep", viewerSession.Answer },
-                                { "viewer_session", viewerSession.ViewerSessionID }
+                                { "viewer_session", viewerSession.ViewerSessionID },
+                                { "room", viewerSession.Room.RoomId }
                             };
                         }
                         else if (joinResult.ErrorCode == JANUS_ROOM_FULL_ERROR_CODE)
