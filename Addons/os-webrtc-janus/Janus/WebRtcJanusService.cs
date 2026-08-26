@@ -232,10 +232,7 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                     await viewerSession.Room.LeaveRoom(viewerSession);
                     viewerSession.Room = null;
                 }
-                return new OSDMap
-                {
-                    { "response", "closed" }
-                };
+                return ProvisionResponseBuilder.BuildClosed();
             }
 
             // Get the parameters that select the room
@@ -275,12 +272,7 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                             // Additive: the joined room number, so the region can record which mixer room this
                             // agent is actually in (per-room-visibility-emission-design-brief.md OQ1(a), step S1).
                             // Success branch only; failure maps carry no room.
-                            ret = new OSDMap
-                            {
-                                { "jsep", viewerSession.Answer },
-                                { "viewer_session", viewerSession.ViewerSessionID },
-                                { "room", viewerSession.Room.RoomId }
-                            };
+                            ret = ProvisionResponseBuilder.BuildSuccess(viewerSession.Answer, viewerSession.ViewerSessionID, viewerSession.Room.RoomId);
                         }
                         else if (joinResult.ErrorCode == JANUS_ROOM_FULL_ERROR_CODE)
                         {
@@ -325,15 +317,9 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
         if (!string.IsNullOrEmpty(errorMsg) && ret is null)
         {
             // The provision failed so build an error message to return.
-            ret = new OSDMap
-            {
-                { "response", "failed" },
-                { "error", errorMsg }
-            };
             // Only a capacity rejection sets errorCode; the CAP handler maps 495 -> HTTP 409.
             // Every other failure leaves it 0 (no error_code field) and keeps its status.
-            if (errorCode != 0)
-                ret["error_code"] = errorCode;
+            ret = ProvisionResponseBuilder.BuildFailure(errorMsg, errorCode);
         }
 
         return ret;

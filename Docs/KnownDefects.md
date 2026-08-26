@@ -1059,3 +1059,105 @@ unreachable first.
 **Related, and not this entry.** *"WebRTC voice: the visibility feed is addressed only to the
 estate room, so per-parcel agents receive no exclusions"* is the delivery gap; per-room emission
 shrinks each batch to one room's content, which helps this cap without curing the dense case.
+
+## Voice visibility sender: the two stall-guard tests have failed since the ILogger migration, so the self-heal has no live coverage
+
+**Status:** filed 2026-08-26, not fixed — **Legion-side (our code), not Tranquillity core.** Test
+coverage defect; the guard itself is not known to be broken.
+
+**Symptom.** `dotnet test Tests/WebRtcJanusService.Tests` reports 2 failed / 78 passed on every
+run. The two are `VisibilityBatchSenderTests.StalledSend_GuardFiresAfterThreshold_ClearsFlag_NextPumpSnapshots`
+and `VisibilityBatchSenderTests.AbandonedSendLateCompletion_DoesNotClearANewerSendsFlag`, each on
+`Assert.That(StallLogCount(appender), Is.EqualTo(1))` — expected 1, was 0
+(`VisibilityBatchSenderTests.cs:436`, `:519`).
+
+**Proven pre-existing.** On 2026-08-26 the same two failures, and only those two, reproduced from
+a clean throwaway worktree at *docs(voice): decide the seven open questions, add build plan and
+64KB defect* (`6586838e43`) with no working-tree change: 2 failed / 78 passed, identical to the
+main tree. They are not caused by any change after that commit.
+
+**Mechanism.** The tests capture the sender's log through **log4net**: `CaptureVisibilityLog`
+(`:382`–`:391`) attaches a `log4net.Appender.MemoryAppender` to the log4net repository of
+`typeof(VisibilityBatchSender).Assembly`, and `StallLogCount` (`:393`–`:395`) counts `Error`
+events whose rendered message contains "stuck in-flight" and "region Ebony". But the sender no
+longer logs through log4net. Since *voice: convert the last four log4net call sites to ILogger*
+(2026-08-23) its logger is `private static readonly ILogger m_log = LoggerProvider.CreateLogger(...)`
+(`WebRtcVoiceRegionModule/VisibilityBatchSender.cs:39`), and the stall log is `m_log.LogError(...)`
+in `ForceClearStalledSend` (`:180`–`:184`). In the test host nothing ever sets
+`LoggerProvider.LoggerFactory`, which defaults to `NullLoggerFactory` precisely so that "tests that
+never build a host do not fail" (`Source/OpenSim.Framework/LoggerProvider.cs:13`, `:17`). The
+stall log is therefore written to a null logger and never reaches the appender; the count is 0
+by construction. The tests were last changed by *test(voice): cover the emission self-heal +
+assembly-level timeout backstop* (2026-08-17), six days before the migration, and were not
+updated with it.
+
+**Consequence — the guard's coverage is dead, not merely noisy.** `ForceClearStalledSend` is FIX 2
+of the emission-wedge hardening: it is the mechanism that detects a `peer_ctl_batch` send stuck
+in flight past 8x the admin timeout, force-clears the single-flight flag, and forces a snapshot,
+turning a permanent silent emission stall into a bounded hiccup. In both tests the first log
+assertion fails **before** the assertions that matter — that the flag was cleared, that the next
+pump acquires, that it sends a snapshot rather than a delta (`:438`–`:443`), and that a late
+completion of the abandoned send cannot clear a newer send's flag. Those lines never execute. A
+regression in any of them would not change the test outcome, because the outcome is already
+"failed" for an unrelated reason. Two red tests that everyone has learned to ignore are worse
+than no tests: they also mask any new failure in the same fixture.
+
+Whether the stall log reaches log4net in **production** is a separate question: the host sets
+`LoggerProvider.LoggerFactory` at startup and the deploy root carries
+`Microsoft.Extensions.Logging.Log4Net.AspNetCore.dll`, so it probably does, but this entry does not
+claim so (`Docs/voice/voice-programme-ledger.md` U-7).
+
+**Fix direction.** Capture through the abstraction the sender actually uses: set
+`LoggerProvider.LoggerFactory` in the fixture to a factory whose `ILoggerProvider` records
+entries (category, level, rendered message), assert `StallLogCount` against that, and restore the
+null factory on teardown. `CreateLogger` returns a deferred logger that resolves the factory at
+log time, so a fixture-level assignment is sufficient. Drop the log4net appender from this fixture.
+The `[Test]` bodies need no other change.
+
+## os-webrtc-janus.ini and its .example carry none of the three Visibility keys the live grid runs on
+
+**Status:** filed 2026-08-26, not fixed — **Legion-side (our code), not Tranquillity core.**
+Configuration/documentation gap. Recorded as "filed nowhere" by
+`Docs/voice/voice-programme-ledger.md` O-21; this is the filing.
+
+**Symptom.** A region configured from either shipped ini file starts with the Phase-3a
+visibility feeder **off**, so parcel ban/restrict, parcel voice moderation and `SeeAVs` hiding
+are not enforced in voice — and nothing says so. The only line the module logs is
+`[REGION WEBRTC VOICE]: enabled`; with the feeder disabled, `RegionLoaded` takes no branch that
+logs, warns, or mentions the feeder (`WebRtcVoiceRegionModule.cs:168`–`:180`, the
+`if (m_VisibilityFeederEnabled)` block has no else).
+
+**Mechanism.** The region module reads three `[WebRtcVoice]` keys with off/default values:
+`VisibilityFeederEnabled` (default `false`), `VisibilityTickMs` (default `250`),
+`VisibilityEmitEnabled` (default `false`) (`WebRtcVoiceRegionModule.cs:103`–`:105`). Verified
+2026-08-26 against all three sources:
+
+- `Addons/os-webrtc-janus/os-webrtc-janus.ini` — the tracked sample the addon README tells
+  operators to copy into `bin/config` (`Addons/os-webrtc-janus/README.md:74`, `:86`): **none of
+  the three keys**.
+- `Addons/os-webrtc-janus/os-webrtc-janus.ini.example`: **none of the three keys**.
+- The live grid's `config\OpenSim.ini` `[WebRtcVoice]`: `VisibilityFeederEnabled = true`,
+  `VisibilityEmitEnabled = true`, `VisibilityTickMs = 250` — added by hand, undocumented.
+
+Two further keys the code reads are likewise absent from both shipped files and present live:
+`[JanusWebRtcVoice] AdminTimeoutMs` (`:113`, default 5000 — the sender's staleness self-heal is
+sized from it) and `[JanusWebRtcVoice] PluginName` (live: `janus.plugin.slvoice`; introduced by
+*Make the Janus plugin name configurable via [JanusWebRtcVoice] PluginName*). Without `PluginName`
+the region attaches to whatever the code's default plugin is, which is a second silent way to
+deploy a region that never talks to the mixer's visibility surface.
+
+**Why it matters.** The keys' defaults are the *safe* defaults for a mixer that has no visibility
+consumer — which is what `Docs/voice/phase3a-feeder-acceptance.md` still says ("off by default —
+no consumer emits its output to Janus yet"). That has been false since *feat(voice): peer_ctl_batch
+sender — wire the visibility matrix to the mixer* (2026-08-16): the consumer exists, the live grid
+runs with emission on, and the acceptance doc's rationale for the default is stale. So the shipped
+files describe a configuration nobody runs, and the configuration everybody should run is
+recoverable only from this grid's private ini. A fresh operator following the README gets a voice
+service in which every sim-side visibility rule is computed and thrown away, with the feeder
+silent about being off.
+
+**Fix direction.** Add the three keys (and `AdminTimeoutMs`, `PluginName`) to both
+`os-webrtc-janus.ini` and the `.example` with the same comment style as `StunServers`, defaulted
+to the values the live grid runs; and log one line at `RegionLoaded` when the feeder is disabled,
+so a matrix-less region is visible in the log. Update `phase3a-feeder-acceptance.md`'s config
+table and its "no consumer" sentence at the same time.
