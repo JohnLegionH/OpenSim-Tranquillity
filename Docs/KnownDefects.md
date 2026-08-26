@@ -935,6 +935,70 @@ and the mixer must cut over together, or the hash needs an explicit version that
 agree on. Adding the overload on its own is the failure mode to guard against.
 
 **Related, and not filed here.** `JanusPeerCtlBatchSink.cs:38` and the provision path at
-`WebRtcJanusService.cs:243` pass *different* parcel local IDs into this same function, which
-is why `peer_ctl_batch` messages address a room that no participant ever joins. That is a
-separate defect with its own cause; this entry covers only the encoding.
+`WebRtcJanusService.cs:243` pass *different* parcel local IDs into this same function, so
+`peer_ctl_batch` messages are addressed to the estate room whichever room an agent actually
+joined. That room *is* correctly populated whenever any parcel in the region sets
+`UseEstateVoiceChan`, because provisioning falls back to `REGION_ROOM_ID` for those agents
+too; it is unpopulated only where no parcel in the region uses the estate channel. Either
+way it is a separate defect with its own cause — see *"WebRTC voice: the visibility feed is
+addressed only to the estate room, so per-parcel agents receive no exclusions"*; this entry
+covers only the encoding.
+
+## WebRTC voice: the visibility feed is addressed only to the estate room, so per-parcel agents receive no exclusions
+
+**Status:** filed 2026-08-25, not fixed — **Legion-side (our code), not Tranquillity core.**
+Affects every region in which any parcel leaves `ParcelFlags.UseEstateVoiceChan` clear.
+
+**Symptom.** On a parcel that uses its own voice channel, sim-authoritative voice visibility
+does nothing at all. Parcel bans, parcel voice moderation and `SeeAVs` hiding are each
+computed correctly by the Phase-3a matrix and then have no audible effect: a banned avatar is
+heard, a moderator-muted avatar is heard, and occupants of a `SeeAVs=false` parcel are heard.
+Nothing errors, nothing latches, and every feeder-side counter reads healthy — the matrix is
+built each tick, the batch is sent, and the mixer answers `{"slvoice":"applied"}`.
+
+**Mechanism.** `JanusPeerCtlBatchSink` computes its room **once, in its constructor**, and
+never again: `_room = JanusAudioBridge.CalcRoomNumber(regionId, "local", REGION_ROOM_ID, "")`
+(`Addons/os-webrtc-janus/WebRtcVoiceRegionModule/JanusPeerCtlBatchSink.cs:38`–`:39`; the
+constant is `REGION_ROOM_ID = -999` at `Addons/os-webrtc-janus/Janus/JanusAudioBridge.cs:176`).
+Every outgoing batch is stamped with that one number at `JanusPeerCtlBatchSink.cs:49`.
+
+That is the only place a room number exists anywhere in the visibility path, and deliberately
+so. `VisibilityBatchSender` is backend- and room-agnostic by design — its header states "no
+Janus / no room number here — the sink stamps the room"
+(`WebRtcVoiceRegionModule/VisibilityBatchSender.cs:3`) — and `VoiceVisibilityService` hands the
+feeder a placeholder rather than a real room (`EstateRoomPlaceholder = -999`,
+`VoiceVisibilityService.cs:32`, passed at `:64`). `JanusPeerCtlBatchSink.cs:38` is the sole
+`CalcRoomNumber` call site in the whole module.
+
+Room *membership*, by contrast, is chosen per agent at provisioning time from the parcel's
+flags. `WebRtcVoiceRegionModule.cs:502`–`:505` removes `parcel_local_id` from the request only
+when `UseEstateVoiceChan` is set; with the flag clear the viewer's `parcel_local_id` survives
+and `Janus/WebRtcJanusService.cs:243` hashes *that* into a distinct per-parcel room. So an
+agent on a per-parcel channel sits in one room while its exclusion column is addressed to
+another.
+
+At the far end the mismatch presents as a listener the room does not contain. The mixer's
+`apply_visbatch` scans the room for a session whose display matches the entry's listener UUID,
+finds none, and skips the entry — counting it in `vis_dropped_listener_entries` and
+`vis_last_batch_dropped_listeners` and logging once at `LOG_VERB` (plugin v0.9.0). The admin
+response is byte-identical to a fully applied batch, so the sim never learns.
+
+**Consequence.** For any agent on a per-parcel voice channel, parcel ban/restrict, parcel voice
+moderation and `SeeAVs` hiding are **unenforced in voice**. The matrix that exists to enforce
+them is rebuilt for that agent every tick and delivered to a room it is not in.
+
+**What still holds — parcel isolation is unaffected.** Separate rooms are independent mixing
+domains: the mixer's `janus_slvoice_room_tick` enumerates only its own `room->participants`, so
+occupants of different per-parcel rooms cannot hear each other whatever the feed does. The
+failure is confined to distinctions *within* a room — a ban between two avatars who share one
+per-parcel room, for instance. Agents on the estate channel are fully covered, because the room
+they join is exactly the room the sink addresses.
+
+**Distinct from the provisioning bypass.** The `else`-chained ban check in
+`ProvisionVoiceAccountRequest` was a separate, sim-side half of the same underlying problem and
+is closed by *"fix(voice): enforce parcel ban/restrict on the estate voice channel"*. That fix
+denies provisioning to a banned avatar; it does nothing about delivery and does not narrow this
+entry.
+
+**Related entry.** *"Parcel local IDs are hashed as `float`, not as an integer"* covers the
+same call site from the encoding side — the two share a call site, not a cause.
