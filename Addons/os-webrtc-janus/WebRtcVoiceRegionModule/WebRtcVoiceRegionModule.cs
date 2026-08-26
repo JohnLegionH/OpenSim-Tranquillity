@@ -105,7 +105,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 m_VisibilityTickMs = m_Config.GetInt("VisibilityTickMs", 250);
                 m_VisibilityEmitEnabled = m_Config.GetBoolean("VisibilityEmitEnabled", false);
                 // S3b: rooms addressed concurrently within one send. A latency budget, not a
-                // throughput knob — see JanusPeerCtlBatchSink.DefaultRoomSendConcurrency.
+                // throughput knob ï¿½ see JanusPeerCtlBatchSink.DefaultRoomSendConcurrency.
                 m_VisibilityRoomSendConcurrency = m_Config.GetInt("VisibilityRoomSendConcurrency",
                     JanusPeerCtlBatchSink.DefaultRoomSendConcurrency);
 
@@ -118,9 +118,26 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                     m_AdminTimeoutMs = janusCfg.GetInt("AdminTimeoutMs", 5000);
                 }
 
+                // Console surface for the moderation store. Registered HERE, once, exactly where
+                // WebRtcVoiceServiceModule registers "show voice closing" - this module registered
+                // no console commands at all before now. Registration is unconditional on the
+                // feeder flag on purpose: with the feeder off there IS no moderation state, and the
+                // commands say so, which is a better answer to an operator than an unknown command.
+                new VoiceModerationCommands(SnapshotVisibilityServices).Register();
+
                 m_log.LogInformation($"{logHeader}: enabled");
             }
         }
+    }
+
+    // A copy of the per-region service map for the console commands. A copy, not the live
+    // dictionary: a console handler resolves names, enumerates parcels and writes to a terminal,
+    // and none of that may happen while holding the lock that the CAP handler and RegionLoaded
+    // contend for.
+    private List<KeyValuePair<Scene, VoiceVisibilityService>> SnapshotVisibilityServices()
+    {
+        lock (m_visibilityServices)
+            return new List<KeyValuePair<Scene, VoiceVisibilityService>>(m_visibilityServices);
     }
 
     // ISharedRegionModule.PostInitialize

@@ -17,6 +17,8 @@
     <Compile Include="AgentRoomTable.cs" />
     <Compile Include="VoiceModerationStore.cs" />
     <Compile Include="VoiceModerationAuth.cs" />
+    <Compile Include="VoiceModerationTargets.cs" />
+    <Compile Include="VoiceModerationCommands.cs" />
     <Compile Include="VisibilityBatchSender.cs" />
     <Compile Include="JanusPeerCtlBatchSink.cs" />
   </ItemGroup>

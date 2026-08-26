@@ -22,6 +22,7 @@
     <Compile Include="VoiceMembershipIndexTests.cs" />
     <Compile Include="VoiceSessionCloseCaptureTests.cs" />
     <Compile Include="AgentRoomTableTests.cs" />
+    <Compile Include="VoiceModerationConsoleTests.cs" />
   </ItemGroup>
 
   <ItemGroup>
