@@ -26,6 +26,7 @@
     <Compile Include="VoiceStateFeeder.cs" />
     <Compile Include="PeerCtlBatchSink.cs" />
     <Compile Include="PeerCtlBatchSerializer.cs" />
+    <Compile Include="PeerCtlBatchPartitioner.cs" />
   </ItemGroup>
 
 </Project>
