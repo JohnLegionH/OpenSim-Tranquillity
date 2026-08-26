@@ -1,7 +1,7 @@
 # Design Brief — Per-Room Visibility Emission
 
-**Status:** DRAFT for decision. Nothing implemented. Open questions at the end need answers
-before this is frozen.
+**Status:** DECIDED 2026-08-26. The seven open questions are resolved in §7, one conflict
+between them is resolved there explicitly, and §8 is the build plan. Nothing implemented yet.
 **Date:** 2026-08-26.
 **Basis:** `tranquillity-develop` at *docs(voice): file the per-parcel visibility delivery gap,
 split #13 by status* (branch `feature/voice-visibility-matrix`); `legion-voice-mixer` at
@@ -168,16 +168,19 @@ so a departed agent is never a listener and its stale record is never consulted;
 agent re-provisions and overwrites it. Clearing on close is an optional tidy-up, not a
 correctness requirement.
 
-**Sink send semantics across rooms.** `SendAsync` returns `Ok` only if every per-room send
-returned `Ok`; any `TransportError` → `TransportError`; any `ProtocolError` → `ProtocolError`.
-This preserves the sender's contract: a partial failure makes the sender re-snapshot next
-tick, and `replace` is per-listener idempotent, so re-sending the rooms that succeeded is
-harmless.
+**Sink send semantics across rooms.** `SendAsync` aggregates the per-room results in
+severity order: any `ProtocolError` → `ProtocolError`; else any `TransportError` →
+`TransportError`; else any `NotApplied` (OQ5) → `NotApplied`; else `Ok`. This preserves the
+sender's contract: a transport failure makes the sender re-snapshot next tick, and `replace`
+is per-listener idempotent, so re-sending the rooms that succeeded is harmless. `NotApplied`
+is counted and otherwise handled as `Ok` for flow control (§7 OQ5).
 
-**Listeners with no record.** A listener the matrix names but the table does not know is an
-agent that never reached the success branch this region saw. Whether the sink drops that
-listener's entry, or falls back to the estate room as today, is **Open Question 4** — the
-fallback is the conservative choice for the no-regression constraint.
+**Agents with no record.** A listener *or source* the matrix names but the table does not
+know is either an agent that never reached the success branch this region saw, or — in the
+connector topology against a service that does not yet return `room` — an agent in a room the
+region cannot see. Both roles resolve a missing record to the **estate room** (OQ4, and the
+consistency resolution in §7). The sink's existing constructor-computed estate room number
+becomes the fallback value, and one fallback counter per role records how often it was used.
 
 ### 2b. Tracking room changes — and whether this depends on the channel-change gap
 
@@ -212,9 +215,11 @@ path and, today, the sink — call the same function, so they agree.
 **Recommendation: fix it separately, not in this change, and keep this change from touching
 the derivation at all.** Three reasons:
 
-- Under the proposed seam the sink stops calling `CalcRoomNumber` entirely (the constructor
-  call at `JanusPeerCtlBatchSink.cs:38`–`:39` is removed; rooms arrive from the service). This
-  change *reduces* the number of derivation sites from two to one and adds none.
+- Under the proposed seam rooms arrive from the service. The sink's one remaining
+  `CalcRoomNumber` call is the constructor's estate-room computation
+  (`JanusPeerCtlBatchSink.cs:38`–`:39`), kept as the OQ4 fallback value. The two derivation
+  sites that exist today — provision path and sink — remain the same two, calling the same
+  function with the same binding; this change adds none.
 - That KnownDefects entry states the consequence of changing the encoding: every room number on
   the grid changes, and every region and the mixer must cut over together or a rolling upgrade
   splits voice mid-flight. That is a grid-wide renumbering with its own deploy choreography, and
@@ -273,15 +278,18 @@ emission partitions that same content by room. Consequences:
   population exceeds 128 across all channels overflows the single estate batch on a snapshot,
   and the 129th-plus listeners are silently skipped.
 - **`SLV_VIS_MAX_EXCL` (128 sources) becomes unreachable *only with same-room source
-  filtering*** (Open Question 2). A listener's matrix column contains every excluded source in
+  filtering*** (OQ2, decided). A listener's matrix column contains every excluded source in
   the region, in any room. Sources in other rooms are inert at the mixer — room membership
   already prevents them being heard, and the dot/presence paths iterate `room->participants`
   too — but they consume cap. The symmetric `SeeAVs` rule makes columns wide: an occupant of a
   `SeeAVs=false` parcel excludes every outsider, so its column is (region population − parcel
   population). **Unfiltered, a `SeeAVs=false` parcel in a region of 130+ voiced agents hits the
   cap; filtered to the listener's own room, a column is ≤ 109 by construction.** Filtering
-  requires the sink to resolve sources' rooms as well as listeners' — the same table — and to
-  drop sources with no record (not in any room, so inert anyway).
+  requires the sink to resolve sources' rooms as well as listeners' — the same table and the
+  **same resolver**, so a source with no record resolves to the estate room exactly as a
+  listener does (§7, consistency resolution). The ≤ 109 bound holds whenever records exist;
+  in the all-unrecorded skew state every column is today's full column, which is precisely
+  the state the no-regression constraint requires us to reproduce — no worse than today.
 - **Byte cap per batch improves** because each room's batch is a subset of today's single
   batch. It does **not** remove the dense case: mute-everyone in a room of 41+ still produces a
   `TOOBIG` delta, and that case exists today on the estate channel unchanged. See *Guard* below.
@@ -294,11 +302,16 @@ emission partitions that same content by room. Consequences:
   in flight and forces a snapshot next (`VisibilityBatchSender.cs:123`–`:135`). All R sends of one
   `SendAsync` run inside one flight. At an admin round-trip of t ms, sequential sends fit the
   250 ms cadence only while 2R·t < 250; beyond that every other tick is skipped, each skip
-  forces an R-message snapshot, and the storm self-sustains until R·t drops. **The admin
-  round-trip is not measured or recorded anywhere in either tree** (the only figure is the
-  5,000 ms timeout), so the crossover R cannot be stated numerically here. Mitigation is
-  bounded concurrency: rooms are independent, `apply_visbatch` takes only its own room's
-  mutex, so per-room sends can be issued in parallel with a small cap (Open Question 3).
+  forces an R-message snapshot, and the storm self-sustains until R·t drops. **Measured on
+  this deployment, reported 2026-08-26: 2.5–3.3 ms over loopback for a trivial Janus core
+  request.** That puts the sequential crossover near **R ≈ 40** occupied rooms (125/t). The
+  figure is a **floor, not a benchmark**, for three reasons: a real `peer_ctl_batch` parses
+  and does per-listener work under `room->mutex` where a core request does neither; an
+  operator may run the mixer on a separate host, adding real network latency; and these calls
+  contend with the per-room 20 ms tick threads for the same mutexes. Nothing in either tree
+  records this figure — it lives here. Mitigation is bounded concurrency (OQ3, decided):
+  rooms are independent and `apply_visbatch` takes only its own room's mutex, so per-room
+  sends are issued in parallel with a small cap c, making the budget ⌈2R/c⌉·t < 250 ms.
 - **Mixer tick cost is unaffected.** Each per-room message takes its room's mutex for one
   sub-millisecond apply; K messages across K rooms contend with nothing but their own room's
   20 ms tick. Sim-side, grouping and filtering are O(total entries), negligible against the
@@ -321,32 +334,36 @@ emission partitions that same content by room. Consequences:
 Take 64 parcels, all with `UseEstateVoiceChan` clear (the default), each occupied by one or
 two agents. R = 64 rooms with listeners. Steady state: almost every tick touches no room or one;
 fine. A region-wide invalidation: 64 rooms × up to 2 ops = 128 sequential admin messages in one
-flight; at any plausible LAN round-trip this exceeds 250 ms, the next tick is skipped, a
-64-message snapshot follows, and the region oscillates until it settles. Each message is tiny
-(a room of two has columns of ≤ 1), so no mixer cap is near; the whole cost is round-trips.
-Bounded concurrency turns 128 sequential round-trips into ⌈128/c⌉ rounds. Conversely a region
+flight; at the measured 3 ms floor that is ~380 ms, exceeding 250 ms, so the next tick is
+skipped, a 64-message snapshot follows, and the region oscillates until it settles. Each
+message is tiny (a room of two has columns of ≤ 1), so no mixer cap is near; the whole cost is
+round-trips. Bounded concurrency at c = 4 turns 128 sequential round-trips into 32 rounds,
+~100 ms at the floor — inside the cadence with margin for the floor being a floor. Conversely a region
 of 64 parcels on the **estate** channel is one room and one message per op, exactly as today —
 the subdivided cost is paid only where per-parcel rooms exist, which is the population this
 fix is for.
 
 ### Guard against silent truncation
 
-Needed, in two places:
+Needed. Split across this change and a separate one:
 
-- **Sim-side chunking in the sink.** Before sending a per-room batch, split it by listener into
-  messages of ≤ 128 listeners and ≤ ~60 KB (leaving headroom under 65,536). Ops are
-  per-listener scoped and idempotent, so a listener's entry moves whole into one chunk; never
-  split one listener's array across chunks for `replace`. This removes `SLV_VIS_MAX_ENTRIES` and
-  the byte cap as silent failure modes and turns the mute-everyone-at-41 case into two
-  messages. The mixer's limits become sim-side constants that must track the mixer's — a version
-  coupling to record next to them. A per-listener column over 128 sources cannot be chunked
-  under `replace`; with same-room filtering it cannot occur, which is a further argument for
-  filtering.
-- **Sim-side counters and one-shot logs** in the sink: chunks emitted, and any listener whose
-  column exceeded the per-listener cap (should be zero with filtering). These are the only
-  signal the sim can produce without reading the mixer's reply.
-- **Reading the inner reply** (§5) would additionally expose `skipped > 0` and `too_big`
-  directly. Recommended, but a separate decision.
+- **Reading the inner reply — in this change (OQ5, decided).** `JanusAdminClient` learns to read
+  the plugin's `slvoice` field and returns a fourth, never-latching result for `error` (any
+  reason: `unknown_room`, `too_big`, `malformed`), `empty`, and `applied` with `skipped > 0`.
+  This gives the sim its first direct view of both silent failure modes — the whole-batch
+  `too_big` rejection and the item-level skip count — and confirms per-room delivery far-end.
+- **Sim-side counters** in the sink: per-role fallback counts (§7), rooms addressed per tick,
+  and `NotApplied` results by reason. With OQ5 these are no longer the only signal, but they
+  are the only ones that attribute a failure to a room and a listener.
+- **Chunking — a separate change (OQ6, decided).** Splitting a per-room batch by listener into
+  messages of ≤ 128 listeners and ≤ ~60 KB would remove `SLV_VIS_MAX_ENTRIES` and the byte cap
+  as failure modes and turn the mute-everyone-at-41 case into two messages. It is deferred
+  because it requires mirroring the mixer's cap constants into C#, a coupling that drifts
+  silently and deserves its own decision, and because the dense case is pre-existing and
+  per-room emission does not worsen it. It is filed as its own defect: *"WebRTC voice: a
+  dense exclusion batch over 64 KB is rejected whole by the mixer, and the sim reads it as
+  applied"* in `Docs/KnownDefects.md`. Note for that change: a per-listener column over 128
+  sources cannot be chunked under `replace`; with OQ2's filtering it cannot occur.
 
 ## 4. Version skew
 
@@ -376,18 +393,21 @@ regression.
 
 **Sim-internal skew (connector topology).** A new region module against an old remote
 `WebRtcJanusService` receives no `room` in the provision response. The record is never
-written and the sink takes the no-record path (Open Question 4). With the estate-room
-fallback, behaviour is exactly today's; with drop, per-parcel agents get nothing, as today.
-Either way not a regression, but the fallback is the only choice that keeps estate-channel
-delivery working in that mixed state.
+written for any agent, so every listener **and every source** resolves to the estate room
+(OQ4 and the §7 consistency resolution): the sink emits one estate-room batch carrying full
+columns — byte-for-byte today's behaviour. Had sources with no record been dropped instead,
+every column in that state would have been empty and estate-channel enforcement would have
+silently collapsed. The source-side fallback is therefore load-bearing for this skew, not
+cosmetic; see §7.
 
 **When `unknown_room` can legitimately occur after this fix.** Rooms are never destroyed on
 empty: the `g_hash_table_size(room->participants) == 0` test at `janus_slvoice.c:1920` is the
 sender skipping idle rooms, and no sim-side path calls `JanusAudioBridge.DestroyRoom`. A
 recorded room therefore exists until the mixer restarts. After a mixer restart every recorded
 room is unknown until its agents re-provision — a pre-existing condition for the estate room,
-now visible per room in the mixer log. Any inner-reply reading added in §5 must treat
-`unknown_room` as non-latching for this reason.
+now visible per room in the mixer log. This is why OQ5's inner-reply result never latches:
+`unknown_room` is the normal signature of a mixer restart, and it heals by itself through the
+pending-join path as agents re-provision.
 
 ## 5. Verification plan
 
@@ -415,25 +435,26 @@ test). Then:
    room(s) addressed, and a counter of distinct rooms addressed per tick.
 5. **Audible check**, the only end-to-end proof: the banned avatar's voice is inaudible to the
    other occupant of the per-parcel room; on the estate channel, unchanged.
-6. **The `unknown_room` reply.** With the current `JanusAdminClient` it is invisible — the
-   client maps every `janus:"success"` to `Ok` (`JanusAdminClient.cs:155`–`:158`) and discards
-   the body. **This fix does not require teaching it to read the inner field**: correctness
-   rests on addressing the right room, and §4 shows the fix works against a mixer that does not
-   send the error at all. But it **should** be taught, as a separate decision (Open Question 5),
-   because it is the only way the sim can see `too_big`, `skipped`, and `unknown_room`, and
-   because the sink's chunking guard in §3 otherwise has no far-end confirmation. If it is
-   taught, the result class must be new — not `ProtocolError`, whose K-consecutive latch would
-   disable emission on the benign mixer-restart case in §4.
+6. **The `unknown_room` reply.** With today's `JanusAdminClient` it is invisible — the client
+   maps every `janus:"success"` to `Ok` (`JanusAdminClient.cs:155`–`:158`) and discards the body.
+   Correctness of this fix does not rest on it: addressing the right room is what fixes
+   delivery, and §4 shows the fix works against a mixer that never sends the error. It is
+   nonetheless taught **in this change** (OQ5, build step S4), because it is the only sim-side
+   view of `too_big`, `skipped`, and `unknown_room`. After S4 the operator sees a `NotApplied`
+   counter by reason on the sink; it must read zero for `too_big` and `skipped` in steady
+   state, and `unknown_room` only around a mixer restart. The result class is new, not
+   `ProtocolError`, whose K-consecutive latch would disable emission on that benign case.
 7. **Console: `janus list rooms`** (`WebRtcJanusService.cs:431`–`:432`) to see per-parcel rooms
    exist and their populations; `show voice closing` for parked sessions that would explain a
    missing record.
 
 **Existing tests to extend.** `Tests/WebRtcJanusService.Tests/VisibilityBatchSenderTests.cs`
-(16 tests) drives the sender through a fake sink; the sender is unchanged so these should pass
-untouched. New unit coverage belongs on the sink: partitioning by resolver, no-record policy,
-result aggregation across rooms, chunking boundaries at 128 listeners and the byte limit, and
-(if adopted) same-room filtering. `PeerCtlBatchSerializerTests.cs` covers the body builder,
-which is unchanged.
+(16 tests) drives the sender through a fake sink; the sender's only change is the `NotApplied`
+handling in S4, so all 16 must pass unmodified and S4 adds cases. New unit coverage belongs on
+the pure partitioner introduced in S3a — partitioning by resolver, same-room filtering, the
+per-role estate fallback and its counters, result aggregation across rooms — and on
+`JanusAdminClient`'s inner-reply classification in S4 (`JanusAdminClientTests.cs`).
+`PeerCtlBatchSerializerTests.cs` covers the body builder, which is unchanged.
 
 ## 6. What this fix does NOT address
 
@@ -451,62 +472,186 @@ which is unchanged.
 - **The `LandData.cs` default divergence.** Bit 30 absent from OpenSim's default word. Binding
   constraint: out of scope; this fix must work with it in place.
 - **The dense-room byte cap.** Mute-everyone in a room of 41+ is `TOOBIG` today and stays so
-  unless the chunking guard in §3 is adopted; it is proposed here but is a separate decision
-  from the delivery fix itself.
+  after this change. Chunking is deferred to its own change (OQ6); the defect is filed as
+  *"WebRTC voice: a dense exclusion batch over 64 KB is rejected whole by the mixer, and the
+  sim reads it as applied"* in `Docs/KnownDefects.md`. What this change does add is
+  visibility: after S4 the rejection is counted sim-side instead of read as success.
 - **`OnListenerProvisioned` on failed provisions.** The pending-join queueing for failed
   provisions is unchanged; only the room record is gated on success.
 
-## 7. Open questions — your decision
+## 7. Decisions (2026-08-26)
 
-**OQ1 — Room source.** (a) *Proposed:* additive `room` in the provision response, recorded
-region-side at success. Topology-independent, ground truth, no new derivation site; needs a
-one-line service change and a one-line region-module read. (b) Live read of
-`JanusViewerSession.Room.RoomId` through a new query on the session registry. Ground truth
-without a wire change, but topology-dependent (no room region-side in the connector
-deployment) and needs the private per-agent index exposed. (c) Region-side recompute via
-`CalcRoomNumber` from the agent's current parcel. No plumbing at all, but addresses the room
-the agent *should* be in rather than *is* in (§2b), and adds a second derivation site bound to
-the float encoding (§2c).
+Each question keeps its identifier. The decision is stated first, then the reasoning, then
+enough of what was rejected that a future reader sees what was on the table. One conflict
+between two of the decisions is resolved at the end of this section.
 
-**OQ2 — Same-room source filtering.** (a) *Recommended:* drop sources whose recorded room
-differs from the listener's. Makes `SLV_VIS_MAX_EXCL` unreachable, shrinks batches, and is
-semantically lossless because cross-room sources are inert at the mixer. Costs: the sink must
-resolve source rooms; a source with no record is dropped (correct — it is in no room — but a
-source whose record lags a re-provision is dropped for that interval). (b) No filtering: send
-full columns. Simpler; cap reachable at ~130 voiced agents with a `SeeAVs=false` parcel, and
-silently.
+**OQ1 — Room source. DECIDED (a): additive `room` in the provision response, recorded
+region-side at success.** Ground truth — it is the room the service actually joined —
+topology-independent, since the connector forwards the leaf's response map, and it adds no
+derivation site. *Rejected:* (b) a live read of `JanusViewerSession.Room.RoomId` through a new
+registry query — ground truth without a wire change, but the region holds no
+`JanusViewerSession` in the connector topology and the per-agent index is private; (c)
+region-side recompute via `CalcRoomNumber` from the agent's current parcel — rejected
+specifically because it addresses the room the agent *should* be in, which is the defect
+being fixed (§2b), and it would add a second derivation site bound to the float encoding.
 
-**OQ3 — Per-room send concurrency.** (a) Sequential within one flight, as the single-flight
-model implies today. Simplest; storm risk at large R with an unmeasured round-trip. (b)
-Bounded parallel (e.g. 4–8 in flight) per `SendAsync`, aggregated result. Removes the storm at
-the cost of concurrent `HttpClient` use on one long-lived client (supported) and a small
-change to the sink only. (c) Per-room single-flight in the sender — rejected as re-opening the
-sender.
+**OQ2 — Same-room source filtering. DECIDED (a): filter each listener's column to sources in
+the listener's room.** This makes `SLV_VIS_MAX_EXCL` unreachable **by construction** — a
+per-room column is bounded by `SLV_MAX_MIX` − 1 = 109 — rather than by a guard that has to be
+maintained, and it is semantically lossless because a cross-room source is inert at the mixer
+(room membership already prevents it being heard, and the dot/presence paths iterate
+`room->participants` too). The sink resolves source rooms with the same table and resolver it
+uses for listeners. *Rejected:* (b) send full columns — simpler, but the symmetric `SeeAVs`
+rule makes the cap reachable at ~130 voiced agents with one `SeeAVs=false` parcel, silently.
+As first drafted, (a) dropped a source with no room record; that part is **superseded** by the
+consistency resolution below.
 
-**OQ4 — No-record policy.** (a) Fall back to the estate room, with a counter. Preserves
-today's behaviour exactly for any listener the record does not cover, which is the strongest
-form of the no-regression guarantee and covers the connector-topology skew in §4. (b) Drop the
-entry, with a counter. Cleaner; a listener with no record is not in any room this region
-knows about, so the estate room is a guess. The counter under (a) tells you when (b) would
-have been safe.
+**OQ3 — Per-room send concurrency. DECIDED (b): bounded parallel sends per `SendAsync`, with
+an aggregated result.** Basis: the admin round-trip on this deployment measured 2.5–3.3 ms
+over loopback for a trivial Janus core request (operator measurement, reported 2026-08-26),
+which puts the sequential crossover 2R·t < 250 ms near **R ≈ 40** occupied rooms. That figure
+is recorded here as a **floor and not a benchmark**: a real `peer_ctl_batch` parses and does
+per-listener work under `room->mutex` where a core request does neither; an operator may run
+the mixer on a separate host; and these calls contend with the per-room tick threads. A
+40-room region is not exotic on the default flag word, and the floor only rises, so sequential
+sending is not safe. Concurrency cap c is a `[WebRtcVoice]` config key with a small default
+(4). *Rejected:* (a) sequential — the storm in §3; (c) per-room single-flight in the sender —
+re-opens the sender, which this design keeps untouched.
 
-**OQ5 — Teach `JanusAdminClient` to read the inner `slvoice` reply.** (a) Not in this change:
-correctness does not need it. (b) In this change, adding a fourth `AdminSendResult` (say
-`NotApplied`) for `error`/`empty`/`skipped>0` that logs and counts but **never latches**. Gives
-the sink far-end confirmation of chunking and the only sim-side view of `too_big`. Touches the
-admin client's tests and the sink's result mapping.
+**OQ4 — No-record policy. DECIDED (a): fall back to the estate room, with a counter.** This is
+the strongest form of the no-regression guarantee — any agent the record does not cover is
+handled exactly as every agent is today — and it is what makes the connector-topology skew in
+§4 safe. The counter is the evidence that would later justify (b). *Rejected for now:* (b)
+drop the entry — cleaner in a fully-recorded world, since an unrecorded agent is in no room
+the region knows about, but it forfeits the skew guarantee; revisit when the counter has read
+zero across a deployment.
 
-**OQ6 — Chunking guard.** (a) In this change, in the sink, with mixer-cap constants mirrored
-sim-side. (b) Separate change; the mute-everyone-at-41 case is pre-existing and per-room
-emission does not worsen it. If (a), the mirrored constants need a home and a note that they
-must track `visbatch.h`.
+**OQ5 — Inner-reply reading. DECIDED (b): teach `JanusAdminClient` to read the plugin's
+`slvoice` field, returning a fourth result that NEVER LATCHES.** Without it there is no
+sim-side view of `too_big` at all — a whole-batch rejection reads as success — and no
+confirmation that per-room delivery landed. Design detail, not a re-opening: the new
+`AdminSendResult.NotApplied` (mirrored as `PeerCtlSendResult.NotApplied`) is returned for
+`slvoice:"error"` of any reason, for `"empty"`, and for `"applied"` with `skipped > 0`; the
+sender counts it by reason and otherwise treats it as `Ok` for flow control — no
+`NoteProtocolError`, no forced snapshot, no retry. Retrying is futile for `too_big` (the
+same batch is the same size) and unnecessary for `unknown_room` (a mixer restart, healed by
+re-provision through the pending-join path); latching would disable emission on that benign
+case. *Rejected:* (a) not in this change — correctness does not need it, but §3's guard has
+no far-end signal without it.
 
-**OQ7 — Multiple sessions per agent.** During a relog overlap an agent briefly holds two
-sessions, possibly in different rooms. (a) Newest provision wins the record; the older session
-receives no exclusions until torn down (transient, bounded by teardown). (b) Record a set of
-rooms per agent and address all of them; the mixer fans out by display within a room already
-(`janus_slvoice.c:1199`), so this only matters across rooms. (a) is simpler and the window is
-the existing teardown window.
+**OQ6 — Chunking guard. DECIDED (b): a separate change.** Chunking requires mirroring the
+mixer's cap constants into C#, a coupling that drifts silently and deserves its own decision;
+and the dense case is pre-existing — per-room emission neither causes nor worsens it. The
+pre-existing failure is filed on its own as *"WebRTC voice: a dense exclusion batch over 64 KB
+is rejected whole by the mixer, and the sim reads it as applied"* in `Docs/KnownDefects.md`,
+because it is a live silent-failure mode independent of this work. *Rejected:* (a) chunk in
+this change with mirrored constants.
+
+**OQ7 — Multiple sessions per agent. DECIDED (a): the newest provision wins the record.** The
+older session of a relog overlap is addressed at the new room until teardown; under OQ4 that
+session is covered by the estate fallback only if it has no record at all, and otherwise it
+simply misses exclusions for the existing teardown window. *Rejected:* (b) a set of rooms per
+agent — the mixer already fans out by display within a room (`janus_slvoice.c:1199`), so this
+would only matter across rooms, for a window bounded by teardown.
+
+### Resolved: one policy for a missing room record
+
+OQ2 as first drafted dropped a *source* with no room record; OQ4 estate-defaults a *listener*
+with no room record. Those are two answers to one missing datum, so the question was whether
+the asymmetry is correct or an accident. **It is an accident, and the consistent policy is a
+single resolver for both roles: `roomOf(agent) = record ?? estateRoom`.** The behaviour that
+changes is OQ2's: a source with no record is *not* dropped; it is treated as an estate-room
+source — kept for estate-room listeners, filtered out for per-parcel listeners. OQ4's
+listener behaviour is unchanged.
+
+Why symmetry is required rather than merely tidy. A missing record means one of two things:
+the agent never reached the success branch this region saw (it is in no room, and any
+exclusion naming it is inert either way), or — the connector-topology skew — the agent is in
+a room the region cannot see because the remote service does not yet return `room`. In that
+second case *nobody* has a record. With asymmetric handling every listener falls back to the
+estate room (good) while every source is dropped (bad): every column arrives empty, and
+estate-channel enforcement silently collapses for the whole region. That violates the
+no-regression constraint and defeats the exact skew coverage OQ4 cites as its reason. With
+the symmetric fallback both roles map to the estate room, the sink emits one estate-room
+batch carrying full columns, and the skew state is today's behaviour byte-for-byte.
+
+The other cases check out. Fully recorded (no skew): an unrecorded source is in no room, so
+keeping it for estate listeners costs cap but not correctness, and dropping it for per-parcel
+listeners is right. Mid-deploy transition (service upgraded, some agents provisioned before):
+a pre-upgrade source in per-parcel room P defaults to estate and is filtered out of a
+post-upgrade listener's column in P — that listener hears it until the source re-provisions,
+which is today's behaviour for P (no exclusions at all), so not a regression; in the estate
+room the pre-upgrade source defaults to estate and is kept, correct. Capacity: with records
+present a column is ≤ 109 as OQ2 promises; in the all-unrecorded state it is today's full
+column, which is the thing the constraint requires us to reproduce.
+
+Two counters, not one: `fallback_listeners` and `fallback_sources`. The listener counter is
+OQ4's evidence; the source counter reads non-zero in exactly the skew and transition states
+above and should read zero on a fully upgraded deployment — which is the signal that OQ4(b)
+could later be revisited.
+
+## 8. Build plan
+
+Ordered steps. Each is one commit and leaves `Tranquillity.sln` building. **Sim-side** unless
+marked. Deploy artefacts are named because the deploy root is flat and keyed on DLL name.
+
+**S1 — Service reports the joined room.** `WebRtcJanusService.ProvisionVoiceAccountRequest`
+adds `"room": viewerSession.Room.RoomId` to the JSEP-offer success map
+(`Janus/WebRtcJanusService.cs:275`–`:279`). Additive; no consumer breaks. In the connector
+topology the same DLL runs on the ROBUST side and the connector forwards the map
+(`WebRtcVoice/WebRtcVoiceServiceConnector.cs:88`–`:95`), so nothing else is needed for skew
+to resolve once both sides run S1. Test: a response-shape assertion alongside
+`ProvisionViewerSessionGuardTests`. Artefact: `WebRtcJanusService.dll`.
+
+**S2 — Region records it.** `VoiceVisibilityService` gains a per-region agent → room table,
+`OnListenerProvisioned(UUID agent, int? room)` (the existing overload delegates with `null`),
+and a public `Func<UUID,int?> RoomOf`. `WebRtcVoiceRegionModule.ProvisionVoiceAccountRequest`
+reads `resp["room"]` and passes it at the existing hook (`WebRtcVoiceRegionModule.cs:550`–`:553`).
+Reading from the success map alone gates the *record* on success; the pending-join queueing
+is left as it is (that defect stands). Test: table semantics — newest wins (OQ7), missing
+key → null. No emission change yet; the sink still stamps one room. Artefact:
+`WebRtcVoiceRegionModule.dll`.
+
+**S3a — Pure partitioner.** In `Addons/os-webrtc-janus/Visibility/`, a dependency-free helper
+(illustratively `PeerCtlBatchPartitioner`) that takes the listener → sources map, a resolver
+and the estate room, and returns per-room maps with same-room filtering, per-role fallback
+counts, and nothing else. Sibling of `PeerCtlBatchSerializer` and testable the same way. Tests
+in `Tests/WebRtcJanusService.Tests`: partitioning, filtering, both fallbacks, empty map,
+single-room fast path. Not wired; builds. Artefact: `VoiceVisibility.dll`.
+
+**S3b — Sink partitions and sends per room. FIRST STEP THAT IS TESTABLE IN-WORLD.**
+`JanusPeerCtlBatchSink` gains a settable resolver — it is constructed *before* the service
+(`WebRtcVoiceRegionModule.cs:174`–`:176`), so the resolver is a property the service sets in
+its constructor, not a ctor argument. `SendAsync` partitions via S3a, sends one message per
+room under a `SemaphoreSlim(c)` (`[WebRtcVoice] VisibilityRoomSendConcurrency`, default 4),
+aggregates per §2a, keeps the constructor estate room as the fallback value, logs the rooms
+addressed at debug, and exposes counters (rooms per send, `fallback_listeners`,
+`fallback_sources`). The start-up log at `JanusPeerCtlBatchSink.cs:40`–`:41` is reworded to
+name the fallback room rather than "the" room. After this step §5 items 1–3 can be run.
+Artefacts: `WebRtcVoiceRegionModule.dll`, `VoiceVisibility.dll`.
+
+**S4 — Inner-reply reading.** `JanusAdminClient` parses `response.slvoice` (and `reason`,
+`skipped`) from the 2xx body and returns `AdminSendResult.NotApplied` per OQ5;
+`PeerCtlSendResult.NotApplied` added; the sink maps and aggregates it; `VisibilityBatchSender`
+counts it by reason and treats it as `Ok` for flow control — no latch, no snapshot, no retry.
+Tests: `JanusAdminClientTests` classification cases (`applied`/`applied+skipped`/`empty`/
+`error:*` all under `janus:"success"`), new `VisibilityBatchSenderTests` cases, and the
+existing 16 unmodified. Artefacts: `WebRtcJanusService.dll`, `WebRtcVoiceRegionModule.dll`,
+`VoiceVisibility.dll`.
+
+**S5 — Documentation.** This brief's status → implemented; the `KnownDefects.md` delivery-gap
+entry → fixed, citing the S3b commit subject; `mixer-feed-protocol.md` §3.4's correction note
+updated to say per-room emission exists; `parcel-voice-semantics.md` §P Part 2 → closed for
+per-parcel agents.
+
+**M1 — Mixer, optional, independent.** Bump `JANUS_SLVOICE_VERSION_STRING` so a deployed
+plugin can be identified as carrying the `unknown_room` reply (the fix commit did not bump
+it). No functional change; required by no sim step. The only mixer touch in this plan.
+
+**Deploy order.** S1 is safe alone on either side. S2–S4 deploy together region-side; in the
+connector topology S1 must reach the ROBUST side for records to appear, and until it does
+OQ4's fallback reproduces today's behaviour (§4). Roll back is the pre-fix
+`WebRtcVoiceRegionModule.dll`/`VoiceVisibility.dll`/`WebRtcJanusService.dll` set.
 
 ## Acceptance
 
@@ -516,5 +661,7 @@ the existing teardown window.
   `dropped_listener_entries` stops climbing.
 - A default-flagged region (all parcels `0x2800204B`, `UseEstateVoiceChan` clear) is fully
   covered with no flag changed.
+- `fallback_listeners` and `fallback_sources` read 0 on a fully upgraded deployment; the sink's
+  `NotApplied` count reads 0 for `too_big` and `skipped` in steady state.
 - The existing 16 `VisibilityBatchSenderTests` pass unmodified.
 - Against a mixer without the `unknown_room` commit, behaviour is identical (§4).

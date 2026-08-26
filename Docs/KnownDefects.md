@@ -1002,3 +1002,60 @@ entry.
 
 **Related entry.** *"Parcel local IDs are hashed as `float`, not as an integer"* covers the
 same call site from the encoding side — the two share a call site, not a cause.
+
+## WebRTC voice: a dense exclusion batch over 64 KB is rejected whole by the mixer, and the sim reads it as applied
+
+**Status:** filed 2026-08-26, not fixed — **Legion-side (our code), not Tranquillity core.**
+Pre-existing and independent of the per-parcel delivery gap; filed while deciding
+`Docs/voice/per-room-visibility-emission-design-brief.md` (OQ6), which defers the fix to its own
+change rather than bundling it.
+
+**Symptom.** A moderator mutes everyone on a busy parcel and nothing happens — every avatar stays
+audible to every other. No log line on the sim, no error, no latch; the visibility sender reports
+the batch as sent and carries on. The same failure hits any state that makes most listeners
+exclude most sources in one room, of which mute-everyone is the realistic trigger.
+
+**Mechanism.** The mixer caps one `peer_ctl_batch` at `SLV_VISBATCH_MAX_BYTES` = 65,536 bytes
+(`legion-voice-mixer/src/visbatch.h:39`) and rejects an oversize payload **whole**, before parsing
+(`src/visbatch.c:60`–`:61`, `SLV_VISBATCH_TOOBIG`). The cap is measured on the inner request
+only — Janus core hands the plugin `json_object_get(root, "request")`
+(`vendor/janus-gateway/src/janus.c:2457`–`:2458`) and the handler measures a compact re-dump of it
+(`src/janus_slvoice.c:1342`–`:1344`) — so the envelope does not count, but the whole `excl` map
+does. The reply is `{"slvoice":"error","reason":"too_big"}` (`janus_slvoice.c:1367`–`:1369`),
+wrapped by the core in `{"janus":"success", …}` (`janus.c:2460`–`:2463`).
+
+The sim never sees it. `JanusAdminClient` classifies on the outer `janus` field alone and maps
+every `success` to `Ok` (`Addons/os-webrtc-janus/Janus/JanusAdminClient.cs:142`–`:165`, the test
+at `:155`–`:158`); the body is discarded. `VisibilityBatchSender` therefore treats the rejected
+batch as applied: on a snapshot it sets `_synced = true` and refreshes `_knownListeners`
+(`WebRtcVoiceRegionModule/VisibilityBatchSender.cs:274`–`:280`), and on a delta it advances
+normally. From then on every delta is computed relative to a state the mixer never received,
+until the next full snapshot — which, if the room is still dense, is rejected the same way.
+
+**Where the threshold is.** Compact JSON with 36-character UUIDs costs ≈ 42 + 39k bytes per
+listener with k sources plus ≈ 73 of header. A room of N in which every listener excludes every
+other source — what mute-everyone produces, since the moderation rule is source-side
+(`Addons/os-webrtc-janus/Visibility/VisibilityRules.cs:37`–`:38`) and applies to every listener
+in the parcel — is ≈ 73 + 3N + 39N². **N = 40 fits (62,593); N = 41 does not (65,755).** The
+design brief §3 carries the arithmetic. Only the snapshot and delta paths are affected: the
+pending-join path sends one listener per message (`VisibilityBatchSender.cs:189`–`:227`) and
+cannot reach the cap.
+
+**Why it matters.** It is a silent failure of the one feature — voice moderation — a parcel
+owner reaches for under pressure, at exactly the population where they need it. The sim-side
+counters that exist (`epoch`, `dropped_listener_entries`) do not move, because the batch never
+reached `apply_visbatch`; the only trace is a `LOG_WARN` "peer_ctl_batch rejected: too_big" on the
+mixer (`janus_slvoice.c:1365`–`:1366`), which nobody watching the sim will see.
+
+**Fix direction — two halves, decided in the design brief.** Visibility first: OQ5 teaches
+`JanusAdminClient` to read the inner `slvoice` field and return a non-latching `NotApplied`, so
+the rejection is at least counted sim-side. Then chunking (OQ6, its own change): split a batch
+by listener into messages under 128 listeners and ~60 KB, which turns the N = 41 case into two
+messages. Chunking is deferred because it mirrors the mixer's cap constants into C# — a coupling
+that drifts silently and needs its own decision — and because per-listener columns over 128
+sources cannot be chunked under `replace` at all, which the brief's OQ2 filtering makes
+unreachable first.
+
+**Related, and not this entry.** *"WebRTC voice: the visibility feed is addressed only to the
+estate room, so per-parcel agents receive no exclusions"* is the delivery gap; per-room emission
+shrinks each batch to one room's content, which helps this cap without curing the dense case.
