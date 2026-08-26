@@ -547,10 +547,14 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             // column is (re)sent once it is present (the mixer silently drops a batch for a listener
             // not yet in the room). Estate-channel scoped; harmless for a per-parcel-channel agent
             // (its replace targets the estate room and the bounded re-send simply gives up loudly).
+            // Step S2: the success map also carries the mixer room the service actually joined (S1).
+            // Record it per agent so S3b can address batches per room. A failure or logout map has
+            // no "room" -> null -> the service leaves any earlier record untouched.
+            int? provisionedRoom = resp.TryGetInt("room", out int provRoom) ? provRoom : (int?)null;
             VoiceVisibilityService svc;
             lock (m_visibilityServices)
                 m_visibilityServices.TryGetValue(scene, out svc);
-            svc?.OnListenerProvisioned(agentID);
+            svc?.OnListenerProvisioned(agentID, provisionedRoom);
         }
         else
         {

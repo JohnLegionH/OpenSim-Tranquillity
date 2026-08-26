@@ -44,6 +44,7 @@ namespace osWebRtcVoice
         private volatile bool m_running;
         private IEstateModule m_estateModule;
         private VisibilityBatchSender m_sender;   // built in StartLoop from the injected sink
+        private readonly AgentRoomTable m_rooms = new AgentRoomTable();   // S2: agent -> joined mixer room (newest wins)
 
         // The sink is passed in directly (NOT resolved via scene.RequestModuleInterface): the sink
         // and the sender live in this module's AssemblyLoadContext, so IPeerCtlBatchSink identity
@@ -63,6 +64,9 @@ namespace osWebRtcVoice
             // before this constructor body runs.
             m_feeder = new VoiceStateFeeder(new FeederWorldFromScene(scene, Moderation), EstateRoomPlaceholder, OnDerivationError);
             m_feeder.BatchProduced += OnBatch;
+            // S2: the resolver the sink consumes (S3b). Null = no record; the SINK maps that to the
+            // estate room (OQ4, one policy for listeners and sources) — this service never guesses.
+            RoomOf = m_rooms.Resolve;
         }
 
         /// The produced feed — the boundary the later Janus sender will consume.
@@ -120,11 +124,26 @@ namespace osWebRtcVoice
             m_log.LogInformation($"{logHeader} feeder started for {m_scene.RegionInfo.RegionName} @ {m_cadenceMs}ms (emit={m_emitEnabled})");
         }
 
-        /// Forward a WebRTC provisioning-success for a listener to the sender's pending-join path
-        /// (correction 1). Called from the region module's provisioning handler; safe if the sender
-        /// is not yet built or emission is disabled.
+        /// Step S2: the mixer room each agent's latest successful provision joined, as a resolver for
+        /// the sink (S3b). Null means no record here; the sink resolves null to the estate room
+        /// (OQ4 / §7 "one policy for a missing room record"). Newest provision wins (OQ7).
+        public Func<UUID, int?> RoomOf { get; }
+
+        /// Forward a WebRTC provisioning result for a listener. If the result carried the joined
+        /// room (the success map, S1) record it; a failure or logout map has no room, so the caller
+        /// passes null and the record is left untouched. Then hand the agent to the sender's
+        /// pending-join path (correction 1) exactly as before — that queueing is deliberately
+        /// unchanged here. Safe if the sender is not yet built or emission is disabled.
+        public void OnListenerProvisioned(UUID listener, int? room)
+        {
+            if (room.HasValue)
+                m_rooms.Record(listener, room.Value);
+            m_sender?.OnListenerProvisioned(listener);
+        }
+
+        /// Pre-S2 overload: no room information. Delegates with null, so the record is untouched.
         public void OnListenerProvisioned(UUID listener)
-            => m_sender?.OnListenerProvisioned(listener);
+            => OnListenerProvisioned(listener, null);
 
         public void Stop()
         {

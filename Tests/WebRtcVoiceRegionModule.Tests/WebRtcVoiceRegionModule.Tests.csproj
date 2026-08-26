@@ -21,6 +21,7 @@
     <Compile Include="FeederWorldFromSceneTests.cs" />
     <Compile Include="VoiceMembershipIndexTests.cs" />
     <Compile Include="VoiceSessionCloseCaptureTests.cs" />
+    <Compile Include="AgentRoomTableTests.cs" />
   </ItemGroup>
 
   <ItemGroup>
