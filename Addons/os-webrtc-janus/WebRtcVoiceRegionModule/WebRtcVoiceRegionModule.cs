@@ -87,6 +87,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     private string m_JanusAdminUri = string.Empty;
     private string m_JanusAdminToken = string.Empty;
     private int m_AdminTimeoutMs = 5000;
+    private int m_VisibilityRoomSendConcurrency = JanusPeerCtlBatchSink.DefaultRoomSendConcurrency;
     private readonly Dictionary<Scene, VoiceVisibilityService> m_visibilityServices = new();
 
     // ISharedRegionModule.Initialize
@@ -103,6 +104,10 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 m_VisibilityFeederEnabled = m_Config.GetBoolean("VisibilityFeederEnabled", false);
                 m_VisibilityTickMs = m_Config.GetInt("VisibilityTickMs", 250);
                 m_VisibilityEmitEnabled = m_Config.GetBoolean("VisibilityEmitEnabled", false);
+                // S3b: rooms addressed concurrently within one send. A latency budget, not a
+                // throughput knob — see JanusPeerCtlBatchSink.DefaultRoomSendConcurrency.
+                m_VisibilityRoomSendConcurrency = m_Config.GetInt("VisibilityRoomSendConcurrency",
+                    JanusPeerCtlBatchSink.DefaultRoomSendConcurrency);
 
                 // Sink endpoint from [JanusWebRtcVoice] (the same section the Janus service reads).
                 IConfig janusCfg = config.Configs["JanusWebRtcVoice"];
@@ -196,9 +201,11 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             return null;
         }
 
-        // The sink logs its computed room number once at Info (unchanged).
+        // The sink logs its fallback room number once at Info, and the service hands it the room
+        // resolver in the service constructor immediately below this call (S3b).
         return new JanusPeerCtlBatchSink(m_JanusAdminUri, m_JanusAdminToken,
-            TimeSpan.FromMilliseconds(m_AdminTimeoutMs), scene.RegionInfo.RegionID, scene.RegionInfo.RegionName);
+            TimeSpan.FromMilliseconds(m_AdminTimeoutMs), scene.RegionInfo.RegionID, scene.RegionInfo.RegionName,
+            m_VisibilityRoomSendConcurrency);
     }
 
     // ISharedRegionModule.Close

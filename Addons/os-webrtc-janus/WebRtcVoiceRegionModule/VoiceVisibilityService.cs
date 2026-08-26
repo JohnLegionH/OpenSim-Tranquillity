@@ -67,6 +67,13 @@ namespace osWebRtcVoice
             // S2: the resolver the sink consumes (S3b). Null = no record; the SINK maps that to the
             // estate room (OQ4, one policy for listeners and sources) — this service never guesses.
             RoomOf = m_rooms.Resolve;
+            // S3b: hand it to the sink HERE. The sink was constructed before this service
+            // (WebRtcVoiceRegionModule.cs:174-176), so the resolver cannot be a ctor argument;
+            // this assignment closes the window before Start() lets any tick emit. Concrete
+            // type on purpose: IPeerCtlBatchSink stays a pure transport seam, so a sink that is
+            // not the Janus one (a test double) needs no room knowledge at all.
+            if (m_sink is JanusPeerCtlBatchSink janusSink)
+                janusSink.RoomOf = RoomOf;
         }
 
         /// The produced feed — the boundary the later Janus sender will consume.
