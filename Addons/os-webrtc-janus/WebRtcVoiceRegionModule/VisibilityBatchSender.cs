@@ -76,6 +76,10 @@ namespace osWebRtcVoice
         private readonly Func<long> _nowMs;         // monotonic clock (injectable for tests)
 
         private readonly HashSet<UUID> _knownListeners = new HashSet<UUID>();   // touched only on RunAsync's thread
+        // Parallel clear-tracking for the MUTE channel: a listener previously sent a mute set that is
+        // now empty must get an explicit empty-mute replace on the next snapshot (omission is not a
+        // clear, §3.3.1). Independent of _knownListeners because a listener may have mutes but no excl.
+        private readonly HashSet<UUID> _knownMuteListeners = new HashSet<UUID>();
         private readonly object _pendingLock = new object();
         private readonly Dictionary<UUID, int> _pending = new Dictionary<UUID, int>();   // listener -> attempts left
 
@@ -194,14 +198,31 @@ namespace osWebRtcVoice
             foreach (UUID listener in due)
             {
                 var one = new Dictionary<UUID, IReadOnlyCollection<UUID>> { [listener] = ColumnFor(listener) };
-                PeerCtlSendResult r = await _sink.SendAsync(VisOp.Replace, one).ConfigureAwait(false);
+                // Re-send the joining listener's FULL state in BOTH channels, so a late joiner under a
+                // sticky moderation mute inherits it (its mute column travels with the replace).
+                IReadOnlyCollection<UUID> muteCol = MuteColumnFor(listener);
+                var oneMute = muteCol.Count > 0
+                    ? new Dictionary<UUID, IReadOnlyCollection<UUID>> { [listener] = muteCol }
+                    : null;
+                PeerCtlSendResult r = await _sink.SendAsync(VisOp.Replace, one, oneMute).ConfigureAwait(false);
                 if (r == PeerCtlSendResult.ProtocolError)
                 {
                     NoteProtocolError("per-listener join replace");   // may or may not latch (K consecutive)
                     return;   // stop this tick's drain either way; do not count the attempt down (it did not apply)
                 }
                 if (r == PeerCtlSendResult.Ok)
+                {
                     NoteOk();
+                    // Invariant repair: the pending-join path just SET mod_muted on the mixer for
+                    // this listener (a non-empty oneMute), but it is NOT the main snapshot/delta path
+                    // and so would otherwise leave _knownMuteListeners unaware of it. Record it here,
+                    // gated on the send SUCCEEDING, so a later snapshot's clear-tracking will emit the
+                    // explicit empty-mute clear for this listener if it is unmuted while the main path
+                    // is unsynced. Without this, that unmute could strand mod_muted for the session.
+                    // (Touched only on RunAsync's thread, like _knownMuteListeners elsewhere.)
+                    if (oneMute != null)
+                        _knownMuteListeners.Add(listener);
+                }
                 bool giveUp = false;
                 lock (_pendingLock)
                 {
@@ -235,13 +256,18 @@ namespace osWebRtcVoice
                 return;
             }
 
-            // Steady-state delta: at most one add + one remove message (per-op bound, §3.3.1).
+            // Steady-state delta: at most one add + one remove message (per-op bound, §3.3.1). Each op
+            // now carries BOTH channels (excl + mute) in one message. Disjointness is checked per
+            // channel; the two channels are independently disjoint (a source is never in both add and
+            // remove of the SAME channel in one tick), and excl-vs-mute disjointness is guaranteed
+            // source-side by VisibilityMatrix.Build (ban wins).
             PeerCtlBatchSerializer.EnsureDisjoint(batch.Added, batch.Removed);
+            PeerCtlBatchSerializer.EnsureDisjoint(batch.MuteAdded, batch.MuteRemoved);
             bool ok = true;
-            if (batch.Added.Count > 0)
-                ok = await SendMappedAsync(VisOp.Add, batch.Added).ConfigureAwait(false);
-            if (ok && batch.Removed.Count > 0)
-                ok = await SendMappedAsync(VisOp.Remove, batch.Removed).ConfigureAwait(false);
+            if (batch.Added.Count > 0 || batch.MuteAdded.Count > 0)
+                ok = await SendMappedAsync(VisOp.Add, batch.Added, batch.MuteAdded).ConfigureAwait(false);
+            if (ok && (batch.Removed.Count > 0 || batch.MuteRemoved.Count > 0))
+                ok = await SendMappedAsync(VisOp.Remove, batch.Removed, batch.MuteRemoved).ConfigureAwait(false);
             if (ok)
                 RefreshKnownListeners();
         }
@@ -249,26 +275,37 @@ namespace osWebRtcVoice
         private async Task SendSnapshotAsync()
         {
             var excl = new Dictionary<UUID, IReadOnlyCollection<UUID>>();
+            var mute = new Dictionary<UUID, IReadOnlyCollection<UUID>>();
             VisibilityMatrix cur = _feed.Current;
             var nowListeners = new HashSet<UUID>();
+            var nowMuteListeners = new HashSet<UUID>();
             foreach (UUID listener in cur.Listeners)
             {
                 excl[listener] = new List<UUID>(cur.ExcludedFor(listener));
                 nowListeners.Add(listener);
             }
-            // Clear-tracking (load-bearing, §3.3.1): a listener we previously sent that is no longer
-            // excluded must be reset with an EXPLICIT empty list — omission is not a clear.
+            foreach (UUID listener in cur.MutedListeners)
+            {
+                mute[listener] = new List<UUID>(cur.MutedFor(listener));
+                nowMuteListeners.Add(listener);
+            }
+            // Clear-tracking (load-bearing, §3.3.1), PER CHANNEL: a listener we previously sent that is
+            // no longer excluded / no longer muted must be reset with an EXPLICIT empty list — omission
+            // is not a clear.
             foreach (UUID listener in _knownListeners)
                 if (!nowListeners.Contains(listener))
                     excl[listener] = Array.Empty<UUID>();
+            foreach (UUID listener in _knownMuteListeners)
+                if (!nowMuteListeners.Contains(listener))
+                    mute[listener] = Array.Empty<UUID>();
 
-            if (excl.Count == 0)
+            if (excl.Count == 0 && mute.Count == 0)
             {
-                _synced = true;   // nothing to (re)send and nothing to clear
+                _synced = true;   // nothing to (re)send and nothing to clear in either channel
                 return;
             }
 
-            PeerCtlSendResult r = await _sink.SendAsync(VisOp.Replace, excl).ConfigureAwait(false);
+            PeerCtlSendResult r = await _sink.SendAsync(VisOp.Replace, excl, mute).ConfigureAwait(false);
             switch (r)
             {
                 case PeerCtlSendResult.Ok:
@@ -277,6 +314,9 @@ namespace osWebRtcVoice
                     _knownListeners.Clear();
                     foreach (UUID l in nowListeners)
                         _knownListeners.Add(l);
+                    _knownMuteListeners.Clear();
+                    foreach (UUID l in nowMuteListeners)
+                        _knownMuteListeners.Add(l);
                     break;
                 case PeerCtlSendResult.TransportError:
                     _synced = false;   // stay unsynced; retry snapshot next tick
@@ -290,9 +330,11 @@ namespace osWebRtcVoice
         }
 
         // Ok -> true. TransportError -> _synced=false (snapshot next), false. ProtocolError -> latch+stop, false.
-        private async Task<bool> SendMappedAsync(VisOp op, IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> excl)
+        private async Task<bool> SendMappedAsync(VisOp op,
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> excl,
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> mute = null)
         {
-            PeerCtlSendResult r = await _sink.SendAsync(op, excl).ConfigureAwait(false);
+            PeerCtlSendResult r = await _sink.SendAsync(op, excl, mute).ConfigureAwait(false);
             switch (r)
             {
                 case PeerCtlSendResult.Ok:
@@ -317,11 +359,22 @@ namespace osWebRtcVoice
                 ? col : Array.Empty<UUID>();
         }
 
+        private IReadOnlyCollection<UUID> MuteColumnFor(UUID listener)
+        {
+            // The listener's full current MUTE column, as a Replace payload (sticky-mute inheritance).
+            VisibilityBatch snap = _feed.SnapshotFor(listener);
+            return snap.MuteAdded.TryGetValue(listener, out IReadOnlyCollection<UUID> col)
+                ? col : Array.Empty<UUID>();
+        }
+
         private void RefreshKnownListeners()
         {
             _knownListeners.Clear();
             foreach (UUID l in _feed.Current.Listeners)
                 _knownListeners.Add(l);
+            _knownMuteListeners.Clear();
+            foreach (UUID l in _feed.Current.MutedListeners)
+                _knownMuteListeners.Add(l);
         }
 
         // A successful send clears the consecutive-ProtocolError run. Called on every Ok, on any path.

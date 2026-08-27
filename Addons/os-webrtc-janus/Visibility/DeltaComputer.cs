@@ -19,38 +19,52 @@ namespace osWebRtcVoice
         {
             var added = new Dictionary<UUID, IReadOnlyCollection<UUID>>();
             var removed = new Dictionary<UUID, IReadOnlyCollection<UUID>>();
+            var muteAdded = new Dictionary<UUID, IReadOnlyCollection<UUID>>();
+            var muteRemoved = new Dictionary<UUID, IReadOnlyCollection<UUID>>();
 
-            var listeners = new HashSet<UUID>();
-            foreach (UUID l in prev.Listeners) listeners.Add(l);
-            foreach (UUID l in next.Listeners) listeners.Add(l);
+            // Exclusion channel - the union of listeners present in either matrix's EXCL sets.
+            var exclListeners = new HashSet<UUID>();
+            foreach (UUID l in prev.Listeners) exclListeners.Add(l);
+            foreach (UUID l in next.Listeners) exclListeners.Add(l);
+            foreach (UUID L in exclListeners)
+                DiffChannel(prev.ExcludedFor(L), next.ExcludedFor(L), L, added, removed);
 
-            foreach (UUID L in listeners)
-            {
-                IReadOnlySet<UUID> before = prev.ExcludedFor(L);
-                IReadOnlySet<UUID> after = next.ExcludedFor(L);
+            // Mute channel - the union of listeners present in either matrix's MUTE sets. Independent
+            // of the excl listener set: a listener may have a mute change with no excl change.
+            var muteListeners = new HashSet<UUID>();
+            foreach (UUID l in prev.MutedListeners) muteListeners.Add(l);
+            foreach (UUID l in next.MutedListeners) muteListeners.Add(l);
+            foreach (UUID L in muteListeners)
+                DiffChannel(prev.MutedFor(L), next.MutedFor(L), L, muteAdded, muteRemoved);
 
-                List<UUID> add = null;
-                foreach (UUID s in after)
-                    if (!before.Contains(s))
-                        (add ??= new List<UUID>()).Add(s);
-
-                List<UUID> rem = null;
-                foreach (UUID s in before)
-                    if (!after.Contains(s))
-                        (rem ??= new List<UUID>()).Add(s);
-
-                if (add != null) added[L] = add;
-                if (rem != null) removed[L] = rem;
-            }
-
-            return VisibilityBatch.Delta(room, added, removed);
+            return VisibilityBatch.Delta(room, added, removed, muteAdded, muteRemoved);
         }
 
-        /// One listener's full current exclusion set as a Replace snapshot (join/reconnect).
+        // One listener's before/after set diff into the given add/remove maps. Shared by both channels.
+        private static void DiffChannel(IReadOnlySet<UUID> before, IReadOnlySet<UUID> after, UUID L,
+            Dictionary<UUID, IReadOnlyCollection<UUID>> add, Dictionary<UUID, IReadOnlyCollection<UUID>> rem)
+        {
+            List<UUID> a = null;
+            foreach (UUID s in after)
+                if (!before.Contains(s))
+                    (a ??= new List<UUID>()).Add(s);
+
+            List<UUID> r = null;
+            foreach (UUID s in before)
+                if (!after.Contains(s))
+                    (r ??= new List<UUID>()).Add(s);
+
+            if (a != null) add[L] = a;
+            if (r != null) rem[L] = r;
+        }
+
+        /// One listener's full current exclusion set (Added) and mute set (MuteAdded) as a Replace
+        /// snapshot (join/reconnect). Both channels are re-sent authoritatively.
         public static VisibilityBatch SnapshotFor(VisibilityMatrix matrix, UUID listener, int room)
         {
             var full = new List<UUID>(matrix.ExcludedFor(listener));
-            return VisibilityBatch.Snapshot(room, listener, full);
+            var fullMute = new List<UUID>(matrix.MutedFor(listener));
+            return VisibilityBatch.Snapshot(room, listener, full, fullMute);
         }
     }
 }

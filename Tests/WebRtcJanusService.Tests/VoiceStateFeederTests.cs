@@ -318,9 +318,12 @@ namespace osWebRtcVoice.Tests
 
             VisibilityMatrix m = VisibilityMatrix.Build(w);
 
-            Assert.That(m.IsExcluded(l1, s), Is.True, "moderated speaker is inaudible to a listener on another parcel");
-            Assert.That(m.IsExcluded(l2, s), Is.True, "moderated speaker is inaudible even to a co-located listener");
-            Assert.That(m.IsExcluded(s, l1), Is.False, "source-side: the muted speaker still hears others");
+            // Option A: moderation is now the MUTE channel (row stays, greyed), NOT the exclusion set.
+            Assert.That(m.IsMuted(l1, s), Is.True, "moderated speaker is muted for a listener on another parcel");
+            Assert.That(m.IsMuted(l2, s), Is.True, "moderated speaker is muted even for a co-located listener");
+            Assert.That(m.IsExcluded(l1, s), Is.False, "moderation does NOT exclude/remove the row (it mutes)");
+            Assert.That(m.IsExcluded(l2, s), Is.False, "moderation does NOT exclude/remove the row (it mutes)");
+            Assert.That(m.IsMuted(s, l1), Is.False, "source-side: the muted speaker still hears others");
         }
 
         // ======================================================================================
@@ -337,7 +340,9 @@ namespace osWebRtcVoice.Tests
 
             VisibilityMatrix m = VisibilityMatrix.Build(w);
 
-            Assert.That(m.IsExcluded(listener, muted), Is.True, "individually-muted agent is inaudible");
+            Assert.That(m.IsMuted(listener, muted), Is.True, "individually-muted agent is muted (row stays, greyed)");
+            Assert.That(m.IsExcluded(listener, muted), Is.False, "moderation mutes, it does not exclude/remove");
+            Assert.That(m.IsMuted(listener, other), Is.False, "an un-muted co-occupant is not muted");
             Assert.That(m.IsExcluded(listener, other), Is.False, "an un-muted co-occupant is still audible");
         }
 
@@ -374,11 +379,11 @@ namespace osWebRtcVoice.Tests
             w.Agents.Add(Child(mover, zone: 1));   // mover starts ON the moderated parcel M
 
             VisibilityMatrix m1 = VisibilityMatrix.Build(w);
-            Assert.That(m1.IsExcluded(listener, mover), Is.True, "muted while on the moderated parcel");
+            Assert.That(m1.IsMuted(listener, mover), Is.True, "muted while on the moderated parcel");
 
             w.Agents[mi] = Child(mover, zone: 2);  // mover walks onto Q
             VisibilityMatrix m2 = VisibilityMatrix.Build(w);
-            Assert.That(m2.IsExcluded(listener, mover), Is.False, "parcel-sticky: no longer moderated after leaving the parcel");
+            Assert.That(m2.IsMuted(listener, mover), Is.False, "parcel-sticky: no longer moderated after leaving the parcel");
         }
 
         // ======================================================================================

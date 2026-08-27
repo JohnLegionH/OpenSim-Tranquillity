@@ -29,6 +29,11 @@ namespace osWebRtcVoice
     /// excluded-source sets. The implementation stamps the room and sends.</summary>
     public interface IPeerCtlBatchSink
     {
-        Task<PeerCtlSendResult> SendAsync(VisOp op, IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> excl);
+        /// <param name="mute">ADDITIVE moderation-mute channel (Option A). Null/empty => no mute
+        /// changes in this op => the serialized body has no "mute" key => byte-for-byte the old wire.
+        /// Optional so existing callers and test doubles compile unchanged.</param>
+        Task<PeerCtlSendResult> SendAsync(VisOp op,
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> excl,
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> mute = null);
     }
 }

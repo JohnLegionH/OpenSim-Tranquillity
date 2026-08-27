@@ -27,15 +27,12 @@ namespace osWebRtcVoice
             if (estate.IsEstateBanned(source.Id) || estate.IsEstateBanned(listener.Id))
                 return true;
 
-            // (2b) Voice moderation - SOURCE-SIDE: a parcel moderator has muted this source, so it is
-            //      inaudible to everyone. Reads only the source and the source's parcel — simpler than
-            //      the pairwise ban. PARCEL-STICKY, not avatar-sticky: sourceParcel is the source's
-            //      CURRENT parcel, so a moderated avatar who leaves the parcel is no longer moderated
-            //      and an arriving one is (mute-everyone is parcel state). That matches SL and is NOT a
-            //      bug — do not "fix" it into avatar-stickiness. Exemptions (owner / estate manager /
-            //      group moderator) live inside the delegate, like the ban delegate.
-            if (sourceParcel.ExcludesByModeration(source.Id))
-                return true;
+            // (2b) MOVED OUT of the exclusion result. Voice moderation is now a SEPARATE channel
+            //      (IsModerationMuted below): a moderated source STAYS in the roster, greyed, rather
+            //      than being removed like a ban. This method (IsExcluded) therefore returns ONLY
+            //      ban/visibility exclusions - the class the mixer turns into a leave/removal. See
+            //      IsModerationMuted for the mute class and VisibilityMatrix.Build for the routing
+            //      (ban wins over mute: a source excluded here is NOT offered to the mute set).
 
             // (3) Parcel ban/restrict - SYMMETRIC (#13 fix): excluded if the source is barred
             //     from the listener's parcel OR the listener is barred from the source's parcel.
@@ -50,6 +47,18 @@ namespace osWebRtcVoice
 
             return false;
         }
+
+        /// True if this SOURCE is moderation-muted on its CURRENT parcel (rule 2b, source-side).
+        /// SEPARATE from IsExcluded by decision (LL-parity, Option A): a moderation mute silences the
+        /// source and greys its roster row but does NOT remove it, so it travels in its own mute
+        /// channel, not the exclusion set. Reads only the source and the source's parcel; exemptions
+        /// (owner / estate manager / group moderator) live inside the delegate, like the ban delegate.
+        /// PARCEL-STICKY, not avatar-sticky (mute-everyone is parcel state) — matches SL.
+        ///
+        /// Precedence is the CALLER's job (VisibilityMatrix.Build): a source already excluded by ban/
+        /// visibility must NOT also be offered to the mute set — removal is stricter than silence.
+        public static bool IsModerationMuted(in AgentView source, in ParcelView sourceParcel)
+            => sourceParcel.ExcludesByModeration(source.Id);
 
         /// voice ON for a source's parcel: estate master AND (TaxFree OR parcel AllowVoiceChat).
         internal static bool SourceVoiceAudible(in ParcelView sourceParcel, in EstateView estate)

@@ -31,13 +31,42 @@ namespace osWebRtcVoice
 
         /// <summary>Build the room-less peer_ctl_batch request. Format invariant: every listener and
         /// source is a non-zero UUID; a violation throws (the caller guards, never inspects responses).</summary>
-        public static OSDMap BuildRequest(VisOp op, IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> excl)
+        public static OSDMap BuildRequest(VisOp op,
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> excl,
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> mute = null)
         {
             if (excl == null)
                 throw new ArgumentNullException(nameof(excl));
 
-            var exclMap = new OSDMap();
-            foreach (KeyValuePair<UUID, IReadOnlyCollection<UUID>> kv in excl)
+            var body = new OSDMap
+            {
+                ["request"] = new OSDString("peer_ctl_batch"),
+                ["op"] = new OSDString(OpString(op)),
+                ["excl"] = BuildChannel(excl)
+            };
+
+            // ADDITIVE moderation-mute channel (Option A).
+            //   - On REPLACE (snapshot): ALWAYS emit "mute", even as an empty object. A REPLACE is
+            //     authoritative, so a NEW sim always carries the key; a mixer then knows that an
+            //     ABSENT "mute" on a replace means an OLD sim (skew disambiguation), never "no change".
+            //     An empty {} names no listener, so it clears nothing — clearing a listener requires
+            //     that listener's key with an empty array, which the sender's clear-tracking emits.
+            //   - On ADD/REMOVE (delta): emit only when non-empty, so a pure-ban delta is byte-for-byte
+            //     the pre-mute wire. An older mixer ignores the key either way (skew-safe).
+            if (op == VisOp.Replace || (mute != null && mute.Count > 0))
+                body["mute"] = BuildChannel(mute);
+
+            return body;
+        }
+
+        /// <summary>Serialize one per-listener {L:[S,...]} channel with the zero-UUID invariant.
+        /// Shared by the "excl" and "mute" channels so both enforce the same guard.</summary>
+        private static OSDMap BuildChannel(IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> channel)
+        {
+            var map = new OSDMap();
+            if (channel == null)
+                return map;   // REPLACE with no mutes -> emit an empty "mute" object (skew disambiguation)
+            foreach (KeyValuePair<UUID, IReadOnlyCollection<UUID>> kv in channel)
             {
                 if (kv.Key == UUID.Zero)
                     throw new InvalidOperationException("peer_ctl_batch invariant: zero listener UUID");
@@ -48,15 +77,9 @@ namespace osWebRtcVoice
                         throw new InvalidOperationException("peer_ctl_batch invariant: zero source UUID");
                     arr.Add(new OSDString(s.ToString()));
                 }
-                exclMap[kv.Key.ToString()] = arr;
+                map[kv.Key.ToString()] = arr;
             }
-
-            return new OSDMap
-            {
-                ["request"] = new OSDString("peer_ctl_batch"),
-                ["op"] = new OSDString(OpString(op)),
-                ["excl"] = exclMap
-            };
+            return map;
         }
 
         /// <summary>Added and Removed must be disjoint per (listener, source) pair. A pair in BOTH is

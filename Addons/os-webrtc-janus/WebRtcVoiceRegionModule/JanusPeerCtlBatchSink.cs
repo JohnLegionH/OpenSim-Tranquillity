@@ -43,6 +43,9 @@ namespace osWebRtcVoice
     public sealed class JanusPeerCtlBatchSink : IPeerCtlBatchSink, IDisposable
     {
         private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
+        // Reused empty excl slice for a room that has only mute changes this op.
+        private static readonly IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> EmptyChannel
+            = new Dictionary<UUID, IReadOnlyCollection<UUID>>();
         private const string LogHeader = "[JANUS PEERCTL SINK]";
         private const string SlvoicePlugin = "janus.plugin.slvoice";
 
@@ -134,21 +137,42 @@ namespace osWebRtcVoice
             _roomGate?.Dispose();
         }
 
-        public async Task<PeerCtlSendResult> SendAsync(VisOp op, IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> excl)
+        public async Task<PeerCtlSendResult> SendAsync(VisOp op,
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> excl,
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> mute = null)
         {
             PeerCtlBatchPartition part = PeerCtlBatchPartitioner.Partition(excl, RoomOf, _fallbackRoom);
             _lastSendRooms = part.RoomCount;
             _lastSendFallbackListeners = part.FallbackListeners;
             _lastSendFallbackSources = part.FallbackSources;
 
+            // ADDITIVE mute channel: partition it with the SAME per-room policy (the partitioner is
+            // untouched — called a second time). Rooms present only in the mute partition are unioned
+            // in below, so a mute-only op still addresses its room(s). Empty/null mute => no second
+            // partition and the excl-only path is byte-for-byte the pre-mute behaviour.
+            IReadOnlyDictionary<int, IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>>> muteRooms
+                = (mute != null && mute.Count > 0)
+                    ? PeerCtlBatchPartitioner.Partition(mute, RoomOf, _fallbackRoom).Rooms
+                    : null;
+
+            // Union the room keys across both channels, preserving order-independence.
+            var roomKeys = new HashSet<int>();
+            foreach (int r in part.Rooms.Keys) roomKeys.Add(r);
+            if (muteRooms != null)
+                foreach (int r in muteRooms.Keys) roomKeys.Add(r);
+
             // Build EVERY body BEFORE sending any of them. The serializer's invariant throw stays
             // all-or-nothing as it was when there was one message: a zero UUID in any room aborts the
             // whole tick with nothing on the wire, rather than leaving some rooms updated and others not.
-            var requests = new List<OSDMap>(part.RoomCount);
-            foreach (KeyValuePair<int, IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>>> room in part.Rooms)
+            var requests = new List<OSDMap>(roomKeys.Count);
+            foreach (int roomKey in roomKeys)
             {
-                OSDMap request = PeerCtlBatchSerializer.BuildRequest(op, room.Value);
-                request["room"] = new OSDInteger(room.Key);   // the sink stamps the room, per room
+                IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> exclSlice =
+                    part.Rooms.TryGetValue(roomKey, out var es) ? es : EmptyChannel;
+                IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> muteSlice =
+                    (muteRooms != null && muteRooms.TryGetValue(roomKey, out var ms)) ? ms : null;
+                OSDMap request = PeerCtlBatchSerializer.BuildRequest(op, exclSlice, muteSlice);
+                request["room"] = new OSDInteger(roomKey);   // the sink stamps the room, per room
                 requests.Add(request);
             }
 

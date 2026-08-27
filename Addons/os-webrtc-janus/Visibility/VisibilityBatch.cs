@@ -21,36 +21,55 @@ namespace osWebRtcVoice
 
         public int Room { get; }
         public bool IsSnapshot { get; }
+        // Exclusion (ban/visibility) channel - unchanged shape and meaning.
         public IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> Added { get; }
         public IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> Removed { get; }
+        // Moderation MUTE channel (Option A), additive. Same per-listener shape as Added/Removed.
+        // Empty on every path that predates moderation, so an unchanged excl case is unaffected.
+        public IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> MuteAdded { get; }
+        public IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> MuteRemoved { get; }
 
         private VisibilityBatch(int room, bool isSnapshot,
             IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> added,
-            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> removed)
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> removed,
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> muteAdded,
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> muteRemoved)
         {
             Room = room;
             IsSnapshot = isSnapshot;
             Added = added ?? EmptyMap;
             Removed = removed ?? EmptyMap;
+            MuteAdded = muteAdded ?? EmptyMap;
+            MuteRemoved = muteRemoved ?? EmptyMap;
         }
 
-        /// A delta carries no per-listener changes at all -> the tick can be dropped.
-        /// (A snapshot is never empty: an empty set is a meaningful "clear this listener".)
-        public bool IsEmpty => !IsSnapshot && Added.Count == 0 && Removed.Count == 0;
+        /// A delta carries no per-listener changes at all (in EITHER channel) -> the tick can be
+        /// dropped. (A snapshot is never empty: an empty set is a meaningful "clear this listener".)
+        public bool IsEmpty => !IsSnapshot
+            && Added.Count == 0 && Removed.Count == 0
+            && MuteAdded.Count == 0 && MuteRemoved.Count == 0;
 
         public static VisibilityBatch Delta(int room,
             IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> added,
-            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> removed)
-            => new VisibilityBatch(room, false, added, removed);
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> removed,
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> muteAdded = null,
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> muteRemoved = null)
+            => new VisibilityBatch(room, false, added, removed, muteAdded, muteRemoved);
 
         /// A no-change delta - returned on a skipped/failed tick so callers get a non-null batch.
         public static VisibilityBatch EmptyDelta(int room)
-            => new VisibilityBatch(room, false, EmptyMap, EmptyMap);
+            => new VisibilityBatch(room, false, EmptyMap, EmptyMap, EmptyMap, EmptyMap);
 
-        public static VisibilityBatch Snapshot(int room, UUID listener, IReadOnlyCollection<UUID> fullSet)
+        /// One listener's FULL current state as a Replace snapshot: excl set in Added, mute set in
+        /// MuteAdded. Both are authoritative-empty-is-a-clear for that listener.
+        public static VisibilityBatch Snapshot(int room, UUID listener,
+            IReadOnlyCollection<UUID> fullSet, IReadOnlyCollection<UUID> fullMuteSet = null)
         {
             var map = new Dictionary<UUID, IReadOnlyCollection<UUID>> { [listener] = fullSet };
-            return new VisibilityBatch(room, true, map, EmptyMap);
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> muteMap = fullMuteSet == null
+                ? EmptyMap
+                : new Dictionary<UUID, IReadOnlyCollection<UUID>> { [listener] = fullMuteSet };
+            return new VisibilityBatch(room, true, map, EmptyMap, muteMap, EmptyMap);
         }
     }
 }

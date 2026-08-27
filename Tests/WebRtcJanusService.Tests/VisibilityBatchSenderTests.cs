@@ -45,22 +45,33 @@ namespace osWebRtcVoice.Tests
         private sealed class FakeSink : IPeerCtlBatchSink
         {
             public PeerCtlSendResult NextResult = PeerCtlSendResult.Ok;
+            public readonly Queue<PeerCtlSendResult> ResultQueue = new();   // per-call results; else NextResult
             public bool Throw;
             public readonly List<(VisOp op, Dictionary<UUID, List<UUID>> excl)> Calls = new();
+            public readonly List<Dictionary<UUID, List<UUID>>> MuteCalls = new();   // parallel to Calls
             private readonly object _lock = new object();
 
-            public Task<PeerCtlSendResult> SendAsync(VisOp op, IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> excl)
+            public Task<PeerCtlSendResult> SendAsync(VisOp op,
+                IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> excl,
+                IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> mute = null)
             {
                 if (Throw)
                     throw new InvalidOperationException("sink boom");
+                PeerCtlSendResult result;
                 lock (_lock)
                 {
+                    result = ResultQueue.Count > 0 ? ResultQueue.Dequeue() : NextResult;
                     var copy = new Dictionary<UUID, List<UUID>>();
                     foreach (var kv in excl)
                         copy[kv.Key] = new List<UUID>(kv.Value);
                     Calls.Add((op, copy));
+                    var mcopy = new Dictionary<UUID, List<UUID>>();
+                    if (mute != null)
+                        foreach (var kv in mute)
+                            mcopy[kv.Key] = new List<UUID>(kv.Value);
+                    MuteCalls.Add(mcopy);
                 }
-                return Task.FromResult(NextResult);
+                return Task.FromResult(result);
             }
 
             public int Count { get { lock (_lock) return Calls.Count; } }
@@ -70,6 +81,7 @@ namespace osWebRtcVoice.Tests
         {
             public VisibilityMatrix Current { get; set; } = VisibilityMatrix.Empty;
             public readonly Dictionary<UUID, IReadOnlyCollection<UUID>> Columns = new();
+            public readonly Dictionary<UUID, IReadOnlyCollection<UUID>> MuteColumns = new();
 
 #pragma warning disable CS0067 // required by the interface; the sender does not subscribe
             public event Action<VisibilityBatch> BatchProduced;
@@ -79,7 +91,9 @@ namespace osWebRtcVoice.Tests
             {
                 IReadOnlyCollection<UUID> col = Columns.TryGetValue(listener, out IReadOnlyCollection<UUID> c)
                     ? c : Array.Empty<UUID>();
-                return VisibilityBatch.Snapshot(Room, listener, col);
+                IReadOnlyCollection<UUID> mcol = MuteColumns.TryGetValue(listener, out IReadOnlyCollection<UUID> m)
+                    ? m : Array.Empty<UUID>();
+                return VisibilityBatch.Snapshot(Room, listener, col, mcol);
             }
         }
 
@@ -109,6 +123,63 @@ namespace osWebRtcVoice.Tests
             w.Agents.Add(new AgentView(a, false, Vector3.Zero, qGid, false));   // a on Q (banned from P)
             w.Agents.Add(new AgentView(b, false, Vector3.Zero, pGid, false));   // b on P
             return VisibilityMatrix.Build(w);
+        }
+
+        // A matrix where `mutedSource` is moderation-muted (source-side) on the shared parcel, so it
+        // is in the MUTE channel for `listener` (MutedFor(listener) = {mutedSource}) and in nobody's
+        // exclusion set. Mirror of BannedPairMatrix for the mute channel.
+        private static VisibilityMatrix MutedSourceMatrix(UUID listener, UUID mutedSource)
+        {
+            var w = new BanWorld();
+            UUID gid = Id(201);
+            ParcelView p = new ParcelView(gid, seeAVs: true, allowVoiceChat: true,
+                isBannedFromLand: _ => false, isRestrictedFromLand: _ => false,
+                isVoiceModerated: x => x == mutedSource);
+            w.ByGid[gid] = p;
+            w.Agents.Add(new AgentView(listener, false, Vector3.Zero, gid, false));
+            w.Agents.Add(new AgentView(mutedSource, false, Vector3.Zero, gid, false));
+            return VisibilityMatrix.Build(w);
+        }
+
+        // ---- stuck-mute window (pending-join sets mute, main emit fails, unmute while unsynced) ----
+
+        [Test]
+        public async Task PendingJoinMute_MainEmitFails_ThenUnmuteWhileUnsynced_SnapshotClearsMute()
+        {
+            UUID L = Id(1), S = Id(2);
+            var feed = new FakeFeed();
+            var sink = new FakeSink();
+            var sender = new VisibilityBatchSender(feed, sink, enabled: true);
+
+            // Phase 1: L moderation-mutes S. The pending-join replace SUCCEEDS (mixer mod_muted[L] set),
+            // but the following main snapshot FAILS, so _synced stays false and the main path never
+            // records L. Only the deliverable-1 fix puts L into _knownMuteListeners here.
+            feed.Current = MutedSourceMatrix(L, S);
+            feed.MuteColumns[L] = new[] { S };
+            sender.OnListenerProvisioned(L);
+            sink.ResultQueue.Enqueue(PeerCtlSendResult.Ok);              // pending-join replace: applied
+            sink.ResultQueue.Enqueue(PeerCtlSendResult.TransportError);  // main snapshot: fails
+            await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
+
+            // Sanity: phase 1 did send L's mute (non-empty) on the pending-join replace.
+            Assert.That(sink.MuteCalls.Any(m => m.TryGetValue(L, out var s0) && s0.Count == 1 && s0[0] == S),
+                Is.True, "phase 1 pending-join must have sent L's non-empty mute");
+
+            int callsAfterPhase1 = sink.Calls.Count;
+
+            // Phase 2: S is unmuted -> Current has no mutes and L's mute column is empty. Still unsynced,
+            // so this Pump runs a snapshot whose clear-tracking must name L with an explicit empty set.
+            feed.Current = VisibilityMatrix.Empty;
+            feed.MuteColumns.Remove(L);
+            sink.ResultQueue.Enqueue(PeerCtlSendResult.Ok);   // pending-join replace (excl only, mute null)
+            sink.ResultQueue.Enqueue(PeerCtlSendResult.Ok);   // main snapshot: applied
+            await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
+
+            // The snapshot (a phase-2 call) must carry an EXPLICIT empty mute set for L — the clear.
+            bool cleared = sink.MuteCalls.Skip(callsAfterPhase1)
+                .Any(m => m.TryGetValue(L, out var s) && s.Count == 0);
+            Assert.That(cleared, Is.True,
+                "after the fix, the snapshot clear-tracking must emit mute[L]=[] to clear the stranded mute");
         }
 
         // ---- no-op paths -------------------------------------------------------------------------
@@ -362,7 +433,9 @@ namespace osWebRtcVoice.Tests
             private readonly object _lock = new object();
             public TaskCompletionSource<PeerCtlSendResult> LastPending;
 
-            public Task<PeerCtlSendResult> SendAsync(VisOp op, IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> excl)
+            public Task<PeerCtlSendResult> SendAsync(VisOp op,
+                IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> excl,
+                IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> mute = null)
             {
                 lock (_lock) Ops.Add(op);
                 if (Hang)
