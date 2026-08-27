@@ -403,6 +403,31 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
+        public async Task PendingJoin_EmptyColumnListener_SkipsPending_WhileExclusionListenerStillResends()
+        {
+            // Vacuous-confirm guard: a listener whose excl AND mute columns are both empty must never
+            // enter the pending machinery -- no re-sends, no GIVING-UP warning (the constant false alarm
+            // that fired on every login and made the silent-drop instrument useless). A listener WITH an
+            // exclusion is unaffected and still re-sends exactly PendingJoinMaxAttempts times.
+            UUID empty = Id(30), banned = Id(31), source = Id(32);
+            var feed = new FakeFeed { Current = VisibilityMatrix.Empty };   // main path a no-op after sync
+            feed.Columns[banned] = new List<UUID> { source };              // `empty` has NO column at all
+            var sink = new FakeSink();
+            var sender = new VisibilityBatchSender(feed, sink, enabled: true);
+
+            sender.OnListenerProvisioned(empty);
+            sender.OnListenerProvisioned(banned);
+
+            for (int i = 0; i < VisibilityBatchSender.PendingJoinMaxAttempts + 3; i++)
+                await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
+
+            Assert.That(sink.Calls.Any(c => c.excl.ContainsKey(empty)), Is.False,
+                "empty-column listener is never sent (skipped at first drain: no re-send, no give-up)");
+            Assert.That(sink.Calls.Count(c => c.excl.ContainsKey(banned)), Is.EqualTo(VisibilityBatchSender.PendingJoinMaxAttempts),
+                "a listener with an exclusion still gets the full bounded re-send");
+        }
+
+        [Test]
         public async Task PendingJoin_DoesNotAffectMainSnapshotState()
         {
             // The pending path must not touch _synced/_knownListeners. With an empty Current, the main

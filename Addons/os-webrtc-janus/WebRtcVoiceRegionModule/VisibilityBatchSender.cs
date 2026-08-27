@@ -197,10 +197,29 @@ namespace osWebRtcVoice
                 due = new List<UUID>(_pending.Keys);
             foreach (UUID listener in due)
             {
-                var one = new Dictionary<UUID, IReadOnlyCollection<UUID>> { [listener] = ColumnFor(listener) };
+                // Vacuous-confirm guard: a listener whose excl AND mute columns are both empty enforces
+                // nothing at the mixer, so there is no silent-drop to detect. Drop it from the pending
+                // set WITHOUT a send or the give-up warning (which would otherwise fire on every login
+                // for every avatar and drown the real dropped-ban signal). Guarded HERE at first drain,
+                // not at enqueue: OnListenerProvisioned runs on the WebRTC provisioning-callback thread
+                // (WebRtcVoiceRegionModule.cs:581 -> VoiceVisibilityService.cs:148), whereas the feed's
+                // column accessors read the un-synchronized _feed._current and are by design touched
+                // only on RunAsync's thread. DrainPendingAsync already runs there and reads the columns
+                // anyway, so the check is free and thread-correct. A late ban/mute that appears before
+                // the listener joins is delivered by the steady-state delta path, not here.
+                IReadOnlyCollection<UUID> exclCol = ColumnFor(listener);
+                IReadOnlyCollection<UUID> muteCol = MuteColumnFor(listener);
+                if (exclCol.Count == 0 && muteCol.Count == 0)
+                {
+                    lock (_pendingLock)
+                        _pending.Remove(listener);
+                    m_log.LogDebug("{LogHeader} listener {ListenerId}: empty excl+mute column at join; " +
+                        "nothing to confirm, skipping pending re-send", LogHeader, listener);
+                    continue;
+                }
+                var one = new Dictionary<UUID, IReadOnlyCollection<UUID>> { [listener] = exclCol };
                 // Re-send the joining listener's FULL state in BOTH channels, so a late joiner under a
                 // sticky moderation mute inherits it (its mute column travels with the replace).
-                IReadOnlyCollection<UUID> muteCol = MuteColumnFor(listener);
                 var oneMute = muteCol.Count > 0
                     ? new Dictionary<UUID, IReadOnlyCollection<UUID>> { [listener] = muteCol }
                     : null;
