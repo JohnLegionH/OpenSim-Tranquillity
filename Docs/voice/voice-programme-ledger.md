@@ -1,10 +1,14 @@
 # Ledger — WebRTC Voice Programme
 
 **Artifact type:** Ledger — **LIVING**. Never frozen. Amend in place; date every change.
-**Last reconciled:** 2026-08-26, against `tranquillity-develop` at *feat(voice): return the
-joined room in the provision success response* (`3c95ddea0e`, branch
+**Last reconciled:** 2026-08-27, against `tranquillity-develop` at *feat(voice): add console
+commands to see and clear parcel voice moderation* (`935bd5b6d2`, branch
 `feature/voice-visibility-matrix`) and `legion-voice-mixer` at *fix(voice): clear stale
-exclusions on leave, error on unknown room and request* (`872f0d9`, branch `main`).
+exclusions on leave, error on unknown room and request* (`872f0d9`, branch `main` — **unchanged
+since the last reconciliation**; the mixer took no commits this cycle) [SRC: `git log`].
+*Previous basis 2026-08-26 at `3c95ddea0e`; six commits folded in below, five of them code —
+S1b, S2, S3a, S3b and the moderation console commands — plus this ledger's own first commit.
+Note the drift was six commits, not seven: `53e560fdc4` (this file) is one of them.*
 **Scope:** the whole voice programme — the `os-webrtc-janus` addon in this tree, the
 `janus.plugin.slvoice` mixer, and the documents about both. Adjacent parcel/estate enforcement
 defects are listed only where a voice document depends on them.
@@ -228,13 +232,42 @@ addendum]: orphan capacity burn, leave-dot ghosting; eviction deliberately not d
 (`WebRtcVoiceRegionModule.cs:513`). Deployed 2026-08-25 (§5). Closes one of three parts of
 OPEN item #13 (§4.1 O-3).
 
-### Per-room visibility emission (build plan S1–S5, M1) — S1 done; S2–S5 not started
-[SRC] S1: *feat(voice): return the joined room in the provision success response*
-(`WebRtcJanusService.cs:278`–`:283`), **committed, not deployed** (§5). S2 (region records
-room), S3a (partitioner), S3b (sink partitions + bounded-parallel sends — first in-world-testable
-step), S4 (`NotApplied` inner-reply reading), S5 (docs): not started. M1 (mixer version bump):
-optional, not started. Decisions OQ1–OQ7 recorded in the brief [DOC, this tree
-`per-room-visibility-emission-design-brief.md` §7].
+### Per-room visibility emission (build plan S1–S5, M1) — S1–S3b done and deployed; S4–S5 not started
+*Amended 2026-08-27.* [SRC] **S1** *feat(voice): return the joined room in the provision success
+response* (`3c95ddea0e`); **S1b** *refactor(voice): extract the provision response builder, pin
+its shape* (`7b08786d19`) — all three response maps moved to `Janus/ProvisionResponseBuilder.cs`
+with `ProvisionResponseShapeTests` pinning key order and per-key type byte-for-byte on both the
+LLSD-XML and JSON-connector paths; **S2** *feat(voice): record the room each agent joined, per
+region* (`98465dc662`) — `AgentRoomTable.cs`, newest-provision-wins, resolver handed to the sink
+in `VoiceVisibilityService`'s constructor; **S3a** *feat(voice): add the per-room batch
+partitioner, unwired* (`ef119f2a90`) — `Visibility/PeerCtlBatchPartitioner.cs`; **S3b**
+*feat(voice): emit one visibility batch per room* (`e35463a088`) — the sink partitions and sends
+bounded-parallel, `VisibilityRoomSendConcurrency` config key added. **All four are deployed**
+(§5, deploy of 2026-08-26 16:23).
+
+**S4** (`NotApplied` inner-reply reading) and **S5** (docs) remain **not started**; both are
+ship-blocking (§8). M1 (mixer version bump): optional, not started. Decisions OQ1–OQ7 recorded in
+the brief [DOC, this tree `per-room-visibility-emission-design-brief.md` §7].
+
+S3b was named in the brief as the first in-world-testable step. **No dated in-world run of the
+per-room emission path exists** — the region has not been started since the deploy [SRC: §5].
+That is U-11 (§6).
+
+### Voice moderation console surface — done, deployed, untested in-world
+*Added 2026-08-27.* [SRC] *feat(voice): add console commands to see and clear parcel voice
+moderation* (`935bd5b6d2`): `show voice moderation` and `voice moderation unmute
+<agent-uuid-or-name>`, registered under the `"Voice"` help category in
+`WebRtcVoiceRegionModule.Initialise` via `VoiceModerationCommands.cs`; `VoiceModerationTargets.cs`
+holds the pure UUID-or-name resolution (ambiguity and absence both reported, never guessed);
+`VoiceModerationStore` gains an ordered detached `Snapshot()` and `UnmuteAgent` now returns
+whether it cleared anything. Store remains in-memory and non-persistent — persistence is still
+slice 2. 18 new unit tests; the two known stall-guard failures (O-20) are unrelated and
+unchanged. Deployed 2026-08-26 18:48 (§5).
+
+**Why it exists:** a parcel mute removed the muted avatar's roster row at the mixer, and that row
+was the only way to reach the unmute — so the mute removed its own undo. This is the server-side
+escape hatch. The viewer-side half is the separate `fix/voice-webrtc-fixes` work (§7.5). Not yet
+exercised on a live region [SRC: region stopped since the deploy].
 
 ### Connector layer — not started (design DRAFT)
 [DOC] `connector-design-brief.md` `Status: DRAFT. Not frozen.`; Q1 (identity) resolved by
@@ -259,7 +292,7 @@ item 4). All [SRC] absent by grep of both source trees and both git logs.
 
 | ID | Item | Status | Recorded in |
 |---|---|---|---|
-| O-1 | Visibility feed addressed only to the estate room; per-parcel agents get no exclusions | filed; fix planned S1–S5, S1 done | `KnownDefects.md` (this tree); per-room brief; `mixer-feed-protocol.md` §3.4 correction; `parcel-voice-semantics.md` §P Part 2 |
+| O-1 | Visibility feed addressed only to the estate room; per-parcel agents get no exclusions | filed; **S1–S3b done and deployed 2026-08-26; S4–S5 remain** (amended 2026-08-27) | `KnownDefects.md` (this tree); per-room brief; `mixer-feed-protocol.md` §3.4 correction; `parcel-voice-semantics.md` §P Part 2 |
 | O-2 | Dense exclusion batch > 64 KB rejected whole, read as applied; sender marks synced | filed 2026-08-26; chunking deferred (OQ6); visibility via S4 | `KnownDefects.md`; per-room brief §3 |
 | O-3 | #13 estate-channel ban — three parts: provisioning bypass **closed**; mixer-side closed for estate room only (= O-1); TaxFree void **open** | split | `parcel-voice-semantics.md` OPEN #13 + §E + §P |
 | O-4 | TaxFree short-circuit voids parcel ban/restrict at provisioning on both channels; matrix overrides it — the two layers disagree under TaxFree | open, undecided | `parcel-voice-semantics.md` §E, §P Part 3 |
@@ -278,8 +311,8 @@ item 4). All [SRC] absent by grep of both source trees and both git logs.
 | O-17 | Connector brief Q2 disclosure, Q3 authorisation, Q4 injection identity, Q5 hypergrid interaction, Q6 disclosure sufficiency | open; Q1 resolved | `connector-design-brief.md` |
 | O-18 | 3b deferred DSP: HRTF+ITD, binning, far-tier, dirty-flag; sim position feed; estate-level leash; per-region spatial config | deferred | `phase3b-design-brief.md` + Amendments 3/8 |
 | O-19 | Scaling: pass-2 parallelism (open for all-audible case); tick composition at N≈110 decomposed; "exactly one inbound track?" unverified inference | open | `scaling-assessment.md` §Open questions + Amendment 1 |
-| O-20 | Two `VisibilityBatchSenderTests` fail (stall-log assertions count a log4net appender; the sender logs via ILogger since 2026-08-23) — pre-existing at `6586838e43`, proven 2026-08-26 | open, **unfiled** | this ledger; S1 report |
-| O-21 | `os-webrtc-janus.ini.example` carries none of `VisibilityFeederEnabled` / `VisibilityEmitEnabled` / `VisibilityTickMs`; the live config uses all three | open, **unfiled** | this ledger [SRC: grep = 0] |
+| O-20 | Two `VisibilityBatchSenderTests` fail (stall-log assertions count a log4net appender; the sender logs via ILogger since 2026-08-23), so `ForceClearStalledSend` has **no live coverage** — pre-existing at `6586838e43` | **FILED 2026-08-26**, not fixed (was "unfiled"; corrected 2026-08-27) | `KnownDefects.md` [SRC: entry added by `7b08786d19`]; this ledger |
+| O-21 | **Both** `os-webrtc-janus.ini` **and** its `.example` carry none of `VisibilityFeederEnabled` / `VisibilityEmitEnabled` / `VisibilityTickMs`; the live config uses all three, so a region built from either ships with the feeder off and no log line saying so | **FILED 2026-08-26**, not fixed (was "unfiled, .example only"; corrected 2026-08-27) | `KnownDefects.md` [SRC: entry added by `7b08786d19`]; [SRC: grep = 0 in both files, re-verified 2026-08-27] |
 | O-22 | `mixer-feed-protocol.md` "room-level flag in v1.1" for voice-denied vs no-exclusions | idea, unscheduled | `mixer-feed-protocol.md` §3.2 |
 | O-23 | `protocol-compat.md` constraint status "ACTIVE (Phase 0)" with expiry at flat-mix parity — parity reached in code (Phase 2); whether the audiobridge-superset constraint still binds is undecided | UNKNOWN | `protocol-compat.md` |
 | O-24 | Spec §10 questions 1–4 (HG pool policy, FOA viewer decode, consent defaults, session migration) | untouched | `webrtc-voice-spec.md` |
@@ -287,6 +320,21 @@ item 4). All [SRC] absent by grep of both source trees and both git logs.
 | O-26 | Five estate toggles packed into region flags with no write path | not started (estate; adjacent) | `KnownDefects.md` |
 | O-27 | Mixer version string not bumped by the `unknown_room` commit, so a deployed plugin cannot self-identify as carrying it (M1) | optional | per-room brief §8 |
 | O-28 | `Docs/voice` cross-repo sync drift: `parcel-voice-semantics.md` differs by 56 lines (this tree's §P not in the mixer); this tree lacks the spec, 3b brief, connector brief, scaling assessment, current-architecture; the mixer lacks the moderation brief and the per-room brief | open | this ledger [SRC: diff 2026-08-26] |
+
+*Rows O-29 – O-38 added 2026-08-27 from the reviewer-condition assessment (§7). All [SRC].*
+
+| ID | Item | Status | Recorded in |
+|---|---|---|---|
+| O-29 | **`multiagent` provisioning bypasses every access check.** All estate-voice / parcel / ban / restrict enforcement sits inside `if (channelType == "local")` (`WebRtcVoiceRegionModule.cs:472`–`:547`); a `channel_type="multiagent"` request skips all of it and goes straight to the service | open, **unfiled** — **SHIP-BLOCKING** (§8) | this ledger §7.2 |
+| O-30 | **Avatar-to-avatar voice has never worked**: `ChatterBoxInvitation` has no callers anywhere; `voice_enabled` sent `false`; session name is the caller's own; `credentials` read and discarded; other ChatSession methods are stubs | open, **unfiled** — deferred (§8) | this ledger §7.3 |
+| O-31 | Methods named `ProvisionVoiceAccountRequestBAD` / `VoiceSignalingRequestBAD` on production paths (`WebRtcJanusService.cs:211`, `:334`) | open, **unfiled** — should-fix (§8) | this ledger §7.6 |
+| O-32 | Sync-over-async: six `.Result` calls in `WebRtcJanusService.cs` (`:137`, `:208`, `:331`, `:437`, `:449`, `:466`), two of them on the provisioning and signalling hot paths | open, **unfiled** | this ledger §7.6 |
+| O-33 | `Math.Abs(hashed.GetHashCode())` (`JanusAudioBridge.cs:219`) throws `OverflowException` on `int.MinValue` — room-number derivation fails hard instead of returning a room | open, **unfiled** — should-fix (§8) | this ledger §7.6 |
+| O-34 | Stale comment `WebRtcJanusService.cs:239` — "channel_type has already been checked to be 'local'" is **false**; `multiagent` reaches that line. Misstates the security posture and hides O-29 from a reader who trusts it | open, **unfiled** — should-fix (§8) | this ledger §7.6 |
+| O-35 | `CalcRoomNumber`'s `"multiagent"` branch hashes only `channelID` + `channelType`, with the in-source comment "should add a GridId here" (`JanusAudioBridge.cs:207`–`:211`) — two grids sharing a mixer can collide on room numbers | open, **unfiled** | this ledger §7.6 |
+| O-36 | Unfinished TODO "check for errors and package the response" (`WebRtcVoiceRegionModule.cs:632`) sitting directly above the line that discards the signalling response | open, **unfiled** — cosmetic; see §7.1, where the discard is load-bearing for the no-P2P finding | this ledger §7.6 |
+| O-37 | **Viewer:** a stored per-avatar volume in `volume_settings.xml` can permanently suppress that avatar's participant row; audio unaffected; survives grid restart, viewer restart, relog and teleport. Mechanism **UNKNOWN**; workaround documented | filed **viewer-side** 2026-08-26 — deferred (§8) | `phoenix-firestorm:docs/voice-participant-row-suppression.md` (do not duplicate here) |
+| O-38 | Hypergrid visitors are provisioned **identically** to local users — the voice addon contains no HG-aware code at all (zero references to `Hypergrid` / `IsLocalGridUser` / `UserAgentService` / `scopeID`). Bears on spec §3.2 and §10 item 1 | open, **policy undecided** — deferred (§8) | this ledger §7.4; spec §3.2, §10 item 1 |
 
 Closed items, kept so nobody re-files them: OnRemovePresence teardown (implemented 2026-08-22);
 estate CAP TaxFree flip on absent `override_public_access` (implemented 2026-08-23); parcel
@@ -358,7 +406,43 @@ filed in this tree's `Docs/KnownDefects.md` (O-2, O-5, O-13) and in `parcel-voic
 
 ---
 
-## 5. Deployed versus committed, as of 2026-08-26 06:19 local
+## 5. Deployed versus committed, as of 2026-08-27
+
+*Superseding amendment 2026-08-27. Two deploys happened on 2026-08-26 after the previous
+reconciliation; the §5.1 text below it describes 08-26 06:19 and is retained only as history.*
+
+### 5.0 Current state (2026-08-27)
+
+**Region: still stopped.** No `OpenSim.Server.RegionServer.exe`; 9000/9001/9002/8003 all free
+[SRC: process and port query at both deploys and at this reconciliation]. **Nothing committed to
+this branch is undeployed, and nothing deployed has been exercised in-world.**
+
+**Two deploys on 2026-08-26**, both staged, hash-verified and rollback-backed [SRC: deploy
+reports; file timestamps and SHA-256 recorded at each]:
+
+| # | Time | Content | Rollback |
+|---|---|---|---|
+| 1 | 16:22–16:23 | S1 + S1b + S2 + S3a + S3b — `WebRtcVoiceRegionModule.dll` (16:23:03), `WebRtcJanusService.dll` (16:23:03), `VoiceVisibility.dll` (16:22:44) | `regionserver-20260826-162213-backup` |
+| 2 | 18:42–18:48 | Moderation console commands (`935bd5b6d2`) — `WebRtcVoiceRegionModule.dll` **and** `.pdb`, both built 18:43:23 | `regionserver-20260826-184209-backup` |
+
+**Deploy-root voice binaries now** [SRC: read 2026-08-27]:
+`WebRtcVoiceRegionModule.dll` 2026-08-26 18:43:23 / 68,608 B (SHA-256 `32A7DFF9…8807276E`);
+`WebRtcVoiceRegionModule.pdb` 18:43:23 / 33,112 B; `WebRtcJanusService.dll` 16:23:03 / 86,528 B;
+`VoiceVisibility.dll` 16:22:44 / 17,920 B; `WebRtcVoice.dll` and `WebRtcVoiceServiceModule.dll`
+**unchanged at 2026-08-25 15:47** — no source in either changed this cycle.
+
+Deploy 2 also replaced a **stale PDB**: the deployed `.pdb` had been dated 2026-08-25 20:11 while
+its DLL was 2026-08-26 16:23, so Debug stack traces from that assembly carried wrong line numbers
+between the two deploys. DLL and PDB now share a build time.
+
+**Committed but NOT deployed: nothing.** HEAD `935bd5b6d2` is the deployed build.
+**Deployed but not verified in-world: everything since 2026-08-25 20:29** — S1, S1b, S2, S3a, S3b
+and the moderation console commands have never run on a started region (U-11, U-12).
+
+**Mixer: unchanged.** Still `872f0d9`, still image `0.9.0`; no mixer commit this cycle [SRC:
+`git log`]. Whether the running container still matches is U-1, unchanged.
+
+### 5.1 History — the 2026-08-26 06:19 reconciliation (retained, superseded by §5.0)
 
 ### Region side — `D:\legiongrid\regionserver`
 - **Not running at reconciliation time.** No `OpenSim.Server.RegionServer.exe` process; nothing
@@ -426,6 +510,227 @@ meant the 08-25 evening deploy, the statement holds; if it meant the current HEA
 | U-8 | The mixer admin round-trip under load (the per-room brief's crossover uses a 2.5–3.3 ms loopback floor for a trivial request) | Timing a real `peer_ctl_batch` from the sink |
 | U-9 | Exact membership of every parcel's `UseEstateVoiceChan` on this grid (four parcels sampled; Elm clear) | `SELECT RegionUUID, LocalLandID, Name, LandFlags & 0x40000000 FROM land` |
 | U-10 | The OpenMetaverse `ParcelFlags` enum text (binary package only; values taken from the SL header, corroborated twice) | A reflection dump of `UtopiaSkye.OpenMetaverse` or its source tag |
+| U-11 | *Added 2026-08-27.* Whether per-room emission (S3b) actually addresses per-parcel rooms correctly in-world — the brief named S3b the first in-world-testable step and it has never run on a started region | Start the region, put two avatars on different parcels of one region, and confirm each is addressed at its own room number (mixer `handle_info`, `excluded_entries`) rather than the estate room |
+| U-12 | *Added 2026-08-27.* Whether the two moderation console commands register and function on a live region | Start a region with `VisibilityFeederEnabled = true`, run `help Voice`, then `show voice moderation` and `voice moderation unmute <uuid>` |
+| U-13 | *Added 2026-08-27.* Whether a viewer can actually drive `multiagent` provisioning today (drives O-29's severity: latent vs live) | Grep the viewer for `"multiagent"` and for its handling of `ChatterBoxSessionStartReply` with `voice_enabled:false` — out of scope for the sim-side assessment |
+| U-14 | *Added 2026-08-27.* Whether any **other** Janus plugin loaded in the same container exposes a client-reachable signalling path (bounds the §7.1 no-P2P finding to this plugin) | Read the container's `janus.jcfg` plugin list |
+| U-15 | *Added 2026-08-27.* Runtime confirmation of the no-P2P guarantee (§7.1 is static analysis) | Packet capture on a two-avatar session confirming no client-to-client ICE candidate ever appears |
+
+---
+
+## 7. Reviewer-condition assessment, 2026-08-27
+
+*Added 2026-08-27. Recorded here because it existed nowhere else. Every finding below is [SRC],
+established by reading source in both repos at the basis commits; nothing here is [DOC] or
+[INF] unless marked.*
+
+### 7.1 The no-peer-to-peer guarantee — HOLDS, and is structural
+
+**The condition:** person-to-person voice must never be true P2P, because ICE candidate exchange
+between clients exposes each party's IP address to the other. Media must route through the
+server.
+
+**Finding: no code path can return another client's ICE candidates, SDP, or transport addresses
+to a client.** This is a property of the architecture, not an unimplemented feature.
+
+**How it was established — this is the re-checkable part.** By enumeration, not by assumption:
+
+1. **All three response builders.** Every map a client can receive from provisioning is built in
+   one file, `Janus/ProvisionResponseBuilder.cs`, whose header states it is the single definition
+   of the shape and that `ProvisionResponseShapeTests` pins it byte-for-byte:
+   `BuildSuccess` → `{ jsep, viewer_session, room }` (`:21`–`:29`); `BuildFailure` →
+   `{ response, error, error_code? }` (`:34`–`:44`); `BuildClosed` → `{ response }` (`:47`–`:53`).
+2. **The provenance of the only SDP in there.** `viewerSession.Answer` is assigned exactly once,
+   at `JanusRoom.cs:83`, from `joinResp.Jsep` — **the media server's own answer to this session's
+   join**. On the mixer side that answer is synthesised by `janus_slvoice_negotiate`
+   (`janus_slvoice.c:1389`–`:1470`), which parses the client's offer and calls
+   `janus_sdp_generate_answer` to describe *the server's* transport. No participant's SDP is
+   copied into another's.
+3. **Both CAP handlers.** `ProvisionVoiceAccountRequest` returns only the maps above.
+   `VoiceSignalingRequest` (`WebRtcVoiceRegionModule.cs:591`–`:637`) computes a response, logs it,
+   and then **unconditionally** writes `llsdUndefAnswerBytes` at `:634` — the service's response is
+   discarded and the client receives `<llsd><undef /></llsd>`. The handler is structurally
+   incapable of returning anything. (This is the load-bearing role of the TODO at O-36.)
+4. **The Janus event loop.** ICE flows one way. Client → sim → Janus via `TrickleCandidates` /
+   `TrickleCompleted` (`WebRtcJanusService.cs:334`–`:386`). In reverse, Janus's own trickle events
+   arrive at `JanusSession.cs:530`–`:535` under the in-source comment *"this is for reverse
+   communication from Janus to the client and we don't do that"* and fire `OnTrickle` —
+   **which has no subscribers**: the whole addon yields only the declaration (`:466`), the
+   null-on-teardown (`:480`) and the invocation (`:534`). Server candidates are logged and dropped.
+5. **Both connector hops.** `WebRtcVoiceServiceConnector.cs:95`–`:115` wraps the request and
+   returns the service map unchanged; `WebRtcVoiceServerConnector.cs:95`–`:125` unwraps and assigns
+   `pResponse.Result = resp`. Transparent forwarders; neither synthesises nor cross-references.
+6. **The mixer's client-facing emissions.** `janus_slvoice_participant_summary`
+   (`janus_slvoice.c:1493`–`:1502`) emits exactly `id`, `display` (agent UUID), `setup`, `muted`.
+   The data channel carries only `j`/`l` presence, `p`/`v` power and VAD, `m` mute, `ug` gain. No
+   SDP, no candidates, no addresses.
+
+**Why a security reviewer should accept it.** Each client negotiates one PeerConnection *with the
+media server* and receives only an answer the server generated about itself. There is no
+session-to-session lookup anywhere in provisioning or signalling — no handler takes another
+agent's id and returns transport state for it, and the only cross-session structure in the mixer
+is the four-field summary above. Media is genuinely mixed server-side: pass 1 decodes each source
+into `s->decbuf`, pass 2 builds a per-listener N-minus-one mix and relays it on that listener's own
+handle (`janus_slvoice.c:2434`–`:2470`). A client receives **one** synthesised stream, never
+per-peer streams. Even if a client wanted to connect directly to another, it is never given
+anything to connect to.
+
+**Not overstated:** `janus list rooms` (`WebRtcJanusService.cs:449`–`:470`) prints participant ids,
+names, muted/talking and spatial position — to the **region operator's console**. Server-side
+operator output, same non-transport fields, not a client-reachable path.
+
+**Scope bounds:** this covers `janus.plugin.slvoice` and the sim. A stock plugin left enabled in
+the same Janus instance is outside it (U-14). The analysis is static (U-15).
+
+### 7.2 The `multiagent` authorisation gap
+
+Every access check in the region module's provisioning path — estate `AllowVoice`, `LandChannel`
+presence, parcel resolution, `AllowVoiceChat`, `UseEstateVoiceChan`, `IsRestrictedFromLand`,
+`IsBannedFromLand` — is nested inside `if (channelType == "local")`
+(`WebRtcVoiceRegionModule.cs:472`–`:547`). A request with `channel_type="multiagent"` skips all of
+it and reaches `voiceService.ProvisionVoiceAccountRequest` directly. Nothing drives that path
+today (§7.3), so it is **latent** — but it is one viewer change from being live, and it sits
+directly beneath the avatar-to-avatar feature. **O-29; ship-blocking (§8).**
+
+### 7.3 Avatar-to-avatar voice — has never worked
+
+`CalcRoomNumber` accepts `"multiagent"` and derives a grid-unique room
+(`JanusAudioBridge.cs:207`–`:211`), and `SelectRoom` passes `pSpatial=false` through. That is the
+whole of the working plumbing. The handshake terminates before a second party exists:
+
+- **The callee is never invited.** `ChatterBoxInvitation` is defined at
+  `EventQueueGetHandlers.cs:219` and **has no callers anywhere** in `Source/` or `Addons/`. The
+  other party learns nothing, never provisions, never joins.
+- **`voice_enabled` is sent `false`.** Matching `WebRtcVoiceRegionModule.cs:715`–`:724` against the
+  signature at `EventQueueGetHandlers.cs:259`–`:262`, the fourth argument is literal `false`.
+- **The session name is the caller's own** (`sp.Name`, `:717`), not the other party's.
+- **The credential handshake does not exist.** `credentials` is read into a local at
+  `WebRtcJanusService.cs:242` and **never used again** in that file.
+- **Every other ChatSession method is a stub** — `"decline p2p voice"`, `"decline invitation"`,
+  `"start conference"`, `"fetch history"` all return bare `OK` under the comment *"we don't know
+  how to handle. Just return OK for now."* (`:690`–`:697`).
+
+**Minimum to make it work:** invite the callee; fix `voice_enabled` and the session name;
+implement accept/decline; and close O-29 so only the two agents named in the session id can join
+that room. **O-30; deferred (§8).**
+
+### 7.4 Hypergrid visitors
+
+**No difference from local users, at all.** The voice addon contains **zero** references to
+`Hypergrid`, `IsLocalGridUser`, `ForeignAgent`, `UserAgentService` or `scopeID`. Caps are
+registered per-agent in `OnRegisterCaps` with no origin check, and every downstream authorisation
+keys on the local `agentID`, so parcel and estate controls apply to HG visitors identically —
+that part is sound. It also means a visitor from any federated grid receives voice provisioning on
+exactly the same terms as a resident, with no additional gate, and their agent UUID is what the
+mixer uses as `display` and what appears in other clients' rosters. Whether that is acceptable is
+policy, unanswered — spec §3.2 and §10 item 1. **O-38; deferred (§8).**
+UNKNOWN: whether an HG visitor can hold parcel-voice-moderator rights (turns on group powers and
+estate-manager status, which HG visitors normally cannot hold — not traced end to end).
+
+### 7.5 Connector hooks — nothing exists; tap is days, injection is weeks
+
+No tap, no recording, no RTP forwarding, no file source, no injection point: grepping the mixer
+for `rtp_forward`, `forwarder`, `record`, `recording`, `.wav`, `fopen`, `inject`, `file_source`,
+`announcement`, `hook`, `tap` yields no functional hits. The participant abstraction does **not**
+admit a server-originated source: `janus_slvoice_session` is bound to `janus_plugin_session
+*handle` (`:348`), the codebase dereferences `->handle` in 19 places, pass 2 skips any session
+with `!webrtc_up || !media_ready` (`:2447`–`:2448`), and pass 1's decode expects a jitter buffer
+fed by `incoming_rtp`.
+
+**A tap is days [INF, from the above SRC facts].** Pass 1 already decodes every source exactly once
+into `s->decbuf` at a known frame size and rate, tick-owned and stable for the rest of the tick
+(`:2434`–`:2442`). A per-source copy handed to a writer thread is purely additive and cannot
+perturb mix timing. The control surface already exists: `janus_slvoice_handle_admin_message`
+(`:1328`) currently accepts exactly one request, `peer_ctl_batch` (`:1337`), so a `start_tap` /
+`stop_tap` request extends a proven path.
+
+**Injection is weeks [INF].** It needs a session variant whose pass-1 decode pulls PCM from a
+source, an audit of all 19 `->handle` dereferences, and guards in `relay_data`, `relay_rtp`,
+`push_presence` and `query_session`. It also needs **semantics decisions that have not been
+made**: does an injected source appear in the roster, is it subject to spatial attenuation and the
+visibility matrix, can moderation exclude it? Those are O-17's Q2–Q6, still open.
+
+### 7.6 Findings that would embarrass us in front of testers
+
+Ranked by how likely a tester or reviewer is to hit them. All [SRC].
+
+1. **`multiagent` provisioning bypasses every access check** — O-29, §7.2. Latent today; the one
+   with real consequences.
+2. **Methods named `…BAD` on production paths** — `ProvisionVoiceAccountRequestBAD` (`:211`),
+   `VoiceSignalingRequestBAD` (`:334`). Anyone reading a stack trace sees "BAD" in it. O-31.
+3. **Sync-over-async on the request path** — six `.Result` calls in `WebRtcJanusService.cs`
+   (`:137`, `:208`, `:331`, `:437`, `:449`, `:466`), including provisioning and signalling. The
+   classic deadlock shape; works under the current host, first thing a reviewer flags. O-32.
+4. **`Math.Abs(hashed.GetHashCode())` can throw** — `JanusAudioBridge.cs:219`;
+   `Math.Abs(int.MinValue)` raises `OverflowException`. Roughly 1-in-4-billion, fails hard, and
+   trivially avoidable. O-33.
+5. **A stale comment that misstates the security posture** — `WebRtcJanusService.cs:239` claims
+   `channel_type` "has already been checked to be 'local'". False, and it hides O-29 from a reader
+   who trusts it. O-34.
+6. **`CalcRoomNumber` `multiagent` grid collision** — hashes only `channelID` + `channelType`,
+   in-source comment "should add a GridId here" (`:207`–`:211`). O-35.
+7. **Unfinished TODO on the signalling response** — `WebRtcVoiceRegionModule.cs:632`, directly
+   above the line that discards the response. Cosmetic, and see §7.1 item 3 for why that discard is
+   currently load-bearing. O-36.
+
+### 7.7 Viewer-side work — cross-reference, not duplicated
+
+Two documents live in `phoenix-firestorm` on branch `fix/voice-webrtc-fixes` and are **the
+authority for their subjects**. Do not copy their content here; amend them there.
+
+- **`docs/voice-participant-row-suppression.md`** — OPEN defect, mechanism UNKNOWN: a stored
+  per-avatar volume in `volume_settings.xml` can permanently suppress that avatar's participant
+  row while audio keeps working, surviving grid restart, viewer restart, relog and teleport.
+  Carries the trigger, the workaround, the ruled-out list and three discriminating tests. O-37.
+- **`docs/voice-moderation-menu-acceptance-test.md`** — PENDING acceptance test for the
+  Conversations-floater Mute/Unmute fix (`4e205cad31`), never run. Carries the four-combination
+  table, the sim-log and `show voice moderation` confirmations, the
+  `voice moderation unmute` recovery path, a required group non-regression spot check, and the
+  procedure for telling the row-suppression defect apart from a failure of the fix.
+
+---
+
+## 8. Release candidate — 2026-08-27
+
+*Added 2026-08-27. **The classification below was given by the programme owner, not decided by
+this ledger.** Where the reconciler disagreed, the disagreement is recorded in the reconciliation
+report, not by moving an item.*
+
+### 8.1 SHIP-BLOCKING
+
+| Item | Why | Ref |
+|---|---|---|
+| The `multiagent` authorisation gap | All parcel/estate/ban/restrict enforcement sits inside `if (channelType == "local")`, so a `multiagent` request skips every check | O-29, §7.2 |
+| Build-plan step **S4** (`NotApplied` inner-reply reading) | Without it a partially-applied batch reads as applied; the per-room path has no failure visibility | §3, per-room brief |
+| Build-plan step **S5** (docs) | The per-room emission change is undocumented in the protocol docs | §3, per-room brief |
+| Run the pending viewer moderation-menu acceptance test | Built and pushed, never exercised in-world | §7.7, U-12 |
+
+### 8.2 SHOULD-FIX BEFORE TESTERS
+
+| Item | Ref |
+|---|---|
+| The `…BAD` method names on production paths | O-31 |
+| The `Math.Abs` overflow in `CalcRoomNumber` | O-33 |
+| The stale comment at `WebRtcJanusService.cs:239` misstating the security posture | O-34 |
+| The visibility ini keys missing from **both** the shipped ini and the example | O-21 |
+
+### 8.3 JUST OUTSIDE THE LINE — the connector tap
+
+**Deliberately not in 8.1 or 8.2, and deliberately not in 8.4.** It is **days** of work (§7.5:
+pass-1 `decbuf` is the seam, `handle_admin_message` the control surface, both proven paths), and
+it is **a named reviewer's outstanding ask**. It is therefore **the first candidate to pull in if
+the blockers clear early**. Injection is a different matter and stays deferred (§8.4).
+
+### 8.4 DEFERRED, WITH THE REASON RECORDED
+
+| Item | Reason for deferral | Ref |
+|---|---|---|
+| Avatar-to-avatar voice | Has never worked; needs invitation, accept/decline, correct `voice_enabled`, and O-29 closed first. A feature, not a fix | O-30, §7.3 |
+| Connector **injection** | Weeks, and blocked on semantics decisions nobody has made: roster visibility, spatial attenuation, matrix and moderation applicability | O-17, §7.5 |
+| Voice morphing (spec §7.4) | Behind injection anyway — there is no server-originated source to morph | O-24, spec §7.4 |
+| Trust domains and HG policy | Policy question, unanswered. Today HG visitors are treated identically to local users and the addon has no HG-aware code | O-38, §7.4, spec §3.2 / §10.1 |
+| Viewer row-suppression defect | Workaround documented and effective; **mechanism unknown**, so a fix would be speculative. Three discriminating tests are written and unrun | O-37, §7.7 |
+| OpenSim default land-flags divergence | Upstream question, not ours to settle in this programme | `Docs/audit/webrtc-upstream-audit.md` |
 
 ---
 
