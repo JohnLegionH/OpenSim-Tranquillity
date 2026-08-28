@@ -251,7 +251,7 @@ addendum]: orphan capacity burn, leave-dot ghosting; eviction deliberately not d
 (`WebRtcVoiceRegionModule.cs:513`). Deployed 2026-08-25 (§5). Closes one of three parts of
 OPEN item #13 (§4.1 O-3).
 
-### Per-room visibility emission (build plan S1–S5, M1) — S1–S3b done and deployed; S4–S5 not started
+### Per-room visibility emission (build plan S1–S5, M1) — **S1–S5 COMPLETE (2026-08-27)**; deployed through S3b, S4 built and pending one deploy
 *Amended 2026-08-27.* [SRC] **S1** *feat(voice): return the joined room in the provision success
 response* (`3c95ddea0e`); **S1b** *refactor(voice): extract the provision response builder, pin
 its shape* (`7b08786d19`) — all three response maps moved to `Janus/ProvisionResponseBuilder.cs`
@@ -264,9 +264,30 @@ partitioner, unwired* (`ef119f2a90`) — `Visibility/PeerCtlBatchPartitioner.cs`
 bounded-parallel, `VisibilityRoomSendConcurrency` config key added. **All four are deployed**
 (§5, deploy of 2026-08-26 16:23).
 
-**S4** (`NotApplied` inner-reply reading) and **S5** (docs) remain **not started**; both are
-ship-blocking (§8). M1 (mixer version bump): optional, not started. Decisions OQ1–OQ7 recorded in
-the brief [DOC, this tree `per-room-visibility-emission-design-brief.md` §7].
+**S4 — inner-reply reading — DONE 2026-08-27** *feat(voice): read the mixer's inner slvoice reply
+and surface its counts* (`33fc3b412e`). The sim now parses the mixer's `peer_ctl_batch` reply
+(`{janus:success, response:{slvoice, entries, mute_entries, skipped, deferred_listeners}}`) in the
+SINK — the client stays a generic Janus admin transport and only returns the raw body. Severity
+policy (deliberate): `deferred_listeners>0` → **INFO** (the join-window deferral self-heal working as
+designed, NOT a fault — warning on it would rebuild the alarm fatigue `b80efffa36` just removed);
+`skipped>0`, a non-applied inner status, or a malformed inner reply → **WARN**; an absent reply (old
+mixer) or an applied all-zero reply → **silent**. Counts are surfaced to the sender via a read-only
+`LastSendStats` property — plumbing only; the sender acts on nothing. **Skew guarantee:** an old /
+pre-mute mixer reply, carrying none of these fields, parses to a default "no info" that logs nothing,
+leaves stats zero, and returns the same `PeerCtlSendResult` — byte-for-byte today's behaviour.
+
+*S4 diverged from the brief's plan, recorded for honesty.* §8's S4 specified a new
+`PeerCtlSendResult.NotApplied` enum value that `VisibilityBatchSender` would count, with classification
+in `JanusAdminClientTests`. The shipped S4 took the **least-invasive** shape instead: the 3-value
+`PeerCtlSendResult` is unchanged, no caller's control flow changed, classification lives in the sink
+(`JanusPeerCtlBatchSink.ParseInnerReply`/`ClassifyReply`), and the counts ride a stats property. Same
+observability, smaller blast radius. The brief's S4 wording is the plan; this is what landed.
+
+**S5 — documentation — DONE 2026-08-27 (this entry).** The per-room emission programme is written up
+here (S1→S4 above); the brief's status is flipped to IMPLEMENTED; the mixer wire doc's mute/deferral
+section (`mixer-feed-protocol.md` §3.4) was added mixer-side (`03418f7`). **The S1–S5 build plan is
+COMPLETE.** M1 (mixer version-string bump, O-27) remains optional and not started. Decisions OQ1–OQ7
+recorded in the brief [DOC §7].
 
 S3b was named in the brief as the first in-world-testable step. **No dated in-world run of the
 per-room emission path exists** — the region has not been started since the deploy [SRC: §5].
@@ -369,7 +390,7 @@ item 4). All [SRC] absent by grep of both source trees and both git logs.
 
 | ID | Item | Status | Recorded in |
 |---|---|---|---|
-| O-1 | Visibility feed addressed only to the estate room; per-parcel agents get no exclusions | filed; **S1–S3b done and deployed 2026-08-26; S4–S5 remain** (amended 2026-08-27) | `KnownDefects.md` (this tree); per-room brief; `mixer-feed-protocol.md` §3.4 correction; `parcel-voice-semantics.md` §P Part 2 |
+| O-1 | Visibility feed addressed only to the estate room; per-parcel agents get no exclusions | filed; **S1–S5 COMPLETE 2026-08-27** (deployed through S3b; S4 `33fc3b412e` built, pending one deploy) | `KnownDefects.md` (this tree); per-room brief; `mixer-feed-protocol.md` §3.4 correction; `parcel-voice-semantics.md` §P Part 2 |
 | O-2 | Dense exclusion batch > 64 KB rejected whole, read as applied; sender marks synced | filed 2026-08-26; chunking deferred (OQ6); visibility via S4 | `KnownDefects.md`; per-room brief §3 |
 | O-3 | #13 estate-channel ban — three parts: provisioning bypass **closed**; mixer-side closed for estate room only (= O-1); TaxFree void **open** | split | `parcel-voice-semantics.md` OPEN #13 + §E + §P |
 | O-4 | TaxFree short-circuit voids parcel ban/restrict at provisioning on both channels; matrix overrides it — the two layers disagree under TaxFree | open, undecided | `parcel-voice-semantics.md` §E, §P Part 3 |
@@ -402,12 +423,12 @@ item 4). All [SRC] absent by grep of both source trees and both git logs.
 
 | ID | Item | Status | Recorded in |
 |---|---|---|---|
-| O-29 | **`multiagent` provisioning bypasses every access check.** All estate-voice / parcel / ban / restrict enforcement sits inside `if (channelType == "local")` (`WebRtcVoiceRegionModule.cs:472`–`:547`); a `channel_type="multiagent"` request skips all of it and goes straight to the service | open, **unfiled** — **SHIP-BLOCKING** (§8) | this ledger §7.2 |
+| O-29 | **`multiagent` provisioning bypasses every access check.** All estate-voice / parcel / ban / restrict enforcement sat inside `if (channelType == "local")` (`WebRtcVoiceRegionModule.cs:472`–`:547`); a `channel_type="multiagent"` request skipped all of it | **RESOLVED 2026-08-27** (`d9fa72c351`): a non-"local" (or missing) channel_type now FAILS CLOSED before any auth-bypassing work; the estate channel is unaffected (it is expressed as "local", not a channel_type) | this ledger §7.2 |
 | O-30 | **Avatar-to-avatar voice has never worked**: `ChatterBoxInvitation` has no callers anywhere; `voice_enabled` sent `false`; session name is the caller's own; `credentials` read and discarded; other ChatSession methods are stubs | open, **unfiled** — deferred (§8) | this ledger §7.3 |
 | O-31 | Methods named `ProvisionVoiceAccountRequestBAD` / `VoiceSignalingRequestBAD` on production paths (`WebRtcJanusService.cs:211`, `:334`) | open, **unfiled** — should-fix (§8) | this ledger §7.6 |
 | O-32 | Sync-over-async: six `.Result` calls in `WebRtcJanusService.cs` (`:137`, `:208`, `:331`, `:437`, `:449`, `:466`), two of them on the provisioning and signalling hot paths | open, **unfiled** | this ledger §7.6 |
-| O-33 | `Math.Abs(hashed.GetHashCode())` (`JanusAudioBridge.cs:219`) throws `OverflowException` on `int.MinValue` — room-number derivation fails hard instead of returning a room | open, **unfiled** — should-fix (§8) | this ledger §7.6 |
-| O-34 | Stale comment `WebRtcJanusService.cs:239` — "channel_type has already been checked to be 'local'" is **false**; `multiagent` reaches that line. Misstates the security posture and hides O-29 from a reader who trusts it | open, **unfiled** — should-fix (§8) | this ledger §7.6 |
+| O-33 | `Math.Abs(hashed.GetHashCode())` (`JanusAudioBridge.cs:219`) threw `OverflowException` on `int.MinValue` — room-number derivation failed hard for one stable input | **RESOLVED 2026-08-27** (`2b58c74f9a`): `int.MinValue` folds to `int.MaxValue`, `Math.Abs` kept verbatim for every other value so no existing room renumbers | this ledger §7.6 |
+| O-34 | Stale comment `WebRtcJanusService.cs:239` — "channel_type has already been checked to be 'local'" — was **false** (`multiagent` reached that line) | **RESOLVED 2026-08-27**: made TRUE again by `d9fa72c351` — the fail-closed guard upstream means only "local" reaches `:239`, so the comment is accurate and no longer hides O-29 | this ledger §7.6 |
 | O-35 | `CalcRoomNumber`'s `"multiagent"` branch hashes only `channelID` + `channelType`, with the in-source comment "should add a GridId here" (`JanusAudioBridge.cs:207`–`:211`) — two grids sharing a mixer can collide on room numbers | open, **unfiled** | this ledger §7.6 |
 | O-36 | Unfinished TODO "check for errors and package the response" (`WebRtcVoiceRegionModule.cs:632`) sitting directly above the line that discards the signalling response | open, **unfiled** — cosmetic; see §7.1, where the discard is load-bearing for the no-P2P finding | this ledger §7.6 |
 | O-37 | **Viewer:** a stored per-avatar volume in `volume_settings.xml` can permanently suppress that avatar's participant row; audio unaffected; survives grid restart, viewer restart, relog and teleport. Mechanism **UNKNOWN**; workaround documented | filed **viewer-side** 2026-08-26 — deferred (§8) | `phoenix-firestorm:docs/voice-participant-row-suppression.md` (do not duplicate here) |
@@ -793,20 +814,27 @@ report, not by moving an item.*
 
 ### 8.1 SHIP-BLOCKING
 
+*Updated 2026-08-27: the `multiagent` gap (O-29, `d9fa72c351`) and build-plan steps S4
+(`33fc3b412e`) and S5 (this ledger) are DONE and struck from this list. One item remains before the
+tester line.*
+
 | Item | Why | Ref |
 |---|---|---|
-| The `multiagent` authorisation gap | All parcel/estate/ban/restrict enforcement sits inside `if (channelType == "local")`, so a `multiagent` request skips every check | O-29, §7.2 |
-| Build-plan step **S4** (`NotApplied` inner-reply reading) | Without it a partially-applied batch reads as applied; the per-room path has no failure visibility | §3, per-room brief |
-| Build-plan step **S5** (docs) | The per-room emission change is undocumented in the protocol docs | §3, per-room brief |
-| Run the pending viewer moderation-menu acceptance test | Built and pushed, never exercised in-world | §7.7, U-12 |
+| Run the formal in-world acceptance test, with `volume_settings.xml` cleared in BOTH accounts | The per-room emission and moderation-mute paths have never been exercised on a started region; volume_settings must be clear so O-37 (the viewer row-suppression) cannot confound the result | §7.7, U-11, U-12; O-37 |
+
+**Pending one deploy:** three sim commits are committed but undeployed — `d9fa72c351` (fail-closed
+channel_type), `33fc3b412e` (S4 inner-reply reader), `2b58c74f9a` (room-number `int.MinValue` fold).
+The acceptance test must run against a region carrying them, so the one remaining blocker is gated on
+that single deploy.
 
 ### 8.2 SHOULD-FIX BEFORE TESTERS
+
+*Updated 2026-08-27: O-33 (the `Math.Abs` overflow, fixed `2b58c74f9a`) and O-34 (the stale `:239`
+comment, now accurate as of `d9fa72c351`) are struck.*
 
 | Item | Ref |
 |---|---|
 | The `…BAD` method names on production paths | O-31 |
-| The `Math.Abs` overflow in `CalcRoomNumber` | O-33 |
-| The stale comment at `WebRtcJanusService.cs:239` misstating the security posture | O-34 |
 | The visibility ini keys missing from **both** the shipped ini and the example | O-21 |
 
 ### 8.3 JUST OUTSIDE THE LINE — the connector tap

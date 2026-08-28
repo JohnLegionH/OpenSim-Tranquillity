@@ -949,6 +949,18 @@ covers only the encoding.
 **Status:** filed 2026-08-25, not fixed — **Legion-side (our code), not Tranquillity core.**
 Affects every region in which any parcel leaves `ParcelFlags.UseEstateVoiceChan` clear.
 
+**RESOLVED 2026-08-27 (deployed 2026-08-26).** The per-room emission build plan (S1–S3b) closed
+this. `JanusPeerCtlBatchSink` no longer fixes one room in its constructor — it partitions each batch
+by the room its listeners are actually in and sends one `peer_ctl_batch` per room, so a per-parcel
+agent's exclusions AND its moderation mutes reach the per-parcel channel it is actually in, not only
+the estate room. S1 *return the joined room in the provision success response* (`3c95ddea0e`); S1b
+*extract the provision response builder* (`7b08786d19`); S2 *record the room each agent joined*
+(`98465dc662`); S3a *per-room batch partitioner* (`ef119f2a90`); S3b *emit one visibility batch per
+room* (`e35463a088`) — all deployed 2026-08-26. S4 *read the mixer's inner slvoice reply* (`33fc3b412e`)
+then made any residual mixer-side drop observable sim-side. The Mechanism and analysis below are
+retained as the historical record of the gap (their line numbers predate the per-room sink) and are
+superseded by this note.
+
 **Symptom.** On a parcel that uses its own voice channel, sim-authoritative voice visibility
 does nothing at all. Parcel bans, parcel voice moderation and `SeeAVs` hiding are each
 computed correctly by the Phase-3a matrix and then have no audible effect: a banned avatar is

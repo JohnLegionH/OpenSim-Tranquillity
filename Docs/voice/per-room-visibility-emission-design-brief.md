@@ -1,7 +1,13 @@
 # Design Brief — Per-Room Visibility Emission
 
-**Status:** DECIDED 2026-08-26. The seven open questions are resolved in §7, one conflict
-between them is resolved there explicitly, and §8 is the build plan. Nothing implemented yet.
+**Status:** IMPLEMENTED 2026-08-27 (S5). The S1–S5 build plan (§8) is COMPLETE: S1/S1b
+(`3c95ddea0e`/`7b08786d19`), S2 (`98465dc662`), S3a/S3b (`ef119f2a90`/`e35463a088`), and S4
+(`33fc3b412e`) have shipped; S5 is this flip plus the ledger write-up. NOTE — the shipped S4 DIVERGED
+from §8's plan: it did NOT add a `PeerCtlSendResult.NotApplied` enum and changed no
+`VisibilityBatchSender` flow; instead it kept the 3-value result, put classification in the sink, and
+surfaced counts via a read-only stats property (same observability, smaller blast radius). M1 (mixer
+version bump) remains optional. The seven open questions are resolved in §7; §8 is the build plan.
+*Originally DECIDED 2026-08-26, nothing implemented; superseded by this line.*
 **Date:** 2026-08-26.
 **Basis:** `tranquillity-develop` at *docs(voice): file the per-parcel visibility delivery gap,
 split #13 by status* (branch `feature/voice-visibility-matrix`); `legion-voice-mixer` at

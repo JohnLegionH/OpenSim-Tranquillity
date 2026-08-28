@@ -1218,6 +1218,17 @@ absent listener. Filed as *"WebRTC voice: the visibility feed is addressed only 
 room, so per-parcel agents receive no exclusions"* in `Docs/KnownDefects.md`;
 `mixer-feed-protocol.md` §4 now carries the correction inline.
 
+**UPDATE 2026-08-27 — Part 2 now CLOSED for per-parcel agents too (deployed 2026-08-26).** The
+per-room emission build plan closed the delivery gap: `JanusPeerCtlBatchSink` no longer fixes one room
+in its constructor — it partitions each batch by the room its listeners are actually in and sends one
+`peer_ctl_batch` per room (S3a `ef119f2a90`, S3b *emit one visibility batch per room* `e35463a088`, on
+the per-agent room record from S1/S1b/S2 `3c95ddea0e`/`7b08786d19`/`98465dc662`), so an agent on a
+per-parcel channel receives its exclusions AND its moderation mutes in the room it is in. S4
+`33fc3b412e` surfaces any residual mixer-side drop sim-side. The "OPEN FOR PER-PARCEL AGENTS" clause
+above is superseded by this note (retained, not rewritten); Part 1 and Part 2 are now both closed,
+and only Part 3 (`TaxFree`) remains open. Filed defect entry in `KnownDefects.md` is marked resolved
+the same day.
+
 **Part 3 — the `TaxFree` void. UNTOUCHED, still open.** Neither of the above changes anything
 about §E. `LandObject.IsBannedFromLand` and `IsRestrictedFromLand` both open with
 `if (m_estateSettings.TaxFree) return false;` (`LandObject.cs:847`–`:848` and `:878`–`:879`),
