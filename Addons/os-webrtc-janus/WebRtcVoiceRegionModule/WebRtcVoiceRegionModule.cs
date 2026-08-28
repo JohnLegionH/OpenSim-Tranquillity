@@ -428,6 +428,20 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     /// <param name="agentID"></param>
     /// <param name="caps"></param>
     /// <returns></returns>
+    /// <summary>Fail-closed channel-type admission for voice provisioning (ledger O-29). Voice
+    /// authorization -- parcel/estate ban &amp; restrict -- is only implemented for the "local"
+    /// channel; a request with any other channel_type, or none, must be REFUSED before it reaches
+    /// the voice service, or it would provision past those checks. "multiagent" is RESERVED for the
+    /// future avatar-to-avatar feature, which must bring its OWN authorization; this is a deliberate
+    /// deny, not a stub to remove. Returns true iff channel_type is present and exactly "local";
+    /// <paramref name="channelType"/> is the value seen (empty string when absent) for the caller's
+    /// refusal log. Pure and side-effect-free so it is unit-testable (ProvisionChannelTypeGuardTests).</summary>
+    public static bool IsProvisionableChannelType(OSDMap map, out string channelType)
+    {
+        channelType = map.TryGetString("channel_type", out string ct) ? ct : string.Empty;
+        return channelType == "local";
+    }
+
     public void ProvisionVoiceAccountRequest(IOSHttpRequest request, IOSHttpResponse response, UUID agentID, Scene scene)
     {
         // Get the voice service. If it doesn't exist, return an error.
@@ -469,7 +483,24 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
 
         if (_MessageDetails) m_log.LogDebug($"{logHeader}[ProvisionVoice]: request: {map}");
 
-        if (map.TryGetString("channel_type", out string channelType))
+        // FAIL CLOSED (ledger O-29): voice authorization -- the parcel/estate ban & restrict
+        // checks below -- is only implemented for the "local" channel, and those checks are nested
+        // under `channel_type == "local"`. A request whose channel_type is ANYTHING ELSE, or is
+        // missing, would skip every one of them and provision voice past a parcel or estate ban.
+        // Refuse it here, BEFORE room selection and BEFORE any Janus session creation, with the
+        // SAME response an unauthorized local request gets (llsd <undef/> + 403 Forbidden; see the
+        // ban/restrict branch below). "multiagent" is RESERVED for the future avatar-to-avatar
+        // feature, which must bring its OWN authorization when it is built -- this deny is
+        // DELIBERATE, not a stub to remove.
+        if (!IsProvisionableChannelType(map, out string channelType))
+        {
+            m_log.LogWarning($"{logHeader}[ProvisionVoice]: refusing provision with channel_type \"{channelType}\" (only \"local\" is authorized) from agent {agentID} in region \"{scene.Name}\"");
+            response.RawBuffer = llsdUndefAnswerBytes;
+            response.StatusCode = (int)HttpStatusCode.Forbidden;
+            return;
+        }
+
+        // channel_type is present and "local": the parcel/estate authorization below is UNCHANGED.
         {
             //do fully not trust viewers voice parcel requests
             if (channelType == "local")
