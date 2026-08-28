@@ -216,9 +216,18 @@ public class JanusAudioBridge : JanusPlugin
         var hashed = hasher.Finish();
         // The "Abs()" is because Janus room number must be a positive integer
         // And note that this is the BHash.GetHashCode() and not Object.getHashCode().
-        int roomNumber = Math.Abs(hashed.GetHashCode());
+        int roomNumber = FoldHashToRoom(hashed.GetHashCode());
         return roomNumber;
     }
+
+    // Fold a 32-bit hash to a POSITIVE Janus room number. Math.Abs(int.MinValue) throws
+    // OverflowException (there is no positive int.MinValue), and because the hash inputs are stable
+    // per agent+parcel, one unlucky combination would crash provisioning on that parcel forever
+    // (ledger O-33). Redirect ONLY int.MinValue to a valid positive room (int.MaxValue); Math.Abs is
+    // kept verbatim for every other value, so NO existing (region,parcel)->room mapping changes
+    // (int.MinValue never yielded a room before -- it threw). Extracted so the guard is unit-testable.
+    public static int FoldHashToRoom(int hashCode)
+        => hashCode == int.MinValue ? int.MaxValue : Math.Abs(hashCode);
     public async Task<JanusRoom> SelectRoom(string pRegionId, string pChannelType, bool pSpatial, int pParcelLocalID, string pChannelID)
     {
         int roomNumber = CalcRoomNumber(pRegionId, pChannelType, pParcelLocalID, pChannelID);
