@@ -58,11 +58,13 @@ namespace osWebRtcVoice.Tests
             public readonly List<OSDMap> Sent = new List<OSDMap>();
             public Func<OSDMap, AdminSendResult> Reply = _ => AdminSendResult.Ok;
 
-            public Task<AdminSendResult> SendAsync(OSDMap request)
+            // S4: the sink now consumes (result, body). These tests assert PeerCtlSendResult only, so
+            // the body is empty (an empty body parses to an absent inner reply -> zero stats, no log).
+            public Task<(AdminSendResult, string)> SendAsync(OSDMap request)
             {
                 lock (_lock)
                     Sent.Add(request);
-                return Task.FromResult(Reply(request));
+                return Task.FromResult((Reply(request), string.Empty));
             }
 
             public List<int> Rooms()
@@ -311,7 +313,7 @@ namespace osWebRtcVoice.Tests
             public int Max => Volatile.Read(ref _max);
             public readonly List<OSDMap> Sent = new List<OSDMap>();
 
-            public async Task<AdminSendResult> SendAsync(OSDMap request)
+            public async Task<(AdminSendResult, string)> SendAsync(OSDMap request)
             {
                 lock (Sent)
                     Sent.Add(request);
@@ -324,7 +326,7 @@ namespace osWebRtcVoice.Tests
                 }
                 await Task.Delay(25).ConfigureAwait(false);
                 Interlocked.Decrement(ref _current);
-                return AdminSendResult.Ok;
+                return (AdminSendResult.Ok, string.Empty);
             }
         }
 

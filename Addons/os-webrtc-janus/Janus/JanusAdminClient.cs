@@ -102,10 +102,18 @@ namespace osWebRtcVoice
         /// body. Reads the response inline (no ack/long-poll wait) and can never block past the
         /// client timeout. See <see cref="AdminSendResult.Ok"/> for the success ceiling.
         /// </summary>
-        public Task<AdminSendResult> SendPluginMessageAsync(string plugin, OSDMap request)
+        public async Task<AdminSendResult> SendPluginMessageAsync(string plugin, OSDMap request)
+            => (await SendPluginMessageWithReplyAsync(plugin, request).ConfigureAwait(false)).Result;
+
+        /// <summary>As <see cref="SendPluginMessageAsync"/>, but also returns the raw response BODY so a
+        /// voice-specific caller (the sink) can parse the plugin's inner reply (slvoice / entries /
+        /// mute_entries / skipped / deferred_listeners). This client stays plugin-agnostic and reads only
+        /// the janus-level status (Interpret); the voice semantics live in the sink. Body is null on a
+        /// transport failure (nothing was received).</summary>
+        public Task<(AdminSendResult Result, string Body)> SendPluginMessageWithReplyAsync(string plugin, OSDMap request)
         {
             string body = BuildEnvelope(plugin, _adminSecret, request, Guid.NewGuid().ToString());
-            return SendWithTimeoutAsync(async ct =>
+            return SendWithTimeoutWithReplyAsync(async ct =>
             {
                 using var req = new HttpRequestMessage(HttpMethod.Post, _adminUri)
                 {
@@ -173,16 +181,23 @@ namespace osWebRtcVoice
         /// </summary>
         public static async Task<AdminSendResult> SendWithTimeoutAsync(
             Func<CancellationToken, Task<(HttpStatusCode status, string body)>> send, TimeSpan timeout)
+            => (await SendWithTimeoutWithReplyAsync(send, timeout).ConfigureAwait(false)).Result;
+
+        /// <summary>As <see cref="SendWithTimeoutAsync"/>, but also returns the raw response body (null
+        /// on timeout/exception). The body is carried so a voice-specific caller can parse the inner
+        /// slvoice reply; the transport mapping (<see cref="Interpret"/>) is unchanged.</summary>
+        public static async Task<(AdminSendResult Result, string Body)> SendWithTimeoutWithReplyAsync(
+            Func<CancellationToken, Task<(HttpStatusCode status, string body)>> send, TimeSpan timeout)
         {
             using var cts = new CancellationTokenSource(timeout);
             try
             {
                 (HttpStatusCode status, string respBody) = await send(cts.Token).ConfigureAwait(false);
-                return Interpret(status, respBody);
+                return (Interpret(status, respBody), respBody);
             }
             catch (Exception)
             {
-                return AdminSendResult.TransportError;
+                return (AdminSendResult.TransportError, null);
             }
         }
     }

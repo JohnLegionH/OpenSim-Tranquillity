@@ -58,7 +58,7 @@ namespace osWebRtcVoice
         public const int DefaultRoomSendConcurrency = 4;
 
         private readonly JanusAdminClient _admin;               // null when a send delegate was injected
-        private readonly Func<OSDMap, Task<AdminSendResult>> _sendOne;
+        private readonly Func<OSDMap, Task<(AdminSendResult Result, string Body)>> _sendOne;
         private readonly SemaphoreSlim _roomGate;
         private readonly int _fallbackRoom;
         private readonly string _region;
@@ -66,6 +66,15 @@ namespace osWebRtcVoice
         private volatile int _lastSendRooms;
         private volatile int _lastSendFallbackListeners;
         private volatile int _lastSendFallbackSources;
+
+        // S4 inner-reply stats for the most recent send, summed across rooms (see LastSendStats).
+        // Volatile ints mirror the LastSend* pattern above; SendAsync is single-flight from the sender.
+        private volatile int _statRepliesParsed;
+        private volatile int _statDeferred;
+        private volatile int _statSkipped;
+        private volatile int _statEntries;
+        private volatile int _statMuteEntries;
+        private volatile int _statAnomalies;
 
         /// <param name="roomSendConcurrency">Rooms in flight at once within one send. Absent, zero
         /// or negative is not honoured: zero would make SemaphoreSlim block every send forever and
@@ -79,13 +88,13 @@ namespace osWebRtcVoice
         public JanusPeerCtlBatchSink(string adminUri, string adminToken, TimeSpan timeout,
                                      UUID regionId, string regionName,
                                      int roomSendConcurrency = DefaultRoomSendConcurrency,
-                                     Func<OSDMap, Task<AdminSendResult>> sendOne = null)
+                                     Func<OSDMap, Task<(AdminSendResult Result, string Body)>> sendOne = null)
         {
             _region = regionName;
             if (sendOne == null)
             {
                 _admin = new JanusAdminClient(adminUri, adminToken, timeout);
-                _sendOne = req => _admin.SendPluginMessageAsync(SlvoicePlugin, req);
+                _sendOne = req => _admin.SendPluginMessageWithReplyAsync(SlvoicePlugin, req);
             }
             else
             {
@@ -130,6 +139,19 @@ namespace osWebRtcVoice
         /// <summary>Distinct sources in the most recent send with no room record. Zero on a fully
         /// upgraded deployment; non-zero says some voice service is not yet reporting its joined room.</summary>
         public int LastSendFallbackSources => _lastSendFallbackSources;
+
+        /// <summary>S4: inner-reply stats from the most recent SendAsync (see <see cref="PeerCtlSendStats"/>),
+        /// summed across the rooms the send addressed. Default/all-zero when the mixer reply carried no such
+        /// fields (old mixer). PLUMBING only -- read by nobody today; surfaced for a future decision.</summary>
+        public PeerCtlSendStats LastSendStats => new PeerCtlSendStats
+        {
+            RepliesParsed = _statRepliesParsed,
+            DeferredListeners = _statDeferred,
+            Skipped = _statSkipped,
+            Entries = _statEntries,
+            MuteEntries = _statMuteEntries,
+            Anomalies = _statAnomalies,
+        };
 
         public void Dispose()
         {
@@ -179,40 +201,175 @@ namespace osWebRtcVoice
             LogRoomsAddressed(op, part);
 
             if (requests.Count == 0)
+            {
+                RecordStats(Array.Empty<SlvoiceReply>());    // an empty send resets last stats
                 return PeerCtlSendResult.Ok;                 // nothing to address is not a failure
+            }
 
-            // One room: no gate, one round-trip - byte-for-byte the pre-S3b send.
+            // One room: no gate, one round-trip - byte-for-byte the pre-S3b send (plus the reply parse).
             if (requests.Count == 1)
-                return Map(await _sendOne(requests[0]).ConfigureAwait(false));
+            {
+                (PeerCtlSendResult only, SlvoiceReply onlyReply) = await SendAndReadAsync(requests[0]).ConfigureAwait(false);
+                RecordStats(new[] { onlyReply });
+                return only;
+            }
 
-            var sends = new Task<PeerCtlSendResult>[requests.Count];
+            var sends = new Task<(PeerCtlSendResult Result, SlvoiceReply Reply)>[requests.Count];
             for (int i = 0; i < requests.Count; i++)
                 sends[i] = SendGatedAsync(requests[i]);
-            PeerCtlSendResult[] results = await Task.WhenAll(sends).ConfigureAwait(false);
+            (PeerCtlSendResult Result, SlvoiceReply Reply)[] results = await Task.WhenAll(sends).ConfigureAwait(false);
 
             // §2a: aggregate in severity order, most severe wins. Every room is attempted - a failure
             // in one must not suppress the others, because rooms are independent and `replace` is
             // per-listener idempotent, so the sender's re-snapshot repairs a partial send safely.
             PeerCtlSendResult worst = PeerCtlSendResult.Ok;
-            foreach (PeerCtlSendResult r in results)
+            var replies = new SlvoiceReply[results.Length];
+            for (int i = 0; i < results.Length; i++)
             {
-                if (Severity(r) > Severity(worst))
-                    worst = r;
+                replies[i] = results[i].Reply;
+                if (Severity(results[i].Result) > Severity(worst))
+                    worst = results[i].Result;
             }
+            RecordStats(replies);
             return worst;
         }
 
-        private async Task<PeerCtlSendResult> SendGatedAsync(OSDMap request)
+        private async Task<(PeerCtlSendResult Result, SlvoiceReply Reply)> SendGatedAsync(OSDMap request)
         {
             await _roomGate.WaitAsync().ConfigureAwait(false);
             try
             {
-                return Map(await _sendOne(request).ConfigureAwait(false));
+                return await SendAndReadAsync(request).ConfigureAwait(false);
             }
             finally
             {
                 _roomGate.Release();
             }
+        }
+
+        // Send one room's request, map the transport outcome, and (only on a janus:"success") parse and
+        // LOG that room's inner slvoice reply. The PeerCtlSendResult is UNCHANGED by the inner reply: a
+        // successful transport is Ok even if the inner reply reports skipped items or a non-applied
+        // status -- that anomaly is reported (WARN) and surfaced in stats, never converted into a
+        // transport/protocol failure (which would wrongly trip the sender's ProtocolError latch or
+        // staleness guard, i.e. change behaviour). See ClassifyReply for the severity policy.
+        private async Task<(PeerCtlSendResult Result, SlvoiceReply Reply)> SendAndReadAsync(OSDMap request)
+        {
+            (AdminSendResult admin, string body) = await _sendOne(request).ConfigureAwait(false);
+            PeerCtlSendResult result = Map(admin);
+            SlvoiceReply reply = default;
+            if (admin == AdminSendResult.Ok)   // only a janus:"success" carries an inner slvoice reply
+            {
+                reply = ParseInnerReply(body);
+                int room = request.TryGetValue("room", out OSD ro) ? ro.AsInteger() : 0;
+                LogReply(room, in reply);
+            }
+            return (result, reply);
+        }
+
+        // Sum this send's per-room inner replies into the LastSendStats snapshot (volatile ints,
+        // single-writer: SendAsync is single-flight from the sender).
+        private void RecordStats(IReadOnlyList<SlvoiceReply> replies)
+        {
+            int parsed = 0, deferred = 0, skipped = 0, entries = 0, muteEntries = 0, anomalies = 0;
+            for (int i = 0; i < replies.Count; i++)
+            {
+                SlvoiceReply r = replies[i];
+                if (r.Present) parsed++;
+                deferred += r.DeferredListeners;
+                skipped += r.Skipped;
+                entries += r.Entries;
+                muteEntries += r.MuteEntries;
+                (bool warn, bool _) = ClassifyReply(in r);
+                if (warn) anomalies++;
+            }
+            _statRepliesParsed = parsed;
+            _statDeferred = deferred;
+            _statSkipped = skipped;
+            _statEntries = entries;
+            _statMuteEntries = muteEntries;
+            _statAnomalies = anomalies;
+        }
+
+        // Deliberate severities (S4): deferred_listeners>0 is the join-window deferral self-heal working
+        // as designed -> INFO, not a fault. skipped>0, a non-applied inner status, or a malformed inner
+        // reply is real loss or protocol drift -> WARN. An absent inner reply (old mixer) or an all-zero
+        // applied reply (quiet steady state) logs NOTHING -- behaviourally identical to before S4.
+        public static (bool Warn, bool Info) ClassifyReply(in SlvoiceReply reply)
+        {
+            if (!reply.Present && !reply.Malformed)
+                return (false, false);   // absent: no info, no log (old mixer / empty)
+            bool applied = reply.Present && string.Equals(reply.Status, "applied", StringComparison.Ordinal);
+            bool warn = reply.Malformed || !applied || reply.Skipped > 0;
+            bool info = reply.DeferredListeners > 0;
+            return (warn, info);
+        }
+
+        private void LogReply(int room, in SlvoiceReply reply)
+        {
+            (bool warn, bool info) = ClassifyReply(in reply);
+            if (warn)
+                m_log.LogWarning("{LogHeader} region {RegionName} room {Room}: peer_ctl_batch inner-reply anomaly " +
+                    "(status={Status}, skipped={Skipped}, malformed={Malformed}) [{Raw}]",
+                    LogHeader, _region, room, reply.Status ?? "(none)", reply.Skipped, reply.Malformed, reply.RawSummary);
+            if (info)
+                m_log.LogInformation("{LogHeader} region {RegionName} room {Room}: mixer deferred {Deferred} listener " +
+                    "entr(y/ies) for not-yet-joined listener(s) (join-window self-heal; replays on join, not a fault)",
+                    LogHeader, _region, room, reply.DeferredListeners);
+        }
+
+        /// <summary>Parsed mixer inner reply for one room (S4). All-default = absent (old mixer): logs
+        /// nothing, contributes zero. Public so the pure ParseInnerReply / ClassifyReply are unit-testable.</summary>
+        public struct SlvoiceReply
+        {
+            public bool Present;              // an inner "response" object was found
+            public bool Malformed;            // janus:success but the inner reply is not the expected shape
+            public string Status;             // inner "slvoice" value ("applied"/"error"/"empty"/...), or null
+            public int Entries;
+            public int MuteEntries;
+            public int Skipped;
+            public int DeferredListeners;
+            public string RawSummary;         // compact inner payload for the WARN log
+        }
+
+        /// <summary>Parse the mixer's peer_ctl_batch inner reply. The plugin response is nested under the
+        /// top-level "response" key: {janus:success, response:{slvoice, op, room, entries, mute_entries,
+        /// skipped, deferred_listeners}} (mixer janus_slvoice.c:1552-1557 + deferred_listeners from 27977c8).
+        /// EVERY inner field is optional: absent (old / pre-mute mixer) yields a default (Present=false)
+        /// reply that logs nothing and contributes zero -- behaviourally identical to before S4. A
+        /// janus:"success" with no/!object "response", or a "response" with no "slvoice", is flagged
+        /// Malformed (protocol drift). Pure and unit-testable.</summary>
+        public static SlvoiceReply ParseInnerReply(string body)
+        {
+            OSDMap top;
+            try { top = OSDParser.DeserializeJson(body ?? string.Empty) as OSDMap; }
+            catch { top = null; }
+            if (top == null)
+                return default;   // unparseable/empty at the top level: the transport layer already handled it
+            if (!(top.TryGetValue("response", out OSD ro) && ro is OSDMap resp))
+                return new SlvoiceReply { Present = false, Malformed = true, RawSummary = Summarize(top) };
+            string status = resp.TryGetValue("slvoice", out OSD st) ? st.AsString() : null;
+            return new SlvoiceReply
+            {
+                Present = true,
+                Malformed = string.IsNullOrEmpty(status),
+                Status = status,
+                Entries = resp.TryGetValue("entries", out OSD e) ? e.AsInteger() : 0,
+                MuteEntries = resp.TryGetValue("mute_entries", out OSD me) ? me.AsInteger() : 0,
+                Skipped = resp.TryGetValue("skipped", out OSD sk) ? sk.AsInteger() : 0,
+                DeferredListeners = resp.TryGetValue("deferred_listeners", out OSD dl) ? dl.AsInteger() : 0,
+                RawSummary = Summarize(resp),
+            };
+        }
+
+        // Compact, capped one-line summary of an inner reply map for the WARN log (a surprise payload
+        // must not flood the log).
+        private static string Summarize(OSDMap map)
+        {
+            if (map == null) return "(none)";
+            string str = map.ToString();
+            const int capLen = 300;
+            return str.Length <= capLen ? str : str.Substring(0, capLen) + "\u2026";
         }
 
         /// <summary>§2a severity order: ProtocolError beats TransportError beats NotApplied beats Ok.

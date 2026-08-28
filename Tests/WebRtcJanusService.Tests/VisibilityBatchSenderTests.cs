@@ -75,6 +75,7 @@ namespace osWebRtcVoice.Tests
             }
 
             public int Count { get { lock (_lock) return Calls.Count; } }
+            public PeerCtlSendStats LastSendStats => default;   // S4: not exercised by these tests
         }
 
         private sealed class FakeFeed : IVisibilityFeed
@@ -474,6 +475,7 @@ namespace osWebRtcVoice.Tests
 
             public int Count { get { lock (_lock) return Ops.Count; } }
             public VisOp LastOp { get { lock (_lock) return Ops[Ops.Count - 1]; } }
+            public PeerCtlSendStats LastSendStats => default;   // S4: not exercised by these tests
         }
 
         // Capture the sender's log4net Error output so "logs once" is asserted against the real log.
