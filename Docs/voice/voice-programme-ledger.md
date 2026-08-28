@@ -1,11 +1,16 @@
 # Ledger — WebRTC Voice Programme
 
 **Artifact type:** Ledger — **LIVING**. Never frozen. Amend in place; date every change.
-**Last reconciled:** 2026-08-27, against `tranquillity-develop` at *feat(voice): add console
-commands to see and clear parcel voice moderation* (`935bd5b6d2`, branch
-`feature/voice-visibility-matrix`) and `legion-voice-mixer` at *fix(voice): clear stale
-exclusions on leave, error on unknown room and request* (`872f0d9`, branch `main` — **unchanged
-since the last reconciliation**; the mixer took no commits this cycle) [SRC: `git log`].
+**Last reconciled:** 2026-08-27 (evening), against `tranquillity-develop` at *fix(voice): skip the
+pending-join re-send for a listener with empty columns* (`b80efffa36`, branch
+`feature/voice-visibility-matrix`) and `legion-voice-mixer` at *fix(voice): defer a visibility entry
+for a not-yet-joined listener, replay on join* (`27977c8`, branch `main`) [SRC: `git log`].
+This evening five commits shipped, deployed, and were **verified live in-world and via the admin API**:
+sim `02ce1b9b10` (moderation mute channel) + `b80efffa36` (empty-column pending guard); mixer
+`354e9fe` (join backlog) + `0d6d0d0` (mute parse / keep+grey) + `27977c8` (join-window deferral). The
+mixer is **no longer at `872f0d9`** (this morning's basis). New/amended entries carry 2026-08-27 dates
+in §3, §4.1 (O-8 resolved; O-39/O-40 added), §5.0. *(Prior basis, this afternoon: `935bd5b6d2`
+console commands / `872f0d9` mixer.)*
 *Previous basis 2026-08-26 at `3c95ddea0e`; six commits folded in below, five of them code —
 S1b, S2, S3a, S3b and the moderation console commands — plus this ledger's own first commit.
 Note the drift was six commits, not seven: `53e560fdc4` (this file) is one of them.*
@@ -201,7 +206,7 @@ sim-authoritative position feed (child agents; cross-region frame transform), es
 leash configuration (ships per-process), per-region spatial config (Amendment 8: "deferred, not
 rejected"). Non-blocking open question: do neighbour-room handles carry `sp`?
 
-### Voice moderation — slice 1 done; parity gap open
+### Voice moderation — slice 1 done; **mute channel SHIPPED 2026-08-27** (roster parity); reporting-parity gap narrowed
 [SRC] `SpatialVoiceModerationRequest` CAP registered (`WebRtcVoiceRegionModule.cs:271`),
 `VoiceModerationStore.cs`, `VoiceModerationAuth.cs`, matrix rule 2b (`VisibilityRules.cs:37`).
 Live verification: [DOC] brief `Status: … VERIFIED end to end (2026-08-22)`, re-verified on
@@ -209,6 +214,20 @@ net10 2026-08-24, requiring a Firestorm master-tracking build. **Open:** moderat
 reported to no client — SL parity gap, worked around **viewer-side** on `phoenix-firestorm`
 branch `fix/voice-webrtc-fixes` [DOC]; OQ1 (`mute_all` scope confirmation in SL) and OQ2
 (exemption set) unanswered [DOC]. The moderation store is in-memory, non-persistent [SRC].
+
+*Amended 2026-08-27 (evening) — moderation mute is now SHIPPED end-to-end, matching Linden Lab's own
+model (Option A): a moderation mute travels on a **separate additive `mute` channel** in the
+`peer_ctl_batch` wire, distinct from the exclusion (`excl`) set. The mixer **keeps the muted source's
+roster row, greyed**, and silences it in the mix (mix gates on `mod_muted` OR the viewer's own
+`muted`) rather than removing it; a ban still removes the row. Routing is **disjoint (ban wins)** — the
+matrix never places a source in both channels for one listener — and **skew-safe both directions**: a
+`replace` **always carries the `mute` key** (empty `{}` when there are no mutes) so a new mixer can tell
+a new sim from an old one, an old mixer ignores the unknown key, and a new mixer reads an absent key as
+"no mutes." **Proven in-world this evening**: a moderation mute keeps the target's row greyed (not
+vanished) and unmuting from the moderator UI restores it. Sim `02ce1b9b10`; mixer parse/keep+grey
+`0d6d0d0`. What remains open is **reporting** parity (O-15): the mute state is now visible to the admin
+API (`mod_muted_entries`, below) but is still not reported to non-moderator clients. OQ1/OQ2 (O-16)
+remain unanswered; the store is still in-memory (persistence = slice 2).*
 
 ### Presence-close teardown — done
 [SRC] *webrtc-voice: presence-close teardown with generation-token capture* +
@@ -269,6 +288,64 @@ was the only way to reach the unmute — so the mute removed its own undo. This 
 escape hatch. The viewer-side half is the separate `fix/voice-webrtc-fixes` work (§7.5). Not yet
 exercised on a live region [SRC: region stopped since the deploy].
 
+### Mixer join backlog — SHIPPED 2026-08-27 (`354e9fe`)
+*Added 2026-08-27 (evening).* [SRC] mixer *fix(voice): send existing-room participants to a joining
+listener* (`354e9fe`). Before this the mixer emitted a `"j"` presence **only on a transition**
+(speech/movement/visibility), so a listener joining a room that already had occupants saw an **empty
+roster** until someone moved — `push_presence` told the room about a newcomer but never told the
+newcomer about the room. The fix synthesises the roster backlog at `data_ready` (the first writable
+moment on the listener's data channel), filtered by the listener's own exclusion set, wire-identical to
+a live `"j"`. **Proven in-world**: a late joiner now sees existing occupants immediately, and the `"j"`
+backlog was observed at `data_ready`. This **supersedes the viewer-repo `voice-participant-row-
+suppression.md` framing** (which chased sim/viewer suppression theories); root cause was mixer-side, see
+`legion-voice-mixer/docs/join-backlog-defect.md`.
+
+### GIVING-UP warning — diagnosed and resolved 2026-08-27 (`b80efffa36`)
+*Added 2026-08-27 (evening).* [SRC] The `[VISIBILITY SENDER]` pending-join path had **no confirmation
+predicate at all**: the mixer exposes no room-membership query and its `Ok` never means "applied," so
+the sender blind-re-sent a joining listener's full column `PendingJoinMaxAttempts` (6) times and
+**always** logged the GIVING-UP warning — for *every* login, including listeners with zero exclusions
+and zero mutes. The instrument was worthless: a real dropped ban looked identical to the constant false
+alarms (this is O-8). **Fix** *fix(voice): skip the pending-join re-send for a listener with empty
+columns* (`b80efffa36`): an empty-excl **and** empty-mute listener is now vacuously confirmed and never
+enters the pending machinery — no re-sends, a DEBUG line instead of the WARN; a listener carrying an
+exclusion or mute still gets the full bounded re-send. Guarded at first drain, not enqueue, because the
+feed columns are only safely readable on the drain thread. The warning is meaningful again. (Deployed
+this evening, §5.0.)
+
+### Join-window silent-drop — defect and mixer-side fix, SHIPPED 2026-08-27 (`27977c8`)
+*Added 2026-08-27 (evening).* [SRC] mixer *fix(voice): defer a visibility entry for a not-yet-joined
+listener, replay on join* (`27977c8`). **Defect**: an exclusion or mute arriving between provision and
+room-join was dropped by `apply_visbatch`/`apply_mutebatch` (`nmatch==0`) and stayed lost until a full
+snapshot — which in steady state may never come, so a parcel-banned agent logging straight into the
+parcel could go **unenforced indefinitely**. **Fix**: a per-room **deferred store** keyed by listener
+holds that listener's latest `excl` and `mute` columns under **op-faithful merge** (`replace` sets,
+`add` unions, `remove` subtracts, an emptied column clears) and **replays them into the session inside
+the locked join, before the join roster is built and before any presence is emitted** — deferred
+exclusions are in force before anything derived from them is revealed. **Why op-fidelity over wholesale
+last-write**: a post-window un-ban (`remove`) must never be resurrected into an exclusion on join;
+wholesale replace would do exactly that. Capped per room (`SLV_VIS_MAX_DEFERRED`, oldest evicted and
+counted), freed on room teardown, **no TTL** (a proven join arrived at +8 min — a timer would recreate
+the loss). New dependency-free module `src/deferred.{c,h}` with a 35-check unit test; all mixer tests
+green; `.so` 306,600 B. **Verified in-world and via the admin API this evening.**
+
+### New observability — added 2026-08-27
+*Added 2026-08-27 (evening).* [SRC] The `peer_ctl_batch` **reply now carries an additive
+`deferred_listeners`** count (entries deferred this batch, excl + mute) — the first time a sim can see
+from the response that its entry was retained, not silently dropped. `query_session` / `handle_info`
+expose the store's counters under `visibility`: `deferred_current`, `deferred_adds`,
+`deferred_replaced`, `deferred_replayed`, `deferred_evicted`; and each session gains
+`mod_muted_entries` (moderation flag, previously invisible to the admin API). All additive; old sim
+ignores the reply key, old mixer never emits it. Sim-side reading of `deferred_listeners` (warn on
+drops) is **S4, still open** (O-1).
+
+### NEW EXPECTED BEHAVIOUR — `have_batch:false` / `epoch:0` on a clean listener is HEALTHY
+*Added 2026-08-27 (evening).* Post-`b80efffa36`, a zero-exclusion / zero-mute listener causes **no
+batch to be sent at all** (there is nothing to enforce), so `query_session` shows `visibility.epoch:0`
+and `have_batch:false` for that room until the first real exclusion/mute arrives — at which point a
+batch appears carrying actual content. **This is correct, not a fault.** Recorded so a future session
+reading the admin API does not misread the absence of a batch as a broken feed.
+
 ### Connector layer — not started (design DRAFT)
 [DOC] `connector-design-brief.md` `Status: DRAFT. Not frozen.`; Q1 (identity) resolved by
 Amendment 1 2026-08-22 as "NPC-backed presence plus policy record"; Q2–Q6 open (§4.1 O-17).
@@ -299,7 +376,7 @@ item 4). All [SRC] absent by grep of both source trees and both git logs.
 | O-5 | Parcel local IDs hashed as `float` (`Add(int)` → `Add(float)`) | filed; deliberately not fixed (grid-wide renumbering) | `KnownDefects.md`; per-room brief §2c |
 | O-6 | OnListenerProvisioned queues a doomed re-send on failed provisions | not started | `KnownDefects.md` (cites stale lines `:408`–`:411`; now `:546`–`:553`) |
 | O-7 | Region crossing leaves a live voice handle in the previous region's room | not started, observed 2026-08-24 | `KnownDefects.md` |
-| O-8 | Pending-join confirmation gives up for every listener even when the batch lands | not started, noise | `KnownDefects.md` |
+| O-8 | Pending-join confirmation gives up for every listener even when the batch lands | **RESOLVED 2026-08-27** (`b80efffa36`): empty-column listeners skip pending, so the GIVING-UP warning is meaningful again (§3) | `KnownDefects.md`; this ledger §3 |
 | O-9 | Feeder thread *death* undetected (blocked/wedged now caught) | partial | `KnownDefects.md` — status says "(uncommitted)"; **stale**, see §4.3-b |
 | O-10 | Parcel ban does not eject an already-present avatar | not started (core) | `KnownDefects.md` |
 | O-11 | No channel-change push on intra-region parcel crossing (no `ParcelVoiceInfoRequest` CAP); agent stays in old room until viewer re-provisions | open, **unfiled** — appears only in a commit message and the per-room brief §6 | commit *fix(voice): enforce parcel ban/restrict…*; per-room brief |
@@ -335,6 +412,8 @@ item 4). All [SRC] absent by grep of both source trees and both git logs.
 | O-36 | Unfinished TODO "check for errors and package the response" (`WebRtcVoiceRegionModule.cs:632`) sitting directly above the line that discards the signalling response | open, **unfiled** — cosmetic; see §7.1, where the discard is load-bearing for the no-P2P finding | this ledger §7.6 |
 | O-37 | **Viewer:** a stored per-avatar volume in `volume_settings.xml` can permanently suppress that avatar's participant row; audio unaffected; survives grid restart, viewer restart, relog and teleport. Mechanism **UNKNOWN**; workaround documented | filed **viewer-side** 2026-08-26 — deferred (§8) | `phoenix-firestorm:docs/voice-participant-row-suppression.md` (do not duplicate here) |
 | O-38 | Hypergrid visitors are provisioned **identically** to local users — the voice addon contains no HG-aware code at all (zero references to `Hypergrid` / `IsLocalGridUser` / `UserAgentService` / `scopeID`). Bears on spec §3.2 and §10 item 1 | open, **policy undecided** — deferred (§8) | this ledger §7.4; spec §3.2, §10 item 1 |
+| O-39 | **Grid-mode (Robust-side) voice connector exists in-tree but is DEAD as shipped.** `WebRtcVoiceServerConnector : IServiceConnector` (`WebRtcVoice/WebRtcVoiceServerConnector.cs:47`) hosts the same `WebRtcVoiceServiceModule` — `WebRtcJanusService` chain as the region path, but it is registered in **no** shipped/example ini (`[ServiceList]` carries only the stock Freeswitch line); the only setup is a manual README edit (`README.md:167`). Complete but unreachable out of the box, **unverified**. Recorded for Iain's grid-mode-fails-to-connect report | open, **unverified** — inventory only (added 2026-08-27) | this ledger; `WebRtcVoice/WebRtcVoiceServerConnector.cs`; `Addons/os-webrtc-janus/README.md:157`—`:187` |
+| O-40 | **Mixer audio tap (Balpien) — first post-RC pull-in.** Confirmed as the first item to pull in after the reviewer-condition RC; not started, no code or brief in either tree yet | open, **post-RC** (recorded 2026-08-27) | this ledger [SRC: this reconciliation; no tree artifact yet] |
 
 Closed items, kept so nobody re-files them: OnRemovePresence teardown (implemented 2026-08-22);
 estate CAP TaxFree flip on absent `override_public_access` (implemented 2026-08-23); parcel
@@ -412,6 +491,22 @@ filed in this tree's `Docs/KnownDefects.md` (O-2, O-5, O-13) and in `parcel-voic
 reconciliation; the §5.1 text below it describes 08-26 06:19 and is retained only as history.*
 
 ### 5.0 Current state (2026-08-27)
+
+*Superseding amendment 2026-08-27 (evening) — today's two sim deploys and the mixer deploy.* HEAD of
+`feature/voice-visibility-matrix` is now **`b80efffa36`**. Two sim staging deploys happened today, each
+staged, SHA-256-verified and rollback-backed [SRC: deploy reports]: **(1) afternoon — `02ce1b9b10`**
+(moderation mute channel) copied `VoiceVisibility.dll` + `.pdb` and `WebRtcVoiceRegionModule.dll` +
+`.pdb` into `D:\legiongrid\regionserver` (build 16:17; rollback `20260827-161903`); **(2) evening —
+`b80efffa36`** (empty-column pending guard) copied **only** `WebRtcVoiceRegionModule.dll` (71,168 B,
+SHA `03F8122B…`) + `.pdb` (build 19:17; rollback `20260827-191855`) — `VoiceVisibility.dll` was
+deliberately **not** redeployed: no Visibility-project source changed, and its rebuilt SHA differed only
+by Debug-build non-determinism (identical byte size), confirmed via `git diff`. The Robust/gridserver
+side got nothing. **Mixer: now at `27977c8`** (`354e9fe` join backlog + `0d6d0d0` mute channel +
+`27977c8` join-window deferral); image rebuilt (`.so` 306,600 B) and **deployed**. **Unlike every prior
+reconciliation, this evening's work was verified LIVE in-world and via the admin API** — moderation
+mute greys/ungreys, the late-joiner backlog, and the deferral/replay all confirmed running. The
+pre-evening detail below is retained as history.
+
 
 **Region: still stopped.** No `OpenSim.Server.RegionServer.exe`; 9000/9001/9002/8003 all free
 [SRC: process and port query at both deploys and at this reconciliation]. **Nothing committed to
