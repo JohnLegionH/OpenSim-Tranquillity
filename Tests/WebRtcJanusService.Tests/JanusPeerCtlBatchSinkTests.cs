@@ -131,6 +131,46 @@ namespace osWebRtcVoice.Tests
             Assert.That(sink.LastSendFallbackSources, Is.Zero);
         }
 
+        // ---- Q4 (2026-08-28 trace): the MUTE channel must be counted, not just the excl channel ----
+
+        [Test]
+        public async Task SendAsync_MuteOnlyBatch_AddressesTheMuteRoom_AndReportsOneRoom()
+        {
+            // A moderation-mute delta: empty exclusion channel, one mute entry for a recorded listener.
+            // Formerly the send delivered it but every counter read the excl channel and reported 0.
+            var rec = new Recorder();
+            using var sink = NewSink(rec, Resolver((1, 4242), (2, 4242)));
+
+            PeerCtlSendResult r = await sink.SendAsync(VisOp.Add, Excl(), Excl((1, new[] { 2 })));
+
+            Assert.That(r, Is.EqualTo(PeerCtlSendResult.Ok));
+            Assert.That(rec.Sent.Count, Is.EqualTo(1), "the mute is delivered to exactly one room");
+            Assert.That(rec.Sent[0]["room"].AsInteger(), Is.EqualTo(4242));
+            Assert.That((rec.Sent[0]["mute"] as OSDMap)?.ContainsKey(Id(1).ToString()), Is.True,
+                "the mute entry for listener 1 is on the wire");
+            Assert.That(sink.LastSendRooms, Is.EqualTo(1),
+                "rooms addressed is the channel union — a mute-only op reads 1, not 0 (the Q4 fix)");
+            Assert.That(sink.LastSendFallbackListeners, Is.Zero, "excl channel had no listeners");
+            Assert.That(sink.LastSendMuteFallbackListeners, Is.Zero, "the mute listener was resolvable, not fallback");
+        }
+
+        [Test]
+        public async Task SendAsync_MuteOnly_UnrecordedListener_CountsMuteFallback()
+        {
+            var rec = new Recorder();
+            using var sink = NewSink(rec, null);   // no resolver -> the mute listener falls back
+            int fallback = sink.FallbackRoom;
+
+            await sink.SendAsync(VisOp.Add, Excl(), Excl((1, new[] { 2 })));
+
+            Assert.That(rec.Sent.Count, Is.EqualTo(1));
+            Assert.That(rec.Sent[0]["room"].AsInteger(), Is.EqualTo(fallback));
+            Assert.That(sink.LastSendRooms, Is.EqualTo(1), "the fallback room is addressed and counted");
+            Assert.That(sink.LastSendMuteFallbackListeners, Is.EqualTo(1),
+                "the unrecorded mute listener is counted on the mute-fallback companion");
+            Assert.That(sink.LastSendFallbackListeners, Is.Zero, "the excl channel had no listeners");
+        }
+
         // ---- the null-resolver window (construction order) ----
 
         [Test]

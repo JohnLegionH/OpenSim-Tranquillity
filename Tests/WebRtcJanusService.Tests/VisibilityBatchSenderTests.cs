@@ -144,6 +144,21 @@ namespace osWebRtcVoice.Tests
 
         // ---- stuck-mute window (pending-join sets mute, main emit fails, unmute while unsynced) ----
 
+        // Q4 (2026-08-28 trace): the [VOICE VISIBILITY] service line logs b.MuteAdded/b.MuteRemoved.
+        // A moderation-mute-only change must produce a delta with a NON-ZERO mute count and a ZERO
+        // exclusion count — the exact batch that formerly logged "+0/-0 listeners".
+        [Test]
+        public void MuteOnlyDelta_HasNonZeroMuteCount_AndZeroExclusionCount()
+        {
+            UUID L = Id(40), S = Id(41);
+            VisibilityBatch b = DeltaComputer.Diff(VisibilityMatrix.Empty, MutedSourceMatrix(L, S), Room);
+            Assert.That(b.IsEmpty, Is.False, "a mute-only change is not an empty batch");
+            Assert.That(b.Added.Count, Is.Zero, "no exclusion listeners — the excl counters read zero, correctly");
+            Assert.That(b.Removed.Count, Is.Zero);
+            Assert.That(b.MuteAdded.Count, Is.EqualTo(1), "the muted count the service line now logs is non-zero");
+            Assert.That(b.MuteAdded.ContainsKey(L), Is.True);
+        }
+
         [Test]
         public async Task PendingJoinMute_MainEmitFails_ThenUnmuteWhileUnsynced_SnapshotClearsMute()
         {

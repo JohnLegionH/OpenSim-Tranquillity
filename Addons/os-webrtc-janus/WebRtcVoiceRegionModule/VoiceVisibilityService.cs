@@ -248,8 +248,11 @@ namespace osWebRtcVoice
         private void OnBatch(VisibilityBatch b)
         {
             if (!b.IsEmpty)
-                m_log.LogDebug("{LogHeader} {RegionName}: +{AddedListenerCount} listeners / -{RemovedListenerCount} listeners",
-                    logHeader, m_scene.RegionInfo.RegionName, b.Added.Count, b.Removed.Count);
+                // Q4: report the MUTE channel too. A moderation-mute-only batch has empty excl
+                // Added/Removed but a non-empty MuteAdded, and formerly logged "+0/-0 listeners" while
+                // the mute was delivered (the 2026-08-28 trace). MuteAdded/MuteRemoved make it visible.
+                m_log.LogDebug("{LogHeader} {RegionName}: +{AddedListenerCount}/-{RemovedListenerCount} listeners, +{AddedMuteCount}/-{RemovedMuteCount} muted",
+                    logHeader, m_scene.RegionInfo.RegionName, b.Added.Count, b.Removed.Count, b.MuteAdded.Count, b.MuteRemoved.Count);
         }
 
         private void OnDerivationError(Exception e)

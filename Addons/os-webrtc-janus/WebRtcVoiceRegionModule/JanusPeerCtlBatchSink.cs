@@ -66,6 +66,12 @@ namespace osWebRtcVoice
         private volatile int _lastSendRooms;
         private volatile int _lastSendFallbackListeners;
         private volatile int _lastSendFallbackSources;
+        // Q4 counter fix: the MUTE channel's fallback counts, parallel to the excl ones above. Kept
+        // SEPARATE (not summed into the excl fields) because the partition exposes counts, not listener
+        // sets, so a distinct cross-channel union cannot be computed without changing the partitioner
+        // (out of scope). _lastSendRooms below becomes the room UNION (rooms addressed by either channel).
+        private volatile int _lastSendMuteFallbackListeners;
+        private volatile int _lastSendMuteFallbackSources;
 
         // S4 inner-reply stats for the most recent send, summed across rooms (see LastSendStats).
         // Volatile ints mirror the LastSend* pattern above; SendAsync is single-flight from the sender.
@@ -140,6 +146,14 @@ namespace osWebRtcVoice
         /// upgraded deployment; non-zero says some voice service is not yet reporting its joined room.</summary>
         public int LastSendFallbackSources => _lastSendFallbackSources;
 
+        /// <summary>Q4: distinct MUTE-channel listeners/sources in the most recent send with no room
+        /// record (fallback), parallel to the excl fallback figures. Non-zero on a mute-only op whose
+        /// listener has no AgentRoomTable record; zero otherwise.</summary>
+        public int LastSendMuteFallbackListeners => _lastSendMuteFallbackListeners;
+
+        /// <summary>Q4: see <see cref="LastSendMuteFallbackListeners"/> — the mute-channel source companion.</summary>
+        public int LastSendMuteFallbackSources => _lastSendMuteFallbackSources;
+
         /// <summary>S4: inner-reply stats from the most recent SendAsync (see <see cref="PeerCtlSendStats"/>),
         /// summed across the rooms the send addressed. Default/all-zero when the mixer reply carried no such
         /// fields (old mixer). PLUMBING only -- read by nobody today; surfaced for a future decision.</summary>
@@ -164,24 +178,32 @@ namespace osWebRtcVoice
             IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> mute = null)
         {
             PeerCtlBatchPartition part = PeerCtlBatchPartitioner.Partition(excl, RoomOf, _fallbackRoom);
-            _lastSendRooms = part.RoomCount;
+            // Exclusion-channel fallback counts keep their exact meaning; _lastSendRooms is set from the
+            // CHANNEL UNION further below (a mute-only op addresses rooms the excl partition never sees).
             _lastSendFallbackListeners = part.FallbackListeners;
             _lastSendFallbackSources = part.FallbackSources;
 
             // ADDITIVE mute channel: partition it with the SAME per-room policy (the partitioner is
             // untouched — called a second time). Rooms present only in the mute partition are unioned
             // in below, so a mute-only op still addresses its room(s). Empty/null mute => no second
-            // partition and the excl-only path is byte-for-byte the pre-mute behaviour.
+            // partition and the excl-only path is byte-for-byte the pre-mute behaviour. mutePart is
+            // captured IN FULL (not just .Rooms) so its fallback counts feed the mute companions and the
+            // log; muteRooms keeps its exact pre-fix value (null when empty), so the SEND LOOP below is
+            // untouched (Q4: counters/logging only, no wire change).
+            PeerCtlBatchPartition mutePart = (mute != null && mute.Count > 0)
+                ? PeerCtlBatchPartitioner.Partition(mute, RoomOf, _fallbackRoom)
+                : PeerCtlBatchPartition.Empty;
             IReadOnlyDictionary<int, IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>>> muteRooms
-                = (mute != null && mute.Count > 0)
-                    ? PeerCtlBatchPartitioner.Partition(mute, RoomOf, _fallbackRoom).Rooms
-                    : null;
+                = (mute != null && mute.Count > 0) ? mutePart.Rooms : null;
+            _lastSendMuteFallbackListeners = mutePart.FallbackListeners;
+            _lastSendMuteFallbackSources = mutePart.FallbackSources;
 
             // Union the room keys across both channels, preserving order-independence.
             var roomKeys = new HashSet<int>();
             foreach (int r in part.Rooms.Keys) roomKeys.Add(r);
             if (muteRooms != null)
                 foreach (int r in muteRooms.Keys) roomKeys.Add(r);
+            _lastSendRooms = roomKeys.Count;   // Q4: rooms addressed by EITHER channel (the true count)
 
             // Build EVERY body BEFORE sending any of them. The serializer's invariant throw stays
             // all-or-nothing as it was when there was one message: a zero UUID in any room aborts the
@@ -198,7 +220,7 @@ namespace osWebRtcVoice
                 requests.Add(request);
             }
 
-            LogRoomsAddressed(op, part);
+            LogRoomsAddressed(op, part, mutePart, roomKeys.Count);
 
             if (requests.Count == 0)
             {
@@ -402,25 +424,35 @@ namespace osWebRtcVoice
         // Which rooms a tick actually addressed is the one thing no other instrument reports: the
         // mixer's reply cannot say (§3.3.1) and the wire carries no per-region view. Debug, because
         // it is per tick.
-        private void LogRoomsAddressed(VisOp op, PeerCtlBatchPartition part)
+        // Q4: report BOTH channels. "addressed N" is the room UNION (rooms that got any channel); the
+        // per-room breakdown shows excl+mute listener counts, and both channels' fallback counts are
+        // logged. Without this a mute-only op logged "addressed 0 rooms / fallback 0" while the mute
+        // was delivered to its room (the 2026-08-28 trace).
+        private void LogRoomsAddressed(VisOp op, PeerCtlBatchPartition part, PeerCtlBatchPartition mutePart, int roomsAddressed)
         {
             if (!m_log.IsEnabled(LogLevel.Debug))
                 return;
 
+            var roomKeys = new SortedSet<int>();
+            foreach (int r in part.Rooms.Keys) roomKeys.Add(r);
+            foreach (int r in mutePart.Rooms.Keys) roomKeys.Add(r);
+
             var sb = new StringBuilder();
-            foreach (KeyValuePair<int, IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>>> room in part.Rooms)
+            foreach (int roomKey in roomKeys)
             {
+                int exclCount = part.Rooms.TryGetValue(roomKey, out var es) ? es.Count : 0;
+                int muteCount = mutePart.Rooms.TryGetValue(roomKey, out var ms) ? ms.Count : 0;
                 if (sb.Length > 0)
                     sb.Append(", ");
-                sb.Append(room.Key).Append(':').Append(room.Value.Count);
+                sb.Append(roomKey).Append(":excl").Append(exclCount).Append("+mute").Append(muteCount);
             }
             if (sb.Length == 0)
                 sb.Append("none");
 
-            m_log.LogDebug("{LogHeader} region {RegionName}: {Op} addressed {RoomCount} room(s) [room:listeners {Rooms}]; " +
-                "fallback listeners {FallbackListeners}, sources {FallbackSources} (fallback room {FallbackRoom})",
-                LogHeader, _region, PeerCtlBatchSerializer.OpString(op), part.RoomCount, sb.ToString(),
-                part.FallbackListeners, part.FallbackSources, _fallbackRoom);
+            m_log.LogDebug("{LogHeader} region {RegionName}: {Op} addressed {RoomCount} room(s) [room:excl+mute {Rooms}]; " +
+                "fallback excl listeners {FbExclL}/sources {FbExclS}, mute listeners {FbMuteL}/sources {FbMuteS} (fallback room {FallbackRoom})",
+                LogHeader, _region, PeerCtlBatchSerializer.OpString(op), roomsAddressed, sb.ToString(),
+                part.FallbackListeners, part.FallbackSources, mutePart.FallbackListeners, mutePart.FallbackSources, _fallbackRoom);
         }
     }
 }
