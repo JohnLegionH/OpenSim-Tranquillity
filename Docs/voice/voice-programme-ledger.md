@@ -367,6 +367,43 @@ and `have_batch:false` for that room until the first real exclusion/mute arrives
 batch appears carrying actual content. **This is correct, not a fault.** Recorded so a future session
 reading the admin API does not misread the absence of a batch as a broken feed.
 
+### Sink counters read only the exclusion channel — investigated and RESOLVED 2026-08-28 (`0190d864ef`)
+*Added 2026-08-28.* Opened 2026-08-27 evening as a possible enforcement regression; **resolved as a
+counter/logging bug — enforcement never broke.**
+
+- **Symptom.** Every post-deploy moderation event logged `[JANUS PEERCTL SINK] … addressed 0 room(s)`
+  and `[VOICE VISIBILITY] +0/-0 listeners` while avatars were in voice.
+- **Decisive captures** (Janus Admin API `handle_info`, two avatars, target unblocked): during an
+  active menu mute the listener's handle read `mod_muted_entries=1`; after unmute, `0`. **Enforcement
+  is proven end-to-end, both directions, on the deployed build** (sim `18640868dc`; mixer image
+  `a5a6c7b7189a` / `27977c8` content).
+- **Root cause (static trace, verified).** The three sim-side instruments — `[VOICE VISIBILITY]`
+  `+N/-N`, the sink's `addressed N room(s)`, and the `_lastSend*` properties — read **only the
+  exclusion channel** (the `part` partition). The mute channel rides the parallel `muteRooms` union
+  that only the wire consumes. **Blind by construction since the mute channel was introduced — NOT a
+  regression.** `b80efffa36` is exonerated: it guards the join path, leaves the `AgentRoomTable`
+  registry untouched, and the observed events were steady-state deltas, not join-path sends.
+- **The 2026-08-27 ~05:24 "regression evidence" is re-read accordingly:** the counters were lying AND
+  the ear was confounded — the target sat on the moderator's **Block Voice** list (a personal mute).
+  The ~21:50 three-way audio pass stands unchanged.
+- **Fix.** `0190d864ef` *fix(voice): count the mute channel in the visibility/sink instruments* —
+  counters/logging only, **wire byte-identical**, unit-tested against the exact capture scenario.
+  Committed, **not yet deployed**; rides the next sim staging batch. **Live confirmation owed then:**
+  one mute should log `addressed 1 room(s)`.
+
+### Reading the instruments — two operational notes (added 2026-08-28)
+*Added 2026-08-28.* Recorded so a future session does not misread the admin API.
+
+- **Mixer `handle_info`: `data_msgs_received` / `last_data_fields_seen` count the viewer's OWN SLData
+  channel** (e.g. `"m"` = that viewer's *personal* mute of someone), incremented only in
+  `janus_slvoice_incoming_data`. **Sim moderation** arrives via `apply_mutebatch` on the Admin API
+  feed and moves `mod_muted_entries` **without** moving those two fields. One changing without the
+  other is **expected**, not an anomaly — they instrument two independent inputs.
+- **`AgentRoomTable` never removes entries** (deliberate, documented in-source). A stale entry is
+  unreachable via matrix membership gating and is overwritten on the agent's next provision. **Not a
+  leak; do not "fix" it** — close-time removal without the teardown generation token would let a late
+  close of an OLD login erase the NEW login's record.
+
 ### Connector layer — not started (design DRAFT)
 [DOC] `connector-design-brief.md` `Status: DRAFT. Not frozen.`; Q1 (identity) resolved by
 Amendment 1 2026-08-22 as "NPC-backed presence plus policy record"; Q2–Q6 open (§4.1 O-17).
@@ -444,7 +481,7 @@ instrumented); About Land access list rendering empty (resolved viewer-side); RE
 bit-28 (not a defect); OPEN #12 estate-change event (exists — `OnEstateInfoChange`, subscribed at
 `VoiceVisibilityService.cs:94`–`:96` [SRC]); scaling items 1 (non-deterministic truncation →
 join-time cap) and 4 (lazy echo ring) [SRC]; connector Q1 [DOC]; per-room OQ1–OQ7 [DOC]; ALC
-split-identity rule (documented, no fix owed).
+split-identity rule (documented, no fix owed); the sink-counter mute-blindness investigation (resolved 2026-08-28, `0190d864ef` — counters/logging only, enforcement never broke; §3).
 
 ### 4.2 KnownDefects in the mixer repo
 **There is none** [SRC: `find` for `*knowndefect*` returns nothing]. Mixer-side defects are
@@ -512,6 +549,16 @@ filed in this tree's `Docs/KnownDefects.md` (O-2, O-5, O-13) and in `parcel-voic
 reconciliation; the §5.1 text below it describes 08-26 06:19 and is retained only as history.*
 
 ### 5.0 Current state (2026-08-27)
+
+*Superseding amendment 2026-08-28.* The evening `b80efffa36` line below is itself superseded: on
+**2026-08-27 20:49** a six-file staging deploy landed `d9fa72c351` + `33fc3b412e` + `2b58c74f9a` over
+`b80efffa36` (`VoiceVisibility.dll` 20,480 B, `WebRtcVoiceRegionModule.dll` 76,800 B,
+`WebRtcJanusService.dll` 88,576 B + matching PDBs; rollback `20260827-204551`), and on **2026-08-28**
+moderation-mute delivery was **verified live in-world and via the admin API** on that build
+(`mod_muted_entries` 1→0 across a menu mute/unmute; §3 sink-counter item). **The running build is now
+sim through `2b58c74f9a`** (docs commit `18640868dc` carried no binary) **plus mixer `27977c8` / image
+`a5a6c7b7189a`.** **`0190d864ef` (the mute-channel counter fix) is the FIRST commit past the running
+build** — committed 2026-08-28, undeployed, counters/logging only, rides the next staging batch.
 
 *Superseding amendment 2026-08-27 (evening) — today's two sim deploys and the mixer deploy.* HEAD of
 `feature/voice-visibility-matrix` is now **`b80efffa36`**. Two sim staging deploys happened today, each
@@ -818,14 +865,21 @@ report, not by moving an item.*
 (`33fc3b412e`) and S5 (this ledger) are DONE and struck from this list. One item remains before the
 tester line.*
 
+*Updated 2026-08-28: those three commits WERE deployed (2026-08-27 20:49 six-file staging) and
+moderation-mute delivery is now proven live in-world and via the admin API (§3, §5.0). The acceptance
+test remains the sole ship-blocker; its outstanding parts are enumerated below.*
+
 | Item | Why | Ref |
 |---|---|---|
-| Run the formal in-world acceptance test, with `volume_settings.xml` cleared in BOTH accounts | The per-room emission and moderation-mute paths have never been exercised on a started region; volume_settings must be clear so O-37 (the viewer row-suppression) cannot confound the result | §7.7, U-11, U-12; O-37 |
+| Run the formal in-world acceptance test to completion | Moderation-mute *delivery* is proven; the documented menu/parity acceptance procedure has still not been run through | §7.7, U-11, U-12; O-37 |
 
-**Pending one deploy:** three sim commits are committed but undeployed — `d9fa72c351` (fail-closed
-channel_type), `33fc3b412e` (S4 inner-reply reader), `2b58c74f9a` (room-number `int.MinValue` fold).
-The acceptance test must run against a region carrying them, so the one remaining blocker is gated on
-that single deploy.
+**Outstanding parts of the acceptance test:** the **group-session spot check** (needs a third avatar
+in voice, to prove the nearby normalisation does not moderate the whole session); the
+**`volume_settings.xml` confirm-or-note** (clear in both accounts so O-37 cannot confound a missing
+row); the **viewer-repo doc amendments** (`voice-participant-row-suppression.md` and the acceptance-test
+doc — phoenix-firestorm, not this tree); and the **results entry** recording the run. The counter fix
+`0190d864ef` is committed but undeployed, so a re-run after the next staging should additionally show a
+mute logging `addressed 1 room(s)`.
 
 ### 8.2 SHOULD-FIX BEFORE TESTERS
 
