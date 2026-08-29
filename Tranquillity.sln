@@ -193,6 +193,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WebRtcVoiceRegionModule.Tes
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.TrustedHypergrid.Tests", "Tests\OpenSim.TrustedHypergrid.Tests\OpenSim.TrustedHypergrid.Tests.csproj", "{3714BB49-4D61-41E4-97F4-3AC9EA3B1BD1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Services.HypergridService.Tests", "Tests\OpenSim.Services.HypergridService.Tests\OpenSim.Services.HypergridService.Tests.csproj", "{2DBDEB35-EEA6-4A29-8B06-732E44463C44}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -1227,6 +1229,18 @@ Global
 		{3714BB49-4D61-41E4-97F4-3AC9EA3B1BD1}.Release|x64.Build.0 = Release|Any CPU
 		{3714BB49-4D61-41E4-97F4-3AC9EA3B1BD1}.Release|x86.ActiveCfg = Release|Any CPU
 		{3714BB49-4D61-41E4-97F4-3AC9EA3B1BD1}.Release|x86.Build.0 = Release|Any CPU
+		{2DBDEB35-EEA6-4A29-8B06-732E44463C44}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2DBDEB35-EEA6-4A29-8B06-732E44463C44}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2DBDEB35-EEA6-4A29-8B06-732E44463C44}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{2DBDEB35-EEA6-4A29-8B06-732E44463C44}.Debug|x64.Build.0 = Debug|Any CPU
+		{2DBDEB35-EEA6-4A29-8B06-732E44463C44}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{2DBDEB35-EEA6-4A29-8B06-732E44463C44}.Debug|x86.Build.0 = Debug|Any CPU
+		{2DBDEB35-EEA6-4A29-8B06-732E44463C44}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2DBDEB35-EEA6-4A29-8B06-732E44463C44}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2DBDEB35-EEA6-4A29-8B06-732E44463C44}.Release|x64.ActiveCfg = Release|Any CPU
+		{2DBDEB35-EEA6-4A29-8B06-732E44463C44}.Release|x64.Build.0 = Release|Any CPU
+		{2DBDEB35-EEA6-4A29-8B06-732E44463C44}.Release|x86.ActiveCfg = Release|Any CPU
+		{2DBDEB35-EEA6-4A29-8B06-732E44463C44}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -1324,6 +1338,7 @@ Global
 		{7E4B0395-81A7-4233-82D6-D267BD832F37} = {6187B41A-47CB-4477-BF79-BA4FA10B3E54}
 		{27B51392-6ED6-41A7-91AF-9BBB22E643B1} = {7F5EC7C6-FD99-4084-8530-5D3F28D6D7C0}
 		{3714BB49-4D61-41E4-97F4-3AC9EA3B1BD1} = {7F5EC7C6-FD99-4084-8530-5D3F28D6D7C0}
+		{2DBDEB35-EEA6-4A29-8B06-732E44463C44} = {7F5EC7C6-FD99-4084-8530-5D3F28D6D7C0}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {A40AD54B-8BC7-41E4-B241-19B59EA65D2A}
