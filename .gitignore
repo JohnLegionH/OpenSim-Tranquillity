@@ -291,3 +291,7 @@ id_ed25519.*
 *secret*.json
 *credential*.ini
 *credential*.json
+# Trusted Hypergrid grid-identity private key — never commit (Design Brief §4; ADR-010).
+# Generated on first run when [TrustedHypergrid] Enabled=true; holds the Ed25519 private key as hex.
+TrustedHypergridSecret.ini
+**/TrustedHypergridSecret.ini
