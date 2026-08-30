@@ -317,6 +317,10 @@ namespace osWebRtcVoice.Tests
             Assert.That(o.Body, Is.Not.Null);
             Assert.That(o.Body.ContainsKey("voice_credentials"), Is.True);
             OSDMap creds = (OSDMap)o.Body["voice_credentials"];
+            // S-A2A-2.2: the caller stores this map as mChannelInfo and routes/compares by
+            // voice_server_type (llvoicechannel.cpp:687, :465-469; llvoicewebrtc.cpp:1682-1687).
+            Assert.That(creds["voice_server_type"].AsString(), Is.EqualTo("webrtc"));
+            Assert.That(creds.ContainsKey("sip_uri"), Is.False);
             Assert.That(creds["channel_uri"].AsString(), Is.EqualTo(Xor.ToString()), "channel_uri = the XOR session id as a string; becomes the provision's `channel`");
             string token = creds["channel_credentials"].AsString();
             Assert.That(token, Is.EqualTo(reg.TryGet(Xor).Token).And.Length.EqualTo(64));

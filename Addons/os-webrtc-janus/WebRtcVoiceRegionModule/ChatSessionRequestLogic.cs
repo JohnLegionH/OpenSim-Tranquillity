@@ -63,6 +63,20 @@ namespace osWebRtcVoice
         public const int InvitationTypeP2P = 2;
 
         /// <summary>
+        /// S-A2A-2.2: WEBRTC_VOICE_SERVER_TYPE (llvoicewebrtc.cpp:83). Every channel-info map the sim
+        /// hands the viewer must carry it: LLVoiceClient::setNonSpatialChannel routes the channel to a
+        /// voice module by this key (llvoiceclient.cpp:514-528) and getVoiceModule defaults an ABSENT
+        /// value to Vivox (:126-132) -- without it the webrtc module never sees the channel and no
+        /// multiagent provision is attempted. It is also the first thing
+        /// LLWebRTCVoiceClient::compareChannels tests (llvoicewebrtc.cpp:1682-1687), so its absence made
+        /// isThisVoiceChannel false for our own channel and tore down live channels on any re-offer.
+        /// Deliberately NO sip_uri: compareChannels' second test is sip_uri equality, and the module's
+        /// own maps (getAudioSessionChannelInfo, :1626-1636) do not carry it -- absent==absent compares
+        /// equal, while adding it would make our maps unequal to every module-built map.
+        /// </summary>
+        public const string VoiceServerType = "webrtc";
+
+        /// <summary>
         /// Body shape per docs/voice-a2a-wire-trace-20260830.md §3 (llimview.cpp:5196-5214): top-level
         /// session_id / session_name / from_id / from_name, plus a `voice` map that becomes the callee's
         /// voice_channel_info verbatim -- so it must carry channel_uri and channel_credentials, which the
@@ -78,6 +92,7 @@ namespace osWebRtcVoice
             OSDMap voice = new OSDMap
             {
                 ["invitation_type"] = OSD.FromInteger(InvitationTypeP2P),
+                ["voice_server_type"] = OSD.FromString(VoiceServerType),   // S-A2A-2.2, see the const
                 ["channel_uri"] = OSD.FromString(session.ChannelUri),
                 ["channel_credentials"] = OSD.FromString(session.Token),
             };
@@ -205,8 +220,14 @@ namespace osWebRtcVoice
                 return Fail(HttpStatusCode.NotFound, agentID, MethodCall, sessionID, $"no live invitation for this agent alt.preferred_voice_server_type={vst}");
             }
 
+            // S-A2A-2.2: voice_server_type rides here too -- the caller's viewer stores this map as
+            // mChannelInfo (voiceCallCapCoro, llvoicechannel.cpp:687 -> setChannelInfo :504) and later
+            // routes by ITS voice_server_type (activate -> setNonSpatialChannel, :465-469) and compares
+            // channel identity against it (isThisVoiceChannel). Same keys as the invitation's voice map;
+            // deliberately no sip_uri (see A2AInvitation.VoiceServerType).
             OSDMap creds = new OSDMap
             {
+                ["voice_server_type"] = OSD.FromString(A2AInvitation.VoiceServerType),
                 ["channel_uri"] = OSD.FromString(s.ChannelUri),
                 ["channel_credentials"] = OSD.FromString(s.Token),
             };

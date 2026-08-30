@@ -67,7 +67,12 @@ namespace osWebRtcVoice.Tests
             Assert.That(voice["invitation_type"].AsInteger(), Is.EqualTo(2), "P2P_CHAT_SESSION (llimview.cpp:5204)");
             Assert.That(voice["channel_uri"].AsString(), Is.EqualTo(Xor.ToString()), "= the provision's `channel` (llvoicewebrtc.cpp:1497)");
             Assert.That(voice["channel_credentials"].AsString(), Is.EqualTo(s.Token), "= the provision's `credentials` (llvoicewebrtc.cpp:1498)");
-            Assert.That(voice.Count, Is.EqualTo(3));
+            // S-A2A-2.2: routes the channel to the webrtc module (llvoiceclient.cpp:514-528; absent
+            // defaults to Vivox, :126-132) and satisfies compareChannels' first test (llvoicewebrtc.cpp:1684).
+            Assert.That(voice["voice_server_type"].AsString(), Is.EqualTo("webrtc"));
+            Assert.That(voice.ContainsKey("sip_uri"), Is.False,
+                "compareChannels tests sip_uri equality and the module's own maps lack it (getAudioSessionChannelInfo, llvoicewebrtc.cpp:1626-1636): absent==absent is what compares equal");
+            Assert.That(voice.Count, Is.EqualTo(4));
             Assert.That(body.Count, Is.EqualTo(5));
 
             // and it survives the event serialisation the queue applies
