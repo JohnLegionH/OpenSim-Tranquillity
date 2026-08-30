@@ -90,6 +90,11 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     private int m_VisibilityRoomSendConcurrency = JanusPeerCtlBatchSink.DefaultRoomSendConcurrency;
     private readonly Dictionary<Scene, VoiceVisibilityService> m_visibilityServices = new();
 
+    // Avatar-to-avatar invitation registry (Docs/voice/a2a-build-plan.md §1.3, S-A2A-1). One per module
+    // instance = per region-server process, shared by every scene this shared module serves; thread-safe
+    // because ChatSessionRequest arrives on cap HTTP threads. Cross-instance A2A is out of scope (§1.7).
+    private readonly A2ASessionRegistry m_a2aSessions = new();
+
     // ISharedRegionModule.Initialize
     public void Initialise(IConfigSource config)
     {
@@ -492,7 +497,22 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         // ban/restrict branch below). "multiagent" is RESERVED for the future avatar-to-avatar
         // feature, which must bring its OWN authorization when it is built -- this deny is
         // DELIBERATE, not a stub to remove.
-        if (!IsProvisionableChannelType(map, out string channelType))
+        bool admitted = IsProvisionableChannelType(map, out string channelType);
+
+        // Permanent instrument (Docs/voice/a2a-build-plan.md §1.8): one greppable DEBUG line per provision
+        // naming the fields the A2A authorization will decide on. The viewer's multiagent body carries
+        // `channel` (NOT channel_id) and `credentials` (wire trace, U-13); the token itself is never logged.
+        // In S-A2A-1 every non-"local" request is still refused by the O-29 guard below; S-A2A-3 replaces
+        // that decision for "multiagent" only and this line will then show allow/deny with its reason.
+        m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} region={RegionName} channel_type=\"{ChannelType}\" channel={Channel} credentials={Credentials} viewer_session={ViewerSession} logout={Logout} decision={Decision}",
+            logHeader, agentID, scene.Name, channelType,
+            map.TryGetString("channel", out string a2aChannel) ? a2aChannel : "-",
+            map.TryGetString("credentials", out string a2aCreds) && !string.IsNullOrEmpty(a2aCreds) ? "present" : "absent",
+            map.TryGetString("viewer_session", out string a2aVs) && !string.IsNullOrEmpty(a2aVs) ? a2aVs : "-",
+            map.TryGetBool("logout", out bool a2aLogout) && a2aLogout,
+            admitted ? "local-admitted" : "refused-o29");
+
+        if (!admitted)
         {
             m_log.LogWarning($"{logHeader}[ProvisionVoice]: refusing provision with channel_type \"{channelType}\" (only \"local\" is authorized) from agent {agentID} in region \"{scene.Name}\"");
             response.RawBuffer = llsdUndefAnswerBytes;
@@ -700,67 +720,49 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             return;
         }
 
-        m_log.LogDebug($"{logHeader} ChatSessionRequest");
+        // Permanent instrument (Docs/voice/a2a-build-plan.md §1.8): the body the viewer actually sent,
+        // single-line and greppable, BEFORE any decision. Never carries a token (the request has none).
+        m_log.LogDebug("{LogHeader} {Tag} agent={AgentId} region={RegionName} body={Body}",
+            logHeader, ChatSessionRequestLogic.InstrumentTag, agentID, scene.RegionInfo.RegionName,
+            OSDParser.SerializeJsonString(reqmap));
 
-        if (!reqmap.TryGetString("method", out string method))
+        // S-A2A-1: the decision is pure and unit-tested (ChatSessionRequestLogic); this adapter applies it.
+        // "start p2p voice" records the pair in the invitation registry (params = callee; absent -> 400,
+        // replacing the old UUID.Random fallback); "call" mints the per-session token and answers in the
+        // HTTP body with voice_credentials { channel_uri, channel_credentials } (llvoicechannel.cpp:687).
+        // Nothing here admits a multiagent provision yet -- the O-29 deny still holds until S-A2A-3.
+        ChatSessionOutcome outcome = ChatSessionRequestLogic.Decide(reqmap, agentID, m_a2aSessions);
+
+        m_log.LogDebug("{LogHeader} {Line}", logHeader, outcome.Instrument);
+
+        if (outcome.Reply is not null)
         {
-            m_log.LogWarning($"{logHeader} ChatSessionRequest: missing required 'method' field in request for agent {agentID}");
-            response.StatusCode = (int)HttpStatusCode.NotFound;
-            return;
+            IEventQueue queue = scene.RequestModuleInterface<IEventQueue>();
+            if (queue is null)
+            {
+                m_log.LogError("{0}: no event queue for scene {1}", logHeader, scene.RegionInfo.RegionName);
+                response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                return;
+            }
+
+            // The viewer reads only success / temp_session_id / session_id from this event; it never reads
+            // voice_enabled, session_name or type (wire trace §2). Values kept as before for stock viewers.
+            queue.ChatterBoxSessionStartReply(
+                    outcome.Reply.SessionId,
+                    sp.Name,
+                    2,
+                    false,
+                    true,
+                    outcome.Reply.TempSessionId,
+                    true,
+                    string.Empty,
+                    agentID);
         }
 
-        if (!reqmap.TryGetUUID("session-id", out UUID sessionID))
-        {
-            m_log.LogWarning($"{logHeader} ChatSessionRequest: missing required 'session-id' field in request for agent {agentID}");
-            response.StatusCode = (int)HttpStatusCode.NotFound;
-            return;
-        }
+        if (outcome.Body is not null)
+            response.RawBuffer = Util.UTF8.GetBytes(OSDParser.SerializeLLSDXmlString(outcome.Body));
 
-        switch (method.ToLower())
-        {
-            // Several different method requests that we don't know how to handle.
-            // Just return OK for now.
-            case "decline p2p voice":
-            case "decline invitation":
-            case "start conference":
-            case "fetch history":
-                response.StatusCode = (int)HttpStatusCode.OK;
-                break;
-            // Asking to start a P2P voice session. We need to generate a new session ID and return
-            //     it to the client in a ChatterBoxSessionStartReply event.
-            case "start p2p voice":
-                UUID newSessionID;
-                if (reqmap.TryGetUUID("params", out UUID otherID))
-                    newSessionID = new(otherID.ulonga ^ agentID.ulonga, otherID.ulongb ^ agentID.ulongb);
-                else
-                    newSessionID = UUID.Random();
-
-                IEventQueue queue = scene.RequestModuleInterface<IEventQueue>();
-                if (queue is null)
-                {
-                    m_log.LogError("{0}: no event queue for scene {1}", logHeader, scene.RegionInfo.RegionName);
-                    response.StatusCode = (int)HttpStatusCode.InternalServerError;
-                }
-                else
-                {
-                    queue.ChatterBoxSessionStartReply(
-                            newSessionID,
-                            sp.Name,
-                            2,
-                            false,
-                            true,
-                            sessionID,
-                            true,
-                            string.Empty,
-                            agentID);
-
-                    response.StatusCode = (int)HttpStatusCode.OK;
-                }
-                break;
-            default:
-                response.StatusCode = (int)HttpStatusCode.BadRequest;
-                break;
-        }
+        response.StatusCode = (int)outcome.Status;
     }
 
     /// <summary>

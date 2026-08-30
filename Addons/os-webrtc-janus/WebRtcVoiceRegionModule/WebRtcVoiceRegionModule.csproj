@@ -21,6 +21,8 @@
     <Compile Include="VoiceModerationCommands.cs" />
     <Compile Include="VisibilityBatchSender.cs" />
     <Compile Include="JanusPeerCtlBatchSink.cs" />
+    <Compile Include="A2ASessionRegistry.cs" />
+    <Compile Include="ChatSessionRequestLogic.cs" />
   </ItemGroup>
 
   <ItemGroup>
