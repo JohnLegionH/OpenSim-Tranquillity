@@ -47,6 +47,17 @@ namespace osWebRtcVoice
         /// <summary>Whether each party currently holds an admitted multiagent provision (S-A2A-3).</summary>
         public bool CallerProvisioned { get; internal set; }
         public bool CalleeProvisioned { get; internal set; }
+
+        /// <summary>
+        /// S-A2A-2.1: the invitation has been DELIVERED to the callee once for this record. Set by
+        /// <see cref="A2ASessionRegistry.MarkInviteSent"/> after a confirmed enqueue, never on a failed
+        /// delivery (so a caller retry can still reach a callee who was momentarily unreachable).
+        /// Cleared only by the record being removed/recreated: one ring per invitation, ever. Closes
+        /// the Invited-state window of the live invitation feedback loop (each viewer answered a
+        /// received ChatterBoxInvitation with its own bare "call", which re-invited the other side,
+        /// ~90ms per cycle, unbounded).
+        /// </summary>
+        public bool InviteSent { get; internal set; }
         /// <summary>The voice-service viewer_session ids each party's admitted provision was answered with; null when none.</summary>
         public string CallerViewerSession { get; internal set; }
         public string CalleeViewerSession { get; internal set; }
@@ -218,6 +229,20 @@ namespace osWebRtcVoice
                     return false;
                 wasParty = true;
                 return _sessions.Remove(sessionId);
+            }
+        }
+
+        /// <summary>
+        /// S-A2A-2.1: record that the callee's invitation was enqueued. Called by the region module
+        /// only when delivery reported "sent" -- issuing an Invitation from Decide does not set it,
+        /// so a callee-unreachable delivery leaves the next caller "call" free to ring again.
+        /// </summary>
+        public void MarkInviteSent(UUID sessionId)
+        {
+            lock (_lock)
+            {
+                if (_sessions.TryGetValue(sessionId, out A2ASession s))
+                    s.InviteSent = true;
             }
         }
 

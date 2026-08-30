@@ -804,6 +804,10 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             string decision = A2AInviteDelivery.Deliver(scenes, outcome.Invite.Callee, outcome.Invite.Body, null, out string calleeRegion);
             m_log.LogDebug("{LogHeader} {Line}", logHeader,
                 A2AInviteDelivery.Line(outcome.Invite.Callee, outcome.Invite.Caller, outcome.Invite.SessionId, calleeRegion, decision));
+            // S-A2A-2.1: one ring per Invited record. Marked only on a confirmed enqueue, so a
+            // callee-unreachable delivery leaves the flag clear and a caller retry can ring later.
+            if (decision == A2AInviteDelivery.DecisionSent)
+                m_a2aSessions.MarkInviteSent(outcome.Invite.SessionId);
         }
 
         if (outcome.Reply is not null)

@@ -332,6 +332,73 @@ namespace osWebRtcVoice.Tests
             Assert.That(o.Status, Is.EqualTo(HttpStatusCode.NotFound));
         }
 
+        // ---- S-A2A-2.1: the invitation feedback loop -----------------------------------------------
+
+        [Test]
+        public void Call_ByCallee_IssuesCredentials_ButNeverInvites()
+        {
+            // The live loop: the callee's viewer answered a received ChatterBoxInvitation with its own
+            // bare "call", which re-invited the caller, whose viewer called again -- ~90ms per cycle.
+            var reg = new A2ASessionRegistry();
+            Invited(reg);
+            ChatSessionOutcome o = ChatSessionRequestLogic.Decide(CallBody(), Bob, reg);
+            Assert.That(o.Status, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(o.Body, Is.Not.Null, "the callee's call still gets credentials");
+            Assert.That(o.Invite, Is.Null, "a call from the CALLEE must ring nobody");
+            Assert.That(o.Instrument, Does.Contain("invite=suppressed-callee"));
+        }
+
+        [Test]
+        public void SecondCallerCall_AfterDeliveredInvite_DoesNotReRing()
+        {
+            var reg = new A2ASessionRegistry();
+            A2ASession s = Invited(reg);
+            ChatSessionOutcome first = ChatSessionRequestLogic.Decide(CallBody(), Alice, reg);
+            Assert.That(first.Invite, Is.Not.Null);
+            reg.MarkInviteSent(s.SessionId);                       // the module marks on decision=sent
+
+            ChatSessionOutcome second = ChatSessionRequestLogic.Decide(CallBody(), Alice, reg);
+            Assert.That(second.Status, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(second.Body, Is.Not.Null);
+            Assert.That(second.Invite, Is.Null, "one ring per Invited record");
+            Assert.That(second.Instrument, Does.Contain("invite=suppressed-already-sent"));
+        }
+
+        [Test]
+        public void FailedDelivery_LeavesTheRetryFreeToRing()
+        {
+            // The module marks InviteSent only on a confirmed enqueue; a callee-unreachable delivery
+            // must not burn the one ring.
+            var reg = new A2ASessionRegistry();
+            Invited(reg);
+            Assert.That(ChatSessionRequestLogic.Decide(CallBody(), Alice, reg).Invite, Is.Not.Null);
+            // no MarkInviteSent -> the retry still carries an invitation
+            Assert.That(ChatSessionRequestLogic.Decide(CallBody(), Alice, reg).Invite, Is.Not.Null);
+        }
+
+        [Test]
+        public void FreshRecordAfterRemoval_InvitesAgain()
+        {
+            var reg = new A2ASessionRegistry();
+            A2ASession s = Invited(reg);
+            reg.MarkInviteSent(s.SessionId);
+            ChatSessionRequestLogic.Decide(DeclineBody(), Bob, reg);          // removed
+
+            A2ASession fresh = Invited(reg);                                   // recreated pair
+            Assert.That(fresh.InviteSent, Is.False, "the flag lives and dies with the record");
+            ChatSessionOutcome o = ChatSessionRequestLogic.Decide(CallBody(), Alice, reg);
+            Assert.That(o.Invite, Is.Not.Null, "a fresh invitation rings again");
+        }
+
+        [Test]
+        public void MarkInviteSent_UnknownSession_IsANoOp()
+        {
+            var reg = new A2ASessionRegistry();
+            reg.MarkInviteSent(Xor);                                           // nothing recorded
+            Invited(reg);
+            Assert.That(ChatSessionRequestLogic.Decide(CallBody(), Alice, reg).Invite, Is.Not.Null);
+        }
+
         // ---- decline -------------------------------------------------------------------------------
 
         [Test]

@@ -218,12 +218,26 @@ namespace osWebRtcVoice
             // ignores a duplicate while the first is pending (mPendingInvitations, llimview.cpp:4257-4281).
             UUID other = s.OtherParty(agentID);
 
-            // S-A2A-3: once the callee has accepted (record Active) a repeat "call" -- the viewer's retry,
-            // or a reconnect -- must NOT re-ring: the callee viewer has no guard after accept (its
-            // mPendingInvitations entry is cleared on accept, llimview.cpp:3336). Credentials are still
-            // returned so the retry keeps working.
+            // S-A2A-2.1 (live invitation feedback loop, 2026-08-30): the invitation fires ONLY when the
+            // requester is the record's CALLER, and at most once per Invited record. The live loop: a
+            // received ChatterBoxInvitation made each viewer issue its own bare "call" (no accept body),
+            // so the callee's "call" invited the caller back, whose viewer called again -- ~90ms per
+            // cycle, unbounded, with a chat announcement per invitation. A callee's "call" now gets
+            // credentials and rings nobody; a repeat caller "call" after a DELIVERED invitation rings
+            // nobody either (InviteSent, set by the module on confirmed delivery -- a failed delivery
+            // leaves it clear so a retry can still reach the callee).
+            // S-A2A-3: once the callee has accepted (record Active) a repeat "call" must NOT re-ring:
+            // the callee viewer has no guard after accept (its mPendingInvitations entry is cleared on
+            // accept, llimview.cpp:3336). Credentials are still returned in every case.
             ChatSessionOutcome.Invitation invite = null;
-            if (s.State != A2ASessionState.Active)
+            string inviteWord;
+            if (s.State == A2ASessionState.Active)
+                inviteWord = "suppressed-active";
+            else if (agentID != s.Caller)
+                inviteWord = "suppressed-callee";
+            else if (s.InviteSent)
+                inviteWord = "suppressed-already-sent";
+            else
             {
                 invite = new ChatSessionOutcome.Invitation
                 {
@@ -232,6 +246,7 @@ namespace osWebRtcVoice
                     SessionId = s.SessionId,
                     Body = A2AInvitation.BuildBody(s, agentID, callerName),
                 };
+                inviteWord = "pending";
             }
 
             return new ChatSessionOutcome
@@ -240,7 +255,7 @@ namespace osWebRtcVoice
                 Body = body,
                 Invite = invite,
                 Instrument = Line(agentID, MethodCall, sessionID, "credentials-issued",
-                    $"channel_uri={s.ChannelUri} other={other} state={s.State} invite={(invite != null ? "pending" : "suppressed-active")} alt.preferred_voice_server_type={vst}"),
+                    $"channel_uri={s.ChannelUri} other={other} state={s.State} invite={inviteWord} alt.preferred_voice_server_type={vst}"),
             };
         }
 
