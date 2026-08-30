@@ -314,6 +314,30 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
     // =====================================================================
     // IWebRtcVoiceService
 
+    // S-A2A-5 (a2a-assessment §4): the viewer_session binding. VoiceViewerSession.TryGetViewerSession
+    // binds by id string only, so any agent presenting another agent's viewer_session id could
+    // drive that session (re-provision it, feed it ICE, log it out). Every registered session
+    // carries the agent it was created for (WebRtcJanusService.CreateViewerSession sets AgentId
+    // from the cap-bound requester), so both cap sites resolve through here: found AND owned by
+    // the requester, else exactly the caller's existing not-found path -- no new error shape, and
+    // the session itself is untouched. A mismatch is a spoof attempt or a viewer bug, so it is
+    // logged at WARN naming both agents; a plain miss is not (the call sites keep their ERROR).
+    // UUID.Zero is never a wildcard. Static and logger-injected so it is unit-testable.
+    public static bool TryGetViewerSessionFor(string pViewerSessionId, UUID pRequester, string pSite, ILogger pLog, out IVoiceViewerSession pSession)
+    {
+        pSession = null;
+        if (!VoiceViewerSession.TryGetViewerSession(pViewerSessionId, out IVoiceViewerSession found) || found is null)
+            return false;
+        if (pRequester == UUID.Zero || found.AgentId != pRequester)
+        {
+            pLog?.LogWarning("{LogHeader} {Site}: viewer session {ViewerSessionId} is bound to agent {BoundAgentId} but was presented by agent {RequesterId} - treated as not found",
+                LogHeader, pSite, pViewerSessionId, found.AgentId, pRequester);
+            return false;
+        }
+        pSession = found;
+        return true;
+    }
+
     // A viewer_session that is absent, empty, or the zero UUID indicates an INITIAL
     // provision request (no session created yet), NOT a lookup of an existing session.
     // NOTE: OSDMap.TryGetString returns true for a *present* OSDUUID(UUID.Zero), yielding
@@ -355,8 +379,9 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         IVoiceViewerSession vSession = null;
         if (HasRealViewerSession(pRequest, out string viewerSessionId))
         {
-            // request has a real viewer session. Use that to find the voice service
-            if (!VoiceViewerSession.TryGetViewerSession(viewerSessionId, out vSession))
+            // request has a real viewer session. Use that to find the voice service -- it must be
+            // this agent's own session (S-A2A-5); another agent's id resolves to nothing.
+            if (!TryGetViewerSessionFor(viewerSessionId, pUserID, "ProvisionVoiceAccountRequest", m_log, out vSession))
             {
                 m_log.LogError($"{LogHeader} ProvisionVoiceAccountRequest: viewer session {viewerSessionId} not found");
             }
@@ -400,8 +425,9 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         IVoiceViewerSession vSession = null;
         if (pRequest.TryGetString("viewer_session", out string viewerSessionId))
         {
-            // request has a viewer session. Use that to find the voice service
-            if (VoiceViewerSession.TryGetViewerSession(viewerSessionId, out vSession))
+            // request has a viewer session. Use that to find the voice service -- it must be this
+            // agent's own session (S-A2A-5); another agent's id resolves to nothing.
+            if (TryGetViewerSessionFor(viewerSessionId, pUserID, "VoiceSignalingRequest", m_log, out vSession))
             {
                     response = vSession.VoiceService.VoiceSignalingRequest(vSession, pRequest, pUserID, pSceneID);
             }
