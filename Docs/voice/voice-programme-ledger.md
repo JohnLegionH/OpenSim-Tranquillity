@@ -20,6 +20,13 @@ programme is **built and committed (S-A2A-1..5), NOT deployed** (§3); the S-A2A
 every voice logout provision refused 403 since `d9fa72c351` — is recorded with its blast radius (§3,
 O-41); §5.0 carries the deployed-vs-committed amendment, the next-deploy watch list and the deploy-
 lineage note. The running build is unchanged since the 2026-08-28 amendment.*
+*Amended 2026-08-30 (evening) against `tranquillity-develop` at *fix(voice): S-A2A-3.1 — non-spatial
+service null when both roles name the same DLL; graceful no-session logout* (`d23e41c762`) [SRC:
+`git log`; deploy verifications; live region log]: **three regionserver deploys today** landed the
+counter fix, the logout fix, S-A2A-1..5 and the three live-found follow-up fixes (§5.0), and the
+**FIRST LIVE A2A CALL COMPLETED end to end, audio both ways** (§3, 17:50). Four defects were found
+live and fixed same-day (§3); the watch list is answered (§5.0); O-42/O-43/O-44 filed. Mixer
+unchanged (`27977c8` / `a5a6c7b7189a`).*
 **Scope:** the whole voice programme — the `os-webrtc-janus` addon in this tree, the
 `janus.plugin.slvoice` mixer, and the documents about both. Adjacent parcel/estate enforcement
 defects are listed only where a voice document depends on them.
@@ -410,8 +417,12 @@ counter/logging bug — enforcement never broke.**
   leak; do not "fix" it** — close-time removal without the teardown generation token would let a late
   close of an OLD login erase the NEW login's record.
 
-### Avatar-to-avatar voice (A2A) — S-A2A-1..5 BUILT and COMMITTED 2026-08-30; NOT deployed; no in-world run
+### Avatar-to-avatar voice (A2A) — S-A2A-1..5 BUILT and COMMITTED 2026-08-30; DEPLOYED and LIVE-VERIFIED the same day
 *Added 2026-08-30.* [SRC: `git log` on `feature/voice-visibility-matrix`; viewer repo `phoenix-firestorm`.]
+*Updated 2026-08-30 (evening): deployed (three stagings, §5.0), extended by the live-found fixes
+S-A2A-2.1 (`7bd7e7fec3`), S-A2A-2.2 (`182660547b`), S-A2A-3.1 (`d23e41c762`), and **verified by the
+first live call** (subsection below). The "NOT deployed; no in-world run" statements in this
+subsection's body are the morning's state, retained as written.*
 The O-30 feature ("has never worked", §7.3), built as five slices against the plan's DECIDED items
 (`Docs/voice/a2a-build-plan.md` §1: no P2P transport, room model (a), registry-primary authorization,
 server-minted channel + token, single-instance scope). One line each:
@@ -447,8 +458,10 @@ every A2A binary is past the running build (§5.0). **No in-world run exists**; 
 plan's §4 two-party protocol, to be run on the next sim deploy (§5.0 watch list). Live-test watch
 items carried from the slice Q&As are recorded in the plan (`a2a-build-plan.md` §5).
 
-### Voice logout provisions refused 403 since `d9fa72c351` — the S-A2A-3 item-0 finding; FIXED in `f73fa4584b`, NOT deployed
+### Voice logout provisions refused 403 since `d9fa72c351` — the S-A2A-3 item-0 finding; FIXED in `f73fa4584b`, deployed and CONFIRMED LIVE 2026-08-30
 *Added 2026-08-30.* [SRC: source at `116dc8e3aa`; live log `OpenSim.Server.RegionServer20260829.log`.]
+*Updated 2026-08-30 (evening): the owed live confirmation is delivered — `decision=logout` on every
+teardown, no `refusing provision with channel_type ""` (§5.0 watch-list results).*
 
 - **Defect.** The O-29 fail-closed guard (`d9fa72c351`, deployed 2026-08-27 20:45–20:49 staging,
   §5.0) ran **before any logout recognition**. The viewer's teardown body is
@@ -479,6 +492,61 @@ items carried from the slice Q&As are recorded in the plan (`a2a-build-plan.md` 
   `[A2A PROVISION]` line shows `decision=logout`. **Live confirmation owed on the next deploy**:
   `decision=logout` lines and **no** `refusing provision with channel_type ""` on relog; mixer
   participant counts stable across voice toggles within a login (§5.0 watch list).
+
+### A2A FIRST LIVE CALL — PASSED 2026-08-30 17:50 (Legion → Aleric, Ebony)
+*Added 2026-08-30 (evening).* [SRC: live region log; operator confirmation in-world.] The build
+plan's §4 protocol, run on the day's third deploy (sim through `d23e41c762`, §5.0). The chain,
+verified line by line:
+
+`start p2p voice` recorded → `call` `credentials-issued` with **one** invitation (`invite=pending`,
+`[A2A INVITE] … decision=sent`) → **callee floater shown** → accept = the callee's `multiagent`
+provision → **both parties `multiagent-admitted`** → the service reached (the S-A2A-3.1 seam) →
+`SelectRoom` **room 1592022445** (grid-derived, non-spatial) **for both parties** →
+`decision=provisioned` Invited then **Active** → mixer media receiving both ways → **audio both
+ways confirmed by the operator** → the caller's re-`call` answered `invite=suppressed-active`
+(S-A2A-2.1/3 guards holding live) → both `decision=logout` teardowns → `removed-both-logout`.
+Spatial voice sessions were torn down around the call and restored after it, as the P2P-as-ad-hoc
+model predicts. **O-30 ("avatar-to-avatar voice has never worked") is CLOSED.**
+
+**Test-protocol lesson, recorded so it is not relearned:** the confounded observations that preceded
+the clean run — the target sat on the tester's **Block Voice** list, which was mistaken for a
+moderation-mute effect (the same confound as the 2026-08-27 "regression evidence", §3 sink-counter
+item). Before any voice acceptance run: clear `volume_settings.xml` **and** both testers' Block
+lists, then verify with `mod_muted_entries` via the admin API, not by ear.
+
+### Four defects found live and fixed same-day — 2026-08-30
+*Added 2026-08-30 (evening).* [SRC: live region log for each symptom; the named commits.] Each was
+found by running the §4 protocol against the deployed build, root-caused to a cited line, fixed,
+redeployed, and re-verified the same day:
+
+- **(a) Every voice logout provision 403'd since `d9fa72c351`** (deployed 2026-08-27). Symptom:
+  `refusing provision with channel_type ""` on every teardown, spatial included. Root cause: the
+  O-29 guard ran before any logout recognition and the teardown body carries no `channel_type`.
+  Fix: **`f73fa4584b`** (S-A2A-3, logout classified by its own field first). Confirmed live:
+  `decision=logout`, no teardown 403s.
+- **(b) Unbounded invitation feedback loop** (~90 ms/cycle). Symptom: alternating bare `call`s on
+  one XOR id, an invitation and a "started a voice call" chat line per cycle, no provision ever.
+  Root cause: the sim invited "the other party" on every `call`, whoever made it, and a viewer
+  holding a `callStarted()` channel auto-accepts a reflected invite with no floater and no
+  `voice_channel_info` (`llimview.cpp:4204-4210`, `:4177-4185`), rebuilding its channel into a
+  bare re-`call`. Fix: **`7bd7e7fec3`** (S-A2A-2.1 — invite only from the record's Caller, once
+  per Invited record).
+- **(c) A2A bodies carried no `voice_server_type`.** Symptom: even a clean accept never attempted
+  a `multiagent` provision. Root cause: the viewer routes channel info by `voice_server_type` and
+  defaults an absent value to **Vivox** (`llvoiceclient.cpp:126-132`, `:514-528`), and
+  `compareChannels` could never compare equal (`llvoicewebrtc.cpp:1682-1687`), driving the
+  channel teardown-rebuild in (b). Fix: **`182660547b`** (S-A2A-2.2 — `voice_server_type:"webrtc"`
+  in the invitation `voice` map and the `call` response's `voice_credentials`; `sip_uri`
+  deliberately absent).
+- **(d) Admitted multiagent provisions died silently before the service.** Symptom:
+  `multiagent-admitted` then nothing — no service line, no exception, viewer in
+  `VOICE_STATE_SESSION_RETRY` (1/2/4/8 s). Root cause: `WebRtcVoiceServiceModule.Initialise`
+  loaded the non-spatial service **only when the two configured DLL names differed**; Legion's
+  config names the same DLL for both roles, so `m_nonSpatialVoiceService` was null since the
+  module was written and the `CreateViewerSession` dispatch threw `NullReferenceException` —
+  swallowed unlogged by the caps wrapper's bare catch (`SimpleStreamHandler.cs:91-101`, → O-43).
+  Fix: **`d23e41c762`** (S-A2A-3.1 — identical role config shares the one instance; a logout
+  naming no live session answers `closed` instead of erroring).
 
 ### Connector layer — not started (design DRAFT)
 [DOC] `connector-design-brief.md` `Status: DRAFT. Not frozen.`; Q1 (identity) resolved by
@@ -537,7 +605,7 @@ item 4). All [SRC] absent by grep of both source trees and both git logs.
 | ID | Item | Status | Recorded in |
 |---|---|---|---|
 | O-29 | **`multiagent` provisioning bypasses every access check.** All estate-voice / parcel / ban / restrict enforcement sat inside `if (channelType == "local")` (`WebRtcVoiceRegionModule.cs:472`–`:547`); a `channel_type="multiagent"` request skipped all of it | **RESOLVED 2026-08-27** (`d9fa72c351`): a non-"local" (or missing) channel_type now FAILS CLOSED before any auth-bypassing work; the estate channel is unaffected (it is expressed as "local", not a channel_type). *Amended 2026-08-30:* the deny is **REPLACED for `multiagent` only** by S-A2A-3 (`f73fa4584b`, `A2AProvisionAdmission`) — admitted iff registry session + named party + token; every other type still fails closed; a logout is now recognised ahead of the guard (§3 item-0 finding) | this ledger §7.2, §3 |
-| O-30 | **Avatar-to-avatar voice has never worked**: `ChatterBoxInvitation` has no callers anywhere; `voice_enabled` sent `false`; session name is the caller's own; `credentials` read and discarded; other ChatSession methods are stubs | **BUILT 2026-08-30** — S-A2A-1..5 (`636842d8ee` … `116dc8e3aa`, §3), NOT deployed, no in-world run; the §8.4 deferral stands only as the RC-time classification | this ledger §7.3, §3; `a2a-build-plan.md` |
+| O-30 | **Avatar-to-avatar voice has never worked**: `ChatterBoxInvitation` has no callers anywhere; `voice_enabled` sent `false`; session name is the caller's own; `credentials` read and discarded; other ChatSession methods are stubs | **CLOSED 2026-08-30** — S-A2A-1..5 (`636842d8ee` … `116dc8e3aa`) plus live-found 2.1/2.2/3.1 (`7bd7e7fec3`, `182660547b`, `d23e41c762`), deployed, and **verified by the first live call 2026-08-30 17:50, audio both ways** (§3); refinements tracked as O-42/O-44 | this ledger §7.3, §3; `a2a-build-plan.md` |
 | O-31 | Methods named `ProvisionVoiceAccountRequestBAD` / `VoiceSignalingRequestBAD` on production paths (`WebRtcJanusService.cs:211`, `:334`) | open, **unfiled** — should-fix (§8) | this ledger §7.6 |
 | O-32 | Sync-over-async: six `.Result` calls in `WebRtcJanusService.cs` (`:137`, `:208`, `:331`, `:437`, `:449`, `:466`), two of them on the provisioning and signalling hot paths | open, **unfiled** | this ledger §7.6 |
 | O-33 | `Math.Abs(hashed.GetHashCode())` (`JanusAudioBridge.cs:219`) threw `OverflowException` on `int.MinValue` — room-number derivation failed hard for one stable input | **RESOLVED 2026-08-27** (`2b58c74f9a`): `int.MinValue` folds to `int.MaxValue`, `Math.Abs` kept verbatim for every other value so no existing room renumbers | this ledger §7.6 |
@@ -553,6 +621,9 @@ item 4). All [SRC] absent by grep of both source trees and both git logs.
 
 | ID | Item | Status | Recorded in |
 |---|---|---|---|
+| O-42 | **Caller's IM floater shows no End Call and no participant state during a live A2A call** (the callee's does). Hypothesis: the sim sends no `ChatterBoxSessionAgentListUpdates` after the invitation — the group module does (`GroupsMessagingModule.cs:623`), the A2A path does not. A read-only viewer/sim trace is owed before any change; candidate FIRST item of an A2A refinement slice | open, **traced-not-yet** (filed 2026-08-30) | this ledger §3 (first-live-call) |
+| O-43 | **The caps wrapper's bare `catch { 500 }` swallows handler exceptions unlogged** (`SimpleStreamHandler.cs:91-101`). Cost a full diagnostic round today: the S-A2A-3.1 `NullReferenceException` surfaced as "admitted, then silence" with no log line anywhere. Should-fix: log the exception at ERROR (path + handler + exception) before setting 500 | open, **should-fix** (filed 2026-08-30) | this ledger §3 (four-defects, d) |
+| O-44 | **Conference (multi-party) voice — ROADMAP, required by the operator.** Not in A2A scope. The substrate is now proven live (non-spatial mixer rooms, invitations, registry admission); what it needs: an n-party registry, server-minted session ids + membership authorization (the XOR trick is 2-party-only), the `"start conference"` ChatSession arm (today a stub), and likely room model (b) — the session-keyed room table — for session-scoped moderation. Tracked-not-blocking alongside the connector tap (O-40) | open, **roadmap** (recorded 2026-08-30) | this ledger §3; `a2a-build-plan.md` §1.2 (room-model fork) |
 | O-41 | **A successful voice logout retains the `ViewerSessions` entry.** The service's logout arm (`WebRtcJanusService.cs:236-245`) leaves the mixer room and replies `BuildClosed()` but never calls `VoiceViewerSession.RemoveViewerSession` (`VoiceViewerSession.cs:264`); only the Janus-disconnect hangup path does (`DisconnectViewerSession`, `WebRtcJanusService.cs:199-205`). The entry — and its `AgentMembershipByRegion` row — persists until the client-close capture (`WebRtcVoiceServiceModule.cs:201-243`), so a voice toggle within a login accumulates one table entry per toggle. Pre-existing (predates `d9fa72c351`); the 403'd-logout defect hid it because the arm never ran | open, **should-fix** (filed 2026-08-30) | this ledger §3 (item-0 finding) |
 
 Closed items, kept so nobody re-files them: OnRemovePresence teardown (implemented 2026-08-22);
@@ -632,7 +703,31 @@ reconciliation; the §5.1 text below it describes 08-26 06:19 and is retained on
 
 ### 5.0 Current state (2026-08-27)
 
-*Superseding amendment 2026-08-30.* **The running build is unchanged** since the 2026-08-28 amendment
+*Superseding amendment 2026-08-30 (evening) — three regionserver deploys today; the morning amendment
+below is history.* All three staged, SHA-256-verified, rollback-backed [SRC: deploy verifications]:
+
+| # | Time | Content | Binaries | Rollback |
+|---|---|---|---|---|
+| 1 | 13:55 | `d2506aab55` — counter fix (`0190d864ef`), logout fix, S-A2A-1..5 | `WebRtcVoiceRegionModule` 97,280 B, `WebRtcJanusService` 90,112 B, `WebRtcVoiceServiceModule` 20,992 B (+ PDBs) | `20260830-135503` |
+| 2 | 15:43 | `182660547b` — S-A2A-2.1 (invite gating) + S-A2A-2.2 (body keys) | `WebRtcVoiceRegionModule` 97,792 B (+ PDB) | `20260830-154344` |
+| 3 | 16:27 | `d23e41c762` — S-A2A-3.1 (shared non-spatial instance; no-session logout) | `WebRtcVoiceServiceModule` 21,504 B (+ PDB) | `20260830-162716` |
+
+**Running build = sim through `d23e41c762` for the shipped voice binaries**, per-DLL stamps [SRC:
+nbgv stamps read at deploy]: `WebRtcVoiceRegionModule.dll` `1.1.147-alpha+182660547b`;
+`WebRtcVoiceServiceModule.dll` `1.1.148-alpha+d23e41c762`; `WebRtcJanusService.dll`
+`1.1.145-alpha+d2506aab55`; `VoiceVisibility.dll` `1.1.135-alpha+18640868dc` and `WebRtcVoice.dll`
+`1.1.114-alpha+119fea881e` (both unchanged-source, deliberately not redeployed — MVID/stamp-only
+churn). **Mixer unchanged: `27977c8` / image `a5a6c7b7189a`.** Nothing committed to this branch is
+undeployed.
+
+**Watch-list results (the four items below, answered 2026-08-30 evening)** [SRC: live region log]:
+item 1 — **`addressed 1 room(s) [226001844:excl0+mute1]`** on the 18:07 moderation mute: the counter
+fix (`0190d864ef`) is confirmed live and the 2026-08-28 sink-counter investigation is **fully
+closed**. Item 2 — logout teardowns confirmed on the wire: `decision=logout` lines, **no**
+`refusing provision with channel_type ""`. Item 3 — no ghost-participant accumulation observed
+across the session's toggles. Item 4 — **the first live A2A call PASSED** (§3, 17:50).
+
+*Superseding amendment 2026-08-30 (morning, retained as history).* **The running build is unchanged** since the 2026-08-28 amendment
 below: sim through `2b58c74f9a` (+ docs), mixer `27977c8` / image `a5a6c7b7189a` [SRC: no deploy since;
 §5.0 rollback stamps]. HEAD of `feature/voice-visibility-matrix` is now **`116dc8e3aa`**. **Committed
 but NOT deployed, in order:** `0190d864ef` (the mute-channel counter fix — still the first undeployed
