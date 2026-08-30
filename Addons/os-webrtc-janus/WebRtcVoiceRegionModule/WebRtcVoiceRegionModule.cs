@@ -194,9 +194,18 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             // later admitted provision re-marks the party present, so this is reversible.
             scene.EventManager.OnClientClosed += delegate (UUID clientID, Scene s)
             {
-                foreach (UUID gone in m_a2aSessions.MarkGone(clientID, null))
+                foreach (A2ASession gone in m_a2aSessions.MarkGoneSessions(clientID, null))
+                {
                     m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} region={RegionName} decision=removed-client-closed",
-                        logHeader, clientID, gone, s?.Name ?? scene.Name);
+                        logHeader, clientID, gone.SessionId, s?.Name ?? scene.Name);
+                    // S-A2A-6: tell the remaining party the departed one LEFT (if reachable here).
+                    List<Scene> scenesSnap;
+                    lock (m_scenes)
+                        scenesSnap = new List<Scene>(m_scenes);
+                    string line = A2AAgentListDelivery.SendLeave(scenesSnap, gone, clientID, null);
+                    if (line != null)
+                        m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
+                }
             };
 
             ISimulatorFeaturesModule simFeatures = scene.RequestModuleInterface<ISimulatorFeaturesModule>();
@@ -670,6 +679,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 // without error_code) leaves the record as it was. The callee's admitted provision is
                 // the accept (Invited -> Active).
                 string vs = provVs;
+                bool wasActive = admission.Session.State == A2ASessionState.Active;
                 A2ASession s = m_a2aSessions.MarkProvisioned(admission.Session.SessionId, agentID, vs);
                 // S-A2A-4: the mixer room the service derived (grid id + channel + type) rides on the
                 // success map as `room`; surfaced here so an A2A join is auditable end to end.
@@ -677,15 +687,38 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                     logHeader, agentID, admission.Session.SessionId, vs ?? "-",
                     resp.TryGetInt("room", out int a2aRoom) ? a2aRoom.ToString() : "-",
                     s?.State.ToString() ?? "gone");
+                // S-A2A-6 (O-42a): on the TRANSITION to Active (the callee's accept), both parties'
+                // IM panels get ChatterBoxSessionAgentListUpdates -- each receives the other's ENTER
+                // plus its own entry, can_voice_chat:true by construction (false hangs up the call,
+                // llimview.cpp:4366-4382). Not re-sent on a reconnect re-provision of an already-
+                // Active record. This is the participant/moderation surface only; the caller's
+                // connected state is O-42b (mixer presence, M-A2A-1).
+                if (!wasActive && s != null && s.State == A2ASessionState.Active)
+                {
+                    List<Scene> scenes;
+                    lock (m_scenes)
+                        scenes = new List<Scene>(m_scenes);
+                    foreach (string line in A2AAgentListDelivery.SendActivePair(scenes, s, null))
+                        m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
+                }
             }
             else if (admission.Kind == ProvisionKind.Logout && a2aVs != "-")
             {
                 // Teardown by viewer session: only the record this party joined under that session is
                 // affected; a spatial logout matches nothing and is a no-op here. Both parties gone
-                // removes the Active record (both-logout).
-                foreach (UUID gone in m_a2aSessions.MarkGone(agentID, a2aVs))
+                // removes the Active record (both-logout). S-A2A-6: the remaining party (if still on
+                // this instance) gets the departed party's LEAVE.
+                foreach (A2ASession gone in m_a2aSessions.MarkGoneSessions(agentID, a2aVs))
+                {
                     m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} viewer_session={ViewerSession} decision=removed-both-logout",
-                        logHeader, agentID, gone, a2aVs);
+                        logHeader, agentID, gone.SessionId, a2aVs);
+                    List<Scene> scenes;
+                    lock (m_scenes)
+                        scenes = new List<Scene>(m_scenes);
+                    string line = A2AAgentListDelivery.SendLeave(scenes, gone, agentID, null);
+                    if (line != null)
+                        m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
+                }
             }
         }
         else

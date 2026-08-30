@@ -165,8 +165,21 @@ namespace osWebRtcVoice
         /// </summary>
         public List<UUID> MarkGone(UUID agent, string viewerSession)
         {
+            List<UUID> ids = new List<UUID>();
+            foreach (A2ASession s in MarkGoneSessions(agent, viewerSession))
+                ids.Add(s.SessionId);
+            return ids;
+        }
+
+        /// <summary>
+        /// As <see cref="MarkGone"/>, but returns the removed SESSIONS (S-A2A-6): the caller needs the
+        /// parties to tell the remaining one who left. Only Active records whose parties are both gone
+        /// are ever removed here, so every returned session was a formed call.
+        /// </summary>
+        public List<A2ASession> MarkGoneSessions(UUID agent, string viewerSession)
+        {
             DateTime now = _clock();
-            List<UUID> removed = new List<UUID>();
+            List<A2ASession> removed = new List<A2ASession>();
             lock (_lock)
             {
                 SweepExpiredLocked(now);
@@ -184,7 +197,7 @@ namespace osWebRtcVoice
                     if (s.State == A2ASessionState.Active && !s.CallerProvisioned && !s.CalleeProvisioned)
                     {
                         _sessions.Remove(s.SessionId);
-                        removed.Add(s.SessionId);
+                        removed.Add(s);
                     }
                 }
             }

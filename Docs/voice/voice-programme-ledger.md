@@ -621,7 +621,7 @@ item 4). All [SRC] absent by grep of both source trees and both git logs.
 
 | ID | Item | Status | Recorded in |
 |---|---|---|---|
-| O-42 | **Caller's IM floater shows no End Call and no participant state during a live A2A call** (the callee's does). Hypothesis: the sim sends no `ChatterBoxSessionAgentListUpdates` after the invitation — the group module does (`GroupsMessagingModule.cs:623`), the A2A path does not. A read-only viewer/sim trace is owed before any change; candidate FIRST item of an A2A refinement slice | open, **traced-not-yet** (filed 2026-08-30) | this ledger §3 (first-live-call) |
+| O-42 | **Caller's IM floater shows no End Call and no participant state during a live A2A call** (the callee's does). *Traced 2026-08-30 (viewer + mixer, read-only) and SPLIT:* **(a)** the IM-panel participant/moderation surface is the missing `ChatterBoxSessionAgentListUpdates` — **built as S-A2A-6** (this tree; ENTER pair on Active, LEAVE to the remaining party on Active-record removal, `can_voice_chat:true` by construction — false hangs up the call, `llimview.cpp:4366-4382`); **(b)** the caller's connected/End-Call state waits on `STATUS_JOINED`, which for the outgoing side fires only on the peer's data-channel `"j"` (`llvoicewebrtc.cpp:1042-1049`, `:1339-1352`) — mixer presence, **fixed as M-A2A-1** (mixer `6ee39be`, fence + counters). Both halves live-verification owed on the next call | split; (a) built, (b) built mixer-side — **live-verification owed** (2026-08-30) | this ledger §3 (first-live-call); `a2a-build-plan.md` §5 |
 | O-43 | **The caps wrapper's bare `catch { 500 }` swallows handler exceptions unlogged** (`SimpleStreamHandler.cs:91-101`). Cost a full diagnostic round today: the S-A2A-3.1 `NullReferenceException` surfaced as "admitted, then silence" with no log line anywhere. Should-fix: log the exception at ERROR (path + handler + exception) before setting 500 | open, **should-fix** (filed 2026-08-30) | this ledger §3 (four-defects, d) |
 | O-44 | **Conference (multi-party) voice — ROADMAP, required by the operator.** Not in A2A scope. The substrate is now proven live (non-spatial mixer rooms, invitations, registry admission); what it needs: an n-party registry, server-minted session ids + membership authorization (the XOR trick is 2-party-only), the `"start conference"` ChatSession arm (today a stub), and likely room model (b) — the session-keyed room table — for session-scoped moderation. Tracked-not-blocking alongside the connector tap (O-40) | open, **roadmap** (recorded 2026-08-30) | this ledger §3; `a2a-build-plan.md` §1.2 (room-model fork) |
 | O-41 | **A successful voice logout retains the `ViewerSessions` entry.** The service's logout arm (`WebRtcJanusService.cs:236-245`) leaves the mixer room and replies `BuildClosed()` but never calls `VoiceViewerSession.RemoveViewerSession` (`VoiceViewerSession.cs:264`); only the Janus-disconnect hangup path does (`DisconnectViewerSession`, `WebRtcJanusService.cs:199-205`). The entry — and its `AgentMembershipByRegion` row — persists until the client-close capture (`WebRtcVoiceServiceModule.cs:201-243`), so a voice toggle within a login accumulates one table entry per toggle. Pre-existing (predates `d9fa72c351`); the 403'd-logout defect hid it because the arm never ran | open, **should-fix** (filed 2026-08-30) | this ledger §3 (item-0 finding) |
@@ -717,8 +717,11 @@ nbgv stamps read at deploy]: `WebRtcVoiceRegionModule.dll` `1.1.147-alpha+182660
 `WebRtcVoiceServiceModule.dll` `1.1.148-alpha+d23e41c762`; `WebRtcJanusService.dll`
 `1.1.145-alpha+d2506aab55`; `VoiceVisibility.dll` `1.1.135-alpha+18640868dc` and `WebRtcVoice.dll`
 `1.1.114-alpha+119fea881e` (both unchanged-source, deliberately not redeployed — MVID/stamp-only
-churn). **Mixer unchanged: `27977c8` / image `a5a6c7b7189a`.** Nothing committed to this branch is
-undeployed.
+churn). **Mixer: `6ee39be`** (*fix(voice): M-A2A-1 — fence the join-presence race; presence
+counters*, the O-42b fix) **built as image `ed2448458d48` and deployed — container verified by the
+operator [SRC: operator confirmation]; live-verification of the fix itself (caller's `"j"` /
+`presence_pushed` on the next A2A call) is owed.** *(Earlier in the day: unchanged at `27977c8` /
+`a5a6c7b7189a`.)* Nothing committed to this branch is undeployed.
 
 **Watch-list results (the four items below, answered 2026-08-30 evening)** [SRC: live region log]:
 item 1 — **`addressed 1 room(s) [226001844:excl0+mute1]`** on the 18:07 moderation mute: the counter
