@@ -23,6 +23,7 @@
     <Compile Include="JanusPeerCtlBatchSink.cs" />
     <Compile Include="A2ASessionRegistry.cs" />
     <Compile Include="ChatSessionRequestLogic.cs" />
+    <Compile Include="A2AInviteDelivery.cs" />
   </ItemGroup>
 
   <ItemGroup>

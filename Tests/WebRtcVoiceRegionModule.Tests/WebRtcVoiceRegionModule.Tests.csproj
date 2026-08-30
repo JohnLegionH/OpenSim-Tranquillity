@@ -24,6 +24,7 @@
     <Compile Include="AgentRoomTableTests.cs" />
     <Compile Include="VoiceModerationConsoleTests.cs" />
     <Compile Include="A2ASessionRegistryTests.cs" />
+    <Compile Include="A2AInvitationTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

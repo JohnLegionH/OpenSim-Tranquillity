@@ -34,10 +34,61 @@ namespace osWebRtcVoice
         /// <summary>Single-line, greppable instrument text (plan §1.8). Always set.</summary>
         public string Instrument { get; init; }
 
+        /// <summary>
+        /// When non-null (S-A2A-2), deliver this ChatterBoxInvitation body to <see cref="Invitation.Callee"/>
+        /// via IEventQueue.BuildEvent + Enqueue. Set ONLY by "call" (never by "start p2p voice", which the
+        /// viewer fires on every P2P IM window open and must not ring anyone).
+        /// </summary>
+        public Invitation Invite { get; init; }
+
         public sealed class StartReply
         {
             public UUID SessionId { get; init; }
             public UUID TempSessionId { get; init; }
+        }
+
+        public sealed class Invitation
+        {
+            public UUID Callee { get; init; }
+            public UUID Caller { get; init; }
+            public UUID SessionId { get; init; }
+            public OSDMap Body { get; init; }
+        }
+    }
+
+    /// <summary>Builds the voice ChatterBoxInvitation body the viewer's voice branch requires.</summary>
+    public static class A2AInvitation
+    {
+        /// <summary>EMultiAgentChatSessionType::P2P_CHAT_SESSION in the viewer (llimview.cpp:119-125).</summary>
+        public const int InvitationTypeP2P = 2;
+
+        /// <summary>
+        /// Body shape per docs/voice-a2a-wire-trace-20260830.md §3 (llimview.cpp:5196-5214): top-level
+        /// session_id / session_name / from_id / from_name, plus a `voice` map that becomes the callee's
+        /// voice_channel_info verbatim -- so it must carry channel_uri and channel_credentials, which the
+        /// callee's startAdHocSession reads (llvoicewebrtc.cpp:1497-1498). No `instantmessage` key: its
+        /// presence would route the viewer to the IM branch (llimview.cpp:5047). session_name labels the
+        /// callee's incoming-call UI, so it is the CALLER's name.
+        /// </summary>
+        public static OSDMap BuildBody(A2ASession session, UUID caller, string callerName)
+        {
+            if (session == null) throw new ArgumentNullException(nameof(session));
+            if (string.IsNullOrEmpty(session.Token)) throw new InvalidOperationException("invitation requires a minted token");
+
+            OSDMap voice = new OSDMap
+            {
+                ["invitation_type"] = OSD.FromInteger(InvitationTypeP2P),
+                ["channel_uri"] = OSD.FromString(session.ChannelUri),
+                ["channel_credentials"] = OSD.FromString(session.Token),
+            };
+            return new OSDMap
+            {
+                ["session_id"] = OSD.FromUUID(session.SessionId),
+                ["session_name"] = OSD.FromString(callerName ?? string.Empty),
+                ["from_id"] = OSD.FromUUID(caller),
+                ["from_name"] = OSD.FromString(callerName ?? string.Empty),
+                ["voice"] = voice,
+            };
         }
     }
 
@@ -60,6 +111,10 @@ namespace osWebRtcVoice
         /// <param name="agentID">The cap-bound requesting agent.</param>
         /// <param name="registry">The instance's invitation registry.</param>
         public static ChatSessionOutcome Decide(OSDMap reqmap, UUID agentID, A2ASessionRegistry registry)
+            => Decide(reqmap, agentID, string.Empty, registry);
+
+        /// <param name="callerName">The requesting agent's display name; labels the callee's incoming-call UI (S-A2A-2).</param>
+        public static ChatSessionOutcome Decide(OSDMap reqmap, UUID agentID, string callerName, A2ASessionRegistry registry)
         {
             if (reqmap == null)
                 return Fail(HttpStatusCode.NoContent, agentID, "-", UUID.Zero, "no body");
@@ -78,7 +133,7 @@ namespace osWebRtcVoice
                     return StartP2PVoice(reqmap, agentID, sessionID, registry);
 
                 case MethodCall:
-                    return Call(reqmap, agentID, sessionID, registry);
+                    return Call(reqmap, agentID, callerName, sessionID, registry);
 
                 // Stubs carried over unchanged: 200, no body. The decline arms gain behaviour in S-A2A-3.
                 case MethodDeclineP2PVoice:
@@ -122,7 +177,7 @@ namespace osWebRtcVoice
             };
         }
 
-        private static ChatSessionOutcome Call(OSDMap reqmap, UUID agentID, UUID sessionID, A2ASessionRegistry registry)
+        private static ChatSessionOutcome Call(OSDMap reqmap, UUID agentID, string callerName, UUID sessionID, A2ASessionRegistry registry)
         {
             string vst = reqmap.TryGetOSDMap("alt_params", out OSDMap alt) && alt.TryGetString("preferred_voice_server_type", out string v) ? v : "-";
             A2ASession s = registry.IssueToken(sessionID, agentID);
@@ -141,12 +196,26 @@ namespace osWebRtcVoice
             };
             OSDMap body = new OSDMap { ["voice_credentials"] = creds };
 
+            // S-A2A-2: the invitation to the OTHER party is triggered here, on "call", never on
+            // "start p2p voice" (which the viewer sends on every P2P IM window open). A repeat "call"
+            // (the viewer retries up to 3x, llvoicechannel.cpp:571-579) re-sends it; the callee viewer
+            // ignores a duplicate while the first is pending (mPendingInvitations, llimview.cpp:4257-4281).
+            UUID other = s.OtherParty(agentID);
+            ChatSessionOutcome.Invitation invite = new ChatSessionOutcome.Invitation
+            {
+                Callee = other,
+                Caller = agentID,
+                SessionId = s.SessionId,
+                Body = A2AInvitation.BuildBody(s, agentID, callerName),
+            };
+
             return new ChatSessionOutcome
             {
                 Status = HttpStatusCode.OK,
                 Body = body,
+                Invite = invite,
                 Instrument = Line(agentID, MethodCall, sessionID, "credentials-issued",
-                    $"channel_uri={s.ChannelUri} other={s.OtherParty(agentID)} alt.preferred_voice_server_type={vst}"),
+                    $"channel_uri={s.ChannelUri} other={other} invite=pending alt.preferred_voice_server_type={vst}"),
             };
         }
 

@@ -150,15 +150,24 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     {
     }
 
+    // Scenes this shared module serves, for callee resolution on THIS instance (S-A2A-2; the group
+    // module's m_sceneList / GetActiveClient pattern). Cross-instance A2A is out of scope (plan §1.7).
+    private readonly List<Scene> m_scenes = new();
+
     // ISharedRegionModule.AddRegion
     public void AddRegion(Scene scene)
     {
-        // todo register module to get parcels changes etc
+        lock (m_scenes)
+            if (!m_scenes.Contains(scene))
+                m_scenes.Add(scene);
     }
 
     // ISharedRegionModule.RemoveRegion
     public void RemoveRegion(Scene scene)
     {
+        lock (m_scenes)
+            m_scenes.Remove(scene);
+
         lock (m_visibilityServices)
         {
             if (m_visibilityServices.TryGetValue(scene, out VoiceVisibilityService svc))
@@ -731,9 +740,23 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         // replacing the old UUID.Random fallback); "call" mints the per-session token and answers in the
         // HTTP body with voice_credentials { channel_uri, channel_credentials } (llvoicechannel.cpp:687).
         // Nothing here admits a multiagent provision yet -- the O-29 deny still holds until S-A2A-3.
-        ChatSessionOutcome outcome = ChatSessionRequestLogic.Decide(reqmap, agentID, m_a2aSessions);
+        ChatSessionOutcome outcome = ChatSessionRequestLogic.Decide(reqmap, agentID, sp.Name, m_a2aSessions);
 
         m_log.LogDebug("{LogHeader} {Line}", logHeader, outcome.Instrument);
+
+        // S-A2A-2: "call" produced an invitation for the other party. Deliver it as a generic
+        // ChatterBoxInvitation event (BuildEvent + Enqueue) to the callee on THIS instance; an
+        // unreachable callee (offline / another region server) gets nothing and the caller rings out.
+        // Never affects this request's outcome: the caller's credentials are returned regardless.
+        if (outcome.Invite is not null)
+        {
+            List<Scene> scenes;
+            lock (m_scenes)
+                scenes = new List<Scene>(m_scenes);
+            string decision = A2AInviteDelivery.Deliver(scenes, outcome.Invite.Callee, outcome.Invite.Body, null, out string calleeRegion);
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                A2AInviteDelivery.Line(outcome.Invite.Callee, outcome.Invite.Caller, outcome.Invite.SessionId, calleeRegion, decision));
+        }
 
         if (outcome.Reply is not null)
         {
