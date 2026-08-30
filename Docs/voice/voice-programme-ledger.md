@@ -14,6 +14,12 @@ console commands / `872f0d9` mixer.)*
 *Previous basis 2026-08-26 at `3c95ddea0e`; six commits folded in below, five of them code —
 S1b, S2, S3a, S3b and the moderation console commands — plus this ledger's own first commit.
 Note the drift was six commits, not seven: `53e560fdc4` (this file) is one of them.*
+*Amended 2026-08-30 against `tranquillity-develop` at *fix(voice): S-A2A-5 — bind viewer_session
+lookups to the requesting agent* (`116dc8e3aa`, same branch) [SRC: `git log`]: the avatar-to-avatar
+programme is **built and committed (S-A2A-1..5), NOT deployed** (§3); the S-A2A-3 item-0 finding —
+every voice logout provision refused 403 since `d9fa72c351` — is recorded with its blast radius (§3,
+O-41); §5.0 carries the deployed-vs-committed amendment, the next-deploy watch list and the deploy-
+lineage note. The running build is unchanged since the 2026-08-28 amendment.*
 **Scope:** the whole voice programme — the `os-webrtc-janus` addon in this tree, the
 `janus.plugin.slvoice` mixer, and the documents about both. Adjacent parcel/estate enforcement
 defects are listed only where a voice document depends on them.
@@ -404,6 +410,76 @@ counter/logging bug — enforcement never broke.**
   leak; do not "fix" it** — close-time removal without the teardown generation token would let a late
   close of an OLD login erase the NEW login's record.
 
+### Avatar-to-avatar voice (A2A) — S-A2A-1..5 BUILT and COMMITTED 2026-08-30; NOT deployed; no in-world run
+*Added 2026-08-30.* [SRC: `git log` on `feature/voice-visibility-matrix`; viewer repo `phoenix-firestorm`.]
+The O-30 feature ("has never worked", §7.3), built as five slices against the plan's DECIDED items
+(`Docs/voice/a2a-build-plan.md` §1: no P2P transport, room model (a), registry-primary authorization,
+server-minted channel + token, single-instance scope). One line each:
+
+- **Assessment** `e39723a850` *docs(voice): add the A2A ground-truth assessment against b7fbc717fa* —
+  `Docs/voice/a2a-assessment-20260830.md`, with the 2026-08-30 addendum (U-13 resolved: the viewer
+  CAN drive `multiagent`; body keys `channel` / `credentials`, no `parcel_local_id`).
+- **Wire trace (viewer)** `ba70cba746` in `phoenix-firestorm` —
+  `docs/voice-a2a-wire-trace-20260830.md` against Firestorm `a9a34638a3`: P2P-as-ad-hoc, `"call"`
+  expects `voice_credentials` in the HTTP body, invitation = `voice` map with `invitation_type:2` and no
+  `instantmessage`, hangup = provision `{logout:true, viewer_session}` with **no `channel_type`**.
+- **Plan** `a59e71e827` *docs(voice): add the A2A build plan; record the U-13 resolution*.
+- **S-A2A-1** `636842d8ee` — `A2ASessionRegistry` (XOR session id, per-session 32-byte token, invite
+  TTL 2 min), `"start p2p voice"` records the pair (`params` absent → 400), `"call"` returns
+  `voice_credentials`, the permanent `[A2A CHATSESSION]` / `[A2A PROVISION]` DEBUG instruments.
+- **S-A2A-2** `f0fe15ab03` — the `ChatterBoxInvitation` to the callee via the generic event queue
+  (`A2AInviteDelivery`), root-presence-preferred scene resolution; callee not on this instance → no
+  invite, record left to TTL (plan §1.7).
+- **S-A2A-3** `f73fa4584b` — `A2AProvisionAdmission` replaces the O-29 deny **for `multiagent` only**
+  (live session + named party + constant-time token compare, else 403); **logout recognised by its own
+  field FIRST** (the item-0 fix, next subsection); room model (a) enforced — only a `local` provision
+  reaches `OnListenerProvisioned`; callee's admitted provision = accept (Invited→Active); Active
+  suppresses re-invite; decline / both-logout / client-close remove; Active idle backstop 8 h; the
+  service reads `channel` (U-13). `"call"`: non-party 403, unknown 404.
+- **S-A2A-4** `90d74cfc69` — grid id (normalised `GatekeeperURI`) in the `multiagent` room hash; O-35
+  closed for `multiagent`; `local` arm byte-for-byte unchanged (fold fixture pins it).
+- **S-A2A-5** `116dc8e3aa` — both `viewer_session` lookup sites bound to the requesting agent; a
+  mismatch is not-found plus one WARN naming both agents (plan §1.6).
+
+**Tests** [SRC: `dotnet test` at each slice]: region module 85 → **133/133**; Janus service 146/148 →
+**170/172**, the two failures still the O-20 pair. **Status: built and committed, NOT deployed** —
+every A2A binary is past the running build (§5.0). **No in-world run exists**; the acceptance is the
+plan's §4 two-party protocol, to be run on the next sim deploy (§5.0 watch list). Live-test watch
+items carried from the slice Q&As are recorded in the plan (`a2a-build-plan.md` §5).
+
+### Voice logout provisions refused 403 since `d9fa72c351` — the S-A2A-3 item-0 finding; FIXED in `f73fa4584b`, NOT deployed
+*Added 2026-08-30.* [SRC: source at `116dc8e3aa`; live log `OpenSim.Server.RegionServer20260829.log`.]
+
+- **Defect.** The O-29 fail-closed guard (`d9fa72c351`, deployed 2026-08-27 20:45–20:49 staging,
+  §5.0) ran **before any logout recognition**. The viewer's teardown body is
+  `{logout:true, viewer_session, voice_server_type}` and carries **no `channel_type`** (wire trace §4,
+  `llvoicewebrtc.cpp:2809-2811`), so **every** voice logout provision — spatial included — was refused
+  `403` with `refusing provision with channel_type ""`. Live: **12 such lines since the deploy** — the
+  first at 2026-08-27 21:30:01 (41 minutes after the staging), none on 08-28, **11 on 2026-08-29**
+  from 11:42:12 through 14:46:49 — one per teardown [SRC: `grep -c` over the three daily logs].
+- **What failed to run.** The service's logout arm, `WebRtcJanusService.cs:236-245`: the mixer
+  `leave` for that participant (`Room.LeaveRoom`), `Room = null`, and the `BuildClosed()` reply.
+- **Blast radius.** One **ghost participant in the mixer room per voice toggle or parcel crossing
+  within a login**: after a (refused) logout the viewer's next provision carries no `viewer_session`,
+  so the sim creates a fresh session (`WebRtcVoiceServiceModule.cs:399` / `:406`) and the old one's
+  participant stays in its room with no media — **counting toward `ROOM_FULL` and the exclusion
+  column** until the login ends. **Bounded per login**: `Event_OnClientClosed`
+  (`WebRtcVoiceServiceModule.cs:201-243`) captures every session of that agent in the region by login
+  generation (`VoiceViewerSession.CaptureSessionsForClose`, `VoiceViewerSession.cs:146`) and
+  `JanusViewerSession.Shutdown` (`JanusViewerSession.cs:95`) does `LeaveRoom` → `Detach` →
+  `DestroySession` on each, with failed teardowns retried from the next provision. Unbounded only
+  within a single login.
+- **Pre-existing and separate — O-41.** Even when the logout arm runs, it does **not** remove the
+  session from `VoiceViewerSession.ViewerSessions` (`VoiceViewerSession.cs:59`); only the hangup path
+  does (`DisconnectViewerSession`, `WebRtcJanusService.cs:199-205`). The table entry is retained until
+  the client-close capture. Should-fix, filed below; not touched by S-A2A-3.
+- **Fix** (`f73fa4584b`): `A2AProvisionAdmission.Decide` (`WebRtcVoiceRegionModule.cs:527`)
+  classifies a logout by its own field **first**, ahead of any `channel_type` check, and the handler
+  routes it straight to the voice service by `viewer_session` (S-A2A-5 binds that to the agent). The
+  `[A2A PROVISION]` line shows `decision=logout`. **Live confirmation owed on the next deploy**:
+  `decision=logout` lines and **no** `refusing provision with channel_type ""` on relog; mixer
+  participant counts stable across voice toggles within a login (§5.0 watch list).
+
 ### Connector layer — not started (design DRAFT)
 [DOC] `connector-design-brief.md` `Status: DRAFT. Not frozen.`; Q1 (identity) resolved by
 Amendment 1 2026-08-22 as "NPC-backed presence plus policy record"; Q2–Q6 open (§4.1 O-17).
@@ -460,18 +536,24 @@ item 4). All [SRC] absent by grep of both source trees and both git logs.
 
 | ID | Item | Status | Recorded in |
 |---|---|---|---|
-| O-29 | **`multiagent` provisioning bypasses every access check.** All estate-voice / parcel / ban / restrict enforcement sat inside `if (channelType == "local")` (`WebRtcVoiceRegionModule.cs:472`–`:547`); a `channel_type="multiagent"` request skipped all of it | **RESOLVED 2026-08-27** (`d9fa72c351`): a non-"local" (or missing) channel_type now FAILS CLOSED before any auth-bypassing work; the estate channel is unaffected (it is expressed as "local", not a channel_type) | this ledger §7.2 |
-| O-30 | **Avatar-to-avatar voice has never worked**: `ChatterBoxInvitation` has no callers anywhere; `voice_enabled` sent `false`; session name is the caller's own; `credentials` read and discarded; other ChatSession methods are stubs | open, **unfiled** — deferred (§8) | this ledger §7.3 |
+| O-29 | **`multiagent` provisioning bypasses every access check.** All estate-voice / parcel / ban / restrict enforcement sat inside `if (channelType == "local")` (`WebRtcVoiceRegionModule.cs:472`–`:547`); a `channel_type="multiagent"` request skipped all of it | **RESOLVED 2026-08-27** (`d9fa72c351`): a non-"local" (or missing) channel_type now FAILS CLOSED before any auth-bypassing work; the estate channel is unaffected (it is expressed as "local", not a channel_type). *Amended 2026-08-30:* the deny is **REPLACED for `multiagent` only** by S-A2A-3 (`f73fa4584b`, `A2AProvisionAdmission`) — admitted iff registry session + named party + token; every other type still fails closed; a logout is now recognised ahead of the guard (§3 item-0 finding) | this ledger §7.2, §3 |
+| O-30 | **Avatar-to-avatar voice has never worked**: `ChatterBoxInvitation` has no callers anywhere; `voice_enabled` sent `false`; session name is the caller's own; `credentials` read and discarded; other ChatSession methods are stubs | **BUILT 2026-08-30** — S-A2A-1..5 (`636842d8ee` … `116dc8e3aa`, §3), NOT deployed, no in-world run; the §8.4 deferral stands only as the RC-time classification | this ledger §7.3, §3; `a2a-build-plan.md` |
 | O-31 | Methods named `ProvisionVoiceAccountRequestBAD` / `VoiceSignalingRequestBAD` on production paths (`WebRtcJanusService.cs:211`, `:334`) | open, **unfiled** — should-fix (§8) | this ledger §7.6 |
 | O-32 | Sync-over-async: six `.Result` calls in `WebRtcJanusService.cs` (`:137`, `:208`, `:331`, `:437`, `:449`, `:466`), two of them on the provisioning and signalling hot paths | open, **unfiled** | this ledger §7.6 |
 | O-33 | `Math.Abs(hashed.GetHashCode())` (`JanusAudioBridge.cs:219`) threw `OverflowException` on `int.MinValue` — room-number derivation failed hard for one stable input | **RESOLVED 2026-08-27** (`2b58c74f9a`): `int.MinValue` folds to `int.MaxValue`, `Math.Abs` kept verbatim for every other value so no existing room renumbers | this ledger §7.6 |
 | O-34 | Stale comment `WebRtcJanusService.cs:239` — "channel_type has already been checked to be 'local'" — was **false** (`multiagent` reached that line) | **RESOLVED 2026-08-27**: made TRUE again by `d9fa72c351` — the fail-closed guard upstream means only "local" reaches `:239`, so the comment is accurate and no longer hides O-29 | this ledger §7.6 |
-| O-35 | `CalcRoomNumber`'s `"multiagent"` branch hashes only `channelID` + `channelType`, with the in-source comment "should add a GridId here" (`JanusAudioBridge.cs:207`–`:211`) — two grids sharing a mixer can collide on room numbers | open, **unfiled** | this ledger §7.6 |
+| O-35 | `CalcRoomNumber`'s `"multiagent"` branch hashes only `channelID` + `channelType`, with the in-source comment "should add a GridId here" (`JanusAudioBridge.cs:207`–`:211`) — two grids sharing a mixer can collide on room numbers | **RESOLVED for `multiagent` 2026-08-30** (`90d74cfc69`, S-A2A-4): the arm hashes the normalised `GatekeeperURI` + channel + type; `local` untouched; **open for any future channel_type** (in-source note at `JanusAudioBridge.cs:243`). NOT deployed | this ledger §7.6, §3 |
 | O-36 | Unfinished TODO "check for errors and package the response" (`WebRtcVoiceRegionModule.cs:632`) sitting directly above the line that discards the signalling response | open, **unfiled** — cosmetic; see §7.1, where the discard is load-bearing for the no-P2P finding | this ledger §7.6 |
 | O-37 | **Viewer:** a stored per-avatar volume in `volume_settings.xml` can permanently suppress that avatar's participant row; audio unaffected; survives grid restart, viewer restart, relog and teleport. Mechanism **UNKNOWN**; workaround documented | filed **viewer-side** 2026-08-26 — deferred (§8) | `phoenix-firestorm:docs/voice-participant-row-suppression.md` (do not duplicate here) |
 | O-38 | Hypergrid visitors are provisioned **identically** to local users — the voice addon contains no HG-aware code at all (zero references to `Hypergrid` / `IsLocalGridUser` / `UserAgentService` / `scopeID`). Bears on spec §3.2 and §10 item 1 | open, **policy undecided** — deferred (§8) | this ledger §7.4; spec §3.2, §10 item 1 |
 | O-39 | **Grid-mode (Robust-side) voice connector exists in-tree but is DEAD as shipped.** `WebRtcVoiceServerConnector : IServiceConnector` (`WebRtcVoice/WebRtcVoiceServerConnector.cs:47`) hosts the same `WebRtcVoiceServiceModule` — `WebRtcJanusService` chain as the region path, but it is registered in **no** shipped/example ini (`[ServiceList]` carries only the stock Freeswitch line); the only setup is a manual README edit (`README.md:167`). Complete but unreachable out of the box, **unverified**. Recorded for Iain's grid-mode-fails-to-connect report | open, **unverified** — inventory only (added 2026-08-27) | this ledger; `WebRtcVoice/WebRtcVoiceServerConnector.cs`; `Addons/os-webrtc-janus/README.md:157`—`:187` |
 | O-40 | **Mixer audio tap (Balpien) — first post-RC pull-in.** Confirmed as the first item to pull in after the reviewer-condition RC; not started, no code or brief in either tree yet | open, **post-RC** (recorded 2026-08-27) | this ledger [SRC: this reconciliation; no tree artifact yet] |
+
+*Row O-41 added 2026-08-30 from the S-A2A-3 item-0 finding (§3). [SRC].*
+
+| ID | Item | Status | Recorded in |
+|---|---|---|---|
+| O-41 | **A successful voice logout retains the `ViewerSessions` entry.** The service's logout arm (`WebRtcJanusService.cs:236-245`) leaves the mixer room and replies `BuildClosed()` but never calls `VoiceViewerSession.RemoveViewerSession` (`VoiceViewerSession.cs:264`); only the Janus-disconnect hangup path does (`DisconnectViewerSession`, `WebRtcJanusService.cs:199-205`). The entry — and its `AgentMembershipByRegion` row — persists until the client-close capture (`WebRtcVoiceServiceModule.cs:201-243`), so a voice toggle within a login accumulates one table entry per toggle. Pre-existing (predates `d9fa72c351`); the 403'd-logout defect hid it because the arm never ran | open, **should-fix** (filed 2026-08-30) | this ledger §3 (item-0 finding) |
 
 Closed items, kept so nobody re-files them: OnRemovePresence teardown (implemented 2026-08-22);
 estate CAP TaxFree flip on absent `override_public_access` (implemented 2026-08-23); parcel
@@ -549,6 +631,32 @@ filed in this tree's `Docs/KnownDefects.md` (O-2, O-5, O-13) and in `parcel-voic
 reconciliation; the §5.1 text below it describes 08-26 06:19 and is retained only as history.*
 
 ### 5.0 Current state (2026-08-27)
+
+*Superseding amendment 2026-08-30.* **The running build is unchanged** since the 2026-08-28 amendment
+below: sim through `2b58c74f9a` (+ docs), mixer `27977c8` / image `a5a6c7b7189a` [SRC: no deploy since;
+§5.0 rollback stamps]. HEAD of `feature/voice-visibility-matrix` is now **`116dc8e3aa`**. **Committed
+but NOT deployed, in order:** `0190d864ef` (the mute-channel counter fix — still the first undeployed
+sim commit), then the A2A slices `636842d8ee` (S-A2A-1), `f0fe15ab03` (S-A2A-2), `f73fa4584b`
+(S-A2A-3, which also carries the **logout-403 fix**), `90d74cfc69` (S-A2A-4), `116dc8e3aa` (S-A2A-5);
+the docs commits in between deploy nothing. **The next sim deploy therefore carries three things:**
+the counter fix, the logout fix, and all five A2A slices — binaries `WebRtcVoiceRegionModule.dll`,
+`WebRtcJanusService.dll`, `WebRtcVoiceServiceModule.dll` (+ PDBs); `VoiceVisibility.dll` only if its
+source changed (it did not in the A2A slices). **Watch list for that deploy, in order:**
+
+1. **`addressed 1 room(s)`** on the first moderation event — owed since `0190d864ef` (§3 sink-counter
+   item); `[VOICE VISIBILITY] +1/-0` alongside it.
+2. **`[A2A PROVISION] … decision=logout`** on every voice teardown, and **NO** `refusing provision
+   with channel_type ""` on relog or voice toggle (§3 item-0 finding).
+3. **Mixer participant counts stable across voice toggles within a login** (`handle_info` /
+   `janus list rooms`): no ghost participant accumulates per toggle.
+4. **The first live A2A call**, per `a2a-build-plan.md` §4 — the seven steps in order; any deviation
+   from the wire trace's predictions is recorded against the trace before code changes.
+
+**Deploy lineage (recorded 2026-08-30 from session decisions):** `D:\legiongrid\regionserver` builds
+from **`feature/voice-visibility-matrix`** until the trusted-hypergrid work is deliberately landed
+there; `D:\legiongrid\gridserver` is **already integration-lineage**
+(`integration/legiongrid-trusted-hg`). **Merge voice → integration remains the rule** for any
+integration-lineage deploy root; the regionserver's voice deploys do not wait on it.
 
 *Superseding amendment 2026-08-28.* The evening `b80efffa36` line below is itself superseded: on
 **2026-08-27 20:49** a six-file staging deploy landed `d9fa72c351` + `33fc3b412e` + `2b58c74f9a` over
@@ -899,6 +1007,9 @@ it is **a named reviewer's outstanding ask**. It is therefore **the first candid
 the blockers clear early**. Injection is a different matter and stays deferred (§8.4).
 
 ### 8.4 DEFERRED, WITH THE REASON RECORDED
+
+*Updated 2026-08-30: the avatar-to-avatar row is superseded — S-A2A-1..5 are built and committed
+(§3), not deployed and not run in-world. The row is retained as the RC-time classification.*
 
 | Item | Reason for deferral | Ref |
 |---|---|---|
