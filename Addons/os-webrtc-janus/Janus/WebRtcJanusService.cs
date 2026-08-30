@@ -61,6 +61,11 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     // [JanusWebRtcVoice] PluginName; defaults to the stock audiobridge.
     private string _JanusPluginName = "janus.plugin.audiobridge";
 
+    // S-A2A-4 (O-35, multiagent): the grid's identity folded into every non-spatial room number so
+    // two grids on a shared mixer cannot collide on the same channel. Read once from the region's
+    // own config (GatekeeperURI, the same chain GridInfo uses); empty when the grid has none.
+    private string _GridId = string.Empty;
+
     private bool _MessageDetails = false;
 
     // An extra "viewer session" that is created initially. Used to verify the service
@@ -91,6 +96,11 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 // original hardcoded behaviour when the key is absent.
                 _JanusPluginName = janusConfig.GetString("PluginName", "janus.plugin.audiobridge");
                 _log.LogInformation($"{LogHeader} Janus plugin (mixer) = {_JanusPluginName}");
+                _GridId = JanusAudioBridge.ReadGridId(_Config);
+                if (string.IsNullOrEmpty(_GridId))
+                    _log.LogWarning($"{LogHeader} no GatekeeperURI in [Hypergrid]/[Startup]/[Const] (nor [GatekeeperService] ExternalName / [GridService] Gatekeeper): multiagent rooms are derived without a grid id (O-35 stays open on a shared mixer)");
+                else
+                    _log.LogInformation($"{LogHeader} grid id for multiagent rooms = {_GridId}");
                 // Debugging options
                 _MessageDetails = janusConfig.GetBoolean("MessageDetails", false);
 
@@ -145,7 +155,7 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
             _log.LogDebug("{0} JanusSession created", LogHeader);
 
             // Once the session is created, create a handle to the plugin for rooms
-            JanusAudioBridge audioBridge = new JanusAudioBridge(janusSession, _JanusPluginName);
+            JanusAudioBridge audioBridge = new JanusAudioBridge(janusSession, _JanusPluginName, _GridId);
 
             if (await audioBridge.Activate(_Config).ConfigureAwait(false))
             {

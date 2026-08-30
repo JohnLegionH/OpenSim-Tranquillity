@@ -671,8 +671,12 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 // the accept (Invited -> Active).
                 string vs = provVs;
                 A2ASession s = m_a2aSessions.MarkProvisioned(admission.Session.SessionId, agentID, vs);
-                m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} viewer_session={ViewerSession} state={State} decision=provisioned",
-                    logHeader, agentID, admission.Session.SessionId, vs ?? "-", s?.State.ToString() ?? "gone");
+                // S-A2A-4: the mixer room the service derived (grid id + channel + type) rides on the
+                // success map as `room`; surfaced here so an A2A join is auditable end to end.
+                m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} viewer_session={ViewerSession} room={Room} state={State} decision=provisioned",
+                    logHeader, agentID, admission.Session.SessionId, vs ?? "-",
+                    resp.TryGetInt("room", out int a2aRoom) ? a2aRoom.ToString() : "-",
+                    s?.State.ToString() ?? "gone");
             }
             else if (admission.Kind == ProvisionKind.Logout && a2aVs != "-")
             {

@@ -29,6 +29,7 @@ using System.Collections.Concurrent;
 using System.Reflection;
 
 using Microsoft.Extensions.Logging;
+using Nini.Config;
 using OpenSim.Framework;
 
 namespace osWebRtcVoice;
@@ -44,9 +45,42 @@ public class JanusAudioBridge : JanusPlugin
     // than hardcoded, so a config-compatible mixer (e.g. janus.plugin.slvoice)
     // can be selected without a code change. Defaults to janus.plugin.audiobridge
     // where it is read (WebRtcJanusService), so behaviour is unchanged if unset.
-    public JanusAudioBridge(JanusSession pSession, string pPluginName) : base(pSession, pPluginName)
+    public JanusAudioBridge(JanusSession pSession, string pPluginName) : this(pSession, pPluginName, string.Empty) { }
+
+    /// <param name="pGridId">The grid's identity for non-spatial room numbers (S-A2A-4, O-35): see
+    /// <see cref="ReadGridId"/>. Empty keeps the pre-S-A2A-4 (grid-less) derivation.</param>
+    public JanusAudioBridge(JanusSession pSession, string pPluginName, string pGridId) : base(pSession, pPluginName)
     {
+        GridId = pGridId ?? string.Empty;
         // m_log.LogDebug("{0} JanusAudioBridge constructor (plugin={1})", LogHeader, pPluginName);
+    }
+
+    /// <summary>The grid id folded into every "multiagent" room number by <see cref="SelectRoom"/>.</summary>
+    public string GridId { get; }
+
+    /// <summary>
+    /// The grid identifier for room derivation (S-A2A-4): the region's GatekeeperURI, read through the
+    /// same section chain GridInfo uses for Scene.SceneGridInfo ([Const] / [Startup] / [Hypergrid],
+    /// then [GatekeeperService] ExternalName, then [GridService] Gatekeeper), so it is the identity
+    /// the region already presents on Hypergrid. Stable across restarts and identical for every
+    /// region of the grid because it comes from the shared grid config; different per grid by
+    /// construction. Normalised (trim, lower-case, no trailing slash) because the value is a hash
+    /// input and two regions must not disagree over a spelling. No DNS resolution here (GridInfo
+    /// resolves and throws; this must not take the voice service down). Empty when unconfigured.
+    /// </summary>
+    public static string ReadGridId(IConfigSource pConfig)
+    {
+        if (pConfig is null)
+            return string.Empty;
+        string[] sections = ["Const", "Startup", "Hypergrid"];
+        string gatekeeper = Util.GetConfigVarFromSections<string>(pConfig, "GatekeeperURI", sections, string.Empty);
+        if (string.IsNullOrEmpty(gatekeeper))
+            gatekeeper = pConfig.Configs["GatekeeperService"]?.GetString("ExternalName", string.Empty);
+        if (string.IsNullOrEmpty(gatekeeper))
+            gatekeeper = pConfig.Configs["GridService"]?.GetString("Gatekeeper", string.Empty);
+        if (string.IsNullOrEmpty(gatekeeper))
+            return string.Empty;
+        return gatekeeper.Trim().TrimEnd('/').ToLowerInvariant();
     }
 
     public override void Dispose()
@@ -192,10 +226,12 @@ public class JanusAudioBridge : JanusPlugin
     // The attempt is to deterministicly create a room number so all regions will generate the
     //     same room number across sessions and across the grid.
     // getHashCode() is not deterministic across sessions.
-    public static int CalcRoomNumber(string pRegionId, string pChannelType, int pParcelLocalID, string pChannelID)
+    /// <param name="pGridId">Enters ONLY the "multiagent" arm (S-A2A-4). The "local" arm is per
+    /// region+parcel and ignores it, so no spatial room number moved when it was introduced.</param>
+    public static int CalcRoomNumber(string pGridId, string pRegionId, string pChannelType, int pParcelLocalID, string pChannelID)
     {
         var hasher = new BHasherMdjb2();
-        // If there is a channel specified it must be group 
+        // If there is a channel specified it must be group
         switch (pChannelType)
         {
             case "local":
@@ -205,8 +241,14 @@ public class JanusAudioBridge : JanusPlugin
                 hasher.Add(pParcelLocalID);
                 break;
             case "multiagent":
-                // A "multiagent" channel is unique to the grid
-                // should add a GridId here
+                // A "multiagent" channel is unique to the grid: grid id + channel (the A2A session
+                // id) + type. Ledger O-35 ("should add a GridId here") is CLOSED for multiagent by
+                // S-A2A-4; it stays OPEN for any future channel_type added below, which must fold
+                // the grid id in the same way before it is admitted. An empty grid id (unconfigured
+                // grid) reproduces the pre-S-A2A-4 derivation exactly (nothing added); the service
+                // warns once at start.
+                if (!string.IsNullOrEmpty(pGridId))
+                    hasher.Add(pGridId);
                 hasher.Add(pChannelID);
                 hasher.Add(pChannelType);
                 break;
@@ -230,7 +272,7 @@ public class JanusAudioBridge : JanusPlugin
         => hashCode == int.MinValue ? int.MaxValue : Math.Abs(hashCode);
     public async Task<JanusRoom> SelectRoom(string pRegionId, string pChannelType, bool pSpatial, int pParcelLocalID, string pChannelID)
     {
-        int roomNumber = CalcRoomNumber(pRegionId, pChannelType, pParcelLocalID, pChannelID);
+        int roomNumber = CalcRoomNumber(GridId, pRegionId, pChannelType, pParcelLocalID, pChannelID);
 
         // Should be unique for the given use and channel type
         m_log.LogDebug("{0} SelectRoom: roomNumber={1}", LogHeader, roomNumber);
