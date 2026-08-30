@@ -25,6 +25,7 @@
     <Compile Include="VoiceModerationConsoleTests.cs" />
     <Compile Include="A2ASessionRegistryTests.cs" />
     <Compile Include="A2AInvitationTests.cs" />
+    <Compile Include="A2ALifecycleTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

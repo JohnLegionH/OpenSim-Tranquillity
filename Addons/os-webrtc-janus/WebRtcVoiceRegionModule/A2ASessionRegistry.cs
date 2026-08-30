@@ -41,11 +41,20 @@ namespace osWebRtcVoice
         /// <summary>The per-session secret the viewer echoes as provision <c>credentials</c>. Null until "call".</summary>
         public string Token { get; internal set; }
         public A2ASessionState State { get; internal set; }
-        /// <summary>Last activity (record, call, refresh); TTL is measured from here.</summary>
+        /// <summary>Last activity (record, call, provision, logout); TTL is measured from here.</summary>
         public DateTime LastSeenUtc { get; internal set; }
+
+        /// <summary>Whether each party currently holds an admitted multiagent provision (S-A2A-3).</summary>
+        public bool CallerProvisioned { get; internal set; }
+        public bool CalleeProvisioned { get; internal set; }
+        /// <summary>The voice-service viewer_session ids each party's admitted provision was answered with; null when none.</summary>
+        public string CallerViewerSession { get; internal set; }
+        public string CalleeViewerSession { get; internal set; }
 
         /// <summary>The value the viewer sends as <c>channel</c> on a multiagent provision: the session id as a string.</summary>
         public string ChannelUri => SessionId.ToString();
+
+        public bool IsProvisioned(UUID agent) => agent == Caller ? CallerProvisioned : agent == Callee && CalleeProvisioned;
 
         internal A2ASession(UUID sessionId, UUID caller, UUID callee, DateTime nowUtc)
         {
@@ -70,22 +79,147 @@ namespace osWebRtcVoice
         /// <summary>Token size in bytes; rendered as lowercase hex (64 chars) so it survives LLSD string round-trips.</summary>
         public const int TokenBytes = 32;
 
+        /// <summary>
+        /// Idle backstop for an Active session (S-A2A-3, the slice-1 carry-forward): removed when no party has
+        /// produced any registry activity (provision, logout, call, decline) for this long. A live call makes
+        /// NO ChatSessionRequest traffic -- audio flows via the mixer -- so this must comfortably exceed any
+        /// plausible call, or a party reconnecting mid-call would be refused-no-session. It is a leak guard
+        /// for the crash/drop case, not a behaviour lever: normal teardown is both-logout (or a client close on
+        /// this instance), which removes the record immediately. 8 hours: longer than a working day's call,
+        /// bounded memory (records are ~200 bytes), and the only cost of a stale record before then is that a
+        /// repeat "call" between the same pair does not re-ring while the record is Active.
+        /// </summary>
+        public static readonly TimeSpan DefaultActiveIdleTtl = TimeSpan.FromHours(8);
+
         private readonly object _lock = new object();
         private readonly Dictionary<UUID, A2ASession> _sessions = new Dictionary<UUID, A2ASession>();
         private readonly TimeSpan _inviteTtl;
+        private readonly TimeSpan _activeIdleTtl;
         private readonly Func<DateTime> _clock;
 
-        public A2ASessionRegistry() : this(DefaultInviteTtl, null) { }
+        public A2ASessionRegistry() : this(DefaultInviteTtl, DefaultActiveIdleTtl, null) { }
 
         /// <param name="inviteTtl">Lifetime of an unanswered invitation.</param>
         /// <param name="clock">UTC clock; injectable so TTL is unit-testable without sleeping.</param>
-        public A2ASessionRegistry(TimeSpan inviteTtl, Func<DateTime> clock)
+        public A2ASessionRegistry(TimeSpan inviteTtl, Func<DateTime> clock) : this(inviteTtl, DefaultActiveIdleTtl, clock) { }
+
+        /// <param name="activeIdleTtl">Idle backstop for Active sessions (see <see cref="DefaultActiveIdleTtl"/>).</param>
+        public A2ASessionRegistry(TimeSpan inviteTtl, TimeSpan activeIdleTtl, Func<DateTime> clock)
         {
             _inviteTtl = inviteTtl > TimeSpan.Zero ? inviteTtl : DefaultInviteTtl;
+            _activeIdleTtl = activeIdleTtl > TimeSpan.Zero ? activeIdleTtl : DefaultActiveIdleTtl;
             _clock = clock ?? (() => DateTime.UtcNow);
         }
 
         public TimeSpan InviteTtl => _inviteTtl;
+        public TimeSpan ActiveIdleTtl => _activeIdleTtl;
+
+        // ---- lifecycle (S-A2A-3) ----------------------------------------------------------------------
+
+        /// <summary>
+        /// A party's multiagent provision was ADMITTED and answered by the voice service with
+        /// <paramref name="viewerSession"/>. The callee's admitted provision is the accept: Invited -> Active.
+        /// Returns null when the session is unknown/expired or the agent is not a party.
+        /// </summary>
+        public A2ASession MarkProvisioned(UUID sessionId, UUID agent, string viewerSession)
+        {
+            DateTime now = _clock();
+            lock (_lock)
+            {
+                SweepExpiredLocked(now);
+                if (!_sessions.TryGetValue(sessionId, out A2ASession s) || !s.IsParty(agent))
+                    return null;
+                if (agent == s.Caller)
+                {
+                    s.CallerProvisioned = true;
+                    s.CallerViewerSession = viewerSession;
+                }
+                else
+                {
+                    s.CalleeProvisioned = true;
+                    s.CalleeViewerSession = viewerSession;
+                    s.State = A2ASessionState.Active;          // the accept
+                }
+                s.LastSeenUtc = now;
+                return s;
+            }
+        }
+
+        /// <summary>
+        /// A party left (logout provision, or its client closed on this instance). When
+        /// <paramref name="viewerSession"/> is given, only the record that party joined under that
+        /// viewer session is affected; when null, every record the agent is a party of. An Active
+        /// record whose parties are BOTH gone is removed (both-logout); an Invited record is left to its
+        /// TTL. Returns the ids of the records removed.
+        /// </summary>
+        public List<UUID> MarkGone(UUID agent, string viewerSession)
+        {
+            DateTime now = _clock();
+            List<UUID> removed = new List<UUID>();
+            lock (_lock)
+            {
+                SweepExpiredLocked(now);
+                foreach (A2ASession s in new List<A2ASession>(_sessions.Values))
+                {
+                    if (!s.IsParty(agent))
+                        continue;
+                    bool isCaller = agent == s.Caller;
+                    string vs = isCaller ? s.CallerViewerSession : s.CalleeViewerSession;
+                    if (viewerSession != null && !string.Equals(vs, viewerSession, StringComparison.Ordinal))
+                        continue;
+                    if (isCaller) { s.CallerProvisioned = false; s.CallerViewerSession = null; }
+                    else { s.CalleeProvisioned = false; s.CalleeViewerSession = null; }
+                    s.LastSeenUtc = now;
+                    if (s.State == A2ASessionState.Active && !s.CallerProvisioned && !s.CalleeProvisioned)
+                    {
+                        _sessions.Remove(s.SessionId);
+                        removed.Add(s.SessionId);
+                    }
+                }
+            }
+            return removed;
+        }
+
+        /// <summary>The session a party joined under <paramref name="viewerSession"/>, or null.</summary>
+        public A2ASession FindByViewerSession(UUID agent, string viewerSession)
+        {
+            if (string.IsNullOrEmpty(viewerSession))
+                return null;
+            DateTime now = _clock();
+            lock (_lock)
+            {
+                SweepExpiredLocked(now);
+                foreach (A2ASession s in _sessions.Values)
+                {
+                    if (agent == s.Caller && string.Equals(s.CallerViewerSession, viewerSession, StringComparison.Ordinal))
+                        return s;
+                    if (agent == s.Callee && string.Equals(s.CalleeViewerSession, viewerSession, StringComparison.Ordinal))
+                        return s;
+                }
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// "decline p2p voice" from a named party removes the record. Returns true when removed; false when the
+        /// session is unknown/expired (nothing to do) or the agent is not a party (ignored -- a stranger
+        /// cannot cancel someone else's call).
+        /// </summary>
+        public bool Decline(UUID sessionId, UUID agent, out bool wasParty)
+        {
+            wasParty = false;
+            DateTime now = _clock();
+            lock (_lock)
+            {
+                SweepExpiredLocked(now);
+                if (!_sessions.TryGetValue(sessionId, out A2ASession s))
+                    return false;
+                if (!s.IsParty(agent))
+                    return false;
+                wasParty = true;
+                return _sessions.Remove(sessionId);
+            }
+        }
 
         /// <summary>The viewer's P2P session id: XOR of the two agent ids (symmetric, so both parties derive it).</summary>
         public static UUID ComputeSessionId(UUID a, UUID b)
@@ -175,13 +309,18 @@ namespace osWebRtcVoice
             }
         }
 
-        /// <summary>Drop every Invited session whose LastSeen is older than the TTL. Active sessions (S-A2A-3) never expire here.</summary>
+        /// <summary>
+        /// Drop every Invited session idle beyond the invite TTL, and every Active session idle beyond the
+        /// active-idle backstop (S-A2A-3). Activity = record / call / admitted provision / logout / decline.
+        /// </summary>
         private void SweepExpiredLocked(DateTime now)
         {
             List<UUID> dead = null;
             foreach (KeyValuePair<UUID, A2ASession> kv in _sessions)
             {
-                if (kv.Value.State == A2ASessionState.Invited && now - kv.Value.LastSeenUtc > _inviteTtl)
+                TimeSpan idle = now - kv.Value.LastSeenUtc;
+                bool expired = kv.Value.State == A2ASessionState.Invited ? idle > _inviteTtl : idle > _activeIdleTtl;
+                if (expired)
                     (dead ??= new List<UUID>()).Add(kv.Key);
             }
             if (dead != null)

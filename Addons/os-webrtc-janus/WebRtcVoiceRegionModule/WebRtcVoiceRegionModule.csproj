@@ -24,6 +24,7 @@
     <Compile Include="A2ASessionRegistry.cs" />
     <Compile Include="ChatSessionRequestLogic.cs" />
     <Compile Include="A2AInviteDelivery.cs" />
+    <Compile Include="A2AProvisionAdmission.cs" />
   </ItemGroup>
 
   <ItemGroup>

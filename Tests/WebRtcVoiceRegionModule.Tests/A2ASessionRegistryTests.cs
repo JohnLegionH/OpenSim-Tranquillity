@@ -342,19 +342,20 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
-        public void Call_ByAStranger_Is404()
+        public void Call_ByAStranger_Is403()
         {
+            // S-A2A-3: a live session that the caller is not a party of is 403, distinct from 404 unknown.
             var reg = new A2ASessionRegistry();
             ChatSessionRequestLogic.Decide(StartBody(Xor, OSD.FromUUID(Bob)), Alice, reg);
             UUID carol = UUID.Random();
             ChatSessionOutcome o = ChatSessionRequestLogic.Decide(CallBody(Xor), carol, reg);
-            Assert.That(o.Status, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(o.Status, Is.EqualTo(HttpStatusCode.Forbidden));
+            Assert.That(o.Instrument, Does.Contain("decision=refused-403"));
             Assert.That(reg.TryGet(Xor).Token, Is.Null, "a stranger's call mints nothing");
         }
 
-        // ---- the rest of the switch, unchanged in this slice ----------------------------------------
+        // ---- the rest of the switch: stubs (decline p2p voice gained behaviour in S-A2A-3, see A2ALifecycleTests) --
 
-        [TestCase("decline p2p voice")]
         [TestCase("decline invitation")]
         [TestCase("start conference")]
         [TestCase("fetch history")]

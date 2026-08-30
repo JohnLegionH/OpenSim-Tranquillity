@@ -135,8 +135,21 @@ namespace osWebRtcVoice
                 case MethodCall:
                     return Call(reqmap, agentID, callerName, sessionID, registry);
 
-                // Stubs carried over unchanged: 200, no body. The decline arms gain behaviour in S-A2A-3.
+                // S-A2A-3: the callee's (or caller's) decline removes the invitation. The viewer sends this
+                // string for a P2P voice invite (llimview.cpp:3419-3425); a non-party's decline is ignored.
                 case MethodDeclineP2PVoice:
+                {
+                    bool removed = registry.Decline(sessionID, agentID, out bool wasParty);
+                    // Brief words: removed | refused-not-party | stub-ok (no such session: the old stub behaviour).
+                    string decision = removed ? "removed" : wasParty ? "stub-ok" : registry.TryGet(sessionID) == null ? "stub-ok" : "refused-not-party";
+                    return new ChatSessionOutcome
+                    {
+                        Status = HttpStatusCode.OK,
+                        Instrument = Line(agentID, MethodDeclineP2PVoice, sessionID, decision, null),
+                    };
+                }
+
+                // Stubs carried over unchanged: 200, no body.
                 case MethodDeclineInvitation:
                 case MethodStartConference:
                 case MethodFetchHistory:
@@ -183,9 +196,12 @@ namespace osWebRtcVoice
             A2ASession s = registry.IssueToken(sessionID, agentID);
             if (s == null)
             {
-                // Unknown/expired session, or not a party. 404 -> the viewer shows VoiceCallGenericError and
-                // deactivates the channel (llvoicechannel.cpp:668-673); 403 would say "VoiceNotAllowed", which
-                // is a policy message we have not earned here.
+                // S-A2A-3: policy is real now. A live session whose parties do not include this agent is
+                // 403 -> the viewer shows VoiceNotAllowed (llvoicechannel.cpp:660-666). An unknown or
+                // expired session stays 404 -> VoiceCallGenericError (:668-673).
+                A2ASession live = registry.TryGet(sessionID);
+                if (live != null && !live.IsParty(agentID))
+                    return Fail(HttpStatusCode.Forbidden, agentID, MethodCall, sessionID, $"not a party of this session alt.preferred_voice_server_type={vst}");
                 return Fail(HttpStatusCode.NotFound, agentID, MethodCall, sessionID, $"no live invitation for this agent alt.preferred_voice_server_type={vst}");
             }
 
@@ -201,13 +217,22 @@ namespace osWebRtcVoice
             // (the viewer retries up to 3x, llvoicechannel.cpp:571-579) re-sends it; the callee viewer
             // ignores a duplicate while the first is pending (mPendingInvitations, llimview.cpp:4257-4281).
             UUID other = s.OtherParty(agentID);
-            ChatSessionOutcome.Invitation invite = new ChatSessionOutcome.Invitation
+
+            // S-A2A-3: once the callee has accepted (record Active) a repeat "call" -- the viewer's retry,
+            // or a reconnect -- must NOT re-ring: the callee viewer has no guard after accept (its
+            // mPendingInvitations entry is cleared on accept, llimview.cpp:3336). Credentials are still
+            // returned so the retry keeps working.
+            ChatSessionOutcome.Invitation invite = null;
+            if (s.State != A2ASessionState.Active)
             {
-                Callee = other,
-                Caller = agentID,
-                SessionId = s.SessionId,
-                Body = A2AInvitation.BuildBody(s, agentID, callerName),
-            };
+                invite = new ChatSessionOutcome.Invitation
+                {
+                    Callee = other,
+                    Caller = agentID,
+                    SessionId = s.SessionId,
+                    Body = A2AInvitation.BuildBody(s, agentID, callerName),
+                };
+            }
 
             return new ChatSessionOutcome
             {
@@ -215,7 +240,7 @@ namespace osWebRtcVoice
                 Body = body,
                 Invite = invite,
                 Instrument = Line(agentID, MethodCall, sessionID, "credentials-issued",
-                    $"channel_uri={s.ChannelUri} other={other} invite=pending alt.preferred_voice_server_type={vst}"),
+                    $"channel_uri={s.ChannelUri} other={other} state={s.State} invite={(invite != null ? "pending" : "suppressed-active")} alt.preferred_voice_server_type={vst}"),
             };
         }
 

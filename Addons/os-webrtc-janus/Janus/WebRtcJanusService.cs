@@ -236,9 +236,16 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
             }
 
             // Get the parameters that select the room
-            // To get here, voice_server_type has already been checked to be 'webrtc' and channel_type='local'
+            // To get here, voice_server_type has already been checked to be 'webrtc' and the region module
+            // has admitted channel_type as 'local' (parcel/estate checks) or 'multiagent' (A2A registry:
+            // channel + party + credentials, S-A2A-3). Nothing else reaches this line.
             int parcel_local_id = pRequest.TryGetInt("parcel_local_id", out int pli) ? pli : JanusAudioBridge.REGION_ROOM_ID;
-            string channel_id = pRequest.TryGetString("channel_id", out string cli) ? cli : string.Empty;
+            // S-A2A-3 / U-13: the viewer's multiagent body carries the session under `channel`, NOT
+            // `channel_id` (llvoicewebrtc.cpp:3682). Reading only channel_id yielded "" and would have
+            // collapsed every A2A call on the grid into one room. `channel_id` is kept as a fallback only.
+            string channel_id = pRequest.TryGetString("channel", out string chn) && !string.IsNullOrEmpty(chn)
+                ? chn
+                : pRequest.TryGetString("channel_id", out string cli) ? cli : string.Empty;
             string channel_credentials = pRequest.TryGetString("credentials", out string cred) ? cred : string.Empty;
             string channel_type = pRequest["channel_type"].AsString();
             bool isSpatial = channel_type == "local";

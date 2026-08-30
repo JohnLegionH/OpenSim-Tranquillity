@@ -187,6 +187,17 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             {
                 OnRegisterCaps(scene, agentID, caps);
             };
+            // S-A2A-3 (reported deviation): a client that drops without a logout provision (crash, kill)
+            // would otherwise leave its Active A2A record until the idle backstop, suppressing a re-ring
+            // between the same pair. Treat the close as that party gone from every record it is in;
+            // the record is removed only when the other party is gone too (both-logout semantics), and a
+            // later admitted provision re-marks the party present, so this is reversible.
+            scene.EventManager.OnClientClosed += delegate (UUID clientID, Scene s)
+            {
+                foreach (UUID gone in m_a2aSessions.MarkGone(clientID, null))
+                    m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} region={RegionName} decision=removed-client-closed",
+                        logHeader, clientID, gone, s?.Name ?? scene.Name);
+            };
 
             ISimulatorFeaturesModule simFeatures = scene.RequestModuleInterface<ISimulatorFeaturesModule>();
             simFeatures?.AddFeature("VoiceServerType", OSD.FromString("webrtc"));
@@ -506,30 +517,35 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         // ban/restrict branch below). "multiagent" is RESERVED for the future avatar-to-avatar
         // feature, which must bring its OWN authorization when it is built -- this deny is
         // DELIBERATE, not a stub to remove.
-        bool admitted = IsProvisionableChannelType(map, out string channelType);
+        // S-A2A-3: admission. "local" -> IsProvisionableChannelType (unchanged O-29 predicate) -> the
+        // parcel/estate checks below. "multiagent" -> the invitation registry: the body's `channel`
+        // (NOT channel_id, U-13) names a live session, the agent is a named party, `credentials` equals the
+        // session token; else 403. A teardown body ({logout, viewer_session}, no channel_type) is routed to
+        // the voice service by viewer_session -- the O-29 guard had been refusing every logout provision
+        // since it shipped (live logs: 'refusing provision with channel_type ""' at each teardown), leaving
+        // mixer teardown to the close-capture path. Everything else stays refused exactly as O-29 left it.
+        ProvisionAdmission admission = A2AProvisionAdmission.Decide(map, agentID, m_a2aSessions);
+        string channelType = admission.ChannelType;
+        string a2aVs = map.TryGetString("viewer_session", out string vsRaw) && !string.IsNullOrEmpty(vsRaw) ? vsRaw : "-";
 
         // Permanent instrument (Docs/voice/a2a-build-plan.md §1.8): one greppable DEBUG line per provision
-        // naming the fields the A2A authorization will decide on. The viewer's multiagent body carries
-        // `channel` (NOT channel_id) and `credentials` (wire trace, U-13); the token itself is never logged.
-        // In S-A2A-1 every non-"local" request is still refused by the O-29 guard below; S-A2A-3 replaces
-        // that decision for "multiagent" only and this line will then show allow/deny with its reason.
+        // naming the fields the A2A authorization decides on; the token itself is never logged.
         m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} region={RegionName} channel_type=\"{ChannelType}\" channel={Channel} credentials={Credentials} viewer_session={ViewerSession} logout={Logout} decision={Decision}",
-            logHeader, agentID, scene.Name, channelType,
-            map.TryGetString("channel", out string a2aChannel) ? a2aChannel : "-",
+            logHeader, agentID, scene.Name, channelType, admission.Channel,
             map.TryGetString("credentials", out string a2aCreds) && !string.IsNullOrEmpty(a2aCreds) ? "present" : "absent",
-            map.TryGetString("viewer_session", out string a2aVs) && !string.IsNullOrEmpty(a2aVs) ? a2aVs : "-",
-            map.TryGetBool("logout", out bool a2aLogout) && a2aLogout,
-            admitted ? "local-admitted" : "refused-o29");
+            a2aVs, admission.Kind == ProvisionKind.Logout, admission.Decision);
 
-        if (!admitted)
+        if (!admission.Admitted)
         {
-            m_log.LogWarning($"{logHeader}[ProvisionVoice]: refusing provision with channel_type \"{channelType}\" (only \"local\" is authorized) from agent {agentID} in region \"{scene.Name}\"");
+            m_log.LogWarning($"{logHeader}[ProvisionVoice]: refusing provision with channel_type \"{channelType}\" ({admission.Decision}) from agent {agentID} in region \"{scene.Name}\"");
             response.RawBuffer = llsdUndefAnswerBytes;
             response.StatusCode = (int)HttpStatusCode.Forbidden;
             return;
         }
 
-        // channel_type is present and "local": the parcel/estate authorization below is UNCHANGED.
+        // channel_type is "local": the parcel/estate authorization below is UNCHANGED. A multiagent or
+        // logout request skips it (its authorization is the registry / the viewer session).
+        if (admission.Kind == ProvisionKind.Local)
         {
             //do fully not trust viewers voice parcel requests
             if (channelType == "local")
@@ -634,11 +650,39 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             // Step S2: the success map also carries the mixer room the service actually joined (S1).
             // Record it per agent so S3b can address batches per room. A failure or logout map has
             // no "room" -> null -> the service leaves any earlier record untouched.
-            int? provisionedRoom = resp.TryGetInt("room", out int provRoom) ? provRoom : (int?)null;
-            VoiceVisibilityService svc;
-            lock (m_visibilityServices)
-                m_visibilityServices.TryGetValue(scene, out svc);
-            svc?.OnListenerProvisioned(agentID, provisionedRoom);
+            // S-A2A-3 / plan §1.4 (a): ONLY a spatial ("local") provision is recorded. An A2A room is
+            // not the agent's spatial room -- recording it would point the visibility batches at the
+            // A2A room and the spatial exclusions would silently miss. The pending-join re-send is
+            // therefore never armed for an A2A join either. A logout map has no room and is excluded
+            // by the same gate (the service keeps its earlier record; the close/leave path clears it).
+            if (A2AProvisionAdmission.RecordsListenerRoom(admission.Kind))
+            {
+                int? provisionedRoom = resp.TryGetInt("room", out int provRoom) ? provRoom : (int?)null;
+                VoiceVisibilityService svc;
+                lock (m_visibilityServices)
+                    m_visibilityServices.TryGetValue(scene, out svc);
+                svc?.OnListenerProvisioned(agentID, provisionedRoom);
+            }
+            else if (admission.Kind == ProvisionKind.Multiagent && resp.TryGetString("viewer_session", out string provVs) && !string.IsNullOrEmpty(provVs))
+            {
+                // Admitted AND joined -- only the service's success map carries viewer_session
+                // (ProvisionResponseBuilder.BuildSuccess); a failure map ({response:"failed"}, with or
+                // without error_code) leaves the record as it was. The callee's admitted provision is
+                // the accept (Invited -> Active).
+                string vs = provVs;
+                A2ASession s = m_a2aSessions.MarkProvisioned(admission.Session.SessionId, agentID, vs);
+                m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} viewer_session={ViewerSession} state={State} decision=provisioned",
+                    logHeader, agentID, admission.Session.SessionId, vs ?? "-", s?.State.ToString() ?? "gone");
+            }
+            else if (admission.Kind == ProvisionKind.Logout && a2aVs != "-")
+            {
+                // Teardown by viewer session: only the record this party joined under that session is
+                // affected; a spatial logout matches nothing and is a no-op here. Both parties gone
+                // removes the Active record (both-logout).
+                foreach (UUID gone in m_a2aSessions.MarkGone(agentID, a2aVs))
+                    m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} viewer_session={ViewerSession} decision=removed-both-logout",
+                        logHeader, agentID, gone, a2aVs);
+            }
         }
         else
         {
