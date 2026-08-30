@@ -116,6 +116,16 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
                         m_Enabled = false;
                     }
                 }
+                else
+                {
+                    // S-A2A-3.1: identical DLL names mean ONE service serving both roles -- share the
+                    // instance. This branch used to leave m_nonSpatialVoiceService NULL, so the first
+                    // non-"local" provision (the admitted A2A multiagent) threw NullReferenceException
+                    // at the CreateViewerSession dispatch below -- swallowed unlogged by the caps
+                    // wrapper's bare catch (SimpleStreamHandler.cs:91-101): the viewer saw an empty
+                    // 500 with no viewer_session/jsep and sat in VOICE_STATE_SESSION_RETRY forever.
+                    m_nonSpatialVoiceService = m_spatialVoiceService;
+                }
 
                 if (m_Enabled)
                 {
@@ -377,14 +387,32 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
 
         OSDMap response = null;
         IVoiceViewerSession vSession = null;
+        // S-A2A-3.1: a teardown that cannot name a live session -- viewer_session absent, the zero
+        // UUID (observed live from a viewer backing out of provision retries), or an id nothing
+        // holds -- has nothing to tear down HERE. Answer the shape a successful logout answers
+        // ({ response: "closed" }, ProvisionResponseBuilder.BuildClosed's map) instead of falling
+        // into the create branch and erroring "no channel_type in request".
+        bool isLogout = pRequest.TryGetBool("logout", out bool lg) && lg;
         if (HasRealViewerSession(pRequest, out string viewerSessionId))
         {
             // request has a real viewer session. Use that to find the voice service -- it must be
             // this agent's own session (S-A2A-5); another agent's id resolves to nothing.
             if (!TryGetViewerSessionFor(viewerSessionId, pUserID, "ProvisionVoiceAccountRequest", m_log, out vSession))
             {
+                if (isLogout)
+                {
+                    m_log.LogDebug("{LogHeader} ProvisionVoiceAccountRequest: logout for unknown viewer session {ViewerSessionId} from {UserId} - nothing to close",
+                        LogHeader, viewerSessionId, pUserID);
+                    return new OSDMap { { "response", "closed" } };
+                }
                 m_log.LogError($"{LogHeader} ProvisionVoiceAccountRequest: viewer session {viewerSessionId} not found");
             }
+        }
+        else if (isLogout)
+        {
+            m_log.LogDebug("{LogHeader} ProvisionVoiceAccountRequest: logout with no usable viewer session from {UserId} - nothing to close",
+                LogHeader, pUserID);
+            return new OSDMap { { "response", "closed" } };
         }
         else
         {
