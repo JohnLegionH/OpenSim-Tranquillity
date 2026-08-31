@@ -86,6 +86,18 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
+        public void RemoveViewerSession_DropsRegistryEntryAndMembership()
+        {
+            // The inverse of OtherAgentLookup_LeavesTheSessionRegistered, and the O-41 contract:
+            // a removal must drop BOTH the ViewerSessions entry and its membership-index row,
+            // so the agent stops being a matrix member the moment the session is gone.
+            Assert.That(VoiceViewerSession.IsAgentInRegion(Region, Owner), Is.True, "precondition: the added session makes the agent a member");
+            VoiceViewerSession.RemoveViewerSession(_session.ViewerSessionID);
+            Assert.That(VoiceViewerSession.TryGetViewerSession(_session.ViewerSessionID, out _), Is.False, "the registry entry is gone");
+            Assert.That(VoiceViewerSession.IsAgentInRegion(Region, Owner), Is.False, "the membership row is gone with it");
+        }
+
+        [Test]
         public void UnknownId_NotFound_NoWarn()
         {
             // The pre-existing not-found path: no session at all is not a spoof, so no WARN here

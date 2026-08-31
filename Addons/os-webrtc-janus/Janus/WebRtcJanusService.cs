@@ -242,6 +242,10 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                     await viewerSession.Room.LeaveRoom(viewerSession);
                     viewerSession.Room = null;
                 }
+                // O-41: remove the registry entry the same way hangup does — DisconnectViewerSession,
+                // not bare RemoveViewerSession, because the live Janus session/handle must be shut
+                // down, not just forgotten (a forgotten entry is unreachable by the close capture).
+                DisconnectViewerSession(viewerSession);
                 return ProvisionResponseBuilder.BuildClosed();
             }
 
