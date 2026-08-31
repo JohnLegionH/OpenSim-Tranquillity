@@ -33,6 +33,13 @@ S-A2A-6 live, the caller's End Call restored, and the callee auto-hangs-up on th
 via three mixer slices (`6ee39be`, `3f4780d`, `5e0d637`, image `1bf042e373dc` deployed, §5.0). The
 **stock-viewer compatibility constraint** is recorded as standing (§4, above the O-list). S-A2A-7
 recorded as RESERVE, not needed. O-28's mixer ledger copy is now due.*
+*Amended 2026-08-31 (later) — docs only, no code basis change [SRC: blob-hash comparison,
+`git rev-parse HEAD:<path>` both repos]: **O-28 is CLOSED** (§4.1) — the two `Docs/voice`
+directories are now a full **13-file mirror**: six documents copied sim→mixer (this ledger among
+them, new there), six mixer→sim (`webrtc-voice-spec.md` now present in this tree, §1;
+`mixer-feed-protocol.md` brought forward to the mixer's `5e0d637` strict superset),
+`phase3a-feeder-acceptance.md` already equal. §4.4's Repo column reads "both" for every
+`Docs/voice` document; §4.3 (k) resynced; a CRLF testing gotcha is recorded at the end of §4.3.*
 **Scope:** the whole voice programme — the `os-webrtc-janus` addon in this tree, the
 `janus.plugin.slvoice` mixer, and the documents about both. Adjacent parcel/estate enforcement
 defects are listed only where a voice document depends on them.
@@ -41,8 +48,8 @@ artifact-type convention; the Discovery Note / Recon Report / Design Brief / Bui
 ADR / RFC vocabulary exists only in conversation. This file lives in `Docs/voice/` because every
 voice artifact does and because that directory is the cross-repo-synced one
 (`Docs/voice/.gitattributes`: synced verbatim with `legion-voice-mixer:docs/voice/`, LF-pinned).
-**A copy is owed to the mixer repo** under the same sync convention; it was not created because
-that repo was out of scope for this task.
+**Copied to the mixer repo 2026-08-31** under the same sync convention; keep in sync per the
+Maintenance rule.
 
 ## How to read the evidence marks
 
@@ -62,8 +69,10 @@ preamble). Where a short SHA is given it is paired with the subject.
 
 ## 1. The authority
 
-**Path:** `legion-voice-mixer/docs/voice/webrtc-voice-spec.md`, 198 lines. **There is no copy in
-this tree** — `Docs/voice/` here holds five files, none of them the spec (§4.4). Every phase
+**Path:** `legion-voice-mixer/docs/voice/webrtc-voice-spec.md`, 198 lines. **A copy is now
+present in this tree** at `Docs/voice/webrtc-voice-spec.md` as of 2026-08-31 (198 lines,
+verbatim — the O-28 close, §4.1). *(Until then there was no copy here; `Docs/voice/` held five
+files, none of them the spec.)* Every phase
 plan's `§3.1 / §7.2 / §7.4 / §10` references resolve to this file [SRC: the 3b brief's
 `**Authority:**` line cites it by path; `sldata-extensions.md` and `protocol-compat.md` call it
 "the vendored spec"].
@@ -643,7 +652,7 @@ discard-before-observer window was accommodated server-side, M-A2A-3, not patche
 | O-25 | Parcel access-list persistence non-atomic (delete-then-reinsert) | not started (core; adjacent) | `KnownDefects.md` |
 | O-26 | Five estate toggles packed into region flags with no write path | not started (estate; adjacent) | `KnownDefects.md` |
 | O-27 | Mixer version string not bumped by the `unknown_room` commit, so a deployed plugin cannot self-identify as carrying it (M1) | optional | per-room brief §8 |
-| O-28 | `Docs/voice` cross-repo sync drift: `parcel-voice-semantics.md` differs by 56 lines (this tree's §P not in the mixer); this tree lacks the spec, 3b brief, connector brief, scaling assessment, current-architecture; the mixer lacks the moderation brief and the per-room brief | open; *2026-08-31: per the header's own convention ("a copy is owed to the mixer repo"), the mixer's ledger copy is now DUE after this amendment* | this ledger [SRC: diff 2026-08-26] |
+| O-28 | `Docs/voice` cross-repo sync drift: `parcel-voice-semantics.md` differs by 56 lines (this tree's §P not in the mixer); this tree lacks the spec, 3b brief, connector brief, scaling assessment, current-architecture; the mixer lacks the moderation brief and the per-room brief | **CLOSED 2026-08-31** — the two `Docs/voice` directories are a full **13-file mirror**, verified by blob hash (`git rev-parse HEAD:<path>`) on both sides. Sim→mixer: `a2a-assessment-20260830`, `a2a-build-plan`, `per-room-visibility-emission-design-brief`, `voice-moderation-design-brief`, `voice-programme-ledger` (new in the mixer), `parcel-voice-semantics` (mixer copy was at `6c9659f`, lacking this tree's §P additions — three diff hunks). Mixer→sim: `connector-design-brief`, `current-architecture`, `phase3b-design-brief`, `scaling-assessment`, `webrtc-voice-spec` (new in this tree, §1), `mixer-feed-protocol` (sim copy was at `58ae158be5`; the mixer's `5e0d637` copy carried the 2026-08-27 deferral amendment in §3.2 and the M-A2A §3.4 notes (d)/(e)/(f) — a strict superset, copied, not merged). `phase3a-feeder-acceptance`: blobs already equal, untouched | this ledger [SRC: blob-hash comparison 2026-08-31; prior basis: diff 2026-08-26] |
 
 *Rows O-29 – O-38 added 2026-08-27 from the reviewer-condition assessment (§7). All [SRC].*
 
@@ -716,26 +725,34 @@ filed in this tree's `Docs/KnownDefects.md` (O-2, O-5, O-13) and in `parcel-voic
   the hook is at `:546`–`:553` [SRC]. Citation drift.
 - **(k)** `mixer-feed-protocol.md` §3.3.1 was corrected 2026-08-25 in both repos; the mixer's
   `docs/voice/parcel-voice-semantics.md` was **not** re-synced after this tree's §P (O-28).
+  Resynced 2026-08-31.
 - **(l)** The 3b brief carries a 2026-08-25 header stating its body is pre-implementation; its
   body still says `SLV_MAX_MIX` = 64 and "no vector helpers" [SRC: 110; `vec3.h` etc. exist].
   Flagged by the header, not corrected in the body, by design.
+
+*Testing gotcha (added 2026-08-31): sim working copies of some `Docs/voice` files are CRLF on
+disk from pre-pin checkouts, so a working-tree diff shows every line changed; git normalises on
+add under the LF pin — compare blob hashes, not files.*
 
 ### 4.4 Documents in scope and their freeze states (claims, not evidence)
 
 | Document | Repo | Stated status | Note |
 |---|---|---|---|
-| `webrtc-voice-spec.md` | mixer only | Draft for review | never frozen, undated |
-| `current-architecture.md` | mixer only | inventory at `0bdeb0bf08` | stale baseline (h) |
-| `parcel-voice-semantics.md` | both | living, append-only addenda through §P | copies drifted (k) |
-| `mixer-feed-protocol.md` | both | living; §3.3.1 version-scoped | in sync |
+| `webrtc-voice-spec.md` | both | Draft for review | never frozen, undated |
+| `current-architecture.md` | both | inventory at `0bdeb0bf08` | stale baseline (h) |
+| `parcel-voice-semantics.md` | both | living, append-only addenda through §P | synced 2026-08-31 |
+| `mixer-feed-protocol.md` | both | living; §3.3.1 version-scoped | in sync 2026-08-31 |
 | `phase3a-feeder-acceptance.md` | both | acceptance notes | stale claim (d) |
-| `phase3b-design-brief.md` | mixer only | FROZEN 2026-08-18 + Amendments 1–8 + staleness header | body deliberately unedited |
-| `scaling-assessment.md` | mixer only | DRAFT + Amendments 1–2 | open items O-19 |
-| `connector-design-brief.md` | mixer only | DRAFT, not frozen | Q1 resolved, Q2–6 open |
-| `voice-moderation-design-brief.md` | this tree only | slice 1 verified; OQ1/2 open | parity gap section 2026-08-24 |
-| `per-room-visibility-emission-design-brief.md` | this tree only | DECIDED 2026-08-26 + build plan | S1 done |
-| `protocol-compat.md` | mixer only | ACTIVE (Phase 0) | expiry condition met, not updated (e) |
-| `voice-mute-wiring.md`, `sldata-extensions.md`, `phase1-bringup.md`, `docker-notes.md` | mixer only | recon / runbook | no status headers |
+| `phase3b-design-brief.md` | both | FROZEN 2026-08-18 + Amendments 1–8 + staleness header | body deliberately unedited |
+| `scaling-assessment.md` | both | DRAFT + Amendments 1–2 | open items O-19 |
+| `connector-design-brief.md` | both | DRAFT, not frozen | Q1 resolved, Q2–6 open |
+| `voice-moderation-design-brief.md` | both | slice 1 verified; OQ1/2 open | parity gap section 2026-08-24 |
+| `per-room-visibility-emission-design-brief.md` | both | DECIDED 2026-08-26 + build plan | S1 done |
+| `a2a-assessment-20260830.md` | both | ground-truth map against `b7fbc717fa` + 2026-08-30 addendum | row added 2026-08-31 |
+| `a2a-build-plan.md` | both | DECIDED; S-A2A-1..5 done, §5 watch items | row added 2026-08-31 |
+| `voice-programme-ledger.md` | both | Ledger — LIVING | this file; mixer copy new 2026-08-31 |
+| `protocol-compat.md` | mixer only (mixer `docs/`, not the synced `docs/voice/`) | ACTIVE (Phase 0) | expiry condition met, not updated (e) |
+| `voice-mute-wiring.md`, `sldata-extensions.md`, `phase1-bringup.md`, `docker-notes.md` | mixer only (mixer `docs/`, not the synced `docs/voice/`) | recon / runbook | no status headers |
 | `Docs/audit/webrtc-upstream-audit.md` | this tree only | point-in-time 2026-08-23 vs upstream `cbdfba2811` | self-declares as as-of |
 | `Docs/KnownDefects.md` | this tree only | living | statuses (a), (b), (j) stale |
 

@@ -324,7 +324,12 @@ to the `op`/`room`/`excl` contract and do not change §3.2.
   empty list**; there is no room-wide reset op. (A full-room snapshot must therefore name every
   listener whose column changed, including those cleared to empty — omission is not a clear.)
 
-- **A batch entry whose listener is not currently in the room is dropped.** If the listener
+- **A batch entry whose listener is not currently in the room is dropped.**
+  **AMENDED 2026-08-27 (mixer `27977c8`): the entry is no longer dropped — it is now DEFERRED
+  and replayed on that listener's join. See the new §3.4. The `deferred_listeners` reply field
+  and the `deferred_*` counters added by that change also mean the "byte-identical response"
+  property noted below no longer holds. The v0.7.0/v0.9.0 text is retained for history.**
+  If the listener
   key matches no session in the room, the entry is skipped and stored nowhere.
   **CORRECTED AT v0.9.0 - the drop is no longer silent.** The zero-match case increments two
   room counters (`vis_dropped_listener_entries`, cumulative since room creation, and
@@ -355,6 +360,101 @@ to the `op`/`room`/`excl` contract and do not change §3.2.
 > `{"slvoice":"applied", …}` to the sender. **A wrong room is therefore undetectable from the
 > response** — the sender sees `applied` whether or not the room existed. Confirm room identity out
 > of band (e.g. the same `CalcRoomNumber` the mixer uses); do not treat `applied` as proof of effect.
+
+---
+
+### 3.4 Moderation MUTE channel + join-window deferral (added 2026-08-27, shipped)
+
+Two additive changes shipped this cycle. Both are **backward-compatible in both skew directions**
+(old sim ↔ new mixer, new sim ↔ old mixer); no existing field changes meaning.
+
+**(a) The additive `mute` channel (Option A, LL parity).** A batch may now carry an optional
+top-level `mute` object with the **same per-listener → source-list shape as `excl`**, parsed by the
+same resilient helper:
+
+```json
+{
+  "op": "replace",
+  "room": -999,
+  "excl": { "<L-uuid>": ["<bannedS-uuid>"] },
+  "mute": { "<L-uuid>": ["<moderatedS-uuid>"] }
+}
+```
+
+- A source in `mute` is **moderation-muted, not excluded**: it is silenced in L's mix (the mix
+  gates on `mod_muted` OR the viewer's own `muted`) but **stays in the roster**, greyed — no `l`
+  leave is synthesised. `excl` still removes the row. The two are **disjoint per source**: the sim's
+  `VisibilityMatrix.Build` guarantees ban wins, so no source is ever in both channels for one
+  listener.
+- **A new sim always emits the `mute` key on a `replace`, even as an empty `{}`**, so the mixer can
+  tell a new sim (key present) from an old one (key absent) — an absent `mute` means "old sim / no
+  mutes" and is handled exactly as before (skew-safe). On `add`/`remove` the key is emitted only
+  when non-empty, so a pure-ban delta is byte-for-byte the pre-mute wire.
+- An **old mixer** silently ignores the unknown `mute` key; a **new mixer** treats an absent `mute`
+  as "no mutes." (Sim `02ce1b9b10`; mixer parse/keep+grey `0d6d0d0`.)
+
+**(b) Join-window deferral + replay (mixer `27977c8`).** An `excl` or `mute` entry whose listener is
+not yet a participant is **no longer dropped** (§3.3.1): the mixer keeps it in a per-room deferred
+store (keyed by listener, holding that listener's latest `excl` and `mute` columns under
+**op-faithful merge** — `replace` sets, `add` unions, `remove` subtracts, an emptied column clears)
+and **replays it into the session the instant that listener joins, under the room lock, before the
+join roster is built and before any presence is emitted** — so a deferred exclusion/mute is in force
+before anything derived from it is revealed. Op-fidelity (not wholesale last-write) is deliberate: a
+post-window un-ban (`remove`) must never be resurrected into an exclusion on join. The store is
+capped per room (`SLV_VIS_MAX_DEFERRED`, oldest evicted and counted), freed on room teardown, with
+**no TTL** (a proven join arrived at +8 minutes; a timer would recreate the very loss this fixes).
+
+**(c) Reply now reports deferrals (additive).** The `peer_ctl_batch` response gains an additive
+`deferred_listeners` integer — the count of listener entries deferred this batch (excl + mute) —
+so a sim can finally observe, from the response alone, that its entry was retained rather than
+silently dropped. `query_session`'s `visibility` object gains `deferred_current`, `deferred_adds`,
+`deferred_replaced`, `deferred_replayed`, `deferred_evicted`, and each session gains a
+`mod_muted_entries` count (the moderation flag was previously invisible to the admin API). An old
+sim ignores the extra reply key; an old mixer never emits it (a new sim must treat its absence as
+"no information").
+
+**(d) Presence delivery guarantee + counters (M-A2A-1, added 2026-08-30).** The joiner's `"j"` to
+already-present members (`push_presence`) and the roster backlog a newly-writable listener receives
+are now provably complementary: `data_ready` flips the recipient's `dc_open` and takes the
+join-backlog snapshot in ONE critical section under `room->mutex` — the same mutex every
+`push_presence` recipient-side `dc_open` read runs under — so for every (joiner, recipient) pair at
+least one of {live push, backlog} delivers the `"j"`, by mutual exclusion alone (the three orderings
+are enumerated at the fence in `janus_slvoice_data_ready`). A duplicate (fence between insert and
+push) is benign: a second `"j"` is idempotent at the viewer. This matters most for rooms that
+receive **no** `peer_ctl_batch` (the avatar-to-avatar rooms, room model (a)), where the
+visibility-transition repair path never runs and a dropped one-shot `"j"` used to be unrecoverable.
+`query_session` gains two additive per-session counters (this session as RECIPIENT):
+`presence_pushed` and `presence_dropped_dc_closed`; after the fence the dropped counter should only
+ever count a genuinely dead channel (PeerConnection down), never the join race. Old sims are
+unaffected; the fields are additive.
+
+**(e) Leave announcement on EVERY removal path + leave counter (M-A2A-2, added 2026-08-31).** The
+leave presence (`"l"`) used to be pushed only by the `"leave"` request arm; a participant whose
+teardown arrived as PC-death + session-destroy was removed **silently**, so the remaining members
+never received `"l"` and a stock viewer's `hangup_on_last_leave` never fired — the remaining party
+of a two-party (A2A) call sat in the room until manual End Call (O-42c). The push now lives in
+`janus_slvoice_leave_room` itself, before the participant is removed, so the `"leave"` request,
+`destroy_session`, and any future removal caller all announce; the room-transition guarantee makes
+it exactly-once per removal. A downed PeerConnection (`hangup_media`) deliberately does NOT
+announce: it never removes the participant, and Janus can renegotiate media on the same handle — an
+`"l"` during an ICE restart would erase the row with no `"j"` to restore it. `query_session` gains
+`presence_leave_pushed` (additive): the leave subset of `presence_pushed`, so a live read can
+decompose pushed=N into joins vs leaves. `presence_pushed` itself now counts at the actual
+relay_data hand-off (a serialisation failure no longer inflates it).
+
+**(f) The viewer attach window + proof-of-attachment backlog re-send (M-A2A-3, added 2026-08-31).**
+The stock viewer discards data-channel frames that arrive before its data observer is attached
+(`llwebrtc.cpp:1763-1771` — an observer list with no buffering, attached via a main-thread hop after
+`OnDataChannelReady`). The join backlog fires at SERVER-side `data_ready`, inside that window, so a
+delivered-and-counted `"j"` can be silently lost viewer-side — the peer never enters the viewer's
+participant map and a later `"l"` no-ops, leaving `hangup_on_last_leave` unfired (the O-42c
+falsifier: `presence_leave_pushed=1` with no hangup). The viewer's own `"j"` SLData (`sendJoin`) is
+sent only after its data interface is set — proof the window has closed — so on receiving it the
+mixer re-sends that participant the roster backlog, once per attachment (CAS-guarded
+`backlog_confirmed`, cleared with `dc_open` on `hangup_media` and on leave, idempotent at the
+viewer). The participant's own presence is deliberately NOT re-pushed to existing members — their
+windows are closed by their own proofs. `query_session` gains `backlog_resent` (additive; normally 1
+per attachment). Old viewers/sims unaffected.
 
 ---
 
