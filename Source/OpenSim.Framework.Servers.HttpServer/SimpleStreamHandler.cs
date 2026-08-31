@@ -26,6 +26,8 @@
  */
 
 using System.Net;
+using System.Reflection;
+using Microsoft.Extensions.Logging;
 using OpenSim.Framework.ServiceAuth;
 
 namespace OpenSim.Framework.Servers.HttpServer;
@@ -39,6 +41,8 @@ namespace OpenSim.Framework.Servers.HttpServer;
 /// </remarks>
 public class SimpleStreamHandler : SimpleBaseRequestHandler, ISimpleStreamHandler
 {
+    private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
+
     protected IServiceAuth m_Auth;
     protected SimpleStreamMethod m_processRequest;
 
@@ -95,8 +99,10 @@ public class SimpleStreamHandler : SimpleBaseRequestHandler, ISimpleStreamHandle
             else
                 ProcessRequest(httpRequest, httpResponse);
         }
-        catch
+        catch (Exception e)
         {
+            m_log.LogError(e, "[SIMPLE STREAM HANDLER]: unhandled exception in handler for {Method} {Path}",
+                httpRequest.HttpMethod, Path);
             httpResponse.StatusCode = (int)HttpStatusCode.InternalServerError;
         }
 
