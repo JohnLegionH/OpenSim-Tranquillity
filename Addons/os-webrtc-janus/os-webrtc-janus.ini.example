@@ -62,6 +62,9 @@
 ;    ; registration, so nothing it sends is ever heard (brief Amendment 2 D2)
 ;    MayInject = false
 ;    AuthorisedBy = Operator Name
+;    ; Optional: pin the connector to one region of a multi-region instance (scene name).
+;    ; Absent = the record starts in EVERY region this instance hosts.
+;    ; Region = Ebony
 ;    ; S-CON-7 (optional): URL the sim POSTs the NPC's chat text to for TTS injection
 ;    ; InjectSourceUrl = http://127.0.0.1:8090/say
     

@@ -521,8 +521,15 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         throw new NotImplementedException();
     }
 
+    // S-CON-2 (connector-build-plan.md): was NotImplementedException. Dispatch to the configured
+    // service by channel_type, mirroring the provision path's local/non-local split. Creating a
+    // session touches no Janus state (WebRtcJanusService.CreateViewerSession just builds the
+    // object), so this is safe to call for an identity that will never send an offer — the
+    // connector registration path, which pairs it with VoiceViewerSession.AddViewerSession.
     public IVoiceViewerSession CreateViewerSession(OSDMap pRequest, UUID pUserID, UUID pSceneID)
     {
-        throw new NotImplementedException();
+        bool isSpatial = pRequest.TryGetString("channel_type", out string ct) && ct == "local";
+        IWebRtcVoiceService service = isSpatial ? m_spatialVoiceService : m_nonSpatialVoiceService;
+        return service?.CreateViewerSession(pRequest, pUserID, pSceneID);
     }
 }

@@ -28,18 +28,24 @@
 using System.Reflection;
 using Microsoft.Extensions.Logging;
 using Nini.Config;
+using OpenMetaverse;
+using OpenMetaverse.StructuredData;
 using OpenSim.Framework;
+using OpenSim.Framework.Console;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 
 namespace osWebRtcVoice;
 
 /// <summary>
-/// S-CON-1 (Docs/voice/connector-build-plan.md): the voice-connector region module. In this slice
-/// it ONLY loads the [VoiceConnector.&lt;name&gt;] policy records (brief Amendment 2 D1), logs the
-/// outcome, and exposes the registry per scene via IVoiceConnectorRegistry — no NPC is created and
-/// no voice session registered (that is S-CON-2). Non-shared: one instance (and one load, so the
-/// per-record INFO repeats per region — small grids, accepted) per region.
+/// S-CON-1/S-CON-2 (Docs/voice/connector-build-plan.md): the voice-connector region module.
+/// S-CON-1: loads the [VoiceConnector.&lt;name&gt;] policy records (brief Amendment 2 D1), logs the
+/// outcome, exposes the registry per scene via IVoiceConnectorRegistry. S-CON-2: at the first
+/// heartbeat after region load, creates each record's NPC, registers its voice session (identity +
+/// membership — the connector-assessment §3 direct path; the peer joins the mixer itself,
+/// S-CON-4), records the estate room, and pushes the moderation mute for a recording-only record.
+/// Non-shared: one instance per region; records carry an optional Region filter so an enabled
+/// record does not spawn in every region of a multi-region instance.
 /// </summary>
 public class VoiceConnectorModule : INonSharedRegionModule
 {
@@ -51,6 +57,17 @@ public class VoiceConnectorModule : INonSharedRegionModule
     private VoiceConnectorRegistry m_registry;
     private string m_npcNameToken = DefaultNpcNameToken;
     private bool m_allowNpcVoice = false;   // read for visibility; ENFORCED in WebRtcVoiceServiceModule
+
+    private Scene m_scene;
+    private INPCModule m_npcModule;
+    private IWebRtcVoiceService m_voiceService;
+    private int m_started = 0;   // one-shot latch for the first-heartbeat start
+
+    // Console command support: one registration process-wide, handlers span the per-region
+    // instances (the non-shared-module equivalent of VoiceModerationCommands' shared owner).
+    private static readonly List<VoiceConnectorModule> s_instances = new List<VoiceConnectorModule>();
+    private static bool s_commandsRegistered = false;
+    private static readonly object s_commandLock = new object();
 
     public string Name => "VoiceConnectorModule";
     public Type ReplaceableInterface => null;
@@ -78,25 +95,213 @@ public class VoiceConnectorModule : INonSharedRegionModule
 
     public void AddRegion(Scene scene)
     {
+        m_scene = scene;
         // The registry is registered even when empty: the AllowNpcVoice guard resolves it per
         // scene and an empty registry answers IsConnectorIdentity=false, exactly like a null one.
         if (m_registry is not null)
             scene.RegisterModuleInterface<IVoiceConnectorRegistry>(m_registry);
+        lock (s_commandLock)
+            s_instances.Add(this);
     }
 
     public void RemoveRegion(Scene scene)
     {
+        StopAll("region close");
         if (m_registry is not null)
             scene.UnregisterModuleInterface<IVoiceConnectorRegistry>(m_registry);
+        lock (s_commandLock)
+            s_instances.Remove(this);
+        m_scene = null;
     }
 
     public void RegionLoaded(Scene scene)
     {
-        // S-CON-2: NPC creation and voice registration happen here, at region-ready. Not in
-        // this slice.
+        if (m_registry is null || m_registry.Count == 0)
+            return;
+
+        // INPCModule and IWebRtcVoiceService register their scene interfaces in AddRegion
+        // (NPCModule.cs:81, WebRtcVoiceServiceModule.cs AddRegion), so both are resolvable by
+        // RegionLoaded. Resolve here; DEFER the actual NPC creation to the first heartbeat
+        // (one-shot on OnRegionHeartbeatEnd): at RegionLoaded the scene's heartbeat and physics
+        // are not provably running yet, and CreateNPC drives a full circuit + CompleteMovement.
+        // The heartbeat firing IS the proof the scene is live (the build plan's fallback shape).
+        m_npcModule = scene.RequestModuleInterface<INPCModule>();
+        m_voiceService = scene.RequestModuleInterface<IWebRtcVoiceService>();
+        if (m_npcModule is null)
+        {
+            m_log.LogWarning("{LogHeader} region {RegionName}: INPCModule not available; connectors inactive",
+                LogHeader, scene.Name);
+            return;
+        }
+        if (m_voiceService is null)
+        {
+            m_log.LogWarning("{LogHeader} region {RegionName}: IWebRtcVoiceService not available; connectors inactive",
+                LogHeader, scene.Name);
+            return;
+        }
+        scene.EventManager.OnRegionHeartbeatEnd += OnFirstHeartbeat;
+        RegisterConsoleCommands();
     }
 
     public void Close()
     {
+        StopAll("module close");
+    }
+
+    private void OnFirstHeartbeat(Scene scene)
+    {
+        if (!ReferenceEquals(scene, m_scene))
+            return;
+        scene.EventManager.OnRegionHeartbeatEnd -= OnFirstHeartbeat;
+        if (Interlocked.Exchange(ref m_started, 1) != 0)
+            return;   // one-shot
+        StartAll();
+    }
+
+    // =====================================================================
+    // Start/stop
+
+    private void StartAll()
+    {
+        foreach (VoiceConnectorRecord record in m_registry.Snapshot())
+            StartRecord(record);
+    }
+
+    private void StopAll(string pReason)
+    {
+        if (m_registry is null)
+            return;
+        foreach (VoiceConnectorRecord record in m_registry.Snapshot())
+        {
+            if (record.NpcId != UUID.Zero)
+                m_log.LogDebug("{LogHeader} {Name}: teardown ({Reason})", LogHeader, record.Name, pReason);
+            StopRecord(record);
+        }
+    }
+
+    private void StartRecord(VoiceConnectorRecord record)
+    {
+        Scene scene = m_scene;
+        if (scene is null || record.NpcId != UUID.Zero)
+            return;
+        if (record.Region is not null && !string.Equals(record.Region, scene.Name, StringComparison.OrdinalIgnoreCase))
+            return;   // record pinned to another region of this instance
+
+        // The per-region visibility service carries both the room record (OnListenerProvisioned)
+        // and the moderation store. Registered per scene by WebRtcVoiceRegionModule.RegionLoaded.
+        VoiceVisibilityService svc = scene.RequestModuleInterface<VoiceVisibilityService>();
+        if (svc is null && !record.MayInject)
+        {
+            // Same refusal shape as the moderation CAP's "cannot enforce, not recorded": a
+            // recording-only record NEEDS the mute channel; without the feeder nothing enforces
+            // silence, so the connector is not brought up at all.
+            m_log.LogWarning("{LogHeader} {Name}: visibility feeder disabled in region {RegionName}; MayInject=false cannot be enforced - connector NOT started",
+                LogHeader, record.Name, scene.Name);
+            return;
+        }
+
+        // The estate/local room, derived exactly as the sink's fallback (JanusPeerCtlBatchSink):
+        // the "local" channel at REGION_ROOM_ID, grid id not in this arm.
+        int estateRoom = JanusAudioBridge.CalcRoomNumber(
+            string.Empty, scene.RegionInfo.RegionID.ToString(), "local", JanusAudioBridge.REGION_ROOM_ID, string.Empty);
+
+        bool ok = VoiceConnectorRegistrar.Register(record, estateRoom,
+            pCreateNpc: r => m_npcModule.CreateNPC(r.NpcFirstName, r.NpcLastName, r.Position,
+                scene.RegionInfo.EstateSettings.EstateOwner, false /* sense as NPC, not agent */,
+                scene, new AvatarAppearance()),
+            pCreateSession: npcId =>
+            {
+                IVoiceViewerSession vs = m_voiceService.CreateViewerSession(
+                    new OSDMap { { "channel_type", OSD.FromString("local") } }, npcId, scene.RegionInfo.RegionID);
+                return vs;
+            },
+            pRecordRoom: (npcId, room) => svc?.OnListenerProvisioned(npcId, room),
+            pMute: npcId =>
+            {
+                // The same call the SpatialVoiceModerationRequest "mute" case makes
+                // (WebRtcVoiceRegionModule.cs, svc.Moderation.MuteAgent(land.GlobalID, target)),
+                // keyed on the parcel at the NPC's configured position (the rule reads the
+                // SOURCE's own parcel, FeederWorldFromScene.voiceModerated).
+                ILandObject parcel = scene.LandChannel?.GetLandObject(record.Position.X, record.Position.Y);
+                if (parcel?.LandData is null)
+                    m_log.LogWarning("{LogHeader} {Name}: no parcel at {Position}; moderation mute NOT pushed",
+                        LogHeader, record.Name, record.Position);
+                else
+                    svc.Moderation.MuteAgent(parcel.LandData.GlobalID, npcId);
+            },
+            pLog: m_log);
+
+        if (ok)
+            // The operator copies this line into the peer's config (S-CON-4: DISPLAY = npc, ROOM = room).
+            m_log.LogInformation("{LogHeader} registered {Name} npc={NpcId} room={Room} inject={MayInject} session={ViewerSessionId}",
+                LogHeader, record.Name, record.NpcId, estateRoom, record.MayInject, record.ViewerSessionId);
+    }
+
+    private void StopRecord(VoiceConnectorRecord record)
+    {
+        Scene scene = m_scene;
+        VoiceConnectorRegistrar.Unregister(record,
+            npcId => { if (scene is not null) m_npcModule?.DeleteNPC(npcId, scene); },
+            m_log);
+    }
+
+    // =====================================================================
+    // Console: "voice connector start|stop <name>" — testing without a region restart.
+
+    private static void RegisterConsoleCommands()
+    {
+        lock (s_commandLock)
+        {
+            if (s_commandsRegistered || MainConsole.Instance is null)
+                return;   // unit tests / embedded hosts have no console
+            s_commandsRegistered = true;
+            MainConsole.Instance.Commands.AddCommand("Voice", false, "voice connector stop",
+                "voice connector stop <name>",
+                "Tear down a running voice connector (session, then NPC) without a restart",
+                HandleConnectorCommand);
+            MainConsole.Instance.Commands.AddCommand("Voice", false, "voice connector start",
+                "voice connector start <name>",
+                "Start (or restart) a loaded voice connector record",
+                HandleConnectorCommand);
+        }
+    }
+
+    private static void HandleConnectorCommand(string module, string[] args)
+    {
+        // args: ["voice", "connector", "start"|"stop", "<name>"]
+        if (args.Length < 4)
+        {
+            MainConsole.Instance.Output("Usage: voice connector start|stop <name>");
+            return;
+        }
+        string op = args[2];
+        string name = args[3];
+        List<VoiceConnectorModule> instances;
+        lock (s_commandLock)
+            instances = new List<VoiceConnectorModule>(s_instances);
+        bool found = false;
+        foreach (VoiceConnectorModule inst in instances)
+        {
+            foreach (VoiceConnectorRecord record in inst.m_registry?.Snapshot() ?? new List<VoiceConnectorRecord>())
+            {
+                if (!string.Equals(record.Name, name, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                found = true;
+                if (op == "stop")
+                {
+                    inst.StopRecord(record);
+                    MainConsole.Instance.Output("connector {0} stopped in {1}", record.Name, inst.m_scene?.Name);
+                }
+                else
+                {
+                    inst.StartRecord(record);
+                    MainConsole.Instance.Output(record.NpcId != UUID.Zero
+                        ? string.Format("connector {0} running in {1} (npc {2})", record.Name, inst.m_scene?.Name, record.NpcId)
+                        : string.Format("connector {0} NOT started in {1} (see log)", record.Name, inst.m_scene?.Name));
+                }
+            }
+        }
+        if (!found)
+            MainConsole.Instance.Output("no loaded connector record named \"{0}\"", name);
     }
 }

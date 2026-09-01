@@ -150,9 +150,12 @@ public sealed class VoiceConnectorRegistry : IVoiceConnectorRegistry
             string injectUrl = section.GetString("InjectSourceUrl", null);
             if (string.IsNullOrWhiteSpace(injectUrl))
                 injectUrl = null;
+            string region = section.GetString("Region", null);
+            if (string.IsNullOrWhiteSpace(region))
+                region = null;
 
             VoiceConnectorRecord record = new VoiceConnectorRecord(name, true, first, last,
-                position, VoiceConnectorScope.Estate, mayInject, authorisedBy, injectUrl);
+                position, VoiceConnectorScope.Estate, mayInject, authorisedBy, injectUrl, region);
             registry.m_records[name] = record;
             fullNameOwners[fullName] = name;
         }

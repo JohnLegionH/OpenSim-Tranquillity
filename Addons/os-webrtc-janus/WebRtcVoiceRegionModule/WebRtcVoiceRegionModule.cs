@@ -174,6 +174,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             {
                 svc.Stop();
                 m_visibilityServices.Remove(scene);
+                scene.UnregisterModuleInterface<VoiceVisibilityService>(svc);
             }
         }
     }
@@ -233,6 +234,11 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 svc.Start();
                 lock (m_visibilityServices)
                     m_visibilityServices[scene] = svc;
+                // S-CON-2: the connector module (same assembly, separate module instance) reaches
+                // the per-region service — room record + moderation store — through the scene, the
+                // same way it reaches INPCModule. Concrete type, deliberately: no other assembly
+                // needs it.
+                scene.RegisterModuleInterface<VoiceVisibilityService>(svc);
             }
         }
     }

@@ -62,6 +62,10 @@ public sealed class VoiceConnectorRecord
     /// <summary>S-CON-7: URL the sim POSTs the NPC's chat text to for TTS injection. Null when
     /// the key is absent (optional).</summary>
     public string InjectSourceUrl { get; }
+    /// <summary>Optional region-name filter (S-CON-2): a region server hosts several regions and
+    /// each gets its own non-shared module instance, so without this an enabled record would
+    /// spawn its NPC in EVERY region. Null = every region (single-region instances).</summary>
+    public string Region { get; }
 
     public string NpcFullName => $"{NpcFirstName} {NpcLastName}";
 
@@ -73,10 +77,13 @@ public sealed class VoiceConnectorRecord
     /// <summary>The registered voice session id once provisioned (S-CON-2); null until then.</summary>
     public string ViewerSessionId { get; internal set; }
 
-    internal VoiceConnectorRecord(string pName, bool pEnabled, string pFirst, string pLast,
+    // Public so tests (and later slices) can construct records directly; production records
+    // still come only from VoiceConnectorRegistry.LoadFrom, which owns every refusal rule.
+    public VoiceConnectorRecord(string pName, bool pEnabled, string pFirst, string pLast,
         Vector3 pPosition, VoiceConnectorScope pScope, bool pMayInject, string pAuthorisedBy,
-        string pInjectSourceUrl)
+        string pInjectSourceUrl, string pRegion = null)
     {
+        Region = pRegion;
         Name = pName;
         Enabled = pEnabled;
         NpcFirstName = pFirst;
