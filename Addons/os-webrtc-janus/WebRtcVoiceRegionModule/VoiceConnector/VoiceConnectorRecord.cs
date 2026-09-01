@@ -72,10 +72,12 @@ public sealed class VoiceConnectorRecord
     // ---- Mutable runtime state, S-CON-2 onward. Written ONLY under the owning registry's
     // lock (VoiceConnectorRegistry), never by this class's consumers directly — the
     // A2ASessionRegistry discipline (immutable identity, lock-guarded mutable state).
-    /// <summary>The NPC's agent id once created (S-CON-2); UUID.Zero until then.</summary>
-    public UUID NpcId { get; internal set; }
-    /// <summary>The registered voice session id once provisioned (S-CON-2); null until then.</summary>
-    public string ViewerSessionId { get; internal set; }
+    /// <summary>The NPC's agent id once created (S-CON-2); UUID.Zero until then. Public setter
+    /// for the test fixtures; production writes come only from VoiceConnectorRegistrar.</summary>
+    public UUID NpcId { get; set; }
+    /// <summary>The registered voice session id once provisioned (S-CON-2); null until then.
+    /// Public setter for the test fixtures, as NpcId.</summary>
+    public string ViewerSessionId { get; set; }
 
     // Public so tests (and later slices) can construct records directly; production records
     // still come only from VoiceConnectorRegistry.LoadFrom, which owns every refusal rule.

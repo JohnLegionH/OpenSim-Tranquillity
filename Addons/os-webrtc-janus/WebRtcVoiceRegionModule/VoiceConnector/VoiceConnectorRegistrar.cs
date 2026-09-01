@@ -61,7 +61,8 @@ public static class VoiceConnectorRegistrar
     /// </summary>
     public static bool Register(VoiceConnectorRecord pRecord, int pEstateRoom,
         CreateNpcDelegate pCreateNpc, CreateSessionDelegate pCreateSession,
-        RecordRoomDelegate pRecordRoom, MuteDelegate pMute, ILogger pLog)
+        RecordRoomDelegate pRecordRoom, MuteDelegate pMute, ILogger pLog,
+        VoiceConnectorDisclosure pDisclosure = null)
     {
         if (pRecord.NpcId != UUID.Zero)
             return true;   // already registered
@@ -99,6 +100,10 @@ public static class VoiceConnectorRegistrar
             pMute(npcId);
             pLog?.LogDebug("[CONNECTOR] {Name}: moderation mute pushed (MayInject=false)", pRecord.Name);
         }
+
+        // S-CON-3 door notice (brief D3(ii)): the attach alert fires LAST — only a fully
+        // registered connector (session, room, mute all in place) is announced as attached.
+        pDisclosure?.OnAttach(pRecord);
         return true;
     }
 
@@ -111,8 +116,10 @@ public static class VoiceConnectorRegistrar
     /// silences dies with the NPC — a future incarnation gets a fresh UUID and its own mute.
     /// Idempotent: an inactive record is a no-op.
     /// </summary>
-    public static void Unregister(VoiceConnectorRecord pRecord, DeleteNpcDelegate pDeleteNpc, ILogger pLog)
+    public static void Unregister(VoiceConnectorRecord pRecord, DeleteNpcDelegate pDeleteNpc, ILogger pLog,
+        VoiceConnectorDisclosure pDisclosure = null)
     {
+        bool wasActive = pRecord.NpcId != UUID.Zero || pRecord.ViewerSessionId != null;
         if (pRecord.ViewerSessionId != null)
         {
             VoiceViewerSession.RemoveViewerSession(pRecord.ViewerSessionId);
@@ -126,5 +133,9 @@ public static class VoiceConnectorRegistrar
             pLog?.LogDebug("[CONNECTOR] {Name}: NPC removed npc={NpcId}", pRecord.Name, pRecord.NpcId);
             pRecord.NpcId = UUID.Zero;
         }
+        // S-CON-3 door notice (brief D3(ii)): announced only if something was actually torn down
+        // — an idempotent re-teardown of an inactive record stays silent.
+        if (wasActive)
+            pDisclosure?.OnDetach(pRecord);
     }
 }

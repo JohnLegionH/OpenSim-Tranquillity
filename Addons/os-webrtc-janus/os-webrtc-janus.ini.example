@@ -32,6 +32,9 @@
     ; identity. Default false (deny) — NPC voice exists only through a policy record
     ; (brief Amendment 2 D2). Set true only to open the whole NPC voice surface.
     ; AllowNpcVoice = false
+    ; S-CON-3 proximity-notice range in metres (the "within voice range" of brief D3(iii)).
+    ; The spatial cull itself is mixer-side; this only scopes the disclosure chat line.
+    ; VoiceRangeMetres = 20
 
 [JanusWebRtcVoice]
     ; URI to access the Janus Gateway

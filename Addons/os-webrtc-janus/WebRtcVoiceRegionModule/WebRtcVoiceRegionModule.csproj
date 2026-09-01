@@ -29,6 +29,7 @@
     <Compile Include="VoiceConnector/VoiceConnectorRecord.cs" />
     <Compile Include="VoiceConnector/VoiceConnectorRegistry.cs" />
     <Compile Include="VoiceConnector/VoiceConnectorRegistrar.cs" />
+    <Compile Include="VoiceConnector/VoiceConnectorDisclosure.cs" />
     <Compile Include="VoiceConnector/VoiceConnectorModule.cs" />
   </ItemGroup>
 

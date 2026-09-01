@@ -53,14 +53,20 @@ public class VoiceConnectorModule : INonSharedRegionModule
     private static readonly string LogHeader = "[CONNECTOR]";
 
     public const string DefaultNpcNameToken = "NPC";
+    // S-CON-3 proximity notice range. The sim-side matrix has no audibility distance (the spatial
+    // cull is mixer-side, SLV_CULL in the plugin), so the range is a [WebRtcVoice] key of its own:
+    // VoiceRangeMetres, default 20 (the SL-conventional voice earshot).
+    public const float DefaultVoiceRangeMetres = 20f;
 
     private VoiceConnectorRegistry m_registry;
     private string m_npcNameToken = DefaultNpcNameToken;
     private bool m_allowNpcVoice = false;   // read for visibility; ENFORCED in WebRtcVoiceServiceModule
+    private float m_voiceRangeMetres = DefaultVoiceRangeMetres;
 
     private Scene m_scene;
     private INPCModule m_npcModule;
     private IWebRtcVoiceService m_voiceService;
+    private VoiceConnectorDisclosure m_disclosure;   // S-CON-3; unconditional (D3: no undisclosed mode)
     private int m_started = 0;   // one-shot latch for the first-heartbeat start
 
     // Console command support: one registration process-wide, handlers span the per-region
@@ -80,6 +86,7 @@ public class VoiceConnectorModule : INonSharedRegionModule
 
         m_npcNameToken = moduleConfig.GetString("NpcNameToken", DefaultNpcNameToken);
         m_allowNpcVoice = moduleConfig.GetBoolean("AllowNpcVoice", false);
+        m_voiceRangeMetres = moduleConfig.GetFloat("VoiceRangeMetres", DefaultVoiceRangeMetres);
 
         VoiceConnectorLoadResult result = VoiceConnectorRegistry.LoadFrom(pConfig, m_npcNameToken);
         m_registry = result.Registry;
@@ -106,6 +113,8 @@ public class VoiceConnectorModule : INonSharedRegionModule
 
     public void RemoveRegion(Scene scene)
     {
+        scene.EventManager.OnRegionHeartbeatEnd -= OnHeartbeat;
+        scene.EventManager.OnMakeRootAgent -= OnMakeRootAgent;
         StopAll("region close");
         if (m_registry is not null)
             scene.UnregisterModuleInterface<IVoiceConnectorRegistry>(m_registry);
@@ -139,7 +148,36 @@ public class VoiceConnectorModule : INonSharedRegionModule
                 LogHeader, scene.Name);
             return;
         }
-        scene.EventManager.OnRegionHeartbeatEnd += OnFirstHeartbeat;
+        // S-CON-3: the three disclosure layers, wired to the real scene surfaces. All
+        // UNCONDITIONAL (brief D3 — no undisclosed mode exists, so no config key gates these).
+        m_disclosure = new VoiceConnectorDisclosure(
+            // Attach/detach: the estate "message region" surface —
+            // IDialogModule.SendNotificationToUsersInRegion (IDialogModule.cs:181; the same call
+            // EstateManagementModule.cs:1613 makes for "message region").
+            pRegionAlert: msg => scene.RequestModuleInterface<IDialogModule>()
+                ?.SendNotificationToUsersInRegion(UUID.Zero, "Voice Connector", msg),
+            // Entry notice: one per-agent line via IDialogModule.SendAlertToUser (IDialogModule.cs:60).
+            pAgentNotice: (agentId, msg) => scene.RequestModuleInterface<IDialogModule>()
+                ?.SendAlertToUser(agentId, msg),
+            // Proximity notice: local chat spoken AS the NPC, delivered to the one agent
+            // (IClientAPI.SendChatMessage, IClientAPI.cs:1095).
+            pNpcChat: (record, agentId, msg) =>
+            {
+                if (scene.TryGetScenePresence(agentId, out ScenePresence sp))
+                    sp.ControllingClient.SendChatMessage(msg, (byte)ChatTypeEnum.Say, record.Position,
+                        record.NpcFullName, record.NpcId, record.NpcId,
+                        (byte)ChatSourceType.Agent, (byte)ChatAudibleLevel.Fully);
+            },
+            pVoiceRangeMetres: m_voiceRangeMetres);
+
+        // Entry notice trigger: the scene's root-transition event (EventManager.cs:698
+        // OnMakeRootAgent, raised by TriggerOnMakeRootAgent at :2077 from
+        // ScenePresence.MakeRootAgent) — fires for logins and for teleports/crossings into root.
+        scene.EventManager.OnMakeRootAgent += OnMakeRootAgent;
+
+        // Heartbeat: PERSISTENT since S-CON-3 (was a one-shot) — the first beat runs StartAll
+        // (the scene is provably live), every beat runs the proximity check.
+        scene.EventManager.OnRegionHeartbeatEnd += OnHeartbeat;
         RegisterConsoleCommands();
     }
 
@@ -148,14 +186,48 @@ public class VoiceConnectorModule : INonSharedRegionModule
         StopAll("module close");
     }
 
-    private void OnFirstHeartbeat(Scene scene)
+    private void OnHeartbeat(Scene scene)
     {
         if (!ReferenceEquals(scene, m_scene))
             return;
-        scene.EventManager.OnRegionHeartbeatEnd -= OnFirstHeartbeat;
-        if (Interlocked.Exchange(ref m_started, 1) != 0)
-            return;   // one-shot
-        StartAll();
+        if (Interlocked.Exchange(ref m_started, 1) == 0)
+            StartAll();   // one-shot: the first beat proves the scene is live
+
+        // S-CON-3 proximity notices (D3(iii)). Snapshot the voiced attached records first — the
+        // common case (none, e.g. a recording-only connector) exits before touching presences.
+        // Cost when armed: one presence walk + O(rootAgents × voiced connectors) squared-distance
+        // compares per heartbeat; at this scale (a handful of agents, 1-2 connectors) that is a
+        // few float compares per ~90 ms beat.
+        List<VoiceConnectorRecord> voiced = null;
+        foreach (VoiceConnectorRecord r in m_registry.Snapshot())
+        {
+            if (r.MayInject && r.NpcId != UUID.Zero)
+                (voiced ??= new List<VoiceConnectorRecord>()).Add(r);
+        }
+        if (voiced is null)
+            return;
+        List<(UUID, UUID, Vector3)> roots = new List<(UUID, UUID, Vector3)>();
+        scene.ForEachScenePresence(sp =>
+        {
+            if (!sp.IsChildAgent && sp.ControllingClient is not null)
+                roots.Add((sp.UUID, sp.ControllingClient.SessionId, sp.AbsolutePosition));
+        });
+        m_disclosure?.ProximityTick(roots, voiced);
+    }
+
+    // Entry notice (D3(ii)): an agent becoming root while a connector is attached gets one line
+    // naming the attached connector(s), once per login session.
+    private void OnMakeRootAgent(ScenePresence sp)
+    {
+        if (sp is null || sp.ControllingClient is null || m_disclosure is null)
+            return;
+        List<VoiceConnectorRecord> attached = new List<VoiceConnectorRecord>();
+        foreach (VoiceConnectorRecord r in m_registry.Snapshot())
+        {
+            if (r.NpcId != UUID.Zero && r.NpcId != sp.UUID)
+                attached.Add(r);
+        }
+        m_disclosure.OnMakeRoot(sp.UUID, sp.ControllingClient.SessionId, attached);
     }
 
     // =====================================================================
@@ -229,7 +301,8 @@ public class VoiceConnectorModule : INonSharedRegionModule
                 else
                     svc.Moderation.MuteAgent(parcel.LandData.GlobalID, npcId);
             },
-            pLog: m_log);
+            pLog: m_log,
+            pDisclosure: m_disclosure);
 
         if (ok)
             // The operator copies this line into the peer's config (S-CON-4: DISPLAY = npc, ROOM = room).
@@ -242,7 +315,7 @@ public class VoiceConnectorModule : INonSharedRegionModule
         Scene scene = m_scene;
         VoiceConnectorRegistrar.Unregister(record,
             npcId => { if (scene is not null) m_npcModule?.DeleteNPC(npcId, scene); },
-            m_log);
+            m_log, m_disclosure);
     }
 
     // =====================================================================
