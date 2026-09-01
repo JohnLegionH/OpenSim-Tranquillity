@@ -24,6 +24,14 @@
     ; NOTE: value is unquoted (matches this addon's other keys); the emitted URI must
     ; have no surrounding quotes or libwebrtc rejects it.
     StunServers = stun:stun.l.google.com:19302
+    ; Voice connectors (S-CON-1, Docs/voice/connector-build-plan.md):
+    ; Marker token every voice-connector NPC name must carry as a whole word (first or last
+    ; name) — the stock-viewer disclosure layer (brief Amendment 2 D3(i)). Default NPC.
+    ; NpcNameToken = NPC
+    ; Refuse ANY NPC-presence voice provision unless the agent is a registered voice-connector
+    ; identity. Default false (deny) — NPC voice exists only through a policy record
+    ; (brief Amendment 2 D2). Set true only to open the whole NPC voice surface.
+    ; AllowNpcVoice = false
 
 [JanusWebRtcVoice]
     ; URI to access the Janus Gateway
@@ -36,5 +44,25 @@
     AdminAPIToken = AdminAPITokenToNeverCheckIn
     ; Debugging: output to log file messages sent and received from Janus. Very verbose.
     MessageDetails = false
+
+; Voice connector policy record (S-CON-1, Docs/voice/connector-build-plan.md; design in
+; connector-design-brief.md Amendment 2). One [VoiceConnector.<name>] section per connector;
+; the record IS the authorisation (operator-only by construction). The NPC name must carry
+; [WebRtcVoice] NpcNameToken as its first or last name or the record is refused at load.
+;[VoiceConnector.Recorder]
+;    Enabled = true
+;    NpcFirstName = Recorder
+;    NpcLastName = NPC
+;    ; Region-local position the connector NPC stands at (its parcel identity for the
+;    ; visibility matrix)
+;    Position = <128, 128, 25>
+;    ; Only "estate" is supported in this plan (per-parcel scope rides ledger O-1)
+;    Scope = estate
+;    ; false = recording only: the sim pushes a moderation mute for the NPC identity at
+;    ; registration, so nothing it sends is ever heard (brief Amendment 2 D2)
+;    MayInject = false
+;    AuthorisedBy = Operator Name
+;    ; S-CON-7 (optional): URL the sim POSTs the NPC's chat text to for TTS injection
+;    ; InjectSourceUrl = http://127.0.0.1:8090/say
     
 

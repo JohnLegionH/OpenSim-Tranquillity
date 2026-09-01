@@ -56,6 +56,7 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
     private static string LogHeader = "[WEBRTC VOICE SERVICE MODULE]";
 
     private static bool m_Enabled = false;
+    private static bool m_allowNpcVoice = false;   // S-CON-1: [WebRtcVoice] AllowNpcVoice, default deny
     private IConfigSource m_Config;
 
     private IWebRtcVoiceService m_spatialVoiceService;
@@ -77,6 +78,10 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         if (moduleConfig is not null)
         {
             m_Enabled = moduleConfig.GetBoolean("Enabled", false);
+            // S-CON-1 (connector-build-plan.md; brief Amendment 2 D2): NPC voice is refused by
+            // default — an NPC presence provisions voice only as a registered connector identity
+            // or when the operator opts the whole surface open. Enforced in the provision path.
+            m_allowNpcVoice = moduleConfig.GetBoolean("AllowNpcVoice", false);
             if (m_Enabled)
             {
                 // Get the DLLs for the two voice services
@@ -368,6 +373,16 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         return true;
     }
 
+    // S-CON-1 (connector-build-plan.md; brief Amendment 2 D2): the AllowNpcVoice decision, pure
+    // and side-effect-free so it is unit-testable without a Scene (NpcProvisionGuardTests — the
+    // IsProvisionableChannelType / HasRealViewerSession extraction pattern). Refuse iff the
+    // presence is an NPC AND the operator has not opened the surface AND the id is not a
+    // registered voice-connector identity. A non-NPC presence is never refused here.
+    public static bool IsNpcProvisionRefused(bool pIsNpcPresence, bool pAllowNpcVoice, bool pIsConnectorIdentity)
+    {
+        return pIsNpcPresence && !pAllowNpcVoice && !pIsConnectorIdentity;
+    }
+
     // IWebRtcVoiceService.ProvisionVoiceAccountRequest
         public OSDMap ProvisionVoiceAccountRequest(OSDMap pRequest, UUID pUserID, UUID pSceneID)
     {
@@ -416,6 +431,29 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         }
         else
         {
+            // S-CON-1 (connector-build-plan.md; brief Amendment 2 D2) — the AllowNpcVoice guard,
+            // BEFORE any session is created. An NPC presence gets voice only when the operator
+            // opened the surface ([WebRtcVoice] AllowNpcVoice=true) or the id is a registered
+            // voice-connector identity (IVoiceConnectorRegistry on the scene; null registry ==
+            // no connector identities). Real-avatar presences never enter the predicate's refuse
+            // arm. The decision is the pure IsNpcProvisionRefused so it is unit-testable
+            // (NpcProvisionGuardTests) — the same extraction pattern as IsProvisionableChannelType.
+            Scene npcScene;
+            lock (m_scenes)
+                m_scenes.TryGetValue(pSceneID, out npcScene);
+            ScenePresence npcSp = npcScene?.GetScenePresence(pUserID);
+            if (npcSp is not null && IsNpcProvisionRefused(
+                    npcSp.PresenceType == PresenceType.Npc,
+                    m_allowNpcVoice,
+                    npcScene.RequestModuleInterface<IVoiceConnectorRegistry>()?.IsConnectorIdentity(pUserID) ?? false))
+            {
+                m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} region={RegionName} decision=refused-npc",
+                    LogHeader, pUserID, npcScene.Name);
+                m_log.LogWarning("{LogHeader} refusing NPC voice provision from agent {AgentId} in region \"{RegionName}\" (AllowNpcVoice=false, not a connector identity)",
+                    LogHeader, pUserID, npcScene.Name);
+                return null;
+            }
+
             // no (usable) viewer session -> this is an initial request
             if (pRequest.TryGetString("channel_type", out string channelType))
             {

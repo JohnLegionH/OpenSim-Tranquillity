@@ -26,6 +26,9 @@
     <Compile Include="A2AAgentListDelivery.cs" />
     <Compile Include="A2AInviteDelivery.cs" />
     <Compile Include="A2AProvisionAdmission.cs" />
+    <Compile Include="VoiceConnector/VoiceConnectorRecord.cs" />
+    <Compile Include="VoiceConnector/VoiceConnectorRegistry.cs" />
+    <Compile Include="VoiceConnector/VoiceConnectorModule.cs" />
   </ItemGroup>
 
   <ItemGroup>

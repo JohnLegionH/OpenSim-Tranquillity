@@ -25,28 +25,20 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-using System.Reflection;
-using OpenSim.Framework;
+using OpenMetaverse;
 
 namespace osWebRtcVoice;
 
-public class PluginRegistration : IPluginRegistryProvider
+/// <summary>
+/// S-CON-1 (Docs/voice/connector-build-plan.md): the voice-connector policy registry, as the
+/// AllowNpcVoice guard in WebRtcVoiceServiceModule sees it. Lives in the shared WebRtcVoice
+/// project because the service module does not (and must not) reference the region-module
+/// project; the region module registers the concrete registry per scene via
+/// RegisterModuleInterface. A null interface on a scene means "no connector identities".
+/// </summary>
+public interface IVoiceConnectorRegistry
 {
-    public void RegisterPlugins(PluginRegistry registry)
-    {
-        RegisterByName(registry, "/OpenSim/RegionModules", "WebRtcVoiceRegionModule", "osWebRtcVoice.WebRtcVoiceRegionModule", "WebRtcVoiceRegionModule", "1.0");
-        RegisterByName(registry, "/OpenSim/RegionModules", "VoiceConnectorModule", "osWebRtcVoice.VoiceConnectorModule", "VoiceConnectorModule", "1.0");
-    }
-
-    private static void RegisterByName(PluginRegistry registry, string extensionPath, string id, string typeName, string displayName, string version)
-    {
-        Assembly assembly = typeof(PluginRegistration).Assembly;
-        Type type = assembly.GetType(typeName, false);
-        if (type == null)
-            return;
-
-        registry.Register(
-            extensionPath,
-            new PluginDescriptor(id, type, displayName, version));
-    }
+    /// <summary>True iff this agent id is a registered voice-connector NPC identity. Empty in
+    /// S-CON-1 (NpcId slots are populated at registration, S-CON-2).</summary>
+    bool IsConnectorIdentity(UUID pAgentId);
 }
