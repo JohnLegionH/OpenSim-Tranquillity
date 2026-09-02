@@ -79,66 +79,81 @@ public class MapImageModule : IMapImageGenerator, INonSharedRegionModule
 
     public SKBitmap CreateMapTile()
     {
+        bool drawPrimVolume = true;
+        bool textureTerrain = false;
+        bool generateMaptiles = true;
+        SKBitmap mapbmp = null;
+
+        string[] configSections = new string[] { "Map", "Startup" };
+
+        drawPrimVolume
+            = Util.GetConfigVarFromSections<bool>(m_config, "DrawPrimOnMapTile", configSections, drawPrimVolume);
+        textureTerrain
+            = Util.GetConfigVarFromSections<bool>(m_config, "TextureOnMapTile", configSections, textureTerrain);
+        generateMaptiles
+            = Util.GetConfigVarFromSections<bool>(m_config, "GenerateMaptiles", configSections, generateMaptiles);
+
         try
         {
-            var mapbmp = new SKBitmap(256, 256);
-            
-            // Create terrain renderer based on scene settings
-            terrainRenderer = new TexturedMapTileRenderer();
-
-            // Get terrain height data and render it directly
-            float[] heightData = m_scene.Heightmap.GetFloatsSerialised();
-            using (var surface = SKSurface.Create(new SKImageInfo(256, 256)))
-            using (var canvas = surface.Canvas)
+            if (generateMaptiles)
             {
-                // Draw terrain heights
-                float maxHeight = float.MinValue;
-                float minHeight = float.MaxValue;
-                
-                // Find height range
-                foreach (var height in heightData)
+                if (String.IsNullOrEmpty(m_scene.RegionInfo.MaptileStaticFile))
                 {
-                    maxHeight = Math.Max(maxHeight, height);
-                    minHeight = Math.Min(minHeight, height);
-                }
+                    if (textureTerrain)
+                        terrainRenderer = new TexturedMapTileRenderer();
+                    else
+                        terrainRenderer = new ShadedMapTileRenderer();
 
-                float heightRange = maxHeight - minHeight;
-                
-                // Render terrain
-                int index = 0;
-                for (int y = 0; y < 256; y++)
-                {
-                    for (int x = 0; x < 256; x++)
+                    terrainRenderer.Initialise(m_scene, m_config);
+
+                    // The tile is rendered at full heightmap resolution (256x256 for a normal
+                    // region, e.g. 1024x1024 for a var region); WorldMapModule scales it down.
+                    mapbmp = new SKBitmap(m_scene.Heightmap.Width, m_scene.Heightmap.Height);
+                    terrainRenderer.TerrainToBitmap(mapbmp);
+
+                    if (drawPrimVolume)
                     {
-                        float height = heightData[index++];
-                        // Normalize height to 0-255 range
-                        byte gray = (byte)(((height - minHeight) / heightRange) * 255);
-                        
-                        // Apply some lighting to create terrain shading
-                        byte shaded = (byte)(gray * 0.8f); // Darken slightly
-                        var color = new SKColor(shaded, shaded, shaded);
-                        
-                        // Set pixel directly
-                        mapbmp.SetPixel(x, y, color);
+                        SKBitmap withObjects = DrawObjectVolume(m_scene, mapbmp);
+                        if (!ReferenceEquals(withObjects, mapbmp))
+                        {
+                            mapbmp.Dispose();
+                            mapbmp = withObjects;
+                        }
                     }
                 }
-            }
+                else
+                {
+                    try
+                    {
+                        mapbmp = SKBitmap.Decode(m_scene.RegionInfo.MaptileStaticFile);
+                    }
+                    catch (Exception)
+                    {
+                        mapbmp = null;
+                    }
 
-            if (m_scene?.Entities != null && m_scene.Entities.Count > 0)
+                    if (mapbmp == null)
+                        m_log.LogError("[MAPTILE]: Failed to load Static map image texture file: {0} for {1}",
+                            m_scene.RegionInfo.MaptileStaticFile, m_scene.Name);
+                    else
+                        m_log.LogDebug("[MAPTILE]: Static map image texture file {0} found for {1}",
+                            m_scene.RegionInfo.MaptileStaticFile, m_scene.Name);
+                }
+            }
+            else
             {
-                mapbmp = DrawObjectVolume(m_scene, mapbmp);
+                mapbmp = FetchTexture(m_scene.RegionInfo.RegionSettings.TerrainImageID);
             }
 
             return mapbmp;
         }
         catch (Exception ex)
         {
-            m_log.LogError($"Failed creating terrain map tile: {ex}");
+            m_log.LogError("[MAPTILE]: Failed creating map tile for {0}: {1}", m_scene.Name, ex);
+            mapbmp?.Dispose();
             return null;
         }
     }
-
-
 
     public byte[] WriteJpeg2000Image()
     {
