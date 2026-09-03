@@ -16,10 +16,11 @@ namespace OpenSimNGC.Appearance.Baking.Tests.Golden;
 /// returns without asserting anything. When present it reports per channel the mean absolute RGB difference,
 /// the mean absolute alpha difference and the share of pixels whose RGB differs by more than 8, and (S0d) the
 /// same two numbers for the 5th component (the morph mask, Docs/MORPH-MASK-PASS.md), to Golden/last-run.txt
-/// (gitignored) and to the test output. No RGB/alpha threshold is asserted yet (S0b): the numbers come first,
-/// the threshold after. The 5th component is asserted (S0d): mean |d| &lt;= 4 and, unless the reference's 5th
-/// component is uniform, at most 5% of pixels with |d| &gt; 8. The test fails otherwise, on an exception, or
-/// on a missing fixture.
+/// (gitignored) and to the test output. The numbers came first (S0b),
+/// the threshold after. Asserted: the 5th component (S0d: mean |d| &lt;= 4 and, unless the reference's 5th
+/// component is uniform, at most 5% of pixels with |d| &gt; 8) and, since S1, RGB (mean |d| &lt;= 4, at most 5% of
+/// pixels with |d| &gt; 8; both skipped when the reference alpha is entirely zero, as for a bald hair) and alpha
+/// (mean |d| &lt;= 2). The test fails otherwise, on an exception, or on a missing fixture.
 /// </summary>
 public class GoldenTests
 {
@@ -109,6 +110,14 @@ public class GoldenTests
             var meanRgb = sumRgb / (3.0 * n);
             var meanA = sumA / (double)n;
             var pct = 100.0 * over8 / n;
+            // S1 thresholds. A channel whose reference alpha is entirely zero (a fully transparent bake, e.g. bald hair) has no
+            // visible RGB, so its two RGB assertions are skipped and the row says so; alpha is still asserted.
+            var refAlphaAllZero = true;
+            for (var i = 0; i < n && refAlphaAllZero; i++) if (b.A[i] > 2) refAlphaAllZero = false;
+            var rgbNote = refAlphaAllZero ? " [RGB assertions skipped: reference alpha is entirely zero]" : "";
+            if (!refAlphaAllZero && meanRgb > 4.0) maskFailures.Add($"{key}: mean |dRGB| {meanRgb:F2} > 4.0");
+            if (!refAlphaAllZero && pct > 5.0) maskFailures.Add($"{key}: {pct:F2}% pixels |dRGB| > 8 exceeds 5%");
+            if (meanA > 2.0) maskFailures.Add($"{key}: mean |dA| {meanA:F2} > 2.0");
 
             // the 5th component: ours (always present) against the reference's (present on every viewer bake)
             if (a.Mask is null) throw new InvalidOperationException($"our {ch} bake has no 5th component");
@@ -127,8 +136,8 @@ public class GoldenTests
             if (meanM > 4.0) maskFailures.Add($"{key}: mean |dM| {meanM:F2} > 4.0");
             if (!uniform && pctM > 5.0) maskFailures.Add($"{key}: {pctM:F2}% pixels |dM| > 8 exceeds 5%");
 
-            report.AppendLine(string.Format(CultureInfo.InvariantCulture, "{0,-8} {1,10:F2} {2,9:F2} {3,9:F2}% {4,10:F2} {5,7:F2}% {6,-12} {7,-17} {8,-22} {9}",
-                key, meanRgb, meanA, pct, meanM, pctM, mRef, $"{mine.W}x{mine.H},{(mine.HasAlpha ? "a" : "-")}", $"{golden.W}x{golden.H},{(golden.HasAlpha ? "a" : "-")}", goldenId));
+            report.AppendLine(string.Format(CultureInfo.InvariantCulture, "{0,-8} {1,10:F2} {2,9:F2} {3,9:F2}% {4,10:F2} {5,7:F2}% {6,-12} {7,-17} {8,-22} {9}{10}",
+                key, meanRgb, meanA, pct, meanM, pctM, mRef, $"{mine.W}x{mine.H},{(mine.HasAlpha ? "a" : "-")}", $"{golden.W}x{golden.H},{(golden.HasAlpha ? "a" : "-")}", goldenId, rgbNote));
             compared++;
         }
         report.AppendLine();
@@ -138,7 +147,7 @@ public class GoldenTests
             foreach (var line in r.Fidelity.Notes) report.AppendLine($"    {line}");
         }
 
-        if (maskFailures.Count > 0) report.AppendLine($"5th-component assertions FAILED: {string.Join("; ", maskFailures)}");
+        if (maskFailures.Count > 0) report.AppendLine($"threshold assertions FAILED: {string.Join("; ", maskFailures)}");
         var text = report.ToString();
         File.WriteAllText(Path.Combine(dir, "last-run.txt"), text);
         _out.WriteLine(text);
