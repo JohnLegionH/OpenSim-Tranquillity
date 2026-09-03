@@ -90,5 +90,19 @@ Not in `Tranquillity.sln`; last touched by the dotnet 10 SDK bump (`0914c8104a`)
 | `Tests/WebFetchInvDescModuleTests.cs` | the whole class is inside a `/* … */` block comment (`:55-`); it targets a `BaseHttpServer` constructor that no longer exists and uses `[TestFixtureSetUp]` | dead; left as is (already compiled out), noted for a later FetchInventoryDescendents2 harness |
 | `.csproj` | references NUnit 4 while the sources use xunit `[Fact]`/`Assert`; pins `Microsoft.NET.Test.Sdk 17.14.1` and `Logging.Console 9.0.7` below `Tests.Common` (NU1605 downgrade errors) | rewritten to the `Tests.Common` package set (xunit 2.9.3, runner 3.1.5, Test.Sdk 18.8.1, Logging.Console 10.0.10) |
 
-Restored: the six assertions rewritten to their original meaning in xunit form, the project added to the solution
-under `Tests`, and run.
+Restored, in this order:
+1. `.csproj` rewritten to the `Tests.Common` package set (NUnit dropped; `<Using Include="NUnit.Framework">` gone).
+2. The six mangled assertions rewritten to their pre-#130 meaning in xunit form (`Assert.Equal(1, keys.Count)`,
+   `Assert.Equal(0, ...)`, `Assert.Equal((int)HttpStatusCode.OK/NotFound, (int)response["int_response_code"])`,
+   `Assert.True(foundUpdate, "Did not find {0} in response")`).
+3. `using Xunit;`, `using Nini.Config;`, `using OpenSim.Region.ClientStack.LindenCaps;` added (the class lives in
+   `OpenSim.Region.ClientStack.Linden.Tests`; the module moved namespaces).
+4. Setup ported to the current `MainServer` API: `MainServer` is instance-based (`IMainServer.Instance`, read-only
+   `DefaultServer`), so `MainServer.RemoveHttpServer(port)` / `AddHttpServer(server)` / `Instance = server` became
+   `MainServer.Instance.RemoveHttpServer(port)` / `MainServer.Instance.AddHttpServer(m_server)` — the base test class
+   removes the previous default server, so the new one becomes `DefaultServer` — and
+   `MainServer.Instance.GetPollServiceHandlerKeys()` (no longer on `IMainServer`) became
+   `m_server.GetPollServiceHandlerKeys()` on the `BaseHttpServer` the test owns.
+5. Project added to `Tranquillity.sln` under `Tests`.
+
+Result: 5 passed, 0 failed (serial). No test was skipped.
