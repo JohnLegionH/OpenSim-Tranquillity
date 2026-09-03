@@ -235,6 +235,39 @@ public class CompositorTests
     }
 
     [Fact]
+    public void the_morph_mask_follows_gatherMorphMaskAlpha()
+    {
+        // Docs/BUMP-PASS.md: 255 everywhere, times the mask of each worn instance of the set's morph-mask layers
+        // (head: facialhair per hair; upper_body: upper_clothes per shirt; lower_body: lower_pants per pants).
+        var lad = Lad;
+        Assert.Equal(new[] { "facialhair" }, lad.MorphMaskLayers["head"].ToArray());
+        Assert.Contains("upper_clothes", lad.MorphMaskLayers["upper_body"]);
+        Assert.Contains("lower_pants", lad.MorphMaskLayers["lower_body"]);
+        Assert.False(lad.MorphMaskLayers.ContainsKey("eyes"));
+        var c = NewCompositor();
+
+        // female shape: every facialhair parameter is male-only and skip_if_zero, so the mask is 0 and the head's morph mask is 0
+        var head = c.Bake(BakeChannel.Head, BaseOutfit(male: false), 64);
+        Assert.All(head.MorphMask, v => Assert.Equal(0, v));
+        Assert.Contains(head.Layers, l => l.Layer == "facialhair" && l.Status == "morph");
+        // no morph-mask layers at all: 255
+        Assert.All(c.Bake(BakeChannel.Eyes, BaseOutfit(), 64).MorphMask, v => Assert.Equal(255, v));
+        Assert.All(c.Bake(BakeChannel.Hair, BaseOutfit(), 64).MorphMask, v => Assert.Equal(255, v));
+        // upper body with no shirt worn: the upper_clothes layer has no instance, mask stays 255
+        Assert.All(c.Bake(BakeChannel.Upper, BaseOutfit(), 64).MorphMask, v => Assert.Equal(255, v));
+        // with a short-sleeved shirt: the morph mask is the shirt's mask (torso 255, wrist 0)
+        var others = new[] { "shirt_bottom_alpha.tga", "shirt_collar_alpha.tga", "shirt_collar_back_alpha.tga" };
+        var torso = FindMaskPixel("shirt_sleeve_alpha.tga", 256, v => v == 255, others);
+        var wrist = FindMaskPixel("shirt_sleeve_alpha.tga", 256, v => v is > 60 and < 120, others);
+        var outfit = BaseOutfit();
+        outfit.Add(Wear(WearableKind.Shirt, new() { [800] = 0f, [801] = 1f, [802] = 1f, [781] = 1f, [803] = 0f, [804] = 0f, [805] = 1f }, (TextureSlot.UpperShirt, Flat(16, 16, 0, 0, 255))));
+        var upper = c.Bake(BakeChannel.Upper, outfit, 256);
+        Assert.Equal(255, upper.MorphMask[torso.Y * 256 + torso.X]);
+        Assert.Equal(0, upper.MorphMask[wrist.Y * 256 + wrist.X]);
+        Assert.Contains(upper.Layers, l => l.Layer == "upper_clothes" && l.Status == "morph");
+    }
+
+    [Fact]
     public void the_male_parameter_is_read_from_the_shape()
     {
         var c = NewCompositor();

@@ -1,3 +1,4 @@
+using System.Text;
 using CoreJ2K;
 using CoreJ2K.Configuration;
 using CoreJ2K.Skia;
@@ -23,7 +24,7 @@ public static class J2kCodec
 
     /// <summary>
     /// Decode a J2C codestream or JP2 file to planar RGBA. 1 component = grey, 2 = grey+alpha, 3 = RGB,
-    /// 4 = RGBA, 5 = RGBA plus the legacy bump channel a viewer appends to its own bakes (dropped).
+    /// 4 = RGBA, 5 = RGBA plus the morph mask a viewer appends to its own bakes (exposed as <see cref="RgbaPlanes.Mask"/>).
     /// </summary>
     /// <exception cref="ArgumentException">If the bytes are not a decodable JPEG 2000 image.</exception>
     public static RgbaPlanes Decode(byte[] data)
@@ -42,6 +43,7 @@ public static class J2kCodec
             {
                 Array.Copy(Comp(0), p.R, n); Array.Copy(Comp(1), p.G, n); Array.Copy(Comp(2), p.B, n);
                 if (c >= 4) Array.Copy(Comp(3), p.A, n);
+                if (c >= 5) p.Mask = Comp(4);   // a viewer bake's morph mask (Docs/BUMP-PASS.md §2)
             }
             else
             {
@@ -75,6 +77,29 @@ public static class J2kCodec
     {
         using var bmp = img.ToSkBitmap();
         return bmp.EncodeToJ2K(EncoderConfig(img.W, img.H, quality));
+    }
+
+    /// <summary>
+    /// Encode a bake the way a viewer uploads one: five components R, G, B, A (visibility alpha) and M (the
+    /// morph mask, Docs/BUMP-PASS.md), single tile, same settings as <see cref="Encode"/>. A null mask is
+    /// written as 255 everywhere, the value <c>gatherMorphMaskAlpha</c> starts from.
+    /// </summary>
+    public static byte[] EncodeBake(RgbaPlanes img, byte[]? morphMask, double quality = 0.85)
+    {
+        int w = img.W, h = img.H, n = w * h;
+        if (morphMask is not null && morphMask.Length != n) throw new ArgumentException($"morph mask has {morphMask.Length} samples, expected {n}");
+        var mask = morphMask;
+        if (mask is null) { mask = new byte[n]; Array.Fill(mask, (byte)255); }
+        // CoreJ2K builds a multi-component source from one greyscale PGM stream per component.
+        var header = Encoding.ASCII.GetBytes($"P5\n{w} {h}\n255\n");
+        Stream Pgm(byte[] plane) { var ms = new MemoryStream(header.Length + n); ms.Write(header); ms.Write(plane, 0, n); ms.Position = 0; return ms; }
+        var streams = new List<Stream> { Pgm(img.R), Pgm(img.G), Pgm(img.B), Pgm(img.A), Pgm(mask) };
+        try
+        {
+            var source = J2kImage.CreateEncodableSource(streams) ?? throw new InvalidOperationException("CoreJ2K returned no encodable source for five planes");
+            return J2kImage.ToBytes(source, EncoderConfig(w, h, quality));
+        }
+        finally { foreach (var s in streams) s.Dispose(); }
     }
 
     /// <summary>Parse the SIZ marker of a codestream (or of the codestream inside a JP2 file).</summary>

@@ -106,6 +106,11 @@ public sealed class AvatarLad
     public readonly Dictionary<int, ParamDef> Params = new();
     public readonly Dictionary<string, LayerSetDef> LayerSets = new(StringComparer.OrdinalIgnoreCase);
     public readonly Dictionary<string, List<int>> GlobalColors = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// The <c>&lt;morph_masks&gt;</c> block: per body_region, the layer names whose alpha mask also drives a mesh
+    /// morph. Only these layers contribute to a bake's 5th component (see Docs/BUMP-PASS.md §2.1).
+    /// </summary>
+    public readonly Dictionary<string, HashSet<string>> MorphMaskLayers = new(StringComparer.OrdinalIgnoreCase);
 
     public static AvatarLad Load(string path) => Parse(XDocument.Load(path));
 
@@ -171,6 +176,14 @@ public sealed class AvatarLad
                 set.Layers.Add(layer);
             }
             lad.LayerSets[set.BodyRegion] = set;
+        }
+        foreach (var m in root.Descendants("morph_masks").Elements("mask"))
+        {
+            var region = (string?)m.Attribute("body_region") ?? "";
+            var layer = (string?)m.Attribute("layer") ?? "";
+            if (region.Length == 0 || layer.Length == 0) continue;
+            if (!lad.MorphMaskLayers.TryGetValue(region, out var names)) lad.MorphMaskLayers[region] = names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            names.Add(layer);
         }
         return lad;
     }

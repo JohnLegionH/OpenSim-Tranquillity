@@ -63,6 +63,34 @@ public class BackendTests
     }
 
     [Fact]
+    public void a_bake_encodes_five_components_and_round_trips_the_morph_mask()
+    {
+        var img = CompositorTests.Flat(96, 96, 180, 90, 30, 200);
+        var mask = new byte[96 * 96];
+        for (var i = 0; i < mask.Length; i++) mask[i] = (byte)(i % 96 < 48 ? 0 : 255);
+        var bytes = J2kCodec.EncodeBake(img, mask);
+        var siz = J2kCodec.ParseSiz(bytes);
+        Assert.Equal(5, siz.Csiz);
+        Assert.True(siz.SingleTile, $"{siz.TileCount} tiles");
+        Assert.Equal(96, siz.Xsiz);
+        var back = J2kCodec.Decode(bytes);
+        Assert.NotNull(back.Mask);
+        Assert.True(back.HasAlpha);
+        var row = 48 * 96;
+        Assert.InRange(back.Mask![row + 10], 0, 8);
+        Assert.InRange(back.Mask![row + 80], 247, 255);
+        Assert.InRange(back.A[row + 10], 190, 210);
+        Assert.InRange(back.R[row + 10], 170, 190);
+        // no mask supplied: 255 everywhere, the value gatherMorphMaskAlpha starts from
+        var plain = J2kCodec.Decode(J2kCodec.EncodeBake(img, null));
+        Assert.NotNull(plain.Mask);
+        Assert.All(plain.Mask!, v => Assert.InRange(v, 250, 255));
+        // and the backend's output is five-component
+        var (req, _) = ClassicRequest();
+        foreach (var r in new SkiaBakeBackend().Bake(req)) Assert.Equal(5, J2kCodec.ParseSiz(r.J2kBytes).Csiz);
+    }
+
+    [Fact]
     public void the_default_encoder_would_tile_a_512_bake_so_the_config_pins_one_tile()
     {
         var cfg = J2kCodec.EncoderConfig(512, 512);

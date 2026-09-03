@@ -17,6 +17,8 @@ public sealed class RgbaPlanes
     public readonly int W, H;
     public readonly byte[] R, G, B, A;
     public readonly bool HasAlpha;
+    /// <summary>A fifth 8-bit plane when the source carried one: the morph mask of a viewer bake (Docs/BUMP-PASS.md). Null otherwise.</summary>
+    public byte[]? Mask;
 
     public RgbaPlanes(int w, int h, bool hasAlpha)
     {
@@ -50,8 +52,10 @@ public sealed class RgbaPlanes
     public RgbaPlanes Resample(int w, int h)
     {
         if (w == W && h == H) return this;
-        return new RgbaPlanes(w, h, Raster.Resample(R, W, H, w, h), Raster.Resample(G, W, H, w, h), Raster.Resample(B, W, H, w, h),
+        var p = new RgbaPlanes(w, h, Raster.Resample(R, W, H, w, h), Raster.Resample(G, W, H, w, h), Raster.Resample(B, W, H, w, h),
             HasAlpha ? Raster.Resample(A, W, H, w, h) : Filled(w * h, 255), HasAlpha);
+        if (Mask is not null) p.Mask = Raster.Resample(Mask, W, H, w, h);
+        return p;
     }
 
     private static byte[] Filled(int n, byte v) { var a = new byte[n]; Array.Fill(a, v); return a; }

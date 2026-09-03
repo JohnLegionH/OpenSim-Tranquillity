@@ -5,7 +5,8 @@ namespace OpenSimNGC.Appearance.Baking;
 /// <summary>
 /// The library's bake backend: wearable text in, JPEG 2000 bakes out. Wearables are parsed with
 /// <see cref="WearableParser"/>, textures decoded with <see cref="J2kCodec"/>, each channel composited by
-/// <see cref="TexLayerCompositor"/> at <see cref="BakeRequest.BakeSize"/>, encoded single-tile and hashed with
+/// <see cref="TexLayerCompositor"/> at <see cref="BakeRequest.BakeSize"/>, encoded as a five-component single-tile
+/// codestream (RGB, visibility alpha, morph mask; Docs/BUMP-PASS.md) and hashed with
 /// <see cref="BakeHash"/>. Pure with respect to its inputs; no I/O.
 /// </summary>
 public sealed class SkiaBakeBackend : IBakeBackend
@@ -104,7 +105,7 @@ public sealed class SkiaBakeBackend : IBakeBackend
                         missing.Add(id);
 
             var composite = _compositor.Bake(ch, worn, r.BakeSize, r.VisualParams);
-            var bytes = J2kCodec.Encode(composite.Image, Quality);
+            var bytes = J2kCodec.EncodeBake(composite.Image, composite.MorphMask, Quality);
             var unsupported = composite.Layers
                 .Where(l => l.Status == "skipped" && (l.Detail.Contains("missing", StringComparison.Ordinal) || l.Detail.Contains("unknown", StringComparison.Ordinal)))
                 .Select(l => $"{l.Layer}: {l.Detail}")

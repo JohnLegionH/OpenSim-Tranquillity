@@ -20,6 +20,11 @@ public sealed class CompositeResult
     public required RgbaPlanes Image;
     public required List<LayerReport> Layers;
     public bool Invisible;
+    /// <summary>
+    /// The bake's 5th component: LLTexLayerSet::gatherMorphMaskAlpha — 255 everywhere, multiplied by the alpha
+    /// mask of every worn instance of the set's morph-mask layers (Docs/BUMP-PASS.md §2).
+    /// </summary>
+    public required byte[] MorphMask;
 }
 
 /// <summary>
@@ -156,6 +161,32 @@ public sealed class TexLayerCompositor
         /// <summary>The wearable whose layer is being rendered, if any.</summary>
         public WornWearable? Instance;
         public bool Male;
+        /// <summary>Each rendered layer instance's alpha mask (LLTexLayer::mAlphaCache), for the morph-mask gather.</summary>
+        public readonly Dictionary<(LayerDef Layer, WornWearable? Instance), byte[]> Masks = new(ReferenceTupleComparer.Instance);
+    }
+
+    private sealed class ReferenceTupleComparer : IEqualityComparer<(LayerDef Layer, WornWearable? Instance)>
+    {
+        public static readonly ReferenceTupleComparer Instance = new();
+        public bool Equals((LayerDef Layer, WornWearable? Instance) a, (LayerDef Layer, WornWearable? Instance) b) => ReferenceEquals(a.Layer, b.Layer) && ReferenceEquals(a.Instance, b.Instance);
+        public int GetHashCode((LayerDef Layer, WornWearable? Instance) k) => HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(k.Layer), k.Instance is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(k.Instance));
+    }
+
+    /// <summary>
+    /// LLTexLayerInterface::getWearableType: the layer's local texture's wearable type, or, without a local texture,
+    /// the single wearable type its colour and alpha parameters belong to; Invalid when they belong to several or none.
+    /// </summary>
+    public WearableKind LayerKind(LayerDef layer)
+    {
+        if (layer.LocalTexture is not null && TextureByName.TryGetValue(layer.LocalTexture, out var slot)) return WearableOf(slot);
+        var kind = WearableKind.Invalid;
+        foreach (var id in layer.ColorParams.Concat(layer.AlphaParams))
+        {
+            if (!_lad.Params.TryGetValue(id, out var def) || def.Wearable is not { Length: > 0 } owner || WearableKinds.FromName(owner) is not { } k) continue;
+            if (kind != WearableKind.Invalid && k != kind) return WearableKind.Invalid;
+            kind = k;
+        }
+        return kind;
     }
 
     private ParamState ResolveParams(IReadOnlyList<WornWearable> worn, IReadOnlyDictionary<int, float>? overlay)
@@ -369,7 +400,8 @@ public sealed class TexLayerCompositor
                     {
                         Array.Clear(canvas.A);
                         reports.Add(new LayerReport(ml.Name, "invisible", $"{w.Label}: IMG_INVISIBLE hides the whole {region} bake", w.Kind));
-                        return new CompositeResult { Image = canvas, Layers = reports, Invisible = true };
+                        var m255 = new byte[n]; Array.Fill(m255, (byte)255);
+                        return new CompositeResult { Image = canvas, Layers = reports, Invisible = true, MorphMask = m255 };
                     }
 
         foreach (var layer in set.Layers)
@@ -391,6 +423,38 @@ public sealed class TexLayerCompositor
                 }
             }
             else RenderLayer(set, layer, st, canvas, size, null, TextureSlot.Unknown, null, reports);
+        }
+
+        // LLTexLayerSet::gatherMorphMaskAlpha (Docs/BUMP-PASS.md §2): 255, times each worn instance's mask for the set's morph-mask layers.
+        var morph = new byte[n];
+        Array.Fill(morph, (byte)255);
+        if (_lad.MorphMaskLayers.TryGetValue(region, out var morphLayers))
+        {
+            foreach (var layer in set.Layers)
+            {
+                if (layer.Bump || !morphLayers.Contains(layer.Name) || layer.AlphaParams.Count == 0) continue;   // addAlphaMask: only hasAlphaParams() layers
+                var kind = LayerKind(layer);
+                if (kind == WearableKind.Invalid) { reports.Add(new LayerReport(layer.Name, "morph", "no wearable type: no instances", null)); continue; }
+                var instances = worn.Where(w => w.Kind == kind).ToList();
+                if (instances.Count == 0) { reports.Add(new LayerReport(layer.Name, "morph", $"no {kind} worn: mask left at 255", kind)); continue; }
+                foreach (var w in instances)
+                {
+                    if (!st.Masks.TryGetValue((layer, w), out var mask))
+                    {
+                        // not rendered in the colour pass (or rendered once for every instance): render its mask on demand, as addAlphaMask does
+                        st.Instance = w;
+                        NetColor(st, layer, out var color);
+                        RgbaPlanes? tex = null;
+                        if (layer.LocalTexture is not null && TextureByName.TryGetValue(layer.LocalTexture, out var slot)) w.Textures.TryGetValue(slot, out tex);
+                        mask = ComputeMask(layer, st, canvas.A, size, w, tex, color, new List<string>(), out _);
+                        st.Instance = null;
+                        if (mask is null) { reports.Add(new LayerReport(layer.Name, "morph", $"{w.Label}: mask file missing; not applied", kind)); continue; }
+                    }
+                    long sum = 0;
+                    for (var i = 0; i < n; i++) { morph[i] = (byte)((morph[i] * (mask[i] + 1)) >> 8); sum += mask[i]; }
+                    reports.Add(new LayerReport(layer.Name, "morph", $"{w.Label}: morph mask *= layer mask (mean {sum / (double)n:F1})", kind));
+                }
+            }
         }
 
         // LLTexLayerSet::renderAlphaMaskTextures: the bake's alpha is 1 (or the set's static alpha file), times every visibility mask.
@@ -424,7 +488,52 @@ public sealed class TexLayerCompositor
                 }
             }
         }
-        return new CompositeResult { Image = canvas, Layers = reports };
+        return new CompositeResult { Image = canvas, Layers = reports, MorphMask = morph };
+    }
+
+    /// <summary>
+    /// LLTexLayer::renderMorphMasks, the mask part: the layer's alpha parameters accumulated (additive from 0, or a leading
+    /// multiply parameter from the current alpha), times the local texture's alpha, times the static mask, times the layer
+    /// colour's alpha. Null only when a mask file is missing. <paramref name="allSkipped"/> reports the all-parameters-skipped
+    /// case (the viewer then draws the layer through this all-zero mask).
+    /// </summary>
+    private byte[]? ComputeMask(LayerDef layer, ParamState st, byte[] currentAlpha, int size, WornWearable? w, RgbaPlanes? tex, Rgba color, List<string> used, out bool allSkipped)
+    {
+        var n = size * size;
+        var first = _lad.Params.GetValueOrDefault(layer.AlphaParams[0]);
+        var mask = first?.Alpha is { MultiplyBlend: true } ? (byte[])currentAlpha.Clone() : new byte[n];
+        var applied = 0;
+        foreach (var pid in layer.AlphaParams)
+        {
+            if (!_lad.Params.TryGetValue(pid, out var def) || def.Alpha is null || string.IsNullOrEmpty(def.Alpha.TgaFile)) continue;
+            if (Skip(st, def)) { used.Add($"{def.Name}#{pid}=skip"); continue; }
+            var eff = Effective(st, def);
+            var p = ProcessedMask(def.Alpha.TgaFile, def.Alpha.Domain, eff, size);
+            if (p is null) { allSkipped = false; return null; }
+            if (def.Alpha.MultiplyBlend) for (var i = 0; i < n; i++) mask[i] = Raster.Mul(mask[i], p.Data[i]);
+            else for (var i = 0; i < n; i++) mask[i] = (byte)Math.Min(255, mask[i] + p.Data[i]);
+            used.Add($"{def.Name}#{pid}={eff:F2}{(def.Alpha.MultiplyBlend ? "*" : "+")}");
+            applied++;
+        }
+        allSkipped = applied == 0 && first?.Alpha is not { MultiplyBlend: true };
+        if (allSkipped) return mask;   // every parameter skipped and nothing added: an all-zero mask, as the viewer's cleared alpha
+        if (tex is { HasAlpha: true } && layer.LocalTexture is not null)
+        {
+            var t = tex.Resample(size, size);
+            for (var i = 0; i < n; i++) mask[i] = Raster.Mul(mask[i], t.A[i]);
+            used.Add("texture alpha*");
+        }
+        if (layer.StaticImage is not null && layer.StaticIsMask)
+        {
+            var m = MaskAt(layer.StaticImage, size);
+            if (m is not null) { for (var i = 0; i < n; i++) mask[i] = Raster.Mul(mask[i], m.Data[i]); used.Add($"{layer.StaticImage}*"); }
+        }
+        if (MathF.Abs(color.A - 1f) > 1e-4f)
+        {
+            var ca = (byte)Math.Round(color.A * 255);
+            for (var i = 0; i < n; i++) mask[i] = Raster.Mul(mask[i], ca);
+        }
+        return mask;
     }
 
     /// <summary>LLTexLayer::render for one layer instance.</summary>
@@ -441,44 +550,16 @@ public sealed class TexLayerCompositor
         if (layer.AlphaParams.Count > 0)
         {
             // LLTexLayer::renderMorphMasks: the alpha channel becomes the mask; additive params start from 0, a leading multiply param from what is there.
-            var first = _lad.Params.GetValueOrDefault(layer.AlphaParams[0]);
-            mask = first?.Alpha is { MultiplyBlend: true } ? (byte[])canvas.A.Clone() : new byte[n];
             var used = new List<string>();
-            var applied = 0;
-            foreach (var pid in layer.AlphaParams)
-            {
-                if (!_lad.Params.TryGetValue(pid, out var def) || def.Alpha is null || string.IsNullOrEmpty(def.Alpha.TgaFile)) continue;
-                if (Skip(st, def)) { used.Add($"{def.Name}#{pid}=skip"); continue; }
-                var eff = Effective(st, def);
-                var p = ProcessedMask(def.Alpha.TgaFile, def.Alpha.Domain, eff, size);
-                if (p is null) { reports.Add(new LayerReport(layer.Name, "skipped", $"{who}mask {def.Alpha.TgaFile} missing", w?.Kind)); return; }
-                if (def.Alpha.MultiplyBlend) for (var i = 0; i < n; i++) mask[i] = Raster.Mul(mask[i], p.Data[i]);
-                else for (var i = 0; i < n; i++) mask[i] = (byte)Math.Min(255, mask[i] + p.Data[i]);
-                used.Add($"{def.Name}#{pid}={eff:F2}{(def.Alpha.MultiplyBlend ? "*" : "+")}");
-                applied++;
-            }
-            if (applied == 0 && first?.Alpha is not { MultiplyBlend: true })
+            mask = ComputeMask(layer, st, canvas.A, size, w, tex, color, used, out var allSkipped);
+            if (mask is null) { reports.Add(new LayerReport(layer.Name, "skipped", $"{who}a mask file is missing", w?.Kind)); return; }
+            st.Masks[(layer, w)] = mask;   // LLTexLayer::mAlphaCache: reused by the morph-mask gather
+            if (allSkipped)
             {
                 // Every mask parameter skipped and nothing to add to an empty mask: the viewer draws the layer through an all-zero mask, i.e. nothing.
                 Array.Copy(mask, canvas.A, n);
                 reports.Add(new LayerReport(layer.Name, "skipped", $"{who}every mask parameter skipped [{string.Join(", ", used)}]", w?.Kind));
                 return;
-            }
-            if (tex is { HasAlpha: true } && layer.LocalTexture is not null)
-            {
-                var t = tex.Resample(size, size);
-                for (var i = 0; i < n; i++) mask[i] = Raster.Mul(mask[i], t.A[i]);
-                used.Add("texture alpha*");
-            }
-            if (layer.StaticImage is not null && layer.StaticIsMask)
-            {
-                var m = MaskAt(layer.StaticImage, size);
-                if (m is not null) { for (var i = 0; i < n; i++) mask[i] = Raster.Mul(mask[i], m.Data[i]); used.Add($"{layer.StaticImage}*"); }
-            }
-            if (MathF.Abs(color.A - 1f) > 1e-4f)
-            {
-                var ca = (byte)Math.Round(color.A * 255);
-                for (var i = 0; i < n; i++) mask[i] = Raster.Mul(mask[i], ca);
             }
             Array.Copy(mask, canvas.A, n);   // the viewer leaves the mask in the alpha channel (the skirt's shape comes from this)
             detail.Add($"masks [{string.Join(", ", used)}]");

@@ -42,11 +42,13 @@ shaped by one), so they ship with the library alongside `avatar_lad.xml` (ADR-00
 **Licence:** the same as `avatar_lad.xml` above: GNU LGPL 2.1 with the Linden Lab viewer linking exception.
 Embedded unmodified as data resources; not compiled or linked.
 
-**Copied from:** the copy redistributed inside the `LibreMetaverse` 3.1.4 NuGet package
-(`content/linden/character/`), which is what the web-viewer gateway read at runtime before S0b, on 2026-09-03.
-Only the 56 files `avatar_lad.xml` references and that copy contains were taken; `avatar_lad.xml` also names
-`head_wrinkles_highlights_alpha.tga`, which that copy lacks (the gateway lacked it too; the layer that uses it
-is reported as skipped).
+**Source:** the Linden Lab viewer source tree at `F:\viewer-develop` (viewer 26.1.1 per
+`indra/newview/VIEWER_VERSION.txt`), directory `indra/newview/character/`. The files were first taken (S0b,
+2026-09-03) from the copy redistributed inside the `LibreMetaverse` 3.1.4 NuGet package; in S0d every one of
+the 56 was re-verified byte for byte (SHA-256 below) against the viewer tree and found identical, so the viewer
+tree is the recorded source. `avatar_lad.xml` also names `head_wrinkles_highlights_alpha.tga`, which exists in
+neither the viewer tree nor the package; only a bump-pass layer references it and bump layers are never rendered
+into a bake (see `Docs/BUMP-PASS.md`), so nothing is affected.
 
 | File | SHA-256 |
 |---|---|

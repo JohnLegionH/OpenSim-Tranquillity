@@ -14,9 +14,12 @@ namespace OpenSimNGC.Appearance.Baking.Tests.Golden;
 /// path named in manifest.json). The authority is the LL compositor, never the capturing client. Fixtures are fetched by
 /// fetch-fixtures.sh into Golden/fixtures/ (gitignored); when they are absent the test reports that and
 /// returns without asserting anything. When present it reports per channel the mean absolute RGB difference,
-/// the mean absolute alpha difference and the share of pixels whose RGB differs by more than 8, to
-/// Golden/last-run.txt (gitignored) and to the test output. No threshold is asserted (S0b): the numbers come
-/// first, the threshold after. The test fails only on an exception or a missing fixture.
+/// the mean absolute alpha difference and the share of pixels whose RGB differs by more than 8, and (S0d) the
+/// same two numbers for the 5th component (the morph mask, Docs/BUMP-PASS.md), to Golden/last-run.txt
+/// (gitignored) and to the test output. No RGB/alpha threshold is asserted yet (S0b): the numbers come first,
+/// the threshold after. The 5th component is asserted (S0d): mean |d| &lt;= 4 and, unless the reference's 5th
+/// component is uniform, at most 5% of pixels with |d| &gt; 8. The test fails otherwise, on an exception, or
+/// on a missing fixture.
 /// </summary>
 public class GoldenTests
 {
@@ -82,7 +85,8 @@ public class GoldenTests
         var refusals = results.FirstOrDefault()?.Fidelity.Refusals ?? Array.Empty<string>();
         report.AppendLine($"fidelity refusals: {(refusals.Count == 0 ? "none" : string.Join("; ", refusals))}");
         report.AppendLine();
-        report.AppendLine("channel  meanAbsRGB  meanAbsA  pctRGB>8   ours(WxH,alpha)   reference(WxH,alpha)   reference-uuid");
+        report.AppendLine("channel  meanAbsRGB  meanAbsA  pctRGB>8   meanAbsM  pctM>8  M-ref        ours(WxH,alpha)   reference(WxH,alpha)   reference-uuid");
+        var maskFailures = new List<string>();
 
         var compared = 0;
         foreach (var (key, ch) in ChannelKeys)
@@ -105,8 +109,26 @@ public class GoldenTests
             var meanRgb = sumRgb / (3.0 * n);
             var meanA = sumA / (double)n;
             var pct = 100.0 * over8 / n;
-            report.AppendLine(string.Format(CultureInfo.InvariantCulture, "{0,-8} {1,10:F2} {2,9:F2} {3,9:F2}%   {4,-17} {5,-22} {6}",
-                key, meanRgb, meanA, pct, $"{mine.W}x{mine.H},{(mine.HasAlpha ? "a" : "-")}", $"{golden.W}x{golden.H},{(golden.HasAlpha ? "a" : "-")}", goldenId));
+
+            // the 5th component: ours (always present) against the reference's (present on every viewer bake)
+            if (a.Mask is null) throw new InvalidOperationException($"our {ch} bake has no 5th component");
+            if (b.Mask is null) throw new InvalidOperationException($"reference {ch} bake {goldenId} has no 5th component");
+            long sumM = 0, overM = 0; int refMin = 255, refMax = 0;
+            for (var i = 0; i < n; i++)
+            {
+                var d = Math.Abs(a.Mask[i] - b.Mask[i]);
+                sumM += d; if (d > 8) overM++;
+                if (b.Mask[i] < refMin) refMin = b.Mask[i]; if (b.Mask[i] > refMax) refMax = b.Mask[i];
+            }
+            var meanM = sumM / (double)n;
+            var pctM = 100.0 * overM / n;
+            var uniform = refMax - refMin <= 2;   // a flat reference mask (no morph-mask layer worn): lossy coding jitters it by a level or two
+            var mRef = uniform ? $"uniform({refMin})" : $"{refMin}..{refMax}";
+            if (meanM > 4.0) maskFailures.Add($"{key}: mean |dM| {meanM:F2} > 4.0");
+            if (!uniform && pctM > 5.0) maskFailures.Add($"{key}: {pctM:F2}% pixels |dM| > 8 exceeds 5%");
+
+            report.AppendLine(string.Format(CultureInfo.InvariantCulture, "{0,-8} {1,10:F2} {2,9:F2} {3,9:F2}% {4,10:F2} {5,7:F2}% {6,-12} {7,-17} {8,-22} {9}",
+                key, meanRgb, meanA, pct, meanM, pctM, mRef, $"{mine.W}x{mine.H},{(mine.HasAlpha ? "a" : "-")}", $"{golden.W}x{golden.H},{(golden.HasAlpha ? "a" : "-")}", goldenId));
             compared++;
         }
         report.AppendLine();
@@ -116,9 +138,11 @@ public class GoldenTests
             foreach (var line in r.Fidelity.Notes) report.AppendLine($"    {line}");
         }
 
+        if (maskFailures.Count > 0) report.AppendLine($"5th-component assertions FAILED: {string.Join("; ", maskFailures)}");
         var text = report.ToString();
         File.WriteAllText(Path.Combine(dir, "last-run.txt"), text);
         _out.WriteLine(text);
         Assert.Equal(manifest.Goldens.Count, compared);
+        Assert.True(maskFailures.Count == 0, string.Join("; ", maskFailures));
     }
 }
