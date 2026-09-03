@@ -192,6 +192,9 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WebRtcVoiceRegionModule.Tests", "Tests\WebRtcVoiceRegionModule.Tests\WebRtcVoiceRegionModule.Tests.csproj", "{27B51392-6ED6-41A7-91AF-9BBB22E643B1}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Region.ClientStack.LindenCaps.Tests", "Tests\OpenSim.Region.ClientStack.LindenCaps.Tests\OpenSim.Region.ClientStack.LindenCaps.Tests.csproj", "{8146CFBE-D65C-4D64-B84C-2D79770A332C}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSimNGC.Appearance.Baking", "Source\OpenSimNGC.Appearance.Baking\OpenSimNGC.Appearance.Baking.csproj", "{1A454325-0AC9-4158-94D5-BAD66FA0B27A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSimNGC.Appearance.Baking.Tests", "Source\OpenSimNGC.Appearance.Baking.Tests\OpenSimNGC.Appearance.Baking.Tests.csproj", "{A1164CB7-B299-4582-8450-6CBC12150FA4}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -1227,6 +1230,30 @@ Global
 		{8146CFBE-D65C-4D64-B84C-2D79770A332C}.Release|x64.Build.0 = Release|Any CPU
 		{8146CFBE-D65C-4D64-B84C-2D79770A332C}.Release|x86.ActiveCfg = Release|Any CPU
 		{8146CFBE-D65C-4D64-B84C-2D79770A332C}.Release|x86.Build.0 = Release|Any CPU
+		{1A454325-0AC9-4158-94D5-BAD66FA0B27A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1A454325-0AC9-4158-94D5-BAD66FA0B27A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1A454325-0AC9-4158-94D5-BAD66FA0B27A}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{1A454325-0AC9-4158-94D5-BAD66FA0B27A}.Debug|x64.Build.0 = Debug|Any CPU
+		{1A454325-0AC9-4158-94D5-BAD66FA0B27A}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{1A454325-0AC9-4158-94D5-BAD66FA0B27A}.Debug|x86.Build.0 = Debug|Any CPU
+		{1A454325-0AC9-4158-94D5-BAD66FA0B27A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1A454325-0AC9-4158-94D5-BAD66FA0B27A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1A454325-0AC9-4158-94D5-BAD66FA0B27A}.Release|x64.ActiveCfg = Release|Any CPU
+		{1A454325-0AC9-4158-94D5-BAD66FA0B27A}.Release|x64.Build.0 = Release|Any CPU
+		{1A454325-0AC9-4158-94D5-BAD66FA0B27A}.Release|x86.ActiveCfg = Release|Any CPU
+		{1A454325-0AC9-4158-94D5-BAD66FA0B27A}.Release|x86.Build.0 = Release|Any CPU
+		{A1164CB7-B299-4582-8450-6CBC12150FA4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1164CB7-B299-4582-8450-6CBC12150FA4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1164CB7-B299-4582-8450-6CBC12150FA4}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A1164CB7-B299-4582-8450-6CBC12150FA4}.Debug|x64.Build.0 = Debug|Any CPU
+		{A1164CB7-B299-4582-8450-6CBC12150FA4}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{A1164CB7-B299-4582-8450-6CBC12150FA4}.Debug|x86.Build.0 = Debug|Any CPU
+		{A1164CB7-B299-4582-8450-6CBC12150FA4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1164CB7-B299-4582-8450-6CBC12150FA4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1164CB7-B299-4582-8450-6CBC12150FA4}.Release|x64.ActiveCfg = Release|Any CPU
+		{A1164CB7-B299-4582-8450-6CBC12150FA4}.Release|x64.Build.0 = Release|Any CPU
+		{A1164CB7-B299-4582-8450-6CBC12150FA4}.Release|x86.ActiveCfg = Release|Any CPU
+		{A1164CB7-B299-4582-8450-6CBC12150FA4}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -1324,6 +1351,8 @@ Global
 		{7E4B0395-81A7-4233-82D6-D267BD832F37} = {6187B41A-47CB-4477-BF79-BA4FA10B3E54}
 		{27B51392-6ED6-41A7-91AF-9BBB22E643B1} = {7F5EC7C6-FD99-4084-8530-5D3F28D6D7C0}
 		{8146CFBE-D65C-4D64-B84C-2D79770A332C} = {7F5EC7C6-FD99-4084-8530-5D3F28D6D7C0}
+		{1A454325-0AC9-4158-94D5-BAD66FA0B27A} = {E886CEB5-B01D-411F-A7A0-72AA1B71761D}
+		{A1164CB7-B299-4582-8450-6CBC12150FA4} = {7F5EC7C6-FD99-4084-8530-5D3F28D6D7C0}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {A40AD54B-8BC7-41E4-B241-19B59EA65D2A}
