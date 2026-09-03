@@ -21,7 +21,10 @@ public static class J2kCodec
         public bool SingleTile => TileCount == 1;
     }
 
-    /// <summary>Decode a J2C codestream or JP2 file to planar RGBA. 1 component = grey, 2 = grey+alpha, 3 = RGB, 4 = RGBA.</summary>
+    /// <summary>
+    /// Decode a J2C codestream or JP2 file to planar RGBA. 1 component = grey, 2 = grey+alpha, 3 = RGB,
+    /// 4 = RGBA, 5 = RGBA plus the legacy bump channel a viewer appends to its own bakes (dropped).
+    /// </summary>
     /// <exception cref="ArgumentException">If the bytes are not a decodable JPEG 2000 image.</exception>
     public static RgbaPlanes Decode(byte[] data)
     {
@@ -32,7 +35,7 @@ public static class J2kCodec
         using (img)
         {
             int w = img.Width, h = img.Height, n = w * h, c = img.NumberOfComponents;
-            var hasAlpha = c is 2 or 4;
+            var hasAlpha = c == 2 || c >= 4;
             var p = new RgbaPlanes(w, h, hasAlpha);
             byte[] Comp(int i) { var b = img.GetComponentBytes(i); return b.Length == n ? b : throw new ArgumentException($"JPEG 2000 component {i} has {b.Length} samples, expected {n}"); }
             if (c >= 3)
