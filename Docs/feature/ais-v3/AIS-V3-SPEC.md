@@ -1,0 +1,222 @@
+# AIS v3 — the surface the LL viewer drives
+
+**Authority (Ledger P-1):** the LL viewer source at `F:\viewer-develop` (viewer 26.1.1). Every row below cites
+the file and line it was read from. Files read, read-only: `indra/newview/llaisapi.h` (167 lines),
+`indra/newview/llaisapi.cpp` (1798 lines), the AIS call site in `indra/newview/llinventorymodel.cpp`
+(`:1025-1058`), and the AIS call sites `remove_inventory_item`, `remove_inventory_category`,
+`purge_descendents_of`, `slam_inventory_folder` in `indra/newview/llviewerinventory.cpp`. Anything that could
+not be pinned to a line in those files is marked **UNVERIFIED** and says which file would settle it.
+
+This document is the contract every A-session implements. Later sessions do not open the viewer tree.
+
+Cap names: `InventoryAPIv3` (`llaisapi.cpp:48`) and `LibraryAPIv3` (`:49`). The viewer asks the seed cap for
+both (`AISAPI::getCapNames`, `:72-76`). HTTP timeout per request 180 s (`:50`). Maximum requested folder depth
+50 (`MAX_FOLDER_DEPTH_REQUEST`, `:58`).
+
+## 1a. Operations
+
+`{inv}` = the InventoryAPIv3 cap URL, `{lib}` = the LibraryAPIv3 cap URL. `tid` is a fresh random UUID per call
+(`LLUUID tid; tid.generate();`). Bodies are LLSD (XML on the wire is what the OpenSim side will accept and emit;
+the viewer's transport encoding is set in `llcorehttputil`, **UNVERIFIED** here).
+
+| # | Operation (`llaisapi.h`) | Verb | URL relative to the cap | Query | Body | Headers | Source |
+|---|---|---|---|---|---|---|---|
+| 1 | `CreateInventory(parentId, newInventory)` | POST | `{inv}/category/{parentId}` | `tid={uuid}` | `newInventory` map: `categories` (array of category maps) verified at `llinventorymodel.cpp:1035-1042`; `items` / `links` arrays **UNVERIFIED** (built in `llviewerinventory.cpp:1156,1370`, outside the permitted functions) | none | `llaisapi.cpp:99-143`, url `:115` |
+| 2 | `SlamFolder(folderId, newInventory)` | PUT | `{inv}/category/{folderId}/links` | `tid={uuid}` | `contents` as passed by the caller (`slam_inventory_folder`, `llviewerinventory.cpp:1776-1784`); shape **UNVERIFIED** (built by `LLAppearanceMgr`, not permitted): expected `{ "links": [ link maps ] }` | none | `llaisapi.cpp:145-180`, url `:161` |
+| 3 | `RemoveCategory(categoryId)` | DELETE | `{inv}/category/{categoryId}` | — | none | none | `:182-217`, url `:197` |
+| 4 | `RemoveItem(itemId)` | DELETE | `{inv}/item/{itemId}` | — | none | none | `:219-252`, url `:234` |
+| 5 | `CopyLibraryCategory(sourceId, destId, copySubfolders)` | COPY | `{lib}/category/{sourceId}` | `tid={uuid}` and, when `!copySubfolders`, the literal suffix `,depth=0` **appended to the tid value with a comma** (`url += ",depth=0"`, `:278`), i.e. `?tid=<uuid>,depth=0` | none | destination = `destId.asString()` (`:282`) passed as the `copyAndSuspend` destination argument (`:294`); that it travels as the HTTP `Destination` header is **UNVERIFIED** (`llcorehttputil.cpp` not permitted) | `:255-301`, url `:275` |
+| 6 | `PurgeDescendents(categoryId)` | DELETE | `{inv}/category/{categoryId}/children` | — | none | none | `:303-339`, url `:318` |
+| 7 | `UpdateCategory(categoryId, updates)` | PATCH | `{inv}/category/{categoryId}` | — | `updates` map of category fields (callers at `llviewerinventory.cpp:663,881,1455`, outside the permitted functions: field set **UNVERIFIED**) | none | `:341-374`, url `:355` |
+| 8 | `UpdateItem(itemId, updates)` | PATCH | `{inv}/item/{itemId}` | — | `updates` map of item fields (callers `:454,1422,1434`, **UNVERIFIED** field set) | none | `:376-409`, url `:391` |
+| 9 | `FetchItem(itemId, type)` | GET | `{inv|lib}/item/{itemId}` (`lib` when `type == LIBRARY`) | — | none | none | `:412-445`, url `:426` |
+| 10 | `FetchCategoryChildren(catId, type, recursive, depth)` | GET | `{inv|lib}/category/{catId}/children` | `depth=N` where N = 50 if `recursive`, else `min(depth, 50)` (`:463-474`) | none (the viewer keeps `{"depth": N}` locally as `request_body` for error handling, `:490`) | none | `:447-498` |
+| 11 | `FetchCategoryChildren(identifier, recursive, depth)` | GET | `{inv}/category/{identifier}/children` — `identifier` is any string, e.g. an alias | `depth=N` as above (`:527`) | none | none | `:500-549`, url `:514` |
+| 12 | `FetchCategoryCategories(catId, type, recursive, depth)` | GET | `{inv|lib}/category/{catId}/categories` | `depth=N` (`:578`) | none | none | `:551-599`, url `:565` |
+| 13 | `FetchCategorySubset(catId, specificChildren, type, recursive, depth)` | GET | `{inv|lib}/category/{catId}/children` | `depth=N&children={id1},{id2},...` (`:642-648`); the viewer warns above 2000 URL characters (`:651`) but still sends | none | none | `:601-678`, url `:628` |
+| 14 | `FetchCOF()` | GET | `{inv}/category/current/links` | — (local `depth` 0, `:709`, not on the URL) | none | none | `:680-714`, url `:692` |
+| 15 | `FetchCategoryLinks(catId)` | GET | `{inv}/category/{catId}/links` | — (local depth 0, `:745`) | none | none | `:716-751`, url `:728` |
+| 16 | `FetchOrphans()` | GET | `{inv}/orphans` | — | none | none | `:753-784`, url `:765` |
+
+Every operation first resolves the cap (`getInvCap()` / `getLibCap()`, `:79-97`); with no cap the callback fires
+with a null id and nothing is sent. Requests are coroutines throttled to 2048 in flight (`:54`, `:786-834`).
+
+The `simulate` query parameter mentioned in the session brief does **not** appear anywhere in `llaisapi.cpp`;
+the viewer never sends it. **UNVERIFIED** whether any other viewer code path adds it.
+
+## 1b. Aliases
+
+- `current` — the Current Outfit folder, used as `{inv}/category/current/links` by `FetchCOF` (`:692`). This is
+  the only alias literal in `llaisapi.cpp`. The string-identifier overload of `FetchCategoryChildren` (`:500-549`)
+  accepts any identifier, so `current/children` is a legal request shape; which callers use it is **UNVERIFIED**
+  (callers are outside the permitted files).
+- No other alias appears in the permitted files.
+
+## 1c. Response envelope
+
+Every response, success or error, goes through `AISUpdate` (`onUpdateReceived`, `:836-849` → `AISUpdate::doUpdate`).
+`parseUpdate` = `parseMeta` then `parseContent` (`:1094-1099`). The viewer distinguishes **fetch** commands
+(`FETCHITEM, FETCHCATEGORYCHILDREN, FETCHCATEGORYCATEGORIES, FETCHCATEGORYSUBSET, FETCHCOF, FETCHCATEGORYLINKS,
+FETCHORPHANS`, `:1028-1034`) from **mutations**; the difference matters for filtering below.
+
+### Meta keys (`parseMeta`, `:1101-1177`) — all top-level in the response map
+
+| Key | LLSD type | What the viewer does |
+|---|---|---|
+| `_categories_removed` | array of uuid | each known category: parent's descendent delta −1, id queued for deletion (`:1105-1120`) |
+| `_category_items_removed` | array of uuid | each known item: parent delta −1, queued for deletion (`:1123-1140`) |
+| `_removed_items` | array of uuid | same handling as `_category_items_removed` (`:1124`) |
+| `_broken_links_removed` | array of uuid | same handling (`:1142-1157`) |
+| `_created_items` | array of uuid | the set of item/link ids the viewer will accept from `_embedded` on a mutation (`:1159`); also drives per-id callbacks for `CREATEINVENTORY` (`:995-1004`) |
+| `_created_categories` | array of uuid | the set of category ids accepted from `_embedded` on a mutation (`:1162`); per-id callbacks for `CREATEINVENTORY` (`:984-993`) |
+| `_updated_category_versions` | map uuid → integer | the authoritative folder versions after the operation (`:1165-1176`); see §1e |
+
+Keys the session brief named that this viewer does **not** read: `_updated_items`, `_updated_categories`,
+`_removed_categories` — there is no reference to them in `llaisapi.cpp` (the removal key is
+`_categories_removed`). Emitting them is harmless; relying on them is wrong.
+
+### Content keys (`parseContent`, `:1179-1214`) — top-level
+
+| Condition | Handling |
+|---|---|
+| `linked_id` **and** `parent_id` present | the response itself is a link: `parseLink` (`:1185-1188`) |
+| else `item_id` **and** `parent_id` | the response is an item: `parseItem` (`:1189-1192`) |
+| `FETCHCATEGORYSUBSET` | the top-level category is ignored (incomplete); `_embedded` parsed at `depth-1` (`:1194-1202`) |
+| else `category_id` **and** `parent_id` | the response is a category: `parseCategory` (`:1203-1206`) |
+| else | `_embedded` parsed if present (`:1207-1213`) |
+
+Callback ids (`InvokeAISCommandCoro`, `:953-1011`): fetch-category commands and `COPYLIBRARYCATEGORY` return
+`category_id`; `FETCHITEM` returns `item_id`, overridden by `linked_id` if present ("Error message might contain an
+item_id", `:972-980`); `CREATEINVENTORY` fires once per `_created_categories` / `_created_items` entry.
+
+### `_embedded` (`parseEmbedded`, `:1484-1508`) — a map with up to five keys
+
+| Key | LLSD type | Where it appears | Handling |
+|---|---|---|---|
+| `categories` | map: category uuid string → category map | inside a category | `parseEmbeddedCategories` (`:1586-1604`): each parsed at `depth` |
+| `items` | map: item uuid string → item map | inside a category | `parseEmbeddedItems` (`:1554-1572`) |
+| `links` | map: link item uuid string → link map | inside a category | `parseEmbeddedLinks` (`:1523-1540`): each `parseLink` at `depth` |
+| `item` | single item map | inside a link | `parseEmbeddedItem` (`:1542-1552`) |
+| `category` | single category map | inside a link | `parseEmbeddedCategory` (`:1574-1584`) |
+
+**Links are a separate collection, not items.** A folder's `_embedded` carries `items` and `links` as sibling maps;
+a link's own `_embedded` may carry the linked `item` or `category`. On a mutation (non-fetch) response the viewer
+ignores any embedded item/link/category whose id is not listed in `_created_items` / `_created_categories`
+(`:1531-1534`, `:1547`, `:1562-1565`, `:1579`, `:1594-1597`); on a fetch it accepts everything.
+
+Descendent count (`parseDescendentCount`, `:1466-1482`): known only when `_embedded` has **all three** of
+`categories`, `links`, `items` (sum of their sizes), or, on a fetch of a `FT_CURRENT_OUTFIT` / `FT_OUTFIT` folder,
+when it has `links` alone (links-only folders). A folder returned without all three collections gets no
+descendent count and therefore no version (see §1e) — the viewer will keep re-fetching it.
+
+## 1d. Item, link and category maps as the viewer reads them
+
+Verified in the permitted files:
+
+| Object | Key | Type | Required | Source |
+|---|---|---|---|---|
+| item | `item_id` | uuid | yes (selects `parseItem`) | `:1189`, `:1217` |
+| item | `parent_id` | uuid | yes | `:1189`; a null parent puts the item in Lost And Found (`:1236`, `:1695-1706`) |
+| link | `linked_id` | uuid | yes (selects `parseLink`) | `:1185` |
+| link | `item_id`, `parent_id` | uuid | yes | `:1262`, `:1274` |
+| link | (permissions, sale info) | — | ignored: the viewer overwrites them with defaults (`:1278-1283`, `:1303-1307`) | |
+| category | `category_id` | uuid | yes | `:1203`, `:1328` |
+| category | `parent_id` | uuid | yes | `:1203` |
+| category | `version` | integer | optional; −1 = unknown | `:1332-1335`, `:1441-1445` |
+| category | `agent_id` | uuid | optional; owner of a newly created category (`:1358-1366`) | |
+| category | `_embedded` | map | optional | `:1379`, `:1460` |
+
+Everything else on an item, link or category is consumed by `LLViewerInventoryItem::unpackMessage(const LLSD&)` /
+`LLViewerInventoryCategory::unpackMessage(const LLSD&)` (`:1223`, `:1268`, `:1368`), which live in
+`indra/llinventory/llinventory.cpp` and `llviewerinventory.cpp` outside the permitted functions. The field set is
+therefore **UNVERIFIED** in this document. The keys a session must expect, to be confirmed against
+`llinventory.cpp` before A1 emits objects: item — `name`, `desc`, `type` (asset type string), `inv_type`, `asset_id`,
+`flags`, `created_at`, `permissions{base_mask, owner_mask, group_mask, everyone_mask, next_owner_mask, creator_id,
+owner_id, last_owner_id, group_id, is_owner_group}`, `sale_info{sale_type, sale_price}`, `thumbnail`; link — the
+same plus `linked_id`; category — `name`, `type_default`, `agent_id`, `version`, `thumbnail`. `unpackMessage`
+does **not** read `version` or descendent count for categories (`:1369` comment).
+
+## 1e. Version semantics
+
+- Folder versions arrive in two places: `version` on a category map (fetch and mutation responses) and
+  `_updated_category_versions` (mutation responses).
+- **Fetch:** `parseCategory` sets the local version from `version` only when the descendent count is known from
+  `_embedded` (§1c) and `depth >= 0` (`:1389-1407`); it refuses ("Got stale folder", `:1338-1348`) a category whose
+  `version` is lower than the version it already holds, and logs a stale-known-folder when the server's is higher
+  (`:1409-1416`, "Version was" `:1396`). A newly created category gets its version only with a known descendent count (`:1434-1447`).
+- **Mutation:** descendent deltas (±1 per created/removed child, `:1112`, `:1131`, `:1149`, `:1250`, `:1310`,
+  `:1450`) are applied only to categories listed in `_updated_category_versions` (`doUpdate`, `:1606-1650`:
+  "Skipping version increment for non-updated category"). Afterwards each listed category's local version is
+  **set to the server's value** ("the AIS version should be considered the true version", `:1757-1795`, set at `:1776`); a listed
+  version of −1 instead triggers a re-fetch with a 360 s expiry (`:1771-1790`).
+- **Consequence for the server:** every mutation must list, in `_updated_category_versions`, every folder whose
+  contents it changed (the parent of a created item/link/category; the old and new parent of a move; the parent
+  of a removed object; the slammed folder), with the post-operation version. A folder changed but not listed
+  leaves the viewer's descendent count and version stale.
+- Which folders each operation is expected to bump (from the accounting rules above): CreateInventory → the parent;
+  SlamFolder → the slammed folder (and each removed link's parent, which is the same folder); RemoveItem /
+  RemoveCategory → the removed object's parent; PurgeDescendents → the purged folder; UpdateItem / UpdateCategory
+  → the parent when the update moves the object, otherwise the object's own folder is listed with delta 0
+  (`:1245`, `:1298`, `:1427`); CopyLibraryCategory → the destination. Those are derived from the viewer's
+  accounting, not from an explicit table; the server rule in OpenSim is the data-layer increment recorded in
+  `S0a-VERIFICATION.md` V6.
+
+## 1f. HTTP status handling (`InvokeAISCommandCoro`, `:851-1011`)
+
+| Condition | Viewer behaviour |
+|---|---|
+| response body not an LLSD map | status forced to 500 "Malformed response contents" (`:882-885`); warn; the (non-map) result is still handed to `onUpdateReceived`, which finds nothing to do |
+| 410 Gone, `REMOVECATEGORY` | warn; `fetchDescendentsOf(parent)`; the local folder is **not** deleted (`:886-903`) |
+| 410 Gone, `REMOVEITEM` | warn; `fetchDescendentsOf(parent)`; local item deleted via `onObjectDeletedFromServer` (`:904-918`) |
+| 403 Forbidden, `FETCHCATEGORYCHILDREN` with `depth == 0` | notification `InventoryLimitReachedAISAlert` (first time) / `InventoryLimitReachedAIS`; warn "content is over limit" (`:920-935`) |
+| 403 Forbidden, `FETCHCATEGORYCHILDREN` with `depth > 0` | debug only: "recoverable by requesting with lower depth" (`:936-940`) — the caller is expected to retry with a smaller depth (retry logic outside the permitted files, **UNVERIFIED**) |
+| any other failure (4xx/5xx, timeout) | warn with status and pretty-printed body (`:942-943`); no retry in `llaisapi.cpp` (transport-level retries in `llcorehttputil`, **UNVERIFIED**) |
+| always, success or failure | `onUpdateReceived(result, type, body)` (`:946`): the body **is parsed as an update** even on error, so an error body must be a map and must not carry `item_id`/`category_id` + `parent_id` pairs it does not mean; then the completion callback fires at least once (`:953-1011`), with a null id unless the body carries the ids of §1c |
+
+What an error body should look like: an LLSD map. Nothing in the permitted files reads `error_code`,
+`error_description` or `message`; they are conventional and safe because they are ignored. The library returns
+them for logs.
+
+## 1g. The `isAvailable()` gate and its consequence
+
+`AISAPI::isAvailable()` (`:62-68`) is exactly `gAgent.getRegion()->isCapabilityAvailable("InventoryAPIv3")`: true
+as soon as the current region's seed-cap response contains a URL for `InventoryAPIv3`. Nothing else is checked
+(no version, no probe). The viewer requests that cap name on every seed (`:72-76`).
+
+Once true, the following go through AIS with **no fallback** (verified in the permitted functions):
+
+| Path | Behaviour when AIS available | Behaviour when not | Source |
+|---|---|---|---|
+| delete an item | `AISAPI::RemoveItem` | warns "Tried to use inventory without AIS API" and does **nothing** | `llviewerinventory.cpp:1497-1509` |
+| delete a category | `AISAPI::RemoveCategory` (no `isAvailable` check at all) | request fails at the cap lookup, callback null | `:1545-1568` |
+| purge a folder's descendents | `AISAPI::PurgeDescendents` | warns, does nothing | `:1630-1645` |
+| slam a folder's links (outfit changes) | `AISAPI::SlamFolder` (no check) | fails at cap lookup | `:1776-1784` |
+| create a category | `AISAPI::CreateInventory` | falls back to the legacy path below the `if` (`:1034`) | `llinventorymodel.cpp:1034-1042` |
+| fetch a category's descendents | `AISAPI::FetchCategoryChildren` (seen at `llviewerinventory.cpp:694,727`, function not in the permitted list) | legacy cap | **UNVERIFIED** detail |
+| background inventory fetch, item fetch, COF fetch, links, orphans, library copy | the remaining `AISAPI::Fetch*` / `CopyLibraryCategory` callers are in files not permitted this session | | **UNVERIFIED** |
+
+The consequence that matters: advertising `InventoryAPIv3` in the seed cap flips every path above at once. A
+partial implementation returns errors for the paths it lacks, and for delete/purge/slam the LL viewer has no other
+way to do them. Hence Ledger risk A-R1: partial AIS is worse than none.
+
+---
+
+# Tree state (HEAD `db7c746248`, branch `feature/ais-v3`)
+
+| # | Finding | file:line |
+|---|---|---|
+| T1 | **Seed-cap request path.** `BunchOfCaps.SeedCapRequest` reads the requested cap names, adds every one to `validCaps` (the `switch` at `:340-374` only sets flags; `default: break;` then `validCaps.Add(cstr)` at `:375` — no whitelist), then `m_HostCapsObj.GetCapsDetailsLLSDxml(validCaps, sb)` at `:380`. `Caps.GetCapsDetailsLLSDxml` (`Source/OpenSim.Capabilities/Caps.cs:202-222`) delegates to `CapsHandlers.GetCapsDetailsLLSDxml` (`Source/OpenSim.Capabilities/CapsHandlers.cs`, method body: for each requested name, emit a URL only if a simple handler or a request handler is registered under that name), then poll handlers and external handlers, likewise only if requested. **For a new cap to reach the viewer it must be (1) registered on the agent's `Caps` under the exact name (`caps.RegisterSimpleHandler(name, ISimpleStreamHandler)` `Caps.cs:196` or `RegisterHandler` `:190`), at `OnRegisterCaps` time (`Scene/EventManager.cs:819`, fired per agent `:2119`), and (2) requested by the viewer in the seed body.** The viewer requests `InventoryAPIv3` and `LibraryAPIv3` (§1g), so (2) is satisfied; registration is the only region-side act, and the module does it per agent from `OnRegisterCaps`, as `FetchInventory2Module.RegionLoaded` → `RegisterCaps` does (`Source/OpenSim.Region.ClientStack.LindenCaps/FetchInventory2Module.cs`, `RegionLoaded` subscribes, `RegisterFetchCap` registers a `SimpleOSDMapHandler` at `"/" + UUID.Random()`). | `Source/OpenSim.Region.ClientStack.LindenCaps/BunchOfCaps/BunchOfCaps.cs:323-384`; `Source/OpenSim.Capabilities/Caps.cs:190-199, 202-222`; `Source/OpenSim.Capabilities/CapsHandlers.cs` (`GetCapsDetailsLLSDxml`) |
+| T2 | **Current Outfit folder resolution:** `IInventoryService.GetFolderForType(userID, FolderType.CurrentOutfit)` (`Source/OpenSim.Services.Interfaces/IInventoryService.cs:68`); implemented by `XInventoryService.GetFolderForType` (`Source/OpenSim.Services.InventoryService/XInventoryService.cs:254`), which queries the user's folder of that type under the root; the folder is created at inventory creation (`:132-133`). Region-side call site that already does this: `AvatarFactoryModule.cs:1097` and `:1112`. The service is reached from a scene via `Scene.InventoryService` (a `LocalInventoryServicesConnector`, `RemoteXInventoryServicesConnector` or `HGInventoryBroker`, `Source/OpenSim.Region.CoreModules/ServiceConnectorsOut/Inventory/*.cs:41-43`). `FolderType.CurrentOutfit` = 46 (`SLUtil.cs:141,204` map it to `currentoutfitfolder`). | as listed |
+| T3 | **CreateInventoryCategory cap:** registered at `BunchOfCaps.cs:264-265`, handler `:1138`; creates `new InventoryFolderBase(folderID, folderName, m_AgentID, (short)folderType, parentID, 1)` at `:1200` and calls `m_Scene.InventoryService.AddFolder(folder)` at `:1201`. Parent version bump confirmed by S0a V6: `XInventoryService.AddFolder` (`:369-407`) → `m_Database.StoreFolder` → `MySqlFolderHandler.Store` (`Source/OpenSim.Data.MySQL/MySQLXInventoryData.cs:283-288`) → `IncrementFolderVersion(folder.parentFolderID)`. | `BunchOfCaps.cs:264-265, 1138, 1200-1201`; `MySQLXInventoryData.cs:283-288` |
+| T4 | **Where folder Version is read back:** `XInventoryService.GetFolder(principalID, folderID)` (`XInventoryService.cs:630-640`) → `ConvertToOpenSim(XInventoryFolder)` (`:677`: `Version = (ushort)folder.version`); `GetFolderContent` (`:296`) also fills `InventoryCollection.Version` (`:333`) and `InventoryCollection` carries `Version` and `Descendents` (`Source/OpenSim.Framework/InventoryCollection.cs:41-42`). The value is the DB column, so it is fresh on every call; nothing caches it region-side. | as listed |
+| T5 | **Link-aware fetch:** `IInventoryService` has none. Its surface (`IInventoryService.cs:46-200`): `GetFolderContent`, `GetMultipleFoldersContent`, `GetFolderItems`, `GetItem`, `GetMultipleItems`, `GetFolder`, plus the mutators. `InventoryCollection` is `Folders` + `Items` (links are items with `AssetType.Link`). The existing descendents cap resolves link targets itself: `FetchInvDescHandler.ProcessLinks` (`Source/OpenSim.Capabilities.Handlers/FetchInventory/FetchInvDescHandler.cs:424-460`) collects `AssetType.Link` items and calls `GetMultipleItems` for the targets. **The AIS module must do the same** (one `GetFolderContent` + one `GetMultipleItems` per folder), and must split links out of `Items` into the `_embedded.links` collection itself. | as listed |
+| T6 | **Existing inventory caps:** `FetchInventory2` / `FetchLib2` (`Source/OpenSim.Region.ClientStack.LindenCaps/FetchInventory2Module.cs`, `ISharedRegionModule`, config `[ClientStack.LindenCaps] Cap_FetchInventory2 = localhost`, registers a `SimpleOSDMapHandler("POST", "/" + UUID.Random(), ...)` per agent from `OnRegisterCaps`), `FetchInventoryDescendents2` / `WebFetchInventoryDescendents` (`WebFetchInvDescModule.cs`, a poll-service handler), `FetchLibDescModule.cs`; the request logic lives in `Source/OpenSim.Capabilities.Handlers/FetchInventory/{FetchInventory2Handler,FetchLib2Handler,FetchInvDescHandler}.cs` (`:41`, `:41`, `:42`) which are **plain classes with no shared base**: each is constructed with `(IInventoryService, agentID)` and exposes a request method. Modules are discovered through `PluginRegistration.RegisterPlugins` (`Source/OpenSim.Region.ClientStack.LindenCaps/PluginRegistration.cs:34-54`), not by reflection: a new module must be added there. There is no base class to reuse; the AIS module follows the same shape (module registers, handler class holds the logic) but puts the logic behind `IAisInventoryBackend` so Phase 2 can host it on Robust. | as listed |
+
+Home for the module: `Source/OpenSim.Region.ClientStack.LindenCaps/AIS/` (the project is named `LindenCaps`, not
+`Linden.Caps`; the brief's path does not exist). It sits beside `FetchInventory2Module.cs` because that is where
+every region-side inventory cap lives (T6), the project already references `OpenSim.Services.Interfaces` and the
+HTTP server, and `PluginRegistration.cs` is the discovery point. Tests go to a new project,
+`Tests/OpenSim.Region.ClientStack.LindenCaps.AIS.Tests/` (NUnit 4, in the solution): the existing
+`Tests/OpenSim.Region.ClientStack.LindenCaps.Tests` is not in `Tranquillity.sln` and does not compile at HEAD
+(`EventQueue/Tests/EventQueueTests.cs`, syntax errors; its csproj also pins package versions below
+`OpenSim.Tests.Common`), so it was left untouched.
