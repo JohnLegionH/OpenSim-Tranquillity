@@ -1,9 +1,15 @@
-# The 5th component of a baked texture ("bump" pass) — what the LL compositor actually does
+# The 5th component of a baked texture is the morph mask — bump layers are never rendered
+
+**In one sentence:** the LL compositor never renders `render_pass="bump"` layers into a bake
+(`lltexlayer.cpp:395` composites `RP_COLOR` layers only); the 5th component a viewer bake carries is the
+**morph mask** from `LLTexLayerSet::gatherMorphMaskAlpha` (`lltexlayer.cpp:460-472`), and that is what this
+library produces as `CompositeResult.MorphMask` and encodes as component 4.
 
 Authority (Ledger P-1): the LL viewer source, read read-only at `F:\viewer-develop` (viewer 26.1.1 per
 `indra/newview/VIEWER_VERSION.txt`): `indra/llappearance/lltexlayer.cpp`, `lltexlayer.h`,
-`lltexlayerparams.cpp`, and `indra/newview/character/avatar_lad.xml`. Line numbers below are from those
-files at that version. This document is the spec `TexLayerCompositor` follows for the 5th component.
+`lltexlayerparams.cpp`, `indra/newview/llviewertexlayer.cpp`, and `indra/newview/character/avatar_lad.xml`.
+Line numbers below are from those files at that version. This document is the spec `TexLayerCompositor`
+follows for the 5th component.
 
 ## 1. Finding: the bump layers are never rendered into a bake
 
@@ -51,10 +57,15 @@ void LLTexLayerSet::gatherMorphMaskAlpha(U8 *data, ...)        lltexlayer.cpp:46
 }
 ```
 
-The packing of RGB + alpha + this array into a 5-component image happens in
-`indra/newview/llviewertexlayer.cpp` (`LLViewerTexLayerSetBuffer::doUpload`), which is outside the files
-this session may read; the component order R, G, B, A(visibility), M(morph mask) is inferred from that
-code's known `"RGBHM"` comment and **confirmed empirically** by the five reference bakes above.
+The packing of RGB + alpha + this array into a 5-component image is **not in the 26.1.1 viewer**: its
+`indra/newview/llviewertexlayer.cpp` (353 lines) has no `LLViewerTexLayerSetBuffer::doUpload`, no J2C encode and
+no upload path at all — the LL viewer stopped uploading client bakes when SL's bake service took over, and
+only renders locally for its own display. The five-component reference bakes therefore come from a client
+that still carries the old upload path, which under P-1 is a capture tool, not an authority. The component
+order R, G, B, A(visibility), M(morph mask) is established **empirically** from the five reference bakes above
+(component 3 carries the eyelash visibility mask on the head; component 4 is the flat morph-mask value), and
+matches the historical LL packing (`"RGBHM"`) that the old upload path wrote. It cannot be cited to a line of
+the permitted viewer files.
 
 ### 2.1 Which layers contribute
 
@@ -82,15 +93,26 @@ contribute**; every other layer leaves `data` untouched. `mHasMorph` is set thro
 
 No other layer set has morph masks, so eyes, hair, skirt and the five extra bakes always carry 255.
 
-### 2.2 Which wearables contribute
+### 2.2 Which wearables contribute: template layers vs plain layers
 
-A template layer contributes once per worn wearable of its type (`LLTexLayerTemplate::gatherAlphaMasks`,
-`lltexlayer.cpp:1706-1714`, over `updateWearableCache()` `:1615-1637`). The layer's type is its local
-texture's wearable type, or, for a layer without a local texture such as `facialhair`, the single wearable
-type its colour/alpha parameters belong to (`LLTexLayerInterface::getWearableType`, `:842-880`); a layer
-whose parameters belong to several types, or to none, has no instances (`updateWearableCache` returns 0
-for `WT_INVALID`). `facialhair`'s parameters (1004–1012) belong to `hair`, so it contributes once per worn
-hair; `upper_clothes` once per worn shirt; `lower_pants` once per worn pants.
+A layer set holds two kinds of layer (`LLTexLayerSet::setInfo`, `lltexlayer.cpp:290-297`): a layer whose
+`isUserSettable()` is true becomes an `LLTexLayerTemplate`, any other a plain `LLTexLayer`. `isUserSettable()`
+is exactly `mLocalTexture != -1` (`lltexlayer.cpp:64`): **only layers with a `local_texture` are templates.**
+
+- A **template** layer is rendered once per worn wearable of its type: `LLTexLayerTemplate::render`
+  (`:1659-1689`) walks `updateWearableCache()` (`:1615-1637`, the worn wearables of `getWearableType()`), and
+  for each one calls `wearable->writeToAvatar` (`:1676`, so that wearable's parameters are current) and renders
+  that wearable's clone of the layer (`:1678`). Its morph mask likewise contributes once per instance
+  (`LLTexLayerTemplate::gatherAlphaMasks`, `:1706-1714`). `upper_clothes` (local texture `upper_shirt`) and
+  `lower_pants` (`lower_pants`) are templates.
+- A **plain** layer is rendered exactly once by `LLTexLayer::render` (`:1023-1200`) whatever is worn, with the
+  avatar's current parameter values — the values the worn wearables wrote in wear order, so the last-worn
+  wearable of a type wins — and its morph mask contributes once (`LLTexLayer::gatherAlphaMasks`,
+  `:1287-1290`). `facialhair` has no local texture and is a plain layer: with two hairs worn it is rendered
+  once, from the second hair's parameters, not once per hair.
+
+(`getWearableType`, `:842-880`, derives a texture-less layer's type from its parameters; it only matters for
+templates and for `getSkip`, since a plain layer never enumerates instances.)
 
 ### 2.3 What each contribution is: the layer's alpha mask
 
@@ -121,15 +143,17 @@ cached mask; `addAlphaMask` then renders it on demand (`:1518-1526`) with the sa
 ## 3. What the library does (`TexLayerCompositor.Bake`)
 
 1. `AvatarLad` parses `<morph_masks>` into `MorphMaskLayers[body_region] = { layer names }`.
-2. The colour pass computes each rendered layer instance's mask exactly as before (`ComputeMask`) and
-   caches it per (layer, instance), mirroring `mAlphaCache`.
+2. The colour pass renders a layer with a local texture once per worn wearable of its type and a layer
+   without one exactly once with the merged parameters (2.2), computing each rendered instance's mask
+   (`ComputeMask`) and caching it per (layer, instance), mirroring `mAlphaCache`.
 3. After the colour layers, `MorphMask` starts at 255 everywhere (`memset(data, 255)`). For each layer of
-   the set named in `MorphMaskLayers` that has alpha parameters, for each worn wearable of the layer's
-   type (2.2), the instance's mask (cached, or computed on demand with the same rules) is multiplied in
-   with `(m * (mask + 1)) >> 8`.
+   the set named in `MorphMaskLayers` that has alpha parameters: a template layer contributes once per worn
+   wearable of its type, a plain layer once; each contribution's mask (cached, or computed on demand with
+   the same rules) is multiplied in with `(m * (mask + 1)) >> 8`.
 4. Sets without morph layers, and the invisible-alpha short-circuit, yield 255 everywhere.
 5. `J2kCodec.EncodeBake` writes R, G, B, A, M as a five-component single-tile J2C; `Decode` exposes a
    fifth component as `RgbaPlanes.Mask`.
 
 Reference check (S0d golden run, Truly Bazar, 512): head 0 vs reference 1, all other channels 255 vs
-254 — the difference is the reference's lossy coding of the same constants.
+254 — the difference is the reference's lossy coding of the same constants. S0e: the plain-layer rule above
+replaced S0d's per-instance treatment of `facialhair`; Truly wears one hair, so her numbers are unchanged.

@@ -6,7 +6,7 @@ namespace OpenSimNGC.Appearance.Baking;
 /// The library's bake backend: wearable text in, JPEG 2000 bakes out. Wearables are parsed with
 /// <see cref="WearableParser"/>, textures decoded with <see cref="J2kCodec"/>, each channel composited by
 /// <see cref="TexLayerCompositor"/> at <see cref="BakeRequest.BakeSize"/>, encoded as a five-component single-tile
-/// codestream (RGB, visibility alpha, morph mask; Docs/BUMP-PASS.md) and hashed with
+/// codestream (RGB, visibility alpha, morph mask; Docs/MORPH-MASK-PASS.md) and hashed with
 /// <see cref="BakeHash"/>. Pure with respect to its inputs; no I/O.
 /// </summary>
 public sealed class SkiaBakeBackend : IBakeBackend

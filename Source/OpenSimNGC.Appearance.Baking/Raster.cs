@@ -17,7 +17,7 @@ public sealed class RgbaPlanes
     public readonly int W, H;
     public readonly byte[] R, G, B, A;
     public readonly bool HasAlpha;
-    /// <summary>A fifth 8-bit plane when the source carried one: the morph mask of a viewer bake (Docs/BUMP-PASS.md). Null otherwise.</summary>
+    /// <summary>A fifth 8-bit plane when the source carried one: the morph mask of a viewer bake (Docs/MORPH-MASK-PASS.md). Null otherwise.</summary>
     public byte[]? Mask;
 
     public RgbaPlanes(int w, int h, bool hasAlpha)

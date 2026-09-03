@@ -108,7 +108,7 @@ public sealed class AvatarLad
     public readonly Dictionary<string, List<int>> GlobalColors = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>
     /// The <c>&lt;morph_masks&gt;</c> block: per body_region, the layer names whose alpha mask also drives a mesh
-    /// morph. Only these layers contribute to a bake's 5th component (see Docs/BUMP-PASS.md §2.1).
+    /// morph. Only these layers contribute to a bake's 5th component (see Docs/MORPH-MASK-PASS.md §2.1).
     /// </summary>
     public readonly Dictionary<string, HashSet<string>> MorphMaskLayers = new(StringComparer.OrdinalIgnoreCase);
 

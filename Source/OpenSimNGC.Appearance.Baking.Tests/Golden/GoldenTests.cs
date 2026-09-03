@@ -15,7 +15,7 @@ namespace OpenSimNGC.Appearance.Baking.Tests.Golden;
 /// fetch-fixtures.sh into Golden/fixtures/ (gitignored); when they are absent the test reports that and
 /// returns without asserting anything. When present it reports per channel the mean absolute RGB difference,
 /// the mean absolute alpha difference and the share of pixels whose RGB differs by more than 8, and (S0d) the
-/// same two numbers for the 5th component (the morph mask, Docs/BUMP-PASS.md), to Golden/last-run.txt
+/// same two numbers for the 5th component (the morph mask, Docs/MORPH-MASK-PASS.md), to Golden/last-run.txt
 /// (gitignored) and to the test output. No RGB/alpha threshold is asserted yet (S0b): the numbers come first,
 /// the threshold after. The 5th component is asserted (S0d): mean |d| &lt;= 4 and, unless the reference's 5th
 /// component is uniform, at most 5% of pixels with |d| &gt; 8. The test fails otherwise, on an exception, or

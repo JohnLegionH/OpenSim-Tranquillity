@@ -43,7 +43,7 @@ public static class J2kCodec
             {
                 Array.Copy(Comp(0), p.R, n); Array.Copy(Comp(1), p.G, n); Array.Copy(Comp(2), p.B, n);
                 if (c >= 4) Array.Copy(Comp(3), p.A, n);
-                if (c >= 5) p.Mask = Comp(4);   // a viewer bake's morph mask (Docs/BUMP-PASS.md §2)
+                if (c >= 5) p.Mask = Comp(4);   // a viewer bake's morph mask (Docs/MORPH-MASK-PASS.md §2)
             }
             else
             {
@@ -81,7 +81,7 @@ public static class J2kCodec
 
     /// <summary>
     /// Encode a bake the way a viewer uploads one: five components R, G, B, A (visibility alpha) and M (the
-    /// morph mask, Docs/BUMP-PASS.md), single tile, same settings as <see cref="Encode"/>. A null mask is
+    /// morph mask, Docs/MORPH-MASK-PASS.md), single tile, same settings as <see cref="Encode"/>. A null mask is
     /// written as 255 everywhere, the value <c>gatherMorphMaskAlpha</c> starts from.
     /// </summary>
     public static byte[] EncodeBake(RgbaPlanes img, byte[]? morphMask, double quality = 0.85)

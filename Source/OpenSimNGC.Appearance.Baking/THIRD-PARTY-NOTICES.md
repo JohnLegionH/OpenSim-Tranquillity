@@ -48,7 +48,7 @@ Embedded unmodified as data resources; not compiled or linked.
 the 56 was re-verified byte for byte (SHA-256 below) against the viewer tree and found identical, so the viewer
 tree is the recorded source. `avatar_lad.xml` also names `head_wrinkles_highlights_alpha.tga`, which exists in
 neither the viewer tree nor the package; only a bump-pass layer references it and bump layers are never rendered
-into a bake (see `Docs/BUMP-PASS.md`), so nothing is affected.
+into a bake (see `Docs/MORPH-MASK-PASS.md`), so nothing is affected.
 
 | File | SHA-256 |
 |---|---|
