@@ -18,15 +18,15 @@ Living document. Update at every session close. **Date opened:** 2026-09-03
 
 ## 2. Open questions
 
-| ID | Question | Owner | Blocks |
-|---|---|---|---|
-| Q-1 | Does the inventory service bump COF folder `Version` on the UDP link create/delete path? | S0a | S3, S5 |
-| Q-2 | `avatar_lad.xml` provenance — vendor as embedded resource with LGPL notice (ADR-007)? | John | S0a |
-| Q-3 | Is the Legion `Client_OnAvatarNowWearing` empty-appearance wipe-loop fix present on Tranquillity? | S0a | flipping any production region |
-| Q-4 | Which J2K encoder does the tree expose (OpenJPEG via OpenMetaverse vs CoreJ2K/CSJ2K), and does it produce viewer-decodable J2C with the right layer count for 512 bakes? | S0a | S0b |
-| Q-5 | Does LibreMetaverse expose `RegionProtocols` from `RegionHandshake` to the gateway, or does the gateway need to read it off the raw packet? | S6 | S6 |
-| Q-6 | Does Firestorm on a bit-0 OpenSim region still send `AvatarNowWearing` on outfit change, or only the cap POST? | S5 | S5 |
-| Q-7 | Golden fixtures: which 6 (later 11) Firestorm bake asset UUIDs for Truly's stock outfit? | **John** | S0b's diff step |
+| ID | Question | Owner | Blocks | Status |
+|---|---|---|---|---|
+| Q-1 | Does the inventory service bump COF folder `Version` on the UDP link create/delete path? | S0a | S3, S5 | **Resolved S0a V6:** yes — data layer `IncrementFolderVersion` on item store/delete/move and folder store; cap `CreateInventoryCategory` bumps the parent too. Sim must read `Version` fresh via `GetFolder`. |
+| Q-2 | `avatar_lad.xml` provenance — vendor as embedded resource with LGPL notice (ADR-007)? | John | S0a | **Resolved S0a (`7dbc092d2e`):** vendored; provenance recorded in `Source/OpenSimNGC.Appearance.Baking/THIRD-PARTY-NOTICES.md` (viewer 26.1.1, wearable_definition_version 22, SHA-256). Viewer commit id not confirmable from `F:iewer-develop` (no `.git`). |
+| Q-3 | Is the Legion `Client_OnAvatarNowWearing` empty-appearance wipe-loop fix present on Tranquillity? | S0a | flipping any production region | **Resolved:** bug present (S0a V5, `AvatarFactoryModule.cs:1205` at `7dbc092d2e`), fixed in S0c `a5e88d72f1` — merge into existing wearables via `AvatarFactoryModule.MergeNowWearing`; unlisted slots retained, `UUID.Zero` still clears, save only on change. |
+| Q-4 | Which J2K encoder does the tree expose (OpenJPEG via OpenMetaverse vs CoreJ2K/CSJ2K), and does it produce viewer-decodable J2C with the right layer count for 512 bakes? | S0a | S0b | **Resolved S0a V7:** CoreJ2K.Skia 2.3.3.91 (plain NuGet, no OpenJPEG code); single-tile config required (`WithTiles(t => t.SetSize(w, h))`, upstream #201 found multi-tile output renders blank). Layer count for 512 bakes still to be confirmed in S0b. |
+| Q-5 | Does LibreMetaverse expose `RegionProtocols` from `RegionHandshake` to the gateway, or does the gateway need to read it off the raw packet? | S6 | S6 | open |
+| Q-6 | Does Firestorm on a bit-0 OpenSim region still send `AvatarNowWearing` on outfit change, or only the cap POST? | S5 | S5 | open |
+| Q-7 | Golden fixtures: which 6 (later 11) Firestorm bake asset UUIDs for Truly's stock outfit? | **John** | S0b's diff step | open |
 
 ## 3. Risks
 
@@ -48,6 +48,8 @@ Living document. Update at every session close. **Date opened:** 2026-09-03
 | 2026-09-02 | wire spike | (none) | Sim delivers others' bake UUIDs + VisualParams; AppearanceData omitted | — |
 | 2026-09-02 | web-viewer S11/S12 | 6 local | Gateway compositor exists, LibreMetaverse Baker disqualified | ADR-003 source |
 | 2026-09-03 | doc set | — | Addendum, Design Brief, ADR set, Build Plan, this Ledger | D-1, D-3, D-4 open |
+| 2026-09-03 | S0a | `29105ccc44`, `7dbc092d2e` | Verification pass V1–V10 (`S0a-VERIFICATION.md`); `OpenSimNGC.Appearance.Baking` skeleton + test project in `Tranquillity.sln`, `avatar_lad.xml` embedded; solution builds, 1/1 test green | Q-1 yes; Q-2, Q-4 resolved; Q-3 = wipe bug present → hard gate; libomv drift 1.1.6 vs upstream 1.1.7 |
+| 2026-09-03 | S0c | `a5e88d72f1` | `Client_OnAvatarNowWearing` merges into existing wearables; 4 new xunit tests green. `OpenSim.Region.CoreModules.Tests` has 35 pre-existing failures at clean `7dbc092d2e` (identical set before/after; NRE/null-asset in Flotsam, IAR, PrimCount, Moap, Serialiser, two legacy AvatarFactory tests) — environmental, not caused by S0c | Q-3 resolved; R-4 gate closed; pre-existing CoreModules test failures need a separate owner |
 
 ## 5. Cross-references
 
