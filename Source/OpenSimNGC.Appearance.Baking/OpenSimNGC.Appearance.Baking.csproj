@@ -23,6 +23,8 @@
     <AssemblyName>OpenSimNGC.Appearance.Baking</AssemblyName>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- CS1591: the compositor's data classes mirror avatar_lad.xml attributes one to one; the file-level docs cover them. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
     <IsPackable>true</IsPackable>
     <PackageId>OpenSimNGC.Appearance.Baking</PackageId>
     <Description>Server-side avatar bake compositor shared by OpenSim-Tranquillity regions and the NGC web-viewer gateway.</Description>
@@ -49,6 +51,12 @@
       LogicalName is fixed so consumers do not depend on folder-to-namespace mangling.
     -->
     <EmbeddedResource Include="Data\avatar_lad.xml" LogicalName="OpenSimNGC.Appearance.Baking.Data.avatar_lad.xml" />
+    <!--
+      The 56 character images (parameter masks, skin base, eye whites, aux base) avatar_lad.xml names by file,
+      from the Linden Lab viewer's character/ directory (see THIRD-PARTY-NOTICES.md). Resource names are
+      OpenSimNGC.Appearance.Baking.Data.character.<file>.
+    -->
+    <EmbeddedResource Include="Data\character\*.tga" LogicalName="OpenSimNGC.Appearance.Baking.Data.character.%(Filename)%(Extension)" />
     <None Include="THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="" />
   </ItemGroup>
 

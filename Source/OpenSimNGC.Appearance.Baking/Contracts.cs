@@ -10,7 +10,7 @@ namespace OpenSimNGC.Appearance.Baking;
 /// <param name="AssetId">Asset id of the wearable asset.</param>
 /// <param name="WearableType">
 /// Wearable type index as used on the wire and in <c>avatar_lad.xml</c>
-/// (0 = shape, 1 = skin, 2 = hair, 3 = eyes, 4 = shirt, 5 = pants, ...).
+/// (0 = shape, 1 = skin, 2 = hair, 3 = eyes, 4 = shirt, 5 = pants, ...; see <see cref="WearableKind"/>).
 /// </param>
 /// <param name="RawText">Full text of the wearable asset, unparsed.</param>
 public sealed record WearableInput(UUID AssetId, int WearableType, string RawText);
@@ -27,16 +27,17 @@ public sealed record TextureInput(UUID TextureId, byte[] J2kBytes);
 /// Everything one bake run needs. The request is complete and self-contained:
 /// the compositor performs no I/O and no asset fetches of its own.
 /// </summary>
-/// <param name="Wearables">The wearables currently worn, in any order.</param>
+/// <param name="Wearables">The wearables currently worn, in wear order (a later wearable of the same type is on top).</param>
 /// <param name="VisualParams">
-/// Visual parameter values keyed by parameter id, after wearable and shape
-/// values have been merged by the caller. Values are in the parameter's native
-/// range from <c>avatar_lad.xml</c>, not the 0..255 wire encoding.
+/// Visual parameter values keyed by parameter id, in the parameter's native range from
+/// <c>avatar_lad.xml</c> (not the 0..255 wire encoding). A worn wearable's own stored value always
+/// wins for the parameters its type owns; these fill in only what no worn wearable stores, and take
+/// part in <see cref="BakeHash"/>. May be empty.
 /// </param>
 /// <param name="Textures">
 /// Source textures keyed by texture id. Any texture a wearable references that
 /// is absent from this map is reported in <see cref="FidelityReport.MissingTextures"/>
-/// and rendered with the layer's fallback colour.
+/// and its layer is skipped.
 /// </param>
 /// <param name="BakeSize">Output edge size in pixels for every channel (ADR-008: 512 by default).</param>
 public sealed record BakeRequest(
@@ -50,24 +51,35 @@ public sealed record BakeRequest(
 /// (ADR-005: best-effort with a structured report; refusal only for corrupt input).
 /// </summary>
 /// <param name="UnsupportedLayers">
-/// Names of <c>avatar_lad.xml</c> layers that were skipped because the backend
-/// does not implement them (for example morph-masked or alpha-gradient layers).
+/// <c>avatar_lad.xml</c> layers of this channel that were skipped for a reason other than "nothing worn":
+/// a bundled resource or mask file missing, or an unknown local texture. Each entry is <c>layer: detail</c>.
 /// </param>
-/// <param name="MissingTextures">Texture ids a wearable referenced that were not supplied in the request.</param>
-/// <param name="Notes">Free-form diagnostics for logs; never parsed.</param>
+/// <param name="MissingTextures">Texture ids a wearable referenced in this channel's slots that were not supplied in the request.</param>
+/// <param name="Notes">One line per layer of the channel (<c>layer status: detail</c>) — the coverage evidence, for logs; never parsed.</param>
+/// <param name="Refusals">
+/// The fidelity gate's reasons for the whole outfit (the same list on every channel): wearable types the
+/// compositor does not composite, texture slots no requested channel draws, duplicate body parts, missing
+/// bundled resources. Empty means the outfit is one the compositor reproduces faithfully. The web-viewer
+/// gateway refuses to send an appearance when this is non-empty; the simulator decides per ADR-005.
+/// </param>
 public sealed record FidelityReport(
     IReadOnlyList<string> UnsupportedLayers,
     IReadOnlyList<UUID> MissingTextures,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes,
+    IReadOnlyList<string> Refusals)
+{
+    /// <summary>True when the gate found nothing to refuse and every referenced texture was supplied.</summary>
+    public bool IsFaithful => Refusals.Count == 0 && MissingTextures.Count == 0 && UnsupportedLayers.Count == 0;
+}
 
 /// <summary>
 /// One finished bake.
 /// </summary>
 /// <param name="Channel">Which output channel this is.</param>
-/// <param name="J2kBytes">The composited texture, JPEG 2000 encoded, ready to store as a texture asset.</param>
+/// <param name="J2kBytes">The composited texture, single-tile JPEG 2000 codestream, ready to store as a texture asset.</param>
 /// <param name="InputHash">
 /// Deterministic hash of the inputs that produced this bake, as computed by
-/// <see cref="BakeHash.Compute"/>. Stored alongside the asset so an unchanged
+/// <see cref="BakeHash.Compute(BakeChannel, BakeRequest)"/>. Stored alongside the asset so an unchanged
 /// input set can be recognised without re-baking (ADR-004 <c>BakeHash:&lt;channel&gt;</c>).
 /// </param>
 /// <param name="Fidelity">What was and was not reproduced.</param>
