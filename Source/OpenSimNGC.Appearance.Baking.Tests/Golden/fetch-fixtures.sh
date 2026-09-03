@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Populate Golden/fixtures/ (gitignored) with Truly Bazar's current wearables, the textures they
-# reference, and the five Firestorm golden bakes named in manifest.json.
+# reference, and the five reference bakes (LL compositor output, captured via the client-bake path
+# named in manifest.json) that manifest.json lists.
 #
 #   1. Truly's PrincipalID from the live grid DB (container legiongrid_mysql, database legiongrid).
 #      The root password is read from D:\legiongrid-runtime\.env (key LEGIONGRID_DB_ROOT_PW); it is

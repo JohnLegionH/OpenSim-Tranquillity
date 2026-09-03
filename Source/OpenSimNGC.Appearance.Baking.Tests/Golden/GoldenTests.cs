@@ -10,7 +10,8 @@ namespace OpenSimNGC.Appearance.Baking.Tests.Golden;
 
 /// <summary>
 /// The golden harness: Truly Bazar's stock-Library outfit baked by the library at 512 px, compared channel by
-/// channel against the Firestorm bakes captured on 2026-09-03 (manifest.json). Fixtures are fetched by
+/// channel against the reference bakes (LL compositor output, captured on 2026-09-03 via the client-bake
+/// path named in manifest.json). The authority is the LL compositor, never the capturing client. Fixtures are fetched by
 /// fetch-fixtures.sh into Golden/fixtures/ (gitignored); when they are absent the test reports that and
 /// returns without asserting anything. When present it reports per channel the mean absolute RGB difference,
 /// the mean absolute alpha difference and the share of pixels whose RGB differs by more than 8, to
@@ -24,7 +25,7 @@ public class GoldenTests
 
     private static string GoldenDir([CallerFilePath] string path = "") => Path.GetDirectoryName(path)!;
 
-    private sealed record Manifest(string Avatar, string Outfit, string Captured, int BakeSize, Dictionary<string, string> Goldens);
+    private sealed record Manifest(string Avatar, string Outfit, string Captured, [property: System.Text.Json.Serialization.JsonPropertyName("captured_via")] string? CapturedVia, int BakeSize, Dictionary<string, string> Goldens);
     private sealed record AvatarRow(int Type, int Index, string ItemId, string AssetId);
     private sealed record AvatarJson(string PrincipalId, List<AvatarRow> Wearables, List<int> VisualParams);
 
@@ -35,7 +36,7 @@ public class GoldenTests
     };
 
     [Fact]
-    public void trulys_stock_outfit_versus_firestorm_goldens()
+    public void trulys_stock_outfit_versus_reference_bakes()
     {
         var dir = GoldenDir();
         var fixtures = Path.Combine(dir, "fixtures");
@@ -74,14 +75,14 @@ public class GoldenTests
         var size = manifest.BakeSize;
 
         var report = new StringBuilder();
-        report.AppendLine($"golden run {DateTimeOffset.Now:O}  avatar={manifest.Avatar}  outfit={manifest.Outfit}  captured={manifest.Captured}  size={size}");
+        report.AppendLine($"reference-bake run {DateTimeOffset.Now:O}  avatar={manifest.Avatar}  outfit={manifest.Outfit}  reference=LL compositor  captured={manifest.Captured} via {manifest.CapturedVia ?? "?"}  size={size}");
         report.AppendLine($"wearables: {string.Join(", ", parsed.Select(p => $"{p.Kind}('{p.Name}', {p.Params.Count}p, {p.Textures.Count(t => t.Value != UUID.Zero && t.Value != BakeConstants.DefaultAvatarTexture)}t)"))}");
         report.AppendLine($"textures supplied: {textures.Count}");
         report.AppendLine($"channels baked: {string.Join(", ", results.Select(r => r.Channel))}");
         var refusals = results.FirstOrDefault()?.Fidelity.Refusals ?? Array.Empty<string>();
         report.AppendLine($"fidelity refusals: {(refusals.Count == 0 ? "none" : string.Join("; ", refusals))}");
         report.AppendLine();
-        report.AppendLine("channel  meanAbsRGB  meanAbsA  pctRGB>8   ours(WxH,alpha)   golden(WxH,alpha)   golden-uuid");
+        report.AppendLine("channel  meanAbsRGB  meanAbsA  pctRGB>8   ours(WxH,alpha)   reference(WxH,alpha)   reference-uuid");
 
         var compared = 0;
         foreach (var (key, ch) in ChannelKeys)
@@ -104,7 +105,7 @@ public class GoldenTests
             var meanRgb = sumRgb / (3.0 * n);
             var meanA = sumA / (double)n;
             var pct = 100.0 * over8 / n;
-            report.AppendLine(string.Format(CultureInfo.InvariantCulture, "{0,-8} {1,10:F2} {2,9:F2} {3,9:F2}%   {4,-17} {5,-19} {6}",
+            report.AppendLine(string.Format(CultureInfo.InvariantCulture, "{0,-8} {1,10:F2} {2,9:F2} {3,9:F2}%   {4,-17} {5,-22} {6}",
                 key, meanRgb, meanA, pct, $"{mine.W}x{mine.H},{(mine.HasAlpha ? "a" : "-")}", $"{golden.W}x{golden.H},{(golden.HasAlpha ? "a" : "-")}", goldenId));
             compared++;
         }
