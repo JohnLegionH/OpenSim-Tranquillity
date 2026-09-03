@@ -1201,36 +1201,113 @@ public class AvatarFactoryModule : IAvatarFactoryModule, INonSharedRegionModule
             return;
         }
 
-        // operate on a copy of the appearance so we don't have to lock anything yet
-        AvatarAppearance avatAppearance = new AvatarAppearance(sp.Appearance, false);
+        // S0c (Ledger R-4 / Q-3): merge the viewer's list INTO the existing wearables instead of
+        // starting from an empty set. Historically this built a fresh AvatarAppearance with
+        // copyWearables=false and filled only the slots the viewer mentioned, so any partial
+        // AgentIsNowWearing (incomplete inventory fetch, bot, gateway) silently deleted every
+        // wearable it did not list, and the loss was persisted and self-reinforcing.
+        //
+        // Semantics preserved from the old code for slots the viewer DID mention: the slot is
+        // replaced by exactly the listed items, and an ItemID of UUID.Zero contributes nothing
+        // (AvatarWearable.Add ignores Zero), so "type X, item Zero" still means "clear slot X".
+        // Only unlisted slots change behaviour: they now keep their current contents.
+        AvatarWearable[] merged = MergeNowWearing(sp.Appearance.Wearables, e.NowWearing, out bool changed);
 
-        foreach (AvatarWearingArgs.Wearable wear in e.NowWearing)
+        if (!changed)
         {
-            // If the wearable type is larger than the current array, expand it
-            if (avatAppearance.Wearables.Length <= wear.Type)
-            {
-                int currentLength = avatAppearance.Wearables.Length;
-                AvatarWearable[] wears = avatAppearance.Wearables;
-                Array.Resize(ref wears, wear.Type + 1);
-                for (int i = currentLength ; i <= wear.Type ; i++)
-                    wears[i] = new AvatarWearable();
-                avatAppearance.Wearables = wears;
-            }
-            avatAppearance.Wearables[wear.Type].Add(wear.ItemID, UUID.Zero);
+            // m_log.LogDebug("[AVFACTORY]: AgentIsNowWearing for {0} matches stored wearables; nothing to persist", client.AgentId);
+            return;
         }
-
-        avatAppearance.GetAssetsFrom(sp.Appearance);
 
         lock (m_setAppearanceLock)
         {
             // Update only those fields that we have changed. This is important because the viewer
             // often sends AvatarIsWearing and SetAppearance packets at once, and AvatarIsWearing
             // shouldn't overwrite the changes made in SetAppearance.
-            sp.Appearance.Wearables = avatAppearance.Wearables;
+            sp.Appearance.Wearables = merged;
             // We don't need to send the appearance here since the "iswearing" will trigger a new set
             // of visual param and baked texture changes. When those complete, the new appearance will be sent
             QueueAppearanceSave(client.AgentId);
         }
+    }
+
+    /// <summary>
+    /// Apply an AgentIsNowWearing list to an existing wearable set.
+    /// </summary>
+    /// <remarks>
+    /// Pure function; neither argument is mutated. Rules:
+    /// <list type="bullet">
+    /// <item>A wearable type that appears in <paramref name="nowWearing"/> is replaced by exactly the
+    /// listed items for that type (in order, capped by <see cref="AvatarWearable.Add"/>). Asset ids are
+    /// carried over from <paramref name="existing"/> for items already known in that slot; new items get
+    /// <see cref="UUID.Zero"/> and are resolved later on save, as before.</item>
+    /// <item>A listed item with <see cref="UUID.Zero"/> as its id contributes nothing, so a type listed only
+    /// with Zero ends up empty. This is the historical meaning of Zero ("not wearing this type").</item>
+    /// <item>A wearable type that does not appear in <paramref name="nowWearing"/> keeps its current items.</item>
+    /// </list>
+    /// </remarks>
+    /// <param name="existing">The agent's current wearables. May be null (treated as empty).</param>
+    /// <param name="nowWearing">The viewer's list.</param>
+    /// <param name="changed">True if the returned set differs from <paramref name="existing"/> in any item id.</param>
+    /// <returns>A new array; safe to assign to <see cref="AvatarAppearance.Wearables"/>.</returns>
+    public static AvatarWearable[] MergeNowWearing(
+        AvatarWearable[] existing, IEnumerable<AvatarWearingArgs.Wearable> nowWearing, out bool changed)
+    {
+        existing ??= Array.Empty<AvatarWearable>();
+
+        int length = existing.Length;
+        var listedTypes = new HashSet<int>();
+        foreach (AvatarWearingArgs.Wearable wear in nowWearing)
+        {
+            listedTypes.Add(wear.Type);
+            if (wear.Type >= length)
+                length = wear.Type + 1;
+        }
+
+        AvatarWearable[] merged = new AvatarWearable[length];
+        for (int i = 0; i < length; i++)
+        {
+            merged[i] = new AvatarWearable();
+            if (listedTypes.Contains(i))
+                continue;
+
+            // Unlisted slot: keep what the agent already has.
+            if (i < existing.Length && existing[i] != null)
+            {
+                for (int j = 0; j < existing[i].Count; j++)
+                    merged[i].Add(existing[i][j].ItemID, existing[i][j].AssetID);
+            }
+        }
+
+        foreach (AvatarWearingArgs.Wearable wear in nowWearing)
+        {
+            // Listed slot: exactly the listed items. Add() ignores UUID.Zero, so a Zero entry clears.
+            UUID assetID = UUID.Zero;
+            if (wear.Type < existing.Length && existing[wear.Type] != null)
+                assetID = existing[wear.Type].GetAsset(wear.ItemID);
+            merged[wear.Type].Add(wear.ItemID, assetID);
+        }
+
+        changed = !SameItemIds(existing, merged);
+        return merged;
+    }
+
+    private static bool SameItemIds(AvatarWearable[] a, AvatarWearable[] b)
+    {
+        int length = Math.Max(a.Length, b.Length);
+        for (int i = 0; i < length; i++)
+        {
+            int ca = (i < a.Length && a[i] != null) ? a[i].Count : 0;
+            int cb = (i < b.Length && b[i] != null) ? b[i].Count : 0;
+            if (ca != cb)
+                return false;
+            for (int j = 0; j < ca; j++)
+            {
+                if (a[i][j].ItemID != b[i][j].ItemID)
+                    return false;
+            }
+        }
+        return true;
     }
 
 /*
