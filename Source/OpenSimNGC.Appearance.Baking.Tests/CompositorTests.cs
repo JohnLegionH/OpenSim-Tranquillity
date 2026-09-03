@@ -237,7 +237,7 @@ public class CompositorTests
     [Fact]
     public void the_morph_mask_follows_gatherMorphMaskAlpha()
     {
-        // Docs/BUMP-PASS.md: 255 everywhere, times the mask of each worn instance of the set's morph-mask layers
+        // Docs/MORPH-MASK-PASS.md: 255 everywhere, times the mask of each worn instance of the set's morph-mask layers
         // (head: facialhair per hair; upper_body: upper_clothes per shirt; lower_body: lower_pants per pants).
         var lad = Lad;
         Assert.Equal(new[] { "facialhair" }, lad.MorphMaskLayers["head"].ToArray());
@@ -265,6 +265,46 @@ public class CompositorTests
         Assert.Equal(255, upper.MorphMask[torso.Y * 256 + torso.X]);
         Assert.Equal(0, upper.MorphMask[wrist.Y * 256 + wrist.X]);
         Assert.Contains(upper.Layers, l => l.Layer == "upper_clothes" && l.Status == "morph");
+    }
+
+    [Fact]
+    public void a_no_texture_layer_renders_once_with_the_last_worn_wearables_parameters()
+    {
+        // lltexlayer.cpp:64 isUserSettable() is mLocalTexture != -1; :290-297 only such layers become LLTexLayerTemplate (rendered
+        // once per worn wearable, :1659-1689). facialhair has no local texture, so it is a plain LLTexLayer: rendered ONCE, from the
+        // avatar's parameters, which each worn wearable's writeToAvatar overwrites in wear order — the last hair's values apply.
+        // Predicted: two hairs (moustache 0 then 1) == a single hair with moustache 1, != a single hair with moustache 0, and the
+        // facialhair layer appears exactly once in the report and once in the morph-mask gather.
+        var c = NewCompositor();
+        WornWearable Hair(float moustache) => Wear(WearableKind.Hair, new() { [114] = 0.5f, [1007] = moustache }, (TextureSlot.Hair, Flat(32, 32, 255, 255, 255, 0)));
+        List<WornWearable> Outfit(params WornWearable[] hairs)
+        {
+            var o = BaseOutfit(male: true);
+            // facialhair sits below head_bodypaint in avatar_lad.xml; a transparent skin texture lets it show (as in the makeup test)
+            o[1] = Wear(WearableKind.Skin, new() { [111] = 0.5f }, (TextureSlot.HeadBodypaint, Flat(64, 64, 200, 150, 120, 0)));
+            o.RemoveAt(2);   // the base hair
+            o.AddRange(hairs);
+            return o;
+        }
+        var first = c.Bake(BakeChannel.Head, Outfit(Hair(0f)), 128);
+        var second = c.Bake(BakeChannel.Head, Outfit(Hair(1f)), 128);
+        var both = c.Bake(BakeChannel.Head, Outfit(Hair(0f), Hair(1f)), 128);
+
+        string Diag(string tag, CompositeResult r) => $"{tag}: " + string.Join(" | ", r.Layers.Where(l => l.Layer == "facialhair").Select(l => $"{l.Status}: {l.Detail}")) + $" | mask max {r.MorphMask.Max()}";
+        var diag = Diag("first", first) + "\n" + Diag("second", second) + "\n" + Diag("both", both);
+        Assert.True(1 == both.Layers.Count(l => l.Layer == "facialhair" && l.Status is "drawn" or "skipped"), diag);
+        Assert.True(1 == both.Layers.Count(l => l.Layer == "facialhair" && l.Status == "morph"), diag);
+        Assert.True(both.Layers.Any(l => l.Layer == "facialhair" && l.Status == "morph" && l.Detail.StartsWith("once (plain layer)")), diag);
+
+        // colour pass: the moustache is drawn from the last hair's parameter
+        Assert.True(second.Layers.Any(l => l.Layer == "facialhair" && l.Status == "drawn"), diag);
+        Assert.True(first.Layers.Any(l => l.Layer == "facialhair" && l.Status == "skipped"), diag);
+        Assert.Equal(second.Image.R, both.Image.R); Assert.Equal(second.Image.G, both.Image.G); Assert.Equal(second.Image.B, both.Image.B);
+        Assert.NotEqual(first.Image.R, both.Image.R);
+        // morph mask (5th component): once, with the last hair's parameter — not the product of both hairs' masks (which would be 0)
+        Assert.Equal(second.MorphMask, both.MorphMask);
+        Assert.All(first.MorphMask, v => Assert.Equal(0, v));
+        Assert.True(both.MorphMask.Max() > 32, diag);   // non-zero (the mask is box-averaged 16:1 at this size, so its peak is well below 255)
     }
 
     [Fact]

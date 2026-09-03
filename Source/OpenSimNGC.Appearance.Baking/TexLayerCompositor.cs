@@ -22,7 +22,7 @@ public sealed class CompositeResult
     public bool Invisible;
     /// <summary>
     /// The bake's 5th component: LLTexLayerSet::gatherMorphMaskAlpha — 255 everywhere, multiplied by the alpha
-    /// mask of every worn instance of the set's morph-mask layers (Docs/BUMP-PASS.md §2).
+    /// mask of every contributing instance of the set's morph-mask layers (Docs/MORPH-MASK-PASS.md §2).
     /// </summary>
     public required byte[] MorphMask;
 }
@@ -422,10 +422,14 @@ public sealed class TexLayerCompositor
                     st.Instance = null;
                 }
             }
-            else RenderLayer(set, layer, st, canvas, size, null, TextureSlot.Unknown, null, reports);
+            else RenderLayer(set, layer, st, canvas, size, null, TextureSlot.Unknown, null, reports);   // no local texture: a plain LLTexLayer, rendered once with the avatar's merged parameters (lltexlayer.cpp:64, :290-297)
         }
 
-        // LLTexLayerSet::gatherMorphMaskAlpha (Docs/BUMP-PASS.md §2): 255, times each worn instance's mask for the set's morph-mask layers.
+        // LLTexLayerSet::gatherMorphMaskAlpha (Docs/MORPH-MASK-PASS.md §2): 255, times the mask of every contributing
+        // instance of the set's morph-mask layers. A layer with a local texture is an LLTexLayerTemplate and contributes
+        // once per worn wearable of its type (lltexlayer.cpp:1706-1714); a layer without one is a plain LLTexLayer
+        // (isUserSettable() is mLocalTexture != -1, lltexlayer.cpp:64, :290-297) and contributes exactly once, with the
+        // avatar's merged parameters (the last-worn wearable's values), whatever is worn.
         var morph = new byte[n];
         Array.Fill(morph, (byte)255);
         if (_lad.MorphMaskLayers.TryGetValue(region, out var morphLayers))
@@ -434,25 +438,30 @@ public sealed class TexLayerCompositor
             {
                 if (layer.Bump || !morphLayers.Contains(layer.Name) || layer.AlphaParams.Count == 0) continue;   // addAlphaMask: only hasAlphaParams() layers
                 var kind = LayerKind(layer);
-                if (kind == WearableKind.Invalid) { reports.Add(new LayerReport(layer.Name, "morph", "no wearable type: no instances", null)); continue; }
-                var instances = worn.Where(w => w.Kind == kind).ToList();
-                if (instances.Count == 0) { reports.Add(new LayerReport(layer.Name, "morph", $"no {kind} worn: mask left at 255", kind)); continue; }
+                List<WornWearable?> instances;
+                if (layer.LocalTexture is null) instances = new List<WornWearable?> { null };   // plain LLTexLayer: once
+                else
+                {
+                    if (kind == WearableKind.Invalid) { reports.Add(new LayerReport(layer.Name, "morph", "no wearable type: no instances", null)); continue; }
+                    instances = worn.Where(w => w.Kind == kind).Select(w => (WornWearable?)w).ToList();
+                    if (instances.Count == 0) { reports.Add(new LayerReport(layer.Name, "morph", $"no {kind} worn: mask left at 255", kind)); continue; }
+                }
                 foreach (var w in instances)
                 {
                     if (!st.Masks.TryGetValue((layer, w), out var mask))
                     {
-                        // not rendered in the colour pass (or rendered once for every instance): render its mask on demand, as addAlphaMask does
+                        // not rendered in the colour pass: render its mask on demand, as addAlphaMask does
                         st.Instance = w;
                         NetColor(st, layer, out var color);
                         RgbaPlanes? tex = null;
-                        if (layer.LocalTexture is not null && TextureByName.TryGetValue(layer.LocalTexture, out var slot)) w.Textures.TryGetValue(slot, out tex);
+                        if (w is not null && layer.LocalTexture is not null && TextureByName.TryGetValue(layer.LocalTexture, out var slot)) w.Textures.TryGetValue(slot, out tex);
                         mask = ComputeMask(layer, st, canvas.A, size, w, tex, color, new List<string>(), out _);
                         st.Instance = null;
-                        if (mask is null) { reports.Add(new LayerReport(layer.Name, "morph", $"{w.Label}: mask file missing; not applied", kind)); continue; }
+                        if (mask is null) { reports.Add(new LayerReport(layer.Name, "morph", $"{(w is null ? "" : w.Label + ": ")}mask file missing; not applied", kind)); continue; }
                     }
                     long sum = 0;
                     for (var i = 0; i < n; i++) { morph[i] = (byte)((morph[i] * (mask[i] + 1)) >> 8); sum += mask[i]; }
-                    reports.Add(new LayerReport(layer.Name, "morph", $"{w.Label}: morph mask *= layer mask (mean {sum / (double)n:F1})", kind));
+                    reports.Add(new LayerReport(layer.Name, "morph", $"{(w is null ? "once (plain layer)" : w.Label)}: morph mask *= layer mask (mean {sum / (double)n:F1})", w?.Kind ?? kind));
                 }
             }
         }
