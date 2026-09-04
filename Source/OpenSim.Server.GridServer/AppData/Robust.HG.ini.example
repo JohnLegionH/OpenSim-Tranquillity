@@ -233,6 +233,24 @@
     ;; entries can be unsecure url (host:port) if using ssl, direct login url if different, old grid url, etc
     ; GatekeeperURIAlias = "login.osgrid.org"
 
+[TrustedHypergrid]
+    ;# {Enabled} {} {Enable Trusted Hypergrid grid-to-grid trust?} {true false} false
+    ;; Trusted Hypergrid adds a signed identity to outbound Hypergrid calls and classifies
+    ;; inbound ones. It produces attribution and revocation, NOT prevention (ADR-008): a modified
+    ;; viewer defeats all server-side control for anything rendered on screen.
+    ;; When false (the default), no signing, no verification and no key load happen — behaviour is
+    ;; byte-identical to stock OpenSimulator. Unsigned and unverifiable callers are always accepted
+    ;; (Open tier); this never refuses a stock grid (ADR-005).
+    ; Enabled = false
+
+    ;# {PrivateKeyFile} {Enabled} {File holding this grid's Ed25519 private key (hex)} {} TrustedHypergridSecret.ini
+    ;; Stored OUTSIDE version control (see .gitignore) following the DirectDeliverySecret.ini pattern,
+    ;; as [TrustedHypergrid] PrivateKey = <hex>. Auto-generated on first run when Enabled=true and the
+    ;; file is absent; the fingerprint is logged at INFO on generation and on load. Never in the
+    ;; database, never committed. To share the file via config include, add an Include- line, e.g.:
+    ;;   Include-TrustedHypergrid = "TrustedHypergridSecret.ini"
+    ; PrivateKeyFile = "TrustedHypergridSecret.ini"
+
 [AccessControl]
     ;# {AllowedClients} {} {Bar (|) separated list of allowed clients} {}
     ;; Bar (|) separated list of viewers which may gain access to the regions.
@@ -796,6 +814,35 @@
     ;; UserTitle, UserFlags and the creation date. Uncomment and change to False
     ;; to block this info from being exposed.
     ; ShowUserDetailsInHGProfile = True
+
+    ;; Public address of this grid, used as the NAT fallback when verifying a
+    ;; local user who arrives at a foreign grid: the foreign simulator reports the
+    ;; client's public IP, and if it does not match the IP recorded at login it is
+    ;; accepted when it matches this grid's own public address (viewer and grid
+    ;; behind the same NAT). The address is obtained by resolving the GatekeeperURI
+    ;; hostname.
+    ;;
+    ;; By default that resolution goes through the operating system resolver. If
+    ;; this host resolves its OWN public hostname to a LAN address - a hosts-file
+    ;; entry, split-horizon DNS, a container's DNS, a router that lacks NAT
+    ;; loopback - the fallback compares a public IP against a private one and
+    ;; fails for every foreign arrival. The symptom is that hypergrid teleports
+    ;; out of this grid appear to succeed and the agent is then logged out on
+    ;; arrival (arrival with no scene, viewer disconnect, "logged out" on return),
+    ;; and the only trace is a DEBUG line in this log:
+    ;;   [USER AGENT SERVICE]: Comparing <public ip> with login IP <lan ip> and MyIP <lan ip>; result is False
+    ;;
+    ;; Set ExternalIPResolver to a public DNS server to resolve the hostname by
+    ;; querying that server directly, bypassing the OS resolver and any hosts-file
+    ;; override. Accepts "ip" or "ip:port". Leave commented to keep using the OS
+    ;; resolver.
+    ; ExternalIPResolver = "1.1.1.1"
+    ;;
+    ;; How often, in minutes, to re-resolve the hostname so a dynamic-DNS address
+    ;; change takes effect without restarting Robust. Applies to both resolution
+    ;; paths. 0 disables the refresh. Default 30. A failed lookup is logged as a
+    ;; warning and the previous address is kept.
+    ; ExternalIPRefreshMinutes = 30
 
 
 ; * The interface that local users get when they are in other grids.
