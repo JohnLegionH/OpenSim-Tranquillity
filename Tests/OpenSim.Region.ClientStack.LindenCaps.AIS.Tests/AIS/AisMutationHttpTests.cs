@@ -320,6 +320,44 @@ public class AisMutationHttpTests
         Assert.That(((OSDArray)body["_categories_removed"]).Select(o => o.AsUUID()), Is.EquivalentTo(new[] { outfit }));
     }
 
+    /// <summary>
+    /// A3 Part 0: the protected set is the viewer's own table, not a guess. Every type whose PROTECTED column is
+    /// false in LLFolderDictionary (llfoldertype.cpp:85-127) must be deletable, and every other type - including
+    /// one the viewer's table has never heard of, which lookupIsProtectedType defaults to protected (:154-162) -
+    /// must be refused.
+    /// </summary>
+    [TestCase((short)FolderType.None, false, TestName = "protected_set: FT_NONE is deletable")]
+    [TestCase((short)FolderType.Outfit, false, TestName = "protected_set: FT_OUTFIT is deletable")]
+    [TestCase((short)FolderType.MarketplaceListings, false, TestName = "protected_set: FT_MARKETPLACE_LISTINGS is deletable")]
+    [TestCase((short)FolderType.MarkplaceStock, false, TestName = "protected_set: FT_MARKETPLACE_STOCK is deletable")]
+    [TestCase((short)30, false, TestName = "protected_set: an ensemble type is deletable")]
+    [TestCase((short)FolderType.Clothing, true, TestName = "protected_set: FT_CLOTHING is protected")]
+    [TestCase((short)FolderType.Trash, true, TestName = "protected_set: FT_TRASH is protected")]
+    [TestCase((short)FolderType.CurrentOutfit, true, TestName = "protected_set: FT_CURRENT_OUTFIT is protected")]
+    [TestCase((short)FolderType.MyOutfits, true, TestName = "protected_set: FT_MY_OUTFITS is protected")]
+    [TestCase((short)FolderType.Favorites, true, TestName = "protected_set: FT_FAVORITE is protected")]
+    [TestCase((short)FolderType.Settings, true, TestName = "protected_set: FT_SETTINGS is protected")]
+    [TestCase((short)FolderType.Suitcase, true, TestName = "protected_set: a type the viewer's table lacks defaults to protected")]
+    public void the_protected_set_is_the_viewers_table(short folderType, bool expectRefused)
+    {
+        var b = Inventory();
+        var id = new UUID("44444444-4444-4444-8444-44444444444" + (folderType < 0 ? "0" : "1"));
+        b.AddFolder(id, Outfits, "subject", 1, folderType);
+
+        var (status, _) = Send(b, "DELETE", $"/category/{id}");
+
+        if (expectRefused)
+        {
+            Assert.That(status, Is.EqualTo((int)HttpStatusCode.Forbidden), $"type {folderType} must be protected");
+            Assert.That(b.Folders.ContainsKey(id), Is.True);
+        }
+        else
+        {
+            Assert.That(status, Is.EqualTo(200), $"type {folderType} must be deletable");
+            Assert.That(b.Folders.ContainsKey(id), Is.False);
+        }
+    }
+
     /// <summary>The verification survives: a service that really does nothing is a 500, not a false 200.</summary>
     [Test]
     public void a_delete_the_service_did_not_perform_is_reported_as_a_failure()

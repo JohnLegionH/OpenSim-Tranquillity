@@ -371,6 +371,46 @@ by the viewer at exactly `depth − depth = 0`, the last value that still versio
 removed. The handler additionally clamps a requested depth to 50, matching the viewer's own ceiling, so a client
 asking for more cannot make the region walk further than the viewer would ever use.
 
+## 1d-ter. Protected folders (A3), from the viewer's own table
+
+`LLFolderType::lookupIsProtectedType` looks the type up in `LLFolderDictionary` and returns that entry's
+PROTECTED flag, **returning `true` for any type the table does not contain**
+(`indra/llinventory/llfoldertype.cpp:154-162`). The table is at `:85-127`. So the honest way to express it is an
+allow-list of the unprotected types with a protected default — which is what the handler implements.
+
+**Unprotected** (PROTECTED = `false` in the table):
+
+| Viewer type | Line | This tree |
+|---|---|---|
+| `FT_NONE` | `:126` | `FolderType.None` (−1) — an ordinary user folder |
+| `FT_ENSEMBLE_START`..`FT_ENSEMBLE_END` | `:106-109` | no member; handled as the numeric range 26–45. The viewer's own comment says *"Not used"* |
+| `FT_OUTFIT` | `:112` | `FolderType.Outfit` — a saved outfit |
+| `FT_MARKETPLACE_LISTINGS` | `:122` | `FolderType.MarketplaceListings` |
+| `FT_MARKETPLACE_STOCK` | `:123` | `FolderType.MarkplaceStock` (the spelling is this tree's) |
+| `FT_MARKETPLACE_VERSION` | `:124` | **no equivalent** — falls through to the protected default; see below |
+
+**Protected**: everything else in the table — `FT_TEXTURE`, `FT_SOUND`, `FT_CALLINGCARD`, `FT_LANDMARK`,
+`FT_CLOTHING`, `FT_OBJECT`, `FT_NOTECARD`, `FT_ROOT_INVENTORY`, `FT_LSL_TEXT`, `FT_BODYPART`, `FT_TRASH`,
+`FT_SNAPSHOT_CATEGORY`, `FT_LOST_AND_FOUND`, `FT_ANIMATION`, `FT_GESTURE`, `FT_FAVORITE`, `FT_CURRENT_OUTFIT`,
+`FT_MY_OUTFITS`, `FT_MESH`, `FT_INBOX`, `FT_OUTBOX`, `FT_BASIC_ROOT`, `FT_SETTINGS`, `FT_MATERIAL`
+(`:87-102`, `:111`, `:113-121`, `:125`) — **and every type the table omits**.
+
+**Mismatches between the two trees.**
+
+- `FT_MARKETPLACE_VERSION` (55) is unprotected in the viewer but has no `FolderType` member here, so it takes the
+  protected default. Nothing in OpenSim creates it; the practical effect is nil.
+- `FolderType.Suitcase` (100) is this tree's, not the viewer's. The viewer's table has no entry, so
+  `lookupIsProtectedType` would return `true` for it — and so does the server rule. That is the right answer for
+  the HG suitcase folder independently.
+- The ensemble range exists in the viewer only as a numeric span with no member here; the server matches it
+  numerically.
+
+**What changed from A2b's guess.** A2b protected "the root, or any system type except `FolderType.Outfit`". The
+real table is **strictly more permissive**: it additionally leaves the marketplace types and the ensemble range
+deletable. No folder that A2b allowed became protected, so the change cannot break anything that worked; it only
+stops refusing four classes of folder the viewer never considered protected. The root remains refused, by type
+(`FT_ROOT_INVENTORY`) and structurally (a folder with no parent).
+
 ## 1e. Version semantics
 
 - Folder versions arrive in two places: `version` on a category map (fetch and mutation responses) and

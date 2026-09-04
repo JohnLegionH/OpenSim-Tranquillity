@@ -397,20 +397,47 @@ public sealed class AisHandler : SimpleStreamHandler
     }
 
     /// <summary>
-    /// A folder the server refuses to delete: the agent's root, or any folder carrying a system type other than
-    /// <see cref="FolderType.Outfit"/>. Mirrors the viewer's own <c>lookupIsProtectedType</c> gate
-    /// (<c>llviewerinventory.cpp:1557-1561</c>); the exact membership of that predicate is UNVERIFIED here because
-    /// <c>llfoldertype.cpp</c> is not a permitted read, so this is a deliberately conservative rule that still
-    /// leaves saved outfits and ordinary user folders deletable.
+    /// The folder types the viewer does **not** protect, taken from `LLFolderDictionary` itself
+    /// (`indra/llinventory/llfoldertype.cpp:85-127`): every `addEntry` whose PROTECTED column is `false`. They are
+    /// `FT_NONE`, the unused ensemble range `FT_ENSEMBLE_START`..`FT_ENSEMBLE_END`, `FT_OUTFIT`, and the three
+    /// marketplace types. Everything else in the table is protected, and — importantly —
+    /// `lookupIsProtectedType` **returns true for any type the table does not contain** (`:154-162`), which is why
+    /// this is expressed as an allow-list with a protected default.
+    /// </summary>
+    private static readonly HashSet<short> UnprotectedFolderTypes = new()
+    {
+        (short)FolderType.None,
+        (short)FolderType.Outfit,
+        (short)FolderType.MarketplaceListings,
+        (short)FolderType.MarkplaceStock,
+        // FT_MARKETPLACE_VERSION (55) is unprotected in the viewer's table but this tree's FolderType has no
+        // member for it, so it falls through to the protected default. It is a marketplace type no OpenSim grid
+        // creates; see the session decisions.
+    };
+
+    /// <summary>The unused ensemble range, entered as unprotected in the viewer's table (`llfoldertype.cpp:106-109`).</summary>
+    private const short EnsembleStart = 26;
+    private const short EnsembleEnd = 45;
+
+    /// <summary>
+    /// A folder the server refuses to delete. This is the viewer's own rule: `LLFolderType::lookupIsProtectedType`
+    /// looks the type up in `LLFolderDictionary` and returns that entry's PROTECTED flag, **defaulting to true for
+    /// an unknown type** (`indra/llinventory/llfoldertype.cpp:154-162`). The viewer refuses to send RemoveCategory
+    /// for such a folder (`llviewerinventory.cpp:1557-1561`), so this is defence in depth — but it also means a
+    /// type this tree has and the viewer does not, such as `FolderType.Suitcase`, is protected automatically,
+    /// which is the safe answer.
+    ///
+    /// <para>The agent's inventory root is refused as well. The viewer covers it by type
+    /// (`FT_ROOT_INVENTORY` is protected), and this adds the structural case of a folder with no parent, which is
+    /// either the root or an orphan and is not something a delete should walk into.</para>
     /// </summary>
     public static bool IsProtected(InventoryFolderBase folder)
     {
         if (folder is null) return true;
-        if (folder.ParentID.IsZero()) return true;                 // the inventory root
-        if (folder.Type < 0) return false;                         // FolderType.None: an ordinary user folder
-        return folder.Type != (short)FolderType.Outfit;
+        if (folder.ParentID.IsZero()) return true;                      // the inventory root, or an orphan
+        if (folder.Type >= EnsembleStart && folder.Type <= EnsembleEnd) return false;
+        return !UnprotectedFolderTypes.Contains(folder.Type);           // unknown types are protected, as the viewer's are
     }
-
     // ------------------------------------------------------------------ wire
 
     /// <summary>
