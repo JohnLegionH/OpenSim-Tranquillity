@@ -43,6 +43,28 @@ public enum AisOperation
     CopyCategory,
 }
 
+/// <summary>Classification of the operations, kept beside the enum so a new one is hard to forget.</summary>
+public static class AisOperations
+{
+    /// <summary>
+    /// True for the operations that change inventory — everything the viewer applies a delta envelope from. The
+    /// fetches are excluded deliberately: their bodies are whole inventory listings, and logging those would bury
+    /// the mutations that matter.
+    /// </summary>
+    public static bool IsMutation(AisOperation operation) => operation switch
+    {
+        AisOperation.CreateInventory or
+        AisOperation.SlamFolder or
+        AisOperation.RemoveCategory or
+        AisOperation.RemoveItem or
+        AisOperation.PurgeDescendents or
+        AisOperation.UpdateCategory or
+        AisOperation.UpdateItem or
+        AisOperation.CopyCategory => true,
+        _ => false,
+    };
+}
+
 /// <summary>
 /// One parsed request: what the viewer asked for, with the ids and query values the spec defines. Never holds
 /// anything scene-bound (Ledger P-2).

@@ -25,6 +25,12 @@ public sealed class CapturedLog : IDisposable, ILoggerFactory
         LoggerProvider.LoggerFactory = this;
     }
 
+    /// <summary>
+    /// The lowest level this capture reports as enabled. Set it above <see cref="LogLevel.Debug"/> to assert that
+    /// code guarded by <c>IsEnabled</c> does no work — which is how the A11 logging keeps its cost claim honest.
+    /// </summary>
+    public LogLevel Enabled { get; init; } = LogLevel.Trace;
+
     public IReadOnlyList<string> Warnings => Messages(LogLevel.Warning);
 
     public IReadOnlyList<string> Messages(LogLevel level)
@@ -54,11 +60,14 @@ public sealed class CapturedLog : IDisposable, ILoggerFactory
         public Recorder(CapturedLog owner) { m_owner = owner; }
 
         public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
-        public bool IsEnabled(LogLevel logLevel) => true;
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= m_owner.Enabled;
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception exception,
             Func<TState, Exception, string> formatter)
-            => m_owner.Record(logLevel, formatter(state, exception));
+        {
+            if (!IsEnabled(logLevel)) return;
+            m_owner.Record(logLevel, formatter(state, exception));
+        }
     }
 
     private sealed class NullScope : IDisposable

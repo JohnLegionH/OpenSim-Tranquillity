@@ -256,6 +256,12 @@ public sealed class AisHandler : SimpleStreamHandler
             var cof = AisInventory.GetCurrentOutfit(m_backend, m_agentId);
             if (cof is null) { WriteError(response, HttpStatusCode.NotFound, "the agent has no Current Outfit folder", route); return; }
             folderId = cof.ID;
+            // A11: the resolution, per request. The A7 WARN only fires when there is more than one candidate, so
+            // in the ordinary case nothing recorded which folder "current" meant — which is what made A10 have to
+            // infer it from the mutation URLs.
+            if (m_log.IsEnabled(LogLevel.Debug))
+                m_log.LogDebug("[AIS]: FetchCOF resolved \"current\" to {Folder} version {Version} for agent {Agent}",
+                    cof.ID, cof.Version, m_agentId);
         }
 
         var contents = AisInventory.GetContents(m_backend, m_agentId, folderId);
@@ -451,8 +457,8 @@ public sealed class AisHandler : SimpleStreamHandler
             return;
         }
 
-        if (categoryIds.Count > 0) envelope["_created_categories"] = categoryIds;
-        if (itemIds.Count > 0) envelope["_created_items"] = itemIds;
+        if (categoryIds.Count > 0) envelope[AisMutation.CreatedCategories] = categoryIds;
+        if (itemIds.Count > 0) envelope[AisMutation.CreatedItems] = itemIds;
         if (embeddedCategories.Count > 0 || embeddedItems.Count > 0)
         {
             var embedded = new OSDMap();
@@ -593,8 +599,8 @@ public sealed class AisHandler : SimpleStreamHandler
         }
 
         var envelope = new OSDMap();
-        if (categoryIds.Count > 0) envelope["_created_categories"] = categoryIds;
-        if (itemIds.Count > 0) envelope["_created_items"] = itemIds;
+        if (categoryIds.Count > 0) envelope[AisMutation.CreatedCategories] = categoryIds;
+        if (itemIds.Count > 0) envelope[AisMutation.CreatedItems] = itemIds;
         if (createdCategories.Count > 0 || createdItems.Count > 0 || createdLinks.Count > 0)
         {
             var embedded = new OSDMap();
@@ -692,7 +698,7 @@ public sealed class AisHandler : SimpleStreamHandler
         }
         if (createdIds.Count > 0)
         {
-            envelope["_created_items"] = createdIds;
+            envelope[AisMutation.CreatedItems] = createdIds;
             envelope[AisEnvelope.Embedded] = new OSDMap { [AisEnvelope.Links] = links };
         }
         foreach (var removed in outcome.Removed) AisMutation.ReportRemoved(envelope, AisMutation.RemovedItems, removed);
@@ -806,6 +812,27 @@ public sealed class AisHandler : SimpleStreamHandler
         response.StatusCode = (int)HttpStatusCode.OK;
         response.ContentType = "application/llsd+xml";
         response.RawBuffer = OSDParser.SerializeLLSDXmlBytes(body);
+        LogMutationResponse(route, (int)HttpStatusCode.OK, body);
+    }
+
+    /// <summary>
+    /// A11: what a mutation actually answered — the status, and the delta keys with their contents. A10 could not
+    /// tell a response the viewer rejected from a response that was never wrong, because nothing recorded what we
+    /// sent back; this is that record. Fetches are skipped deliberately: their bodies are whole inventory
+    /// listings and logging them would bury the mutations that matter.
+    ///
+    /// <para><b>Cost when DEBUG is off:</b> one enum switch and one <c>IsEnabled</c> call, both of which run
+    /// before anything is built. <see cref="AisMutation.SummariseDeltas"/> is the only allocating work and it sits
+    /// in the argument list of a call that is never reached unless both predicates pass — so a production log
+    /// level pays two predicates and nothing else. No interpolated string is ever constructed: the message is a
+    /// constant template and the values are passed as arguments.</para>
+    /// </summary>
+    private static void LogMutationResponse(AisRoute route, int status, OSDMap body)
+    {
+        if (!AisOperations.IsMutation(route.Operation)) return;
+        if (!m_log.IsEnabled(LogLevel.Debug)) return;
+        m_log.LogDebug("[AIS]: {Operation} -> {Status} {Deltas}",
+            route.Operation, status, AisMutation.SummariseDeltas(body));
     }
 
     /// <summary>The error body: an LLSD map with conventional keys the viewer ignores (spec §1f).</summary>
@@ -826,6 +853,12 @@ public sealed class AisHandler : SimpleStreamHandler
     {
         response.StatusCode = (int)status;
         response.ContentType = "application/llsd+xml";
-        response.RawBuffer = OSDParser.SerializeLLSDXmlBytes(ErrorBody(status, message, route));
+        var body = ErrorBody(status, message, route);
+        response.RawBuffer = OSDParser.SerializeLLSDXmlBytes(body);
+
+        // A failed mutation is the case A10 most needed and least had: the status and the reason, on the same
+        // line shape as a success, so a log grep shows both.
+        if (AisOperations.IsMutation(route.Operation) && m_log.IsEnabled(LogLevel.Debug))
+            m_log.LogDebug("[AIS]: {Operation} -> {Status} {Message}", route.Operation, (int)status, message);
     }
 }

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Text;
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
 using OpenSim.Framework;
@@ -101,6 +102,76 @@ public static class AisMutation
     public const string CategoriesRemoved = "_categories_removed";
     public const string RemovedItems = "_removed_items";
     public const string UpdatedCategoryVersions = "_updated_category_versions";
+    public const string CreatedItems = "_created_items";
+    public const string CreatedCategories = "_created_categories";
+    public const string CategoryItemsRemoved = "_category_items_removed";
+    public const string BrokenLinksRemoved = "_broken_links_removed";
+
+    /// <summary>
+    /// Every delta key of spec §1d-bis, in the order a reader wants them: what was made, then what went, then the
+    /// versions that gate both. The response logging walks this, so the log cannot drift from the contract.
+    /// </summary>
+    public static readonly string[] DeltaKeys =
+    {
+        CreatedCategories, CreatedItems,
+        CategoriesRemoved, RemovedItems, CategoryItemsRemoved, BrokenLinksRemoved,
+        UpdatedCategoryVersions,
+    };
+
+    /// <summary>
+    /// A one-line rendering of a mutation response's deltas, for the DEBUG log. Absent keys are omitted, so a
+    /// response that reported nothing prints as <c>no deltas</c> — which is the interesting case, because a
+    /// mutation that changed a folder and said nothing is exactly how a viewer's model goes stale (§1d-bis).
+    ///
+    /// <para><b>Only ever call this inside an <c>IsEnabled(LogLevel.Debug)</c> guard.</b> It allocates a builder
+    /// and walks the whole envelope; with DEBUG off none of it should run.</para>
+    /// </summary>
+    public static string SummariseDeltas(OSDMap body)
+    {
+        if (body is null || body.Count == 0) return "empty body";
+
+        var sb = new StringBuilder();
+
+        // the content object a response carries at top level, when it has one
+        foreach (var idKey in new[] { "category_id", "item_id" })
+            if (body.TryGetValue(idKey, out var id))
+                sb.Append(idKey).Append('=').Append(id.AsUUID()).Append(' ');
+
+        foreach (var key in DeltaKeys)
+        {
+            if (!body.TryGetValue(key, out var value)) continue;
+            sb.Append(key).Append('=');
+            switch (value)
+            {
+                case OSDArray array:
+                    sb.Append('[');
+                    for (var i = 0; i < array.Count; i++)
+                    {
+                        if (i > 0) sb.Append(',');
+                        sb.Append(array[i].AsUUID());
+                    }
+                    sb.Append(']');
+                    break;
+                case OSDMap map:      // _updated_category_versions: folder -> version
+                    sb.Append('{');
+                    var first = true;
+                    foreach (string folder in map.Keys)
+                    {
+                        if (!first) sb.Append(',');
+                        first = false;
+                        sb.Append(folder).Append(':').Append(map[folder].AsInteger());
+                    }
+                    sb.Append('}');
+                    break;
+                default:
+                    sb.Append(value.AsString());
+                    break;
+            }
+            sb.Append(' ');
+        }
+
+        return sb.Length == 0 ? "no deltas" : sb.ToString().TrimEnd();
+    }
 
     /// <summary>
     /// Adds <paramref name="folder"/>'s freshly read version to the response's
