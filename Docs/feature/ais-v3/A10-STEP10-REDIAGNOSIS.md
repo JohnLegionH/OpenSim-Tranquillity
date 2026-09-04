@@ -1,5 +1,25 @@
 # A10 — re-diagnosing step 10, after A9 removed the original explanation
 
+
+> **ANSWERED 2026-09-04 by A12/A13. Neither hypothesis in §5 was right.**
+>
+> - **H1 (a response delta the viewer rejected) is dead.** A11's response logging showed the deltas were correct
+>   and complete: `_removed_items` named the link and `_updated_category_versions` named the COF with its new
+>   version. Nothing was rejected because nothing was wrong.
+> - **H2 (the appearance record never updated) was wrong as framed.** The record was not simply never written —
+>   the wearables were correct, 7 entries and no dress. H2 assumed a *missing server behaviour*; the truth is a
+>   *lost write*.
+>
+> **The cause:** the detach happened and the **deferred appearance save was dropped** because the agent left
+> before the five-second timer fired — `AvatarFactoryModule.SaveAppearance`, `sp == null -> continue`. It predates
+> AIS, hits the legacy path equally, and is symmetric: wear loses the same way. Diagnosed in
+> `A12-ATTACHMENT-RECONCILIATION.md`, fixed in `dc4e417bb3`, closed in `A13-STEP10-CLOSED.md`.
+>
+> **What this document got right and should be kept for:** take-off is `DELETE /item` and not a slam; COF
+> resolution was never wrong; and the passing re-run it examined was not a clean repetition. Those three findings
+> stand. Its §5 hypotheses do not.
+
+
 **Date:** 2026-09-04. **Region:** Ebony. **Avatar:** Truly Bazar
 (`a7d2ff2e-dc32-44d8-aa61-3d22070a4964`). **Sources:** `OpenSim.Server.RegionServer20260904.log` and the live
 database, read-only.

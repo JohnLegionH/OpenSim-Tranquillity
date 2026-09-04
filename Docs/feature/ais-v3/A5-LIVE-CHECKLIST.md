@@ -141,9 +141,24 @@ service refused part of it; the response names the survivors.
 
 **Server side:** `grep "PUT /category" <log>`.
 
-### 10. Take off a garment (slam)
+### 10. Take off a garment
 
-**Do:** right-click a worn garment → Take Off.
+> **Wait about ten seconds in-world before relogging.** Otherwise this step races the appearance-save timer
+> instead of testing AIS.
+>
+> Taking something off updates the avatar's appearance record through a **deferred** write:
+> `AvatarFactoryModule.QueueAppearanceSave` schedules it `m_savetime` seconds out — five by default — and
+> `SaveAppearance` reads the `ScenePresence` only when the timer fires. Log out inside that window and, before
+> `dc4e417bb3`, the write was dropped silently and the garment came back on the next login. That is precisely
+> what happened on 2026-09-04: the detach was recorded at 14:09:35,408, the save was due at ~14:09:40.4, and the
+> avatar left at ~14:09:40.0.
+>
+> `dc4e417bb3` flushes the queue on close, so the fast path is now covered too — but a run that logs out
+> immediately is still testing the flush rather than the take-off. **Give it ten seconds and the test means what
+> it says.** Also note: take-off is `DELETE /item` (RemoveItem), **not** a slam; the viewer removes the COF link
+> and reconciles the attachment itself.
+
+**Do:** right-click a worn garment → Take Off. Wait ~10 seconds. Then relog.
 
 **Works:** it comes off, the rest of the outfit is untouched, and it stays off through a relog.
 

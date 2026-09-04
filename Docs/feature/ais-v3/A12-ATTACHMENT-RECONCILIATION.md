@@ -1,5 +1,17 @@
 # A12 — reconciling COF changes with attachment state: design brief
 
+
+> **CONFIRMED and ACTED ON, 2026-09-04 (A13).** §2's finding — the detach happened and the deferred appearance
+> save was lost — is the cause, and it is fixed: `dc4e417bb3` flushes a pending save on `OnRemovePresence`,
+> deployed in merge `bfb50070d8`. Checklist step 10 then passed on a clean run and is closed
+> (`A13-STEP10-CLOSED.md`).
+>
+> **Still outstanding from §4 and §5**, unaffected by that fix: the viewer skips its removal arm entirely when
+> `isFullyLoaded()` is false and never retries, and an offline agent has no viewer to reconcile at all — the case
+> Phase 2's Robust hosting makes normal. Option **B3, login-time reconciliation**, remains the standing
+> recommendation.
+
+
 **Design only. No behaviour changed this session.**
 
 > **The brief's premise does not survive the evidence, and the correction matters more than the design.**
