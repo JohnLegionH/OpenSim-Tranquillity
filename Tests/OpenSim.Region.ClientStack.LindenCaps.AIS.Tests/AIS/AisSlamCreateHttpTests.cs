@@ -410,4 +410,41 @@ public class AisSlamCreateHttpTests
         Assert.That(status, Is.EqualTo((int)HttpStatusCode.BadRequest));
         Assert.That(body["error_code"].AsInteger(), Is.EqualTo(400));
     }
+
+    /// <summary>
+    /// A5: the exact map asAISCreateCatLLSD sends (llinventory.cpp:1256-1276) - category_id null, parent_id,
+    /// type_default as an integer, name, and optionally thumbnail and favorite. Everything is accepted; the two
+    /// optional ones have no column in this tree and are dropped.
+    /// </summary>
+    [Test]
+    public void the_categories_create_map_is_accepted_exactly_as_the_viewer_sends_it()
+    {
+        var b = Inventory();
+
+        var (status, body) = Send(b, "POST", $"/category/{Clothing}", new OSDMap
+        {
+            ["categories"] = new OSDArray
+            {
+                new OSDMap
+                {
+                    ["category_id"] = UUID.Zero,          // null on a create: the server assigns it
+                    ["parent_id"] = Clothing,
+                    ["type_default"] = (int)FolderType.Outfit,
+                    ["name"] = "Beach Outfit",
+                    ["thumbnail"] = new OSDMap { ["asset_id"] = UUID.Random() },
+                    ["favorite"] = new OSDMap { ["toggled"] = true },
+                },
+            },
+        });
+
+        Assert.That(status, Is.EqualTo(200), "thumbnail and favorite must not make the create fail");
+        var created = ((OSDArray)body["_created_categories"]).Single().AsUUID();
+        Assert.That(created, Is.Not.EqualTo(UUID.Zero), "the server assigned an id rather than echoing the null one");
+
+        var folder = b.Folders[created];
+        Assert.That(folder.Name, Is.EqualTo("Beach Outfit"));
+        Assert.That(folder.Type, Is.EqualTo((short)FolderType.Outfit), "type_default is the integer folder type");
+        Assert.That(folder.ParentID, Is.EqualTo(Clothing));
+        Assert.That(folder.Owner, Is.EqualTo(Agent));
+    }
 }

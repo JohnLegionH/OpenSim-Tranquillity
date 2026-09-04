@@ -513,11 +513,14 @@ public sealed class AisHandler : SimpleStreamHandler
     ///   (<c>:1120-1121</c>) — so a stock viewer never sends it. This handler answers **501** for a non-empty
     ///   <c>items</c> array rather than creating an item with no asset behind it, which is what A3's guess did.
     ///   </item>
-    ///   <item><b><c>categories</c> — still UNVERIFIED.</b> The caller is
-    ///   <c>new_inventory["categories"] = [ cat.asAISCreateCatLLSD() ]</c>
-    ///   (<c>llinventorymodel.cpp:1036-1041</c>), but <c>asAISCreateCatLLSD</c> itself is in no permitted file. The
-    ///   accepted keys stay the category field set A-Q1 established from <c>fromLLSD</c>: <c>name</c> and
-    ///   <c>type</c>/<c>type_default</c>. Not guessed a second time.</item>
+    ///   <item><b><c>categories</c> — verified (A5).</b> <c>LLInventoryCategory::asAISCreateCatLLSD</c>
+    ///   (<c>indra/llinventory/llinventory.cpp:1256-1276</c>) emits exactly <c>category_id</c> (null on a create,
+    ///   since the viewer builds the category with <c>LLUUID::null</c>, <c>llinventorymodel.cpp:1038</c>),
+    ///   <c>parent_id</c>, <c>type_default</c> as an **integer** preferred type, <c>name</c>, and — only when set —
+    ///   <c>thumbnail</c>{<c>asset_id</c>} and <c>favorite</c>{<c>toggled</c>}. It is a base-class method, which is
+    ///   why A4 could not find it in <c>llviewerinventory.cpp</c>. Everything it sends is accepted;
+    ///   <c>thumbnail</c> and <c>favorite</c> have no column in this tree and are dropped, as they are for a
+    ///   PATCH.</item>
     /// </list>
     ///    /// </summary>
     private void CreateInventory(AisRoute route, OSDMap body, IOSHttpResponse response)
@@ -545,10 +548,13 @@ public sealed class AisHandler : SimpleStreamHandler
             foreach (var entry in categories)
             {
                 if (entry is not OSDMap m) continue;
+                // asAISCreateCatLLSD sends parent_id alongside the URL parent; honour it when it names a real
+                // folder, and fall back to the folder the POST addressed, as an item create does.
+                var bodyParent = m["parent_id"].AsUUID();
                 var folder = new InventoryFolderBase(UUID.Random(), m["name"].AsString() ?? "", m_agentId,
                     (short)(m.ContainsKey("type_default") ? m["type_default"].AsInteger()
                         : m.ContainsKey("type") ? m["type"].AsInteger() : -1),
-                    route.Id, 1);
+                    bodyParent.IsZero() ? route.Id : bodyParent, 1);
                 if (!m_backend.AddFolder(folder))
                 {
                     WriteError(response, HttpStatusCode.InternalServerError, $"could not create the category {folder.Name}", route);

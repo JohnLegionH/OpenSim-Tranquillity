@@ -183,6 +183,26 @@ and `sale_info` inner key sets are taken from that same file for the same reason
 unverifiable this session. Golden fixtures under
 `Tests/OpenSim.Region.ClientStack.LindenCaps.AIS.Tests/AIS/Fixtures` pin the result.
 
+### A-Q3 closed (A5): the categories-create map
+
+`LLInventoryCategory::asAISCreateCatLLSD` (`indra/llinventory/llinventory.cpp:1256-1276`) is what
+`llinventorymodel.cpp:1040` puts in `new_inventory["categories"]`. It is a **base-class** method, which is why A4
+could not find it in `llviewerinventory.cpp` and left this UNVERIFIED. It emits, in order:
+
+| Key | Line | Value |
+|---|---|---|
+| `category_id` | `:1259` | `mUUID` — **null on a create**: the viewer constructs the category with `LLUUID::null` (`llinventorymodel.cpp:1038`), so the server assigns the id |
+| `parent_id` | `:1260` | `mParentUUID` — the same folder the POST is addressed to |
+| `type_default` | `:1261-1262` | `(S8)mPreferredType`, an **integer** folder type |
+| `name` | `:1263` | |
+| `thumbnail` | `:1265-1268` | `{ asset_id: mThumbnailUUID }`, **only when non-null** |
+| `favorite` | `:1270-1273` | `{ toggled: mFavorite }`, **only when true** |
+
+Nothing else. This is the same key set `fromLLSD` reads (§1d) minus the read-only `type` alias, so A4's
+inference was right in substance; the one refinement A5 made is that the server now honours the body's
+`parent_id` when it names a folder, instead of always using the one in the URL. `thumbnail` and `favorite` are
+accepted and dropped: this tree's `InventoryFolderBase` has no column for either.
+
 ### A-Q3, partially resolved (A1): the link map the viewer builds
 
 `LLAppearanceMgr` builds a SlamFolder body as an **LLSD array** of link maps, each carrying exactly `name`,
