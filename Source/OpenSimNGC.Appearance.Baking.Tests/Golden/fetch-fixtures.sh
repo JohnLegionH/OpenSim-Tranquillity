@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
-# Populate Golden/fixtures/ (gitignored) with Truly Bazar's current wearables, the textures they
-# reference, and the five reference bakes (LL compositor output, captured via the client-bake path
-# named in manifest.json) that manifest.json lists.
+# Populate <set>/fixtures/ (gitignored) with one avatar's current wearables, the textures they
+# reference, and the reference bakes (LL compositor output, captured via the client-bake path
+# named in that set's manifest.json).
 #
-#   1. Truly's PrincipalID from the live grid DB (container legiongrid_mysql, database legiongrid).
+# Usage:  ./fetch-fixtures.sh [set-name]        (default: truly-stock)
+#
+# A "set" is a subdirectory here holding manifest.json (committed) and fixtures/ (not committed):
+#   truly-stock/   Truly Bazar, stock Library outfit          (S0b)
+#   aleric-max/    Aleric Fenwood, richer outfit              (S1b, Ledger Q-11)
+#
+# The avatar's name comes from the manifest's "avatar" field; the reference bake UUIDs from its
+# "goldens" map. Steps:
+#
+#   1. The avatar's PrincipalID from the live grid DB (container legiongrid_mysql, database legiongrid).
 #      The root password is read from D:\legiongrid-runtime\.env (key LEGIONGRID_DB_ROOT_PW); it is
 #      never written anywhere.
-#   2. Her Avatars rows ('Wearable <type>:<index>' = itemID:assetID, and VisualParams) -> fixtures/avatar.json
-#   3. Every wearable asset, every texture those wearables reference, and the five bakes, from Robust
+#   2. Their Avatars rows ('Wearable <type>:<index>' = itemID:assetID, and VisualParams) -> fixtures/avatar.json
+#   3. Every wearable asset, every texture those wearables reference, and the reference bakes, from Robust
 #      (http://localhost:8003/assets/<uuid>, AssetBase XML with base64 Data) -> fixtures/<uuid>.<ext>.
 #      Bakes are temporary assets and Robust does not hold them; for those the region's Flotsam asset
 #      cache (same AssetBase XML on disk) is read instead, and the source column says so.
@@ -18,20 +27,34 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUT="$HERE/fixtures"
+SET="${1:-truly-stock}"
+SET_DIR="$HERE/$SET"
+MANIFEST="$SET_DIR/manifest.json"
+OUT="$SET_DIR/fixtures"
 ENV_FILE="${LEGIONGRID_ENV:-D:/legiongrid-runtime/.env}"
 ROBUST="${ROBUST_ASSETS:-http://localhost:8003/assets}"
 REGION_CACHE="${LEGIONGRID_REGION_CACHE:-D:/legiongrid/regionserver/assetcache}"
 DB_CONTAINER="${LEGIONGRID_DB_CONTAINER:-legiongrid_mysql}"
 DB_NAME="${LEGIONGRID_DB_NAME:-legiongrid}"
-FIRST="${GOLDEN_FIRST:-Truly}"
-LAST="${GOLDEN_LAST:-Bazar}"
 
 die() { echo "FETCH FAILED: $*" >&2; exit 1; }
 
 if command -v python3 >/dev/null 2>&1 && python3 -c "" >/dev/null 2>&1; then PY=python3
 elif command -v python >/dev/null 2>&1; then PY=python
 else die "python 3 not found on PATH"; fi
+
+[ -d "$SET_DIR" ] || die "no such set '$SET' ($SET_DIR). Sets here: $(ls -d "$HERE"/*/ 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
+[ -f "$MANIFEST" ] || die "$MANIFEST not found"
+
+# the avatar's name from the manifest
+read -r FIRST LAST <<EOF
+$("$PY" -c "import json,sys; a=json.load(open(sys.argv[1]))['avatar'].split(); print(a[0], ' '.join(a[1:]))" "$MANIFEST" | tr -d '\r')
+EOF
+[ -n "$FIRST" ] && [ -n "$LAST" ] || die "manifest 'avatar' field is not a 'First Last' name"
+
+echo "set        $SET"
+echo "manifest   $MANIFEST"
+echo "avatar     $FIRST $LAST"
 
 [ -f "$ENV_FILE" ] || die "env file $ENV_FILE not found"
 PW="$(grep -E '^LEGIONGRID_DB_ROOT_PW=' "$ENV_FILE" | cut -d= -f2- | tr -d '"\r')"
@@ -44,7 +67,7 @@ mkdir -p "$OUT"
 # ---------------------------------------------------------------- 1. principal
 PID="$(sql "SELECT PrincipalID FROM UserAccounts WHERE FirstName='$FIRST' AND LastName='$LAST'" | head -1)"
 [ -n "$PID" ] || die "no UserAccounts row for $FIRST $LAST (is $DB_CONTAINER up?)"
-echo "principal $FIRST $LAST = $PID"
+echo "principal  $PID"
 
 # ---------------------------------------------------------------- 2. avatar rows -> avatar.json
 sql "SELECT Name, Value FROM Avatars WHERE PrincipalID='$PID' AND (Name LIKE 'Wearable %' OR Name='VisualParams') ORDER BY Name" > "$OUT/avatar.tsv"
@@ -76,7 +99,7 @@ PY
 }
 
 list_goldens() {
-  "$PY" - "$HERE/manifest.json" <<'PY' | tr -d '\r'
+  "$PY" - "$MANIFEST" <<'PY' | tr -d '\r'
 import json, sys
 for k, v in json.load(open(sys.argv[1]))['goldens'].items():
     print(k, v)
@@ -140,6 +163,12 @@ echo "UUID                                  kind       source       type       b
 TEXTURES=()
 while read -r t a; do
   [ -n "$a" ] || continue
+  # A worn slot may carry the null asset id (the row exists, nothing is in it). The orchestrator skips
+  # those (BakeOrchestrator.Resolve: assetId.IsZero()); so does this, and says so.
+  if [ "$a" = "00000000-0000-0000-0000-000000000000" ]; then
+    printf '%s  %-10s %-12s %s\n' "$a" "wearable:$t" "skipped" "null asset id: slot worn but empty"
+    continue
+  fi
   fetch "$a" "wearable:$t"
   f="$(ls "$OUT/$a".* | head -1)"
   while read -r id; do

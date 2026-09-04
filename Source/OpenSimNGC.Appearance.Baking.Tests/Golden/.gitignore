@@ -1,4 +1,5 @@
 # Fetched by fetch-fixtures.sh: resident content and binaries, never committed.
-fixtures/
-# Written by GoldenTests on every run.
-last-run.txt
+# One subdirectory per reference set (truly-stock, aleric-max, ...); manifests are committed, fixtures are not.
+*/fixtures/
+# Written by GoldenTests on every run, one per set.
+last-run-*.txt
