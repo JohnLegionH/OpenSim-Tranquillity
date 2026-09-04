@@ -420,21 +420,29 @@ public class AisMutationHttpTests
         AssertErrorBody(body, 500);
     }
 
+    /// <summary>
+    /// After A4 nothing in the spec answers 501 on the inventory cap except COPY, which belongs to the library
+    /// cap. Purge, slam and create all landed in A3/A4.
+    /// </summary>
     [Test]
-    public void the_operations_that_are_still_unimplemented_answer_501()
+    public void the_previously_unimplemented_mutations_now_answer_properly()
     {
-        // PurgeDescendents and COPY are A4; SlamFolder and CreateInventory landed in A3
-        foreach (var (verb, path) in new (string, string)[]
+        var b = Inventory();
+        foreach (var (verb, path, expected) in new (string, string, int)[]
         {
-            ("DELETE", $"/category/{Clothing}/children"), ("COPY", $"/category/{Clothing}"),
+            ("DELETE", $"/category/{Outfits}/children", 200),   // purge (A4)
+            ("PUT", $"/category/{Outfits}/links", 200),         // slam (A3)
+            ("POST", $"/category/{Outfits}", 200),              // create (A3)
+            ("COPY", $"/category/{Outfits}", 501),              // library-cap operation
         })
         {
-            var (status, body) = Send(Inventory(), verb, path);
-            Assert.That(status, Is.EqualTo((int)HttpStatusCode.NotImplemented), $"{verb} {path}");
-            AssertErrorBody(body, 501);
+            var handler = new AisHandler(Cap, Agent, b);
+            var response = new TestOSHttpResponse();
+            var body = verb == "PUT" ? (OSD)new OSDArray() : new OSDMap();
+            handler.Handle(new MutTestRequest(verb, Cap + path, body as OSDMap), response);
+            Assert.That(response.StatusCode, Is.EqualTo(expected), $"{verb} {path}");
         }
     }
-
     private static void AssertErrorBody(OSDMap body, int code)
     {
         Assert.That(body["error_code"].AsInteger(), Is.EqualTo(code));

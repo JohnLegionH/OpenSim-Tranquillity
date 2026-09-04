@@ -44,13 +44,24 @@ public sealed class AisHandler : SimpleStreamHandler
     private readonly string m_capPath;
     private readonly AisMode m_mode;
 
-    public AisHandler(string capPath, UUID agentId, IAisInventoryBackend backend, AisMode mode = AisMode.Inventory)
+    /// <summary>
+    /// Where a library COPY writes, and as whom. Only the library cap has these: its own <see cref="AgentId"/> is
+    /// the library owner, so it needs the viewing agent's inventory to copy *into*. Null on the inventory cap,
+    /// where COPY is not an operation the viewer sends.
+    /// </summary>
+    private readonly IAisInventoryBackend m_destination;
+    private readonly UUID m_destinationAgentId;
+
+    public AisHandler(string capPath, UUID agentId, IAisInventoryBackend backend, AisMode mode = AisMode.Inventory,
+        IAisInventoryBackend destination = null, UUID destinationAgentId = default)
         : base(capPath, mode == AisMode.Library ? AISv3Module.LibraryCapName : AISv3Module.CapName)
     {
         m_capPath = capPath;
         m_agentId = agentId;
         m_backend = backend ?? throw new ArgumentNullException(nameof(backend));
         m_mode = mode;
+        m_destination = destination;
+        m_destinationAgentId = destinationAgentId;
     }
 
     public UUID AgentId => m_agentId;
@@ -83,6 +94,7 @@ public sealed class AisHandler : SimpleStreamHandler
                 case AisOperation.FetchCategoryLinks:
                 case AisOperation.FetchCOF: FetchLinks(route, httpResponse); return;
                 case AisOperation.FetchOrphans: FetchOrphans(route, httpResponse); return;
+                case AisOperation.CopyCategory: CopyCategory(route, httpRequest, httpResponse); return;
 
                 case AisOperation.UpdateItem:
                 case AisOperation.UpdateCategory:
@@ -91,6 +103,8 @@ public sealed class AisHandler : SimpleStreamHandler
                 case AisOperation.SlamFolder:
                 case AisOperation.CreateInventory:
                 case AisOperation.PurgeDescendents:
+                    // COPY is the exception: it is a library-cap operation by design (the viewer sends it to
+                    // {lib}, spec 1a row 5), and it writes into the *agent's* inventory, not the library.
                     if (m_mode == AisMode.Library)
                     {
                         WriteError(httpResponse, HttpStatusCode.MethodNotAllowed, $"{route.Operation} is not allowed on the library: LibraryAPIv3 is read-only", route);
@@ -359,6 +373,88 @@ public sealed class AisHandler : SimpleStreamHandler
         Write(response, envelope, route);
     }
 
+    /// <summary>
+    /// COPY /category/{sourceId}?tid= — CopyLibraryCategory (<see cref="AisCopy"/> for the permission rule this
+    /// reuses and the no-rollback reasoning).
+    ///
+    /// <para>The destination folder id travels in the HTTP <c>Destination</c> header
+    /// (<c>llcorehttputil.cpp:1135</c>, A1). The tid carries a quirk: when the viewer does **not** want
+    /// sub-folders it appends the literal <c>,depth=0</c> to the tid value rather than adding a query parameter
+    /// (<c>llaisapi.cpp:275-278</c>), which <see cref="AisRouter"/> already splits out into the <c>depth</c>
+    /// query value — so <c>depth == 0</c> here means "this folder only".</para>
+    ///
+    /// <para>The destination is **not** subjected to the protected-folder rule. Copying a library folder into
+    /// Clothing or into the inventory root is the ordinary case, and that rule governs moving, deleting and
+    /// retyping a folder, not adding children to it — the same reconciliation as slam (A3) and purge. What is
+    /// checked is the thing that matters: the destination must exist and be the agent's own folder.</para>
+    /// </summary>
+    private void CopyCategory(AisRoute route, IOSHttpRequest request, IOSHttpResponse response)
+    {
+        if (m_mode != AisMode.Library || m_destination is null)
+        {
+            WriteError(response, HttpStatusCode.NotImplemented,
+                "COPY is a LibraryAPIv3 operation; this cap cannot serve it", route);
+            return;
+        }
+
+        var destinationHeader = request.Headers["Destination"];
+        if (!UUID.TryParse(destinationHeader, out var destinationId) || destinationId.IsZero())
+        {
+            WriteError(response, HttpStatusCode.BadRequest,
+                "COPY needs a Destination header carrying the destination folder id", route);
+            return;
+        }
+
+        var destinationFolder = m_destination.GetFolder(m_destinationAgentId, destinationId);
+        if (destinationFolder is null)
+        {
+            WriteError(response, HttpStatusCode.NotFound, $"no destination category {destinationId}", route);
+            return;
+        }
+
+        // ",depth=0" on the tid means this folder only (llaisapi.cpp:275-278)
+        var copySubfolders = route.Depth != 0;
+
+        var outcome = AisCopy.Run(m_backend, m_destination, m_agentId, m_destinationAgentId,
+            route.Id, destinationId, copySubfolders);
+
+        var envelope = new OSDMap();
+        var categoryIds = new OSDArray();
+        var itemIds = new OSDArray();
+        var embeddedCategories = new OSDMap();
+        var embeddedItems = new OSDMap();
+        foreach (var folder in outcome.Categories)
+        {
+            categoryIds.Add(OSD.FromUUID(folder.ID));
+            embeddedCategories[folder.ID.ToString()] = AisEnvelope.Category(folder, m_destinationAgentId,
+                AisEnvelope.EmbeddedMap(new OSDMap(), new OSDMap(), new OSDMap()));
+        }
+        foreach (var item in outcome.Items)
+        {
+            itemIds.Add(OSD.FromUUID(item.ID));
+            embeddedItems[item.ID.ToString()] = AisEnvelope.Item(item, m_destinationAgentId);
+        }
+
+        if (!outcome.Ok)
+        {
+            // additive, so a partial copy leaves what it made and risks nothing that existed before
+            WriteError(response, HttpStatusCode.InternalServerError,
+                $"{outcome.Failure}; {categoryIds.Count} categories and {itemIds.Count} items were created before the failure", route);
+            return;
+        }
+
+        if (categoryIds.Count > 0) envelope["_created_categories"] = categoryIds;
+        if (itemIds.Count > 0) envelope["_created_items"] = itemIds;
+        if (embeddedCategories.Count > 0 || embeddedItems.Count > 0)
+        {
+            var embedded = new OSDMap();
+            if (embeddedCategories.Count > 0) embedded[AisEnvelope.Categories] = embeddedCategories;
+            if (embeddedItems.Count > 0) embedded[AisEnvelope.Items] = embeddedItems;
+            envelope[AisEnvelope.Embedded] = embedded;
+        }
+        AisMutation.ReportVersion(envelope, m_destination.GetFolder(m_destinationAgentId, destinationId));
+        Write(response, envelope, route);
+    }
     /// <summary>
     /// DELETE /category/{id}/children — empty the folder, keeping the folder (<see cref="AisPurge"/>, which
     /// documents who calls it, why the deltas must be enumerated and what the composition costs).

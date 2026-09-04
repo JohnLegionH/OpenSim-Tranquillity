@@ -93,8 +93,11 @@ public class AISv3Module : ISharedRegionModule
             return;
         }
         var libraryOwner = LibraryOwnerOf(m_libraryService);
+        // COPY reads from the library and writes into the agent's inventory, so the library handler carries both
+        // sides: itself as the source, the agent's inventory as the destination.
         caps.RegisterSimpleHandler(LibraryCapName,
-            new AisHandler("/" + UUID.Random(), libraryOwner, new LibraryServiceBackend(m_libraryService), AisMode.Library));
+            new AisHandler("/" + UUID.Random(), libraryOwner, new LibraryServiceBackend(m_libraryService), AisMode.Library,
+                new InventoryServiceBackend(m_inventoryService), agentID));
     }
 
     /// <summary>

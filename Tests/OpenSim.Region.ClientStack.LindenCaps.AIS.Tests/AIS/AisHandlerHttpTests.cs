@@ -76,41 +76,33 @@ public class AisHandlerHttpTests
         => (new AisTestRequest(verb, url), new TestOSHttpResponse());
 
     /// <summary>
-    /// The operations still unimplemented after A3 — PurgeDescendents and COPY —
-    /// answer 501. (A0's version of this test covered the fetch routes, which A1 implemented, and the single-object
-    /// mutations, which A2 implemented; those live in AisFetchRoutesHttpTests and AisMutationHttpTests now.)
+    /// After A4 every operation in the spec is implemented, so the only 501 left is COPY arriving on the
+    /// **inventory** cap: it is a LibraryAPIv3 operation by design (spec 1a row 5 sends it to {lib}), and the
+    /// inventory handler has no library source or destination to serve it with.
     /// </summary>
     [Test]
-    public void the_operations_left_for_a4_still_return_501_with_an_llsd_error_map()
+    public void copy_on_the_inventory_cap_is_the_only_501_left()
     {
         var cap = "/CAP/0a1b2c3d-0000-4000-8000-000000000000";
         var handler = new AisHandler(cap, Agent, new ExplodingBackend());
-        var routes = new (string Verb, string Path)[]
-        {
-            ("COPY", $"/category/{Cat}?tid={UUID.Random()},depth=0"), ("DELETE", $"/category/{Cat}/children"),
-        };
-        foreach (var (verb, path) in routes)
-        {
-            var route = AisRouter.Parse(verb, cap + path, cap);
-            Assert.That(route.Operation, Is.Not.EqualTo(AisOperation.Unknown), $"{verb} {path} must be a spec route");
-            var (req, resp) = Http(verb, cap + path);
-            handler.Dispatch(route, req, resp);
-            Assert.That(resp.StatusCode, Is.EqualTo((int)HttpStatusCode.NotImplemented), $"{verb} {path}");
-            Assert.That(resp.ContentType, Is.EqualTo("application/llsd+xml"));
-            var body = OSDParser.DeserializeLLSDXml(resp.RawBuffer);
-            Assert.That(body, Is.InstanceOf<OSDMap>(), "the viewer forces 500 'Malformed response contents' on a non-map body (llaisapi.cpp:882-885)");
-            var map = (OSDMap)body;
-            Assert.That(map["error_code"].AsInteger(), Is.EqualTo(501));
-            Assert.That(map["error_description"].AsString(), Is.EqualTo("NotImplemented"));
-            Assert.That(map["message"].AsString(), Does.Contain(route.Operation.ToString()));
-            // spec §1f: an error body must not look like content the viewer would apply
-            Assert.That(map.ContainsKey("parent_id"), Is.False);
-            Assert.That(map.ContainsKey("item_id"), Is.False);
-            Assert.That(map.ContainsKey("category_id"), Is.False);
-            Assert.That(map.ContainsKey("_embedded"), Is.False);
-        }
-    }
+        var path = $"/category/{Cat}?tid={UUID.Random()},depth=0";
+        var route = AisRouter.Parse("COPY", cap + path, cap);
+        Assert.That(route.Operation, Is.EqualTo(AisOperation.CopyCategory));
 
+        var (req, resp) = Http("COPY", cap + path);
+        handler.Dispatch(route, req, resp);
+
+        Assert.That(resp.StatusCode, Is.EqualTo((int)HttpStatusCode.NotImplemented));
+        Assert.That(resp.ContentType, Is.EqualTo("application/llsd+xml"));
+        var map = (OSDMap)OSDParser.DeserializeLLSDXml(resp.RawBuffer);
+        Assert.That(map["error_code"].AsInteger(), Is.EqualTo(501));
+        Assert.That(map["operation"].AsString(), Is.EqualTo(nameof(AisOperation.CopyCategory)));
+        // spec 1f: an error body must not look like content the viewer would apply
+        Assert.That(map.ContainsKey("parent_id"), Is.False);
+        Assert.That(map.ContainsKey("item_id"), Is.False);
+        Assert.That(map.ContainsKey("category_id"), Is.False);
+        Assert.That(map.ContainsKey("_embedded"), Is.False);
+    }
     [Test]
     public void the_handler_parses_verb_and_path_from_the_request_itself()
     {
@@ -119,7 +111,8 @@ public class AisHandlerHttpTests
         var handler = new AisHandler(cap, Agent, new ExplodingBackend());
         var (req, resp) = Http("DELETE", cap + $"/category/{Cat}/children");
         handler.Handle(req, resp);
-        Assert.That(resp.StatusCode, Is.EqualTo((int)HttpStatusCode.NotImplemented));
+        // every operation is implemented as of A4, so this backend throws rather than being left untouched; what
+        // the test is actually about is that the verb and the path came off the request and reached the router
         var map = (OSDMap)OSDParser.DeserializeLLSDXml(resp.RawBuffer);
         Assert.That(map["operation"].AsString(), Is.EqualTo(nameof(AisOperation.PurgeDescendents)));
         Assert.That(map["path"].AsString(), Is.EqualTo($"/category/{Cat}/children"));
