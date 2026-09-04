@@ -326,25 +326,58 @@ public class AisFetchRoutesHttpTests
         }
     }
 
+    /// <summary>
+    /// The advertisement gate (A5). Both cap names are pinned, the default is off, and the per-region override
+    /// resolves independently for each region - a grid-wide flip is unacceptable under risk A-R1, because
+    /// turning AIS on hands the LL viewer's whole inventory path to it with no fallback.
+    /// </summary>
     [Test]
-    public void neither_cap_is_registered_when_ais_is_disabled()
+    public void the_flag_defaults_off_and_resolves_per_region()
     {
-        // AISv3Module.RegionLoaded returns before touching the scene when the flag is off, so a null scene proves
-        // the gate: with the flag on it would dereference the scene instead.
+        Assert.That(AISv3Module.CapName, Is.EqualTo("InventoryAPIv3"));
+        Assert.That(AISv3Module.LibraryCapName, Is.EqualTo("LibraryAPIv3"));
+
         var module = new AISv3Module();
         module.Initialise(new Nini.Config.IniConfigSource());
         Assert.That(module.Enabled, Is.False, "[AIS] Enabled defaults to false (A-D4, risk A-R1)");
-        Assert.DoesNotThrow(() => module.RegionLoaded(null), "a disabled module registers nothing at all");
+        Assert.DoesNotThrow(() => module.RegionLoaded(null), "a null scene is ignored, not dereferenced");
 
         var source = new Nini.Config.IniConfigSource();
         source.AddConfig("AIS").Set("Enabled", "true");
         var enabled = new AISv3Module();
         enabled.Initialise(source);
         Assert.That(enabled.Enabled, Is.True);
-        Assert.That(AISv3Module.CapName, Is.EqualTo("InventoryAPIv3"));
-        Assert.That(AISv3Module.LibraryCapName, Is.EqualTo("LibraryAPIv3"));
     }
 
+    /// <summary>
+    /// One region can be turned on without touching the others, using the per-region idiom this tree already has
+    /// (a [&lt;Region Name&gt;] section, as AutoBackupModule.cs:400-406 reads it). Resolution is static and takes a
+    /// plain config source, so it is provable without building a Scene.
+    /// </summary>
+    [Test]
+    public void one_region_can_be_enabled_without_affecting_the_others()
+    {
+        var sceneConfig = new Nini.Config.IniConfigSource();
+        sceneConfig.AddConfig("AIS").Set("Enabled", "false");   // grid default: off
+        sceneConfig.AddConfig("Ebony").Set("AIS_Enabled", "true");
+        sceneConfig.AddConfig("Transylvania").Set("SomethingElse", "1");
+
+        Assert.That(AISv3Module.ResolveEnabled(false, sceneConfig, "Ebony"), Is.True,
+            "the named region opts in");
+        Assert.That(AISv3Module.ResolveEnabled(false, sceneConfig, "Transylvania"), Is.False,
+            "a region with its own section but no AIS_Enabled key stays on the grid default");
+        Assert.That(AISv3Module.ResolveEnabled(false, sceneConfig, "Elm"), Is.False,
+            "a region with no section at all stays on the grid default");
+
+        // and the override works downwards too: a grid that is on can exempt one region
+        var optOut = new Nini.Config.IniConfigSource();
+        optOut.AddConfig("Elm").Set("AIS_Enabled", "false");
+        Assert.That(AISv3Module.ResolveEnabled(true, optOut, "Elm"), Is.False);
+        Assert.That(AISv3Module.ResolveEnabled(true, optOut, "Ebony"), Is.True);
+
+        Assert.That(AISv3Module.ResolveEnabled(false, null, "Ebony"), Is.False,
+            "no scene config at all falls back to the grid default");
+    }
     // ------------------------------------------------------------------ shared assertions
 
     /// <summary>Spec §1f: an error body is a flat map that the viewer's update parser finds nothing to apply in.</summary>

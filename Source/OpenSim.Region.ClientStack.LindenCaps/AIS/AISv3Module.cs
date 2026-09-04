@@ -31,10 +31,11 @@ public class AISv3Module : ISharedRegionModule
     public const string LibraryCapName = "LibraryAPIv3";
     public const string ConfigSection = "AIS";
 
+    /// <summary>The grid-wide default from <c>[AIS] Enabled</c>. A region may override it; see <see cref="ResolveEnabled"/>.</summary>
     public bool Enabled { get; private set; }
-    private readonly List<Scene> m_scenes = new();
-    private IInventoryService m_inventoryService;
-    private ILibraryService m_libraryService;
+
+    /// <summary>The scenes that resolved to enabled, with the handler they subscribed, so RemoveRegion can undo exactly what RegionLoaded did.</summary>
+    private readonly Dictionary<Scene, EventManager.RegisterCapsEvent> m_enabledScenes = new();
 
     public string Name => "AISv3Module";
     public Type ReplaceableInterface => null;
@@ -44,7 +45,10 @@ public class AISv3Module : ISharedRegionModule
         IConfig config = source.Configs[ConfigSection];
         Enabled = config is not null && config.GetBoolean("Enabled", false);
         if (Enabled)
-            m_log.LogWarning("[AIS]: InventoryAPIv3 is ENABLED; the LL viewer will route inventory deletes, purges, slams and creates through it (see Docs/feature/ais-v3/AIS-V3-SPEC.md §1g)");
+            m_log.LogWarning(
+                "[AIS]: [{Section}] Enabled is true for every region on this simulator. Enabling AIS routes ALL "
+                + "inventory traffic through it - fetch, delete, purge, slam and create - and the LL viewer has no "
+                + "fallback for the mutations (spec 1g, risk A-R1). Prefer a per-region override.", ConfigSection);
     }
 
     public void PostInitialise() { }
@@ -52,52 +56,83 @@ public class AISv3Module : ISharedRegionModule
 
     public void AddRegion(Scene scene) { }
 
+    /// <summary>
+    /// Whether AIS is on for one region. The grid-wide <c>[AIS] Enabled</c> is the default, and a
+    /// <c>[&lt;Region Name&gt;]</c> section may override it with <c>AIS_Enabled</c> — the per-region idiom this tree
+    /// already uses (<c>AutoBackupModule.cs:400-406</c> reads <c>scene.Config.Configs[regionName]</c> and takes
+    /// per-key defaults from the global setting).
+    ///
+    /// <para>This exists because risk A-R1 makes a grid-wide flip unacceptable: turning AIS on hands the LL
+    /// viewer's entire inventory path to this code with no fallback, so it must be possible to try it on exactly
+    /// one region. Static and free of <c>Scene</c> so it can be tested with a plain config source.</para>
+    /// </summary>
+    public static bool ResolveEnabled(bool gridDefault, IConfigSource sceneConfig, string regionName)
+    {
+        if (sceneConfig is null || string.IsNullOrEmpty(regionName)) return gridDefault;
+        IConfig regionConfig = sceneConfig.Configs[regionName];
+        return regionConfig is null ? gridDefault : regionConfig.GetBoolean("AIS_Enabled", gridDefault);
+    }
+
     public void RegionLoaded(Scene scene)
     {
-        if (!Enabled) return;
-        m_inventoryService ??= scene.InventoryService;
-        m_libraryService ??= scene.LibraryService;
-        if (m_inventoryService is null)
+        if (scene is null) return;
+        if (!ResolveEnabled(Enabled, scene.Config, scene.RegionInfo?.RegionName)) return;
+
+        if (scene.InventoryService is null)
         {
-            m_log.LogError("[AIS]: region {Region} has no inventory service; InventoryAPIv3 not registered", scene.Name);
+            m_log.LogError("[AIS]: region {Region} has no inventory service; no AIS caps registered there", scene.Name);
             return;
         }
-        lock (m_scenes) m_scenes.Add(scene);
-        scene.EventManager.OnRegisterCaps += RegisterCaps;
+
+        void Handler(UUID agentID, Caps caps) => RegisterCaps(scene, agentID, caps);
+        lock (m_enabledScenes)
+        {
+            if (m_enabledScenes.ContainsKey(scene)) return;
+            m_enabledScenes[scene] = Handler;
+        }
+        scene.EventManager.OnRegisterCaps += Handler;
+
+        var caps = scene.LibraryService is null
+            ? CapName
+            : CapName + ", " + LibraryCapName;
+        m_log.LogInformation(
+            "[AIS]: region {Region} advertises {Caps} to every agent. All LL-viewer inventory traffic there - fetch, "
+            + "delete, purge, slam and create - goes through AIS with no fallback (spec 1g).", scene.Name, caps);
     }
 
     public void RemoveRegion(Scene scene)
     {
-        if (!Enabled) return;
-        scene.EventManager.OnRegisterCaps -= RegisterCaps;
-        lock (m_scenes)
+        if (scene is null) return;
+        EventManager.RegisterCapsEvent handler;
+        lock (m_enabledScenes)
         {
-            m_scenes.Remove(scene);
-            if (m_scenes.Count == 0) { m_inventoryService = null; m_libraryService = null; }
+            if (!m_enabledScenes.Remove(scene, out handler)) return;
         }
+        scene.EventManager.OnRegisterCaps -= handler;
     }
-
     /// <summary>
     /// Both caps are registered together when enabled, and neither when disabled (tree state T1: a cap reaches
     /// the viewer only if it is registered under its exact name and the viewer asked for it; the viewer asks for
     /// both, `llaisapi.cpp:72-76`). LibraryAPIv3 runs the same handler over the library service with the library
     /// owner as its agent id, and refuses every mutation with 405.
     /// </summary>
-    private void RegisterCaps(UUID agentID, Caps caps)
+    private void RegisterCaps(Scene scene, UUID agentID, Caps caps)
     {
-        caps.RegisterSimpleHandler(CapName, new AisHandler("/" + UUID.Random(), agentID, new InventoryServiceBackend(m_inventoryService)));
+        var inventory = scene.InventoryService;
+        var library = scene.LibraryService;
+        caps.RegisterSimpleHandler(CapName, new AisHandler("/" + UUID.Random(), agentID, new InventoryServiceBackend(inventory)));
 
-        if (m_libraryService is null)
+        if (library is null)
         {
-            m_log.LogWarning("[AIS]: no library service on this region; {Cap} not registered", LibraryCapName);
+            m_log.LogWarning("[AIS]: region {Region} has no library service; {Cap} not registered", scene.Name, LibraryCapName);
             return;
         }
-        var libraryOwner = LibraryOwnerOf(m_libraryService);
+        var libraryOwner = LibraryOwnerOf(library);
         // COPY reads from the library and writes into the agent's inventory, so the library handler carries both
         // sides: itself as the source, the agent's inventory as the destination.
         caps.RegisterSimpleHandler(LibraryCapName,
-            new AisHandler("/" + UUID.Random(), libraryOwner, new LibraryServiceBackend(m_libraryService), AisMode.Library,
-                new InventoryServiceBackend(m_inventoryService), agentID));
+            new AisHandler("/" + UUID.Random(), libraryOwner, new LibraryServiceBackend(library), AisMode.Library,
+                new InventoryServiceBackend(inventory), agentID));
     }
 
     /// <summary>
