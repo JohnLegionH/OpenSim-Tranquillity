@@ -133,6 +133,12 @@ public sealed class FakeAisBackend : IAisInventoryBackend
     /// </summary>
     public bool DeleteFoldersOnlyIfTrash = false;
 
+    /// <summary>Fault injection: return false to make this AddItem fail. Null means every add succeeds.</summary>
+    public Func<InventoryItemBase, bool> AddItemGate;
+
+    /// <summary>Fault injection: return false to make this DeleteItems fail. Null means every delete succeeds.</summary>
+    public Func<IReadOnlyList<UUID>, bool> DeleteItemsGate;
+
     /// <summary>Runs after every successful write, so a test can change the store underneath the handler.</summary>
     public Action OnWrite;
 
@@ -154,8 +160,9 @@ public sealed class FakeAisBackend : IAisInventoryBackend
 
     public bool AddItem(InventoryItemBase item)
     {
-        Calls.Add($"AddItem({item.ID})");
+        Calls.Add($"AddItem({item.Name})");
         if (!AllowWrite) return false;
+        if (AddItemGate is not null && !AddItemGate(item)) return false;
         Items[item.ID] = item;
         Bump(item.Folder);
         OnWrite?.Invoke();
@@ -186,6 +193,7 @@ public sealed class FakeAisBackend : IAisInventoryBackend
     {
         Calls.Add($"DeleteItems[{itemIds.Count}]");
         if (!AllowWrite || agentId != Owner) return false;
+        if (DeleteItemsGate is not null && !DeleteItemsGate(itemIds)) return false;
         foreach (var id in itemIds)
             if (Items.TryGetValue(id, out var item)) { Items.Remove(id); Bump(item.Folder); }
         OnWrite?.Invoke();

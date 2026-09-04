@@ -76,18 +76,17 @@ public class AisHandlerHttpTests
         => (new AisTestRequest(verb, url), new TestOSHttpResponse());
 
     /// <summary>
-    /// The operations still unimplemented after A2 — CreateInventory, SlamFolder, PurgeDescendents and COPY —
+    /// The operations still unimplemented after A3 — PurgeDescendents and COPY —
     /// answer 501. (A0's version of this test covered the fetch routes, which A1 implemented, and the single-object
     /// mutations, which A2 implemented; those live in AisFetchRoutesHttpTests and AisMutationHttpTests now.)
     /// </summary>
     [Test]
-    public void the_operations_left_for_a3_and_a4_still_return_501_with_an_llsd_error_map()
+    public void the_operations_left_for_a4_still_return_501_with_an_llsd_error_map()
     {
         var cap = "/CAP/0a1b2c3d-0000-4000-8000-000000000000";
         var handler = new AisHandler(cap, Agent, new ExplodingBackend());
         var routes = new (string Verb, string Path)[]
         {
-            ("POST", $"/category/{Cat}?tid={UUID.Random()}"), ("PUT", $"/category/{Cat}/links?tid={UUID.Random()}"),
             ("COPY", $"/category/{Cat}?tid={UUID.Random()},depth=0"), ("DELETE", $"/category/{Cat}/children"),
         };
         foreach (var (verb, path) in routes)

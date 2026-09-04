@@ -423,10 +423,9 @@ public class AisMutationHttpTests
     [Test]
     public void the_operations_that_are_still_unimplemented_answer_501()
     {
-        // SlamFolder, PurgeDescendents, CreateInventory and COPY are A3/A4
+        // PurgeDescendents and COPY are A4; SlamFolder and CreateInventory landed in A3
         foreach (var (verb, path) in new (string, string)[]
         {
-            ("POST", $"/category/{Clothing}"), ("PUT", $"/category/{Clothing}/links"),
             ("DELETE", $"/category/{Clothing}/children"), ("COPY", $"/category/{Clothing}"),
         })
         {
