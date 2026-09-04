@@ -76,19 +76,19 @@ public class AisHandlerHttpTests
         => (new AisTestRequest(verb, url), new TestOSHttpResponse());
 
     /// <summary>
-    /// A1 implements the read surface; every mutation still answers 501 until A2. (A0's version of this test
-    /// covered the fetch routes too — they now return content, and are covered by AisFetchRoutesHttpTests.)
+    /// The operations still unimplemented after A2 — CreateInventory, SlamFolder, PurgeDescendents and COPY —
+    /// answer 501. (A0's version of this test covered the fetch routes, which A1 implemented, and the single-object
+    /// mutations, which A2 implemented; those live in AisFetchRoutesHttpTests and AisMutationHttpTests now.)
     /// </summary>
     [Test]
-    public void every_mutation_route_still_returns_501_with_an_llsd_error_map()
+    public void the_operations_left_for_a3_and_a4_still_return_501_with_an_llsd_error_map()
     {
         var cap = "/CAP/0a1b2c3d-0000-4000-8000-000000000000";
         var handler = new AisHandler(cap, Agent, new ExplodingBackend());
         var routes = new (string Verb, string Path)[]
         {
             ("POST", $"/category/{Cat}?tid={UUID.Random()}"), ("PUT", $"/category/{Cat}/links?tid={UUID.Random()}"),
-            ("DELETE", $"/category/{Cat}"), ("DELETE", $"/item/{Cat}"), ("COPY", $"/category/{Cat}?tid={UUID.Random()},depth=0"),
-            ("DELETE", $"/category/{Cat}/children"), ("PATCH", $"/category/{Cat}"), ("PATCH", $"/item/{Cat}"),
+            ("COPY", $"/category/{Cat}?tid={UUID.Random()},depth=0"), ("DELETE", $"/category/{Cat}/children"),
         };
         foreach (var (verb, path) in routes)
         {

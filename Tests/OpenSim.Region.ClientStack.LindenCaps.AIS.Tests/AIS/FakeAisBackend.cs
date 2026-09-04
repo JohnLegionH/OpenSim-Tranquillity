@@ -121,12 +121,126 @@ public sealed class FakeAisBackend : IAisInventoryBackend
         return Items.TryGetValue(itemId, out var item) ? item : null;
     }
 
-    // mutators: A1 is the read surface, nothing calls these
-    public bool AddFolder(InventoryFolderBase folder) => throw new InvalidOperationException("A1 must not mutate");
-    public bool AddItem(InventoryItemBase item) => throw new InvalidOperationException("A1 must not mutate");
-    public bool UpdateItem(InventoryItemBase item) => throw new InvalidOperationException("A1 must not mutate");
-    public bool UpdateFolder(InventoryFolderBase folder) => throw new InvalidOperationException("A1 must not mutate");
-    public bool DeleteItems(UUID agentId, IReadOnlyList<UUID> itemIds) => throw new InvalidOperationException("A1 must not mutate");
-    public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds) => throw new InvalidOperationException("A1 must not mutate");
-    public bool PurgeFolder(InventoryFolderBase folder) => throw new InvalidOperationException("A1 must not mutate");
+    // ---------------- mutators (A2) ----------------
+
+    /// <summary>Set to false to make the service refuse writes, as XInventoryService does when AllowDelete is off.</summary>
+    public bool AllowWrite = true;
+
+    /// <summary>
+    /// Set to true to reproduce this tree's real DeleteFolders behaviour: the two-argument overload on
+    /// IInventoryService is onlyIfTrash = true, so a folder outside Trash is silently skipped and true is still
+    /// returned (XInventoryService.cs:459-478).
+    /// </summary>
+    public bool DeleteFoldersOnlyIfTrash = false;
+
+    /// <summary>Runs after every successful write, so a test can change the store underneath the handler.</summary>
+    public Action OnWrite;
+
+    /// <summary>The data layer bumps a folder's version on every store or delete of its contents (S0a V6).</summary>
+    private void Bump(UUID folderId)
+    {
+        if (Folders.TryGetValue(folderId, out var folder)) folder.Version = (ushort)(folder.Version + 1);
+    }
+
+    public bool AddFolder(InventoryFolderBase folder)
+    {
+        Calls.Add($"AddFolder({folder.ID})");
+        if (!AllowWrite) return false;
+        Folders[folder.ID] = folder;
+        Bump(folder.ParentID);
+        OnWrite?.Invoke();
+        return true;
+    }
+
+    public bool AddItem(InventoryItemBase item)
+    {
+        Calls.Add($"AddItem({item.ID})");
+        if (!AllowWrite) return false;
+        Items[item.ID] = item;
+        Bump(item.Folder);
+        OnWrite?.Invoke();
+        return true;
+    }
+
+    public bool UpdateItem(InventoryItemBase item)
+    {
+        Calls.Add($"UpdateItem({item.ID})");
+        if (!AllowWrite || !Items.ContainsKey(item.ID)) return false;
+        Items[item.ID] = item;
+        Bump(item.Folder);
+        OnWrite?.Invoke();
+        return true;
+    }
+
+    public bool UpdateFolder(InventoryFolderBase folder)
+    {
+        Calls.Add($"UpdateFolder({folder.ID})");
+        if (!AllowWrite || !Folders.ContainsKey(folder.ID)) return false;
+        Folders[folder.ID] = folder;
+        Bump(folder.ParentID);
+        OnWrite?.Invoke();
+        return true;
+    }
+
+    public bool DeleteItems(UUID agentId, IReadOnlyList<UUID> itemIds)
+    {
+        Calls.Add($"DeleteItems[{itemIds.Count}]");
+        if (!AllowWrite || agentId != Owner) return false;
+        foreach (var id in itemIds)
+            if (Items.TryGetValue(id, out var item)) { Items.Remove(id); Bump(item.Folder); }
+        OnWrite?.Invoke();
+        return true;
+    }
+
+    /// <summary>Recursive, and with the real service's trash gate available for a test to switch on.</summary>
+    public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds)
+    {
+        Calls.Add($"DeleteFolders[{folderIds.Count}]");
+        if (!AllowWrite || agentId != Owner) return false;
+        foreach (var id in folderIds)
+        {
+            if (!Folders.TryGetValue(id, out var folder)) continue;
+            if (DeleteFoldersOnlyIfTrash && !UnderTrash(id)) continue;   // silently skipped, as the real service does
+            Purge(id);
+            Folders.Remove(id);
+            Bump(folder.ParentID);
+        }
+        OnWrite?.Invoke();
+        return true;
+    }
+
+    public bool PurgeFolder(InventoryFolderBase folder)
+    {
+        Calls.Add($"PurgeFolder({folder.ID})");
+        if (!AllowWrite) return false;
+        Purge(folder.ID);
+        Bump(folder.ID);
+        OnWrite?.Invoke();
+        return true;
+    }
+
+    /// <summary>Everything under a folder, depth first.</summary>
+    private void Purge(UUID folderId)
+    {
+        foreach (var child in Folders.Values.Where(f => f.ParentID == folderId).Select(f => f.ID).ToList())
+        {
+            Purge(child);
+            Folders.Remove(child);
+        }
+        foreach (var item in Items.Values.Where(i => i.Folder == folderId).Select(i => i.ID).ToList())
+            Items.Remove(item);
+    }
+
+    /// <summary>The Trash / Lost And Found test the real service applies before it will delete a folder.</summary>
+    public UUID TrashId = UUID.Zero;
+    private bool UnderTrash(UUID folderId)
+    {
+        var id = folderId;
+        for (var guard = 0; guard < 64 && Folders.TryGetValue(id, out var folder); guard++)
+        {
+            if (folder.ParentID == TrashId && !TrashId.IsZero()) return true;
+            id = folder.ParentID;
+        }
+        return false;
+    }
 }
