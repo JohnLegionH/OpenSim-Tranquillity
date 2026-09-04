@@ -66,7 +66,8 @@ public sealed class AisHandler : SimpleStreamHandler
     /// <summary>Dispatch a parsed route. Public so the HTTP-level tests can drive it without a scene.</summary>
     public void Dispatch(AisRoute route, IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)
     {
-        var body = ReadBody(httpRequest);
+        var raw = ReadBodyOsd(httpRequest);
+        var body = raw as OSDMap ?? new OSDMap();
         try
         {
             switch (route.Operation)
@@ -87,6 +88,8 @@ public sealed class AisHandler : SimpleStreamHandler
                 case AisOperation.UpdateCategory:
                 case AisOperation.RemoveItem:
                 case AisOperation.RemoveCategory:
+                case AisOperation.SlamFolder:
+                case AisOperation.CreateInventory:
                     if (m_mode == AisMode.Library)
                     {
                         WriteError(httpResponse, HttpStatusCode.MethodNotAllowed, $"{route.Operation} is not allowed on the library: LibraryAPIv3 is read-only", route);
@@ -97,6 +100,8 @@ public sealed class AisHandler : SimpleStreamHandler
                         case AisOperation.UpdateItem: UpdateItem(route, body, httpResponse); return;
                         case AisOperation.UpdateCategory: UpdateCategory(route, body, httpResponse); return;
                         case AisOperation.RemoveItem: RemoveItem(route, httpResponse); return;
+                        case AisOperation.SlamFolder: SlamFolder(route, raw, httpResponse); return;
+                        case AisOperation.CreateInventory: CreateInventory(route, body, httpResponse); return;
                         default: RemoveCategory(route, httpResponse); return;
                     }
 
@@ -261,8 +266,11 @@ public sealed class AisHandler : SimpleStreamHandler
 
     // ------------------------------------------------------------------ the mutation routes (A2)
 
-    /// <summary>The request body as an LLSD map; an empty map when there is none or it is not a map.</summary>
-    private static OSDMap ReadBody(IOSHttpRequest request)
+    /// <summary>
+    /// The request body as LLSD, whatever its top-level type. A slam body is a bare **array**
+    /// (<c>llappearancemgr.cpp:2209-2245</c>, <c>:1795-1833</c>), so it cannot be forced to a map here.
+    /// </summary>
+    private static OSD ReadBodyOsd(IOSHttpRequest request)
     {
         try
         {
@@ -272,7 +280,7 @@ public sealed class AisHandler : SimpleStreamHandler
             stream.CopyTo(ms);
             var bytes = ms.ToArray();
             if (bytes.Length == 0) return new OSDMap();
-            return OSDParser.DeserializeLLSDXml(bytes) as OSDMap ?? new OSDMap();
+            return OSDParser.DeserializeLLSDXml(bytes) ?? new OSDMap();
         }
         catch { return new OSDMap(); }
         finally { try { request.InputStream?.Dispose(); } catch { } }
@@ -349,6 +357,184 @@ public sealed class AisHandler : SimpleStreamHandler
         Write(response, envelope, route);
     }
 
+    /// <summary>
+    /// POST /category/{parentId}?tid= — create categories, items and links in that folder.
+    ///
+    /// <para><b>The route is the parent category itself</b>, not <c>/children</c>: <c>AISAPI::CreateInventory</c>
+    /// builds <c>{inv}/category/{parentId}</c> (<c>llaisapi.cpp:115</c>).</para>
+    ///
+    /// <para><b>The body</b> is a map of arrays. Only <c>categories</c> is verified: the one caller in the
+    /// permitted files builds <c>new_inventory["categories"] = [ cat.asAISCreateCatLLSD() ]</c>
+    /// (<c>llinventorymodel.cpp:1036-1041</c>). The contents of that map come from
+    /// <c>asAISCreateCatLLSD</c> in <c>llviewerinventory.cpp</c>, which is not a permitted read this session, so
+    /// the accepted keys are the category field set A-Q1 already established from <c>fromLLSD</c> —
+    /// <c>name</c>, <c>type</c>/<c>type_default</c>, <c>parent_id</c>. The <c>items</c> and <c>links</c> arrays
+    /// have **no caller in any permitted file** and remain UNVERIFIED (A-Q3); they are implemented by symmetry,
+    /// items taking the A-Q1 item field set and links the slam link shape.</para>
+    ///
+    /// <para>The envelope: <c>_created_categories</c> and <c>_created_items</c> name what was made, the objects
+    /// themselves ride in <c>_embedded</c> (the viewer accepts an embedded object on a mutation only when its id
+    /// is listed, §1c), and the parent folder's fresh version goes in <c>_updated_category_versions</c> — without
+    /// which the +1 descendent deltas are discarded (<c>llaisapi.cpp:1625-1629</c>). A newly created category is
+    /// deliberately **not** listed: the viewer skips version accounting for one it has just created
+    /// (<c>:1618-1622</c>).</para>
+    /// </summary>
+    private void CreateInventory(AisRoute route, OSDMap body, IOSHttpResponse response)
+    {
+        var parent = m_backend.GetFolder(m_agentId, route.Id);
+        if (parent is null) { WriteError(response, HttpStatusCode.NotFound, $"no category {route.Id}", route); return; }
+
+        var createdCategories = new OSDMap();
+        var createdItems = new OSDMap();
+        var createdLinks = new OSDMap();
+        var categoryIds = new OSDArray();
+        var itemIds = new OSDArray();
+
+        if (body["categories"] is OSDArray categories)
+        {
+            foreach (var entry in categories)
+            {
+                if (entry is not OSDMap m) continue;
+                var folder = new InventoryFolderBase(UUID.Random(), m["name"].AsString() ?? "", m_agentId,
+                    (short)(m.ContainsKey("type_default") ? m["type_default"].AsInteger()
+                        : m.ContainsKey("type") ? m["type"].AsInteger() : -1),
+                    route.Id, 1);
+                if (!m_backend.AddFolder(folder))
+                {
+                    WriteError(response, HttpStatusCode.InternalServerError, $"could not create the category {folder.Name}", route);
+                    return;
+                }
+                categoryIds.Add(OSD.FromUUID(folder.ID));
+                createdCategories[folder.ID.ToString()] = AisEnvelope.Category(folder, m_agentId,
+                    AisEnvelope.EmbeddedMap(new OSDMap(), new OSDMap(), new OSDMap()));
+            }
+        }
+
+        foreach (var (key, isLink) in new[] { ("items", false), ("links", true) })
+        {
+            if (body[key] is not OSDArray array) continue;
+            foreach (var entry in array)
+            {
+                if (entry is not OSDMap m) continue;
+                var row = NewItem(m, isLink, route.Id);
+                if (!m_backend.AddItem(row))
+                {
+                    WriteError(response, HttpStatusCode.InternalServerError, $"could not create {(isLink ? "the link" : "the item")} {row.Name}", route);
+                    return;
+                }
+                itemIds.Add(OSD.FromUUID(row.ID));
+                if (AisEnvelope.IsLink(row)) createdLinks[row.ID.ToString()] = AisEnvelope.Link(row, m_agentId);
+                else createdItems[row.ID.ToString()] = AisEnvelope.Item(row, m_agentId);
+            }
+        }
+
+        var envelope = new OSDMap();
+        if (categoryIds.Count > 0) envelope["_created_categories"] = categoryIds;
+        if (itemIds.Count > 0) envelope["_created_items"] = itemIds;
+        if (createdCategories.Count > 0 || createdItems.Count > 0 || createdLinks.Count > 0)
+        {
+            var embedded = new OSDMap();
+            if (createdCategories.Count > 0) embedded[AisEnvelope.Categories] = createdCategories;
+            if (createdItems.Count > 0) embedded[AisEnvelope.Items] = createdItems;
+            if (createdLinks.Count > 0) embedded[AisEnvelope.Links] = createdLinks;
+            envelope[AisEnvelope.Embedded] = embedded;
+        }
+        AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, route.Id));
+        Write(response, envelope, route);
+    }
+
+    /// <summary>An item or link row from a create body. Unknown keys are ignored, as they are for a PATCH.</summary>
+    private InventoryItemBase NewItem(OSDMap m, bool isLink, UUID parentId)
+    {
+        var assetType = m.ContainsKey("type") ? m["type"].AsInteger()
+            : isLink ? (int)AssetType.Link : (int)AssetType.Unknown;
+        var linked = m["linked_id"].AsUUID();
+        return new InventoryItemBase(UUID.Random(), m_agentId)
+        {
+            // the body may name a parent; absent, the object goes in the folder the POST addressed
+            Folder = m.ContainsKey("parent_id") && !m["parent_id"].AsUUID().IsZero()
+                ? m["parent_id"].AsUUID() : parentId,
+            Name = m["name"].AsString() ?? "",
+            Description = m["desc"].AsString() ?? "",
+            AssetID = linked.IsZero() ? m["asset_id"].AsUUID() : linked,
+            AssetType = assetType,
+            InvType = m.ContainsKey("inv_type") ? m["inv_type"].AsInteger() : 0,
+            Flags = (uint)m["flags"].AsInteger(),
+            CreatorId = m_agentId.ToString(),
+            CreationDate = (int)Util.UnixTimeSinceEpoch(),
+            BasePermissions = (uint)OpenSim.Framework.PermissionMask.All,
+            CurrentPermissions = (uint)OpenSim.Framework.PermissionMask.All,
+            NextPermissions = (uint)OpenSim.Framework.PermissionMask.All,
+        };
+    }
+    /// <summary>
+    /// PUT /category/{id}/links — replace the folder's links (<see cref="AisSlam"/>, which documents the
+    /// ordering and the exact guarantee). <c>current</c> resolves to the Current Outfit folder as it does for a
+    /// fetch.
+    ///
+    /// <para>A slam is deliberately **not** subject to the protected-folder rule. That rule is the viewer's
+    /// <c>lookupIsProtectedType</c>, which governs moving, deleting and retyping a folder
+    /// (<c>llfoldertype.cpp:151-153</c>) — the Current Outfit folder is protected by it, and slamming the Current
+    /// Outfit is the single most common thing the viewer does (<c>llappearancemgr.cpp:2251</c>).</para>
+    ///
+    /// <para>Only **links** are touched. Non-link items in the folder are left alone: the viewer builds the body
+    /// from link rows only (<c>:1795-1833</c> switches on <c>AT_LINK</c> / <c>AT_LINK_FOLDER</c> and ignores
+    /// everything else), so a slam has nothing to say about them.</para>
+    ///
+    /// <para>The envelope: the created links are named in <c>_created_items</c> and carried in
+    /// <c>_embedded.links</c> — on a mutation the viewer accepts an embedded object only when its id is in
+    /// <c>_created_items</c> (§1c) — the removed ones in <c>_removed_items</c>, and the folder's fresh version in
+    /// <c>_updated_category_versions</c>. Each parsed link adds +1 to the folder's descendent count
+    /// (<c>llaisapi.cpp:1310-1312</c>) and each removal −1 (<c>:1130</c>), so the arithmetic closes.</para>
+    /// </summary>
+    private void SlamFolder(AisRoute route, OSD rawBody, IOSHttpResponse response)
+    {
+        var folderId = route.Id;
+        if (route.IsAlias)
+        {
+            var cof = AisInventory.GetCurrentOutfit(m_backend, m_agentId);
+            if (cof is null) { WriteError(response, HttpStatusCode.NotFound, "the agent has no Current Outfit folder", route); return; }
+            folderId = cof.ID;
+        }
+
+        var contents = AisInventory.GetContents(m_backend, m_agentId, folderId);
+        if (contents is null) { WriteError(response, HttpStatusCode.NotFound, $"no category {folderId}", route); return; }
+
+        var wanted = AisSlam.ParseBody(rawBody);
+        if (wanted is null)
+        {
+            WriteError(response, HttpStatusCode.BadRequest,
+                "a slam body must be an LLSD array of link maps (name, desc, linked_id, type)", route);
+            return;
+        }
+
+        var outcome = AisSlam.Run(m_backend, m_agentId, folderId, contents.Links, wanted);
+        if (!outcome.Ok)
+        {
+            var detail = outcome.CompensationFailed
+                ? $"{outcome.Failure}; the rollback also failed and these links remain: {string.Join(", ", outcome.Leftover)}"
+                : outcome.Failure;
+            WriteError(response, HttpStatusCode.InternalServerError, detail, route);
+            return;
+        }
+
+        var envelope = new OSDMap();
+        var createdIds = new OSDArray();
+        var links = new OSDMap();
+        foreach (var link in outcome.Created)
+        {
+            createdIds.Add(OSD.FromUUID(link.ID));
+            links[link.ID.ToString()] = AisEnvelope.Link(link, m_agentId);
+        }
+        if (createdIds.Count > 0)
+        {
+            envelope["_created_items"] = createdIds;
+            envelope[AisEnvelope.Embedded] = new OSDMap { [AisEnvelope.Links] = links };
+        }
+        foreach (var removed in outcome.Removed) AisMutation.ReportRemoved(envelope, AisMutation.RemovedItems, removed);
+        AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, folderId));
+        Write(response, envelope, route);
+    }
     /// <summary>
     /// DELETE /category/{id}. Only the folder id goes in <c>_categories_removed</c>: the viewer purges the
     /// descendents itself (<c>LLInventoryModel::onObjectDeletedFromServer</c> calls
