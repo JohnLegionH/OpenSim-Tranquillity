@@ -90,6 +90,7 @@ public sealed class AisHandler : SimpleStreamHandler
                 case AisOperation.RemoveCategory:
                 case AisOperation.SlamFolder:
                 case AisOperation.CreateInventory:
+                case AisOperation.PurgeDescendents:
                     if (m_mode == AisMode.Library)
                     {
                         WriteError(httpResponse, HttpStatusCode.MethodNotAllowed, $"{route.Operation} is not allowed on the library: LibraryAPIv3 is read-only", route);
@@ -102,6 +103,7 @@ public sealed class AisHandler : SimpleStreamHandler
                         case AisOperation.RemoveItem: RemoveItem(route, httpResponse); return;
                         case AisOperation.SlamFolder: SlamFolder(route, raw, httpResponse); return;
                         case AisOperation.CreateInventory: CreateInventory(route, body, httpResponse); return;
+                        case AisOperation.PurgeDescendents: PurgeDescendents(route, httpResponse); return;
                         default: RemoveCategory(route, httpResponse); return;
                     }
 
@@ -357,6 +359,43 @@ public sealed class AisHandler : SimpleStreamHandler
         Write(response, envelope, route);
     }
 
+    /// <summary>
+    /// DELETE /category/{id}/children — empty the folder, keeping the folder (<see cref="AisPurge"/>, which
+    /// documents who calls it, why the deltas must be enumerated and what the composition costs).
+    ///
+    /// <para>The protected-folder rule is deliberately not applied: Trash and Lost and Found are protected types
+    /// and are precisely the folders this operation exists to empty (<c>llinventorymodel.cpp:4125-4131</c>).</para>
+    /// </summary>
+    private void PurgeDescendents(AisRoute route, IOSHttpResponse response)
+    {
+        var folderId = route.Id;
+        if (route.IsAlias)
+        {
+            var cof = AisInventory.GetCurrentOutfit(m_backend, m_agentId);
+            if (cof is null) { WriteError(response, HttpStatusCode.NotFound, "the agent has no Current Outfit folder", route); return; }
+            folderId = cof.ID;
+        }
+
+        var folder = m_backend.GetFolder(m_agentId, folderId);
+        if (folder is null) { WriteError(response, HttpStatusCode.NotFound, $"no category {folderId}", route); return; }
+
+        var outcome = AisPurge.Run(m_backend, m_agentId, folder);
+
+        var envelope = new OSDMap();
+        foreach (var id in outcome.RemovedCategories) AisMutation.ReportRemoved(envelope, AisMutation.CategoriesRemoved, id);
+        foreach (var id in outcome.RemovedItems) AisMutation.ReportRemoved(envelope, AisMutation.RemovedItems, id);
+        AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, folderId));
+
+        if (!outcome.Ok)
+        {
+            // Partly purged. A purge cannot be rolled back, so the honest answer is to say which children
+            // survived; re-issuing the purge finishes the job (see AisPurge.Run).
+            WriteError(response, HttpStatusCode.InternalServerError,
+                $"category {folderId} was only partly purged; these children remain: {string.Join(", ", outcome.Survivors)}", route);
+            return;
+        }
+        Write(response, envelope, route);
+    }
     /// <summary>
     /// POST /category/{parentId}?tid= — create categories, items and links in that folder.
     ///
