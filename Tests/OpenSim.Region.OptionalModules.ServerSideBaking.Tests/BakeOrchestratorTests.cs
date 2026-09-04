@@ -204,7 +204,7 @@ public class BakeOrchestratorTests
     }
 
     /// <summary>
-    /// S1c decision 3, answered end to end — and it is a defect, so this test is RED on purpose (S1d).
+    /// S1c decision 3, answered end to end. RED through S1d; green from S1e, which fixed it.
     ///
     /// An assetless Skirt slot makes the library produce a Skirt channel (SkiaBakeBackend.ChannelsFor adds it
     /// whenever a Skirt wearable is worn, textures or not). Every layer of that channel is then skipped —
@@ -217,9 +217,9 @@ public class BakeOrchestratorTests
     /// paint a solid dark skirt over whatever face 19 held. The pre-existing trigger is a real Skirt wearable
     /// carrying no skirt texture; S1d widened it to assetless slots, which are common.
     ///
-    /// The assertion below is what SHOULD happen: a channel in which nothing was drawn must not overwrite the
-    /// face. Fixing it needs the library to say whether a composite drew anything (a channel-level flag), which is
-    /// beyond S1d's orchestrator scope — so this stays red rather than being asserted into correctness.
+    /// S1e closes it: the library reports BakeResult.NothingDrawn for a channel where every layer was skipped,
+    /// and StoreAndApply neither stores nor applies such a bake — the outcome is Skipped, "nothing drawn for
+    /// this channel", and the face keeps what it had.
     /// </summary>
     [Fact]
     public void Run_AssetlessSkirtSlot_MustNotOverwriteFace19WithAnUndrawnBake()
@@ -246,5 +246,34 @@ public class BakeOrchestratorTests
         Assert.All(skirt.Fidelity.Notes, n => Assert.Contains("skipped", n));
         // therefore the face must be left as it was
         Assert.True(before[19] == after[19], "an undrawn channel must not overwrite its face. " + diag);
+    }
+
+    /// <summary>
+    /// The other side of the S1e rule, so it cannot be satisfied by discarding transparent bakes instead: a
+    /// channel that DID draw is stored and applied even when every pixel it drew is transparent. Truly Bazar's
+    /// bald hair is exactly this — a 4x4 fully transparent hair texture — and its bake is the correct bake.
+    /// </summary>
+    [Fact]
+    public void Run_DrawnButFullyTransparentChannel_IsStillStoredAndApplied()
+    {
+        if (!FixturesPresent) { Console.WriteLine(SkipNote); return; }
+        var (assets, wearables, vp) = LoadFixtures();
+        var appearance = new AvatarAppearance();
+        var before = Faces(appearance);
+        var compositor = new TexLayerCompositor();
+
+        var outcome = BakeOrchestrator.Run(Agent, BakeReason.Console, wearables, vp, appearance, assets,
+            new SkiaBakeBackend(compositor) { Quality = 0.5 }, compositor, 128, CancellationToken.None);
+
+        var hair = outcome.Channels.Single(c => c.Channel == BakeChannel.Hair);
+        var after = Faces(appearance);
+        Assert.Equal(ChannelStatus.Baked, hair.Status);
+        var stored = assets.Get(hair.AssetId.ToString());
+        Assert.NotNull(stored);
+        Assert.Equal(hair.AssetId, after[BakeOrchestrator.FaceOf(BakeChannel.Hair)]);
+        Assert.NotEqual(before[BakeOrchestrator.FaceOf(BakeChannel.Hair)], after[BakeOrchestrator.FaceOf(BakeChannel.Hair)]);
+        // it really is all-transparent: this is the case a pixel-based rule would have wrongly discarded
+        var img = J2kCodec.Decode(stored!.Data);
+        Assert.True(img.A.All(a => a <= 2), $"Truly's hair bake should be fully transparent; max alpha {img.A.Max()}");
     }
 }

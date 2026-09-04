@@ -177,6 +177,16 @@ public static class BakeOrchestrator
                 outcomes.Add(new ChannelOutcome(ch, ChannelStatus.Failed, UUID.Zero, result.InputHash, "backend returned no bytes", result.Fidelity));
                 continue;
             }
+            if (result.NothingDrawn)
+            {
+                // Every layer of this channel was skipped, so the bake is whatever the canvas was cleared to —
+                // opaque, not blank (S1d measured 96.5% opaque near-black on an assetless skirt slot). Storing it
+                // and writing the face would paint that over the avatar, replacing a viewer bake that may be
+                // perfectly good. The face keeps what it has. Note this is a fact about the layer decisions, not
+                // the pixels: a channel that drew a fully transparent texture (a bald hair) is stored normally.
+                outcomes.Add(new ChannelOutcome(ch, ChannelStatus.Skipped, UUID.Zero, result.InputHash, "nothing drawn for this channel", result.Fidelity));
+                continue;
+            }
             var asset = new AssetBase(UUID.Random(), AssetNameFor(agentId, ch), (sbyte)AssetType.Texture, agentId.ToString())
             {
                 Data = result.J2kBytes,
