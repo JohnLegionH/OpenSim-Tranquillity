@@ -136,6 +136,12 @@ public sealed class FakeAisBackend : IAisInventoryBackend
     /// <summary>Fault injection: return false to make this AddItem fail. Null means every add succeeds.</summary>
     public Func<InventoryItemBase, bool> AddItemGate;
 
+    /// <summary>Fault injection: return false to make this PurgeFolder fail. Null means it succeeds.</summary>
+    public Func<InventoryFolderBase, bool> PurgeFolderGate;
+
+    /// <summary>Fault injection: return false to make this DeleteFolders fail. Null means it succeeds.</summary>
+    public Func<IReadOnlyList<UUID>, bool> DeleteFoldersGate;
+
     /// <summary>Fault injection: return false to make this DeleteItems fail. Null means every delete succeeds.</summary>
     public Func<IReadOnlyList<UUID>, bool> DeleteItemsGate;
 
@@ -205,6 +211,7 @@ public sealed class FakeAisBackend : IAisInventoryBackend
     {
         Calls.Add($"DeleteFolders[{folderIds.Count}, onlyIfTrash={onlyIfTrash}]");
         if (!AllowWrite || agentId != Owner) return false;
+        if (DeleteFoldersGate is not null && !DeleteFoldersGate(folderIds)) return false;
         foreach (var id in folderIds)
         {
             if (!Folders.TryGetValue(id, out var folder)) continue;
@@ -221,6 +228,7 @@ public sealed class FakeAisBackend : IAisInventoryBackend
     {
         Calls.Add($"PurgeFolder({folder.ID})");
         if (!AllowWrite) return false;
+        if (PurgeFolderGate is not null && !PurgeFolderGate(folder)) return false;
         Purge(folder.ID);
         Bump(folder.ID);
         OnWrite?.Invoke();
