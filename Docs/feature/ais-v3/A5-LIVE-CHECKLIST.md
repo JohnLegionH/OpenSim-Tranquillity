@@ -182,18 +182,19 @@ degraded — the library copy must carry the source's own masks, not `NextPermis
 
 Confirm these behave as documented rather than in some worse way.
 
-### 13. Creating an inventory **item** — expected 501
+### 13. Creating an inventory **item** — RESOLVED, it just works
 
 **Do:** Inventory → + → New Notecard (or New Script, New Clothing).
 
-**Expected:** the notecard is **not** created. The viewer's own AIS path for this is compiled out
-(`USE_AIS_FOR_NC`) and expects the server to mint the asset, which this region does not do, so the route answers
-501 rather than creating an item with no asset behind it.
+**Expected:** the notecard **is** created, normally, and AIS is never involved. Settled in A11 from the source:
+the AIS arm of `create_inventory_item` is inside `#ifdef USE_AIS_FOR_NC`
+(`llviewerinventory.cpp:1120`-`:1166`), the macro is not defined, so control falls unconditionally to the legacy
+`CreateInventoryItem` UDP send at `:1169`. Confirmed in the 2026-09-04 run: the item was created over UDP and the
+only AIS request was a `FetchItem` syncing the result.
 
-**What to watch for:** whether the viewer falls back to the legacy `CreateInventoryItem` UDP path and the notecard
-appears anyway — that would be the good outcome and worth recording. If instead nothing happens and the viewer
-logs an AIS failure, that is the expected-but-unfortunate outcome, and it is the single biggest argument against
-flipping this flag more widely.
+**This step was once "the single biggest argument against flipping this flag more widely". It is not any more** —
+the code is LL's, so stock viewers behave identically, and our 501 route is simply never reached for item
+creation. Watch only that the item appears and survives a relog.
 
 ### 14. Hypergrid folder deletion — expected refusal
 
