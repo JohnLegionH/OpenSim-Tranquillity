@@ -56,8 +56,13 @@ public interface IAisInventoryBackend
     /// <summary>Delete items (and links) by id. Bumps each parent's version (S0a V6).</summary>
     bool DeleteItems(UUID agentId, IReadOnlyList<UUID> itemIds);
 
-    /// <summary>Delete folders by id, recursively.</summary>
-    bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds);
+    /// <summary>
+    /// Delete folders by id, recursively. <paramref name="onlyIfTrash"/> is the inventory service's Trash
+    /// restriction: with it true a folder outside Trash or Lost And Found is silently skipped and the call still
+    /// succeeds. AIS passes **false** — the LL viewer deletes any non-protected folder wherever it sits — which is
+    /// why <c>IInventoryService</c> gained the three-argument overload in A2b (Ledger A-Q9).
+    /// </summary>
+    bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds, bool onlyIfTrash);
 
     /// <summary>Delete a folder's contents but keep the folder (AIS PurgeDescendents).</summary>
     bool PurgeFolder(InventoryFolderBase folder);

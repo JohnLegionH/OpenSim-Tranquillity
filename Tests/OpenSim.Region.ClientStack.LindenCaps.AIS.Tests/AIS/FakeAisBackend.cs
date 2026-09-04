@@ -193,14 +193,14 @@ public sealed class FakeAisBackend : IAisInventoryBackend
     }
 
     /// <summary>Recursive, and with the real service's trash gate available for a test to switch on.</summary>
-    public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds)
+    public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds, bool onlyIfTrash)
     {
-        Calls.Add($"DeleteFolders[{folderIds.Count}]");
+        Calls.Add($"DeleteFolders[{folderIds.Count}, onlyIfTrash={onlyIfTrash}]");
         if (!AllowWrite || agentId != Owner) return false;
         foreach (var id in folderIds)
         {
             if (!Folders.TryGetValue(id, out var folder)) continue;
-            if (DeleteFoldersOnlyIfTrash && !UnderTrash(id)) continue;   // silently skipped, as the real service does
+            if (onlyIfTrash && DeleteFoldersOnlyIfTrash && !UnderTrash(id)) continue;   // as the real service does
             Purge(id);
             Folders.Remove(id);
             Bump(folder.ParentID);

@@ -355,11 +355,19 @@ public sealed class AisHandler : SimpleStreamHandler
     /// <c>onDescendentsPurgedFromServer</c> for a category, <c>llinventorymodel.cpp:2019-2023</c>), so they are
     /// implied rather than enumerated.
     ///
-    /// <para><b>The delete is verified, not assumed.</b> <c>IInventoryService.DeleteFolders</c> is the two-argument
-    /// overload, which is <c>onlyIfTrash = true</c>: it silently skips any folder not under Trash or Lost And Found
-    /// and still returns true (<c>XInventoryService.cs:459-478</c>). The viewer calls RemoveCategory on any
-    /// non-protected folder wherever it sits (<c>llviewerinventory.cpp:1545-1568</c>). So the folder is re-read
-    /// afterwards and a survivor is reported as a failure rather than a false success (Ledger A-Q9).</para>
+    /// <para><b>Deletion is not restricted to Trash</b> (A2b, Ledger A-Q9 resolved). The call passes
+    /// <c>onlyIfTrash: false</c> through the <c>IInventoryService</c> overload added in A2b, because the viewer
+    /// deletes any non-protected folder wherever it sits (<c>llviewerinventory.cpp:1545-1568</c>, read in A2). The
+    /// result is still verified by re-reading the folder rather than trusting the return value, since the service
+    /// returns true even when it deleted nothing.</para>
+    ///
+    /// <para><b>Protected folders are refused</b> with 403. The viewer refuses to send RemoveCategory for a folder
+    /// whose type <c>LLFolderType::lookupIsProtectedType</c> accepts (<c>llviewerinventory.cpp:1557-1561</c>), so
+    /// this is defence in depth rather than a path the viewer exercises. That predicate's exact membership lives in
+    /// <c>llfoldertype.cpp</c>, which is not a permitted read, so the server rule is stated in our own terms and
+    /// marked UNVERIFIED against the viewer's list: a folder is protected when it is the agent's root or carries a
+    /// system type, **except** <see cref="FolderType.Outfit"/>, which is an ordinary saved outfit that users delete
+    /// routinely.</para>
     /// </summary>
     private void RemoveCategory(AisRoute route, IOSHttpResponse response)
     {
@@ -367,12 +375,18 @@ public sealed class AisHandler : SimpleStreamHandler
         if (folder is null) { WriteError(response, HttpStatusCode.NotFound, $"no category {route.Id}", route); return; }
         var parentId = folder.ParentID;
 
-        m_backend.DeleteFolders(m_agentId, new[] { route.Id });
+        if (IsProtected(folder))
+        {
+            WriteError(response, HttpStatusCode.Forbidden,
+                $"category {route.Id} is a protected system folder and cannot be deleted", route);
+            return;
+        }
+
+        m_backend.DeleteFolders(m_agentId, new[] { route.Id }, onlyIfTrash: false);
         if (m_backend.GetFolder(m_agentId, route.Id) is not null)
         {
-            WriteError(response, HttpStatusCode.Conflict,
-                $"category {route.Id} was not deleted: this inventory service only deletes folders under Trash or Lost And Found",
-                route);
+            WriteError(response, HttpStatusCode.InternalServerError,
+                $"the inventory service did not delete category {route.Id}", route);
             return;
         }
 
@@ -380,6 +394,21 @@ public sealed class AisHandler : SimpleStreamHandler
         AisMutation.ReportRemoved(envelope, AisMutation.CategoriesRemoved, route.Id);
         AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, parentId));
         Write(response, envelope, route);
+    }
+
+    /// <summary>
+    /// A folder the server refuses to delete: the agent's root, or any folder carrying a system type other than
+    /// <see cref="FolderType.Outfit"/>. Mirrors the viewer's own <c>lookupIsProtectedType</c> gate
+    /// (<c>llviewerinventory.cpp:1557-1561</c>); the exact membership of that predicate is UNVERIFIED here because
+    /// <c>llfoldertype.cpp</c> is not a permitted read, so this is a deliberately conservative rule that still
+    /// leaves saved outfits and ordinary user folders deletable.
+    /// </summary>
+    public static bool IsProtected(InventoryFolderBase folder)
+    {
+        if (folder is null) return true;
+        if (folder.ParentID.IsZero()) return true;                 // the inventory root
+        if (folder.Type < 0) return false;                         // FolderType.None: an ordinary user folder
+        return folder.Type != (short)FolderType.Outfit;
     }
 
     // ------------------------------------------------------------------ wire

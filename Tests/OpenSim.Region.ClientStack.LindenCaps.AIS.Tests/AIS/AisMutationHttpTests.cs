@@ -259,19 +259,79 @@ public class AisMutationHttpTests
             "the deleted folder must not be listed: the viewer would dereference a category it has just removed (Ledger A-R6)");
     }
 
+    /// <summary>
+    /// A2b, replacing A2's 409: the handler passes onlyIfTrash: false through the IInventoryService overload
+    /// added in A2b, so a folder outside Trash is deleted rather than silently skipped. The trash gate is armed
+    /// on the backend here, so this fails if the handler ever stops passing the flag.
+    /// </summary>
     [Test]
-    public void a_folder_the_service_silently_refused_to_delete_is_reported_as_a_failure_not_a_success()
+    public void a_folder_outside_trash_is_deleted_because_the_handler_passes_only_if_trash_false()
     {
-        // IInventoryService.DeleteFolders is onlyIfTrash = true and returns true even when it skipped everything
-        // (XInventoryService.cs:459-478). The handler re-reads the folder rather than trusting that return.
         var b = Inventory();
-        b.DeleteFoldersOnlyIfTrash = true;   // no Trash folder in this inventory, so nothing qualifies
+        b.DeleteFoldersOnlyIfTrash = true;   // armed: with onlyIfTrash true this folder would be skipped
+        var before = b.Folders[Clothing].Version;
 
         var (status, body) = Send(b, "DELETE", $"/category/{Outfits}");
 
-        Assert.That(status, Is.EqualTo((int)HttpStatusCode.Conflict));
-        AssertErrorBody(body, 409);
-        Assert.That(b.Folders.ContainsKey(Outfits), Is.True, "and the folder really is still there");
+        Assert.That(status, Is.EqualTo(200));
+        Assert.That(b.Folders.ContainsKey(Outfits), Is.False, "the folder is gone even though it was never in Trash");
+        Assert.That(b.Calls, Does.Contain("DeleteFolders[1, onlyIfTrash=False]"),
+            "the AIS route must ask for the unrestricted delete (Ledger A-Q9)");
+        Assert.That(((OSDArray)body["_categories_removed"]).Select(o => o.AsUUID()), Is.EquivalentTo(new[] { Outfits }));
+        Assert.That(Versions(body)[Clothing.ToString()].AsInteger(), Is.EqualTo(before + 1));
+    }
+
+    /// <summary>
+    /// Protected folders are still refused, server side. The viewer refuses to send RemoveCategory for a folder
+    /// whose type lookupIsProtectedType accepts (llviewerinventory.cpp:1557-1561), so this is defence in depth;
+    /// the exact membership of that predicate is UNVERIFIED (llfoldertype.cpp is not a permitted read), so the
+    /// server rule is "the root, or any system type except Outfit".
+    /// </summary>
+    [Test]
+    public void a_protected_folder_is_refused_with_403_and_nothing_is_deleted()
+    {
+        var b = Inventory();
+
+        // a system-typed folder
+        var (status, body) = Send(b, "DELETE", $"/category/{Clothing}");
+        Assert.That(status, Is.EqualTo((int)HttpStatusCode.Forbidden));
+        AssertErrorBody(body, 403);
+        Assert.That(b.Folders.ContainsKey(Clothing), Is.True);
+        Assert.That(b.Calls.Any(c => c.StartsWith("DeleteFolders")), Is.False, "the backend is never asked");
+
+        // the inventory root
+        var (rootStatus, _) = Send(b, "DELETE", $"/category/{Root}");
+        Assert.That(rootStatus, Is.EqualTo((int)HttpStatusCode.Forbidden));
+        Assert.That(b.Folders.ContainsKey(Root), Is.True);
+    }
+
+    /// <summary>A saved outfit is ordinary user data and must stay deletable.</summary>
+    [Test]
+    public void a_saved_outfit_folder_is_not_protected()
+    {
+        var b = Inventory();
+        var outfit = new UUID("55555555-5555-4555-8555-555555555551");
+        b.AddFolder(outfit, Outfits, "Beach Outfit", 1, (short)FolderType.Outfit);
+
+        var (status, body) = Send(b, "DELETE", $"/category/{outfit}");
+
+        Assert.That(status, Is.EqualTo(200), "FolderType.Outfit is a user folder, not a protected system one");
+        Assert.That(b.Folders.ContainsKey(outfit), Is.False);
+        Assert.That(((OSDArray)body["_categories_removed"]).Select(o => o.AsUUID()), Is.EquivalentTo(new[] { outfit }));
+    }
+
+    /// <summary>The verification survives: a service that really does nothing is a 500, not a false 200.</summary>
+    [Test]
+    public void a_delete_the_service_did_not_perform_is_reported_as_a_failure()
+    {
+        var b = Inventory();
+        b.AllowWrite = false;   // DeleteFolders returns false and changes nothing
+
+        var (status, body) = Send(b, "DELETE", $"/category/{Outfits}");
+
+        Assert.That(status, Is.EqualTo((int)HttpStatusCode.InternalServerError));
+        AssertErrorBody(body, 500);
+        Assert.That(b.Folders.ContainsKey(Outfits), Is.True);
     }
 
     [Test]

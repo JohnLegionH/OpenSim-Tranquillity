@@ -133,7 +133,7 @@ public class AISv3Module : ISharedRegionModule
         public bool UpdateItem(InventoryItemBase item) => m_service.UpdateItem(item);
         public bool UpdateFolder(InventoryFolderBase folder) => m_service.UpdateFolder(folder);
         public bool DeleteItems(UUID agentId, IReadOnlyList<UUID> itemIds) => m_service.DeleteItems(agentId, new List<UUID>(itemIds));
-        public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds) => m_service.DeleteFolders(agentId, new List<UUID>(folderIds));
+        public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds, bool onlyIfTrash) => m_service.DeleteFolders(agentId, new List<UUID>(folderIds), onlyIfTrash);
         public bool PurgeFolder(InventoryFolderBase folder) => m_service.PurgeFolder(folder);
     }
 
@@ -203,7 +203,7 @@ public class AISv3Module : ISharedRegionModule
         public bool UpdateItem(InventoryItemBase item) => false;
         public bool UpdateFolder(InventoryFolderBase folder) => false;
         public bool DeleteItems(UUID agentId, IReadOnlyList<UUID> itemIds) => false;
-        public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds) => false;
+        public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds, bool onlyIfTrash) => false;
         public bool PurgeFolder(InventoryFolderBase folder) => false;
     }
 }

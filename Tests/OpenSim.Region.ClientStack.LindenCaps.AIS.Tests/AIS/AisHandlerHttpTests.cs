@@ -37,7 +37,7 @@ public class AisHandlerHttpTests
         public bool UpdateItem(InventoryItemBase item) => throw Boom();
         public bool UpdateFolder(InventoryFolderBase folder) => throw Boom();
         public bool DeleteItems(UUID agentId, IReadOnlyList<UUID> itemIds) => throw Boom();
-        public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds) => throw Boom();
+        public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds, bool onlyIfTrash) => throw Boom();
         public bool PurgeFolder(InventoryFolderBase folder) => throw Boom();
     }
 
