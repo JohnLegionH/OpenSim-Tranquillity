@@ -22,9 +22,11 @@ public enum AisMode
 /// request with <see cref="AisRouter"/> and dispatches on <see cref="AisOperation"/>. Holds only an agent id, a
 /// backend and its cap path (Ledger P-2) so the same class can be mounted on Robust in Phase 2.
 ///
-/// <para>A1 implements the **read** surface: <c>GET /item</c>, <c>/category/{id}/children</c> (whole and subset),
-/// <c>/categories</c>, <c>/links</c>, <c>/category/current/links</c> and <c>/orphans</c>. Every mutation still
-/// answers 501 on the inventory cap and 405 on the library cap. Nothing in this session writes to inventory.</para>
+/// <para>A1 implemented the **read** surface: <c>GET /item</c>, <c>/category/{id}/children</c> (whole and subset),
+/// <c>/categories</c>, <c>/links</c>, <c>/category/current/links</c> and <c>/orphans</c>. A2 adds the
+/// **single-object mutations**: <c>PATCH /item</c>, <c>PATCH /category</c>, <c>DELETE /item</c> and
+/// <c>DELETE /category</c>, each answering with the delta envelope of §1d-bis. SlamFolder, PurgeDescendents,
+/// CreateInventory and COPY are still 501 (A3/A4). Every mutation is 405 on the library cap.</para>
 ///
 /// <para><b>Which collections a response carries.</b> The viewer derives a folder's descendent count only when
 /// <c>_embedded</c> has all three of <c>categories</c>, <c>items</c>, <c>links</c> — or, for a Current Outfit or
@@ -64,7 +66,7 @@ public sealed class AisHandler : SimpleStreamHandler
     /// <summary>Dispatch a parsed route. Public so the HTTP-level tests can drive it without a scene.</summary>
     public void Dispatch(AisRoute route, IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)
     {
-        httpRequest.InputStream?.Dispose();
+        var body = ReadBody(httpRequest);
         try
         {
             switch (route.Operation)
@@ -80,6 +82,23 @@ public sealed class AisHandler : SimpleStreamHandler
                 case AisOperation.FetchCategoryLinks:
                 case AisOperation.FetchCOF: FetchLinks(route, httpResponse); return;
                 case AisOperation.FetchOrphans: FetchOrphans(route, httpResponse); return;
+
+                case AisOperation.UpdateItem:
+                case AisOperation.UpdateCategory:
+                case AisOperation.RemoveItem:
+                case AisOperation.RemoveCategory:
+                    if (m_mode == AisMode.Library)
+                    {
+                        WriteError(httpResponse, HttpStatusCode.MethodNotAllowed, $"{route.Operation} is not allowed on the library: LibraryAPIv3 is read-only", route);
+                        return;
+                    }
+                    switch (route.Operation)
+                    {
+                        case AisOperation.UpdateItem: UpdateItem(route, body, httpResponse); return;
+                        case AisOperation.UpdateCategory: UpdateCategory(route, body, httpResponse); return;
+                        case AisOperation.RemoveItem: RemoveItem(route, httpResponse); return;
+                        default: RemoveCategory(route, httpResponse); return;
+                    }
 
                 default:
                     // Every mutation. On the library cap they are refused outright; on the inventory cap they are
@@ -236,6 +255,129 @@ public sealed class AisHandler : SimpleStreamHandler
             [AisEnvelope.Items] = AisEnvelope.ItemsMap(orphans.Items, m_agentId),
         };
         Write(response, new OSDMap { [AisEnvelope.Embedded] = embedded }, route);
+    }
+
+    // ------------------------------------------------------------------ the mutation routes (A2)
+
+    /// <summary>The request body as an LLSD map; an empty map when there is none or it is not a map.</summary>
+    private static OSDMap ReadBody(IOSHttpRequest request)
+    {
+        try
+        {
+            var stream = request.InputStream;
+            if (stream is null) return new OSDMap();
+            using var ms = new System.IO.MemoryStream();
+            stream.CopyTo(ms);
+            var bytes = ms.ToArray();
+            if (bytes.Length == 0) return new OSDMap();
+            return OSDParser.DeserializeLLSDXml(bytes) as OSDMap ?? new OSDMap();
+        }
+        catch { return new OSDMap(); }
+        finally { try { request.InputStream?.Dispose(); } catch { } }
+    }
+
+    /// <summary>
+    /// PATCH /item/{id}. The updated item goes back as **top-level content** — on a mutation the viewer ignores
+    /// anything embedded that is not in <c>_created_items</c> (§1c) — and its parent folder is listed in
+    /// <c>_updated_category_versions</c>, without which the viewer discards even the zero-delta entry
+    /// <c>parseItem</c> creates (§1d-bis, <c>llaisapi.cpp:1625-1629</c>). Fields this tree cannot store are
+    /// ignored, not refused: the viewer sends the whole item map, so most keys carry unchanged values.
+    /// </summary>
+    private void UpdateItem(AisRoute route, OSDMap body, IOSHttpResponse response)
+    {
+        var item = m_backend.GetItem(m_agentId, route.Id);
+        if (item is null) { WriteError(response, HttpStatusCode.NotFound, $"no item {route.Id}", route); return; }
+
+        var applied = AisMutation.ApplyToItem(body, item);
+        if (applied.Any && !m_backend.UpdateItem(item))
+        {
+            WriteError(response, HttpStatusCode.InternalServerError, $"the inventory service refused the update of item {route.Id}", route);
+            return;
+        }
+
+        var envelope = AisEnvelope.Item(item, m_agentId);
+        AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, item.Folder));
+        Write(response, envelope, route);
+    }
+
+    /// <summary>
+    /// PATCH /category/{id}. <c>parseCategory</c> creates zero-delta entries for the category **and** its parent
+    /// (§1d-bis, <c>llaisapi.cpp:1419-1428</c>), so both are listed. <c>thumbnail</c> and <c>favorite</c> have no
+    /// storage in this tree and are dropped.
+    /// </summary>
+    private void UpdateCategory(AisRoute route, OSDMap body, IOSHttpResponse response)
+    {
+        var folder = m_backend.GetFolder(m_agentId, route.Id);
+        if (folder is null) { WriteError(response, HttpStatusCode.NotFound, $"no category {route.Id}", route); return; }
+
+        var applied = AisMutation.ApplyToFolder(body, folder);
+        if (applied.Any && !m_backend.UpdateFolder(folder))
+        {
+            WriteError(response, HttpStatusCode.InternalServerError, $"the inventory service refused the update of category {route.Id}", route);
+            return;
+        }
+
+        var fresh = m_backend.GetFolder(m_agentId, route.Id) ?? folder;
+        var envelope = AisEnvelope.Category(fresh, m_agentId);
+        AisMutation.ReportVersion(envelope, fresh);
+        AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, fresh.ParentID));
+        Write(response, envelope, route);
+    }
+
+    /// <summary>
+    /// DELETE /item/{id}. No content: the removal travels as <c>_removed_items</c> and the parent's new version
+    /// as <c>_updated_category_versions</c> (§1d-bis). The parent is read **after** the delete, so the version is
+    /// the post-operation one the data layer bumped (S0a V6, tree state T3/T4).
+    /// </summary>
+    private void RemoveItem(AisRoute route, IOSHttpResponse response)
+    {
+        var item = m_backend.GetItem(m_agentId, route.Id);
+        if (item is null) { WriteError(response, HttpStatusCode.NotFound, $"no item {route.Id}", route); return; }
+        var parentId = item.Folder;
+
+        if (!m_backend.DeleteItems(m_agentId, new[] { route.Id }))
+        {
+            WriteError(response, HttpStatusCode.InternalServerError, $"the inventory service refused the delete of item {route.Id}", route);
+            return;
+        }
+
+        var envelope = new OSDMap();
+        AisMutation.ReportRemoved(envelope, AisMutation.RemovedItems, route.Id);
+        AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, parentId));
+        Write(response, envelope, route);
+    }
+
+    /// <summary>
+    /// DELETE /category/{id}. Only the folder id goes in <c>_categories_removed</c>: the viewer purges the
+    /// descendents itself (<c>LLInventoryModel::onObjectDeletedFromServer</c> calls
+    /// <c>onDescendentsPurgedFromServer</c> for a category, <c>llinventorymodel.cpp:2019-2023</c>), so they are
+    /// implied rather than enumerated.
+    ///
+    /// <para><b>The delete is verified, not assumed.</b> <c>IInventoryService.DeleteFolders</c> is the two-argument
+    /// overload, which is <c>onlyIfTrash = true</c>: it silently skips any folder not under Trash or Lost And Found
+    /// and still returns true (<c>XInventoryService.cs:459-478</c>). The viewer calls RemoveCategory on any
+    /// non-protected folder wherever it sits (<c>llviewerinventory.cpp:1545-1568</c>). So the folder is re-read
+    /// afterwards and a survivor is reported as a failure rather than a false success (Ledger A-Q9).</para>
+    /// </summary>
+    private void RemoveCategory(AisRoute route, IOSHttpResponse response)
+    {
+        var folder = m_backend.GetFolder(m_agentId, route.Id);
+        if (folder is null) { WriteError(response, HttpStatusCode.NotFound, $"no category {route.Id}", route); return; }
+        var parentId = folder.ParentID;
+
+        m_backend.DeleteFolders(m_agentId, new[] { route.Id });
+        if (m_backend.GetFolder(m_agentId, route.Id) is not null)
+        {
+            WriteError(response, HttpStatusCode.Conflict,
+                $"category {route.Id} was not deleted: this inventory service only deletes folders under Trash or Lost And Found",
+                route);
+            return;
+        }
+
+        var envelope = new OSDMap();
+        AisMutation.ReportRemoved(envelope, AisMutation.CategoriesRemoved, route.Id);
+        AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, parentId));
+        Write(response, envelope, route);
     }
 
     // ------------------------------------------------------------------ wire
