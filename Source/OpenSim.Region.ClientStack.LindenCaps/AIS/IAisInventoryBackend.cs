@@ -25,6 +25,16 @@ public interface IAisInventoryBackend
     /// <summary>A folder's direct children: sub-folders and items (links included in <c>Items</c>), with the folder's version.</summary>
     InventoryCollection GetFolderContent(UUID agentId, UUID folderId);
 
+    /// <summary>A folder's direct sub-folders only (GET /category/{id}/categories). Empty when the folder is absent.</summary>
+    IReadOnlyList<InventoryFolderBase> GetSubFolders(UUID agentId, UUID folderId);
+
+    /// <summary>
+    /// Every folder the agent owns, parents included — the inventory skeleton
+    /// (<c>IInventoryService.GetInventorySkeleton</c>). Used only to find folders whose parent no longer exists
+    /// (GET /orphans); there is no cheaper orphan query in the service.
+    /// </summary>
+    IReadOnlyList<InventoryFolderBase> GetInventorySkeleton(UUID agentId);
+
     /// <summary>Items by id, e.g. link targets; absent ids are simply missing from the result.</summary>
     IReadOnlyList<InventoryItemBase> GetItems(UUID agentId, IReadOnlyList<UUID> itemIds);
 
