@@ -291,6 +291,86 @@ inventory skeleton. `IInventoryService` has no item-orphan query and finding orp
 the contents of every folder (tree state T5), so items are never reported. **An empty response means "no orphan
 folders", not "no orphans of any kind".**
 
+## 1c-bis. The depth contract (A2b), settled from the fetch path
+
+A1 implemented `depth=N` as "N counts generations expanded below the requested folder" and marked it UNVERIFIED,
+expecting a live SL capture to settle it. It is settled from the source instead, and the implementation matches.
+
+### (a) Every URL the viewer builds with a depth
+
+Only two call sites in `llinventorymodelbackgroundfetch.cpp`, and both pass a literal `0` for the depth argument
+while varying the *recursive* flag:
+
+| Call | Line | Arguments |
+|---|---|---|
+| `AISAPI::FetchCategorySubset(cat_id, children, item_type, true, cb, 0)` | `:937` | recursive **true**, depth 0 |
+| `AISAPI::FetchCategoryChildren(cat_id, item_type, type == FT_RECURSIVE, cb, 0)` | `:994` | recursive from the queue entry, depth 0 |
+
+The depth that reaches the URL is computed in `llaisapi.cpp`: `depth = MAX_FOLDER_DEPTH_REQUEST` when recursive,
+else `llmin(depth, MAX_FOLDER_DEPTH_REQUEST)` (`:463-474` for children, `:517-527` for the string-identifier form,
+`:630-637` for the subset), with `MAX_FOLDER_DEPTH_REQUEST = 50` (`:58`). **So the only depths the viewer ever
+sends are `depth=50` (recursive) and `depth=0` (not).** No other value is reachable from these call sites.
+
+### (b) What the viewer does with the response
+
+Two mechanisms, and the second is the one that matters:
+
+1. **It re-queues descendants regardless.** `onAISContentCalback` (`llinventorymodelbackgroundfetch.cpp:579-625`)
+   walks the direct descendant categories of every folder in the response and pushes each back on
+   `mFetchFolderQueue` as `FT_RECURSIVE` — the comment says why: *"push descendant back to verify they are fetched
+   fully (ex: didn't encounter depth limit)"* (`:610`). The viewer never assumes the server honoured the depth.
+2. **"Fetched" means "has a version".** The queue drain skips a child category when
+   `VERSION_UNKNOWN != child_cat->getVersion()` (`:894-898`, again at `:948-953`); only unversioned children are
+   put in a subset request.
+
+And a folder only gets a version when the response let the viewer count its descendents: `parseCategory` sets it
+inside `if (mCatDescendentsKnown.find(category_id) != end)` **and** `depth >= 0` — *"set version only if we are
+sure this update has full data and embeded items since viewer uses version to decide if folder and content still
+need fetching"* (`llaisapi.cpp:1380-1407`). `mCatDescendentsKnown` is filled only for a category whose
+`_embedded` carries all three collections, or `links` alone for a Current Outfit / Outfit folder (`:1466-1482`).
+
+### (c) The rule the server must follow
+
+The depth in the parse decrements as it descends: `parseContent` parses the top-level category at `mFetchDepth`
+(`:1205`), which is the `depth` the viewer kept locally, defaulting to 50 (`:1036-1040`); `parseCategory` then
+parses its `_embedded` at `depth - 1` (`:1461-1464`). Combined with the `depth >= 0` gate above:
+
+> **The rule.** `depth=N` licenses the server to expand up to **N generations below the requested folder**. The
+> requested folder is parsed at N, its children at N−1, and so on; a category that arrives deeper than N is parsed
+> at a negative depth and **never gets a version**, so expanding further than N is wasted work that the viewer
+> will re-fetch anyway. Expanding **fewer** generations than N is always safe: the unversioned folders are simply
+> queued and fetched on the next round (b1), at the cost of a round trip.
+
+Two corollaries the implementation must respect, and does:
+
+- Every category the server **expands** must carry all three `_embedded` collections *and* a `version`, or the
+  viewer cannot count its descendents, will not version it, and will re-request it forever (risk A-R3).
+- Every category the server **does not** expand must be a stub with no `_embedded`. Sending `version` on a stub is
+  harmless — the version gate is inside the descendents-known branch, so an unexpanded category is left
+  `VERSION_UNKNOWN` whatever version accompanies it — which is exactly the "come back for this one" signal.
+
+At `depth=0` this produces precisely the viewer's intent: `mFetchDepth = 0`, the requested folder is versioned,
+its `_embedded` is parsed at −1 so no child is versioned, and every child comes back on the queue.
+
+### (d) Limits
+
+| Limit | Value | Source |
+|---|---|---|
+| Maximum depth requested | 50 | `MAX_FOLDER_DEPTH_REQUEST`, `llaisapi.cpp:58`; every depth is clamped to it |
+| Children per subset request | `BatchSizeAIS3`, default **20**, clamped to [1, 40] | `llinventorymodelbackgroundfetch.cpp:883-885` |
+| More children than the batch | parent re-queued as `FT_CONTENT_RECURSIVE` to collect the rest | `:909-913`, `:955-960` |
+| URL length | warns above **2000** characters and **still sends** | `llaisapi.cpp:651-654` |
+| Marketplace listings | never fetched by this path | `:900-904` |
+
+### Conformance
+
+`AisInventory.Walk(backend, agent, root, depth)` expands the requested folder plus `depth` further generations,
+breadth first, and `AisHandler.FetchChildren` emits every walked folder with all three collections and every
+unwalked child as a stub. That is the rule above, with no off-by-one: our deepest expanded generation is parsed
+by the viewer at exactly `depth − depth = 0`, the last value that still versions. The **UNVERIFIED** marker is
+removed. The handler additionally clamps a requested depth to 50, matching the viewer's own ceiling, so a client
+asking for more cannot make the region walk further than the viewer would ever use.
+
 ## 1e. Version semantics
 
 - Folder versions arrive in two places: `version` on a category map (fetch and mutation responses) and

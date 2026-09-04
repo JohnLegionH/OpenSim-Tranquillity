@@ -62,18 +62,22 @@ public static class AisInventory
         return targets;
     }
 
+    /// <summary>The viewer's own ceiling on a requested depth: MAX_FOLDER_DEPTH_REQUEST (llaisapi.cpp:58).</summary>
+    public const int MaxDepth = 50;
     /// <summary>
     /// A folder and its descendants to <paramref name="depth"/> levels below it. <c>depth = 0</c> expands the
     /// requested folder only: its own <c>categories</c>, <c>items</c> and <c>links</c> are listed, and each child
     /// category appears as a bare map with no <c>_embedded</c>. Each further level of depth expands one more
     /// generation. Returned in breadth-first order with the requested folder first.
     ///
-    /// <para>The depth number comes from the viewer (<c>depth=N</c> on the URL, spec §1a rows 10-13), but how much
-    /// a server expands for a given N is the server's choice: the viewer only consumes what arrives, and its one
-    /// hard rule is that a category must carry all three collections or none (spec §1c). This reading — N counts
-    /// generations expanded below the requested folder — is therefore **UNVERIFIED** against the viewer and is
-    /// stated here as the contract the tests pin.</para>
+    /// <para>Settled in A2b from the viewer's own fetch path (spec §1c-bis): the viewer parses the requested
+    /// folder at the depth it asked for and each `_embedded` level one lower (`llaisapi.cpp:1205`, `:1461-1464`),
+    /// and versions a category only while that depth is still &gt;= 0 and its descendent count is known
+    /// (`:1380-1407`). So N licenses exactly N generations below the requested folder — deeper is wasted work the
+    /// viewer will not version, shallower is safe because it re-queues every descendant regardless
+    /// (`llinventorymodelbackgroundfetch.cpp:610`). This implementation is that rule, with no off-by-one.</para>
     /// </summary>
+
     public static IReadOnlyList<AisFolderContents> Walk(IAisInventoryBackend backend, UUID agentId, UUID rootId, int depth)
     {
         var expanded = new List<AisFolderContents>();

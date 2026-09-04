@@ -133,7 +133,9 @@ public sealed class AisHandler : SimpleStreamHandler
     /// </summary>
     private void FetchChildren(AisRoute route, IOSHttpResponse response)
     {
-        var depth = route.Depth < 0 ? 0 : route.Depth;
+        // MAX_FOLDER_DEPTH_REQUEST (llaisapi.cpp:58): the viewer clamps every depth it sends to 50, so anything
+        // above that is a client we do not know asking the region to walk further than any viewer would use.
+        var depth = System.Math.Clamp(route.Depth, 0, AisInventory.MaxDepth);
         var walked = AisInventory.Walk(m_backend, m_agentId, route.Id, depth);
         if (walked.Count == 0) { WriteError(response, HttpStatusCode.NotFound, $"no category {route.Id}", route); return; }
 

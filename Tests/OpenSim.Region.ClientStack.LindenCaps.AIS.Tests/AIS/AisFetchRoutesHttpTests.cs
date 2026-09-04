@@ -395,4 +395,47 @@ public class AisFetchRoutesHttpTests
         var linkFixture = (OSDMap)((OSDMap)Coll(catFixture, "links")).Values.First();
         Assert.That(link.Keys, Is.EquivalentTo(linkFixture.Keys), "link envelope");
     }
+
+    /// <summary>
+    /// The depth contract of spec 1c-bis, pinned: N licenses exactly N generations below the requested folder,
+    /// an expanded category carries all three collections and a version, and an unexpanded one is a stub. The
+    /// viewer versions a category only while its decremented depth is still >= 0 and its descendent count is
+    /// known (llaisapi.cpp:1380-1407), so our deepest expanded generation lands on exactly 0 - the last value
+    /// that still counts. A requested depth above the viewer own ceiling of 50 is clamped.
+    /// </summary>
+    [Test]
+    public void the_depth_contract_matches_the_viewers_parse()
+    {
+        var b = Inventory();
+
+        // the two depths the viewer actually sends (llinventorymodelbackgroundfetch.cpp:937, :994 with
+        // llaisapi.cpp:463-474): 0 for a plain fetch, 50 for a recursive one
+        var (_, d0) = Get(b, $"/category/{Clothing}/children?depth=0");
+        Assert.That(((OSDMap)Coll(d0, "categories")[Outfits.ToString()]).ContainsKey("_embedded"), Is.False,
+            "depth 0 versions the requested folder only; every child must be a stub so the viewer re-queues it");
+
+        var (_, d50) = Get(b, $"/category/{Clothing}/children?depth=50");
+        var outfits = (OSDMap)Coll(d50, "categories")[Outfits.ToString()];
+        var party = (OSDMap)Coll(outfits, "categories")[Party.ToString()];
+        Assert.That(party.ContainsKey("_embedded"), Is.True, "a recursive fetch expands the whole tree");
+
+        // every expanded category carries all three collections AND a version, or the viewer cannot count its
+        // descendents and will never version it (llaisapi.cpp:1466-1482, risk A-R3)
+        void AssertExpandedAreCountable(OSDMap c)
+        {
+            if (!c.ContainsKey("_embedded")) return;
+            Assert.That(c.ContainsKey("version"), Is.True, c["name"].AsString());
+            var e = Embedded(c);
+            foreach (var name in new[] { "categories", "items", "links" })
+                Assert.That(e.ContainsKey(name), Is.True, $"{c["name"].AsString()}: {name}");
+            foreach (var child in ((OSDMap)e["categories"]).Values) AssertExpandedAreCountable((OSDMap)child);
+        }
+        AssertExpandedAreCountable(d50);
+
+        // a depth beyond the viewer ceiling is clamped, not honoured literally
+        var (status, clamped) = Get(b, $"/category/{Clothing}/children?depth=100000");
+        Assert.That(status, Is.EqualTo(200));
+        Assert.That(((OSDMap)Coll((OSDMap)Coll(clamped, "categories")[Outfits.ToString()], "categories")[Party.ToString()])
+            .ContainsKey("_embedded"), Is.True, "clamping to 50 still covers any real inventory");
+    }
 }
