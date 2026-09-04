@@ -75,7 +75,9 @@ public class AisInventoryTests
         var b = Inventory();
         var cof = AisInventory.GetCurrentOutfit(b, Agent);
         Assert.That(cof?.ID, Is.EqualTo(Cof));
-        Assert.That(b.Calls, Does.Contain("GetFolderForType(CurrentOutfit)"), "resolved via GetFolderForType (T2)");
+        // A7: resolution moved from the service's own folders[0] to a deterministic scan of the skeleton, because
+        // an agent can own more than one folder of a type and the service picks arbitrarily between them.
+        Assert.That(b.Calls, Does.Contain("GetInventorySkeleton"), "resolved by folder type over the skeleton (T2)");
 
         b.CurrentOutfitId = UUID.Zero;
         b.Folders.Remove(Cof);

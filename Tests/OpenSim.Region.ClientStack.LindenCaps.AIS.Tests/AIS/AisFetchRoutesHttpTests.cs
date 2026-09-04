@@ -243,8 +243,8 @@ public class AisFetchRoutesHttpTests
         var b = Inventory();
         var (status, cat) = Get(b, "/category/current/links");
         Assert.That(status, Is.EqualTo(200));
-        Assert.That(cat["category_id"].AsUUID(), Is.EqualTo(Cof), "'current' resolved through GetFolderForType (T2)");
-        Assert.That(b.Calls, Does.Contain("GetFolderForType(CurrentOutfit)"));
+        Assert.That(cat["category_id"].AsUUID(), Is.EqualTo(Cof), "'current' resolved by folder type (T2)");
+        Assert.That(b.Calls, Does.Contain("GetInventorySkeleton"), "resolved deterministically over the skeleton (A7)");
         Assert.That(Coll(cat, "links").Count, Is.EqualTo(2));
     }
 

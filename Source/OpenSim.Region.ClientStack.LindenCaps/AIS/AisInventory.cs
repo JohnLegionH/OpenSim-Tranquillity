@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Extensions.Logging;
 using OpenMetaverse;
 using OpenSim.Framework;
 
@@ -23,6 +24,8 @@ public sealed record AisOrphans(IReadOnlyList<InventoryFolderBase> Folders, IRea
 /// </summary>
 public static class AisInventory
 {
+    private static readonly ILogger m_log = LoggerProvider.CreateLogger(typeof(AisInventory));
+
     /// <summary>A folder's contents with links separated from items; null when the folder is not the agent's.</summary>
     public static AisFolderContents GetContents(IAisInventoryBackend backend, UUID agentId, UUID folderId)
     {
@@ -104,7 +107,63 @@ public static class AisInventory
 
     /// <summary>The agent's Current Outfit folder (spec §1b, tree state T2); null when the agent has none.</summary>
     public static InventoryFolderBase GetCurrentOutfit(IAisInventoryBackend backend, UUID agentId)
-        => backend.GetFolderForType(agentId, FolderType.CurrentOutfit);
+        => GetSystemFolder(backend, agentId, FolderType.CurrentOutfit);
+
+    /// <summary>
+    /// The agent's folder of a system type, resolved **deterministically** even when the agent owns more than one
+    /// folder of that type.
+    ///
+    /// <para>The service's own resolution is a coin flip: <c>XInventoryService.GetSystemFolderForType</c> returns
+    /// <c>folders[0]</c> from a query with no <c>ORDER BY</c> and no <c>LIMIT</c>
+    /// (<c>MySQLGenericTableHandler.Get</c> passes an empty <c>options</c>), and nothing in the schema forbids
+    /// duplicates — <c>inventoryfolders</c> has no unique key on <c>(agentID, type)</c>. On Legion Grid seven
+    /// accounts carry two type-46 folders each, and picking the wrong one silently writes an outfit change into a
+    /// folder no viewer reads. That is the A7 live failure; see Docs/feature/ais-v3/A7-DUPLICATE-COF.md.</para>
+    ///
+    /// <para>The rule is **highest <c>Version</c>, lowest id on a tie**. A folder's version is incremented on
+    /// every child add or remove and never decreases, so the folder the viewer has been writing to is the folder
+    /// whose version climbed — which is exactly the ground truth we have to match. Creation order cannot be used:
+    /// the table has no timestamp. Descendant count cannot be used either: a legitimately emptied Current Outfit
+    /// has none, and emptying it is what "take off the last garment" does.</para>
+    ///
+    /// <para>Candidates come from the skeleton rather than from <see cref="IAisInventoryBackend.GetFolderForType"/>
+    /// because the skeleton is queried by agent alone and so sees every folder the viewer sees, including one that
+    /// is not a direct child of the root — which the service's own query structurally cannot return. When the
+    /// skeleton is unavailable, or holds no folder of this type, the backend's own answer is used unchanged.</para>
+    /// </summary>
+    public static InventoryFolderBase GetSystemFolder(IAisInventoryBackend backend, UUID agentId, FolderType type)
+    {
+        var skeleton = backend.GetInventorySkeleton(agentId);
+        if (skeleton is null || skeleton.Count == 0)
+            return backend.GetFolderForType(agentId, type);
+
+        List<InventoryFolderBase> candidates = null;
+        foreach (var folder in skeleton)
+            if (folder.Type == (short)type)
+                (candidates ??= new List<InventoryFolderBase>()).Add(folder);
+
+        if (candidates is null)
+            return backend.GetFolderForType(agentId, type);
+        if (candidates.Count == 1)
+            return candidates[0];
+
+        var chosen = candidates[0];
+        foreach (var folder in candidates)
+            if (folder.Version > chosen.Version ||
+                (folder.Version == chosen.Version && folder.ID.CompareTo(chosen.ID) < 0))
+                chosen = folder;
+
+        // An operator has to be able to see this without opening the database, because the visible symptom is an
+        // outfit change that quietly does not stick.
+        m_log.LogWarning(
+            "[AIS]: agent {Agent} has {Count} folders of type {Type} ({Candidates}); using {Chosen} version {Version}. "
+            + "Duplicate system folders are a data fault, not an AIS one - see Docs/feature/ais-v3/A7-DUPLICATE-COF.md",
+            agentId, candidates.Count, type,
+            string.Join(", ", candidates.Select(f => $"{f.ID} v{f.Version}")),
+            chosen.ID, chosen.Version);
+
+        return chosen;
+    }
 
     /// <summary>
     /// Folders whose <c>ParentID</c> names a folder that is not in the agent's skeleton — the only orphan class

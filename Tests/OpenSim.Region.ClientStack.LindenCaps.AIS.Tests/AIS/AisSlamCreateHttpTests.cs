@@ -166,7 +166,7 @@ public class AisSlamCreateHttpTests
         var (status, _) = Send(b, "PUT", "/category/current/links", Body(Targets[4]));
         Assert.That(status, Is.EqualTo(200));
         Assert.That(LinkTargets(b, Cof), Is.EquivalentTo(new[] { Targets[4] }));
-        Assert.That(b.Calls, Does.Contain("GetFolderForType(CurrentOutfit)"));
+        Assert.That(b.Calls, Does.Contain("GetInventorySkeleton"), "resolved deterministically over the skeleton (A7)");
     }
 
     [Test]
