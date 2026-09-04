@@ -63,7 +63,19 @@ public static class BakeOrchestrator
                 for (var j = 0; j < slot.Count; j++)
                 {
                     var assetId = slot[j].AssetID;
-                    if (assetId.IsZero()) continue;
+                    if (assetId.IsZero())
+                    {
+                        // The slot is worn, there is just no asset behind it (typically a default system wearable
+                        // item). That is still a worn wearable: the viewer counts wearables, not textures
+                        // (LLTexLayerTemplate::updateWearableCache, lltexlayer.cpp:1615-1638), so it contributes its
+                        // layers' morph masks with the avatar's own parameter values. Passing it on as an empty
+                        // WearableInput is what the library expects (S1c, MORPH-MASK-PASS.md §2.4); dropping it here
+                        // was Ledger Q-12. It carries no textures, so nothing is fetched for it.
+                        inputs.Add(new WearableInput(UUID.Zero, type, ""));
+                        parsed.Add(new ParsedWearable((WearableKind)type, "", new Dictionary<int, float>(), new Dictionary<TextureSlot, UUID>()));
+                        notes.Add($"wearable type {(WearableKind)type}:{j} is worn with no asset; kept as a worn instance with no textures");
+                        continue;
+                    }
                     var asset = assets.Get(assetId.ToString());
                     if (asset?.Data is not { Length: > 0 })
                     {

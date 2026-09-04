@@ -18,10 +18,10 @@ public class BakeOrchestratorTests
     private static readonly UUID Agent = new("a7d2ff2e-dc32-44d8-aa61-3d22070a4964");
 
     private static string FixtureDir([CallerFilePath] string here = "")
-        => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(here)!, "..", "..", "Source", "OpenSimNGC.Appearance.Baking.Tests", "Golden", "fixtures"));
+        => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(here)!, "..", "..", "Source", "OpenSimNGC.Appearance.Baking.Tests", "Golden", "truly-stock", "fixtures"));
 
     // xunit 2.9 has no dynamic skip: absent fixtures make tests 1 and 3 vacuous passes that say so on the console.
-    private const string SkipNote = "SKIPPED: golden fixtures not fetched (Source/OpenSimNGC.Appearance.Baking.Tests/Golden/fixtures)";
+    private const string SkipNote = "SKIPPED: golden fixtures not fetched (Source/OpenSimNGC.Appearance.Baking.Tests/Golden/truly-stock/fixtures)";
 
     private static bool FixturesPresent => File.Exists(Path.Combine(FixtureDir(), "avatar.json"));
 
@@ -173,5 +173,78 @@ public class BakeOrchestratorTests
         Assert.Equal(1, outcome.Count(ChannelStatus.Failed));
         Assert.Equal(6, outcome.Count(ChannelStatus.Skipped));
         Assert.Equal(4, assets.Stored.Count);
+    }
+
+    // ------------------------------------------------------------------ 4. worn but assetless (S1d)
+
+    /// <summary>
+    /// A worn slot with no asset behind it is a real worn wearable, not an empty slot: the viewer counts
+    /// wearables, not textures (LLTexLayerTemplate::updateWearableCache, lltexlayer.cpp:1615-1638), so it still
+    /// contributes its layers' morph masks. Resolve must hand it to the library as an empty WearableInput of
+    /// its type rather than dropping it (Ledger Q-12; MORPH-MASK-PASS.md 2.4).
+    /// </summary>
+    [Fact]
+    public void Resolve_WornButAssetlessSlot_ReachesTheLibraryAsAWearableInput()
+    {
+        var assets = new FakeAssetService();
+        var wearables = new AvatarWearable[AvatarWearable.MAX_WEARABLES];
+        for (var i = 0; i < wearables.Length; i++) wearables[i] = new AvatarWearable();
+        // a shirt slot that is worn (a real item) with no asset, exactly as Aleric Fenwood wears his
+        wearables[(int)WearableType.Shirt].Add(new UUID("77c41e39-38f9-f75a-0000-585989bf0000"), UUID.Zero);
+
+        var r = BakeOrchestrator.Resolve(wearables, null, assets, new TexLayerCompositor(), 512);
+
+        var shirt = Assert.Single(r.Request.Wearables);
+        Assert.Equal((int)WearableType.Shirt, shirt.WearableType);
+        Assert.Equal(UUID.Zero, shirt.AssetId);
+        Assert.Equal("", shirt.RawText);
+        Assert.Empty(r.Failures);            // a missing asset is not a failure: there is nothing to fetch
+        Assert.Empty(r.Request.Textures);
+        Assert.Contains(r.Notes, n => n.Contains("worn with no asset"));
+    }
+
+    /// <summary>
+    /// S1c decision 3, answered end to end — and it is a defect, so this test is RED on purpose (S1d).
+    ///
+    /// An assetless Skirt slot makes the library produce a Skirt channel (SkiaBakeBackend.ChannelsFor adds it
+    /// whenever a Skirt wearable is worn, textures or not). Every layer of that channel is then skipped —
+    /// skirt_fabric has no texture, skirt_fabric_alpha is a mask layer with nothing to mask, skirt_tattoo needs a
+    /// Universal — so nothing is drawn. But the bake is not empty: the layer set's alpha starts opaque and only
+    /// the (skipped) mask layer would have carved the skirt out of it, so what gets encoded is a 96.5% opaque
+    /// near-black image, which the orchestrator then stores and writes into face 19.
+    ///
+    /// On any avatar whose Skirt slot is occupied by a default item with no asset, a server bake would therefore
+    /// paint a solid dark skirt over whatever face 19 held. The pre-existing trigger is a real Skirt wearable
+    /// carrying no skirt texture; S1d widened it to assetless slots, which are common.
+    ///
+    /// The assertion below is what SHOULD happen: a channel in which nothing was drawn must not overwrite the
+    /// face. Fixing it needs the library to say whether a composite drew anything (a channel-level flag), which is
+    /// beyond S1d's orchestrator scope — so this stays red rather than being asserted into correctness.
+    /// </summary>
+    [Fact]
+    public void Run_AssetlessSkirtSlot_MustNotOverwriteFace19WithAnUndrawnBake()
+    {
+        if (!FixturesPresent) { Console.WriteLine(SkipNote); return; }
+        var (assets, wearables, vp) = LoadFixtures();
+        wearables[(int)WearableType.Skirt].Add(UUID.Random(), UUID.Zero);   // worn, no asset
+        var appearance = new AvatarAppearance();
+        var before = Faces(appearance);
+        var compositor = new TexLayerCompositor();
+
+        var outcome = BakeOrchestrator.Run(Agent, BakeReason.Console, wearables, vp, appearance, assets,
+            new SkiaBakeBackend(compositor) { Quality = 0.5 }, compositor, 128, CancellationToken.None);
+
+        var skirt = outcome.Channels.Single(c => c.Channel == BakeChannel.Skirt);
+        var after = Faces(appearance);
+        var stored = skirt.AssetId.IsZero() ? null : assets.Get(skirt.AssetId.ToString());
+        var img = stored is null ? null : J2kCodec.Decode(stored.Data);
+        var opaque = img is null ? 0 : img.A.Count(a => a > 128) * 100.0 / img.A.Length;
+        var diag = $"skirt={skirt.Status} face19 {before[19]} -> {after[19]} opaque={opaque:F1}% "
+                 + $"layers=[{string.Join(" | ", skirt.Fidelity.Notes)}]";
+
+        // nothing was drawn into this channel: every layer skipped
+        Assert.All(skirt.Fidelity.Notes, n => Assert.Contains("skipped", n));
+        // therefore the face must be left as it was
+        Assert.True(before[19] == after[19], "an undrawn channel must not overwrite its face. " + diag);
     }
 }
