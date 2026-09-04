@@ -16,8 +16,13 @@ both (`AISAPI::getCapNames`, `:72-76`). HTTP timeout per request 180 s (`:50`). 
 ## 1a. Operations
 
 `{inv}` = the InventoryAPIv3 cap URL, `{lib}` = the LibraryAPIv3 cap URL. `tid` is a fresh random UUID per call
-(`LLUUID tid; tid.generate();`). Bodies are LLSD (XML on the wire is what the OpenSim side will accept and emit;
-the viewer's transport encoding is set in `llcorehttputil`, **UNVERIFIED** here).
+(`LLUUID tid; tid.generate();`). Bodies are **LLSD XML** (A-Q2, resolved A1): every request body is serialised with `LLSDSerialize::toXML`
+(`indra/llmessage/llcorehttputil.cpp:144` POST, `:169` PUT, `:193` PATCH) and every response parsed with
+`LLSDSerialize::fromXML` (`:123`, `responseToLLSD`). `HttpCoroutineAdapter::checkDefaultHeaders` (`:1211-1229`)
+sets both `Content-Type` and `Accept` to `HTTP_CONTENT_LLSD_XML` on every AIS request unless the caller
+already set them; the literal is `application/llsd+xml` per the comments at `:478` and `:497`. The response
+parse itself does **not** check the content type — it only gates a warning (`:495-500`) — so a response is
+read as LLSD XML whatever it is labelled. (The file is at `indra/llmessage/`, not `indra/llcorehttp/`.)
 
 | # | Operation (`llaisapi.h`) | Verb | URL relative to the cap | Query | Body | Headers | Source |
 |---|---|---|---|---|---|---|---|
@@ -25,7 +30,7 @@ the viewer's transport encoding is set in `llcorehttputil`, **UNVERIFIED** here)
 | 2 | `SlamFolder(folderId, newInventory)` | PUT | `{inv}/category/{folderId}/links` | `tid={uuid}` | `contents` as passed by the caller (`slam_inventory_folder`, `llviewerinventory.cpp:1776-1784`); shape **UNVERIFIED** (built by `LLAppearanceMgr`, not permitted): expected `{ "links": [ link maps ] }` | none | `llaisapi.cpp:145-180`, url `:161` |
 | 3 | `RemoveCategory(categoryId)` | DELETE | `{inv}/category/{categoryId}` | — | none | none | `:182-217`, url `:197` |
 | 4 | `RemoveItem(itemId)` | DELETE | `{inv}/item/{itemId}` | — | none | none | `:219-252`, url `:234` |
-| 5 | `CopyLibraryCategory(sourceId, destId, copySubfolders)` | COPY | `{lib}/category/{sourceId}` | `tid={uuid}` and, when `!copySubfolders`, the literal suffix `,depth=0` **appended to the tid value with a comma** (`url += ",depth=0"`, `:278`), i.e. `?tid=<uuid>,depth=0` | none | destination = `destId.asString()` (`:282`) passed as the `copyAndSuspend` destination argument (`:294`); that it travels as the HTTP `Destination` header is **UNVERIFIED** (`llcorehttputil.cpp` not permitted) | `:255-301`, url `:275` |
+| 5 | `CopyLibraryCategory(sourceId, destId, copySubfolders)` | COPY | `{lib}/category/{sourceId}` | `tid={uuid}` and, when `!copySubfolders`, the literal suffix `,depth=0` **appended to the tid value with a comma** (`url += ",depth=0"`, `:278`), i.e. `?tid=<uuid>,depth=0` | none | destination = `destId.asString()` (`:282`) passed as the `copyAndSuspend` destination argument (`:294`), which appends it as the HTTP **`Destination`** header: `headers->append(HTTP_OUT_HEADER_DESTINATION, dest)` (`llcorehttputil.cpp:1135`) — A-Q2, resolved A1 | `:255-301`, url `:275` |
 | 6 | `PurgeDescendents(categoryId)` | DELETE | `{inv}/category/{categoryId}/children` | — | none | none | `:303-339`, url `:318` |
 | 7 | `UpdateCategory(categoryId, updates)` | PATCH | `{inv}/category/{categoryId}` | — | `updates` map of category fields (callers at `llviewerinventory.cpp:663,881,1455`, outside the permitted functions: field set **UNVERIFIED**) | none | `:341-374`, url `:355` |
 | 8 | `UpdateItem(itemId, updates)` | PATCH | `{inv}/item/{itemId}` | — | `updates` map of item fields (callers `:454,1422,1434`, **UNVERIFIED** field set) | none | `:376-409`, url `:391` |
@@ -126,16 +131,65 @@ Verified in the permitted files:
 | category | `agent_id` | uuid | optional; owner of a newly created category (`:1358-1366`) | |
 | category | `_embedded` | map | optional | `:1379`, `:1460` |
 
-Everything else on an item, link or category is consumed by `LLViewerInventoryItem::unpackMessage(const LLSD&)` /
-`LLViewerInventoryCategory::unpackMessage(const LLSD&)` (`:1223`, `:1268`, `:1368`), which live in
-`indra/llinventory/llinventory.cpp` and `llviewerinventory.cpp` outside the permitted functions. The field set is
-therefore **UNVERIFIED** in this document. The keys a session must expect, to be confirmed against
-`llinventory.cpp` before A1 emits objects: item — `name`, `desc`, `type` (asset type string), `inv_type`, `asset_id`,
-`flags`, `created_at`, `permissions{base_mask, owner_mask, group_mask, everyone_mask, next_owner_mask, creator_id,
-owner_id, last_owner_id, group_id, is_owner_group}`, `sale_info{sale_type, sale_price}`, `thumbnail`; link — the
-same plus `linked_id`; category — `name`, `type_default`, `agent_id`, `version`, `thumbnail`. `unpackMessage`
-does **not** read `version` or descendent count for categories (`:1369` comment).
+### A-Q1 resolved (A1): the field set `fromLLSD` reads
 
+`llaisapi.cpp` hands each object map to `LLViewerInventoryItem::unpackMessage(const LLSD&)` /
+`LLViewerInventoryCategory::unpackMessage(const LLSD&)` (`:1223`, `:1268`, `:1368`). There is **no**
+`unpackMessage(const LLSD&)` in `indra/llinventory/llinventory.cpp`; the LLSD readers there are
+`LLInventoryItem::fromLLSD` (`:984-1183`) and `LLInventoryCategory::fromLLSD` (`:1289-1352`). That the viewer
+subclasses' `unpackMessage(const LLSD&)` delegate to these is **UNVERIFIED** — `llviewerinventory.cpp` is not a
+permitted read — but they are the only LLSD readers for these types in the permitted file, and the label
+constants below are theirs.
+
+**Item** (`fromLLSD`, label constants at `:45-63`). Any key not listed is ignored by the loop:
+
+| Key | Type | Line | Notes |
+|---|---|---|---|
+| `item_id` | uuid | `:1004` | |
+| `parent_id` | uuid | `:1010` | |
+| `thumbnail` | map with `asset_id` | `:1016-1035` | or `thumbnail_id` (uuid) at `:1037` |
+| `favorite` | map with `toggled` (bool) | `:1043-1051` | |
+| `permissions` | map | `:1054` | inner keys read by `LLPermissions::importLLSD`, **UNVERIFIED** (`llpermissions.cpp` not permitted) |
+| `sale_info` | map | `:1060` | inner keys read by `LLSaleInfo::fromLLSD`, **UNVERIFIED** |
+| `shadow_id` | uuid | `:1087` | XOR-obfuscated asset id; an alternative to `asset_id` |
+| `asset_id` | uuid | `:1094` | |
+| `linked_id` | uuid | `:1100` | read **into the asset id**; its presence is also what selects `parseLink` (§1c) |
+| `type` | string **or** integer | `:1106-1120` | asset type; `LLAssetType::lookup` for a string |
+| `inv_type` | string **or** integer | `:1122-1135` | inventory type |
+| `flags` | integer or binary | `:1137-1148` | |
+| `name` | string | `:1150` | non-standard ASCII and `|` replaced with spaces |
+| `desc` | string | `:1156` | |
+| `created_at` | integer | `:1162` | |
+
+**Category** (`fromLLSD`, `:1289-1352`):
+
+| Key | Type | Line | Notes |
+|---|---|---|---|
+| `category_id` | uuid | `:1293` | the constant is `INV_FOLDER_ID_LABEL_WS` = `"category_id"` (`:67`) |
+| `parent_id` | uuid | `:1297` | |
+| `thumbnail` / `thumbnail_id` | map with `asset_id` / uuid | `:1303-1318` | |
+| `favorite` | map with `toggled` | `:1321-1331` | |
+| `type` | integer | `:1333-1338` | folder type |
+| `type_default` | integer | `:1339-1344` | `INV_ASSET_TYPE_LABEL_WS` (`:66`); read after `type`, so it wins |
+| `name` | string | `:1346` | |
+
+It reads neither `version` nor a descendent count — `llaisapi.cpp` reads those itself (§1e). Note `cat_id`
+(`INV_FOLDER_ID_LABEL`, `:46`) is **not** read by `fromLLSD`; the category id key is `category_id`.
+
+**What the server emits (A1 decision).** Integers for `type`, `inv_type` and `sale_type`, since `fromLLSD`
+accepts either and integers are what this tree already sends over FetchInventoryDescendents2
+(`Source/OpenSim.Capabilities/LLSDInventoryItem.cs:33-68`) and the LL viewer already accepts. The `permissions`
+and `sale_info` inner key sets are taken from that same file for the same reason, their readers being
+unverifiable this session. Golden fixtures under
+`Tests/OpenSim.Region.ClientStack.LindenCaps.AIS.Tests/AIS/Fixtures` pin the result.
+
+### A-Q3, partially resolved (A1): the link map the viewer builds
+
+`LLAppearanceMgr` builds a SlamFolder body as an **LLSD array** of link maps, each carrying exactly `name`,
+`desc`, `linked_id` and `type` (`AT_LINK`, or `AT_LINK_FOLDER` for the base-outfit link)
+(`indra/newview/llappearancemgr.cpp:2209-2245`). That is the shape A2 must accept on
+`PUT /category/{id}/links`. The `UpdateItem` / `UpdateCategory` / `CreateInventory` bodies are still
+**UNVERIFIED**: their callers are elsewhere in `llviewerinventory.cpp`.
 ## 1e. Version semantics
 
 - Folder versions arrive in two places: `version` on a category map (fetch and mutation responses) and
