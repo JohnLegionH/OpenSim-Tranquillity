@@ -41,8 +41,8 @@
         <key>asset_id</key><uuid>77777777-7777-4777-8777-777777777777</uuid>
         <key>name</key><string>Blue Shirt</string>
         <key>desc</key><string></string>
-        <key>type</key><string>clothing</string>
-        <key>inv_type</key><string>wearable</string>
+        <key>type</key><integer>5</integer>
+        <key>inv_type</key><integer>18</integer>
         <key>flags</key><integer>4</integer>
         <key>created_at</key><integer>1756900000</integer>
         <key>permissions</key>
@@ -54,13 +54,12 @@
           <key>next_owner_mask</key><integer>532480</integer>
           <key>creator_id</key><uuid>aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa</uuid>
           <key>owner_id</key><uuid>aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa</uuid>
-          <key>last_owner_id</key><uuid>aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa</uuid>
           <key>group_id</key><uuid>00000000-0000-0000-0000-000000000000</uuid>
           <key>is_owner_group</key><boolean>false</boolean>
         </map>
         <key>sale_info</key>
         <map>
-          <key>sale_type</key><string>not</string>
+          <key>sale_type</key><integer>0</integer>
           <key>sale_price</key><integer>10</integer>
         </map>
       </map>
@@ -75,8 +74,8 @@
         <key>linked_id</key><uuid>22222222-2222-4222-8222-222222222222</uuid>
         <key>name</key><string>Blue Shirt</string>
         <key>desc</key><string>@clothing</string>
-        <key>type</key><string>link</string>
-        <key>inv_type</key><string>wearable</string>
+        <key>type</key><integer>24</integer>
+        <key>inv_type</key><integer>18</integer>
         <key>flags</key><integer>4</integer>
         <key>created_at</key><integer>1756900001</integer>
       </map>

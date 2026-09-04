@@ -29,6 +29,8 @@ public class AisHandlerHttpTests
         public InventoryFolderBase GetFolder(UUID agentId, UUID folderId) => throw Boom();
         public InventoryCollection GetFolderContent(UUID agentId, UUID folderId) => throw Boom();
         public IReadOnlyList<InventoryItemBase> GetItems(UUID agentId, IReadOnlyList<UUID> itemIds) => throw Boom();
+        public IReadOnlyList<InventoryFolderBase> GetSubFolders(UUID agentId, UUID folderId) => throw Boom();
+        public IReadOnlyList<InventoryFolderBase> GetInventorySkeleton(UUID agentId) => throw Boom();
         public InventoryItemBase GetItem(UUID agentId, UUID itemId) => throw Boom();
         public bool AddFolder(InventoryFolderBase folder) => throw Boom();
         public bool AddItem(InventoryItemBase item) => throw Boom();
@@ -73,8 +75,12 @@ public class AisHandlerHttpTests
     private static (AisTestRequest Request, TestOSHttpResponse Response) Http(string verb, string url)
         => (new AisTestRequest(verb, url), new TestOSHttpResponse());
 
+    /// <summary>
+    /// A1 implements the read surface; every mutation still answers 501 until A2. (A0's version of this test
+    /// covered the fetch routes too — they now return content, and are covered by AisFetchRoutesHttpTests.)
+    /// </summary>
     [Test]
-    public void every_spec_route_returns_501_with_an_llsd_error_map()
+    public void every_mutation_route_still_returns_501_with_an_llsd_error_map()
     {
         var cap = "/CAP/0a1b2c3d-0000-4000-8000-000000000000";
         var handler = new AisHandler(cap, Agent, new ExplodingBackend());
@@ -83,9 +89,6 @@ public class AisHandlerHttpTests
             ("POST", $"/category/{Cat}?tid={UUID.Random()}"), ("PUT", $"/category/{Cat}/links?tid={UUID.Random()}"),
             ("DELETE", $"/category/{Cat}"), ("DELETE", $"/item/{Cat}"), ("COPY", $"/category/{Cat}?tid={UUID.Random()},depth=0"),
             ("DELETE", $"/category/{Cat}/children"), ("PATCH", $"/category/{Cat}"), ("PATCH", $"/item/{Cat}"),
-            ("GET", $"/item/{Cat}"), ("GET", $"/category/{Cat}/children?depth=50"), ("GET", "/category/current/children?depth=0"),
-            ("GET", $"/category/{Cat}/categories?depth=1"), ("GET", $"/category/{Cat}/children?depth=1&children={Cat}"),
-            ("GET", "/category/current/links"), ("GET", $"/category/{Cat}/links"), ("GET", "/orphans"),
         };
         foreach (var (verb, path) in routes)
         {
