@@ -68,10 +68,27 @@ Status legend: **Proposed** = needs John's ruling · **Accepted** = ruled · **C
 
 ---
 
-## ADR-008 — Bake size 512, parameterised
+## ADR-008 — Bake size 1024, parameterised
 
-**Status:** Carried (D-7)
-**Decision:** Sim default 512 px per channel; `[Appearance] BakeSize` accepts 512/1024. Hash includes size so a config change invalidates stored bakes on next login rather than serving mixed sizes.
+**Status:** Accepted, revised 2026-09-03 by measurement (supersedes the 512 default carried from D-7)
+**Decision:** Sim default **1024** px per channel; `[Appearance] BakeSize` accepts 512, 1024 or 2048. Hash includes size so a config change invalidates stored bakes on next login rather than serving mixed sizes.
+
+**Why 1024 and not the original 512.** S1b ran both reference sets at all three sizes against the LL
+compositor references (`S1b-FIDELITY.md` §6). 1024 is the knee: every channel improves from 512 to 1024, and on
+the richer of the two outfits the improvement is large — Aleric's lower channel goes from mean abs RGB **2.29**
+at 512 to **0.89** at 1024, the single worst number in the matrix and the only one that would have failed a
+tighter threshold. Going on to 2048 buys nothing: five of the nine channel rows get *worse*, none improves
+materially, and the encoded bytes rise ~1.8×. 512 costs about 0.69× of 1024's bytes, which does not pay for a
+visible loss on a busy outfit.
+
+The references themselves are 2048 for head, upper, lower and hair, and 512 for eyes, on both avatars — so
+1024 is also below the reference resolution everywhere except eyes, and the diff numbers already account for
+that by resampling both images to the compared size.
+
+**Consequences:** No config change is needed anywhere: S1 already shipped `BakeSize = 1024` in
+`OpenSimDefaults.ini` and the live region server has been running 1024 since the 2026-09-03 deploy. This ADR
+now records what is actually running. 512 remains available for operators who want the smaller assets and
+accept the loss; 2048 remains available but is not recommended.
 
 ---
 

@@ -18,7 +18,7 @@ Living document. Update at every session close. **Date opened:** 2026-09-03
 | D-4 | Library placement `Source/OpenSimNGC.Appearance.Baking`, NuGet-published | **OPEN — needs John (and Mike)** | — | ADR-003. Interim: gateway `ProjectReference`. |
 | D-5 | Test region for flag-on = Transylvania | Proposed | — | Build Plan §4 |
 | D-6 | Bakes expire (TTL reaper, default 30 days, off on standalone) | Accepted | 2026-09-02 | ADR-004 |
-| D-7 | Bake size 512 default, parameterised | Accepted | 2026-09-02 | ADR-008 |
+| D-7 | Bake size default, parameterised | **Superseded by measurement 2026-09-03** | 2026-09-02, revised 2026-09-03 | The 512 default ruled here was replaced by **1024** on the S1b evidence: 1024 is the knee (aleric lower mean abs RGB 2.29 at 512 vs 0.89 at 1024) and 2048 buys nothing at ~1.8× the bytes. See `S1b-FIDELITY.md` §6 and ADR-008. No ini change: S1 already shipped 1024 and the live sim runs it. 512 and 2048 stay configurable. |
 | D-8 | Add-only: no legacy appearance handler removed | Accepted | 2026-08-31 | ADR-001 |
 | D-9 | Gateway is a pure consumer on bit-0 regions | Proposed | — | ADR-009; keeps web-viewer G6 intact |
 
