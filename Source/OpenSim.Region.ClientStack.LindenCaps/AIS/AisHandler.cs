@@ -363,26 +363,41 @@ public sealed class AisHandler : SimpleStreamHandler
     /// <para><b>The route is the parent category itself</b>, not <c>/children</c>: <c>AISAPI::CreateInventory</c>
     /// builds <c>{inv}/category/{parentId}</c> (<c>llaisapi.cpp:115</c>).</para>
     ///
-    /// <para><b>The body</b> is a map of arrays. Only <c>categories</c> is verified: the one caller in the
-    /// permitted files builds <c>new_inventory["categories"] = [ cat.asAISCreateCatLLSD() ]</c>
-    /// (<c>llinventorymodel.cpp:1036-1041</c>). The contents of that map come from
-    /// <c>asAISCreateCatLLSD</c> in <c>llviewerinventory.cpp</c>, which is not a permitted read this session, so
-    /// the accepted keys are the category field set A-Q1 already established from <c>fromLLSD</c> —
-    /// <c>name</c>, <c>type</c>/<c>type_default</c>, <c>parent_id</c>. The <c>items</c> and <c>links</c> arrays
-    /// have **no caller in any permitted file** and remain UNVERIFIED (A-Q3); they are implemented by symmetry,
-    /// items taking the A-Q1 item field set and links the slam link shape.</para>
-    ///
-    /// <para>The envelope: <c>_created_categories</c> and <c>_created_items</c> name what was made, the objects
-    /// themselves ride in <c>_embedded</c> (the viewer accepts an embedded object on a mutation only when its id
-    /// is listed, §1c), and the parent folder's fresh version goes in <c>_updated_category_versions</c> — without
-    /// which the +1 descendent deltas are discarded (<c>llaisapi.cpp:1625-1629</c>). A newly created category is
-    /// deliberately **not** listed: the viewer skips version accounting for one it has just created
-    /// (<c>:1618-1622</c>).</para>
-    /// </summary>
+    /// <para><b>The body</b> is a map of arrays, and A4 pinned two of the three against their builders:</para>
+    /// <list type="bullet">
+    ///   <item><b><c>links</c> — verified.</b> <c>link_inventory_array</c> builds each entry with exactly
+    ///   <c>linked_id</c>, <c>type</c> (<c>AT_LINK</c> or <c>AT_LINK_FOLDER</c>), <c>inv_type</c> (the
+    ///   <i>target's</i> inventory type), <c>name</c> and <c>desc</c>, and sends them as
+    ///   <c>new_inventory["links"]</c> (<c>llviewerinventory.cpp:1352-1370</c>). No <c>parent_id</c>: the folder
+    ///   is the one in the URL.</item>
+    ///   <item><b><c>items</c> — verified, and deliberately refused.</b> The one builder wraps the item's whole
+    ///   <c>asLLSD()</c> with a null <c>item_id</c> and a null <c>asset_id</c> — <i>"don't know yet, whenever
+    ///   server creates it"</i> — because the server is expected to mint the asset
+    ///   (<c>llviewerinventory.cpp:1124-1157</c>). It sits inside <c>#ifdef USE_AIS_FOR_NC</c>, which is never
+    ///   defined in that file, above the viewer's own comment <i>"not yet implemented within AIS3"</i>
+    ///   (<c>:1120-1121</c>) — so a stock viewer never sends it. This handler answers **501** for a non-empty
+    ///   <c>items</c> array rather than creating an item with no asset behind it, which is what A3's guess did.
+    ///   </item>
+    ///   <item><b><c>categories</c> — still UNVERIFIED.</b> The caller is
+    ///   <c>new_inventory["categories"] = [ cat.asAISCreateCatLLSD() ]</c>
+    ///   (<c>llinventorymodel.cpp:1036-1041</c>), but <c>asAISCreateCatLLSD</c> itself is in no permitted file. The
+    ///   accepted keys stay the category field set A-Q1 established from <c>fromLLSD</c>: <c>name</c> and
+    ///   <c>type</c>/<c>type_default</c>. Not guessed a second time.</item>
+    /// </list>
+    ///    /// </summary>
     private void CreateInventory(AisRoute route, OSDMap body, IOSHttpResponse response)
     {
         var parent = m_backend.GetFolder(m_agentId, route.Id);
         if (parent is null) { WriteError(response, HttpStatusCode.NotFound, $"no category {route.Id}", route); return; }
+
+        // Refused before anything is written, so a mixed body does not half-succeed. See the remarks above:
+        // the viewer's own items builder is compiled out and expects the server to create the asset.
+        if (body["items"] is OSDArray requested && requested.Count > 0)
+        {
+            WriteError(response, HttpStatusCode.NotImplemented,
+                "creating inventory items through AIS is not implemented: the body carries a null asset_id for the server to fill, and this region does not create assets. The viewer's own path is disabled (USE_AIS_FOR_NC).", route);
+            return;
+        }
 
         var createdCategories = new OSDMap();
         var createdItems = new OSDMap();
@@ -410,7 +425,7 @@ public sealed class AisHandler : SimpleStreamHandler
             }
         }
 
-        foreach (var (key, isLink) in new[] { ("items", false), ("links", true) })
+        foreach (var (key, isLink) in new[] { ("links", true) })
         {
             if (body[key] is not OSDArray array) continue;
             foreach (var entry in array)

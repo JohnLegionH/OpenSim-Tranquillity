@@ -262,39 +262,88 @@ public class AisSlamCreateHttpTests
     // ------------------------------------------------------------------ create
 
     [Test]
-    public void create_makes_categories_items_and_links_with_the_right_deltas()
+    public void create_makes_categories_and_links_with_the_right_deltas()
     {
         var b = Inventory();
         var before = b.Folders[Clothing].Version;
 
+        // the shapes the viewer really sends: a categories array (llinventorymodel.cpp:1036-1041) and a links
+        // array whose entries are linked_id / type / inv_type / name / desc (llviewerinventory.cpp:1352-1370)
         var (status, body) = Send(b, "POST", $"/category/{Clothing}?tid={UUID.Random()}", new OSDMap
         {
             ["categories"] = new OSDArray { new OSDMap { ["name"] = "New Folder", ["type_default"] = -1 } },
-            ["items"] = new OSDArray { new OSDMap { ["name"] = "New Note", ["type"] = (int)AssetType.Notecard, ["inv_type"] = (int)InventoryType.Notecard } },
-            ["links"] = new OSDArray { new OSDMap { ["name"] = "a link", ["linked_id"] = Targets[0], ["type"] = (int)AssetType.Link } },
+            ["links"] = new OSDArray
+            {
+                new OSDMap
+                {
+                    ["linked_id"] = Targets[0],
+                    ["type"] = (int)AssetType.Link,
+                    ["inv_type"] = (int)InventoryType.Wearable,
+                    ["name"] = "a link",
+                    ["desc"] = "",
+                },
+            },
         });
 
         Assert.That(status, Is.EqualTo(200));
         Assert.That(((OSDArray)body["_created_categories"]).Count, Is.EqualTo(1));
-        Assert.That(((OSDArray)body["_created_items"]).Count, Is.EqualTo(2), "an item and a link are both created items");
+        Assert.That(((OSDArray)body["_created_items"]).Count, Is.EqualTo(1), "a link is a created item");
 
         var embedded = (OSDMap)body["_embedded"];
         Assert.That(embedded.ContainsKey("categories"), Is.True);
-        Assert.That(embedded.ContainsKey("items"), Is.True);
         Assert.That(embedded.ContainsKey("links"), Is.True, "links are their own collection, never items");
+        Assert.That(embedded.ContainsKey("items"), Is.False);
         var link = (OSDMap)((OSDMap)embedded["links"]).Values.First();
         Assert.That(link["linked_id"].AsUUID(), Is.EqualTo(Targets[0]));
+        Assert.That(link["inv_type"].AsInteger(), Is.EqualTo((int)InventoryType.Wearable),
+            "the body's inv_type is the target's and is kept");
 
         Assert.That(((OSDMap)body["_updated_category_versions"])[Clothing.ToString()].AsInteger(),
             Is.EqualTo(b.Folders[Clothing].Version));
         Assert.That(b.Folders[Clothing].Version, Is.GreaterThan(before));
         Assert.That(body["tid"].Type, Is.EqualTo(OSDType.UUID), "tid is echoed");
-
-        // the new objects really are in the addressed folder
         Assert.That(b.Folders.Values.Count(f => f.ParentID == Clothing && f.Name == "New Folder"), Is.EqualTo(1));
-        Assert.That(b.Items.Values.Count(i => i.Folder == Clothing && i.Name == "New Note"), Is.EqualTo(1));
     }
 
+    /// <summary>
+    /// A4: an items array is refused with 501 rather than creating an item with no asset behind it. The viewer's
+    /// own builder wraps the item's asLLSD with a null asset_id for the server to fill
+    /// (llviewerinventory.cpp:1124-1157) and is compiled out behind USE_AIS_FOR_NC, above the comment "not yet
+    /// implemented within AIS3" (:1120-1121). A3 guessed and created assetless items; this replaces that.
+    /// </summary>
+    [Test]
+    public void an_items_create_array_is_refused_before_anything_is_written()
+    {
+        var b = Inventory();
+        var foldersBefore = b.Folders.Count;
+        var itemsBefore = b.Items.Count;
+
+        var (status, body) = Send(b, "POST", $"/category/{Clothing}", new OSDMap
+        {
+            // a mixed body: the categories must NOT be created either
+            ["categories"] = new OSDArray { new OSDMap { ["name"] = "should not appear" } },
+            ["items"] = new OSDArray { new OSDMap { ["name"] = "New Note", ["type"] = (int)AssetType.Notecard } },
+        });
+
+        Assert.That(status, Is.EqualTo((int)HttpStatusCode.NotImplemented));
+        Assert.That(body["error_code"].AsInteger(), Is.EqualTo(501));
+        Assert.That(b.Folders.Count, Is.EqualTo(foldersBefore), "the refusal happens before any write");
+        Assert.That(b.Items.Count, Is.EqualTo(itemsBefore));
+    }
+
+    /// <summary>An empty items array is not a request to create items, so it does not trip the refusal.</summary>
+    [Test]
+    public void an_empty_items_array_is_not_refused()
+    {
+        var b = Inventory();
+        var (status, _) = Send(b, "POST", $"/category/{Clothing}", new OSDMap
+        {
+            ["items"] = new OSDArray(),
+            ["categories"] = new OSDArray { new OSDMap { ["name"] = "fine" } },
+        });
+        Assert.That(status, Is.EqualTo(200));
+        Assert.That(b.Folders.Values.Any(f => f.Name == "fine"), Is.True);
+    }
     [Test]
     public void creating_a_second_object_with_the_same_name_is_allowed()
     {
