@@ -190,6 +190,107 @@ unverifiable this session. Golden fixtures under
 (`indra/newview/llappearancemgr.cpp:2209-2245`). That is the shape A2 must accept on
 `PUT /category/{id}/links`. The `UpdateItem` / `UpdateCategory` / `CreateInventory` bodies are still
 **UNVERIFIED**: their callers are elsewhere in `llviewerinventory.cpp`.
+## 1d-bis. The delta contract (A2): what the viewer applies from a mutation response
+
+Extracted from `AISUpdate::parseMeta` / `parseContent` / `parseItem` / `parseCategory` / `doUpdate` in
+`llaisapi.cpp` and `LLInventoryModel::onObjectDeletedFromServer` in `llinventorymodel.cpp`. This is the table
+the mutation routes implement.
+
+### The complete set of delta keys
+
+Read by `parseMeta` (`:1101-1177`) and **nothing else**. A0's list is confirmed against the source: the removal
+key is `_categories_removed`, and `_updated_items`, `_updated_categories` and `_removed_categories` appear
+nowhere in the file.
+
+| Key | LLSD | Line | What the viewer does |
+|---|---|---|---|
+| `_categories_removed` | array of uuid | `:1104-1119` | for each id **it already has**: parent descendent delta −1, id queued for deletion |
+| `_category_items_removed` | array of uuid | `:1122-1139` | same, for items; merged into the same id set as the next row |
+| `_removed_items` | array of uuid | `:1124` | parsed into the *same* list as `_category_items_removed` — the two are interchangeable |
+| `_broken_links_removed` | array of uuid | `:1141-1156` | same handling again |
+| `_created_items` | array of uuid | `:1159` | the ids the viewer will accept from `_embedded` on a mutation; drives per-id callbacks for CreateInventory |
+| `_created_categories` | array of uuid | `:1162` | same for categories |
+| `_updated_category_versions` | map uuid → integer | `:1164-1176` | the folder versions the viewer will adopt, **and the gate on all descendent accounting** |
+
+### Updated objects are content, not a delta key
+
+There is no "updated" delta key. An updated item or category arrives as **top-level content**: `parseContent`
+(`:1179-1212`) routes a body with `item_id` + `parent_id` to `parseItem`, and one with `category_id` +
+`parent_id` to `parseCategory`. On a **mutation** response (`!mFetch`):
+
+- `parseItem` (`:1215-1258`): if the viewer already has the item it copies its current values first
+  (`copyViewerItem`, `:1222` — *"Default to current values where not provided"*), applies the map, and files it
+  under `mItemsUpdated`, **plus a zero delta for the parent** (`:1241-1245`). If it does **not** have the item,
+  the same body is treated as a creation: `mItemsCreated` and parent delta **+1** (`:1247-1252`).
+- `parseCategory` (`:1327-1465`): the same, filing under `mCategoriesUpdated` with zero deltas for **both** the
+  parent and the category itself (`:1419-1428`).
+
+Two consequences for the server. A PATCH response may be sparse — only the changed fields plus `item_id` /
+`category_id` and `parent_id` — because the viewer merges onto its own copy. And it must be **top level**: on a
+mutation the viewer ignores any `_embedded` object whose id is not in `_created_items` / `_created_categories`
+(§1c), so an updated object hidden in `_embedded` is silently dropped.
+
+### `_updated_category_versions` gates everything
+
+`doUpdate` (`:1606-1648`) walks the accumulated descendent deltas and **skips any category not listed in**
+`_updated_category_versions` — *"Skipping version increment for non-updated category"* (`:1625-1629`). A folder
+whose contents changed but which the response does not list keeps a stale descendent count and version forever.
+Newly created categories are skipped too, deliberately (`:1618-1622`).
+
+At the end of the update (`:1755-1791`) each listed category has its local version **set to the server's value**
+(`:1776`, *"the AIS version should be considered the true version"*); a listed version of −1
+(`VERSION_UNKNOWN`) instead triggers a re-fetch with a 360 s expiry (`:1779-1789`).
+
+> **Hazard (Ledger A-R6).** That loop does `cat->getVersion()` with **no null check** on
+> `gInventory.getCategory(id)` (`:1760-1762`). Listing a folder the viewer has never fetched is a null
+> dereference in the viewer. Only list folders the operation touched.
+
+### Per operation: what to send
+
+| Operation | Content | Delta keys | `_updated_category_versions` must list |
+|---|---|---|---|
+| `PATCH /item/{id}` | the item, top level (`item_id`, `parent_id`, changed fields) | none | the item's parent folder — the zero-delta entry `parseItem` creates is discarded without it |
+| `PATCH /category/{id}` | the category, top level (`category_id`, `parent_id`, changed fields) | none | the category **and** its parent — `parseCategory` creates zero-delta entries for both |
+| `DELETE /item/{id}` | none | `_removed_items` (or `_category_items_removed`) with the item id | the item's parent |
+| `DELETE /category/{id}` | none | `_categories_removed` with the folder id **only** | the folder's parent |
+
+**Descendents of a deleted folder are implied, not enumerated.**
+`LLInventoryModel::onObjectDeletedFromServer` (`llinventorymodel.cpp:2015-2041`) calls
+`onDescendentsPurgedFromServer` first for a category — *"For category, need to delete/update all children
+first"* — so naming the folder is enough and its children are purged locally. Enumerating them as well would be
+harmless but pointless; enumerating them **instead** of the folder would leave the folder behind.
+
+### Two edge rules
+
+- **A delta naming an object the viewer does not have is dropped**, with a warning: every removal arm is inside
+  `if (cat)` / `if (item)` (`:1109`, `:1130`, `:1148`), so there is no descendent delta and no deletion. Sending
+  a removal for something the viewer never knew is therefore safe, and silently does nothing.
+- **An absent delta key and an empty one are identical.** `parseUUIDArray` (`:1077-1088`) does nothing when the
+  key is absent and nothing when the array is empty; `_updated_category_versions` is guarded by `update.has`
+  (`:1165`). Emitting empty arrays is neither required nor harmful.
+
+### A-Q3, resolved for updates (A2)
+
+`UpdateItem`'s body is the item's **full** `asLLSD()` with `asset_id` and `shadow_id` removed and replaced by
+`hash_id` (the transaction id) when it is set — `LLViewerInventoryItem::updateServer`
+(`llviewerinventory.cpp:435-454`) and `update_inventory_item` (`:1399-1422`), identically. So the server receives
+the whole item map of §1d, minus the asset id, and must ignore what it does not accept rather than fail.
+
+`UpdateCategory`'s body is the category's full `asLLSD()` for a rename (`LLViewerInventoryCategory::updateServer`,
+`:651-665`) and for a type change (`changeType`, `:866-884`). For a **protected** folder type the viewer refuses
+to send anything but a single-key `{thumbnail}` or `{favorite}` map (`update_inventory_category`, `:1436-1457`),
+so those two are the only fields a protected system folder will ever be asked to change.
+
+`CreateInventory`'s `items` / `links` arrays remain **UNVERIFIED** — their callers are outside the permitted
+functions — and are A4's problem, not A2's.
+
+## 1e-bis. GET /orphans scope (A1, recorded A2)
+
+`/orphans` reports **folder orphans only**: folders whose `ParentID` names a folder absent from the agent's
+inventory skeleton. `IInventoryService` has no item-orphan query and finding orphaned items would mean listing
+the contents of every folder (tree state T5), so items are never reported. **An empty response means "no orphan
+folders", not "no orphans of any kind".**
+
 ## 1e. Version semantics
 
 - Folder versions arrive in two places: `version` on a category map (fetch and mutation responses) and
