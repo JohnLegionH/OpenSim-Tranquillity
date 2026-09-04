@@ -82,6 +82,7 @@ public class AvatarFactoryModule : IAvatarFactoryModule, INonSharedRegionModule
 
         scene.RegisterModuleInterface<IAvatarFactoryModule>(this);
         scene.EventManager.OnNewClient += SubscribeToClientEvents;
+        scene.EventManager.OnRemovePresence += FlushAppearanceSaveOnClose;
     }
 
     public void RemoveRegion(Scene scene)
@@ -90,9 +91,61 @@ public class AvatarFactoryModule : IAvatarFactoryModule, INonSharedRegionModule
         {
             scene.UnregisterModuleInterface<IAvatarFactoryModule>(this);
             scene.EventManager.OnNewClient -= SubscribeToClientEvents;
+            scene.EventManager.OnRemovePresence -= FlushAppearanceSaveOnClose;
         }
 
         m_scene = null;
+    }
+
+    /// <summary>
+    /// Write a pending appearance change before the presence goes away.
+    ///
+    /// <para><b>The defect this closes.</b> <see cref="QueueAppearanceSave"/> defers the write by
+    /// <c>m_savetime</c> seconds, and <see cref="SaveAppearance"/> resolves the <c>ScenePresence</c> only when the
+    /// timer finally fires. If the agent left in between, the presence was gone and the write was skipped
+    /// **silently**: the change stayed in memory and died with the presence. A detach followed by a logout inside
+    /// the save window therefore left the stored appearance still wearing the garment, and the viewer put the item
+    /// back on the next login. Wear is affected identically. This predates AIS and hits the legacy path just as
+    /// hard; the evidence is in Docs/feature/ais-v3/A12-ATTACHMENT-RECONCILIATION.md of the AIS branch.</para>
+    ///
+    /// <para><b>Why <c>OnRemovePresence</c> is the right hook.</b> <c>Scene.RemoveClient</c> raises it at
+    /// <c>Scene.cs:3866</c>, while the presence is still in the scene graph: it is not removed until
+    /// <c>m_sceneGraph.RemoveScenePresence</c> in the <c>finally</c> block at <c>:3898</c>, and not disposed until
+    /// <c>:3905</c>. So <c>GetScenePresence</c> still resolves here — which is precisely what
+    /// <see cref="SaveAppearance"/> needs and precisely what it lacks when the timer fires later. Nothing between
+    /// the event and the removal changes appearance either: <c>DeRezAttachments</c> (<c>:3871</c>) saves the
+    /// attachment *objects* and calls <c>ScenePresence.ClearAttachments</c>, which only empties the group list
+    /// (<c>ScenePresence.cs:5488-5492</c>) and never touches <c>Appearance</c>.</para>
+    ///
+    /// <para><b>No extra write per session.</b> The queue is consulted, never forced: with nothing pending this
+    /// writes nothing. A session that changed no appearance costs one dictionary lookup.</para>
+    ///
+    /// <para><b>Child agents are skipped.</b> A child agent's <c>Appearance</c> is a copy of state owned by
+    /// whichever region holds the root, so writing it from here could publish a stale outfit over a newer one. On
+    /// a teleport the source's root is converted by <c>ScenePresence.MakeChildAgent</c>, not by
+    /// <c>RemoveClient</c>, and the appearance travels to the destination in the agent data — so skipping loses
+    /// nothing and not skipping risks a stale overwrite.</para>
+    /// </summary>
+    private void FlushAppearanceSaveOnClose(UUID agentId)
+    {
+        // Only a genuinely pending change earns a write; an unchanged session must stay free.
+        if (!m_savequeue.TryRemove(agentId, out _))
+            return;
+
+        ScenePresence sp = m_scene?.GetScenePresence(agentId);
+        if (sp is null)
+        {
+            m_log.LogWarning(
+                "[AVFACTORY]: pending appearance change for {AgentId} could not be flushed on close - no presence. The change is lost.",
+                agentId);
+            return;
+        }
+
+        if (sp.IsChildAgent)
+            return;
+
+        m_log.LogDebug("[AVFACTORY]: flushing pending appearance save for {AgentId} on close", agentId);
+        SaveAppearance(new List<UUID> { agentId });
     }
 
     public void RegionLoaded(Scene scene)
@@ -816,7 +869,16 @@ public class AvatarFactoryModule : IAvatarFactoryModule, INonSharedRegionModule
         {
             ScenePresence sp = m_scene.GetScenePresence(id);
             if(sp == null)
+            {
+                // The presence went away between queueing and firing, so the change can no longer be read and is
+                // lost. FlushAppearanceSaveOnClose exists to make this unreachable on a normal close; if it is
+                // ever reached again, something closes a presence by a path that does not raise OnRemovePresence,
+                // and that must not be silent a second time.
+                m_log.LogWarning(
+                    "[AVFACTORY]: dropping queued appearance save for {AgentId}: no presence when the save fired. The change is lost.",
+                    id);
                 continue;
+            }
             // This could take awhile since it needs to pull inventory
             // We need to do it at the point of save so that there is a sufficient delay for any upload of new body part/shape
             // assets and item asset id changes to complete.
