@@ -220,4 +220,82 @@ public class BackendTests
         Assert.NotEqual(BakeHash.Compute(BakeChannel.Lower, req), BakeHash.Compute(BakeChannel.Lower, req with { Wearables = req.Wearables.Append(pants).ToList() }));
         _ = assets;
     }
+
+    // ---------------- a worn wearable with no texture asset (S1c, Docs/MORPH-MASK-PASS.md 2.4) ----------------
+
+    /// <summary>
+    /// The rule: a morph-mask layer with a local_texture contributes the mask of the top worn wearable of its
+    /// type, and a wearable counts as worn whether or not it carries a texture asset
+    /// (LLTexLayerTemplate::updateWearableCache counts LLWearable objects, lltexlayer.cpp:1615-1638; its
+    /// getLayer only needs a local texture object, :1639-1656). The layer draws nothing in the colour pass
+    /// without an image, but its parameter alphas still make a morph mask, and their values come from the
+    /// avatar parameters rather than from the absent asset.
+    /// </summary>
+    [Fact]
+    public void a_worn_wearable_with_no_texture_asset_still_contributes_its_morph_mask()
+    {
+        var jacketTex = UUID.Random();
+        var textures = new Dictionary<UUID, TextureInput>
+        {
+            [jacketTex] = new TextureInput(jacketTex, J2kCodec.Encode(CompositorTests.Flat(32, 32, 40, 40, 60))),
+        };
+        // the shirt-owned drivers of upper_clothes's four param alphas (600/601/602/778): short sleeves, so the
+        // mask has a zero region. They live on the avatar, not on the (absent) shirt asset.
+        var visual = new Dictionary<int, float> { [800] = 0f, [801] = 1f, [802] = 1f, [781] = 1f };
+        var shape = new WearableInput(UUID.Random(), (int)WearableKind.Shape, WearableText(WearableKind.Shape, "S", new Dictionary<int, float> { [80] = 1f }, new Dictionary<TextureSlot, UUID>()));
+        var jacket = new WearableInput(UUID.Random(), (int)WearableKind.Jacket, WearableText(WearableKind.Jacket, "J", new Dictionary<int, float>(), new Dictionary<TextureSlot, UUID> { [TextureSlot.UpperJacket] = jacketTex }));
+
+        byte[] UpperMask(params WearableInput[] worn)
+        {
+            var r = new SkiaBakeBackend().Bake(new BakeRequest(worn, visual, textures, 128));
+            return r.Single(x => x.Channel == BakeChannel.Upper).Fidelity is not null
+                ? J2kCodec.Decode(r.Single(x => x.Channel == BakeChannel.Upper).J2kBytes).Mask!
+                : throw new InvalidOperationException();
+        }
+
+        // jacket alone, no shirt slot at all: upper_clothes has no instance and the morph mask stays flat at 255
+        // (the J2C round-trip renders a flat 255 plane back as a flat 254, as the golden tables show)
+        var withoutShirtSlot = UpperMask(shape, jacket);
+        Assert.True(withoutShirtSlot.Max() - withoutShirtSlot.Min() <= 2, "no shirt slot: the morph mask must be flat");
+        Assert.True(withoutShirtSlot.Min() >= 250, $"no shirt slot: the flat mask must be ~255, was {withoutShirtSlot.Min()}");
+
+        // the same outfit, plus a worn Shirt slot with no asset behind it: the mask is now real
+        var assetlessShirt = new WearableInput(UUID.Zero, (int)WearableKind.Shirt, "");
+        var withShirtSlot = UpperMask(shape, jacket, assetlessShirt);
+        Assert.True(withShirtSlot.Any(v => v < 250), "an assetless but worn shirt must still produce a morph mask");
+        Assert.True(withShirtSlot.Any(v => v > 250), "the mask must be a mask, not zero everywhere");
+
+        // and it is the shirt layer that did it, not the jacket: upper_jacket is not in <morph_masks>
+        Assert.DoesNotContain("upper_jacket", AvatarLad.Embedded.MorphMaskLayers["upper_body"]);
+        Assert.Contains("upper_clothes", AvatarLad.Embedded.MorphMaskLayers["upper_body"]);
+    }
+
+    /// <summary>
+    /// The other half of the same rule: LLTexLayerTemplate::gatherAlphaMasks uses getLayer(num_wearables - 1)
+    /// only — "For rendering morph masks, we only want to use the top wearable" (lltexlayer.cpp:1710-1719) —
+    /// unlike render(), which loops over every instance. Two shirts must give the second one's mask, not the
+    /// product of both.
+    /// </summary>
+    [Fact]
+    public void the_morph_mask_of_a_template_layer_comes_from_the_top_wearable_only()
+    {
+        var shape = new WearableInput(UUID.Random(), (int)WearableKind.Shape, WearableText(WearableKind.Shape, "S", new Dictionary<int, float> { [80] = 1f }, new Dictionary<TextureSlot, UUID>()));
+        WearableInput Shirt(float sleeve) => new(UUID.Random(), (int)WearableKind.Shirt,
+            WearableText(WearableKind.Shirt, "shirt", new Dictionary<int, float> { [800] = sleeve, [801] = 1f, [802] = 1f, [781] = 1f }, new Dictionary<TextureSlot, UUID>()));
+
+        byte[] Mask(params WearableInput[] worn)
+        {
+            var r = new SkiaBakeBackend().Bake(new BakeRequest(worn, new Dictionary<int, float>(), new Dictionary<UUID, TextureInput>(), 128));
+            return J2kCodec.Decode(r.Single(x => x.Channel == BakeChannel.Upper).J2kBytes).Mask!;
+        }
+
+        var shortOnly = Mask(shape, Shirt(0f));
+        var longOnly = Mask(shape, Shirt(1f));
+        var shortThenLong = Mask(shape, Shirt(0f), Shirt(1f));
+
+        long Diff(byte[] a, byte[] b) { long d = 0; for (var i = 0; i < a.Length; i++) d += Math.Abs(a[i] - b[i]); return d / a.Length; }
+        Assert.True(Diff(shortOnly, longOnly) > 4, "the two sleeve lengths must give different masks for this test to mean anything");
+        Assert.True(Diff(shortThenLong, longOnly) <= 2, $"two shirts must give the top (last) shirt's mask; differs by {Diff(shortThenLong, longOnly)}");
+        Assert.True(Diff(shortThenLong, shortOnly) > 4, "two shirts must not give the first shirt's mask");
+    }
 }

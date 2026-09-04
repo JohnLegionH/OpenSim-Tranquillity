@@ -73,6 +73,7 @@ public class GoldenTests
         public required List<ParsedWearable> Parsed;
         public required Dictionary<UUID, TextureInput> Textures;
         public required List<string> NullSlots;
+        public required Dictionary<int, float> VisualParams;
     }
 
     /// <summary>Loads a set, or returns null with a reason when its fixtures are not there.</summary>
@@ -96,8 +97,8 @@ public class GoldenTests
         }
 
         // the request: every worn wearable's text, every texture they reference in a drawn slot.
-        // A worn slot carrying the null asset id (the row exists, nothing is in it) is skipped, as the
-        // orchestrator does (BakeOrchestrator.Resolve: assetId.IsZero()), and named in the report.
+        // A worn slot carrying the null asset id is still a worn wearable — the viewer counts wearables, not
+        // textures (Docs/MORPH-MASK-PASS.md §2.4) — so it goes in with empty text and is named in the report.
         var wearables = new List<WearableInput>();
         var nullSlots = new List<string>();
         foreach (var row in avatar.Wearables.OrderBy(w => w.Type).ThenBy(w => w.Index))
@@ -105,11 +106,12 @@ public class GoldenTests
             if (!UUID.TryParse(row.AssetId, out var assetId) || assetId.IsZero())
             {
                 nullSlots.Add($"{(WearableKind)row.Type}:{row.Index}");
+                wearables.Add(new WearableInput(UUID.Zero, row.Type, ""));
                 continue;
             }
             wearables.Add(new WearableInput(assetId, row.Type, File.ReadAllText(Fixture(row.AssetId, "bodypart", "clothing"), Encoding.UTF8)));
         }
-        var parsed = wearables.Select(w => WearableParser.Parse(w.RawText)).ToList();
+        var parsed = wearables.Where(w => w.RawText.Length > 0).Select(w => WearableParser.Parse(w.RawText)).ToList();
         var textures = new Dictionary<UUID, TextureInput>();
         foreach (var pw in parsed)
             foreach (var (_, id) in pw.Textures)
@@ -123,13 +125,30 @@ public class GoldenTests
         {
             Name = set, Dir = dir, Fixtures = fixtures, Manifest = manifest, Avatar = avatar,
             Wearables = wearables, Parsed = parsed, Textures = textures, NullSlots = nullSlots,
+            VisualParams = DecodeVisualParams(avatar.VisualParams),
         };
+    }
+
+    /// <summary>
+    /// The avatar's VisualParams as the simulator sends them, decoded through the parameter table exactly as
+    /// BakeOrchestrator.Resolve does. Wearables' own stored values still win; this fills in what none of them
+    /// carries — which for a worn-but-assetless slot is everything (Docs/MORPH-MASK-PASS.md §2.4).
+    /// </summary>
+    private static Dictionary<int, float> DecodeVisualParams(List<int>? bytes)
+    {
+        var overlay = new Dictionary<int, float>();
+        if (bytes is null || bytes.Count == 0) return overlay;
+        var list = VisualParamEncoder.SendList(new TexLayerCompositor().Lad);
+        if (bytes.Count != list.Count) return overlay;
+        for (var i = 0; i < list.Count; i++)
+            overlay[list[i].Id] = list[i].Min + bytes[i] / 255f * (list[i].Max - list[i].Min);
+        return overlay;
     }
 
     /// <summary>Bakes the set at one size and compares every channel the manifest has a reference for.</summary>
     private static (IReadOnlyList<BakeResult> Results, List<Row> Rows, List<string> Failures) Compare(SetContext c, int size)
     {
-        var request = new BakeRequest(c.Wearables, new Dictionary<int, float>(), c.Textures, size);
+        var request = new BakeRequest(c.Wearables, c.VisualParams, c.Textures, size);
         var results = new SkiaBakeBackend().Bake(request);
         var rows = new List<Row>();
         var failures = new List<string>();
@@ -191,7 +210,8 @@ public class GoldenTests
         var m = c.Manifest;
         report.AppendLine($"reference-bake run {DateTimeOffset.Now:O}  set={c.Name}  avatar={m.Avatar}  outfit={m.Outfit}  reference=LL compositor  captured={m.Captured} via {m.CapturedVia ?? "?"}  size={size}");
         report.AppendLine($"wearables: {string.Join(", ", c.Parsed.Select(p => $"{p.Kind}('{p.Name}', {p.Params.Count}p, {p.Textures.Count(t => t.Value != UUID.Zero && t.Value != BakeConstants.DefaultAvatarTexture)}t)"))}");
-        if (c.NullSlots.Count > 0) report.AppendLine($"worn but empty (null asset id, skipped): {string.Join(", ", c.NullSlots)}");
+        if (c.NullSlots.Count > 0) report.AppendLine($"worn but assetless (contributes as an instance, no textures): {string.Join(", ", c.NullSlots)}");
+        report.AppendLine($"visual params overlaid: {c.VisualParams.Count}");
         report.AppendLine($"textures supplied: {c.Textures.Count}");
     }
 

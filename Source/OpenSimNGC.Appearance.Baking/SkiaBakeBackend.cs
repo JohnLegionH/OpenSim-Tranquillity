@@ -59,6 +59,17 @@ public sealed class SkiaBakeBackend : IBakeBackend
         foreach (var w in r.Wearables)
         {
             ParsedWearable pw;
+            if (string.IsNullOrWhiteSpace(w.RawText))
+            {
+                // A worn slot with no asset behind it. The viewer counts wearables, not textures
+                // (LLTexLayerTemplate::updateWearableCache, lltexlayer.cpp:1615-1638), so such a slot is still a
+                // contributing instance of its type; it just carries no textures and no stored parameters of its
+                // own, and its parameter values come from the avatar's (BakeRequest.VisualParams).
+                // Docs/MORPH-MASK-PASS.md §2.4.
+                pw = new ParsedWearable((WearableKind)w.WearableType, "", new Dictionary<int, float>(), new Dictionary<TextureSlot, UUID>());
+                parsed.Add((w, pw));
+                continue;
+            }
             try { pw = WearableParser.Parse(w.RawText); }
             catch (FormatException ex) { throw new ArgumentException($"wearable {w.AssetId}: {ex.Message}", ex); }
             if ((int)pw.Kind != w.WearableType && w.WearableType is >= 0 and < 255)

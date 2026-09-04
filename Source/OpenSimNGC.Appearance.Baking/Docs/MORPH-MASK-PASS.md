@@ -102,8 +102,11 @@ is exactly `mLocalTexture != -1` (`lltexlayer.cpp:64`): **only layers with a `lo
 - A **template** layer is rendered once per worn wearable of its type: `LLTexLayerTemplate::render`
   (`:1659-1689`) walks `updateWearableCache()` (`:1615-1637`, the worn wearables of `getWearableType()`), and
   for each one calls `wearable->writeToAvatar` (`:1676`, so that wearable's parameters are current) and renders
-  that wearable's clone of the layer (`:1678`). Its morph mask likewise contributes once per instance
-  (`LLTexLayerTemplate::gatherAlphaMasks`, `:1706-1714`). `upper_clothes` (local texture `upper_shirt`) and
+  that wearable's clone of the layer (`:1678`). Its morph mask, however, contributes **only once, from the
+  top (last) worn wearable** — `LLTexLayerTemplate::gatherAlphaMasks` (`:1710-1719`) takes
+  `U32 i = num_wearables - 1; getLayer(i)` with the comment *"For rendering morph masks, we only want to use
+  the top wearable"*, unlike `render`, which loops over all of them. (S1c correction: S0d/S0e recorded this as
+  once per instance.) `upper_clothes` (local texture `upper_shirt`) and
   `lower_pants` (`lower_pants`) are templates.
 - A **plain** layer is rendered exactly once by `LLTexLayer::render` (`:1023-1200`) whatever is worn, with the
   avatar's current parameter values — the values the worn wearables wrote in wear order, so the last-worn
@@ -140,6 +143,61 @@ mask is 0, and 255 × (0 + 1) >> 8 = 0. The reference head bake's component 4 is
 A layer whose net colour alpha is ≈ 0 is not rendered in the colour pass (`:1040-1044`) and so has no
 cached mask; `addAlphaMask` then renders it on demand (`:1518-1526`) with the same rules.
 
+### 2.4 A worn wearable with no texture asset still contributes (S1c)
+
+This is the mechanism behind Ledger Q-12. Aleric Fenwood wears a jacket and **no shirt asset** — but his Shirt
+slot is occupied: item `77c41e39-38f9-f75a-0000-585989bf0000` (the default shirt item) with asset id
+`00000000-…`. His reference upper bake carries a real morph mask (31.4% of pixels at 0, 67.0% at 224); the
+library produced a uniform 255 and logged `upper_clothes morph: no Shirt worn: mask left at 255`.
+
+The authority resolves it, and rules out the other candidate S1b floated:
+
+1. **`<morph_masks>` is the only selector; the jacket never contributes.** `gatherMorphMaskAlpha`
+   (`lltexlayer.cpp:460-472`) does walk *every* layer of the set, so the block is not a filter there. But a layer
+   can only contribute what `LLTexLayer::addAlphaMask` (`:1513-1531`) can get from `getAlphaData()`, and that
+   cache (`:1183-1200`) is only ever filled by `renderMorphMasks`, which returns at once unless `hasMorph()`
+   (`:1297-1302`) and caches only under `if (hasMorph() && success)` (`:1389`). `mHasMorph` is set exactly for
+   the layers named in `<morph_masks>`: `LLAvatarAppearance::addMaskedMorph` (`llavatarappearance.cpp:1352-1358`,
+   fed from `avatar_lad.xml:17473-17502` at `:971-985`) fills `mBakedTextureDatas[baked].mMaskedMorphs`, and the
+   layerset loader looks each one up by name and calls `layer->setHasMorph(true)` (`:1237-1243`).
+   `upper_jacket` is **not** in `<morph_masks>`, so `hasMorph()` is false for it and it contributes nothing to
+   the morph mask however it is worn. S1b candidate (a) — "the gather should include `upper_jacket`" — is
+   **refuted**. Its five `param_alpha` entries (`jacket Sleeve Length#1020`, `jacket Collar Front#1022`,
+   `Collar Back#1024`, `bottom length upper#620`, `open upper#622`) drive the **colour** pass only.
+
+2. **The contributing wearable is counted, not its texture.** `upper_clothes` has `local_texture="upper_shirt"`,
+   so it is an `LLTexLayerTemplate` of wearable type Shirt (2.2). `LLTexLayerTemplate::gatherAlphaMasks`
+   (`:1710-1719`) asks `updateWearableCache()` (`:1615-1638`) for the worn wearables of that type — and that
+   function counts **`LLWearable` objects**, not textures: `getWearableCount(wearable_type)` and
+   `getWearable(wearable_type, i)`, with no reference to whether the wearable has an image. `getLayer(i)`
+   (`:1639-1656`) then needs only an `LLLocalTextureObject` for the layer's `local_texture`, which a worn shirt
+   has whether or not a texture asset was ever set. So a worn-but-assetless shirt yields a real `LLTexLayer`,
+   `hasAlphaParams()` is true (four `param_alpha` children), `hasMorph()` is true, and `renderMorphMasks`
+   (`:1296-1400`) produces a mask from the parameter alphas alone. The texture-alpha accumulation step
+   (`:1336-1353`) contributes nothing, because there is no image — which is also why the **colour** pass draws
+   nothing for this layer and the visible bake is unaffected.
+
+3. **The parameters are on the avatar, not the missing asset.** `upper_clothes`'s four alpha params are
+   `Sleeve Length Cloth#600` (`shirt_sleeve_alpha.tga`, `multiply_blend="false"`), `Shirt Bottom Cloth#601`
+   (`shirt_bottom_alpha.tga`), `Collar Front Height Cloth#602` (`shirt_collar_alpha.tga`) and
+   `Collar Back Height Cloth#778` (`shirt_collar_back_alpha.tga`). All four are `group="1"` driven params; their
+   drivers are `Sleeve Length#800`, `Shirt Bottom#801`, `Collar Front#802` and `Collar Back#781`, which are
+   `group="0"` shirt-owned params and therefore travel in the avatar's `VisualParams`. A missing shirt *asset*
+   costs no parameter value.
+
+**Predicted mechanism for the observed histogram.** `#600` is first in `mParamAlphaList` and is
+`multiply_blend="false"`, so `renderMorphMasks` clears the buffer to 0 and accumulates `shirt_sleeve_alpha.tga`
+(`:1307-1330`); `#601`, `#602` and `#778` then multiply in. The 31.4% of pixels at 0 is the upper-body area no
+(short-sleeved, bottom-limited, low-collar) shirt covers — beyond the sleeve, below the shirt bottom, above the
+collar — and the 67.0% at 224 is where the shirt does cover. The parameters responsible, by name and id, are
+`Sleeve Length Cloth#600` (dominant, being the clearing param), then `Shirt Bottom Cloth#601`,
+`Collar Front Height Cloth#602` and `Collar Back Height Cloth#778`.
+
+**The rule to implement** (general, not jacket- or shirt-specific): *a morph-mask layer with a `local_texture`
+contributes the mask of the **top worn wearable of its type**; a wearable counts as worn when its slot is
+occupied, whether or not it carries a texture asset. Its parameter values come from the avatar's parameters,
+which for an assetless wearable are supplied entirely by the caller's `VisualParams`.*
+
 ## 3. What the library does (`TexLayerCompositor.Bake`)
 
 1. `AvatarLad` parses `<morph_masks>` into `MorphMaskLayers[body_region] = { layer names }`.
@@ -147,9 +205,11 @@ cached mask; `addAlphaMask` then renders it on demand (`:1518-1526`) with the sa
    without one exactly once with the merged parameters (2.2), computing each rendered instance's mask
    (`ComputeMask`) and caching it per (layer, instance), mirroring `mAlphaCache`.
 3. After the colour layers, `MorphMask` starts at 255 everywhere (`memset(data, 255)`). For each layer of
-   the set named in `MorphMaskLayers` that has alpha parameters: a template layer contributes once per worn
-   wearable of its type, a plain layer once; each contribution's mask (cached, or computed on demand with
-   the same rules) is multiplied in with `(m * (mask + 1)) >> 8`.
+   the set named in `MorphMaskLayers` that has alpha parameters: a template layer contributes the mask of the
+   **top worn wearable of its type** (2.2), a plain layer contributes once; each contribution's mask (cached,
+   or computed on demand with the same rules) is multiplied in with `(m * (mask + 1)) >> 8`. A wearable whose
+   slot is worn but carries no texture asset is a contributing instance like any other (2.4); its parameters
+   come from `BakeRequest.VisualParams`.
 4. Sets without morph layers, and the invisible-alpha short-circuit, yield 255 everywhere.
 5. `J2kCodec.EncodeBake` writes R, G, B, A, M as a five-component single-tile J2C; `Decode` exposes a
    fifth component as `RgbaPlanes.Mask`.

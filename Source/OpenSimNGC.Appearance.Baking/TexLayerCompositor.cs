@@ -443,8 +443,13 @@ public sealed class TexLayerCompositor
                 else
                 {
                     if (kind == WearableKind.Invalid) { reports.Add(new LayerReport(layer.Name, "morph", "no wearable type: no instances", null)); continue; }
-                    instances = worn.Where(w => w.Kind == kind).Select(w => (WornWearable?)w).ToList();
-                    if (instances.Count == 0) { reports.Add(new LayerReport(layer.Name, "morph", $"no {kind} worn: mask left at 255", kind)); continue; }
+                    // LLTexLayerTemplate::gatherAlphaMasks (lltexlayer.cpp:1710-1719) takes getLayer(num_wearables - 1)
+                    // only — "For rendering morph masks, we only want to use the top wearable" — unlike render(), which
+                    // loops over every instance. A wearable counts as worn whether or not it has a texture asset
+                    // (updateWearableCache, :1615-1638). Docs/MORPH-MASK-PASS.md §2.2, §2.4.
+                    var ofKind = worn.Where(w => w.Kind == kind).ToList();
+                    if (ofKind.Count == 0) { reports.Add(new LayerReport(layer.Name, "morph", $"no {kind} worn: mask left at 255", kind)); continue; }
+                    instances = new List<WornWearable?> { ofKind[^1] };
                 }
                 foreach (var w in instances)
                 {
