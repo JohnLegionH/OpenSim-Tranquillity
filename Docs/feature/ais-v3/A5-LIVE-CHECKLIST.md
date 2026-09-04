@@ -232,10 +232,18 @@ Emptying Trash (step 8) and deleting a folder **inside** Trash are unaffected: t
 A5 deployed the region side only. Redeploying Robust is a separate decision and a separate outage, and it is
 John's to make.
 
-## Repeat in Firestorm
+## Firestorm is the only client available here
 
-Firestorm is a test client only, never an authority (Ledger P-1). But it exercises paths the LL viewer does not,
-and Legion Grid's residents use it, so these steps must be repeated there:
+**Superseded by Ledger P-3 (A8, 2026-09-04).** This section was written expecting the LL viewer to be the
+primary run and Firestorm a second pass. That is not possible on this grid: the stock LL viewer will not start
+against it, because its Vivox voice component refuses to initialise outside SL. **Every run is a Firestorm run,
+and there is no control.**
+
+Firestorm remains a test client and never an authority (Ledger P-1). What changes is the reading of a green
+result: it means Firestorm is satisfied, not that the protocol is right. Anything observed only in Firestorm
+must be checked against the LL viewer source before it is relied on — step 13's legacy fallback is the live
+example (`A5-RUN-2026-09-04.md`). These are the steps where Firestorm's own machinery differs most, so they
+carry the least transferable evidence:
 
 - **1** (full load) — Firestorm's fetch pacing differs;
 - **9 and 10** (wear / take off) — Firestorm has its own outfit machinery and may still send
@@ -243,8 +251,9 @@ and Legion Grid's residents use it, so these steps must be repeated there:
 - **8** (Empty Trash);
 - **12** (library copy).
 
-If Firestorm and the LL viewer disagree on any of these, the LL viewer is right and the difference is recorded, not
-fixed against Firestorm.
+If Firestorm and the LL viewer **source** disagree on any of these, the source is right and the difference is
+recorded, not fixed against Firestorm. The disagreement has to be found by reading the source, because the
+viewer itself cannot be run here.
 
 ---
 
