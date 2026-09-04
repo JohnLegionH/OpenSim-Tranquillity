@@ -113,65 +113,88 @@ public class XInventoryService : ServiceBase, IInventoryService
 
         XInventoryFolder[] sysFolders = GetSystemFolders(principalID, rootFolder.ID);
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.Animation))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.Animation, "Animations");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.Animation, "Animations");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.BodyPart))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.BodyPart, "Body Parts");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.BodyPart, "Body Parts");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.CallingCard))
+        XInventoryFolder callingCards = EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.CallingCard, "Calling Cards");
+        if (callingCards is not null)
         {
-            XInventoryFolder folder = CreateFolder(principalID, rootFolder.ID, (int)FolderType.CallingCard, "Calling Cards");
-            folder = CreateFolder(principalID, folder.folderID, (int)FolderType.CallingCard, "Friends");
+            XInventoryFolder folder = CreateFolder(principalID, callingCards.folderID, (int)FolderType.CallingCard, "Friends");
             CreateFolder(principalID, folder.folderID, (int)FolderType.CallingCard, "All");
         }
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.Clothing))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.Clothing, "Clothing");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.Clothing, "Clothing");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.CurrentOutfit))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.CurrentOutfit, "Current Outfit");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.CurrentOutfit, "Current Outfit");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.Favorites))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.Favorites, "Favorites");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.Favorites, "Favorites");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.Gesture))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.Gesture, "Gestures");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.Gesture, "Gestures");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.Landmark))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.Landmark, "Landmarks");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.Landmark, "Landmarks");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.LostAndFound))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.LostAndFound, "Lost And Found");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.LostAndFound, "Lost And Found");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.Notecard))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.Notecard, "Notecards");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.Notecard, "Notecards");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.Object))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.Object, "Objects");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.Object, "Objects");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.Snapshot))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.Snapshot, "Photo Album");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.Snapshot, "Photo Album");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.LSLText))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.LSLText, "Scripts");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.LSLText, "Scripts");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.Sound))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.Sound, "Sounds");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.Sound, "Sounds");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.Texture))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.Texture, "Textures");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.Texture, "Textures");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.Trash))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.Trash, "Trash");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.Trash, "Trash");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.Settings))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.Settings, "Settings");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.Settings, "Settings");
 
-        if (!Array.Exists(sysFolders, f => f.type == (int)FolderType.Material))
-            CreateFolder(principalID, rootFolder.ID, (int)FolderType.Material, "Materials");
+        EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.Material, "Materials");
 
         return result;
+    }
+
+    /// <summary>
+    /// Create the agent's system folder of <paramref name="type"/> under <paramref name="rootID"/>, but only if
+    /// they do not already have one there. Returns the folder it created, or null when one already existed —
+    /// so a caller can tell whether it is responsible for populating it.
+    ///
+    /// <para><paramref name="sysFolders"/> is the snapshot read once at the top of
+    /// <see cref="CreateUserInventory"/>. By the time a later type is reached that snapshot is many database round
+    /// trips old, and this method is entered concurrently for the same principal: Direct Delivery calls
+    /// <c>CreateUserInventory</c> on every delivery, and a region can call it at any time through
+    /// <c>XInventoryInConnector</c>. Two overlapping calls that both read "missing" both create, and there is no
+    /// unique key on <c>(agentID, type)</c> to catch the loser — which is how seven Legion Grid accounts came to
+    /// hold two Current Outfit folders each, one of them never written to (A7,
+    /// Docs/feature/ais-v3/A7-DUPLICATE-COF.md).</para>
+    ///
+    /// <para>Re-reading immediately before the insert narrows that window from the whole method to a single
+    /// query. <b>It does not close it.</b> Nothing here can: only a unique constraint on <c>(agentID, type)</c>
+    /// makes a duplicate impossible, and that is a migration plus a dedupe of the existing rows, in that order —
+    /// ledger A-R8. The extra read costs nothing in the normal case, because it is only reached when the snapshot
+    /// already says the folder is missing.</para>
+    /// </summary>
+    private XInventoryFolder EnsureSystemFolder(UUID principalID, UUID rootID, XInventoryFolder[] sysFolders, FolderType type, string name)
+    {
+        if (Array.Exists(sysFolders, f => f.type == (int)type))
+            return null;
+
+        XInventoryFolder[] fresh = m_Database.GetFolders(
+                [ "agentID", "parentFolderID", "type" ],
+                [ principalID.ToString(), rootID.ToString(), ((int)type).ToString() ]);
+
+        if (fresh.Length > 0)
+        {
+            m_log.LogDebug(
+                "[XINVENTORY]: not creating a second {Type} folder for {Principal}: {Count} appeared since this call started",
+                type, principalID, fresh.Length);
+            return null;
+        }
+
+        return CreateFolder(principalID, rootID, (int)type, name);
     }
 
     protected XInventoryFolder CreateFolder(UUID principalID, UUID parentID, int type, string name)
