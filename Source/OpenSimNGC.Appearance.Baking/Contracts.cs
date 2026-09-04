@@ -87,4 +87,24 @@ public sealed record BakeResult(
     BakeChannel Channel,
     byte[] J2kBytes,
     string InputHash,
-    FidelityReport Fidelity);
+    FidelityReport Fidelity)
+{
+    /// <summary>
+    /// True when **no layer of this channel drew anything** — every colour layer was skipped, so nothing ever
+    /// reached the canvas. Set from the compositor's own per-layer decisions, never by inspecting pixels, and it
+    /// is per channel: an outfit can have one undrawn channel and ten drawn ones.
+    /// <para>
+    /// **Drawn-but-transparent is not undrawn.** A layer that drew a fully transparent texture has drawn: Truly
+    /// Bazar's bald hair draws a 4x4 transparent hair texture, and its all-transparent bake is the correct bake
+    /// and must be stored. So is the case where an alpha wearable hides a whole region (IMG_INVISIBLE). Only the
+    /// "every layer skipped" case sets this.
+    /// </para>
+    /// <para>
+    /// It matters because such a bake is not blank: the layer set's alpha starts opaque
+    /// (LLTexLayerSet::render clears to opaque black) and only a mask layer would have carved it, so an undrawn
+    /// channel encodes as a solid near-black image. A caller that stored it would paint that over the avatar —
+    /// the defect S1d found on an assetless skirt slot. Callers should not store or apply such a bake.
+    /// </para>
+    /// </summary>
+    public bool NothingDrawn { get; init; }
+}

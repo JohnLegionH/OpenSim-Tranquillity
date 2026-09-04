@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+using System.Text.Json;
 using OpenMetaverse;
 using Xunit;
 
@@ -297,5 +299,83 @@ public class BackendTests
         Assert.True(Diff(shortOnly, longOnly) > 4, "the two sleeve lengths must give different masks for this test to mean anything");
         Assert.True(Diff(shortThenLong, longOnly) <= 2, $"two shirts must give the top (last) shirt's mask; differs by {Diff(shortThenLong, longOnly)}");
         Assert.True(Diff(shortThenLong, shortOnly) > 4, "two shirts must not give the first shirt's mask");
+    }
+
+    // ---------------- a channel where nothing was drawn (S1e) ----------------
+
+    private static string TrulyFixtures([CallerFilePath] string here = "")
+        => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(here)!, "Golden", "truly-stock", "fixtures"));
+
+    /// <summary>
+    /// BakeResult.NothingDrawn is set only when every colour layer of the channel was skipped. An assetless
+    /// Skirt slot is exactly that case: skirt_fabric has no texture, skirt_fabric_alpha is a mask layer and
+    /// skirt_tattoo needs a Universal, so nothing reaches the canvas — and because the set's alpha starts
+    /// opaque, what encodes is a solid image, not a blank one. S1d found this painting a dark skirt onto face 19.
+    /// </summary>
+    [Fact]
+    public void a_channel_whose_every_layer_was_skipped_reports_nothing_drawn()
+    {
+        var shape = new WearableInput(UUID.Random(), (int)WearableKind.Shape, WearableText(WearableKind.Shape, "S", new Dictionary<int, float> { [80] = 0f }, new Dictionary<TextureSlot, UUID>()));
+        var skirt = new WearableInput(UUID.Zero, (int)WearableKind.Skirt, "");   // worn, no asset
+        var results = new SkiaBakeBackend().Bake(new BakeRequest(new[] { shape, skirt }, new Dictionary<int, float>(), new Dictionary<UUID, TextureInput>(), 64));
+
+        var s = results.Single(r => r.Channel == BakeChannel.Skirt);
+        Assert.True(s.NothingDrawn, "an all-skipped skirt channel must report NothingDrawn: " + string.Join(" | ", s.Fidelity.Notes));
+        Assert.All(s.Fidelity.Notes, n => Assert.Contains("skipped", n));
+        // it still encodes a full image - that is the hazard: an undrawn channel is not an empty bake, and how
+        // opaque it comes out depends on which mask layers the outfit skipped (on a real outfit S1d measured 96.5%
+        // opaque near-black). The orchestrator must decide on this flag, never on the pixels.
+        Assert.NotEmpty(s.J2kBytes);
+        Assert.Equal(64, J2kCodec.Decode(s.J2kBytes).W);
+        // and it is per channel, not per outfit: the head of the same outfit did draw
+        Assert.False(results.Single(r => r.Channel == BakeChannel.Head).NothingDrawn);
+    }
+
+    /// <summary>
+    /// Drawn-but-transparent is NOT undrawn. Truly Bazar's hair wearable carries a 4x4 fully transparent
+    /// texture: the base layer draws it, the bake is legitimately all-transparent, and it must still be stored.
+    /// Asserted on the real truly-stock fixtures, and on a synthetic equivalent so the rule is covered when the
+    /// fixtures are not fetched.
+    /// </summary>
+    [Fact]
+    public void a_channel_that_drew_a_fully_transparent_texture_is_not_nothing_drawn()
+    {
+        // synthetic: a bald hair — a hair wearable whose texture is entirely transparent
+        var shape = new WearableInput(UUID.Random(), (int)WearableKind.Shape, WearableText(WearableKind.Shape, "S", new Dictionary<int, float> { [80] = 0f }, new Dictionary<TextureSlot, UUID>()));
+        var bald = UUID.Random();
+        var hair = new WearableInput(UUID.Random(), (int)WearableKind.Hair, WearableText(WearableKind.Hair, "bald", new Dictionary<int, float> { [114] = 0.5f }, new Dictionary<TextureSlot, UUID> { [TextureSlot.Hair] = bald }));
+        var textures = new Dictionary<UUID, TextureInput> { [bald] = new TextureInput(bald, J2kCodec.Encode(CompositorTests.Flat(4, 4, 255, 255, 255, 0))) };
+        var synthetic = new SkiaBakeBackend().Bake(new BakeRequest(new[] { shape, hair }, new Dictionary<int, float>(), textures, 64))
+            .Single(r => r.Channel == BakeChannel.Hair);
+        Assert.False(synthetic.NothingDrawn, "a drawn but transparent layer has drawn: " + string.Join(" | ", synthetic.Fidelity.Notes));
+        Assert.Contains(synthetic.Fidelity.Notes, n => n.StartsWith("base drawn"));
+        var img = J2kCodec.Decode(synthetic.J2kBytes);
+        Assert.True(img.A.All(a => a <= 2), "the bald hair bake is legitimately all-transparent and must still be stored");
+
+        // the real thing: Truly Bazar's stock outfit
+        var fx = TrulyFixtures();
+        if (!File.Exists(Path.Combine(fx, "avatar.json"))) { Console.WriteLine("SKIPPED (truly-stock fixtures not fetched): synthetic case asserted above"); return; }
+        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(fx, "avatar.json")));
+        var worn = new List<WearableInput>();
+        foreach (var w in doc.RootElement.GetProperty("wearables").EnumerateArray())
+        {
+            var id = w.GetProperty("assetId").GetString()!;
+            var type = w.GetProperty("type").GetInt32();
+            if (id == "00000000-0000-0000-0000-000000000000") { worn.Add(new WearableInput(UUID.Zero, type, "")); continue; }
+            var f = Directory.GetFiles(fx, id + ".*").First(x => !x.EndsWith(".j2c"));
+            worn.Add(new WearableInput(new UUID(id), type, File.ReadAllText(f)));
+        }
+        var tex = new Dictionary<UUID, TextureInput>();
+        foreach (var w in worn.Where(x => x.RawText.Length > 0))
+            foreach (var (_, id) in WearableParser.Parse(w.RawText).Textures)
+            {
+                var f = Path.Combine(fx, id + ".j2c");
+                if (File.Exists(f) && !tex.ContainsKey(id)) tex[id] = new TextureInput(id, File.ReadAllBytes(f));
+            }
+        var real = new SkiaBakeBackend().Bake(new BakeRequest(worn, new Dictionary<int, float>(), tex, 128));
+        var realHair = real.Single(r => r.Channel == BakeChannel.Hair);
+        Assert.False(realHair.NothingDrawn, "Truly's bald hair drew: " + string.Join(" | ", realHair.Fidelity.Notes));
+        // and no channel of a normal outfit reports nothing drawn
+        Assert.All(real, r => Assert.False(r.NothingDrawn, $"{r.Channel}: " + string.Join(" | ", r.Fidelity.Notes)));
     }
 }

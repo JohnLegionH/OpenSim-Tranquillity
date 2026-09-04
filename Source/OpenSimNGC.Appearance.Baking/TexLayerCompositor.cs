@@ -21,6 +21,14 @@ public sealed class CompositeResult
     public required List<LayerReport> Layers;
     public bool Invisible;
     /// <summary>
+    /// True when no layer of this set drew anything: every colour layer was skipped. It is a fact about the
+    /// layer decisions, never about the pixels — a layer that drew a fully transparent texture (a bald hair) has
+    /// drawn, and so has the <see cref="Invisible"/> case, where an alpha wearable deliberately hides the region.
+    /// Both of those are legitimate bakes; an undrawn channel is not one, because the set's alpha starts opaque
+    /// and nothing carved it, so it encodes as a solid image of whatever the canvas was cleared to.
+    /// </summary>
+    public bool NothingDrawn;
+    /// <summary>
     /// The bake's 5th component: LLTexLayerSet::gatherMorphMaskAlpha — 255 everywhere, multiplied by the alpha
     /// mask of every contributing instance of the set's morph-mask layers (Docs/MORPH-MASK-PASS.md §2).
     /// </summary>
@@ -502,7 +510,11 @@ public sealed class TexLayerCompositor
                 }
             }
         }
-        return new CompositeResult { Image = canvas, Layers = reports, MorphMask = morph };
+        // LLTexLayerSet::render draws each layer or skips it; if every one skipped, nothing reached the canvas.
+        // Deliberate all-transparent output (a drawn but transparent layer, or the IMG_INVISIBLE short-circuit
+        // above) is NOT this: those drew.
+        var nothingDrawn = !reports.Any(l => l.Status == "drawn");
+        return new CompositeResult { Image = canvas, Layers = reports, MorphMask = morph, NothingDrawn = nothingDrawn };
     }
 
     /// <summary>

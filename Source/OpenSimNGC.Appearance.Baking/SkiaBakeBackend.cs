@@ -124,7 +124,7 @@ public sealed class SkiaBakeBackend : IBakeBackend
             var notes = composite.Layers.Select(l => $"{l.Layer} {l.Status}: {l.Detail}").ToList();
             if (composite.Invisible) notes.Insert(0, "invisible: the whole region is hidden by an alpha wearable");
             var fidelity = new FidelityReport(unsupported, missing, notes, refusals);
-            results.Add(new BakeResult(ch, bytes, BakeHash.Compute(ch, r), fidelity));
+            results.Add(new BakeResult(ch, bytes, BakeHash.Compute(ch, r), fidelity) { NothingDrawn = composite.NothingDrawn });
         }
         return results;
     }
