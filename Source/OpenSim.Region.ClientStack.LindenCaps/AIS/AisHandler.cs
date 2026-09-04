@@ -5,6 +5,7 @@ using OpenMetaverse;
 using OpenMetaverse.StructuredData;
 using OpenSim.Framework;
 using OpenSim.Framework.Servers.HttpServer;
+using Microsoft.Extensions.Logging;
 
 namespace OpenSim.Region.ClientStack.LindenCaps.AIS;
 
@@ -39,6 +40,8 @@ public enum AisMode
 /// </summary>
 public sealed class AisHandler : SimpleStreamHandler
 {
+    private static readonly ILogger m_log = LoggerProvider.CreateLogger(typeof(AisHandler));
+
     private readonly UUID m_agentId;
     private readonly IAisInventoryBackend m_backend;
     private readonly string m_capPath;
@@ -71,6 +74,11 @@ public sealed class AisHandler : SimpleStreamHandler
     protected override void ProcessRequest(IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)
     {
         var route = AisRouter.Parse(httpRequest.HttpMethod, httpRequest.RawUrl ?? httpRequest.UriPath, m_capPath);
+        // A6: without this a request that arrives and fails is indistinguishable in the log from one that never
+        // arrived, which is exactly what made the first live run take a code read to diagnose.
+        if (m_log.IsEnabled(LogLevel.Debug))
+            m_log.LogDebug("[AIS]: {Verb} {Url} -> {Operation} (cap {Mode}, agent {Agent})",
+                httpRequest.HttpMethod, httpRequest.RawUrl ?? httpRequest.UriPath, route.Operation, m_mode, m_agentId);
         Dispatch(route, httpRequest, httpResponse);
     }
 

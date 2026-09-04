@@ -31,6 +31,17 @@ public class AISv3Module : ISharedRegionModule
     public const string LibraryCapName = "LibraryAPIv3";
     public const string ConfigSection = "AIS";
 
+    /// <summary>
+    /// AIS caps must be registered as **variable-path** handlers. Every other capability in this tree answers on
+    /// its exact URL; AIS answers on paths below it — <c>&lt;capurl&gt;/item/{id}</c>,
+    /// <c>&lt;capurl&gt;/category/{id}/children</c>, <c>&lt;capurl&gt;/orphans</c>. The listener keeps exact and
+    /// variable-path handlers in different dictionaries and only the latter is matched by prefix
+    /// (<c>BaseHttpServer.TryGetSimpleStreamHandler</c>, <c>AddSimpleStreamHandler</c>), so registering the
+    /// default way makes every AIS request 404 before the handler is entered. That is the A6 live failure;
+    /// see Docs/feature/ais-v3/A6-LIVE-FAILURE.md.
+    /// </summary>
+    public const bool VarPath = true;
+
     /// <summary>The grid-wide default from <c>[AIS] Enabled</c>. A region may override it; see <see cref="ResolveEnabled"/>.</summary>
     public bool Enabled { get; private set; }
 
@@ -120,7 +131,11 @@ public class AISv3Module : ISharedRegionModule
     {
         var inventory = scene.InventoryService;
         var library = scene.LibraryService;
-        caps.RegisterSimpleHandler(CapName, new AisHandler("/" + UUID.Random(), agentID, new InventoryServiceBackend(inventory)));
+
+        var invHandler = new AisHandler("/" + UUID.Random(), agentID, new InventoryServiceBackend(inventory));
+        caps.RegisterSimpleHandler(CapName, invHandler, varPath: VarPath);
+        m_log.LogDebug("[AIS]: registered {Cap} at {Path} for agent {Agent} in {Region}",
+            CapName, invHandler.CapPath, agentID, scene.Name);
 
         if (library is null)
         {
@@ -130,9 +145,11 @@ public class AISv3Module : ISharedRegionModule
         var libraryOwner = LibraryOwnerOf(library);
         // COPY reads from the library and writes into the agent's inventory, so the library handler carries both
         // sides: itself as the source, the agent's inventory as the destination.
-        caps.RegisterSimpleHandler(LibraryCapName,
-            new AisHandler("/" + UUID.Random(), libraryOwner, new LibraryServiceBackend(library), AisMode.Library,
-                new InventoryServiceBackend(inventory), agentID));
+        var libHandler = new AisHandler("/" + UUID.Random(), libraryOwner, new LibraryServiceBackend(library), AisMode.Library,
+            new InventoryServiceBackend(inventory), agentID);
+        caps.RegisterSimpleHandler(LibraryCapName, libHandler, varPath: VarPath);
+        m_log.LogDebug("[AIS]: registered {Cap} at {Path} for agent {Agent} in {Region}",
+            LibraryCapName, libHandler.CapPath, agentID, scene.Name);
     }
 
     /// <summary>
