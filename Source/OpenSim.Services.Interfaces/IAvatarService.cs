@@ -87,6 +87,54 @@ public interface IAvatarService
 /// Each region/client that uses avatars will have a data structure
 /// of this type representing the avatars.
 /// </summary>
+/// <summary>
+/// Names in the avatar service's key/value store that do <b>not</b> belong to the appearance record.
+///
+/// <para>
+/// <see cref="IAvatarService.SetAvatar"/> has to start by deleting every row for the principal, because the
+/// appearance keys it writes are of variable cardinality: <c>Wearable i:j</c> and <c>_ap_&lt;point&gt;</c> exist
+/// only while something occupies that slot or attach point, and
+/// <see cref="AvatarData.ToAvatarAppearance"/> reads them additively
+/// (<c>wearables[index].Add(...)</c>, <c>SetAttachment</c>). Without the delete, taking a shirt off would leave
+/// its <c>Wearable 4:0</c> row behind and the next read would put the shirt back on. The delete is load-bearing
+/// and stays.
+/// </para>
+///
+/// <para>
+/// What must not be caught by it is data some other subsystem keeps in the same table. Server-side baking's
+/// ADR-004 index does exactly that — <c>Bake:&lt;channel&gt;</c>, <c>BakeHash:&lt;channel&gt;</c>,
+/// <c>BakeCOFVersion</c>, <c>BakeSize</c>, <c>BakeUpdated</c> — and before this existed, every appearance save
+/// destroyed it (Ledger Q-14). A name listed here is preserved across <c>SetAvatar</c>; everything else is the
+/// appearance record and is replaced wholesale, exactly as before.
+/// </para>
+///
+/// <para>
+/// No appearance key may start with a preserved prefix. The appearance layer writes <c>Serial</c>,
+/// <c>AvatarHeight</c>, <c>VisualParams</c>, <c>Wearable i:j</c> and <c>_ap_N</c>, plus <c>AvatarType</c> and the
+/// legacy <c>&lt;Type&gt;Item</c>/<c>&lt;Type&gt;Asset</c> pairs; none of them begins with <c>Bake</c>, and a test
+/// pins that.
+/// </para>
+/// </summary>
+public static class AvatarDataKeys
+{
+    /// <summary>Server-side baking's bake index (ADR-004). Covers <c>Bake:</c>, <c>BakeHash:</c>, <c>BakeCOFVersion</c>, <c>BakeSize</c> and <c>BakeUpdated</c> in one prefix.</summary>
+    public const string BakeIndexPrefix = "Bake";
+
+    /// <summary>Every prefix <see cref="IAvatarService.SetAvatar"/> preserves.</summary>
+    public static readonly string[] PreservedPrefixes = { BakeIndexPrefix };
+
+    /// <summary>True when the named row belongs to a module rather than to the appearance record.</summary>
+    public static bool IsPreserved(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return false;
+        foreach (string prefix in PreservedPrefixes)
+            if (name.StartsWith(prefix, StringComparison.Ordinal))
+                return true;
+        return false;
+    }
+}
+
 public class AvatarData
 {
     // This pretty much determines which name/value pairs will be

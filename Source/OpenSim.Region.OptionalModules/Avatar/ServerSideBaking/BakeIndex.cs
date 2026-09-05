@@ -33,25 +33,29 @@ public sealed record StoredBake(UUID AssetId, string Hash);
 /// (<c>OpenSim.Data.MySQL/Resources/Avatar.migrations:7</c>).
 ///
 /// <para>
-/// <b>Hazard this index lives with.</b> <c>AvatarService.SetAvatar</c> starts with
-/// <c>m_Database.Delete("PrincipalID", ...)</c> (AvatarService.cs:93) — it drops *every* row for the agent and
-/// rewrites only the keys <c>AvatarData(AvatarAppearance)</c> derives (IAvatarService.cs:142-189), which are the
-/// wearables, visual params, height, serial and attachments. So any appearance save wipes this index. It cannot
-/// corrupt it — the index is either wholly there or wholly gone — and a missing index means "re-bake", which is
-/// always safe. What it costs is a needless re-bake and an orphaned previous asset that supersede can no longer
-/// find; the bake assets are named <c>bake:&lt;agent&gt;:&lt;channel&gt;</c> precisely so a reaper can still find
-/// those. The bake path itself therefore does not queue an appearance save (see
-/// <see cref="ServerSideBakingModule"/>): a bake changes only the baked faces, which the avatar service does not
-/// persist at all.
+/// <b>Why every key here starts with "Bake".</b> <c>AvatarService.SetAvatar</c> deletes every row for the
+/// principal before rewriting the appearance keys, and it has to: the appearance keys are of variable cardinality
+/// and are read back additively, so a row left behind by a garment that was taken off would put it back on. Until
+/// S3 that delete took this index with it, and every appearance save destroyed it (Ledger Q-14). The service now
+/// preserves the names <see cref="AvatarDataKeys.IsPreserved"/> accepts, and this class derives its two prefixes
+/// from <see cref="AvatarDataKeys.BakeIndexPrefix"/> so the two cannot drift apart.
+/// </para>
+///
+/// <para>
+/// The bake path still does not queue an appearance save (see <see cref="ServerSideBakingModule"/>): a bake
+/// changes only the baked faces, which the avatar service does not persist at all, so the save would be pure
+/// cost. And a missing index remains safe in every case — it means "re-bake", never a wrong bake.
 /// </para>
 /// </summary>
 public sealed class BakeIndex
 {
-    public const string BakeKeyPrefix = "Bake:";
-    public const string HashKeyPrefix = "BakeHash:";
-    public const string CofVersionKey = "BakeCOFVersion";
-    public const string SizeKey = "BakeSize";
-    public const string UpdatedKey = "BakeUpdated";
+    // All five derive from AvatarDataKeys.BakeIndexPrefix, which is what AvatarService.SetAvatar preserves. Adding
+    // a key here that does not start with it would be silently wiped by the next appearance save.
+    public const string BakeKeyPrefix = AvatarDataKeys.BakeIndexPrefix + ":";
+    public const string HashKeyPrefix = AvatarDataKeys.BakeIndexPrefix + "Hash:";
+    public const string CofVersionKey = AvatarDataKeys.BakeIndexPrefix + "COFVersion";
+    public const string SizeKey = AvatarDataKeys.BakeIndexPrefix + "Size";
+    public const string UpdatedKey = AvatarDataKeys.BakeIndexPrefix + "Updated";
 
     /// <summary>An index with nothing in it: every channel re-bakes.</summary>
     public static readonly BakeIndex Empty = new(new Dictionary<BakeChannel, StoredBake>(), 0, 0, default);
