@@ -175,6 +175,33 @@ public class AisMutationHttpTests
         Assert.That(b.Items[Shirt].Flags, Is.EqualTo(4u));
     }
 
+    // ------------------------------------------------------------------ A16: the asset id
+
+    /// <summary>
+    /// The A16 defect, reproduced. A wearable save uploads a new asset and then PATCHes the item; the PATCH
+    /// answered 200 and the item kept its old asset, so the edit survived only in the viewer's cache. Live on
+    /// 2026-09-05: asset 44f77403 uploaded at 16:27:24,899, PATCH of item e2c03d62 answered 200 at :24,958, and
+    /// the row still read 637022fb. The legacy UDP path did persist it, which is what made the bug look
+    /// intermittent.
+    /// </summary>
+    [Test]
+    public void patching_asset_id_persists_it()
+    {
+        var b = Inventory();
+        var uploaded = UUID.Random();
+        var before = b.Items[Shirt].AssetID;
+        var versionBefore = b.Folders[Clothing].Version;
+
+        var (status, body) = Send(b, "PATCH", $"/item/{Shirt}", new OSDMap { ["asset_id"] = uploaded });
+
+        Assert.That(status, Is.EqualTo(200));
+        Assert.That(b.Items[Shirt].AssetID, Is.Not.EqualTo(before), "the item still carries the asset it had before the save");
+        Assert.That(b.Items[Shirt].AssetID, Is.EqualTo(uploaded));
+        Assert.That(body["asset_id"].AsUUID(), Is.EqualTo(uploaded), "and the response says so");
+        Assert.That(Versions(body)[Clothing.ToString()].AsInteger(), Is.EqualTo(versionBefore + 1),
+            "an asset change is a change: the parent's version must move or the viewer never re-reads the item");
+    }
+
     [Test]
     public void patching_an_unknown_item_is_404()
     {
