@@ -23,7 +23,8 @@ timer had already drained the queue at ~17:15:23, fifteen seconds before logout,
 The flush exists for the other case: a logout **inside** the five-second window. That is what happened at
 14:09:40 on the failing run, and that is what lost the dress.
 
-`A5-RUN-2026-09-04.md` is updated: step 10 **pass**, tally **12 pass / 3 not run (7, 14, 15)**.
+`A5-RUN-2026-09-04.md` is updated: step 10 **pass**. *(Tally revised again by A15, once step 7 was found to be
+unreachable through the viewer: **12 pass, 1 not reachable (7), 2 not run (14, 15)**.)*
 
 ## 2. A-Q17 answered — and neither hypothesis was right
 
@@ -92,13 +93,16 @@ conflicts, no file overlap between the branches. Backup at
 
 ## 4. Open items — enough context to pick up cold
 
-**1. The live region runs a commit reachable from only one branch.**
-`bfb50070d8` exists only on `integration/ais-appearance`. Resolve before the next deploy: either merge
-`fix/appearance-save-flush` into `feature/ais-v3` and drop the integration branch, or adopt the integration branch
-as the deploy branch. `D:\tranq-integration` is new worktree state to remove once reconciled.
+~~**1. The live region runs a commit reachable from only one branch.**~~ **DONE 2026-09-04 (A14).**
+`fix/appearance-save-flush` merged into `feature/ais-v3`; the merged tree differs from the deployed
+`bfb50070d8` only in `Docs/`, so the live binaries are reproducible from the branch. `integration/ais-appearance`
+deleted and `D:\tranq-integration` removed. The deployed merge is not an ancestor of the new HEAD, so it is
+tagged `deployed/region-2026-09-04` to keep the binaries' `+bfb50070d8` stamp resolvable.
 
-**2. Robust redeploy, still blocked** on the trusted-HG branch reconciliation. It blocks checklist step 7, A2b's
-`ONLYIFTRASH`, and A7's `EnsureSystemFolder` prevention fix — all three ship only with Robust.
+~~**2. Robust redeploy, still blocked.**~~ **DONE 2026-09-04 (R1).** Merged as `a2c8fb63f3` and deployed;
+Robust runs one commit where it ran four, and restarted cleanly at 19:03:58 with trusted-hypergrid loaded.
+`ONLYIFTRASH` and `EnsureSystemFolder` are live. **Checklist step 7 was never actually blocked by this** — it is
+not reachable through any viewer (A15).
 
 **3. A12's remaining holes.** The viewer skips its removal arm entirely when `isFullyLoaded()` is false
 (`llappearancemgr.cpp:2654`) and **never retries**; and an offline agent has no viewer to reconcile at all, which

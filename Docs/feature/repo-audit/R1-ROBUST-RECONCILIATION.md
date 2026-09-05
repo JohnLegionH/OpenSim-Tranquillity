@@ -134,8 +134,10 @@ Merge `integration/legiongrid-trusted-hg` into `feature/ais-v3`, republish Robus
 
 **Conflict surface: 1 file, mechanical.**
 
-- **Cost:** essentially nothing beyond the merge itself and a Robust deploy. Unblocks step 7, A2b's
-  `ONLYIFTRASH` and A7's prevention fix immediately.
+- **Cost:** essentially nothing beyond the merge itself and a Robust deploy. Ships A2b's `ONLYIFTRASH` and A7's
+  prevention fix, and ends the four-commit split. *(Written before A15: this also said it unblocks step 7. Step 7
+  turned out not to be reachable through any viewer — see `../ais-v3/A5-LIVE-CHECKLIST.md` step 7. The deploy's
+  real value is the single-commit inventory, not that step.)*
 - **Cost deferred:** the gap to upstream keeps growing. Today it is 22 commits; every week of local work makes
   the eventual sync larger, and #198 is exactly the kind of broad mechanical churn that is cheap to take early
   and expensive to take late.
@@ -205,8 +207,10 @@ preserve `config/`, `config-include/`, `TrustedHypergridSecret.ini` and any live
 deployed stamps are a **single** commit, and confirm `TrustedHypergridSecret.ini` survived. **After this deploy
 the live Robust should report one commit, not four.**
 
-**Step 5 — re-run checklist step 7** (delete a folder outside Trash). It is the direct test that `ONLYIFTRASH`
-arrived.
+~~**Step 5 — re-run checklist step 7.**~~ **Superseded by A15.** Step 7 is **not reachable through the viewer**:
+the only folder-removal routes are move-to-Trash, purge a single item, and Empty Trash, and none produces
+`DELETE /category` on a folder outside Trash. `ONLYIFTRASH` is correct and now live, but no in-world gesture
+exercises it. The deploy was verified live instead — see §6.
 
 **Step 6 — upstream sync, as its own change**, on its own day, with `MapImageModule.cs` resolved by whoever owns
 `fix/maptile-legacy-renderer`.
@@ -296,3 +300,29 @@ are region-side directories and were listed for preservation out of caution rath
 
 The upstream v1.0 sync (Road B) was explicitly out of scope. `MapImageModule.cs` remains the one semantic conflict
 awaiting `fix/maptile-legacy-renderer`'s owner.
+
+---
+
+## 6. Live verification (2026-09-04, 19:03:58)
+
+The binaries were verified at deploy time; this is the reconciliation confirmed **running**.
+
+Robust restarted cleanly on **`1.1.208-alpha+a2c8fb63f3`** with **zero load failures**:
+
+| Check | Result |
+|---|---|
+| Version reported at startup | `1.1.208-alpha+a2c8fb63f3` — the merged commit |
+| Trusted-hypergrid grid identity | loaded from `TrustedHypergridSecret.ini`, fingerprint `637ee209…` |
+| External IP resolver | resolved `legiongrid.ddns.net` |
+| Direct Delivery | enabled |
+| Connectors | all loaded |
+| Load failures | **none** |
+
+This is the point the whole exercise was for. The two features that had only ever existed in *separate* builds —
+trusted-hypergrid (previously three hand-copied assemblies) and the AIS-side Robust changes — are now running
+together from one commit, and trusted-hypergrid still finds its secret and still resolves the grid's external
+address. **The reconciliation is confirmed live, not merely in the binaries.**
+
+> **What it did not do:** unblock checklist step 7. That step is not reachable through any viewer (A15), so
+> `ONLYIFTRASH` shipping changed nothing a resident can see. The deploy's value is that Robust now reports one
+> commit instead of four, and that a rollback point exists for the first time.

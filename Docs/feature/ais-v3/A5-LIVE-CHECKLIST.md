@@ -96,17 +96,36 @@ it), or it reverts on relog (we did not write it). The likely cause of the first
 
 **Fails:** it reappears after a moment or after relog.
 
-### 7. Delete a folder **outside** Trash
+### 7. Delete a folder **outside** Trash — NOT REACHABLE THROUGH THE VIEWER
 
-**Do:** create a folder, put nothing in it, delete it from where it sits.
+> **Settled 2026-09-04: this step cannot be performed.** It is not unrun, and it is not blocked — **a resident
+> has no way to ask for it.**
 
-**Works:** it is gone.
+**Do:** nothing. There is no gesture that produces it.
 
-**Fails:** nothing happens at all. **This is the step most likely to fail**, and if it does the cause is almost
-certainly the Robust side: A2b added an `ONLYIFTRASH` field to the inventory wire, and a Robust that predates it
-ignores the field and keeps the old trash-only behaviour. See "The Robust question" below.
+Firestorm and the LL viewer offer exactly three folder-removal routes, and none of them is a delete of a folder
+outside Trash:
 
-**Server side:** `grep "DELETE /category" <log>`. A 500 naming the folder means the service declined the delete.
+| Route | What it actually is |
+|---|---|
+| Delete / right-click → Delete | a **MOVE** to Trash — `PATCH /category` changing `parent_id`, not `DELETE /category` |
+| Purge a single item in Trash | acts on an item, not a folder |
+| Empty Trash | `DELETE /category/{trash}/children` — **step 8**, and it passed |
+
+**There is no shift-delete for folders.** The protected-folder rule reinforces this: the viewer routes folder
+removal through the outfit/inventory machinery rather than raw deletion.
+
+**Verified in-world 2026-09-04.** Two folders were deleted, one nested and one at the inventory root. **Both
+moved to Trash**, and both were still in Trash after a restart. The AIS log for the whole day shows
+`CreateInventory` and `UpdateCategory` — the move — and **no `RemoveCategory` at any point**.
+
+**What this means for A2b.** The `ONLYIFTRASH` work is **still correct and still wanted**: the spec defines
+`DELETE /category/{id}` (`llaisapi.h`), so the route must exist and must behave honestly when something calls it —
+a script, a future viewer, another AIS client, or our own tooling. But **it was never gating a resident-visible
+operation.** The folder removal residents actually perform is Empty Trash, which is step 8, and that has passed
+since before the Robust redeploy.
+
+**Server side:** `grep "DELETE /category" <log>` — expect nothing from ordinary use.
 
 ### 8. Empty Trash
 
@@ -227,7 +246,13 @@ whatever the flag says, so the verification step turns that into a 500.
 
 ---
 
-## The Robust question — step 7 will fail until Robust is redeployed
+## The Robust question — RESOLVED, and it was never about step 7
+
+> **Robust was reconciled and redeployed on 2026-09-04** (`1.1.208-alpha+a2c8fb63f3`), so `ONLYIFTRASH` is live.
+> And step 7 turned out not to be reachable through any viewer, so this was never blocking a resident-visible
+> operation — see step 7 above. The section below is kept because the wire-compatibility reasoning still governs
+> the route.
+
 
 A2b added an optional `ONLYIFTRASH` field to the inventory wire so that AIS could ask for a folder delete that is
 not restricted to Trash. It was made backward-compatible in both directions on purpose: the simulator sends the
@@ -238,15 +263,16 @@ Legion Grid resolves inventory **remotely**: `config-include/Grid.ini:12` sets
 `InventoryServices = "RemoteXInventoryServicesConnector"`, and `GridCommon.ini:39` points it at
 `http://127.0.0.1:8003`. Every folder delete therefore crosses to Robust.
 
-**So until the grid server is redeployed with the A2b change, step 7 (delete a folder outside Trash) will fail.**
-The old Robust ignores the new field, keeps its trash-only behaviour, deletes nothing and still reports success;
-the AIS route catches that by re-reading the folder and answers 500. Nothing is corrupted — the operation simply
-does not happen, and the checklist records it.
+~~So until the grid server is redeployed with the A2b change, step 7 will fail.~~ That was true of the wire, and
+it is now moot twice over: Robust carries the change as of 2026-09-04, and no viewer can request the operation
+anyway.
 
-Emptying Trash (step 8) and deleting a folder **inside** Trash are unaffected: those satisfy the old gate.
+Emptying Trash (step 8) and deleting a folder **inside** Trash were never affected: those satisfy the old gate,
+and step 8 passed before the Robust deploy.
 
-A5 deployed the region side only. Redeploying Robust is a separate decision and a separate outage, and it is
-John's to make.
+**The honest summary:** A2b made the route correct; the Robust deploy made it live; neither changed anything a
+resident can see. The Robust deploy's real value was ending the four-commit split (see
+`../repo-audit/R1-ROBUST-RECONCILIATION.md`), not unblocking step 7.
 
 ## Firestorm is the only client available here
 
