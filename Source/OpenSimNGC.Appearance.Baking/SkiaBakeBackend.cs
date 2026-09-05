@@ -97,8 +97,10 @@ public sealed class SkiaBakeBackend : IBakeBackend
         {
             if (!wanted.Contains(id)) continue;
             ct.ThrowIfCancellationRequested();
+            var t0 = BakeTimings.Now;
             try { decoded[id] = J2kCodec.Decode(tex.J2kBytes); }
             catch (ArgumentException ex) { throw new ArgumentException($"texture {id}: {ex.Message}", ex); }
+            r.Timings?.AddDecode(t0, (long)decoded[id].W * decoded[id].H);
         }
 
         var worn = new List<WornWearable>();
@@ -128,8 +130,12 @@ public sealed class SkiaBakeBackend : IBakeBackend
                     if (slots.Contains(slot) && id != UUID.Zero && id != BakeConstants.DefaultAvatarTexture && !decoded.ContainsKey(id) && !missing.Contains(id))
                         missing.Add(id);
 
+            var tComposite = BakeTimings.Now;
             var composite = _compositor.Bake(ch, worn, r.BakeSize, r.VisualParams);
+            r.Timings?.AddComposite(tComposite);
+            var tEncode = BakeTimings.Now;
             var bytes = J2kCodec.EncodeBake(composite.Image, composite.MorphMask, Quality);
+            r.Timings?.AddEncode(tEncode, bytes.Length);
             var unsupported = composite.Layers
                 .Where(l => l.Status == "skipped" && (l.Detail.Contains("missing", StringComparison.Ordinal) || l.Detail.Contains("unknown", StringComparison.Ordinal)))
                 .Select(l => $"{l.Layer}: {l.Detail}")

@@ -140,9 +140,11 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
             sp.SendAppearanceToAgent(sp);
         }
 
-        // step 8: one INFO line per bake; the fidelity evidence at DEBUG
-        m_log.LogInformation("[SSB]: bake for {Name} ({Agent}) reason={Reason}: {Summary} in {Ms} ms",
-            sp.Name, sp.UUID, reason, Summarise(outcome), outcome.ElapsedMs);
+        // step 8: one INFO line per bake, carrying the phase split (Ledger Q-10); the fidelity evidence at DEBUG
+        var t = outcome.Timings;
+        m_log.LogInformation("[SSB]: bake for {Name} ({Agent}) reason={Reason}: {Summary} in {Ms} ms [{Split}, other={Other} ms]",
+            sp.Name, sp.UUID, reason, Summarise(outcome), outcome.ElapsedMs, t.Summary,
+            Math.Max(0, outcome.ElapsedMs - (long)t.Accounted.TotalMilliseconds));
         if (m_log.IsEnabled(LogLevel.Debug))
             foreach (var c in outcome.Channels)
             {
@@ -207,6 +209,7 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
             }
             var sb = new StringBuilder();
             sb.AppendLine($"Server bake for {sp.Name} in {scene.RegionInfo.RegionName}: {outcome.ElapsedMs} ms, size {BakeSize}");
+            sb.AppendLine($"time split: {outcome.Timings.Summary}, other {Math.Max(0, outcome.ElapsedMs - (long)outcome.Timings.Accounted.TotalMilliseconds)}");
             sb.AppendLine($"{"channel",-8} {"face",4} {"status",-8} {"asset",-36} detail");
             foreach (var c in outcome.Channels)
             {

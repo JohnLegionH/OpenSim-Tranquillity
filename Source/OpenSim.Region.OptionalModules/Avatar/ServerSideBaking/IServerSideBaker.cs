@@ -55,6 +55,9 @@ public sealed record BakeOutcome(UUID AgentId, BakeReason Reason, IReadOnlyList<
 
     /// <summary>Resolver and reuse notes: why a channel was not reused, a wearable worn with no asset, and so on.</summary>
     public IReadOnlyList<string> Notes { get; init; } = Array.Empty<string>();
+
+    /// <summary>Where the time went: asset fetch, J2K decode, composite, J2K encode, asset store (Ledger Q-10).</summary>
+    public BakeTimings Timings { get; init; } = new();
 }
 
 /// <summary>

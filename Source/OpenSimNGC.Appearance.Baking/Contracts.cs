@@ -57,6 +57,13 @@ public sealed record BakeRequest(
     /// </para>
     /// </summary>
     public IReadOnlyCollection<BakeChannel>? Channels { get; init; }
+
+    /// <summary>
+    /// Optional sink for the phase split (Ledger Q-10). Purely an output: nothing in it reaches a pixel, a hash or
+    /// a byte of the bake, and a null one (the default) costs a null check per phase. The library fills in decode,
+    /// composite and encode; the caller fills in the two I/O phases around them.
+    /// </summary>
+    public BakeTimings? Timings { get; init; }
 }
 
 /// <summary>

@@ -65,7 +65,7 @@ public static class BakeOrchestrator
     /// fails the channels its type feeds (the shape feeds them all). Nothing else is refused (ADR-005). No
     /// texture is fetched here.
     /// </summary>
-    public static ResolvedWearables ResolveWearables(AvatarWearable[] wearables, byte[] visualParams, IAssetService assets, TexLayerCompositor compositor)
+    public static ResolvedWearables ResolveWearables(AvatarWearable[] wearables, byte[] visualParams, IAssetService assets, TexLayerCompositor compositor, BakeTimings timings = null)
     {
         ArgumentNullException.ThrowIfNull(assets);
         ArgumentNullException.ThrowIfNull(compositor);
@@ -96,7 +96,9 @@ public static class BakeOrchestrator
                         notes.Add($"wearable type {(WearableKind)type}:{j} is worn with no asset; kept as a worn instance with no textures");
                         continue;
                     }
+                    var t0 = BakeTimings.Now;
                     var asset = assets.Get(assetId.ToString());
+                    timings?.AddAssetFetch(t0, asset?.Data?.Length ?? 0);
                     if (asset?.Data is not { Length: > 0 })
                     {
                         Fail(failures, ChannelsFedBy((WearableKind)type, compositor), $"wearable type {(WearableKind)type} asset {assetId} not found");
@@ -138,7 +140,7 @@ public static class BakeOrchestrator
     /// was not asked for, since such a channel is being reused and its face is not being rewritten.
     /// </summary>
     public static (IReadOnlyDictionary<UUID, TextureInput> Textures, IReadOnlyList<InputFailure> Failures) ResolveTextures(
-        IReadOnlyList<ParsedWearable> parsed, IReadOnlyCollection<BakeChannel> channels, IAssetService assets, TexLayerCompositor compositor)
+        IReadOnlyList<ParsedWearable> parsed, IReadOnlyCollection<BakeChannel> channels, IAssetService assets, TexLayerCompositor compositor, BakeTimings timings = null)
     {
         ArgumentNullException.ThrowIfNull(assets);
         ArgumentNullException.ThrowIfNull(compositor);
@@ -153,7 +155,9 @@ public static class BakeOrchestrator
             {
                 if (!drawn.Contains(texSlot)) continue;
                 if (id.IsZero() || id == BakeConstants.DefaultAvatarTexture || textures.ContainsKey(id)) continue;
+                var t0 = BakeTimings.Now;
                 var asset = assets.Get(id.ToString());
+                timings?.AddAssetFetch(t0, asset?.Data?.Length ?? 0);
                 if (asset?.Data is not { Length: > 0 })
                 {
                     Fail(failures, ChannelsDrawing(texSlot, compositor).Where(channels.Contains), $"texture {id} ({texSlot}) not found");
@@ -294,7 +298,7 @@ public static class BakeOrchestrator
     public static IReadOnlyList<ChannelOutcome> StoreAndApply(IReadOnlyList<BakeResult> results, ResolvedInputs inputs, UUID agentId,
         IAssetService assets, AvatarAppearance appearance,
         IReadOnlyDictionary<BakeChannel, StoredBake> reused = null, IReadOnlyDictionary<BakeChannel, StoredBake> previous = null,
-        List<UUID> superseded = null)
+        List<UUID> superseded = null, BakeTimings timings = null)
     {
         ArgumentNullException.ThrowIfNull(results);
         ArgumentNullException.ThrowIfNull(assets);
@@ -345,7 +349,9 @@ public static class BakeOrchestrator
                 Temporary = false,
                 Local = false,
             };
+            var tStore = BakeTimings.Now;
             var storedId = assets.Store(asset);
+            timings?.AddAssetStore(tStore);
             if (string.IsNullOrEmpty(storedId) || !UUID.TryParse(storedId, out var id) || id.IsZero())
             {
                 // the store failed: the channel's previous bake, if any, is still the one its face points at and
@@ -355,7 +361,7 @@ public static class BakeOrchestrator
             }
             appearance.Texture.CreateFace((uint)FaceOf(ch)).TextureID = id;
             outcomes.Add(new ChannelOutcome(ch, ChannelStatus.Baked, id, result.InputHash, "", result.Fidelity));
-            Supersede(assets, appearance, previous, ch, id, superseded);
+            Supersede(assets, appearance, previous, ch, id, superseded, timings);
         }
         return outcomes;
     }
@@ -366,7 +372,7 @@ public static class BakeOrchestrator
     /// including a face of some other channel that was left alone this run.
     /// </summary>
     private static void Supersede(IAssetService assets, AvatarAppearance appearance, IReadOnlyDictionary<BakeChannel, StoredBake> previous,
-        BakeChannel ch, UUID newId, List<UUID> superseded)
+        BakeChannel ch, UUID newId, List<UUID> superseded, BakeTimings timings = null)
     {
         if (previous is null || !previous.TryGetValue(ch, out var old)) return;
         if (old.AssetId.IsZero() || old.AssetId == newId) return;
@@ -377,7 +383,10 @@ public static class BakeOrchestrator
         }
         try
         {
-            if (assets.Delete(old.AssetId.ToString())) superseded?.Add(old.AssetId);
+            var t0 = BakeTimings.Now;
+            var gone = assets.Delete(old.AssetId.ToString());
+            timings?.AddAssetStore(t0, deleted: true);
+            if (gone) superseded?.Add(old.AssetId);
         }
         catch (Exception) { }
     }
@@ -400,7 +409,8 @@ public static class BakeOrchestrator
         CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
-        var w = ResolveWearables(wearables, visualParams, assets, compositor);
+        var timings = new BakeTimings();
+        var w = ResolveWearables(wearables, visualParams, assets, compositor, timings);
         ct.ThrowIfCancellationRequested();
 
         // the channels this outfit needs at all, and their input hashes — computed from the wearables alone, so
@@ -411,13 +421,13 @@ public static class BakeOrchestrator
         var reuse = DecideReuse(needed, hashRequest, index, assets, compositor, bakeSize);
         ct.ThrowIfCancellationRequested();
 
-        var (textures, texFailures) = ResolveTextures(w.Parsed, reuse.ToBake, assets, compositor);
+        var (textures, texFailures) = ResolveTextures(w.Parsed, reuse.ToBake, assets, compositor, timings);
         var failures = new List<InputFailure>(w.Failures);
         failures.AddRange(texFailures);
         var notes = new List<string>(w.Notes);
         notes.AddRange(reuse.Notes);
         var inputs = new ResolvedInputs(
-            new BakeRequest(w.Wearables, w.VisualParams, textures, bakeSize) { Channels = reuse.ToBake },
+            new BakeRequest(w.Wearables, w.VisualParams, textures, bakeSize) { Channels = reuse.ToBake, Timings = timings },
             failures, notes);
         ct.ThrowIfCancellationRequested();
 
@@ -435,11 +445,11 @@ public static class BakeOrchestrator
             // left exactly as it was.
             var all = AllChannels.Select(ch => new ChannelOutcome(ch, ChannelStatus.Failed, UUID.Zero, "", $"backend refused the inputs: {ex.Message}",
                 new FidelityReport(Array.Empty<string>(), Array.Empty<UUID>(), Array.Empty<string>(), Array.Empty<string>()))).ToList();
-            return new BakeOutcome(agentId, reason, all, sw.ElapsedMilliseconds);
+            return new BakeOutcome(agentId, reason, all, sw.ElapsedMilliseconds) { Timings = timings };
         }
 
         var superseded = new List<UUID>();
-        var outcomes = StoreAndApply(results, inputs, agentId, assets, appearance, reuse.Reused, index.Bakes, superseded);
+        var outcomes = StoreAndApply(results, inputs, agentId, assets, appearance, reuse.Reused, index.Bakes, superseded, timings);
 
         // the index: one row pair per channel that now has a live bake, plus the three scalars
         var live = outcomes
@@ -453,6 +463,7 @@ public static class BakeOrchestrator
             Superseded = superseded,
             IndexWritten = indexWritten,
             Notes = notes,
+            Timings = timings,
         };
     }
 }
