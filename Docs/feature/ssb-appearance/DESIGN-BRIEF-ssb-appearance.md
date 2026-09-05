@@ -91,7 +91,9 @@ Cap response:
 
 **What `success:true` means (revised in S5).** It means *accepted — the bake will follow within the save cycle*. It does **not** mean "baked", which is what S3 shipped and what the first three bullets used to say.
 
-S3 had the cap bake synchronously and answer afterwards. That is bake-on-arrival, which Q-16 rules out: the POST arrives before the region has resolved the new items to asset ids. Q-6 measured it landing 310 ms after `AgentIsNowWearing`, and the appearance save that resolves those ids is a further `DelayBeforeAppearanceSave` (5 s) behind that. A bake at POST time composites wearables still carrying `UUID.Zero` and stores the result as if it were the new look.
+S3 had the cap bake synchronously and answer afterwards. That is bake-on-arrival, which Q-16 rules out: the POST arrives before the region has resolved the new items to asset ids, and the appearance save that resolves them is up to `DelayBeforeAppearanceSave` (5 s) away. A bake at POST time composites wearables still carrying `UUID.Zero` and stores the result as if it were the new look.
+
+**On the ordering of the two signals.** The 5 s save delay is a configured value and is the only interval here that is established. The spread between `AgentIsNowWearing` and the cap POST for one change is **not measured** — an earlier "310 ms" figure was written into these notes without a source and has been withdrawn (Ledger Q-6). It does not affect the design: S5 makes *both* routes queue an appearance save and bake off its completion, so the ordering between them stops mattering. It affects only the debounce, which is sized against the save delay instead.
 
 So the cap now answers the handshake and queues an appearance save. The bake happens when that save completes, off `OnAvatarAppearanceChange` (§4.6). The legacy `AgentIsNowWearing` route already queued a save, so **both signals converge on one trigger with one ordering** — which matters because Q-6 established that both arrive, not one or the other.
 

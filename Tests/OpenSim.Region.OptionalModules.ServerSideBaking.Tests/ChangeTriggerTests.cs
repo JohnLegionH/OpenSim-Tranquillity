@@ -27,7 +27,9 @@ public class ChangeTriggerTests
     public ChangeTriggerTests(ITestOutputHelper output) { _out = output; }
 
     private static readonly UUID Agent = new("a7d2ff2e-dc32-44d8-aa61-3d22070a4964");
-    private static readonly DateTime T0 = new(2026, 9, 5, 12, 16, 0, DateTimeKind.Utc);
+    // An arbitrary fixed instant. Deliberately not a timestamp from any log: the spacings in these tests are
+    // constructed, not observed (Ledger Q-6).
+    private static readonly DateTime T0 = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
     private static ServerSideBakingRegion On(TimeSpan? debounce = null)
         => new(true, new CofHandshake()) { ChangeDebounce = debounce ?? TimeSpan.FromSeconds(2) };
@@ -49,8 +51,10 @@ public class ChangeTriggerTests
     }
 
     /// <summary>
-    /// Q-6 measured the two signals 310 ms apart on Ebony. A slam produces more than two. Everything inside the
-    /// window collapses into the one bake that was already claimed.
+    /// A single outfit change produces more than one signal, and a slam produces several. The exact spread is
+    /// unmeasured (Ledger Q-6), so the window is sized against the 5 s save delay rather than against it;
+    /// everything inside the window collapses into the one bake that was already claimed. The spacings below are
+    /// illustrative, not observations.
     /// </summary>
     [Fact]
     public void ABurstOfSignalsCoalescesToOne()
@@ -58,7 +62,7 @@ public class ChangeTriggerTests
         var region = On(TimeSpan.FromSeconds(2));
         var claims = 0;
 
-        // the measured pair, plus the extra signals a slam adds, all inside one second
+        // a pair close together, plus the extra signals a slam adds, all inside one second
         foreach (var ms in new[] { 0, 310, 420, 655, 980 })
             if (region.TryClaimChangeBake(Agent, T0.AddMilliseconds(ms))) claims++;
 

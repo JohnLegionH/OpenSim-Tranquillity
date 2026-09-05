@@ -328,9 +328,10 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
         }
 
         // Q-16: do NOT bake here. The POST is the viewer telling us its COF moved, and it arrives before the
-        // region has resolved the new items to asset ids — Q-6 measured it 310 ms after AgentIsNowWearing, and
-        // the save that resolves those ids is 5 s behind that. Baking now would composite an outfit whose
-        // wearables still carry UUID.Zero asset ids and store the result as if it were the new look.
+        // region has resolved the new items to asset ids. The POST arrives ahead of the appearance save that
+        // resolves them, and that save is up to DelayBeforeAppearanceSave (5 s) away — the only interval here
+        // that is measured. Baking now would composite an outfit whose wearables still carry UUID.Zero asset ids
+        // and store the result as if it were the new look.
         //
         // Instead the cap joins the same path the legacy route already takes: queue an appearance save, and let
         // the bake happen when that save completes (OnAvatarAppearanceChanged). Both signals therefore converge

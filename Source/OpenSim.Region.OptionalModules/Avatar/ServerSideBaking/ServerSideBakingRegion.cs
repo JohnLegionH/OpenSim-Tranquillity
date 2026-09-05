@@ -61,10 +61,13 @@ public sealed class ServerSideBakingRegion : IServerSideBakingRegion
     /// <para>
     /// The real coalescing is done upstream: every route into a rebake goes through
     /// <c>AvatarFactoryModule.QueueAppearanceSave</c>, whose queue is keyed by agent and drains on a timer
-    /// (<c>DelayBeforeAppearanceSave</c>, default 5 s), so the two signals Q-6 measured 310 ms apart already
-    /// collapse into one save and one event. This window is the second guard, for signals that land either side
-    /// of a drain boundary. It is deliberately longer than that measured 310 ms spread and shorter than the 5 s
-    /// save delay, so it cannot suppress a genuinely distinct change that completed its own save cycle.
+    /// (<c>DelayBeforeAppearanceSave</c>, default 5 s), so signals arriving within one drain already collapse
+    /// into one save and one event. This window is the second guard, for signals that land either side of a drain
+    /// boundary. It is sized against the one interval that is actually measured — the 5 s save delay — and is
+    /// deliberately shorter than it, so it cannot suppress a genuinely distinct change that completed its own
+    /// save cycle. The spread between the two signals of a single change has <b>not</b> been measured (Ledger
+    /// Q-6); 2 s is an estimate comfortably above any plausible value and comfortably below the save delay, and
+    /// the S5 live verify is what will replace the estimate.
     /// </para>
     /// </summary>
     public TimeSpan ChangeDebounce { get; init; } = TimeSpan.FromSeconds(2);
