@@ -105,6 +105,16 @@ accept the loss; 2048 remains available but is not recommended.
 
 ## ADR-009 — Gateway is a consumer on SSB regions
 
-**Status:** Proposed (web-viewer side)
-**Decision (recommended):** On `RegionHandshake` with bit 0 set, the gateway session switches to `server` appearance mode: never bakes, accepts `AppearanceData`-bearing `AvatarAppearance` for self, fetches bakes via the existing asset route. On bit-0-clear regions the S11/S12 path stays. Detected per region, re-evaluated on every teleport.
+**Status:** Accepted, **implemented in S6(b)** (web-viewer `7a31412b54`)
+**Decision:** On `RegionHandshake` with bit 0 set, the gateway session switches to `server` appearance mode: never bakes, accepts `AppearanceData`-bearing `AvatarAppearance` for self, fetches bakes via the existing asset route. On bit-0-clear regions the S11/S12 path stays. Detected per region, re-evaluated on every teleport.
 **Consequences:** Web-viewer G6 ("standalone, no grid reliance") holds — the gateway degrades gracefully to its own baker off-NGC. On Legion Grid the corruption hazard that caused e881646 disappears entirely for SSB regions, because the gateway sends nothing.
+
+**As built (S6(b)).** Five things the implementation settled that the decision above left open:
+
+1. **The mode is a type, not a flag.** `ServerAppearance` implements `IAppearanceMode` but **not** `IBakeSteps`, and `AppearanceBaker.RunAsync` takes an `IBakeSteps`. There is therefore no send step to reach in server mode — the guarantee is the absence of the code, not a branch inside it. The S6(a) refactor that moved the whole S11/S12 pipeline into `ClientBakeAppearance` exists for this reason.
+2. **Detection is `Simulator.Protocols` at every `SimConnected`**, login and teleport landing alike, which is the viewer's own test — `llviewerregion.cpp:3083` computes `mCentralBakeVersion = region_protocols & 1` from the handshake. Every choice is logged with the region name and the protocols word.
+3. **Handover aborts a bake in flight before it can send.** `AppearanceBaker` now gates the send on the cancellation token explicitly, because a CPU-bound step need not observe it. A send already made stands — it is on the wire, and the simulator overwrites it in its own time, which is exactly what the S6 pre-verify observed.
+4. **`AppearanceVersion == 0` is refused in server mode.** LibreMetaverse leaves both versions at 0 when the packet carried no `AppearanceData` block, so 0 means the simulator declared no server bake. The viewer's own resolver is more forgiving (`llvoavatar.cpp:9663-9690` substitutes 1 when neither the field nor the 11000 param is set); the stricter rule is the gateway's, because in server mode it has no bake of its own to fall back on.
+5. **Two routes to a bake, asset first.** The existing asset route is tried first; on an empty answer the gateway retries the grid's appearance service at the URL a viewer would build — `<service>texture/<agent>/<channel>/<uuid>`, the channel as its **name** (`llvoavatar.cpp:5912` from `mDefaultImageName`), the service from the login response's `agent_appearance_service` (`llstartup.cpp:4047-4051`). Which route served is logged.
+
+**Deferred, deliberately:** the gateway does not POST `UpdateAvatarAppearance`. That cap is how a viewer declares a COF change *it made*, and the gateway has no outfit-change UI, so it has nothing to declare. When one is added the POST belongs with it, and §4.3's handshake already answers it.
