@@ -81,11 +81,25 @@ G6. Ordinary OpenSim grid owners can run the web viewer without any of this; SSB
 
 ### 4.3 COF version handshake without AIS
 
-The viewer's `cof_version` is the COF folder's inventory `Version`. The sim reads the same number from the inventory service at bake time and records it. Cap response:
+The viewer's `cof_version` is the COF folder's inventory `Version`. The sim reads the same number from the inventory service and records it. Both are the same field with one writer — the data layer's folder-version bump — which S3 proved rather than assumed (`AisMutation.ReportVersion` and `ServerSideBakingModule.CofVersionOf` read the same `InventoryFolderBase.Version`).
 
-- `cof_version == server's` → bake (or reuse) → `{success:true}` and `AvatarAppearance` follows with `CofVersion = cof_version`.
+Cap response:
+
+- `cof_version == server's` → **accept**: `{success:true}`.
 - `cof_version < server's` → `{success:false, expected:<server>}`; viewer re-requests.
-- `cof_version > server's` → the viewer changed the COF through a path the sim hasn't seen yet; re-read the folder once, then respond as above. Never livelock: after N mismatches within T seconds, bake anyway with the server's version and log it (Ledger R-2).
+- `cof_version > server's` → the viewer changed the COF through a path the sim hasn't seen yet; re-read the folder once, then respond as above. Never livelock: after N mismatches within T seconds, accept anyway at the server's version and log it (Ledger R-2).
+
+**What `success:true` means (revised in S5).** It means *accepted — the bake will follow within the save cycle*. It does **not** mean "baked", which is what S3 shipped and what the first three bullets used to say.
+
+S3 had the cap bake synchronously and answer afterwards. That is bake-on-arrival, which Q-16 rules out: the POST arrives before the region has resolved the new items to asset ids. Q-6 measured it landing 310 ms after `AgentIsNowWearing`, and the appearance save that resolves those ids is a further `DelayBeforeAppearanceSave` (5 s) behind that. A bake at POST time composites wearables still carrying `UUID.Zero` and stores the result as if it were the new look.
+
+So the cap now answers the handshake and queues an appearance save. The bake happens when that save completes, off `OnAvatarAppearanceChange` (§4.6). The legacy `AgentIsNowWearing` route already queued a save, so **both signals converge on one trigger with one ordering** — which matters because Q-6 established that both arrive, not one or the other.
+
+Consequences worth stating:
+
+- `BakeReason.Cap` is **no longer produced**. A cap-driven rebake surfaces as `CofChanged`, because that is what it is. The enum value remains valid.
+- The `AvatarAppearance` the viewer is waiting for arrives after the save cycle rather than in step with the cap response. The viewer waits for it either way and does not re-request, so this is a latency change, not a protocol one.
+- A change whose channels all hash the same still sends the appearance. Nothing is recomputed, but the message must go out: the viewer will not ask again.
 
 Pre-AIS the LL viewer cannot change the COF, so in practice only the login case fires. Firestorm on a bit-0 region *can* change the COF via UDP and will POST; the path above handles it as long as the inventory service bumps `Version` on UDP link changes (S0 verification).
 
