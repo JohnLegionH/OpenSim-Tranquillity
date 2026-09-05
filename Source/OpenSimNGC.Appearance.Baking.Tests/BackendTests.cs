@@ -159,6 +159,36 @@ public class BackendTests
         Assert.Throws<ArgumentException>(() => new SkiaBakeBackend().Bake(corrupt));
     }
 
+    /// <summary>
+    /// <see cref="BakeRequest.Channels"/> narrows what is composited without changing what comes out. It is the
+    /// mechanism behind the ADR-004 skip: the orchestrator leaves out the channels whose inputs are unchanged, so
+    /// no texture of theirs is even decoded. Two properties are asserted — the results are exactly the requested
+    /// channels intersected with what the outfit needs, and each one is byte-for-byte the bake a full run makes.
+    /// </summary>
+    [Fact]
+    public void requesting_a_subset_of_channels_bakes_only_those_and_changes_no_bytes()
+    {
+        var (req, _) = ClassicRequest();
+        var full = new SkiaBakeBackend().Bake(req);
+
+        var subset = new[] { BakeChannel.Upper, BakeChannel.Eyes };
+        var partial = new SkiaBakeBackend().Bake(req with { Channels = subset });
+        Assert.Equal(subset, partial.Select(r => r.Channel).ToArray());
+        foreach (var r in partial)
+        {
+            var same = full.Single(f => f.Channel == r.Channel);
+            Assert.Equal(same.J2kBytes, r.J2kBytes);
+            Assert.Equal(same.InputHash, r.InputHash);
+            Assert.Equal(same.Fidelity.Notes, r.Fidelity.Notes);
+        }
+
+        // naming a channel the outfit does not feed does not conjure it
+        Assert.Empty(new SkiaBakeBackend().Bake(req with { Channels = new[] { BakeChannel.Skirt } }));
+        // an empty set bakes nothing; null (the default) bakes everything
+        Assert.Empty(new SkiaBakeBackend().Bake(req with { Channels = Array.Empty<BakeChannel>() }));
+        Assert.Equal(full.Count, new SkiaBakeBackend().Bake(req with { Channels = null }).Count);
+    }
+
     [Fact]
     public void skirt_and_extra_channels_appear_only_when_worn_or_painted()
     {

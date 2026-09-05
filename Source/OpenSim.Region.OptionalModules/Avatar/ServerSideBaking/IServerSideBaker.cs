@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,7 +22,11 @@ public enum ChannelStatus
 {
     /// <summary>Composited, stored as an asset, written to the TextureEntry face.</summary>
     Baked,
-    /// <summary>Inputs unchanged; the stored bake was reused (S2, not produced in S1).</summary>
+    /// <summary>
+    /// Inputs unchanged and the stored asset still resolves: the bake was not recomputed (ADR-004). The channel's
+    /// face is still written to the stored asset and the appearance is still sent — reuse saves the compute, not
+    /// the delivery.
+    /// </summary>
     Reused,
     /// <summary>The library produced nothing for the channel (nothing worn for it); the face was left as it was.</summary>
     Skipped,
@@ -41,6 +46,15 @@ public sealed record BakeOutcome(UUID AgentId, BakeReason Reason, IReadOnlyList<
         foreach (var c in Channels) if (c.Status == status) n++;
         return n;
     }
+
+    /// <summary>Assets deleted because a new bake for the same channel superseded them (ADR-004).</summary>
+    public IReadOnlyList<UUID> Superseded { get; init; } = Array.Empty<UUID>();
+
+    /// <summary>Whether the ADR-004 bake index was written to the avatar service on this run.</summary>
+    public bool IndexWritten { get; init; }
+
+    /// <summary>Resolver and reuse notes: why a channel was not reused, a wearable worn with no asset, and so on.</summary>
+    public IReadOnlyList<string> Notes { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>

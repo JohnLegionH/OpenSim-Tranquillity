@@ -39,12 +39,25 @@ public sealed record TextureInput(UUID TextureId, byte[] J2kBytes);
 /// is absent from this map is reported in <see cref="FidelityReport.MissingTextures"/>
 /// and its layer is skipped.
 /// </param>
-/// <param name="BakeSize">Output edge size in pixels for every channel (ADR-008: 512 by default).</param>
+/// <param name="BakeSize">Output edge size in pixels for every channel (ADR-008: 1024 by default).</param>
 public sealed record BakeRequest(
     IReadOnlyList<WearableInput> Wearables,
     IReadOnlyDictionary<int, float> VisualParams,
     IReadOnlyDictionary<UUID, TextureInput> Textures,
-    int BakeSize);
+    int BakeSize)
+{
+    /// <summary>
+    /// The channels to composite, or null (the default) for every channel the outfit needs. A caller that has
+    /// recognised a channel's inputs as unchanged and is reusing its stored bake (ADR-004) leaves that channel
+    /// out, and then nothing is decoded or composited for it. Naming a channel the outfit does not need does not
+    /// add it: the set is intersected with what the wearables actually feed.
+    /// <para>
+    /// It is a request-shaping field only. It is deliberately **not** part of <see cref="BakeHash"/>: the bake of
+    /// a channel must not depend on which of its siblings were asked for in the same call.
+    /// </para>
+    /// </summary>
+    public IReadOnlyCollection<BakeChannel>? Channels { get; init; }
+}
 
 /// <summary>
 /// What the compositor could not reproduce faithfully for one output channel

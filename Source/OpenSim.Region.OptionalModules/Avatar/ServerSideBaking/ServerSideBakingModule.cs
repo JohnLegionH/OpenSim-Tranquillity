@@ -17,7 +17,8 @@ namespace OpenSim.Region.OptionalModules.Avatar.ServerSideBaking;
 
 /// <summary>
 /// Server-side baking (Design Brief §4.2 C2, ADR-002/004/005). S1: the orchestrator plus one region console
-/// command; no login/COF/cap trigger, no persistence keys, no wire changes. Config:
+/// command. S2 adds the ADR-004 bake index in the avatar service and the input-hash skip, so a second bake of an
+/// unchanged outfit composites nothing. Still no login/COF/cap trigger and no wire changes. Config:
 /// <code>
 /// [Appearance]
 ///     ServerSideBaking = false   ; the wire flag (RegionProtocols bit 0, AppearanceData) — parsed and logged, not acted on in S1
@@ -117,16 +118,26 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
         var scene = sp.Scene;
         var backend = Backend;
 
-        // steps 2, 4-6, scene-free
-        var outcome = await Task.Run(() => BakeOrchestrator.Run(sp.UUID, reason, sp.Appearance.Wearables, sp.Appearance.VisualParams, sp.Appearance,
-            scene.AssetService, backend, m_compositor, BakeSize, ct), ct).ConfigureAwait(false);
+        var cofVersion = CofVersionOf(scene, sp.UUID);
 
-        // step 7: send to everyone in view and to self, then persist the new TE the way every appearance change does
-        if (outcome.Count(ChannelStatus.Baked) > 0)
+        // steps 2, 4-6, scene-free; the ADR-004 index in the avatar service is read for the reuse decision and
+        // written back at the end of the run
+        var outcome = await Task.Run(() => BakeOrchestrator.Run(sp.UUID, reason, sp.Appearance.Wearables, sp.Appearance.VisualParams, sp.Appearance,
+            scene.AssetService, scene.AvatarService, backend, m_compositor, BakeSize, cofVersion, ct), ct).ConfigureAwait(false);
+
+        // step 7: send to everyone in view and to self. A reused channel is sent exactly like a fresh one — the
+        // reason for the bake may be that nobody has seen it yet.
+        //
+        // No QueueAppearanceSave here, deliberately. A bake changes only the baked faces of the TextureEntry, and
+        // the avatar service does not persist those at all: AvatarData(AvatarAppearance) carries the serial,
+        // height, wearables, visual params and attachments and nothing else (IAvatarService.cs:142-189). What a
+        // save would do is destroy this bake's index, because AvatarService.SetAvatar deletes every row for the
+        // agent before rewriting those keys (AvatarService.cs:93). The bake index written above IS the
+        // persistence of the baked faces.
+        if (outcome.Count(ChannelStatus.Baked) + outcome.Count(ChannelStatus.Reused) > 0)
         {
             sp.SendAppearanceToAllOtherAgents();
             sp.SendAppearanceToAgent(sp);
-            scene.AvatarFactory?.QueueAppearanceSave(sp.UUID);
         }
 
         // step 8: one INFO line per bake; the fidelity evidence at DEBUG
@@ -145,7 +156,28 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
 
     private static string Summarise(BakeOutcome o)
         => string.Join(", ", o.Channels.Where(c => c.Status != ChannelStatus.Skipped).Select(c => $"{c.Channel}={c.Status}{(c.Status == ChannelStatus.Failed ? $"({c.Reason})" : "")}"))
-           + $" [{o.Count(ChannelStatus.Skipped)} skipped]";
+           + $" [{o.Count(ChannelStatus.Skipped)} skipped]"
+           + $" reused {o.Count(ChannelStatus.Reused)}/{o.Count(ChannelStatus.Baked) + o.Count(ChannelStatus.Reused)}"
+           + (o.Superseded.Count > 0 ? $", superseded {o.Superseded.Count}" : "")
+           + (o.IndexWritten ? "" : ", index NOT written");
+
+    /// <summary>
+    /// The Current Outfit folder's version, stored with the bake as <c>BakeCOFVersion</c> (ADR-006: the sim reads
+    /// the COF folder's own <c>Version</c> and needs no AIS). Zero when there is no inventory service or no COF.
+    /// </summary>
+    private static int CofVersionOf(Scene scene, UUID agentId)
+    {
+        try
+        {
+            var cof = scene.InventoryService?.GetFolderForType(agentId, FolderType.CurrentOutfit);
+            return cof?.Version ?? 0;
+        }
+        catch (Exception ex)
+        {
+            m_log.LogDebug(ex, "[SSB]: could not read the COF version for {Agent}", agentId);
+            return 0;
+        }
+    }
 
     // ------------------------------------------------------------------ console
 
@@ -180,6 +212,7 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
             {
                 var detail = c.Status switch
                 {
+                    ChannelStatus.Reused => $"hash {c.InputHash[..Math.Min(12, c.InputHash.Length)]}; inputs unchanged, not recomputed",
                     ChannelStatus.Baked => $"hash {c.InputHash[..Math.Min(12, c.InputHash.Length)]}"
                         + (c.Fidelity.MissingTextures.Count > 0 ? $"; missing textures {c.Fidelity.MissingTextures.Count}" : "")
                         + (c.Fidelity.UnsupportedLayers.Count > 0 ? $"; unsupported layers {c.Fidelity.UnsupportedLayers.Count}" : ""),
@@ -187,6 +220,9 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
                 };
                 sb.AppendLine($"{c.Channel,-8} {BakeOrchestrator.FaceOf(c.Channel),4} {c.Status,-8} {(c.AssetId.IsZero() ? "-" : c.AssetId.ToString()),-36} {detail}");
             }
+            sb.AppendLine($"reused {outcome.Count(ChannelStatus.Reused)} of {outcome.Count(ChannelStatus.Baked) + outcome.Count(ChannelStatus.Reused)} live channels; "
+                + $"superseded {outcome.Superseded.Count} old asset(s); index {(outcome.IndexWritten ? "written" : "NOT written")}, COF version {CofVersionOf(scene, sp.UUID)}");
+            foreach (var note in outcome.Notes) sb.AppendLine($"  note: {note}");
             MainConsole.Instance.Output(sb.ToString().TrimEnd());
         }
         if (!found) MainConsole.Instance.Output("No root agent named {0} {1} in any region here", firstname, lastname);

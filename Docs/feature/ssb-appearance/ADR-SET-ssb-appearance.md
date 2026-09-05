@@ -34,10 +34,21 @@ Status legend: **Proposed** = needs John's ruling · **Accepted** = ruled · **C
 
 ## ADR-004 — Bake persistence: assets with a bake marker, index in the avatar service, supersede-immediately + TTL reaper
 
-**Status:** Carried in part (D-6 "expire bakes"), marker mechanism Proposed
+**Status:** Accepted; index, hash skip and supersede **implemented in S2** (the TTL reaper is still Proposed)
 **Decision:** Bakes are stored through `IAssetService` as texture assets. Marker (recommended): `AssetBase.Flags |= AssetFlags.Collectable` is *not* used (it means "temp" in stock code paths and gets purged wrongly); instead the asset **name** is `bake:<agent>:<channel>` and `Description` carries the input hash, and the authoritative index is the avatar-service key set (`Bake:<channel>`, `BakeHash:<channel>`, `BakeCOFVersion`, `BakeSize`, `BakeUpdated`). Supersede = delete the previous asset for that channel synchronously after the new one is confirmed stored. TTL reaper walks avatar-service records whose `BakeUpdated` is older than `BakeTTLDays` and whose presence record shows no login since, deletes assets, clears keys.
 **Alternatives rejected:** (a) New `bakes` table — schema change in three DB backends for something the key/value Avatars table already expresses. (b) Never expire — violates D-6. (c) `AssetFlags` marker — see above; also not indexed.
 **Consequences:** No migration. Grid owners on plain OpenSim never see any of this. A grid with the reaper off (default standalone) grows only until supersede, i.e. ≤11 bakes per avatar.
+
+**As built (S2).** The index is read and written through the three calls `IAvatarService` already has — `GetAvatar`
+(every key), `SetItems` (one batched write per bake) and `RemoveItems` — which exist on both the local service and the
+Robust connector, so no service change and no schema change were needed; the longest key, `BakeHash:LeftArm`, is 16
+characters against the table's `Name varchar(32)`. The skip is per channel and runs *before* any texture is fetched: the
+hash is computed from the wearables alone, so a reused channel costs no asset fetch, no J2K decode, no composite, no
+encode and no store. A channel is reused only when the stored hash matches **and** the stored asset still resolves — a
+hash whose asset has vanished is never trusted. `BakeSize` is compared as well as being folded into the hash. Supersede
+deletes the previous asset only after the new one is confirmed stored and the face has moved to it, and never an asset
+any baked face still points at. One thing the design did not anticipate: any appearance save wipes the whole index,
+because `AvatarService.SetAvatar` deletes every row for the principal first — Ledger Q-14.
 
 ---
 

@@ -79,10 +79,23 @@ public sealed class SkiaBakeBackend : IBakeBackend
         var wearables = parsed.Select(p => p.Wearable).ToList();
         var channels = ChannelsFor(wearables);
 
-        // 2. textures (undecodable bytes are a refusal; absent ones are reported per channel)
+        // 1b. the channels actually asked for. The fidelity gate below still sees the full set, so a partial bake
+        // reports the same refusals as a full one; only the compositing loop and the decode are narrowed.
+        var requested = r.Channels is null ? channels : channels.Where(r.Channels.Contains).ToList();
+
+        // 2. textures (undecodable bytes are a refusal; absent ones are reported per channel). Only the textures
+        // the requested channels can draw are decoded: a texture reaches the canvas through a slot, so one no
+        // requested channel's layer set names cannot affect any bake this call produces. On a full bake that is
+        // every texture in the request, exactly as before.
+        var drawnSlots = requested.SelectMany(_compositor.SlotsOf).ToHashSet();
+        var wanted = new HashSet<UUID>();
+        foreach (var pw in wearables)
+            foreach (var (slot, id) in pw.Textures)
+                if (drawnSlots.Contains(slot)) wanted.Add(id);
         var decoded = new Dictionary<UUID, RgbaPlanes>();
         foreach (var (id, tex) in r.Textures)
         {
+            if (!wanted.Contains(id)) continue;
             ct.ThrowIfCancellationRequested();
             try { decoded[id] = J2kCodec.Decode(tex.J2kBytes); }
             catch (ArgumentException ex) { throw new ArgumentException($"texture {id}: {ex.Message}", ex); }
@@ -103,9 +116,9 @@ public sealed class SkiaBakeBackend : IBakeBackend
         // 3. the fidelity gate's evidence, once for the outfit; the caller decides what to do with it
         var refusals = FidelityCheck.Check(summaries, _compositor, channels);
 
-        // 4. each channel
-        var results = new List<BakeResult>(channels.Count);
-        foreach (var ch in channels)
+        // 4. each requested channel
+        var results = new List<BakeResult>(requested.Count);
+        foreach (var ch in requested)
         {
             ct.ThrowIfCancellationRequested();
             var slots = _compositor.SlotsOf(ch).ToHashSet();
