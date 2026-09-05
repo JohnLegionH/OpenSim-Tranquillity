@@ -244,6 +244,29 @@ whatever the flag says, so the verification step turns that into a 500.
 **Expected:** the operation appears to succeed and the setting does not persist across a relog. This tree's
 `InventoryFolderBase` has no column for either, so both are accepted and dropped.
 
+## Phase 6 — saving an asset (step 16)
+
+Added in A18. **The checklist had no step that saved an asset**, which is why steps 1-15 all passed while
+`PATCH /item` was silently discarding every asset id a wearable save sent. Renaming an item exercises the same
+route and does persist, so nothing here caught it; the defect surfaced during Q-11 preparation instead. Any
+future route that stores something needs a step that reads it back **after the viewer has been made to forget**,
+not just after the operation.
+
+### 16. Edit a wearable, change a colour, save — the colour persists
+
+**Do:** Appearance → Edit an item you can modify (a skirt, a shirt). Change its colour. **Save**. Close the
+Appearance floater, then re-open it and look at the item again.
+
+**Expected:** the colour you saved. Re-opening is the point: it makes the viewer re-read the item rather than
+draw from its own cache, which is where the change lives until the server has actually stored it.
+
+**Also check, if you have the log and the database:**
+
+- the region log shows `ASSET XFER ... uploaded <asset>` and then a `PATCH .../item/<item>` answering 200;
+- the item's `assetID` column equals **that** uploaded asset, not the one it had before;
+- the `_updated_category_versions` in the PATCH response is **higher** than the folder's previous version. If the
+  same version comes back twice for two different saves, nothing was written — that is the A18 signature.
+
 ---
 
 ## The Robust question — RESOLVED, and it was never about step 7

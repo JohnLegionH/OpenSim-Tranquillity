@@ -33,7 +33,7 @@ read as LLSD XML whatever it is labelled. (The file is at `indra/llmessage/`, no
 | 5 | `CopyLibraryCategory(sourceId, destId, copySubfolders)` | COPY | `{lib}/category/{sourceId}` | `tid={uuid}` and, when `!copySubfolders`, the literal suffix `,depth=0` **appended to the tid value with a comma** (`url += ",depth=0"`, `:278`), i.e. `?tid=<uuid>,depth=0` | none | destination = `destId.asString()` (`:282`) passed as the `copyAndSuspend` destination argument (`:294`), which appends it as the HTTP **`Destination`** header: `headers->append(HTTP_OUT_HEADER_DESTINATION, dest)` (`llcorehttputil.cpp:1135`) — A-Q2, resolved A1 | `:255-301`, url `:275` |
 | 6 | `PurgeDescendents(categoryId)` | DELETE | `{inv}/category/{categoryId}/children` | — | none | none | `:303-339`, url `:318` |
 | 7 | `UpdateCategory(categoryId, updates)` | PATCH | `{inv}/category/{categoryId}` | — | `updates` map of category fields (callers at `llviewerinventory.cpp:663,881,1455`, outside the permitted functions: field set **UNVERIFIED**) | none | `:341-374`, url `:355` |
-| 8 | `UpdateItem(itemId, updates)` | PATCH | `{inv}/item/{itemId}` | — | `updates` map of item fields (callers `:454,1422,1434`, **UNVERIFIED** field set) | none | `:376-409`, url `:391` |
+| 8 | `UpdateItem(itemId, updates)` | PATCH | `{inv}/item/{itemId}` | — | the item's full `asLLSD()` with `asset_id`/`shadow_id` replaced by `hash_id` (callers `:454,1422,1434`; field set **verified**, see §1d-ter) | none | `:376-409`, url `:391` |
 | 9 | `FetchItem(itemId, type)` | GET | `{inv|lib}/item/{itemId}` (`lib` when `type == LIBRARY`) | — | none | none | `:412-445`, url `:426` |
 | 10 | `FetchCategoryChildren(catId, type, recursive, depth)` | GET | `{inv|lib}/category/{catId}/children` | `depth=N` where N = 50 if `recursive`, else `min(depth, 50)` (`:463-474`) | none (the viewer keeps `{"depth": N}` locally as `request_body` for error handling, `:490`) | none | `:447-498` |
 | 11 | `FetchCategoryChildren(identifier, recursive, depth)` | GET | `{inv}/category/{identifier}/children` — `identifier` is any string, e.g. an alias | `depth=N` as above (`:527`) | none | none | `:500-549`, url `:514` |
@@ -303,6 +303,30 @@ so those two are the only fields a protected system folder will ever be asked to
 
 `CreateInventory`'s `items` / `links` arrays remain **UNVERIFIED** — their callers are outside the permitted
 functions — and are A4's problem, not A2's.
+
+### 1d-ter. `UpdateItem`'s field set, and what the server does with each (A18)
+
+`LLInventoryItem::asLLSD` (`llinventory.cpp:936-981`) is the whole body, minus the erase in `updateServer`. The
+server's rule for each key, with the reason:
+
+| Key | Source | Server |
+|---|---|---|
+| `asset_id` | `:952-955` (unrestricted perms, or a null asset) | **applied** |
+| `shadow_id` | `:956-963` (restricted perms; the asset XORed with `MAGIC_ID`) | **never arrives** — both update-body builders erase it (`llviewerinventory.cpp:445-452`, `:1414-1421`) |
+| `hash_id` | not from `asLLSD`; put in place of the two above when the transaction id is set | **applied**, by handing the transaction to the region's asset-transaction module — only it knows which asset the xfer produced (`Scene.Inventory.cs:579-582`) |
+| `permissions` | `:939` `ll_fill_sd_from_permissions` (`llpermissions.cpp:1082-1094`) | `next_owner_mask`, `everyone_mask`, `group_mask` **applied**, each masked by the item's own base; `base_mask` / `owner_mask` and the id fields ignored (`Scene.Inventory.cs:497-548`) |
+| `name`, `desc` | `:979-980` | **applied** |
+| `flags` | `:976` | **applied** |
+| `sale_info` | `:977` (`llsaleinfo.cpp:97-107`: `sale_type`, `sale_price`) | **applied** |
+| `parent_id` | `:938` | **ignored** — a move changes two folders' versions and is not this route's job |
+| `type`, `inv_type` | `:966-975` | **ignored** — invariants; `XInventoryService.UpdateItem` refuses to change them anyway (`:558-585`) |
+| `created_at` | `:981` | **ignored** — not mutable through this route |
+| `item_id` | `:937` | **ignored** — it is the URL |
+| `thumbnail`, `favorite` | `:942-951` | **ignored** — no column in this tree |
+
+**Why it matters that anything is applied at all.** The data layer bumps the parent folder's version on every
+item store (`MySQLXInventoryData.cs:238-246`). A PATCH that changes nothing writes nothing, so no version moves,
+so the viewer never re-reads the item — which is exactly how A18's asset loss stayed invisible until a relog.
 
 ## 1e-bis. GET /orphans scope (A1, recorded A2)
 
