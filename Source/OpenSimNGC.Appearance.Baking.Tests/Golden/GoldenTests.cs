@@ -19,7 +19,8 @@ namespace OpenSimNGC.Appearance.Baking.Tests.Golden;
 /// Fixtures are fetched per set by <c>fetch-fixtures.sh &lt;set&gt;</c> into <c>&lt;set&gt;/fixtures/</c> (gitignored);
 /// when they are absent the test reports that and returns without asserting anything.
 ///
-/// <para><see cref="reference_set_versus_library_bakes"/> bakes at the manifest's size and asserts, per channel:
+/// <para><see cref="reference_set_versus_library_bakes"/> bakes at the manifest's <c>bakeSize</c> — which is the
+/// shipped <c>[Appearance] BakeSize</c> (ADR-008: 1024), not the reference's own size — and asserts, per channel:
 /// RGB (mean |d| &lt;= 4, at most 5% of pixels with |d| &gt; 8 — both skipped when the reference alpha is entirely
 /// zero, as for a bald hair), alpha (mean |d| &lt;= 2) and the 5th component, the morph mask (mean |d| &lt;= 4 and,
 /// unless the reference's mask is uniform, at most 5% of pixels with |d| &gt; 8). It writes the table and the full
