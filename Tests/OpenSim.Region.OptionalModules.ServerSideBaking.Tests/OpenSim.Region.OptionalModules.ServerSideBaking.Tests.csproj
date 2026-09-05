@@ -28,6 +28,8 @@
     <!-- S3 Part 0: the Q-14 tests exercise the real AvatarService over an in-memory row table. -->
     <ProjectReference Include="..\..\Source\OpenSim.Services.AvatarService\OpenSim.Services.AvatarService.csproj" />
     <ProjectReference Include="..\..\Source\OpenSim.Data\OpenSim.Data.csproj" />
+    <!-- S3 Part 1: the cof_version identity proof compares the number AIS reports with the number the bake reads. -->
+    <ProjectReference Include="..\..\Source\OpenSim.Region.ClientStack.LindenCaps\OpenSim.Region.ClientStack.LindenCaps.csproj" />
     <ProjectReference Include="..\..\Source\OpenSim.Region.OptionalModules\OpenSim.Region.OptionalModules.csproj" />
     <ProjectReference Include="..\..\Source\OpenSimNGC.Appearance.Baking\OpenSimNGC.Appearance.Baking.csproj" />
   </ItemGroup>

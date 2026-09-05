@@ -4346,7 +4346,11 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
 
     public void SendAppearanceToAgentNF(ScenePresence avatar)
     {
-        avatar.ControllingClient.SendAppearance(UUID, Appearance.VisualParams, Appearance.Texture.GetBakesBytes(), Appearance.AvatarPreferencesHoverZ);
+        // -1 unless this simulator baked this avatar in this region, in which case the appearance carries the
+        // AppearanceData block the LL viewer needs to accept its own appearance (V4/V5). On a region with no
+        // baking module, or with the flag off, this is -1 for everyone and the packet is unchanged.
+        int cofVersion = m_scene.RequestModuleInterface<IServerSideBakingRegion>()?.BakedCofVersion(UUID) ?? -1;
+        avatar.ControllingClient.SendAppearance(UUID, Appearance.VisualParams, Appearance.Texture.GetBakesBytes(), Appearance.AvatarPreferencesHoverZ, cofVersion);
     }
 
     public void SendAnimPackToAgent(ScenePresence p)

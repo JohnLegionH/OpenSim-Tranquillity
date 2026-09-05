@@ -4,11 +4,16 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Net;
 using Nini.Config;
+using OpenMetaverse.StructuredData;
+using Caps = OpenSim.Framework.Capabilities.Caps;
+using OpenSim.Framework.Servers.HttpServer;
 using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Framework.Console;
 using OpenSim.Region.Framework.Interfaces;
+using OpenSim.Services.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 using OpenSimNGC.Appearance.Baking;
 using Microsoft.Extensions.Logging;
@@ -16,16 +21,26 @@ using Microsoft.Extensions.Logging;
 namespace OpenSim.Region.OptionalModules.Avatar.ServerSideBaking;
 
 /// <summary>
-/// Server-side baking (Design Brief §4.2 C2, ADR-002/004/005). S1: the orchestrator plus one region console
-/// command. S2 adds the ADR-004 bake index in the avatar service and the input-hash skip, so a second bake of an
-/// unchanged outfit composites nothing. Still no login/COF/cap trigger and no wire changes. Config:
+/// Server-side baking (Design Brief §4.2 C2, ADR-001/002/004/005). S1 was the orchestrator plus a console
+/// command; S2 added the ADR-004 index and the input-hash skip; S3 is the wire — <c>RegionProtocols</c> bit 0,
+/// the <c>AppearanceData</c> block, the <c>UpdateAvatarAppearance</c> cap with the §4.3 handshake, and a
+/// login-time bake. Config:
 /// <code>
 /// [Appearance]
-///     ServerSideBaking = false   ; the wire flag (RegionProtocols bit 0, AppearanceData) — parsed and logged, not acted on in S1
+///     ServerSideBaking = false   ; simulator-wide default for the wire flag
 ///     BakeSize = 1024            ; 512, 1024 or 2048
 ///     BakeQuality = 0.85
+///
+/// [&lt;Region Name&gt;]
+///     ServerSideBaking = true    ; per-region override, same idiom as [AIS] AIS_Enabled
 /// </code>
-/// The module always loads so that <c>appearance serverbake &lt;first&gt; &lt;last&gt;</c> exists on every region console.
+///
+/// <para>
+/// Everything the flag gates is add-only (ADR-001). On a region where it is off, the handshake carries the value
+/// it always carried, no cap is advertised, no login bake runs, and <c>SendAppearance</c> emits the count-0
+/// <c>AppearanceData</c> form — Firestorm keeps client-baking there exactly as before. The module still always
+/// loads, so <c>appearance serverbake &lt;first&gt; &lt;last&gt;</c> exists on every region console.
+/// </para>
 /// </summary>
 public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
 {
@@ -34,10 +49,14 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
     public const string ConfigSection = "Appearance";
 
     private readonly List<Scene> m_scenes = new();
+    private readonly Dictionary<Scene, ServerSideBakingRegion> m_regions = new();
     private IBakeBackend m_backend;
     private TexLayerCompositor m_compositor;
 
-    /// <summary>The wire flag as configured. Not read by anything in S1; S3 gates RegionHandshake/AppearanceData on it.</summary>
+    /// <summary>The cap the LL viewer POSTs to after every COF change (viewer contract V3).</summary>
+    public const string CapName = "UpdateAvatarAppearance";
+
+    /// <summary>The simulator-wide default for the wire flag; a <c>[&lt;Region Name&gt;]</c> section overrides it.</summary>
     public bool ServerSideBakingEnabled { get; private set; }
     public int BakeSize { get; private set; } = 1024;
     public double BakeQuality { get; private set; } = 0.85;
@@ -75,12 +94,53 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
     public void RemoveRegion(Scene scene)
     {
         scene.UnregisterModuleInterface<IServerSideBaker>(this);
-        lock (m_scenes) m_scenes.Remove(scene);
+        ServerSideBakingRegion region;
+        lock (m_scenes)
+        {
+            m_scenes.Remove(scene);
+            m_regions.Remove(scene, out region);
+        }
+        if (region is null) return;
+        scene.UnregisterModuleInterface<IServerSideBakingRegion>(region);
+        scene.EventManager.OnMakeRootAgent -= OnMakeRootAgent;
+        scene.EventManager.OnRemovePresence -= region.Forget;
+    }
+
+    /// <summary>This region's state, or null on a region the module has not finished loading.</summary>
+    public ServerSideBakingRegion RegionOf(Scene scene)
+    {
+        lock (m_scenes) return m_regions.TryGetValue(scene, out var r) ? r : null;
     }
 
     public void RegionLoaded(Scene scene)
     {
-        lock (m_scenes) m_scenes.Add(scene);
+        // The per-region flag is resolved once, here, and everything wire-facing reads it off this object.
+        var enabled = ServerSideBakingRegion.ResolveEnabled(ServerSideBakingEnabled, scene.Config, scene.RegionInfo?.RegionName);
+        var region = new ServerSideBakingRegion(enabled, new CofHandshake());
+        lock (m_scenes)
+        {
+            m_scenes.Add(scene);
+            m_regions[scene] = region;
+        }
+        scene.RegisterModuleInterface<IServerSideBakingRegion>(region);
+
+        if (enabled)
+        {
+            // V3: the viewer POSTs here after every COF change. V1: bit 0 of RegionProtocols is what makes it do
+            // so, and LLClientView reads that off the same object.
+            scene.EventManager.OnRegisterCaps += (agentID, caps) => RegisterCaps(scene, agentID, caps);
+            scene.EventManager.OnMakeRootAgent += OnMakeRootAgent;
+            scene.EventManager.OnRemovePresence += region.Forget;
+            m_log.LogInformation(
+                "[SSB]: region {Region} has server-side baking ON: RegionProtocols bit 0 set, {Cap} advertised, "
+                + "login bake armed, appearances carry AppearanceData. Firestorm there will stop client-baking.",
+                scene.Name, CapName);
+        }
+        else
+        {
+            m_log.LogInformation("[SSB]: region {Region} has server-side baking off; the wire is unchanged there", scene.Name);
+        }
+
         scene.AddCommand(
             "Users", this, "appearance serverbake",
             "appearance serverbake <first-name> <last-name>",
@@ -125,6 +185,12 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
         var outcome = await Task.Run(() => BakeOrchestrator.Run(sp.UUID, reason, sp.Appearance.Wearables, sp.Appearance.VisualParams, sp.Appearance,
             scene.AssetService, scene.AvatarService, backend, m_compositor, BakeSize, cofVersion, ct), ct).ConfigureAwait(false);
 
+        // Record the bake before sending: SendAppearanceToAgentNF asks IServerSideBakingRegion for the version,
+        // and an appearance sent before the record would go out without its AppearanceData block. RecordBake
+        // ignores the call on a flag-off region, which is what keeps a console bake there off the wire.
+        if (outcome.Count(ChannelStatus.Baked) + outcome.Count(ChannelStatus.Reused) > 0)
+            RegionOf(scene)?.RecordBake(sp.UUID, cofVersion);
+
         // step 7: send to everyone in view and to self. A reused channel is sent exactly like a fresh one — the
         // reason for the bake may be that nobody has seen it yet.
         //
@@ -167,11 +233,20 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
     /// The Current Outfit folder's version, stored with the bake as <c>BakeCOFVersion</c> (ADR-006: the sim reads
     /// the COF folder's own <c>Version</c> and needs no AIS). Zero when there is no inventory service or no COF.
     /// </summary>
-    private static int CofVersionOf(Scene scene, UUID agentId)
+    private static int CofVersionOf(Scene scene, UUID agentId) => CofVersionOf(scene?.InventoryService, agentId);
+
+    /// <summary>
+    /// The same read, over the service alone, so the identity with AIS's number is testable. AIS reports the COF
+    /// version from the very same field — <c>AisMutation.ReportVersion</c> writes <c>(int)folder.Version</c> of
+    /// the <see cref="InventoryFolderBase"/> it gets back from the same <see cref="IInventoryService"/>, and
+    /// <c>AisEnvelope.Category</c> does the same for <c>version</c>. So the <c>cof_version</c> the viewer sends
+    /// back and the number read here are one quantity with one writer, the data layer's folder-version bump.
+    /// </summary>
+    public static int CofVersionOf(IInventoryService inventory, UUID agentId)
     {
         try
         {
-            var cof = scene.InventoryService?.GetFolderForType(agentId, FolderType.CurrentOutfit);
+            var cof = inventory?.GetFolderForType(agentId, FolderType.CurrentOutfit);
             return cof?.Version ?? 0;
         }
         catch (Exception ex)
@@ -179,6 +254,126 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
             m_log.LogDebug(ex, "[SSB]: could not read the COF version for {Agent}", agentId);
             return 0;
         }
+    }
+
+    // ------------------------------------------------------------------ S3: the cap and the login trigger
+
+    /// <summary>
+    /// Register <c>UpdateAvatarAppearance</c> for one agent. Only ever called on a flag-on region: advertising it
+    /// where the flag is off would tell the viewer to expect server bakes that are not coming.
+    /// </summary>
+    private void RegisterCaps(Scene scene, UUID agentID, Caps caps)
+    {
+        string capPath = "/" + UUID.Random();
+        caps.RegisterSimpleHandler(CapName,
+            new SimpleStreamHandler(capPath, (httpRequest, httpResponse) => HandleUpdateAvatarAppearance(httpRequest, httpResponse, scene, agentID)));
+        m_log.LogDebug("[SSB]: registered {Cap} at {Path} for agent {Agent} in {Region}", CapName, capPath, agentID, scene.Name);
+    }
+
+    /// <summary>
+    /// The §4.3 handshake over HTTP. The viewer POSTs <c>{cof_version:N}</c> after every COF change (V3) and
+    /// expects <c>{success, expected, error}</c>. The decision itself is <see cref="CofHandshake"/>, which knows
+    /// nothing about HTTP; this method reads the body, reads the folder version fresh (ADR-006), and turns the
+    /// verdict into a bake and a response.
+    /// </summary>
+    private void HandleUpdateAvatarAppearance(IOSHttpRequest httpRequest, IOSHttpResponse httpResponse, Scene scene, UUID agentID)
+    {
+        if (httpRequest.HttpMethod != "POST")
+        {
+            httpResponse.StatusCode = (int)HttpStatusCode.NotFound;
+            return;
+        }
+
+        var region = RegionOf(scene);
+        if (region is null || !region.ServerSideBakingEnabled)
+        {
+            WriteCapResult(httpResponse, false, -1, "server-side baking is not enabled on this region");
+            return;
+        }
+
+        int clientVersion;
+        try
+        {
+            var body = (OSDMap)OSDParser.DeserializeLLSDXml(httpRequest.InputStream);
+            clientVersion = body is not null && body.TryGetValue("cof_version", out var v) ? v.AsInteger() : -1;
+        }
+        catch (Exception)
+        {
+            httpResponse.StatusCode = (int)HttpStatusCode.BadRequest;
+            return;
+        }
+
+        ScenePresence sp = scene.GetScenePresence(agentID);
+        if (sp is null || sp.IsChildAgent)
+        {
+            WriteCapResult(httpResponse, false, -1, "no root presence for this agent here");
+            return;
+        }
+
+        // ADR-006: read the folder's Version fresh, never a cached copy. AIS mutates the same field, so the
+        // number the viewer sends and the number read here are the same quantity (see AisMutation.ReportVersion).
+        int serverVersion = CofVersionOf(scene, agentID);
+        CofDecision decision = region.Handshake.Decide(agentID, clientVersion, serverVersion, () => CofVersionOf(scene, agentID), DateTime.UtcNow);
+
+        if (decision.Verdict == CofVerdict.LivelockBake)
+            m_log.LogWarning("[SSB]: anti-livelock for {Name} ({Agent}) in {Region}: {Reason}", sp.Name, agentID, scene.Name, decision.Reason);
+
+        if (!decision.Success)
+        {
+            m_log.LogDebug("[SSB]: {Cap} for {Name}: stale — {Reason}", CapName, sp.Name, decision.Reason);
+            WriteCapResult(httpResponse, false, decision.Version, null);
+            return;
+        }
+
+        try
+        {
+            BakeAsync(sp, BakeReason.Cap, CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            // ADR-005: a bake that throws must not overwrite a good bake, and must not leave the viewer waiting.
+            m_log.LogError(ex, "[SSB]: {Cap} bake for {Name} threw", CapName, sp.Name);
+            WriteCapResult(httpResponse, false, decision.Version, "the bake failed");
+            return;
+        }
+
+        WriteCapResult(httpResponse, true, decision.Version, null);
+    }
+
+    /// <summary>The V3 response body: <c>success</c> always, <c>expected</c> when there is a version to quote, <c>error</c> when there is something to say.</summary>
+    private static void WriteCapResult(IOSHttpResponse response, bool success, int expected, string error)
+    {
+        var map = new OSDMap { ["success"] = success };
+        if (expected >= 0) map["expected"] = expected;
+        if (!string.IsNullOrEmpty(error)) map["error"] = error;
+        response.RawBuffer = Util.UTF8NBGetbytes(OSDParser.SerializeLLSDXmlString(map));
+        response.StatusCode = (int)HttpStatusCode.OK;
+    }
+
+    /// <summary>
+    /// Login-time bake (Design Brief §4.2 step 1). Only armed on flag-on regions. It runs off the login thread:
+    /// a bake is ~2.8 s cold and must never sit in the path that makes the agent root.
+    ///
+    /// <para>A warm agent — one whose stored bakes still match its wearables — costs about 70 ms and stores
+    /// nothing, so this is cheap for everyone but a first login or an outfit change (Ledger Q-10).</para>
+    /// </summary>
+    private void OnMakeRootAgent(ScenePresence sp)
+    {
+        if (sp is null || sp.IsChildAgent || sp.IsNPC) return;
+        var scene = sp.Scene;
+        if (RegionOf(scene) is not { ServerSideBakingEnabled: true }) return;
+
+        Util.FireAndForget(_ =>
+        {
+            try
+            {
+                BakeAsync(sp, BakeReason.Login, CancellationToken.None).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                m_log.LogError(ex, "[SSB]: login bake for {Name} threw", sp.Name);
+            }
+        }, null, "SSB login bake");
     }
 
     // ------------------------------------------------------------------ console
