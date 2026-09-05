@@ -47,8 +47,31 @@ public interface IAisInventoryBackend
     /// <summary>Create an item or link under its <c>Folder</c>. Bumps the parent's version (S0a V6).</summary>
     bool AddItem(InventoryItemBase item);
 
-    /// <summary>Update an item's mutable fields (name, description, flags, parent on move).</summary>
+    /// <summary>Update an item's mutable fields (name, description, flags, asset, permissions).</summary>
     bool UpdateItem(InventoryItemBase item);
+
+    /// <summary>
+    /// Resolve a <c>hash_id</c> — an asset transaction id — to the asset that transaction uploaded, apply it to
+    /// <paramref name="item"/> and store the item (A16).
+    ///
+    /// <para>
+    /// This is the one thing the AIS routes cannot do through <c>IInventoryService</c> alone. A wearable save
+    /// uploads its asset over the xfer protocol under a transaction id and then PATCHes the item, and the viewer
+    /// sends the transaction id rather than the asset id: <c>LLViewerInventoryItem::updateServer</c>
+    /// (<c>llviewerinventory.cpp:435-454</c>) erases <c>asset_id</c> and <c>shadow_id</c> from the body and puts
+    /// <c>hash_id</c> in their place. Only the region's asset-transaction module knows which asset that
+    /// transaction produced, so the region backend hands the pair to it, exactly as the legacy UDP path does
+    /// (<c>Scene.Inventory.cs:579-582</c>).
+    /// </para>
+    ///
+    /// <para>
+    /// Returns false when this backend cannot resolve transactions at all — the library, or a region with no
+    /// transaction module or no connected client for the agent — in which case the item's asset is left alone.
+    /// True means the transaction was handed over; the module stores the item itself once the xfer completes, so
+    /// the caller must re-read the item rather than trust the copy it passed in.
+    /// </para>
+    /// </summary>
+    bool ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item);
 
     /// <summary>Update a folder's mutable fields (name, type, parent on move).</summary>
     bool UpdateFolder(InventoryFolderBase folder);

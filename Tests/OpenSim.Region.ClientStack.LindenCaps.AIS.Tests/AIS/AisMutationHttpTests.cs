@@ -133,10 +133,18 @@ public class AisMutationHttpTests
             "the version reported is whatever GetFolder returns after the write, read fresh (tree state T4)");
     }
 
+    /// <summary>
+    /// The viewer sends the item's whole <c>asLLSD</c> map (A-Q3, <c>llviewerinventory.cpp:435-454</c>), so a
+    /// body is mostly keys carrying values that have not changed. The ones this tree has no column for —
+    /// <c>thumbnail</c>, <c>favorite</c>, <c>created_at</c> — and the invariants <c>type</c> / <c>inv_type</c> /
+    /// <c>parent_id</c> are ignored rather than refused, because refusing would fail every ordinary rename.
+    /// A16 moved <c>asset_id</c>, <c>hash_id</c> and <c>permissions</c> out of this set; the two here are still
+    /// no-ops for their own reasons — an unknown transaction has no asset yet, and <c>owner_mask</c> is not a
+    /// client-settable field.
+    /// </summary>
     [Test]
     public void a_patch_carrying_fields_this_tree_cannot_store_is_ignored_not_refused()
     {
-        // the viewer sends the item's whole asLLSD map (A-Q3, llviewerinventory.cpp:435-454)
         var b = Inventory();
         var body = new OSDMap
         {
@@ -156,7 +164,7 @@ public class AisMutationHttpTests
 
         Assert.That(status, Is.EqualTo(200), "an unstorable field must not fail an ordinary rename");
         Assert.That(b.Items[Shirt].Name, Is.EqualTo("Renamed"));
-        Assert.That(b.Items[Shirt].CurrentPermissions, Is.EqualTo(0x7fffffffu), "permissions are not a PATCH field here");
+        Assert.That(b.Items[Shirt].CurrentPermissions, Is.EqualTo(0x7fffffffu), "owner_mask is never taken from a body");
         Assert.That(response["item_id"].AsUUID(), Is.EqualTo(Shirt));
     }
 
@@ -200,6 +208,133 @@ public class AisMutationHttpTests
         Assert.That(body["asset_id"].AsUUID(), Is.EqualTo(uploaded), "and the response says so");
         Assert.That(Versions(body)[Clothing.ToString()].AsInteger(), Is.EqualTo(versionBefore + 1),
             "an asset change is a change: the parent's version must move or the viewer never re-reads the item");
+    }
+
+    /// <summary>
+    /// The path a wearable save actually takes. <c>LLViewerInventoryItem::updateServer</c> erases
+    /// <c>asset_id</c> from the body and sends <c>hash_id</c> — the xfer transaction id — in its place
+    /// (<c>llviewerinventory.cpp:445-452</c>), so the server never sees an asset id at all and must ask the
+    /// asset-transaction module which asset that transaction produced.
+    /// </summary>
+    [Test]
+    public void patching_hash_id_resolves_the_transaction_to_the_uploaded_asset()
+    {
+        var b = Inventory();
+        var transaction = UUID.Random();
+        var uploaded = UUID.Random();
+        b.Transactions[transaction] = uploaded;
+        var versionBefore = b.Folders[Clothing].Version;
+
+        var (status, body) = Send(b, "PATCH", $"/item/{Shirt}", new OSDMap { ["hash_id"] = transaction });
+
+        Assert.That(status, Is.EqualTo(200));
+        Assert.That(b.Items[Shirt].AssetID, Is.EqualTo(uploaded));
+        Assert.That(body["asset_id"].AsUUID(), Is.EqualTo(uploaded), "the response carries the resolved asset, not the transaction");
+        Assert.That(Versions(body)[Clothing.ToString()].AsInteger(), Is.EqualTo(versionBefore + 1));
+    }
+
+    [Test]
+    public void the_map_fields_are_stored_before_the_transaction_is_handed_over()
+    {
+        // the legacy route's order: InventoryService.UpdateItem (Scene.Inventory.cs:576), then
+        // HandleItemUpdateFromTransaction (:579-582), which stores again once the xfer completes
+        var b = Inventory();
+        var transaction = UUID.Random();
+        b.Transactions[transaction] = UUID.Random();
+
+        Send(b, "PATCH", $"/item/{Shirt}", new OSDMap { ["name"] = "Saved Shirt", ["hash_id"] = transaction });
+
+        var order = b.Calls.Where(c => c.StartsWith("UpdateItem(") || c.StartsWith("ApplyAssetTransaction(")).ToList();
+        Assert.That(order.First(), Does.StartWith("UpdateItem("), "the body's own fields are stored first");
+        Assert.That(order, Does.Contain($"ApplyAssetTransaction({transaction})"));
+        Assert.That(b.Items[Shirt].Name, Is.EqualTo("Saved Shirt"));
+    }
+
+    [Test]
+    public void an_unresolvable_transaction_leaves_the_asset_alone_and_still_answers_200()
+    {
+        // a region with no transaction module, or the library: the item keeps what it had
+        var b = Inventory();
+        b.ResolvesTransactions = false;
+        var before = b.Items[Shirt].AssetID;
+
+        var (status, _) = Send(b, "PATCH", $"/item/{Shirt}", new OSDMap { ["hash_id"] = UUID.Random() });
+
+        Assert.That(status, Is.EqualTo(200), "an unresolvable hash must not fail the rest of the patch");
+        Assert.That(b.Items[Shirt].AssetID, Is.EqualTo(before));
+    }
+
+    [Test]
+    public void patching_permissions_applies_next_everyone_and_group_masked_by_base()
+    {
+        // set_default_permissions changes exactly these three and calls updateServer (llagentwearables.cpp:62-78)
+        var b = Inventory();
+        b.Items[Shirt].BasePermissions = 0x0000000e;   // copy | modify | transfer, nothing else
+        b.Items[Shirt].NextPermissions = 0;
+        b.Items[Shirt].EveryOnePermissions = 0;
+        b.Items[Shirt].GroupPermissions = 0;
+
+        var (status, _) = Send(b, "PATCH", $"/item/{Shirt}", new OSDMap
+        {
+            ["permissions"] = new OSDMap
+            {
+                ["next_owner_mask"] = unchecked((int)0xffffffff),
+                ["everyone_mask"] = unchecked((int)0xffffffff),
+                ["group_mask"] = 0x00000008,
+            },
+        });
+
+        Assert.That(status, Is.EqualTo(200));
+        Assert.That(b.Items[Shirt].NextPermissions, Is.EqualTo(0x0000000eu), "masked by base (Scene.Inventory.cs:539)");
+        Assert.That(b.Items[Shirt].EveryOnePermissions, Is.EqualTo(0x0000000eu));
+        Assert.That(b.Items[Shirt].GroupPermissions, Is.EqualTo(0x00000008u));
+    }
+
+    [Test]
+    public void patching_permissions_never_takes_base_or_current_from_the_body()
+    {
+        var b = Inventory();
+        var (status, _) = Send(b, "PATCH", $"/item/{Shirt}", new OSDMap
+        {
+            ["permissions"] = new OSDMap { ["base_mask"] = 0, ["owner_mask"] = 0, ["next_owner_mask"] = 8 },
+        });
+        Assert.That(status, Is.EqualTo(200));
+        Assert.That(b.Items[Shirt].BasePermissions, Is.EqualTo(0x7fffffffu), "base is not a client-settable field");
+        Assert.That(b.Items[Shirt].CurrentPermissions, Is.EqualTo(0x7fffffffu), "nor is current");
+    }
+
+    [Test]
+    public void patching_permissions_leaves_the_export_bit_as_it_stands()
+    {
+        var b = Inventory();
+        b.Items[Shirt].BasePermissions = 0x7fffffff;
+        b.Items[Shirt].EveryOnePermissions = 0;
+
+        Send(b, "PATCH", $"/item/{Shirt}", new OSDMap
+        {
+            ["permissions"] = new OSDMap { ["everyone_mask"] = (int)OpenSim.Framework.PermissionMask.Export },
+        });
+
+        Assert.That(b.Items[Shirt].EveryOnePermissions & (uint)OpenSim.Framework.PermissionMask.Export, Is.EqualTo(0u),
+            "export is not granted through this route; the legacy path guards it with a creator check we do not reproduce here");
+    }
+
+    [Test]
+    public void a_patch_that_changes_nothing_writes_nothing()
+    {
+        var b = Inventory();
+        var asset = b.Items[Shirt].AssetID;
+        var version = b.Folders[Clothing].Version;
+
+        var (status, _) = Send(b, "PATCH", $"/item/{Shirt}", new OSDMap
+        {
+            ["name"] = "Blue Shirt",
+            ["asset_id"] = asset,
+        });
+
+        Assert.That(status, Is.EqualTo(200));
+        Assert.That(b.Calls, Does.Not.Contain($"UpdateItem({Shirt})"), "an unchanged body must not bump the folder");
+        Assert.That(b.Folders[Clothing].Version, Is.EqualTo(version));
     }
 
     [Test]

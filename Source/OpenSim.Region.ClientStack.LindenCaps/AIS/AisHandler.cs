@@ -322,6 +322,16 @@ public sealed class AisHandler : SimpleStreamHandler
     /// <c>_updated_category_versions</c>, without which the viewer discards even the zero-delta entry
     /// <c>parseItem</c> creates (§1d-bis, <c>llaisapi.cpp:1625-1629</c>). Fields this tree cannot store are
     /// ignored, not refused: the viewer sends the whole item map, so most keys carry unchanged values.
+    ///
+    /// <para>
+    /// A16: the body's asset travels either as <c>asset_id</c> or, on the path a wearable save actually takes, as
+    /// <c>hash_id</c> — the id of the xfer transaction that uploaded it. The map fields are applied and stored
+    /// first and the transaction is handed over second, which is the order the legacy UDP route uses
+    /// (<c>Scene.Inventory.cs:576</c> then <c>:579-582</c>); the transaction module stores the item again once the
+    /// xfer completes, so the item is re-read before the envelope is built. Both writes bump the parent folder's
+    /// version in the data layer (<c>MySQLXInventoryData.cs:238-246</c>), which is what makes the viewer re-read
+    /// the item at all — before A16 no write happened, so no version moved and the edit was never fetched back.
+    /// </para>
     /// </summary>
     private void UpdateItem(AisRoute route, OSDMap body, IOSHttpResponse response)
     {
@@ -333,6 +343,14 @@ public sealed class AisHandler : SimpleStreamHandler
         {
             WriteError(response, HttpStatusCode.InternalServerError, $"the inventory service refused the update of item {route.Id}", route);
             return;
+        }
+
+        if (applied.Transaction.IsNotZero())
+        {
+            // Unknown transaction ids are not an error here: the module opens a pending uploader for one and the
+            // asset lands when the xfer does, exactly as it does for the legacy route (AgentAssetsTransactions.cs:68-90).
+            m_backend.ApplyAssetTransaction(m_agentId, applied.Transaction, item);
+            item = m_backend.GetItem(m_agentId, route.Id) ?? item;
         }
 
         var envelope = AisEnvelope.Item(item, m_agentId);

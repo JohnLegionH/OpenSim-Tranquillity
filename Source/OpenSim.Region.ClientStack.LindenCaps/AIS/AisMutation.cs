@@ -17,8 +17,21 @@ public static class AisMutation
     /// <c>asset_id</c>/<c>shadow_id</c> swapped for <c>hash_id</c> (A-Q3, <c>llviewerinventory.cpp:435-454</c> and
     /// <c>:1399-1422</c>), so most keys in a body are just the item as the viewer already had it. Anything not
     /// listed here is ignored rather than refused — refusing would fail every ordinary rename.
+    ///
+    /// <para>
+    /// <c>hash_id</c> is listed but is not applied here: it is a transaction id, and only the region's
+    /// asset-transaction module knows which asset it produced. <see cref="ApplyToItem"/> reports it and the
+    /// handler hands it to <see cref="IAisInventoryBackend.ApplyAssetTransaction"/> (A16).
+    /// </para>
+    ///
+    /// <para>
+    /// <c>shadow_id</c> is deliberately absent. It is the obfuscated form <c>asLLSD</c> emits instead of
+    /// <c>asset_id</c> for a restricted-permission item (<c>llinventory.cpp:952-964</c>), and both of the two
+    /// callers that build an update body erase it before sending (<c>llviewerinventory.cpp:445-452</c>,
+    /// <c>:1414-1421</c>), so no PATCH this tree can receive from a stock viewer carries one.
+    /// </para>
     /// </summary>
-    public static readonly string[] ItemFields = { "name", "desc", "sale_info", "flags" };
+    public static readonly string[] ItemFields = { "name", "desc", "sale_info", "flags", "asset_id", "hash_id", "permissions" };
 
     /// <summary>
     /// Fields of a category PATCH this tree can store. The viewer sends the category's whole <c>asLLSD()</c> for a
@@ -29,9 +42,47 @@ public static class AisMutation
     public static readonly string[] CategoryFields = { "name" };
 
     /// <summary>What a patch actually changed, for the log and for deciding whether to write at all.</summary>
-    public sealed record Applied(IReadOnlyList<string> Changed, IReadOnlyList<string> Ignored)
+    /// <param name="Transaction">
+    /// The body's <c>hash_id</c>, if it carried one. Not a field this class can apply — resolving a transaction
+    /// id to the asset it uploaded needs the region's asset-transaction module — so it is reported for the
+    /// handler to hand to <see cref="IAisInventoryBackend.ApplyAssetTransaction"/> (A16).
+    /// </param>
+    public sealed record Applied(IReadOnlyList<string> Changed, IReadOnlyList<string> Ignored, UUID Transaction = default)
     {
         public bool Any => Changed.Count > 0;
+    }
+
+    /// <summary>
+    /// The permission masks a client may set, each first masked by the item's own <c>BasePermissions</c>. Base
+    /// and current are never taken from a request body. This is the tree's existing rule for a client-supplied
+    /// item update, lifted from the legacy UDP path (<c>Scene.Inventory.cs:497-548</c>) so both routes agree.
+    ///
+    /// <para>
+    /// One simplification against that path, deliberate: it also forces full next-owner permissions when the
+    /// everyone mask gains <c>Export</c>, and denies the change outright for a non-creator. Here the export bit
+    /// is simply preserved as it stands — masking by base already prevents granting an export the item does not
+    /// have, and preserving it prevents removing one through a route that was never asked to manage exports.
+    /// </para>
+    /// </summary>
+    private static bool ApplyPermissions(OSDMap perms, InventoryItemBase item)
+    {
+        const uint Export = (uint)OpenSim.Framework.PermissionMask.Export;   // Scene.Inventory.cs uses this one
+        var next = perms.ContainsKey("next_owner_mask") ? (uint)perms["next_owner_mask"].AsInteger() : item.NextPermissions;
+        var everyone = perms.ContainsKey("everyone_mask") ? (uint)perms["everyone_mask"].AsInteger() : item.EveryOnePermissions;
+        var group = perms.ContainsKey("group_mask") ? (uint)perms["group_mask"].AsInteger() : item.GroupPermissions;
+
+        next &= item.BasePermissions;
+        everyone &= item.BasePermissions;
+        group &= item.BasePermissions;
+        everyone = (everyone & ~Export) | (item.EveryOnePermissions & Export);   // the export bit stands as it is
+
+        if (next == item.NextPermissions && everyone == item.EveryOnePermissions && group == item.GroupPermissions)
+            return false;
+
+        item.NextPermissions = next;
+        item.EveryOnePermissions = everyone;
+        item.GroupPermissions = group;
+        return true;
     }
 
     /// <summary>
@@ -43,6 +94,7 @@ public static class AisMutation
     {
         var changed = new List<string>();
         var ignored = new List<string>();
+        var transaction = UUID.Zero;
         foreach (var key in body.Keys)
         {
             switch (key)
@@ -58,6 +110,20 @@ public static class AisMutation
                 case "flags":
                     var flags = (uint)body["flags"].AsInteger();
                     if (flags != item.Flags) { item.Flags = flags; changed.Add(key); }
+                    break;
+                case "asset_id":
+                    // The asset the viewer wants this item to point at. A16: dropping this answered 200 and left
+                    // the wearable pointing at its previous asset, so an outfit edit survived only in the
+                    // viewer's cache until it re-read the item.
+                    var assetId = body["asset_id"].AsUUID();
+                    if (assetId != item.AssetID) { item.AssetID = assetId; changed.Add(key); }
+                    break;
+                case "hash_id":
+                    // A transaction id, not an asset id (llviewerinventory.cpp:435-454). Reported, not applied.
+                    transaction = body["hash_id"].AsUUID();
+                    break;
+                case "permissions":
+                    if (body["permissions"] is OSDMap perms && ApplyPermissions(perms, item)) changed.Add(key);
                     break;
                 case "sale_info":
                     if (body["sale_info"] is OSDMap sale)
@@ -77,7 +143,7 @@ public static class AisMutation
                     break;
             }
         }
-        return new Applied(changed, ignored);
+        return new Applied(changed, ignored, transaction);
     }
 
     /// <summary>Applies the storable fields of a category PATCH. <c>type_default</c> is ignored: see the decisions.</summary>

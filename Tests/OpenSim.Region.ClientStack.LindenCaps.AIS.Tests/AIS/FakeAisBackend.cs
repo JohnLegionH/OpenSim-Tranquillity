@@ -175,6 +175,27 @@ public sealed class FakeAisBackend : IAisInventoryBackend
         return true;
     }
 
+    /// <summary>
+    /// Asset transactions the region has completed: transaction id -> the asset it uploaded. A16 —
+    /// <see cref="ApplyAssetTransaction"/> stands in for the region's asset-transaction module, whose real
+    /// behaviour is to set the item's asset and store the item itself (<c>AssetXferUploader.cs:425-430</c>).
+    /// </summary>
+    public readonly Dictionary<UUID, UUID> Transactions = new();
+
+    /// <summary>False when this backend cannot resolve transactions at all, as the library backend cannot.</summary>
+    public bool ResolvesTransactions = true;
+
+    public bool ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item)
+    {
+        Calls.Add($"ApplyAssetTransaction({transactionId})");
+        if (!ResolvesTransactions || agentId != Owner) return false;
+        // An unknown transaction opens a pending uploader and the asset lands with the xfer; nothing is stored yet.
+        if (!Transactions.TryGetValue(transactionId, out var assetId)) return true;
+        item.AssetID = assetId;
+        UpdateItem(item);
+        return true;
+    }
+
     public bool UpdateItem(InventoryItemBase item)
     {
         Calls.Add($"UpdateItem({item.ID})");

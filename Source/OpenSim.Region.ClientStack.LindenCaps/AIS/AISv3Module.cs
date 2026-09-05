@@ -132,7 +132,7 @@ public class AISv3Module : ISharedRegionModule
         var inventory = scene.InventoryService;
         var library = scene.LibraryService;
 
-        var invHandler = new AisHandler("/" + UUID.Random(), agentID, new InventoryServiceBackend(inventory));
+        var invHandler = new AisHandler("/" + UUID.Random(), agentID, new InventoryServiceBackend(inventory, TransactionResolverFor(scene)));
         caps.RegisterSimpleHandler(CapName, invHandler, varPath: VarPath);
         m_log.LogDebug("[AIS]: registered {Cap} at {Path} for agent {Agent} in {Region}",
             CapName, invHandler.CapPath, agentID, scene.Name);
@@ -146,11 +146,43 @@ public class AISv3Module : ISharedRegionModule
         // COPY reads from the library and writes into the agent's inventory, so the library handler carries both
         // sides: itself as the source, the agent's inventory as the destination.
         var libHandler = new AisHandler("/" + UUID.Random(), libraryOwner, new LibraryServiceBackend(library), AisMode.Library,
-            new InventoryServiceBackend(inventory), agentID);
+            new InventoryServiceBackend(inventory, TransactionResolverFor(scene)), agentID);
         caps.RegisterSimpleHandler(LibraryCapName, libHandler, varPath: VarPath);
         m_log.LogDebug("[AIS]: registered {Cap} at {Path} for agent {Agent} in {Region}",
             LibraryCapName, libHandler.CapPath, agentID, scene.Name);
     }
+
+    /// <summary>
+    /// Hands a <c>hash_id</c> to the region's asset-transaction module, which is the only thing that knows which
+    /// asset a transaction produced (A16). Kept here rather than in the backend so
+    /// <see cref="InventoryServiceBackend"/> stays free of <c>Scene</c> (Ledger P-2) and Phase 2 can host it on
+    /// Robust unchanged: there it simply has no resolver and the PATCH falls back to <c>asset_id</c>.
+    ///
+    /// <para>
+    /// The two lookups are done per call, not captured: an agent's <see cref="IClientAPI"/> comes and goes with
+    /// the connection, and the module is registered on the scene. The call itself is the legacy route's, field
+    /// for field (<c>Scene.Inventory.cs:579-582</c>).
+    /// </para>
+    /// </summary>
+    private static InventoryServiceBackend.AssetTransactionResolver TransactionResolverFor(Scene scene)
+        => (agentId, transactionId, item) =>
+        {
+            var transactions = scene.RequestModuleInterface<IAgentAssetTransactions>();
+            if (transactions is null)
+            {
+                m_log.LogWarning("[AIS]: item {Item} carried hash_id {Transaction} but region {Region} has no asset transaction module; the asset was not applied",
+                    item.ID, transactionId, scene.Name);
+                return false;
+            }
+            if (!scene.TryGetClient(agentId, out var client) || client is null)
+            {
+                m_log.LogWarning("[AIS]: item {Item} carried hash_id {Transaction} but agent {Agent} has no client in {Region}; the asset was not applied",
+                    item.ID, transactionId, agentId, scene.Name);
+                return false;
+            }
+            transactions.HandleItemUpdateFromTransaction(client, transactionId, item);
+            return true;
+        };
 
     /// <summary>
     /// The library's owner, as the tree defines it: <c>ILibraryService.LibraryRootFolder.Owner</c>, set by
@@ -166,8 +198,17 @@ public class AISv3Module : ISharedRegionModule
     /// </summary>
     public sealed class InventoryServiceBackend : IAisInventoryBackend
     {
+        /// <summary>Hands a transaction id and the item to whatever knows about asset transactions (A16).</summary>
+        public delegate bool AssetTransactionResolver(UUID agentId, UUID transactionId, InventoryItemBase item);
+
         private readonly IInventoryService m_service;
-        public InventoryServiceBackend(IInventoryService service) { m_service = service ?? throw new ArgumentNullException(nameof(service)); }
+        private readonly AssetTransactionResolver m_transactions;
+
+        public InventoryServiceBackend(IInventoryService service, AssetTransactionResolver transactions = null)
+        {
+            m_service = service ?? throw new ArgumentNullException(nameof(service));
+            m_transactions = transactions;
+        }
 
         public InventoryFolderBase GetFolderForType(UUID agentId, FolderType type) => m_service.GetFolderForType(agentId, type);
         public InventoryFolderBase GetFolder(UUID agentId, UUID folderId) => m_service.GetFolder(agentId, folderId);
@@ -190,6 +231,10 @@ public class AISv3Module : ISharedRegionModule
         public bool DeleteItems(UUID agentId, IReadOnlyList<UUID> itemIds) => m_service.DeleteItems(agentId, new List<UUID>(itemIds));
         public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds, bool onlyIfTrash) => m_service.DeleteFolders(agentId, new List<UUID>(folderIds), onlyIfTrash);
         public bool PurgeFolder(InventoryFolderBase folder) => m_service.PurgeFolder(folder);
+
+        /// <summary>Only a region with a transaction module and a connected client can resolve one; see the remarks on the interface.</summary>
+        public bool ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item)
+            => m_transactions is not null && m_transactions(agentId, transactionId, item);
     }
 
     /// <summary>
@@ -260,5 +305,7 @@ public class AISv3Module : ISharedRegionModule
         public bool DeleteItems(UUID agentId, IReadOnlyList<UUID> itemIds) => false;
         public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds, bool onlyIfTrash) => false;
         public bool PurgeFolder(InventoryFolderBase folder) => false;
+        /// <summary>The library is read-only and has no asset transactions.</summary>
+        public bool ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item) => false;
     }
 }
