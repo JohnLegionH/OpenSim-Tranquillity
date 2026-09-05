@@ -103,6 +103,138 @@ Pre-AIS the LL viewer cannot change the COF, so in practice only the login case 
 - Flipping bit 0 makes Firestorm switch to `UpdateAvatarAppearance` immediately. If the compositor produces a worse bake than Firestorm would, every Firestorm user on that region degrades — which is why the fidelity harness (S0) precedes the flag (S3), not follows it.
 - Turning the flag **off** again is safe: Firestorm reverts to client bake on next login; the LL viewer reverts to cloud; stored bakes are ignored, not deleted.
 
+### 4.6 The AIS/COF seam (for S5)
+
+AIS v3 is live on Ebony and the Current Outfit folder is the authoritative record of what an agent wears: an
+outfit change is `SlamFolder` on the COF and a take-off is `DELETE /item` / `RemoveItem` (AIS ledger A10, which
+corrected A7 on exactly this point). The bake does not read the COF. `ServerSideBakingModule` passes
+`sp.Appearance.Wearables` to the orchestrator (`ServerSideBakingModule.cs:125`) — a deliberate S1 Part 1a choice,
+made when nothing could change the COF behind the region's back. AIS changed that, and S5 owns the consequence.
+
+#### Which store wins
+
+Neither, as stated — the question is malformed, and getting it wrong is how S5 discovers this late.
+
+- **The COF is authoritative about *membership*: which items are worn.** It is what the viewer reads back, what
+  `cof_version` counts (§4.3), and what survives a relog.
+- **`sp.Appearance.Wearables` is authoritative about *what a bake can be made from*.** The COF holds
+  `AssetType.Link` rows (`AisEnvelope.cs:47`), so it names items, not assets; a bake needs asset ids and the
+  wearable bodies behind them. The ScenePresence is the only place in the region where membership has already
+  been resolved to assets.
+
+So the rule for S5 is an ordering rule, not a precedence rule: **the COF decides *whether* to bake; the
+ScenePresence decides *what* to bake; and the bake must not run until the ScenePresence has caught up with the
+COF.** A bake that reads one store while the other has moved is not a merge conflict to resolve — it is simply
+early.
+
+#### What happens today if they disagree — the trace
+
+**AIS never touches the ScenePresence.** The AIS surface is inventory-backend only by design (Ledger P-2;
+`IAisInventoryBackend.cs:9`, `AisInventory.cs:22`): nothing under
+`Source/OpenSim.Region.ClientStack.LindenCaps/AIS/` references `ScenePresence`, `AvatarAppearance` or
+`AvatarFactory`. A `SlamFolder` that rewrites the COF leaves `sp.Appearance.Wearables` exactly as it was.
+
+**The region learns from the viewer, over UDP, as a separate message.** The only assignment to
+`Appearance.Wearables` anywhere in the tree is `AvatarFactoryModule.cs:1289`, inside `Client_OnAvatarNowWearing`
+(`:1256`), which is raised by the `AgentIsNowWearing` packet (`LLClientView.cs:8431`, handler `:9229-9244`, event
+`:86`). AIS writing the COF and the viewer sending `AgentIsNowWearing` are two independent messages with no
+ordering guarantee between them.
+
+**And when it arrives, the asset ids are not there yet.** `MergeNowWearing` (`:1315-1354`) fills a listed item's
+`AssetID` from the *existing* contents of that slot (`GetAsset`, `:1345-1349`); an item that was not already in
+the slot gets **`UUID.Zero`**. The real asset ids are resolved only in `SetAppearanceAssets` (`:901-947`, its live body; a long commented-out block follows), called
+from `SaveAppearance` (`:888`), which runs on a thread pool behind the save queue — `DelayBeforeAppearanceSave`,
+default **5 seconds** (`:51`, `:71`), on a 500 ms tick (`:155`).
+
+**So the path is reliable but late, and there is a window.** Between `AgentIsNowWearing` and the queued save, the
+newly worn item sits in `sp.Appearance.Wearables` with `AssetID == UUID.Zero`. A bake in that window reads it
+through `BakeOrchestrator.ResolveWearables` (`BakeOrchestrator.cs:86-96`) as **worn but assetless** — a genuine
+worn instance that contributes its layers' morph masks and no textures at all (the S1c/Q-12 rule, correct in its
+own right and exactly wrong here). The avatar is baked wearing the *shape* of the new shirt and none of its
+pixels. The window is at least the 5-second save delay, longer when the queue is busy, and unbounded at the front
+because nothing bounds the gap between the AIS write and the UDP packet.
+
+Two things already in place soften this and neither is sufficient. The input hash includes the wearable's asset
+id (`BakeHash.cs:46`, `:58`), so a stale bake's hash differs from the correct one and a *later* bake will not
+reuse it — but the stale bake has already been stored, its face already applied, and the previous good bake
+already deleted by supersede. And `SetAppearanceAssets` drops an item whose inventory row is missing
+(`AvatarFactoryModule.cs:936-939`), which is a different failure from this one.
+
+#### The options for S5's trigger
+
+**(a) Read the COF directly.** Authoritative, and independent of whether the viewer sends anything. Costs:
+`GetFolderForType` plus a folder-content fetch per trigger — a Robust round trip on a grid — then link → item →
+asset resolution for every worn item (the descendents cap already does this dance at
+`FetchInvDescHandler.cs:436-455`), plus a dependency on the folder `Version` bump (Ledger Q-1: present at the
+data layer, `MySQLXInventoryData.cs:162`, `:244`, `:277-278`, `:288`). It also puts a *second* wearable resolver
+in the tree alongside `SetAppearanceAssets`, which is the same class of mistake as two lanes deploying from two
+branches. Worse, it does not actually fix the disagreement: a bake made from COF-resolved assets writes faces
+onto an appearance whose `Wearables` still say `UUID.Zero`, so the next save and the next bake disagree with the
+one just stored.
+
+**(b) Keep reading the ScenePresence, and trigger only after the region has applied the change.** Cheap, and it
+reuses the one resolver. It depends on the apply path being reliable — and the trace above says it is reliable,
+just late, with a precise completion point: `AvatarFactoryModule.cs:890`, immediately after `SetAppearanceAssets`
+and `AvatarService.SetAppearance`. An event for exactly this already exists and is unused:
+`EventManager.OnAvatarAppearanceChange` / `TriggerAvatarAppearanceChanged` (`EventManager.cs:404-405`,
+`:1948-1967`), whose only call site in the tree is **commented out**, on the very next line
+(`AvatarFactoryModule.cs:891`), with no subscribers anywhere.
+
+#### What Q-14 means for this, and why it decides the choice
+
+Q-14: an appearance save wipes the bake index, because `AvatarService.SetAvatar` deletes every row for the
+principal before rewriting the appearance-derived keys (`AvatarService.cs:93`). **An outfit change is exactly
+when an appearance save happens** — `Client_OnAvatarNowWearing` queues one at `AvatarFactoryModule.cs:1292`.
+
+So a bake triggered on the *arrival* of a COF change is wrong twice over: it composites from `UUID.Zero` asset
+ids, and about five seconds later the queued save deletes the index it just wrote — so the work is lost as well
+as incorrect, and the next login re-bakes from nothing. A bake triggered *after* that save has run reads resolved
+asset ids **and** writes its index into a record that has just been rewritten and will not be rewritten again by
+this change.
+
+**The stale-wearables problem and the wiped-index problem have the same fix, and it is an ordering fix.** That is
+the strongest argument in this section.
+
+#### Recommendation
+
+**(b), hooked to the completion of `SaveAppearance`** — uncomment `TriggerAvatarAppearanceChanged` at
+`AvatarFactoryModule.cs:891` (or raise an equivalent event on that line) and make S5's COF-change trigger a
+subscriber to it.
+
+In terms of what breaks if the recommendation is wrong:
+
+- **If (b) is wrong** — some outfit change reaches the COF and never produces an `AgentIsNowWearing`, so the save
+  never fires — the failure is **a bake that does not happen**. The avatar keeps its previous, *valid* bake and
+  looks stale until the next login or one `appearance serverbake`. It is visible, residents report it as "my
+  shirt didn't change", it is diagnosable from the absence of an `[SSB]` line, and it is recoverable with one
+  console command. Nothing is corrupted.
+- **If (a) is wrong** — the COF and the ScenePresence disagree and the bake follows the COF — the failure is **a
+  bake that is wrong and stored**: faces written from one truth while `Wearables` holds another, an index whose
+  hash describes inputs the ScenePresence never had, and a supersede that has *already deleted the previous good
+  asset*. That is the S1d/Q-13 class of defect — a bad bake painted over a good one — and it needs an
+  asset-level repair, not a re-trigger.
+
+The asymmetry is the whole argument: **(b) fails late, (a) fails wrong.** A baker that is occasionally late is a
+nuisance; a baker that is confidently wrong destroys the previous good bake through supersede. Cost is the
+secondary argument and points the same way — (b) is free, (a) is a Robust round trip plus N link resolutions on
+every trigger, on a path S2 measured live at 2823 ms cold.
+
+**What (b) requires before S5 can rely on it.** These are S5's work, not caveats:
+
+1. The trigger must fire *after* `AvatarService.SetAppearance`, never before — that is the Q-14 ordering, and it
+   is the entire point.
+2. `Client_OnAvatarNowWearing` returns early when nothing changed (`:1278-1283`), so no save is queued and no
+   event fires. Harmless for the bake (unchanged inputs would be `Reused` anyway), but "no event" must not be
+   read as "no change" by anything else that subscribes.
+3. `SaveAppearance` drops a queued save when the presence has gone (`:871-880`); `FlushAppearanceSaveOnClose`
+   (`:129`) covers the normal close. A bake must not be attempted for a presence that is closing.
+4. `BakeCOFVersion` is stored but not compared today (S2, ADR-004 "as built"). §4.3's handshake is what will
+   compare it, and it should be read *at the same point* the bake reads the wearables, not earlier.
+5. **Ledger Q-6 stands and is the one thing that could overturn this.** If Firestorm on a bit-0 region stops
+   sending `AgentIsNowWearing` and only POSTs the cap, (b)'s trigger disappears on precisely the regions SSB is
+   enabled for — and then the cap POST becomes the trigger and this section's ordering rule applies to it
+   unchanged. That is a measurement, not an argument, and S5 should take it first.
+
 ## 5. Interaction with the web viewer (G3, G4)
 
 | Situation | Gateway behaviour |
