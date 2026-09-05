@@ -4350,7 +4350,17 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         // AppearanceData block the LL viewer needs to accept its own appearance (V4/V5). On a region with no
         // baking module, or with the flag off, this is -1 for everyone and the packet is unchanged.
         int cofVersion = m_scene.RequestModuleInterface<IServerSideBakingRegion>()?.BakedCofVersion(UUID) ?? -1;
-        avatar.ControllingClient.SendAppearance(UUID, Appearance.VisualParams, Appearance.Texture.GetBakesBytes(), Appearance.AvatarPreferencesHoverZ, cofVersion);
+
+        // The AppearanceData block is not enough on its own. The viewer prefers the appearance-version *parameter*
+        // over the block's field, and discards the whole message when the two disagree
+        // (llvoavatar.cpp:9663-9690, :9720-9723) — which is what kept a bit-0 region's avatars in the cloud
+        // state: block said 1, parameter said 0. The two are made to agree here, on a copy, for exactly the
+        // avatars that carry the block. cofVersion < 0 leaves both the parameters and the packet untouched.
+        byte[] visualParams = cofVersion < 0
+            ? Appearance.VisualParams
+            : AvatarAppearance.WithAppearanceVersion(Appearance.VisualParams, 1);
+
+        avatar.ControllingClient.SendAppearance(UUID, visualParams, Appearance.Texture.GetBakesBytes(), Appearance.AvatarPreferencesHoverZ, cofVersion);
     }
 
     public void SendAnimPackToAgent(ScenePresence p)
