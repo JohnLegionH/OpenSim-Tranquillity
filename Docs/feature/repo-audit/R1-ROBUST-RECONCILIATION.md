@@ -1,6 +1,10 @@
 # R1 — Robust reconciliation: what is running, what a merge costs, and the two roads
 
-**Date:** 2026-09-04. **Recon only** — nothing merged, built, deployed, created or deleted.
+**Date:** 2026-09-04. Recon, then **executed** — see §5.
+
+> **DONE 2026-09-04 (Road A).** Robust was backed up for the first time, the branches were merged, and Robust was
+> republished and redeployed. **The live grid server now reports a single commit** — `1.1.208-alpha+a2c8fb63f3`
+> across all 45 assemblies — where it previously reported four. Details in §5.
 
 **Headline: the merge is far cheaper than feared, and the real risk is elsewhere.** `feature/ais-v3` and
 `integration/legiongrid-trusted-hg` conflict in **exactly one file**, and that file is a solution manifest with
@@ -209,3 +213,86 @@ arrived.
 
 Steps 1–5 are Road A. Step 6 is Road B, deferred rather than skipped — which is the point of sequencing them
 this way: the Robust reconciliation is urgent and cheap, the upstream sync is neither.
+
+---
+
+## 5. What was actually done (Road A, executed 2026-09-04)
+
+### Step 1 — the first rollback point Robust has ever had
+
+| Artefact | Result |
+|---|---|
+| `D:\legiongrid\_backup\gridserver-20260904-1853\` | **765 files, 530 MB** — same file count as the source. All **79** top-level binaries MZ-probed: **0 non-PE**. `TrustedHypergridSecret.ini`, `config/Robust.ini`, `config/DirectDeliverySecret.ini` and both hand-made `.example.net10` files all present. |
+| `D:\legiongrid\_backup\legiongrid-prerobust-20260904-1853.sql` | **2,688,481,364 bytes**, **no BOM**, terminates `-- Dump completed on 2026-09-04 23:54:11`. Taken by byte-exact shell redirection. |
+
+### Step 2 — the merge
+
+`integration/legiongrid-trusted-hg` merged into `feature/ais-v3` as **`a2c8fb63f3`**.
+
+**Exactly one conflict, as predicted: `Tranquillity.sln`**, three hunks, all pure additions on both sides.
+Resolved by keeping both. `dotnet sln list` parses, **93 projects, no duplicates**, and all four test projects
+survive.
+
+> **One thing the recon did not predict.** `feature/ais-v3`'s own solution file was already **malformed**: its two
+> added test projects shared a single `EndProject`, leaving one `Project(` unclosed. MSBuild tolerated it, so it
+> had gone unnoticed. Keeping both sides made a second entry unclosed, so the resolution inserts the two missing
+> `EndProject` lines. `Project`/`EndProject` now balance at **98/98**.
+
+**Trusted-hypergrid preserved, proven by diff against its own branch:**
+
+| File | vs `integration/legiongrid-trusted-hg` |
+|---|---|
+| `Source/OpenSim.Framework/TrustedHypergrid/TrustedHypergridRuntime.cs` | **identical** |
+| `Source/OpenSim.Services.HypergridService/ExternalIPResolver.cs` | **identical** |
+
+The only difference anywhere under `OpenSim.Services.HypergridService` is +12 lines, and they are A2b's own
+`DeleteFolders(..., onlyIfTrash)` NOGO overrides — the AIS side adding to files trusted-HG also owns, not a
+regression of trusted-HG.
+
+**Build:** solution, **0 errors**. **Tests:** AIS **140/140**, appearance flush **6/6**, and the two suites the
+merge brought in — `OpenSim.TrustedHypergrid.Tests` **25 passed / 3 skipped**, `OpenSim.Services.HypergridService.Tests`
+**25/25**.
+
+### Step 3 — publish and deploy
+
+Published **RID-less** (`-c Release --self-contained false`, no `-r win-x64`); `deps.json` confirms
+`.NETCoreApp,Version=v10.0`, matching the live shape.
+
+Compared publish against live **by content before writing**: **596 identical, 90 differ, 0 new**. Every differing
+file is a `.dll`/`.pdb`/`.exe` except `deps.json`. **No `.ini` in either set.** The dry run listed 591 files by
+timestamp — the publish tree is fresh, so most are byte-identical rewrites; the content comparison is the number
+that matters.
+
+**Result — four commits became one:**
+
+| Before | After |
+|---|---|
+| `119fea881e` ×38, `0ac27e3f2d` ×5, `d8461f96e0` ×1, `1c35f18db7` ×1 | **`1.1.208-alpha+a2c8fb63f3` ×45** |
+
+No assembly carries any of the four old commits. All seven previously-stray assemblies — including the three the
+old record missed — now carry the merged commit.
+
+**Probed in the deployed binaries, not the publish:**
+
+| Assembly | Found |
+|---|---|
+| `OpenSim.Framework.dll` | `TrustedHypergridRuntime` |
+| `OpenSim.Services.HypergridService.dll` | `ExternalIPResolver`, `HGSuitcaseInventoryService`, `onlyIfTrash` |
+| `OpenSim.Server.Handlers.dll` | `ONLYIFTRASH`, `XInventoryInConnector` |
+| `OpenSim.Services.Connectors.dll` | `ONLYIFTRASH` |
+| `OpenSim.Services.InventoryService.dll` | `EnsureSystemFolder`, `not creating a second {Type} folder` |
+
+**Preserved:** all seven `.ini`/`.example` files including `Robust.ini.example.net10` and
+`Robust.HG.ini.example.net10`; `TrustedHypergridSecret.ini` (99 bytes, still Aug 29 14:44); `config/` (3);
+`assets/` (469); `inventory/` (26); `maptiles/` (38); `appsettings.json` (Jun 30); 27 log files. No `/MIR`, no
+`/PURGE`. **Total file count unchanged at 765** — nothing added, nothing lost.
+
+`config-include/`, `Library/`, `data/`, `Estates/` and `openmetaverse_data/` hold no files in the grid root — they
+are region-side directories and were listed for preservation out of caution rather than because they exist here.
+
+**Servers were not started.**
+
+### Not done, deliberately
+
+The upstream v1.0 sync (Road B) was explicitly out of scope. `MapImageModule.cs` remains the one semantic conflict
+awaiting `fix/maptile-legacy-renderer`'s owner.
