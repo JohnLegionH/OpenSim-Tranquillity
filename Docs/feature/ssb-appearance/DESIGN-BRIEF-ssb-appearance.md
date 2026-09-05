@@ -267,3 +267,63 @@ Listed in the Ledger as D-1 … D-5 and Q-1 … Q-4. The three that block S0:
 - D-1: SSB before AIS (order change from BP-v2's AIS→SSB).
 - D-3: sim-side fidelity policy — bake best-effort with a logged report (recommended) vs refuse like the gateway.
 - ADR-003: library placement (in-tree project vs NGC NuGet package — affects Mike and the gateway's reference style).
+
+## 7. S6 recon — gateway SSB-aware mode (ADR-009)
+
+Recorded 2026-09-05 against `feature/ais-v3` `b13f15add3` and web-viewer `master` `0a6acffea9`. No gateway code was changed; this section is the answer to the five recon questions S6 asked before building.
+
+### 7.1 Does LibreMetaverse 3.1.4 expose `RegionProtocols`? — Ledger Q-5, **answered: yes**
+
+Reflected out of `LibreMetaverse.dll` (net10.0, `~/.nuget/packages/libremetaverse/3.1.4/lib/net10.0/`), assembly identity `LibreMetaverse, Version=3.0.0.0`. Namespace is `LibreMetaverse.Packets`, **not** `OpenMetaverse.Packets` — the gateway's package and the OpenSim tree's vendored OMV are different assemblies with different namespaces.
+
+- `LibreMetaverse.Packets.RegionHandshakePacket+RegionInfo4Block` carries `UInt64 RegionProtocols` alongside `UInt64 RegionFlagsExtended`. Raw access is available.
+- Better, the library already decodes it: `LibreMetaverse.Simulator.Protocols` is an instance field of type `LibreMetaverse.RegionProtocols`, a flags enum:
+
+| member | value |
+|---|---|
+| `None` | `0x0` |
+| **`AgentAppearanceService`** | **`0x1`** |
+| `SelfAppearanceSupport` | `0x4` |
+
+So bit 0 is named, decoded, and held per `Simulator`. **No raw-packet path is needed**, and Q-5's fallback question does not arise. The gateway reads `simulator.Protocols.HasFlag(RegionProtocols.AgentAppearanceService)`.
+
+That the sim's bit 0 is the right thing to key on is the viewer's own rule: `llviewerregion.cpp:3034` reads `RegionInfo4 / RegionProtocols` out of the handshake, `:3044` stores it, and `:3083` computes `mCentralBakeVersion = region_protocols & 1`. Consumers read it back through `getCentralBakeVersion()` (`llvoavatar.cpp:3945`).
+
+### 7.2 Does it parse the `AppearanceData` block? — **yes, and it surfaces it**
+
+- `LibreMetaverse.Packets.AvatarAppearancePacket+AppearanceDataBlock` = `{ Byte AppearanceVersion, Int32 CofVersion, UInt32 Flags }` — the same three fields the sim writes (S3).
+- It reaches the consumer without touching packets: `LibreMetaverse.AvatarAppearanceEventArgs` exposes `AppearanceVersion`, `COFVersion`, `AppearanceFlags`, plus `FaceTextures`, `DefaultTexture`, `VisualParams` and `AvatarID`.
+
+So the gateway gets `cof_version` and `appearance_version` for self and for others from the ordinary appearance event. Note `AppearanceFlags` is an enum whose only member is `None`, so the `Flags` word carries nothing the library names — consistent with the sim writing 0.
+
+### 7.3 Does it surface `agent_appearance_service`? — **yes**
+
+`LibreMetaverse.LoginResponseData.AgentAppearanceServiceURL` (get/set) and `LibreMetaverse.NetworkManager.AgentAppearanceServiceURL` (get). The gateway does not need to read the raw login LLSD. This is the value S4 taught Robust to advertise and `llstartup.cpp` adopts only when non-empty.
+
+### 7.4 Where the compositor project reference points — **stale branch, current content**
+
+`gateway/src/Gateway/Gateway.csproj` references
+
+    D:\tranq-ssb\Source\OpenSimNGC.Appearance.Baking\OpenSimNGC.Appearance.Baking.csproj
+
+`D:\tranq-ssb` is a worktree on **`feature/ssb-appearance` at `162bfadcc3`** ("perf(ssb): instrument the bake phases and answer Q-10", S2 Part 2), not the integration branch. It is 20+ commits behind `feature/ais-v3`.
+
+**It does not currently matter for correctness.** `git diff 162bfadcc3 b13f15add3 -- Source/OpenSimNGC.Appearance.Baking/` is empty and no commit in that range touches the library: S3, S4 and S5 changed the region module, the services and the wire, never the compositor. The gateway is therefore building a byte-identical library to the one at `b13f15add3`.
+
+It is still a hazard rather than a fact to file away: the next change to the library will land on `feature/ais-v3` and the gateway will silently keep building the old one. **Not repointed in this session — John's decision.**
+
+### 7.5 The gateway's self-appearance flow — every route to the bake/send step
+
+Three entry points, all funnelling into one method:
+
+| # | site | trigger | gate |
+|---|---|---|---|
+| 1 | `AgentSession.Appearance.cs:117` | login / appearance ready | `_opts.BakeOnLogin` (`:112`) |
+| 2 | `AgentSession.Appearance.cs:121` `RequestRebake` | client `appearance.rebake`, from `SessionHub.cs:300` | none |
+| 3 | `AgentSession.Appearance.cs:128` `OnRebakeRequested` | sim's `RebakeAvatarRequested` (subscribed `:70`, released `:79`) | `_opts.BakeOnLogin` |
+
+All three call `RunBakeAsync` (`AgentSession.Appearance.cs:131`), which single-flights on `_bakeRunning` and calls `AppearanceBaker.RunAsync(this, …)` (`:145`). `AgentSession` implements `IBakeSteps` (`:26`), so the pipeline is: `GatherWearablesAsync` (`:180`) → `DownloadWearablesAsync` (`:205`) → `CheckSupportAsync` (`:259`, the fidelity gate) → `DownloadTexturesAsync` (`:269`) → `CreateAndUploadBakesAsync` (`:332`) → `SendAppearanceAsync` (`:402`).
+
+`SendAppearanceAsync` is the only place an `AgentSetAppearance` leaves the gateway (`AppearanceBaker.cs:34`, and the S11 invariant at `:47-51`). It builds the packet in `BuildAppearancePacket` (`:481`) and publishes to the client in `PublishSelfAppearance` (`:430`).
+
+**Consequence for S6.** The `server`-mode construction has to cut the type, not the call: all three entry points already converge, so the branch point is a single one — but `AgentSession` *is* the `IBakeSteps` implementation, so "the code that can send appearance does not exist on that branch" means the server-mode session must not be an `IBakeSteps` at all, rather than an `AgentSession` that declines to bake.
