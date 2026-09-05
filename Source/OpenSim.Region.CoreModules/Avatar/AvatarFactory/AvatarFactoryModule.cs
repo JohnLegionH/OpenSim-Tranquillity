@@ -888,7 +888,13 @@ public class AvatarFactoryModule : IAvatarFactoryModule, INonSharedRegionModule
             SetAppearanceAssets(id, sp.Appearance);
 
             m_scene.AvatarService.SetAppearance(id, sp.Appearance);
-            //m_scene.EventManager.TriggerAvatarAppearanceChanged(sp);
+
+            // The appearance is now applied AND persisted: SetAppearanceAssets has resolved every worn item to
+            // its asset id, and the avatar service has the result. This is the only point in the region where
+            // both are true, which is why server-side baking triggers off it rather than off the arrival of a
+            // change (Design Brief §4.6, Ledger Q-16). Uncommented in S5; the event has existed unused since
+            // before this fork.
+            m_scene.EventManager.TriggerAvatarAppearanceChanged(sp);
         }
     }
 

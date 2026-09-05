@@ -49,6 +49,48 @@ public sealed class ServerSideBakingRegion : IServerSideBakingRegion
     {
         m_bakedCof.TryRemove(agentId, out _);
         Handshake.Clear(agentId);
+        m_lastChangeBake.TryRemove(agentId, out _);
+    }
+
+    private readonly ConcurrentDictionary<UUID, DateTime> m_lastChangeBake = new();
+
+    /// <summary>
+    /// How close together two change-triggered bakes for one agent have to be before the second is treated as
+    /// part of the same outfit change.
+    ///
+    /// <para>
+    /// The real coalescing is done upstream: every route into a rebake goes through
+    /// <c>AvatarFactoryModule.QueueAppearanceSave</c>, whose queue is keyed by agent and drains on a timer
+    /// (<c>DelayBeforeAppearanceSave</c>, default 5 s), so the two signals Q-6 measured 310 ms apart already
+    /// collapse into one save and one event. This window is the second guard, for signals that land either side
+    /// of a drain boundary. It is deliberately longer than that measured 310 ms spread and shorter than the 5 s
+    /// save delay, so it cannot suppress a genuinely distinct change that completed its own save cycle.
+    /// </para>
+    /// </summary>
+    public TimeSpan ChangeDebounce { get; init; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Claim the right to bake this agent for a change at <paramref name="nowUtc"/>, or report that a bake for
+    /// the same change has just happened. Atomic, because appearance saves run on the thread pool and two can
+    /// land at once.
+    /// </summary>
+    public bool TryClaimChangeBake(UUID agentId, DateTime nowUtc)
+    {
+        // A flag-off region never claims, so the change trigger cannot fire there even if something subscribes
+        // it by mistake. Nothing about the wire changes where the flag is off (ADR-001).
+        if (!ServerSideBakingEnabled) return false;
+
+        bool claimed = false;
+        m_lastChangeBake.AddOrUpdate(
+            agentId,
+            _ => { claimed = true; return nowUtc; },
+            (_, previous) =>
+            {
+                if (nowUtc - previous < ChangeDebounce) return previous;
+                claimed = true;
+                return nowUtc;
+            });
+        return claimed;
     }
 
     /// <summary>

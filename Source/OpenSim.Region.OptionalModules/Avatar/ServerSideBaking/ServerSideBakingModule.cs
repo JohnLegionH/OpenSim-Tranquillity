@@ -104,6 +104,7 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
         scene.UnregisterModuleInterface<IServerSideBakingRegion>(region);
         scene.EventManager.OnMakeRootAgent -= OnMakeRootAgent;
         scene.EventManager.OnRemovePresence -= region.Forget;
+        scene.EventManager.OnAvatarAppearanceChange -= OnAvatarAppearanceChanged;
     }
 
     /// <summary>This region's state, or null on a region the module has not finished loading.</summary>
@@ -131,6 +132,7 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
             scene.EventManager.OnRegisterCaps += (agentID, caps) => RegisterCaps(scene, agentID, caps);
             scene.EventManager.OnMakeRootAgent += OnMakeRootAgent;
             scene.EventManager.OnRemovePresence += region.Forget;
+            scene.EventManager.OnAvatarAppearanceChange += OnAvatarAppearanceChanged;
             m_log.LogInformation(
                 "[SSB]: region {Region} has server-side baking ON: RegionProtocols bit 0 set, {Cap} advertised, "
                 + "login bake armed, appearances carry AppearanceData. Firestorm there will stop client-baking.",
@@ -325,17 +327,16 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
             return;
         }
 
-        try
-        {
-            BakeAsync(sp, BakeReason.Cap, CancellationToken.None).GetAwaiter().GetResult();
-        }
-        catch (Exception ex)
-        {
-            // ADR-005: a bake that throws must not overwrite a good bake, and must not leave the viewer waiting.
-            m_log.LogError(ex, "[SSB]: {Cap} bake for {Name} threw", CapName, sp.Name);
-            WriteCapResult(httpResponse, false, decision.Version, "the bake failed");
-            return;
-        }
+        // Q-16: do NOT bake here. The POST is the viewer telling us its COF moved, and it arrives before the
+        // region has resolved the new items to asset ids — Q-6 measured it 310 ms after AgentIsNowWearing, and
+        // the save that resolves those ids is 5 s behind that. Baking now would composite an outfit whose
+        // wearables still carry UUID.Zero asset ids and store the result as if it were the new look.
+        //
+        // Instead the cap joins the same path the legacy route already takes: queue an appearance save, and let
+        // the bake happen when that save completes (OnAvatarAppearanceChanged). Both signals therefore converge
+        // on one trigger and one ordering. The queue is keyed by agent, so a POST arriving alongside an
+        // AgentIsNowWearing costs nothing extra.
+        scene.AvatarFactory?.QueueAppearanceSave(agentID);
 
         WriteCapResult(httpResponse, true, decision.Version, null);
     }
@@ -348,6 +349,53 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
         if (!string.IsNullOrEmpty(error)) map["error"] = error;
         response.RawBuffer = Util.UTF8NBGetbytes(OSDParser.SerializeLLSDXmlString(map));
         response.StatusCode = (int)HttpStatusCode.OK;
+    }
+
+    /// <summary>
+    /// The change trigger (Design Brief §4.6, Ledger Q-16). Fires when the region has finished applying an
+    /// appearance change <b>and</b> persisted it — <c>AvatarFactoryModule.SaveAppearance</c> raises it right after
+    /// <c>SetAppearanceAssets</c> has resolved every worn item to its asset id and the avatar service has stored
+    /// the result. Baking any earlier composites an outfit whose wearables are still <c>UUID.Zero</c>.
+    ///
+    /// <para>
+    /// <b>Both signal paths reach here.</b> The legacy route arrives as <c>AgentIsNowWearing</c> and queues a save
+    /// in <c>Client_OnAvatarNowWearing</c> (<c>AvatarFactoryModule.cs:1292</c>); the cap route now queues one too
+    /// (see <see cref="HandleUpdateAvatarAppearance"/>). Attachment changes and the login/teleport cache check
+    /// also queue saves, so this fires for those as well — deliberately. A spurious trigger costs one hash check
+    /// per channel and re-sends the appearance; a missed one leaves the avatar wrong until relog, so the bias is
+    /// towards triggering (S5 brief).
+    /// </para>
+    ///
+    /// <para>Runs on the appearance-save thread pool thread. The bake goes to its own work item so a slow bake
+    /// cannot hold up the rest of the save queue.</para>
+    /// </summary>
+    private void OnAvatarAppearanceChanged(ScenePresence sp)
+    {
+        if (sp is null || sp.IsChildAgent || sp.IsNPC) return;
+        var scene = sp.Scene;
+        var region = RegionOf(scene);
+        if (region is not { ServerSideBakingEnabled: true }) return;
+
+        if (!region.TryClaimChangeBake(sp.UUID, DateTime.UtcNow))
+        {
+            m_log.LogDebug("[SSB]: change bake for {Name} coalesced into the one just done", sp.Name);
+            return;
+        }
+
+        Util.FireAndForget(_ =>
+        {
+            try
+            {
+                // BakeAsync sends the appearance itself when anything is live, reused included, so a change whose
+                // hashes all match still reaches the viewer — which it must, because the viewer is waiting for an
+                // AvatarAppearance it can accept and will not re-request one.
+                BakeAsync(sp, BakeReason.CofChanged, CancellationToken.None).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                m_log.LogError(ex, "[SSB]: change bake for {Name} threw", sp.Name);
+            }
+        }, null, "SSB change bake");
     }
 
     /// <summary>
