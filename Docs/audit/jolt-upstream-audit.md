@@ -3,6 +3,27 @@ Findings here are as-of that commit and some have since been resolved — see
 `Docs/KnownDefects.md` and the git history for what became of them. Do not treat an open
 item here as current without checking.
 
+**Addendum 2026-09-05 (PHYS-2) - appended, the body below is unchanged:**
+
+The same signature returned on the eleventh crossing after the PHYS-1 fix went live. **It has not been
+reproduced and it has not been fixed.**
+
+A harness now exists that would catch the PHYS-1 class: `RequireSimLock` asks `Monitor.IsEntered` at every
+managed call site that reaches the PhysicsSystem's TempAllocator and throws a catchable exception instead of
+letting joltc `std::abort()`. Two backends stepping on their own threads, 1000 teleport-arrival sequences,
+~17M steps combined - no fault, and a control test proves the harness catches a deliberately unlocked call.
+
+The audit behind that negative: `system->tempAllocator` reaches exactly seven native entry points
+(`joltc.cpp:1050, :8107, :8135, :8151, :8182, :8198, :8223`) and only three are reachable from this tree's
+binding, all three inside `_simLock`. **So the remaining cause is not a missing lock on a managed call site.**
+It is either inside joltc/Jolt with no managed caller, or something the harness does not yet do - terrain
+replacement, shutdown racing a step, mesh/hull cooking, constraints.
+
+**Also standing, and not from this class:** six binding methods touch `_system` with no `_simLock`
+(`RemoveConstraint`, `SetConstraintEnabled`, `SetConstraintMotor`, `SetConstraintLimits`,
+`IsConstraintBroken`, `SetGravity`). None can produce the allocator message; they are the family of the
+already-fixed body add/remove race and would present as an access violation.
+
 **Addendum 2026-09-05 (PHYS-1) - appended, the 2026-08-23 body below is unchanged:**
 
 The region process fail-fasted twice inside `joltc.dll` on inter-region teleport (`0xc0000409`, identical
