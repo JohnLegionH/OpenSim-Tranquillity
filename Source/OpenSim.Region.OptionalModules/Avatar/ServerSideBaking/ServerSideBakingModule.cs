@@ -181,6 +181,19 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
         var backend = Backend;
 
         var cofVersion = CofVersionOf(scene, sp.UUID);
+        var region = RegionOf(scene);
+
+        // S8, step 0: refuse a bake whose wearable set has lost a body part since the last one. Composing from a
+        // set with no skin produces a valid-looking bake of nothing, and storing it supersedes - deletes - the
+        // good bakes it replaces, so the damage is not recoverable by baking again. Observed 2026-09-05: four
+        // unresolvable item ids emptied slots 1-4 and the CofChanged bake that followed stored 4 and superseded 4.
+        var refusal = region?.RefusalForBodyPartLoss(sp.UUID, sp.Appearance.Wearables);
+        if (refusal is not null)
+        {
+            m_log.LogWarning("[SSB]: bake for {Name} ({Agent}) reason={Reason} REFUSED: {Reason2}",
+                sp.Name, sp.UUID, reason, refusal);
+            return new BakeOutcome(sp.UUID, reason, Array.Empty<ChannelOutcome>(), 0);
+        }
 
         // steps 2, 4-6, scene-free; the ADR-004 index in the avatar service is read for the reuse decision and
         // written back at the end of the run
@@ -191,7 +204,12 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
         // and an appearance sent before the record would go out without its AppearanceData block. RecordBake
         // ignores the call on a flag-off region, which is what keeps a console bake there off the wire.
         if (outcome.Count(ChannelStatus.Baked) + outcome.Count(ChannelStatus.Reused) > 0)
-            RegionOf(scene)?.RecordBake(sp.UUID, cofVersion);
+        {
+            region?.RecordBake(sp.UUID, cofVersion);
+            // The baseline for the next body-part check is what a bake actually succeeded from, never what one
+            // was refused for: recording a refused set would let the second attempt through unchallenged.
+            region?.RecordGoodBodyParts(sp.UUID, sp.Appearance.Wearables);
+        }
 
         // step 7: send to everyone in view and to self. A reused channel is sent exactly like a fresh one — the
         // reason for the bake may be that nobody has seen it yet.

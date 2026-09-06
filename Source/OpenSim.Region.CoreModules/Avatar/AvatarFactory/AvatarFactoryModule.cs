@@ -386,6 +386,17 @@ public class AvatarFactoryModule : IAvatarFactoryModule, INonSharedRegionModule
 
     public void QueueAppearanceSave(UUID agentid)
     {
+        // S8: a child presence's appearance is a copy of the root's, carried for drawing. It is not authoritative
+        // and must never reach the avatar service - see the guard in SaveAppearance for what happened when it did.
+        var queueing = m_scene?.GetScenePresence(agentid);
+        if (queueing is not null && queueing.IsChildAgent)
+        {
+            m_log.LogDebug(
+                "[AVFACTORY]: not queueing an appearance save for {AgentId} in {Region}: child presence, the root region owns this appearance",
+                agentid, m_scene.Name);
+            return;
+        }
+
 //            m_log.LogDebug("[AVFACTORY]: Queueing appearance save for {0}", agentid);
 
         // 10000 ticks per millisecond, 1000 milliseconds per second
@@ -879,6 +890,19 @@ public class AvatarFactoryModule : IAvatarFactoryModule, INonSharedRegionModule
                     id);
                 continue;
             }
+            if (sp.IsChildAgent)
+            {
+                // S8: the authoritative write barrier. Everything below resolves items against THIS region's
+                // inventory view and then writes the result to the avatar service; on a child presence that is a
+                // write about an avatar another region owns, made from a presence that is only a copy. On
+                // 2026-09-05 a save that ran on a non-root presence resolved four body-part items it could not
+                // see, and the stored record lost skin, hair, eyes and shirt (slots 1-4).
+                m_log.LogDebug(
+                    "[AVFACTORY]: skipping appearance save for {AgentId} in {Region}: child presence",
+                    id, m_scene.Name);
+                continue;
+            }
+
             // This could take awhile since it needs to pull inventory
             // We need to do it at the point of save so that there is a sufficient delay for any upload of new body part/shape
             // assets and item asset id changes to complete.
@@ -938,11 +962,26 @@ public class AvatarFactoryModule : IAvatarFactoryModule, INonSharedRegionModule
                     }
                     else
                     {
+                        // S8: KEEP the slot. The message this replaced said "setting to default" and the code
+                        // then did something worse than that - it removed the wearable outright, so the slot went
+                        // empty, and because the very next statement in SaveAppearance persists the whole
+                        // appearance (and AvatarService.SetAvatar deletes every row before rewriting,
+                        // AvatarService.cs:93), the slot vanished from the stored record altogether. An item id
+                        // this region cannot resolve is a statement about the inventory lookup, not about what
+                        // the avatar is wearing: a stale viewer cache, an inventory service that answered late or
+                        // not at all, or an item from another grid will all produce it, and in each case the
+                        // wearable the agent already has is the better answer than none.
+                        //
+                        // This is the same failure S0c fixed for a different input. There the viewer LISTED fewer
+                        // slots than were worn and the unlisted ones were dropped; here the slot IS listed and
+                        // the item behind it cannot be resolved. S0c merged instead of replacing; this keeps
+                        // instead of removing. Both leave the last known good wearable in place.
+                        //
+                        // Inherited from upstream unchanged (OpenSim-NGC develop a68d59f232,
+                        // AvatarFactoryModule.cs:871-878).
                         m_log.LogWarning(
-                            "[AVFACTORY]: Can't find inventory item {0} for {1}, setting to default",
-                            appearance.Wearables[i][j].ItemID, (WearableType)i);
-
-                        appearance.Wearables[i].RemoveItem(appearance.Wearables[i][j].ItemID);
+                            "[AVFACTORY]: agent {AgentId} slot {Slot} ({SlotIndex}) names item {ItemId}, which this region cannot resolve; keeping the wearable already in the slot and leaving it out of this save's asset resolution",
+                            userID, (WearableType)i, i, appearance.Wearables[i][j].ItemID);
                     }
                 }
             }

@@ -1,4 +1,7 @@
+using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using OpenSim.Framework;
 using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Region.Framework.Interfaces;
@@ -50,7 +53,62 @@ public sealed class ServerSideBakingRegion : IServerSideBakingRegion
         m_bakedCof.TryRemove(agentId, out _);
         Handshake.Clear(agentId);
         m_lastChangeBake.TryRemove(agentId, out _);
+        m_lastGoodBodyParts.TryRemove(agentId, out _);
     }
+
+    // ------------------------------------------------------------------ S8: the body-part guard
+
+    /// <summary>
+    /// The four body-part slots. A body part is not something a resident takes off: a viewer will not let you
+    /// remove your skin, and every avatar has all four from creation. So a wearable set that HAD one of these and
+    /// now does not is, in practice, always the result of a failed resolution rather than an outfit change - which
+    /// is exactly what happened on 2026-09-05, when four unresolvable item ids emptied slots 1-4 and the bake that
+    /// followed superseded the four good bakes with "no Skin worn / no Eyes worn / no Hair worn".
+    /// </summary>
+    public static readonly int[] BodyPartSlots =
+    {
+        (int)WearableType.Shape, (int)WearableType.Skin, (int)WearableType.Hair, (int)WearableType.Eyes,
+    };
+
+    private readonly ConcurrentDictionary<UUID, int[]> m_lastGoodBodyParts = new();
+
+    /// <summary>Which of the four body-part slots this wearable set actually has something in.</summary>
+    public static int[] BodyPartsPresent(AvatarWearable[] wearables)
+    {
+        var present = new List<int>(BodyPartSlots.Length);
+        foreach (var slot in BodyPartSlots)
+            if (wearables is not null && slot < wearables.Length && wearables[slot] is { Count: > 0 })
+                present.Add(slot);
+        return present.ToArray();
+    }
+
+    /// <summary>
+    /// Whether this bake must be refused because a body-part slot the agent had is now empty. Returns null to
+    /// proceed. The check is against the last set this sim actually baked from, so the first bake of a session
+    /// always proceeds - there is nothing to compare with, and refusing would leave a new arrival unbaked.
+    ///
+    /// <para>Nothing is recorded here. A refusal must not become the new baseline, or the second attempt would
+    /// see no loss and go through; <see cref="RecordGoodBodyParts"/> is called only after a bake succeeds.</para>
+    /// </summary>
+    public string RefusalForBodyPartLoss(UUID agentId, AvatarWearable[] wearables)
+    {
+        if (!m_lastGoodBodyParts.TryGetValue(agentId, out var before)) return null;
+
+        var now = BodyPartsPresent(wearables);
+        var lost = new List<string>();
+        foreach (var slot in before)
+            if (Array.IndexOf(now, slot) < 0)
+                lost.Add($"{(WearableType)slot} (slot {slot})");
+
+        return lost.Count == 0
+            ? null
+            : $"body-part slots lost since the last bake: {string.Join(", ", lost)}. A body part is never removed by a resident, "
+              + "so this is a resolution failure upstream of the bake, not an outfit change; nothing is baked and nothing is superseded.";
+    }
+
+    /// <summary>Remember what a successful bake was made from, as the baseline for the next one.</summary>
+    public void RecordGoodBodyParts(UUID agentId, AvatarWearable[] wearables)
+        => m_lastGoodBodyParts[agentId] = BodyPartsPresent(wearables);
 
     private readonly ConcurrentDictionary<UUID, DateTime> m_lastChangeBake = new();
 
