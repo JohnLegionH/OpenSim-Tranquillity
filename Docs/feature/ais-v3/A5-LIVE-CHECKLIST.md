@@ -284,6 +284,33 @@ bake at all, because an edit moves neither the worn set nor any signal the regio
 the region logs `item ... is worn by ... and its asset changed ...; queueing an appearance save` at DEBUG. No
 such line means the item was not in the presence's wearables, which is a different bug from this one.
 
+### 18. Add a SECOND wearable of a type — the sim layers both, newer on top
+
+**Do:** wear a shirt. Then right-click a *different* shirt in inventory and choose **Add** (not Wear — Wear
+replaces, Add layers). Stay in world.
+
+**Expected:** you are wearing both, with the added one **on top**. The region log shows **one** `[SSB]`
+`reason=CofChanged` bake with `Upper=Baked` — not `Reused` — and the other channels reused.
+
+Added in S10. Before it, this failed silently and looked like a bake that had nothing to do: on 2026-09-06 at
+10:09:52 both shirts were linked in the COF, the bake reported **`reused 6/6`**, and the `Avatars` record held
+`Wearable 4:0` alone. The second shirt never reached the sim's wearables, because nothing on a bit-0 region
+turned a COF link into one.
+
+**Also check, if you have the log and the database:**
+
+- the `Avatars` record for the agent now has **both** `Wearable 4:0` and `Wearable 4:1`;
+- the two COF link items' `description` columns are `@400` and `@401` — that is the viewer's ordering
+  information (`"@" + type * 100 + index`), and it is what the sim layers by, higher index on top;
+- the region log carries `[SSB]: <name>'s worn set from the COF: … Shirt x2 …` at DEBUG.
+
+**If the bake reuses everything,** the derivation did not see the second link. Check that DEBUG line first: no
+line at all means the COF read found nothing to change, and a warning about links *"this region cannot resolve
+as a wearable"* means the link's target did not come back from inventory — a different fault, and the S8 rule
+deliberately keeps the old wearables in that case rather than emptying the slot.
+
+Then swap which shirt is on top (take both off, add them in the other order) and confirm the bake follows.
+
 ---
 
 ## The Robust question — RESOLVED, and it was never about step 7

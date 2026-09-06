@@ -337,7 +337,7 @@ Every trigger converges on one place: an appearance **save** completing, which r
 |---|---|---|---|---|
 | 1 | Login / teleport arrival | - | the baked-texture cache check (`ScenePresence.cs:2291-2294`) | S3/S5 |
 | 2 | Wear or take off a wearable | `AgentIsNowWearing` | `Client_OnAvatarNowWearing` (`AvatarFactoryModule.cs:1298`) | pre-existing |
-| 3 | Wear or take off, AIS route | `UpdateAvatarAppearance` POST | the cap handler, after the §4.3 handshake | S5 |
+| 3 | Wear or take off, AIS route | `UpdateAvatarAppearance` POST | the cap handler, after the §4.3 handshake: **it reads the COF and derives the worn set first**, then queues the save | S5, **S10** |
 | 4 | Attach or detach | - | `AttachmentsModule`, six `QueueAppearanceSave` call sites | pre-existing |
 | 5 | **Edit a worn wearable** (colour, texture, params) | AIS `UpdateItem` carrying `hash_id` | **the AIS `UpdateItem` handler, when the item's asset changed and the item is worn** | **S9** |
 
@@ -348,6 +348,34 @@ present but unreliable here: `requestServerAppearanceUpdate` defers while any up
 (`llappearancemgr.cpp:3849`), and an edit always has one, so the POST arrives late with a `cof_version` the COF
 has already moved past and is refused as stale. Observed 2026-09-05: four edits, no bake, one POST at 20:57:40
 refused with "client cof_version 578, server 579".
+
+**Why #3 has to read the folder (S10).** Until S10 the cap only queued a save, and on a bit-0 region that
+made #3 a trigger with no input: **nothing in the tree turned a COF link into an `AvatarAppearance.Wearables`
+entry.** #2 cannot, because the LL viewer's only `AgentIsNowWearing` sender is
+`LLAgentWearables::sendDummyAgentWearablesUpdate` — four hard-coded nonsense item ids, and no callers left
+(`llagentwearables.cpp:819-851`). #5 cannot, because it only rewrites the asset of an item id already worn
+(`AisWornAssets.cs:32-52`). So a wear that added a link produced a save of the wearables the sim already had and
+a bake that reused every channel. Observed on Ebony 2026-09-06 10:09:52: two shirts linked in the COF, `reused
+6/6`, and the `Avatars` record holding `Wearable 4:0` alone.
+
+The cap now calls `ServerSideBakingModule.ApplyCofToWearables` (`:382`) before `QueueAppearanceSave` (`:365`):
+`GetFolderContent` on the COF, each `AssetType.Link` resolved to its target, and `CofWearables.Derive` applied.
+**Read, do not bake** — the Q-16 ordering is unchanged, because the derived items still carry unresolved asset
+ids until `SetAppearanceAssets` runs inside the save.
+
+**Order within a type.** The viewer keeps it in the link item's description as `"@" + (type * 100 + index)`
+(`build_order_string`, `llappearancemgr.cpp:3637-3642`, written by `getWearableOrderingDescUpdates` `:3676-3702`
+and pushed to the server by `updateClothingOrderingInfo` `:3733`), and layers by it, later index on top
+(`LLTexLayerTemplate::render`, `lltexlayer.cpp:1659-1689`, over the cache built `0..n-1` at `:1615-1638`).
+`CofWearables.Derive` sorts on that key and sinks unnumbered links below the numbered ones, as
+`WearablesOrderComparator` does (`:3644-3674`). Nothing downstream needed changing: `AvatarWearable` already
+holds five per type in order, `BakeOrchestrator.ResolveWearables` already walks `j` over `slot.Count`, and
+`TexLayerCompositor` already composites every instance of a type in list order
+(`TexLayerCompositor.cs:423-431`).
+
+**S8 is what makes an unresolvable link safe.** A link whose target this region cannot read is dropped in the
+reader rather than attributed to a guessed type; its type is then one this read says nothing about, and `Derive`
+keeps what the agent already wears — the same answer `SetAppearanceAssets` gives (`AvatarFactoryModule.cs:975-989`).
 
 **Cost.** #5 queues a save; it does not bake. The save re-resolves every worn item and the bake's per-channel
 input hash then decides what is recomputed, so an edit that changed nothing visible costs one hash check per
