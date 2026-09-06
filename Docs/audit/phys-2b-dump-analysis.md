@@ -604,3 +604,85 @@ Delete `D:\legiongrid\regionserver\joltc.dll` (and `joltc_double.dll` beside it,
 extend the deploy's hash check to assert on **every** `joltc*.dll` under the deploy root rather than the one
 under `runtimes\`, which is the check that missed this for five sessions. `assert-patched-joltc.ps1` exists as
 the post-publish backstop and evidently does not cover the application directory. Not implemented here.
+
+---
+
+# Addendum, 2026-09-06 (PHYS-4b) - the patched joltc is now the one that loads
+
+Region down for the swap (`tasklist | grep -i RegionServ` empty; the GridServer was up and does not touch the
+region root). Only `D:\legiongrid\regionserver` was written.
+
+## Part 1 - how the stock joltc got there, and why the swap alone would not have held
+
+**The publish itself places it.** Tonight's publish output contains, at its root, `joltc.dll` = `67BECFC7`
+(stock) alongside `runtimes/win-x64/native/joltc.dll` = `16AF7638` (patched). It was **not** in the staged copy
+list for any deploy, because the live root already held the identical stock file - so the content comparison
+correctly reported "no change" every time while the wrong DLL sat in place.
+
+The cause is a mismatch between two decisions made in different places. The LegionJolt csproj comment states
+the design: *"Under a PORTABLE publish (no -r) this copies the native into the output automatically."* The
+deploy procedure publishes the region with **`-r win-x64`**, and a RID-specific publish **also flattens the
+NuGet native asset for that RID to the output root** - the path the loader prefers. `ExcludeAssets="all"` on
+`Legion.Physics`'s `JoltPhysics.Native` reference does not prevent it, because **`ExcludeAssets` is not
+transitive**: `OpenSim.Server.RegionServer`, the project actually published, resolves that package through
+`JoltPhysicsSharp` with no exclusion of its own.
+
+**So yes - swapping the file by hand is undone by the next publish.** Part 3 fixes the publish.
+
+## Part 2 - the swap (region root only)
+
+| | before | after |
+|---|---|---|
+| `regionserver\joltc.dll` | `67BECFC7...0910` (stock) | **`16AF76381387DADD7DFA5E10D6E3AD025AB624F22187D7442D1BDB88146743B5`** |
+| `regionserver\joltc_double.dll` | `8C68788D...` | unchanged - see below |
+
+Both backed up first to `D:\legiongrid\_backup\joltc-stock-20260906\`.
+
+**`joltc_double.dll` was left alone deliberately.** The patched build produces **only** `joltc.dll` - there is
+no double-precision variant in `build_win_64/bin/Distribution` - and `DOUBLE_PRECISION` is `OFF`, so the double
+DLL is never loaded. The dump's module list confirms it: only `joltc.dll` was mapped.
+
+## Part 3 - making it stick
+
+Two changes, both verified by a fresh `-r win-x64` publish to scratch:
+
+- **`OpenSim.Server.RegionServer.csproj`** gains a direct
+  `<PackageReference Include="JoltPhysics.Native" ExcludeAssets="native" />`. It exists only to suppress the
+  package's native copy at the publishing project, where the exclusion actually takes effect.
+- **`OpenSim.Region.PhysicsModules.LegionJolt.csproj`** places the vendored patched `joltc.dll` at the output
+  **root** by name (`Link="joltc.dll"`) as well as under `runtimes/`, so native resolution is satisfied by the
+  root copy. The `runtimes` glob also gains `CopyToPublishDirectory`.
+
+A Content item at the root **alone was not enough** - tried first, and the package's native asset still won the
+root. The `ExcludeAssets="native"` is what removes it.
+
+**Verified:** the fresh publish has `16AF7638` at the root and under `runtimes/`, and a hash sweep of every
+`.dll` in the output finds **no `67BECFC7` anywhere**. That publish was not deployed.
+
+## Part 4 - the checks that should have existed
+
+**(a) `assert-patched-joltc.ps1` passed while the grid was crashing.** It built a candidate list with
+`runtimes\win-x64\native\joltc.dll` **first** and the root copy second, then took `Select-Object -First 1`
+- so it hashed the patched file that was never loaded, printed green, and stopped. It now enumerates **every**
+`joltc*.dll` under the deploy root, reports the **root first**, and fails if any loadable copy is not patched.
+`joltc_double.dll` and natives under a non-`win-x64` RID are reported without failing, since neither can be
+loaded here. Verified passing against the live root and the fixed publish, and failing against the stock backup.
+
+**(b) Post-start check - what the module list says, not what the disk says.** The disk check cannot tell you
+which file the process opened. After starting the region, run:
+
+```powershell
+Get-Process OpenSim.Server.RegionServer |
+  ForEach-Object { $_.Modules } |
+  Where-Object { $_.ModuleName -like 'joltc*' } |
+  ForEach-Object { [pscustomobject]@{
+      Module = $_.ModuleName
+      Path   = $_.FileName
+      SHA256 = (Get-FileHash $_.FileName -Algorithm SHA256).Hash } } |
+  Format-List
+```
+
+Expect exactly one `joltc.dll`, `Path` = `D:\legiongrid\regionserver\joltc.dll`, `SHA256` starting
+`16AF7638`. **Any other path or hash means the region is running the wrong native and will abort under load.**
+This is the check that would have caught PHYS-4 on day one: `lmvm joltc` in the very first dump showed the
+image path, and nobody looked.
