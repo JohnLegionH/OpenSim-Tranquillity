@@ -73,6 +73,21 @@ public interface IAisInventoryBackend
     /// </summary>
     bool ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item);
 
+    /// <summary>
+    /// A worn wearable's asset just changed (S9). The region points the presence's wearable at the new asset and
+    /// queues an appearance save; the save resolves every worn item afresh, persists the result and raises the
+    /// S5 change trigger, and the bake's own input hash then decides whether anything is recomputed - so an edit
+    /// that changed nothing visible costs one hash check per channel and no compositing.
+    ///
+    /// <para>
+    /// This exists because it is the only reliable signal. Editing a wearable leaves the worn set unchanged, so
+    /// no <c>AgentIsNowWearing</c> follows, and the viewer's <c>UpdateAvatarAppearance</c> POST is deferred behind
+    /// pending uploads and can arrive stale. Backends with no presence to update - the library, Phase 2 on
+    /// Robust - do nothing.
+    /// </para>
+    /// </summary>
+    void OnItemAssetChanged(UUID agentId, UUID itemId, UUID newAssetId);
+
     /// <summary>Update a folder's mutable fields (name, type, parent on move).</summary>
     bool UpdateFolder(InventoryFolderBase folder);
 

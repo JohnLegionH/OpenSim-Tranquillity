@@ -132,7 +132,7 @@ public class AISv3Module : ISharedRegionModule
         var inventory = scene.InventoryService;
         var library = scene.LibraryService;
 
-        var invHandler = new AisHandler("/" + UUID.Random(), agentID, new InventoryServiceBackend(inventory, TransactionResolverFor(scene)));
+        var invHandler = new AisHandler("/" + UUID.Random(), agentID, new InventoryServiceBackend(inventory, TransactionResolverFor(scene), WornAssetObserverFor(scene)));
         caps.RegisterSimpleHandler(CapName, invHandler, varPath: VarPath);
         m_log.LogDebug("[AIS]: registered {Cap} at {Path} for agent {Agent} in {Region}",
             CapName, invHandler.CapPath, agentID, scene.Name);
@@ -146,7 +146,7 @@ public class AISv3Module : ISharedRegionModule
         // COPY reads from the library and writes into the agent's inventory, so the library handler carries both
         // sides: itself as the source, the agent's inventory as the destination.
         var libHandler = new AisHandler("/" + UUID.Random(), libraryOwner, new LibraryServiceBackend(library), AisMode.Library,
-            new InventoryServiceBackend(inventory, TransactionResolverFor(scene)), agentID);
+            new InventoryServiceBackend(inventory, TransactionResolverFor(scene), WornAssetObserverFor(scene)), agentID);
         caps.RegisterSimpleHandler(LibraryCapName, libHandler, varPath: VarPath);
         m_log.LogDebug("[AIS]: registered {Cap} at {Path} for agent {Agent} in {Region}",
             LibraryCapName, libHandler.CapPath, agentID, scene.Name);
@@ -185,6 +185,32 @@ public class AISv3Module : ISharedRegionModule
         };
 
     /// <summary>
+    /// S9. Turns "this item's asset changed" into "rebake if it mattered". Kept here, not in the backend, for the
+    /// same reason as the transaction resolver: <see cref="InventoryServiceBackend"/> stays free of <c>Scene</c>
+    /// (Ledger P-2) and Phase 2 on Robust, which has no presence to update, simply has no observer.
+    ///
+    /// <para>
+    /// Queuing rather than baking is deliberate and is the same ordering the cap uses (Q-16): the save resolves
+    /// every worn item to its current asset, persists the result and raises the S5 trigger, and the bake's own
+    /// per-channel input hash then decides what is recomputed. An edit that changed nothing visible costs one
+    /// hash check per channel.
+    /// </para>
+    /// </summary>
+    private static InventoryServiceBackend.WornAssetObserver WornAssetObserverFor(Scene scene)
+        => (agentId, itemId, newAssetId) =>
+        {
+            ScenePresence sp = scene.GetScenePresence(agentId);
+            if (sp is null || sp.IsChildAgent) return;   // S8: a child presence never drives an appearance save
+
+            if (!AisWornAssets.ApplyTo(sp.Appearance, itemId, newAssetId))
+                return;                                  // not worn here, or already carrying this asset
+
+            m_log.LogDebug("[AIS]: item {Item} is worn by {Agent} and its asset changed to {Asset}; queueing an appearance save in {Region}",
+                itemId, agentId, newAssetId, scene.Name);
+            scene.AvatarFactory?.QueueAppearanceSave(agentId);
+        };
+
+    /// <summary>
     /// The library's owner, as the tree defines it: <c>ILibraryService.LibraryRootFolder.Owner</c>, set by
     /// <c>LibraryService</c> to <c>Constants.m_MrOpenSimID</c> for the root folder and every library folder and
     /// item (<c>Source/OpenSim.Services.InventoryService/LibraryService.cs:50, 100, 115-116, 176, 199-200</c>).
@@ -201,13 +227,19 @@ public class AISv3Module : ISharedRegionModule
         /// <summary>Hands a transaction id and the item to whatever knows about asset transactions (A16).</summary>
         public delegate bool AssetTransactionResolver(UUID agentId, UUID transactionId, InventoryItemBase item);
 
+        /// <summary>Told that an item's asset changed, so a worn one can rebake (S9).</summary>
+        public delegate void WornAssetObserver(UUID agentId, UUID itemId, UUID newAssetId);
+
         private readonly IInventoryService m_service;
         private readonly AssetTransactionResolver m_transactions;
+        private readonly WornAssetObserver m_wornAssets;
 
-        public InventoryServiceBackend(IInventoryService service, AssetTransactionResolver transactions = null)
+        public InventoryServiceBackend(IInventoryService service, AssetTransactionResolver transactions = null,
+            WornAssetObserver wornAssets = null)
         {
             m_service = service ?? throw new ArgumentNullException(nameof(service));
             m_transactions = transactions;
+            m_wornAssets = wornAssets;
         }
 
         public InventoryFolderBase GetFolderForType(UUID agentId, FolderType type) => m_service.GetFolderForType(agentId, type);
@@ -235,6 +267,10 @@ public class AISv3Module : ISharedRegionModule
         /// <summary>Only a region with a transaction module and a connected client can resolve one; see the remarks on the interface.</summary>
         public bool ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item)
             => m_transactions is not null && m_transactions(agentId, transactionId, item);
+
+        /// <inheritdoc/>
+        public void OnItemAssetChanged(UUID agentId, UUID itemId, UUID newAssetId)
+            => m_wornAssets?.Invoke(agentId, itemId, newAssetId);
     }
 
     /// <summary>
@@ -307,5 +343,7 @@ public class AISv3Module : ISharedRegionModule
         public bool PurgeFolder(InventoryFolderBase folder) => false;
         /// <summary>The library is read-only and has no asset transactions.</summary>
         public bool ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item) => false;
+        /// <summary>Nothing in the library is worn.</summary>
+        public void OnItemAssetChanged(UUID agentId, UUID itemId, UUID newAssetId) { }
     }
 }

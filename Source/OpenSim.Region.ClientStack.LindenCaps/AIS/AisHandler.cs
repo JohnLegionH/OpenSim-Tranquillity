@@ -338,6 +338,9 @@ public sealed class AisHandler : SimpleStreamHandler
         var item = m_backend.GetItem(m_agentId, route.Id);
         if (item is null) { WriteError(response, HttpStatusCode.NotFound, $"no item {route.Id}", route); return; }
 
+        // S9: captured before ApplyToItem, which mutates the item in place.
+        var assetBefore = item.AssetID;
+
         var applied = AisMutation.ApplyToItem(body, item);
         if (applied.Any && !m_backend.UpdateItem(item))
         {
@@ -352,6 +355,13 @@ public sealed class AisHandler : SimpleStreamHandler
             m_backend.ApplyAssetTransaction(m_agentId, applied.Transaction, item);
             item = m_backend.GetItem(m_agentId, route.Id) ?? item;
         }
+
+        // S9: an edit to a WORN wearable is the one appearance change nothing else tells the region about. The
+        // worn set does not move (the viewer keeps the item id), so no AgentIsNowWearing follows, and the
+        // UpdateAvatarAppearance POST is deferred behind pending uploads and can arrive stale. This PATCH is the
+        // moment the new asset exists and is known, so it is where the save is queued.
+        if (item.AssetID != assetBefore && item.AssetID.IsNotZero())
+            m_backend.OnItemAssetChanged(m_agentId, route.Id, item.AssetID);
 
         var envelope = AisEnvelope.Item(item, m_agentId);
         AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, item.Folder));

@@ -196,6 +196,15 @@ public sealed class FakeAisBackend : IAisInventoryBackend
         return true;
     }
 
+    /// <summary>S9: every (item, newAsset) the handler reported as an asset change, in order.</summary>
+    public readonly List<(UUID Item, UUID Asset)> AssetChanges = new();
+
+    public void OnItemAssetChanged(UUID agentId, UUID itemId, UUID newAssetId)
+    {
+        Calls.Add($"OnItemAssetChanged({itemId})");
+        if (agentId == Owner) AssetChanges.Add((itemId, newAssetId));
+    }
+
     public bool UpdateItem(InventoryItemBase item)
     {
         Calls.Add($"UpdateItem({item.ID})");
