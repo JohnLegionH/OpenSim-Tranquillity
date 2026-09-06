@@ -253,3 +253,88 @@ remain a separate, differently-presenting hazard.
 exit `2147944002` = `HRESULT_FROM_WIN32(1602)`, `ERROR_INSTALL_USEREXIT` - the SDK installer needs elevation
 and cannot get it non-interactively. **No native stack was obtained, then or now.** The gap PHYS-2b identified
 between `ExtendedUpdate` and the abort thunk is still unobserved.
+
+---
+
+# Addendum, 2026-09-06 (PHYS-2d) - the native stack, and the patch
+
+`cdb.exe` is now present at
+`C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe`. Report only; nothing was fixed or deployed.
+
+## Part 1 - the native stack
+
+The first thing cdb gave, before any stack walk, closes a PHYS-2b unknown: **thread names**. The faulting
+thread `0x9fb0` is `Heartbeat-(Ebony)` and the other Jolt thread `0x5740` is `Heartbeat-(Transylvania)`.
+**The abort happened on the DEPARTING region's heartbeat, not the arriving one.**
+
+`joltc.dll` is loaded at `00007ff9'589c0000`-`00007ff9'58b9b000`. Frames between `ExtendedUpdate` and the
+abort, with each return address mapped to its `.pdata` function range in the byte-identical binary:
+
+| # | return address | RVA | containing function | size | what it is |
+|---|---|---|---|---|---|
+| 0 | `7ff9'58ad08bd` | `0x1108bd` | `0x110878-0x1108ce` | 86 | the abort thunk - `int 29h` at `0x1108ad`, and `rcx = 7` = `FAST_FAIL_FATAL_APP_EXIT` |
+| 1 | `7ff9'589c2bf2` | `0x2bf2` | **`0x2b90-0x2bf3`** | 99 | **`TempAllocatorImpl::Free` - one of the two "Freeing in the wrong order" paths found in PHYS-2b** |
+| 2 | `7ff9'58a3e608` | `0x7e608` | `0x7e086-0x7e68a` | 1540 | **the Jolt function that called `Free`** |
+| 3 | `7ff9'58a3eb94` | `0x7eb94` | `0x7eb18-0x7ebbb` | 163 | |
+| 4 | `7ff9'58a403da` | `0x803da` | `0x80274-0x8046e` | 506 | |
+| 5 | `7ff9'58af06ef` | `0x1306cf` | `0x1304c0-0x1306f9` | 569 | `JPH_CharacterVirtual_ExtendedUpdate+0x20f` (export RVA `0x1304c0`) |
+
+**The chain passes through `0x2b90-0x2bf3`, not `0x2a60-0x2aa2`.** That is the larger of the two Free
+instantiations (99 bytes against 66), which fits the `TempAllocatorImplWithMallocFallback::Free` wrapper with
+`TempAllocatorImpl::Free` inlined into it - and the binding constructs exactly that class, so the virtual call
+lands there. **PHYS-2b's inference that the fault offset carries no site information is now confirmed
+directly**: the abort thunk is frame 0, and the allocator's own check is frame 1.
+
+**Which Jolt function called `Free` is NOT resolvable.** No PDB exists, so frames 2-4 can only be given as
+address ranges. Frame 2 (`0x7e086-0x7e68a`, 1540 bytes) is the caller of `Free`; from Jolt v5.4.0's structure
+the candidates three levels below `ExtendedUpdate` that build temp-allocated contact arrays are
+`CharacterVirtual::GetContactsAtPosition`, `MoveShape` and `GetFirstContactForSweep`, but **naming it would be
+a guess and it is not named here.**
+
+Registers at the abort are readable; the native heap is not. `dq` on the allocator pointers held in the Free
+frame's callee-saved registers (`rbx=1c6'ecda2ae0`, `r12=1c6'ecda2b10`, `r14=1c6'ecda29e0` - three addresses
+0x30 and 0x100 apart, consistent with one fallback allocator and its embedded `TempAllocatorImpl`) returns
+`????????`. **So `mBase`, `mTop` and `mSize` could not be read, and the exact out-of-order address cannot be
+shown.** That is the DumpType 1 limit again.
+
+## Part 2 - what D:\joltc-build actually changes
+
+**One commit, one file, 14 insertions and 13 deletions.**
+
+- Base: `amerkoleci/joltc` at `1715c5a` ("Improve and add more bindings for HeightFieldShapeSettings").
+- Legion commit `907819f`, "Legion: per-system TempAllocator (base amerkoleci/joltc 1715c5a; builds joltc.dll
+  SHA256 16AF7638)", touching `src/joltc.cpp` only. Working tree clean; no other local change.
+- The same patch is vendored in this repo as `native/joltc/per-system-tempallocator.patch` with
+  `native/joltc/README.md`.
+
+The diff is a pure ownership substitution, not a change of strategy: the process-global
+`static TempAllocator* s_TempAllocator`, created in `JPH_Init` and deleted in `JPH_Shutdown`, is removed and
+replaced by a `JPH::TempAllocator* tempAllocator` member on `struct JPH_PhysicsSystem`, created in
+`JPH_PhysicsSystem_Create` and deleted in `JPH_PhysicsSystem_Destroy`. Every one of the eight
+`*s_TempAllocator` uses becomes `*system->tempAllocator` / `system->tempAllocator`. **The allocator class and
+size are unchanged from upstream.**
+
+| | |
+|---|---|
+| Jolt version | **v5.4.0** (`_deps/joltphysics-src` at `036ea7b1` "Bump version to v5.4.0") |
+| `CMAKE_BUILD_TYPE` | **`Distribution`** |
+| `USE_ASSERTS` | **`OFF`** - so `JPH_ENABLE_ASSERTS` is not defined |
+| `DOUBLE_PRECISION` | `OFF` |
+| `CROSS_PLATFORM_DETERMINISTIC` | `OFF` |
+| allocator class | **`TempAllocatorImplWithMallocFallback`**, `8 * 1024 * 1024` (`joltc.cpp:956`), one per `JPH_PhysicsSystem` |
+
+## Part 3 - conclusion
+
+This is an **ordering violation, not a size mismatch, and not an assert artefact**. The message comes from
+`TempAllocatorImpl::Free`'s `mBase + mTop != inAddress` test (`Jolt/Core/TempAllocator.h:81-85`) and the stack
+lands in that exact function, one frame below the abort; a size problem would instead surface from `Allocate`
+as *"Out of memory trying to allocate"*, and with the malloc-fallback class in use it cannot even do that,
+because an overflow of the 8 MB stack silently spills to `malloc` - so the 8 MB figure is not implicated.
+**Stock, assert-off joltc would have aborted identically**: this build already has `USE_ASSERTS=OFF`, and the
+`Trace()` + `std::abort()` pair is plain code, not a `JPH_ASSERT` - only the `inAddress == nullptr` branch
+beside it uses the assert macro - so the check is compiled into every configuration including `Distribution`
+and cannot be turned off. What remains unknown is *which* Jolt function freed out of order, and that is now a
+symbols problem rather than a debugging one. **The single next step: rebuild `D:\joltc-build` from the pinned
+source (base `1715c5a` + `907819f`, Jolt v5.4.0, `Distribution`, `USE_ASSERTS=OFF`) with debug info emitted so
+a PDB is produced, leave the live DLL alone, and re-open this same dump with that PDB on the symbol path -
+which names frames 2-4 and, with them, the call that freed out of order.**
