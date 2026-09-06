@@ -28,4 +28,12 @@
     </PackageReference>
   </ItemGroup>
 
+  <!-- PHYS-2: the harness drives two real JoltPhysicsBackend instances, so it needs the managed binding AND the
+       PATCHED joltc. The native arrives through the LegionJolt module's Content glob (runtimes/win-x64/native),
+       which is also what overwrites the stock joltc that JoltPhysicsSharp's dependency maps to that path. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\Addons\LegionPhysics\Legion.Physics\Legion.Physics.csproj" />
+    <ProjectReference Include="..\..\Source\OpenSim.Region.PhysicsModules.LegionJolt\OpenSim.Region.PhysicsModules.LegionJolt.csproj" />
+  </ItemGroup>
+
 </Project>

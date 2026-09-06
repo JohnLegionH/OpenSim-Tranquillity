@@ -173,6 +173,43 @@ namespace Legion.Physics.Jolt
         // =====================================================================
         private readonly object _simLock = new object();
 
+        // =====================================================================
+        // PHYS-2 - the allocator owner check.
+        //
+        // The patched joltc hands system->tempAllocator to exactly SEVEN native entry points
+        // (joltc.cpp:1050 PhysicsSystem_Update, :8107/:8135/:8151/:8182/:8198/:8223 the CharacterVirtual
+        // scratch users). TempAllocatorImpl is a LIFO stack with a non-atomic mTop whose ordering Jolt
+        // guarantees "though job dependencies" (Jolt/Core/TempAllocator.h:11-13) - so two callers that are
+        // not in one job graph corrupt it, and TempAllocatorImpl::Free answers with std::abort() (:83-84).
+        // A native abort takes the process with it: no exception, no stack, no test failure. PHYS-1 was
+        // diagnosed from a Windows event id and a console line.
+        //
+        // So the rule is made checkable. Every managed call site that reaches one of the seven calls
+        // RequireSimLock first, which asks Monitor.IsEntered - "does THIS thread hold this backend's
+        // _simLock" - and throws a managed, catchable exception naming the API when it does not. That
+        // turns an unrecoverable native abort into a test failure, which is what let PHYS-2 be looked for
+        // instead of waited for.
+        //
+        // On by default in DEBUG. In RELEASE it costs a static bool read per call and is off unless a
+        // harness turns it on, so the shipped simulator pays nothing.
+        // =====================================================================
+        public static bool AllocatorOwnerCheck { get; set; } =
+#if DEBUG
+            true;
+#else
+            false;
+#endif
+
+        private void RequireSimLock(string api)
+        {
+            if (!AllocatorOwnerCheck || Monitor.IsEntered(_simLock))
+                return;
+            throw new InvalidOperationException(
+                $"PHYS-2: {api} reaches this PhysicsSystem's TempAllocator but the calling thread does not hold "
+                + "_simLock. Concurrent use of that allocator is what aborts the process from native code "
+                + "(Jolt/Core/TempAllocator.h:83-84). Take _simLock, then _characterGate.");
+        }
+
         // Set true (under _simLock) by Dispose. Step and every native query check it under _simLock and
         // bail out, so a heartbeat Step that races region shutdown does NOTHING rather than touching a
         // freed PhysicsSystem / CharacterVirtual. Found on Legion 2026-08-02: Scene.Close only Sleep(500)s
@@ -1734,6 +1771,7 @@ namespace Legion.Physics.Jolt
                 (Shape wrapper, Shape inner) = BuildStandingCapsule(capsuleHalfHeight, capsuleRadius);
                 // Force the swap (maxPenetrationDepth = MaxValue) - callers resize deliberately; we do not
                 // want a silent no-op if the new capsule momentarily overlaps the floor.
+                RequireSimLock("CharacterVirtual::SetShape (joltc.cpp:8223)");
                 bool ok = rec.Character.SetShape(
                     0f, wrapper, float.MaxValue, new ObjectLayer((uint)PhysicsLayer.Avatar), _system, null, null);
                 if (ok)
@@ -1752,6 +1790,26 @@ namespace Legion.Physics.Jolt
                     wrapper.Dispose();
                     inner.Dispose();
                 }
+            }
+        }
+
+        /// <summary>
+        /// PHYS-2 harness control ONLY. Does exactly what <see cref="SetCharacterShape"/> did before PHYS-1 -
+        /// takes <c>_characterGate</c> and not <c>_simLock</c> - so the harness can prove its own owner check
+        /// actually catches an unlocked allocator call. A harness that reproduces nothing proves nothing unless
+        /// it can be shown to catch something. Never called by the simulator.
+        /// </summary>
+        public void SetCharacterShapeUnlockedForTest(CharacterId character, float capsuleHalfHeight, float capsuleRadius)
+        {
+            lock (_characterGate)
+            {
+                if (_disposed || _system == null || !_characters.TryGet(character.Value, out JoltCharacterRecord rec) || rec.Character == null)
+                    return;
+                RequireSimLock("CharacterVirtual::SetShape (joltc.cpp:8223)");
+                (Shape wrapper, Shape inner) = BuildStandingCapsule(capsuleHalfHeight, capsuleRadius);
+                rec.Character.SetShape(0f, wrapper, float.MaxValue, new ObjectLayer((uint)PhysicsLayer.Avatar), _system, null, null);
+                wrapper.Dispose();
+                inner.Dispose();
             }
         }
 
@@ -1869,6 +1927,7 @@ namespace Legion.Physics.Jolt
                 WalkStairsStepUp = new Vector3(0f, 0f, MathF.Max(0f, rec.StepHeight)),
                 StickToFloorStepDown = new Vector3(0f, 0f, -MathF.Max(0.05f, rec.StepHeight)),
             };
+            RequireSimLock("CharacterVirtual::ExtendedUpdate (joltc.cpp:8135)");
             ch.ExtendedUpdate(dt, ext, new ObjectLayer((uint)PhysicsLayer.Avatar), _system, null, null);
         }
 
@@ -2293,6 +2352,7 @@ namespace Legion.Physics.Jolt
             if (_system != null && s_jobSystem != null)
             {
                 int collisionSteps = Math.Max(1, _settings.CollisionSteps);
+                RequireSimLock("PhysicsSystem::Update (joltc.cpp:1050)");
                 _system.Update(deltaTime, collisionSteps, s_jobSystem);
             }
 
