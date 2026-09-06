@@ -3,6 +3,24 @@ Findings here are as-of that commit and some have since been resolved — see
 `Docs/KnownDefects.md` and the git history for what became of them. Do not treat an open
 item here as current without checking.
 
+**Addendum 2026-09-05 (PHYS-1) - appended, the 2026-08-23 body below is unchanged:**
+
+The region process fail-fasted twice inside `joltc.dll` on inter-region teleport (`0xc0000409`, identical
+offset `0x1108bd`; *"TempAllocator: Freeing in the wrong order"*). This is **not** a return of the stock
+shared allocator that section 5 and the `_simLock` comment warn about - the deployed `joltc.dll` was verified
+as the patched build (SHA-256 prefix `16AF7638`) and the per-system allocators were working as designed.
+
+The fault was in the **managed binding**: `JoltPhysicsBackend.SetCharacterShape` took `_characterGate` alone,
+while `Step` releases that gate before `_system.Update`, so `CharacterVirtual::SetShape` (`joltc.cpp:8223`)
+could run concurrently with `PhysicsSystem::Update` (`:1050`) on one region's allocator. Fixed by taking
+`_simLock` first, per the rule the backend file already documented. Full trace and citations in
+`Docs/feature/ssb-appearance/LEDGER-ssb-appearance.md` section 4b, commit `d7c8052e92`.
+
+**Standing note for anyone reading section 5:** "the allocator is per-system" is necessary but not sufficient.
+Every one of the seven native entry points that consumes it must still be called under this region's
+`_simLock`, because an allocator shared between `Update` and any other caller on the same system is exactly as
+unsafe as one shared between regions.
+
 **Since this audit:**
 
 - **The OMV layout question is closed.** `Legion.Physics` contains zero `OpenMetaverse`
