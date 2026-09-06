@@ -244,7 +244,7 @@ whatever the flag says, so the verification step turns that into a 500.
 **Expected:** the operation appears to succeed and the setting does not persist across a relog. This tree's
 `InventoryFolderBase` has no column for either, so both are accepted and dropped.
 
-## Phase 6 — saving an asset (step 16)
+## Phase 6 — saving an asset (steps 16-17)
 
 Added in A18. **The checklist had no step that saved an asset**, which is why steps 1-15 all passed while
 `PATCH /item` was silently discarding every asset id a wearable save sent. Renaming an item exercises the same
@@ -266,6 +266,23 @@ draw from its own cache, which is where the change lives until the server has ac
 - the item's `assetID` column equals **that** uploaded asset, not the one it had before;
 - the `_updated_category_versions` in the PATCH response is **higher** than the folder's previous version. If the
   same version comes back twice for two different saves, nothing was written — that is the A18 signature.
+
+### 17. Edit a WORN wearable, change a colour, save — the sim rebakes that channel
+
+**Do:** wear the item first. Appearance → Edit it → change its colour → **Save**. Stay in world and watch
+yourself; do not relog.
+
+**Expected:** within about **7 s** the colour changes in-world, on you and to everyone else, with no relog. The
+region log shows one `[SSB]` `reason=CofChanged` bake in which **that wearable's channel is `Baked` and the
+others are `Reused`** — the whole point is that only what changed is recomputed.
+
+Added in S9. Step 16 checks the asset is *stored*; this checks the region *acts* on it. They are different
+failures and step 16 passed while this one did not: on 2026-09-05 four edits stored correctly and produced no
+bake at all, because an edit moves neither the worn set nor any signal the region was watching.
+
+**If nothing bakes,** the thing to check is whether the AIS `UpdateItem` for that item reported an asset change —
+the region logs `item ... is worn by ... and its asset changed ...; queueing an appearance save` at DEBUG. No
+such line means the item was not in the presence's wearables, which is a different bug from this one.
 
 ---
 

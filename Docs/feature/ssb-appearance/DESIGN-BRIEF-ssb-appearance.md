@@ -328,6 +328,31 @@ All three call `RunBakeAsync` (`AgentSession.Appearance.cs:131`), which single-f
 
 **Consequence for S6.** The `server`-mode construction has to cut the type, not the call: all three entry points already converge, so the branch point is a single one — but `AgentSession` *is* the `IBakeSteps` implementation, so "the code that can send appearance does not exist on that branch" means the server-mode session must not be an `IBakeSteps` at all, rather than an `AgentSession` that declines to bake.
 
+## 4.8 What triggers a bake (S5, S9)
+
+Every trigger converges on one place: an appearance **save** completing, which raises `OnAvatarAppearanceChange`
+(Q-16, S5). Nothing bakes on the arrival of a change, because the items are not resolved to asset ids yet.
+
+| # | Change | What the viewer sends | What queues the save | Session |
+|---|---|---|---|---|
+| 1 | Login / teleport arrival | - | the baked-texture cache check (`ScenePresence.cs:2291-2294`) | S3/S5 |
+| 2 | Wear or take off a wearable | `AgentIsNowWearing` | `Client_OnAvatarNowWearing` (`AvatarFactoryModule.cs:1298`) | pre-existing |
+| 3 | Wear or take off, AIS route | `UpdateAvatarAppearance` POST | the cap handler, after the §4.3 handshake | S5 |
+| 4 | Attach or detach | - | `AttachmentsModule`, six `QueueAppearanceSave` call sites | pre-existing |
+| 5 | **Edit a worn wearable** (colour, texture, params) | AIS `UpdateItem` carrying `hash_id` | **the AIS `UpdateItem` handler, when the item's asset changed and the item is worn** | **S9** |
+
+**Why #5 needs its own trigger.** An edit moves nothing else the region watches. The worn set is unchanged
+because the viewer keeps the item id (`llagentwearables.cpp:319`), so no `AgentIsNowWearing` follows. The COF
+*does* move - the edit panel replaces the link - but a COF version bump is not a trigger by itself. And #3 is
+present but unreliable here: `requestServerAppearanceUpdate` defers while any upload is pending
+(`llappearancemgr.cpp:3849`), and an edit always has one, so the POST arrives late with a `cof_version` the COF
+has already moved past and is refused as stale. Observed 2026-09-05: four edits, no bake, one POST at 20:57:40
+refused with "client cof_version 578, server 579".
+
+**Cost.** #5 queues a save; it does not bake. The save re-resolves every worn item and the bake's per-channel
+input hash then decides what is recomputed, so an edit that changed nothing visible costs one hash check per
+channel. An item that is not worn queues nothing.
+
 ## 4.7 The body-part guard (S8)
 
 A bake is refused when the incoming wearable set has lost one of the four body-part slots — shape, skin, hair,
