@@ -200,6 +200,59 @@ namespace Legion.Physics.Jolt
             false;
 #endif
 
+        // ---------------------------------------------------------------------
+        // PHYS-2c - the re-entry guard, and why the owner check cannot replace it.
+        //
+        // CharacterVirtual::ExtendedUpdate is the only one of the seven allocator entry points that calls BACK
+        // into managed code while an allocator sequence is open: OnContactAdded/Persisted/Removed and
+        // OnCharacterContactAdded/Persisted all fire from inside it. Monitor is re-entrant per thread, so a
+        // handler that calls back into any of the seven takes _simLock again without blocking, and the owner
+        // check - which only asks "does this thread hold the lock" - sees nothing wrong. The allocator does:
+        // the inner call allocates on top of the outer sequence's frames and frees them out of order, which
+        // TempAllocatorImpl::Free answers with std::abort().
+        //
+        // So this tracks the open site per THREAD, not per backend. Cross-backend re-entry on one thread is a
+        // bug for the same reason - the inner call runs on another system's allocator while this one's sequence
+        // is still open, and neither allocator's LIFO order survives if the callback does anything on either.
+        // ---------------------------------------------------------------------
+        [ThreadStatic] private static string t_allocatorSiteInFlight;
+
+        /// <summary>Marks one of the seven allocator entry points as open on this thread for its duration.</summary>
+        private readonly struct AllocatorSite : IDisposable
+        {
+            private readonly string m_previous;
+            private readonly bool m_on;
+
+            public AllocatorSite(JoltPhysicsBackend owner, string api)
+            {
+                m_on = AllocatorOwnerCheck;
+                m_previous = null;
+                if (!m_on)
+                    return;
+
+                owner.RequireSimLock(api);
+
+                string open = t_allocatorSiteInFlight;
+                if (open is not null)
+                    throw new InvalidOperationException(
+                        $"PHYS-2c: {api} entered while {open} is still open on this thread. Both draw on a "
+                        + "PhysicsSystem's TempAllocator, which is a LIFO stack: the inner call's frames sit on "
+                        + "top of the outer call's and are freed out of order, which Jolt answers with "
+                        + "std::abort() (Jolt/Core/TempAllocator.h:83-84). _simLock does not catch this - Monitor "
+                        + "is re-entrant, so the nested call holds it too.");
+
+                t_allocatorSiteInFlight = api;
+            }
+
+            public void Dispose()
+            {
+                if (m_on) t_allocatorSiteInFlight = m_previous;
+            }
+        }
+
+        /// <summary>Open an allocator site on this thread. Checks the lock and the re-entry rule together.</summary>
+        private AllocatorSite Enter(string api) => new AllocatorSite(this, api);
+
         private void RequireSimLock(string api)
         {
             if (!AllocatorOwnerCheck || Monitor.IsEntered(_simLock))
@@ -1771,9 +1824,10 @@ namespace Legion.Physics.Jolt
                 (Shape wrapper, Shape inner) = BuildStandingCapsule(capsuleHalfHeight, capsuleRadius);
                 // Force the swap (maxPenetrationDepth = MaxValue) - callers resize deliberately; we do not
                 // want a silent no-op if the new capsule momentarily overlaps the floor.
-                RequireSimLock("CharacterVirtual::SetShape (joltc.cpp:8223)");
-                bool ok = rec.Character.SetShape(
-                    0f, wrapper, float.MaxValue, new ObjectLayer((uint)PhysicsLayer.Avatar), _system, null, null);
+                bool ok;
+                using (Enter("CharacterVirtual::SetShape (joltc.cpp:8223)"))
+                    ok = rec.Character.SetShape(
+                        0f, wrapper, float.MaxValue, new ObjectLayer((uint)PhysicsLayer.Avatar), _system, null, null);
                 if (ok)
                 {
                     rec.StandingShape?.Dispose();
@@ -1927,8 +1981,8 @@ namespace Legion.Physics.Jolt
                 WalkStairsStepUp = new Vector3(0f, 0f, MathF.Max(0f, rec.StepHeight)),
                 StickToFloorStepDown = new Vector3(0f, 0f, -MathF.Max(0.05f, rec.StepHeight)),
             };
-            RequireSimLock("CharacterVirtual::ExtendedUpdate (joltc.cpp:8135)");
-            ch.ExtendedUpdate(dt, ext, new ObjectLayer((uint)PhysicsLayer.Avatar), _system, null, null);
+            using (Enter("CharacterVirtual::ExtendedUpdate (joltc.cpp:8135)"))
+                ch.ExtendedUpdate(dt, ext, new ObjectLayer((uint)PhysicsLayer.Avatar), _system, null, null);
         }
 
         // =====================================================================
@@ -2352,8 +2406,8 @@ namespace Legion.Physics.Jolt
             if (_system != null && s_jobSystem != null)
             {
                 int collisionSteps = Math.Max(1, _settings.CollisionSteps);
-                RequireSimLock("PhysicsSystem::Update (joltc.cpp:1050)");
-                _system.Update(deltaTime, collisionSteps, s_jobSystem);
+                using (Enter("PhysicsSystem::Update (joltc.cpp:1050)"))
+                    _system.Update(deltaTime, collisionSteps, s_jobSystem);
             }
 
             // 3. Fold this frame's queued activation deltas into the step-thread-owned active

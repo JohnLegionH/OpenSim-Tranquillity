@@ -190,3 +190,66 @@ attachment set and lands immediately after an attachment script rez, which is pr
 produces contacts. That is the gap between the harness and the failure, and it is the next thing to add.
 
 *No code change is proposed here.*
+
+---
+
+# Addendum, 2026-09-06 (PHYS-2c) - the contact callbacks fire, and nothing re-enters
+
+PHYS-2b named contact-listener re-entry as the one harness ingredient the evidence pointed at. It has now been
+added, the callbacks demonstrably run, and **the hypothesis is not confirmed**. No fix was made.
+
+## The guard the owner check could not be
+
+`RequireSimLock` asks only "does this thread hold `_simLock`". Monitor is re-entrant, so a contact handler that
+called back into one of the seven allocator entry points would hold the lock and pass that check while
+corrupting the allocator underneath the call it is nested inside. `JoltPhysicsBackend` therefore gained a
+second, orthogonal guard: a `[ThreadStatic]` record of which allocator site is currently open **on this
+thread**, checked and set by an `AllocatorSite` scope around all three managed call sites. Entering one while
+another is open throws and names both. It is per-thread, not per-backend, so cross-backend re-entry on one
+thread is caught too. Same gating as the owner check: on in DEBUG, off in RELEASE unless a harness enables it.
+
+## Making the callbacks fire
+
+The PHYS-2 harness ran characters alone in an empty world, so `CharacterVirtual::OnContact*` never fired once.
+Three changes fixed that, and each was necessary:
+
+- **a floor** - a static box at z=20, characters standing on it, so contacts begin and persist;
+- **attachments ON the avatar** - the 14 rezzed bodies overlap the wearer rather than sitting beside it;
+- **a resident avatar re-grounded every crossing** - two `CharacterVirtual`s in one backend's
+  `CharacterVsCharacterCollisionSimple`, overlapping. The first run without the re-grounding produced only 22
+  avatar-vs-avatar callbacks in a thousand crossings, because the controller shoves the pair apart within a
+  step or two; that number is recorded here because a thinly-exercised callback would have made the negative
+  worthless.
+
+The handlers are the production ones - `PushCharacterBodyContact` (`JoltPhysicsBackend.cs:1677`) and
+`PushCharacterCharacterContact` (`:1699`), wired at `:1594-1598` and `:1608-1611` - not stubs. The harness
+counts what they push, drained from `Step`.
+
+## Result: green, with the callbacks proven to have run
+
+| | Ebony | Transylvania |
+|---|---|---|
+| steps | 16,090,814 | 16,124,337 |
+| `OnContactAdded` | 24,146 | 24,351 |
+| `OnContactPersisted` | 37,916,883 | 37,893,374 |
+| `OnCharacterContactAdded/Persisted` | 2,089,153 | 1,927,231 |
+
+1000 crossings, both regions stepping throughout, ~32 M steps, **~76 M contact callbacks and 4 M
+avatar-vs-avatar callbacks executed inside `ExtendedUpdate`** - and neither the owner check nor the re-entry
+guard fired, and no fault of any kind occurred.
+
+**Why, from the code.** Both handlers are pure managed bookkeeping: a `ConcurrentDictionary` lookup and a push
+into a pre-allocated ring buffer. The only native call either makes is `other.UserData`
+(`JPH_CharacterVirtual_GetUserData`) in the avatar-vs-avatar handler, and that is **not** one of the seven
+`tempAllocator` entry points. There is no path from a contact callback back into the allocator.
+
+**So contact-listener re-entry is eliminated**, on the same footing as the earlier eliminations: by a harness
+that demonstrably exercises the thing, not by reading alone. The remaining untested ingredients from PHYS-2b
+are mesh/convex-hull attachment cooking, terrain replacement, and region shutdown racing a step; constraints
+remain a separate, differently-presenting hazard.
+
+**Tooling note.** `cdb` still could not be obtained: `winget install Microsoft.WindowsSDK.10.0.26100` with
+`/features OptionId.WindowsDesktopDebuggers /quiet` downloaded and verified the installer and then failed with
+exit `2147944002` = `HRESULT_FROM_WIN32(1602)`, `ERROR_INSTALL_USEREXIT` - the SDK installer needs elevation
+and cannot get it non-interactively. **No native stack was obtained, then or now.** The gap PHYS-2b identified
+between `ExtendedUpdate` and the abort thunk is still unobserved.
