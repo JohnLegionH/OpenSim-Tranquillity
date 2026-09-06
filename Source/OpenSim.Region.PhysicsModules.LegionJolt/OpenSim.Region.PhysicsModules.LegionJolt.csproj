@@ -54,6 +54,30 @@
          linux .so). Adding runtimes/linux-x64/native/libjoltc.so later is a drop-in for a Linux grid. -->
     <Content Include="runtimes\**\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+
+    <!--
+      PHYS-4b. The glob above is correct for a PORTABLE publish, which is what the comment at the top of this
+      file assumed. The deploy procedure publishes the region with **-r win-x64**, and a RID-specific publish
+      ALSO flattens the NuGet native asset for that RID to the output ROOT - where the loader looks first,
+      because a DLL in the application directory beats one under runtimes/. `ExcludeAssets="all"` on
+      Legion.Physics's JoltPhysics.Native reference does not stop it: ExcludeAssets is not transitive, and the
+      publishing project (OpenSim.Server.RegionServer) resolves that package through JoltPhysicsSharp with no
+      exclusion of its own.
+
+      The result, live from 2026-09-05 to 2026-09-06: every deploy left the STOCK joltc (67BECFC7) at
+      D:\legiongrid
+egionserver\joltc.dll while the patched one (16AF7638) sat unused under runtimes/, the
+      three regions shared stock joltc's one process-global TempAllocator, and the process aborted five times.
+      Every hash check looked under runtimes/ and passed.
+
+      So the patched native is ALSO placed at the output root, by name, which is the path that actually gets
+      loaded. assert-patched-joltc.ps1 checks every joltc*.dll under the root, root first.
+    -->
+    <Content Include="runtimes\win-x64\native\joltc.dll" Link="joltc.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
 

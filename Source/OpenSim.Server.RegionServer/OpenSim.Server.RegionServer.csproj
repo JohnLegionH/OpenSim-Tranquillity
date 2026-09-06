@@ -95,6 +95,26 @@
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
     <PackageReference Include="Autofac" Version="9.3.2" />
     <PackageReference Include="Autofac.Extensions.DependencyInjection" Version="11.0.2" />
+
+    <!--
+      PHYS-4b. This is the project the deploy publishes, and it publishes with -r win-x64. A RID-specific
+      publish flattens the JoltPhysics.Native native asset for that RID to the output ROOT, which is the path
+      the loader prefers over runtimes/win-x64/native/. Legion.Physics already carries
+      ExcludeAssets="all" on this package, but ExcludeAssets is NOT transitive: this project resolves
+      JoltPhysics.Native through JoltPhysicsSharp with no exclusion of its own, so the STOCK joltc landed at
+      the root of every deploy while the PATCHED one sat unused beneath it.
+
+      That is what ran live from 2026-09-05 to 2026-09-06 and aborted the process five times: stock joltc has
+      one process-global TempAllocator, three regions stepped on it concurrently holding only their own
+      per-instance _simLock, and the first out-of-order free called abort(). Every hash check verified
+      runtimes/win-x64/native/joltc.dll, which was never the file being loaded.
+
+      The direct reference below exists ONLY to carry ExcludeAssets="native" and suppress that copy. The
+      PATCHED joltc reaches the output root as a Content item from
+      OpenSim.Region.PhysicsModules.LegionJolt, which owns the vendored native - so native resolution is
+      satisfied by the root copy, and the only joltc.dll in the output is the patched one.
+    -->
+    <PackageReference Include="JoltPhysics.Native" Version="1.0.4" ExcludeAssets="native" />
   </ItemGroup>
 
   <ItemGroup>
