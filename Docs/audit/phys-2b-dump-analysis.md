@@ -338,3 +338,107 @@ symbols problem rather than a debugging one. **The single next step: rebuild `D:
 source (base `1715c5a` + `907819f`, Jolt v5.4.0, `Distribution`, `USE_ASSERTS=OFF`) with debug info emitted so
 a PDB is produced, leave the live DLL alone, and re-open this same dump with that PDB on the symbol path -
 which names frames 2-4 and, with them, the call that freed out of order.**
+
+---
+
+# Addendum, 2026-09-06 (PHYS-2e) - frames 2-4 named, and the LIFO violation found
+
+Report only; nothing fixed, nothing deployed. The live
+`D:\legiongrid\regionserver\runtimes\win-x64\native\joltc.dll` was **not touched**: SHA-256
+`16AF7638...43B5` before and after, unchanged.
+
+## Part 1 - the symbol rebuild
+
+Built from the pinned source into a **separate** directory, `D:\joltc-build\build_sym`, leaving the verified
+`build_win_64` output alone: VS 2022 x64, `Distribution`, `USE_ASSERTS=OFF`, `DOUBLE_PRECISION=OFF`,
+`CROSS_PLATFORM_DETERMINISTIC=OFF`, plus `/Zi` and `/DEBUG /OPT:REF /OPT:ICF` so a PDB is emitted while keeping
+the linker's Release folding behaviour.
+
+**The result is not byte-identical, and that does not matter here.**
+
+| | |
+|---|---|
+| live / original build | `16AF76381387DADD7DFA5E10D6E3AD025AB624F22187D7442D1BDB88146743B5` |
+| symbol build | `5B8336BF41E91BD9B57527B3B0666519834702FDA0D38B5D245A717B1528EFB0` |
+| file size | **identical**, 1,865,728 bytes both |
+| whole-file bytes differing | 116,232 (6.23%), first at `0x118` - the PE headers |
+
+The fallback proposed in PHYS-2d was `.pdata` range matching, and it turned out to be far stronger than
+expected:
+
+- **`.pdata` is byte-for-byte identical** - 5131 entries, every function beginning and ending at the same RVA;
+- **`.text` is 99.98% identical** (256 bytes differ out of 1,360,896) at the same RVA and the same size;
+- only `.rdata` grew, by `0x60`, for the debug directory and PDB path.
+
+So the code layout is the same binary in both, and resolving the dump's addresses through the symbol build's
+PDB is sound. cdb was pointed at it with `.reload /i` to accept the signature mismatch deliberately.
+**Confidence: high**, and it rests on the identical `.pdata` table rather than on the hash.
+
+## Part 2 - the named stack
+
+```
+joltc!abort+0x45
+  (inline) JPH::TempAllocatorImpl::Free+0x44
+joltc!JPH::TempAllocatorImplWithMallocFallback::Free+0x62
+  (inline) JPH::STLTempAllocator<JPH::CharacterVirtual::Constraint>::deallocate+0x22
+  (inline) JPH::Array<Constraint, STLTempAllocator<Constraint>>::free / destroy / {dtor}
+joltc!JPH::CharacterVirtual::MoveShape+0x5f8            <- frame 2, the caller of Free
+joltc!JPH::CharacterVirtual::Update+0xb4                <- frame 3
+joltc!JPH::CharacterVirtual::ExtendedUpdate+0x19a       <- frame 4
+joltc!JPH_CharacterVirtual_ExtendedUpdate+0x22f
+```
+
+Every range predicted from `.pdata` in PHYS-2d matches: frame 2 `0x7e086-0x7e68a` is `MoveShape` (1540 bytes,
+the big one), frame 3 `0x7eb18-0x7ebbb` is `Update`, frame 4 `0x80274-0x8046e` is `ExtendedUpdate`.
+
+**The array being freed is `ConstraintList constraints`** - `Array<CharacterVirtual::Constraint,
+STLTempAllocator<Constraint>>`, declared at `Jolt/Physics/Character/CharacterVirtual.cpp:1243` inside
+`MoveShape`'s collision loop and destructed at the end of each iteration.
+
+**Which allocation should have been freed first.** `MoveShape` declares three temp arrays inside the loop body,
+in this order (`:1228`, `:1238`, `:1243`):
+
+```cpp
+TempContactList    contacts(inAllocator);          contacts.reserve(mMaxNumHits);              // :1228-1229
+IgnoredContactList ignored_contacts(inAllocator);  ignored_contacts.reserve(contacts.size());  // :1238-1239
+ConstraintList     constraints(inAllocator);       constraints.reserve(contacts.size() * 2);   // :1243-1244
+```
+
+C++ destroys in reverse declaration order, so `constraints` correctly frees first. **The destructor order is
+right; the stack underneath it was wrong.** For `constraints`'s buffer not to be the top of the allocator, some
+allocation made *after* it must still have been live.
+
+**The structural reason that can happen.** `STLTempAllocator` implements only `allocate` and `deallocate`
+(`Jolt/Core/STLTempAllocator.h:41-50`) - it has **no `reallocate`**. So `Array::reallocate`
+(`Jolt/Core/Array.h:155-177`) takes the else branch: **allocate the new buffer, move, then free the old one**.
+On a stack allocator that is an inherent LIFO violation - the new block is pushed on top and the old block,
+now beneath it, is freed - and `TempAllocatorImpl::Free` (`Jolt/Core/TempAllocator.h:71-90`) answers
+`mBase + mTop != inAddress` with `Trace()` and `std::abort()`. Any temp Array that outgrows its `reserve`
+while another temp allocation sits above its buffer aborts the process. This is upstream Jolt behaviour,
+present with or without the Legion patch and with `USE_ASSERTS=OFF`.
+
+**Which of the three grew, and when, cannot be read from this dump.** `mBase`, `mTop`, `mSize` and the address
+passed to `Free` are on the native heap, which a DumpType 1 minidump does not carry. Naming a specific array
+here would be a guess and is not done.
+
+## Part 3 - conclusion
+
+The abort is `constraints`'s destructor freeing a buffer that is no longer the top of its region's stack
+allocator, inside `CharacterVirtual::MoveShape` on Ebony's heartbeat; the destructor order in `MoveShape` is
+correct by construction, so the inversion was created earlier by a temp array growing past its `reserve` -
+`STLTempAllocator` has no `reallocate`, so a growth allocates above and then frees below, which on a LIFO stack
+allocator is fatal by design. **The departing region's removal of Truly's character and her 14 attachment bodies
+cannot be the cause, and this is now a positive statement rather than an absence of evidence**: the allocator is
+per-`JPH_PhysicsSystem` (`joltc.cpp:956`) so no other region can touch it; `RemoveCharacter`
+(`JoltPhysicsBackend.cs:1737-1742`) and every body op take `_simLock`, which the heartbeat holds for the whole
+of `Step` including `MoveShape`, so they cannot interleave with it; and `rec.Character.Dispose()` at `:1762` is
+deterministic and inside both locks, so there is no finalizer race on the `CharacterVirtual` either. That also
+explains why PHYS-2c's 1000 contended crossings and 32 M steps found nothing: **concurrency is not an
+ingredient of this bug at all.** The smallest harness change that should make it red is therefore not a
+concurrency change but a load one - drive a single character's contact count past `mMaxNumHits`
+(default **256**, `CharacterVirtual.h:52`) so the temp arrays in `MoveShape` outgrow their reservations: the
+PHYS-2c harness surrounded the avatar with **14** bodies, which never came close. Stated as a hypothesis, not a
+known reproduction: it follows from the named frames and the allocator contract, and it has not yet been run.
+
+**Still missing:** which array grew and the address it freed. WER is now DumpType 2, so the next occurrence
+carries the heap and answers both directly.
