@@ -1707,11 +1707,28 @@ namespace Legion.Physics.Jolt
             }
         }
 
+        // PHYS-1 (2026-09-05): this took _characterGate ONLY, and CharacterVirtual::SetShape is one of the
+        // seven per-system TempAllocator consumers in the patched joltc (joltc.cpp:8223, *system->tempAllocator).
+        // Step holds _simLock for the whole step but releases _characterGate after phase 1, so for the whole of
+        // _system.Update (joltc.cpp:1050, the SAME allocator) this method could acquire _characterGate freely and
+        // allocate into that stack behind Update's back. TempAllocator is a LIFO stack with a non-atomic mTop and
+        // no locking - "allocations and frees can take place from different threads, but the order is guaranteed
+        // though job dependencies" (Jolt/Core/TempAllocator.h:11-13) - and two independent callers have no job
+        // dependency, so the free comes back out of order and TempAllocatorImpl::Free aborts (:83-84).
+        //
+        // That is the 2026-09-05 region death: an inter-region teleport creates the character and the scene
+        // thread then applies the avatar's size (PhysicsActor.Size -> JoltCharacter.cs:274) while that region's
+        // heartbeat is inside Update. Two Application-1000 events, joltc.dll, 0xc0000409, identical offset
+        // 0x1108bd, and "TempAllocator: Freeing in the wrong order" on the console before the second.
+        //
+        // The rule at the top of this file already said character ops take _characterGate INSIDE _simLock. This
+        // one did not. Taking both, in that order, is the whole fix - no allocator change, no native change.
         public void SetCharacterShape(CharacterId character, float capsuleHalfHeight, float capsuleRadius)
         {
+            lock (_simLock)
             lock (_characterGate)
             {
-                if (_system == null || !_characters.TryGet(character.Value, out JoltCharacterRecord rec) || rec.Character == null)
+                if (_disposed || _system == null || !_characters.TryGet(character.Value, out JoltCharacterRecord rec) || rec.Character == null)
                     return;
 
                 (Shape wrapper, Shape inner) = BuildStandingCapsule(capsuleHalfHeight, capsuleRadius);
