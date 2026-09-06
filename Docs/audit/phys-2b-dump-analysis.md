@@ -514,3 +514,93 @@ diagnose properly trades a known unknown for an unknown one. The next occurrence
 to a named line. **If something protective must ship before then, it is `TempAllocatorMalloc` for character
 updates** - it is the only option that removes the class, it cannot be wrong about the cause because it does
 not depend on the cause, and its cost is CPU rather than correctness.
+
+---
+
+# Addendum, 2026-09-06 (PHYS-4) - CAUSE FOUND: the region loads a STOCK joltc
+
+The full dump answers it in one line, and it is not any of the mechanisms the previous four sessions chased.
+
+**The region process does not load the patched joltc.** It loads
+`D:\legiongrid\regionserver\joltc.dll`, SHA-256 `67BECFC70CFBDA643AB9B75ABA895042900C3E339B001080BA4107E4929B0910`,
+dated 2025-10-10 - **byte-identical to the stock `JoltPhysics.Native` 1.0.4 NuGet package**
+(`~/.nuget/packages/joltphysics.native/1.0.4/runtimes/win-x64/native/joltc.dll`). The patched build,
+`16AF7638...`, is present and intact at `runtimes\win-x64\native\joltc.dll` - and is **not the file the
+loader picks**, because a DLL in the application directory wins over one under `runtimes\`.
+
+Every hash check across S9, PHYS-1 and the deploys verified `runtimes\win-x64\native\joltc.dll`. That file
+was never the problem and was never loaded. **This is precisely the hazard written into
+`Legion.Physics.csproj`**: *"If anyone drops the stock JoltPhysics.Native joltc.dll back into bin ... the shared
+allocator returns and the cross-region crashes come back."*
+
+## Part 1 - thread and character
+
+Same chain, different region:
+
+```
+joltc!abort+0x45
+  (inline) JPH::TempAllocatorImpl::Free
+joltc!JPH::TempAllocatorImplWithMallocFallback::Free+0x62
+  (inline) Array<CharacterVirtual::Constraint, STLTempAllocator<...>>::{dtor}
+joltc!JPH::CharacterVirtual::MoveShape+0x5f8
+joltc!JPH::CharacterVirtual::Update+0xb4
+joltc!JPH::CharacterVirtual::ExtendedUpdate+0x19a
+```
+
+**Faulting thread: `Heartbeat-(Transylvania)`** (05:54 was `Heartbeat-(Ebony)`).
+
+**The character is Truly**, not the NPC: the `CharacterVirtual` at `0x24a43a7d460` carries
+`mUserData = 0x3DD17F1C` = **1037139740**, which is the id the log gives Truly at 08:36:18 on Transylvania.
+`mSystem = 0x22a0b061780`. `mMaxNumHits = 0x100` (256) and **`mMaxHitsExceeded = 0`** - independent confirmation
+of PHYS-3: the contact cap was never approached.
+
+**And Ebony's heartbeat was aborting at the same instant.** Thread 61 is inside
+`joltc!write_text_ansi_nolock` <- `_write_nolock` <- `__acrt_stdio_flush_and_write_narrow_nolock` - the CRT
+write path, which is Jolt's `Trace()` emitting *"TempAllocator: Freeing in the wrong order"* to the console.
+One region got as far as printing the message; the other reached `__fastfail` first and took the process down.
+**That is the "x2" console message seen on 2026-09-05.**
+
+## Part 2 - the allocator
+
+**There is no per-system allocator to read.** In the loaded image, `JPH_PhysicsSystem` is four pointers: the raw
+bytes at the wrapper for Truly's system (`0x24a48534df0`) are the three filters and `physicsSystem =
+0x22a0b061780` - matching the map key and the character's `mSystem` exactly, so the read is aligned - and then a
+heap block header. The `tempAllocator` member the patch adds **is not there**.
+
+A whole-process search for the `TempAllocatorImplWithMallocFallback` vtable found **exactly one instance**,
+`0x24a45900f60`, which is also the value in `r15` on the faulting thread. `joltc!s_PhysicsSystems` reports
+`mSize = 3`. **Three physics systems, one allocator.** That is stock joltc's process-global `s_TempAllocator`.
+
+`mBase` / `mTop` / the freed address were not read: once the shared allocator was established the numbers stop
+being diagnostic, and the remaining budget was better spent confirming which file was loaded.
+
+## Part 3 - the other region, and whose allocator it is
+
+The question "is the abort thread's allocator the one belonging to the backend whose character it was stepping"
+has no per-backend answer: **all three regions share the single global allocator.** Two heartbeats were provably
+inside it at the same moment - Transylvania in `Free`, Ebony in `Trace` - and Elm's heartbeat is a third
+consumer of the same stack.
+
+## Part 4 - the mechanism, and what it rules in
+
+The deployed region loads stock joltc, whose `s_TempAllocator` is one process-global LIFO stack shared by every
+`PhysicsSystem`; three regions step concurrently on their own threads, each holding only its own per-instance
+`_simLock`, so their allocations and frees interleave on that one stack and the first out-of-order free aborts
+the process - which is exactly the failure `JoltPhysicsBackend`'s own comment says a per-instance lock cannot
+protect against, and exactly why `_simLock` was static for a day in August before the patched native allowed it
+to be per-instance again. **This rules in the one hypothesis never tested and rules out all four that were:**
+concurrency was eliminated (PHYS-2c) against a harness whose native was the *patched* build - the test project
+resolves `16AF7638` from the LegionJolt Content glob, so five sessions of harnesses ran the fixed native while
+the live region ran the broken one; contact load was eliminated (PHYS-3) for the same reason; and the frame the
+dump shows is not diagnostic of a Jolt bug at all, merely of whichever region lost the race. **The 05:54 crash
+fits the same reading exactly** - `Heartbeat-(Ebony)` faulting while other regions stepped, no crossing needed
+(this 08:36 crash had none: Truly logged straight into Transylvania), and the Recorder NPC present in both
+windows (`id=558022834` at 05:43:13, `id=866248265` at 08:30:42) is incidental: it is simply another character
+being stepped on another thread, one more consumer of the shared stack.
+
+**Fix shape: put the patched joltc where the loader will find it, and make the wrong one impossible to load.**
+Delete `D:\legiongrid\regionserver\joltc.dll` (and `joltc_double.dll` beside it, same provenance) so the
+`runtimes\win-x64\native\` copy is used, or copy the patched build over the application-directory one; then
+extend the deploy's hash check to assert on **every** `joltc*.dll` under the deploy root rather than the one
+under `runtimes\`, which is the check that missed this for five sessions. `assert-patched-joltc.ps1` exists as
+the post-publish backstop and evidently does not cover the application directory. Not implemented here.
