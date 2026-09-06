@@ -336,6 +336,12 @@ public class AvatarData
 
             AvatarWearable[] wearables = appearance.Wearables;
             int currentLength = wearables.Length;
+
+            // S10: the key is "Wearable <type>:<index>" and BOTH numbers matter. Several wearables of one type
+            // are layered in index order, later index on top (LLTexLayerTemplate::render, lltexlayer.cpp:1659-1689),
+            // so a record read back in row order would silently reorder them: Data comes from a row store, which
+            // owes no order at all. Collect first, then apply by (type, index).
+            var wornRows = new List<(int Type, int Index, UUID ItemID, UUID AssetID)>();
             foreach (KeyValuePair<string, string> _kvp in Data)
             {
                 // New style wearables
@@ -344,18 +350,12 @@ public class AvatarData
                     string wearIndex = _kvp.Key.Substring(9);
                     string[] wearIndices = wearIndex.Split(new char[] {':'});
                     int index = Convert.ToInt32(wearIndices[0]);
+                    // A record written before the index was carried has one entry per type and no ":<index>";
+                    // it reads as index 0, which is what it was.
+                    int slot = wearIndices.Length > 1 ? Convert.ToInt32(wearIndices[1]) : 0;
 
                     string[] ids = _kvp.Value.Split(new char[] {':'});
-                    UUID itemID = new UUID(ids[0]);
-                    UUID assetID = new UUID(ids[1]);
-                    if (index >= currentLength)
-                    {
-                        Array.Resize(ref wearables, index + 1);
-                        for (int i = currentLength ; i < wearables.Length ; i++)
-                            wearables[i] = new AvatarWearable();
-                        currentLength = wearables.Length;           
-                    }   
-                    wearables[index].Add(itemID, assetID);
+                    wornRows.Add((index, slot, new UUID(ids[0]), new UUID(ids[1])));
                     continue;
                 }
                 // Attachments
@@ -377,6 +377,20 @@ public class AvatarData
                     }
                 }
             }
+
+            wornRows.Sort((a, b) => a.Type != b.Type ? a.Type.CompareTo(b.Type) : a.Index.CompareTo(b.Index));
+            foreach (var row in wornRows)
+            {
+                if (row.Type >= currentLength)
+                {
+                    Array.Resize(ref wearables, row.Type + 1);
+                    for (int i = currentLength ; i < wearables.Length ; i++)
+                        wearables[i] = new AvatarWearable();
+                    currentLength = wearables.Length;
+                }
+                wearables[row.Type].Add(row.ItemID, row.AssetID);
+            }
+            appearance.Wearables = wearables;
 
             if (appearance.Wearables[AvatarWearable.BODY].Count == 0)
                 appearance.Wearables[AvatarWearable.BODY].Wear(

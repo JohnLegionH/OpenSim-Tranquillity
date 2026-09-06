@@ -351,6 +351,13 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
         // that is measured. Baking now would composite an outfit whose wearables still carry UUID.Zero asset ids
         // and store the result as if it were the new look.
         //
+        // S10: but DO read the folder. On a bit-0 region this POST is the only notice the sim gets that the worn
+        // SET changed - the LL viewer's AgentIsNowWearing is a four-item dummy with no callers
+        // (llagentwearables.cpp:819-851), so nothing else turns a COF link into a wearable. Without this the save
+        // below persists the wearables the sim already had and the bake reuses every channel, which is exactly
+        // what happened on Ebony on 2026-09-06: two shirts linked in the COF, one shirt in the Avatars record.
+        ApplyCofToWearables(scene, sp);
+
         // Instead the cap joins the same path the legacy route already takes: queue an appearance save, and let
         // the bake happen when that save completes (OnAvatarAppearanceChanged). Both signals therefore converge
         // on one trigger and one ordering. The queue is keyed by agent, so a POST arriving alongside an
@@ -358,6 +365,72 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
         scene.AvatarFactory?.QueueAppearanceSave(agentID);
 
         WriteCapResult(httpResponse, true, decision.Version, null);
+    }
+
+    /// <summary>
+    /// S10. Read the agent's Current Outfit Folder and put every wearable link it holds into the presence's
+    /// <see cref="AvatarAppearance.Wearables"/>, in the viewer's order. The rules are
+    /// <see cref="CofWearables.Derive"/>'s; this is only the read.
+    ///
+    /// <para>
+    /// A link is kept when its target resolves in this region and is a wearable. A link whose target cannot be
+    /// read is dropped rather than guessed at, which is what makes the S8 rule hold: its type then looks
+    /// untouched by this read and keeps what the agent already wears, instead of being emptied by an inventory
+    /// lookup that failed.
+    /// </para>
+    /// </summary>
+    private static void ApplyCofToWearables(Scene scene, ScenePresence sp)
+    {
+        var inventory = scene?.InventoryService;
+        if (inventory is null || sp is null) return;
+
+        List<CofWearableLink> links;
+        try
+        {
+            var cof = inventory.GetFolderForType(sp.UUID, FolderType.CurrentOutfit);
+            if (cof is null) return;
+            var content = inventory.GetFolderContent(sp.UUID, cof.ID);
+            if (content?.Items is null) return;
+
+            links = new List<CofWearableLink>(content.Items.Count);
+            var unresolved = 0;
+            foreach (var link in content.Items)
+            {
+                if (link is null || link.AssetType != (int)AssetType.Link || link.AssetID.IsZero()) continue;
+                var target = inventory.GetItem(sp.UUID, link.AssetID);
+                if (target is null) { unresolved++; continue; }
+                if (target.InvType != (int)InventoryType.Wearable) continue;   // an attachment or a gesture link
+                var type = (int)(target.Flags & 0xff);
+                if (type < 0 || type >= AvatarWearable.MAX_WEARABLES) { unresolved++; continue; }
+                links.Add(new CofWearableLink(link.ID, link.Description, target.ID, type, target.AssetID));
+            }
+            if (unresolved > 0)
+                m_log.LogWarning("[SSB]: {Count} COF link(s) for {Name} name an item this region cannot resolve as a wearable; their types keep what the agent already wears (S8)", unresolved, sp.Name);
+        }
+        catch (Exception ex)
+        {
+            m_log.LogWarning(ex, "[SSB]: could not read the COF for {Name}; the wearables are left as they are", sp.Name);
+            return;
+        }
+
+        var derived = CofWearables.Derive(sp.Appearance?.Wearables, links, out var changed);
+        if (!changed) return;
+
+        sp.Appearance.Wearables = derived;
+        m_log.LogDebug("[SSB]: {Name}'s worn set from the COF: {Summary}", sp.Name, DescribeWearables(derived));
+    }
+
+    /// <summary>"Shirt x2, Pants" — the worn types and how many of each, for the log.</summary>
+    private static string DescribeWearables(AvatarWearable[] wearables)
+    {
+        var parts = new List<string>();
+        for (var type = 0; type < wearables.Length; type++)
+        {
+            var count = wearables[type]?.Count ?? 0;
+            if (count == 0) continue;
+            parts.Add(count == 1 ? $"{(WearableType)type}" : $"{(WearableType)type} x{count}");
+        }
+        return parts.Count == 0 ? "nothing" : string.Join(", ", parts);
     }
 
     /// <summary>The V3 response body: <c>success</c> always, <c>expected</c> when there is a version to quote, <c>error</c> when there is something to say.</summary>
