@@ -327,3 +327,28 @@ All three call `RunBakeAsync` (`AgentSession.Appearance.cs:131`), which single-f
 `SendAppearanceAsync` is the only place an `AgentSetAppearance` leaves the gateway (`AppearanceBaker.cs:34`, and the S11 invariant at `:47-51`). It builds the packet in `BuildAppearancePacket` (`:481`) and publishes to the client in `PublishSelfAppearance` (`:430`).
 
 **Consequence for S6.** The `server`-mode construction has to cut the type, not the call: all three entry points already converge, so the branch point is a single one — but `AgentSession` *is* the `IBakeSteps` implementation, so "the code that can send appearance does not exist on that branch" means the server-mode session must not be an `IBakeSteps` at all, rather than an `AgentSession` that declines to bake.
+
+## 4.7 The body-part guard (S8)
+
+A bake is refused when the incoming wearable set has lost one of the four body-part slots — shape, skin, hair,
+eyes — since the last set this sim successfully baked from.
+
+**Why a refusal and not a warning.** Storing a bake supersedes the asset it replaces, and supersede means delete
+(ADR-004). A bake composed from a set with no skin is a valid-looking bake of nothing, and once it is stored the
+good bakes are gone; baking again cannot recover them. On 2026-09-05 exactly that happened: four unresolvable
+item ids emptied slots 1-4, and the `reason=CofChanged` bake that followed reported "no Skin worn / no Eyes worn
+/ no Hair worn", stored 4 channels and superseded 4.
+
+**Why these four slots and why only present -> absent.** A resident cannot take off a body part — no viewer
+offers it, and every avatar has all four from creation — so that transition is never something the resident did.
+It is always a failure upstream of the bake: a stale viewer cache, an inventory service that answered late, an
+item from another grid. Everything a resident *can* do passes through untouched, because it either keeps the
+body parts populated or replaces them: changing clothes, stripping to underwear, swapping a shape.
+
+**The baseline.** Recorded only after a bake succeeds, never after a refusal. Recording a refused set would make
+the next attempt see no loss and do the damage anyway — the guard would delay it, not prevent it. The first bake
+of a session always proceeds, there being nothing to compare against, and `Forget` clears the baseline on close.
+
+**Standing.** This is a backstop, not the cure. With S8's `SetAppearanceAssets` and child-presence fixes in
+place the empty set should not reach the baker at all; the guard exists because the cost of being wrong here is
+unrecoverable and the cost of a false refusal is one skipped bake.
