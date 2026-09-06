@@ -442,3 +442,75 @@ known reproduction: it follows from the named frames and the allocator contract,
 
 **Still missing:** which array grew and the address it freed. WER is now DumpType 2, so the next occurrence
 carries the heap and answers both directly.
+
+---
+
+# Addendum, 2026-09-06 (PHYS-3) - the growth hypothesis is falsified
+
+PHYS-2e proposed that a temp Array outgrew its `reserve` inside `MoveShape`. **From the Jolt v5.4.0 source,
+none of the three can**, and a load harness that drove a character well past the contact cap agrees. Nothing
+was fixed.
+
+## Part 1 - each array against its reserve, from source
+
+| array | reserve | can it exceed it inside `MoveShape`? |
+|---|---|---|
+| `contacts` (`:1228-1229`) | `mMaxNumHits` (**256**, `CharacterVirtual.h:52`) | **No.** `GetContactsAtPosition` fills it through `ContactCollector(..., mMaxNumHits, ...)` (`:416`), which caps at exactly that: `if (mContacts.size() == mMaxHits)` at `:251` and `:296`, setting `mMaxHitsExceeded` and reducing hits rather than pushing. Reserve == cap. |
+| `ignored_contacts` (`:1238-1239`) | `contacts.size()` | **No, not there.** `RemoveConflictingContacts` (`:437-474`) pairs **every** `emplace_back` with an `erase` from `ioContacts` (`:459-460`, `:466-468`), so `ignored.size() + contacts.size()` is invariant at the original count - which is the reserve. |
+| `constraints` (`:1243-1244`) | `contacts.size() * 2` | **No.** `DetermineConstraints` (`:651-691`) emits one constraint per contact (`:662`) plus at most one more for a too-steep slope (`:683`). Two per contact is the ceiling; two per contact is the reserve. |
+
+**Ranking by "how few bodies to exceed the reserve": all three are unreachable at any body count.** Two are
+bounded by an equality (the collector cap; two-per-contact) and one by a conservation invariant.
+
+**One growth path does exist, and it is not in `MoveShape`.** `SolveConstraints` pushes into the same
+`ignored_contacts` at `CharacterVirtual.cpp:869` (`ioIgnoredContacts.emplace_back(*c->mContact)`), once per
+*ignored constraint*, with no relation to the reserve - and there can be up to two constraints per remaining
+contact. So `ignored_contacts` can outgrow `contacts.size()`. **But a growth there aborts inside
+`SolveConstraints`**, freeing the old buffer while `constraints` and the arrays `SolveConstraints` allocated
+sit above it - **not** in the destructor of `constraints`, which is where the dump's stack actually is. So it
+does not explain the observed frame either.
+
+## Part 2 - the load harness
+
+One character, one region, no crossings, no second thread. Small static boxes packed on a lattice inside the
+capsule volume so every one is a contact. The detection is the abort itself, so the load runs in a **child
+process** and the parent asserts on how it died; exit `0xC0000409` would be `__fastfail`.
+
+| variant | bodies | max avatar contacts in one step | child exit |
+|---|---|---|---|
+| load | 400 | **344** | `0x00000000` - survived |
+| sanity, a Legion arrival | 14 | **15** | `0x00000000` - survived |
+
+**The load genuinely landed.** 344 contact reports from one step is far past the 256 collector cap, so the
+collector was saturated and the hit-reduction path exercised. (That figure counts `ContactReport`s across a
+whole step - several `MoveShape` iterations - so it is an upper bound on any single `contacts.size()`, not that
+value. The point is that the cap was reached, and it was.)
+
+**The sanity number is the more interesting one.** An ordinary arrival with Truly's 14 attachments produces
+**15** avatar contacts - the attachments plus the floor. That is **6% of `mMaxNumHits`**. The live crash was
+nowhere near any contact-related limit.
+
+## Part 3 - where this leaves it
+
+PHYS-2e's mechanism is **falsified for the arrays in `MoveShape`**: all three are bounded by their reserves by
+construction, and driving a character to 344 contacts - twenty-three times what the live crossing produced -
+does not abort. The one remaining growth path, `SolveConstraints:869`, is real but would abort a frame lower
+than the dump shows. **PHYS-3 narrows the search; it does not explain the crash.** What is missing is unchanged
+from PHYS-2e: `mBase`, `mTop`, and the address passed to `Free`. WER is now DumpType 2 and symbols now exist,
+so the next occurrence should be a one-line diagnosis rather than another elimination round.
+
+### Fix shapes, for a decision - none implemented
+
+| shape | cost | what it buys |
+|---|---|---|
+| **Raise the `ignored_contacts` reserve** (e.g. `contacts.size() * 3`) | one line, upstreamable; the multiplier is picked by argument, not proof | closes the one real growth path found, `SolveConstraints:869` - which does not match the observed stack |
+| **Make the collector cap all three** | not applicable | two of the three are already bounded by equality; there is nothing left to cap |
+| **`TempAllocatorMalloc` for character updates** - give the six `JPH_CharacterVirtual_*` entry points a malloc-backed allocator instead of `system->tempAllocator` | a second joltc patch on top of the one already carried; a malloc per temp array per character per step; further divergence from upstream | **removes the entire LIFO hazard for characters** - the only shape that addresses the class rather than a guessed instance |
+| **Upstream: give `TempAllocatorImpl` a `reallocate`** | upstream PR, long feedback loop | can only grow the *top* block in place; a non-top grow still allocates-copies-frees and still aborts, so it is partial even upstream |
+
+**What I would take: none of them yet.** Every shape above aims at a mechanism this session has just shown is
+not the live one, and shipping a guessed multiplier or a second native patch against a crash we can now
+diagnose properly trades a known unknown for an unknown one. The next occurrence carries the heap and resolves
+to a named line. **If something protective must ship before then, it is `TempAllocatorMalloc` for character
+updates** - it is the only option that removes the class, it cannot be wrong about the cause because it does
+not depend on the cause, and its cost is CPU rather than correctness.
