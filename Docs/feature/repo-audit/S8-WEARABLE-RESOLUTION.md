@@ -41,6 +41,27 @@ to be rebuilt on `UserAccountHelpers.CreateUserWithInventory` to go red.
 
 That is the transferable lesson: a test for a resolution failure has to make resolution actually run.
 
+## Which presence actually ran it — and why that matters for the fix
+
+Corrected here, because the S8 session got it wrong twice and the second reading was no better sourced than the
+first.
+
+**The AVFACTORY warnings carry no region tag.** `SetAppearanceAssets` logs agent, slot and item and nothing
+else, so no line in that block says where it ran. The original brief placed the 18:06:46 warnings on
+Transylvania's child presence; the S8 report then argued they must have been on a Transylvania presence that had
+just become root, because the bake five seconds later cannot happen on a child. Both readings were inferences
+about a region the log never named.
+
+**The timing settles it.** Truly logged in at **18:06:40**, on **Ebony**. `DelayBeforeAppearanceSave` is 5 s.
+The login queues a save through the baked-texture cache check (`ScenePresence.cs:2291-2294`), it drains at
+~18:06:45-46, and that is the save whose warnings are in the log. The presence is **Ebony's root** — the region
+Truly actually logged into. Transylvania's child presence did not write anything.
+
+**So fix #1 is the cause and fix #2 is defence in depth.** Keeping an unresolvable wearable
+(`SetAppearanceAssets`) is what stops this loss; the child-presence guard closes a hole that is real and
+unguarded but was not the path taken here. Ordering the two that way matters if either is ever reverted: without
+fix #1 the loss recurs on a root presence, where no child guard can reach it.
+
 ## Upstream
 
 Both S8 defects are inherited unchanged from OpenSim-NGC develop `a68d59f232`: the removal at
