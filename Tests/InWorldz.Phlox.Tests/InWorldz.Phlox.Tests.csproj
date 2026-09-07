@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <None Include="dispatch-baseline.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="LiveScripts\**\*.lsl" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
