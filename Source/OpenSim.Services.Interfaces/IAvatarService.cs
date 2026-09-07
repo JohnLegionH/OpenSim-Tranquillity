@@ -196,8 +196,20 @@ public class AvatarData
         // Wearables
         Data["AvatarHeight"] = appearance.AvatarHeight.ToString();
 
-        for (int i = 0 ; i < AvatarWearable.LEGACY_VERSION_MAX_WEARABLES ; i++)
+        // S11: every type the appearance actually has, not the first LEGACY_VERSION_MAX_WEARABLES (15) of them.
+        // The old bound stopped at type 14, so Physics (15) and Universal (16) were never written - the record
+        // for a live avatar wearing both held no "Wearable 15:*" or "Wearable 16:*" row at all, however
+        // faithfully the rest of the stack carried them. Nothing else in the tree is bounded this way: the
+        // wearable table is MAX_WEARABLES (17) wide (AvatarWearable.cs:75), the wire negotiates its own count and
+        // sends 15 and 16 in "wrbls8" (AvatarAppearance.cs:801-819), the compositor draws both, and the reader
+        // below takes any index (S10). This writer was the only floor. It is driven off the array's own length so
+        // it is right for a legacy 15-slot appearance too - AvatarAppearance's constructor and ClearWearables
+        // still make one of those (AvatarAppearance.cs:320-325) - and for whatever a later type count adds.
+        for (int i = 0 ; i < appearance.Wearables.Length ; i++)
         {
+            if (appearance.Wearables[i] is null)
+                continue;
+
             for (int j = 0 ; j < appearance.Wearables[i].Count ; j++)
             {
                 string fieldName = String.Format("Wearable {0}:{1}", i, j);
