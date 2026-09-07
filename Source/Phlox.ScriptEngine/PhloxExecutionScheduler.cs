@@ -402,6 +402,60 @@ namespace Phlox.ScriptEngine
             return list;
         }
 
+        /// <summary>
+        /// PHLOX-2f: a read-only view of one script for the console. Everything the last four
+        /// sessions had to reach for with a debugger or infer from silence - what state the script
+        /// is in, whether anything is queued for it, and what the region thinks it handles.
+        /// </summary>
+        internal struct ScriptStatus
+        {
+            public bool Found;
+            public UUID ItemId;
+            public uint HostLocalId;
+            public string RunState;
+            public bool Enabled;
+            public bool GeneralEnable;
+            public bool Suspended;
+            public int QueuedEvents;
+            public int LslState;
+            public int TimerIntervalMs;
+            public ulong EventMask;
+        }
+
+        internal ScriptStatus GetStatus(UUID itemId)
+        {
+            lock (m_AllScriptsLock)
+            {
+                if (!m_AllScripts.TryGetValue(itemId, out Interpreter interp))
+                    return new ScriptStatus { Found = false, ItemId = itemId };
+
+                var st = interp.ScriptState;
+                int queued;
+                lock (st.EventQueueLock) queued = st.EventQueue.Count;
+
+                return new ScriptStatus
+                {
+                    Found = true,
+                    ItemId = itemId,
+                    HostLocalId = interp.HostLocalId,
+                    RunState = st.RunState.ToString(),
+                    Enabled = st.Enabled,
+                    GeneralEnable = st.GeneralEnable,
+                    Suspended = m_Suspended.Contains(itemId),
+                    QueuedEvents = queued,
+                    LslState = st.LSLState,
+                    TimerIntervalMs = st.TimerInterval,
+                    EventMask = 0,
+                };
+            }
+        }
+
+        /// <summary>Every item this scheduler holds, for a whole-object status listing.</summary>
+        internal List<UUID> AllItemIds()
+        {
+            lock (m_AllScriptsLock) return new List<UUID>(m_AllScripts.Keys);
+        }
+
         // ── Syscall returns ────────────────────────────────────────────────────
 
         public void PostSyscallReturn(UUID itemId, object retValue, int delay)

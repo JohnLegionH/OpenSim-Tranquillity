@@ -131,6 +131,20 @@ public sealed class SchedulerHarness : IDisposable
         }
     }
 
+    /// <summary>Pump for a wall-clock duration, so timer cadence can be measured.</summary>
+    public void PumpFor(TimeSpan how)
+    {
+        var loaderDoWork = m_loader.GetType().GetMethod("DoWork");
+        var exeDoWork = m_exe.GetType().GetMethod("DoWork");
+        var until = DateTime.UtcNow + how;
+        while (DateTime.UtcNow < until)
+        {
+            loaderDoWork!.Invoke(m_loader, null);
+            exeDoWork!.Invoke(m_exe, null);
+            System.Threading.Thread.Sleep(1);
+        }
+    }
+
     private static bool Pending(object workStatus)
         => (bool)(workStatus.GetType().GetField("WorkIsPending")?.GetValue(workStatus)
                   ?? workStatus.GetType().GetProperty("WorkIsPending")?.GetValue(workStatus)
@@ -145,6 +159,21 @@ public sealed class SchedulerHarness : IDisposable
     public bool SaidAnything(UUID itemId) { lock (m_said) return m_said.Count > 0; }
 
     public void ClearSaid(UUID itemId) { lock (m_said) m_said.Clear(); }
+
+    /// <summary>
+    /// Touch the prim through the SCENE's own path - <c>EventManager.TriggerObjectGrab</c> into the
+    /// engine's <c>OnObjectGrab</c> handler - rather than posting an event straight at the
+    /// scheduler. This is the route that was silent in world, and the only one that exercises the
+    /// part's event mask.
+    /// </summary>
+    public void TouchViaScene()
+    {
+        // A client is required: PhloxEngine.BuildTouchDetectParams reads remoteClient.AgentId
+        // without a null check (PhloxEngine.cs:464), and in world there is always one.
+        Scene.EventManager.TriggerObjectGrab(
+            Prim.LocalId, Prim.LocalId, OpenMetaverse.Vector3.Zero, NullClient.Create(),
+            new OpenSim.Framework.SurfaceTouchEventArgs());
+    }
 
     /// <summary>Post a touch_start the way the region does when a resident touches the prim.</summary>
     public void PostTouch(UUID itemId)
@@ -191,6 +220,19 @@ internal class NullWorldComm : System.Reflection.DispatchProxy
 
     protected override object Invoke(MethodInfo targetMethod, object[] args)
     {
+        var rt = targetMethod.ReturnType;
+        return rt == typeof(void) || !rt.IsValueType ? null : Activator.CreateInstance(rt);
+    }
+}
+
+/// <summary>A do-nothing IClientAPI, generated: the touch path needs one but reads almost nothing.</summary>
+internal class NullClient : System.Reflection.DispatchProxy
+{
+    public static OpenSim.Framework.IClientAPI Create() => Create<OpenSim.Framework.IClientAPI, NullClient>();
+
+    protected override object Invoke(MethodInfo targetMethod, object[] args)
+    {
+        if (targetMethod.Name == "get_Name") return "Test Toucher";
         var rt = targetMethod.ReturnType;
         return rt == typeof(void) || !rt.IsValueType ? null : Activator.CreateInstance(rt);
     }

@@ -172,6 +172,11 @@ namespace Phlox.ScriptEngine
                     "Transiently pause Phlox script(s): timers/listens/state survive; no timeslices until 'phlox resume'. Not persisted — a region restart clears it. Does NOT touch the Running flag.",
                     HandleSuspendCommand);
                 MainConsole.Instance.Commands.AddCommand("Phlox", false,
+                    "phlox status",
+                    "phlox status <script-item-uuid | object-name>",
+                    "Read-only: what state a Phlox script is in - RunState, enabled flags, queued events, LSL state, timer interval, the event mask the region holds for the prim, and the item's Running flag. Changes nothing.",
+                    HandleStatusCommand);
+                MainConsole.Instance.Commands.AddCommand("Phlox", false,
                     "phlox resume",
                     "phlox resume <script-item-uuid | object-name>",
                     "Resume script(s) paused by 'phlox suspend' (accumulated events then deliver).",
@@ -191,6 +196,93 @@ namespace Phlox.ScriptEngine
 
         private void HandleSuspendCommand(string module, string[] args) => HandleSuspendResume(args, true);
         private void HandleResumeCommand(string module, string[] args) => HandleSuspendResume(args, false);
+
+        private void HandleStatusCommand(string module, string[] args)
+        {
+            if (WrongConsoleScene()) return;
+            if (args.Length < 3)
+            {
+                MainConsole.Instance.Output("Usage: phlox status <script-item-uuid | object-name>");
+                return;
+            }
+            if (m_ExeScheduler == null)
+            {
+                MainConsole.Instance.Output("Script engine not running.");
+                return;
+            }
+
+            string target = string.Join(" ", args, 2, args.Length - 2);
+
+            if (UUID.TryParse(target, out UUID itemId))
+            {
+                ReportStatus(itemId);
+                return;
+            }
+
+            int found = 0;
+            foreach (var sog in m_Scene.GetSceneObjectGroups())
+            {
+                if (!string.Equals(sog.Name, target, StringComparison.OrdinalIgnoreCase)) continue;
+                foreach (var part in sog.Parts)
+                    foreach (var item in part.Inventory.GetInventoryItems(InventoryType.LSL))
+                    {
+                        ReportStatus(item.ItemID);
+                        found++;
+                    }
+            }
+            if (found == 0)
+                MainConsole.Instance.Output($"No object named '{target}' with scripts found in this region.");
+        }
+
+        /// <summary>
+        /// PHLOX-2f. Everything the last four sessions had to infer from silence, in one line-set:
+        /// whether the scheduler even has the script, what state it is in, what is queued for it,
+        /// and - the one that mattered - the event mask the REGION holds for the prim, which is
+        /// what decides whether a touch ever reaches the script at all.
+        /// </summary>
+        private void ReportStatus(UUID itemId)
+        {
+            var st = m_ExeScheduler.GetStatus(itemId);
+            var o = MainConsole.Instance;
+
+            if (!st.Found)
+            {
+                o.Output($"{itemId}: NOT LOADED by Phlox in this region (no interpreter).");
+                LogLoadContext(itemId);
+                return;
+            }
+
+            SceneObjectPart part = m_Scene.GetSceneObjectPart(st.HostLocalId);
+            TaskInventoryItem item = part?.Inventory.GetInventoryItem(itemId);
+
+            o.Output($"{itemId}");
+            o.Output($"  prim          : {part?.Name ?? "(unknown)"} localId={st.HostLocalId}");
+            o.Output($"  script name   : {item?.Name ?? "(not in prim inventory)"}");
+            o.Output($"  RunState      : {st.RunState}");
+            o.Output($"  enabled       : Enabled={st.Enabled} GeneralEnable={st.GeneralEnable} suspended={st.Suspended}");
+            o.Output($"  Running flag  : {(item is null ? "(unknown)" : item.ScriptRunning.ToString())}");
+            o.Output($"  queued events : {st.QueuedEvents}");
+            o.Output($"  LSL state     : {st.LslState}");
+            o.Output($"  timer         : {(st.TimerIntervalMs > 0 ? st.TimerIntervalMs + " ms" : "not set")}");
+            o.Output($"  region mask   : part.ScriptEvents={part?.ScriptEvents.ToString() ?? "(no part)"}");
+            o.Output($"  aggregate     : {part?.AggregatedScriptEvents.ToString() ?? "(no part)"}");
+        }
+
+        /// <summary>When there is no interpreter, say what the prim still knows about the item.</summary>
+        private void LogLoadContext(UUID itemId)
+        {
+            foreach (var sog in m_Scene.GetSceneObjectGroups())
+                foreach (var part in sog.Parts)
+                {
+                    var item = part.Inventory.GetInventoryItem(itemId);
+                    if (item is null) continue;
+                    MainConsole.Instance.Output(
+                        $"  found in prim '{part.Name}' (localId={part.LocalId}): asset={item.AssetID} " +
+                        $"Running flag={item.ScriptRunning} engine='{item.ScriptRunning}'");
+                    return;
+                }
+            MainConsole.Instance.Output("  and no prim in this region holds an inventory item with that id.");
+        }
 
         private void HandleSuspendResume(string[] args, bool suspend)
         {

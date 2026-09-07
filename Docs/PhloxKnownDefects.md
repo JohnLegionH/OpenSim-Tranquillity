@@ -512,3 +512,93 @@ that the test scene does not. Candidates, none investigated:
 **The last one would fit every observation** and is the first thing to check, but it is a guess and
 is recorded as one.
 
+---
+
+## PHLOX-2f — a fresh instance was born disabled, so the region never learned the prim was touchable
+
+**Logged:** 2026-09-07. **Fixed; not deployed.** The timer half was **not reproduced** — see below.
+
+### The defect, and it is one line
+
+`RuntimeState(int numGlobals)`, the constructor used for every fresh interpreter
+(`Interpreter.cs:96`), set `LocalDisable` but **never set `GeneralEnable`**, which therefore
+defaulted to `false`. Only `Reset()` set it (`RuntimeState.cs:286`).
+
+`PhloxExecutionScheduler.FinishedLoading` computes the script's event mask at **`:184`**, and the
+freshStart branch calls `sysApi.OnScriptReset()` at **`:190`** — *after*. And
+`LSLSystemAPI.SetScriptEventFlags` gates the entire mask on `GeneralEnable`
+(`LSLSystemAPI.cs:96-101`):
+
+```csharp
+if (m_thisScript.ScriptState.GeneralEnable && ... )
+    foreach (var evt in ...) flags |= MapEventFlag(...);
+m_host.SetScriptEvents(m_itemID, flags);      // :102
+```
+
+So a fresh instance sent the part a mask of **zero**. `SceneObjectPart.aggregateScriptEvents`
+derives `PrimFlags.Touch` from `anytouch` in that mask (`:5254-5256`, into `m_localFlags` at
+`:5269`), and the region's own touch dispatch tests the same mask
+(`Scene.PacketHandlers.cs:334`). With it empty: **no touch cursor, and `touch_start` can never
+fire** — while `state_entry` still ran, because `ProcessEventQueue` lets `STATE_ENTRY` past a
+disabled script (`:664`). That is exactly what was seen on 1.1.277 at 15:48-15:53: llSetColor,
+llSetText, llSay and llOwnerSay all worked, Running was ticked, and the prim could not be clicked.
+It is also why the manhole's `llSetTouchText` ran and the menu still read "Touch".
+
+A restored-state instance takes `savedState.ToRuntimeState()`, which carries a persisted
+`GeneralEnable`, which is why restored scripts have always been touchable.
+
+**Fixed at the root**: the fresh constructor sets `GeneralEnable = true`. A brand-new script is
+enabled; that is not a property of having been Reset.
+
+### Tests
+
+`EventMaskRegistrationTests` — three, all red before the fix:
+
+- a fresh compile registers `touch_start` on the part, and the aggregate carries `anytouch`;
+- a **shared-script start** (second instance of a loaded asset) does too — the live path;
+- a touch through the **scene's own route** (`EventManager.TriggerObjectGrab` → the engine's
+  `OnObjectGrab`) reaches `touch_start`. Not a directly posted event.
+
+Building the third turned up that `PhloxEngine.BuildTouchDetectParams` dereferences
+`remoteClient.AgentId` with no null check (`PhloxEngine.cs:464`). Harmless in world, where there is
+always a client; noted, not fixed.
+
+### The timer half was NOT reproduced
+
+`TimerCadenceTests` asserts a `llSetTimerEvent(3.0)` script fires at most twice in 3.5 s. **It
+passes on the unmodified tree.** The units are consistent end to end: `SetTimer` stores
+`(int)(sec * 1000)` ms (`:421`), `readyOn` adds that to `Util.EnvironmentTickCount()` which is also
+ms (`:434`), and `CheckSleepingScripts` compares the two directly (`:601-605`). **No unit or scale
+error found, and none invented.**
+
+So the live ~5 ticks/second has another cause, and the most likely place is the one this harness
+cannot see by construction — `PhloxMasterScheduler`'s thread and its wake-up arithmetic, which the
+harness replaces with a hand-driven pump. `PhloxMasterScheduler.cs:70-79` already documents one
+lost-wakeup bug of that family having been fixed. **Next step: measure it in world with the new
+`phlox status`, which prints the timer interval the scheduler is actually holding.**
+
+### `phlox status` (PART 3)
+
+Read-only, and it changes nothing:
+
+```
+phlox status <script-item-uuid | object-name>
+```
+
+Prints, per script: prim and localId, script name, **RunState**, `Enabled` / `GeneralEnable` /
+suspended, the item's **Running flag**, **queued events**, LSL state, **timer interval in ms**, and
+the **region's event mask** for the prim (`part.ScriptEvents` and `AggregatedScriptEvents`). When
+there is no interpreter it says so and reports what the prim still knows about the item.
+
+Every one of those is something the last four sessions had to infer from silence or reach for with
+a debugger. The mask line is the one that would have made PHLOX-2f a five-minute diagnosis.
+
+### Amendments to PHLOX-2d and PHLOX-2e
+
+- **PHLOX-2d's `Waiting` fix stands** and was correct — `ProcessEventQueue` does only start an
+  event for a `Waiting` script — but it was **not the live symptom**. The live symptom was this:
+  the event mask never reaching the region, plus the timer cadence, which is still open.
+- **PHLOX-2e's conclusion stands too**: the scheduler does run a fresh instance, and it does. What
+  2e could not see is that running is not enough — the region also has to be *told* what the script
+  handles, and that is a different call on a different object.
+

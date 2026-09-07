@@ -262,6 +262,15 @@ namespace InWorldz.Phlox.VM
         /// <param name="numGlobals">Number of global variables in the associated script</param>
         public RuntimeState(int numGlobals)
         {
+            // PHLOX-2f: a brand-new script is ENABLED. Only Reset() used to set this, so a fresh
+            // instance was born with GeneralEnable false, and PhloxExecutionScheduler.FinishedLoading
+            // computes the script's event mask (:184) BEFORE the freshStart branch resets it (:190).
+            // LSLSystemAPI.SetScriptEventFlags gates the whole mask on GeneralEnable
+            // (LSLSystemAPI.cs:96), so the mask went to the part as ZERO: the region never learned
+            // the prim was touchable, the viewer showed no touch cursor, and touch_start could never
+            // fire. state_entry still ran, because ProcessEventQueue lets STATE_ENTRY past a
+            // disabled script (:664) - which is exactly what was seen in world on 1.1.277.
+            GeneralEnable = true;
             MemInfo = new MemoryInfo();
             Globals = new object[numGlobals];
 
