@@ -13,6 +13,8 @@ using System.Reflection;
 using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Services.Interfaces;
+using OpenSim.Region.Framework.Interfaces;
+using OpenSim.Region.Framework.Scenes;
 using InWorldz.Phlox.VM;
 using InWorldz.Phlox.Glue;
 using InWorldz.Phlox.Serialization;
@@ -385,6 +387,17 @@ namespace Phlox.ScriptEngine
             }
         }
 
+        /// <summary>
+        /// PHLOX-2: tell the owner once, with the script's name, that their script did not compile.
+        /// The log line above stays exactly as it was - this is in addition to it, not instead.
+        /// </summary>
+        private static void ReportCompileFailureToOwner(PhloxLoadRequest req, LogOutputListener listener)
+        {
+            if (req?.Prim is null || listener is null || listener.Errors.Count == 0) return;
+            string scriptName = req.Prim.Inventory?.GetInventoryItem(req.ItemID)?.Name;
+            PhloxCompileErrorReport.ToOwner(req.Prim, scriptName, listener.Errors);
+        }
+
         private static void SafeDeleteCache(string path)
         {
             try { File.Delete(path); }
@@ -393,7 +406,9 @@ namespace Phlox.ScriptEngine
 
         private void CompileAndStart(UUID assetId, PhloxLoadRequest req)
         {
-            var frontend = new CompilerFrontend(new LogOutputListener(req.ItemID), ".");
+            // PHLOX-2: keep the listener so its errors can reach the owner, not only the log.
+            var listener = new LogOutputListener(req.ItemID);
+            var frontend = new CompilerFrontend(listener, ".");
             try
             {
                 m_CompileTimer.Restart();
@@ -405,6 +420,7 @@ namespace Phlox.ScriptEngine
                 if (compiled == null)
                 {
                     m_log.LogError("[PhloxLoader]: Compilation failed for {0} item {1}", assetId, req.ItemID);
+                    ReportCompileFailureToOwner(req, listener);
                     return;
                 }
 
@@ -574,9 +590,16 @@ namespace Phlox.ScriptEngine
 
         public LogOutputListener(UUID itemId) { m_ItemId = itemId; }
 
+        /// <summary>PHLOX-2: every error, in order, so the owner can be told what the log already says.</summary>
+        private readonly List<string> m_Errors = new List<string>();
+
+        /// <summary>The compiler's errors for this script, in the order it reported them.</summary>
+        public IReadOnlyList<string> Errors => m_Errors;
+
         public void Error(string message)
         {
             m_ErrorCount++;
+            m_Errors.Add(message);
             m_log.LogError("[PhloxCompile]: {0}: {1}", m_ItemId, message);
         }
 
@@ -587,5 +610,73 @@ namespace Phlox.ScriptEngine
             => m_log.LogDebug("[PhloxCompile]: Finished {0}", m_ItemId);
 
         public bool HasErrors() => m_ErrorCount > 0;
+    }
+
+    /// <summary>
+    /// PHLOX-2. A script that will not compile has always been a log line and nothing else
+    /// (<see cref="LogOutputListener.Error"/>), so the resident whose object is broken is never
+    /// told and the object gives no sign. SL sends the owner the compiler's message; this is that.
+    ///
+    /// <para>The build is separated from the send so the wording is a unit test and the delivery
+    /// is one line.</para>
+    /// </summary>
+    public static class PhloxCompileErrorReport
+    {
+        /// <summary>
+        /// The message SL sends the owner: the object, the script, and each error with its
+        /// position. One message per failed compile however many errors it carried - a script
+        /// with twenty errors must not be twenty dialogs.
+        /// </summary>
+        public static string Build(string objectName, string scriptName, IReadOnlyList<string> errors)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append(string.IsNullOrEmpty(objectName) ? "Object" : objectName);
+            sb.Append(" [");
+            sb.Append(string.IsNullOrEmpty(scriptName) ? "Script" : scriptName);
+            sb.Append("]: script failed to compile");
+
+            if (errors is null || errors.Count == 0)
+                return sb.ToString();
+
+            // The compiler already prefixes "line <l>:<c> " where it knows the position, so the
+            // errors are passed through rather than reformatted - reformatting would lose the
+            // positions on the messages that carry them differently.
+            const int Max = 10;
+            for (int i = 0; i < errors.Count && i < Max; i++)
+            {
+                sb.Append(Environment.NewLine);
+                sb.Append(errors[i]);
+            }
+            if (errors.Count > Max)
+            {
+                sb.Append(Environment.NewLine);
+                sb.Append("... and ");
+                sb.Append(errors.Count - Max);
+                sb.Append(" more; the rest are in the region log.");
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Send it, once, to the part's owner. Silent when the region has no dialog module or no
+        /// part - a missing notification must never take down a script load.
+        /// </summary>
+        public static void ToOwner(SceneObjectPart part, string scriptName, IReadOnlyList<string> errors)
+        {
+            if (part is null || errors is null || errors.Count == 0) return;
+            try
+            {
+                var dm = part.ParentGroup?.Scene?.RequestModuleInterface<IDialogModule>();
+                if (dm is null) return;
+                dm.SendAlertToUser(part.OwnerID, Build(part.Name, scriptName, errors), false);
+            }
+            catch (Exception ex)
+            {
+                m_reportLog.LogWarning(ex, "[PhloxCompile]: could not tell {Owner} that {Script} failed to compile",
+                    part.OwnerID, scriptName);
+            }
+        }
+
+        private static readonly ILogger m_reportLog = LoggerProvider.CreateLogger(typeof(PhloxCompileErrorReport));
     }
 }

@@ -181,3 +181,84 @@ errors to the log. Replace with a real listener adaptor once LSLSystemAPI is wir
    grep.
 
 None of that is built. (1) is the one with SL parity behind it and the smallest surface.
+
+---
+
+## PHLOX-2 — a compile harness, owner-visible errors, and the overload work not done
+
+**Logged:** 2026-09-07. **Part 2 (signature-keyed built-in resolution) was NOT implemented.**
+Parts 1 and 3 were. Read the "Why part 2 stopped" section before picking it up.
+
+### Scope ruling, recorded
+
+**Built-in (`ll*`/`os*`) overloads should resolve by name + signature. User-function
+overloading stays rejected** — SL has no user-function overloading, so Phlox's existing
+rule is the parity rule and YEngine's acceptance is the divergence. The airship
+(`b8079466-322a-47f5-ba8d-cd17d9e0da61`, `SetVehicleSettings()` at line 92 and
+`SetVehicleSettings(string)` at 96) is therefore **content to fix, not a compiler defect**.
+`UserFunctionOverloadTests` pins that so nobody "fixes" it later by copying YEngine.
+
+### What landed
+
+**A Phlox test project — there was none.** `Tests/InWorldz.Phlox.Tests`, on
+`CompilerFrontend.Compile(string)` with a collecting `ILSLListener`. The template path the
+frontend takes is stored and never read, so a compile needs no scene, no region and no disk.
+This is the harness whose absence made PHLOX-1 report YEngine's verdict from reading source
+rather than running a compile.
+
+**It reproduces the live failure verbatim** — `line 8:8 Function 'osTeleportAgent' expects 4
+arguments, got 3`, the same message the region logged for `9898c41e-…` at 08:35 UTC.
+
+**Owner-visible compile errors (part 3).** `PhloxCompileErrorReport.Build` composes the SL-shaped
+message — `<object> [<script>]: script failed to compile` followed by the compiler's own lines,
+positions and all — and `ToOwner` sends it once through `IDialogModule.SendAlertToUser`.
+`PhloxScriptLoader.CompileAndStart` keeps its listener and calls it on failure. **One message per
+failed compile however many errors it carried**, capped at ten lines with the rest pointed at the
+log. The startup log line is unchanged: this is in addition, not instead. Silent when the region
+has no dialog module or no part — a missing notification must never take down a script load.
+
+### Why part 2 stopped, and what the next person needs
+
+Four tests are committed **`[Fact(Skip = …)]`** — they are the executable spec and the Skip is the
+reason. Remove it when the work lands.
+
+The blocker is not the table, it is that **Phlox resolves calls by name alone at four layers**:
+
+| Layer | Site | What it does today |
+|---|---|---|
+| Table | `InWorldz.Phlox/Types/Defaults.cs:8` | `Dictionary<string, FunctionSig>` — one signature per name, one `TableIndex` per entry |
+| Symbols | `Compiler/SymbolTable.cs:172-182` | `_globals.Define(sysMethod)` keyed by `fn.FunctionName` — a second `osTeleportAgent` collides |
+| Types | `Compiler/TypesVisitor.cs:612-616`, `:758` | compares against **the** parameter list; raises the "expects N arguments" error |
+| Codegen | `ByteCompiler/BytecodeGenerator.cs:126`, `:174-194` | `_functions` keyed by name; `.Add` throws on a duplicate |
+
+**The one unknown worth having resolved: the annotation channel exists.** `TypesVisitor` already
+passes decisions forward to codegen through `_annotations` (`SetPromoteToType`, used at `:631` for
+argument promotions). So the types pass can record *which* overload it chose on the call node and
+codegen can read it — which is the mechanism a name-mangling implementation needs, and it is
+already there.
+
+**Recommended shape** (not built): keep `Dictionary<string, FunctionSig>` and key overloads by a
+mangled name (`osTeleportAgent$3`) with `FunctionName` left bare; `SymbolTable` and
+`BytecodeGenerator` then define and dispatch per mangled name with no collision and a correct
+`TableIndex` each; `TypesVisitor` resolves the bare name, gathers `name` plus `name$N` candidates,
+picks by arity then by `CanAssignTo`/`promoteFromTo` — **the implicit-conversion rule already in
+the tree** (`TypesVisitor.cs:623-624`), which is LSL's int→float and key↔string — and annotates the
+node with the winner. Then `LSLSystemAPI` gains the two `osTeleportAgent` forms and
+`llLinkPlaySound`'s 4-argument form against `OSSL_Api.cs:1015`, `:1051` and its `llLinkPlaySound`.
+
+**Why I did not do it in the time available:** it is four coupled layers of a compiler plus the
+syscall shim, and the failure mode of getting it wrong is not a build error — it is a *silently
+wrong dispatch index*, which corrupts running content instead of failing loudly. It wants a session
+of its own with the harness now in place.
+
+### Parked
+
+- **The 4 arity divergences** (`llDerezObject`, `llSHA256String`, `llTargetedEmail`,
+  `llUpdateKeyValue`) — **check these against the SL wiki, not against `OSSL_Api.cs`.** Phlox's
+  table matches Phlox's own implementations, so OSSL is not the authority for whether Phlox is
+  wrong; SL is. Input to PHLOX-3.
+- **The 271 functions absent from Phlox** — PHLOX-3, to be ranked by SL-wiki usage rather than
+  added wholesale. Re-derive with `Docs/audit/phlox-ossl-surface-audit.py`.
+- **Script `96c2d98a`'s recurring "Slow timeslice" (250–2500 ms)** — perf lane, not compiler.
+  Not investigated here.
+
