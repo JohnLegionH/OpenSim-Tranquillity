@@ -24,7 +24,7 @@ public class BuiltinOverloadTests
 {
     // ------------------------------------------------------------------ osTeleportAgent
 
-    [Fact(Skip = "PHLOX-2 part 2 is NOT implemented. Phlox resolves calls by name alone; built-in overloads need name+signature resolution across Defaults.cs, SymbolTable, TypesVisitor and BytecodeGenerator. Remove this Skip when that lands - the test is the spec.")]
+    [Fact]
     public void The3ArgLocalTeleportOverloadCompiles()
     {
         // Verbatim from the failing script (asset 01d4448d-087e-49fb-9253-4b06ce522811, line 16).
@@ -36,7 +36,7 @@ public class BuiltinOverloadTests
         Assert.False(c.HasErrors(), $"osTeleportAgent(key, vector, vector) is OSSL_Api.cs:1051: {c.Report}");
     }
 
-    [Fact(Skip = "PHLOX-2 part 2 is NOT implemented. Phlox resolves calls by name alone; built-in overloads need name+signature resolution across Defaults.cs, SymbolTable, TypesVisitor and BytecodeGenerator. Remove this Skip when that lands - the test is the spec.")]
+    [Fact]
     public void The5ArgGridCoordinateOverloadCompiles()
     {
         // OSSL_Api.cs:1015 - osTeleportAgent(string agent, int regionX, int regionY, vector, vector)
@@ -60,7 +60,7 @@ public class BuiltinOverloadTests
 
     // ------------------------------------------------------------------ llLinkPlaySound
 
-    [Fact(Skip = "PHLOX-2 part 2 is NOT implemented. Phlox resolves calls by name alone; built-in overloads need name+signature resolution across Defaults.cs, SymbolTable, TypesVisitor and BytecodeGenerator. Remove this Skip when that lands - the test is the spec.")]
+    [Fact]
     public void LlLinkPlaySoundBothFormsCompile()
     {
         var three = PhloxCompiler.CompileInDefault(@"llLinkPlaySound(LINK_THIS, ""snd"", 1.0);");
@@ -84,7 +84,7 @@ public class BuiltinOverloadTests
         Assert.True(c.HasErrors(), "a 2-argument osTeleportAgent matches no overload and must fail");
     }
 
-    [Fact(Skip = "PHLOX-2 part 2 is NOT implemented. Phlox resolves calls by name alone; built-in overloads need name+signature resolution across Defaults.cs, SymbolTable, TypesVisitor and BytecodeGenerator. Remove this Skip when that lands - the test is the spec.")]
+    [Fact]
     public void TheRejectionListsTheAcceptedSignatures()
     {
         // The message that sent this session looking at the wrong thing said "expects 4
