@@ -43,6 +43,18 @@ public sealed class PhloxCompiler : ILSLListener
         return listener;
     }
 
+    /// <summary>
+    /// PHLOX-2d: the compiled script itself, for tests that need to RUN it rather than only compile
+    /// it. Null when the compile failed; the listener's errors say why.
+    /// </summary>
+    public static InWorldz.Phlox.VM.CompiledScript CompileTo(string source, out PhloxCompiler listener)
+    {
+        listener = new PhloxCompiler();
+        var frontend = new CompilerFrontend(listener, templatePath: null);
+        try { return frontend.Compile(source); }
+        catch (Exception ex) { listener._errors.Add(ex.Message); return null; }
+    }
+
     /// <summary>Wraps a body in a default state so a test only has to write the call.</summary>
     public static PhloxCompiler CompileInDefault(string body)
         => Compile("default\n{\n    state_entry()\n    {\n" + body + "\n    }\n}\n");

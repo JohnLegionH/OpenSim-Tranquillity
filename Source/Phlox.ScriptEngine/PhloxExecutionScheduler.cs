@@ -185,8 +185,17 @@ namespace Phlox.ScriptEngine
 
             if (freshStart)
             {
-                // New script — fire state_entry to run the script's initialization
-                interp.ScriptState.RunState = RuntimeState.Status.Running;
+                // New script — fire state_entry to run the script's initialization.
+                //
+                // PHLOX-2d: this MUST be Waiting, not Running. ProcessEventQueue only starts an
+                // event when the script is Waiting (:681); anything else is queued (:687), and the
+                // queue is drained by TransitionToWait, which runs only when a script that is
+                // already on the run queue finishes an event. A fresh script set to Running was
+                // therefore never started by anything: its state_entry sat in the queue for ever,
+                // with no error and no log line. The restored-state branch below has always set
+                // Waiting, which is why scripts restored from state ran and freshly compiled ones
+                // did not - the manhole on 1.1.275, and every new script.
+                interp.ScriptState.RunState = RuntimeState.Status.Waiting;
                 sysApi.OnScriptReset();
                 PostEvent(req.ItemID, new PostedEvent
                 {

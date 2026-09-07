@@ -377,3 +377,74 @@ Argument types remain the tree's own implicit-conversion rule: `promoteFromTo` p
 - **`botRemoveBot`'s key** is fixed and pinned (see the PHLOX-2c key commit).
 - Nothing is deployed.
 
+---
+
+## PHLOX-2d — freshly started scripts never ran, and it was never a 2b/2c regression
+
+**Logged:** 2026-09-07, against live 1.1.275. **Fixed; not deployed.**
+
+### The defect
+
+`PhloxExecutionScheduler.FinishedLoading` set a fresh script to
+**`RunState = Running`** and then posted its `state_entry`
+(`PhloxExecutionScheduler.cs:189-195`). But `ProcessEventQueue` only **starts** an event when the
+script is **`Waiting`** (`:681`); anything else is **queued** (`:687`). The queue is drained by
+`TransitionToWait` (`:558-565`), which runs only for a script already on the run queue — and
+`StartEvent` (`:887-894`) is the only thing that puts one there. So a freshly started script sat in
+`Running` with its `state_entry` in a queue nothing would ever drain: no execution, no error, no log
+line. It is now set to `Waiting`, exactly as the restored-state branch always did (`:200`).
+
+### Why every piece of the evidence fits
+
+| Evidence | Explanation |
+|---|---|
+| Manhole compiled at 11:12:51 then nothing, touch text never set | fresh start → `Running` → `state_entry` queued for ever |
+| New script "Starting from disk cache", then silent | same; the disk-cache path calls the same `BeginScriptRun` |
+| Script 96c2d98a executing all day | **restored from saved state** → `Waiting` (`:200`) → events start normally |
+| Zero ERROR/EXCEPTION lines | nothing threw; the event was simply never started |
+
+**It is not a PHLOX-2/2b/2c regression.** `git blame` puts both `:189` and `:681` at `02cf1370df`,
+the original Phlox import. What 2c changed is that the manhole *compiles* now, so it reached the
+fresh-start path for the first time; and every other script on the region had been restored from
+state, which is the branch that works. The defect was there all along with nothing to reveal it.
+
+### What the dispatch guard did NOT pin, and what now does
+
+`DispatchIndexGuardTests` pins that no built-in's `TableIndex` **moved**. It says nothing about
+whether a compiled call **reaches** the right shim, or whether a script executes at all — the whole
+suite compiled scripts and never ran one. `ScriptExecutionTests` now drives a compiled
+`state_entry` through the real `Interpreter` against a recording `ISystemAPI` (generated with
+`DispatchProxy`, the interface having hundreds of members) and asserts `llSay` arrives. **It passes
+on the unmodified tree**, which is what proved dispatch sound and sent this to the start path —
+the `__` separator and the `Shim_botRemoveBot` key fix altered no existing built-in's runtime map.
+
+`FreshStartRunStateTests` pins the fix at source level, both halves: the fresh-start branch leaves
+the script `Waiting`, and `ProcessEventQueue` starts an event only for a `Waiting` script. The
+scheduler needs a `Scene` and a prim to construct, so this is a source assertion of the invariant
+rather than a live one — a real gap, and the reason the defect survived.
+
+### Evidence 3 — the edit-and-save producing no compile — is NOT this defect
+
+The save path is the `UpdateScriptTask` cap (`BunchOfCaps.cs:256-258`) →
+`UpdateItemAsset.UpdateScriptTaskInventory` (`:146`) → `Scene.CapsUpdateTaskInventoryScriptAsset`
+(`Scene.Inventory.cs:427`), which calls **`part.Inventory.CreateScriptInstanceEr(...)`** directly
+and then `EventManager.TriggerUpdateScript` and `ResumeScripts()`. It does **not** raise
+`OnRezScript`, so the absence of an `OnRezScript` line after a save is expected rather than a fault;
+the absence of a `Compiled` line is consistent with the asset already being in the disk cache.
+
+**A19's `IAgentAssetTransactions` void→bool does not sit on this path and is not in this deploy.**
+`git log bb4bcd03dc..c94c561cf1` over `OpenSim.Region.Framework/` and
+`CoreModules/Agent/AssetTransaction/` is **empty** — A19 shipped at 1.1.262 and the script-save path
+was untouched between 1.1.264 and 1.1.275. Whether the saved script then *ran* is the same
+fresh-start question this row fixes; whether the save itself stored is unverified. **Not fixed here.**
+
+### Correction to the record
+
+**PHLOX-2c's deploy row claimed the manhole was "fixed, pending deploy" and the deploy row listed
+its verification as pending — but the verification that mattered was never possible from what was
+checked.** The 1.1.275 deploy verified that the *binaries* landed: hashes, metadata names, the
+overload keys. It did not, and could not, show a script running, because nothing in the suite ran
+one. The manhole compiled and still did nothing. **A "did it land" check that stops at the artefact
+is not a verification of the behaviour**; the behaviour needed a script to execute, and that test
+did not exist until now.
+
