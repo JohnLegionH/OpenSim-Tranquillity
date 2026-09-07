@@ -321,3 +321,59 @@ key is precisely the class of mistake this work exists to avoid.
 - **The airship stays rejected** by ruling; `UserFunctionOverloadTests` passes.
 - Nothing is deployed. Solution 0 errors; `InWorldz.Phlox.Tests` 12 passed, 3 skipped.
 
+---
+
+## PHLOX-2c — overload resolution finished; the manhole is **fixed, pending deploy**
+
+**Logged:** 2026-09-07. Closes PHLOX-2b. Built-in `ll*`/`os*` calls now resolve by name **and**
+signature, all the way through to the shim.
+
+### The two faults 2b stopped on
+
+**(1) Only one of the two call visitors resolved by arity.** A statement-level call —
+`osTeleportAgent(id, pos, lookat);` on its own line, which is exactly what the manhole writes —
+reaches `TypesVisitor.VisitFuncCall`, not `VisitMethodCallPostfix`. 2b changed the latter only.
+That is why the symptom was so confusing: the error message already listed all three signatures,
+proving `Defaults` and the type pass both saw the overloads, while resolution still fell back to
+the first. **The naming was never wrong.** `MethodSymbol.Name` returns `base.Name + "()"`
+(`MethodSymbol.cs:43-47`), `RawName` the bare form, and `BaseScope.Define` keys on `Name` verbatim
+(`BaseScope.cs:63`) — consistent throughout, and 2b's suspicion of it was misplaced.
+
+**(2) The mangling character was illegal in the assembler.** The emitted instruction is literally
+`syscall <symbol name>` (`ByteCodeEmitter.cs:174`), and the assembly lexer split on `$`:
+*"no viable alternative at input 'syscallosTeleportAgent3'"*. The separator is now one named
+constant, **`Defaults.OverloadSeparator = "__"`**, used by `SymbolNameFor`,
+`CandidateSymbolNames`, both passes' lookups and the literal table's own keys. No LSL or OSSL name
+contains a double underscore, so it cannot collide.
+
+### The rule, and where it lives
+
+One source of truth: **`Defaults.SymbolNameFor(sig)`**. The first signature declared for a name
+keeps the bare name — so every script that compiled before resolves to the same symbol and the same
+`TableIndex` — and later overloads become `name__<arity>`. `SymbolTable` defines from it,
+`BytecodeGenerator` keys its assembler map from it, and both compiler passes resolve against it,
+so the type checker, the emitter and the assembler cannot disagree about which shim a call reaches.
+Argument types remain the tree's own implicit-conversion rule: `promoteFromTo` plus `CanAssignTo`
+(`TypesVisitor.cs:623-624`), LSL's integer→float widening and its interchangeable key and string.
+
+### Verified
+
+- **`InWorldz.Phlox.Tests`: 38 passed, 0 skipped.** Solution 0 errors.
+- **`DispatchIndexGuardTests` green throughout** — no existing built-in moved its index, none
+  vanished, indices stay unique and contiguous, every one has a non-null shim.
+- **Every script live on this grid compiles.** All 17 distinct script assets in prims across every
+  region are committed under `Tests/InWorldz.Phlox.Tests/LiveScripts` and compiled by
+  `LiveScriptCompileTests` — content, not fixtures, because they are what actually runs. The only
+  failure is the airship, which must fail.
+- **The 20-plus built-ins those scripts actually call each keep their original dispatch index**,
+  checked from the direction that matters rather than only across the table.
+
+### Standing
+
+- **The manhole (`9898c41e-…`, asset `01d4448d-…`) compiles — fixed, pending deploy.** It has
+  failed at every region start since it was rezzed; it will start on the next one that carries this.
+- **The airship (`3eb0c62b-…`) still fails, by ruling**, on user-function overloading, with a
+  message about the duplicate symbol. It is content to fix, not a compiler defect.
+- **`botRemoveBot`'s key** is fixed and pinned (see the PHLOX-2c key commit).
+- Nothing is deployed.
+
