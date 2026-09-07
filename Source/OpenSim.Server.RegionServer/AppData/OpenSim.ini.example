@@ -5,29 +5,7 @@
 ;;
 ;; Once you have copied OpenSim.ini.example to OpenSim.ini you will at least
 ;; need to set the constants in the [Const] section and pick an architecture
-;; in the [AIS]
-    ;; AIS v3 (InventoryAPIv3 / LibraryAPIv3) for the whole simulator. See [AIS] in OpenSimDefaults.ini for what
-    ;; enabling it means - it routes ALL of an LL viewer's inventory traffic through it. One line, no region named:
-    ;;
-    ; Enabled = true
-    ;;
-    ;; A single region opts OUT with AIS_Enabled = false in its own [<Region Name>] section. A region section is
-    ;; never the way to opt in.
-
-
-[Appearance]
-    ;; Server-side baking for the whole simulator. See [Appearance] in OpenSimDefaults.ini. One line, no region
-    ;; named:
-    ;;
-    ; ServerSideBaking = true
-    ;;
-    ;; A single region opts OUT with ServerSideBaking = false in its own [<Region Name>] section.
-    ;;
-    ;; Those two lines - [AIS] Enabled and [Appearance] ServerSideBaking - are the whole switch. Each region logs
-    ;; one line at INFO when it loads saying which config decided, "(global)" or "(region section)".
-
-
-[Architecture] section at the end of this file. The architecture
+;; in the [Architecture] section at the end of this file. The architecture
 ;; will require a suitable .ini file in the config-include directory, either
 ;; StandaloneCommon.ini or GridCommon.ini which you can copy and modify from the
 ;; available .example files.
@@ -1307,6 +1285,28 @@
     ;;   Anyone                                   — any avatar may acquire
     ;;   AdminsOnly                               — grid administrators/gods only
     ; ExperienceCreators = EstateManagersAndRegionOwners
+
+[AIS]
+    ;; AIS v3 (InventoryAPIv3 / LibraryAPIv3) for the whole simulator. See [AIS] in OpenSimDefaults.ini for what
+    ;; enabling it means - it routes ALL of an LL viewer's inventory traffic through it. One line, no region named:
+    ;;
+    ; Enabled = true
+    ;;
+    ;; A single region opts OUT with AIS_Enabled = false in its own [<Region Name>] section. A region section is
+    ;; never the way to opt in.
+
+
+[Appearance]
+    ;; Server-side baking for the whole simulator. See [Appearance] in OpenSimDefaults.ini. One line, no region
+    ;; named:
+    ;;
+    ; ServerSideBaking = true
+    ;;
+    ;; A single region opts OUT with ServerSideBaking = false in its own [<Region Name>] section.
+    ;;
+    ;; Those two lines - [AIS] Enabled and [Appearance] ServerSideBaking - are the whole switch. Each region logs
+    ;; one line at INFO when it loads saying which config decided, "(global)" or "(region section)".
+
 
 [Architecture]
     ;# {Include-Architecture} {} {Choose one of the following architectures} {config-include/Standalone.ini config-include/StandaloneHypergrid.ini config-include/Grid.ini config-include/GridHypergrid.ini} config-include/Standalone.ini
