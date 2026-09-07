@@ -172,16 +172,24 @@ public class AISv3Module : ISharedRegionModule
             {
                 m_log.LogWarning("[AIS]: item {Item} carried hash_id {Transaction} but region {Region} has no asset transaction module; the asset was not applied",
                     item.ID, transactionId, scene.Name);
-                return false;
+                return AisAssetTransaction.NotResolvable;
             }
             if (!scene.TryGetClient(agentId, out var client) || client is null)
             {
                 m_log.LogWarning("[AIS]: item {Item} carried hash_id {Transaction} but agent {Agent} has no client in {Region}; the asset was not applied",
                     item.ID, transactionId, agentId, scene.Name);
-                return false;
+                return AisAssetTransaction.NotResolvable;
             }
-            transactions.HandleItemUpdateFromTransaction(client, transactionId, item);
-            return true;
+            // A19: the module's verdict, not an unconditional yes. It is false only when the referenced assets
+            // were validated and refused, which is the case the cap has to report rather than answer 200 to.
+            bool applied = transactions.HandleItemUpdateFromTransaction(client, transactionId, item);
+            if (!applied)
+            {
+                m_log.LogWarning("[AIS]: item {Item} carried hash_id {Transaction} but the asset transaction module REFUSED the update for agent {Agent} in {Region}; the item still points at its previous asset",
+                    item.ID, transactionId, agentId, scene.Name);
+                return AisAssetTransaction.Refused;
+            }
+            return AisAssetTransaction.Applied;
         };
 
     /// <summary>
@@ -225,7 +233,7 @@ public class AISv3Module : ISharedRegionModule
     public sealed class InventoryServiceBackend : IAisInventoryBackend
     {
         /// <summary>Hands a transaction id and the item to whatever knows about asset transactions (A16).</summary>
-        public delegate bool AssetTransactionResolver(UUID agentId, UUID transactionId, InventoryItemBase item);
+        public delegate AisAssetTransaction AssetTransactionResolver(UUID agentId, UUID transactionId, InventoryItemBase item);
 
         /// <summary>Told that an item's asset changed, so a worn one can rebake (S9).</summary>
         public delegate void WornAssetObserver(UUID agentId, UUID itemId, UUID newAssetId);
@@ -265,8 +273,8 @@ public class AISv3Module : ISharedRegionModule
         public bool PurgeFolder(InventoryFolderBase folder) => m_service.PurgeFolder(folder);
 
         /// <summary>Only a region with a transaction module and a connected client can resolve one; see the remarks on the interface.</summary>
-        public bool ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item)
-            => m_transactions is not null && m_transactions(agentId, transactionId, item);
+        public AisAssetTransaction ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item)
+            => m_transactions is null ? AisAssetTransaction.NotResolvable : m_transactions(agentId, transactionId, item);
 
         /// <inheritdoc/>
         public void OnItemAssetChanged(UUID agentId, UUID itemId, UUID newAssetId)
@@ -342,7 +350,7 @@ public class AISv3Module : ISharedRegionModule
         public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds, bool onlyIfTrash) => false;
         public bool PurgeFolder(InventoryFolderBase folder) => false;
         /// <summary>The library is read-only and has no asset transactions.</summary>
-        public bool ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item) => false;
+        public AisAssetTransaction ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item) => AisAssetTransaction.NotResolvable;
         /// <summary>Nothing in the library is worn.</summary>
         public void OnItemAssetChanged(UUID agentId, UUID itemId, UUID newAssetId) { }
     }

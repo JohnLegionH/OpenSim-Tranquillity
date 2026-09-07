@@ -352,7 +352,22 @@ public sealed class AisHandler : SimpleStreamHandler
         {
             // Unknown transaction ids are not an error here: the module opens a pending uploader for one and the
             // asset lands when the xfer does, exactly as it does for the legacy route (AgentAssetsTransactions.cs:68-90).
-            m_backend.ApplyAssetTransaction(m_agentId, applied.Transaction, item);
+            // A19: a refused transaction is a FAILED save and must be answered as one. Before this, the verdict
+            // was discarded and the cap answered 200 with the item's old asset id in the envelope, so the viewer
+            // recorded a save that had not happened - observed 2026-09-06 09:52:55, a wearable referencing a
+            // library texture refused by the uploader and reported as "UpdateItem -> 200".
+            //
+            // 403 rather than 500: the refusal is always a permission verdict on the referenced assets
+            // (AssetXferUploader.ValidateAssets), and the viewer treats a non-2xx as an error without special
+            // handling for this command (llaisapi.cpp:880-948). The error body carries no
+            // _updated_category_versions, so the folder version the viewer holds does NOT advance and its next
+            // fetch of that folder still sees the true state.
+            if (m_backend.ApplyAssetTransaction(m_agentId, applied.Transaction, item) == AisAssetTransaction.Refused)
+            {
+                WriteError(response, HttpStatusCode.Forbidden,
+                    $"the asset uploaded by transaction {applied.Transaction} was refused for item {route.Id}; the item still points at its previous asset", route);
+                return;
+            }
             item = m_backend.GetItem(m_agentId, route.Id) ?? item;
         }
 

@@ -377,6 +377,17 @@ holds five per type in order, `BakeOrchestrator.ResolveWearables` already walks 
 reader rather than attributed to a guessed type; its type is then one this read says nothing about, and `Derive`
 keeps what the agent already wears — the same answer `SetAppearanceAssets` gives (`AvatarFactoryModule.cs:975-989`).
 
+**The save contract (A19).** #5 fires off the AIS `UpdateItem` PATCH, and that PATCH must only report success
+when the save actually happened. Until A19 it always reported success: the asset-transaction chain was `void` from
+`IAgentAssetTransactions` down, so a validator refusal reached nobody and the cap answered `200` with the item's
+old asset id. It now carries `AisAssetTransaction` - `Applied`, `NotResolvable`, `Refused` - and a **`Refused`
+answers 403 and emits no `_updated_category_versions`**, so the folder version the viewer holds does not advance
+and its next fetch still sees the true state. `NotResolvable` (no transaction module, no client, the library
+backend, an unknown transaction id whose xfer is still in flight) is **not** a failure and still answers 200.
+
+The bake side follows from that: a refused save changes no asset, so the S9 hook does not fire and no bake is
+queued for an outfit that did not change. That is pinned by a test rather than left to follow from the code.
+
 **Cost.** #5 queues a save; it does not bake. The save re-resolves every worn item and the bake's per-channel
 input hash then decides what is recomputed, so an edit that changed nothing visible costs one hash check per
 channel. An item that is not worn queues nothing.

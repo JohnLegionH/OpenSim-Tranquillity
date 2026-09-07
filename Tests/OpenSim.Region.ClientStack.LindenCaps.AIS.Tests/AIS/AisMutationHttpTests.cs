@@ -264,6 +264,65 @@ public class AisMutationHttpTests
         Assert.That(b.Items[Shirt].AssetID, Is.EqualTo(before));
     }
 
+    // ------------------------------------------------------------------ A19: a refused save is not a 200
+
+    [Test]
+    public void a_refused_transaction_answers_403_and_does_not_bump_the_category_version()
+    {
+        // 2026-09-06 09:52:55: a wearable referencing a library texture was refused by the uploader
+        // ("REJECTED update with texture 00000000-0000-2222-3333-100000001002 ... because they do not own the
+        // texture") and the cap still answered "UpdateItem -> 200" with the item's asset unchanged. The viewer was
+        // told the save had succeeded.
+        var b = Inventory();
+        var transaction = UUID.Random();
+        b.RefusedTransactions.Add(transaction);
+        var assetBefore = b.Items[Shirt].AssetID;
+        var versionBefore = b.Folders[Clothing].Version;
+
+        var (status, body) = Send(b, "PATCH", $"/item/{Shirt}", new OSDMap { ["hash_id"] = transaction });
+
+        Assert.That(status, Is.EqualTo(403), "a refused save must not be reported as a success");
+        Assert.That(b.Items[Shirt].AssetID, Is.EqualTo(assetBefore), "the item still points at its previous asset");
+        Assert.That(body.ContainsKey("_updated_category_versions"), Is.False,
+            "a failed save must not advance the folder version the viewer holds, or its next fetch skips the folder "
+            + "and it never sees the true state (llaisapi.cpp:1625-1629)");
+        Assert.That(b.Folders[Clothing].Version, Is.EqualTo(versionBefore));
+    }
+
+    [Test]
+    public void a_refused_transaction_does_not_fire_the_worn_wearable_rebake()
+    {
+        // S9's hook is keyed on the asset actually changing, so a refusal must leave it silent - it did before this
+        // fix and it must keep doing so, or a refused edit would cost a bake of an outfit that did not change.
+        var b = Inventory();
+        var transaction = UUID.Random();
+        b.RefusedTransactions.Add(transaction);
+
+        Send(b, "PATCH", $"/item/{Shirt}", new OSDMap { ["hash_id"] = transaction });
+
+        Assert.That(b.AssetChanges, Is.Empty, "nothing changed, so nothing may queue an appearance save");
+    }
+
+    [Test]
+    public void a_refused_transaction_still_leaves_the_body_fields_it_already_stored()
+    {
+        // The map fields are applied and stored before the transaction is handed over (the legacy route's order),
+        // so a rename that travelled with a refused asset is already written. The 403 is about the ASSET; it does
+        // not pretend the rest of the PATCH did not happen, and the viewer re-reads the item either way.
+        var b = Inventory();
+        var transaction = UUID.Random();
+        b.RefusedTransactions.Add(transaction);
+
+        var (status, _) = Send(b, "PATCH", $"/item/{Shirt}", new OSDMap
+        {
+            ["name"] = "Renamed Shirt",
+            ["hash_id"] = transaction,
+        });
+
+        Assert.That(status, Is.EqualTo(403));
+        Assert.That(b.Items[Shirt].Name, Is.EqualTo("Renamed Shirt"));
+    }
+
     [Test]
     public void patching_permissions_applies_next_everyone_and_group_masked_by_base()
     {

@@ -65,13 +65,15 @@ public interface IAisInventoryBackend
     /// </para>
     ///
     /// <para>
-    /// Returns false when this backend cannot resolve transactions at all — the library, or a region with no
-    /// transaction module or no connected client for the agent — in which case the item's asset is left alone.
-    /// True means the transaction was handed over; the module stores the item itself once the xfer completes, so
-    /// the caller must re-read the item rather than trust the copy it passed in.
+    /// A19: the answer is a three-way <see cref="AisAssetTransaction"/>, not a bool. <c>NotResolvable</c> is what
+    /// a backend that resolves no transactions at all returns — the library, or a region with no transaction
+    /// module or no connected client for the agent — and the item's asset is simply left alone. <c>Applied</c>
+    /// means the transaction was handed over; the module stores the item itself once the xfer completes, so the
+    /// caller must re-read the item rather than trust the copy it passed in. <c>Refused</c> means the region
+    /// validated the uploaded asset and said no, which is a <b>failed save</b>.
     /// </para>
     /// </summary>
-    bool ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item);
+    AisAssetTransaction ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item);
 
     /// <summary>
     /// A worn wearable's asset just changed (S9). The region points the presence's wearable at the new asset and
@@ -104,4 +106,29 @@ public interface IAisInventoryBackend
 
     /// <summary>Delete a folder's contents but keep the folder (AIS PurgeDescendents).</summary>
     bool PurgeFolder(InventoryFolderBase folder);
+}
+
+/// <summary>
+/// A19. What became of a <c>hash_id</c>. The three states have to be distinct because two of them are fine and
+/// one is a failed save, and the bool this replaced could not tell them apart - which is how a refused wearable
+/// update came to be answered <c>200</c>.
+/// </summary>
+public enum AisAssetTransaction
+{
+    /// <summary>The asset was applied to the item, or the xfer is still in flight and will apply it when it lands.</summary>
+    Applied,
+
+    /// <summary>
+    /// Nothing to apply and nothing refused: this backend resolves no transactions at all (the library, or a
+    /// region with no asset-transaction module), or the agent has no client here. The rest of the PATCH stands
+    /// and the cap still answers <c>200</c> - an unknown transaction id is not an error, the uploader opens a
+    /// pending xfer for it (<c>AgentAssetsTransactions.cs:68-90</c>).
+    /// </summary>
+    NotResolvable,
+
+    /// <summary>
+    /// The region validated the uploaded asset and <b>refused</b> it, so the asset was not stored and the item
+    /// still points where it did. This is a failed save and the cap must say so.
+    /// </summary>
+    Refused,
 }

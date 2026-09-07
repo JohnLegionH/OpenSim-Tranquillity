@@ -185,15 +185,23 @@ public sealed class FakeAisBackend : IAisInventoryBackend
     /// <summary>False when this backend cannot resolve transactions at all, as the library backend cannot.</summary>
     public bool ResolvesTransactions = true;
 
-    public bool ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item)
+    /// <summary>
+    /// A19: transactions the region's validator REFUSES - the uploaded asset referenced something the resident may
+    /// not use, so nothing is stored and the item keeps the asset it had. Distinct from a transaction this backend
+    /// cannot resolve at all, which is not a failure.
+    /// </summary>
+    public readonly HashSet<UUID> RefusedTransactions = new();
+
+    public AisAssetTransaction ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item)
     {
         Calls.Add($"ApplyAssetTransaction({transactionId})");
-        if (!ResolvesTransactions || agentId != Owner) return false;
+        if (!ResolvesTransactions || agentId != Owner) return AisAssetTransaction.NotResolvable;
+        if (RefusedTransactions.Contains(transactionId)) return AisAssetTransaction.Refused;
         // An unknown transaction opens a pending uploader and the asset lands with the xfer; nothing is stored yet.
-        if (!Transactions.TryGetValue(transactionId, out var assetId)) return true;
+        if (!Transactions.TryGetValue(transactionId, out var assetId)) return AisAssetTransaction.Applied;
         item.AssetID = assetId;
         UpdateItem(item);
-        return true;
+        return AisAssetTransaction.Applied;
     }
 
     /// <summary>S9: every (item, newAsset) the handler reported as an asset change, in order.</summary>
