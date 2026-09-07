@@ -967,7 +967,7 @@ namespace InWorldz.Phlox.Compiler
             if (bare == null) return null;
             if (bare.Members.Count == argCount) return bare;
 
-            if (_symtab.Globals.Resolve(funcName + "$" + argCount + "()") is MethodSymbol overload)
+            if (_symtab.Globals.Resolve(funcName + InWorldz.Phlox.Types.Defaults.OverloadSeparator + argCount + "()") is MethodSymbol overload)
                 return overload;
 
             return bare;

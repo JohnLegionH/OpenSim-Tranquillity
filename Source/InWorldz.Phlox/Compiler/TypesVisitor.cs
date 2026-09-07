@@ -739,12 +739,16 @@ namespace InWorldz.Phlox.Compiler
         public override ISymbolType VisitFuncCall([NotNull] LSLParser.FuncCallContext context)
         {
             string funcName = context.ID().GetText();
-            MethodSymbol methSym = _symtab.Globals.Resolve(funcName + "()") as MethodSymbol;
 
+            // PHLOX-2b/2c: arguments first, because the arity chooses the overload. A
+            // statement-level call reaches this visitor rather than VisitMethodCallPostfix, and
+            // missing that is why 2b resolved nothing - both paths must use the same rule.
             List<ISymbolType> argTypes = new List<ISymbolType>();
             if (context.callParamList() != null)
                 foreach (var expr in context.callParamList().expr())
                     argTypes.Add(Visit(expr));
+
+            MethodSymbol methSym = ResolveCall(funcName, argTypes.Count);
 
             if (methSym == null)
             {
@@ -872,7 +876,7 @@ namespace InWorldz.Phlox.Compiler
 
             // Wrong arity for the first signature: this is an overloaded built-in or a genuine
             // mistake. Only the former has a mangled sibling.
-            if (_symtab.Globals.Resolve(funcName + "$" + argCount + "()") is MethodSymbol overload)
+            if (_symtab.Globals.Resolve(funcName + Defaults.OverloadSeparator + argCount + "()") is MethodSymbol overload)
                 return overload;
 
             return bare;   // report against the first signature, as before

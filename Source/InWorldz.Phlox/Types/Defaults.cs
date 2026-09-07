@@ -4816,19 +4816,28 @@ namespace InWorldz.Phlox.Types
         /// <c>name$&lt;arity&gt;</c>. Both the symbol table and the assembler derive their keys from
         /// here, so they cannot disagree about which shim a call reaches.
         /// </summary>
+        /// <summary>
+        /// PHLOX-2c. What separates a built-in's name from its arity in an overload's symbol name.
+        /// It must be legal in the ASSEMBLER's identifier rule, because the emitted instruction is
+        /// literally <c>syscall &lt;symbol name&gt;</c> - '$' was tried and the assembly lexer split
+        /// on it ("no viable alternative at input 'syscallosTeleportAgent3'"). No LSL or OSSL
+        /// function name contains a double underscore, so it cannot collide with a real name.
+        /// </summary>
+        public const string OverloadSeparator = "__";
+
         static public string SymbolNameFor(FunctionSig sig)
         {
             List<FunctionSig> list = SystemMethods[sig.FunctionName];
             return list.Count < 2 || list[0].TableIndex == sig.TableIndex
                 ? sig.FunctionName
-                : sig.FunctionName + "$" + sig.ParamTypes.Length;
+                : sig.FunctionName + OverloadSeparator + sig.ParamTypes.Length;
         }
 
         /// <summary>The symbol name a call of this arity should resolve to, bare name first.</summary>
         static public IEnumerable<string> CandidateSymbolNames(string functionName, int argCount)
         {
             yield return functionName;
-            yield return functionName + "$" + argCount;
+            yield return functionName + OverloadSeparator + argCount;
         }
 
         /// <summary>Every signature of every built-in, flat - for callers that want the whole surface.</summary>
