@@ -10,9 +10,12 @@ namespace InWorldz.Phlox.Tests;
 /// not a build error but a call quietly reaching a different shim.
 ///
 /// <para>
-/// The 17 scripts are the distinct script assets across all regions, pulled from
-/// <c>primitems</c> → <c>assets</c> on 2026-09-07. They are content, not fixtures: they are here
-/// because they are what actually runs.
+/// The 17 scripts are the distinct script assets across all regions as of 2026-09-07. They are
+/// content, not fixtures: they are here because they are what actually runs. <b>Their bodies are
+/// not committed</b> — they are residents' content — so this follows the SSB golden convention:
+/// <c>LiveScripts/manifest.json</c> carries the asset ids and their SHA-256, and
+/// <c>fetch-live-scripts.sh</c> pulls the bodies. Without them these tests are a vacuous pass that
+/// says so on the console, exactly as <c>BakeOrchestratorTests</c> behaves without its fixtures.
 /// </para>
 /// </summary>
 public class LiveScriptCompileTests
@@ -26,18 +29,59 @@ public class LiveScriptCompileTests
     /// <summary>The airship — user-function overloading, rejected by ruling.</summary>
     private const string Airship = "b8079466-322a-47f5-ba8d-cd17d9e0da61";
 
-    private static string Dir => Path.Combine(
+    private static string Root => Path.Combine(
         Path.GetDirectoryName(typeof(LiveScriptCompileTests).Assembly.Location)!, "LiveScripts");
 
+    private static string Dir => Path.Combine(Root, "scripts");
+
+    private const string SkipNote =
+        "SKIPPED: live script bodies not fetched (Tests/InWorldz.Phlox.Tests/LiveScripts/fetch-live-scripts.sh)";
+
+    private static bool Fetched => Directory.Exists(Dir) && Directory.GetFiles(Dir, "*.lsl").Length > 0;
+
+    /// <summary>The manifest's (assetId, sha256) rows - committed, and the authority for what is covered.</summary>
+    private static List<(string Id, string Sha)> Manifest()
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(Root, "manifest.json")));
+        return doc.RootElement.GetProperty("scripts").EnumerateArray()
+            .Select(e => (e.GetProperty("assetId").GetString()!, e.GetProperty("sha256").GetString()!))
+            .ToList();
+    }
+
+    private static string Body(string assetId) => File.ReadAllText(Path.Combine(Dir, assetId + ".lsl"));
+
     public static IEnumerable<object[]> AllScripts()
-        => Directory.GetFiles(Dir, "*.lsl").Select(f => new object[] { Path.GetFileNameWithoutExtension(f) });
+        => Manifest().Select(m => new object[] { m.Id });
+
+    [Fact]
+    public void TheManifestListsEveryScriptAndTheFetchedBodiesMatchIt()
+    {
+        var manifest = Manifest();
+        Assert.Equal(17, manifest.Count);
+        Assert.Contains(manifest, m => m.Id == Manhole);
+        Assert.Contains(manifest, m => m.Id == Airship);
+
+        if (!Fetched) { Console.WriteLine(SkipNote); return; }
+
+        // A changed script must be visible, not silently alter what these tests cover.
+        var wrong = new List<string>();
+        foreach (var (id, sha) in manifest)
+        {
+            var path = Path.Combine(Dir, id + ".lsl");
+            if (!File.Exists(path)) { wrong.Add($"{id}: not fetched"); continue; }
+            var got = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
+            if (got != sha) wrong.Add($"{id}: body changed in world");
+        }
+        Assert.True(wrong.Count == 0, string.Join("; ", wrong));
+    }
 
     [Fact]
     public void TheManholeCompiles()
     {
         // "Function 'osTeleportAgent' expects 4 arguments, got 3" at lines 16:12 and 20:12, every
         // region start since it was rezzed. Its call is the 3-argument local-teleport overload.
-        var c = PhloxCompiler.Compile(File.ReadAllText(Path.Combine(Dir, Manhole + ".lsl")));
+        if (!Fetched) { Console.WriteLine(SkipNote); return; }
+        var c = PhloxCompiler.Compile(Body(Manhole));
         Assert.False(c.HasErrors(), c.Report);
     }
 
@@ -46,7 +90,8 @@ public class LiveScriptCompileTests
     {
         // Scope ruling: SL has no user-function overloading, so this stays rejected. The message
         // must still be about the duplicate symbol, not about a built-in.
-        var c = PhloxCompiler.Compile(File.ReadAllText(Path.Combine(Dir, Airship + ".lsl")));
+        if (!Fetched) { Console.WriteLine(SkipNote); return; }
+        var c = PhloxCompiler.Compile(Body(Airship));
         Assert.True(c.HasErrors(), "the airship defines SetVehicleSettings at two arities");
         Assert.Contains("SetVehicleSettings", string.Join(" | ", c.Errors));
     }
@@ -55,7 +100,8 @@ public class LiveScriptCompileTests
     [MemberData(nameof(AllScripts))]
     public void EveryLiveScriptCompilesOrFailsOnlyForAKnownReason(string assetId)
     {
-        var c = PhloxCompiler.Compile(File.ReadAllText(Path.Combine(Dir, assetId + ".lsl")));
+        if (!Fetched) { Console.WriteLine(SkipNote); return; }
+        var c = PhloxCompiler.Compile(Body(assetId));
         if (!c.HasErrors()) return;
 
         // The airship is the one known-bad script, by ruling. Anything else failing is a
@@ -77,6 +123,8 @@ public class LiveScriptCompileTests
             .Where(l => l.Length > 0 && l[0] != '#')
             .Select(l => l.Split(' '))
             .ToDictionary(p => p[0], p => int.Parse(p[1]));
+
+        if (!Fetched) { Console.WriteLine(SkipNote); return; }
 
         var called = new SortedSet<string>();
         foreach (var file in Directory.GetFiles(Dir, "*.lsl"))

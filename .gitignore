@@ -295,3 +295,6 @@ id_ed25519.*
 # Generated on first run when [TrustedHypergrid] Enabled=true; holds the Ed25519 private key as hex.
 TrustedHypergridSecret.ini
 **/TrustedHypergridSecret.ini
+
+# PHLOX-2c: live script bodies are residents' content - manifest committed, bodies fetched on demand
+Tests/InWorldz.Phlox.Tests/LiveScripts/scripts/

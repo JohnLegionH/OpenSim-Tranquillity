@@ -1,0 +1,104 @@
+{
+  "purpose": "Every script asset held in a prim on this grid, compiled by LiveScriptCompileTests.",
+  "captured": "2026-09-07",
+  "source": "primitems.assetID (invType 10) -> assets.data, container legiongrid_mysql, database legiongrid",
+  "authority": "live content: these are what actually runs, not fixtures written for the test",
+  "known_failures": {
+    "b8079466-322a-47f5-ba8d-cd17d9e0da61": "the airship - defines SetVehicleSettings at two arities. User-function overloading, which SL rejects and Phlox rejects by ruling (PHLOX-2/2c). Content to fix, not a compiler defect."
+  },
+  "notable": {
+    "01d4448d-087e-49fb-9253-4b06ce522811": "the manhole - the 3-argument osTeleportAgent that PHLOX-2c fixed"
+  },
+  "notes": [
+    "Script bodies are NOT committed: they are residents' content. Run fetch-live-scripts.sh to populate scripts/.",
+    "sha256 is of the asset body exactly as the asset service returns it, so a changed script is visible rather than silently altering what the tests cover.",
+    "The tests are a vacuous pass with a console note when scripts/ is absent, the same way the SSB golden tests behave without their fixtures."
+  ],
+  "scripts": [
+    {
+      "assetId": "01d4448d-087e-49fb-9253-4b06ce522811",
+      "sha256": "e759568a424b7316926803d9082c8f54c9299fe3ff65da5a9f200e38aef11188",
+      "bytes": 446
+    },
+    {
+      "assetId": "19520c10-a3d7-4a6a-9fef-148e2643d5a2",
+      "sha256": "6a66d7a2da29e91a8bfe5deddb17b8d276f317bd58519e6b86c2e40f61cb0173",
+      "bytes": 220
+    },
+    {
+      "assetId": "2074003b-8d5f-40e5-8b20-581c1c50aedb",
+      "sha256": "b4fa53bc95ea28f261eeb2e5c5be0ec5f7df56425899fdc8678b8675a52fcb55",
+      "bytes": 80
+    },
+    {
+      "assetId": "2fc389c2-a9cf-45c8-815d-f41e54240acd",
+      "sha256": "85d08485a9f179ff26033efa4445c0b42374a41f041a3ef0404f8b370de1ce30",
+      "bytes": 8001
+    },
+    {
+      "assetId": "3b85546a-2af3-4f21-b4ac-2e4156c7c36d",
+      "sha256": "8fae07e6b8f7b3427fa03766cc6e62133732f9e484b7dcc20489b3bb455753c9",
+      "bytes": 115
+    },
+    {
+      "assetId": "479a58c1-0c78-423f-a17e-80577ea02b59",
+      "sha256": "6a66d7a2da29e91a8bfe5deddb17b8d276f317bd58519e6b86c2e40f61cb0173",
+      "bytes": 220
+    },
+    {
+      "assetId": "5b13d011-717f-419c-8312-07fabb1de44f",
+      "sha256": "10197d5c3aca7eeba535acdff43bfc7ed3ee29215d304a529711edc489d28528",
+      "bytes": 2150
+    },
+    {
+      "assetId": "650e40a3-af7e-4421-a495-85b79b8b08e8",
+      "sha256": "9c1d682c9d955c1c3d27b5101eef656c459726dc9256fa2ed52584dbfbde0766",
+      "bytes": 145
+    },
+    {
+      "assetId": "65c8f1b2-1301-4c4d-aaff-6385b207aa13",
+      "sha256": "06a28ddcd33b6bb6f0c8d21defa8b8b6c45cee541ece242878036092cb85c7a8",
+      "bytes": 838
+    },
+    {
+      "assetId": "93da0a6d-7330-41cf-97c9-fc7ac1ab3959",
+      "sha256": "c6a6736819daeb98a849f774616606a7ea9ce0b4427e05002a6357a9a89c900a",
+      "bytes": 182
+    },
+    {
+      "assetId": "96c2d98a-f091-4035-aabe-f0ff34ce918d",
+      "sha256": "9e5b115fd74ac768ad412e18ffd4cefe0e03b16006865005016d487854ed2b14",
+      "bytes": 1252
+    },
+    {
+      "assetId": "a791b947-b648-497c-b5fd-02f13dadf006",
+      "sha256": "8705c24df0d85216bf32b8e025f9a6b682f7fe47006f1be6bed9efff2a2c8843",
+      "bytes": 8006
+    },
+    {
+      "assetId": "b8079466-322a-47f5-ba8d-cd17d9e0da61",
+      "sha256": "fe7b3e674622518807e1c7c378b67862df92b202d47ac65ce595b1c3cd3c44ba",
+      "bytes": 14014
+    },
+    {
+      "assetId": "bdd0c0d3-8418-4edb-b5bd-f130c03a14cb",
+      "sha256": "cad9180e989f326cc9dfc0e70159775d46b82cde3f09861aecbce0188f1eb47c",
+      "bytes": 367
+    },
+    {
+      "assetId": "d565a4d8-efc5-40d4-8e06-64750f0c453a",
+      "sha256": "35411402ddac206866a9d375e3d4c2561f969fef5bbb64c040d5f2a26205b78c",
+      "bytes": 2108
+    },
+    {
+      "assetId": "e908ddc2-37e2-419f-bee4-0da7d6569a5a",
+      "sha256": "ce529db4b716f7e0e641a769e006fc6d3916f58741ed7e53e8f4fa634be53d02",
+      "bytes": 655
+    },
+    {
+      "assetId": "f743c02b-8482-4624-b752-309d7331a645",
+      "sha256": "98cdb44676b2b0792860c8e60c86b7f424d89fda47d67620ccfa9aba2d5de39b",
+      "bytes": 2484
+    }
+  ]
+}
