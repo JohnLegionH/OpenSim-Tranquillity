@@ -5,7 +5,18 @@ namespace InWorldz.Phlox.Types
 {
 	public class Defaults
 	{
-		static public Dictionary<string, FunctionSig> SystemMethods = new Dictionary<string, FunctionSig>()
+		/// <summary>
+		/// PHLOX-2b. The literal table, one entry per SIGNATURE. The dictionary key is a bare
+		/// function name for the 674 that have only one signature, and a mangled
+		/// <c>name$&lt;arity&gt;</c> for the overloads added since - a Dictionary literal cannot hold
+		/// the same key twice, and the key was never what resolves a call. <c>FunctionName</c> is,
+		/// and it stays bare on every entry.
+		///
+		/// <para>Leaving these 674 entries untouched is deliberate: their <c>TableIndex</c> values
+		/// are positions in <c>SyscallShim._shimMap</c>, so rewriting them to add overloads would
+		/// have risked moving one silently. <c>DispatchIndexGuardTests</c> pins that.</para>
+		/// </summary>
+		private static readonly Dictionary<string, FunctionSig> RawMethods = new Dictionary<string, FunctionSig>()
 		{
 			{"llSin", new FunctionSig {
 				FunctionName =  "llSin",
@@ -4744,6 +4755,99 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { },
                 TableIndex = 673
             }},
+
+            // ---------------------------------------------------------------- PHLOX-2b overloads
+            // Appended above the historical 674 so no existing TableIndex moves. Each needs a shim
+            // at the matching position in SyscallShim._shimMap.
+
+            // OSSL_Api.cs:1051 - osTeleportAgent(agent, position, lookat), teleport within this region.
+            // This is the form script 9898c41e-... calls, and the one whose absence produced
+            // "Function 'osTeleportAgent' expects 4 arguments, got 3" at every region start.
+            {"osTeleportAgent$3", new FunctionSig {
+                FunctionName = "osTeleportAgent",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.String, VarType.Vector, VarType.Vector },
+                ParamNames = new string[] { "agent", "pos", "lookat" },
+                TableIndex = 674
+            }},
+
+            // OSSL_Api.cs:1015 - osTeleportAgent(agent, regionX, regionY, position, lookat).
+            {"osTeleportAgent$5", new FunctionSig {
+                FunctionName = "osTeleportAgent",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer, VarType.Integer, VarType.Vector, VarType.Vector },
+                ParamNames = new string[] { "agent", "regionX", "regionY", "pos", "lookat" },
+                TableIndex = 675
+            }},
+
+            // LSL_Api's three-argument llLinkPlaySound; Phlox has always had the four-argument form.
+            {"llLinkPlaySound$3", new FunctionSig {
+                FunctionName = "llLinkPlaySound",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.String, VarType.Float },
+                ParamNames = new string[] { "link", "sound", "volume" },
+                TableIndex = 676
+            }},
          };
+
+        /// <summary>
+        /// PHLOX-2b. Built-ins by name, every signature of that name, in table order. This is what
+        /// the compiler resolves against: a call is matched on name <b>and</b> signature, so the
+        /// three <c>osTeleportAgent</c> forms are three candidates under one name.
+        /// </summary>
+        static public readonly Dictionary<string, List<FunctionSig>> SystemMethods = BuildByName();
+
+        private static Dictionary<string, List<FunctionSig>> BuildByName()
+        {
+            var byName = new Dictionary<string, List<FunctionSig>>();
+            foreach (FunctionSig sig in RawMethods.Values)
+            {
+                if (!byName.TryGetValue(sig.FunctionName, out List<FunctionSig> list))
+                    byName[sig.FunctionName] = list = new List<FunctionSig>(1);
+                list.Add(sig);
+            }
+            return byName;
+        }
+
+        /// <summary>
+        /// PHLOX-2b. The name a signature is known by inside the compiler. The first signature
+        /// declared for a name keeps the bare name, so every script that compiled before still
+        /// resolves to the same symbol and the same TableIndex; later overloads are mangled
+        /// <c>name$&lt;arity&gt;</c>. Both the symbol table and the assembler derive their keys from
+        /// here, so they cannot disagree about which shim a call reaches.
+        /// </summary>
+        static public string SymbolNameFor(FunctionSig sig)
+        {
+            List<FunctionSig> list = SystemMethods[sig.FunctionName];
+            return list.Count < 2 || list[0].TableIndex == sig.TableIndex
+                ? sig.FunctionName
+                : sig.FunctionName + "$" + sig.ParamTypes.Length;
+        }
+
+        /// <summary>The symbol name a call of this arity should resolve to, bare name first.</summary>
+        static public IEnumerable<string> CandidateSymbolNames(string functionName, int argCount)
+        {
+            yield return functionName;
+            yield return functionName + "$" + argCount;
+        }
+
+        /// <summary>Every signature of every built-in, flat - for callers that want the whole surface.</summary>
+        static public IEnumerable<FunctionSig> AllMethods => RawMethods.Values;
+
+        /// <summary>
+        /// The first signature declared for a name. For callers that predate overloading and do not
+        /// choose between signatures - the SLua compiler and the interpreter's method map - this is
+        /// exactly what they resolved to before, because the historical entry is always first.
+        /// </summary>
+        static public bool TryGetMethod(string name, out FunctionSig sig)
+        {
+            if (SystemMethods.TryGetValue(name, out List<FunctionSig> list) && list.Count > 0)
+            {
+                sig = list[0];
+                return true;
+            }
+            sig = default;
+            return false;
+        }
         }
 }

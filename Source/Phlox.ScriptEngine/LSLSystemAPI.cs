@@ -1979,6 +1979,37 @@ namespace Phlox.ScriptEngine
             iwTeleportAgent(agent, region, pos, lookAt);
         }
 
+        /// <summary>
+        /// PHLOX-2b. OSSL_Api.cs:1051 - teleport the agent within THIS region. OSSL treats an empty
+        /// region name as "here" and so does iwTeleportAgent, which this tree's four-argument form
+        /// already documents, so the local teleport is that call with no region.
+        /// </summary>
+        public void osTeleportAgent(string agent, Vector3 pos, Vector3 lookAt)
+        {
+            iwTeleportAgent(agent, String.Empty, pos, lookAt);
+        }
+
+        /// <summary>
+        /// PHLOX-2b. OSSL_Api.cs:1015 - teleport to the region at these GRID coordinates (region
+        /// units, not metres). The handle is built the same way llTeleportAgentGlobalCoords builds
+        /// its own, and authorisation is the same IsTeleportAuthorized check every other teleport
+        /// here goes through - OSSL gates this one on ThreatLevel.Severe for the same reason.
+        /// </summary>
+        public void osTeleportAgent(string agent, int regionGridX, int regionGridY, Vector3 pos, Vector3 lookAt)
+        {
+            if (!UUID.TryParse(agent, out UUID agentId)) return;
+            ScenePresence sp = World?.GetScenePresence(agentId);
+            if (sp == null || sp.IsChildAgent || sp.IsInTransit) return;
+            if (!IsTeleportAuthorized(sp)) return;
+
+            ulong regionHandle = OpenMetaverse.Utils.UIntsToLong(
+                (uint)(regionGridX * 256), (uint)(regionGridY * 256));
+
+            sp.ControllingClient.SendTeleportStart((uint)OpenMetaverse.TeleportFlags.DisableCancel);
+            World.RequestTeleportLocation(sp.ControllingClient, regionHandle,
+                pos, lookAt, (uint)OpenMetaverse.TeleportFlags.ViaLocation);
+        }
+
         public void llTeleportAgent(string agent, string landmark, Vector3 pos, Vector3 lookAt)
         {
             // SL: teleport to landmark name or "" for same region
@@ -5152,6 +5183,12 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             ISoundModule sm = World?.RequestModuleInterface<ISoundModule>();
             if (sm == null) return;
             sm.SendSound(m_host, soundID, volume, false, 0, false, false);
+        }
+
+        /// <summary>PHLOX-2b. LSL_Api.cs:2939-2942 - the three-argument form is the four with flags 0.</summary>
+        public void llLinkPlaySound(int link, string sound, float volume)
+        {
+            llLinkPlaySound(link, sound, volume, 0);
         }
 
         public void llLinkPlaySound(int link, string sound, float volume, int flags)

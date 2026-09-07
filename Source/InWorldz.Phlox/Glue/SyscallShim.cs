@@ -758,6 +758,9 @@ private static string ConvToString(object o)
 								Shim_botSetPersistentData,      //671
 								Shim_osTeleportAgent,           //672
 								Shim_osGetAvatarList,           //673
+								Shim_osTeleportAgentLocal,      //674  PHLOX-2b
+								Shim_osTeleportAgentGrid,       //675  PHLOX-2b
+								Shim_llLinkPlaySound3,          //676  PHLOX-2b
         };
 
         public void SetScriptEventFlags()
@@ -6893,6 +6896,47 @@ private static string ConvToString(object o)
             {
                 self._systemAPI.osTeleportAgent(agent, region, pos, lookat);
             });
+        }
+
+        // PHLOX-2b - OSSL: void osTeleportAgent(string agent, vector pos, vector lookat)
+        static private void Shim_osTeleportAgentLocal(SyscallShim self)
+        {
+            Vector3 lookat = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 pos = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            string agent = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+
+            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
+
+            self._asyncCallDelegate(delegate()
+            {
+                self._systemAPI.osTeleportAgent(agent, pos, lookat);
+            });
+        }
+
+        // PHLOX-2b - OSSL: void osTeleportAgent(string agent, int regionX, int regionY, vector pos, vector lookat)
+        static private void Shim_osTeleportAgentGrid(SyscallShim self)
+        {
+            Vector3 lookat = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 pos = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            int regionY = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int regionX = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string agent = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+
+            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
+
+            self._asyncCallDelegate(delegate()
+            {
+                self._systemAPI.osTeleportAgent(agent, regionX, regionY, pos, lookat);
+            });
+        }
+
+        // PHLOX-2b - LSL: void llLinkPlaySound(int link, string sound, float volume)
+        static private void Shim_llLinkPlaySound3(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.llLinkPlaySound(p0, p1, p2);
         }
 
         // OSSL: list osGetAvatarList()

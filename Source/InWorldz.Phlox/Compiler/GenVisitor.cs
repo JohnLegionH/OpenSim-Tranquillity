@@ -622,7 +622,7 @@ namespace InWorldz.Phlox.Compiler
         {
             string funcName = GetCallName(context.postfixExpression());
             MethodSymbol methSym = funcName != null
-                ? _symtab.Globals.Resolve(funcName + "()") as MethodSymbol : null;
+                ? ResolveCallForGen(funcName, context.callParamList()?.expr()?.Length ?? 0) : null;
 
             var exprs = new List<string>();
             if (context.callParamList() != null)
@@ -713,7 +713,7 @@ namespace InWorldz.Phlox.Compiler
         public override string VisitFuncCall([NotNull] LSLParser.FuncCallContext context)
         {
             string funcName = context.ID().GetText();
-            MethodSymbol methSym = _symtab.Globals.Resolve(funcName + "()") as MethodSymbol;
+            MethodSymbol methSym = ResolveCallForGen(funcName, context.callParamList()?.expr()?.Length ?? 0);
 
             var exprs = new List<string>();
             if (context.callParamList() != null)
@@ -951,5 +951,27 @@ namespace InWorldz.Phlox.Compiler
             if (tree.ChildCount == 1) return IsConstantExpr(tree.GetChild(0));
             return false;
         }
+
+        /// <summary>
+        /// PHLOX-2b. The same overload choice the type pass made, by the same rule - the bare name
+        /// unless its arity does not fit and a <c>name$&lt;arity&gt;</c> sibling does. Both passes
+        /// deriving the symbol the same way is what makes the emitted <c>syscall &lt;name&gt;</c>
+        /// reach the shim the type checker approved; the assembler keys its table off the same
+        /// <c>Defaults.SymbolNameFor</c>.
+        /// </summary>
+        private MethodSymbol ResolveCallForGen(string funcName, int argCount)
+        {
+            if (funcName == null) return null;
+
+            MethodSymbol bare = _symtab.Globals.Resolve(funcName + "()") as MethodSymbol;
+            if (bare == null) return null;
+            if (bare.Members.Count == argCount) return bare;
+
+            if (_symtab.Globals.Resolve(funcName + "$" + argCount + "()") is MethodSymbol overload)
+                return overload;
+
+            return bare;
+        }
+
     }
 }

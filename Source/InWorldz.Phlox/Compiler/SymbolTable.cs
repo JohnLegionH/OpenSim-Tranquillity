@@ -171,7 +171,9 @@ namespace InWorldz.Phlox.Compiler
             {
                 foreach (FunctionSig fn in systemFunctions)
                 {
-                    MethodSymbol sysMethod = new MethodSymbol(fn.FunctionName, indexToType[(int)fn.ReturnType], _globals);
+                    // PHLOX-2b: a built-in with several signatures is several symbols - the first
+                    // under the bare name, the rest mangled - so defining them cannot collide.
+                    MethodSymbol sysMethod = new MethodSymbol(Defaults.SymbolNameFor(fn), indexToType[(int)fn.ReturnType], _globals);
                     sysMethod.IsSyscall = true;
                     for (int i = 0; i < fn.ParamNames.Length; i++)
                     {

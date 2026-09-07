@@ -262,3 +262,62 @@ of its own with the harness now in place.
 - **Script `96c2d98a`'s recurring "Slow timeslice" (250–2500 ms)** — perf lane, not compiler.
   Not investigated here.
 
+---
+
+## PHLOX-2b — signature-keyed built-in resolution: **UNFINISHED**
+
+**Logged:** 2026-09-07. Four of the five layers are in and the solution is green, but **the
+overloads are not yet reachable from a script**, so the manhole is *not* fixed. Three tests are
+committed skipped with the exact next step in the Skip reason.
+
+### What is in, and verified
+
+- **The guard, committed first and green before anything moved** (`1742252656`).
+  `DispatchIndexGuardTests` pins all 674 built-ins' `TableIndex` against a baseline captured at
+  `34fb6d201b`, asserts indices stay unique and contiguous from zero, and asserts every index has a
+  non-null shim. `SyscallShim._shimMap` is positional (`SyscallShim.cs:81`), so this is the check
+  that a wrong dispatch is a red test rather than a live surprise. **It has stayed green throughout.**
+- **`Defaults.cs` is name → `List<FunctionSig>`.** The 674 literal entries are *untouched* — the
+  public table is built from them by `BuildByName()`, and the three new overloads append with keys
+  `osTeleportAgent$3`, `osTeleportAgent$5`, `llLinkPlaySound$3` at indices 674-676. `AllMethods`
+  and `TryGetMethod` serve the callers that predate overloading (CompilerFrontend, SLuaCompiler,
+  the interpreter map, SluaProofRunner) with exactly their previous behaviour.
+- **Shims and API.** Three shims appended at the matching positions; `ISystemAPI` and
+  `LSLSystemAPI` gained `osTeleportAgent(agent,pos,lookat)` (OSSL_Api.cs:1051, routed through
+  `iwTeleportAgent` with an empty region, which is this tree's own "same region" convention),
+  `osTeleportAgent(agent,gridX,gridY,pos,lookat)` (OSSL_Api.cs:1015, handle built as
+  `llTeleportAgentGlobalCoords` builds its own, behind the same `IsTeleportAuthorized` gate) and
+  `llLinkPlaySound(link,sound,volume)` (LSL_Api.cs:2939, the four-argument form with flags 0).
+  **`LSLSystemAPI` is the only live `ISystemAPI` implementation** — the brief asked; there is one.
+- **Both compiler passes resolve by arity.** `TypesVisitor.ResolveCall` and
+  `GenVisitor.ResolveCallForGen` try the bare name and fall back to `name$<arity>`; both derive
+  their symbol names from `Defaults.SymbolNameFor`, as does the assembler
+  (`BytecodeGenerator.cs:126`), so the three cannot disagree about which shim a call reaches.
+  Argument types are still checked by the tree's own implicit-conversion rule — `promoteFromTo`
+  plus `CanAssignTo` (`TypesVisitor.cs:623-624`), which is LSL's integer→float widening and its
+  interchangeable key and string.
+- **The error message already lists every accepted signature**, which is one of the four tests and
+  it passes: *"Function 'osTeleportAgent' got 3 arguments; it accepts osTeleportAgent(string,
+  string, vector, vector); osTeleportAgent(string, vector, vector); osTeleportAgent(string,
+  integer, integer, vector, vector)"*.
+
+### What is not in
+
+**The mangled symbol does not resolve.** `Globals.Resolve("osTeleportAgent$3()")` returns null, so
+`ResolveCall` falls back to the first signature and the call is still rejected. Everything upstream
+of the symbol table is demonstrably correct — the error text above proves `Defaults` and the type
+pass both see all three signatures.
+
+**The next step, precisely:** `BaseScope.Define` keys on `sym.Name` verbatim (`BaseScope.cs:63`)
+while every lookup is `Resolve(name + "()")`, so `MethodSymbol` is evidently not storing the string
+it was constructed with. Confirm what `MethodSymbol.Name` actually returns after construction and
+make `Defaults.SymbolNameFor` produce that exact form. It is expected to be a one-line change; it
+was not made because the session hit its stop time mid-diagnosis, and guessing at a symbol-table
+key is precisely the class of mistake this work exists to avoid.
+
+### Standing
+
+- **The manhole (`9898c41e-…`) is NOT fixed** and will still fail at every region start.
+- **The airship stays rejected** by ruling; `UserFunctionOverloadTests` passes.
+- Nothing is deployed. Solution 0 errors; `InWorldz.Phlox.Tests` 12 passed, 3 skipped.
+

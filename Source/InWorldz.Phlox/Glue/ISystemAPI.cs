@@ -402,6 +402,12 @@ namespace InWorldz.Phlox.Glue
         string iwSHA256String(string src);
         void iwTeleportAgent(string agent, string region, Vector3 pos, Vector3 lookat);
         void osTeleportAgent(string agent, string region, Vector3 pos, Vector3 lookat);
+
+        /// <summary>PHLOX-2b: OSSL_Api.cs:1051 - teleport within the current region.</summary>
+        void osTeleportAgent(string agent, Vector3 pos, Vector3 lookat);
+
+        /// <summary>PHLOX-2b: OSSL_Api.cs:1015 - teleport to a region named by grid coordinates.</summary>
+        void osTeleportAgent(string agent, int regionGridX, int regionGridY, Vector3 pos, Vector3 lookat);
         LSLList osGetAvatarList();
         string llAvatarOnLinkSitTarget(int linknumber);
         string iwGetLastOwner();
@@ -603,6 +609,9 @@ namespace InWorldz.Phlox.Glue
         string llHMAC(string msg, string privateKey, string algorithm);
         string llSHA256String(string src, int nonce);
         void llLinkPlaySound(int link, string sound, float volume, int flags);
+
+        /// <summary>PHLOX-2b: LSL_Api.cs:2939 - the three-argument form, flags defaulted to 0.</summary>
+        void llLinkPlaySound(int link, string sound, float volume);
         Vector3 llLinear2sRGB(Vector3 color);
         Vector3 llSRGB2Linear(Vector3 color);
 		Vector3 llWorldPosToHUD(Vector3 worldPos);

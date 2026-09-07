@@ -2115,7 +2115,7 @@ namespace InWorldz.Phlox.SLua
         private VarType EmitLlCall(LlCall c, bool statementLevel)
         {
             string phloxName = "ll" + c.Member; // ll.Say -> llSay
-            if (!Defaults.SystemMethods.TryGetValue(phloxName, out FunctionSig sig))
+            if (!Defaults.TryGetMethod(phloxName, out FunctionSig sig))
                 throw new SLuaException("unknown ll function 'll." + c.Member + "' (-> " + phloxName + ")", c.Line);
 
             if (c.Args.Count != sig.ParamTypes.Length)

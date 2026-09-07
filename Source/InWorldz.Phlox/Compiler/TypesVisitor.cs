@@ -588,17 +588,16 @@ namespace InWorldz.Phlox.Compiler
 
             // Resolve the function symbol.
             string funcName = GetCallName(context.postfixExpression());
-            MethodSymbol methSym = funcName != null
-                ? _symtab.Globals.Resolve(funcName + "()") as MethodSymbol
-                : null;
 
-            // Visit each argument expression.
+            // Visit each argument expression first: the arity chooses the overload.
             List<ISymbolType> argTypes = new List<ISymbolType>();
             if (context.callParamList() != null)
             {
                 foreach (var expr in context.callParamList().expr())
                     argTypes.Add(Visit(expr));
             }
+
+            MethodSymbol methSym = ResolveCall(funcName, argTypes.Count);
 
             if (methSym == null)
             {
@@ -611,8 +610,10 @@ namespace InWorldz.Phlox.Compiler
             var paramSymbols = new List<Symbol>(methSym.Members.Values);
             if (argTypes.Count != paramSymbols.Count)
             {
-                ErrorAtContext(context,
-                    $"Function '{funcName}' expects {paramSymbols.Count} arguments, got {argTypes.Count}");
+                string accepted = AcceptedSignatures(funcName);
+                ErrorAtContext(context, accepted == null
+                    ? $"Function '{funcName}' expects {paramSymbols.Count} arguments, got {argTypes.Count}"
+                    : $"Function '{funcName}' got {argTypes.Count} arguments; it accepts {accepted}");
             }
             else
             {
@@ -754,8 +755,10 @@ namespace InWorldz.Phlox.Compiler
             var paramSymbols = new List<Symbol>(methSym.Members.Values);
             if (argTypes.Count != paramSymbols.Count)
             {
-                ErrorAtContext(context,
-                    $"Function '{funcName}' expects {paramSymbols.Count} arguments, got {argTypes.Count}");
+                string accepted = AcceptedSignatures(funcName);
+                ErrorAtContext(context, accepted == null
+                    ? $"Function '{funcName}' expects {paramSymbols.Count} arguments, got {argTypes.Count}"
+                    : $"Function '{funcName}' got {argTypes.Count} arguments; it accepts {accepted}");
             }
             else
             {
@@ -848,5 +851,43 @@ namespace InWorldz.Phlox.Compiler
             }
             return null;
         }
+
+        /// <summary>
+        /// PHLOX-2b. Resolve a call to a method symbol, choosing among a built-in's overloads by
+        /// the number of arguments at the call site. The bare name is tried first, so a
+        /// single-signature built-in and every user function resolve exactly as they did; only a
+        /// name that has a <c>name$&lt;arity&gt;</c> sibling can pick anything else.
+        ///
+        /// <para>Argument TYPES are checked by the caller afterwards, through the tree's existing
+        /// implicit-conversion rule - <c>SymbolTable.promoteFromTo</c> plus <c>CanAssignTo</c>,
+        /// which is LSL's integer-to-float widening and its interchangeable key and string.</para>
+        /// </summary>
+        private MethodSymbol ResolveCall(string funcName, int argCount)
+        {
+            if (funcName == null) return null;
+
+            MethodSymbol bare = _symtab.Globals.Resolve(funcName + "()") as MethodSymbol;
+            if (bare == null) return null;
+            if (bare.Members.Count == argCount) return bare;
+
+            // Wrong arity for the first signature: this is an overloaded built-in or a genuine
+            // mistake. Only the former has a mangled sibling.
+            if (_symtab.Globals.Resolve(funcName + "$" + argCount + "()") is MethodSymbol overload)
+                return overload;
+
+            return bare;   // report against the first signature, as before
+        }
+
+        /// <summary>Every arity a built-in accepts, for the error message when none of them match.</summary>
+        private string AcceptedSignatures(string funcName)
+        {
+            if (funcName == null || !Defaults.SystemMethods.TryGetValue(funcName, out var sigs))
+                return null;
+            var forms = new List<string>();
+            foreach (var sig in sigs)
+                forms.Add(funcName + "(" + string.Join(", ", Array.ConvertAll(sig.ParamTypes, t => t.ToString().ToLowerInvariant())) + ")");
+            return string.Join("; ", forms);
+        }
+
     }
 }

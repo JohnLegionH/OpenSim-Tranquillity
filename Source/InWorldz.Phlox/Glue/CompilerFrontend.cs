@@ -139,7 +139,7 @@ namespace InWorldz.Phlox.Glue
                 // Phase 2: Symbol definition pass (replaces Def tree grammar)
                 // --------------------------------------------------------
                 LSLNodeAnnotations annotations = new LSLNodeAnnotations();
-                SymbolTable symtab = new SymbolTable(tokens, Defaults.SystemMethods.Values, DefaultConstants.Constants.Values);
+                SymbolTable symtab = new SymbolTable(tokens, Defaults.AllMethods, DefaultConstants.Constants.Values);
                 symtab.StatusListener = _listener;
 
                 DefVisitor def = new DefVisitor(symtab, annotations);
@@ -209,7 +209,7 @@ namespace InWorldz.Phlox.Glue
                 asmParser.RemoveErrorListeners();
                 asmParser.AddErrorListener(asmErrorListener);
 
-                BytecodeGenerator bcgen = new BytecodeGenerator(Defaults.SystemMethods.Values);
+                BytecodeGenerator bcgen = new BytecodeGenerator(Defaults.AllMethods);
                 asmParser.SetGenerator(bcgen);
 
                 try
@@ -263,7 +263,7 @@ namespace InWorldz.Phlox.Glue
             asmParser.RemoveErrorListeners();
             asmParser.AddErrorListener(asmErrorListener);
 
-            BytecodeGenerator bcgen = new BytecodeGenerator(Defaults.SystemMethods.Values);
+            BytecodeGenerator bcgen = new BytecodeGenerator(Defaults.AllMethods);
             asmParser.SetGenerator(bcgen);
 
             try
