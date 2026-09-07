@@ -448,3 +448,67 @@ one. The manhole compiled and still did nothing. **A "did it land" check that st
 is not a verification of the behaviour**; the behaviour needed a script to execute, and that test
 did not exist until now.
 
+---
+
+## PHLOX-2e — the scheduler harness exists, and it says the fault is NOT in the scheduler
+
+**Logged:** 2026-09-07. **PART 1 only. Stopped at the gate, deliberately — no fix was made.**
+
+### The harness
+
+`SchedulerHarness` stands up a whole `PhloxEngine` on a `SceneHelpers` test scene, puts a real
+script in a real prim's task inventory (`TaskInventoryHelpers.AddScript`), rezzes it exactly as
+`PhloxEngine.OnRezScript` does, and then pumps `PhloxScriptLoader.DoWork` and
+`PhloxExecutionScheduler.DoWork` by hand instead of running `PhloxMasterScheduler`'s thread — so a
+test is deterministic and cannot hang. `llSay` is observed where it really goes,
+`Scene.SimChat` → `EventManager.OnChatFromWorld` (`Scene.PacketHandlers.cs:51-85`), because the
+engine builds its own `LSLSystemAPI` inside `FinishedLoading` and offers no seam for a stub.
+
+This is the gap PHLOX-2d named and could not build in the time it had.
+
+### The result, which is not the expected one
+
+| Variant | Result on `9482615186` |
+|---|---|
+| fresh compile → `state_entry` runs | **PASSES** |
+| shared-script start (second instance of a loaded asset) → `state_entry` runs | **PASSES** |
+| fresh instance handles a posted `touch_start` | **PASSES** |
+
+**The scheduler runs a fresh instance correctly.** The second variant is the live symptom exactly —
+`Starting shared script 2074003b` at 16:55:18 for a new item on a fresh prim — and it works here.
+So on the brief's own rule the fault is **outside the scheduler**, and this stops here rather than
+producing a fix that passes.
+
+### Three harness faults were found and fixed on the way, and they are worth knowing
+
+Each of them produced a convincing red that meant nothing:
+
+1. **`DispatchProxy` cannot proxy a `sealed` type.** The `IWorldComm` stub threw at construction.
+2. **No task-inventory item.** `PhloxScriptLoader.FindAssetId` reads
+   `Prim.Inventory.GetInventoryItem` and drops the load when it is absent
+   (`PhloxScriptLoader.cs:301-307`). It *does* log an error there — an earlier reading of
+   `PerformLoad:237-238` as a silent drop was wrong.
+3. **The engine name.** `PhloxEngine.Name` is **`"InWorldz.Phlox"`**, not `"PhloxEngine"`, and
+   `OnRezScript` returns immediately when the name does not match (`PhloxEngine.cs:312`). Passing
+   the wrong one dropped every rez **silently — no log line at all**, and left every queue empty.
+   That is the one to remember: it is indistinguishable, from outside, from the live symptom.
+
+### Where to look next
+
+The scheduler is exonerated for a fresh instance, so the live difference is in what the region does
+that the test scene does not. Candidates, none investigated:
+
+- **`TaskInventoryItem.ScriptRunning`** — the region persists a per-item running flag; the harness
+  never sets or reads one, and `ProcessEventQueue` skips a disabled script for every event except
+  `STATE_ENTRY` (`PhloxExecutionScheduler.cs:655-656`).
+- **`OnStartScript` / `ChangeEnabledStatus`** — the region calls these around rez; the harness does
+  not.
+- **The master scheduler's thread**, which the harness deliberately replaces. If the live failure is
+  a lost wake-up, this harness cannot see it by construction — the `m_ActionEvent` comment at
+  `PhloxMasterScheduler.cs:70-79` describes exactly that class of bug having been fixed once before.
+- **`StateManager.LoadState`** returning something non-null for a brand-new item, which would take
+  the restored-state branch and leave the script `Waiting` with no `state_entry` ever posted.
+
+**The last one would fit every observation** and is the first thing to check, but it is a guess and
+is recorded as one.
+
