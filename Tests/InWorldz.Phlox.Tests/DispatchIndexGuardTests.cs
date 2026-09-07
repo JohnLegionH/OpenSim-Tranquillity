@@ -112,3 +112,55 @@ public class DispatchIndexGuardTests
                 $"{sig.FunctionName} dispatches to index {sig.TableIndex}, which is null in _shimMap");
     }
 }
+
+/// <summary>
+/// PHLOX-2c. The table's dictionary KEY must be the function's own name, or the name-keyed lookups
+/// miss it. Found while building the dispatch baseline: <c>botRemoveBot</c> was keyed
+/// <c>"Shim_botRemoveBot"</c>, so <c>Defaults.TryGetMethod("botRemoveBot")</c> returned false and
+/// both the SLua bridge (<c>SLuaCompiler.cs:2118</c>) and the interpreter's method map
+/// (<c>Interpreter.Actions.cs:2011</c>) silently had no entry for it. The compiler was unaffected —
+/// it reads <c>FunctionName</c>, which was always right — which is why nothing ever failed loudly.
+/// </summary>
+public class TableKeyTests
+{
+    [Fact]
+    public void EveryTableKeyIsItsFunctionName()
+    {
+        var wrong = new List<string>();
+        foreach (var (key, sigs) in InWorldz.Phlox.Types.Defaults.SystemMethods)
+            foreach (var sig in sigs)
+                if (sig.FunctionName != key)
+                    wrong.Add($"{key} -> {sig.FunctionName}");
+
+        // SystemMethods is grouped BY FunctionName, so this holds by construction; the check that
+        // bites is the raw table below.
+        Assert.True(wrong.Count == 0, string.Join(", ", wrong));
+    }
+
+    [Fact]
+    public void EveryRawTableKeyIsTheFunctionNameOrItsOverloadForm()
+    {
+        var raw = (System.Collections.IDictionary)typeof(InWorldz.Phlox.Types.Defaults)
+            .GetField("RawMethods", BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetValue(null)!;
+
+        var wrong = new List<string>();
+        foreach (System.Collections.DictionaryEntry e in raw)
+        {
+            var key = (string)e.Key;
+            var sig = (InWorldz.Phlox.Types.FunctionSig)e.Value!;
+            var expectedOverload = sig.FunctionName + InWorldz.Phlox.Types.Defaults.OverloadSeparator + sig.ParamTypes.Length;
+            if (key != sig.FunctionName && key != expectedOverload)
+                wrong.Add($"key '{key}' is neither '{sig.FunctionName}' nor '{expectedOverload}'");
+        }
+
+        Assert.True(wrong.Count == 0, string.Join("; ", wrong));
+    }
+
+    [Fact]
+    public void TheNameKeyedLookupFindsBotRemoveBot()
+    {
+        Assert.True(InWorldz.Phlox.Types.Defaults.TryGetMethod("botRemoveBot", out var sig));
+        Assert.Equal("botRemoveBot", sig.FunctionName);
+    }
+}

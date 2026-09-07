@@ -3050,7 +3050,7 @@ namespace InWorldz.Phlox.Types
 				ParamNames = new string[] {"tag"},
 				TableIndex = 432
 			}},
-            {"Shim_botRemoveBot", new FunctionSig {
+            {"botRemoveBot", new FunctionSig {
 				FunctionName =  "botRemoveBot",
 				ReturnType = VarType.Void,
 				ParamTypes = new VarType[] {VarType.Key},
@@ -4763,7 +4763,7 @@ namespace InWorldz.Phlox.Types
             // OSSL_Api.cs:1051 - osTeleportAgent(agent, position, lookat), teleport within this region.
             // This is the form script 9898c41e-... calls, and the one whose absence produced
             // "Function 'osTeleportAgent' expects 4 arguments, got 3" at every region start.
-            {"osTeleportAgent$3", new FunctionSig {
+            {"osTeleportAgent__3", new FunctionSig {
                 FunctionName = "osTeleportAgent",
                 ReturnType = VarType.Void,
                 ParamTypes = new VarType[] { VarType.String, VarType.Vector, VarType.Vector },
@@ -4772,7 +4772,7 @@ namespace InWorldz.Phlox.Types
             }},
 
             // OSSL_Api.cs:1015 - osTeleportAgent(agent, regionX, regionY, position, lookat).
-            {"osTeleportAgent$5", new FunctionSig {
+            {"osTeleportAgent__5", new FunctionSig {
                 FunctionName = "osTeleportAgent",
                 ReturnType = VarType.Void,
                 ParamTypes = new VarType[] { VarType.String, VarType.Integer, VarType.Integer, VarType.Vector, VarType.Vector },
@@ -4781,7 +4781,7 @@ namespace InWorldz.Phlox.Types
             }},
 
             // LSL_Api's three-argument llLinkPlaySound; Phlox has always had the four-argument form.
-            {"llLinkPlaySound$3", new FunctionSig {
+            {"llLinkPlaySound__3", new FunctionSig {
                 FunctionName = "llLinkPlaySound",
                 ReturnType = VarType.Void,
                 ParamTypes = new VarType[] { VarType.Integer, VarType.String, VarType.Float },
