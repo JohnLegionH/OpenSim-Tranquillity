@@ -170,4 +170,21 @@ public sealed class ServerSideBakingRegion : IServerSideBakingRegion
         IConfig regionConfig = sceneConfig.Configs[regionName];
         return regionConfig is null ? simulatorDefault : regionConfig.GetBoolean("ServerSideBaking", simulatorDefault);
     }
+
+    /// <summary>
+    /// S12: which config decided this region's flag - <c>"region section"</c> when the region's own section carries
+    /// a <c>ServerSideBaking</c> key, <c>"global"</c> otherwise. Purely for the startup line: an operator who has
+    /// just added the two global lines needs the log to say the global path is what turned the region on, and an
+    /// operator debugging one wrong region needs to know a section is overriding them.
+    /// </summary>
+    public static string EnabledSource(IConfigSource sceneConfig, string regionName)
+    {
+        if (sceneConfig is null || string.IsNullOrEmpty(regionName)) return GlobalSource;
+        IConfig regionConfig = sceneConfig.Configs[regionName];
+        return regionConfig is not null && regionConfig.Contains("ServerSideBaking") ? RegionSource : GlobalSource;
+    }
+
+    /// <summary>The two answers <see cref="EnabledSource"/> gives, named so the log line and its test cannot drift.</summary>
+    public const string GlobalSource = "global";
+    public const string RegionSource = "region section";
 }

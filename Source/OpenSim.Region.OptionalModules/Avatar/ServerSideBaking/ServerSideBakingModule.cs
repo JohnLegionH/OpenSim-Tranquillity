@@ -116,7 +116,15 @@ public class ServerSideBakingModule : ISharedRegionModule, IServerSideBaker
     public void RegionLoaded(Scene scene)
     {
         // The per-region flag is resolved once, here, and everything wire-facing reads it off this object.
-        var enabled = ServerSideBakingRegion.ResolveEnabled(ServerSideBakingEnabled, scene.Config, scene.RegionInfo?.RegionName);
+        var regionName = scene.RegionInfo?.RegionName;
+        var enabled = ServerSideBakingRegion.ResolveEnabled(ServerSideBakingEnabled, scene.Config, regionName);
+        var source = ServerSideBakingRegion.EnabledSource(scene.Config, regionName);
+
+        // S12: one line per region, naming which config decided. This is what the flip verify reads - after the
+        // two global lines go in and a region section comes out, every region must say "on (global)".
+        m_log.LogInformation("[SSB]: region {Region}: server-side baking {State} ({Source})",
+            scene.Name, enabled ? "ON" : "off", source);
+
         var region = new ServerSideBakingRegion(enabled, new CofHandshake());
         lock (m_scenes)
         {

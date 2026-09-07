@@ -328,6 +328,44 @@ All three call `RunBakeAsync` (`AgentSession.Appearance.cs:131`), which single-f
 
 **Consequence for S6.** The `server`-mode construction has to cut the type, not the call: all three entry points already converge, so the branch point is a single one — but `AgentSession` *is* the `IBakeSteps` implementation, so "the code that can send appearance does not exist on that branch" means the server-mode session must not be an `IBakeSteps` at all, rather than an `AgentSession` that declines to bake.
 
+## 4.9 The config contract (S12)
+
+**An operator turns both lanes on for the whole simulator with two lines, and never names a region.**
+
+```ini
+[AIS]
+    Enabled = true
+
+[Appearance]
+    ServerSideBaking = true
+```
+
+That is the switch, verbatim. A `[<Region Name>]` section is an **optional override and never the way to opt
+in**: a single region opts *out* of a simulator-wide true with `AIS_Enabled = false` or
+`ServerSideBaking = false` in its own section.
+
+**Precedence, both lanes, identical:** the region section's value if that section carries the key, else the
+global, else `false`. `AISv3Module.ResolveEnabled` and `ServerSideBakingRegion.ResolveEnabled` have always done
+this - S12 did not change the resolution, it changed what the configuration files *tell* an operator to do and
+added the evidence. Note the asymmetry the operator sees and cannot avoid: the global AIS key is `Enabled`
+(inside `[AIS]`) while the per-region key is `AIS_Enabled`, because a region section holds settings for many
+modules and the key has to say which one it belongs to. `ServerSideBaking` is the same word in both places.
+
+**A region section that exists but says nothing about these keys does not opt out.** Regions commonly have a
+section for other settings; the override applies only when the key itself is present. That is a test, not a
+convention.
+
+**Every region logs one line at INFO when it loads, naming which config decided:**
+
+```
+[AIS]: region Ebony: AIS v3 ON (global)
+[SSB]: region Ebony: server-side baking ON (global)
+```
+
+`(region section)` in place of `(global)` when the region's own section carried the key. This is what a flip
+verify reads - after the two global lines go in and a region's own lines come out, every region must say
+`(global)`, and a region still saying `(region section)` is one whose section was missed.
+
 ## 4.8 What triggers a bake (S5, S9)
 
 Every trigger converges on one place: an appearance **save** completing, which raises `OnAvatarAppearanceChange`

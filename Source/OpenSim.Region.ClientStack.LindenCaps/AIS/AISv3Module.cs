@@ -56,10 +56,11 @@ public class AISv3Module : ISharedRegionModule
         IConfig config = source.Configs[ConfigSection];
         Enabled = config is not null && config.GetBoolean("Enabled", false);
         if (Enabled)
-            m_log.LogWarning(
-                "[AIS]: [{Section}] Enabled is true for every region on this simulator. Enabling AIS routes ALL "
-                + "inventory traffic through it - fetch, delete, purge, slam and create - and the LL viewer has no "
-                + "fallback for the mutations (spec 1g, risk A-R1). Prefer a per-region override.", ConfigSection);
+            m_log.LogInformation(
+                "[AIS]: [{Section}] Enabled = true: AIS v3 is on for every region this simulator runs. It routes ALL "
+                + "of an LL viewer's inventory traffic - fetch, delete, purge, slam and create - and the viewer has "
+                + "no fallback for the mutations (spec 1g, risk A-R1). A single region opts out with "
+                + "AIS_Enabled = false in its own section.", ConfigSection);
     }
 
     public void PostInitialise() { }
@@ -84,10 +85,36 @@ public class AISv3Module : ISharedRegionModule
         return regionConfig is null ? gridDefault : regionConfig.GetBoolean("AIS_Enabled", gridDefault);
     }
 
+    /// <summary>
+    /// S12: which config decided this region's flag - <c>"region section"</c> when the region's own section carries
+    /// an <c>AIS_Enabled</c> key, <c>"global"</c> otherwise. For the startup line only; see
+    /// <c>ServerSideBakingRegion.EnabledSource</c>, which answers the same question for the other lane in the same
+    /// words, because the flip verify reads both.
+    /// </summary>
+    public static string EnabledSource(IConfigSource sceneConfig, string regionName)
+    {
+        if (sceneConfig is null || string.IsNullOrEmpty(regionName)) return GlobalSource;
+        IConfig regionConfig = sceneConfig.Configs[regionName];
+        return regionConfig is not null && regionConfig.Contains("AIS_Enabled") ? RegionSource : GlobalSource;
+    }
+
+    /// <summary>The two answers <see cref="EnabledSource"/> gives.</summary>
+    public const string GlobalSource = "global";
+    public const string RegionSource = "region section";
+
     public void RegionLoaded(Scene scene)
     {
         if (scene is null) return;
-        if (!ResolveEnabled(Enabled, scene.Config, scene.RegionInfo?.RegionName)) return;
+
+        var regionName = scene.RegionInfo?.RegionName;
+        var enabled = ResolveEnabled(Enabled, scene.Config, regionName);
+
+        // S12: one line per region, naming which config decided - the same shape the SSB lane logs, so the flip
+        // verify reads one console for both.
+        m_log.LogInformation("[AIS]: region {Region}: AIS v3 {State} ({Source})",
+            scene.Name, enabled ? "ON" : "off", EnabledSource(scene.Config, regionName));
+
+        if (!enabled) return;
 
         if (scene.InventoryService is null)
         {
