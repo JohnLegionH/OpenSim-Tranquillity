@@ -200,7 +200,11 @@ public sealed class SchedulerHarness : IDisposable
         var interp = InterpreterFor(itemId);
         if (interp is null) return "(no interpreter)";
         var state = interp.GetType().GetProperty("ScriptState")?.GetValue(interp);
-        return state?.GetType().GetProperty("RunState")?.GetValue(state)?.ToString() ?? "(no state)";
+        if (state is null) return "(no state)";
+        var t = state.GetType();
+        var v = t.GetProperty("RunState")?.GetValue(state)
+                ?? t.GetField("RunState", BindingFlags.Public | BindingFlags.Instance)?.GetValue(state);
+        return v?.ToString() ?? "(no RunState)";
     }
 
     public void Dispose()

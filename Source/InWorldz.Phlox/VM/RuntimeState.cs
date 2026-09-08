@@ -106,6 +106,13 @@ namespace InWorldz.Phlox.VM
         public bool GeneralEnable;
 
         /// <summary>
+        /// PHLOX-2g: the TableIndex of the syscall most recently dispatched, so a script parked in
+        /// Status.Syscall can say WHICH call it is parked in. Diagnostic only - never persisted,
+        /// never read by the VM.
+        /// </summary>
+        public int LastSyscallIndex = -1;
+
+        /// <summary>
         /// The next time this script should be woken up from a sleep
         /// </summary>
         public UInt64 NextWakeup;

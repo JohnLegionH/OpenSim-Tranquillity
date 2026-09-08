@@ -102,6 +102,17 @@ namespace Phlox.ScriptEngine
             m_host.SetScriptEvents(m_itemID, flags);
         }
 
+        /// <summary>
+        /// PHLOX-2g. The backstop completion for a long-running syscall. Twenty-four async shims set
+        /// RunState=Syscall and called an implementation that never signalled a return, so the script
+        /// stayed in Syscall for ever - no error, no timeout, every later event piling up in its
+        /// queue. That is what the manhole was doing at 19:21 with four queued events.
+        /// </summary>
+        public void CompleteSyscall()
+        {
+            m_ScriptEngine?.SysReturn(m_itemID, null, 0);
+        }
+
         public void ShoutError(string errorText)
         {
             m_host?.ParentGroup?.Scene?.SimChat(
@@ -1739,6 +1750,14 @@ namespace Phlox.ScriptEngine
         {
             if (m_host == null) return;
             m_host.TouchName = text;
+
+            // PHLOX-2g: setting the field is not enough - the viewer's context menu comes from the
+            // object update, so without scheduling one the menu keeps whatever it last received.
+            // That is why the manhole's menu still read "Touch" after its state_entry had run
+            // llSetTouchText("Enter") successfully. llSetClickAction next door already marks the
+            // group changed for the same reason.
+            if (m_host.ParentGroup != null) m_host.ParentGroup.HasGroupChanged = true;
+            m_host.ScheduleFullUpdate();
         }
 
         public void llSetClickAction(int action)

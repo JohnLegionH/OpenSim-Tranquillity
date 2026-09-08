@@ -12,6 +12,14 @@ namespace InWorldz.Phlox.Glue
 	public interface ISystemAPI
 	{
         void SetScriptEventFlags();
+
+        /// <summary>
+        /// PHLOX-2g: signal that a long-running syscall has finished, so the scheduler can take the
+        /// script out of <c>Status.Syscall</c>. An implementation that already posts its own return
+        /// may call this too - a return that arrives when the script is no longer in Syscall is
+        /// ignored (<c>PhloxExecutionScheduler.ProcessSyscallReturns:897</c>).
+        /// </summary>
+        void CompleteSyscall();
         void ShoutError(string errorText);
         void OnScriptReset();
         void OnStateChange();

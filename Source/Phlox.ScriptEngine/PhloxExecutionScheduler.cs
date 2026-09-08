@@ -420,6 +420,7 @@ namespace Phlox.ScriptEngine
             public int LslState;
             public int TimerIntervalMs;
             public ulong EventMask;
+            public string PendingSyscall;
         }
 
         internal ScriptStatus GetStatus(UUID itemId)
@@ -446,11 +447,35 @@ namespace Phlox.ScriptEngine
                     LslState = st.LSLState,
                     TimerIntervalMs = st.TimerInterval,
                     EventMask = 0,
+                    // PHLOX-2g: which syscall the script is sitting in. One word, and it is the
+                    // difference between "RunState=Syscall" telling you nothing and telling you
+                    // everything - this is what made the manhole a half-hour trace instead of a
+                    // five-minute one.
+                    PendingSyscall = st.RunState == RuntimeState.Status.Syscall
+                        ? DescribeCurrentSyscall(interp) : null,
                 };
             }
         }
 
         /// <summary>Every item this scheduler holds, for a whole-object status listing.</summary>
+        /// <summary>
+        /// The built-in the script is currently inside, by name. The interpreter's instruction
+        /// pointer sits just past the syscall opcode, so the operand it carries is the function's
+        /// TableIndex; that is looked back up in the table it was emitted from.
+        /// </summary>
+        private static string DescribeCurrentSyscall(Interpreter interp)
+        {
+            try
+            {
+                int idx = interp.ScriptState.LastSyscallIndex;
+                if (idx < 0) return "(unknown)";
+                foreach (var sig in InWorldz.Phlox.Types.Defaults.AllMethods)
+                    if (sig.TableIndex == idx) return sig.FunctionName;
+                return "(index " + idx + ")";
+            }
+            catch { return "(unknown)"; }
+        }
+
         internal List<UUID> AllItemIds()
         {
             lock (m_AllScriptsLock) return new List<UUID>(m_AllScripts.Keys);

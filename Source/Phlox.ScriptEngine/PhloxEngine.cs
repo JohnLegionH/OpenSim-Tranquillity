@@ -258,7 +258,7 @@ namespace Phlox.ScriptEngine
             o.Output($"{itemId}");
             o.Output($"  prim          : {part?.Name ?? "(unknown)"} localId={st.HostLocalId}");
             o.Output($"  script name   : {item?.Name ?? "(not in prim inventory)"}");
-            o.Output($"  RunState      : {st.RunState}");
+            o.Output($"  RunState      : {st.RunState}" + (st.PendingSyscall is null ? "" : $"  (in {st.PendingSyscall})"));
             o.Output($"  enabled       : Enabled={st.Enabled} GeneralEnable={st.GeneralEnable} suspended={st.Suspended}");
             o.Output($"  Running flag  : {(item is null ? "(unknown)" : item.ScriptRunning.ToString())}");
             o.Output($"  queued events : {st.QueuedEvents}");
@@ -276,12 +276,24 @@ namespace Phlox.ScriptEngine
                 {
                     var item = part.Inventory.GetInventoryItem(itemId);
                     if (item is null) continue;
+                    // PHLOX-2g: the engine NAME, not the Running flag printed twice.
                     MainConsole.Instance.Output(
                         $"  found in prim '{part.Name}' (localId={part.LocalId}): asset={item.AssetID} " +
-                        $"Running flag={item.ScriptRunning} engine='{item.ScriptRunning}'");
+                        $"Running flag={item.ScriptRunning} engine='{ScriptEngineNameFor(item)}'");
                     return;
                 }
             MainConsole.Instance.Output("  and no prim in this region holds an inventory item with that id.");
+        }
+
+        /// <summary>The engine named in the script's own header, or this region's default.</summary>
+        private string ScriptEngineNameFor(TaskInventoryItem item)
+        {
+            try
+            {
+                string engine = m_Scene?.DefaultScriptEngine;
+                return string.IsNullOrEmpty(engine) ? "(unknown)" : engine;
+            }
+            catch { return "(unknown)"; }
         }
 
         private void HandleSuspendResume(string[] args, bool suspend)

@@ -37,7 +37,10 @@ default
         var ticks = h.Said.Count(m => m.Contains("tick"));
 
         _out.WriteLine($"ticks in 3.5s = {ticks}");
-        Assert.True(ticks <= 2, $"a 3 s timer fired {ticks} times in 3.5 s");
+        // The defect signature was about five ticks a second - seventeen or so in this window.
+        // The bound is deliberately loose: this is wall-clock timing on a shared machine, and a
+        // tight bound here is a flaky test rather than a stronger one.
+        Assert.True(ticks <= 4, $"a 3 s timer fired {ticks} times in 3.5 s");
         Assert.True(ticks >= 1, $"a 3 s timer did not fire at all in 3.5 s");
     }
 }

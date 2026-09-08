@@ -763,6 +763,22 @@ private static string ConvToString(object o)
 								Shim_llLinkPlaySound3,          //676  PHLOX-2b
         };
 
+        /// <summary>
+        /// PHLOX-2g. Run a long-running syscall off the script thread and ALWAYS signal completion,
+        /// including when the body throws. Before this each async shim posted the work and trusted
+        /// the API implementation to return; 24 of them called implementations that never did, and
+        /// the script hung in Status.Syscall permanently.
+        /// </summary>
+        private static void RunAsync(SyscallShim self, Action body)
+        {
+            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
+            self._asyncCallDelegate(delegate()
+            {
+                try { body(); }
+                finally { self._systemAPI.CompleteSyscall(); }
+            });
+        }
+
         public void SetScriptEventFlags()
         {
             _systemAPI.SetScriptEventFlags();
@@ -818,6 +834,9 @@ private static string ConvToString(object o)
 
         public void Call(int funcid)
         {
+            // PHLOX-2g: remember what we are about to run, so 'phlox status' can name it if the
+            // call parks the script in Status.Syscall and never completes.
+            if (_interpreter != null) _interpreter.ScriptState.LastSyscallIndex = funcid;
             _shimMap[funcid](this);
         }
 
@@ -1908,9 +1927,8 @@ private static string ConvToString(object o)
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
             //set the script to long running syscall and call the function async
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.llInstantMessage(p0, p1);
             });
@@ -1923,9 +1941,8 @@ private static string ConvToString(object o)
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
             //set the script to long running syscall and call the function async
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.llEmail(p0, p1, p2);
             });
@@ -1937,9 +1954,8 @@ private static string ConvToString(object o)
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
             //set the script to long running syscall and call the function async
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.llGetNextEmail(p0, p1);
             });
@@ -2199,9 +2215,8 @@ private static string ConvToString(object o)
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
             //set the script to long running syscall and call the function async
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.llGiveInventory(p0, p1);
             });
@@ -2247,9 +2262,8 @@ private static string ConvToString(object o)
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
             //set the script to long running syscall and call the function async
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.llRequestAgentData(p0, p1);
             });
@@ -2277,9 +2291,8 @@ private static string ConvToString(object o)
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
             //set the script to long running syscall and call the function async
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.llTeleportAgentHome(p0);
             });
@@ -2807,9 +2820,8 @@ private static string ConvToString(object o)
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
             //set the script to long running syscall and call the function async
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.llEjectFromLand(p0);
             });
@@ -2990,9 +3002,8 @@ private static string ConvToString(object o)
             string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.llGiveInventoryList(p0, p1, p2);
             });
@@ -4171,9 +4182,8 @@ private static string ConvToString(object o)
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
             //set the script to long running syscall and call the function async
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.llRequestUsername(p0);
             });
@@ -4193,9 +4203,8 @@ private static string ConvToString(object o)
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
             //set the script to long running syscall and call the function async
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.llRequestDisplayName(p0);
             });
@@ -4207,9 +4216,8 @@ private static string ConvToString(object o)
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
             //set the script to long running syscall and call the function async
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.iwMakeNotecard(p0, p1);
             });
@@ -4221,9 +4229,8 @@ private static string ConvToString(object o)
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
             //set the script to long running syscall and call the function async
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.iwAvatarName2Key(p0, p1);
             });
@@ -4349,9 +4356,8 @@ private static string ConvToString(object o)
             string region = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             string agent = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.iwTeleportAgent(agent, region, pos, lookat);
             });
@@ -4388,9 +4394,8 @@ private static string ConvToString(object o)
             int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
 
             //set the script to long running syscall and call the function async
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.iwGiveLinkInventory(p0, p1, p2);
             });
@@ -4403,9 +4408,8 @@ private static string ConvToString(object o)
             string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
 
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.iwGiveLinkInventoryList(p0, p1, p2, p3);
             });
@@ -4622,9 +4626,8 @@ private static string ConvToString(object o)
             int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
 
             //set the script to long running syscall and call the function async
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.llManageEstateAccess(p0, p1);
             });
@@ -5743,9 +5746,8 @@ private static string ConvToString(object o)
             int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
 
             //set the script to long running syscall and call the function async
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate ()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.iwDeliverInventory(p0, p1, p2);
             });
@@ -5758,9 +5760,8 @@ private static string ConvToString(object o)
             string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
 
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate ()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.iwDeliverInventoryList(p0, p1, p2, p3);
             });
@@ -5863,10 +5864,9 @@ private static string ConvToString(object o)
             int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
+            
             string ret = null;
-            self._asyncCallDelegate(delegate()
+            RunAsync(self, delegate()
             {
                 ret = self._systemAPI.iwRezAt(p0, p1, p2, p3, p4, p5);
             });
@@ -6890,9 +6890,8 @@ private static string ConvToString(object o)
             string region = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             string agent = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.osTeleportAgent(agent, region, pos, lookat);
             });
@@ -6905,9 +6904,8 @@ private static string ConvToString(object o)
             Vector3 pos = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
             string agent = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.osTeleportAgent(agent, pos, lookat);
             });
@@ -6922,9 +6920,8 @@ private static string ConvToString(object o)
             int regionX = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
             string agent = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
-            self._interpreter.ScriptState.RunState = VM.RuntimeState.Status.Syscall;
-
-            self._asyncCallDelegate(delegate()
+            
+            RunAsync(self, delegate()
             {
                 self._systemAPI.osTeleportAgent(agent, regionX, regionY, pos, lookat);
             });

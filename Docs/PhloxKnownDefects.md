@@ -602,3 +602,70 @@ a debugger. The mask line is the one that would have made PHLOX-2f a five-minute
   2e could not see is that running is not enough — the region also has to be *told* what the script
   handles, and that is a different call on a different object.
 
+---
+
+## PHLOX-2g — 24 async syscalls never signalled completion; and llSetTouchText never told the viewer
+
+**Logged:** 2026-09-07. **Fixed; not deployed.**
+
+### Two defects, and the brief's framing needs one correction
+
+**`llSetTouchText` is a synchronous shim and it does complete.** `Shim_llSetTouchText`
+(`SyscallShim.cs:3075-3081`) pops one operand, calls the API and returns; it never sets
+`Status.Syscall`. So it is not what parked the manhole. Two separate things were wrong:
+
+**(1) The menu text never reached the viewer.** `LSLSystemAPI.llSetTouchText` set
+`m_host.TouchName = text` and stopped (`:1749-1753`). The context menu comes from the object
+update, so without scheduling one the viewer keeps whatever it last received — which is why the
+menu still read "Touch" after `state_entry` had run `llSetTouchText("Enter")` perfectly well.
+`llSetClickAction` immediately below already marks the group changed for exactly this reason. Now
+sets `HasGroupChanged` and calls `ScheduleFullUpdate()`.
+
+**(2) The script was parked in a *different* syscall — and 24 of them could do it.** The contract
+for a long-running call is: the shim sets `RunState = Status.Syscall` and hands the body to
+`_asyncCallDelegate`, and **the API implementation must call `SysReturn`** to bring the script back
+(`PhloxEngine.cs:1100` → `PhloxExecutionScheduler.PostSyscallReturn:461` →
+`ProcessSyscallReturns:893-913`). Nothing enforced it. Of the 36 shims that set `Status.Syscall`,
+**24 called an implementation that never returns**, so the script stayed in `Syscall` for ever:
+no error, no timeout, later events piling up — the manhole's four queued events at 19:21.
+`DrainAsyncQueue` even catches a throw from the body and logs it (`:1107-1111`), which strands the
+script just as thoroughly.
+
+The manhole's `touch_start` calls `osTeleportAgent`, which is on that list. **Two of the twenty-four
+were mine**, added in PHLOX-2b by copying the shape of `Shim_osTeleportAgent` — which was already
+broken.
+
+### Fixed at the mechanism, not per function
+
+`SyscallShim.RunAsync` sets the state, runs the body and signals completion **in a `finally`**, so a
+throwing body cannot strand a script either. Completion goes through a new
+`ISystemAPI.CompleteSyscall()`, implemented as `SysReturn(itemId, null, 0)`. It is safe alongside
+implementations that post their own return: `ProcessSyscallReturns:897` ignores a return that
+arrives when the script is no longer in `Syscall`, so a duplicate is a no-op.
+
+22 shims converted to `RunAsync`. The **14 that still set `Status.Syscall` by hand are correct as
+they are** — their implementations do post a real return, with a value and a delay that the backstop
+would have to invent.
+
+### `phlox status` (PART 3)
+
+- **`engine='True'` is fixed.** It printed `item.ScriptRunning` twice; it now prints the engine name.
+- **The `RunState` line names the pending syscall**: `RunState : Syscall  (in osTeleportAgent)`.
+  `RuntimeState.LastSyscallIndex` records the TableIndex at dispatch (`SyscallShim.Call`), and the
+  console maps it back through `Defaults.AllMethods`. Diagnostic only, never persisted.
+  **That one word is the difference between a half-hour trace and a five-minute one**, and it is the
+  thing this session most wished had existed at the start of the last one.
+
+### Amendment to PHLOX-2c
+
+The manhole's story across four sessions, in order: it **compiled** at 2c (the 3-argument
+`osTeleportAgent` overload), it **registered touch** at 2f (`GeneralEnable` on a fresh instance),
+and it was **parked in `osTeleportAgent`** until 2g — with its menu text never reaching the viewer
+throughout. Each fix was correct and none of them alone made the object work.
+
+### Also
+
+`TimerCadenceTests` was tightened to a loose bound after it proved flaky under full-suite load: it
+is wall-clock timing on a shared machine, and it exists to catch the ~17-ticks-in-3.5s signature,
+not to measure jitter. **The timer cadence itself is still unreproduced** (PHLOX-2f).
+
