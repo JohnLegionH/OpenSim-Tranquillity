@@ -98,6 +98,16 @@ public sealed class SchedulerHarness : IDisposable
 
     private int m_scriptSeq;
 
+    /// <summary>
+    /// PROPS-1: add a real client to the scene so what the region SENDS can be asserted, not just
+    /// what it stores on the part.
+    /// </summary>
+    public OpenSim.Tests.Common.TestClient AddClient()
+    {
+        var sp = SceneHelpers.AddScenePresence(Scene, OpenMetaverse.UUID.Random());
+        return (OpenSim.Tests.Common.TestClient)sp.ControllingClient;
+    }
+
     /// <summary>Where a load got to: queues, whether an interpreter exists, and what it said.</summary>
     public string Diagnose(UUID itemId)
     {

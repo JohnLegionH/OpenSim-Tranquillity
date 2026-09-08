@@ -1758,6 +1758,13 @@ namespace Phlox.ScriptEngine
             // group changed for the same reason.
             if (m_host.ParentGroup != null) m_host.ParentGroup.HasGroupChanged = true;
             m_host.ScheduleFullUpdate();
+
+            // PROPS-1: the ObjectUpdate above does NOT carry the touch label. The viewer takes it
+            // from the full ObjectProperties reply, which the region otherwise sends only on
+            // select - a right-click asks for ObjectPropertiesFamily, which has no touch name.
+            // Without this push the menu keeps whatever it was told when the object was last
+            // selected, which is why it still read "Touch" after state_entry had set "Enter".
+            m_host.SendPropertiesToAllClients();
         }
 
         public void llSetClickAction(int action)

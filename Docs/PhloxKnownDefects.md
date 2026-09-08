@@ -669,3 +669,82 @@ throughout. Each fix was correct and none of them alone made the object work.
 is wall-clock timing on a shared machine, and it exists to catch the ~17-ticks-in-3.5s signature,
 not to measure jitter. **The timer cadence itself is still unreproduced** (PHLOX-2f).
 
+---
+
+## PROPS-1 — the touch label never reached the viewer
+
+**Logged:** 2026-09-08. **Fixed; not deployed.**
+
+### Where it was lost: not set, not copied, not sent, or sent too early?
+
+It was **sent too early and never re-sent**. Each of the other three is ruled out:
+
+- **Set on the part** — yes. `TouchName` writes `osUTF8TouchName` (`SceneObjectPart.cs:1109-1114`),
+  and PHLOX-2g's fix made `llSetTouchText` set it; `phlox status` showed the mask and the value.
+- **Copied into the reply** — yes. The full ObjectProperties block writes it at
+  `LLClientView.cs:6387` (`zc.AddShortLimitedUTF8(sop.osUTF8TouchName)`).
+- **Sent on select** — yes. `Scene.PacketHandlers.SelectPrim` calls
+  `part.SendPropertiesToClient` for every selected prim (`:223`).
+- **Sent on right-click** — **no, and this is the gap.** A right-click sends
+  `RequestObjectPropertiesFamily`, which reaches
+  `SceneGraph.RequestObjectPropertiesFamily` (`:1588-1593`) →
+  `ServiceObjectPropertiesFamilyRequest`. **The Family reply has no touch-name field at all.**
+
+The viewer confirms the same shape from the other side: `LLSelectMgr::processObjectProperties`
+fills `LLSelectNode::mTouchName` (`llselectmgr.cpp:6110`) — that is the *full* ObjectProperties
+handler — and the context-menu label reads it, falling back to the default label when empty
+(`llviewermenu.cpp:3096-3105`). Nothing in the Family path touches it.
+
+**So the label a viewer shows is whatever it was told the last time the object was selected.** A
+script that changes it afterwards is invisible until the next select. PHLOX-2g's
+`ScheduleFullUpdate` does not help: an ObjectUpdate carries no touch name.
+
+Worth noting the same is true upstream — `LSL_Api.llSetTouchText` (`:8420-8426`) also just assigns
+the field (and truncates to 9 characters, which Phlox does not) — so this is a latent OpenSim
+behaviour, not a Phlox regression. It only became visible here because a script was setting the
+label from `state_entry` on an object nobody had re-selected.
+
+### The fix
+
+`SceneObjectPart.SendPropertiesToAllClients()` pushes the full ObjectProperties to every client in
+the region; `llSetTouchText` calls it after setting the value. Pinned by a test that adds a real
+client to the scene and asserts the reply was sent for that part — **verified red** by disabling
+the push, not just green after it.
+
+**Not done:** `llSetSitText`, `llSetObjectName` and `llSetObjectDesc` have the identical shape and
+were left alone. They are the same defect and the same one-line fix, but they were not in evidence
+and changing them unasked would be scope I did not measure.
+
+---
+
+## PHLOX-3 framing — Mike Chase's consolidation note, and PHLOX-1 reconciled
+
+Read from `upstream/develop:Docs/PhloxYEngineConsolidation.md` (fetched, **not merged**), captured
+2026-09-07, status *discussion / not started*.
+
+- **Merging the two runtimes is not recommended.** The outer contract is already shared
+  (`IScriptEngine`/`IScriptModule`, `EventParams`, `DetectParams`, partly `LSL_Types`). The syscall
+  layer is the incompatibility: YEngine's emitted IL calls interfaces typed in `LSL_Types` wrapper
+  structs, Phlox's VM calls `ISystemAPI` typed in raw CLR primitives — unifying is a rewrite of one
+  side, ~30k vs ~13k lines to cross-check. The compilers differ on purpose: Phlox's bytecode VM buys
+  **serializable mid-execution state**, YEngine's IL buys speed.
+- **Retiring YEngine is directionally right but gated on OSSL parity**, and that gate is wide open.
+- **Keep both engines** meanwhile, YEngine config-gated and non-default, as the fallback for
+  OSSL-heavy content. Unifying the duplicated `AsyncCommandManager`/Http/Xml/Sensor plugins is the
+  one merge rated worthwhile (low–medium); Timer/Dataserver/Listener must stay Phlox-native because
+  they are bound up with the serializable-state guarantee.
+- **PHLOX-3 is therefore "port the OSSL surface to Phlox"**, with its own conformance suite —
+  analogous to `Tests/SluaProofRunner` — *before* any deprecation date is set.
+
+**Reconciled with PHLOX-1's audit, and the numbers agree exactly.** Counted again today from
+`Defaults.cs`: **`ll*` 532, `os*` 2, `iw*` 82, `bot*` 58**; `OSSL_Api` exposes **268** `os*`. That
+is Mike's table to the digit. PHLOX-1's "271 absent from Phlox" is the same fact from the other
+side — 266 missing `os*` plus a handful of newer `ll*`. Core LSL is close to complete; **OSSL is
+the hole**, and it is essentially the whole of it.
+
+Two of PHLOX-1's rows are now closed and should not be recounted as gaps: the **2 overload
+families** (`osTeleportAgent`, `llLinkPlaySound`) were resolved by PHLOX-2b/2c, which is also why
+`os*` reads 2 rather than 1. The **4 arity divergences** and **1 type divergence** (`llMapBeacon`)
+remain, and PHLOX-1's standing instruction holds: check those against the **SL wiki**, not against
+`OSSL_Api`, because Phlox's table matches Phlox's own implementations.
+
