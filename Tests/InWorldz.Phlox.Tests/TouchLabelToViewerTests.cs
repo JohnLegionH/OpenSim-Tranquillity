@@ -43,4 +43,28 @@ default
         Assert.Equal("Enter", h.Prim.TouchName);
         Assert.Contains(client.ObjectPropertiesSent, e => ReferenceEquals(e, h.Prim));
     }
+
+    [Theory]
+    [InlineData("llSetSitText(\"Sit here\");", "SitName", "Sit here")]
+    [InlineData("llSetObjectName(\"Renamed\");", "Name", "Renamed")]
+    [InlineData("llSetObjectDesc(\"Described\");", "Description", "Described")]
+    public void EveryPropertySetterPushesObjectPropertiesToClients(string call, string property, string expected)
+    {
+        // PROPS-1: the sit label, name and description all live in the same full ObjectProperties
+        // reply as the touch label (LLClientView.cs:6381, :6384, :6390) and had the identical
+        // defect - set the field, never tell anyone.
+        using var h = new SchedulerHarness();
+        var client = h.AddClient();
+        client.ObjectPropertiesSent.Clear();
+
+        // One line of LSL: the compiler does not care, and it keeps the attribute data literal-free.
+        h.RezScript("default { state_entry() { " + call + " } }");
+        h.Pump();
+
+        var actual = h.Prim.GetType().GetProperty(property)!.GetValue(h.Prim)?.ToString();
+        _out.WriteLine($"{property}='{actual}' propertiesSent={client.ObjectPropertiesSent.Count}");
+
+        Assert.Equal(expected, actual);
+        Assert.Contains(client.ObjectPropertiesSent, e => ReferenceEquals(e, h.Prim));
+    }
 }

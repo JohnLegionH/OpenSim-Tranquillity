@@ -444,9 +444,24 @@ namespace Phlox.ScriptEngine
         public string llGetOwner() => m_host?.OwnerID.ToString() ?? UUID.Zero.ToString();
         public string llGetCreator() => m_host?.CreatorID.ToString() ?? UUID.Zero.ToString();
         public string llGetObjectName() => m_host?.Name ?? string.Empty;
-        public void llSetObjectName(string name) { if (m_host != null) m_host.Name = name; }
+        /// <summary>PROPS-1: the name is in the full ObjectProperties reply (LLClientView.cs:6381),
+        /// so a change has to be pushed or the viewer keeps what it had at the last select.</summary>
+        public void llSetObjectName(string name)
+        {
+            if (m_host == null) return;
+            m_host.Name = name;
+            if (m_host.ParentGroup != null) m_host.ParentGroup.HasGroupChanged = true;
+            m_host.SendPropertiesToAllClients();
+        }
         public string llGetObjectDesc() => m_host?.Description ?? string.Empty;
-        public void llSetObjectDesc(string name) { if (m_host != null) m_host.Description = name; }
+        /// <summary>PROPS-1: same for the description (LLClientView.cs:6384).</summary>
+        public void llSetObjectDesc(string name)
+        {
+            if (m_host == null) return;
+            m_host.Description = name;
+            if (m_host.ParentGroup != null) m_host.ParentGroup.HasGroupChanged = true;
+            m_host.SendPropertiesToAllClients();
+        }
         public int llGetNumberOfPrims() => m_host?.ParentGroup?.PrimCount ?? 1;
         public int llGetLinkNumber() => m_host?.LinkNum ?? 0;
         public int llGetNumberOfSides() => m_host?.GetNumberOfSides() ?? 0;
@@ -1744,6 +1759,12 @@ namespace Phlox.ScriptEngine
         {
             if (m_host == null) return;
             m_host.SitName = text;
+
+            // PROPS-1: the sit label rides the same wire as the touch label - the full
+            // ObjectProperties reply (LLClientView.cs:6390), which the region otherwise sends only
+            // on select. Right-click asks for ObjectPropertiesFamily, which carries neither.
+            if (m_host.ParentGroup != null) m_host.ParentGroup.HasGroupChanged = true;
+            m_host.SendPropertiesToAllClients();
         }
 
         public void llSetTouchText(string text)

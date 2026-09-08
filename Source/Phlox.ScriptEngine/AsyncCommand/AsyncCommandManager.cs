@@ -126,15 +126,33 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             }
         }
 
+        private static readonly object m_cmdHandlerThreadLock = new object();
+
+        /// <summary>
+        /// PROPS-1 (found while deploying): this was a race. The IsAlive check and the assignment
+        /// were unguarded, so two engines constructing at once could both pass the check, the second
+        /// overwrite the static before the first reached Start(), and one of them then call Start()
+        /// on a thread the other had already started - "Thread is running or terminated; it cannot
+        /// restart", thrown out of PhloxEngine.RegionLoaded. Every region in a process builds its own
+        /// AsyncCommandManager, so a multi-region simulator loading regions concurrently is exactly
+        /// the shape that hits it. The lock makes check-create-start atomic, and the thread that is
+        /// started is the one this call created.
+        /// </summary>
         private static void StartThread()
         {
-            if (cmdHandlerThread != null && cmdHandlerThread.IsAlive)
-                return;
+            lock (m_cmdHandlerThreadLock)
+            {
+                if (cmdHandlerThread != null && cmdHandlerThread.IsAlive)
+                    return;
 
-            cmdHandlerThread = new Thread(CmdHandlerThreadLoop);
-            cmdHandlerThread.Name = "PhloxAsyncCmdHandlerThread";
-            cmdHandlerThread.IsBackground = true;
-            cmdHandlerThread.Start();
+                Thread t = new Thread(CmdHandlerThreadLoop)
+                {
+                    Name = "PhloxAsyncCmdHandlerThread",
+                    IsBackground = true,
+                };
+                cmdHandlerThread = t;
+                t.Start();
+            }
         }
 
         private static void CmdHandlerThreadLoop()
