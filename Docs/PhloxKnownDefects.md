@@ -752,7 +752,7 @@ remain, and PHLOX-1's standing instruction holds: check those against the **SL w
 
 ## PHLOX-3 candidates seen on 1.1.287
 
-**Logged:** 2026-09-09 - (i) and (ii) from the MERGE-1 deploy's live verification, (iii) and (iv) from the startup review of the first two starts on 1.1.287. **(v) is resolved - see PHLOX-3a below.**
+**Logged:** 2026-09-09 - (i) and (ii) from the MERGE-1 deploy's live verification, (iii) from the startup review of the first two starts on 1.1.287, (iv) from PHLOX-3b. **The timer-floor candidate is resolved - see PHLOX-3b below; (v) was resolved as PHLOX-3a.**
 
 ### (i) `phlox status <name>` reports a miss once per scene that does not hold the object
 
@@ -770,19 +770,7 @@ if YEngine accepts what Phlox rejects it is a Phlox compiler rule to fix, and if
 script's bug and gets recorded rather than fixed. **Nobody has compiled this script under YEngine yet.**
 Until that is done, any change to Phlox's duplicate-symbol handling would be a guess.
 
-### (iii) `llSetTimerEvent` has no floor: Phlox honours 0.01 s
-
-Phlox ran a `llSetTimerEvent(0.01)` timer at the rate it was asked for - a 10 ms timer - and the result was
-a stream of `[PhloxExe]: Slow timeslice` warnings at 1000-1600 ms each, from one prim, on a live region.
-**SL clamps the timer to a floor, and so did InWorldz.** Phlox does not, so any resident can ask a region
-for 100 Hz and get it.
-
-**Do not guess the floor.** Take it from the SL wiki, as PHLOX-1's standing rule requires for every arity
-and behaviour question, and apply it in the API - not in the scheduler, so the clamp is visible to anyone
-reading `llSetTimerEvent` rather than buried in the wake loop. A script asking for less should get the
-floor silently, as SL does.
-
-### (iv) `phlox status` cannot be given the id the warnings actually print
+### (iii) `phlox status` cannot be given the id the warnings actually print
 
 `Slow timeslice for "96c2d98a-..."` prints an **asset id**. `phlox status` accepts an **item id** or a prim
 name, so the one identifier an operator has in front of them at the moment they want to diagnose is the one
@@ -791,6 +779,30 @@ command should have done. **Make `phlox status` accept an asset id** and report 
 which is also the right answer when one asset is shared across several prims.
 
 ---
+
+### (iv) The harness-based tests fail intermittently under xUnit's collection parallelism
+
+**Measured, not assumed, on 2026-09-09:** **2 failures in 8 full runs** of `InWorldz.Phlox.Tests`, on
+**two different** tests - `TimerFloorTests.AValueAboveTheFloorIsUntouched` once and
+`FreshInstanceExecutionTests.AFreshCompileRunsItsStateEntry` once. **Each passes in isolation.** With
+collection parallelism off (`-- xUnit.ParallelizeTestCollections=false`) the suite was green **3/3**, at
+four times the wall clock.
+
+**This is called out rather than written off**, because the last time this suite showed an intermittent
+failure the answer was a real race - PHLOX-2f's `TimerCadenceTests`, which turned out to be the
+unguarded `AsyncCommandManager.StartThread` (PROPS-1). It was twice dismissed as flakiness and a test
+bound was widened to hide it. That must not happen again.
+
+**The shape suggests, but does not establish, shared static state.** Every harness test constructs a
+whole `PhloxEngine` on its own `TestScene`, xUnit runs collections in parallel, and `PhloxEngine` reaches
+static state (`AsyncCommandManager`'s static thread, the SLua-proof console registration guard). PHLOX-3b
+added six more harness tests, which raises exposure - it did not introduce the fault, since one of the two
+observed failures is in a test that predates it.
+
+**Do not raise a bound, and do not turn parallelism off in the csproj to make it green.** Either would
+hide it exactly as before. The first step is to reproduce it deliberately - construct several engines
+concurrently in one test and see what breaks - and only then decide whether the fix is isolation in the
+harness or a real lock in the engine.
 
 ## PHLOX-3a - RESOLVED: `state default;` crashed the compiler
 
@@ -867,3 +879,60 @@ The SL wiki's State page warns: *"NEVER do a state change from within a touch_st
 to the next touch_start on return to this state to be missed."* `lmap4` changes state from `touch_start`
 in all four states. That is a **script-quality** matter for its owner, not a compiler defect, and nothing
 was changed on the resident's script.
+
+---
+
+## PHLOX-3b - RESOLVED: `llSetTimerEvent` had no floor
+
+**Logged:** 2026-09-09 as candidate (iii). **Fixed the same day; not deployed.**
+
+### What it cost
+
+A resident script on Ebony called `llSetTimerEvent(0.01)`. Phlox honoured it exactly - `phlox status`
+read back `timer: 10 ms` - and the region logged `Slow timeslice` warnings of **1-1.8 s** for two days,
+across three regions, until the prim was deleted. **One script, one prim, three regions degraded**, and
+nothing in the engine said no.
+
+### Where the floor came from, and where it did NOT
+
+**The candidate note was wrong, and the correction matters more than the fix.** It said *"SL and InWorldz
+clamp"*. Both halves are false, and both were checked against sources this time rather than memory:
+
+| source | what it actually does |
+|---|---|
+| **SL wiki**, `llSetTimerEvent` | Documents **no minimum**. Only *"Cause the timer event to be triggered a maximum of once every sec seconds"* and *"Passing in 0.0 stops further timer events"*. The `timer` event page says nothing about a minimum or a frame-rate limit either. |
+| **Halcyon / InWorldz** (`D:\halcyon-reference`) | **No clamp anywhere.** `LSLSystemAPI.cs:1116` -> `EngineInterface.cs:831-834` -> `ExecutionScheduler.cs:1846-1853`, `TimerInterval = (int)(sec * 1000)`, tested only `> 0`. |
+| **Upstream, in this repo** | **Clamps.** `LSL_Api.cs:4005-4011`, `if (sec != 0.0 && sec < m_MinTimerInterval) sec = m_MinTimerInterval;` - code default 0.5 (`:113`), config key `MinTimerInterval` (`:518`), and `OpenSimDefaults.ini` ships `[YEngine] MinTimerInterval = 0.1`, **which is live on this grid**. |
+
+So until this fix, **the same call behaved differently depending on which engine ran the script** - YEngine
+floored at 0.1 s, Phlox at nothing.
+
+### The fix
+
+**0.1 s, config-driven** - `MinTimerInterval` in `[InWorldz.Phlox]`, same key name and same default as the
+other engine, so an operator sets one number and both agree; `0` disables the floor; the value is logged
+at startup next to `Enabled`. **John chose the config-driven form over a hard constant**, having been
+shown that neither named source supported any constant.
+
+One clamp, **at the API entry and not in the scheduler**, so `phlox status` reads back the value actually
+applied - a script and the log cannot then disagree about how fast a timer is. **Zero and negative are
+untouched**: 0.0 still stops the timer per the wiki, and negative still lands `<= 0` where the scheduler
+arms nothing. One **DEBUG** line per script instance when a value is clamped, naming item, requested and
+applied - not per tick, since a 10 ms timer would write a hundred lines a second.
+
+**A detail worth keeping:** `(int)(sec * 1000)` truncates, so before the clamp `llSetTimerEvent(0.0001)`
+did not mean *very fast*, it meant **timer off**. Raising it to the floor changes what such a script does,
+not merely how fast it runs. Rare, but it is a behaviour change and not only a limit.
+
+### Commits
+
+| commit | what |
+|---|---|
+| `ef064538a0` | red test - 6 cases through the whole engine; 2 red (10 ms, and 0 ms for the sub-millisecond case) |
+| `516c6a9be8` | the fix: config-driven floor, clamp at the API entry |
+
+Phlox suite **60 -> 66**, all green; solution 0 errors. **Not deployed.**
+
+**Did-it-land, named for the deploy:** a fresh prim calling `llSetTimerEvent(0.01)` shows **`timer: 100 ms`**
+in `phlox status`; **one** DEBUG clamp line appears in the log for it; and **no `Slow timeslice`** is logged
+for that script.
