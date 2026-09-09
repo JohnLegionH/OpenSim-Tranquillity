@@ -750,9 +750,9 @@ remain, and PHLOX-1's standing instruction holds: check those against the **SL w
 
 ---
 
-## PHLOX-3 candidates seen on 1.1.287, neither chased
+## PHLOX-3 candidates seen on 1.1.287, none chased
 
-**Logged:** 2026-09-09, from the MERGE-1 deploy's live verification.
+**Logged:** 2026-09-09 - (i) and (ii) from the MERGE-1 deploy's live verification, (iii) to (v) from the startup review of the first two starts on 1.1.287.
 
 ### (i) `phlox status <name>` reports a miss once per scene that does not hold the object
 
@@ -769,3 +769,39 @@ Unchanged on 1.1.287 - `[PhloxCompile]: "3eb0c62b-f307-41d4-a82c-da59aef5ca05": 
 if YEngine accepts what Phlox rejects it is a Phlox compiler rule to fix, and if both reject it is the
 script's bug and gets recorded rather than fixed. **Nobody has compiled this script under YEngine yet.**
 Until that is done, any change to Phlox's duplicate-symbol handling would be a guess.
+
+### (iii) `llSetTimerEvent` has no floor: Phlox honours 0.01 s
+
+Phlox ran a `llSetTimerEvent(0.01)` timer at the rate it was asked for - a 10 ms timer - and the result was
+a stream of `[PhloxExe]: Slow timeslice` warnings at 1000-1600 ms each, from one prim, on a live region.
+**SL clamps the timer to a floor, and so did InWorldz.** Phlox does not, so any resident can ask a region
+for 100 Hz and get it.
+
+**Do not guess the floor.** Take it from the SL wiki, as PHLOX-1's standing rule requires for every arity
+and behaviour question, and apply it in the API - not in the scheduler, so the clamp is visible to anyone
+reading `llSetTimerEvent` rather than buried in the wake loop. A script asking for less should get the
+floor silently, as SL does.
+
+### (iv) `phlox status` cannot be given the id the warnings actually print
+
+`Slow timeslice for "96c2d98a-..."` prints an **asset id**. `phlox status` accepts an **item id** or a prim
+name, so the one identifier an operator has in front of them at the moment they want to diagnose is the one
+the command will not take. Tracing 96c2d98a to "Timer test (2)" on 2026-09-09 took a manual search that the
+command should have done. **Make `phlox status` accept an asset id** and report every instance running it -
+which is also the right answer when one asset is shared across several prims.
+
+### (v) The compiler throws NullReferenceException on one script, and the resident is told nothing useful
+
+`[PhloxCompile]: "4e51f068-9350-4f55-a52a-f8de3e53bdc4": "Object reference not set to an instance of an
+object."` - at 04:48:35 on 2026-09-09, and again at 04:56:15 on the next start, so it is deterministic and
+reproduces from the stored asset. John reports the prim as `464506571`.
+
+**This is a crash in the compiler, not a syntax error**, and it matters more than the one script: PHLOX-2's
+owner-visible compile errors path reports it to the resident as a bare compile failure, so someone is being
+told their script is wrong when what actually happened is that the compiler fell over. Whatever the fix, the
+error the owner sees should distinguish the two.
+
+**Blocked on the source.** The script body is the resident's content and is not in the tree; John to
+identify it. When it is available, the first step is a **red test in `InWorldz.Phlox.Tests`** that reproduces
+the throw from the smallest fragment that still crashes - the fixture convention from PHLOX-2c applies, so
+the body is fetched on demand and not committed.
