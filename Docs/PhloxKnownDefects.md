@@ -956,29 +956,33 @@ script asleep or mid-event when the region stopped was saved in exactly the stat
 |---|---|---|
 | **Sleeping** | never `TrackSleep`'d - nothing woke it, and the stale frame stayed on the stack, so the next unrelated event pushed on top of it (`RuntimeState.cs:335-336`) and the interrupted handler resumed **nested inside** the new event | **fixed** - `TrackSleep(NextWakeup)`, pinned by test 1a |
 | **Waiting with queued events** | `ProcessEventQueue` reads only `m_PendingEvents`; `ScriptState.EventQueue` is drained by `TransitionToWait`, which runs only for a script already on the run queue. A restored script is on neither, so queued events sat for ever | **fixed** - `DeliverNextQueuedEvent`, pinned by test 1c |
-| **Running** | never `AddToRunQueue`'d; same nesting on the next event | **NOT fixed** - see below |
-| **Syscall** | unhandled | **NOT fixed** - now logs a warning instead of pretending |
+| **Running** | never `AddToRunQueue`'d; same nesting on the next event | **fixed in PHLOX-4b** - `AddToRunQueue`, pinned by test 1b; see the correction below |
+| **Syscall** | unhandled | **fixed in PHLOX-4b** - `ResumeFromSyscall` with tag 22, pinned by test 1d |
 
-### Running: the briefed one-liner is not enough, and it is not shipped
+### Running - CORRECTED in PHLOX-4b: the one-liner was sufficient; the finding was a measurement error
 
-The obvious fix is `AddToRunQueue`, and **it does not work**. Measured: with it, a script captured
-mid-loop is restored `Running` and **stays** `Running` through **3000 pump rounds on a 20,000-iteration
-loop** - it never reaches the end. So the run queue is not the only thing an interrupted script is
-missing.
+PHLOX-4 recorded here that `AddToRunQueue` "does not work" because a script captured mid-loop was
+"restored `Running` and stays `Running` through 3000 pump rounds on a 20,000-iteration loop". **That
+conclusion was wrong, and the probes in PHLOX-4b show exactly how.** With `AddToRunQueue` in place the
+restored script's IP cycles through **eleven addresses** - the loop body - and its locals climb from
+`Int32(4), Int32(6)` at capture to **`Int32(8731), Int32(38110815)`** after 2000 pumps. One `PumpOnce`
+advances the loop about **4.4 iterations**, so 3000 rounds reached roughly **13,000 of the 20,000**
+asked for. It was resuming the whole time; the test simply did not pump long enough for the loop it
+chose, and *didn't finish* was read as *doesn't work* - the same shape of error as PHLOX-2f's
+"flakiness", pointing the other way. `SerializedLSLPrimitive` was suspected and is **not** implicated:
+the locals round-trip with type and value intact.
 
-Shipping it anyway would have changed live behaviour on the strength of a guess, so `Running` is left at
-today's behaviour (`Waiting`) and now **logs a warning naming the script**, which is at least honest
-where it used to be silent. Test 1b stays in the tree **skipped, with the measurement in its skip
-reason**, so the next session starts from the evidence rather than rediscovering it.
+The arm is `AddToRunQueue`, the warning is gone, and test 1b runs un-skipped against a 2,000-iteration
+loop.
+### Syscall - done in PHLOX-4b
 
-### Syscall: its own row, by the brief's own escape hatch
-
-A syscall in flight when the region stopped has **no completion coming**. Reviving it means pushing the
-default of that function's `ReturnType` and persisting `RuntimeState.LastSyscallIndex` as a new
-`SerializedRuntimeState` member (next free protobuf tag is **22**; `LastSyscallIndex` already exists at
-`RuntimeState.cs:113`, added for `phlox status` in PHLOX-2g). Not done here. It now logs a warning
-rather than silently restoring a script whose stack is missing a value.
-
+`SerializedRuntimeState` gains **`[ProtoMember(22)] LastSyscallIndex`**, initialised to **-1** because 0
+is a real table index; `FromRuntimeState` copies it and `ToRuntimeState` restores it. A row written
+before tag 22 loads with -1 - proved by deserialising a blob that carries only the three required
+members - and falls back to Waiting with a warning. With an index, `ResumeFromSyscall` looks the
+function up by `TableIndex` in `Defaults.AllMethods`, pushes its `ReturnType`'s default (Void pushes
+nothing), puts the script on the run queue and logs the function name at Information. Test 1d captures
+in Syscall (index 23, `llSay`), restores, reaches Waiting and answers a touch.
 ### One clock - three defects, one root
 
 The engine had **two tick sources on different bases**, and both were broken:
@@ -1019,3 +1023,63 @@ Phlox suite **66 -> 73**: 72 passed, **1 skipped** (1b), 0 failed. Solution 0 er
 The restore tests share **one SQLite file** - `StateManager.DB_FILE` is a fixed relative path - so they
 are a single non-parallel xUnit collection. That is more global state reachable from a harness test, and
 it belongs with **candidate (iv)**, the intermittent harness failures.
+
+
+---
+
+## PHLOX-4b / 4c - the Running measurement corrected, Syscall done, and a regression I caused
+
+**2026-09-09. Not deployed.** Two sessions; the first ended uncommitted on purpose.
+
+### What 4b established
+
+Three probes on the restored Running script, run before touching the engine - tick count via IP
+movement, an IP trace every 100 pumps, and a frame dump at capture and after restore. Verbatim:
+
+```
+(c) AT CAPTURE : IP=17 Calls=1 Operands=0 RunState=Running Locals=[0:Int32(4), 1:Int32(6)]
+(b) IP every 100 pumps: 33,49,22,38,54,27,43,55,28,44,17,33,49,22,38,54,27,43,55,28
+(c) AFTER 2000 PUMPS: IP=28 Calls=1 Operands=1 RunState=Running Locals=[0:Int32(8731), 1:Int32(38110815)]
+```
+
+Executing, advancing, locals intact. See the corrected Running paragraph in the PHLOX-4 row above.
+
+### What 4b broke, and why it stayed uncommitted
+
+The full suite finished with `ASleepingScriptWakesUpAndFinishesItsHandler` failing **deterministically**,
+alone or in company - the PHLOX-4 symptom back. It was **not** committed. 4c found the cause by reading
+the dispatch: 4b had replaced the Running block by **slicing from `case Running` to `case Syscall`**, and
+the Sleeping arm sat between them. **It was deleted.** A sleeping script fell to `default` and was
+restored Waiting. Not a serializer fault, not `LastSyscallIndex` - an editing error.
+
+Also found and fixed on the way: PHLOX-4 part 3's settable `Clock` source is **process-global**, and
+`ClockBasisTests` pins it at `0x3FFFFF00` while running. Any engine test beside it arms timers against a
+frozen clock; `TimerFloorTests` failed exactly that way in the full run and passed alone. Every class
+that builds a `SchedulerHarness` is now in the single non-parallel `phlox-state` collection, **with the
+reason named** - this is not the blanket parallelism switch candidate (iv) warns against, and the
+compiler tests stay parallel.
+
+### 4c
+
+- The Sleeping arm is back. The dispatch is on `RunState` **only**; `LastSyscallIndex` is read inside the
+  Syscall arm and nowhere else.
+- `LastSyscallIndex` now means **"the syscall I am parked in"**: reset to -1 in `RunAsync`'s `finally`
+  beside `CompleteSyscall`, and in `SyscallShim.Call` - the one choke point every shim returns through -
+  whenever the shim returns without leaving the script in Syscall. So `llSleep`, which sets Sleeping,
+  clears it too; 1a's probe reads `-1` at capture and asserts `-1` after the handler finishes. The
+  `phlox status` line that reads it keeps working for parked scripts, which is all it ever meant.
+
+### Commits
+
+| commit | what |
+|---|---|
+| `9a216e2df6` | every engine test in one non-parallel collection; the state probes on the harness |
+| `65736aa9f4` | Running and Syscall arms resume; the Sleeping arm put back; tag 22; index reset; 1b un-skipped, 1d and two serializer tests |
+
+Phlox suite **73 -> 76**, **0 skipped**, green **three runs in a row**; solution 0 errors.
+
+### Standing correction to candidate (iv)
+
+Two of its observed intermittent failures now have named causes: the global clock seam (fixed by the
+collection) and the shared `script_state.db` (same). Whether anything remains under (iv) is unknown
+until the suite has run parallel-by-default for a while with those two removed; the entry stays open.
