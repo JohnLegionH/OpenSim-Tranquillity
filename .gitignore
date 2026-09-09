@@ -298,3 +298,4 @@ TrustedHypergridSecret.ini
 
 # PHLOX-2c: live script bodies are residents' content - manifest committed, bodies fetched on demand
 Tests/InWorldz.Phlox.Tests/LiveScripts/scripts/
+scratchpad/
