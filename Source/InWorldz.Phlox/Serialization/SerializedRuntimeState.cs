@@ -73,6 +73,20 @@ namespace InWorldz.Phlox.Serialization
         [ProtoMember(20)]
         public Dictionary<int, SerializedLSLPrimitive[]> MiscAttributes;
 
+        /// <summary>
+        /// PHLOX-4b. Which syscall was in flight when the state was captured, as a
+        /// <c>FunctionSig.TableIndex</c>, or -1 for none. Without it a script saved mid-syscall could
+        /// not be resumed at all: the call has no completion coming, so the only way back is to push
+        /// that function's return value ourselves, and that needs to know which function it was.
+        /// <para>
+        /// Tag 22 was the next free one. <b>Rows written before this field must still load</b>, and they
+        /// do: protobuf-net leaves an absent field at its initialised value, which is why this is -1
+        /// here and not 0 - 0 is a real table index.
+        /// </para>
+        /// </summary>
+        [ProtoMember(22)]
+        public int LastSyscallIndex = -1;
+
         [ProtoMember(21)]
         public float TotalRuntime;
 
@@ -140,6 +154,8 @@ namespace InWorldz.Phlox.Serialization
             serState.StateCapturedOn = DateTime.Now;
             //if the next wakeup is in the past, just filter it to be now equal to the state capture time
             //this prevents strange values from getting into the tickcounttodatetime calculation
+            serState.LastSyscallIndex = state.LastSyscallIndex;
+
             serState.NextWakeup = state.NextWakeup < tickCountNow ? serState.StateCapturedOn : Util.Clock.TickCountToDateTime(state.NextWakeup, tickCountNow);
             serState.TimerLastScheduledOn = Util.Clock.TickCountToDateTime(state.TimerLastScheduledOn, tickCountNow);
             serState.TimerInterval = state.TimerInterval;
@@ -203,6 +219,7 @@ namespace InWorldz.Phlox.Serialization
             }
 
             state.RunState = this.RunState;
+            state.LastSyscallIndex = this.LastSyscallIndex;
             state.GeneralEnable = this.Enabled;
 
             UInt64 currentTickCount = Util.Clock.GetLongTickCount();

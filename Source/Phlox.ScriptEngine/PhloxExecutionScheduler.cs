@@ -221,35 +221,31 @@ namespace Phlox.ScriptEngine
                 switch (restoredRunState)
                 {
                     case RuntimeState.Status.Running:
-                        // PHLOX-4: NOT resumed, and deliberately so. The obvious fix is AddToRunQueue,
-                        // and it is not enough: with it, a script captured mid-loop is restored
-                        // Running and stays Running - 3000 pump rounds on a 20,000-iteration loop and
-                        // it never reaches the end. So the run queue is not the only thing an
-                        // interrupted script is missing, and shipping the one-liner would change live
-                        // behaviour on the strength of a guess. Left as today (Waiting) until the
-                        // reason is known; RestoredScriptResumeTests has the skipped test that pins it.
-                        m_log.LogWarning(
-                            "[PhloxExe]: {Item} was saved mid-event (Running); restored as Waiting - the interrupted handler does not resume (PHLOX-4)",
-                            req.ItemID);
-                        interp.ScriptState.RunState = RuntimeState.Status.Waiting;
+                        // PHLOX-4b: mid-event with time left on the clock. Put it back on the run
+                        // queue and it continues from its own TopFrame.
+                        AddToRunQueue(interp);
                         break;
 
                     case RuntimeState.Status.Sleeping:
                         // NextWakeup was already restored relative to now by
                         // SerializedRuntimeState.ToRuntimeState, so it is a tick value on this run's
                         // basis and can be tracked directly.
+                        //
+                        // PHLOX-4c: this arm was DELETED by PHLOX-4b's edit - the Running block was
+                        // replaced by slicing from `case Running` to `case Syscall`, and Sleeping sat
+                        // between them. A sleeping script then fell to `default` and was restored
+                        // Waiting, which is the exact PHLOX-4 symptom coming back. The dispatch is
+                        // on RunState ONLY; LastSyscallIndex is read inside the Syscall arm and
+                        // nowhere else, whatever value it holds.
                         TrackSleep(interp, interp.ScriptState.NextWakeup);
                         break;
 
                     case RuntimeState.Status.Syscall:
-                        // PHLOX-4: not handled here - a syscall that was in flight when the region
-                        // stopped has no completion coming, and reviving it needs the function's
-                        // return value pushed. Left Waiting deliberately and logged, rather than
-                        // silently resumed with a missing value on the stack. Its own row.
-                        m_log.LogWarning(
-                            "[PhloxExe]: {Item} was saved mid-syscall; restored as Waiting - the interrupted call does not resume (PHLOX-4)",
-                            req.ItemID);
-                        interp.ScriptState.RunState = RuntimeState.Status.Waiting;
+                        // PHLOX-4b: a syscall in flight when the region stopped has NO completion
+                        // coming - whatever was going to call SysReturn died with the old process. So
+                        // the only way back is to supply the return value ourselves, which is what
+                        // LastSyscallIndex is persisted for.
+                        ResumeFromSyscall(interp, req.ItemID);
                         break;
 
                     default:
@@ -1123,6 +1119,66 @@ namespace Phlox.ScriptEngine
             m_WorldComm.DeleteListener(script.ItemId);
         }
 
+        /// <summary>
+        /// PHLOX-4b. Bring a script back that was captured mid-syscall.
+        /// <para>
+        /// The interrupted call cannot be re-issued and its completion will never arrive, so the
+        /// function's return value is pushed here and the script continues from the instruction after
+        /// the call. A Void function pushes nothing, which is exactly what its caller expects.
+        /// </para>
+        /// <para>
+        /// A state saved before <c>LastSyscallIndex</c> existed has -1 and cannot be resumed - there is
+        /// no way to know what value to push - so it falls back to the old behaviour and says so.
+        /// </para>
+        /// </summary>
+        private void ResumeFromSyscall(Interpreter interp, UUID itemId)
+        {
+            int index = interp.ScriptState.LastSyscallIndex;
+            // FunctionSig is a struct, so "not found" needs its own flag.
+            InWorldz.Phlox.Types.FunctionSig sig = default;
+            bool found = false;
+            if (index >= 0)
+            {
+                foreach (var m in InWorldz.Phlox.Types.Defaults.AllMethods)
+                {
+                    if (m.TableIndex == index) { sig = m; found = true; break; }
+                }
+            }
+
+            if (!found)
+            {
+                m_log.LogWarning(
+                    "[PhloxExe]: {Item} was saved mid-syscall with no recorded function (index {Index}); restored as Waiting - the interrupted call does not resume",
+                    itemId, index);
+                interp.ScriptState.RunState = RuntimeState.Status.Waiting;
+                return;
+            }
+
+            if (sig.ReturnType != InWorldz.Phlox.Types.VarType.Void)
+                interp.ScriptState.Operands.Push(DefaultValueFor(sig.ReturnType));
+
+            m_log.LogInformation(
+                "[PhloxExe]: {Item} was saved inside {Function}; resuming with that call's default return value",
+                itemId, sig.FunctionName);
+
+            AddToRunQueue(interp);
+        }
+
+        /// <summary>PHLOX-4b: the value an interrupted call of this return type contributes.</summary>
+        private static object DefaultValueFor(InWorldz.Phlox.Types.VarType type)
+        {
+            switch (type)
+            {
+                case InWorldz.Phlox.Types.VarType.Integer: return 0;
+                case InWorldz.Phlox.Types.VarType.Float:   return 0.0f;
+                case InWorldz.Phlox.Types.VarType.Vector:  return OpenMetaverse.Vector3.Zero;
+                case InWorldz.Phlox.Types.VarType.Rotation:return OpenMetaverse.Quaternion.Identity;
+                case InWorldz.Phlox.Types.VarType.List:    return new InWorldz.Phlox.Types.LSLList(new System.Collections.Generic.List<object>());
+                case InWorldz.Phlox.Types.VarType.Key:     return OpenMetaverse.UUID.Zero.ToString();
+                case InWorldz.Phlox.Types.VarType.String:  return string.Empty;
+                default:                                   return null;
+            }
+        }
         private void TrackSleep(Interpreter script, ulong readyOn)
         {
             C5.IPriorityQueueHandle<SleepEntry> h = null;

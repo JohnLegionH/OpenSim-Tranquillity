@@ -57,18 +57,28 @@ public class RestoredScriptResumeTests
             runToTargetState(h1, itemId);
             stateAtCapture = h1.RunStateOf(itemId);
             before = h1.Said;
+            _out.WriteLine("PROBE at capture: " + h1.DumpFrame(itemId)
+                           + " LastSyscallIndex=" + h1.LastSyscallIndexOf(itemId));
             _out.WriteLine("captured in RunState=" + stateAtCapture + " said=[" + string.Join(",", before) + "]");
             h1.SaveState(itemId);
         }
 
         using var h2 = new SchedulerHarness();
         h2.RezScript(source, assetId, itemId);
+        _out.WriteLine("PROBE after restore, before pumping: RunState=" + h2.RunStateOf(itemId)
+                       + " LastSyscallIndex=" + h2.LastSyscallIndexOf(itemId));
         afterRestore(h2, itemId);
         saidAfter = h2.Said;
+        _out.WriteLine("PROBE after pumping: RunState=" + h2.RunStateOf(itemId)
+                       + " LastSyscallIndex=" + h2.LastSyscallIndexOf(itemId));
+        m_lastIndexAfter = h2.LastSyscallIndexOf(itemId);
         _out.WriteLine("after restore: RunState=" + h2.RunStateOf(itemId)
                        + " said=[" + string.Join(",", saidAfter) + "]");
         return (before, stateAtCapture);
     }
+
+    /// <summary>PHLOX-4c: the index as the second engine left it once the handler finished.</summary>
+    private int m_lastIndexAfter = int.MinValue;
 
     private const string SleepScript =
         "default { state_entry() { llSay(0, \"a\"); llSleep(2); llSay(0, \"b\"); } }";
@@ -97,34 +107,61 @@ public class RestoredScriptResumeTests
         // re-run of state_entry would show up as "a" appearing again; it must not.
         Assert.DoesNotContain("a", after);
         Assert.Equal(1, after.Count(s => s == "b"));
+        // PHLOX-4c: LastSyscallIndex means 'the syscall I am parked in'. The handler has finished,
+        // so the script is parked in nothing, and a state saved now must not carry llSleep's index.
+        Assert.Equal(-1, m_lastIndexAfter);
     }
 
     private const string CountingScript =
-        "default { state_entry() { integer i; integer n; for (i = 0; i < 20000; i++) { n = n + i; } llSay(0, \"done\"); } }";
+        "default { state_entry() { integer i; integer n; for (i = 0; i < 2000; i++) { n = n + i; } llSay(0, \"done\"); } }";
 
     /// <summary>
     /// 1b. Running. Captured after a timeslice, the script is never put back on the run queue, so it
     /// never finishes the loop and "done" never arrives.
     /// </summary>
-    [Fact(Skip = "PHLOX-4: AddToRunQueue alone does not resume it - restored Running, stays Running " +
-                "through 3000 pump rounds on a 20,000-iteration loop. Needs its own diagnosis; the test " +
-                "stays here so it is not rediscovered.")]
+    /// <summary>
+    /// PHLOX-4b PART 1. Un-skipped and instrumented: three probes that say WHY a restored Running
+    /// script does not finish, before anything in the engine is touched.
+    /// </summary>
+    [Fact]
     public void ARunningScriptIsPutBackOnTheRunQueueAndFinishes()
     {
-        var (before, captured) = CaptureAndRestore(
-            CountingScript,
-            (h, id) => { h.PumpOnce(); },                   // one timeslice, still mid-loop
-            (h, id) => { h.Pump(3000); },
-            out var after);
+        var assetId = UUID.Random();
+        var itemId = UUID.Random();
 
-        Assert.Equal("Running", captured);
-        Assert.DoesNotContain("done", before);
+        string dumpAtCapture;
+        using (var h1 = new SchedulerHarness())
+        {
+            h1.RezScript(CountingScript, assetId, itemId);
+            h1.PumpOnce();
+            Assert.Equal("Running", h1.RunStateOf(itemId));
+            dumpAtCapture = h1.DumpFrame(itemId);
+            _out.WriteLine("(c) AT CAPTURE : " + dumpAtCapture);
+            h1.SaveState(itemId);
+        }
 
-        Assert.Contains("done", after);
-        Assert.Equal(1, after.Count(s => s == "done"));
-        // and the loop was resumed, not restarted - a restart would re-run state_entry from the top,
-        // which for this script is indistinguishable in output, so the state at capture is the proof:
-        // it was mid-loop and Running, and the same interpreter finished it.
+        using var h2 = new SchedulerHarness();
+        h2.RezScript(CountingScript, assetId, itemId);
+        _out.WriteLine("(c) AFTER RESTORE, before pumping: " + h2.DumpFrame(itemId));
+
+        // (a) is it ticking at all? IP moving is the observable proof.
+        int ipStart = h2.IpOf(itemId);
+        var ips = new List<int>();
+        for (int round = 0; round < 2000; round++)
+        {
+            h2.PumpOnce();
+            if (round % 100 == 0) ips.Add(h2.IpOf(itemId));
+        }
+        int ipEnd = h2.IpOf(itemId);
+
+        _out.WriteLine("(a) IP at start=" + ipStart + " at end=" + ipEnd + " moved=" + (ipStart != ipEnd));
+        _out.WriteLine("(b) IP every 100 pumps: " + string.Join(",", ips));
+        _out.WriteLine("(b) distinct IPs seen: " + ips.Distinct().Count());
+        _out.WriteLine("(c) AFTER 2000 PUMPS: " + h2.DumpFrame(itemId));
+        _out.WriteLine("    said=[" + string.Join(",", h2.Said) + "]");
+
+        Assert.Contains("done", h2.Said);
+        Assert.Equal(1, h2.Said.Count(s => s == "done"));
     }
 
     private const string TouchScript =

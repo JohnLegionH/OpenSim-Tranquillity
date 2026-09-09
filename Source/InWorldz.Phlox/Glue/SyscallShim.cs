@@ -775,7 +775,13 @@ private static string ConvToString(object o)
             self._asyncCallDelegate(delegate()
             {
                 try { body(); }
-                finally { self._systemAPI.CompleteSyscall(); }
+                finally
+                {
+                    self._systemAPI.CompleteSyscall();
+                    // PHLOX-4c: the call is over, so the script is no longer parked in it. A saved
+                    // state must never carry a stale index into a state that is not Syscall.
+                    if (self._interpreter != null) self._interpreter.ScriptState.LastSyscallIndex = -1;
+                }
             });
         }
 
@@ -838,6 +844,13 @@ private static string ConvToString(object o)
             // call parks the script in Status.Syscall and never completes.
             if (_interpreter != null) _interpreter.ScriptState.LastSyscallIndex = funcid;
             _shimMap[funcid](this);
+            // PHLOX-4c: Call is the one choke point every shim returns through. If the shim did not
+            // park the script in Syscall - a synchronous call that has already returned, or llSleep
+            // which set Sleeping - then the script is not 'in' a syscall any more and the index must
+            // not outlive the call. The async case is reset by RunAsync's finally instead, because
+            // there the shim returns while the body is still running.
+            if (_interpreter != null && _interpreter.ScriptState.RunState != VM.RuntimeState.Status.Syscall)
+                _interpreter.ScriptState.LastSyscallIndex = -1;
         }
 
         #endregion
