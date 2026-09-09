@@ -21,6 +21,7 @@ namespace InWorldz.Phlox.Tests;
 /// A green run here is a real result, not a failure of the test.
 /// </para>
 /// </summary>
+[Collection("phlox-state")]
 public class FreshInstanceExecutionTests
 {
     private readonly ITestOutputHelper _out;

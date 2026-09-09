@@ -7,6 +7,7 @@ namespace InWorldz.Phlox.Tests;
 /// PHLOX-2f. <c>llSetTimerEvent(3.0)</c> must fire once per three seconds. Live on 1.1.277 the same
 /// script fired roughly five times a second.
 /// </summary>
+[Collection("phlox-state")]
 public class TimerCadenceTests
 {
     private readonly ITestOutputHelper _out;

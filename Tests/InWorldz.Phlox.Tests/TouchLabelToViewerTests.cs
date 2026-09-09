@@ -15,6 +15,7 @@ namespace InWorldz.Phlox.Tests;
 /// after the last select was invisible - the menu still read "Touch" with TouchName set to "Enter".
 /// </para>
 /// </summary>
+[Collection("phlox-state")]
 public class TouchLabelToViewerTests
 {
     private readonly ITestOutputHelper _out;

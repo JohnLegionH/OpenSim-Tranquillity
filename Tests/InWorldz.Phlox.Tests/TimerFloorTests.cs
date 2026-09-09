@@ -32,6 +32,7 @@ namespace InWorldz.Phlox.Tests;
 /// uses.
 /// </para>
 /// </summary>
+[Collection("phlox-state")]
 public class TimerFloorTests
 {
     private readonly ITestOutputHelper _out;

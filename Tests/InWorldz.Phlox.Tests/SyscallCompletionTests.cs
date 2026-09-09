@@ -8,6 +8,7 @@ namespace InWorldz.Phlox.Tests;
 /// <c>Status.Syscall</c> for ever: no error, no timeout, every later event piling up in its queue.
 /// Live at 19:21 the manhole sat in <c>RunState=Syscall</c> with four queued events.
 /// </summary>
+[Collection("phlox-state")]
 public class SyscallCompletionTests
 {
     private readonly ITestOutputHelper _out;

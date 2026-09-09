@@ -171,6 +171,58 @@ public sealed class SchedulerHarness : IDisposable
         }
     }
 
+    /// <summary>PHLOX-4b probe: the interpreter's RuntimeState, by reflection.</summary>
+    public object StateOf(UUID itemId)
+    {
+        var interp = InterpreterFor(itemId);
+        return interp?.GetType().GetProperty("ScriptState")?.GetValue(interp);
+    }
+
+    private static object Member(object o, string name)
+        => o.GetType().GetProperty(name)?.GetValue(o)
+           ?? o.GetType().GetField(name, BindingFlags.Public | BindingFlags.Instance)?.GetValue(o);
+
+    /// <summary>PHLOX-4c probe: the syscall the script is parked in, or -1; int.MinValue if no state.</summary>
+    public int LastSyscallIndexOf(UUID itemId)
+    {
+        var st = StateOf(itemId);
+        return st == null ? int.MinValue : (int)(Member(st, "LastSyscallIndex") ?? int.MinValue);
+    }
+
+    /// <summary>PHLOX-4b probe (b): the instruction pointer right now, or -1.</summary>
+    public int IpOf(UUID itemId)
+    {
+        var st = StateOf(itemId);
+        return st == null ? -1 : (int)(Member(st, "IP") ?? -1);
+    }
+
+    /// <summary>PHLOX-4b probe (c): TopFrame locals with their CLR types, operands, calls, IP.</summary>
+    public string DumpFrame(UUID itemId)
+    {
+        var st = StateOf(itemId);
+        if (st == null) return "(no state)";
+        var sb = new System.Text.StringBuilder();
+        sb.Append("IP=").Append(Member(st, "IP"));
+        var calls = Member(st, "Calls") as System.Collections.ICollection;
+        sb.Append(" Calls=").Append(calls?.Count.ToString() ?? "null");
+        var ops = Member(st, "Operands") as System.Collections.ICollection;
+        sb.Append(" Operands=").Append(ops?.Count.ToString() ?? "null");
+        sb.Append(" RunState=").Append(Member(st, "RunState"));
+        var top = Member(st, "TopFrame");
+        if (top == null) { sb.Append(" TopFrame=null"); return sb.ToString(); }
+        var locals = Member(top, "Locals") as object[];
+        sb.Append(" Locals=[");
+        if (locals == null) sb.Append("null");
+        else for (int i = 0; i < locals.Length; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            var v = locals[i];
+            sb.Append(i).Append(':').Append(v == null ? "null" : v.GetType().Name + "(" + v + ")");
+        }
+        sb.Append(']');
+        return sb.ToString();
+    }
+
     /// <summary>PHLOX-4: exactly one DoWork on each scheduler - one timeslice, no more.</summary>
     public void PumpOnce()
     {
