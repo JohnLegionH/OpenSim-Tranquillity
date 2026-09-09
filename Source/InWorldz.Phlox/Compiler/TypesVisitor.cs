@@ -203,11 +203,20 @@ namespace InWorldz.Phlox.Compiler
         public override ISymbolType VisitStateChangeStmt([NotNull] LSLParser.StateChangeStmtContext context)
         {
             // Verify the target state exists.
-            string stateName = context.ID().GetText();
+            //
+            // PHLOX-3a: `state default;` is valid LSL - the wiki's own example does it - and the
+            // grammar matches `default` as a KEYWORD, not an ID (LSL.g4:87,
+            // `stateNode='state' (ID | 'default') SEMI`). So ID() is null for exactly that case and
+            // this dereferenced it, throwing a NullReferenceException out of the whole compile.
+            // GenVisitor already had this right (`context.ID()?.GetText()`, GenVisitor.cs:237) and
+            // ByteCodeEmitter.StateChange reads a null id as the default state, so the back end was
+            // never wrong - only this check was.
+            var id = context.ID();
+            string stateName = id?.GetText() ?? "default";
             string key = stateName == "default" ? "default(*)" : stateName + "(*)";
             if (_symtab.Globals.Resolve(key) == null)
             {
-                Error(context.ID().Symbol, $"Unknown state '{stateName}'");
+                Error(id?.Symbol ?? context.stateNode, $"Unknown state '{stateName}'");
             }
             return null;
         }
