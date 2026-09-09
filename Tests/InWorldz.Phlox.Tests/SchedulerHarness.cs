@@ -84,6 +84,36 @@ public sealed class SchedulerHarness : IDisposable
     /// <c>Prim.Inventory.GetInventoryItem</c> and logs an error and drops the load without one
     /// (<c>PhloxScriptLoader.cs:301-307</c>), so a harness that skips this tests nothing.
     /// </summary>
+    /// <summary>
+    /// PHLOX-4: rez with BOTH ids pinned. A restore test has to stand a second engine up and rez the
+    /// same item and asset, because StateManager.LoadState keys on the item id and discards the row
+    /// when the asset id does not match.
+    /// </summary>
+    public UUID RezScript(string source, UUID assetId, UUID itemId)
+    {
+        var item = TaskInventoryHelpers.AddScript(
+            Scene.AssetService, Prim, itemId, assetId, "script" + (++m_scriptSeq), source);
+        var rez = Engine.GetType().GetMethod("OnRezScript", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(rez);
+        rez!.Invoke(Engine, new object[] { Prim.LocalId, item.ItemID, source, 0, false, Engine.Name, 0 });
+        return item.ItemID;
+    }
+
+    /// <summary>PHLOX-4: the engine's StateManager, which is internal - reached by reflection.</summary>
+    public object StateManagerOf() => Engine.GetType()
+        .GetProperty("StateManager", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)
+        ?.GetValue(Engine);
+
+    /// <summary>PHLOX-4: save this script the way shutdown does, through ScriptUnloaded.</summary>
+    public void SaveState(UUID itemId)
+    {
+        var sm = StateManagerOf();
+        Assert.NotNull(sm);
+        var interp = InterpreterFor(itemId);
+        Assert.NotNull(interp);
+        sm.GetType().GetMethod("ScriptUnloaded")!.Invoke(sm, new[] { interp });
+    }
+
     public UUID RezScript(string source, UUID assetId = default)
     {
         var item = TaskInventoryHelpers.AddScript(
@@ -139,6 +169,32 @@ public sealed class SchedulerHarness : IDisposable
             if (!Pending(l) && !Pending(e)) { /* keep pumping a little; events can arrive late */ }
             System.Threading.Thread.Sleep(1);
         }
+    }
+
+    /// <summary>PHLOX-4: exactly one DoWork on each scheduler - one timeslice, no more.</summary>
+    public void PumpOnce()
+    {
+        m_loader.GetType().GetMethod("DoWork")!.Invoke(m_loader, null);
+        m_exe.GetType().GetMethod("DoWork")!.Invoke(m_exe, null);
+    }
+
+    /// <summary>
+    /// PHLOX-4: put an event straight on the script's OWN queue (ScriptState.EventQueue), which is
+    /// what a script that was interrupted mid-event has when it is saved - not the scheduler's
+    /// pending list.
+    /// </summary>
+    public void QueueEventOnScriptState(UUID itemId)
+    {
+        var interp = InterpreterFor(itemId);
+        Assert.NotNull(interp);
+        var state = interp.GetType().GetProperty("ScriptState")!.GetValue(interp)!;
+        var q = state.GetType().GetField("EventQueue")!.GetValue(state)!;
+        var evt = new global::InWorldz.Phlox.VM.PostedEvent
+        {
+            EventType = global::InWorldz.Phlox.Types.SupportedEventList.Events.TOUCH_START,
+            Args = new object[] { 1 },
+        };
+        q.GetType().GetMethod("Add")!.Invoke(q, new object[] { evt });
     }
 
     /// <summary>Pump for a wall-clock duration, so timer cadence can be measured.</summary>

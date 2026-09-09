@@ -205,8 +205,71 @@ namespace Phlox.ScriptEngine
             }
            else
             {
-                // Restored from saved state — don't re-run init, just wait for events
-                interp.ScriptState.RunState = RuntimeState.Status.Waiting;
+                // PHLOX-4: resume where the script stopped, instead of forcing Waiting.
+                //
+                // The saved state carries RunState, Calls, TopFrame, RunningEvent, EventQueue and a
+                // relative NextWakeup, and all of it used to be restored and then thrown away by an
+                // unconditional `RunState = Waiting`. Nothing re-armed a sleep and nothing put a
+                // running script back on the run queue, so an interrupted handler simply never
+                // finished. Worse than never: the stale frame stays on the stack, so the next
+                // unrelated event pushes on top of it (RuntimeState.cs:335-336) and the interrupted
+                // handler resumes NESTED inside the new event, after it.
+                //
+                // ScriptUnloaded saves at shutdown, so a script mid-llSleep when the region stopped
+                // was saved in exactly the state that never resumed.
+                var restoredRunState = interp.ScriptState.RunState;
+                switch (restoredRunState)
+                {
+                    case RuntimeState.Status.Running:
+                        // PHLOX-4: NOT resumed, and deliberately so. The obvious fix is AddToRunQueue,
+                        // and it is not enough: with it, a script captured mid-loop is restored
+                        // Running and stays Running - 3000 pump rounds on a 20,000-iteration loop and
+                        // it never reaches the end. So the run queue is not the only thing an
+                        // interrupted script is missing, and shipping the one-liner would change live
+                        // behaviour on the strength of a guess. Left as today (Waiting) until the
+                        // reason is known; RestoredScriptResumeTests has the skipped test that pins it.
+                        m_log.LogWarning(
+                            "[PhloxExe]: {Item} was saved mid-event (Running); restored as Waiting - the interrupted handler does not resume (PHLOX-4)",
+                            req.ItemID);
+                        interp.ScriptState.RunState = RuntimeState.Status.Waiting;
+                        break;
+
+                    case RuntimeState.Status.Sleeping:
+                        // NextWakeup was already restored relative to now by
+                        // SerializedRuntimeState.ToRuntimeState, so it is a tick value on this run's
+                        // basis and can be tracked directly.
+                        TrackSleep(interp, interp.ScriptState.NextWakeup);
+                        break;
+
+                    case RuntimeState.Status.Syscall:
+                        // PHLOX-4: not handled here - a syscall that was in flight when the region
+                        // stopped has no completion coming, and reviving it needs the function's
+                        // return value pushed. Left Waiting deliberately and logged, rather than
+                        // silently resumed with a missing value on the stack. Its own row.
+                        m_log.LogWarning(
+                            "[PhloxExe]: {Item} was saved mid-syscall; restored as Waiting - the interrupted call does not resume (PHLOX-4)",
+                            req.ItemID);
+                        interp.ScriptState.RunState = RuntimeState.Status.Waiting;
+                        break;
+
+                    default:
+                        interp.ScriptState.RunState = RuntimeState.Status.Waiting;
+                        break;
+                }
+
+                // A script saved while Waiting can still hold events on its OWN queue
+                // (ScriptState.EventQueue). ProcessEventQueue reads only m_PendingEvents, and that
+                // queue is drained by TransitionToWait - which runs only for a script already on the
+                // run queue. A restored script is on neither, so without this the queued events sit
+                // there for ever.
+                if (interp.ScriptState.RunState == RuntimeState.Status.Waiting)
+                {
+                    bool hasQueued;
+                    lock (interp.ScriptState.EventQueueLock)
+                        hasQueued = interp.ScriptState.EventQueue != null && interp.ScriptState.EventQueue.Count > 0;
+                    if (hasQueued)
+                        DeliverNextQueuedEvent(interp);
+                }
 
                 // Re-register timer if the script had one running
                 if (interp.ScriptState.TimerInterval > 0)
