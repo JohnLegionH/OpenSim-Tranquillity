@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using OpenMetaverse;
 using OpenSim.Framework;
@@ -629,6 +630,19 @@ namespace Phlox.ScriptEngine
         /// </summary>
         public static string Build(string objectName, string scriptName, IReadOnlyList<string> errors)
         {
+            // PHLOX-3a: a compiler crash is not a script error and must not be reported as one.
+            // The resident gets the exception TYPE and the fact that the operator has it; the
+            // stack stays in the region log, where LogOutputListener already put it.
+            string crash = errors is null ? null
+                : errors.FirstOrDefault(InWorldz.Phlox.Types.CompilerCrash.IsCrash);
+            if (crash != null)
+            {
+                return "Script " + (string.IsNullOrEmpty(scriptName) ? "Script" : scriptName)
+                     + ": compiler error (not a script syntax error) \u2014 "
+                     + InWorldz.Phlox.Types.CompilerCrash.TypeNameOf(crash)
+                     + "; reported to the grid operator";
+            }
+
             var sb = new System.Text.StringBuilder();
             sb.Append(string.IsNullOrEmpty(objectName) ? "Object" : objectName);
             sb.Append(" [");

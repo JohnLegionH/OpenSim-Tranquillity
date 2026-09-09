@@ -89,3 +89,60 @@ state onHigh
         Assert.NotNull(compiled);
     }
 }
+
+/// <summary>
+/// PHLOX-3a step 4. The owner-visible path has to tell a compiler crash apart from a fault in the
+/// script. Before this, both arrived as "script failed to compile" followed by whatever string the
+/// compiler produced — so a NullReferenceException read to the resident as a verdict on their code.
+/// </summary>
+public class CompilerCrashOwnerAlertTests
+{
+    /// <summary>What a throwing compile actually puts in the listener, produced the real way.</summary>
+    private static IReadOnlyList<string> ErrorsFromAThrowingCompile()
+    {
+        var listener = new PhloxCompiler();
+        var frontend = new InWorldz.Phlox.Glue.CompilerFrontend(listener, templatePath: null);
+        // A null input stream throws inside Compile; the route to the blanket catch is what matters
+        // here, not which exception takes it.
+        frontend.Compile((Antlr4.Runtime.ICharStream)null);
+        Assert.True(listener.HasErrors(), "the compile was expected to fail");
+        return listener.Errors;
+    }
+
+    [Fact]
+    public void AThrowingCompileIsMarkedAsACrashAndCarriesItsStack()
+    {
+        var errors = ErrorsFromAThrowingCompile();
+
+        Assert.Contains(errors, InWorldz.Phlox.Types.CompilerCrash.IsCrash);
+        // The stack is what makes the region log useful; LogOutputListener writes this at ERROR.
+        Assert.Contains(errors, e => e.Contains("CompilerFrontend"));
+    }
+
+    [Fact]
+    public void TheOwnerIsToldItIsTheCompilerAndNotTheirScript()
+    {
+        var msg = global::Phlox.ScriptEngine.PhloxCompileErrorReport.Build(
+            "Lamp Prim", "lmap4", ErrorsFromAThrowingCompile());
+
+        Assert.Contains("Script lmap4:", msg);
+        Assert.Contains("compiler error (not a script syntax error)", msg);
+        Assert.Contains("reported to the grid operator", msg);
+
+        // And it must NOT read as a verdict on the script, nor leak a stack to a resident.
+        Assert.DoesNotContain("failed to compile", msg);
+        Assert.DoesNotContain("   at ", msg);
+    }
+
+    [Fact]
+    public void AnOrdinaryScriptErrorStillReportsInTheLineNumberForm()
+    {
+        // The distinction has to cut both ways, or it is just a second wording.
+        var msg = global::Phlox.ScriptEngine.PhloxCompileErrorReport.Build(
+            "Lamp Prim", "lmap4", new[] { "line 16:12 Unknown state 'onHigh'" });
+
+        Assert.Contains("failed to compile", msg);
+        Assert.Contains("line 16:12", msg);
+        Assert.DoesNotContain("compiler error (not a script syntax error)", msg);
+    }
+}

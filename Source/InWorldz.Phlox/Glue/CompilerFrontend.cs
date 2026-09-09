@@ -237,7 +237,12 @@ namespace InWorldz.Phlox.Glue
             }
             catch (Exception e)
             {
-                _listener.Error(e.Message);
+                // PHLOX-3a: this used to report e.Message and nothing else, so a compiler crash
+                // was indistinguishable from a fault in the script - in the log and in the
+                // owner's dialog alike. CompilerCrash.Format marks it and carries the type and
+                // stack, which the listener logs and the owner-visible path deliberately does not
+                // repeat back to the resident.
+                _listener.Error(Types.CompilerCrash.Format(e));
             }
 
             return null;
