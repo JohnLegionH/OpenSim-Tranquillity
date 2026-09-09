@@ -90,11 +90,12 @@ namespace Phlox.ScriptEngine
 
                         if (wakeAt != ulong.MaxValue)
                         {
-                            // Both wakeAt and EnvironmentTickCount are based on the same
-                            // 30-bit masked tick value (see OpenSim.Framework.Util).
-                            // Cast Int32 to long directly — the value is always non-negative
-                            // (masked to 0x3FFFFFFF), so this is safe.
-                            long now = (long)(uint)Util.EnvironmentTickCount();
+                            // PHLOX-4: wakeAt and now are both InWorldz.Phlox.Util.Clock, so there is
+                            // one basis for the whole engine. This used to read a 30-bit MASKED uptime
+                            // tick (OpenSim.Framework.Util.EnvironmentTickCount), which drops back to
+                            // near zero every 12.4 days - below every queued wakeAt, making waitMs
+                            // enormous and stalling every timer and sleep until it climbed back.
+                            long now = (long)InWorldz.Phlox.Util.Clock.Now;
                             long waitMs = (long)wakeAt - now;
                             if (waitMs > 0)
                                 m_ActionEvent.WaitOne((int)Math.Min(waitMs, int.MaxValue));

@@ -274,7 +274,7 @@ namespace Phlox.ScriptEngine
                 // Re-register timer if the script had one running
                 if (interp.ScriptState.TimerInterval > 0)
                 {
-                    ulong readyOn = (ulong)Util.EnvironmentTickCount() + (ulong)interp.ScriptState.TimerInterval;
+                    ulong readyOn = InWorldz.Phlox.Util.Clock.Now + (ulong)interp.ScriptState.TimerInterval;
                     TrackTimer(interp, readyOn, true);
                 }
 
@@ -573,7 +573,7 @@ namespace Phlox.ScriptEngine
 
             if (script.ScriptState.TimerInterval > 0)
             {
-                ulong readyOn = (ulong)Util.EnvironmentTickCount() + (ulong)script.ScriptState.TimerInterval;
+                ulong readyOn = InWorldz.Phlox.Util.Clock.Now + (ulong)script.ScriptState.TimerInterval;
                 TrackTimer(script, readyOn, false);
             }
         }
@@ -740,7 +740,7 @@ namespace Phlox.ScriptEngine
 
         private void CheckSleepingScripts()
         {
-            ulong now = (ulong)Util.EnvironmentTickCount();
+            ulong now = InWorldz.Phlox.Util.Clock.Now;
             while (m_SleepHeap.Count > 0)
             {
                 SleepEntry s = m_SleepHeap.FindMin();
@@ -995,7 +995,7 @@ namespace Phlox.ScriptEngine
                 else
                 {
                     script.ScriptState.RunState = RuntimeState.Status.Sleeping;
-                    script.ScriptState.NextWakeup = (ulong)Util.EnvironmentTickCount() + (ulong)ret.Delay;
+                    script.ScriptState.NextWakeup = InWorldz.Phlox.Util.Clock.Now + (ulong)ret.Delay;
                     TrackSleep(script, script.ScriptState.NextWakeup);
                 }
             }
@@ -1055,7 +1055,7 @@ namespace Phlox.ScriptEngine
                 script.ScriptState.TimerInterval > 0 &&
                 !m_TimerHandles.ContainsKey(script.ItemId))
             {
-                ulong readyOn = (ulong)Util.EnvironmentTickCount() + (ulong)script.ScriptState.TimerInterval;
+                ulong readyOn = InWorldz.Phlox.Util.Clock.Now + (ulong)script.ScriptState.TimerInterval;
                 TrackTimer(script, readyOn, false);
             }
         }
@@ -1147,7 +1147,7 @@ namespace Phlox.ScriptEngine
             });
             m_TimerHandles[script.ItemId] = h;
             if (!fromRestore)
-                script.ScriptState.TimerLastScheduledOn = (ulong)Util.EnvironmentTickCount();
+                script.ScriptState.TimerLastScheduledOn = InWorldz.Phlox.Util.Clock.Now;
             script.ScriptState.RemovePendingTimerEvent();
         }
 

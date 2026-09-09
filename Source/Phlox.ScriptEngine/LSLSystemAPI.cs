@@ -71,7 +71,7 @@ namespace Phlox.ScriptEngine
         protected void ScriptSleep(int ms)
         {
             if (m_thisScript == null || ms <= 0) return;
-            m_thisScript.ScriptState.NextWakeup = (ulong)OpenSim.Framework.Util.EnvironmentTickCount() + (ulong)ms;
+            m_thisScript.ScriptState.NextWakeup = InWorldz.Phlox.Util.Clock.Now + (ulong)ms;
             m_thisScript.ScriptState.RunState = RuntimeState.Status.Sleeping;
         }
 
