@@ -358,13 +358,13 @@ convention.
 **Every region logs one line at INFO when it loads, naming which config decided:**
 
 ```
-[AIS]: region Ebony: AIS v3 ON (global)
-[SSB]: region Ebony: server-side baking ON (global)
+[AIS]: region "Ebony": AIS v3 "ON" ("global")
+[SSB]: region "Ebony": server-side baking "ON" ("global")
 ```
 
-`(region section)` in place of `(global)` when the region's own section carried the key. This is what a flip
+**The quotes are real.** The logger is structured and renders every argument quoted, so a verify grep written against the unquoted form matches nothing - use `grep -E 'AIS v3 "ON"|server-side baking "ON"'`. `("region section")` in place of `("global")` when the region's own section carried the key. This is what a flip
 verify reads - after the two global lines go in and a region's own lines come out, every region must say
-`(global)`, and a region still saying `(region section)` is one whose section was missed.
+`("global")`, and a region still saying `("region section")` is one whose section was missed.
 
 ## 4.8 What triggers a bake (S5, S9)
 

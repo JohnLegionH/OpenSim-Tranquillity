@@ -748,3 +748,24 @@ families** (`osTeleportAgent`, `llLinkPlaySound`) were resolved by PHLOX-2b/2c, 
 remain, and PHLOX-1's standing instruction holds: check those against the **SL wiki**, not against
 `OSSL_Api`, because Phlox's table matches Phlox's own implementations.
 
+---
+
+## PHLOX-3 candidates seen on 1.1.287, neither chased
+
+**Logged:** 2026-09-09, from the MERGE-1 deploy's live verification.
+
+### (i) `phlox status <name>` reports a miss once per scene that does not hold the object
+
+After finding and printing the object in one scene, the command still prints **"No object named ..."** for
+every other scene in the process - three regions here, so a successful lookup is followed by two misses.
+**Cosmetic**: the answer is correct and complete, it is the per-scene loop reporting rather than the
+aggregate. Worth fixing when the command is next touched, not on its own.
+
+### (ii) `3eb0c62b` still fails to compile: "Symbol 'SetVehicleSettings()' already defined"
+
+Unchanged on 1.1.287 - `[PhloxCompile]: "3eb0c62b-f307-41d4-a82c-da59aef5ca05": "line 96:0 Symbol
+'SetVehicleSettings()' already defined"` at load. This is the last of PHLOX-1's live compile failures whose
+**verdict is still unsettled**, and it stays unsettled for the same reason as before: PHLOX-1's rule is that
+if YEngine accepts what Phlox rejects it is a Phlox compiler rule to fix, and if both reject it is the
+script's bug and gets recorded rather than fixed. **Nobody has compiled this script under YEngine yet.**
+Until that is done, any change to Phlox's duplicate-symbol handling would be a guess.
