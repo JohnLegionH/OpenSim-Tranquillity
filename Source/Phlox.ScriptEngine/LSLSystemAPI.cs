@@ -1155,7 +1155,43 @@ namespace Phlox.ScriptEngine
 
         // ── Timer / sleep ──────────────────────────────────────────────────────
 
-        public void llSetTimerEvent(float sec) => m_ScriptEngine.SetTimerEvent(m_localID, m_itemID, sec);
+        /// <summary>
+        /// PHLOX-3b. A positive request below the region's floor is raised to it.
+        ///
+        /// <para>
+        /// Zero and negative are left exactly as they were: the SL wiki says "Passing in 0.0 stops
+        /// further timer events", and a negative value lands &lt;= 0 where the scheduler only arms a
+        /// timer for an interval &gt; 0. The floor must never resurrect a stopped timer.
+        /// </para>
+        ///
+        /// <para>
+        /// The clamp is here, at the API entry, and not in the scheduler, so that what
+        /// <c>phlox status</c> reads back is the value that was actually applied - one place to look
+        /// when a script and the log disagree about how fast a timer is.
+        /// </para>
+        /// </summary>
+        public void llSetTimerEvent(float sec)
+        {
+            float applied = sec;
+            float floor = m_ScriptEngine?.MinTimerInterval ?? 0f;
+            if (sec > 0f && floor > 0f && sec < floor)
+            {
+                applied = floor;
+                if (!m_timerFloorLogged)
+                {
+                    // Once per script, not once per tick: the point is to name the script that asked,
+                    // and a 10 ms timer would otherwise write a hundred lines a second.
+                    m_timerFloorLogged = true;
+                    m_log.LogDebug("[PhloxAPI]: llSetTimerEvent floor applied for {Item}: requested {Requested}s, applied {Applied}s",
+                        m_itemID, sec, applied);
+                }
+            }
+
+            m_ScriptEngine.SetTimerEvent(m_localID, m_itemID, applied);
+        }
+
+        /// <summary>PHLOX-3b: one clamp message per script instance, however often it re-arms.</summary>
+        private bool m_timerFloorLogged;
         public void llSleep(float sec) => ScriptSleep((int)(sec * 1000));
         public void llMinEventDelay(float delay)
         {
