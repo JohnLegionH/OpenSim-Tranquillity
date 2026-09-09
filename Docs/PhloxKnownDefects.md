@@ -936,3 +936,86 @@ Phlox suite **60 -> 66**, all green; solution 0 errors. **Not deployed.**
 **Did-it-land, named for the deploy:** a fresh prim calling `llSetTimerEvent(0.01)` shows **`timer: 100 ms`**
 in `phlox status`; **one** DEBUG clamp line appears in the log for it; and **no `Slow timeslice`** is logged
 for that script.
+
+
+---
+
+## PHLOX-4 - restored scripts, and one clock for the engine
+
+**Logged and part-fixed 2026-09-09. Not deployed. Two arms deliberately left open - see below.**
+
+### The four saved states, and what each did
+
+`PhloxExecutionScheduler.FinishedLoading` restored the whole saved `RuntimeState` - RunState, Calls,
+TopFrame, RunningEvent, EventQueue and a relative NextWakeup - and then **overwrote RunState with an
+unconditional `Waiting`**, re-registering only the timer and the listens. Everything the state carried
+about what the script was *doing* was dropped. `StateManager.ScriptUnloaded` saves at shutdown, so a
+script asleep or mid-event when the region stopped was saved in exactly the state that never resumes.
+
+| saved as | what happened | now |
+|---|---|---|
+| **Sleeping** | never `TrackSleep`'d - nothing woke it, and the stale frame stayed on the stack, so the next unrelated event pushed on top of it (`RuntimeState.cs:335-336`) and the interrupted handler resumed **nested inside** the new event | **fixed** - `TrackSleep(NextWakeup)`, pinned by test 1a |
+| **Waiting with queued events** | `ProcessEventQueue` reads only `m_PendingEvents`; `ScriptState.EventQueue` is drained by `TransitionToWait`, which runs only for a script already on the run queue. A restored script is on neither, so queued events sat for ever | **fixed** - `DeliverNextQueuedEvent`, pinned by test 1c |
+| **Running** | never `AddToRunQueue`'d; same nesting on the next event | **NOT fixed** - see below |
+| **Syscall** | unhandled | **NOT fixed** - now logs a warning instead of pretending |
+
+### Running: the briefed one-liner is not enough, and it is not shipped
+
+The obvious fix is `AddToRunQueue`, and **it does not work**. Measured: with it, a script captured
+mid-loop is restored `Running` and **stays** `Running` through **3000 pump rounds on a 20,000-iteration
+loop** - it never reaches the end. So the run queue is not the only thing an interrupted script is
+missing.
+
+Shipping it anyway would have changed live behaviour on the strength of a guess, so `Running` is left at
+today's behaviour (`Waiting`) and now **logs a warning naming the script**, which is at least honest
+where it used to be silent. Test 1b stays in the tree **skipped, with the measurement in its skip
+reason**, so the next session starts from the evidence rather than rediscovering it.
+
+### Syscall: its own row, by the brief's own escape hatch
+
+A syscall in flight when the region stopped has **no completion coming**. Reviving it means pushing the
+default of that function's `ReturnType` and persisting `RuntimeState.LastSyscallIndex` as a new
+`SerializedRuntimeState` member (next free protobuf tag is **22**; `LastSyscallIndex` already exists at
+`RuntimeState.cs:113`, added for `phlox status` in PHLOX-2g). Not done here. It now logs a warning
+rather than silently restoring a script whose stack is missing a value.
+
+### One clock - three defects, one root
+
+The engine had **two tick sources on different bases**, and both were broken:
+
+- `Clock.GetLongTickCount` P/Invoked `GetTickCount64` on Windows and returned
+  `(UInt64)Environment.TickCount` elsewhere. That counter is **signed 32-bit and goes negative at 24.9
+  days**; the cast yields ~**1.8e19**, putting every wake-up eighteen quintillion ms away.
+- Both schedulers compared against `(ulong)Util.EnvironmentTickCount()` - uptime **masked to 30 bits**
+  (`Util.cs:3618-3623`). At every `0x40000000` boundary, a shade over **12.4 days**, `now` drops to
+  nearly zero, below every queued `ReadyOn`, and **every timer and sleep on the region stalls** until it
+  climbs back.
+- And they **disagreed**: the serializer restored `NextWakeup` on the Clock basis, the scheduler
+  compared it on the masked basis. PHLOX-4's Sleeping fix depends on those two agreeing, which is why
+  this is one row and not two.
+
+`Clock` is now a single static source over `Environment.TickCount64` with a settable `Func<ulong>` for
+tests; the P/Invoke and the `IsWindows` branch are gone. **All nine call sites moved** - scheduler 6,
+master 1, `LSLSystemAPI` 1, plus a master-loop comment that asserted the opposite of the truth. `grep`
+for `EnvironmentTickCount` under `Source/Phlox.ScriptEngine` and `Source/InWorldz.Phlox` now returns
+exactly one line: inside `Clock`'s own doc comment, describing what it used to do.
+
+**Four tests step the clock across `0x3FFFFF00` -> `0x40000C00`** - monotonic across the boundary; a
+timer armed below it is due after and not before; the master loop's `waitMs` reads 3000 then
+non-positive rather than ~12 days; and the real clock is nowhere near the old cast's 1.8e19. Without a
+settable source these would need a machine up for twelve days to fail, **which is why this survived**.
+
+### Commits
+
+| commit | what |
+|---|---|
+| `e5dabd0049` | parts 1+2 - Sleeping and queued-event arms, three round-trip tests, Running and Syscall logged not resumed |
+| `a5b95e8e4b` | part 3 - one clock, nine call sites, four boundary tests |
+
+Phlox suite **66 -> 73**: 72 passed, **1 skipped** (1b), 0 failed. Solution 0 errors.
+
+### Noted while here
+
+The restore tests share **one SQLite file** - `StateManager.DB_FILE` is a fixed relative path - so they
+are a single non-parallel xUnit collection. That is more global state reachable from a harness test, and
+it belongs with **candidate (iv)**, the intermittent harness failures.
