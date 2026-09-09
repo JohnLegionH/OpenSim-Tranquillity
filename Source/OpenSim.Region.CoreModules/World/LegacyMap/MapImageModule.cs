@@ -69,11 +69,35 @@ public class MapImageModule : IMapImageGenerator, INonSharedRegionModule
     private IMapTileTerrainRenderer terrainRenderer;
     private bool m_Enabled = false;
 
-    private readonly J2KEncoderConfiguration encoderConfig = new J2KEncoderConfiguration()
-        .WithQuality(0.85)
-        .WithTiles(t => t.SetSize(256, 256))
-        .WithWavelet(w => w.UseIrreversible97().WithDecompositionLevels(7))
-        .WithProgression(p => p.WithOrder(ProgressionOrder.RPCL));
+    /// <summary>
+    /// Build the J2K encoder configuration for a map tile of the given size.
+    /// </summary>
+    /// <remarks>
+    /// The tile size is pinned to the image dimensions so the codestream is always a
+    /// SINGLE TILE, for the same reason as VectorRenderModule.BuildEncoderConfig: Second
+    /// Life viewers cannot render multi-tile JPEG2000, and a tiled image arrives as a blank
+    /// square with no error anywhere in the pipeline.
+    ///
+    /// This matters here only once the map tile is larger than 256 in either dimension.
+    /// While CreateMapTile emitted a fixed 256x256 bitmap the tiling was single-tile by
+    /// accident, so correcting the bitmap size WITHOUT also correcting this would have
+    /// replaced an under-sized map with an unrenderable one - the same blank square, a
+    /// different cause.
+    ///
+    /// Decomposition levels are deliberately left at 7 rather than aligned to the 5 used by
+    /// VectorRenderModule. 5 was chosen there from measurements of textures delivered to a
+    /// viewer over the texture pipeline; map tiles reach the viewer by a different path and
+    /// no equivalent measurement has been taken. Changing it here would be an unverified
+    /// change riding along with a verified one.
+    /// </remarks>
+    private static J2KEncoderConfiguration BuildEncoderConfig(int width, int height)
+    {
+        return new J2KEncoderConfiguration()
+            .WithQuality(0.85)
+            .WithTiles(t => t.SetSize(width, height))
+            .WithWavelet(w => w.UseIrreversible97().WithDecompositionLevels(7))
+            .WithProgression(p => p.WithOrder(ProgressionOrder.RPCL));
+    }
 
     #region IMapImageGenerator Members
 
@@ -163,7 +187,7 @@ public class MapImageModule : IMapImageGenerator, INonSharedRegionModule
             {
                 if (skBitmap != null)
                 {
-                    return J2kImage.ToBytes(skBitmap, encoderConfig);
+                    return J2kImage.ToBytes(skBitmap, BuildEncoderConfig(skBitmap.Width, skBitmap.Height));
                 }
             }
         }

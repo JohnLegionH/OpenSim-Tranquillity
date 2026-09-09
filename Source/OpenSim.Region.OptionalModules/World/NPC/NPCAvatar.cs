@@ -928,7 +928,10 @@ public class NPCAvatar : IClientAPI, INPC
     public void SendAlertMessage(string message, string info)
     {
     }
-
+    public void SendAlertMessage(string message, string info, byte[] extra)
+    {
+    }
+    
     public void SendSystemAlertMessage(string message)
     {
     }
