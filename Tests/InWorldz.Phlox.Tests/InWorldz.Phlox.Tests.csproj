@@ -18,6 +18,7 @@
     <None Include="dispatch-baseline.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="LiveScripts\manifest.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="LiveScripts\scripts\*.lsl" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\*.lsl" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
