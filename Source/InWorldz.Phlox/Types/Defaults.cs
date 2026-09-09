@@ -4788,6 +4788,73 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "link", "sound", "volume" },
                 TableIndex = 676
             }},
+
+            // ---------------------------------------------------------------- PHLOX-5 SL names and arities
+            // SL is the authority for names and signatures; every older Phlox spelling and arity stays
+            // above, so current Legion content compiles unchanged. Appended, so nothing moves.
+
+            // wiki.secondlife.com/wiki/LlsRGB2Linear - "vector llsRGB2Linear( vector srgb )". Lowercase s.
+            // Phlox carried it as llSRGB2Linear (570); that spelling remains an alias.
+            {"llsRGB2Linear", new FunctionSig {
+                FunctionName = "llsRGB2Linear",
+                ReturnType = VarType.Vector,
+                ParamTypes = new VarType[] { VarType.Vector },
+                ParamNames = new string[] { "srgb" },
+                TableIndex = 677
+            }},
+
+            // wiki.secondlife.com/wiki/LlListSortStrided - "list llListSortStrided( list src, integer
+            // stride, integer stride_index, integer ascending )". Phlox had it as llSortListStrided (564).
+            {"llListSortStrided", new FunctionSig {
+                FunctionName = "llListSortStrided",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] { VarType.List, VarType.Integer, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "src", "stride", "stride_index", "ascending" },
+                TableIndex = 678
+            }},
+
+            // wiki.secondlife.com/wiki/LlSHA256String - "string llSHA256String( string src )": the
+            // SHA-256 of the UTF-8 string, 64 hex characters, nothing appended. The (string, integer)
+            // nonce form at 567 is Phlox's own and stays.
+            {"llSHA256String__1", new FunctionSig {
+                FunctionName = "llSHA256String",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "src" },
+                TableIndex = 679
+            }},
+
+            // wiki.secondlife.com/wiki/LlTargetedEmail - "llTargetedEmail( integer target, string subject,
+            // string message )": the address is derived from the target, not passed. The 4-argument
+            // (target, address, subject, message) form at 653 is Phlox's own and stays.
+            {"llTargetedEmail__3", new FunctionSig {
+                FunctionName = "llTargetedEmail",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.String, VarType.String },
+                ParamNames = new string[] { "target", "subject", "message" },
+                TableIndex = 680
+            }},
+
+            // wiki.secondlife.com/wiki/LlUpdateKeyValue - "key llUpdateKeyValue( string k, string v, integer
+            // checked, string original_value )": asynchronous, answered on dataserver with "1,value" or
+            // "0,<XP_ERROR_*>". The synchronous 3-argument (key, value, check) -> integer form at 612 stays.
+            {"llUpdateKeyValue__4", new FunctionSig {
+                FunctionName = "llUpdateKeyValue",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.Integer, VarType.String },
+                ParamNames = new string[] { "k", "v", "checked", "original_value" },
+                TableIndex = 681
+            }},
+
+            // wiki.secondlife.com/wiki/LlDerezObject - "integer llDerezObject( key id, integer flag )" with
+            // DEREZ_DIE / DEREZ_MAKE_TEMP / DEREZ_TO_INVENTORY. The 1-argument void form at 544 stays.
+            {"llDerezObject__2", new FunctionSig {
+                FunctionName = "llDerezObject",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Key, VarType.Integer },
+                ParamNames = new string[] { "id", "flag" },
+                TableIndex = 682
+            }},
          };
 
         /// <summary>

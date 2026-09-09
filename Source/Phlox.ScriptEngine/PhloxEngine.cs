@@ -1139,6 +1139,14 @@ namespace Phlox.ScriptEngine
         /// <summary>
         /// Called by LSLSystemAPI.llSetTimerEvent.
         /// </summary>
+        /// <summary>
+        /// PHLOX-5. Let the API answer an asynchronous call on the script's own event queue - the
+        /// SL contract for llUpdateKeyValue(k, v, checked, original) is a dataserver reply, not a
+        /// return value. The scheduler already has PostEvent; this is the one public door to it.
+        /// </summary>
+        public void PostScriptEvent(UUID itemID, InWorldz.Phlox.VM.PostedEvent evt)
+            => m_ExeScheduler?.PostEvent(itemID, evt);
+
         public void SetTimerEvent(uint localID, UUID itemID, float sec)
             => m_ExeScheduler?.SetTimer(itemID, sec);
 

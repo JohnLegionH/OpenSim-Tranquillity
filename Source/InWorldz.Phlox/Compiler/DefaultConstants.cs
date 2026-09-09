@@ -293,6 +293,13 @@ namespace InWorldz.Phlox.Compiler
             {"LINKSETDATA_UPDATE", new ConstantSymbol("LINKSETDATA_UPDATE", SymbolTable.INT, "1")},
             {"LINKSETDATA_DELETE", new ConstantSymbol("LINKSETDATA_DELETE", SymbolTable.INT, "2")},
             {"LINKSETDATA_MULTIDELETE", new ConstantSymbol("LINKSETDATA_MULTIDELETE", SymbolTable.INT, "3")},
+            // PHLOX-5. DEREZ_* per wiki.secondlife.com/wiki/LlDerezObject; the TARGETED_EMAIL_* values
+            // are upstream's (OpenSim.Region.ScriptEngine.Shared/Api/ScriptBase/LSL_Constants.cs:1033-1034).
+            {"DEREZ_DIE", new ConstantSymbol("DEREZ_DIE", SymbolTable.INT, "0")},
+            {"DEREZ_MAKE_TEMP", new ConstantSymbol("DEREZ_MAKE_TEMP", SymbolTable.INT, "1")},
+            {"DEREZ_TO_INVENTORY", new ConstantSymbol("DEREZ_TO_INVENTORY", SymbolTable.INT, "2")},
+            {"TARGETED_EMAIL_ROOT_CREATOR", new ConstantSymbol("TARGETED_EMAIL_ROOT_CREATOR", SymbolTable.INT, "1")},
+            {"TARGETED_EMAIL_OBJECT_OWNER", new ConstantSymbol("TARGETED_EMAIL_OBJECT_OWNER", SymbolTable.INT, "2")},
             {"LINKSETDATA_OK", new ConstantSymbol("LINKSETDATA_OK", SymbolTable.INT, "0")},
             {"LINKSETDATA_EMEMORY", new ConstantSymbol("LINKSETDATA_EMEMORY", SymbolTable.INT, "1")},
             {"LINKSETDATA_ENOKEY", new ConstantSymbol("LINKSETDATA_ENOKEY", SymbolTable.INT, "2")},

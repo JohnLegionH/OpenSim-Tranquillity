@@ -12466,6 +12466,155 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         }
 
         // ── 653: llTargetedEmail ──
+        // ---- PHLOX-5: SL names and arities. Each is the SL behaviour, not a forward. ------------
+
+        /// <summary>wiki: llsRGB2Linear(vector srgb) - the SL spelling. Same conversion; the older
+        /// llSRGB2Linear stays as an alias. (The wiki notes the name is a misnomer - LSL colour is
+        /// Rec.709 - but the documented formula is the sRGB one both spellings implement.)</summary>
+        public Vector3 llsRGB2Linear(Vector3 srgb) => llSRGB2Linear(srgb);
+
+        /// <summary>wiki: llListSortStrided - the SL name for what Phlox shipped as llSortListStrided.
+        /// Bounds rule per the wiki: stride_index in [-stride, stride) or an empty list.</summary>
+        public LSLList llListSortStrided(LSLList src, int stride, int stride_index, int ascending)
+            => llSortListStrided(src, stride, stride_index, ascending);
+
+        /// <summary>wiki: string llSHA256String(string src) - "a string of 64 hex characters that is
+        /// the SHA-256 security hash of src", src as UTF-8, nothing appended. Distinct from the
+        /// (src, nonce) form, which hashes src + ":" + nonce.</summary>
+        public string llSHA256String(string src)
+        {
+            byte[] data = System.Text.Encoding.UTF8.GetBytes(src ?? string.Empty);
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            return Convert.ToHexString(sha.ComputeHash(data)).ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// wiki: llTargetedEmail(integer target, string subject, string message) - the address is
+        /// derived from the target. Routing follows upstream LSL_Api.cs:4362-4375: OBJECT_OWNER mails
+        /// the owner's account (skipped when the object is group-owned); ROOT_CREATOR mails the root
+        /// creator only when this script item's creator is the same person - upstream's guard against
+        /// creator spam. 20 s sleep per the wiki. 4096-character cap per upstream.
+        /// </summary>
+        public void llTargetedEmail(int target, string subject, string message)
+        {
+            const int TargetRootCreator = 1, TargetObjectOwner = 2;
+            try
+            {
+                if (m_host == null || World == null) return;
+                if ((subject ?? string.Empty).Length + (message ?? string.Empty).Length > 4096) return;
+                SceneObjectGroup parent = m_host.ParentGroup;
+                if (parent == null) return;
+
+                UUID recipient;
+                if (target == TargetObjectOwner)
+                {
+                    if (parent.OwnerID == parent.GroupID) return;
+                    recipient = parent.OwnerID;
+                }
+                else if (target == TargetRootCreator)
+                {
+                    TaskInventoryItem item = m_host.Inventory?.GetInventoryItem(m_itemID);
+                    if (item == null || item.CreatorID != parent.RootPart.CreatorID) return;
+                    recipient = parent.RootPart.CreatorID;
+                }
+                else return;
+
+                UserAccount account = World.UserAccountService?.GetUserAccount(World.RegionInfo.ScopeID, recipient);
+                if (account == null || string.IsNullOrEmpty(account.Email)) return;
+
+                IEmailModule emailModule = World.RequestModuleInterface<IEmailModule>();
+                emailModule?.SendEmail(m_host.UUID, parent.OwnerID, account.Email, subject, message);
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning("[PhloxAPI]: llTargetedEmail exception: {0}", e.Message);
+            }
+            finally
+            {
+                ScriptSleep(20000);
+            }
+        }
+
+        /// <summary>
+        /// wiki: key llUpdateKeyValue(string k, string v, integer checked, string original_value) -
+        /// asynchronous; the dataserver event carries "1,value" on success or "0,error" on failure,
+        /// XP_ERROR_RETRY_UPDATE when checked is TRUE and original_value no longer matches. The
+        /// checked update goes through the Experience KV adapter's compare-and-set; an unchecked one
+        /// writes unconditionally. The 3-argument synchronous form at 612 is untouched.
+        /// </summary>
+        public string llUpdateKeyValue(string k, string v, int isChecked, string original_value)
+        {
+            UUID requestId = UUID.Random();
+            string reply;
+            if (string.IsNullOrEmpty(k) || k.Length > MAX_EXPERIENCE_KEY_LENGTH)
+                reply = "0," + XP_ERROR_KEY_NOT_FOUND;
+            else
+            {
+                var expService = GetExperienceAdapter();
+                UUID expId = GetScriptExperienceId();
+                if (expService == null || expId == UUID.Zero) expId = m_host.OwnerID;
+                try
+                {
+                    if (expService == null) reply = "0," + XP_ERROR_RETRY_UPDATE;
+                    else if (ExceedsQuota(expService, expId, k, v)) reply = "0," + XP_ERROR_QUOTA_EXCEEDED;
+                    else if (isChecked != 0)
+                        reply = expService.UpdateKeyValue(expId, k, v, original_value) ? "1," + v : "0," + XP_ERROR_RETRY_UPDATE;
+                    else
+                    {
+                        // Unchecked: an unconditional write - compare against whatever is there now.
+                        string current = expService.ReadKeyValue(expId, k);
+                        reply = expService.UpdateKeyValue(expId, k, v, current) ? "1," + v : "0," + XP_ERROR_RETRY_UPDATE;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    m_log.LogWarning("[PhloxAPI]: llUpdateKeyValue(4) failed: {0}", ex.Message);
+                    reply = "0," + XP_ERROR_RETRY_UPDATE;
+                }
+            }
+            m_ScriptEngine?.PostScriptEvent(m_itemID, new InWorldz.Phlox.VM.PostedEvent
+            {
+                EventType = SupportedEventList.Events.DATASERVER,
+                Args = new object[] { requestId.ToString(), reply },
+            });
+            return requestId.ToString();
+        }
+
+        /// <summary>
+        /// wiki: integer llDerezObject(key id, integer flag). Both rules from the wiki apply: the
+        /// target's rezzer must be the object hosting this script, and its owner must be the script's
+        /// owner. DEREZ_DIE deletes; DEREZ_MAKE_TEMP marks the object temporary so the simulator
+        /// removes it later; DEREZ_TO_INVENTORY needs a viewer session to receive the item and
+        /// Scene.DeRezObjects takes an IClientAPI, so it is refused (0) and logged rather than faked.
+        /// Returns 1 on success, 0 otherwise.
+        /// </summary>
+        public int llDerezObject(string id, int flag)
+        {
+            const int DerezDie = 0, DerezMakeTemp = 1, DerezToInventory = 2;
+            if (m_host == null || World == null || !UUID.TryParse(id, out UUID targetID) || targetID == UUID.Zero) return 0;
+            SceneObjectPart sop = World.GetSceneObjectPart(targetID);
+            SceneObjectGroup sog = sop?.ParentGroup;
+            if (sog == null || sog.IsDeleted || sog.IsAttachment) return 0;
+            if (sog.OwnerID != m_host.OwnerID) return 0;
+            if (sog.RezzerID != m_host.UUID && sog.RezzerID != m_host.ParentGroup?.UUID) return 0;
+            switch (flag)
+            {
+                case DerezDie:
+                    World.DeleteSceneObject(sog, false);
+                    return 1;
+                case DerezMakeTemp:
+                    sog.RootPart.AddFlag(PrimFlags.TemporaryOnRez);
+                    sog.HasGroupChanged = true;
+                    sog.ScheduleGroupForFullUpdate();
+                    return 1;
+                case DerezToInventory:
+                    m_log.LogInformation("[PhloxAPI]: llDerezObject DEREZ_TO_INVENTORY is not available server-side (needs a viewer session); {0} left in place", targetID);
+                    return 0;
+                default:
+                    return 0;
+            }
+        }
+
         public void llTargetedEmail(int targetType, string address, string subject, string message)
         {
             // SL's targeted email: targetType 0=object, 1=avatar, 2=external

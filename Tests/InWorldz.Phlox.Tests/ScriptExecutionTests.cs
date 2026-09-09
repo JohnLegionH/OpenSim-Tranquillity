@@ -76,6 +76,12 @@ public class RecordingSystemApi : DispatchProxy
     {
         _calls.Add(targetMethod.Name + "(" + string.Join(", ", args ?? Array.Empty<object>()) + ")");
         var rt = targetMethod.ReturnType;
+        // PHLOX-5: a null string or list pushed onto the operand stack throws in SafeOperandsPush,
+        // and the aborted syscall is then re-dispatched - which recorded every non-void call twice
+        // and made llGetKey() unusable in a recorded script. Empty values are what a script would
+        // get from a quiet API, and they keep the VM on its rails.
+        if (rt == typeof(string)) return string.Empty;
+        if (rt == typeof(LSLList)) return new LSLList(new List<object>());
         return rt == typeof(void) || !rt.IsValueType ? null : Activator.CreateInstance(rt);
     }
 }

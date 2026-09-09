@@ -761,6 +761,12 @@ private static string ConvToString(object o)
 								Shim_osTeleportAgentLocal,      //674  PHLOX-2b
 								Shim_osTeleportAgentGrid,       //675  PHLOX-2b
 								Shim_llLinkPlaySound3,          //676  PHLOX-2b
+								Shim_llsRGB2Linear,             //677  PHLOX-5
+								Shim_llListSortStrided,         //678  PHLOX-5
+								Shim_llSHA256String1,           //679  PHLOX-5
+								Shim_llTargetedEmail3,          //680  PHLOX-5
+								Shim_llUpdateKeyValue4,         //681  PHLOX-5
+								Shim_llDerezObject2,            //682  PHLOX-5
         };
 
         /// <summary>
@@ -5970,6 +5976,57 @@ private static string ConvToString(object o)
             int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             string ret = self._systemAPI.llGetObjectLinkKey(p0, p1);
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+
+        // ---- PHLOX-5: SL names and arities -------------------------------------------------
+        static private void Shim_llsRGB2Linear(SyscallShim self)
+        {
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 ret = self._systemAPI.llsRGB2Linear(p0);
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+
+        static private void Shim_llListSortStrided(SyscallShim self)
+        {
+            int p3 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            LSLList p0 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            LSLList ret = self._systemAPI.llListSortStrided(p0, p1, p2, p3);
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+
+        static private void Shim_llSHA256String1(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.llSHA256String(p0);
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+
+        static private void Shim_llTargetedEmail3(SyscallShim self)
+        {
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.llTargetedEmail(p0, p1, p2);
+        }
+
+        static private void Shim_llUpdateKeyValue4(SyscallShim self)
+        {
+            string p3 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.llUpdateKeyValue(p0, p1, p2, p3);
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+
+        static private void Shim_llDerezObject2(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.llDerezObject(p0, p1);
             self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
         }
 

@@ -728,6 +728,14 @@ namespace InWorldz.Phlox.Glue
         string llGetStartString();
         void llSetGroundTexture(string texture, int corner);
         void llTargetedEmail(int targetType, string address, string subject, string message);
+
+        // ---- PHLOX-5: SL names and arities. Older spellings above stay as aliases. ----
+        Vector3 llsRGB2Linear(Vector3 srgb);
+        LSLList llListSortStrided(LSLList src, int stride, int stride_index, int ascending);
+        string llSHA256String(string src);
+        void llTargetedEmail(int target, string subject, string message);
+        string llUpdateKeyValue(string k, string v, int isChecked, string original_value);
+        int llDerezObject(string id, int flag);
         int llTransferOwnership(string destination);
         float llDetectedDamage(int number);
         void llDamage(string target, float amount, int damageType);

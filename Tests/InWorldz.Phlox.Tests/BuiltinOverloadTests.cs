@@ -70,6 +70,130 @@ public class BuiltinOverloadTests
         Assert.False(four.HasErrors(), $"llLinkPlaySound(int, string, float, int): {four.Report}");
     }
 
+    // ------------------------------------------------------------------ PHLOX-5: SL names and arities
+
+    /// <summary>
+    /// Compile a state_entry body, run it against the recording ISystemAPI, and return every
+    /// syscall that reached the API as "name(arg, arg)" - so a test can say not just that the SL
+    /// spelling COMPILES but that it DISPATCHES to the SL body and not the older one. The two
+    /// forms of each function differ in arity, and the recording proxy records the CLR method's
+    /// argument list, so the count tells them apart.
+    /// </summary>
+    private static List<string> Run(string body)
+    {
+        var compiled = PhloxCompiler.CompileTo(
+            "default { state_entry() { " + body + " } }", out var listener);
+        Assert.False(listener.HasErrors(), listener.Report);
+        Assert.NotNull(compiled);
+        var api = RecordingSystemApi.Create(out var calls);
+        var shim = new InWorldz.Phlox.Glue.SyscallShim(call => call());
+        shim.SystemAPI = api;
+        var interp = new InWorldz.Phlox.VM.Interpreter(compiled, shim);
+        shim.Interpreter = interp;
+        var info = compiled.FindEvent(interp.ScriptState.LSLState,
+            (int)InWorldz.Phlox.Types.SupportedEventList.Events.STATE_ENTRY);
+        Assert.NotNull(info);
+        interp.ScriptState.DoEvent(info,
+            new InWorldz.Phlox.VM.PostedEvent { EventType = InWorldz.Phlox.Types.SupportedEventList.Events.STATE_ENTRY, Args = Array.Empty<object>() },
+            Array.Empty<object>());
+        try { for (var i = 0; i < 100_000 && interp.ScriptState.RunningEvent != null; i++) interp.Tick(); }
+        catch (InvalidOperationException) { /* ticked past the end of the event */ }
+        return calls;
+    }
+
+    // The recording ISystemAPI returns null for string and list results, and storing null into a
+    // local trips Op_Store - so each SL form is called as a statement and the VM pops the result.
+    // The call reaching the API is what is under test, not the store.
+    /// <summary>
+    /// The calls of this name that reached the API - at least one - so the test can assert that
+    /// EVERY one of them carried the SL arity. Driving the interpreter by hand, without the
+    /// scheduler, replays state_entry once more after it finishes (every recorded call appears
+    /// twice), so "exactly one" is a claim about the harness, not about dispatch; "all of them
+    /// have the SL shape" is the claim that matters.
+    /// </summary>
+    private static List<string> AllOf(List<string> calls, string name)
+    {
+        var hits = calls.Where(c => c.StartsWith(name + "(")).ToList();
+        Assert.True(hits.Count >= 1, $"no {name} call reached the API; all syscalls: [{string.Join(" | ", calls)}]");
+        return hits;
+    }
+
+    // The recording ISystemAPI returns null for string and list results, and storing null into a
+    // local trips Op_Store - so each SL form is called as a statement and the VM pops the result.
+    // The call reaching the API is what is under test, not the store.
+    /// <summary>Exactly one call of this name reached the API, and here is everything that did if not.</summary>
+    private static int Arity(string call) => call.EndsWith("()") ? 0 : call.Count(c => c == ',') + 1;
+
+    [Fact]
+    public void LlsRGB2LinearDispatchesToTheSlSpelling()
+    {
+        // wiki.secondlife.com/wiki/LlsRGB2Linear - lowercase s. Phlox only had llSRGB2Linear.
+        var calls = Run("llsRGB2Linear(<0.5, 0.5, 0.5>);");
+        Assert.Contains(calls, c => c.StartsWith("llsRGB2Linear("));
+        Assert.DoesNotContain(calls, c => c.StartsWith("llSRGB2Linear("));
+    }
+
+    [Fact]
+    public void LlListSortStridedDispatchesToTheSlName()
+    {
+        // wiki.secondlife.com/wiki/LlListSortStrided. Phlox only had llSortListStrided.
+        var calls = Run("llListSortStrided([1, \"a\", 2, \"b\"], 2, 0, TRUE);");
+        Assert.Contains(calls, c => c.StartsWith("llListSortStrided("));
+        Assert.DoesNotContain(calls, c => c.StartsWith("llSortListStrided("));
+    }
+
+    [Fact]
+    public void LlSHA256StringOneArgDispatchesToTheSlBody()
+    {
+        // wiki: string llSHA256String(string src) - no nonce. Phlox's (src, nonce) form is 567.
+        var calls = Run("llSHA256String(\"abc\");");
+        var hits = AllOf(calls, "llSHA256String");
+        Assert.All(hits, hit => Assert.Equal(1, Arity(hit)));
+    }
+
+    [Fact]
+    public void LlTargetedEmailThreeArgDispatchesToTheSlBody()
+    {
+        // wiki: llTargetedEmail(integer target, string subject, string message).
+        var calls = Run("llTargetedEmail(TARGETED_EMAIL_OBJECT_OWNER, \"s\", \"m\");");
+        var hits = AllOf(calls, "llTargetedEmail");
+        Assert.All(hits, hit => Assert.Equal(3, Arity(hit)));
+        Assert.All(hits, hit => Assert.StartsWith("llTargetedEmail(2,", hit));   // the constant resolved to upstream's value
+    }
+
+    [Fact]
+    public void LlUpdateKeyValueFourArgDispatchesToTheSlBody()
+    {
+        // wiki: key llUpdateKeyValue(string k, string v, integer checked, string original_value).
+        var calls = Run("llUpdateKeyValue(\"k\", \"v\", TRUE, \"old\");");
+        var hits = AllOf(calls, "llUpdateKeyValue");
+        Assert.All(hits, hit => Assert.Equal(4, Arity(hit)));
+    }
+
+    [Fact]
+    public void LlDerezObjectTwoArgDispatchesToTheSlBody()
+    {
+        // wiki: integer llDerezObject(key id, integer flag), with DEREZ_DIE = 0.
+        var calls = Run("llDerezObject(llGetKey(), DEREZ_DIE);");
+        var hits = AllOf(calls, "llDerezObject");
+        Assert.All(hits, hit => Assert.Equal(2, Arity(hit)));
+    }
+
+    /// <summary>Every older Phlox spelling and arity must still compile - current Legion content
+    /// depends on them. These are the aliases, and they are not going anywhere.</summary>
+    [Theory]
+    [InlineData("vector v = llSRGB2Linear(<0.5, 0.5, 0.5>);")]
+    [InlineData("list l = llSortListStrided([1, \"a\", 2, \"b\"], 2, 0, TRUE);")]
+    [InlineData("string h = llSHA256String(\"abc\", 7);")]
+    [InlineData("llTargetedEmail(2, \"who@example.com\", \"s\", \"m\");")]
+    [InlineData("integer r = llUpdateKeyValue(\"k\", \"v\", \"old\");")]
+    [InlineData("llDerezObject(llGetKey());")]
+    public void TheOlderSpellingStillCompiles(string body)
+    {
+        var c = PhloxCompiler.CompileInDefault(body);
+        Assert.False(c.HasErrors(), body + ": " + c.Report);
+    }
+
     // ------------------------------------------------------------------ still rejected, and helpfully
 
     [Fact]

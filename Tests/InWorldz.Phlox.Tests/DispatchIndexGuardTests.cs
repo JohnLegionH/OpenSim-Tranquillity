@@ -80,7 +80,27 @@ public class DispatchIndexGuardTests
         Assert.True(gone.Count == 0, "built-ins vanished from the table: " + string.Join(", ", gone));
         Assert.True(moved.Count == 0,
             "a moved TableIndex is a different function at runtime, silently: " + string.Join(", ", moved));
-        Assert.Equal(674, baseline.Count);
+        // 674 at 34fb6d201b; PHLOX-5 added two NEW names (llsRGB2Linear, llListSortStrided) - the
+        // four SL-arity overloads share existing names and do not add entries. Regenerated with
+        // RegenerateBaseline below, never by hand.
+        Assert.Equal(676, baseline.Count);
+    }
+
+    /// <summary>
+    /// PHLOX-5. The baseline is REGENERATED from the table, not hand-edited: run this one test with
+    /// PHLOX_REGEN_BASELINE=1 in the environment and it rewrites dispatch-baseline.txt in the SOURCE
+    /// tree from Current(). Without the variable it is a no-op that passes, so it can live here.
+    /// </summary>
+    [Fact]
+    public void RegenerateBaseline()
+    {
+        if (Environment.GetEnvironmentVariable("PHLOX_REGEN_BASELINE") != "1") return;
+        var here = Path.GetDirectoryName(typeof(DispatchIndexGuardTests).Assembly.Location)!;
+        var src = Path.GetFullPath(Path.Combine(here, "..", "..", "..", "dispatch-baseline.txt"));
+        Assert.True(File.Exists(src), src);
+        var header = File.ReadAllLines(src).TakeWhile(l => l.StartsWith("#")).ToList();
+        var body = Current().OrderBy(kv => kv.Value).Select(kv => kv.Key + " " + kv.Value);
+        File.WriteAllLines(src, header.Concat(body));
     }
 
     [Fact]

@@ -1083,3 +1083,67 @@ Phlox suite **73 -> 76**, **0 skipped**, green **three runs in a row**; solution
 Two of its observed intermittent failures now have named causes: the global clock seam (fixed by the
 collection) and the shared `script_state.db` (same). Whether anything remains under (iv) is unknown
 until the suite has run parallel-by-default for a while with those two removed; the entry stays open.
+
+
+---
+
+## PHLOX-5 - SL names and arities for six built-ins
+
+**2026-09-09. Landed; not deployed.** SL is the authority for names and signatures; every older Phlox
+spelling and arity stays as an alias or overload, so current Legion content compiles unchanged.
+
+### The six, each against its wiki page
+
+| Phlox had | SL says | kind | index | body |
+|---|---|---|---|---|
+| `llSRGB2Linear(vector)` 570 | `vector llsRGB2Linear(vector srgb)` - lowercase s | rename, old kept | 677 | same conversion; the wiki itself notes the name is a misnomer (LSL colour is Rec.709) |
+| `llSortListStrided(list,int,int,int)` 564 | `list llListSortStrided(list src, integer stride, integer stride_index, integer ascending)` | rename, old kept | 678 | same body; wiki bounds rule (`[-stride, stride)` or empty list) already held |
+| `llSHA256String(string, integer)` 567 | `string llSHA256String(string src)` | overload | 679 | **SHA-256 of the UTF-8 bytes, 64 lowercase hex, nothing appended** - not a forward to the nonce form, which hashes `src + ":" + nonce` |
+| `llTargetedEmail(int, string, string, string)` 653 | `llTargetedEmail(integer target, string subject, string message)` | overload | 680 | address derived from the target, routing per upstream `LSL_Api.cs:4362-4375`: OBJECT_OWNER mails the owner's account (skipped if group-owned); ROOT_CREATOR only when this item's creator is the root creator; 4096-char cap; 20 s sleep |
+| `llUpdateKeyValue(string, string, string)` 612 -> int | `key llUpdateKeyValue(string k, string v, integer checked, string original_value)` | overload | 681 | **asynchronous**: returns a request key and answers on **dataserver** with `1,value` or `0,<XP_ERROR_*>`; checked -> compare-and-set through the Experience KV adapter, `XP_ERROR_RETRY_UPDATE` on mismatch; unchecked -> unconditional write; quota -> `XP_ERROR_QUOTA_EXCEEDED` |
+| `llDerezObject(key)` 544 -> void | `integer llDerezObject(key id, integer flag)` | overload | 682 | both wiki rules enforced (rezzer must be this object, owner must match); `DEREZ_DIE` deletes, `DEREZ_MAKE_TEMP` sets `TemporaryOnRez`; **`DEREZ_TO_INVENTORY` returns 0 and logs** - `Scene.DeRezObjects` needs an `IClientAPI` and there is no viewer session to receive the item |
+
+**Constants added** (`DefaultConstants.cs`): `DEREZ_DIE = 0`, `DEREZ_MAKE_TEMP = 1`, `DEREZ_TO_INVENTORY = 2`
+from the wiki; `TARGETED_EMAIL_ROOT_CREATOR = 1`, `TARGETED_EMAIL_OBJECT_OWNER = 2` from upstream
+`ScriptBase/LSL_Constants.cs:1033-1034`. **Plumbing added:** `PhloxEngine.PostScriptEvent`, the one public
+door from the API to the scheduler's event queue - no API function had ever posted a `dataserver`
+event before, which is why the SL `llUpdateKeyValue` contract needed it.
+
+### What pins it
+
+- **Six dispatch tests**, one per SL form, that compile the SL spelling, RUN it against the recording
+  `ISystemAPI`, and assert that every call of that name reaching the API has the **SL arity** - so
+  `llSHA256String("abc")` lands on the one-argument body and not the nonce one, and
+  `llTargetedEmail(TARGETED_EMAIL_OBJECT_OWNER, ...)` arrives as `(2, s, m)`, the constant resolved.
+- **Six alias compiles**, one per older spelling and arity, so none of them can quietly vanish.
+- **The dispatch baseline was regenerated, not hand-edited**: `DispatchIndexGuardTests.RegenerateBaseline`
+  rewrites `dispatch-baseline.txt` from the live table when `PHLOX_REGEN_BASELINE=1` is set and is a
+  no-op otherwise. The diff is exactly the two new names (`llsRGB2Linear 677`, `llListSortStrided 678`);
+  the four overloads share existing names and add no entries. Expected count 674 -> 676. No existing
+  index moved.
+
+### Verified
+
+Phlox suite **76 -> 89**, 0 skipped, green; solution 0 errors. The 17-script live set compiles unchanged
+(`LiveScriptCompileTests` in the same run), and **none of the six older spellings appears in any of the
+17** - `grep` over `LiveScripts/scripts/*.lsl` for all six names returns nothing - so no live script's
+resolution changes.
+
+### Found in the harness on the way, fixed
+
+The recording `ISystemAPI` returned `null` for `string` and `list` results. A null pushed onto the
+operand stack throws in `SafeOperandsPush`, the aborted syscall is re-dispatched, and every non-void
+call was recorded twice - which is why `llGetKey()` had never been usable in a recorded script. It now
+returns an empty string / empty list. Separately, driving the interpreter by hand without the scheduler
+replays `state_entry` once more after it finishes, so the dispatch tests assert the SL arity on **every**
+recorded call of the name rather than on a count; "exactly one" would have been a claim about the
+harness, not about dispatch.
+
+### Decisions
+
+- Renames get a **new index and shim** rather than sharing the old one: the guard forbids two
+  signatures on one index, and the raw-key rule allows only `name` or `name__N` as a key.
+- `DEREZ_TO_INVENTORY` is refused honestly (0, logged) rather than faked; doing it needs a client-less
+  derez path, which is its own change.
+- The four-argument `llUpdateKeyValue` returns a fresh request key and posts the reply immediately
+  rather than deferring it; the contract a script sees is the SL one.

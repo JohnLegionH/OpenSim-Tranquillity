@@ -600,6 +600,7 @@ llGetRegionSunRotation 593
 llGetRegionMoonDirection 594
 llGetRegionMoonRotation 595
 llGetRegionLightDir 596
+llSignRSA 597
 llGetRenderMaterial 598
 llSetRenderMaterial 599
 llIsLinkGLTFMaterial 600
@@ -631,7 +632,6 @@ llEvade 625
 llFleeFrom 626
 llWanderWithin 627
 llPatrolPoints 628
-llSignRSA 597
 llVerifyRSA 629
 llGetEnvironment 630
 llSetEnvironment 631
@@ -677,3 +677,5 @@ botGetPersistentData 670
 botSetPersistentData 671
 osTeleportAgent 672
 osGetAvatarList 673
+llsRGB2Linear 677
+llListSortStrided 678
