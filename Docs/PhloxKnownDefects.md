@@ -750,9 +750,9 @@ remain, and PHLOX-1's standing instruction holds: check those against the **SL w
 
 ---
 
-## PHLOX-3 candidates seen on 1.1.287, none chased
+## PHLOX-3 candidates seen on 1.1.287
 
-**Logged:** 2026-09-09 - (i) and (ii) from the MERGE-1 deploy's live verification, (iii) to (v) from the startup review of the first two starts on 1.1.287.
+**Logged:** 2026-09-09 - (i) and (ii) from the MERGE-1 deploy's live verification, (iii) and (iv) from the startup review of the first two starts on 1.1.287. **(v) is resolved - see PHLOX-3a below.**
 
 ### (i) `phlox status <name>` reports a miss once per scene that does not hold the object
 
@@ -790,18 +790,80 @@ the command will not take. Tracing 96c2d98a to "Timer test (2)" on 2026-09-09 to
 command should have done. **Make `phlox status` accept an asset id** and report every instance running it -
 which is also the right answer when one asset is shared across several prims.
 
-### (v) The compiler throws NullReferenceException on one script, and the resident is told nothing useful
+---
 
-`[PhloxCompile]: "4e51f068-9350-4f55-a52a-f8de3e53bdc4": "Object reference not set to an instance of an
-object."` - at 04:48:35 on 2026-09-09, and again at 04:56:15 on the next start, so it is deterministic and
-reproduces from the stored asset. John reports the prim as `464506571`.
+## PHLOX-3a - RESOLVED: `state default;` crashed the compiler
 
-**This is a crash in the compiler, not a syntax error**, and it matters more than the one script: PHLOX-2's
-owner-visible compile errors path reports it to the resident as a bare compile failure, so someone is being
-told their script is wrong when what actually happened is that the compiler fell over. Whatever the fix, the
-error the owner sees should distinguish the two.
+**Logged:** 2026-09-09 as candidate (v). **Fixed the same day; not deployed.**
 
-**Blocked on the source.** The script body is the resident's content and is not in the tree; John to
-identify it. When it is available, the first step is a **red test in `InWorldz.Phlox.Tests`** that reproduces
-the throw from the smallest fragment that still crashes - the fixture convention from PHLOX-2c applies, so
-the body is fetched on demand and not committed.
+### What it looked like
+
+Every region start under 1.1.287 logged, twice, at 04:37:36 and again at 04:56:15:
+
+```
+ERROR [PhloxCompile]: 4e51f068-...: Object reference not set to an instance of an object.
+ERROR [PhloxLoader]: Compilation failed for 1ee3b9b1-... item 4e51f068-...
+```
+
+The script is `lmap4` on Ebony, a four-state lamp belonging to a Legion Grid resident. Nothing in it is
+exotic, which was the first useful signal: whatever the compiler tripped over had to be something
+ordinary.
+
+### The cause, in one line
+
+**`TypesVisitor.VisitStateChangeStmt` dereferenced a null `ID()` for `state default;`**
+(`Source/InWorldz.Phlox/Compiler/TypesVisitor.cs:206`). The grammar matches the default state as a
+**keyword**, not an identifier:
+
+```
+LSL.g4:87    | stateNode='state' (ID | 'default') SEMI    # stateChangeStmt
+```
+
+so `context.ID()` is null for exactly that statement, and `.GetText()` threw out of the whole compile.
+The very next line read `stateName == "default"`, so the check was written expecting `default` to
+arrive as an ID. It never does.
+
+**`state default;` is valid LSL** - the SL wiki's State page demonstrates it - so the fix is to compile
+it, not to reject it with a better message. And **any** script that returns to its default state hits
+this, which is most state machines; `lmap4` is simply the one that happened to be rezzed.
+
+### Why the back end was never wrong
+
+`GenVisitor.cs:237` already reads `context.ID()?.GetText()` and `ByteCodeEmitter.StateChange` emits
+`statechg @default` for a null or empty id. Code generation has always handled this correctly. Only the
+type-check pass forgot, so the fix is one null-conditional plus a fallback token for the error position -
+no restructuring.
+
+### The second defect, which is the more important one
+
+`CompilerFrontend.Compile` ends in a blanket `catch (Exception e)` that reported `e.Message` and nothing
+else. So the crash reached the resident, through PHLOX-2's owner-visible path, as *"Object reference not
+set to an instance of an object."* - **indistinguishable from a message about their own script**. Someone
+was being told their script was broken when the compiler had fallen over, and that is part of why this
+sat in world unexplained.
+
+New `InWorldz.Phlox.Types.CompilerCrash` marks a crash on its way through `ILSLListener` (which carries
+strings, and the front end has neither a logger nor a dialog module), so:
+
+- the region log now gets the **exception type and stack**, through the listener that already logs at ERROR;
+- the owner gets **`Script <name>: compiler error (not a script syntax error) - <type>; reported to the
+  grid operator`**, and never a stack;
+- an ordinary error still reports in the `line N:C <message>` form - pinned by its own test, because
+  without that the distinction is only a second wording.
+
+### Commits
+
+| commit | what |
+|---|---|
+| `3efe425650` | red test + `Fixtures/lmap4.lsl`, the asset byte-for-byte |
+| `7ae8910a41` | the fix: null `ID()` handled in `TypesVisitor` |
+| `39f1a0c113` | owner alert distinguishes a compiler crash from a script error |
+
+Phlox suite **55 -> 60**, all green; solution 0 errors. **Not deployed** - deploy is a separate session.
+
+### Filed while here, not chased
+
+The SL wiki's State page warns: *"NEVER do a state change from within a touch_start event - that can lead
+to the next touch_start on return to this state to be missed."* `lmap4` changes state from `touch_start`
+in all four states. That is a **script-quality** matter for its owner, not a compiler defect, and nothing
+was changed on the resident's script.
