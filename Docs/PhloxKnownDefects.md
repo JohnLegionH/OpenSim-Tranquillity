@@ -1411,3 +1411,32 @@ shim)` + `DoEvent`), while the same script runs on the scheduler path. `MemInfo.
 never-initialised local is the suspect; not investigated (time). The two runtime probes that need
 locals use the scheduler harness instead; the list and constant probes have no locals and stay bare.
 A harness candidate, not an engine defect, recorded here.
+
+### PHLOX-9b - DEBUG_CHANNEL object chat reaches the owner only
+
+**2026-09-10. Landed; not deployed.** The did-it-land for 1.1.315 came back **half wrong**: Legion's
+divide-by-zero prim raised the script-warning box on a second avatar's viewer standing nearby, with the
+Owner field correctly showing Legion. The channel change landed (it was DEBUG_CHANNEL, not local chat);
+the *outcome* depended on the viewer. The [DEBUG_CHANNEL](https://wiki.secondlife.com/wiki/DEBUG_CHANNEL)
+page says the sim broadcasts and "most viewers filter out messages received on DEBUG_CHANNEL from objects
+owned by others" - this viewer did not. The sim filters now.
+
+| | |
+|---|---|
+| where | `ChatModule.DeliverChatToAvatars` (`ChatModule.cs`), the module that retypes channel 0x7FFFFFFF to `ChatTypeEnum.DebugChannel` at `:211` |
+| rule | chat whose type is `DebugChannel` **and** whose source is an object is delivered only to the presence whose UUID equals the sending part's `ParentGroup.OwnerID` (the root part's owner). Everything else - channel 0 from the same part, avatar-typed `/2147483647`, every other channel - is untouched |
+| range | **kept as it was, and as it was is "none"**: `TrySendChatMessage` applies a distance only for Whisper/Say/Shout; `DebugChannel` falls to the `default` arm (`maxDistSQ = -1`), so a DEBUG_CHANNEL line already reached every avatar in the region regardless of distance, and the owner now hears it from anywhere in the region. The original `Shout` type is overwritten at `:211` before the distance check, so there is no llSay-range rule to keep. A say/shout range for DebugChannel would be a separate change - flagged, not made |
+| scripted listens | **unaffected, checked**: `PhloxEngine` subscribes to `EventManager.OnChatFromWorld` itself (`PhloxEngine.cs:159`, handler `:524` -> `ListenManager.DeliverChat`) as a sibling of `ChatModule` on the same event - the listen manager sees every chat *before and independently of* this module's delivery filter, which only decides which viewers get a `ChatFromSimulator` packet. `llListen(DEBUG_CHANNEL, ...)` in a script keeps working; `WorldCommModule` (upstream engines) hangs off `OnChatFromClient` the same way |
+| not touched | `OnChatBroadcast` (`SimChatBroadcast`, region-wide chat) still sends DEBUG_CHANNEL to everyone; nothing in Phlox uses it for errors (`ShoutError` goes through `SimChat`). Recorded, not changed |
+
+### What pins it
+
+`DebugChannelOwnerOnlyTests` (`Tests/OpenSim.Region.CoreModules.Tests/Avatar/Chat/Tests/`), at the ChatModule
+level with a `TestScene`, the real `ChatModule`, two presences 2 m apart and a prim owned by one of them:
+a DEBUG_CHANNEL `SimChat` from the prim reaches **exactly the owner** (red on the unchanged module: *"the
+other avatar heard: 6:Script error: ..."* - type 6 is DebugChannel); channel 0 from the same prim reaches
+**both**; DEBUG_CHANNEL typed by the *other* avatar reaches **both**. Red 1/3, green 3/3.
+
+The rest of `OpenSim.Region.CoreModules.Tests` ran alongside: 95 pass, **5 fail** - three
+`InventoryArchiveLoadTests` and two `AvatarFactoryModuleTests` - none of which touch chat, and whose
+failures are recorded as found, not proven pre-existing (no second checkout in budget): the IAR tests assert creator names `"Lord Lucan"` / `"Mr Tiddles"` and a coalesced-item count (`Assert.Single` found 2 parts); the avatar-factory pair fails `Assert.NotNull` at `AvatarFactoryModuleTests.cs:88`. Neither file references `ChatModule`, `SimChat` or `OnChatFromWorld`; the avatar-factory test last changed 2026-09-05 (`483c2d7a13`). Candidate for a separate look.
