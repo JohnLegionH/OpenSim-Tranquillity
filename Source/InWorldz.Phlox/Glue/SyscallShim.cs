@@ -767,6 +767,23 @@ private static string ConvToString(object o)
 								Shim_llTargetedEmail3,          //680  PHLOX-5
 								Shim_llUpdateKeyValue4,         //681  PHLOX-5
 								Shim_llDerezObject2,            //682  PHLOX-5
+								Shim_osGetGridName,                  //683  PHLOX-12
+								Shim_osGetGridNick,                  //684  PHLOX-12
+								Shim_osGetGridHomeURI,               //685  PHLOX-12
+								Shim_osGetGridLoginURI,              //686  PHLOX-12
+								Shim_osGetGridGatekeeperURI,         //687  PHLOX-12
+								Shim_osGetGridCustom,                //688  PHLOX-12
+								Shim_osGetRegionSize,                //689  PHLOX-12
+								Shim_osGetRegionStats,               //690  PHLOX-12
+								Shim_osGetSimulatorVersion,          //691  PHLOX-12
+								Shim_osGetAgents,                    //692  PHLOX-12
+								Shim_osGetMapTexture,                //693  PHLOX-12
+								Shim_osGetPhysicsEngineType,         //694  PHLOX-12
+								Shim_osGetPhysicsEngineName,         //695  PHLOX-12
+								Shim_osGetSimulatorMemory,           //696  PHLOX-12
+								Shim_osGetSimulatorMemoryKB,         //697  PHLOX-12
+								Shim_osGetHealth,                    //698  PHLOX-12
+								Shim_osGetScriptEngineName,          //699  PHLOX-12
         };
 
         /// <summary>
@@ -6838,6 +6855,95 @@ private static string ConvToString(object o)
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             // PHLOX-10: goes through ApplyDamage, which waits on on_damage - never from the script thread
             RunAsync(self, delegate() { self._systemAPI.llDamage(p0, p1, p2); });
+        }
+
+        // ── PHLOX-12: OSSL information functions ──
+        static private void Shim_osGetGridName(SyscallShim self)
+        {
+            string ret = self._systemAPI.osGetGridName();
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetGridNick(SyscallShim self)
+        {
+            string ret = self._systemAPI.osGetGridNick();
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetGridHomeURI(SyscallShim self)
+        {
+            string ret = self._systemAPI.osGetGridHomeURI();
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetGridLoginURI(SyscallShim self)
+        {
+            string ret = self._systemAPI.osGetGridLoginURI();
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetGridGatekeeperURI(SyscallShim self)
+        {
+            string ret = self._systemAPI.osGetGridGatekeeperURI();
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetGridCustom(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetGridCustom(p0);
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetRegionSize(SyscallShim self)
+        {
+            Vector3 ret = self._systemAPI.osGetRegionSize();
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetRegionStats(SyscallShim self)
+        {
+            LSLList ret = self._systemAPI.osGetRegionStats();
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetSimulatorVersion(SyscallShim self)
+        {
+            string ret = self._systemAPI.osGetSimulatorVersion();
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetAgents(SyscallShim self)
+        {
+            LSLList ret = self._systemAPI.osGetAgents();
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetMapTexture(SyscallShim self)
+        {
+            string ret = self._systemAPI.osGetMapTexture();
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetPhysicsEngineType(SyscallShim self)
+        {
+            string ret = self._systemAPI.osGetPhysicsEngineType();
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetPhysicsEngineName(SyscallShim self)
+        {
+            string ret = self._systemAPI.osGetPhysicsEngineName();
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetSimulatorMemory(SyscallShim self)
+        {
+            int ret = self._systemAPI.osGetSimulatorMemory();
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetSimulatorMemoryKB(SyscallShim self)
+        {
+            int ret = self._systemAPI.osGetSimulatorMemoryKB();
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetHealth(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            float ret = self._systemAPI.osGetHealth(p0);
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetScriptEngineName(SyscallShim self)
+        {
+            string ret = self._systemAPI.osGetScriptEngineName();
+            self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
         }
 		static private void Shim_llSetLinkRenderMaterial(SyscallShim self)
         {

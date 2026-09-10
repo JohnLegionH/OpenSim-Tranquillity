@@ -66,9 +66,13 @@ namespace Phlox.ScriptEngine
         /// </summary>
         public float MinTimerInterval { get; private set; } = DefaultMinTimerInterval;
 
+        /// <summary>PHLOX-12. The [OSSL] permission gate, read from the same config YEngine reads.</summary>
+        internal OsslGate Ossl { get; private set; } = new OsslGate(null);
+
         public void Initialise(IConfigSource config)
         {
             m_ConfigSource = config;
+            Ossl = new OsslGate(config);
             m_Config = config.Configs["InWorldz.Phlox"];
             if (m_Config == null)
             {

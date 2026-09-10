@@ -31,13 +31,15 @@ public sealed class SchedulerHarness : IDisposable
     private readonly object m_loader;
     private readonly object m_exe;
 
-    public SchedulerHarness()
+    /// <param name="configure">PHLOX-12: a hook to add config sections (e.g. [OSSL]) before the engine reads them.</param>
+    public SchedulerHarness(Action<IConfigSource> configure = null)
     {
         var config = new IniConfigSource();
         var phlox = config.AddConfig("InWorldz.Phlox");
         phlox.Set("Enabled", "true");
         var startup = config.AddConfig("Startup");
         startup.Set("DefaultScriptEngine", "InWorldz.Phlox");
+        configure?.Invoke(config);
 
         Scene = new SceneHelpers().SetupScene();
 

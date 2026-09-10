@@ -6636,6 +6636,146 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return new LSLList(result);
         }
 
+        // ── PHLOX-12: OSSL read-only information functions ─────────────────────────────────────
+        // Each ported from Source/OpenSim.Region.ScriptEngine.Shared/Api/OSSL_Api.cs (line cited) with
+        // the SAME threat level and the same [OSSL] keys, through OsslGate. A denied call throws, and
+        // the script stops with YEngine's message on DEBUG_CHANNEL.
+        private TaskInventoryItem OsslItem => m_host?.Inventory?.GetInventoryItem(m_itemID);
+        private void OsslCheck() => m_ScriptEngine.Ossl.Check();
+        private void OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel level, string function)
+            => m_ScriptEngine.Ossl.Check(level, function, World, m_host, OsslItem);
+        private const string GridInfoSection = "GridInfoService";
+
+        /// <summary>OSSL_Api.cs:2580 - ungated upstream.</summary>
+        public string osGetGridName() => World?.SceneGridInfo?.GridName ?? string.Empty;
+
+        /// <summary>OSSL_Api.cs:2575 - ungated upstream.</summary>
+        public string osGetGridNick() => World?.SceneGridInfo?.GridNick ?? string.Empty;
+
+        /// <summary>OSSL_Api.cs:2601 - Moderate.</summary>
+        public string osGetGridHomeURI()
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.Moderate, "osGetGridHomeURI");
+            return World?.SceneGridInfo?.HomeURLNoEndSlash ?? string.Empty;
+        }
+
+        /// <summary>OSSL_Api.cs:2585 - Moderate. [GridInfoService] login; the upstream fallback to the login server's info page is not made.</summary>
+        public string osGetGridLoginURI()
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.Moderate, "osGetGridLoginURI");
+            return m_ScriptEngine.ConfigSource?.Configs[GridInfoSection]?.GetString("login", string.Empty) ?? string.Empty;
+        }
+
+        /// <summary>OSSL_Api.cs:2608 - Moderate.</summary>
+        public string osGetGridGatekeeperURI()
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.Moderate, "osGetGridGatekeeperURI");
+            return World?.SceneGridInfo?.GateKeeperURLNoEndSlash ?? string.Empty;
+        }
+
+        /// <summary>OSSL_Api.cs:2615 - Moderate. [GridInfoService] &lt;key&gt;; no remote fallback.</summary>
+        public string osGetGridCustom(string key)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.Moderate, "osGetGridCustom");
+            if (string.IsNullOrEmpty(key)) return string.Empty;
+            return m_ScriptEngine.ConfigSource?.Configs[GridInfoSection]?.GetString(key, string.Empty) ?? string.Empty;
+        }
+
+        /// <summary>OSSL_Api.cs:3640 - bare CheckThreatLevel (the master switch only).</summary>
+        public Vector3 osGetRegionSize()
+        {
+            OsslCheck();
+            var reg = World.RegionInfo;
+            return new Vector3(reg.RegionSizeX, reg.RegionSizeY, 0f);
+        }
+
+        /// <summary>OSSL_Api.cs:3626 - Moderate.</summary>
+        public LSLList osGetRegionStats()
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.Moderate, "osGetRegionStats");
+            var ret = new List<object>();
+            float[] stats = World.StatsReporter?.LastReportedSimStats;
+            if (stats != null) foreach (float f in stats) ret.Add(f);
+            return new LSLList(ret);
+        }
+
+        /// <summary>OSSL_Api.cs:2078 - High.</summary>
+        public string osGetSimulatorVersion()
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osGetSimulatorVersion");
+            return World.GetSimulatorVersion();
+        }
+
+        /// <summary>OSSL_Api.cs:1145 - None.</summary>
+        public LSLList osGetAgents()
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.None, "osGetAgents");
+            var ret = new List<object>();
+            World.ForEachRootScenePresence(sp => ret.Add(sp.Name));
+            return new LSLList(ret);
+        }
+
+        /// <summary>OSSL_Api.cs:3582 - bare CheckThreatLevel.</summary>
+        public string osGetMapTexture()
+        {
+            OsslCheck();
+            return World.RegionInfo.RegionSettings.TerrainImageID.ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:2040 - High, but NON-throwing: an empty string when not permitted, as upstream.</summary>
+        public string osGetPhysicsEngineType()
+        {
+            if (!m_ScriptEngine.Ossl.Enabled) return string.Empty;
+            if (!string.IsNullOrEmpty(m_ScriptEngine.Ossl.Test(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osGetPhysicsEngineType", World, m_host, OsslItem)))
+                return string.Empty;
+            return World.PhysicsScene?.EngineType ?? "unknown";
+        }
+
+        /// <summary>OSSL_Api.cs:2064 - bare CheckThreatLevel.</summary>
+        public string osGetPhysicsEngineName()
+        {
+            OsslCheck();
+            if (World.PhysicsScene == null) return "NoEngine";
+            return World.PhysicsScene.EngineName ?? "UnknownEngine";
+        }
+
+        /// <summary>OSSL_Api.cs:3651 - Moderate.</summary>
+        public int osGetSimulatorMemory()
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.Moderate, "osGetSimulatorMemory");
+            long pws = Util.GetPhysicalMemUse();
+            if (pws > int.MaxValue) return int.MaxValue;
+            return pws < 0 ? 0 : (int)pws;
+        }
+
+        /// <summary>OSSL_Api.cs:3665 - Moderate.</summary>
+        public int osGetSimulatorMemoryKB()
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.Moderate, "osGetSimulatorMemoryKB");
+            long pws = Util.GetPhysicalMemUse();
+            if ((pws & 0x3FFL) != 0) pws += 0x400L;
+            pws >>= 10;
+            return pws > int.MaxValue ? int.MaxValue : (int)pws;
+        }
+
+        /// <summary>OSSL_Api.cs:3749 - None.</summary>
+        public float osGetHealth(string agent)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.None, "osGetHealth");
+            if (!UUID.TryParse(agent, out UUID id) || id.IsZero()) return -1f;
+            ScenePresence presence = World.GetScenePresence(id);
+            return presence == null ? -1f : presence.Health;
+        }
+
+        /// <summary>OSSL_Api.cs:1997 - High. Upstream strips through the first '.' of the engine name: "InWorldz.Phlox" -> "Phlox".</summary>
+        public string osGetScriptEngineName()
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osGetScriptEngineName");
+            string n = m_ScriptEngine.Name ?? string.Empty;
+            int dot = n.IndexOf('.');
+            return dot >= 0 ? n.Substring(dot + 1) : n;
+        }
+
         public LSLList osGetAvatarList()
         {
             // OSSL: returns [uuid, position, name, uuid, position, name, ...]

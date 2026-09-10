@@ -4855,6 +4855,126 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "id", "flag" },
                 TableIndex = 682
             }},
+            // PHLOX-12: OSSL read-only information functions, ported from OSSL_Api.cs with the same [OSSL] gate
+            {"osGetGridName", new FunctionSig {
+                FunctionName = "osGetGridName",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 683
+            }},
+            {"osGetGridNick", new FunctionSig {
+                FunctionName = "osGetGridNick",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 684
+            }},
+            {"osGetGridHomeURI", new FunctionSig {
+                FunctionName = "osGetGridHomeURI",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 685
+            }},
+            {"osGetGridLoginURI", new FunctionSig {
+                FunctionName = "osGetGridLoginURI",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 686
+            }},
+            {"osGetGridGatekeeperURI", new FunctionSig {
+                FunctionName = "osGetGridGatekeeperURI",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 687
+            }},
+            {"osGetGridCustom", new FunctionSig {
+                FunctionName = "osGetGridCustom",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "key" },
+                TableIndex = 688
+            }},
+            {"osGetRegionSize", new FunctionSig {
+                FunctionName = "osGetRegionSize",
+                ReturnType = VarType.Vector,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 689
+            }},
+            {"osGetRegionStats", new FunctionSig {
+                FunctionName = "osGetRegionStats",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 690
+            }},
+            {"osGetSimulatorVersion", new FunctionSig {
+                FunctionName = "osGetSimulatorVersion",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 691
+            }},
+            {"osGetAgents", new FunctionSig {
+                FunctionName = "osGetAgents",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 692
+            }},
+            {"osGetMapTexture", new FunctionSig {
+                FunctionName = "osGetMapTexture",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 693
+            }},
+            {"osGetPhysicsEngineType", new FunctionSig {
+                FunctionName = "osGetPhysicsEngineType",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 694
+            }},
+            {"osGetPhysicsEngineName", new FunctionSig {
+                FunctionName = "osGetPhysicsEngineName",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 695
+            }},
+            {"osGetSimulatorMemory", new FunctionSig {
+                FunctionName = "osGetSimulatorMemory",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 696
+            }},
+            {"osGetSimulatorMemoryKB", new FunctionSig {
+                FunctionName = "osGetSimulatorMemoryKB",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 697
+            }},
+            {"osGetHealth", new FunctionSig {
+                FunctionName = "osGetHealth",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "agent" },
+                TableIndex = 698
+            }},
+            {"osGetScriptEngineName", new FunctionSig {
+                FunctionName = "osGetScriptEngineName",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 699
+            }},
          };
 
         /// <summary>

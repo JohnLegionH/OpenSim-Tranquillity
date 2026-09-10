@@ -417,6 +417,24 @@ namespace InWorldz.Phlox.Glue
         /// <summary>PHLOX-2b: OSSL_Api.cs:1015 - teleport to a region named by grid coordinates.</summary>
         void osTeleportAgent(string agent, int regionGridX, int regionGridY, Vector3 pos, Vector3 lookat);
         LSLList osGetAvatarList();
+        // PHLOX-12: OSSL information functions
+        string osGetGridName();
+        string osGetGridNick();
+        string osGetGridHomeURI();
+        string osGetGridLoginURI();
+        string osGetGridGatekeeperURI();
+        string osGetGridCustom(string key);
+        Vector3 osGetRegionSize();
+        LSLList osGetRegionStats();
+        string osGetSimulatorVersion();
+        LSLList osGetAgents();
+        string osGetMapTexture();
+        string osGetPhysicsEngineType();
+        string osGetPhysicsEngineName();
+        int osGetSimulatorMemory();
+        int osGetSimulatorMemoryKB();
+        float osGetHealth(string agent);
+        string osGetScriptEngineName();
         string llAvatarOnLinkSitTarget(int linknumber);
         string iwGetLastOwner();
         void iwRemoveLinkInventory(int linknumber, string item);

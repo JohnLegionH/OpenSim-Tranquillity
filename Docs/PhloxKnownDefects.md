@@ -1574,3 +1574,110 @@ phrase, `SQLITE_BUSY`, `busy_timeout`: 0 hits); it is the perf note in the 09-08
 perf notes because nothing was known about it. Marked closed by PHLOX-11 in the current handoff. The
 nearest tracked item is candidate (iv)'s note that the harness tests share one `script_state.db` - which
 the persistent connections and the busy timeout now serve as well.
+
+## PHLOX-12 - the OSSL lane opens; three PHLOX-11 leftovers ride along
+
+**2026-09-10. Landed in two commits; not deployed.**
+
+### PART 0 - the leftovers
+
+**0a - the verify scripts counted lines from earlier starts.** Every count *was* scoped to
+`/tmp/thisstart.log`, but that file was built with `awk '$0 >= "<timestamp>"'` - a string compare - and an
+exception's continuation lines carry no timestamp: `database is locked"` alone on a line sorts after any
+`2026-...` string and came through from the 05:47 start on every run. The 15:30 start showed the count as
+2 with 0 `[PhloxState]` errors. All three scripts (`verify-phlox8-9`, `9b-10`, `11`) now scope by the
+**line number** of the last `[STARTUP]`. Re-run against the 15:30 start of 1.1.321: `database is locked`
+**0**, `[PhloxState]` WARN/ERROR **0**, `Restored state for` **17** - the row that failed on 1.1.319 loads.
+That is the first of PHLOX-11's two required clean starts.
+
+**0b - the flush race (`92552f74d1`).** `SerializedRuntimeState.FromRuntimeState` already snapshotted
+`Calls`, `EventQueue` (under `EventQueueLock`), `ActiveListens`, `MiscAttributes` and `Globals` - and
+then handed the **live operand stack** to `FromPrimitiveStack`, which enumerated it in place while the
+script thread pushed and popped. That is the 05:58:12 line, verbatim: `FlushRaceTests` hammers a
+`RuntimeState` from one thread (events queued and removed, a reset every 25 rounds, 20 pushes and pops)
+while another serialises it 100 times, protobuf included - **red: 17 of 100 threw
+`InvalidOperationException: Collection was modified after the enumerator was instantiated.`**; green:
+**0 of 100**. Two `EventQueue.Clear()`s (`Reset`, `StateChangePrep`) and the timer `Remove` also ran
+without the lock the saver snapshots under; they take it now.
+
+**0c - WAL growth, measured, no fix.** Read-only against the live DB during the 15:30 run: **396 rows**,
+blob average **624 B** (max 901), `page_size` 4096. `FlushAllDirty` saves **dirty scripts only** - rows
+saved in the last 10/30/60/300 s were **2/2/2/7**, not 396 - so it is not "saves everything"; a script is
+dirty after every timeslice it ran (`ScriptChanged` at `PhloxExecutionScheduler.cs:773`), so a timer
+script re-saves every 2.5 s whether or not its state changed, at ~12 KB of WAL per commit (leaf page +
+index page + commit frame for a 70-byte row). WAL: 2.6 MB at +17 s, **3.41 MB at 15:31:27, 4.10 MB at
+15:32:40** (+111 KB in 10 s), **4.12 MB at 15:50 and flat**; the main DB's mtime moved from 06:10:12 to
+**15:50:47** - `wal_autocheckpoint` (1000 pages = 4,096,000 B) fired as soon as the WAL crossed it, so
+the WAL plateaus at ~4 MB and stays. The startup burst is 17 restored scripts' first saves plus the
+loaders' traffic. A "did the state actually change" check before marking dirty would cut the steady
+write rate; it is a one-line-ish change but not the fix the brief conditioned on, so not made.
+
+### PART 1 - the OSSL map
+
+`Docs/audit/phlox-ossl-surface-audit.py` **undercounts**: it reported 57 absent `os*` names, but the
+upstream `OSSL_Api.cs` declares **268** and Phlox's table carries **2** (`osGetAvatarList`,
+`osTeleportAgent`) - **266 absent**. The audit's regex finds all 268 on the upstream side; the shortfall is
+in how it prints (60 rows) - not fixed this session, the map below was built directly from the two files.
+
+| family | absent | names |
+|---|---|---|
+| osNpc* | 23 | osNpcCreate osNpcGetOwner osNpcGetPos osNpcGetRot osNpcLoadAppearance osNpcLookAt osNpcMoveTo osNpcMoveToTarget osNpcPlayAnimation osNpcRemove osNpcSaveAppearance osNpcSay osNpcSayTo osNpcSetProfileAbout osNpcSetProfileImage osNpcSetRot osNpcShout osNpcSit osNpcStand osNpcStopAnimation osNpcStopMoveToTarget osNpcTouch osNpcWhisper |
+| osGetGrid*/osGetRegion*/osGetSim*/osGetAvatar*/osGetAgent* (read-only information) | 65 → **48** after PART 2 | osGetAgentCountry osGetAgentIP osGetApparentRegionTime(+String) osGetApparentTime(+String) osGetAvatarHomeURI osGetCurrentSunHour osGetGender osGetHealRate osGetInventory{Desc,ItemKey,ItemKeys,LastOwner,Name,Names} osGetLastChangedEventKey osGetLinkColor osGetLinkInventory{Desc,ItemKey,ItemKeys,Key,Keys,Name,Names} osGetLinkNumber osGetLinkPrimitiveParams osGetLinkSitActiveRange osGetLinkStandTarget osGetNotecard osGetNotecardLine osGetNumberOfAttachments osGetNumberOfNotecardLines osGetPSTWallclock osGetParcel{Details,Dwell,ID,IDs} osGetPrimCount osGetPrimitiveParams osGetRegionMapTexture osGetRezzingObject osGetSitActiveRange osGetSittingAvatarsCount osGetStandTarget osGetSunParam osGetTerrainHeight osGetWindParam |
+| osDraw*/osSetDynamicTexture*/osMovePen/osSetPen/osSetFont | 28 | osDraw{Ellipse,FilledEllipse,FilledPolygon,FilledRectangle,Image,Line,Polygon,Rectangle,ResetTransform,RotationTransform,ScaleTransform,Text,TranslationTransform} osGetDrawStringSize osMovePen osSetDynamicTexture{Data,DataBlend,DataBlendFace,DataFace,URL,URLBlend,URLBlendFace} osSetFontName osSetFontSize osSetPenCap osSetPenColor osSetPenColour osSetPenSize |
+| osParcel*/osEstate*/osSetParcel*/osSetEstate*/terrain/wind/sun | 25 | osParcelJoin osParcelSetDetails osParcelSubdivide osRegionNotice osRegionRestart osReplaceParcelEnvironment osSetEstateSunSettings osSetParcelDetails osSetParcelMediaURL osSetParcelMusicURL osSetParcelSIPAddress osSetRegionSunSettings osSetRegionWaterHeight osSetSunParam osSetTerrainHeight osSetTerrainTexture osSetTerrainTextureHeight osSetTerrainTextures osSetWindParam osSunGetParam osSunSetParam osTerrainFlush osTerrainGetHeight osTerrainSetHeight osWindActiveModelPluginName |
+| osAgent*/osAvatar*/osForce*/osKick*/osCause*/osTeleport* | 30 | osAgentSaveAppearance osAvatarName2Key osAvatarPlayAnimation osAvatarStopAnimation osAvatarType osCauseDamage osCauseHealing osDie osDropAttachment osDropAttachmentAt osEjectFromGroup osForceAttachToAvatar osForceAttachToAvatarFromInventory osForceAttachToOtherAvatarFromInventory osForceBreakAllLinks osForceBreakLink osForceCreateLink osForceDetachFromAvatar osForceDropAttachment osForceDropAttachmentAt osForceOtherSit osInviteToGroup osKickAvatar osOwnerSaveAppearance osSetHealRate osSetHealth osSetOwnerSpeed osSetSpeed osTeleportObject osTeleportOwner |
+| osSet* prim/object/sound/misc side-effects | 39 | osAdjustSoundVolume osClearInertia osClearObjectAnimations osCollisionSound osConsoleCommand osLocalTeleportAgent osLoopSound osLoopSoundMaster osLoopSoundSlave osMakeNotecard osMessageAttachments osMessageObject osPlaySound osPlaySoundSlave osReplaceAgentEnvironment osReplaceRegionEnvironment osReplaceString osRequestSecureURL osRequestURL osResetAllScripts osSetContentType osSetInertia osSetInertiaAsBox osSetInertiaAsCylinder osSetInertiaAsSphere osSetLinkSitActiveRange osSetLinkStandTarget osSetPrimFloatOnWater osSetPrimitiveParams osSetProjectionParams osSetRot osSetSitActiveRange osSetSoundRadius osSetStandTarget osStopSound osTriggerSound osTriggerSoundAtPos osTriggerSoundLimited osVolumeDetect |
+| osString*/osList*/osFormat*/osRegex*/osUnix*/crypto/pure helpers | 39 | osAESDecrypt osAESDecryptFrom osAESEncrypt osAESEncryptTo osAngleBetween osApproxEquals osCheckODE osDetectedCountry osFormatString osIsNotValidNumber osIsNpc osIsUUID osKey2Name osListAsFloat osListAsInteger osListAsRotation osListAsString osListAsVector osListFindListNext osListSortInPlace osListSortInPlaceStrided osListenRegex osMatchString osMax osMin osRegexIsMatch osRound osSHA256 osSlerp osStringEndsWith osStringIndexOf osStringLastIndexOf osStringRemove osStringReplace osStringStartsWith osStringSubString osUnixTimeToTimestamp osVecDistSquare osVecMagSquare |
+| misc | 17 | osGetInertiaData osGetNPCList osGetSitTargetPos osGetSitTargetRot osGiveLinkInventory osGiveLinkInventoryList osLinkParticleSystem osLoadedCreationDate osLoadedCreationID osLoadedCreationTime osOldList2ListStrided osParticleSystem osPerlinNoise2D osPreloadSound osRemoveLinkInventory osResetEnvironment osTemperature2sRGB |
+
+### PART 2 - the first family: seventeen read-only information functions (`this commit`)
+
+**The gate first.** `OsslGate` (`Source/Phlox.ScriptEngine/OsslGate.cs`) is `OSSL_Api.CheckThreatLevel`
+/ `CheckThreatLevelTest` ported (`OSSL_Api.cs:180-215, 301-530`), reading the **same `[OSSL]` keys**
+(falling back to the engine's own section when `[OSSL]` is absent, as upstream does):
+`AllowOSFunctions` (default true), `OSFunctionThreatLevel` (default VeryLow), `PermissionErrorToOwner`,
+`Allow_<function>` (true / false / a comma list of owner UUIDs and `PARCEL_OWNER`, `PARCEL_GROUP_MEMBER`,
+`ESTATE_MANAGER`, `ESTATE_OWNER`, `ACTIVE_GOD`, `GOD`, `GRID_GOD`) and `Creators_<function>`. The
+`ThreatLevel` enum is upstream's own (`IOSSL_Api.cs`). A denied call throws `VMException` with upstream's
+text verbatim; the script stops and the owner reads it on DEBUG_CHANNEL, as on YEngine.
+
+| function | upstream | gate | index |
+|---|---|---|---|
+| `osGetGridName` / `osGetGridNick` | `:2580` / `:2575` | none (upstream has none) | 683-684 |
+| `osGetGridHomeURI` / `osGetGridLoginURI` / `osGetGridGatekeeperURI` / `osGetGridCustom(key)` | `:2601` / `:2585` / `:2608` / `:2615` | Moderate | 685-688 |
+| `osGetRegionSize` | `:3640` | master switch only | 689 |
+| `osGetRegionStats` | `:3626` | Moderate | 690 |
+| `osGetSimulatorVersion` | `:2078` | High | 691 |
+| `osGetAgents` | `:1145` | None | 692 |
+| `osGetMapTexture` | `:3582` | master switch only | 693 |
+| `osGetPhysicsEngineType` | `:2040` | High, **non-throwing** (empty string when denied, as upstream) | 694 |
+| `osGetPhysicsEngineName` | `:2064` | master switch only | 695 |
+| `osGetSimulatorMemory` / `osGetSimulatorMemoryKB` | `:3651` / `:3665` | Moderate | 696-697 |
+| `osGetHealth(agent)` | `:3749` | None | 698 |
+| `osGetScriptEngineName` | `:1997` | High ("InWorldz.Phlox" -> `Phlox`, upstream's strip-to-the-dot) | 699 |
+
+Two departures, stated: `osGetGridLoginURI` and `osGetGridCustom` read `[GridInfoService]` only - upstream
+also asks the login server's info page when the key is absent; not done. Left for the next pass:
+`osGetCurrentSunHour` (environment module), `osGetRegionMapTexture` (grid lookup + sleep),
+`osGetNumberOfAttachments`, `osGetAvatarHomeURI`.
+
+### What pins it
+
+`OsslInfoFunctionsTests`, through the harness: under the default config a script dispatches the ungated
+and None/master-switch functions and says `size=256x256`, `agents=1`, `map=<TerrainImageID>`,
+`health=100.000000`, `phys=basicphysics 1.0|ptype=` (High, empty, no error); `osGetGridHomeURI` under the
+default VeryLow stops the script with **`OSSL Permission Error: osGetGridHomeURI permission denied.
+Allowed threat level is VeryLow but function threat level is Moderate`**; `OSFunctionThreatLevel =
+Moderate` allows it; `Allow_osGetGridHomeURI = true` allows it, a UUID list without the prim's owner denies
+with `permission denied`, the same list with the owner allows, `false` denies with `disabled in region
+configuration`; `AllowOSFunctions = false` with `PermissionErrorToOwner = true` stops even the master-switch
+function with `(OWNER)OSSL Permission Error: All unsafe OSSL funtions disabled`. Dispatch baseline
+**regenerated** (676 -> 693 names, all appended). Suite **138 -> 144**; region server builds.
+
+### Found on the way, not fixed
+
+A script killed by a syscall exception is **run again**: every denial test logs three stops for the one
+script - the permission error, then `Unable to cast object of type 'System.Int32' to type
+'System.String'`, then `Stack empty` - the interpreter re-entered its half-finished handler with a torn
+operand stack. YEngine kills and stays killed. Candidate: `TerminateWithError` sets `Killed` but something
+still schedules the script (the queued-event drain, or the harness's pump). Not investigated.

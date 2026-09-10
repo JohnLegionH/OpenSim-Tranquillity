@@ -47,6 +47,7 @@
     <Compile Include="PhloxExperienceAdapter.cs" />
     <Compile Include="LinksetDataPhloxExtensions.cs" />
     <Compile Include="PhloxEngine.cs" />
+    <Compile Include="OsslGate.cs" />
     <Compile Include="SluaBackHalfProof.cs" />
     <Compile Include="PhloxExecutionScheduler.cs" />
     <Compile Include="PhloxLoadRequest.cs" />
