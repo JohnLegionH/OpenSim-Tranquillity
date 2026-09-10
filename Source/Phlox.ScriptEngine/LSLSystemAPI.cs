@@ -11390,17 +11390,8 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             if (!World.RegionInfo.RegionSettings.AllowDamage)
                 return;
 
-            float newHealth = sp.Health - amount;
-            if (newHealth <= 0f)
-            {
-                sp.setHealthWithUpdate(0f);
-                sp.Scene.EventManager.TriggerAvatarKill(m_host.LocalId, sp);
-            }
-            else
-            {
-                if (newHealth > 100f) newHealth = 100f;
-                sp.setHealthWithUpdate(newHealth);
-            }
+            // PHLOX-10: through the one door. Same arithmetic as before (clamp to 100 on a heal, kill at 0).
+            sp.ApplyDamage(m_host.UUID, m_host.OwnerID, m_host.LocalId, amount, DamageEntry.TYPE_GENERIC, true);
         }
 
         public void llSetHealth(string id, float health)
@@ -11414,15 +11405,9 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                 return;
 
             health = Math.Clamp(health, 0f, 100f);
-            if (health <= 0f)
-            {
-                sp.setHealthWithUpdate(0f);
-                sp.Scene.EventManager.TriggerAvatarKill(m_host.LocalId, sp);
-            }
-            else
-            {
-                sp.setHealthWithUpdate(health);
-            }
+            // PHLOX-10: an absolute set is a damage of (current - target) through the one door - a heal is
+            // a negative amount. Invulnerable / god presences keep their health, as the door rules.
+            sp.ApplyDamage(m_host.UUID, m_host.OwnerID, m_host.LocalId, sp.Health - health, DamageEntry.TYPE_GENERIC, true);
         }
 
 		// -- Tier 4: Pathfinding / Character System (606-628) --
