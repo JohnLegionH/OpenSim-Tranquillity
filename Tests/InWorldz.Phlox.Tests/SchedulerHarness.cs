@@ -130,6 +130,17 @@ public sealed class SchedulerHarness : IDisposable
         return item.ItemID;
     }
 
+    /// <summary>PHLOX-10: rez a script into a part other than the harness prim (a second attachment).</summary>
+    public UUID RezScriptInto(SceneObjectPart part, string source)
+    {
+        var item = TaskInventoryHelpers.AddScript(
+            Scene.AssetService, part, UUID.Random(), UUID.Random(), "script" + (++m_scriptSeq), source);
+        var rez = Engine.GetType().GetMethod("OnRezScript", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(rez);
+        rez!.Invoke(Engine, new object[] { part.LocalId, item.ItemID, source, 0, false, Engine.Name, 0 });
+        return item.ItemID;
+    }
+
     private int m_scriptSeq;
 
     /// <summary>

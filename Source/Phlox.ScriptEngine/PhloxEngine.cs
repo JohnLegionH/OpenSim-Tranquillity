@@ -163,6 +163,8 @@ namespace Phlox.ScriptEngine
             m_Scene.EventManager.OnObjectDeGrab += OnObjectDeGrab;
             m_Scene.EventManager.OnScriptChangedEvent += OnScriptChangedEvent;
             m_Scene.EventManager.OnAvatarKilled += OnAvatarKilled;   // PHLOX-6: on_death
+            m_Scene.EventManager.OnAvatarDamage += OnAvatarDamage;   // PHLOX-10: on_damage (synchronous)
+            m_Scene.EventManager.OnAvatarDamageApplied += OnAvatarDamageApplied;   // PHLOX-10: final_damage
             m_Scene.EventManager.OnScriptControlEvent += OnScriptControlEvent;
 			m_Scene.EventManager.OnShutdown += OnShutdown;
             m_Scene.EventManager.OnScriptColliderStart     += OnScriptColliderStart;
@@ -394,6 +396,8 @@ namespace Phlox.ScriptEngine
             m_Scene.EventManager.OnChatFromWorld -= OnChatFromWorld;
             m_Scene.EventManager.OnChatFromClient -= OnChatFromClient;
             m_Scene.EventManager.OnAvatarKilled -= OnAvatarKilled;
+            m_Scene.EventManager.OnAvatarDamage -= OnAvatarDamage;
+            m_Scene.EventManager.OnAvatarDamageApplied -= OnAvatarDamageApplied;
             m_Scene.EventManager.OnObjectGrab -= OnObjectGrab;
             m_Scene.EventManager.OnObjectGrabbing -= OnObjectGrabbing;
             m_Scene.EventManager.OnObjectDeGrab -= OnObjectDeGrab;
@@ -848,7 +852,10 @@ namespace Phlox.ScriptEngine
         public bool PostObjectEvent(UUID localID, string name, object[] args)
             => false;
 
-        public bool PostScriptEvent(UUID itemID, EventParams parms)
+        public bool PostScriptEvent(UUID itemID, EventParams parms) => PostScriptEvent(itemID, parms, null);
+
+        /// <summary>PHLOX-10: the same, with a completion callback the scheduler fires when the event is done with.</summary>
+        public bool PostScriptEvent(UUID itemID, EventParams parms, Action completed)
         {
             if (m_ExeScheduler == null) return false;
 
@@ -861,7 +868,8 @@ namespace Phlox.ScriptEngine
             {
                 EventType = (InWorldz.Phlox.Types.SupportedEventList.Events)eventInfo.TableIndex,
                 Args = parms.Params,
-                DetectVars = detectVars
+                DetectVars = detectVars,
+                Completed = completed
             };
             evt.Normalize();
             m_ExeScheduler.PostEvent(itemID, evt);
@@ -891,6 +899,110 @@ namespace Phlox.ScriptEngine
             {
                 m_log.LogWarning("[PhloxEngine]: on_death delivery for {0} failed: {1}", dead.UUID, e.Message);
             }
+        }
+
+        /// <summary>
+        /// PHLOX-10. How long the region waits for every on_damage handler to finish before the damage
+        /// lands. SL is synchronous here; a script that sleeps in on_damage forfeits its adjustment.
+        /// </summary>
+        public const int OnDamageWaitMs = 500;
+
+        /// <summary>
+        /// PHLOX-10. on_damage - "before damage has been applied" (wiki) - to every script on every
+        /// attachment the presence wears, with one DetectParams per pending entry: llDetectedKey /
+        /// llDetectedOwner name the source, llDetectedDamage(n) is [amount, type, original], and
+        /// llAdjustDamage(n, v) writes the entry's Amount through the AdjustDamage hook. The region
+        /// thread that raised the damage BLOCKS here, bounded by <see cref="OnDamageWaitMs"/>, until the
+        /// scheduler reports every posted event done (handler finished or event dropped) - that is what
+        /// makes the adjustment land before the amount does. The wait is skipped, and the events merely
+        /// posted, when the caller IS the script thread (a synchronous syscall could never be waited on
+        /// from itself); llDamage and llSetHealth are async syscalls for exactly this reason.
+        /// </summary>
+        private void OnAvatarDamage(ScenePresence presence, List<DamageEntry> batch)
+        {
+            if (presence == null || batch == null || batch.Count == 0 || m_ExeScheduler == null) return;
+            try
+            {
+                var det = DamageDetectParams(batch, adjustable: true);
+                bool canWait = System.Threading.Thread.CurrentThread.ManagedThreadId != m_ExeScheduler.WorkerThreadId;
+                using var done = new System.Threading.CountdownEvent(1);
+                int posted = 0;
+                foreach (UUID itemId in AttachmentScripts(presence))
+                {
+                    done.AddCount();
+                    posted++;
+                    if (!PostScriptEvent(itemId, new EventParams("on_damage", new object[] { batch.Count }, det), () => done.Signal()))
+                        done.Signal();
+                }
+                done.Signal();
+                if (posted > 0 && canWait && !done.Wait(OnDamageWaitMs))
+                    m_log.LogWarning("[PhloxEngine]: on_damage for {0}: {1} handler(s) still running after {2} ms; applying the batch as adjusted so far",
+                        presence.UUID, done.CurrentCount, OnDamageWaitMs);
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning("[PhloxEngine]: on_damage delivery for {0} failed: {1}", presence.UUID, e.Message);
+            }
+        }
+
+        /// <summary>PHLOX-10. final_damage - what landed, to the same scripts, not waited on.</summary>
+        private void OnAvatarDamageApplied(ScenePresence presence, List<DamageEntry> batch)
+        {
+            if (presence == null || batch == null || batch.Count == 0) return;
+            try
+            {
+                var det = DamageDetectParams(batch, adjustable: false);
+                foreach (UUID itemId in AttachmentScripts(presence))
+                    PostScriptEvent(itemId, new EventParams("final_damage", new object[] { batch.Count }, det));
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning("[PhloxEngine]: final_damage delivery for {0} failed: {1}", presence.UUID, e.Message);
+            }
+        }
+
+        private DetectParams[] DamageDetectParams(List<DamageEntry> batch, bool adjustable)
+        {
+            var det = new DetectParams[batch.Count];
+            for (int i = 0; i < batch.Count; i++)
+            {
+                DamageEntry entry = batch[i];
+                SceneObjectPart src = entry.SourceObject.IsZero() ? null : World?.GetSceneObjectPart(entry.SourceObject);
+                det[i] = new DetectParams
+                {
+                    Key = entry.SourceObject,
+                    Owner = entry.SourceOwner,
+                    Group = src?.GroupID ?? UUID.Zero,
+                    Name = src?.Name ?? string.Empty,
+                    Type = src == null ? 0 : (src.ParentGroup.ContainsScripts() ? DetectParams.SCRIPTED | DetectParams.ACTIVE : DetectParams.PASSIVE),
+                    Position = src == null ? new LSL_Types.Vector3() : new LSL_Types.Vector3(src.AbsolutePosition.X, src.AbsolutePosition.Y, src.AbsolutePosition.Z),
+                    Damage = entry.Amount,
+                    DamageType = entry.DamageType,
+                    OriginalDamage = entry.OriginalDamage,
+                    AdjustDamage = adjustable ? (v => entry.Amount = v) : null,
+                };
+            }
+            return det;
+        }
+
+        /// <summary>Every script item on every part of every attachment the presence wears - the on_death set.</summary>
+        private List<UUID> AttachmentScripts(ScenePresence presence)
+        {
+            var items = new List<UUID>();
+            foreach (SceneObjectGroup attachment in presence.GetAttachments())
+            {
+                if (attachment == null || attachment.IsDeleted) continue;
+                foreach (SceneObjectPart part in attachment.Parts)
+                {
+                    TaskInventoryDictionary scripts;
+                    lock (part.TaskInventory)
+                        scripts = (TaskInventoryDictionary)part.TaskInventory.Clone();
+                    foreach (var kvp in scripts)
+                        if (kvp.Value.Type == (int)AssetType.LSLText || kvp.Value.Type == 10)
+                            items.Add(kvp.Value.ItemID);
+                }
+            }
+            return items;
         }
 
         private void OnScriptControlEvent(UUID itemID, UUID agentID, uint held, uint change)
@@ -1206,6 +1318,10 @@ namespace Phlox.ScriptEngine
                     TouchPos     = parms[i].TouchPos,
                     TouchST      = parms[i].TouchST,
                     TouchUV      = parms[i].TouchUV,
+                    Damage       = parms[i].Damage,
+                    DamageType   = parms[i].DamageType,
+                    OriginalDamage = parms[i].OriginalDamage,
+                    AdjustDamage = parms[i].AdjustDamage,
                 };
             }
             return result;

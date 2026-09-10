@@ -11380,18 +11380,25 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             return sp.Health;
         }
 
-        public void llAdjustDamage(string id, float amount)
+        /// <summary>
+        /// PHLOX-10. SL's llAdjustDamage(integer number, float new_damage): inside on_damage, rewrite the
+        /// pending entry's amount before it lands (wiki: "modifies the amount of damage that will be applied
+        /// by the current on_damage event after it has completed"). Anywhere else: an error on DEBUG_CHANNEL,
+        /// as the wiki says. Out-of-range or negative index: silent. The pre-PHLOX-10 (key, amount) form,
+        /// an OpenSim-ism with the same arity, is gone - llDamage is the SL way to deal damage.
+        /// </summary>
+        public void llAdjustDamage(int number, float newDamage)
         {
-            if (!UUID.TryParse(id, out UUID agentId))
+            var state = m_thisScript?.ScriptState;
+            if (state?.RunningEvent == null || state.RunningEvent.EventType != InWorldz.Phlox.Types.SupportedEventList.Events.ON_DAMAGE)
+            {
+                ShoutError("llAdjustDamage: only valid inside an on_damage handler");
                 return;
-            ScenePresence sp = World?.GetScenePresence(agentId);
-            if (sp == null || sp.IsChildAgent || sp.Invulnerable || sp.IsViewerUIGod)
-                return;
-            if (!World.RegionInfo.RegionSettings.AllowDamage)
-                return;
-
-            // PHLOX-10: through the one door. Same arithmetic as before (clamp to 100 on a heal, kill at 0).
-            sp.ApplyDamage(m_host.UUID, m_host.OwnerID, m_host.LocalId, amount, DamageEntry.TYPE_GENERIC, true);
+            }
+            var vars = state.RunningEvent.DetectVars;
+            if (vars == null || number < 0 || number >= vars.Length) return;
+            vars[number].Damage = newDamage;
+            vars[number].AdjustDamage?.Invoke(newDamage);
         }
 
         public void llSetHealth(string id, float health)
@@ -12871,37 +12878,42 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         }
 
         // ── 655: llDetectedDamage ──
-        public float llDetectedDamage(int number)
+        /// <summary>
+        /// PHLOX-10. [float damage, integer damage_type, float original_damage] for pending entry n
+        /// (wiki). Inside on_damage, damage is the amount as adjusted so far; inside final_damage, what
+        /// landed. From any other handler: an empty list, as the wiki says.
+        /// </summary>
+        public LSLList llDetectedDamage(int number)
         {
-            // Returns the damage amount from a damage event
-            // Damage events aren't fully implemented in OpenSim, return 0.0
-            Stub("llDetectedDamage");
-            return 0.0f;
+            var evt = m_thisScript?.ScriptState?.RunningEvent;
+            if (evt == null) return new LSLList();
+            if (evt.EventType != InWorldz.Phlox.Types.SupportedEventList.Events.ON_DAMAGE
+                && evt.EventType != InWorldz.Phlox.Types.SupportedEventList.Events.FINAL_DAMAGE)
+                return new LSLList();
+            var vars = evt.DetectVars;
+            if (vars == null || number < 0 || number >= vars.Length) return new LSLList();
+            var d = vars[number];
+            return new LSLList(new object[] { d.Damage, d.DamageType, d.OriginalDamage });
         }
 
         // ── 656: llDamage ──
+        /// <summary>
+        /// PHLOX-10. llDamage(key target, float damage, integer damage_type): damage through the one door,
+        /// this prim as the source, so the target's attachments get on_damage (llDetectedKey == this prim)
+        /// and final_damage. Avatars only here (the wiki also allows tasks and redirects seated avatars to
+        /// their seat - not done); region damage must be on; no throttle yet. Runs as an async syscall so
+        /// the region's wait on on_damage never blocks the script thread that issued it.
+        /// </summary>
         public void llDamage(string target, float amount, int damageType)
         {
-            // SL Combat 2.0 — apply damage to an agent
-            // damageType: DAMAGE_TYPE_IMPACT=0, _BURN=1, _BLAST=2, etc.
-            // OpenSim doesn't have a full Combat 2.0 module, so we use the
-            // legacy damage system if available
-            if (World == null) return;
-
-            UUID targetId;
-            if (!UUID.TryParse(target, out targetId)) return;
-
+            if (World == null || m_host == null) return;
+            if (!UUID.TryParse(target, out UUID targetId)) return;
             ScenePresence sp = World.GetScenePresence(targetId);
             if (sp == null || sp.IsChildAgent) return;
-
-            // Try to apply damage via the legacy combat system
+            if (!World.RegionInfo.RegionSettings.AllowDamage) return;
             try
             {
-                // Check if damage is enabled in the region
-                if (!World.RegionInfo.RegionSettings.AllowDamage)
-                    return;
-
-                sp.ControllingClient.SendHealth(Math.Max(0f, sp.Health - amount));
+                sp.ApplyDamage(m_host.UUID, m_host.OwnerID, m_host.LocalId, amount, damageType, true);
             }
             catch (Exception e)
             {

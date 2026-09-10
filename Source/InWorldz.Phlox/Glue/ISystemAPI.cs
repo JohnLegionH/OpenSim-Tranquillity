@@ -662,7 +662,7 @@ namespace InWorldz.Phlox.Glue
 
         // ── Tier 3: Combat 2.0 ──
         float llGetHealth(string id);
-        void llAdjustDamage(string id, float amount);
+        void llAdjustDamage(int number, float newDamage);
         void llSetHealth(string id, float health);
 
 		// ── Tier 4: Pathfinding Shims ──
@@ -737,7 +737,7 @@ namespace InWorldz.Phlox.Glue
         string llUpdateKeyValue(string k, string v, int isChecked, string original_value);
         int llDerezObject(string id, int flag);
         int llTransferOwnership(string destination);
-        float llDetectedDamage(int number);
+        LSLList llDetectedDamage(int number);
         void llDamage(string target, float amount, int damageType);
         void llSetLinkRenderMaterial(int link, string materialId, int face);
         string llXorBase64(string s1, string s2);

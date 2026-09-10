@@ -4251,8 +4251,8 @@ namespace InWorldz.Phlox.Types
             {"llAdjustDamage", new FunctionSig {
                 FunctionName = "llAdjustDamage",
                 ReturnType = VarType.Void,
-                ParamTypes = new VarType[] { VarType.String, VarType.Float },
-                ParamNames = new string[] { "id", "amount" },
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Float },   // PHLOX-10: SL form
+                ParamNames = new string[] { "number", "new_damage" },
                 TableIndex = 604
             }},
             {"llSetHealth", new FunctionSig {
@@ -4621,7 +4621,7 @@ namespace InWorldz.Phlox.Types
             }},
             {"llDetectedDamage", new FunctionSig {
                 FunctionName = "llDetectedDamage",
-                ReturnType = VarType.Float,
+                ReturnType = VarType.List,   // PHLOX-10: [damage, damage_type, original_damage]
                 ParamTypes = new VarType[] { VarType.Integer },
                 ParamNames = new string[] { "number" },
                 TableIndex = 655

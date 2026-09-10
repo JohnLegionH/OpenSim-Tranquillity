@@ -63,13 +63,15 @@ public class DamageDoorTests
         Assert.Equal(99f, sp.Health, 3);
     }
 
+    // PART 1 drove this through llAdjustDamage(key, amount), the OpenSim-form door; PART 2 gave that name
+    // its SL signature (number, new_damage), so the scripted door is llDamage now - same door, same numbers.
     [Fact]
-    public void ScriptedAdjustDamageTakesTheAmountAndAHealClampsAt100()
+    public void ScriptedDamageTakesTheAmountAndAHealClampsAt100()
     {
         using var h = new SchedulerHarness();
         var sp = Vulnerable(h);
-        h.RezScript("default { state_entry() { llAdjustDamage(\"" + sp.UUID + "\", 30); llSay(0, \"h=\" + (string)llGetHealth(\"" + sp.UUID + "\")); llAdjustDamage(\"" + sp.UUID + "\", -50); llSay(0, \"h2=\" + (string)llGetHealth(\"" + sp.UUID + "\")); } }");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        h.RezScript("default { state_entry() { llDamage(\"" + sp.UUID + "\", 30, DAMAGE_TYPE_GENERIC); llSay(0, \"h=\" + (string)llGetHealth(\"" + sp.UUID + "\")); llDamage(\"" + sp.UUID + "\", -50, DAMAGE_TYPE_GENERIC); llSay(0, \"h2=\" + (string)llGetHealth(\"" + sp.UUID + "\")); } }");
+        h.PumpFor(TimeSpan.FromSeconds(3));
 
         Assert.Contains("h=70.000000", h.Said);
         Assert.Contains("h2=100.000000", h.Said);

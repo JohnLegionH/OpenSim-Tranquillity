@@ -594,8 +594,13 @@ namespace Phlox.ScriptEngine
 
         // ── Main work loop ─────────────────────────────────────────────────────
 
+        /// <summary>PHLOX-10. The managed thread id of whoever last drove DoWork - the script thread.
+        /// A region-side wait on a script event must never block this thread.</summary>
+        public int WorkerThreadId { get; private set; } = -1;
+
         public WorkStatus DoWork()
         {
+            WorkerThreadId = System.Threading.Thread.CurrentThread.ManagedThreadId;
             CheckSleepingScripts();
             ProcessEventQueue();
             ProcessEnableDisable();
@@ -702,6 +707,7 @@ namespace Phlox.ScriptEngine
         private void TransitionToWait()
         {
             Interpreter script = m_NextScript.Value;
+            script.ScriptState.RunningEvent?.SignalCompleted();   // PHLOX-10
             script.ScriptState.RunningEvent = null;
 
             while (true)
@@ -819,15 +825,19 @@ namespace Phlox.ScriptEngine
                 Interpreter script;
                 if (!m_AllScripts.TryGetValue(pe.ItemId, out script))
                 {
+                    pe.Evt.SignalCompleted();   // PHLOX-10: a waiter must not wait for a script that is not here
                     AddDeferredEvent(pe.ItemId, pe.Evt);
                     continue;
                 }
 
                 if (!script.ScriptState.Enabled && pe.Evt.EventType != SupportedEventList.Events.STATE_ENTRY)
+                {
+                    pe.Evt.SignalCompleted();
                     continue;
+                }
 
                 PhloxEventInfo info = FindEventHandler(pe.Evt, script);
-                if (info == null) continue;
+                if (info == null) { pe.Evt.SignalCompleted(); continue; }
 
                 // Flood protection: drop events if the script's queue is full
                 int queueDepth = script.ScriptState.EventQueue.Count;
@@ -835,6 +845,7 @@ namespace Phlox.ScriptEngine
                 {
                     m_log.LogWarning("[PhloxExe]: Event queue full ({0} events) for script {1}, dropping {2} event",
                         queueDepth, pe.ItemId, pe.Evt.EventType);
+                    pe.Evt.SignalCompleted();
                     continue;
                 }
 
@@ -845,6 +856,7 @@ namespace Phlox.ScriptEngine
                 // accumulates exactly one pending TIMER event — no flood.
                 if (m_Suspended.Contains(pe.ItemId))
                 {
+                    pe.Evt.SignalCompleted();   // PHLOX-10: it will run on resume, but nobody waits that long
                     script.ScriptState.QueueEvent(pe.Evt);
                     continue;
                 }
@@ -1278,6 +1290,7 @@ namespace Phlox.ScriptEngine
 
         private void TerminateWithError(Interpreter script, Exception e)
         {
+            script.ScriptState.RunningEvent?.SignalCompleted();   // PHLOX-10
             script.ScriptState.RunState = RuntimeState.Status.Killed;
             m_log.LogError("[PhloxExe]: Script {0} asset {1} terminated: {2}",
                 script.ItemId, script.Script.AssetId, e);

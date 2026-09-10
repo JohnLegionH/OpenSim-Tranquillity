@@ -6471,8 +6471,9 @@ private static string ConvToString(object o)
 
         static private void Shim_llAdjustDamage(SyscallShim self)
         {
+            // PHLOX-10: SL form (integer number, float new_damage)
             float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
-            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
             self._systemAPI.llAdjustDamage(p0, p1);
         }
 
@@ -6480,7 +6481,8 @@ private static string ConvToString(object o)
         {
             float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
-            self._systemAPI.llSetHealth(p0, p1);
+            // PHLOX-10: goes through ApplyDamage, which waits on on_damage - never from the script thread
+            RunAsync(self, delegate() { self._systemAPI.llSetHealth(p0, p1); });
         }
 
 		static private void Shim_llGetClosestNavPoint(SyscallShim self)
@@ -6826,7 +6828,7 @@ private static string ConvToString(object o)
 		static private void Shim_llDetectedDamage(SyscallShim self)
         {
             int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
-            float ret = self._systemAPI.llDetectedDamage(p0);
+            LSLList ret = self._systemAPI.llDetectedDamage(p0);   // PHLOX-10: a list, per the wiki
             self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
         }
 		static private void Shim_llDamage(SyscallShim self)
@@ -6834,7 +6836,8 @@ private static string ConvToString(object o)
             int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
             float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
-            self._systemAPI.llDamage(p0, p1, p2);
+            // PHLOX-10: goes through ApplyDamage, which waits on on_damage - never from the script thread
+            RunAsync(self, delegate() { self._systemAPI.llDamage(p0, p1, p2); });
         }
 		static private void Shim_llSetLinkRenderMaterial(SyscallShim self)
         {

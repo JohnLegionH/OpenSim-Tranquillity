@@ -1312,10 +1312,10 @@ first, then change the flag.
 Phlox suite **105 -> 110**, 0 skipped, green; solution 0 errors. `grep` for a `Stub(` tag or a no-op /
 not-supported comment on any of the five: **0 hits**.
 
-### Still a stub, on purpose
+### No longer a stub
 
-**`llDetectedDamage` stays a stub until the damage hook from PHLOX-6 is built** - it reads the damage
-carried by an `on_damage` / `final_damage` event, and nothing raises those yet.
+`llDetectedDamage` was left a stub here until the damage hook existed; **PHLOX-10** built the hook and the
+function with it (a list, per the wiki).
 
 ## PHLOX-8 - constants audit: Phlox vs SL, by name and by value
 
@@ -1440,3 +1440,75 @@ other avatar heard: 6:Script error: ..."* - type 6 is DebugChannel); channel 0 f
 The rest of `OpenSim.Region.CoreModules.Tests` ran alongside: 95 pass, **5 fail** - three
 `InventoryArchiveLoadTests` and two `AvatarFactoryModuleTests` - none of which touch chat, and whose
 failures are recorded as found, not proven pre-existing (no second checkout in budget): the IAR tests assert creator names `"Lord Lucan"` / `"Mr Tiddles"` and a coalesced-item count (`Assert.Single` found 2 parts); the avatar-factory pair fails `Assert.NotNull` at `AvatarFactoryModuleTests.cs:88`. Neither file references `ChatModule`, `SimChat` or `OnChatFromWorld`; the avatar-factory test last changed 2026-09-05 (`483c2d7a13`). Candidate for a separate look.
+
+## PHLOX-10 - the damage-applied hook: on_damage, final_damage, llDetectedDamage, llDamage
+
+**2026-09-10. Landed in two commits; not deployed.** Wiki pages read first: on_damage, final_damage,
+llDetectedDamage, llAdjustDamage, llDamage, llSetDamage (DAMAGE_TYPE_* from the llDamage page - the
+constant pages themselves 404).
+
+### PART 1 - one door (`9bef63058a`)
+
+Damage reached `ScenePresence.Health` from two doors with their own arithmetic and their own
+`TriggerAvatarKill`: `PhysicsCollisionUpdate` (ground falls, prim collisions, `llSetDamage` prims, inline)
+and `LSLSystemAPI.llAdjustDamage` / `llSetHealth` via `setHealthWithUpdate`. Now every door builds a
+**`DamageEntry`** (`Scenes/DamageEntry.cs`: source object, owner, local id, `OriginalDamage`, mutable
+`Amount`, `DamageType`) and calls **`ScenePresence.ApplyDamage(batch, announce)`**; the physics frame's
+collisions arrive as **one batch** (the wiki's `num_detected`). The 0..100 clamp, the client-update rule
+(scripted: always; collision: only past 1.0, the anti-spam rule) and the kill live in the door.
+
+`DamageDoorTests` characterise it - **green before and after the refactor**: a `Damage = 10` prim
+collision takes 10 and the prim dies; a -10 m/s ground fall takes 1.0 and -4 takes nothing; scripted 30
+then a -50 heal gives 70 then 100; a `Damage = 100` prim fires `OnAvatarKilled` exactly once with the
+prim's local id. Two normalisations, stated: Health is clamped to **0** at death (the collision path sent
+a negative value to the client); `llSetHealth` on an invulnerable presence is a no-op like every other
+door (it alone bypassed that check).
+
+### PART 2 - the events, SL order (`this commit`)
+
+| step | where | what |
+|---|---|---|
+| 1 | `EventManager.OnAvatarDamage(presence, batch)`, raised **synchronously** from `ApplyDamage` before anything is subtracted | `PhloxEngine.OnAvatarDamage` posts **`on_damage(num_detected)`** to every script on every part of every attachment the presence wears, one `DetectParams` per entry: `llDetectedKey` / `llDetectedOwner` name the source, `llDetectedDamage(n)` is **`[damage, damage_type, original_damage]`** (the wiki's order - the brief said `[amount, adjusted, type]`), `llAdjustDamage(n, new_damage)` writes the entry's `Amount` through an `AdjustDamage` callback carried on the detect record. **Then it waits** |
+| 2 | `ApplyDamage` | subtracts the adjusted amounts, clamps |
+| 3 | `EventManager.OnAvatarDamageApplied` | **`final_damage(num_detected)`** to the same scripts; `llDetectedDamage` inside it is what landed. Not waited on |
+| 4 | `TriggerAvatarKill` if Health hit 0 | `on_death`, as PHLOX-6 built it |
+
+**How the wait works - the one place SL is synchronous.** `PostedEvent` gained a `Completed` callback
+(not serialized). The scheduler fires it exactly once when the event is *done with*: handler finished
+(`TransitionToWait`), script terminated (`TerminateWithError`), or the event dropped - no handler in the
+current state, script disabled, script not loaded (deferred), queue full, script suspended. The engine
+posts every on_damage with `Completed` wired to a `CountdownEvent` and blocks the calling thread on it,
+**bounded by `PhloxEngine.OnDamageWaitMs = 500`**; on timeout it logs and applies the batch as adjusted
+so far. The caller is the physics thread (collisions) or an async-syscall thread - **`llDamage` and
+`llSetHealth` are now `RunAsync` shims** precisely so a script can never wait on itself; if the caller *is*
+the script thread anyway (`PhloxExecutionScheduler.WorkerThreadId`, recorded at each `DoWork`), the
+events are posted and not waited on. This is not the PHLOX-5 dataserver shape (post and forget); it is a
+bounded region-side wait on script completion, and nothing else in the engine does that.
+
+**Functions.** `llDetectedDamage(integer)` returns a **list** now (was a `float` stub at index 655; same
+index, new return type). `llAdjustDamage` is SL's **`(integer number, float new_damage)`** at index 604 -
+the OpenSim-form `(key, float)` with the same arity is gone (the resolver keys overloads by arity; 0 live
+scripts used it; `llDamage` is the SL way to deal damage). `llDamage(key, float, integer)` goes through
+the door with the calling prim as source: avatars only, region damage must be on, **no 10-per-30-s
+throttle and no seat redirect** (both wiki rules, not done). Sixteen **`DAMAGE_TYPE_*`** constants added
+(IMPACT -1 .. EMOTIONAL 14); collision-door entries carry `DAMAGE_TYPE_IMPACT`, scripted ones what the
+caller passed.
+
+### What pins it
+
+`DamageEventsTests`, on the scheduler harness with the region-side call on a second thread and the test
+thread pumping (production's shape): an attachment script that halves the damage in `on_damage` sees
+`od=1:20/5/20 from <source>` then `fd=1:10/5/20` and Health drops **by the halved amount** (90); a second
+attachment with no `on_damage` still gets `final_damage` and sees the halved value; `llDamage` from a prim
+reaches a worn attachment's `on_damage` with **`llDetectedKey` == the prim** and `llDetectedOwner` == its
+owner; `llAdjustDamage` outside `on_damage` is a DEBUG_CHANNEL error and changes nothing. **Red 4/4 on the
+PART 1 engine, green 4/4.** Suite **126 -> 134**, 0 skipped; `DispatchIndexGuard` unchanged (no index
+moved); region server builds clean.
+
+### Not done, on record
+
+The wiki's "region must allow damage adjustment" flag (no such setting here - `AllowDamage` gates the
+scripted doors as before); `llDamage` on a task target and the seated-avatar redirect; the llDamage
+throttle; `on_damage` on the *hit object's* scripts (SL raises it on tasks too - only avatars' attachments
+here). The PHLOX-6 note that the hook "would live in `ScenePresence.PhysicsCollisionUpdate`" was half
+right: it lives in the door that path now calls.
