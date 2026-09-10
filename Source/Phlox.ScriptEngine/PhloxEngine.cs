@@ -686,50 +686,46 @@ namespace Phlox.ScriptEngine
 
         private void OnScriptColliderStart(uint localID, ColliderArgs col)
         {
-            int dc = col.Colliders.Count;
-            if (dc == 0) return;
-            DetectParams[] det = new DetectParams[dc];
-            int i = 0;
-            foreach (DetectedObject detobj in col.Colliders)
-            {
-                DetectParams d = new DetectParams();
-                d.Key = detobj.keyUUID;
-                d.Populate(m_Scene, detobj);
-                det[i++] = d;
-            }
-            PostObjectEvent(localID, new EventParams("collision_start", new object[] { dc }, det));
+            DetectParams[] det = FilteredColliders(localID, col);
+            if (det.Length == 0) return;
+            PostObjectEvent(localID, new EventParams("collision_start", new object[] { det.Length }, det));
         }
 
         private void OnScriptColliding(uint localID, ColliderArgs col)
         {
-            int dc = col.Colliders.Count;
-            if (dc == 0) return;
-            DetectParams[] det = new DetectParams[dc];
-            int i = 0;
-            foreach (DetectedObject detobj in col.Colliders)
-            {
-                DetectParams d = new DetectParams();
-                d.Key = detobj.keyUUID;
-                d.Populate(m_Scene, detobj);
-                det[i++] = d;
-            }
-            PostObjectEvent(localID, new EventParams("collision", new object[] { dc }, det));
+            DetectParams[] det = FilteredColliders(localID, col);
+            if (det.Length == 0) return;
+            PostObjectEvent(localID, new EventParams("collision", new object[] { det.Length }, det));
         }
 
         private void OnScriptCollidingEnd(uint localID, ColliderArgs col)
         {
-            int dc = col.Colliders.Count;
-            if (dc == 0) return;
-            DetectParams[] det = new DetectParams[dc];
-            int i = 0;
+            DetectParams[] det = FilteredColliders(localID, col);
+            if (det.Length == 0) return;
+            PostObjectEvent(localID, new EventParams("collision_end", new object[] { det.Length }, det));
+        }
+
+        /// <summary>
+        /// PHLOX-7a. The colliders the host part's llCollisionFilter lets through, as DetectParams.
+        /// The region's own collision path already applies SceneObjectPart.CollisionFilteredOut
+        /// before raising the event (SceneObjectPart.cs:2812-2820, ScenePresence.cs:6462-6470); this
+        /// applies it again here so the filter holds for a collision arriving by any other door, and
+        /// so the count a script sees is the count it was allowed to see.
+        /// </summary>
+        private DetectParams[] FilteredColliders(uint localID, ColliderArgs col)
+        {
+            if (col?.Colliders == null || col.Colliders.Count == 0) return s_emptyDetectParams;
+            SceneObjectPart host = m_Scene?.GetSceneObjectPart(localID);
+            var det = new List<DetectParams>(col.Colliders.Count);
             foreach (DetectedObject detobj in col.Colliders)
             {
+                if (host != null && host.CollisionFilteredOut(detobj.keyUUID, detobj.nameStr)) continue;
                 DetectParams d = new DetectParams();
                 d.Key = detobj.keyUUID;
                 d.Populate(m_Scene, detobj);
-                det[i++] = d;
+                det.Add(d);
             }
-            PostObjectEvent(localID, new EventParams("collision_end", new object[] { dc }, det));
+            return det.ToArray();
         }
 
         // ── Land collision events ──────────────────────────────────────────────

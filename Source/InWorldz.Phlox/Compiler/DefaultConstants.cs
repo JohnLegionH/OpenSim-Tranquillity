@@ -295,6 +295,30 @@ namespace InWorldz.Phlox.Compiler
             {"LINKSETDATA_MULTIDELETE", new ConstantSymbol("LINKSETDATA_MULTIDELETE", SymbolTable.INT, "3")},
             // PHLOX-5. DEREZ_* per wiki.secondlife.com/wiki/LlDerezObject; the TARGETED_EMAIL_* values
             // are upstream's (OpenSim.Region.ScriptEngine.Shared/Api/ScriptBase/LSL_Constants.cs:1033-1034).
+            // PHLOX-7a. The llRezObjectWithParams rule and flag constants, values from upstream
+            // LSL_Constants.cs:1131-1154. None existed here before: a script could only call
+            // llRezObjectWithParams with bare numbers, and Phlox's own numbering disagreed with SL.
+            {"REZ_PARAM", new ConstantSymbol("REZ_PARAM", SymbolTable.INT, "0")},
+            {"REZ_FLAGS", new ConstantSymbol("REZ_FLAGS", SymbolTable.INT, "1")},
+            {"REZ_FLAG_TEMP", new ConstantSymbol("REZ_FLAG_TEMP", SymbolTable.INT, "1")},
+            {"REZ_FLAG_PHYSICAL", new ConstantSymbol("REZ_FLAG_PHYSICAL", SymbolTable.INT, "2")},
+            {"REZ_FLAG_PHANTOM", new ConstantSymbol("REZ_FLAG_PHANTOM", SymbolTable.INT, "4")},
+            {"REZ_FLAG_DIE_ON_COLLIDE", new ConstantSymbol("REZ_FLAG_DIE_ON_COLLIDE", SymbolTable.INT, "8")},
+            {"REZ_FLAG_DIE_ON_NOENTRY", new ConstantSymbol("REZ_FLAG_DIE_ON_NOENTRY", SymbolTable.INT, "16")},
+            {"REZ_FLAG_NO_COLLIDE_OWNER", new ConstantSymbol("REZ_FLAG_NO_COLLIDE_OWNER", SymbolTable.INT, "32")},
+            {"REZ_FLAG_NO_COLLIDE_FAMILY", new ConstantSymbol("REZ_FLAG_NO_COLLIDE_FAMILY", SymbolTable.INT, "64")},
+            {"REZ_FLAG_BLOCK_GRAB_OBJECT", new ConstantSymbol("REZ_FLAG_BLOCK_GRAB_OBJECT", SymbolTable.INT, "128")},
+            {"REZ_POS", new ConstantSymbol("REZ_POS", SymbolTable.INT, "2")},
+            {"REZ_ROT", new ConstantSymbol("REZ_ROT", SymbolTable.INT, "3")},
+            {"REZ_VEL", new ConstantSymbol("REZ_VEL", SymbolTable.INT, "4")},
+            {"REZ_ACCEL", new ConstantSymbol("REZ_ACCEL", SymbolTable.INT, "5")},
+            {"REZ_OMEGA", new ConstantSymbol("REZ_OMEGA", SymbolTable.INT, "7")},
+            {"REZ_DAMAGE", new ConstantSymbol("REZ_DAMAGE", SymbolTable.INT, "8")},
+            {"REZ_SOUND", new ConstantSymbol("REZ_SOUND", SymbolTable.INT, "9")},
+            {"REZ_SOUND_COLLIDE", new ConstantSymbol("REZ_SOUND_COLLIDE", SymbolTable.INT, "10")},
+            {"REZ_LOCK_AXES", new ConstantSymbol("REZ_LOCK_AXES", SymbolTable.INT, "11")},
+            {"REZ_DAMAGE_TYPE", new ConstantSymbol("REZ_DAMAGE_TYPE", SymbolTable.INT, "12")},
+            {"REZ_PARAM_STRING", new ConstantSymbol("REZ_PARAM_STRING", SymbolTable.INT, "13")},
             {"DEREZ_DIE", new ConstantSymbol("DEREZ_DIE", SymbolTable.INT, "0")},
             {"DEREZ_MAKE_TEMP", new ConstantSymbol("DEREZ_MAKE_TEMP", SymbolTable.INT, "1")},
             {"DEREZ_TO_INVENTORY", new ConstantSymbol("DEREZ_TO_INVENTORY", SymbolTable.INT, "2")},

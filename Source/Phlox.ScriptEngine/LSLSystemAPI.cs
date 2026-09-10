@@ -3421,6 +3421,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             => RezObjectInternal(inventory, pos, vel, rot, param, true);
 
         private void RezObjectInternal(string inventory, Vector3 pos, Vector3 vel, Quaternion rot, int param, bool atRoot)
+            => RezObjectInternal(inventory, pos, vel, rot, param, atRoot, null);
+
+        /// <summary>
+        /// PHLOX-7a: the one rez path, now carrying REZ_PARAM_STRING. Upstream stores it on the rezzed
+        /// group (LSL_Api.cs:3894, sog.RezStringParameter) and llGetStartString reads it back
+        /// (LSL_Api.cs:4589-4593); until now Phlox parsed REZ_PARAM only and the string went nowhere.
+        /// </summary>
+        private void RezObjectInternal(string inventory, Vector3 pos, Vector3 vel, Quaternion rot, int param, bool atRoot, string startString)
         {
             ScriptSleep(100);
             if (m_host == null || World == null) return;
@@ -3449,6 +3457,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 return;
             }
 
+            foreach (SceneObjectGroup grp in rezzed)
+            {
+                if (startString != null) grp.RezStringParameter = startString;
+            }
             foreach (SceneObjectGroup grp in rezzed)
             {
                 m_ScriptEngine.PostObjectEvent(m_host.LocalId,
@@ -6297,7 +6309,24 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
         public void llPointAt(Vector3 pos) { /* Deprecated */ }
         public void llStopPointAt() { /* Deprecated */ }
-        public void llCollisionFilter(string name, string id, int accept) { /* NotImplemented in Halcyon */ }
+        /// <summary>
+        /// PHLOX-7a. Ported from upstream LSL_Api.cs:4036-4043. wiki: "Sets the collision filter,
+        /// exclusively or inclusively" - accept TRUE keeps only matches, FALSE excludes them; a blank
+        /// name or a null/invalid id matches everything. The part stores it
+        /// (SceneObjectPart.SetCollisionFilter) and the region's own collision path consults
+        /// CollisionFilteredOut before raising the event; PhloxEngine's handlers consult it too, so
+        /// the filter holds whichever door a collision arrives by.
+        /// </summary>
+        public void llCollisionFilter(string name, string id, int accept)
+        {
+            if (m_host == null) return;
+            _ = UUID.TryParse(id, out UUID objectID);
+            string lname = (name ?? string.Empty).ToLower(System.Globalization.CultureInfo.InvariantCulture);
+            if (objectID == UUID.Zero)
+                m_host.SetCollisionFilter(accept != 0, lname, string.Empty);
+            else
+                m_host.SetCollisionFilter(accept != 0, lname, objectID.ToString());
+        }
         public void llPassTouches(int pass)
         {
             if (m_host == null) return;
@@ -7421,10 +7450,56 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return number;
         }
 
-        public string llXorBase64Strings(string s1, string s2)
+        private const string s_b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+        /// <summary>
+        /// PHLOX-7a. Ported as-is from upstream LSL_Api.cs:14509-14580. wiki: deprecated in favour of
+        /// llXorBase64, sleeps 0.3 s, and "incorrectly performs an exclusive or on two Base64 strings" -
+        /// the padding quirks below ARE the documented behaviour, not a bug to fix here.
+        /// </summary>
+        public string llXorBase64Strings(string str1, string str2)
         {
-            // Deprecated per LSL spec — return empty string
-            return string.Empty;
+            int padding = 0;
+            ScriptSleep(300);
+            str1 ??= string.Empty; str2 ??= string.Empty;
+            if (str1.Length == 0) return string.Empty;
+            if (str2.Length == 0) return str1;
+
+            int len = str2.Length;
+            if ((len % 4) != 0) // LL is EVIL!!!!
+            {
+                while (str2.EndsWith("=")) str2 = str2[..^1];
+                len = str2.Length;
+                int mod = len % 4;
+                if (mod == 1) str2 = str2[..^1];
+                else if (mod == 2) str2 += "==";
+                else if (mod == 3) str2 += "=";
+            }
+
+            try
+            {
+                Convert.FromBase64String(str1);
+                Convert.FromBase64String(str2);
+            }
+            catch { return string.Empty; }
+
+            // Remove padding
+            while (str1.EndsWith('=')) { str1 = str1[..^1]; padding++; }
+            while (str2.EndsWith('=')) str2 = str2[..^1];
+
+            byte[] d1 = new byte[str1.Length];
+            byte[] d2 = new byte[str2.Length];
+            for (int i = 0; i < str1.Length; i++) { int idx = s_b64.IndexOf(str1[i]); d1[i] = (byte)(idx == -1 ? 0 : idx); }
+            for (int i = 0; i < str2.Length; i++) { int idx = s_b64.IndexOf(str2[i]); d2[i] = (byte)(idx == -1 ? 0 : idx); }
+
+            var output = new System.Text.StringBuilder(d1.Length + padding);
+            for (int pos = 0; pos < d1.Length; pos++)
+                output.Append(s_b64[d1[pos] ^ d2[pos % d2.Length]]);
+            // Here's a funny thing: LL blithely violate the base64 standard pretty much everywhere.
+            // Here, padding is added only if the first input string had it, rather than when the
+            // data actually needs it. This can result in invalid base64 being returned. Go figure.
+            while (padding-- > 0) output.Append('=');
+            return output.ToString();
         }
 
         public string llXorBase64StringsCorrect(string str1, string str2)
@@ -8396,19 +8471,37 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             // Return a reasonable default (16KB, typical for LSL scripts)
             return 16384;
         }
+        /// <summary>PHLOX-7a. Ported from upstream LSL_Api.cs:4548-4556. wiki: "Returns a list of names
+        /// of animations playing in the current object"; the part tracks them in AnimationsNames.</summary>
         public LSLList llGetObjectAnimationNames()
         {
-            // SL Animesh feature — returns list of animations playing on the object.
-            // OpenSim doesn't support Animesh; return empty list.
-            return new LSLList();
+            var ret = new List<object>();
+            var names = m_host?.AnimationsNames;
+            if (names == null || names.Count == 0) return new LSLList(ret);
+            lock (names)
+                foreach (string name in names.Values) ret.Add(name);
+            return new LSLList(ret);
         }
+        /// <summary>
+        /// PHLOX-7a. Ported from upstream LSL_Api.cs:4533-4541. wiki: the animation is "an item in the
+        /// inventory of the prim this script is in" - resolved by inventory name, then the default
+        /// avatar animation names, never by UUID. The part manages the set and sends the update;
+        /// whether anything moves is the mesh's business (Animesh needs a skeleton).
+        /// </summary>
         public void llStartObjectAnimation(string anim)
         {
-            // SL Animesh — not supported in OpenSim. No-op.
+            if (m_host == null) return;
+            UUID animID = OpenSim.Region.Framework.Scenes.Scripting.ScriptUtils.GetAssetIdFromItemName(m_host, anim, (int)AssetType.Animation);
+            if (animID == UUID.Zero)
+                animID = DefaultAvatarAnimations.GetDefaultAnimation(anim);
+            if (animID != UUID.Zero)
+                m_host.AddAnimation(animID, anim);
         }
+
+        /// <summary>PHLOX-7a. Ported from upstream LSL_Api.cs:4543-4546 - by the same name it was started with.</summary>
         public void llStopObjectAnimation(string anim)
         {
-            // SL Animesh — not supported in OpenSim. No-op.
+            m_host?.RemoveAnimation(anim);
         }
         public int llGetLinkSitFlags(int link)
         {
@@ -12223,12 +12316,17 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
             if (string.IsNullOrEmpty(inventory)) return;
 
-            const int REZ_POS = 1;
-            const int REZ_ROT = 2;
-            const int REZ_VEL = 3;
-            const int REZ_FLAGS = 8;
-            const int REZ_DAMAGE = 4;
-            const int REZ_PARAM = 7;
+            // PHLOX-7a: these were 1,2,3,8,4,7 - a private numbering that matched neither SL nor
+            // upstream, so a script written to the SL constants had every rule misread. Now the
+            // values in LSL_Constants.cs:1131-1154, the same ones DefaultConstants exposes.
+            const int REZ_PARAM = 0;
+            const int REZ_FLAGS = 1;
+            const int REZ_POS = 2;
+            const int REZ_ROT = 3;
+            const int REZ_VEL = 4;
+            const int REZ_DAMAGE = 8;
+            const int REZ_PARAM_STRING = 13;
+            string startString = null;
 
             Vector3 pos = m_host.AbsolutePosition;
             Quaternion rot = m_host.GetWorldRotation();
@@ -12284,6 +12382,14 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                             catch { }
                         }
                         break;
+                    case REZ_PARAM_STRING:
+                        // upstream LSL_Api.cs:3796-3803
+                        if (i + 1 < paramList.Length)
+                        {
+                            startString = paramList.Data[i + 1]?.ToString() ?? string.Empty;
+                            i += 1;
+                        }
+                        break;
                     case REZ_PARAM:
                         if (i + 1 < paramList.Length)
                         {
@@ -12307,9 +12413,9 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
             // Delegate to existing rez infrastructure
             if (atRoot)
-                llRezAtRoot(inventory, pos, vel, rot, param);
+                RezObjectInternal(inventory, pos, vel, rot, param, true, startString);
             else
-                llRezObject(inventory, pos, vel, rot, param);
+                RezObjectInternal(inventory, pos, vel, rot, param, false, startString);
         }
 
         public string llGetMaterialOverride(int face, LSLList paramList)
@@ -12427,13 +12533,13 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         }
 
         // ── 651: llGetStartString ──
+        /// <summary>PHLOX-7a. Ported from upstream LSL_Api.cs:4589-4593. wiki: "Returns a string that was
+        /// passed to the object's root prim on rez with llRezObjectWithParams"; blank when the object was
+        /// rezzed any other way.</summary>
         public string llGetStartString()
         {
-            // Returns the string passed to llRezObjectWithParams via REZ_PARAM
-            // In SL this is a string variant of llGetStartParameter.
-            // OpenSim/Phlox only has integer start params, so return empty string.
-            // Scripts using llRezObjectWithParams with REZ_PARAM get integer only.
-            return string.Empty;
+            string s = m_host?.ParentGroup?.RezStringParameter;
+            return string.IsNullOrEmpty(s) ? string.Empty : s;
         }
 
         // ── 652: llSetGroundTexture ──

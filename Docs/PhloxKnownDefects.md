@@ -1207,3 +1207,66 @@ Phlox suite **89 -> 99**, 0 skipped, green; solution 0 errors. Four new `scriptE
 
 **Did-it-land for the deploy:** a prim with all five handlers compiles with no `[PhloxCompile]` error,
 and `phlox status` lists them in the mask.
+
+
+---
+
+## PHLOX-7a - four stubs that upstream LSL_Api already implements
+
+**2026-09-09. Landed; not deployed.** Each was a no-op or a default return in `LSLSystemAPI.cs`; each is
+ported from the upstream body, the SL wiki page checked first, Phlox's own conventions kept.
+
+| function | was | upstream ported from | wiki agrees | now |
+|---|---|---|---|---|
+| `llCollisionFilter(name, id, accept)` | empty (`/* NotImplemented in Halcyon */`) | `LSL_Api.cs:4036-4043` | yes - accept TRUE keeps only matches, FALSE excludes; blank name / null id match everything | stored via `SceneObjectPart.SetCollisionFilter`, **and** `PhloxEngine`'s three collision handlers consult `CollisionFilteredOut` through a new `FilteredColliders` helper, so the count a script sees is the count it was allowed to see |
+| `llStartObjectAnimation` / `llStopObjectAnimation` | no-ops with a *"not supported in OpenSim"* comment that was wrong | `:4533-4546` | yes - resolved by inventory name, then the default animation names, never by UUID | `SceneObjectPart.AddAnimation` / `RemoveAnimation`, which the Framework already had |
+| `llGetObjectAnimationNames()` | `[]` | `:4548-4556` | yes | reads `SceneObjectPart.AnimationsNames` |
+| `llGetStartString()` | `""` | `:4589-4593` | yes - *"a string that was passed to the object's root prim on rez with llRezObjectWithParams"* | reads `ParentGroup.RezStringParameter`, which the Framework had (`SceneObjectGroup.cs:488`) and Phlox never set |
+| `llXorBase64Strings(s1, s2)` | `""` (*"deprecated"*) | `:14509-14580`, as-is | yes - deprecated for `llXorBase64`, 0.3 s sleep, and *"incorrectly performs an exclusive or"* - the padding quirk **is** the documented behaviour | the upstream body, quirk and comment included |
+
+### The start-string path, traced - and what it turned up
+
+Upstream parses `REZ_PARAM_STRING` in `llRezObjectWithParams` (`LSL_Api.cs:3796-3803`), stores it on the
+rezzed group (`:3894`, `sog.RezStringParameter`) and reads it back in `llGetStartString` (`:4589`).
+**Phlox never stored it - it never parsed it.** Its `llRezObjectWithParams` handled `REZ_PARAM` (the
+integer) and nothing else string-shaped, and delegated to `llRezObject` / `llRezAtRoot`, which drop the
+rezzed groups on the floor. Now: `RezObjectInternal` takes a `startString` and sets `RezStringParameter`
+on every group `World.RezObject` returns (`LSLSystemAPI.cs:3441-3450`), and `llRezObjectWithParams`
+parses rule 13 and threads it through. Pinned by a test that rezzes a real inventory object in the
+test scene and reads the string off the rezzed group.
+
+**Two things found on the way, both fixed and both bigger than the stub:**
+
+- **No `REZ_*` constant existed in Phlox at all.** A script could only call `llRezObjectWithParams`
+  with bare numbers. All 21 (`REZ_PARAM` .. `REZ_PARAM_STRING`, and the eight `REZ_FLAG_*`) are now in
+  `DefaultConstants`, values from `LSL_Constants.cs:1131-1154`.
+- **Phlox's private rule numbering matched neither SL nor upstream.** The method's own constants were
+  `REZ_POS=1, REZ_ROT=2, REZ_VEL=3, REZ_DAMAGE=4, REZ_PARAM=7, REZ_FLAGS=8`; SL's are
+  `REZ_PARAM=0, REZ_FLAGS=1, REZ_POS=2, REZ_ROT=3, REZ_VEL=4, REZ_DAMAGE=8`. A script written to the SL
+  constants had every rule misread. Aligned to upstream. **This is a behaviour change** for any script
+  that used Phlox's private numbers as literals; none of the 17 live scripts calls
+  `llRezObjectWithParams` at all (grep), so nothing on the grid moves.
+
+### The collision filter - why the engine consults it too
+
+The Framework already applies `CollisionFilteredOut` before raising the event on the physics path
+(`SceneObjectPart.cs:2812-2820`, `ScenePresence.cs:6462-6470`), so the store alone *does* filter physics
+collisions. It does nothing for a collision that arrives by any other door - a direct
+`TriggerScriptCollidingStart`, which is exactly what the harness test uses. `PhloxEngine` now filters in
+its own handlers as well, so the guarantee does not depend on the entry point.
+
+### What pins it
+
+Six tests in `UpstreamPortedStubTests`, **all six red on the unchanged engine** (run before the port,
+6/6 failed) and green after: reject-by-name delivers 0 events for the rejected name and 1 for another;
+accept-by-name delivers exactly 1 of 2; object animations are listed by name after start and gone after
+stop; the start string reads back from the group; `llRezObjectWithParams` stores it on the rezzed
+object; and `llXorBase64Strings` returns the upstream algorithm's identities (`""` for empty s1, s1 for
+empty s2, `AAAA` for equal inputs) rather than `""`.
+
+A test-shape note: `DetectParams.Populate` cannot name a collider that is not in the scene, so
+`llDetectedName(0)` is blank in these tests and the assertions are on the **count** of events - which
+is the stronger claim anyway: a filtered collision must produce no event, not an event with no name.
+
+Phlox suite **99 -> 105**, 0 skipped, green; solution 0 errors. `grep` for a `Stub(` tag or a
+*not supported* / *NotImplemented* comment on any of the four: **0 hits**.
