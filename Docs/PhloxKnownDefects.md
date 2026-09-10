@@ -1316,3 +1316,48 @@ not-supported comment on any of the five: **0 hits**.
 
 **`llDetectedDamage` stays a stub until the damage hook from PHLOX-6 is built** - it reads the damage
 carried by an `on_damage` / `final_damage` event, and nothing raises those yet.
+
+## PHLOX-8 - constants audit: Phlox vs SL, by name and by value
+
+**2026-09-09. Landed; not deployed.** `Docs/audit/phlox-constants-audit.py` parses both tables
+(`InWorldz.Phlox/Compiler/DefaultConstants.cs`, 832 names before / 1140 after; upstream
+`ScriptBase/LSL_Constants.cs`, 964 names, every expression resolved), normalises each side to what a
+**script** sees - upstream's `A | B`, `1 << n`, `unchecked((int)0x...)` and `ZERO_VECTOR` aliases evaluated in
+declaration order; Phlox's STRING/KEY text put through the same unescape the assembler applies
+(`BytecodeGenerator.UnescapeStringChars`) - and classifies. It re-runs to **A 0 / B 0**.
+
+| class | before | after | what |
+|---|---|---|---|
+| **A** upstream has it, Phlox did not | **308** | **0** | added in one batch at the end of the table, upstream's values in upstream's order: 296 integers, 12 strings (`NAK`, the eleven `IMG_USE_BAKED_*`). Families: `PRIM_PROJECTOR`, `PRIM_REFLECTION_PROBE`, `PRIM_GLTF_*`, `PRIM_RENDER_MATERIAL`, `PRIM_PHYSICS_MATERIAL`, `PRIM_SIT_FLAGS`, `PRIM_DAMAGE`/`PRIM_HEALTH`, `OBJECT_*` 29-54, `PARCEL_DETAILS_*`, `CHANGED_RENDER_MATERIAL`, `INVENTORY_SETTING`/`_MATERIAL`, `HTTP_USER_AGENT`/`_ACCEPT`/`_EXTENDED_ERROR`, `VEHICLE_FLAG_NO_X/Y/Z`, `STATUS_DIE_AT_NO_ENTRY`, `AGENT_BY_USERNAME`, `CLICK_ACTION_DISABLED`/`_IGNORE`, `LSL_STATUS_*`, `STATS_*`, `RC_REJECT_HOST*`, and **26 `OS_*`/`OSTPOBJ_*` names** (OSSL's - not SL's; added because the brief said all of A, and they are harmless: a constant with no consumer) |
+| **B** same name, different value | **4** | **0** | the table below; **one real defect**, three that only looked like one |
+| **C** Phlox-only | 176 | 176 | **135 heritage** (`IW_`, `BOT_`, `PHLOX_`, `IWTIMER`, `TRAVELMODE`, `IWERR_` by prefix, plus 10 names the Halcyon reference `LSL_Constants.cs` declares: `DATA_ACCOUNT_TYPE`, `ESTATE_ACCESS_QUERY_*`, `VEHICLE_TYPE_SAILBOAT`/`_MOTORCYCLE`, `WIND_SPEED_*`); **27 that SL has and upstream lacks** (`PU_*` 13, `STATUS_*` 8, `OBJECT_RETURN_*` 3, `DEREZ_*` 3 - each family checked on its wiki page); **14 flagged**: `VEHICLE_MOUSELOOK_AZIMUTH`/`_ALTITUDE`, `VEHICLE_BANKING_AZIMUTH`, `VEHICLE_DISABLE_MOTORS_HEIGHT`/`_DELAY`, `VEHICLE_INVERTED_BANKING_MODIFIER`, `VEHICLE_LINEAR`/`ANGULAR_WIND_EFFICIENCY`, `VEHICLE_FLAG_REACT_TO_CURRENTS`/`_WIND`, `VEHICLE_FLAG_LIMIT_MOTOR_DOWN`, `VEHICLE_FLAG_MOUSEPOINT_STEER`/`_BANK`, `OBJECT_TOTAL_UPDATES` - in neither SL, upstream nor the Halcyon reference, used nowhere in this tree outside the table, all from the Phlox import (`02cf1370df`). Left in: an SL script cannot name them, so they cost nothing; an SL script that does would not compile in SL either |
+
+### The four B hits, each against its wiki page
+
+| name | Phlox had | upstream | SL wiki | verdict | now |
+|---|---|---|---|---|---|
+| `TOUCH_INVALID_FACE` | `0x7FFFFFFF` (2147483647) | `-1` (`:808`) | [TOUCH_INVALID_FACE](https://wiki.secondlife.com/wiki/TOUCH_INVALID_FACE): `0xFFFFFFFF`, which is **-1** as a 32-bit integer; Halcyon `:653` also `-1` | **Phlox wrong.** `if (llDetectedTouchFace(0) == -1)` - the idiom the wiki documents - never matched here | `-1` |
+| `EOF` | table text backslash-n x3 | three 0x0a (`:624`) | [EOF](https://wiki.secondlife.com/wiki/EOF): "three newline characters (0x0a)" | **Phlox right at runtime** - the audit's first pass compared table text; the STRING ConstValue is an `sconst` operand and the assembler unescapes it. Audit corrected; the value test proves three real newlines reach `llSay` | unchanged |
+| `TOUCH_INVALID_VECTOR` | `<0,0,0>` | `= ZERO_VECTOR` (`:810`) | [TOUCH_INVALID_VECTOR](https://wiki.secondlife.com/wiki/TOUCH_INVALID_VECTOR): `<0.0, 0.0, 0.0>` | **both right** - the audit's vector regex missed the alias. Audit corrected | unchanged |
+| `JSON_APPEND` | integer `-1` | **string** `"-1"` (`:945`) | [JSON_APPEND](https://wiki.secondlife.com/wiki/JSON_APPEND): `integer JSON_APPEND = -1`; Halcyon `:736` integer | **Phlox right, upstream's type is its own** (its JSON functions take `list` and compare the string form). Listed in the audit's `SL_SIDES_WITH_PHLOX` with the page, reported outside B | unchanged |
+
+**Live scripts:** `grep` of `Tests/InWorldz.Phlox.Tests/LiveScripts/scripts/*.lsl` for the four B names - **0 hits**;
+no live script depended on the old `TOUCH_INVALID_FACE`. It is still a behaviour change for any script
+in the grid that compared against `2147483647` literally or against the constant and expected the old
+value; the wiki idiom now works.
+
+### What pins it
+
+`ConstantsAuditTests`: **`Fixtures/phlox8-upstream-names.lsl`** references every one of the 308 added
+names once and must compile with no errors (red before the batch: 308 unresolved identifiers); five
+runtime value probes on the hand-driven interpreter with the recording API - `(string)TOUCH_INVALID_FACE`
+is `-1` (red before: `2147483647`), `(string)JSON_APPEND` is `-1`, `TOUCH_INVALID_VECTOR == ZERO_VECTOR`,
+`EOF` reaches `llSay` as three 0x0a, `NAK` as `0x0a 0x15 0x0a` (the one added string with a control
+character; red before: unresolved). Red 3/6, green 6/6; suite **110 -> 116**, 0 skipped.
+
+**`DispatchIndexGuard` untouched, confirmed:** constants live in `DefaultConstants` and reach bytecode as
+`iconst`/`sconst` operands (`GenVisitor.VisitIdExpr` -> `ByteCodeEmitter.SysConstLoad`); `Defaults.cs`,
+`SyscallShim.cs` and the guard test reference neither `DefaultConstants` nor `ConstantSymbol` (0 hits), and
+`dispatch-baseline.txt` is unchanged. `CACHE_SCHEMA_VERSION` likewise: a cached script that used
+`TOUCH_INVALID_FACE` carries the old `iconst` until it is recompiled - only such scripts, and only the
+fix, not the additions (a script naming an added constant never compiled, so has no cache entry).
