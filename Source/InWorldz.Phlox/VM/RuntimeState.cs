@@ -112,6 +112,28 @@ namespace InWorldz.Phlox.VM
         /// </summary>
         public int LastSyscallIndex = -1;
 
+        /// <summary>PHLOX-7b. llMinEventDelay: the floor, in ms, between event handler starts for
+        /// this script. 0 = none. Persisted (tag 23); old rows load as 0.</summary>
+        public int MinEventDelayMs = 0;
+
+        /// <summary>PHLOX-7b. The Clock tick before which the next handler may not start. Not
+        /// persisted - it is relative to this process's clock and a restore starts allowed.</summary>
+        public ulong NextEventAllowedOn = 0;
+
+        /// <summary>PHLOX-7b. llScriptProfiler(PROFILE_SCRIPT_MEMORY) is on (tag 24).</summary>
+        public bool ProfilingMemory = false;
+
+        /// <summary>PHLOX-7b. High-water mark of MemInfo.MemoryUsed since profiling last started,
+        /// sampled at event boundaries and at the two API reads (tag 25).</summary>
+        public int PeakMemoryUsed = 0;
+
+        /// <summary>PHLOX-7b: fold the current usage into the peak while profiling.</summary>
+        public void SampleMemoryPeak()
+        {
+            if (ProfilingMemory && MemInfo != null && MemInfo.MemoryUsed > PeakMemoryUsed)
+                PeakMemoryUsed = MemInfo.MemoryUsed;
+        }
+
         /// <summary>
         /// The next time this script should be woken up from a sleep
         /// </summary>

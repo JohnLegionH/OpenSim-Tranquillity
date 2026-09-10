@@ -1270,3 +1270,49 @@ is the stronger claim anyway: a filtered collision must produce no event, not an
 
 Phlox suite **99 -> 105**, 0 skipped, green; solution 0 errors. `grep` for a `Stub(` tag or a
 *not supported* / *NotImplemented* comment on any of the four: **0 hits**.
+
+
+---
+
+## PHLOX-7b - the remaining stubs
+
+**2026-09-09. Landed; not deployed.** Same method as 7a: wiki page first, upstream body where one exists,
+Phlox conventions kept, every test red on the unchanged engine (5/5 failed) and green after.
+
+| function | was | wiki | upstream | now |
+|---|---|---|---|---|
+| `llSetLinkSitFlags` / `llGetLinkSitFlags` | no-op / `0` | five `SIT_FLAG_*` bits, values = `LSL_Constants.cs:1156-1160` | `llGet` (`:21155-21166`) hard-codes `ALLOW_UNSIT \| NO_COLLIDE \| NO_DAMAGE` as "forced"; `llSet` (`:21168`) is a no-op | **real state.** `SIT_TARGET` read-only from `IsSitTargetSet`; **`ALLOW_UNSIT` and `SCRIPTED_ONLY` honoured today** - they land on `AllowUnsit` / `ScriptedSitOnly`, which `ScenePresence` already checks (`:2656`, `:3399`, `:3411`); **`NO_COLLIDE` and `NO_DAMAGE` stored and read back only** (new `SceneObjectPart.SitFlagsStored`) - the presence has no seated collision-volume toggle and no damage distribution to seated avatars |
+| `llMinEventDelay` | no-op, comment claiming the scheduler made it unnecessary | "the minimum time between events being handled"; events inside the window are **queued** | forwards to the engine (`:4433-4444`); YEngine's implementation **drops** some event types inside the window (`XMRInstRun.cs:86-105`) | a per-script floor between handler **starts**, in the execution scheduler on the `Clock` basis, events held on the script's own queue and released by a `WakeEvent.MinDelay` sleep-heap entry. **The wiki is the parity rule where YEngine drops** |
+| `llScriptProfiler` / `llGetSPMaxMemory` | no-op / constant `16384` | `PROFILE_SCRIPT_MEMORY` starts recording; after `PROFILE_NONE`, "the most memory used at any one time" | both effectively no-ops (`:17570`, `:17558` returns 65536) | a `PeakMemoryUsed` high-water mark over the `MemInfo.MemoryUsed` the VM already maintains, sampled at **event boundaries, both profiler calls and each read** - coarser than SL's continuous tracking, and stated as such |
+| `llRequestSimulatorData` | local region only; remote returned `NULL_KEY` and raised nothing; rating was the raw maturity number | `DATA_SIM_POS` global position vector, `_STATUS` "up"/..., `_RATING` "PG"/"MATURE"/"ADULT"/"UNKNOWN", 1.0 s sleep; unknown region "unknown region" / "rating or region unknown" | `:13389-13485`: local from `RegionInfo`, remote via `GridService.GetRegionByName` with the hypergrid `RegionSecret` handling for POS | ported, remote via `World.GridService`, reply through the dataserver door PHLOX-5 opened |
+
+**Two departures from upstream, both towards the wiki**, in `llRequestSimulatorData`: POS is in **metres**
+(`WorldLocX`) - upstream returns `RegionLocX`, which in this tree is region units against the wiki's
+"global position"; and an unknown region answers with the wiki's two texts rather than upstream's
+single "unknown".
+
+**State:** `RuntimeState` gains `MinEventDelayMs` (tag 23), `ProfilingMemory` (24), `PeakMemoryUsed` (25);
+old rows load as 0 / false / 0. `NextEventAllowedOn` is deliberately **not** persisted - it is relative to
+the old process's clock, and a restore starts allowed. Constants added: the five `SIT_FLAG_*`, `PROFILE_NONE`,
+`PROFILE_SCRIPT_MEMORY` (`DATA_SIM_*` already existed).
+
+### What pins it
+
+Five tests in `RemainingStubTests`: sit flags read back `34` then `35` once a sit target exists and
+`AllowUnsit` is true on the part; two touches posted 10 ms apart under `llMinEventDelay(1.0)` are handled
+**1.0006 s apart and both are handled** (`3.018`, `4.018`) - queued, not dropped; the profiler reports
+`before=0`, then a 400-string list inside the window lifts the peak from **402 to 27,626** bytes; the
+local region answers `up` / `PG` / `<256000, 256000, 0>`; an unknown region raises the dataserver event
+with both wiki texts and returns a real key.
+
+One fix inside the session: the first profiler body cleared the flag before sampling, so a
+`PROFILE_NONE` lost everything allocated since the last event boundary (`peak=402`, `grew=0`). Sample
+first, then change the flag.
+
+Phlox suite **105 -> 110**, 0 skipped, green; solution 0 errors. `grep` for a `Stub(` tag or a no-op /
+not-supported comment on any of the five: **0 hits**.
+
+### Still a stub, on purpose
+
+**`llDetectedDamage` stays a stub until the damage hook from PHLOX-6 is built** - it reads the damage
+carried by an `on_damage` / `final_damage` event, and nothing raises those yet.

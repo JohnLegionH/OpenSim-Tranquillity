@@ -1193,12 +1193,13 @@ namespace Phlox.ScriptEngine
         /// <summary>PHLOX-3b: one clamp message per script instance, however often it re-arms.</summary>
         private bool m_timerFloorLogged;
         public void llSleep(float sec) => ScriptSleep((int)(sec * 1000));
-        public void llMinEventDelay(float delay)
-        {
-            // No-op in Phlox — the scheduler handles event timing internally.
-            // LSL spec says this sets a minimum gap between event handler invocations,
-            // but Phlox's single-threaded scheduler already serializes events.
-        }
+        /// <summary>
+        /// PHLOX-7b. wiki: "Set the minimum time between events being handled" - a floor between
+        /// handler starts for THIS script, events inside the window queued, not dropped. The old
+        /// comment said the scheduler made this unnecessary; serialising events is not the same as
+        /// spacing them. Upstream forwards to the engine too (LSL_Api.cs:4433-4444).
+        /// </summary>
+        public void llMinEventDelay(float delay) => m_ScriptEngine?.SetMinEventDelay(m_itemID, delay);
 
         // ── Script state ───────────────────────────────────────────────────────
 
@@ -1384,7 +1385,24 @@ namespace Phlox.ScriptEngine
             return 0;
         }
         public int llGetMemoryLimit() { return 131072; /* 128 * 1024 */ }
-        public void llScriptProfiler(int flags) { }
+        /// <summary>
+        /// PHLOX-7b. wiki: "Enables or disables the scripts profiling state" - PROFILE_SCRIPT_MEMORY (1)
+        /// starts recording, PROFILE_NONE (0) stops it, and llGetSPMaxMemory then returns "the most
+        /// memory used at any one time". Upstream is a no-op (LSL_Api.cs:17570); Phlox has MemInfo, so
+        /// this is a peak field and two reads. Starting resets the peak to the current usage.
+        /// </summary>
+        public void llScriptProfiler(int flags)
+        {
+            var st = m_thisScript?.ScriptState;
+            if (st == null) return;
+            bool on = (flags & 1) != 0;   // PROFILE_SCRIPT_MEMORY
+            // Fold the usage at the moment of the call in FIRST: a PROFILE_NONE that cleared the flag
+            // before sampling would lose everything allocated since the last event boundary.
+            st.SampleMemoryPeak();
+            if (on && !st.ProfilingMemory) st.PeakMemoryUsed = st.MemInfo?.MemoryUsed ?? 0;
+            st.ProfilingMemory = on;
+            st.SampleMemoryPeak();
+        }
 
         // ── Permissions ────────────────────────────────────────────────────────
 
@@ -8399,34 +8417,77 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
             ScriptSleep(100);
         }
+        /// <summary>
+        /// PHLOX-7b. wiki: "Requests data about region. When data is available the dataserver event
+        /// will be raised"; DATA_SIM_POS a vector of the region's global position, DATA_SIM_STATUS
+        /// "up"/..., DATA_SIM_RATING "PG"/"MATURE"/"ADULT"/"UNKNOWN", 1.0 s sleep. Ported from upstream
+        /// LSL_Api.cs:13389-13485: the local region answers from RegionInfo; any other region is
+        /// resolved through GridService.GetRegionByName, with the hypergrid RegionSecret dance for
+        /// POS. Two departures from upstream, both towards the wiki: POS is in metres (upstream returns
+        /// region units against the wiki's "global position"), and an unknown region answers with the
+        /// wiki's texts rather than "unknown". The reply goes by the dataserver door PHLOX-5 opened.
+        /// </summary>
         public string llRequestSimulatorData(string simulator, int data)
         {
-            // Fires a dataserver event with the requested simulator data
-            // DATA_SIM_POS=5, DATA_SIM_STATUS=6, DATA_SIM_RATING=7
-            // For local region, answer immediately; remote regions are not supported
+            const int DATA_SIM_POS = 5, DATA_SIM_STATUS = 6, DATA_SIM_RATING = 7, DATA_SIM_RELEASE = 128;
             if (World?.RegionInfo == null) return UUID.Zero.ToString();
-            string regionName = World.RegionInfo.RegionName;
-            if (!simulator.Equals(regionName, StringComparison.OrdinalIgnoreCase))
+            if (data != DATA_SIM_POS && data != DATA_SIM_STATUS && data != DATA_SIM_RATING && data != DATA_SIM_RELEASE)
             {
-                // Remote region — not supported, return zero
-                return UUID.Zero.ToString();
+                ScriptSleep(1000);
+                return UUID.Zero.ToString();   // raise no event, as upstream
             }
+
+            static string Rating(int maturity) => maturity switch { 0 => "PG", 1 => "MATURE", 2 => "ADULT", _ => "UNKNOWN" };
+            static string PosOf(uint worldX, uint worldY) => new Vector3(worldX, worldY, 0f).ToString();
+
             UUID queryID = UUID.Random();
-            string result = data switch
+            string reply;
+            if (simulator.Equals(World.RegionInfo.RegionName, StringComparison.OrdinalIgnoreCase))
             {
-                5 => // DATA_SIM_POS
-                    new LSLList(new object[] {
-                        (float)(World.RegionInfo.RegionLocX * Constants.RegionSize),
-                        (float)(World.RegionInfo.RegionLocY * Constants.RegionSize),
-                        0f }).ToString(),
-                6 => "up", // DATA_SIM_STATUS
-                7 => World.RegionInfo.RegionSettings.Maturity.ToString(), // DATA_SIM_RATING
-                _ => string.Empty
-            };
-            System.Threading.Tasks.Task.Run(() => PostDataserverEvent(queryID, result));
+                RegionInfo ri = World.RegionInfo;
+                reply = data switch
+                {
+                    DATA_SIM_POS => PosOf(ri.WorldLocX, ri.WorldLocY),
+                    DATA_SIM_STATUS => "up",
+                    DATA_SIM_RATING => Rating(ri.RegionSettings.Maturity),
+                    _ => "OpenSim",
+                };
+            }
+            else
+            {
+                reply = data == DATA_SIM_STATUS ? "unknown region" : data == DATA_SIM_RATING ? "rating or region unknown" : "unknown";
+                try
+                {
+                    var info = World.GridService?.GetRegionByName(World.RegionInfo.ScopeID, simulator);
+                    if (info != null)
+                    {
+                        switch (data)
+                        {
+                            case DATA_SIM_POS:
+                                // Hypergrid puts the real destination coords in RegionSecret (upstream :13437-13451).
+                                var flags = (OpenSim.Framework.RegionFlags)World.GridService.GetRegionFlags(info.ScopeID, info.RegionID);
+                                if ((flags & OpenSim.Framework.RegionFlags.Hyperlink) != 0 && ulong.TryParse(info.RegionSecret, out ulong handle))
+                                {
+                                    Utils.LongToUInts(handle, out uint rx, out uint ry);
+                                    reply = PosOf(rx, ry);
+                                }
+                                else reply = PosOf((uint)info.RegionLocX, (uint)info.RegionLocY);
+                                break;
+                            case DATA_SIM_STATUS: reply = "up"; break;
+                            case DATA_SIM_RATING: reply = Rating(info.Maturity); break;
+                            default: reply = "OpenSim"; break;
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    m_log.LogWarning("[PhloxAPI]: llRequestSimulatorData({0}) grid lookup failed: {1}", simulator, e.Message);
+                }
+            }
+            PostDataserverEvent(queryID, reply);
+            ScriptSleep(1000);
             return queryID.ToString();
         }
-
         public string llGetEnv(string name)
         {
             if (World?.RegionInfo == null) return string.Empty;
@@ -8465,11 +8526,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (stats == null || statType < 0 || statType >= stats.Length) return 0f;
             return stats[statType];
         }
+        /// <summary>PHLOX-7b. wiki: "the most bytes used while llScriptProfiler was last active".
+        /// 0 when profiling was never started - there is no LSO fixed size to report here.</summary>
         public int llGetSPMaxMemory()
         {
-            // SL: returns peak script memory usage. Phlox doesn't track this granularly.
-            // Return a reasonable default (16KB, typical for LSL scripts)
-            return 16384;
+            var st = m_thisScript?.ScriptState;
+            if (st == null) return 0;
+            st.SampleMemoryPeak();
+            return st.PeakMemoryUsed;
         }
         /// <summary>PHLOX-7a. Ported from upstream LSL_Api.cs:4548-4556. wiki: "Returns a list of names
         /// of animations playing in the current object"; the part tracks them in AnimationsNames.</summary>
@@ -8503,15 +8567,42 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             m_host?.RemoveAnimation(anim);
         }
+        private const int SIT_FLAG_SIT_TARGET = 0x01, SIT_FLAG_ALLOW_UNSIT = 0x02, SIT_FLAG_SCRIPTED_ONLY = 0x04,
+                          SIT_FLAG_NO_COLLIDE = 0x10, SIT_FLAG_NO_DAMAGE = 0x20;
+
+        /// <summary>
+        /// PHLOX-7b. wiki: llGetLinkSitFlags reads the flags on the link's sit target. Upstream
+        /// (LSL_Api.cs:21155-21166) hard-codes ALLOW_UNSIT | NO_COLLIDE | NO_DAMAGE as "forced" and
+        /// stores nothing; this reports the part's real state. SIT_TARGET is read-only, from
+        /// IsSitTargetSet; ALLOW_UNSIT and SCRIPTED_ONLY are the part properties ScenePresence honours
+        /// (ScenePresence.cs:2656, :3399, :3411); NO_COLLIDE and NO_DAMAGE are stored and read back.
+        /// </summary>
         public int llGetLinkSitFlags(int link)
         {
-            // SL: returns sit flags for a link. OpenSim doesn't fully implement SitFlags.
-            // Return 0 (no flags set).
-            return 0;
+            SceneObjectPart part = GetLinkParts(link).FirstOrDefault();
+            if (part == null) return 0;
+            int flags = part.SitFlagsStored & (SIT_FLAG_NO_COLLIDE | SIT_FLAG_NO_DAMAGE);
+            if (part.IsSitTargetSet) flags |= SIT_FLAG_SIT_TARGET;
+            if (part.AllowUnsit) flags |= SIT_FLAG_ALLOW_UNSIT;
+            if (part.ScriptedSitOnly) flags |= SIT_FLAG_SCRIPTED_ONLY;
+            return flags;
         }
+
+        /// <summary>
+        /// PHLOX-7b. wiki: "Sets flags on the link's sittarget." Upstream's is a no-op (LSL_Api.cs:21168).
+        /// Here ALLOW_UNSIT and SCRIPTED_ONLY are honoured by the region's sit path today, through the
+        /// part properties it already checks; NO_COLLIDE and NO_DAMAGE are stored for read-back only -
+        /// the presence has no seated collision-volume toggle and no damage distribution to seated
+        /// avatars (the PHLOX-6 damage hook does not exist). SIT_TARGET is read-only and ignored.
+        /// </summary>
         public void llSetLinkSitFlags(int link, int flags)
         {
-            // SL: sets sit flags for a link. OpenSim doesn't fully implement SitFlags. No-op.
+            foreach (SceneObjectPart part in GetLinkParts(link))
+            {
+                part.AllowUnsit = (flags & SIT_FLAG_ALLOW_UNSIT) != 0;
+                part.ScriptedSitOnly = (flags & SIT_FLAG_SCRIPTED_ONLY) != 0;
+                part.SitFlagsStored = flags & (SIT_FLAG_NO_COLLIDE | SIT_FLAG_NO_DAMAGE);
+            }
         }
         public Vector3 llLinear2sRGB(Vector3 color)
         {

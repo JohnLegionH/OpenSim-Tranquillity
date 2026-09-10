@@ -60,7 +60,7 @@ namespace Phlox.ScriptEngine
             public UUID ItemId;
             public ulong ReadyOn;
             public WakeEvent Event;
-            public enum WakeEvent { None, Timer, Touch }
+            public enum WakeEvent { None, Timer, Touch, MinDelay }
 
             public int CompareTo(SleepEntry other)
                 => ReadyOn < other.ReadyOn ? -1 : ReadyOn > other.ReadyOn ? 1 : 0;
@@ -70,6 +70,8 @@ namespace Phlox.ScriptEngine
         private readonly System.Collections.Generic.Dictionary<UUID, C5.IPriorityQueueHandle<SleepEntry>> m_StdSleepHandles = new();
         private readonly System.Collections.Generic.Dictionary<UUID, C5.IPriorityQueueHandle<SleepEntry>> m_TimerHandles = new();
         private readonly System.Collections.Generic.Dictionary<UUID, C5.IPriorityQueueHandle<SleepEntry>> m_TouchHandles = new();
+        /// <summary>PHLOX-7b: one pending llMinEventDelay wake per script.</summary>
+        private readonly System.Collections.Generic.Dictionary<UUID, C5.IPriorityQueueHandle<SleepEntry>> m_MinDelayHandles = new();
 
         // Pending events (posted from outside thread)
         private readonly Queue<PendingEvent> m_PendingEvents = new();
@@ -713,8 +715,18 @@ namespace Phlox.ScriptEngine
                 PhloxEventInfo info = FindEventHandler(nextEvt, script);
                 if (info != null)
                 {
+                    // PHLOX-7b: the floor applies to a queued start as much as a fresh one. Put
+                    // the event back at the front, arm the wake, and let the script go idle.
+                    if (MinDelayHolds(script))
+                    {
+                        lock (script.ScriptState.EventQueueLock)
+                            script.ScriptState.EventQueue.InsertFirst(nextEvt);
+                        TrackMinDelayWake(script);
+                        break;
+                    }
                     try
                     {
+                        ArmMinDelay(script);
                         script.ScriptState.DoEvent(info, nextEvt, nextEvt.Args);
                         CheckAndResetTimer(script, info);
                         return; // stay on run queue
@@ -749,6 +761,7 @@ namespace Phlox.ScriptEngine
                     case SleepEntry.WakeEvent.None: m_StdSleepHandles.Remove(s.ItemId); break;
                     case SleepEntry.WakeEvent.Timer: m_TimerHandles.Remove(s.ItemId); break;
                     case SleepEntry.WakeEvent.Touch: m_TouchHandles.Remove(s.ItemId); break;
+                    case SleepEntry.WakeEvent.MinDelay: m_MinDelayHandles.Remove(s.ItemId); break;
                 }
 
                 Interpreter script;
@@ -766,6 +779,17 @@ namespace Phlox.ScriptEngine
                             EventType = SupportedEventList.Events.TIMER,
                             Args = Array.Empty<object>()
                         });
+                        break;
+                    case SleepEntry.WakeEvent.MinDelay:
+                        // PHLOX-7b: the floor has elapsed; if the script is idle with events it was
+                        // made to hold, start the next one now.
+                        if (script.ScriptState.RunState == RuntimeState.Status.Waiting)
+                        {
+                            bool queued;
+                            lock (script.ScriptState.EventQueueLock)
+                                queued = script.ScriptState.EventQueue != null && script.ScriptState.EventQueue.Count > 0;
+                            if (queued) DeliverNextQueuedEvent(script);
+                        }
                         break;
                     case SleepEntry.WakeEvent.Touch:
                         if (script.ScriptState.TouchActive)
@@ -827,7 +851,16 @@ namespace Phlox.ScriptEngine
 
                 if (script.ScriptState.RunState == RuntimeState.Status.Waiting)
                 {
-                    StartEvent(pe.Evt, script, info);
+                    // PHLOX-7b: llMinEventDelay - a floor between handler STARTS. wiki: events
+                    // inside the window are queued and processed after it, not dropped (YEngine
+                    // drops some; the wiki is the parity rule here). Hold it and arm a wake.
+                    if (MinDelayHolds(script))
+                    {
+                        script.ScriptState.QueueEvent(pe.Evt);
+                        TrackMinDelayWake(script);
+                    }
+                    else
+                        StartEvent(pe.Evt, script, info);
                 }
                 else
                 {
@@ -1035,6 +1068,8 @@ namespace Phlox.ScriptEngine
         {
             try
             {
+                ArmMinDelay(script);
+                script.ScriptState.SampleMemoryPeak();   // PHLOX-7b: event boundary
                 script.ScriptState.DoEvent(info, evt, evt.Args);
                 CheckAndResetTimer(script, info);
                 AddToRunQueue(script);
@@ -1043,6 +1078,40 @@ namespace Phlox.ScriptEngine
             {
                 TerminateWithError(script, e);
             }
+        }
+
+        // ── PHLOX-7b: llMinEventDelay ───────────────────────────────────────────
+
+        /// <summary>True while this script's floor has not elapsed since its last handler start.</summary>
+        private static bool MinDelayHolds(Interpreter script)
+            => script.ScriptState.MinEventDelayMs > 0
+               && InWorldz.Phlox.Util.Clock.Now < script.ScriptState.NextEventAllowedOn;
+
+        /// <summary>A handler is starting now: the next may not start before now + floor.</summary>
+        private static void ArmMinDelay(Interpreter script)
+        {
+            if (script.ScriptState.MinEventDelayMs > 0)
+                script.ScriptState.NextEventAllowedOn = InWorldz.Phlox.Util.Clock.Now + (ulong)script.ScriptState.MinEventDelayMs;
+        }
+
+        /// <summary>Wake at the end of the floor so the held event is delivered without a poke.</summary>
+        private void TrackMinDelayWake(Interpreter script)
+        {
+            if (m_MinDelayHandles.ContainsKey(script.ItemId)) return;
+            var entry = new SleepEntry { ItemId = script.ItemId, ReadyOn = script.ScriptState.NextEventAllowedOn, Event = SleepEntry.WakeEvent.MinDelay };
+            C5.IPriorityQueueHandle<SleepEntry> h = null;
+            m_SleepHeap.Add(ref h, entry);
+            m_MinDelayHandles[script.ItemId] = h;
+            m_WorkArrived?.Invoke();
+        }
+
+        /// <summary>llMinEventDelay(delay): the floor, applied from the next handler start on.</summary>
+        public void SetMinEventDelay(UUID itemId, float seconds)
+        {
+            if (!m_AllScripts.TryGetValue(itemId, out Interpreter script)) return;
+            int ms = seconds <= 0f ? 0 : (int)(seconds * 1000f);
+            script.ScriptState.MinEventDelayMs = ms;
+            if (ms == 0) script.ScriptState.NextEventAllowedOn = 0;
         }
 
         private void CheckAndResetTimer(Interpreter script, PhloxEventInfo info)

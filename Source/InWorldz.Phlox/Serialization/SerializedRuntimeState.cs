@@ -87,6 +87,15 @@ namespace InWorldz.Phlox.Serialization
         [ProtoMember(22)]
         public int LastSyscallIndex = -1;
 
+        /// <summary>PHLOX-7b. Tags 23-25. Rows written before them load as 0 / false / 0, which is
+        /// "no floor, not profiling, no peak" - exactly what an older script had.</summary>
+        [ProtoMember(23)]
+        public int MinEventDelayMs;
+        [ProtoMember(24)]
+        public bool ProfilingMemory;
+        [ProtoMember(25)]
+        public int PeakMemoryUsed;
+
         [ProtoMember(21)]
         public float TotalRuntime;
 
@@ -155,6 +164,9 @@ namespace InWorldz.Phlox.Serialization
             //if the next wakeup is in the past, just filter it to be now equal to the state capture time
             //this prevents strange values from getting into the tickcounttodatetime calculation
             serState.LastSyscallIndex = state.LastSyscallIndex;
+            serState.MinEventDelayMs = state.MinEventDelayMs;
+            serState.ProfilingMemory = state.ProfilingMemory;
+            serState.PeakMemoryUsed = state.PeakMemoryUsed;
 
             serState.NextWakeup = state.NextWakeup < tickCountNow ? serState.StateCapturedOn : Util.Clock.TickCountToDateTime(state.NextWakeup, tickCountNow);
             serState.TimerLastScheduledOn = Util.Clock.TickCountToDateTime(state.TimerLastScheduledOn, tickCountNow);
@@ -220,6 +232,10 @@ namespace InWorldz.Phlox.Serialization
 
             state.RunState = this.RunState;
             state.LastSyscallIndex = this.LastSyscallIndex;
+            state.MinEventDelayMs = this.MinEventDelayMs;
+            state.ProfilingMemory = this.ProfilingMemory;
+            state.PeakMemoryUsed = this.PeakMemoryUsed;
+            state.NextEventAllowedOn = 0;   // relative to the old process's clock; a restore starts allowed
             state.GeneralEnable = this.Enabled;
 
             UInt64 currentTickCount = Util.Clock.GetLongTickCount();

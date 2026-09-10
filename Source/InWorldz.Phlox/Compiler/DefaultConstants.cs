@@ -319,6 +319,15 @@ namespace InWorldz.Phlox.Compiler
             {"REZ_LOCK_AXES", new ConstantSymbol("REZ_LOCK_AXES", SymbolTable.INT, "11")},
             {"REZ_DAMAGE_TYPE", new ConstantSymbol("REZ_DAMAGE_TYPE", SymbolTable.INT, "12")},
             {"REZ_PARAM_STRING", new ConstantSymbol("REZ_PARAM_STRING", SymbolTable.INT, "13")},
+            // PHLOX-7b. SIT_FLAG_* per wiki.secondlife.com/wiki/LlSetLinkSitFlags (= LSL_Constants.cs:1156-1160);
+            // PROFILE_* per wiki.secondlife.com/wiki/LlScriptProfiler (= LSL_Constants.cs:554-555).
+            {"SIT_FLAG_SIT_TARGET", new ConstantSymbol("SIT_FLAG_SIT_TARGET", SymbolTable.INT, "1")},
+            {"SIT_FLAG_ALLOW_UNSIT", new ConstantSymbol("SIT_FLAG_ALLOW_UNSIT", SymbolTable.INT, "2")},
+            {"SIT_FLAG_SCRIPTED_ONLY", new ConstantSymbol("SIT_FLAG_SCRIPTED_ONLY", SymbolTable.INT, "4")},
+            {"SIT_FLAG_NO_COLLIDE", new ConstantSymbol("SIT_FLAG_NO_COLLIDE", SymbolTable.INT, "16")},
+            {"SIT_FLAG_NO_DAMAGE", new ConstantSymbol("SIT_FLAG_NO_DAMAGE", SymbolTable.INT, "32")},
+            {"PROFILE_NONE", new ConstantSymbol("PROFILE_NONE", SymbolTable.INT, "0")},
+            {"PROFILE_SCRIPT_MEMORY", new ConstantSymbol("PROFILE_SCRIPT_MEMORY", SymbolTable.INT, "1")},
             {"DEREZ_DIE", new ConstantSymbol("DEREZ_DIE", SymbolTable.INT, "0")},
             {"DEREZ_MAKE_TEMP", new ConstantSymbol("DEREZ_MAKE_TEMP", SymbolTable.INT, "1")},
             {"DEREZ_TO_INVENTORY", new ConstantSymbol("DEREZ_TO_INVENTORY", SymbolTable.INT, "2")},

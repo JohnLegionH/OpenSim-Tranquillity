@@ -1170,6 +1170,10 @@ namespace Phlox.ScriptEngine
         public void PostScriptEvent(UUID itemID, InWorldz.Phlox.VM.PostedEvent evt)
             => m_ExeScheduler?.PostEvent(itemID, evt);
 
+        /// <summary>PHLOX-7b. llMinEventDelay lands in the execution scheduler.</summary>
+        public void SetMinEventDelay(UUID itemID, float seconds)
+            => m_ExeScheduler?.SetMinEventDelay(itemID, seconds);
+
         public void SetTimerEvent(uint localID, UUID itemID, float sec)
             => m_ExeScheduler?.SetTimer(itemID, sec);
 
