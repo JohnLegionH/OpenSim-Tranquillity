@@ -113,13 +113,21 @@ namespace Phlox.ScriptEngine
             m_ScriptEngine?.SysReturn(m_itemID, null, 0);
         }
 
+        /// <summary>
+        /// PHLOX-9. Run-time errors go out on DEBUG_CHANNEL, as SL does (wiki: "chat channel reserved for
+        /// script debugging and error messages"; viewers route it to the script-error window and filter
+        /// out other owners' objects) - not shouted on channel 0, where every avatar in range read them
+        /// in local chat. The text is unchanged. ChatModule turns the channel into ChatTypeEnum.DebugChannel.
+        /// </summary>
         public void ShoutError(string errorText)
         {
             m_host?.ParentGroup?.Scene?.SimChat(
                 "Script error: " + errorText,
-                ChatTypeEnum.Shout, 0,
+                ChatTypeEnum.Shout, DEBUG_CHANNEL,
                 m_host.AbsolutePosition, m_host.Name, m_host.UUID, false);
         }
+
+        private const int DEBUG_CHANNEL = 0x7FFFFFFF;
 
         public void OnScriptReset() { }
         public void OnStateChange() { }

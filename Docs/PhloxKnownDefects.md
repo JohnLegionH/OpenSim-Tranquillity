@@ -1361,3 +1361,53 @@ character; red before: unresolved). Red 3/6, green 6/6; suite **110 -> 116**, 0 
 `dispatch-baseline.txt` is unchanged. `CACHE_SCHEMA_VERSION` likewise: a cached script that used
 `TOUCH_INVALID_FACE` carries the old `iconst` until it is recompiled - only such scripts, and only the
 fix, not the additions (a script naming an added constant never compiled, so has no cache entry).
+
+## PHLOX-9 - four small SL-parity leftovers
+
+**2026-09-09. Landed; not deployed.** Each against its wiki page, each red on the unchanged engine first
+(`SlParityLeftoverTests`: 7 of 10 red, then 10 of 10 green; suite **116 -> 126**, 0 skipped).
+
+| # | was | SL (wiki) | now |
+|---|---|---|---|
+| 1 | `LSLSystemAPI.ShoutError` sent `"Script error: ..."` as a **Shout on channel 0** - local chat, every avatar in 100 m read it | [DEBUG_CHANNEL](https://wiki.secondlife.com/wiki/DEBUG_CHANNEL) `0x7FFFFFFF`: "chat channel reserved for script debugging and error messages"; the viewer shows it in the script-error window, and "most viewers filter out messages received on DEBUG_CHANNEL from objects owned by others" | channel **DEBUG_CHANNEL**, text unchanged. `ChatModule.cs:211` turns that channel into `ChatTypeEnum.DebugChannel` before delivery. **Wider than the brief's "run-time errors"**: `ShoutError` is the API's one error door - `TerminateWithError` (`PhloxExecutionScheduler.cs:1286`), the VM's own raise (`Interpreter.cs:122`), `SyscallShim.cs:801`, and ~100 sites in `LSLSystemAPI` ("No permissions to track the camera", "No item named ...", "PERMISSION_DEBIT not granted", ...). All of those are DEBUG_CHANNEL messages in SL as well, so every caller moves together; there is no second door left on channel 0 |
+| 2 | `quaternion` was not a type: `quaternion q;` failed with *Unknown type 'quaternion'* | [Quaternion](https://wiki.secondlife.com/wiki/Quaternion): "a keyword supported by the LSL compiler that means the same thing as, and is interchangeable with, rotation" | `'quaternion'` is a `TYPE` token in `LSL.g4`; `SymbolTable.CanonicalTypeName` maps it to `rotation` at the three places TYPE text becomes a type (`DefVisitor.ResolveType`, `TypesVisitor.ResolveType`, `AnalyzeVisitor.VisitFuncDef`), so it resolves to the one `ROTATION` instance the type tables compare by reference. Declarations, parameters, return types and `(quaternion)` casts all work |
+| 3 | `<<=` and `>>=` accepted (`assignmentStmt` `:75`, `assignmentExpression` `:131`) | [LSL_Operators](https://wiki.secondlife.com/wiki/LSL_Operators): no shift-assign exists; YEngine's acceptance is its own extension | both removed from both rules; `x <<= 1;` is a syntax error **on its line** (`line 6:`), `x = x << 1;` unchanged. **LiveScripts: 0 uses of either** |
+| 4 | `Op_Lneq` (`Interpreter.Actions.cs:2564`) pushed `0`/`1` | [LSL_Operators](https://wiki.secondlife.com/wiki/LSL_Operators): "Equality test on lists does not compare contents, only the length"; `a != b` is `llGetListLength(a) - llGetListLength(b)` | `Op_Lneq` pushes the length difference: `[1,2,3] != [1]` is **2**, `[1] != [1,2,3]` is **-2**, `[1] != [2]` is **0**. `Op_Leq` stays `0`/`1` (`[1,2] == [3,4]` is 1) |
+
+**The other two error paths, checked and left alone:** the PHLOX-2 compile-error surfacing goes
+through `PhloxCompileErrorReport.ToOwner` - `SendAlertToUser(part.OwnerID, ...)` (`PhloxScriptLoader.cs:685`), owner-directed, and the scheduler's
+`TerminateWithError` has no delivery of its own - it calls `ShoutError`, so it moved with item 1
+(the test's line is exactly that path: `Script error: Script <asset> stopped: Attempted to divide by zero.`).
+
+### The grammar was regenerated, not hand-edited
+
+`Source/InWorldz.Phlox/grammar/buildgrammar4.sh` (new) is the command:
+```
+bash Source/InWorldz.Phlox/grammar/buildgrammar4.sh
+```
+ANTLR **4.13.1** (the version every generated header carries) via the `antlr4` launcher (antlr4-tools +
+JDK 21; the jar was fetched from Maven Central on first use), raw output to `grammar/generated/` (not
+compiled), the six `.cs` copied into `Compiler/` with the one hand post-edit the committed copies have
+always carried and that nothing documented: the listener interface renamed `ILSLListener ->
+ILSLParseTreeListener` (the compiler already has an `ILSLListener`, the status listener), and two
+`using`s in `LSLParser.cs`. **Gate before the grammar change:** the script on the *unchanged* `LSL.g4`
+reproduced the committed `Compiler/` files byte for byte, bar the `Generated from <path>` header line
+(the old one names `D:/legion-grid-source/...`). Token numbering shifted (`T__41`, `T__42` gone; `TYPE`
+44 -> 42) - a tree-wide regeneration, 16 generated files, and the reason the diff is large.
+
+### What pins it
+
+`SlParityLeftoverTests`: divide by zero on the scheduler harness yields **one** chat on `2147483647`
+containing `Script error` and **none** on channel 0 (red: `0:Script error: ... stopped: Attempted to
+divide by zero.`); `quaternion` globals, locals, a `llSetRot` argument, a `rotation r = q` and a
+`(quaternion)` cast compile, and `q == ZERO_ROTATION` says `1` on the real path; `x <<= 1` / `x >>= 1`
+each fail with an error at `line 6:`; `x = x << 3; x = x >> 1` says `4`; the five list comparisons above.
+`SchedulerHarness` now records `(channel, message)` as `SaidOn`; `HandDrivenRun` is the shared bare
+interpreter helper (PHLOX-8's copy stays as it was).
+
+**Harness limitation found, not fixed:** a script with a *local variable store* throws
+`NullReferenceException` in `Op_Store` on the bare hand-driven interpreter (`new Interpreter(compiled,
+shim)` + `DoEvent`), while the same script runs on the scheduler path. `MemInfo.ReplaceStored` over a
+never-initialised local is the suspect; not investigated (time). The two runtime probes that need
+locals use the scheduler harness instead; the list and constant probes have no locals and stay bare.
+A harness candidate, not an engine defect, recorded here.

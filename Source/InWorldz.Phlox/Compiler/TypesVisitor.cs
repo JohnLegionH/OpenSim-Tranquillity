@@ -61,7 +61,7 @@ namespace InWorldz.Phlox.Compiler
         /// </summary>
         private ISymbolType ResolveType(string typeName)
         {
-            Symbol s = _symtab.Globals.Resolve(typeName);
+            Symbol s = _symtab.Globals.Resolve(SymbolTable.CanonicalTypeName(typeName));
             if (s is ISymbolType t) return t;
             return SymbolTable.VOID;
         }

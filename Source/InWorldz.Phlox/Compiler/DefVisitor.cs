@@ -38,7 +38,7 @@ namespace InWorldz.Phlox.Compiler
             if (string.IsNullOrEmpty(typeName))
                 return SymbolTable.VOID;
 
-            Symbol sym = _symtab.Globals.Resolve(typeName);
+            Symbol sym = _symtab.Globals.Resolve(SymbolTable.CanonicalTypeName(typeName));
             if (sym is ISymbolType t) return t;
 
             _symtab.StatusListener.Error($"line 0:0 Unknown type '{typeName}'");

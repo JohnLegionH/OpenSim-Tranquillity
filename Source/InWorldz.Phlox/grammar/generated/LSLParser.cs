@@ -8,7 +8,7 @@
 // </auto-generated>
 //------------------------------------------------------------------------------
 
-// Generated from D:/legion-grid-source/OpenSim/Addons/Phlox/grammar/LSL.g4 by ANTLR 4.13.1
+// Generated from LSL.g4 by ANTLR 4.13.1
 
 // Unreachable code detected
 #pragma warning disable 0162
@@ -29,6 +29,8 @@ using Antlr4.Runtime.Atn;
 using Antlr4.Runtime.Misc;
 using Antlr4.Runtime.Tree;
 using DFA = Antlr4.Runtime.Dfa.DFA;
+using InWorldz.Phlox.Types;
+using InWorldz.Phlox.Compiler;
 
 [System.CodeDom.Compiler.GeneratedCode("ANTLR", "4.13.1")]
 [System.CLSCompliant(false)]
@@ -41,9 +43,9 @@ public partial class LSLParser : Parser {
 		T__17=18, T__18=19, T__19=20, T__20=21, T__21=22, T__22=23, T__23=24, 
 		T__24=25, T__25=26, T__26=27, T__27=28, T__28=29, T__29=30, T__30=31, 
 		T__31=32, T__32=33, T__33=34, T__34=35, T__35=36, T__36=37, T__37=38, 
-		T__38=39, T__39=40, T__40=41, T__41=42, T__42=43, TYPE=44, ID=45, WS=46, 
-		SEMI=47, LT=48, GT=49, MINUS=50, LPAREN=51, RPAREN=52, COMMENT_SINGLE=53, 
-		COMMENT_BLOCK=54, STRING_LITERAL=55, INTEGER_LITERAL=56, FLOAT_LITERAL=57;
+		T__38=39, T__39=40, T__40=41, TYPE=42, ID=43, WS=44, SEMI=45, LT=46, GT=47, 
+		MINUS=48, LPAREN=49, RPAREN=50, COMMENT_SINGLE=51, COMMENT_BLOCK=52, STRING_LITERAL=53, 
+		INTEGER_LITERAL=54, FLOAT_LITERAL=55;
 	public const int
 		RULE_prog = 0, RULE_globalStmt = 1, RULE_stateDef = 2, RULE_stateBlock = 3, 
 		RULE_stateBlockContent = 4, RULE_funcDef = 5, RULE_funcBlock = 6, RULE_statement = 7, 
@@ -69,18 +71,18 @@ public partial class LSLParser : Parser {
 
 	private static readonly string[] _LiteralNames = {
 		null, "'state'", "'default'", "'{'", "'}'", "'@'", "'.'", "'='", "'+='", 
-		"'-='", "'*='", "'/='", "'%='", "'<<='", "'>>='", "'if'", "'else'", "'while'", 
-		"'for'", "'do'", "'++'", "'--'", "'return'", "'jump'", "','", "'||'", 
-		"'&&'", "'|'", "'&'", "'^'", "'!='", "'=='", "'<='", "'>='", "'<<'", "'>>'", 
-		"'+'", "'*'", "'/'", "'%'", "'!'", "'~'", "'['", "']'", null, null, null, 
-		"';'", "'<'", "'>'", "'-'", "'('", "')'"
+		"'-='", "'*='", "'/='", "'%='", "'if'", "'else'", "'while'", "'for'", 
+		"'do'", "'++'", "'--'", "'return'", "'jump'", "','", "'||'", "'&&'", "'|'", 
+		"'&'", "'^'", "'!='", "'=='", "'<='", "'>='", "'<<'", "'>>'", "'+'", "'*'", 
+		"'/'", "'%'", "'!'", "'~'", "'['", "']'", null, null, null, "';'", "'<'", 
+		"'>'", "'-'", "'('", "')'"
 	};
 	private static readonly string[] _SymbolicNames = {
 		null, null, null, null, null, null, null, null, null, null, null, null, 
 		null, null, null, null, null, null, null, null, null, null, null, null, 
 		null, null, null, null, null, null, null, null, null, null, null, null, 
-		null, null, null, null, null, null, null, null, "TYPE", "ID", "WS", "SEMI", 
-		"LT", "GT", "MINUS", "LPAREN", "RPAREN", "COMMENT_SINGLE", "COMMENT_BLOCK", 
+		null, null, null, null, null, null, "TYPE", "ID", "WS", "SEMI", "LT", 
+		"GT", "MINUS", "LPAREN", "RPAREN", "COMMENT_SINGLE", "COMMENT_BLOCK", 
 		"STRING_LITERAL", "INTEGER_LITERAL", "FLOAT_LITERAL"
 	};
 	public static readonly IVocabulary DefaultVocabulary = new Vocabulary(_LiteralNames, _SymbolicNames);
@@ -130,12 +132,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_prog; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterProg(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitProg(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -167,7 +169,7 @@ public partial class LSLParser : Parser {
 				State = 77;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
-			} while ( (((_la) & ~0x3f) == 0 && ((1L << _la) & 52776558133254L) != 0) );
+			} while ( (((_la) & ~0x3f) == 0 && ((1L << _la) & 13194139533318L) != 0) );
 			State = 79;
 			Match(Eof);
 			}
@@ -200,12 +202,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_globalStmt; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterGlobalStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitGlobalStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -278,12 +280,12 @@ public partial class LSLParser : Parser {
 		public NamedStateDefContext(StateDefContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterNamedStateDef(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitNamedStateDef(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -300,12 +302,12 @@ public partial class LSLParser : Parser {
 		public DefaultStateDefContext(StateDefContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterDefaultStateDef(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitDefaultStateDef(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -375,12 +377,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_stateBlock; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterStateBlock(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitStateBlock(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -441,12 +443,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_stateBlockContent; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterStateBlockContent(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitStateBlockContent(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -497,12 +499,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_funcDef; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterFuncDef(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitFuncDef(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -576,12 +578,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_funcBlock; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterFuncBlock(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitFuncBlock(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -605,7 +607,7 @@ public partial class LSLParser : Parser {
 			State = 119;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
-			while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 2445313876852778L) != 0)) {
+			while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 611328469213226L) != 0)) {
 				{
 				{
 				State = 116;
@@ -645,12 +647,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_statement; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterStatement(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitStatement(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -708,12 +710,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_exprStatement; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterExprStatement(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitExprStatement(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -739,11 +741,11 @@ public partial class LSLParser : Parser {
 				Match(SEMI);
 				}
 				break;
-			case T__19:
-			case T__20:
+			case T__17:
+			case T__18:
+			case T__37:
+			case T__38:
 			case T__39:
-			case T__40:
-			case T__41:
 			case ID:
 			case LT:
 			case MINUS:
@@ -783,12 +785,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_label_; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterLabel_(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitLabel_(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -857,12 +859,12 @@ public partial class LSLParser : Parser {
 		public ForStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterForStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitForStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -885,12 +887,12 @@ public partial class LSLParser : Parser {
 		public WhileStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterWhileStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitWhileStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -910,12 +912,12 @@ public partial class LSLParser : Parser {
 		public PostDecrementStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterPostDecrementStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitPostDecrementStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -935,12 +937,12 @@ public partial class LSLParser : Parser {
 		public PreIncrementStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterPreIncrementStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitPreIncrementStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -957,12 +959,12 @@ public partial class LSLParser : Parser {
 		public StateChangeStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterStateChangeStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitStateChangeStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -979,12 +981,12 @@ public partial class LSLParser : Parser {
 		public FuncCallStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterFuncCallStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitFuncCallStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1003,12 +1005,12 @@ public partial class LSLParser : Parser {
 		public ReturnStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterReturnStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitReturnStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1025,12 +1027,12 @@ public partial class LSLParser : Parser {
 		public AnonBlockContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterAnonBlock(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitAnonBlock(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1046,12 +1048,12 @@ public partial class LSLParser : Parser {
 		public JumpStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterJumpStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitJumpStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1079,12 +1081,12 @@ public partial class LSLParser : Parser {
 		public IfStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterIfStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitIfStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1108,12 +1110,12 @@ public partial class LSLParser : Parser {
 		public DoWhileStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterDoWhileStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitDoWhileStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1131,12 +1133,12 @@ public partial class LSLParser : Parser {
 		public LabelStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterLabelStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitLabelStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1156,12 +1158,12 @@ public partial class LSLParser : Parser {
 		public PostIncrementStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterPostIncrementStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitPostIncrementStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1181,12 +1183,12 @@ public partial class LSLParser : Parser {
 		public PreDecrementStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterPreDecrementStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitPreDecrementStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1201,12 +1203,12 @@ public partial class LSLParser : Parser {
 		public SemiStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterSemiStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitSemiStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1232,12 +1234,12 @@ public partial class LSLParser : Parser {
 		public AssignmentStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterAssignmentStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitAssignmentStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1254,12 +1256,12 @@ public partial class LSLParser : Parser {
 		public VarDeclStmtContext(FuncBlockContentContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterVarDeclStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitVarDeclStmt(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1318,7 +1320,7 @@ public partial class LSLParser : Parser {
 				State = 146;
 				((AssignmentStmtContext)_localctx).op = TokenStream.LT(1);
 				_la = TokenStream.LA(1);
-				if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 32640L) != 0)) ) {
+				if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 8064L) != 0)) ) {
 					((AssignmentStmtContext)_localctx).op = ErrorHandler.RecoverInline(this);
 				}
 				else {
@@ -1346,7 +1348,7 @@ public partial class LSLParser : Parser {
 				EnterOuterAlt(_localctx, 3);
 				{
 				State = 153;
-				((IfStmtContext)_localctx).i = Match(T__14);
+				((IfStmtContext)_localctx).i = Match(T__12);
 				State = 154;
 				Match(LPAREN);
 				State = 155;
@@ -1361,7 +1363,7 @@ public partial class LSLParser : Parser {
 				case 1:
 					{
 					State = 158;
-					Match(T__15);
+					Match(T__13);
 					State = 159;
 					((IfStmtContext)_localctx).e = statement();
 					}
@@ -1374,7 +1376,7 @@ public partial class LSLParser : Parser {
 				EnterOuterAlt(_localctx, 4);
 				{
 				State = 162;
-				((WhileStmtContext)_localctx).w = Match(T__16);
+				((WhileStmtContext)_localctx).w = Match(T__14);
 				State = 163;
 				Match(LPAREN);
 				State = 164;
@@ -1390,7 +1392,7 @@ public partial class LSLParser : Parser {
 				EnterOuterAlt(_localctx, 5);
 				{
 				State = 168;
-				((ForStmtContext)_localctx).f = Match(T__17);
+				((ForStmtContext)_localctx).f = Match(T__15);
 				State = 169;
 				Match(LPAREN);
 				State = 170;
@@ -1400,7 +1402,7 @@ public partial class LSLParser : Parser {
 				State = 173;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
-				if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 255903634786615296L) != 0)) {
+				if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 63975908696653824L) != 0)) {
 					{
 					State = 172;
 					((ForStmtContext)_localctx).loop = expression();
@@ -1418,11 +1420,11 @@ public partial class LSLParser : Parser {
 				EnterOuterAlt(_localctx, 6);
 				{
 				State = 178;
-				((DoWhileStmtContext)_localctx).d = Match(T__18);
+				((DoWhileStmtContext)_localctx).d = Match(T__16);
 				State = 179;
 				statement();
 				State = 180;
-				Match(T__16);
+				Match(T__14);
 				State = 181;
 				Match(LPAREN);
 				State = 182;
@@ -1454,7 +1456,7 @@ public partial class LSLParser : Parser {
 				EnterOuterAlt(_localctx, 9);
 				{
 				State = 188;
-				Match(T__19);
+				Match(T__17);
 				State = 189;
 				Match(ID);
 				State = 192;
@@ -1478,7 +1480,7 @@ public partial class LSLParser : Parser {
 				EnterOuterAlt(_localctx, 10);
 				{
 				State = 195;
-				Match(T__20);
+				Match(T__18);
 				State = 196;
 				Match(ID);
 				State = 199;
@@ -1516,7 +1518,7 @@ public partial class LSLParser : Parser {
 				}
 
 				State = 207;
-				Match(T__19);
+				Match(T__17);
 				State = 208;
 				Match(SEMI);
 				}
@@ -1540,7 +1542,7 @@ public partial class LSLParser : Parser {
 				}
 
 				State = 214;
-				Match(T__20);
+				Match(T__18);
 				State = 215;
 				Match(SEMI);
 				}
@@ -1550,11 +1552,11 @@ public partial class LSLParser : Parser {
 				EnterOuterAlt(_localctx, 13);
 				{
 				State = 216;
-				((ReturnStmtContext)_localctx).r = Match(T__21);
+				((ReturnStmtContext)_localctx).r = Match(T__19);
 				State = 218;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
-				if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 255903634786615296L) != 0)) {
+				if ((((_la) & ~0x3f) == 0 && ((1L << _la) & 63975908696653824L) != 0)) {
 					{
 					State = 217;
 					expression();
@@ -1599,7 +1601,7 @@ public partial class LSLParser : Parser {
 				EnterOuterAlt(_localctx, 16);
 				{
 				State = 227;
-				Match(T__22);
+				Match(T__20);
 				State = 228;
 				Match(ID);
 				State = 229;
@@ -1636,12 +1638,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_lhs; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterLhs(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitLhs(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1689,12 +1691,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_funcCall; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterFuncCall(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitFuncCall(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1752,12 +1754,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_eventDef; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterEventDef(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitEventDef(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1821,12 +1823,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_paramList; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterParamList(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitParamList(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1850,11 +1852,11 @@ public partial class LSLParser : Parser {
 			State = 254;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
-			while (_la==T__23) {
+			while (_la==T__21) {
 				{
 				{
 				State = 250;
-				Match(T__23);
+				Match(T__21);
 				State = 251;
 				paramDecl();
 				}
@@ -1886,12 +1888,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_paramDecl; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterParamDecl(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitParamDecl(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -1940,12 +1942,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_varDecl; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterVarDecl(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitVarDecl(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2009,12 +2011,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_callParamList; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterCallParamList(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitCallParamList(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2034,11 +2036,11 @@ public partial class LSLParser : Parser {
 			State = 277;
 			ErrorHandler.Sync(this);
 			switch (TokenStream.LA(1)) {
-			case T__19:
-			case T__20:
+			case T__17:
+			case T__18:
+			case T__37:
+			case T__38:
 			case T__39:
-			case T__40:
-			case T__41:
 			case ID:
 			case LT:
 			case MINUS:
@@ -2053,11 +2055,11 @@ public partial class LSLParser : Parser {
 				State = 273;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
-				while (_la==T__23) {
+				while (_la==T__21) {
 					{
 					{
 					State = 269;
-					Match(T__23);
+					Match(T__21);
 					State = 270;
 					expr();
 					}
@@ -2099,12 +2101,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_expression; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2148,12 +2150,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_expr; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2203,12 +2205,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_assignmentExpression; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterAssignmentExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitAssignmentExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2239,7 +2241,7 @@ public partial class LSLParser : Parser {
 					{
 					State = 284;
 					_la = TokenStream.LA(1);
-					if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 32640L) != 0)) ) {
+					if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 8064L) != 0)) ) {
 					ErrorHandler.RecoverInline(this);
 					}
 					else {
@@ -2282,12 +2284,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_booleanExpression; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterBooleanExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitBooleanExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2311,12 +2313,12 @@ public partial class LSLParser : Parser {
 			State = 296;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
-			while (_la==T__24 || _la==T__25) {
+			while (_la==T__22 || _la==T__23) {
 				{
 				{
 				State = 292;
 				_la = TokenStream.LA(1);
-				if ( !(_la==T__24 || _la==T__25) ) {
+				if ( !(_la==T__22 || _la==T__23) ) {
 				ErrorHandler.RecoverInline(this);
 				}
 				else {
@@ -2358,12 +2360,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_bitwiseExpression; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterBitwiseExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitBitwiseExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2387,12 +2389,12 @@ public partial class LSLParser : Parser {
 			State = 304;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
-			while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 939524096L) != 0)) {
+			while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 234881024L) != 0)) {
 				{
 				{
 				State = 300;
 				_la = TokenStream.LA(1);
-				if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 939524096L) != 0)) ) {
+				if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 234881024L) != 0)) ) {
 				ErrorHandler.RecoverInline(this);
 				}
 				else {
@@ -2434,12 +2436,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_equalityExpression; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterEqualityExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitEqualityExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2463,12 +2465,12 @@ public partial class LSLParser : Parser {
 			State = 312;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
-			while (_la==T__29 || _la==T__30) {
+			while (_la==T__27 || _la==T__28) {
 				{
 				{
 				State = 308;
 				_la = TokenStream.LA(1);
-				if ( !(_la==T__29 || _la==T__30) ) {
+				if ( !(_la==T__27 || _la==T__28) ) {
 				ErrorHandler.RecoverInline(this);
 				}
 				else {
@@ -2518,12 +2520,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_relationalExpression; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterRelationalExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitRelationalExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2554,7 +2556,7 @@ public partial class LSLParser : Parser {
 					{
 					State = 316;
 					_la = TokenStream.LA(1);
-					if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 844437815033856L) != 0)) ) {
+					if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 211109453758464L) != 0)) ) {
 					ErrorHandler.RecoverInline(this);
 					}
 					else {
@@ -2597,12 +2599,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_binaryBitwiseExpression; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterBinaryBitwiseExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitBinaryBitwiseExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2626,12 +2628,12 @@ public partial class LSLParser : Parser {
 			State = 328;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
-			while (_la==T__33 || _la==T__34) {
+			while (_la==T__31 || _la==T__32) {
 				{
 				{
 				State = 324;
 				_la = TokenStream.LA(1);
-				if ( !(_la==T__33 || _la==T__34) ) {
+				if ( !(_la==T__31 || _la==T__32) ) {
 				ErrorHandler.RecoverInline(this);
 				}
 				else {
@@ -2677,12 +2679,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_additiveExpression; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterAdditiveExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitAdditiveExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2706,12 +2708,12 @@ public partial class LSLParser : Parser {
 			State = 336;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
-			while (_la==T__35 || _la==MINUS) {
+			while (_la==T__33 || _la==MINUS) {
 				{
 				{
 				State = 332;
 				_la = TokenStream.LA(1);
-				if ( !(_la==T__35 || _la==MINUS) ) {
+				if ( !(_la==T__33 || _la==MINUS) ) {
 				ErrorHandler.RecoverInline(this);
 				}
 				else {
@@ -2753,12 +2755,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_multiplicativeExpression; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterMultiplicativeExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitMultiplicativeExpression(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2782,12 +2784,12 @@ public partial class LSLParser : Parser {
 			State = 344;
 			ErrorHandler.Sync(this);
 			_la = TokenStream.LA(1);
-			while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 962072674304L) != 0)) {
+			while ((((_la) & ~0x3f) == 0 && ((1L << _la) & 240518168576L) != 0)) {
 				{
 				{
 				State = 340;
 				_la = TokenStream.LA(1);
-				if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 962072674304L) != 0)) ) {
+				if ( !((((_la) & ~0x3f) == 0 && ((1L << _la) & 240518168576L) != 0)) ) {
 				ErrorHandler.RecoverInline(this);
 				}
 				else {
@@ -2834,12 +2836,12 @@ public partial class LSLParser : Parser {
 		public UnaryBitNotContext(UnaryExpressionContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterUnaryBitNot(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitUnaryBitNot(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2857,12 +2859,12 @@ public partial class LSLParser : Parser {
 		public UnaryMinusContext(UnaryExpressionContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterUnaryMinus(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitUnaryMinus(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2879,12 +2881,12 @@ public partial class LSLParser : Parser {
 		public TypeCastExprContext(UnaryExpressionContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterTypeCastExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitTypeCastExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2901,12 +2903,12 @@ public partial class LSLParser : Parser {
 		public UnaryBoolNotContext(UnaryExpressionContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterUnaryBoolNot(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitUnaryBoolNot(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -2935,29 +2937,29 @@ public partial class LSLParser : Parser {
 				unaryExpression();
 				}
 				break;
-			case T__39:
+			case T__37:
 				_localctx = new UnaryBoolNotContext(_localctx);
 				EnterOuterAlt(_localctx, 2);
 				{
 				State = 349;
-				Match(T__39);
+				Match(T__37);
 				State = 350;
 				unaryExpression();
 				}
 				break;
-			case T__40:
+			case T__38:
 				_localctx = new UnaryBitNotContext(_localctx);
 				EnterOuterAlt(_localctx, 3);
 				{
 				State = 351;
-				Match(T__40);
+				Match(T__38);
 				State = 352;
 				unaryExpression();
 				}
 				break;
-			case T__19:
-			case T__20:
-			case T__41:
+			case T__17:
+			case T__18:
+			case T__39:
 			case ID:
 			case LT:
 			case LPAREN:
@@ -3008,12 +3010,12 @@ public partial class LSLParser : Parser {
 		public TypeCastContext(TypeCastExpressionContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterTypeCast(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitTypeCast(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3030,12 +3032,12 @@ public partial class LSLParser : Parser {
 		public PreIncDecExprContext(TypeCastExpressionContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterPreIncDecExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitPreIncDecExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3108,12 +3110,12 @@ public partial class LSLParser : Parser {
 		public PreDecrementContext(PreIncDecExpressionContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterPreDecrement(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitPreDecrement(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3130,12 +3132,12 @@ public partial class LSLParser : Parser {
 		public PostfixExprContext(PreIncDecExpressionContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterPostfixExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitPostfixExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3152,12 +3154,12 @@ public partial class LSLParser : Parser {
 		public PreIncrementContext(PreIncDecExpressionContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterPreIncrement(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitPreIncrement(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3176,27 +3178,27 @@ public partial class LSLParser : Parser {
 			State = 368;
 			ErrorHandler.Sync(this);
 			switch (TokenStream.LA(1)) {
-			case T__19:
+			case T__17:
 				_localctx = new PreIncrementContext(_localctx);
 				EnterOuterAlt(_localctx, 1);
 				{
 				State = 363;
-				Match(T__19);
+				Match(T__17);
 				State = 364;
 				postfixExpression(0);
 				}
 				break;
-			case T__20:
+			case T__18:
 				_localctx = new PreDecrementContext(_localctx);
 				EnterOuterAlt(_localctx, 2);
 				{
 				State = 365;
-				Match(T__20);
+				Match(T__18);
 				State = 366;
 				postfixExpression(0);
 				}
 				break;
-			case T__41:
+			case T__39:
 			case ID:
 			case LT:
 			case LPAREN:
@@ -3245,12 +3247,12 @@ public partial class LSLParser : Parser {
 		public SubscriptPostfixContext(PostfixExpressionContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterSubscriptPostfix(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitSubscriptPostfix(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3267,12 +3269,12 @@ public partial class LSLParser : Parser {
 		public PostIncrementPostfixContext(PostfixExpressionContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterPostIncrementPostfix(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitPostIncrementPostfix(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3289,12 +3291,12 @@ public partial class LSLParser : Parser {
 		public PrimaryExprContext(PostfixExpressionContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterPrimaryExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitPrimaryExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3311,12 +3313,12 @@ public partial class LSLParser : Parser {
 		public PostDecrementPostfixContext(PostfixExpressionContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterPostDecrementPostfix(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitPostDecrementPostfix(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3338,12 +3340,12 @@ public partial class LSLParser : Parser {
 		public MethodCallPostfixContext(PostfixExpressionContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterMethodCallPostfix(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitMethodCallPostfix(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3412,7 +3414,7 @@ public partial class LSLParser : Parser {
 						State = 378;
 						if (!(Precpred(Context, 4))) throw new FailedPredicateException(this, "Precpred(Context, 4)");
 						State = 379;
-						Match(T__19);
+						Match(T__17);
 						}
 						break;
 					case 3:
@@ -3422,7 +3424,7 @@ public partial class LSLParser : Parser {
 						State = 380;
 						if (!(Precpred(Context, 3))) throw new FailedPredicateException(this, "Precpred(Context, 3)");
 						State = 381;
-						Match(T__20);
+						Match(T__18);
 						}
 						break;
 					case 4:
@@ -3474,12 +3476,12 @@ public partial class LSLParser : Parser {
 		public StringLiteralContext(PrimaryContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterStringLiteral(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitStringLiteral(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3496,12 +3498,12 @@ public partial class LSLParser : Parser {
 		public RotationLiteralExprContext(PrimaryContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterRotationLiteralExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitRotationLiteralExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3518,12 +3520,12 @@ public partial class LSLParser : Parser {
 		public ListLiteralExprContext(PrimaryContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterListLiteralExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitListLiteralExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3538,12 +3540,12 @@ public partial class LSLParser : Parser {
 		public IntegerLiteralContext(PrimaryContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterIntegerLiteral(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitIntegerLiteral(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3558,12 +3560,12 @@ public partial class LSLParser : Parser {
 		public FloatLiteralContext(PrimaryContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterFloatLiteral(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitFloatLiteral(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3580,12 +3582,12 @@ public partial class LSLParser : Parser {
 		public VectorLiteralExprContext(PrimaryContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterVectorLiteralExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitVectorLiteralExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3604,12 +3606,12 @@ public partial class LSLParser : Parser {
 		public ParenExprContext(PrimaryContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterParenExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitParenExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3624,12 +3626,12 @@ public partial class LSLParser : Parser {
 		public IdExprContext(PrimaryContext context) { CopyFrom(context); }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterIdExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitIdExpr(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3745,12 +3747,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_vecLiteral; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterVecLiteral(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitVecLiteral(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3773,11 +3775,11 @@ public partial class LSLParser : Parser {
 			State = 404;
 			expr();
 			State = 405;
-			Match(T__23);
+			Match(T__21);
 			State = 406;
 			expr();
 			State = 407;
-			Match(T__23);
+			Match(T__21);
 			State = 408;
 			expr();
 			State = 409;
@@ -3811,12 +3813,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_rotLiteral; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterRotLiteral(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitRotLiteral(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3839,15 +3841,15 @@ public partial class LSLParser : Parser {
 			State = 412;
 			expr();
 			State = 413;
-			Match(T__23);
+			Match(T__21);
 			State = 414;
 			expr();
 			State = 415;
-			Match(T__23);
+			Match(T__21);
 			State = 416;
 			expr();
 			State = 417;
-			Match(T__23);
+			Match(T__21);
 			State = 418;
 			expr();
 			State = 419;
@@ -3876,12 +3878,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_listLiteral; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterListLiteral(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitListLiteral(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3900,11 +3902,11 @@ public partial class LSLParser : Parser {
 			EnterOuterAlt(_localctx, 1);
 			{
 			State = 421;
-			Match(T__41);
+			Match(T__39);
 			State = 422;
 			listContents();
 			State = 423;
-			Match(T__42);
+			Match(T__40);
 			}
 		}
 		catch (RecognitionException re) {
@@ -3932,12 +3934,12 @@ public partial class LSLParser : Parser {
 		public override int RuleIndex { get { return RULE_listContents; } }
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void EnterRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.EnterListContents(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
 		public override void ExitRule(IParseTreeListener listener) {
-			ILSLListener typedListener = listener as ILSLListener;
+			ILSLParseTreeListener typedListener = listener as ILSLParseTreeListener;
 			if (typedListener != null) typedListener.ExitListContents(this);
 		}
 		[System.Diagnostics.DebuggerNonUserCode]
@@ -3957,11 +3959,11 @@ public partial class LSLParser : Parser {
 			State = 434;
 			ErrorHandler.Sync(this);
 			switch (TokenStream.LA(1)) {
-			case T__19:
-			case T__20:
+			case T__17:
+			case T__18:
+			case T__37:
+			case T__38:
 			case T__39:
-			case T__40:
-			case T__41:
 			case ID:
 			case LT:
 			case MINUS:
@@ -3976,11 +3978,11 @@ public partial class LSLParser : Parser {
 				State = 430;
 				ErrorHandler.Sync(this);
 				_la = TokenStream.LA(1);
-				while (_la==T__23) {
+				while (_la==T__21) {
 					{
 					{
 					State = 426;
-					Match(T__23);
+					Match(T__21);
 					State = 427;
 					expr();
 					}
@@ -3991,7 +3993,7 @@ public partial class LSLParser : Parser {
 				}
 				}
 				break;
-			case T__42:
+			case T__40:
 				EnterOuterAlt(_localctx, 2);
 				{
 				}
@@ -4028,7 +4030,7 @@ public partial class LSLParser : Parser {
 	}
 
 	private static int[] _serializedATN = {
-		4,1,57,437,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,6,2,7,
+		4,1,55,437,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,6,2,7,
 		7,7,2,8,7,8,2,9,7,9,2,10,7,10,2,11,7,11,2,12,7,12,2,13,7,13,2,14,7,14,
 		2,15,7,15,2,16,7,16,2,17,7,17,2,18,7,18,2,19,7,19,2,20,7,20,2,21,7,21,
 		2,22,7,22,2,23,7,23,2,24,7,24,2,25,7,25,2,26,7,26,2,27,7,27,2,28,7,28,
@@ -4063,8 +4065,8 @@ public partial class LSLParser : Parser {
 		35,1,35,1,35,1,35,1,36,1,36,1,36,5,36,429,8,36,10,36,12,36,432,9,36,1,
 		36,3,36,435,8,36,1,36,0,1,62,37,0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,
 		30,32,34,36,38,40,42,44,46,48,50,52,54,56,58,60,62,64,66,68,70,72,0,9,
-		1,0,7,14,2,0,2,2,45,45,1,0,25,26,1,0,27,29,1,0,30,31,2,0,32,33,48,49,1,
-		0,34,35,2,0,36,36,50,50,1,0,37,39,467,0,75,1,0,0,0,2,84,1,0,0,0,4,91,1,
+		1,0,7,12,2,0,2,2,43,43,1,0,23,24,1,0,25,27,1,0,28,29,2,0,30,31,46,47,1,
+		0,32,33,2,0,34,34,48,48,1,0,35,37,467,0,75,1,0,0,0,2,84,1,0,0,0,4,91,1,
 		0,0,0,6,93,1,0,0,0,8,102,1,0,0,0,10,105,1,0,0,0,12,115,1,0,0,0,14,126,
 		1,0,0,0,16,132,1,0,0,0,18,134,1,0,0,0,20,231,1,0,0,0,22,233,1,0,0,0,24,
 		235,1,0,0,0,26,241,1,0,0,0,28,249,1,0,0,0,30,257,1,0,0,0,32,260,1,0,0,
@@ -4075,57 +4077,57 @@ public partial class LSLParser : Parser {
 		0,72,434,1,0,0,0,74,76,3,2,1,0,75,74,1,0,0,0,76,77,1,0,0,0,77,75,1,0,0,
 		0,77,78,1,0,0,0,78,79,1,0,0,0,79,80,5,0,0,1,80,1,1,0,0,0,81,85,3,32,16,
 		0,82,85,3,10,5,0,83,85,3,4,2,0,84,81,1,0,0,0,84,82,1,0,0,0,84,83,1,0,0,
-		0,85,3,1,0,0,0,86,87,5,1,0,0,87,88,5,45,0,0,88,92,3,6,3,0,89,90,5,2,0,
+		0,85,3,1,0,0,0,86,87,5,1,0,0,87,88,5,43,0,0,88,92,3,6,3,0,89,90,5,2,0,
 		0,90,92,3,6,3,0,91,86,1,0,0,0,91,89,1,0,0,0,92,5,1,0,0,0,93,97,5,3,0,0,
 		94,96,3,8,4,0,95,94,1,0,0,0,96,99,1,0,0,0,97,95,1,0,0,0,97,98,1,0,0,0,
 		98,100,1,0,0,0,99,97,1,0,0,0,100,101,5,4,0,0,101,7,1,0,0,0,102,103,3,26,
-		13,0,103,9,1,0,0,0,104,106,5,44,0,0,105,104,1,0,0,0,105,106,1,0,0,0,106,
-		107,1,0,0,0,107,108,5,45,0,0,108,110,5,51,0,0,109,111,3,28,14,0,110,109,
-		1,0,0,0,110,111,1,0,0,0,111,112,1,0,0,0,112,113,5,52,0,0,113,114,3,12,
+		13,0,103,9,1,0,0,0,104,106,5,42,0,0,105,104,1,0,0,0,105,106,1,0,0,0,106,
+		107,1,0,0,0,107,108,5,43,0,0,108,110,5,49,0,0,109,111,3,28,14,0,110,109,
+		1,0,0,0,110,111,1,0,0,0,111,112,1,0,0,0,112,113,5,50,0,0,113,114,3,12,
 		6,0,114,11,1,0,0,0,115,119,5,3,0,0,116,118,3,20,10,0,117,116,1,0,0,0,118,
 		121,1,0,0,0,119,117,1,0,0,0,119,120,1,0,0,0,120,122,1,0,0,0,121,119,1,
 		0,0,0,122,123,5,4,0,0,123,13,1,0,0,0,124,127,3,12,6,0,125,127,3,20,10,
-		0,126,124,1,0,0,0,126,125,1,0,0,0,127,15,1,0,0,0,128,133,5,47,0,0,129,
-		130,3,36,18,0,130,131,5,47,0,0,131,133,1,0,0,0,132,128,1,0,0,0,132,129,
-		1,0,0,0,133,17,1,0,0,0,134,135,5,5,0,0,135,136,5,45,0,0,136,19,1,0,0,0,
-		137,232,5,47,0,0,138,140,5,51,0,0,139,138,1,0,0,0,139,140,1,0,0,0,140,
-		141,1,0,0,0,141,144,3,22,11,0,142,143,5,6,0,0,143,145,5,45,0,0,144,142,
+		0,126,124,1,0,0,0,126,125,1,0,0,0,127,15,1,0,0,0,128,133,5,45,0,0,129,
+		130,3,36,18,0,130,131,5,45,0,0,131,133,1,0,0,0,132,128,1,0,0,0,132,129,
+		1,0,0,0,133,17,1,0,0,0,134,135,5,5,0,0,135,136,5,43,0,0,136,19,1,0,0,0,
+		137,232,5,45,0,0,138,140,5,49,0,0,139,138,1,0,0,0,139,140,1,0,0,0,140,
+		141,1,0,0,0,141,144,3,22,11,0,142,143,5,6,0,0,143,145,5,43,0,0,144,142,
 		1,0,0,0,144,145,1,0,0,0,145,146,1,0,0,0,146,147,7,0,0,0,147,149,3,36,18,
-		0,148,150,5,52,0,0,149,148,1,0,0,0,149,150,1,0,0,0,150,151,1,0,0,0,151,
-		152,5,47,0,0,152,232,1,0,0,0,153,154,5,15,0,0,154,155,5,51,0,0,155,156,
-		3,36,18,0,156,157,5,52,0,0,157,160,3,14,7,0,158,159,5,16,0,0,159,161,3,
-		14,7,0,160,158,1,0,0,0,160,161,1,0,0,0,161,232,1,0,0,0,162,163,5,17,0,
-		0,163,164,5,51,0,0,164,165,3,36,18,0,165,166,5,52,0,0,166,167,3,14,7,0,
-		167,232,1,0,0,0,168,169,5,18,0,0,169,170,5,51,0,0,170,171,3,16,8,0,171,
+		0,148,150,5,50,0,0,149,148,1,0,0,0,149,150,1,0,0,0,150,151,1,0,0,0,151,
+		152,5,45,0,0,152,232,1,0,0,0,153,154,5,13,0,0,154,155,5,49,0,0,155,156,
+		3,36,18,0,156,157,5,50,0,0,157,160,3,14,7,0,158,159,5,14,0,0,159,161,3,
+		14,7,0,160,158,1,0,0,0,160,161,1,0,0,0,161,232,1,0,0,0,162,163,5,15,0,
+		0,163,164,5,49,0,0,164,165,3,36,18,0,165,166,5,50,0,0,166,167,3,14,7,0,
+		167,232,1,0,0,0,168,169,5,16,0,0,169,170,5,49,0,0,170,171,3,16,8,0,171,
 		173,3,16,8,0,172,174,3,36,18,0,173,172,1,0,0,0,173,174,1,0,0,0,174,175,
-		1,0,0,0,175,176,5,52,0,0,176,177,3,14,7,0,177,232,1,0,0,0,178,179,5,19,
-		0,0,179,180,3,14,7,0,180,181,5,17,0,0,181,182,5,51,0,0,182,183,3,36,18,
-		0,183,184,5,52,0,0,184,185,5,47,0,0,185,232,1,0,0,0,186,232,3,32,16,0,
-		187,232,3,24,12,0,188,189,5,20,0,0,189,192,5,45,0,0,190,191,5,6,0,0,191,
-		193,5,45,0,0,192,190,1,0,0,0,192,193,1,0,0,0,193,194,1,0,0,0,194,232,5,
-		47,0,0,195,196,5,21,0,0,196,199,5,45,0,0,197,198,5,6,0,0,198,200,5,45,
-		0,0,199,197,1,0,0,0,199,200,1,0,0,0,200,201,1,0,0,0,201,232,5,47,0,0,202,
-		205,5,45,0,0,203,204,5,6,0,0,204,206,5,45,0,0,205,203,1,0,0,0,205,206,
-		1,0,0,0,206,207,1,0,0,0,207,208,5,20,0,0,208,232,5,47,0,0,209,212,5,45,
-		0,0,210,211,5,6,0,0,211,213,5,45,0,0,212,210,1,0,0,0,212,213,1,0,0,0,213,
-		214,1,0,0,0,214,215,5,21,0,0,215,232,5,47,0,0,216,218,5,22,0,0,217,219,
-		3,36,18,0,218,217,1,0,0,0,218,219,1,0,0,0,219,220,1,0,0,0,220,232,5,47,
-		0,0,221,222,5,1,0,0,222,223,7,1,0,0,223,232,5,47,0,0,224,225,3,18,9,0,
-		225,226,5,47,0,0,226,232,1,0,0,0,227,228,5,23,0,0,228,229,5,45,0,0,229,
-		232,5,47,0,0,230,232,3,12,6,0,231,137,1,0,0,0,231,139,1,0,0,0,231,153,
+		1,0,0,0,175,176,5,50,0,0,176,177,3,14,7,0,177,232,1,0,0,0,178,179,5,17,
+		0,0,179,180,3,14,7,0,180,181,5,15,0,0,181,182,5,49,0,0,182,183,3,36,18,
+		0,183,184,5,50,0,0,184,185,5,45,0,0,185,232,1,0,0,0,186,232,3,32,16,0,
+		187,232,3,24,12,0,188,189,5,18,0,0,189,192,5,43,0,0,190,191,5,6,0,0,191,
+		193,5,43,0,0,192,190,1,0,0,0,192,193,1,0,0,0,193,194,1,0,0,0,194,232,5,
+		45,0,0,195,196,5,19,0,0,196,199,5,43,0,0,197,198,5,6,0,0,198,200,5,43,
+		0,0,199,197,1,0,0,0,199,200,1,0,0,0,200,201,1,0,0,0,201,232,5,45,0,0,202,
+		205,5,43,0,0,203,204,5,6,0,0,204,206,5,43,0,0,205,203,1,0,0,0,205,206,
+		1,0,0,0,206,207,1,0,0,0,207,208,5,18,0,0,208,232,5,45,0,0,209,212,5,43,
+		0,0,210,211,5,6,0,0,211,213,5,43,0,0,212,210,1,0,0,0,212,213,1,0,0,0,213,
+		214,1,0,0,0,214,215,5,19,0,0,215,232,5,45,0,0,216,218,5,20,0,0,217,219,
+		3,36,18,0,218,217,1,0,0,0,218,219,1,0,0,0,219,220,1,0,0,0,220,232,5,45,
+		0,0,221,222,5,1,0,0,222,223,7,1,0,0,223,232,5,45,0,0,224,225,3,18,9,0,
+		225,226,5,45,0,0,226,232,1,0,0,0,227,228,5,21,0,0,228,229,5,43,0,0,229,
+		232,5,45,0,0,230,232,3,12,6,0,231,137,1,0,0,0,231,139,1,0,0,0,231,153,
 		1,0,0,0,231,162,1,0,0,0,231,168,1,0,0,0,231,178,1,0,0,0,231,186,1,0,0,
 		0,231,187,1,0,0,0,231,188,1,0,0,0,231,195,1,0,0,0,231,202,1,0,0,0,231,
 		209,1,0,0,0,231,216,1,0,0,0,231,221,1,0,0,0,231,224,1,0,0,0,231,227,1,
-		0,0,0,231,230,1,0,0,0,232,21,1,0,0,0,233,234,5,45,0,0,234,23,1,0,0,0,235,
-		236,5,45,0,0,236,237,5,51,0,0,237,238,3,34,17,0,238,239,5,52,0,0,239,240,
-		5,47,0,0,240,25,1,0,0,0,241,242,5,45,0,0,242,244,5,51,0,0,243,245,3,28,
-		14,0,244,243,1,0,0,0,244,245,1,0,0,0,245,246,1,0,0,0,246,247,5,52,0,0,
-		247,248,3,12,6,0,248,27,1,0,0,0,249,254,3,30,15,0,250,251,5,24,0,0,251,
+		0,0,0,231,230,1,0,0,0,232,21,1,0,0,0,233,234,5,43,0,0,234,23,1,0,0,0,235,
+		236,5,43,0,0,236,237,5,49,0,0,237,238,3,34,17,0,238,239,5,50,0,0,239,240,
+		5,45,0,0,240,25,1,0,0,0,241,242,5,43,0,0,242,244,5,49,0,0,243,245,3,28,
+		14,0,244,243,1,0,0,0,244,245,1,0,0,0,245,246,1,0,0,0,246,247,5,50,0,0,
+		247,248,3,12,6,0,248,27,1,0,0,0,249,254,3,30,15,0,250,251,5,22,0,0,251,
 		253,3,30,15,0,252,250,1,0,0,0,253,256,1,0,0,0,254,252,1,0,0,0,254,255,
-		1,0,0,0,255,29,1,0,0,0,256,254,1,0,0,0,257,258,5,44,0,0,258,259,5,45,0,
-		0,259,31,1,0,0,0,260,261,5,44,0,0,261,264,5,45,0,0,262,263,5,7,0,0,263,
+		1,0,0,0,255,29,1,0,0,0,256,254,1,0,0,0,257,258,5,42,0,0,258,259,5,43,0,
+		0,259,31,1,0,0,0,260,261,5,42,0,0,261,264,5,43,0,0,262,263,5,7,0,0,263,
 		265,3,36,18,0,264,262,1,0,0,0,264,265,1,0,0,0,265,266,1,0,0,0,266,267,
-		5,47,0,0,267,33,1,0,0,0,268,273,3,38,19,0,269,270,5,24,0,0,270,272,3,38,
+		5,45,0,0,267,33,1,0,0,0,268,273,3,38,19,0,269,270,5,22,0,0,270,272,3,38,
 		19,0,271,269,1,0,0,0,272,275,1,0,0,0,273,271,1,0,0,0,273,274,1,0,0,0,274,
 		278,1,0,0,0,275,273,1,0,0,0,276,278,1,0,0,0,277,268,1,0,0,0,277,276,1,
 		0,0,0,278,35,1,0,0,0,279,280,3,38,19,0,280,37,1,0,0,0,281,282,3,40,20,
@@ -4145,30 +4147,30 @@ public partial class LSLParser : Parser {
 		333,7,7,0,0,333,335,3,54,27,0,334,332,1,0,0,0,335,338,1,0,0,0,336,334,
 		1,0,0,0,336,337,1,0,0,0,337,53,1,0,0,0,338,336,1,0,0,0,339,344,3,56,28,
 		0,340,341,7,8,0,0,341,343,3,56,28,0,342,340,1,0,0,0,343,346,1,0,0,0,344,
-		342,1,0,0,0,344,345,1,0,0,0,345,55,1,0,0,0,346,344,1,0,0,0,347,348,5,50,
-		0,0,348,355,3,56,28,0,349,350,5,40,0,0,350,355,3,56,28,0,351,352,5,41,
+		342,1,0,0,0,344,345,1,0,0,0,345,55,1,0,0,0,346,344,1,0,0,0,347,348,5,48,
+		0,0,348,355,3,56,28,0,349,350,5,38,0,0,350,355,3,56,28,0,351,352,5,39,
 		0,0,352,355,3,56,28,0,353,355,3,58,29,0,354,347,1,0,0,0,354,349,1,0,0,
-		0,354,351,1,0,0,0,354,353,1,0,0,0,355,57,1,0,0,0,356,357,5,51,0,0,357,
-		358,5,44,0,0,358,359,5,52,0,0,359,362,3,56,28,0,360,362,3,60,30,0,361,
-		356,1,0,0,0,361,360,1,0,0,0,362,59,1,0,0,0,363,364,5,20,0,0,364,369,3,
-		62,31,0,365,366,5,21,0,0,366,369,3,62,31,0,367,369,3,62,31,0,368,363,1,
+		0,354,351,1,0,0,0,354,353,1,0,0,0,355,57,1,0,0,0,356,357,5,49,0,0,357,
+		358,5,42,0,0,358,359,5,50,0,0,359,362,3,56,28,0,360,362,3,60,30,0,361,
+		356,1,0,0,0,361,360,1,0,0,0,362,59,1,0,0,0,363,364,5,18,0,0,364,369,3,
+		62,31,0,365,366,5,19,0,0,366,369,3,62,31,0,367,369,3,62,31,0,368,363,1,
 		0,0,0,368,365,1,0,0,0,368,367,1,0,0,0,369,61,1,0,0,0,370,371,6,31,-1,0,
-		371,372,3,64,32,0,372,387,1,0,0,0,373,374,10,5,0,0,374,375,5,51,0,0,375,
-		376,3,34,17,0,376,377,5,52,0,0,377,386,1,0,0,0,378,379,10,4,0,0,379,386,
-		5,20,0,0,380,381,10,3,0,0,381,386,5,21,0,0,382,383,10,2,0,0,383,384,5,
-		6,0,0,384,386,5,45,0,0,385,373,1,0,0,0,385,378,1,0,0,0,385,380,1,0,0,0,
+		371,372,3,64,32,0,372,387,1,0,0,0,373,374,10,5,0,0,374,375,5,49,0,0,375,
+		376,3,34,17,0,376,377,5,50,0,0,377,386,1,0,0,0,378,379,10,4,0,0,379,386,
+		5,18,0,0,380,381,10,3,0,0,381,386,5,19,0,0,382,383,10,2,0,0,383,384,5,
+		6,0,0,384,386,5,43,0,0,385,373,1,0,0,0,385,378,1,0,0,0,385,380,1,0,0,0,
 		385,382,1,0,0,0,386,389,1,0,0,0,387,385,1,0,0,0,387,388,1,0,0,0,388,63,
-		1,0,0,0,389,387,1,0,0,0,390,402,5,55,0,0,391,402,5,56,0,0,392,402,5,57,
-		0,0,393,402,3,66,33,0,394,402,3,70,35,0,395,402,3,68,34,0,396,402,5,45,
-		0,0,397,398,5,51,0,0,398,399,3,36,18,0,399,400,5,52,0,0,400,402,1,0,0,
+		1,0,0,0,389,387,1,0,0,0,390,402,5,53,0,0,391,402,5,54,0,0,392,402,5,55,
+		0,0,393,402,3,66,33,0,394,402,3,70,35,0,395,402,3,68,34,0,396,402,5,43,
+		0,0,397,398,5,49,0,0,398,399,3,36,18,0,399,400,5,50,0,0,400,402,1,0,0,
 		0,401,390,1,0,0,0,401,391,1,0,0,0,401,392,1,0,0,0,401,393,1,0,0,0,401,
 		394,1,0,0,0,401,395,1,0,0,0,401,396,1,0,0,0,401,397,1,0,0,0,402,65,1,0,
-		0,0,403,404,5,48,0,0,404,405,3,38,19,0,405,406,5,24,0,0,406,407,3,38,19,
-		0,407,408,5,24,0,0,408,409,3,38,19,0,409,410,5,49,0,0,410,67,1,0,0,0,411,
-		412,5,48,0,0,412,413,3,38,19,0,413,414,5,24,0,0,414,415,3,38,19,0,415,
-		416,5,24,0,0,416,417,3,38,19,0,417,418,5,24,0,0,418,419,3,38,19,0,419,
-		420,5,49,0,0,420,69,1,0,0,0,421,422,5,42,0,0,422,423,3,72,36,0,423,424,
-		5,43,0,0,424,71,1,0,0,0,425,430,3,38,19,0,426,427,5,24,0,0,427,429,3,38,
+		0,0,403,404,5,46,0,0,404,405,3,38,19,0,405,406,5,22,0,0,406,407,3,38,19,
+		0,407,408,5,22,0,0,408,409,3,38,19,0,409,410,5,47,0,0,410,67,1,0,0,0,411,
+		412,5,46,0,0,412,413,3,38,19,0,413,414,5,22,0,0,414,415,3,38,19,0,415,
+		416,5,22,0,0,416,417,3,38,19,0,417,418,5,22,0,0,418,419,3,38,19,0,419,
+		420,5,47,0,0,420,69,1,0,0,0,421,422,5,40,0,0,422,423,3,72,36,0,423,424,
+		5,41,0,0,424,71,1,0,0,0,425,430,3,38,19,0,426,427,5,22,0,0,427,429,3,38,
 		19,0,428,426,1,0,0,0,429,432,1,0,0,0,430,428,1,0,0,0,430,431,1,0,0,0,431,
 		435,1,0,0,0,432,430,1,0,0,0,433,435,1,0,0,0,434,425,1,0,0,0,434,433,1,
 		0,0,0,435,73,1,0,0,0,41,77,84,91,97,105,110,119,126,132,139,144,149,160,

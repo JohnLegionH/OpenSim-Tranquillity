@@ -46,7 +46,7 @@ namespace InWorldz.Phlox.Compiler
         public override object VisitFuncDef([NotNull] LSLParser.FuncDefContext context)
         {
             // Mirrors Analyze.g methodDef / methodOut
-            string typeName = context.TYPE() != null ? context.TYPE().GetText() : null;
+            string typeName = context.TYPE() != null ? SymbolTable.CanonicalTypeName(context.TYPE().GetText()) : null;
 
             // Build a synthetic LSLAst for the FunctionBranch node (used for line info only).
             LSLAst defNode = new LSLAst(context.ID().Symbol) { Text = context.ID().GetText() };

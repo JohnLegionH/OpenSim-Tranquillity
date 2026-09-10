@@ -2561,12 +2561,17 @@ namespace InWorldz.Phlox.VM
             _state.TopFrame.Locals[lidx] = newVal;
         }
 
+        /// <summary>
+        /// PHLOX-9. SL: <c>a != b</c> on lists is <c>llGetListLength(a) - llGetListLength(b)</c> - the length
+        /// difference, not 0/1 ("Equality test on lists does not compare contents, only the length").
+        /// <c>==</c> (Op_Leq) stays 0/1: TRUE when the lengths match.
+        /// </summary>
         private void Op_Lneq()
         {
             LSLList rhs = (LSLList)_state.Operands.Pop();
             LSLList lhs = (LSLList)_state.Operands.Pop();
 
-            SafeOperandsPush(lhs.Members.Count == rhs.Members.Count ? 0 : 1);
+            SafeOperandsPush(lhs.Members.Count - rhs.Members.Count);
         }
 
         private const string ZERO_GUID = "00000000-0000-0000-0000-000000000000";

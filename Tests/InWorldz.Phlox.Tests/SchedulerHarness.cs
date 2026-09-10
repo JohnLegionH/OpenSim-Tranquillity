@@ -57,7 +57,11 @@ public sealed class SchedulerHarness : IDisposable
         // builds its own LSLSystemAPI inside FinishedLoading and takes no seam for one.
         Scene.EventManager.OnChatFromWorld += (sender, chat) =>
         {
-            lock (m_said) m_said.Add(chat.Message ?? string.Empty);
+            lock (m_said)
+            {
+                m_said.Add(chat.Message ?? string.Empty);
+                m_saidOn.Add((chat.Channel, chat.Message ?? string.Empty));
+            }
         };
 
         m_loader = Field(Engine, "m_ScriptLoader");
@@ -269,14 +273,17 @@ public sealed class SchedulerHarness : IDisposable
                   ?? false);
 
     private readonly List<string> m_said = new();
+    private readonly List<(int Channel, string Message)> m_saidOn = new();
 
     /// <summary>Everything any script in this scene has said, in order.</summary>
     public IReadOnlyList<string> Said { get { lock (m_said) return m_said.ToArray(); } }
+    /// <summary>PHLOX-9: the same chat with its channel - run-time errors must land on DEBUG_CHANNEL, not 0.</summary>
+    public IReadOnlyList<(int Channel, string Message)> SaidOn { get { lock (m_said) return m_saidOn.ToArray(); } }
 
     /// <summary>Whether anything has been said since the last <see cref="ClearSaid"/>.</summary>
     public bool SaidAnything(UUID itemId) { lock (m_said) return m_said.Count > 0; }
 
-    public void ClearSaid(UUID itemId) { lock (m_said) m_said.Clear(); }
+    public void ClearSaid(UUID itemId) { lock (m_said) { m_said.Clear(); m_saidOn.Clear(); } }
 
     /// <summary>
     /// Touch the prim through the SCENE's own path - <c>EventManager.TriggerObjectGrab</c> into the
