@@ -135,11 +135,17 @@ namespace InWorldz.Phlox.Serialization
             try { globalsSnapshot = (object[])state.Globals.Clone(); }
             catch { globalsSnapshot = state.Globals; }
 
+            // PHLOX-12 0b: the operand stack was the one live collection still walked in place
+            // (FromPrimitiveStack enumerates it) while the script thread pushes and pops.
+            Stack<object> operandsSnapshot;
+            try { operandsSnapshot = new Stack<object>(new Stack<object>(state.Operands)); }
+            catch { operandsSnapshot = new Stack<object>(); }
+
             SerializedRuntimeState serState = new SerializedRuntimeState();
             serState.IP = state.IP;
             serState.LSLState = state.LSLState;
             serState.Globals = SerializedLSLPrimitive.FromPrimitiveList(globalsSnapshot);
-            serState.Operands = SerializedLSLPrimitive.FromPrimitiveStack(state.Operands);
+            serState.Operands = SerializedLSLPrimitive.FromPrimitiveStack(operandsSnapshot);
 
             serState.Calls = new SerializedStackFrame[callsSnapshot.Length];
             for (int i = 0; i < callsSnapshot.Length; i++)

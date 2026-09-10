@@ -334,7 +334,7 @@ namespace InWorldz.Phlox.VM
             TopFrame = null;
             Calls.Clear();
             Operands.Clear();
-            EventQueue.Clear();
+            lock (EventQueueLock) EventQueue.Clear();   // PHLOX-12 0b: every mutation under the lock the saver snapshots under
             NextWakeup = 0;
             StateCapturedOn = 0;
             TimerLastScheduledOn = 0;
@@ -438,7 +438,7 @@ namespace InWorldz.Phlox.VM
             TopFrame = null;
             Calls.Clear();
             Operands.Clear();
-            EventQueue.Clear();
+            lock (EventQueueLock) EventQueue.Clear();   // PHLOX-12 0b
         }
 
         public DetectVariables GetDetectVariables(int index)
@@ -479,14 +479,17 @@ namespace InWorldz.Phlox.VM
         {
             PostedEvent foundEvt;
 
-            if (EventQueue.Find(
-                delegate (PostedEvent evt) {
-                    if (evt.EventType == Types.SupportedEventList.Events.TIMER) return true;
-                    return false;
-                },
-                out foundEvt))
+            lock (EventQueueLock)   // PHLOX-12 0b
             {
-                EventQueue.Remove(foundEvt);
+                if (EventQueue.Find(
+                    delegate (PostedEvent evt) {
+                        if (evt.EventType == Types.SupportedEventList.Events.TIMER) return true;
+                        return false;
+                    },
+                    out foundEvt))
+                {
+                    EventQueue.Remove(foundEvt);
+                }
             }
         }
     }
