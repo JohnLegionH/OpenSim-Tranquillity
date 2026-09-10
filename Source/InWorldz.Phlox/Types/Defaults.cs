@@ -5228,6 +5228,182 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "a" },
                 TableIndex = 735
             }},
+            // PHLOX-14: osNpc* - a second door onto BotManager, ported from OSSL_Api.cs with the same [OSSL] gate
+            {"osIsNpc", new FunctionSig {
+                FunctionName = "osIsNpc",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "npc" },
+                TableIndex = 736
+            }},
+            {"osNpcCreate", new FunctionSig {
+                FunctionName = "osNpcCreate",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.Vector, VarType.String },
+                ParamNames = new string[] { "firstname", "lastname", "position", "notecard" },
+                TableIndex = 737
+            }},
+            {"osNpcCreate__5", new FunctionSig {
+                FunctionName = "osNpcCreate",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.Vector, VarType.String, VarType.Integer },
+                ParamNames = new string[] { "firstname", "lastname", "position", "notecard", "options" },
+                TableIndex = 738
+            }},
+            {"osNpcSaveAppearance", new FunctionSig {
+                FunctionName = "osNpcSaveAppearance",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] { VarType.Key, VarType.String },
+                ParamNames = new string[] { "npc", "notecard" },
+                TableIndex = 739
+            }},
+            {"osNpcSaveAppearance__3", new FunctionSig {
+                FunctionName = "osNpcSaveAppearance",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] { VarType.Key, VarType.String, VarType.Integer },
+                ParamNames = new string[] { "npc", "notecard", "includeHuds" },
+                TableIndex = 740
+            }},
+            {"osNpcLoadAppearance", new FunctionSig {
+                FunctionName = "osNpcLoadAppearance",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.String },
+                ParamNames = new string[] { "npc", "notecard" },
+                TableIndex = 741
+            }},
+            {"osNpcGetOwner", new FunctionSig {
+                FunctionName = "osNpcGetOwner",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "npc" },
+                TableIndex = 742
+            }},
+            {"osNpcGetPos", new FunctionSig {
+                FunctionName = "osNpcGetPos",
+                ReturnType = VarType.Vector,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "npc" },
+                TableIndex = 743
+            }},
+            {"osNpcMoveTo", new FunctionSig {
+                FunctionName = "osNpcMoveTo",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.Vector },
+                ParamNames = new string[] { "npc", "pos" },
+                TableIndex = 744
+            }},
+            {"osNpcMoveToTarget", new FunctionSig {
+                FunctionName = "osNpcMoveToTarget",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.Vector, VarType.Integer },
+                ParamNames = new string[] { "npc", "target", "options" },
+                TableIndex = 745
+            }},
+            {"osNpcGetRot", new FunctionSig {
+                FunctionName = "osNpcGetRot",
+                ReturnType = VarType.Rotation,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "npc" },
+                TableIndex = 746
+            }},
+            {"osNpcSetRot", new FunctionSig {
+                FunctionName = "osNpcSetRot",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.Rotation },
+                ParamNames = new string[] { "npc", "rotation" },
+                TableIndex = 747
+            }},
+            {"osNpcStopMoveToTarget", new FunctionSig {
+                FunctionName = "osNpcStopMoveToTarget",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "npc" },
+                TableIndex = 748
+            }},
+            {"osNpcSetProfileAbout", new FunctionSig {
+                FunctionName = "osNpcSetProfileAbout",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.String },
+                ParamNames = new string[] { "npc", "about" },
+                TableIndex = 749
+            }},
+            {"osNpcSetProfileImage", new FunctionSig {
+                FunctionName = "osNpcSetProfileImage",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.String },
+                ParamNames = new string[] { "npc", "image" },
+                TableIndex = 750
+            }},
+            {"osNpcSay", new FunctionSig {
+                FunctionName = "osNpcSay",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.String },
+                ParamNames = new string[] { "npc", "message" },
+                TableIndex = 751
+            }},
+            {"osNpcSay__3", new FunctionSig {
+                FunctionName = "osNpcSay",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.Integer, VarType.String },
+                ParamNames = new string[] { "npc", "channel", "message" },
+                TableIndex = 752
+            }},
+            {"osNpcShout", new FunctionSig {
+                FunctionName = "osNpcShout",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.Integer, VarType.String },
+                ParamNames = new string[] { "npc", "channel", "message" },
+                TableIndex = 753
+            }},
+            {"osNpcWhisper", new FunctionSig {
+                FunctionName = "osNpcWhisper",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.Integer, VarType.String },
+                ParamNames = new string[] { "npc", "channel", "message" },
+                TableIndex = 754
+            }},
+            {"osNpcSit", new FunctionSig {
+                FunctionName = "osNpcSit",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.Key, VarType.Integer },
+                ParamNames = new string[] { "npc", "target", "options" },
+                TableIndex = 755
+            }},
+            {"osNpcStand", new FunctionSig {
+                FunctionName = "osNpcStand",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "npc" },
+                TableIndex = 756
+            }},
+            {"osNpcRemove", new FunctionSig {
+                FunctionName = "osNpcRemove",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "npc" },
+                TableIndex = 757
+            }},
+            {"osNpcPlayAnimation", new FunctionSig {
+                FunctionName = "osNpcPlayAnimation",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.String },
+                ParamNames = new string[] { "npc", "animation" },
+                TableIndex = 758
+            }},
+            {"osNpcStopAnimation", new FunctionSig {
+                FunctionName = "osNpcStopAnimation",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.String },
+                ParamNames = new string[] { "npc", "animation" },
+                TableIndex = 759
+            }},
+            {"osNpcTouch", new FunctionSig {
+                FunctionName = "osNpcTouch",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.Key, VarType.Integer },
+                ParamNames = new string[] { "npc", "object_key", "link_num" },
+                TableIndex = 760
+            }},
          };
 
         /// <summary>

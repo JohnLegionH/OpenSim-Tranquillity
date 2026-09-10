@@ -7066,6 +7066,262 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return a.LengthSquared();
         }
 
+        // ── PHLOX-14: osNpc* - a second door onto BotManager's bots (one BotData per NPC), ported from OSSL_Api.cs ──
+        private const int OS_NPC_NOT_OWNED = 0x2, OS_NPC_SENSE_AS_AGENT = 0x4, OS_NPC_OBJECT_GROUP = 0x8, OS_NPC_NO_FLY = 1, OS_NPC_RUNNING = 4;
+        private IBotManager NpcMgr() => World?.RequestModuleInterface<IBotManager>();
+        private static bool NpcKey(string npc, out UUID id) => UUID.TryParse(npc, out id) && id.IsNotZero();
+
+        /// <summary>OSSL_Api.cs:2848-2975 NpcCreate. The notecard argument is the bot outfit store's outfit name ("" = the owner's current appearance).</summary>
+        private string NpcCreate(string firstname, string lastname, Vector3 position, string notecard, bool owned, bool senseAsAgent, bool hostGroup)
+        {
+            if (World == null || m_host == null) return UUID.Zero.ToString();
+            if (!World.Permissions.CanRezObject(1, m_host.OwnerID, position))
+            {
+                ShoutError("no permission to rez NPC at requested location");
+                return UUID.Zero.ToString();
+            }
+            var mgr = NpcMgr();
+            if (mgr == null)
+            {
+                ShoutError("NPC module not enabled");
+                return UUID.Zero.ToString();
+            }
+            // OS_NPC_OBJECT_GROUP: BotManager's CreateNPC call carries no group - accepted, not applied (recorded in PHLOX-14).
+            UUID id = mgr.CreateBot(firstname, lastname, position, notecard ?? string.Empty, m_itemID, m_host.OwnerID, owned, senseAsAgent, out string reason);
+            if (reason != null) ShoutError("osNpcCreate: " + reason);
+            return id.ToString();
+        }
+
+        private string NpcSaveOutfit(string npc, string notecard)
+        {
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return UUID.Zero.ToString();
+            UUID key = mgr.SaveBotOutfit(id, notecard, m_host.OwnerID, out string reason);
+            if (reason != null) ShoutError("osNpcSaveAppearance: " + reason);
+            return key.ToString();
+        }
+
+        private void NpcMove(string npc, Vector3 target, TravelMode mode)
+        {
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return;
+            mgr.SetBotNavigationPoints(id, new List<Vector3> { target }, new List<TravelMode> { mode }, new Dictionary<int, object>(), m_host.OwnerID);
+        }
+
+        private void NpcChat(string npc, int channel, string message, ChatTypeEnum type)
+        {
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return;
+            mgr.BotChat(id, channel, message ?? string.Empty, type, m_host.OwnerID);   // upstream's 2 s say-throttle is not applied
+        }
+
+
+        /// <summary>OSSL_Api.cs:2808 - bare CheckThreatLevel (master switch).</summary>
+        public int osIsNpc(string npc)
+        {
+            OsslCheck();
+            return UUID.TryParse(npc, out UUID id) && World?.GetScenePresence(id)?.IsNPC == true ? 1 : 0;
+        }
+
+        /// <summary>OSSL_Api.cs:2823 - High (key osNpcCreate).</summary>
+        public string osNpcCreate(string firstname, string lastname, Vector3 position, string notecard)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcCreate");
+            return NpcCreate(firstname, lastname, position, notecard, true, false, false);
+        }
+
+        /// <summary>OSSL_Api.cs:2837 - High (key osNpcCreate).</summary>
+        public string osNpcCreate(string firstname, string lastname, Vector3 position, string notecard, int options)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcCreate");
+            return NpcCreate(firstname, lastname, position, notecard,
+                (options & OS_NPC_NOT_OWNED) == 0, (options & OS_NPC_SENSE_AS_AGENT) != 0, (options & OS_NPC_OBJECT_GROUP) != 0);
+        }
+
+        /// <summary>OSSL_Api.cs:2975 - High (key osNpcSaveAppearance).</summary>
+        public string osNpcSaveAppearance(string npc, string notecard)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcSaveAppearance");
+            return NpcSaveOutfit(npc, notecard);
+        }
+
+        /// <summary>OSSL_Api.cs:2980 - High (key osNpcSaveAppearance).</summary>
+        public string osNpcSaveAppearance(string npc, string notecard, int includeHuds)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcSaveAppearance");
+            return NpcSaveOutfit(npc, notecard);   // includeHuds: the outfit store keeps the whole appearance
+        }
+
+        /// <summary>OSSL_Api.cs:3005 - High (key osNpcLoadAppearance).</summary>
+        public void osNpcLoadAppearance(string npc, string notecard)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcLoadAppearance");
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return;
+            mgr.ChangeBotOutfit(id, notecard, m_host.OwnerID, out string reason);
+            if (reason != null) ShoutError("osNpcLoadAppearance: " + reason);
+        }
+
+        /// <summary>OSSL_Api.cs:3035 - None (key osNpcGetOwner).</summary>
+        public string osNpcGetOwner(string npc)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.None, "osNpcGetOwner");
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return UUID.Zero.ToString();
+            UUID owner = mgr.GetBotOwner(id);
+            return owner.IsZero() ? npc : owner.ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:3055 - High (key osNpcGetPos).</summary>
+        public Vector3 osNpcGetPos(string npc)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcGetPos");
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id) || !mgr.CheckPermission(id, m_host.OwnerID)) return Vector3.Zero;
+            return World.GetScenePresence(id)?.AbsolutePosition ?? Vector3.Zero;
+        }
+
+        /// <summary>OSSL_Api.cs:3077 - High (key osNpcMoveTo).</summary>
+        public void osNpcMoveTo(string npc, Vector3 pos)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcMoveTo");
+            NpcMove(npc, pos, TravelMode.Fly);   // upstream: noFly false, land at target
+        }
+
+        /// <summary>OSSL_Api.cs:3094 - High (key osNpcMoveToTarget).</summary>
+        public void osNpcMoveToTarget(string npc, Vector3 target, int options)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcMoveToTarget");
+            NpcMove(npc, target, (options & OS_NPC_RUNNING) != 0 ? TravelMode.Run : (options & OS_NPC_NO_FLY) != 0 ? TravelMode.Walk : TravelMode.Fly);
+        }
+
+        /// <summary>OSSL_Api.cs:3117 - High (key osNpcGetRot).</summary>
+        public Quaternion osNpcGetRot(string npc)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcGetRot");
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id) || !mgr.CheckPermission(id, m_host.OwnerID)) return Quaternion.Identity;
+            return World.GetScenePresence(id)?.GetWorldRotation() ?? Quaternion.Identity;
+        }
+
+        /// <summary>OSSL_Api.cs:3139 - High (key osNpcSetRot).</summary>
+        public void osNpcSetRot(string npc, Quaternion rotation)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcSetRot");
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return;
+            mgr.SetBotRotation(id, rotation, m_host.OwnerID);
+        }
+
+        /// <summary>OSSL_Api.cs:3158 - High (key osNpcStopMoveToTarget).</summary>
+        public void osNpcStopMoveToTarget(string npc)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcStopMoveToTarget");
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return;
+            mgr.StopMovement(id, m_host.OwnerID);
+        }
+
+        /// <summary>OSSL_Api.cs:3174 - Low (key osNpcSetProfileAbout).</summary>
+        public void osNpcSetProfileAbout(string npc, string about)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.Low, "osNpcSetProfileAbout");
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return;
+            mgr.SetBotProfile(id, about ?? string.Empty, null, null, null, m_host.OwnerID);
+        }
+
+        /// <summary>OSSL_Api.cs:3192 - Low (key osNpcSetProfileImage).</summary>
+        public void osNpcSetProfileImage(string npc, string image)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.Low, "osNpcSetProfileImage");
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return;
+            UUID imageId = UUID.Zero;
+            if (!UUID.TryParse(image, out imageId)) imageId = FindInventoryItem(image, (int)AssetType.Texture)?.AssetID ?? UUID.Zero;
+            mgr.SetBotProfile(id, null, null, imageId, null, m_host.OwnerID);
+        }
+
+        /// <summary>OSSL_Api.cs:3217 - ungated upstream.</summary>
+        public void osNpcSay(string npc, string message)
+        {
+            osNpcSay(npc, 0, message);
+        }
+
+        /// <summary>OSSL_Api.cs:3222 - High (key osNpcSay).</summary>
+        public void osNpcSay(string npc, int channel, string message)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcSay");
+            NpcChat(npc, channel, message, ChatTypeEnum.Say);
+        }
+
+        /// <summary>OSSL_Api.cs:3272 - High (key osNpcShout).</summary>
+        public void osNpcShout(string npc, int channel, string message)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcShout");
+            NpcChat(npc, channel, message, ChatTypeEnum.Shout);
+        }
+
+        /// <summary>OSSL_Api.cs:3417 - High (key osNpcWhisper).</summary>
+        public void osNpcWhisper(string npc, int channel, string message)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcWhisper");
+            NpcChat(npc, channel, message, ChatTypeEnum.Whisper);
+        }
+
+        /// <summary>OSSL_Api.cs:3290 - High (key osNpcSit).</summary>
+        public void osNpcSit(string npc, string target, int options)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcSit");
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id) || !UUID.TryParse(target, out UUID targetId)) return;
+            mgr.SitBotOnObject(id, targetId, m_host.OwnerID);   // OS_NPC_SIT_NOW is the only option and the only behaviour
+        }
+
+        /// <summary>OSSL_Api.cs:3306 - High (key osNpcStand).</summary>
+        public void osNpcStand(string npc)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcStand");
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return;
+            mgr.StandBotUp(id, m_host.OwnerID);
+        }
+
+        /// <summary>OSSL_Api.cs:3322 - High (key osNpcRemove).</summary>
+        public void osNpcRemove(string npc)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcRemove");
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return;
+            mgr.RemoveBot(id, m_host.OwnerID);   // permission inside: unowned, or owner == caller (NPCModule.CheckPermissions)
+        }
+
+        /// <summary>OSSL_Api.cs:3342 - High (key osNpcPlayAnimation).</summary>
+        public void osNpcPlayAnimation(string npc, string animation)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcPlayAnimation");
+            if (string.IsNullOrEmpty(animation)) return;
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return;
+            UUID animID = FindInventoryItem(animation, (int)AssetType.Animation)?.AssetID ?? UUID.Zero;
+            if (animID.IsZero()) UUID.TryParse(animation, out animID);
+            if (animID.IsZero()) return;
+            mgr.StartBotAnimation(id, animID, animation, m_host.UUID, m_host.OwnerID);
+        }
+
+        /// <summary>OSSL_Api.cs:3381 - High (key osNpcStopAnimation).</summary>
+        public void osNpcStopAnimation(string npc, string animation)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcStopAnimation");
+            if (string.IsNullOrEmpty(animation)) return;
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id)) return;
+            UUID animID = FindInventoryItem(animation, (int)AssetType.Animation)?.AssetID ?? UUID.Zero;
+            if (animID.IsZero()) UUID.TryParse(animation, out animID);
+            if (animID.IsZero()) return;
+            mgr.StopBotAnimation(id, animID, animation, m_host.OwnerID);
+        }
+
+        /// <summary>OSSL_Api.cs:3433 - High (key osNpcTouch).</summary>
+        public void osNpcTouch(string npc, string object_key, int link_num)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High, "osNpcTouch");
+            var mgr = NpcMgr(); if (mgr == null || !NpcKey(npc, out UUID id) || !UUID.TryParse(object_key, out UUID objectId)) return;
+            SceneObjectPart part = World.GetSceneObjectPart(objectId);
+            if (part == null) return;
+            if (link_num != -4 /* LINK_THIS */)
+            {
+                if (link_num == 0 || link_num == 1 /* LINK_ROOT */) part = part.ParentGroup.RootPart;
+                else part = part.ParentGroup.GetLinkNumPart(link_num);
+                if (part == null) return;
+            }
+            mgr.BotTouchObject(id, part.UUID, m_host.OwnerID);
+        }
+
         public LSLList osGetAvatarList()
         {
             // OSSL: returns [uuid, position, name, uuid, position, name, ...]

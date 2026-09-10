@@ -820,6 +820,31 @@ private static string ConvToString(object o)
 								Shim_osUnixTimeToTimestamp,          //733  PHLOX-13
 								Shim_osVecDistSquare,                //734  PHLOX-13
 								Shim_osVecMagSquare,                 //735  PHLOX-13
+								Shim_osIsNpc,                        //736  PHLOX-14
+								Shim_osNpcCreate,                    //737  PHLOX-14
+								Shim_osNpcCreate5,                   //738  PHLOX-14
+								Shim_osNpcSaveAppearance,            //739  PHLOX-14
+								Shim_osNpcSaveAppearance3,           //740  PHLOX-14
+								Shim_osNpcLoadAppearance,            //741  PHLOX-14
+								Shim_osNpcGetOwner,                  //742  PHLOX-14
+								Shim_osNpcGetPos,                    //743  PHLOX-14
+								Shim_osNpcMoveTo,                    //744  PHLOX-14
+								Shim_osNpcMoveToTarget,              //745  PHLOX-14
+								Shim_osNpcGetRot,                    //746  PHLOX-14
+								Shim_osNpcSetRot,                    //747  PHLOX-14
+								Shim_osNpcStopMoveToTarget,          //748  PHLOX-14
+								Shim_osNpcSetProfileAbout,           //749  PHLOX-14
+								Shim_osNpcSetProfileImage,           //750  PHLOX-14
+								Shim_osNpcSay,                       //751  PHLOX-14
+								Shim_osNpcSay3,                      //752  PHLOX-14
+								Shim_osNpcShout,                     //753  PHLOX-14
+								Shim_osNpcWhisper,                   //754  PHLOX-14
+								Shim_osNpcSit,                       //755  PHLOX-14
+								Shim_osNpcStand,                     //756  PHLOX-14
+								Shim_osNpcRemove,                    //757  PHLOX-14
+								Shim_osNpcPlayAnimation,             //758  PHLOX-14
+								Shim_osNpcStopAnimation,             //759  PHLOX-14
+								Shim_osNpcTouch,                     //760  PHLOX-14
         };
 
         /// <summary>
@@ -7264,6 +7289,171 @@ private static string ConvToString(object o)
             Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
             float ret = self._systemAPI.osVecMagSquare(p0);
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+
+        // ── PHLOX-14: osNpc* ──
+        static private void Shim_osIsNpc(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osIsNpc(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osNpcCreate(SyscallShim self)
+        {
+            string p3 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p2 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osNpcCreate(p0, p1, p2, p3);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osNpcCreate5(SyscallShim self)
+        {
+            int p4 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p3 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p2 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osNpcCreate(p0, p1, p2, p3, p4);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osNpcSaveAppearance(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osNpcSaveAppearance(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osNpcSaveAppearance3(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osNpcSaveAppearance(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osNpcLoadAppearance(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcLoadAppearance(p0, p1);
+        }
+        static private void Shim_osNpcGetOwner(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osNpcGetOwner(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osNpcGetPos(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 ret = self._systemAPI.osNpcGetPos(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osNpcMoveTo(SyscallShim self)
+        {
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcMoveTo(p0, p1);
+        }
+        static private void Shim_osNpcMoveToTarget(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcMoveToTarget(p0, p1, p2);
+        }
+        static private void Shim_osNpcGetRot(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            Quaternion ret = self._systemAPI.osNpcGetRot(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osNpcSetRot(SyscallShim self)
+        {
+            Quaternion p1 = ConvToQuat(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcSetRot(p0, p1);
+        }
+        static private void Shim_osNpcStopMoveToTarget(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcStopMoveToTarget(p0);
+        }
+        static private void Shim_osNpcSetProfileAbout(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcSetProfileAbout(p0, p1);
+        }
+        static private void Shim_osNpcSetProfileImage(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcSetProfileImage(p0, p1);
+        }
+        static private void Shim_osNpcSay(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcSay(p0, p1);
+        }
+        static private void Shim_osNpcSay3(SyscallShim self)
+        {
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcSay(p0, p1, p2);
+        }
+        static private void Shim_osNpcShout(SyscallShim self)
+        {
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcShout(p0, p1, p2);
+        }
+        static private void Shim_osNpcWhisper(SyscallShim self)
+        {
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcWhisper(p0, p1, p2);
+        }
+        static private void Shim_osNpcSit(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcSit(p0, p1, p2);
+        }
+        static private void Shim_osNpcStand(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcStand(p0);
+        }
+        static private void Shim_osNpcRemove(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcRemove(p0);
+        }
+        static private void Shim_osNpcPlayAnimation(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcPlayAnimation(p0, p1);
+        }
+        static private void Shim_osNpcStopAnimation(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcStopAnimation(p0, p1);
+        }
+        static private void Shim_osNpcTouch(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osNpcTouch(p0, p1, p2);
         }
 		static private void Shim_llSetLinkRenderMaterial(SyscallShim self)
         {

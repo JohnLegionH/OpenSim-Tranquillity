@@ -1740,3 +1740,72 @@ it throws `ArgumentOutOfRange`, and with `offset 4, count 5` it answers **-1** w
 only ever see `Length - offset` characters below `offset`. The test asserts the faithful -1. And the
 throw produced exactly one stop - PART 0 at work. Dispatch baseline **regenerated**
 (693 -> 725 names: 36 entries, four of them overloads sharing a name). Suite **144 -> 148**; region server builds.
+
+## PHLOX-14 - OSSL osNpc* on top of BotManager
+
+**2026-09-10. Landed; not deployed.** A second door onto the same bots, not a second NPC system.
+
+### PART 0 - what is there
+
+- **Upstream:** `INPCModule` (`OpenSim.Region.Framework/Interfaces/INPCModule.cs:87-303` - CreateNPC x2,
+  IsNPC, GetNPC, CheckPermissions, SetNPCAppearance, MoveToTarget, StopMoveToTarget, Say/Shout/Whisper, Sit,
+  Stand, Touch, DeleteNPC, GetOwner) and the 23 `osNpc*` in `OSSL_Api.cs:2808-3460` (+ `osNpcLookAt`
+  `:6335`). Every one, bar `osIsNpc` (master switch), `osNpcSay(2)` (delegates) and `osNpcGetOwner` (None),
+  is **High** or (the two profile setters) **Low**, and every one checks `INPCModule.CheckPermissions(npc,
+  m_host.OwnerID)`: an unowned NPC obeys anyone, an owned one only its owner.
+- **This tree:** `NPCModule` (OptionalModules, the upstream module as is) and **`BotManager`**
+  (`OptionalModules/World/NPC/BotManager.cs`, 1437 lines) - the InWorldz bot subsystem the `bot*` family
+  and `llCreateCharacter` sit on. **BotManager is built ON NPCModule**: `CreateBot` calls
+  `m_npcModule.CreateNPC`, `RemoveBot` calls `DeleteNPC`, and `GetBotWithPermission` delegates to
+  `NPCModule.CheckPermissions`. One `BotData` per NPC, keyed by the NPC's own key.
+- **Neither is live.** `NPCModule.Initialise` reads `[NPC]` and is enabled only if the section exists;
+  `BotManager.Initialise` reads the same section. The live `config/OpenSim.ini` has **no `[NPC]` section**,
+  so `NPCModule.Enabled` is false, `INPCModule` is never registered, and BotManager never registers
+  `IBotManager` (the 15:30 log of 1.1.321 has not one `[BotManager]` line). **Every `bot*` call on the
+  grid today silently does nothing**, and so will `osNpc*` until `[NPC] Enabled = true` is added - the
+  operator's file, the operator's edit. That is a precondition of the did-it-land.
+
+### PART 1 - the family, 25 dispatch entries (736-760), 22 names
+
+**Two additions to BotManager / `IBotManager`**, so osNpc* needs nothing the bot door lacks:
+`CreateBot(..., bool owned, bool senseAsAgent, out reason)` - the old signature delegates with `true,
+true`; the NPC and its `BotData` are owned by nobody when `owned` is false (OS_NPC_NOT_OWNED), and
+`senseAsAgent` is the flag rather than the always-true the bot door passes. `SaveBotOutfit(botID, name,
+ownerID, out reason)` - the BOT's current appearance into the caller's outfit store
+(`SaveOutfitToDatabase` captures the owner's, which is what `botSetOutfit` wants and not what
+`osNpcSaveAppearance` means). And **`GetBotsWithTag("")` now returns every bot** - no bot carries `""` as
+a tag, so that query was always empty; it is how `botGetBotsWithTag("")` lists an osNpcCreate'd NPC.
+
+| option flag / concept | mapping |
+|---|---|
+| `OS_NPC_NOT_OWNED` (0x2) | NPC owner and `BotData.OwnerID` = `UUID.Zero`; `CheckPermissions` then admits anyone - **mapped** |
+| `OS_NPC_SENSE_AS_AGENT` (0x4) | `CreateNPC(..., senseAsAgent, ...)` - **mapped**; the bot door still always senses as agent |
+| `OS_NPC_OBJECT_GROUP` (0x8) | BotManager's `CreateNPC` overload carries no group; `BotData` has no group field - **accepted, not applied** |
+| `OS_NPC_CREATOR_OWNED` (0x1) | the default; same as no flag |
+| `notecard` (create / load / save) | **the bot outfit store, by name, scoped to the calling prim's owner**: `""` on create = the owner's current appearance (BotManager's rule); `osNpcLoadAppearance(npc, name)` = `ChangeBotOutfit`; `osNpcSaveAppearance(npc, name)` = `SaveBotOutfit`, returning the outfit key where upstream returns a notecard asset id; `includeHuds` accepted, the store keeps the whole appearance. No notecard is written or read - the bot store IS the appearance store on Legion |
+| `osNpcMoveTo` / `MoveToTarget` | one navigation point through `SetBotNavigationPoints`: `OS_NPC_RUNNING` -> `Run`, `OS_NPC_NO_FLY` -> `Walk`, otherwise `Fly` (upstream's `noFly = false`); `OS_NPC_LAND_AT_TARGET` accepted, not applied (BotManager lands on arrival anyway) |
+| `osNpcSit(npc, target, options)` | `SitBotOnObject`; `OS_NPC_SIT_NOW` is the only option and the only behaviour |
+| `osNpcSay/Shout/Whisper` | `BotChat` with the chat type; upstream's 2 s say-throttle not applied |
+| `osNpcTouch(npc, object, link)` | `BotTouchObject` after upstream's link resolution (0/`LINK_ROOT` -> root, `LINK_THIS` -> the part, n -> link n) |
+| `osNpcGetOwner` | `GetBotOwner`; an unowned NPC answers **its own key**, as upstream |
+| `osIsNpc` | the presence's `IsNPC` - true for any NPC, bot or not |
+| not landed | `osNpcSayTo` (targeted delivery has no door in Phlox's listen manager yet), `osNpcLookAt` (BotManager has no look-at) |
+
+**Gate:** every function under its upstream key at its upstream level through `OsslGate`
+(`Allow_osNpcCreate`, `Allow_osNpcRemove`, ... - the live `osslDefaultEnable.ini` maps them all to
+`${OSSL|osslNPC}` = `ESTATE_MANAGER,ESTATE_OWNER`, so on Legion only estate managers' and the owner's
+prims may drive NPCs, the same as YEngine).
+
+### What pins it
+
+`OsslNpcTests`, on a harness scene built the way upstream's `NPCModuleTests` builds one (AvatarFactory,
+UserManagement, Attachments, NPCModule, BasicInventoryAccess) plus `BotManager` and `ChatModule` (an NPC is
+a client; its chat reaches the scene through the chat module), `[NPC] Enabled`, `OSFunctionThreatLevel =
+High`: `osNpcCreate("Test","Npc", llGetPos()+<2,0,0>, "")` yields a key for a presence named **Test Npc**;
+`osIsNpc` 1, `botIsBot` 1, `osIsNpc(owner)` 0; `botGetBotsWithTag("")` lists it at index 0;
+`osNpcGetOwner` is the prim owner; `osNpcSay(npc, "hello")` arrives as **client chat from the NPC's key**
+on channel 0; `osNpcGetPos` reads the position back. An owned NPC survives `osNpcRemove` from another
+owner's prim and is removed by its owner's; an `OS_NPC_NOT_OWNED` NPC reports itself as owner, has
+`BotData.OwnerID` zero, and is removed by anyone. At the default VeryLow, `osNpcCreate` is denied with
+one stop and no bot exists. Dispatch baseline **regenerated** (725 -> 747 names). Suite **148 -> 152**;
+region server builds.

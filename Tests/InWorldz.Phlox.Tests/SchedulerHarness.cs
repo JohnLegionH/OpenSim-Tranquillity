@@ -40,6 +40,7 @@ public sealed class SchedulerHarness : IDisposable
         var startup = config.AddConfig("Startup");
         startup.Set("DefaultScriptEngine", "InWorldz.Phlox");
         configure?.Invoke(config);
+        Config = config;
 
         Scene = new SceneHelpers().SetupScene();
 
@@ -57,6 +58,11 @@ public sealed class SchedulerHarness : IDisposable
         // llSay goes Scene.SimChat -> EventManager.OnChatFromWorld (Scene.PacketHandlers.cs:51-85),
         // so the real path is observed rather than a stub API injected into the engine - the engine
         // builds its own LSLSystemAPI inside FinishedLoading and takes no seam for one.
+        // PHLOX-14: NPC chat arrives as CLIENT chat (NPCAvatar is a client), with the NPC as sender.
+        Scene.EventManager.OnChatFromClient += (sender, chat) =>
+        {
+            lock (m_said) m_clientChat.Add((chat.Channel, chat.Message ?? string.Empty, chat.Sender?.AgentId ?? chat.SenderUUID));
+        };
         Scene.EventManager.OnChatFromWorld += (sender, chat) =>
         {
             lock (m_said)
@@ -297,6 +303,11 @@ public sealed class SchedulerHarness : IDisposable
 
     private readonly List<string> m_said = new();
     private readonly List<(int Channel, string Message)> m_saidOn = new();
+    private readonly List<(int Channel, string Message, UUID Sender)> m_clientChat = new();
+    /// <summary>PHLOX-14: chat that came in as client chat (NPCs), with the sender's key.</summary>
+    public IReadOnlyList<(int Channel, string Message, UUID Sender)> ClientChat { get { lock (m_said) return m_clientChat.ToArray(); } }
+    /// <summary>PHLOX-14: the config the engine was initialised with, for adding scene modules after construction.</summary>
+    public IConfigSource Config { get; }
 
     /// <summary>Everything any script in this scene has said, in order.</summary>
     public IReadOnlyList<string> Said { get { lock (m_said) return m_said.ToArray(); } }
