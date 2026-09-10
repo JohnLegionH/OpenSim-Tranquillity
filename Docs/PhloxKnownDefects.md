@@ -1512,3 +1512,65 @@ scripted doors as before); `llDamage` on a task target and the seated-avatar red
 throttle; `on_damage` on the *hit object's* scripts (SL raises it on tasks too - only avatars' attachments
 here). The PHLOX-6 note that the hook "would live in `ScenePresence.PhysicsCollisionUpdate`" was half
 right: it lives in the door that path now calls.
+
+## PHLOX-11 - script_state.db: no more "database is locked"
+
+**2026-09-10. Landed; not deployed.** Live on 1.1.319, start 05:47:01: `05:47:08 WARN [PhloxState] Failed to
+load state for 77147179-... "database is locked"` (348 ms after that script started from disk cache),
+then `05:47:09 ERROR [PhloxState] Batch flush failed: "database is locked"`. A failed load was a fresh
+start: `LoadState` swallowed the exception and returned null, `FinishedLoading` read null as "no saved
+state", posted `state_entry`, and the next flush **saved the fresh state over the row** - the globals
+were gone for good, not just for that run. Three regions load in parallel and each engine's
+`StateManager.FlushLoop` writes every 2.5 s, all on one SQLite file.
+
+### PART 1 - the reproduction that did not reproduce, and what it proved instead
+
+Three shapes against a real temp DB with the pre-fix connection setup, 10 rounds each, **0 BUSY**:
+one manager with three loader threads restoring 50 rows each against a writer feeding the flush loop;
+**three managers on one file** (three engines, three flush loops - the live shape); and pure open/close
+churn, nine threads x 800 loads with no long-lived connection. Two probes explain why:
+
+- a load against a held `BEGIN EXCLUSIVE` returned its row in **12 ms** (WAL readers do not block on
+  the writer), and a write against the same held lock **waited 2098 ms and succeeded** - System.Data.SQLite
+  retries a plain `SQLITE_BUSY` inside `Step` until its 30 s command timeout. In-process contention
+  therefore never surfaces as an exception, which is why the live failure - **348 ms** after the load
+  began, not 30 s - cannot have been a plain busy. What the provider does *not* retry is the busy a
+  connection gets while another is rebuilding the WAL index, and the old code opened and closed a
+  connection **per call**, so between calls the connection count dropped to zero and the WAL was torn
+  down and rebuilt, over and over, across three engines. That is the mechanism this fix removes;
+  it could not be provoked on this machine in the budget, and that is recorded as such rather than
+  as a red test. **The cited exception is the live one**, not a test's.
+- the churn probe ran **2015 ms** on per-call connections and **53 ms** on the persistent ones.
+
+`StateDbContentionTests` (the three-manager shape, 10 rounds) stays as the regression: it must read 0
+load failures, 0 flush failures, 0 null rows, and prints the first error text if it ever does not.
+
+### PART 2 - the fix, all in `StateManager`
+
+| | |
+|---|---|
+| (a) | `PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;` **once** per manager under the writer lock (the old code re-issued the journal pragma on **every** open) |
+| (b) | `busy_timeout` **5000 ms** on every connection - connection string `BusyTimeout=5000` and the pragma |
+| (c) | **one writer**: every write in the process - all three engines' flush loops, `SaveSingle`, `DeleteState` - serialises on a **static** `s_WriterLock` (the old `m_Lock` was per manager, so three engines had three writers). Each manager keeps **one persistent writer and one persistent reader** open for its lifetime, so the WAL is never torn down between calls; loads use the reader under the manager's own read lock |
+| held, not fresh | `LoadState`: a database failure is **not** "no state". One retry, then `StateLoadFailedException`; `FinishedLoading` catches it, logs ERROR with the item id, and holds the script **Disabled** with the new `LocalDisableFlag.StateLoadFailed` - loaded, in `phlox status` as `HELD: StateLoadFailed (state load failed - row kept, never run or saved this process; restart to retry)`, no `state_entry`, no run queue. `StateManager.MarkLoadFailed` makes `ScriptChanged` and `ScriptUnloaded` **refuse to save** that id, so the row survives shutdown too |
+
+**The row is not overwritten - proven.** `StateLoadFailedHoldTests`: process 1 runs the script (a
+global lands at 41) and saves; process 2 has the database "locked" for that item (the
+`FailLoadForTest` seam, throwing as SQLite would) - the load fails twice, the script is held
+(`Enabled=False LocalDisable=StateLoadFailed`), never says `up`, ignores a touch, and the process ends
+through `ScriptUnloaded`; the row's blob and `saved_at` are **byte-identical** before and after; process 3
+loads it - no `up`, and the touch says **`g=42`**. Suite green; region server builds.
+
+### Found on the way, not fixed
+
+`05:58:12 WARN [PhloxState] Failed to save 6b726988-...: "Collection was modified after the enumerator
+was instantiated."` - a flush serialising a script's event queue while the script thread changes it.
+Different bug (a snapshot under the queue lock in `SerializedRuntimeState.FromRuntimeState`); a
+dropped save, not a lost row. Candidate.
+
+**The older entry, closed against this one.** It is not in the tracked docs (`grep` of `Docs/` for the
+phrase, `SQLITE_BUSY`, `busy_timeout`: 0 hits); it is the perf note in the 09-08 ops handoff, §3.4:
+"`[PhloxState] database is locked` 09-06 14:19" - the same line, four days earlier, filed under physics
+perf notes because nothing was known about it. Marked closed by PHLOX-11 in the current handoff. The
+nearest tracked item is candidate (iv)'s note that the harness tests share one `script_state.db` - which
+the persistent connections and the busy timeout now serve as well.

@@ -141,6 +141,13 @@ public sealed class SchedulerHarness : IDisposable
         return item.ItemID;
     }
 
+    /// <summary>PHLOX-11: the scheduler's status record for a script, as `phlox status` reads it.</summary>
+    public string StatusOf(UUID itemId)
+    {
+        var st = ((global::Phlox.ScriptEngine.PhloxExecutionScheduler)m_exe).GetStatus(itemId);
+        return $"Found={st.Found} RunState={st.RunState} Enabled={st.Enabled} GeneralEnable={st.GeneralEnable} LocalDisable={st.LocalDisable ?? "None"} queued={st.QueuedEvents}";
+    }
+
     private int m_scriptSeq;
 
     /// <summary>

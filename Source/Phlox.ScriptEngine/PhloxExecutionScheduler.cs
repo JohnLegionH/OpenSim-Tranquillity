@@ -142,10 +142,23 @@ namespace Phlox.ScriptEngine
 
             Interpreter interp;
             bool freshStart;
+            bool holdStateLoadFailed = false;
 
             try
             {
-                var savedState = m_Engine.StateManager?.LoadState(req.ItemID, compiled.AssetId);
+                InWorldz.Phlox.Serialization.SerializedRuntimeState savedState = null;
+                try
+                {
+                    savedState = m_Engine.StateManager?.LoadState(req.ItemID, compiled.AssetId);
+                }
+                catch (StateLoadFailedException e)
+                {
+                    // PHLOX-11: the row may be there and unreadable right now. A fresh start here would
+                    // save over it at the next flush. Hold the script instead: loaded, visible in
+                    // `phlox status` as StateLoadFailed, never run, never saved. A restart retries.
+                    m_log.LogError("[PhloxExe]: Holding {0} DISABLED (state load failed, row kept): {1}", req.ItemID, e.Message);
+                    holdStateLoadFailed = true;
+                }
                 if (savedState != null)
                 {
                     try
@@ -184,6 +197,13 @@ namespace Phlox.ScriptEngine
             lock (m_AllScriptsLock)
                 m_AllScripts[interp.ItemId] = interp;
             interp.SetScriptEventFlags();
+
+            if (holdStateLoadFailed)
+            {
+                interp.ScriptState.LocalDisable |= RuntimeState.LocalDisableFlag.StateLoadFailed;
+                interp.ScriptState.RunState = RuntimeState.Status.Waiting;
+                return;   // no state_entry, no run queue - and StateManager refuses to save it
+            }
 
             if (freshStart)
             {
@@ -482,6 +502,8 @@ namespace Phlox.ScriptEngine
             public int TimerIntervalMs;
             public ulong EventMask;
             public string PendingSyscall;
+            /// <summary>PHLOX-11: why the simulator holds it, if it does (e.g. StateLoadFailed).</summary>
+            public string LocalDisable;
         }
 
         internal ScriptStatus GetStatus(UUID itemId)
@@ -514,6 +536,7 @@ namespace Phlox.ScriptEngine
                     // five-minute one.
                     PendingSyscall = st.RunState == RuntimeState.Status.Syscall
                         ? DescribeCurrentSyscall(interp) : null,
+                    LocalDisable = st.LocalDisable == RuntimeState.LocalDisableFlag.None ? null : st.LocalDisable.ToString(),
                 };
             }
         }

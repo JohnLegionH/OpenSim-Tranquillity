@@ -241,7 +241,14 @@ namespace InWorldz.Phlox.VM
             /// <summary>
             /// Script has been disabled until the avatar is crossed into the region
             /// </summary>
-            CrossingWait    = (1 << 1)
+            CrossingWait    = (1 << 1),
+
+            /// <summary>
+            /// PHLOX-11. The script's saved state row could not be read at load; the script is held
+            /// here, with a fresh interpreter that must never run or save, so the row survives for
+            /// the next process to try again.
+            /// </summary>
+            StateLoadFailed = (1 << 2)
         }
 
         /// <summary>

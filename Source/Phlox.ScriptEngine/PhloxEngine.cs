@@ -286,7 +286,9 @@ namespace Phlox.ScriptEngine
             o.Output($"  prim          : {part?.Name ?? "(unknown)"} localId={st.HostLocalId}");
             o.Output($"  script name   : {item?.Name ?? "(not in prim inventory)"}");
             o.Output($"  RunState      : {st.RunState}" + (st.PendingSyscall is null ? "" : $"  (in {st.PendingSyscall})"));
-            o.Output($"  enabled       : Enabled={st.Enabled} GeneralEnable={st.GeneralEnable} suspended={st.Suspended}");
+            o.Output($"  enabled       : Enabled={st.Enabled} GeneralEnable={st.GeneralEnable} suspended={st.Suspended}"
+                + (st.LocalDisable is null ? "" : $"  HELD: {st.LocalDisable}"
+                    + (st.LocalDisable.Contains("StateLoadFailed") ? " (state load failed - row kept, never run or saved this process; restart to retry)" : "")));
             o.Output($"  Running flag  : {(item is null ? "(unknown)" : item.ScriptRunning.ToString())}");
             o.Output($"  queued events : {st.QueuedEvents}");
             o.Output($"  LSL state     : {st.LslState}");
