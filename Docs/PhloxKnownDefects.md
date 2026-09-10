@@ -1147,3 +1147,63 @@ harness, not about dispatch.
   derez path, which is its own change.
 - The four-argument `llUpdateKeyValue` returns a fresh request key and posts the reply immediately
   rather than deferring it; the contract a script sees is the SL one.
+
+
+---
+
+## PHLOX-6 - the five SL events Phlox did not recognise
+
+**2026-09-09. Landed; not deployed.** A script declaring any of these handlers failed to compile - the
+compiler rejected the handler name outright. Signatures are the SL wiki's, checked page by page.
+
+| event | wiki signature | compiles | mask bit | delivers | trigger |
+|---|---|---|---|---|---|
+| `path_update` | `(integer type, list reserved)` | yes | `scriptEvents.path_update` (1<<40, already existed upstream) | **yes** | `BotManager.FirePathEvent` (`BotManager.cs:298-322`) now posts it beside `bot_update` through `IScriptModule.PostScriptEvent`; `BOT_MOVE_COMPLETE` (1) -> `PU_GOAL_REACHED` (1), `BOT_MOVE_FAILED` (3, a navigation timeout) -> `PU_FAILURE_UNREACHABLE` (4) |
+| `on_damage` | `(integer num_detected)` | yes | new `1<<44` | **compile-only** | none exists - damage is applied inline with no event before or after |
+| `final_damage` | `(integer num_detected)` | yes | new `1<<45` | **compile-only** | same |
+| `on_death` | `()` | yes | new `1<<46` | **yes** | `EventManager.OnAvatarKilled` -> `PhloxEngine.OnAvatarKilled` posts it to every script on every attachment of the dead avatar, which is exactly the wiki's scope ("all attachments worn by an avatar when that avatar's health reaches 0") |
+| `game_control` | `(key id, integer button_levels, list axes)` - **three** parameters | yes | new `1<<47` | **compile-only, permanently** | "triggered when compatible viewer sends fresh `GameControlInput` message" - a viewer->sim message Tranquillity does not carry. Nothing fakes a trigger |
+
+**One disagreement with the brief that scoped this:** it gave `game_control` four parameters
+(`integer button_edges` between `button_levels` and `axes`). The wiki page has three. The wiki wins,
+and the table comment says so.
+
+### The damage trio - evidence for compile-only
+
+Phlox's `llAdjustDamage` and `llSetHealth` (`LSLSystemAPI.cs:11185-11225`) subtract from
+`ScenePresence.Health` via `setHealthWithUpdate` and, at zero, call `TriggerAvatarKill`. Its `llDamage`
+(`:12687`) only sends the client a health figure. The region's own damage path is
+`ScenePresence.PhysicsCollisionUpdate` (`ScenePresence.cs:5245`), which decrements `Health` inline for
+velocity and `ParentGroup.Damage` collisions and calls `TriggerAvatarKill` at `:5344`. **There is no
+event raised when damage is applied - only when it kills.** So `on_death` has a real hook and the
+other two do not. **The future hook for `on_damage` / `final_damage` lives in
+`ScenePresence.PhysicsCollisionUpdate`**, batched per frame: post `on_damage(count)` before the
+subtraction, `final_damage(count)` after, to the presence's attachments - and the same two lines in
+`llAdjustDamage`. Not done here; that is a combat-semantics change, not an event-recognition one.
+
+### path_update - a decision
+
+`BotData` carries no record of whether a bot was created by `llCreateCharacter` or by the InWorldz bot
+API, so `path_update` is posted **beside** `bot_update` for every bot path outcome rather than only
+for pathfinding characters. A script declares one handler or the other, and an engine drops an event
+the script has no handler for, so nothing sees both. Thirteen `PU_*` constants added from the wiki
+(`PU_FAILURE_OTHER` = 0xF4240 = 1000000); neither Phlox nor upstream had any.
+
+### What pins it
+
+Ten tests in `SlEventRecognitionTests`: the five handlers compile together and each alone; a prim
+holding `on_damage` / `final_damage` / `on_death` shows all three bits in `ScriptEvents` (what `phlox
+status` prints); `on_death` reaches a script on an attachment when the wearer is killed through the
+real `TriggerAvatarKill`; and `path_update` reaches its handler with the PU code through the same
+`IScriptModule.PostScriptEvent` door `BotManager` uses, for both mapped outcomes.
+
+**Red first, honestly stated:** the test project would not even build against the unchanged engine -
+`'scriptEvents' does not contain a definition for 'on_damage' / 'final_damage' / 'on_death'` - which
+proves the mask bits did not exist; the handler-name rejection was the premise and was not separately
+executed, since the same file carries both halves.
+
+Phlox suite **89 -> 99**, 0 skipped, green; solution 0 errors. Four new `scriptEvents` bits (44-47) in
+`OpenSim.Region.Framework` - unused by YEngine, harmless to it.
+
+**Did-it-land for the deploy:** a prim with all five handlers compiles with no `[PhloxCompile]` error,
+and `phlox status` lists them in the mask.

@@ -10604,6 +10604,12 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 				case SupportedEventList.Events.HTTP_REQUEST:        return (ulong)scriptEvents.http_request;
 				case SupportedEventList.Events.TRANSACTION_RESULT:  return (ulong)scriptEvents.transaction_result;
 				case SupportedEventList.Events.LINKSET_DATA:        return (ulong)scriptEvents.linkset_data;
+				// PHLOX-6: the five SL events, now in both enums.
+				case SupportedEventList.Events.PATH_UPDATE:         return (ulong)scriptEvents.path_update;
+				case SupportedEventList.Events.ON_DAMAGE:           return (ulong)scriptEvents.on_damage;
+				case SupportedEventList.Events.FINAL_DAMAGE:        return (ulong)scriptEvents.final_damage;
+				case SupportedEventList.Events.ON_DEATH:            return (ulong)scriptEvents.on_death;
+				case SupportedEventList.Events.GAME_CONTROL:        return (ulong)scriptEvents.game_control;
 				// Note: the following events are intentionally deferred — each requires a
 				// coordinated two-sided change (Phlox SupportedEventList AND core OpenSim
 				// scriptEvents enum / posting infrastructure) before a case label here is safe.

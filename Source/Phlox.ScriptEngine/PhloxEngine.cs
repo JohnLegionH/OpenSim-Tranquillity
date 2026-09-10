@@ -162,6 +162,7 @@ namespace Phlox.ScriptEngine
             m_Scene.EventManager.OnObjectGrabbing += OnObjectGrabbing;
             m_Scene.EventManager.OnObjectDeGrab += OnObjectDeGrab;
             m_Scene.EventManager.OnScriptChangedEvent += OnScriptChangedEvent;
+            m_Scene.EventManager.OnAvatarKilled += OnAvatarKilled;   // PHLOX-6: on_death
             m_Scene.EventManager.OnScriptControlEvent += OnScriptControlEvent;
 			m_Scene.EventManager.OnShutdown += OnShutdown;
             m_Scene.EventManager.OnScriptColliderStart     += OnScriptColliderStart;
@@ -392,6 +393,7 @@ namespace Phlox.ScriptEngine
             m_Scene.EventManager.OnGetScriptRunning -= OnGetScriptRunning;
             m_Scene.EventManager.OnChatFromWorld -= OnChatFromWorld;
             m_Scene.EventManager.OnChatFromClient -= OnChatFromClient;
+            m_Scene.EventManager.OnAvatarKilled -= OnAvatarKilled;
             m_Scene.EventManager.OnObjectGrab -= OnObjectGrab;
             m_Scene.EventManager.OnObjectGrabbing -= OnObjectGrabbing;
             m_Scene.EventManager.OnObjectDeGrab -= OnObjectDeGrab;
@@ -868,6 +870,31 @@ namespace Phlox.ScriptEngine
             evt.Normalize();
             m_ExeScheduler.PostEvent(itemID, evt);
             return true;
+        }
+
+        /// <summary>
+        /// PHLOX-6. on_death - "triggered on all attachments worn by an avatar when that avatar's
+        /// health reaches 0" (wiki). The region's one death hook is EventManager.OnAvatarKilled,
+        /// raised from ScenePresence.PhysicsCollisionUpdate and from llAdjustDamage / llSetHealth
+        /// when Health falls to 0. Every script on every part of every attachment gets it, with no
+        /// arguments. The killer's local id is not part of the SL event and is not forwarded.
+        /// </summary>
+        private void OnAvatarKilled(uint killerLocalId, ScenePresence dead)
+        {
+            if (dead == null) return;
+            try
+            {
+                foreach (SceneObjectGroup attachment in dead.GetAttachments())
+                {
+                    if (attachment == null || attachment.IsDeleted) continue;
+                    foreach (SceneObjectPart part in attachment.Parts)
+                        PostObjectEvent(part.LocalId, new EventParams("on_death", Array.Empty<object>(), null));
+                }
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning("[PhloxEngine]: on_death delivery for {0} failed: {1}", dead.UUID, e.Message);
+            }
         }
 
         private void OnScriptControlEvent(UUID itemID, UUID agentID, uint held, uint change)

@@ -797,6 +797,20 @@ namespace InWorldz.Phlox.Compiler
 
             {"BOT_CREATE_DEFAULT", new ConstantSymbol("BOT_CREATE_DEFAULT", SymbolTable.INT, "0")},
             
+            // PHLOX-6. PU_* per wiki.secondlife.com/wiki/Path_update (values quoted there in hex).
+            {"PU_SLOWDOWN_DISTANCE_REACHED", new ConstantSymbol("PU_SLOWDOWN_DISTANCE_REACHED", SymbolTable.INT, "0")},
+            {"PU_GOAL_REACHED", new ConstantSymbol("PU_GOAL_REACHED", SymbolTable.INT, "1")},
+            {"PU_FAILURE_INVALID_START", new ConstantSymbol("PU_FAILURE_INVALID_START", SymbolTable.INT, "2")},
+            {"PU_FAILURE_INVALID_GOAL", new ConstantSymbol("PU_FAILURE_INVALID_GOAL", SymbolTable.INT, "3")},
+            {"PU_FAILURE_UNREACHABLE", new ConstantSymbol("PU_FAILURE_UNREACHABLE", SymbolTable.INT, "4")},
+            {"PU_FAILURE_TARGET_GONE", new ConstantSymbol("PU_FAILURE_TARGET_GONE", SymbolTable.INT, "5")},
+            {"PU_FAILURE_NO_VALID_DESTINATION", new ConstantSymbol("PU_FAILURE_NO_VALID_DESTINATION", SymbolTable.INT, "6")},
+            {"PU_EVADE_HIDDEN", new ConstantSymbol("PU_EVADE_HIDDEN", SymbolTable.INT, "7")},
+            {"PU_EVADE_SPOTTED", new ConstantSymbol("PU_EVADE_SPOTTED", SymbolTable.INT, "8")},
+            {"PU_FAILURE_NO_NAVMESH", new ConstantSymbol("PU_FAILURE_NO_NAVMESH", SymbolTable.INT, "9")},
+            {"PU_FAILURE_DYNAMIC_PATHFINDING_DISABLED", new ConstantSymbol("PU_FAILURE_DYNAMIC_PATHFINDING_DISABLED", SymbolTable.INT, "10")},
+            {"PU_FAILURE_PARCEL_UNREACHABLE", new ConstantSymbol("PU_FAILURE_PARCEL_UNREACHABLE", SymbolTable.INT, "11")},
+            {"PU_FAILURE_OTHER", new ConstantSymbol("PU_FAILURE_OTHER", SymbolTable.INT, "1000000")},
             {"BOT_MOVE_COMPLETE", new ConstantSymbol("BOT_MOVE_COMPLETE", SymbolTable.INT, "1")},
             {"BOT_MOVE_UPDATE", new ConstantSymbol("BOT_MOVE_UPDATE", SymbolTable.INT, "2")},
             {"BOT_MOVE_FAILED", new ConstantSymbol("BOT_MOVE_FAILED", SymbolTable.INT, "3")},
