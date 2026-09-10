@@ -861,12 +861,31 @@ private static string ConvToString(object o)
 
         #region ISyscallShim Members
 
+        /// <summary>PHLOX-13 test seam: make a shim throw as a broken implementation would. Null in production.</summary>
+        public static Func<int, Exception> ThrowForTest;
+
         public void Call(int funcid)
         {
             // PHLOX-2g: remember what we are about to run, so 'phlox status' can name it if the
             // call parks the script in Status.Syscall and never completes.
             if (_interpreter != null) _interpreter.ScriptState.LastSyscallIndex = funcid;
-            _shimMap[funcid](this);
+            try
+            {
+                if (ThrowForTest != null) { var ex = ThrowForTest(funcid); if (ex != null) throw ex; }
+                _shimMap[funcid](this);
+            }
+            catch
+            {
+                // PHLOX-13: an exception escaping a shim terminates the script (the scheduler's job);
+                // it is not parked in a syscall, whatever the shim managed to set before it threw.
+                if (_interpreter != null)
+                {
+                    _interpreter.ScriptState.LastSyscallIndex = -1;
+                    if (_interpreter.ScriptState.RunState == VM.RuntimeState.Status.Syscall)
+                        _interpreter.ScriptState.RunState = VM.RuntimeState.Status.Running;
+                }
+                throw;
+            }
             // PHLOX-4c: Call is the one choke point every shim returns through. If the shim did not
             // park the script in Syscall - a synchronous call that has already returned, or llSleep
             // which set Sleeping - then the script is not 'in' a syscall any more and the index must

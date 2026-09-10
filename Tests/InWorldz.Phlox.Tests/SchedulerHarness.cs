@@ -143,6 +143,9 @@ public sealed class SchedulerHarness : IDisposable
         return item.ItemID;
     }
 
+    /// <summary>PHLOX-13: is the script on the run queue?</summary>
+    public bool IsOnRunQueue(UUID itemId) => ((global::Phlox.ScriptEngine.PhloxExecutionScheduler)m_exe).IsOnRunQueue(itemId);
+
     /// <summary>PHLOX-11: the scheduler's status record for a script, as `phlox status` reads it.</summary>
     public string StatusOf(UUID itemId)
     {

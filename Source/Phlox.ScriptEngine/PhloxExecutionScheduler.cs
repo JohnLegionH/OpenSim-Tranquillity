@@ -506,6 +506,12 @@ namespace Phlox.ScriptEngine
             public string LocalDisable;
         }
 
+        /// <summary>PHLOX-13 test seam: is this script on the run queue right now?</summary>
+        internal bool IsOnRunQueue(UUID itemId)
+        {
+            lock (m_AllScriptsLock) return m_RunIndex.ContainsKey(itemId);
+        }
+
         internal ScriptStatus GetStatus(UUID itemId)
         {
             lock (m_AllScriptsLock)
@@ -673,7 +679,14 @@ namespace Phlox.ScriptEngine
                     try { m_NextScript.Value.Tick(); }
                     catch (Exception e)
                     {
+                        // PHLOX-13: TerminateWithError marks the script Killed, but this path broke out of
+                        // the timeslice WITHOUT the Killed arm of CheckRunstateChange, so the node stayed on
+                        // the run queue and the next pass ticked the dead script again on a torn operand
+                        // stack - the "Unable to cast" and "Stack empty" stops that followed every OSSL
+                        // denial. Off the queue here, once.
                         TerminateWithError(m_NextScript.Value, e);
+                        m_RunIndex.Remove(m_NextScript.Value.ItemId);
+                        m_RunQueue.Remove(m_NextScript);
                         terminated = true;
                     }
 
@@ -1315,6 +1328,7 @@ namespace Phlox.ScriptEngine
         {
             script.ScriptState.RunningEvent?.SignalCompleted();   // PHLOX-10
             script.ScriptState.RunState = RuntimeState.Status.Killed;
+            script.ScriptState.LastSyscallIndex = -1;   // PHLOX-13: not parked in anything any more
             m_log.LogError("[PhloxExe]: Script {0} asset {1} terminated: {2}",
                 script.ItemId, script.Script.AssetId, e);
             try
