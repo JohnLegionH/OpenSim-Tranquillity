@@ -784,6 +784,42 @@ private static string ConvToString(object o)
 								Shim_osGetSimulatorMemoryKB,         //697  PHLOX-12
 								Shim_osGetHealth,                    //698  PHLOX-12
 								Shim_osGetScriptEngineName,          //699  PHLOX-12
+								Shim_osAESEncrypt,                   //700  PHLOX-13
+								Shim_osAESDecrypt,                   //701  PHLOX-13
+								Shim_osAESEncryptTo,                 //702  PHLOX-13
+								Shim_osAESDecryptFrom,               //703  PHLOX-13
+								Shim_osAngleBetween,                 //704  PHLOX-13
+								Shim_osApproxEquals,                 //705  PHLOX-13
+								Shim_osApproxEquals3,                //706  PHLOX-13
+								Shim_osCheckODE,                     //707  PHLOX-13
+								Shim_osFormatString,                 //708  PHLOX-13
+								Shim_osIsNotValidNumber,             //709  PHLOX-13
+								Shim_osIsUUID,                       //710  PHLOX-13
+								Shim_osListAsFloat,                  //711  PHLOX-13
+								Shim_osListAsInteger,                //712  PHLOX-13
+								Shim_osListAsString,                 //713  PHLOX-13
+								Shim_osListAsVector,                 //714  PHLOX-13
+								Shim_osListAsRotation,               //715  PHLOX-13
+								Shim_osMatchString,                  //716  PHLOX-13
+								Shim_osMax,                          //717  PHLOX-13
+								Shim_osMin,                          //718  PHLOX-13
+								Shim_osRegexIsMatch,                 //719  PHLOX-13
+								Shim_osRound,                        //720  PHLOX-13
+								Shim_osSHA256,                       //721  PHLOX-13
+								Shim_osSlerp,                        //722  PHLOX-13
+								Shim_osStringStartsWith,             //723  PHLOX-13
+								Shim_osStringEndsWith,               //724  PHLOX-13
+								Shim_osStringIndexOf,                //725  PHLOX-13
+								Shim_osStringIndexOf5,               //726  PHLOX-13
+								Shim_osStringLastIndexOf,            //727  PHLOX-13
+								Shim_osStringLastIndexOf5,           //728  PHLOX-13
+								Shim_osStringRemove,                 //729  PHLOX-13
+								Shim_osStringReplace,                //730  PHLOX-13
+								Shim_osStringSubString,              //731  PHLOX-13
+								Shim_osStringSubString3,             //732  PHLOX-13
+								Shim_osUnixTimeToTimestamp,          //733  PHLOX-13
+								Shim_osVecDistSquare,                //734  PHLOX-13
+								Shim_osVecMagSquare,                 //735  PHLOX-13
         };
 
         /// <summary>
@@ -6963,6 +6999,271 @@ private static string ConvToString(object o)
         {
             string ret = self._systemAPI.osGetScriptEngineName();
             self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
+        }
+
+        // ── PHLOX-13: OSSL pure helpers ──
+        static private void Shim_osAESEncrypt(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osAESEncrypt(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osAESDecrypt(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osAESDecrypt(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osAESEncryptTo(SyscallShim self)
+        {
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osAESEncryptTo(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osAESDecryptFrom(SyscallShim self)
+        {
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osAESDecryptFrom(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osAngleBetween(SyscallShim self)
+        {
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            float ret = self._systemAPI.osAngleBetween(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osApproxEquals(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p0 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osApproxEquals(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osApproxEquals3(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p0 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osApproxEquals(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osCheckODE(SyscallShim self)
+        {
+            int ret = self._systemAPI.osCheckODE();
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osFormatString(SyscallShim self)
+        {
+            LSLList p1 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osFormatString(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osIsNotValidNumber(SyscallShim self)
+        {
+            float p0 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osIsNotValidNumber(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osIsUUID(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osIsUUID(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osListAsFloat(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            LSLList p0 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            float ret = self._systemAPI.osListAsFloat(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osListAsInteger(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            LSLList p0 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osListAsInteger(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osListAsString(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            LSLList p0 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osListAsString(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osListAsVector(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            LSLList p0 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 ret = self._systemAPI.osListAsVector(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osListAsRotation(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            LSLList p0 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            Quaternion ret = self._systemAPI.osListAsRotation(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osMatchString(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            LSLList ret = self._systemAPI.osMatchString(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osMax(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p0 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float ret = self._systemAPI.osMax(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osMin(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p0 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float ret = self._systemAPI.osMin(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osRegexIsMatch(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osRegexIsMatch(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osRound(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            float p0 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float ret = self._systemAPI.osRound(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSHA256(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSHA256(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSlerp(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            Quaternion p1 = ConvToQuat(self._interpreter.ScriptState.Operands.Pop());
+            Quaternion p0 = ConvToQuat(self._interpreter.ScriptState.Operands.Pop());
+            Quaternion ret = self._systemAPI.osSlerp(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osStringStartsWith(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osStringStartsWith(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osStringEndsWith(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osStringEndsWith(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osStringIndexOf(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osStringIndexOf(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osStringIndexOf5(SyscallShim self)
+        {
+            int p4 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p3 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osStringIndexOf(p0, p1, p2, p3, p4);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osStringLastIndexOf(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osStringLastIndexOf(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osStringLastIndexOf5(SyscallShim self)
+        {
+            int p4 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p3 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osStringLastIndexOf(p0, p1, p2, p3, p4);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osStringRemove(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osStringRemove(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osStringReplace(SyscallShim self)
+        {
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osStringReplace(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osStringSubString(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osStringSubString(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osStringSubString3(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osStringSubString(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osUnixTimeToTimestamp(SyscallShim self)
+        {
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osUnixTimeToTimestamp(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osVecDistSquare(SyscallShim self)
+        {
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            float ret = self._systemAPI.osVecDistSquare(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osVecMagSquare(SyscallShim self)
+        {
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            float ret = self._systemAPI.osVecMagSquare(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }
 		static private void Shim_llSetLinkRenderMaterial(SyscallShim self)
         {

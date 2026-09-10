@@ -4975,6 +4975,259 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] {  },
                 TableIndex = 699
             }},
+            // PHLOX-13: OSSL pure helpers (string/list/format/regex/crypto/maths), ported from OSSL_Api.cs, same gate
+            {"osAESEncrypt", new FunctionSig {
+                FunctionName = "osAESEncrypt",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String },
+                ParamNames = new string[] { "secret", "plainText" },
+                TableIndex = 700
+            }},
+            {"osAESDecrypt", new FunctionSig {
+                FunctionName = "osAESDecrypt",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String },
+                ParamNames = new string[] { "secret", "encryptedText" },
+                TableIndex = 701
+            }},
+            {"osAESEncryptTo", new FunctionSig {
+                FunctionName = "osAESEncryptTo",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.String },
+                ParamNames = new string[] { "secret", "plainText", "ivString" },
+                TableIndex = 702
+            }},
+            {"osAESDecryptFrom", new FunctionSig {
+                FunctionName = "osAESDecryptFrom",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.String },
+                ParamNames = new string[] { "secret", "encryptedText", "ivString" },
+                TableIndex = 703
+            }},
+            {"osAngleBetween", new FunctionSig {
+                FunctionName = "osAngleBetween",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.Vector, VarType.Vector },
+                ParamNames = new string[] { "a", "b" },
+                TableIndex = 704
+            }},
+            {"osApproxEquals", new FunctionSig {
+                FunctionName = "osApproxEquals",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Float, VarType.Float },
+                ParamNames = new string[] { "a", "b" },
+                TableIndex = 705
+            }},
+            {"osApproxEquals__3", new FunctionSig {
+                FunctionName = "osApproxEquals",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Float, VarType.Float, VarType.Float },
+                ParamNames = new string[] { "a", "b", "margin" },
+                TableIndex = 706
+            }},
+            {"osCheckODE", new FunctionSig {
+                FunctionName = "osCheckODE",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 707
+            }},
+            {"osFormatString", new FunctionSig {
+                FunctionName = "osFormatString",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.List },
+                ParamNames = new string[] { "str", "strings" },
+                TableIndex = 708
+            }},
+            {"osIsNotValidNumber", new FunctionSig {
+                FunctionName = "osIsNotValidNumber",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Float },
+                ParamNames = new string[] { "v" },
+                TableIndex = 709
+            }},
+            {"osIsUUID", new FunctionSig {
+                FunctionName = "osIsUUID",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "thing" },
+                TableIndex = 710
+            }},
+            {"osListAsFloat", new FunctionSig {
+                FunctionName = "osListAsFloat",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.List, VarType.Integer },
+                ParamNames = new string[] { "src", "index" },
+                TableIndex = 711
+            }},
+            {"osListAsInteger", new FunctionSig {
+                FunctionName = "osListAsInteger",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.List, VarType.Integer },
+                ParamNames = new string[] { "src", "index" },
+                TableIndex = 712
+            }},
+            {"osListAsString", new FunctionSig {
+                FunctionName = "osListAsString",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.List, VarType.Integer },
+                ParamNames = new string[] { "src", "index" },
+                TableIndex = 713
+            }},
+            {"osListAsVector", new FunctionSig {
+                FunctionName = "osListAsVector",
+                ReturnType = VarType.Vector,
+                ParamTypes = new VarType[] { VarType.List, VarType.Integer },
+                ParamNames = new string[] { "src", "index" },
+                TableIndex = 714
+            }},
+            {"osListAsRotation", new FunctionSig {
+                FunctionName = "osListAsRotation",
+                ReturnType = VarType.Rotation,
+                ParamTypes = new VarType[] { VarType.List, VarType.Integer },
+                ParamNames = new string[] { "src", "index" },
+                TableIndex = 715
+            }},
+            {"osMatchString", new FunctionSig {
+                FunctionName = "osMatchString",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.Integer },
+                ParamNames = new string[] { "src", "pattern", "start" },
+                TableIndex = 716
+            }},
+            {"osMax", new FunctionSig {
+                FunctionName = "osMax",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.Float, VarType.Float },
+                ParamNames = new string[] { "a", "b" },
+                TableIndex = 717
+            }},
+            {"osMin", new FunctionSig {
+                FunctionName = "osMin",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.Float, VarType.Float },
+                ParamNames = new string[] { "a", "b" },
+                TableIndex = 718
+            }},
+            {"osRegexIsMatch", new FunctionSig {
+                FunctionName = "osRegexIsMatch",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.String, VarType.String },
+                ParamNames = new string[] { "input", "pattern" },
+                TableIndex = 719
+            }},
+            {"osRound", new FunctionSig {
+                FunctionName = "osRound",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.Float, VarType.Integer },
+                ParamNames = new string[] { "value", "ndigits" },
+                TableIndex = 720
+            }},
+            {"osSHA256", new FunctionSig {
+                FunctionName = "osSHA256",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "input" },
+                TableIndex = 721
+            }},
+            {"osSlerp", new FunctionSig {
+                FunctionName = "osSlerp",
+                ReturnType = VarType.Rotation,
+                ParamTypes = new VarType[] { VarType.Rotation, VarType.Rotation, VarType.Float },
+                ParamNames = new string[] { "a", "b", "amount" },
+                TableIndex = 722
+            }},
+            {"osStringStartsWith", new FunctionSig {
+                FunctionName = "osStringStartsWith",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.Integer },
+                ParamNames = new string[] { "src", "value", "ignorecase" },
+                TableIndex = 723
+            }},
+            {"osStringEndsWith", new FunctionSig {
+                FunctionName = "osStringEndsWith",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.Integer },
+                ParamNames = new string[] { "src", "value", "ignorecase" },
+                TableIndex = 724
+            }},
+            {"osStringIndexOf", new FunctionSig {
+                FunctionName = "osStringIndexOf",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.Integer },
+                ParamNames = new string[] { "src", "value", "ignorecase" },
+                TableIndex = 725
+            }},
+            {"osStringIndexOf__5", new FunctionSig {
+                FunctionName = "osStringIndexOf",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.Integer, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "src", "value", "offset", "count", "ignorecase" },
+                TableIndex = 726
+            }},
+            {"osStringLastIndexOf", new FunctionSig {
+                FunctionName = "osStringLastIndexOf",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.Integer },
+                ParamNames = new string[] { "src", "value", "ignorecase" },
+                TableIndex = 727
+            }},
+            {"osStringLastIndexOf__5", new FunctionSig {
+                FunctionName = "osStringLastIndexOf",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.Integer, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "src", "value", "offset", "count", "ignorecase" },
+                TableIndex = 728
+            }},
+            {"osStringRemove", new FunctionSig {
+                FunctionName = "osStringRemove",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "src", "offset", "count" },
+                TableIndex = 729
+            }},
+            {"osStringReplace", new FunctionSig {
+                FunctionName = "osStringReplace",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.String },
+                ParamNames = new string[] { "src", "oldvalue", "newvalue" },
+                TableIndex = 730
+            }},
+            {"osStringSubString", new FunctionSig {
+                FunctionName = "osStringSubString",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer },
+                ParamNames = new string[] { "src", "offset" },
+                TableIndex = 731
+            }},
+            {"osStringSubString__3", new FunctionSig {
+                FunctionName = "osStringSubString",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "src", "offset", "length" },
+                TableIndex = 732
+            }},
+            {"osUnixTimeToTimestamp", new FunctionSig {
+                FunctionName = "osUnixTimeToTimestamp",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.Integer },
+                ParamNames = new string[] { "time" },
+                TableIndex = 733
+            }},
+            {"osVecDistSquare", new FunctionSig {
+                FunctionName = "osVecDistSquare",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.Vector, VarType.Vector },
+                ParamNames = new string[] { "a", "b" },
+                TableIndex = 734
+            }},
+            {"osVecMagSquare", new FunctionSig {
+                FunctionName = "osVecMagSquare",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.Vector },
+                ParamNames = new string[] { "a" },
+                TableIndex = 735
+            }},
          };
 
         /// <summary>

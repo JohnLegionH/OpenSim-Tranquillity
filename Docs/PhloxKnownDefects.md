@@ -1681,3 +1681,62 @@ script - the permission error, then `Unable to cast object of type 'System.Int32
 'System.String'`, then `Stack empty` - the interpreter re-entered its half-finished handler with a torn
 operand stack. YEngine kills and stays killed. Candidate: `TerminateWithError` sets `Killed` but something
 still schedules the script (the queued-event drain, or the harness's pump). Not investigated.
+
+## PHLOX-13 - a thrown syscall stays dead; OSSL pure helpers
+
+**2026-09-10. Landed in two commits; not deployed.**
+
+### PART 0 - the re-dispatch (`f6f1b0911c`)
+
+PHLOX-12 logged **three** stops per OSSL denial: the permission error, then `Unable to cast object of type
+'System.Int32' to type 'System.String'`, then `Stack empty`. The PHLOX-5 harness note pointed at
+`SafeOperandsPush`; the cause was one level up. `PhloxExecutionScheduler.DoTimeslices` catches the
+exception from `Tick()`, calls `TerminateWithError` (which sets `RunState = Killed`) and breaks out of the
+timeslice with `terminated = true` - **without** going through `CheckRunstateChange`, whose `Killed` arm
+is the only place a dead script leaves the run queue. The node stayed on the queue; the next pass ticked
+the dead script again, from the instruction after the syscall, on an operand stack the aborted shim had
+half-popped: the cast error, then one more pass, the empty stack. Three terminations, three shouts, three
+`[PhloxExe] terminated` lines.
+
+Now: the catch takes the node off the run queue and the run index; `TerminateWithError` resets
+`LastSyscallIndex`; `SyscallShim.Call` wraps the shim so an escaping exception resets the index and
+un-parks a `Syscall` state before rethrowing. `ThrownSyscallStaysDeadTests`: an OSSL denial
+(`Allow_osGetSimulatorVersion = false`) and a forced `ArgumentException` from a shim (`ThrowForTest`, a
+test seam on the shim's one choke point) each give **exactly one** DEBUG_CHANNEL line, `RunState=Killed`,
+`LastSyscallIndex=-1`, not on the run queue, and the statement after never runs. **Red, with the two
+removal lines disabled: 3 stops with the live texts. Green: 1.**
+
+### PART 1 - the pure helpers (`this commit`)
+
+**32 names, 36 dispatch entries (700-735)** from the 39 in PHLOX-12's map, each ported from `OSSL_Api.cs`
+at its line and threat level through `OsslGate`: `osAESEncrypt`/`Decrypt`/`EncryptTo`/`DecryptFrom`
+(`:6586-6640`, ungated, `Util.AES*`), `osAngleBetween` (`:5010`), `osApproxEquals` float forms 2 and 3 args
+(`:5417`, `:5424`), `osCheckODE` (`:2026`, master switch), `osFormatString` (`:2649`, VeryLow),
+`osIsNotValidNumber` (`:5973`), `osIsUUID` (`:4434`), `osListAsFloat`/`Integer`/`String`/`Vector`/`Rotation`
+(`:6799-6863`), `osMatchString` (`:2656`, VeryLow), `osMax` (`:4456`, **gated under the key
+`osGetRezzingObject` at None** - upstream's copy-paste, honoured as is so the same `Allow_` line governs
+it on both engines), `osMin` (`:4445`), `osRegexIsMatch` (`:4600`, Low), `osRound` (`:4990`), `osSHA256`
+(`:2557`), `osSlerp` rotation form (`:5919`), `osStringStartsWith`/`EndsWith`/`IndexOf` x2/`LastIndexOf` x2/
+`SubString` x2 (`:5252-5360`, master switch), `osStringRemove`/`Replace` (`:5384`, `:5405`),
+`osUnixTimeToTimestamp` (`:4012`), `osVecDistSquare`/`osVecMagSquare` (`:5004`, `:4999`).
+
+**Remaining, 7 names:** `osListFindListNext` (needs upstream's `ListFind_areEqual` coercion rules),
+`osListSortInPlace` / `osListSortInPlaceStrided` (in-place list mutation - Phlox lists are values),
+`osListenRegex` (a listen, not pure), `osDetectedCountry`, `osKey2Name`, `osIsNpc` (user / NPC module
+lookups). Also not landed, by the resolver's arity keying: `osApproxEquals`'s vector and rotation forms
+and `osSlerp`'s vector form (same arity as the float / rotation forms that did land).
+
+### What pins it
+
+`OsslPureHelpersTests`: one script calls every helper and says a value the test asserts **exactly** -
+AES round trips both ways, `angle=1.570796`, `approx=110`, `fmt=a-2`, `las=1.500000|7|s|1|1|0`,
+`match=o, 4, o, 7`, `round=3.000000|2.350000`, `sha=ba7816bf...`, `str=10|2|3|3|-1|ho|heLLo|llo|ell`,
+`ts=1970-01-01T00:00:00.0000000Z`, `vec=25.000000|25.000000`, and no error chat; `osRegexIsMatch` (Low)
+is denied at the default VeryLow with one stop and answers `rx=10` at `OSFunctionThreatLevel = Low`.
+Two things the first runs taught about the 5-argument `osStringLastIndexOf`: with `offset 0, count 3`
+it throws `ArgumentOutOfRange`, and with `offset 4, count 5` it answers **-1** where a human expects 3 -
+**both are upstream's behaviour**, ported faithfully: .NET's `LastIndexOf` searches *backwards* from
+`offset`, but upstream clamps `count` to `Length - offset` as if searching forward, so the 5-arg form can
+only ever see `Length - offset` characters below `offset`. The test asserts the faithful -1. And the
+throw produced exactly one stop - PART 0 at work. Dispatch baseline **regenerated**
+(693 -> 725 names: 36 entries, four of them overloads sharing a name). Suite **144 -> 148**; region server builds.

@@ -6776,6 +6776,296 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return dot >= 0 ? n.Substring(dot + 1) : n;
         }
 
+        // ── PHLOX-13: OSSL pure helpers, ported from OSSL_Api.cs (line cited), same threat level via OsslGate ──
+        /// <summary>OSSL_Api.cs:6586 - ungated upstream.</summary>
+        public string osAESEncrypt(string secret, string plainText)
+        {
+            if (string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(plainText)) return string.Empty;
+            string r = Util.AESEncrypt(secret.AsSpan(), plainText.AsSpan());
+            if (string.IsNullOrEmpty(r)) { ShoutError("osAESEncrypt: Failed to encrypt!"); return string.Empty; }
+            return r;
+        }
+
+        /// <summary>OSSL_Api.cs:6600 - ungated upstream.</summary>
+        public string osAESDecrypt(string secret, string encryptedText)
+        {
+            if (string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(encryptedText)) return string.Empty;
+            var r = Util.AESDecrypt(secret.AsSpan(), encryptedText.AsSpan());
+            if (r.Length == 0) { ShoutError("osAESDecrypt: Failed to Decrypt!"); return string.Empty; }
+            return r.ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:6614 - ungated upstream.</summary>
+        public string osAESEncryptTo(string secret, string plainText, string ivString)
+        {
+            if (string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(plainText) || string.IsNullOrEmpty(ivString)) return string.Empty;
+            string r = Util.AESEncryptTo(secret.AsSpan(), plainText.AsSpan(), ivString.AsSpan());
+            if (string.IsNullOrEmpty(r)) { ShoutError("osAESEncryptTo: Failed to encrypt!"); return string.Empty; }
+            return r;
+        }
+
+        /// <summary>OSSL_Api.cs:6628 - ungated upstream.</summary>
+        public string osAESDecryptFrom(string secret, string encryptedText, string ivString)
+        {
+            if (string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(encryptedText) || string.IsNullOrEmpty(ivString)) return string.Empty;
+            var r = Util.AESDecryptFrom(secret.AsSpan(), encryptedText.AsSpan(), ivString.AsSpan());
+            if (r.Length == 0) { ShoutError("osAESDecryptFrom: Failed to decrypt!"); return string.Empty; }
+            return r.ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:5010 - ungated upstream.</summary>
+        public float osAngleBetween(Vector3 a, Vector3 b)
+        {
+            double dot = Vector3.Dot(a, b);
+            double mcross = Vector3.Cross(a, b).Length();
+            return (float)Math.Atan2(mcross, dot);
+        }
+
+        /// <summary>OSSL_Api.cs:5417 - ungated upstream.</summary>
+        public int osApproxEquals(float a, float b)
+        {
+            return (a > b + 1.0e-6 || a < b - 1.0e-6) ? 0 : 1;
+        }
+
+        /// <summary>OSSL_Api.cs:5424 - ungated upstream.</summary>
+        public int osApproxEquals(float a, float b, float margin)
+        {
+            double e = Math.Abs(margin);
+            return (a > b + e || a < b - e) ? 0 : 1;
+        }
+
+        /// <summary>OSSL_Api.cs:2026 - bare CheckThreatLevel (master switch).</summary>
+        public int osCheckODE()
+        {
+            OsslCheck();
+            return World?.PhysicsScene?.EngineType == "OpenDynamicsEngine" ? 1 : 0;
+        }
+
+        /// <summary>OSSL_Api.cs:2649 - VeryLow (key osFormatString).</summary>
+        public string osFormatString(string str, LSLList strings)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.VeryLow, "osFormatString");
+            return string.Format(str, strings.Members.ToArray());
+        }
+
+        /// <summary>OSSL_Api.cs:5973 - ungated upstream.</summary>
+        public int osIsNotValidNumber(float v)
+        {
+            if (float.IsNaN(v)) return 1;
+            if (float.IsNegativeInfinity(v)) return 2;
+            if (float.IsPositiveInfinity(v)) return 3;
+            return 0;
+        }
+
+        /// <summary>OSSL_Api.cs:4434 - ungated upstream.</summary>
+        public int osIsUUID(string thing)
+        {
+            return UUID.TryParse(thing, out _) ? 1 : 0;
+        }
+
+        /// <summary>OSSL_Api.cs:6799 - ungated upstream.</summary>
+        public float osListAsFloat(LSLList src, int index)
+        {
+            var m = src?.Members; if (m == null || index < 0 || index >= m.Count) return 0f;
+            return m[index] switch { float f => f, double d => (float)d, _ => 0f };
+        }
+
+        /// <summary>OSSL_Api.cs:6815 - ungated upstream.</summary>
+        public int osListAsInteger(LSLList src, int index)
+        {
+            var m = src?.Members; if (m == null || index < 0 || index >= m.Count) return 0;
+            return m[index] is int i ? i : 0;
+        }
+
+        /// <summary>OSSL_Api.cs:6831 - ungated upstream.</summary>
+        public string osListAsString(LSLList src, int index)
+        {
+            var m = src?.Members; if (m == null || index < 0 || index >= m.Count) return string.Empty;
+            return m[index] is string s ? s : string.Empty;
+        }
+
+        /// <summary>OSSL_Api.cs:6847 - ungated upstream.</summary>
+        public Vector3 osListAsVector(LSLList src, int index)
+        {
+            var m = src?.Members; if (m == null || index < 0 || index >= m.Count) return Vector3.Zero;
+            return m[index] is Vector3 v ? v : Vector3.Zero;
+        }
+
+        /// <summary>OSSL_Api.cs:6863 - ungated upstream.</summary>
+        public Quaternion osListAsRotation(LSLList src, int index)
+        {
+            var m = src?.Members; if (m == null || index < 0 || index >= m.Count) return Quaternion.Identity;
+            return m[index] is Quaternion q ? q : Quaternion.Identity;
+        }
+
+        /// <summary>OSSL_Api.cs:2656 - VeryLow (key osMatchString).</summary>
+        public LSLList osMatchString(string src, string pattern, int start)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.VeryLow, "osMatchString");
+            var result = new List<object>();
+            if (start < 0) start = src.Length + start;
+            if (start < 0 || start >= src.Length) return new LSLList(result);
+            var match = new System.Text.RegularExpressions.Regex(pattern).Match(src, start);
+            while (match.Success)
+            {
+                foreach (System.Text.RegularExpressions.Group g in match.Groups)
+                    if (g.Success) { result.Add(g.Value); result.Add(g.Index); }
+                match = match.NextMatch();
+            }
+            return new LSLList(result);
+        }
+
+        /// <summary>OSSL_Api.cs:4456 - None (key osGetRezzingObject).</summary>
+        public float osMax(float a, float b)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.None, "osGetRezzingObject");
+            return Math.Max(a, b);   // upstream gates osMax under the key "osGetRezzingObject" (a copy-paste there); honoured as is
+        }
+
+        /// <summary>OSSL_Api.cs:4445 - ungated upstream.</summary>
+        public float osMin(float a, float b)
+        {
+            return Math.Min(a, b);
+        }
+
+        /// <summary>OSSL_Api.cs:4600 - Low (key osRegexIsMatch).</summary>
+        public int osRegexIsMatch(string input, string pattern)
+        {
+            OsslCheck(OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.Low, "osRegexIsMatch");
+            try { return System.Text.RegularExpressions.Regex.IsMatch(input, pattern) ? 1 : 0; }
+            catch (Exception) { ShoutError("Possible invalid regular expression detected."); return 0; }
+        }
+
+        /// <summary>OSSL_Api.cs:4990 - ungated upstream.</summary>
+        public float osRound(float value, int ndigits)
+        {
+            if (ndigits <= 0) return (float)Math.Round((double)value, MidpointRounding.AwayFromZero);
+            if (ndigits > 15) ndigits = 15;
+            return (float)Math.Round((double)value, ndigits, MidpointRounding.AwayFromZero);
+        }
+
+        /// <summary>OSSL_Api.cs:2557 - ungated upstream.</summary>
+        public string osSHA256(string input)
+        {
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            return Convert.ToHexString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(input ?? string.Empty))).ToLowerInvariant();
+        }
+
+        /// <summary>OSSL_Api.cs:5919 - ungated upstream.</summary>
+        public Quaternion osSlerp(Quaternion a, Quaternion b, float amount)
+        {
+            if (amount < 0) amount = 0; else if (amount > 1f) amount = 1f;
+            a.Normalize(); b.Normalize();
+            return Quaternion.Slerp(a, b, amount);
+        }
+
+        /// <summary>OSSL_Api.cs:5284 - bare CheckThreatLevel (master switch).</summary>
+        public int osStringStartsWith(string src, string value, int ignorecase)
+        {
+            OsslCheck();
+            if (string.IsNullOrEmpty(src) || string.IsNullOrEmpty(value)) return 0;
+            return src.StartsWith(value, ignorecase != 0, System.Globalization.CultureInfo.CurrentCulture) ? 1 : 0;
+        }
+
+        /// <summary>OSSL_Api.cs:5296 - bare CheckThreatLevel (master switch).</summary>
+        public int osStringEndsWith(string src, string value, int ignorecase)
+        {
+            OsslCheck();
+            if (string.IsNullOrEmpty(src) || string.IsNullOrEmpty(value)) return 0;
+            return src.EndsWith(value, ignorecase != 0, System.Globalization.CultureInfo.CurrentCulture) ? 1 : 0;
+        }
+
+        /// <summary>OSSL_Api.cs:5308 - bare CheckThreatLevel (master switch).</summary>
+        public int osStringIndexOf(string src, string value, int ignorecase)
+        {
+            OsslCheck();
+            if (string.IsNullOrEmpty(src) || string.IsNullOrEmpty(value)) return -1;
+            return src.IndexOf(value, ignorecase == 0 ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>OSSL_Api.cs:5322 - bare CheckThreatLevel (master switch).</summary>
+        public int osStringIndexOf(string src, string value, int offset, int count, int ignorecase)
+        {
+            OsslCheck();
+            if (string.IsNullOrEmpty(src) || string.IsNullOrEmpty(value)) return -1;
+            if (offset >= src.Length) return -1; else if (offset < 0) offset = 0;
+            if (count <= 0) count = src.Length - offset; else if (count > src.Length - offset) count = src.Length - offset;
+            return src.IndexOf(value, offset, count, ignorecase == 0 ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>OSSL_Api.cs:5346 - bare CheckThreatLevel (master switch).</summary>
+        public int osStringLastIndexOf(string src, string value, int ignorecase)
+        {
+            OsslCheck();
+            if (string.IsNullOrEmpty(src) || string.IsNullOrEmpty(value)) return -1;
+            return src.LastIndexOf(value, ignorecase == 0 ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>OSSL_Api.cs:5360 - bare CheckThreatLevel (master switch).</summary>
+        public int osStringLastIndexOf(string src, string value, int offset, int count, int ignorecase)
+        {
+            OsslCheck();
+            if (string.IsNullOrEmpty(src) || string.IsNullOrEmpty(value)) return -1;
+            if (offset >= src.Length) return -1; if (offset < 0) offset = 0;
+            if (count <= 0) count = src.Length - offset; else if (count > src.Length - offset) count = src.Length - offset;
+            return src.LastIndexOf(value, offset, count, ignorecase == 0 ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>OSSL_Api.cs:5384 - ungated upstream.</summary>
+        public string osStringRemove(string src, int offset, int count)
+        {
+            if (string.IsNullOrEmpty(src) || offset >= src.Length) return string.Empty;
+            if (offset < 0) offset = 0;
+            if (count <= 0) count = src.Length - offset; else if (count > src.Length - offset) count = src.Length - offset;
+            if (count >= src.Length) return string.Empty;
+            return src.Remove(offset, count);
+        }
+
+        /// <summary>OSSL_Api.cs:5405 - ungated upstream.</summary>
+        public string osStringReplace(string src, string oldvalue, string newvalue)
+        {
+            if (string.IsNullOrEmpty(src) || string.IsNullOrEmpty(oldvalue)) return string.Empty;
+            if (string.IsNullOrEmpty(newvalue)) newvalue = null;
+            return src.Replace(oldvalue, newvalue);
+        }
+
+        /// <summary>OSSL_Api.cs:5252 - bare CheckThreatLevel (master switch).</summary>
+        public string osStringSubString(string src, int offset)
+        {
+            OsslCheck();
+            if (string.IsNullOrEmpty(src) || offset >= src.Length) return string.Empty;
+            if (offset <= 0) return src;
+            return src.Substring(offset);
+        }
+
+        /// <summary>OSSL_Api.cs:5265 - bare CheckThreatLevel (master switch).</summary>
+        public string osStringSubString(string src, int offset, int length)
+        {
+            OsslCheck();
+            if (string.IsNullOrEmpty(src) || length <= 0 || offset >= src.Length) return string.Empty;
+            if (offset <= 0) { if (length == src.Length) return src; offset = 0; }
+            if (length > src.Length - offset) length = src.Length - offset;
+            return src.Substring(offset, length);
+        }
+
+        /// <summary>OSSL_Api.cs:4012 - ungated upstream.</summary>
+        public string osUnixTimeToTimestamp(int time)
+        {
+            return Util.ToDateTime(time).ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+        }
+
+        /// <summary>OSSL_Api.cs:5004 - ungated upstream.</summary>
+        public float osVecDistSquare(Vector3 a, Vector3 b)
+        {
+            return (a - b).LengthSquared();
+        }
+
+        /// <summary>OSSL_Api.cs:4999 - ungated upstream.</summary>
+        public float osVecMagSquare(Vector3 a)
+        {
+            return a.LengthSquared();
+        }
+
         public LSLList osGetAvatarList()
         {
             // OSSL: returns [uuid, position, name, uuid, position, name, ...]
