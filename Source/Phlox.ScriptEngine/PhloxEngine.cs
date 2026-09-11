@@ -294,6 +294,8 @@ namespace Phlox.ScriptEngine
                 + (st.LocalDisable is null ? "" : $"  HELD: {st.LocalDisable}"
                     + (st.LocalDisable.Contains("StateLoadFailed") ? " (state load failed - row kept, never run or saved this process; restart to retry)" : "")));
             o.Output($"  Running flag  : {(item is null ? "(unknown)" : item.ScriptRunning.ToString())}");
+            if (st.TerminatedReason is not null)
+                o.Output($"  terminated    : {st.TerminatedReason}  (PHLOX-18: stays stopped; reset it, or tick Running, to start it fresh)");
             o.Output($"  queued events : {st.QueuedEvents}");
             o.Output($"  LSL state     : {st.LslState}");
             o.Output($"  timer         : {(st.TimerIntervalMs > 0 ? st.TimerIntervalMs + " ms" : "not set")}");
@@ -505,6 +507,17 @@ namespace Phlox.ScriptEngine
                 if (botID != UUID.Zero)
                     mgr?.RemoveBot(botID, obj.OwnerID);
             }
+        }
+
+        /// <summary>PHLOX-18: the item's Running flag, as the viewer's checkbox and llSetScriptState persist it.</summary>
+        internal void SetItemRunningFlag(uint localId, UUID itemId, bool running)
+        {
+            SceneObjectPart part = m_Scene?.GetSceneObjectPart(localId);
+            TaskInventoryItem item = part?.Inventory?.GetInventoryItem(itemId);
+            if (item is null || item.ScriptRunning == running) return;
+            item.ScriptRunning = running;
+            part.Inventory.ForceInventoryPersistence();
+            part.ParentGroup.HasGroupChanged = true;
         }
 
         private void OnStartScript(uint localID, UUID itemID)

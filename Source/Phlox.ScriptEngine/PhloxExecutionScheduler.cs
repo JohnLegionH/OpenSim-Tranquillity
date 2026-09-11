@@ -41,6 +41,8 @@ namespace Phlox.ScriptEngine
 
         private readonly WorkArrivedDelegate m_WorkArrived;
         private readonly PhloxEngine m_Engine;
+        /// <summary>PHLOX-18: scripts loaded with the item's Running flag off and never started; enabling one owes it a state_entry.</summary>
+        private readonly HashSet<UUID> m_HeldFresh = new HashSet<UUID>();
         private readonly IWorldComm m_WorldComm;
 
         // All scripts regardless of run state
@@ -218,6 +220,16 @@ namespace Phlox.ScriptEngine
                 // Waiting, which is why scripts restored from state ran and freshly compiled ones
                 // did not - the manhole on 1.1.275, and every new script.
                 interp.ScriptState.RunState = RuntimeState.Status.Waiting;
+                var invItem = req.Prim.Inventory?.GetInventoryItem(req.ItemID);
+                if (invItem != null && !invItem.ScriptRunning)
+                {
+                    // PHLOX-18: the item's Running flag is off - unticked in the viewer, llSetScriptState(FALSE), or a
+                    // crash before this restart. Loaded and held: no state_entry until a reset or the checkbox.
+                    interp.ScriptState.GeneralEnable = false;
+                    lock (m_AllScriptsLock) m_HeldFresh.Add(req.ItemID);
+                    m_log.LogInformation("[PhloxExe]: {0} loaded STOPPED (item Running flag off); no state_entry until reset or Running is ticked", req.ItemID);
+                    return;
+                }
                 sysApi.OnScriptReset();
                 PostEvent(req.ItemID, new PostedEvent
                 {
@@ -426,7 +438,16 @@ namespace Phlox.ScriptEngine
 
             UnregisterFromNotifications(script);
             m_Engine.StateManager?.DeleteState(itemId);
+            bool wasCrashed = script.ScriptState.TerminatedReason != null;
+            lock (m_AllScriptsLock) m_HeldFresh.Remove(itemId);   // PHLOX-18: a reset of a held script owes it nothing more
             script.Reset();
+            if (wasCrashed)
+            {
+                // PHLOX-18: a reset is how a crashed script comes back - fresh, and running again
+                script.ScriptState.TerminatedReason = null;
+                script.ScriptState.GeneralEnable = true;
+                m_Engine.SetItemRunningFlag(script.HostLocalId, itemId, true);
+            }
             script.SetScriptEventFlags();
 
             PostEvent(itemId, new PostedEvent
@@ -504,6 +525,8 @@ namespace Phlox.ScriptEngine
             public string PendingSyscall;
             /// <summary>PHLOX-11: why the simulator holds it, if it does (e.g. StateLoadFailed).</summary>
             public string LocalDisable;
+            /// <summary>PHLOX-18: the error a crashed script stopped on, or null.</summary>
+            public string TerminatedReason;
         }
 
         /// <summary>PHLOX-13 test seam: is this script on the run queue right now?</summary>
@@ -543,6 +566,7 @@ namespace Phlox.ScriptEngine
                     PendingSyscall = st.RunState == RuntimeState.Status.Syscall
                         ? DescribeCurrentSyscall(interp) : null,
                     LocalDisable = st.LocalDisable == RuntimeState.LocalDisableFlag.None ? null : st.LocalDisable.ToString(),
+                    TerminatedReason = st.TerminatedReason,
                 };
             }
         }
@@ -618,7 +642,10 @@ namespace Phlox.ScriptEngine
            script.OnUnload(ScriptUnloadReason.Unloaded, RuntimeState.LocalDisableFlag.None);
             m_Engine.StateManager?.ScriptUnloaded(script);
             lock (m_AllScriptsLock)
+            {
                 m_AllScripts.Remove(itemId);
+                m_HeldFresh.Remove(itemId);
+            }
         }
 
         // ── Main work loop ─────────────────────────────────────────────────────
@@ -939,7 +966,16 @@ namespace Phlox.ScriptEngine
 
                 if (req.Enable)
                 {
+                    // PHLOX-18: ticking Running on a crashed script starts it fresh, never from its dead frame
+                    if (script.ScriptState.TerminatedReason != null) { ResetNow(req.ItemId); continue; }
                     script.ScriptState.GeneralEnable = true;
+                    bool heldFresh;
+                    lock (m_AllScriptsLock) heldFresh = m_HeldFresh.Remove(req.ItemId);
+                    if (heldFresh)
+                    {
+                        // PHLOX-18: loaded with the Running flag off and never started - its state_entry is owed now
+                        PostEvent(req.ItemId, new PostedEvent { EventType = SupportedEventList.Events.STATE_ENTRY, Args = Array.Empty<object>() });
+                    }
                     if (!m_RunIndex.ContainsKey(req.ItemId))
                         AddToRunQueue(script);
                 }
@@ -1329,6 +1365,13 @@ namespace Phlox.ScriptEngine
             script.ScriptState.RunningEvent?.SignalCompleted();   // PHLOX-10
             script.ScriptState.RunState = RuntimeState.Status.Killed;
             script.ScriptState.LastSyscallIndex = -1;   // PHLOX-13: not parked in anything any more
+            // PHLOX-18: a crashed script stays stopped until reset. The Running flag goes off the way
+            // llSetScriptState(FALSE) and the viewer's checkbox take it off - GeneralEnable in the state, which
+            // is persisted, and the item's flag - so a restore holds it and `phlox status` says why.
+            script.ScriptState.GeneralEnable = false;
+            script.ScriptState.TerminatedReason = e.Message;
+            UnregisterFromNotifications(script);
+            m_Engine.SetItemRunningFlag(script.HostLocalId, script.ItemId, false);
             m_log.LogError("[PhloxExe]: Script {0} asset {1} terminated: {2}",
                 script.ItemId, script.Script.AssetId, e);
             try

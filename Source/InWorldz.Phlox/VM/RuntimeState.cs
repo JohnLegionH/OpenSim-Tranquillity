@@ -259,6 +259,13 @@ namespace InWorldz.Phlox.VM
         public LocalDisableFlag LocalDisable;
 
         /// <summary>
+        /// PHLOX-18: why TerminateWithError stopped this script, or null. Persisted (SerializedRuntimeState tag 26)
+        /// so a crashed script restores stopped and `phlox status` can say why; cleared by a reset, which is how
+        /// it comes back.
+        /// </summary>
+        public string TerminatedReason;
+
+        /// <summary>
         /// Combines the persisted disabled flag with the local simulator flag
         /// </summary>
         public bool Enabled

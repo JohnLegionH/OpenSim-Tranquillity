@@ -101,10 +101,14 @@ public sealed class SchedulerHarness : IDisposable
     /// same item and asset, because StateManager.LoadState keys on the item id and discards the row
     /// when the asset id does not match.
     /// </summary>
-    public UUID RezScript(string source, UUID assetId, UUID itemId)
+    public UUID RezScript(string source, UUID assetId, UUID itemId) => RezScript(source, assetId, itemId, running: true);
+
+    /// <summary>PHLOX-18: rez with the item's Running flag as given - false is the viewer's unticked checkbox.</summary>
+    public UUID RezScript(string source, UUID assetId, UUID itemId, bool running)
     {
         var item = TaskInventoryHelpers.AddScript(
             Scene.AssetService, Prim, itemId, assetId, "script" + (++m_scriptSeq), source);
+        item.ScriptRunning = running;
         var rez = Engine.GetType().GetMethod("OnRezScript", BindingFlags.NonPublic | BindingFlags.Instance);
         Assert.NotNull(rez);
         rez!.Invoke(Engine, new object[] { Prim.LocalId, item.ItemID, source, 0, false, Engine.Name, 0 });
@@ -156,7 +160,7 @@ public sealed class SchedulerHarness : IDisposable
     public string StatusOf(UUID itemId)
     {
         var st = ((global::Phlox.ScriptEngine.PhloxExecutionScheduler)m_exe).GetStatus(itemId);
-        return $"Found={st.Found} RunState={st.RunState} Enabled={st.Enabled} GeneralEnable={st.GeneralEnable} LocalDisable={st.LocalDisable ?? "None"} queued={st.QueuedEvents}";
+        return $"Found={st.Found} RunState={st.RunState} Enabled={st.Enabled} GeneralEnable={st.GeneralEnable} LocalDisable={st.LocalDisable ?? "None"} queued={st.QueuedEvents} terminated={st.TerminatedReason ?? "-"}";
     }
 
     private int m_scriptSeq;

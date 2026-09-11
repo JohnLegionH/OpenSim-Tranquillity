@@ -1994,3 +1994,43 @@ builds.
 **Did it land (combined deploy):** from a manager's prim, `osTerrainSetHeight(10,10,
 osTerrainGetHeight(10,10)+1.0); osTerrainFlush();` then `osTerrainGetHeight(10,10)` reads 1.0 higher and the
 ground visibly moves; `osSetParcelDetails` on the prim's parcel changes its name in About Land.
+
+## PHLOX-18 - killed scripts stay killed; OSSL draw and dynamic textures
+
+**2026-09-11. Landed in two commits; not deployed.**
+
+### PART 0 - a killed script stays stopped until reset (`<p0 commit>`)
+
+**What was wrong.** `TerminateWithError` set `RunState = Killed` and nothing else (`PhloxExecutionScheduler.cs:1327-1339`).
+The Running flag stayed on, so the killed state was saved at unload and restored as **Waiting** (`FinishedLoading`'s
+`default` arm) - a half-dead script that answered touches off a dead frame - and a restart that found no usable
+state ran `state_entry` again and re-threw. **The live case:** the osSetRot-denied prim `013b8258` (item
+`a37d3c87`) at the 05:36 start on 09-11 - `Discarding stale state ... saved asset 2074003b, current 013b8258`
+then the same `OSSL Permission Error: osSetRot` - and the trace shows the older cause underneath: the script had
+been **edited** at 21:35 on 09-10 (new asset id), so its state was stale, and a killed script had nothing that
+said "stopped" outside its state. SL keeps a crashed script halted until it is reset.
+
+**Now.** The kill turns the Running flag off the way `llSetScriptState(FALSE)` and the viewer's checkbox take it
+off - `GeneralEnable` in the persisted state, the item's `ScriptRunning` (through `ForceInventoryPersistence`
+so the group saves it), timers and listens unregistered - and keeps the reason: `RuntimeState.TerminatedReason`,
+serialized as **tag 26** of `SerializedRuntimeState` (rows written before it load with null). `phlox status`
+prints `terminated : <reason> (PHLOX-18: stays stopped; reset it, or tick Running, to start it fresh)` under
+the Running flag. A restore of a killed state **holds** it: no `state_entry`, not on the run queue, reason
+intact. A reset (`ResetNow`) clears the reason and turns Running back on; **ticking Running on a crashed script
+resets it** (`ProcessEnableDisable`) rather than resuming the dead frame. The loader now also honours the
+**item's** Running flag at a fresh start - an item rezzed with it off (unticked in the viewer, or crashed before
+a restart whose state was lost) loads held, and enabling it later owes it its `state_entry` (`m_HeldFresh`).
+
+**Risk, named:** any script whose item flag is already `false` in the live inventory - unticked by an owner
+long ago and still running under Phlox because the flag was ignored - stops at the first restart after this
+deploys. That is the checkbox meaning what it says; the did-it-land looks for the `loaded STOPPED` line.
+
+### What pins PART 0
+
+`TerminatedScriptStaysStoppedTests` (collection `phlox-state`, `OSFunctionThreatLevel = VeryLow`, the script
+calls `osSetRot` - the live denial): engine 1 says "up" once, is `Killed`, `GetScriptState` false, the item's
+`ScriptRunning` false, status carries `terminated=... osSetRot ...`, not on the run queue; saved through
+`ScriptUnloaded`. Engine 2 restores the same item and asset: **no "up", no error line, still stopped, reason
+intact**; `ResetScript` then says "up" once more and is killed again. `TriggerStartScript` on a crashed script
+runs `state_entry` a second time from a fresh state. An item rezzed with `ScriptRunning = false` loads held,
+says nothing, and runs when ticked. Suite **173 -> 176**.

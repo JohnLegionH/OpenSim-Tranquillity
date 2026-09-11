@@ -96,6 +96,10 @@ namespace InWorldz.Phlox.Serialization
         [ProtoMember(25)]
         public int PeakMemoryUsed;
 
+        /// <summary>PHLOX-18. Tag 26: the error a crashed script stopped on; null for every row written before it and for a script that is not crashed.</summary>
+        [ProtoMember(26)]
+        public string TerminatedReason;
+
         [ProtoMember(21)]
         public float TotalRuntime;
 
@@ -164,6 +168,7 @@ namespace InWorldz.Phlox.Serialization
 
             serState.RunState = state.RunState;
             serState.Enabled = state.GeneralEnable;
+            serState.TerminatedReason = state.TerminatedReason;
 
             UInt64 tickCountNow = Util.Clock.GetLongTickCount();
             serState.StateCapturedOn = DateTime.Now;
@@ -243,6 +248,7 @@ namespace InWorldz.Phlox.Serialization
             state.PeakMemoryUsed = this.PeakMemoryUsed;
             state.NextEventAllowedOn = 0;   // relative to the old process's clock; a restore starts allowed
             state.GeneralEnable = this.Enabled;
+            state.TerminatedReason = this.TerminatedReason;
 
             UInt64 currentTickCount = Util.Clock.GetLongTickCount();
 
