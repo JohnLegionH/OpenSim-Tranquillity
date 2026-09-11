@@ -2322,9 +2322,9 @@ async syscall has to come back through the `LastSyscallIndex` / `ResumeFromSysca
 for restarts. That deserves its own change with a restart test, not a drive-by.
 
 **Suite hygiene, from PHLOX-18b:** `SsbNpcAppearanceTests`, `OsslAgentTests.AvatarTypeNameAndKeyAgreeOnAPresence`
-and `RemainingStubTests.TwoTouchesTenMillisecondsApartAreHandledAtLeastOneSecondApart` fail **only** in a full
-run and pass in isolation - a run-order or timing coupling between test scenes, not a product defect. A
-candidate for a session of its own.
+and `RemainingStubTests.TwoTouchesTenMillisecondsApartAreHandledAtLeastOneSecondApart` fail **intermittently in a
+full run** and always pass in isolation - the same full suite went 194 of 194 green on the next run - so it is
+a run-order or timing coupling between test scenes, not a product defect. A candidate for a session of its own.
 
 **Did it land:** a prim's script calls `osSetPenColor("", <1,0,0>)` and `osSetPenColor("", "Red")` in one
 script and gets two different draw-list strings; and a script that sorts its own list with
