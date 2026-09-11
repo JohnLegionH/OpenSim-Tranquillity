@@ -83,7 +83,7 @@ public class DispatchIndexGuardTests
         // 674 at 34fb6d201b; PHLOX-5 added two NEW names (llsRGB2Linear, llListSortStrided) - the
         // four SL-arity overloads share existing names and do not add entries. Regenerated with
         // RegenerateBaseline below, never by hand.
-        Assert.Equal(871, baseline.Count);
+        Assert.Equal(913, baseline.Count);
     }
 
     /// <summary>

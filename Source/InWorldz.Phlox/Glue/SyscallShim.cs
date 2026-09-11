@@ -980,6 +980,50 @@ private static string ConvToString(object o)
 								Shim_osSetPenCap,                     //893  PHLOX-18
 								Shim_osDrawImage,                     //894  PHLOX-18
 								Shim_osGetDrawStringSize,             //895  PHLOX-18
+								Shim_osGetNotecardLine,               //896  PHLOX-19
+								Shim_osGetNotecard,                   //897  PHLOX-19
+								Shim_osGetNumberOfNotecardLines,      //898  PHLOX-19
+								Shim_osGetAvatarHomeURI,              //899  PHLOX-19
+								Shim_osGetNumberOfAttachments,        //900  PHLOX-19
+								Shim_osGetRegionMapTexture,           //901  PHLOX-19
+								Shim_osGetLinkNumber,                 //902  PHLOX-19
+								Shim_osGetRezzingObject,              //903  PHLOX-19
+								Shim_osListenRegex,                   //904  PHLOX-19
+								Shim_osDetectedCountry,               //905  PHLOX-19
+								Shim_osGetAgentCountry,               //906  PHLOX-19
+								Shim_osGetGender,                     //907  PHLOX-19
+								Shim_osGetHealRate,                   //908  PHLOX-19
+								Shim_osGetApparentTime,               //909  PHLOX-19
+								Shim_osGetApparentTimeString,         //910  PHLOX-19
+								Shim_osGetApparentRegionTime,         //911  PHLOX-19
+								Shim_osGetApparentRegionTimeString,   //912  PHLOX-19
+								Shim_osGetPSTWallclock,               //913  PHLOX-19
+								Shim_osGetLastChangedEventKey,        //914  PHLOX-19
+								Shim_osGetLinkColor,                  //915  PHLOX-19
+								Shim_osGetSitActiveRange,             //916  PHLOX-19
+								Shim_osGetLinkSitActiveRange,         //917  PHLOX-19
+								Shim_osGetStandTarget,                //918  PHLOX-19
+								Shim_osGetLinkStandTarget,            //919  PHLOX-19
+								Shim_osGetPrimCount,                  //920  PHLOX-19
+								Shim_osGetPrimCount1,                 //921  PHLOX-19
+								Shim_osGetSittingAvatarsCount,        //922  PHLOX-19
+								Shim_osGetSittingAvatarsCount1,       //923  PHLOX-19
+								Shim_osGetParcelDwell,                //924  PHLOX-19
+								Shim_osGetParcelID,                   //925  PHLOX-19
+								Shim_osGetParcelIDs,                  //926  PHLOX-19
+								Shim_osGetInventoryLastOwner,         //927  PHLOX-19
+								Shim_osGetInventoryItemKey,           //928  PHLOX-19
+								Shim_osGetInventoryName,              //929  PHLOX-19
+								Shim_osGetInventoryDesc,              //930  PHLOX-19
+								Shim_osGetInventoryItemKeys,          //931  PHLOX-19
+								Shim_osGetInventoryNames,             //932  PHLOX-19
+								Shim_osGetLinkInventoryName,          //933  PHLOX-19
+								Shim_osGetLinkInventoryDesc,          //934  PHLOX-19
+								Shim_osGetLinkInventoryKey,           //935  PHLOX-19
+								Shim_osGetLinkInventoryKeys,          //936  PHLOX-19
+								Shim_osGetLinkInventoryItemKey,       //937  PHLOX-19
+								Shim_osGetLinkInventoryItemKeys,      //938  PHLOX-19
+								Shim_osGetLinkInventoryNames,         //939  PHLOX-19
         };
 
         /// <summary>
@@ -8501,6 +8545,276 @@ private static string ConvToString(object o)
             string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             Vector3 ret = self._systemAPI.osGetDrawStringSize(p0, p1, p2, p3);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+
+        // ── PHLOX-19 shims ──
+        static private void Shim_osGetNotecardLine(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetNotecardLine(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetNotecard(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetNotecard(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetNumberOfNotecardLines(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osGetNumberOfNotecardLines(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetAvatarHomeURI(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetAvatarHomeURI(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetNumberOfAttachments(SyscallShim self)
+        {
+            LSLList p1 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            LSLList ret = self._systemAPI.osGetNumberOfAttachments(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetRegionMapTexture(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetRegionMapTexture(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetLinkNumber(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osGetLinkNumber(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetRezzingObject(SyscallShim self)
+        {
+            string ret = self._systemAPI.osGetRezzingObject();
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osListenRegex(SyscallShim self)
+        {
+            int p4 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p3 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osListenRegex(p0, p1, p2, p3, p4);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osDetectedCountry(SyscallShim self)
+        {
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osDetectedCountry(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetAgentCountry(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetAgentCountry(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetGender(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetGender(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetHealRate(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            float ret = self._systemAPI.osGetHealRate(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetApparentTime(SyscallShim self)
+        {
+            float ret = self._systemAPI.osGetApparentTime();
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetApparentTimeString(SyscallShim self)
+        {
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetApparentTimeString(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetApparentRegionTime(SyscallShim self)
+        {
+            float ret = self._systemAPI.osGetApparentRegionTime();
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetApparentRegionTimeString(SyscallShim self)
+        {
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetApparentRegionTimeString(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetPSTWallclock(SyscallShim self)
+        {
+            float ret = self._systemAPI.osGetPSTWallclock();
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetLastChangedEventKey(SyscallShim self)
+        {
+            string ret = self._systemAPI.osGetLastChangedEventKey();
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetLinkColor(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 ret = self._systemAPI.osGetLinkColor(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetSitActiveRange(SyscallShim self)
+        {
+            float ret = self._systemAPI.osGetSitActiveRange();
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetLinkSitActiveRange(SyscallShim self)
+        {
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            float ret = self._systemAPI.osGetLinkSitActiveRange(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetStandTarget(SyscallShim self)
+        {
+            Vector3 ret = self._systemAPI.osGetStandTarget();
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetLinkStandTarget(SyscallShim self)
+        {
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 ret = self._systemAPI.osGetLinkStandTarget(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetPrimCount(SyscallShim self)
+        {
+            int ret = self._systemAPI.osGetPrimCount();
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetPrimCount1(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osGetPrimCount(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetSittingAvatarsCount(SyscallShim self)
+        {
+            int ret = self._systemAPI.osGetSittingAvatarsCount();
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetSittingAvatarsCount1(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osGetSittingAvatarsCount(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetParcelDwell(SyscallShim self)
+        {
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osGetParcelDwell(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetParcelID(SyscallShim self)
+        {
+            string ret = self._systemAPI.osGetParcelID();
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetParcelIDs(SyscallShim self)
+        {
+            LSLList ret = self._systemAPI.osGetParcelIDs();
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetInventoryLastOwner(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetInventoryLastOwner(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetInventoryItemKey(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetInventoryItemKey(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetInventoryName(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetInventoryName(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetInventoryDesc(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetInventoryDesc(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetInventoryItemKeys(SyscallShim self)
+        {
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            LSLList ret = self._systemAPI.osGetInventoryItemKeys(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetInventoryNames(SyscallShim self)
+        {
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            LSLList ret = self._systemAPI.osGetInventoryNames(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetLinkInventoryName(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetLinkInventoryName(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetLinkInventoryDesc(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetLinkInventoryDesc(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetLinkInventoryKey(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetLinkInventoryKey(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetLinkInventoryKeys(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            LSLList ret = self._systemAPI.osGetLinkInventoryKeys(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetLinkInventoryItemKey(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetLinkInventoryItemKey(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetLinkInventoryItemKeys(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            LSLList ret = self._systemAPI.osGetLinkInventoryItemKeys(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetLinkInventoryNames(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            LSLList ret = self._systemAPI.osGetLinkInventoryNames(p0, p1);
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }
 

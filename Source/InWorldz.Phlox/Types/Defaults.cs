@@ -6353,6 +6353,315 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "contentType", "text", "fontName", "fontSize" },
                 TableIndex = 895
             }},
+            // PHLOX-19: OSSL read-only remainder, 896-939
+            {"osGetNotecardLine", new FunctionSig {
+                FunctionName = "osGetNotecardLine",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer },
+                ParamNames = new string[] { "name", "line" },
+                TableIndex = 896
+            }},
+            {"osGetNotecard", new FunctionSig {
+                FunctionName = "osGetNotecard",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "name" },
+                TableIndex = 897
+            }},
+            {"osGetNumberOfNotecardLines", new FunctionSig {
+                FunctionName = "osGetNumberOfNotecardLines",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "name" },
+                TableIndex = 898
+            }},
+            {"osGetAvatarHomeURI", new FunctionSig {
+                FunctionName = "osGetAvatarHomeURI",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "uuid" },
+                TableIndex = 899
+            }},
+            {"osGetNumberOfAttachments", new FunctionSig {
+                FunctionName = "osGetNumberOfAttachments",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] { VarType.Key, VarType.List },
+                ParamNames = new string[] { "avatar", "attachmentPoints" },
+                TableIndex = 900
+            }},
+            {"osGetRegionMapTexture", new FunctionSig {
+                FunctionName = "osGetRegionMapTexture",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "regionNameOrID" },
+                TableIndex = 901
+            }},
+            {"osGetLinkNumber", new FunctionSig {
+                FunctionName = "osGetLinkNumber",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "name" },
+                TableIndex = 902
+            }},
+            {"osGetRezzingObject", new FunctionSig {
+                FunctionName = "osGetRezzingObject",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 903
+            }},
+            {"osListenRegex", new FunctionSig {
+                FunctionName = "osListenRegex",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.String, VarType.Key, VarType.String, VarType.Integer },
+                ParamNames = new string[] { "channelID", "name", "ID", "msg", "regexBitfield" },
+                TableIndex = 904
+            }},
+            {"osDetectedCountry", new FunctionSig {
+                FunctionName = "osDetectedCountry",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.Integer },
+                ParamNames = new string[] { "number" },
+                TableIndex = 905
+            }},
+            {"osGetAgentCountry", new FunctionSig {
+                FunctionName = "osGetAgentCountry",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "id" },
+                TableIndex = 906
+            }},
+            {"osGetGender", new FunctionSig {
+                FunctionName = "osGetGender",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "rawAvatarId" },
+                TableIndex = 907
+            }},
+            {"osGetHealRate", new FunctionSig {
+                FunctionName = "osGetHealRate",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "avatar" },
+                TableIndex = 908
+            }},
+            {"osGetApparentTime", new FunctionSig {
+                FunctionName = "osGetApparentTime",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 909
+            }},
+            {"osGetApparentTimeString", new FunctionSig {
+                FunctionName = "osGetApparentTimeString",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.Integer },
+                ParamNames = new string[] { "format24" },
+                TableIndex = 910
+            }},
+            {"osGetApparentRegionTime", new FunctionSig {
+                FunctionName = "osGetApparentRegionTime",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 911
+            }},
+            {"osGetApparentRegionTimeString", new FunctionSig {
+                FunctionName = "osGetApparentRegionTimeString",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.Integer },
+                ParamNames = new string[] { "format24" },
+                TableIndex = 912
+            }},
+            {"osGetPSTWallclock", new FunctionSig {
+                FunctionName = "osGetPSTWallclock",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 913
+            }},
+            {"osGetLastChangedEventKey", new FunctionSig {
+                FunctionName = "osGetLastChangedEventKey",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 914
+            }},
+            {"osGetLinkColor", new FunctionSig {
+                FunctionName = "osGetLinkColor",
+                ReturnType = VarType.Vector,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "link", "face" },
+                TableIndex = 915
+            }},
+            {"osGetSitActiveRange", new FunctionSig {
+                FunctionName = "osGetSitActiveRange",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 916
+            }},
+            {"osGetLinkSitActiveRange", new FunctionSig {
+                FunctionName = "osGetLinkSitActiveRange",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.Integer },
+                ParamNames = new string[] { "linkNumber" },
+                TableIndex = 917
+            }},
+            {"osGetStandTarget", new FunctionSig {
+                FunctionName = "osGetStandTarget",
+                ReturnType = VarType.Vector,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 918
+            }},
+            {"osGetLinkStandTarget", new FunctionSig {
+                FunctionName = "osGetLinkStandTarget",
+                ReturnType = VarType.Vector,
+                ParamTypes = new VarType[] { VarType.Integer },
+                ParamNames = new string[] { "linkNumber" },
+                TableIndex = 919
+            }},
+            {"osGetPrimCount", new FunctionSig {
+                FunctionName = "osGetPrimCount",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 920
+            }},
+            {"osGetPrimCount__1", new FunctionSig {
+                FunctionName = "osGetPrimCount",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "object_id" },
+                TableIndex = 921
+            }},
+            {"osGetSittingAvatarsCount", new FunctionSig {
+                FunctionName = "osGetSittingAvatarsCount",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 922
+            }},
+            {"osGetSittingAvatarsCount__1", new FunctionSig {
+                FunctionName = "osGetSittingAvatarsCount",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "object_id" },
+                TableIndex = 923
+            }},
+            {"osGetParcelDwell", new FunctionSig {
+                FunctionName = "osGetParcelDwell",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Vector },
+                ParamNames = new string[] { "pos" },
+                TableIndex = 924
+            }},
+            {"osGetParcelID", new FunctionSig {
+                FunctionName = "osGetParcelID",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 925
+            }},
+            {"osGetParcelIDs", new FunctionSig {
+                FunctionName = "osGetParcelIDs",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 926
+            }},
+            {"osGetInventoryLastOwner", new FunctionSig {
+                FunctionName = "osGetInventoryLastOwner",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "itemNameorid" },
+                TableIndex = 927
+            }},
+            {"osGetInventoryItemKey", new FunctionSig {
+                FunctionName = "osGetInventoryItemKey",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "name" },
+                TableIndex = 928
+            }},
+            {"osGetInventoryName", new FunctionSig {
+                FunctionName = "osGetInventoryName",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.Key },
+                ParamNames = new string[] { "itemId" },
+                TableIndex = 929
+            }},
+            {"osGetInventoryDesc", new FunctionSig {
+                FunctionName = "osGetInventoryDesc",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "itemNameorid" },
+                TableIndex = 930
+            }},
+            {"osGetInventoryItemKeys", new FunctionSig {
+                FunctionName = "osGetInventoryItemKeys",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] { VarType.Integer },
+                ParamNames = new string[] { "type" },
+                TableIndex = 931
+            }},
+            {"osGetInventoryNames", new FunctionSig {
+                FunctionName = "osGetInventoryNames",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] { VarType.Integer },
+                ParamNames = new string[] { "type" },
+                TableIndex = 932
+            }},
+            {"osGetLinkInventoryName", new FunctionSig {
+                FunctionName = "osGetLinkInventoryName",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Key },
+                ParamNames = new string[] { "linkNumber", "itemId" },
+                TableIndex = 933
+            }},
+            {"osGetLinkInventoryDesc", new FunctionSig {
+                FunctionName = "osGetLinkInventoryDesc",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.String },
+                ParamNames = new string[] { "linkNumber", "itemNameorid" },
+                TableIndex = 934
+            }},
+            {"osGetLinkInventoryKey", new FunctionSig {
+                FunctionName = "osGetLinkInventoryKey",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.String, VarType.Integer },
+                ParamNames = new string[] { "linkNumber", "name", "type" },
+                TableIndex = 935
+            }},
+            {"osGetLinkInventoryKeys", new FunctionSig {
+                FunctionName = "osGetLinkInventoryKeys",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "linkNumber", "type" },
+                TableIndex = 936
+            }},
+            {"osGetLinkInventoryItemKey", new FunctionSig {
+                FunctionName = "osGetLinkInventoryItemKey",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.String },
+                ParamNames = new string[] { "linkNumber", "name" },
+                TableIndex = 937
+            }},
+            {"osGetLinkInventoryItemKeys", new FunctionSig {
+                FunctionName = "osGetLinkInventoryItemKeys",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "linkNumber", "type" },
+                TableIndex = 938
+            }},
+            {"osGetLinkInventoryNames", new FunctionSig {
+                FunctionName = "osGetLinkInventoryNames",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "linkNumber", "type" },
+                TableIndex = 939
+            }},
          };
 
         /// <summary>

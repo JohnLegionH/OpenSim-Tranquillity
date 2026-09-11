@@ -2121,3 +2121,68 @@ server builds.
 
 **Did it land:** the same prim, `osSetDynamicTextureData("", "vector", "MoveTo 20,20; PenColour RED;
 FontSize 24; Text Hello;", "", 0)`, shows red "Hello" on white - and the word sits below y=20, not above.
+
+## PHLOX-19 - OSSL read-only remainder
+
+**2026-09-11. Landed; not deployed.** 42 names, 44 dispatch entries (896-939): what was left of PHLOX-12's
+information row after PHLOX-12 took seventeen and later sessions took `osGetAgentIP`, `osGetCurrentSunHour`,
+`osGetLinkPrimitiveParams`, `osGetPrimitiveParams`, `osGetParcelDetails`, `osGetSunParam`, `osGetTerrainHeight`
+and `osGetWindParam` - the row's `{...}` groups expanded (six `osGetInventory*`, seven `osGetLinkInventory*`, two
+apparent-time pairs, three parcel readers) plus the brief's `osListenRegex` (the PHLOX-13 leftover) and
+`osDetectedCountry`. `osIsUUID` was already there (PHLOX-13). Same method: every body ported from
+`OSSL_Api.cs` with its line range in the `<summary>`, every gated function under its upstream `Allow_` key and
+level through `OsslGate`, upstream's bare `CheckThreatLevel()` as the master switch, an ungated upstream
+function left ungated.
+
+**The notecard trio - the most-used OSSL functions in ported content.** `osGetNotecardLine`, `osGetNotecard`,
+`osGetNumberOfNotecardLines` (VeryHigh) read the notecard **synchronously** through the same asset-service read
+the async `llGetNotecardLine` path uses and the same `StripNotecardHeader`; upstream's `NotecardCache` is a
+cache over that read, and this tree's asset cache already sits in front of the service. A missing notecard is
+a shout and `"ERROR!"` / `-1`, an out-of-range line is EOF, as upstream. **And the shared stripper was wrong for
+every notecard that exists:** the body is followed by `}` + newline (`AssetNotecard.Encode` and the viewer both
+write it so), and `StripNotecardHeader` only stripped `newline + }` or a bare `}` - so the last line of every
+notecard came back as `text}` with an empty line after it, for `llGetNotecardLine` and
+`llGetNumberOfNotecardLines` too, since May. It now takes exactly the `Text length N` the header declares and
+falls back to the brace strip only when N does not fit. The trio's test showed it (`n=3`, `l1=second line}`)
+before the fix.
+
+**Doors reused:** `llGetColor` became `ColorOf(part, face)` so `osGetLinkColor` shares it; the inventory
+family reads the part's `Inventory` (the link forms through upstream's `GetSingleLinkPart` rule); `osListenRegex`
+goes to Phlox's own listen manager, which **now matches regexes** - `ListenEntry` carries a compiled `NameRegex`
+/ `MsgRegex` when `OS_LISTEN_REGEX_NAME` (1) / `OS_LISTEN_REGEX_MESSAGE` (2) is set, and the plain `Add` is the
+new one with bitfield 0; the regexes are validated first, a shout and -1 when invalid, as upstream.
+
+| landed | gate |
+|---|---|
+| osGetNotecardLine, osGetNotecard, osGetNumberOfNotecardLines | VeryHigh |
+| osGetRegionMapTexture (grid service by name or id; upstream's 1 s sleep not applied) | High |
+| osGetNumberOfAttachments (strided [point, count]), osDetectedCountry, osGetAgentCountry (a non-god owner only for a present agent) | Moderate |
+| osGetAvatarHomeURI, osListenRegex | Low |
+| osGetRezzingObject, osGetGender (the shape's "male" param), osGetHealRate | None |
+| osGetLinkNumber, osGetApparentTime, osGetApparentTimeString, osGetApparentRegionTime, osGetApparentRegionTimeString | master switch |
+| osGetPSTWallclock, osGetLastChangedEventKey, osGetLinkColor, osGetSitActiveRange, osGetLinkSitActiveRange, osGetStandTarget, osGetLinkStandTarget, osGetPrimCount x2, osGetSittingAvatarsCount x2, osGetParcelDwell, osGetParcelID, osGetParcelIDs, osGetInventoryLastOwner, osGetInventoryItemKey, osGetInventoryName, osGetInventoryDesc, osGetInventoryItemKeys, osGetInventoryNames, osGetLinkInventoryName, osGetLinkInventoryDesc, osGetLinkInventoryKey, osGetLinkInventoryKeys, osGetLinkInventoryItemKey, osGetLinkInventoryItemKeys, osGetLinkInventoryNames | ungated upstream |
+
+**Not in `OSSL_Api.cs` at all, so not landed:** `osGetSimulatorHostname` and `osGetGridStats` from the brief -
+nothing upstream defines them.
+
+**Wiki:** `osGetNotecardLine` (VeryHigh, "skips the dataserver event"), `osListenRegex` (Low, the two
+bitfield constants, "an error will be shouted" for a bad regex), `osGetNumberOfAttachments` (Moderate, the
+strided list), `osGetAvatarHomeURI` (Low) read over plain HTTP.
+
+### What pins it
+
+`OsslReadOnlyTests`: a real notecard asset "cfg" with two lines in the harness asset service reads back
+**`n=2`, `l0=first line`, `l1=second line`**, EOF for line 9, the whole text from `osGetNotecard`, `-1` and one
+shout for a missing notecard; the inventory family answers by name, by id and by permission (a copy-only item's
+key is NULL_KEY, the full-permission one's is not; names, keys and the link forms agree with the items); the
+prim, parcel and misc readers answer from the scene (prim counts by key, sit range, stand target, link colour
+after `llSetColor`, link number 0 for an unlinked prim, the parcel id and count with a real land module, the
+rezzer id, the EEP time strings without an environment module, the home URI); on a presence `osGetHealRate`,
+`osGetGender` (the default shape is female), a strided attachment count and the country; **`osListenRegex(7,
+"", NULL_KEY, "^hel+o$", OS_LISTEN_REGEX_MESSAGE)` hears "hello" from a second prim and not "goodbye"**, and an
+invalid name regex is a shout and -1; at VeryLow `osGetNotecardLine` is denied with one stop. Dispatch baseline
+**regenerated** (871 -> 913 names). Suite **181 -> 186**; region server builds.
+
+**Did it land (combined deploy with DRAW-1):** a prim holding a notecard "cfg" with two lines says
+`osGetNumberOfNotecardLines("cfg") = 2` and `osGetNotecardLine("cfg", 0)` = its first line **with no trailing
+brace on the last line**; and the draw prim shows red "Hello" on white.

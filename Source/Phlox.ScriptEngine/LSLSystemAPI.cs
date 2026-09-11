@@ -5141,12 +5141,15 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             SetColor(m_host, color, face);
         }
 
-        public Vector3 llGetColor(int face)
+        public Vector3 llGetColor(int face) => ColorOf(m_host, face);
+
+        /// <summary>PHLOX-19: llGetColor over any part, shared with osGetLinkColor (upstream LSL_Api.GetColor).</summary>
+        private static Vector3 ColorOf(SceneObjectPart part, int face)
         {
-            if (m_host == null) return Vector3.Zero;
-            Primitive.TextureEntry tex = m_host.Shape.Textures;
+            if (part == null) return Vector3.Zero;
+            Primitive.TextureEntry tex = part.Shape.Textures;
             if (tex == null) return Vector3.Zero;
-            int sides = m_host.GetNumberOfSides();
+            int sides = part.GetNumberOfSides();
             Vector3 rgb = Vector3.Zero;
 
             if (face == ALL_SIDES)
@@ -8411,6 +8414,389 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (tm == null) return Vector3.Zero;
             tm.GetDrawStringSize(contentType, text ?? string.Empty, fontName, fontSize, out double xSize, out double ySize);
             return new Vector3((float)xSize, (float)ySize, 0f);
+        }
+
+        // ── PHLOX-19: OSSL read-only remainder, ported from OSSL_Api.cs (line cited per function), each gated function
+        //    under its upstream key and threat level through OsslGate; "master" = upstream's bare CheckThreatLevel() ──
+
+        private const uint OsslFullPerms = (uint)(OpenSim.Framework.PermissionMask.Copy | OpenSim.Framework.PermissionMask.Transfer | OpenSim.Framework.PermissionMask.Modify);
+        private static bool OsslFullPerm(TaskInventoryItem item) => (item.CurrentPermissions & OsslFullPerms) == OsslFullPerms;
+        private TaskInventoryItem OsslItemByNameOrId(SceneObjectPart part, string nameOrId)
+        {
+            if (part == null || string.IsNullOrEmpty(nameOrId)) return null;
+            return UUID.TryParse(nameOrId, out UUID id) ? part.Inventory.GetInventoryItem(id) : part.Inventory.GetInventoryItem(nameOrId);
+        }
+
+        /// <summary>The notecard's body lines, read synchronously through the asset service the async llGetNotecardLine uses (LSL_Api's NotecardCache is a cache over the same read); null when there is no such notecard.</summary>
+        private string[] OsslNotecardLines(string name)
+        {
+            if (m_host == null || string.IsNullOrEmpty(name)) return null;
+            TaskInventoryItem item = UUID.TryParse(name, out UUID id) ? m_host.Inventory.GetInventoryItem(id) : FindInventoryItem(name, (int)AssetType.Notecard);
+            if (item == null) return null;
+            AssetBase asset = World?.AssetService?.Get(item.AssetID.ToString());
+            if (asset?.Data == null) return null;
+            string body = StripNotecardHeader(OpenMetaverse.Utils.BytesToString(asset.Data));
+            if (body.Length == 0) return Array.Empty<string>();
+            string[] lines = body.Split('\n');
+            for (int i = 0; i < lines.Length; i++) lines[i] = lines[i].TrimEnd('\r');
+            return lines;
+        }
+
+        /// <summary>OSSL_Api.cs:2361-2371 - VeryHigh. The line, or "ERROR!" with a shout when the notecard is missing; an out-of-range line is EOF as the cache answers.</summary>
+        public string osGetNotecardLine(string name, int line)
+        {
+            OsslCheck(TlVeryHigh, "osGetNotecardLine");
+            string[] lines = OsslNotecardLines(name);
+            if (lines == null) { ShoutError("Notecard '" + name + "' could not be found."); return "ERROR!"; }
+            return line >= 0 && line < lines.Length ? lines[line] : "\n\n\n";
+        }
+
+        /// <summary>OSSL_Api.cs:2388-2402 (LoadNotecard :2264-2290) - VeryHigh. Every line joined with newlines.</summary>
+        public string osGetNotecard(string name)
+        {
+            OsslCheck(TlVeryHigh, "osGetNotecard");
+            string[] lines = OsslNotecardLines(name);
+            if (lines == null) { ShoutError("Notecard '" + name + "' could not be found."); return "ERROR!"; }
+            var sb = new StringBuilder();
+            foreach (string l in lines) sb.Append(l).Append('\n');
+            return sb.ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:2417-2428 - VeryHigh. -1 with a shout when the notecard is missing.</summary>
+        public int osGetNumberOfNotecardLines(string name)
+        {
+            OsslCheck(TlVeryHigh, "osGetNumberOfNotecardLines");
+            string[] lines = OsslNotecardLines(name);
+            if (lines == null) { ShoutError("Notecard '" + name + "' could not be found."); return -1; }
+            return lines.Length;
+        }
+
+        /// <summary>OSSL_Api.cs:2631-2645 - Low. The user's HomeURI from user management, else this grid's home URL.</summary>
+        public string osGetAvatarHomeURI(string uuid)
+        {
+            OsslCheck(TlLow, "osGetAvatarHomeURI");
+            string v = string.Empty;
+            if (UUID.TryParse(uuid, out UUID id)) v = World?.RequestModuleInterface<IUserManagement>()?.GetUserServerURL(id, "HomeURI") ?? string.Empty;
+            return v.Length == 0 ? (World?.SceneGridInfo?.HomeURLNoEndSlash ?? string.Empty) : v;
+        }
+
+        /// <summary>OSSL_Api.cs:4299-4322 - Moderate. A strided list [point, count] for each point asked for; nothing for a point at or below 0 but 0.</summary>
+        public LSLList osGetNumberOfAttachments(string avatar, LSLList attachmentPoints)
+        {
+            OsslCheck(TlModerate, "osGetNumberOfAttachments");
+            var resp = new LSLList();
+            if (attachmentPoints.Length < 1 || !UUID.TryParse(avatar, out UUID id)) return resp;
+            ScenePresence target = World?.GetScenePresence(id);
+            if (target == null) return resp;
+            for (int i = 0; i < attachmentPoints.Length; i++)
+            {
+                int point = attachmentPoints.GetLSLIntegerItem(i);
+                resp = resp.Append(point);
+                resp = resp.Append(point <= 0 ? 0 : target.GetAttachments((uint)point).Count);
+            }
+            return resp;
+        }
+
+        /// <summary>OSSL_Api.cs:3594-3617 - High. "" = this region's map texture; a name or id is looked up in the grid service (1 s sleep upstream, not applied).</summary>
+        public string osGetRegionMapTexture(string regionNameOrID)
+        {
+            OsslCheck(TlHigh, "osGetRegionMapTexture");
+            if (World == null) return UUID.Zero.ToString();
+            if (string.IsNullOrWhiteSpace(regionNameOrID)) return World.RegionInfo.RegionSettings.TerrainImageID.ToString();
+            OpenSim.Services.Interfaces.GridRegion region = UUID.TryParse(regionNameOrID, out UUID key)
+                ? World.GridService?.GetRegionByUUID(UUID.Zero, key)
+                : World.GridService?.GetRegionByName(UUID.Zero, regionNameOrID);
+            return (region?.TerrainImage ?? UUID.Zero).ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:4979-4986 - master switch. The link number of the first prim with that name, -1 for none.</summary>
+        public int osGetLinkNumber(string name)
+        {
+            OsslCheck();
+            SceneObjectGroup sog = m_host?.ParentGroup;
+            if (sog == null || sog.IsDeleted) return -1;
+            return sog.GetLinkNumber(name);
+        }
+
+        /// <summary>OSSL_Api.cs:4461-4468 - None. NULL_KEY when nothing rezzed this object or the rezzer is an avatar.</summary>
+        public string osGetRezzingObject()
+        {
+            OsslCheck(TlNone, "osGetRezzingObject");
+            UUID rez = m_host?.ParentGroup?.RezzerID ?? UUID.Zero;
+            if (rez == UUID.Zero || World?.GetScenePresence(rez) != null) return UUID.Zero.ToString();
+            return rez.ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:4558-4592 - Low. The regexes are validated as upstream (a shout and -1 when invalid); the listen goes to Phlox's listen manager with the bitfield.</summary>
+        public int osListenRegex(int channelID, string name, string ID, string msg, int regexBitfield)
+        {
+            OsslCheck(TlLow, "osListenRegex");
+            if (m_ScriptEngine.ListenManager == null || m_host == null) return -1;
+            if (!UUID.TryParse(ID, out UUID keyID)) return -1;
+            if ((regexBitfield & 1) != 0) { try { System.Text.RegularExpressions.Regex.IsMatch("", name ?? string.Empty); } catch { ShoutError("Name regex is invalid."); return -1; } }
+            if ((regexBitfield & 2) != 0) { try { System.Text.RegularExpressions.Regex.IsMatch("", msg ?? string.Empty); } catch { ShoutError("Message regex is invalid."); return -1; } }
+            return m_ScriptEngine.ListenManager.Add(m_localID, m_itemID, m_host.UUID, channelID, name, keyID, msg, regexBitfield);
+        }
+
+        private string OsslCountryOf(UUID key)
+        {
+            if (key == UUID.Zero) return string.Empty;
+            UserAccount account = World?.UserAccountService?.GetUserAccount(World.RegionInfo.ScopeID, key);
+            return account?.UserCountry ?? string.Empty;
+        }
+
+        /// <summary>OSSL_Api.cs:5212-5225 - Moderate. The detected agent's account country.</summary>
+        public string osDetectedCountry(int number)
+        {
+            OsslCheck(TlModerate, "osDetectedCountry");
+            if (!UUID.TryParse(GetDetect(number).Key ?? string.Empty, out UUID key)) return string.Empty;
+            return OsslCountryOf(key);
+        }
+
+        /// <summary>OSSL_Api.cs:5228-5249 - Moderate. A non-god owner may only ask about an agent present in the region.</summary>
+        public string osGetAgentCountry(string id)
+        {
+            OsslCheck(TlModerate, "osGetAgentCountry");
+            if (!UUID.TryParse(id, out UUID key) || key == UUID.Zero || World == null) return string.Empty;
+            if (!World.Permissions.IsGod(m_host.OwnerID) && World.GetScenePresence(key) == null) return string.Empty;
+            return OsslCountryOf(key);
+        }
+
+        /// <summary>OSSL_Api.cs:3540-3575 - None. The shape's "male" visual param, read by its index among the group-0 params; "unknown" off-region.</summary>
+        public string osGetGender(string rawAvatarId)
+        {
+            OsslCheck(TlNone, "osGetGender");
+            if (!UUID.TryParse(rawAvatarId, out UUID id)) return "unknown";
+            ScenePresence sp = World?.GetScenePresence(id);
+            if (sp == null || sp.IsChildAgent || sp.Appearance?.VisualParams == null) return "unknown";
+            int index = 0; bool found = false; VisualParam male = default;
+            foreach (var vp in VisualParams.Params)
+            {
+                if (vp.Value.Name == "male" && vp.Value.Wearable == "shape") { male = vp.Value; found = true; break; }
+                if (vp.Value.Group == 0) index++;
+            }
+            if (!found || index >= sp.Appearance.VisualParams.Length) return "unknown";
+            float weight = Utils.ByteToFloat(sp.Appearance.VisualParams[index], male.MinValue, male.MaxValue);
+            return weight > 0.5f ? "male" : "female";
+        }
+
+        /// <summary>OSSL_Api.cs:3854-3865 - None.</summary>
+        public float osGetHealRate(string avatar)
+        {
+            OsslCheck(TlNone, "osGetHealRate");
+            if (!UUID.TryParse(avatar, out UUID id)) return 0f;
+            return World?.GetScenePresence(id)?.HealRate ?? 0f;
+        }
+
+        private float OsslDayFraction() => World?.RequestModuleInterface<IEnvironmentModule>()?.GetRegionDayFractionTime() ?? -1f;
+        private static string OsslTimeToString(float hours, bool format24)
+        {
+            int h = (int)hours; hours -= h; hours *= 60; int m = (int)hours; hours -= m; hours *= 60; int s = (int)hours;
+            if (format24) return string.Format("{0:00}:{1:00}:{2:00}", h, m, s);
+            if (h > 12) return string.Format("{0}:{1:00}:{2:00} PM", h - 12, m, s);
+            if (h == 12) return string.Format("{0}:{1:00}:{2:00} PM", h, m, s);
+            return string.Format("{0}:{1:00}:{2:00} AM", h, m, s);
+        }
+
+        /// <summary>OSSL_Api.cs:1559-1566 - master switch. Seconds into the region's day; 0 without an environment module.</summary>
+        public float osGetApparentTime() { OsslCheck(); float f = OsslDayFraction(); return f < 0 ? 0f : 86400f * f; }
+        /// <summary>OSSL_Api.cs:1588-1596 - master switch.</summary>
+        public string osGetApparentTimeString(int format24) { OsslCheck(); float f = OsslDayFraction(); return f < 0 ? (format24 != 0 ? "00:00:00" : "0:00:00 AM") : OsslTimeToString(24f * f, format24 != 0); }
+        /// <summary>OSSL_Api.cs:1602-1609 - master switch. The same value as osGetApparentTime under EEP (one region day).</summary>
+        public float osGetApparentRegionTime() { OsslCheck(); float f = OsslDayFraction(); return f < 0 ? 0f : 86400f * f; }
+        /// <summary>OSSL_Api.cs:1613-1621 - master switch.</summary>
+        public string osGetApparentRegionTimeString(int format24) { OsslCheck(); float f = OsslDayFraction(); return f < 0 ? (format24 != 0 ? "00:00:00" : "0:00:00 AM") : OsslTimeToString(24f * f, format24 != 0); }
+
+        private static readonly TimeZoneInfo OsslPstZone = FindPst();
+        private static TimeZoneInfo FindPst()
+        {
+            foreach (string id in new[] { "Pacific Standard Time", "America/Los_Angeles" })
+                try { return TimeZoneInfo.FindSystemTimeZoneById(id); } catch (Exception) { }
+            return null;
+        }
+
+        /// <summary>OSSL_Api.cs:5910-5916 - ungated upstream. Seconds since midnight, Pacific time; the local clock when the zone is unknown to this host.</summary>
+        public float osGetPSTWallclock()
+        {
+            if (OsslPstZone == null) return (float)DateTime.Now.TimeOfDay.TotalSeconds;
+            return (float)TimeZoneInfo.ConvertTime(DateTime.UtcNow, OsslPstZone).TimeOfDay.TotalSeconds;
+        }
+
+        /// <summary>OSSL_Api.cs:5901-5907 - ungated upstream. The key of the first detected entry of the current event.</summary>
+        public string osGetLastChangedEventKey() => GetDetect(0).Key ?? string.Empty;
+
+        /// <summary>OSSL_Api.cs:6642-6656 - ungated upstream. LINK_ROOT, LINK_THIS or a link number; llGetColor's reading over that part.</summary>
+        public Vector3 osGetLinkColor(int link, int face)
+        {
+            if (m_host?.ParentGroup == null) return Vector3.Zero;
+            SceneObjectPart part = link == OsslLinkRoot ? m_host.ParentGroup.RootPart : link == OsslLinkThis ? m_host : m_host.ParentGroup.GetLinkNumPart(link);
+            return part == null ? Vector3.Zero : ColorOf(part, face);
+        }
+
+        /// <summary>OSSL_Api.cs:6032-6035 - ungated upstream.</summary>
+        public float osGetSitActiveRange() => m_host?.SitActiveRange ?? 0f;
+
+        /// <summary>OSSL_Api.cs:6037-6049 - ungated upstream. int.MinValue for a negative link or an unknown one, as upstream.</summary>
+        public float osGetLinkSitActiveRange(int linkNumber)
+        {
+            if (m_host?.ParentGroup == null) return 0f;
+            if (linkNumber == OsslLinkThis) return m_host.SitActiveRange;
+            if (linkNumber < 0) return int.MinValue;
+            if (linkNumber < 2) return m_host.ParentGroup.RootPart.SitActiveRange;
+            SceneObjectPart t = m_host.ParentGroup.GetLinkNumPart(linkNumber);
+            return t == null ? int.MinValue : t.SitActiveRange;
+        }
+
+        /// <summary>OSSL_Api.cs:6084-6087 - ungated upstream.</summary>
+        public Vector3 osGetStandTarget() => m_host?.StandOffset ?? Vector3.Zero;
+
+        /// <summary>OSSL_Api.cs:6089-6101 - ungated upstream.</summary>
+        public Vector3 osGetLinkStandTarget(int linkNumber)
+        {
+            if (m_host?.ParentGroup == null) return Vector3.Zero;
+            if (linkNumber == OsslLinkThis) return m_host.StandOffset;
+            if (linkNumber < 0) return Vector3.Zero;
+            if (linkNumber < 2) return m_host.ParentGroup.RootPart.StandOffset;
+            return m_host.ParentGroup.GetLinkNumPart(linkNumber)?.StandOffset ?? Vector3.Zero;
+        }
+
+        /// <summary>OSSL_Api.cs:6560-6563 - ungated upstream.</summary>
+        public int osGetPrimCount() => m_host?.ParentGroup?.PrimCount ?? 0;
+
+        /// <summary>OSSL_Api.cs:6565-6570 - ungated upstream. 0 for a key that is not a prim here.</summary>
+        public int osGetPrimCount(string object_id)
+        {
+            if (!UUID.TryParse(object_id, out UUID id) || id == UUID.Zero || World == null) return 0;
+            return World.TryGetSceneObjectPart(id, out SceneObjectPart part) ? part.ParentGroup.PrimCount : 0;
+        }
+
+        /// <summary>OSSL_Api.cs:6573-6576 - ungated upstream.</summary>
+        public int osGetSittingAvatarsCount() => m_host?.ParentGroup?.GetSittingAvatarsCount() ?? 0;
+
+        /// <summary>OSSL_Api.cs:6578-6583 - ungated upstream.</summary>
+        public int osGetSittingAvatarsCount(string object_id)
+        {
+            if (!UUID.TryParse(object_id, out UUID id) || id == UUID.Zero || World == null) return 0;
+            return World.TryGetSceneObjectPart(id, out SceneObjectPart part) ? part.ParentGroup.GetSittingAvatarsCount() : 0;
+        }
+
+        /// <summary>OSSL_Api.cs:1720-1728 - ungated upstream.</summary>
+        public int osGetParcelDwell(Vector3 pos) => (int)(World?.GetLandData(pos)?.Dwell ?? 0f);
+
+        /// <summary>OSSL_Api.cs:6463-6467 - ungated upstream. The parcel under the prim.</summary>
+        public string osGetParcelID()
+        {
+            if (m_host == null) return UUID.Zero.ToString();
+            ILandObject parcel = World?.LandChannel?.GetLandObject(m_host.AbsolutePosition);
+            return (parcel?.GlobalID ?? UUID.Zero).ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:6443-6458 - ungated upstream. Every parcel with a global id and a non-zero area.</summary>
+        public LSLList osGetParcelIDs()
+        {
+            var ret = new LSLList();
+            var parcels = World?.LandChannel?.AllParcels();
+            if (parcels == null) return ret;
+            foreach (ILandObject p in parcels)
+            {
+                if (p.GlobalID == UUID.Zero || p.LandData == null || p.LandData.Area == 0) continue;
+                ret = ret.Append(p.GlobalID.ToString());
+            }
+            return ret;
+        }
+
+        // inventory family, OSSL_Api.cs:5514-5720 - every one ungated upstream; the *ItemKey / *Keys forms answer only for full-permission items
+        /// <summary>OSSL_Api.cs:5514-5523.</summary>
+        public string osGetInventoryLastOwner(string itemNameorid)
+        {
+            TaskInventoryItem item = OsslItemByNameOrId(m_host, itemNameorid);
+            if (item == null) return UUID.Zero.ToString();
+            return (item.LastOwnerID != UUID.Zero ? item.LastOwnerID : item.OwnerID).ToString();
+        }
+        /// <summary>OSSL_Api.cs:5528-5541.</summary>
+        public string osGetInventoryItemKey(string name)
+        {
+            TaskInventoryItem item = m_host?.Inventory.GetInventoryItem(name);
+            return item != null && OsslFullPerm(item) ? item.ItemID.ToString() : UUID.Zero.ToString();
+        }
+        /// <summary>OSSL_Api.cs:5544-5550.</summary>
+        public string osGetInventoryName(string itemId)
+        {
+            TaskInventoryItem item = UUID.TryParse(itemId, out UUID id) ? m_host?.Inventory.GetInventoryItem(id) : null;
+            return item?.Name ?? string.Empty;
+        }
+        /// <summary>OSSL_Api.cs:5567-5573.</summary>
+        public string osGetInventoryDesc(string itemNameorid) => OsslItemByNameOrId(m_host, itemNameorid)?.Description ?? string.Empty;
+        /// <summary>OSSL_Api.cs:5651-5664.</summary>
+        public LSLList osGetInventoryItemKeys(int type)
+        {
+            var ret = new LSLList();
+            if (m_host == null) return ret;
+            foreach (TaskInventoryItem item in m_host.Inventory.GetInventoryItems())
+                if ((item.Type == type || type == -1) && OsslFullPerm(item)) ret = ret.Append(item.ItemID.ToString());
+            return ret;
+        }
+        /// <summary>OSSL_Api.cs:5690-5701.</summary>
+        public LSLList osGetInventoryNames(int type)
+        {
+            var ret = new LSLList();
+            if (m_host == null) return ret;
+            foreach (TaskInventoryItem item in m_host.Inventory.GetInventoryItems())
+                if (item.Type == type || type == -1) ret = ret.Append(item.Name);
+            return ret;
+        }
+        /// <summary>OSSL_Api.cs:5553-5564 - the link-addressed forms use upstream's GetSingleLinkPart rule.</summary>
+        public string osGetLinkInventoryName(int linkNumber, string itemId)
+        {
+            SceneObjectPart part = OsslSingleLinkPart(linkNumber);
+            TaskInventoryItem item = part != null && UUID.TryParse(itemId, out UUID id) ? part.Inventory.GetInventoryItem(id) : null;
+            return item?.Name ?? string.Empty;
+        }
+        /// <summary>OSSL_Api.cs:5576-5586.</summary>
+        public string osGetLinkInventoryDesc(int linkNumber, string itemNameorid) => OsslItemByNameOrId(OsslSingleLinkPart(linkNumber), itemNameorid)?.Description ?? string.Empty;
+        /// <summary>OSSL_Api.cs:5589-5606 - the ASSET key of a full-permission item of that name and type.</summary>
+        public string osGetLinkInventoryKey(int linkNumber, string name, int type)
+        {
+            SceneObjectPart part = OsslSingleLinkPart(linkNumber);
+            TaskInventoryItem item = part?.Inventory.GetInventoryItem(name);
+            if (item == null || (type != -1 && item.Type != type) || !OsslFullPerm(item)) return UUID.Zero.ToString();
+            return item.AssetID.ToString();
+        }
+        /// <summary>OSSL_Api.cs:5609-5628 - asset keys of full-permission items of that type (-1 = any).</summary>
+        public LSLList osGetLinkInventoryKeys(int linkNumber, int type)
+        {
+            var ret = new LSLList();
+            SceneObjectPart part = OsslSingleLinkPart(linkNumber);
+            if (part == null) return ret;
+            foreach (TaskInventoryItem item in part.Inventory.GetInventoryItems())
+                if ((item.Type == type || type == -1) && OsslFullPerm(item)) ret = ret.Append(item.AssetID.ToString());
+            return ret;
+        }
+        /// <summary>OSSL_Api.cs:5631-5648.</summary>
+        public string osGetLinkInventoryItemKey(int linkNumber, string name)
+        {
+            TaskInventoryItem item = OsslSingleLinkPart(linkNumber)?.Inventory.GetInventoryItem(name);
+            return item != null && OsslFullPerm(item) ? item.ItemID.ToString() : UUID.Zero.ToString();
+        }
+        /// <summary>OSSL_Api.cs:5668-5687.</summary>
+        public LSLList osGetLinkInventoryItemKeys(int linkNumber, int type)
+        {
+            var ret = new LSLList();
+            SceneObjectPart part = OsslSingleLinkPart(linkNumber);
+            if (part == null) return ret;
+            foreach (TaskInventoryItem item in part.Inventory.GetInventoryItems())
+                if ((item.Type == type || type == -1) && OsslFullPerm(item)) ret = ret.Append(item.ItemID.ToString());
+            return ret;
+        }
+        /// <summary>OSSL_Api.cs:5705-5718.</summary>
+        public LSLList osGetLinkInventoryNames(int linkNumber, int type)
+        {
+            var ret = new LSLList();
+            SceneObjectPart part = OsslSingleLinkPart(linkNumber);
+            if (part == null) return ret;
+            foreach (TaskInventoryItem item in part.Inventory.GetInventoryItems())
+                if (item.Type == type || type == -1) ret = ret.Append(item.Name);
+            return ret;
         }
 
         // ── PHLOX-14: osNpc* - a second door onto BotManager's bots (one BotData per NPC), ported from OSSL_Api.cs ──
@@ -12782,7 +13168,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             int bodyStart = raw.IndexOf('\n', marker + 1);
             if (bodyStart < 0) return string.Empty;
             string body = raw.Substring(bodyStart + 1);
-            if (body.EndsWith("\n}", StringComparison.Ordinal)) body = body.Substring(0, body.Length - 2);
+            // PHLOX-19: the body is followed by "}\n" (AssetNotecard.Encode and the viewer both write it so), which the
+            // EndsWith checks below never matched - the last line came back as "text}" with an empty line after it.
+            // "Text length N" says how long the body is; take exactly that when it fits.
+            string lenText = raw.Substring(marker + 13, bodyStart - (marker + 13)).Trim();
+            if (int.TryParse(lenText, out int declared) && declared >= 0 && declared <= body.Length)
+                return body.Substring(0, declared);
+            if (body.EndsWith("}\n", StringComparison.Ordinal)) body = body.Substring(0, body.Length - 2);
+            else if (body.EndsWith("\n}", StringComparison.Ordinal)) body = body.Substring(0, body.Length - 2);
             else if (body.EndsWith("}", StringComparison.Ordinal)) body = body.Substring(0, body.Length - 1);
             return body;
         }
