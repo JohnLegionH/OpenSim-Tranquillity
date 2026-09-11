@@ -8283,6 +8283,136 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return ParcelDetailsOf(parcel?.LandData, param);
         }
 
+        // ── PHLOX-18 PART 1: OSSL draw and dynamic-texture functions, ported from OSSL_Api.cs (line cited per function).
+        //    The draw helpers append to a command string the VectorRender module parses; the texture calls hand it to
+        //    the DynamicTexture module (IDynamicTextureManager), which renders synchronously and puts the asset on the face. ──
+
+        private IDynamicTextureManager DynTex() => World?.RequestModuleInterface<IDynamicTextureManager>();
+
+        /// <summary>OSSL_Api.cs:721-737 - VeryHigh. dynamicID and timer are unused upstream too; the updater's id comes back.</summary>
+        public string osSetDynamicTextureURL(string dynamicID, string contentType, string url, string extraParams, int timer)
+        {
+            OsslCheck(TlVeryHigh, "osSetDynamicTextureURL");
+            var tm = DynTex();
+            if (tm == null || m_host == null || !string.IsNullOrEmpty(dynamicID)) return UUID.Zero.ToString();
+            return tm.AddDynamicTextureURL(World.RegionInfo.RegionID, m_host.UUID, contentType, url, extraParams ?? string.Empty).ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:742-758 - VeryHigh.</summary>
+        public string osSetDynamicTextureURLBlend(string dynamicID, string contentType, string url, string extraParams, int timer, int alpha)
+        {
+            OsslCheck(TlVeryHigh, "osSetDynamicTextureURLBlend");
+            var tm = DynTex();
+            if (tm == null || m_host == null || !string.IsNullOrEmpty(dynamicID)) return UUID.Zero.ToString();
+            return tm.AddDynamicTextureURL(World.RegionInfo.RegionID, m_host.UUID, contentType, url, extraParams ?? string.Empty, true, (byte)alpha).ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:763-779 - VeryHigh.</summary>
+        public string osSetDynamicTextureURLBlendFace(string dynamicID, string contentType, string url, string extraParams, int blend, int disp, int timer, int alpha, int face)
+        {
+            OsslCheck(TlVeryHigh, "osSetDynamicTextureURLBlendFace");
+            var tm = DynTex();
+            if (tm == null || m_host == null || !string.IsNullOrEmpty(dynamicID)) return UUID.Zero.ToString();
+            return tm.AddDynamicTextureURL(World.RegionInfo.RegionID, m_host.UUID, contentType, url, extraParams ?? string.Empty, blend != 0, disp, (byte)alpha, face).ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:784-788 - the five-argument form is DataFace with face -1 (all faces).</summary>
+        public string osSetDynamicTextureData(string dynamicID, string contentType, string data, string extraParams, int timer)
+            => OsslDynamicTextureData("osSetDynamicTextureData", dynamicID, contentType, data, extraParams, false, 3, 255, -1);
+
+        /// <summary>OSSL_Api.cs:790-813 DataFace body - VeryLow (key osSetDynamicTextureData). "" extraParams means 256.</summary>
+        private string OsslDynamicTextureData(string key, string dynamicID, string contentType, string data, string extraParams, bool blend, int disp, byte alpha, int face)
+        {
+            OsslCheck(TlVeryLow, key);
+            var tm = DynTex();
+            if (tm == null || m_host == null || !string.IsNullOrEmpty(dynamicID)) return UUID.Zero.ToString();
+            if (string.IsNullOrEmpty(extraParams)) extraParams = "256";
+            return tm.AddDynamicTextureData(World.RegionInfo.RegionID, m_host.UUID, contentType, data ?? string.Empty, extraParams, blend, disp, alpha, face).ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:819-841 - VeryLow. (DataFace at :790 shares arity 6 with this form and Phlox keys overloads by arity: not landed.)</summary>
+        public string osSetDynamicTextureDataBlend(string dynamicID, string contentType, string data, string extraParams, int timer, int alpha)
+        {
+            OsslCheck(TlVeryLow, "osSetDynamicTextureDataBlend");
+            var tm = DynTex();
+            if (tm == null || m_host == null || !string.IsNullOrEmpty(dynamicID)) return UUID.Zero.ToString();
+            if (string.IsNullOrEmpty(extraParams)) extraParams = "256";
+            return tm.AddDynamicTextureData(World.RegionInfo.RegionID, m_host.UUID, contentType, data ?? string.Empty, extraParams, true, (byte)alpha).ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:847-869 - VeryLow.</summary>
+        public string osSetDynamicTextureDataBlendFace(string dynamicID, string contentType, string data, string extraParams, int blend, int disp, int timer, int alpha, int face)
+            => OsslDynamicTextureData("osSetDynamicTextureDataBlendFace", dynamicID, contentType, data, extraParams, blend != 0, disp, (byte)alpha, face);
+
+        // the draw-list helpers, OSSL_Api.cs:1238-1470 - every one is upstream's bare CheckThreatLevel(), the master switch
+        /// <summary>OSSL_Api.cs:1238-1243.</summary>
+        public string osDrawResetTransform(string drawList) { OsslCheck(); return drawList + "ResetTransf;"; }
+        /// <summary>OSSL_Api.cs:1246-1251.</summary>
+        public string osDrawRotationTransform(string drawList, float x) { OsslCheck(); return drawList + "RotTransf " + x + ";"; }
+        /// <summary>OSSL_Api.cs:1254-1259.</summary>
+        public string osDrawScaleTransform(string drawList, float x, float y) { OsslCheck(); return drawList + "ScaleTransf " + x + "," + y + ";"; }
+        /// <summary>OSSL_Api.cs:1262-1267.</summary>
+        public string osDrawTranslationTransform(string drawList, float x, float y) { OsslCheck(); return drawList + "TransTransf " + x + "," + y + ";"; }
+        /// <summary>OSSL_Api.cs:1270-1275.</summary>
+        public string osMovePen(string drawList, int x, int y) { OsslCheck(); return drawList + "MoveTo " + x + "," + y + ";"; }
+        /// <summary>OSSL_Api.cs:1278-1283.</summary>
+        public string osDrawLine(string drawList, int startX, int startY, int endX, int endY) { OsslCheck(); return drawList + "MoveTo " + startX + "," + startY + "; LineTo " + endX + "," + endY + "; "; }
+        /// <summary>OSSL_Api.cs:1286-1291.</summary>
+        public string osDrawLine(string drawList, int endX, int endY) { OsslCheck(); return drawList + "LineTo " + endX + "," + endY + "; "; }
+        /// <summary>OSSL_Api.cs:1294-1299.</summary>
+        public string osDrawText(string drawList, string text) { OsslCheck(); return drawList + "Text " + text + "; "; }
+        /// <summary>OSSL_Api.cs:1302-1307.</summary>
+        public string osDrawEllipse(string drawList, int width, int height) { OsslCheck(); return drawList + "Ellipse " + width + "," + height + "; "; }
+        /// <summary>OSSL_Api.cs:1310-1315.</summary>
+        public string osDrawFilledEllipse(string drawList, int width, int height) { OsslCheck(); return drawList + "FillEllipse " + width + "," + height + "; "; }
+        /// <summary>OSSL_Api.cs:1318-1323.</summary>
+        public string osDrawRectangle(string drawList, int width, int height) { OsslCheck(); return drawList + "Rectangle " + width + "," + height + "; "; }
+        /// <summary>OSSL_Api.cs:1326-1331.</summary>
+        public string osDrawFilledRectangle(string drawList, int width, int height) { OsslCheck(); return drawList + "FillRectangle " + width + "," + height + "; "; }
+
+        private string OsslPolygon(string keyword, string drawList, LSLList x, LSLList y)
+        {
+            if (x.Length != y.Length || x.Length < 3) return string.Empty;
+            var sb = new StringBuilder(drawList).Append(keyword).Append(' ').Append(x.GetLSLStringItem(0)).Append(',').Append(y.GetLSLStringItem(0));
+            for (int i = 1; i < x.Length; i++) sb.Append(',').Append(x.GetLSLStringItem(i)).Append(',').Append(y.GetLSLStringItem(i));
+            return sb.Append("; ").ToString();
+        }
+        /// <summary>OSSL_Api.cs:1334-1348 - an empty string for mismatched or fewer than three points, as upstream.</summary>
+        public string osDrawFilledPolygon(string drawList, LSLList x, LSLList y) { OsslCheck(); return OsslPolygon("FillPolygon", drawList, x, y); }
+        /// <summary>OSSL_Api.cs:1351-1365.</summary>
+        public string osDrawPolygon(string drawList, LSLList x, LSLList y) { OsslCheck(); return OsslPolygon("Polygon", drawList, x, y); }
+        /// <summary>OSSL_Api.cs:1368-1373.</summary>
+        public string osSetFontSize(string drawList, int fontSize) { OsslCheck(); return drawList + "FontSize " + fontSize + "; "; }
+        /// <summary>OSSL_Api.cs:1376-1381.</summary>
+        public string osSetFontName(string drawList, string fontName) { OsslCheck(); return drawList + "FontName " + fontName + "; "; }
+        /// <summary>OSSL_Api.cs:1384-1389.</summary>
+        public string osSetPenSize(string drawList, int penSize) { OsslCheck(); return drawList + "PenSize " + penSize + "; "; }
+        /// <summary>OSSL_Api.cs:1392-1397 - a colour name or hex.</summary>
+        public string osSetPenColor(string drawList, string color) { OsslCheck(); return drawList + "PenColor " + color + "; "; }
+        /// <summary>OSSL_Api.cs:1422-1446 - vector and alpha as AARRGGBB. (The two-argument vector form at :1400 shares arity 2 with the string form: not landed.)</summary>
+        public string osSetPenColor(string drawList, Vector3 color, float alpha)
+        {
+            OsslCheck();
+            byte a = Utils.FloatZeroOneToByte(alpha), r = Utils.FloatZeroOneToByte(color.X), g = Utils.FloatZeroOneToByte(color.Y), b = Utils.FloatZeroOneToByte(color.Z);
+            return drawList + "PenColor " + a.ToString("X2") + r.ToString("X2") + g.ToString("X2") + b.ToString("X2") + "; ";
+        }
+        /// <summary>OSSL_Api.cs:1449-1455 - the deprecated spelling; the renderer accepts PenColour.</summary>
+        public string osSetPenColour(string drawList, string colour) { OsslCheck(); return drawList + "PenColour " + colour + "; "; }
+        /// <summary>OSSL_Api.cs:1458-1463.</summary>
+        public string osSetPenCap(string drawList, string direction, string type) { OsslCheck(); return drawList + "PenCap " + direction + "," + type + "; "; }
+        /// <summary>OSSL_Api.cs:1466-1471.</summary>
+        public string osDrawImage(string drawList, int width, int height, string imageUrl) { OsslCheck(); return drawList + "Image " + width + "," + height + "," + imageUrl + "; "; }
+
+        /// <summary>OSSL_Api.cs:1474-1485 - master switch. The renderer measures the text; zero without a texture manager.</summary>
+        public Vector3 osGetDrawStringSize(string contentType, string text, string fontName, int fontSize)
+        {
+            OsslCheck();
+            var tm = DynTex();
+            if (tm == null) return Vector3.Zero;
+            tm.GetDrawStringSize(contentType, text ?? string.Empty, fontName, fontSize, out double xSize, out double ySize);
+            return new Vector3((float)xSize, (float)ySize, 0f);
+        }
+
         // ── PHLOX-14: osNpc* - a second door onto BotManager's bots (one BotData per NPC), ported from OSSL_Api.cs ──
         private const int OS_NPC_NOT_OWNED = 0x2, OS_NPC_SENSE_AS_AGENT = 0x4, OS_NPC_OBJECT_GROUP = 0x8, OS_NPC_NO_FLY = 1, OS_NPC_RUNNING = 4;
         private IBotManager NpcMgr() => World?.RequestModuleInterface<IBotManager>();

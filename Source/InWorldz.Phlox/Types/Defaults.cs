@@ -6149,6 +6149,210 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "id", "param" },
                 TableIndex = 866
             }},
+            // PHLOX-18: OSSL draw and dynamic-texture functions, 867-895
+            {"osSetDynamicTextureURL", new FunctionSig {
+                FunctionName = "osSetDynamicTextureURL",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.String, VarType.String, VarType.Integer },
+                ParamNames = new string[] { "dynamicID", "contentType", "url", "extraParams", "timer" },
+                TableIndex = 867
+            }},
+            {"osSetDynamicTextureURLBlend", new FunctionSig {
+                FunctionName = "osSetDynamicTextureURLBlend",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.String, VarType.String, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "dynamicID", "contentType", "url", "extraParams", "timer", "alpha" },
+                TableIndex = 868
+            }},
+            {"osSetDynamicTextureURLBlendFace", new FunctionSig {
+                FunctionName = "osSetDynamicTextureURLBlendFace",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.String, VarType.String, VarType.Integer, VarType.Integer, VarType.Integer, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "dynamicID", "contentType", "url", "extraParams", "blend", "disp", "timer", "alpha", "face" },
+                TableIndex = 869
+            }},
+            {"osSetDynamicTextureData", new FunctionSig {
+                FunctionName = "osSetDynamicTextureData",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.String, VarType.String, VarType.Integer },
+                ParamNames = new string[] { "dynamicID", "contentType", "data", "extraParams", "timer" },
+                TableIndex = 870
+            }},
+            {"osSetDynamicTextureDataBlend", new FunctionSig {
+                FunctionName = "osSetDynamicTextureDataBlend",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.String, VarType.String, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "dynamicID", "contentType", "data", "extraParams", "timer", "alpha" },
+                TableIndex = 871
+            }},
+            {"osSetDynamicTextureDataBlendFace", new FunctionSig {
+                FunctionName = "osSetDynamicTextureDataBlendFace",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.String, VarType.String, VarType.Integer, VarType.Integer, VarType.Integer, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "dynamicID", "contentType", "data", "extraParams", "blend", "disp", "timer", "alpha", "face" },
+                TableIndex = 872
+            }},
+            {"osDrawResetTransform", new FunctionSig {
+                FunctionName = "osDrawResetTransform",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "drawList" },
+                TableIndex = 873
+            }},
+            {"osDrawRotationTransform", new FunctionSig {
+                FunctionName = "osDrawRotationTransform",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Float },
+                ParamNames = new string[] { "drawList", "x" },
+                TableIndex = 874
+            }},
+            {"osDrawScaleTransform", new FunctionSig {
+                FunctionName = "osDrawScaleTransform",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Float, VarType.Float },
+                ParamNames = new string[] { "drawList", "x", "y" },
+                TableIndex = 875
+            }},
+            {"osDrawTranslationTransform", new FunctionSig {
+                FunctionName = "osDrawTranslationTransform",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Float, VarType.Float },
+                ParamNames = new string[] { "drawList", "x", "y" },
+                TableIndex = 876
+            }},
+            {"osMovePen", new FunctionSig {
+                FunctionName = "osMovePen",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "drawList", "x", "y" },
+                TableIndex = 877
+            }},
+            {"osDrawLine", new FunctionSig {
+                FunctionName = "osDrawLine",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer, VarType.Integer, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "drawList", "startX", "startY", "endX", "endY" },
+                TableIndex = 878
+            }},
+            {"osDrawLine__3", new FunctionSig {
+                FunctionName = "osDrawLine",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "drawList", "endX", "endY" },
+                TableIndex = 879
+            }},
+            {"osDrawText", new FunctionSig {
+                FunctionName = "osDrawText",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String },
+                ParamNames = new string[] { "drawList", "text" },
+                TableIndex = 880
+            }},
+            {"osDrawEllipse", new FunctionSig {
+                FunctionName = "osDrawEllipse",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "drawList", "width", "height" },
+                TableIndex = 881
+            }},
+            {"osDrawFilledEllipse", new FunctionSig {
+                FunctionName = "osDrawFilledEllipse",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "drawList", "width", "height" },
+                TableIndex = 882
+            }},
+            {"osDrawRectangle", new FunctionSig {
+                FunctionName = "osDrawRectangle",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "drawList", "width", "height" },
+                TableIndex = 883
+            }},
+            {"osDrawFilledRectangle", new FunctionSig {
+                FunctionName = "osDrawFilledRectangle",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "drawList", "width", "height" },
+                TableIndex = 884
+            }},
+            {"osDrawFilledPolygon", new FunctionSig {
+                FunctionName = "osDrawFilledPolygon",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.List, VarType.List },
+                ParamNames = new string[] { "drawList", "x", "y" },
+                TableIndex = 885
+            }},
+            {"osDrawPolygon", new FunctionSig {
+                FunctionName = "osDrawPolygon",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.List, VarType.List },
+                ParamNames = new string[] { "drawList", "x", "y" },
+                TableIndex = 886
+            }},
+            {"osSetFontSize", new FunctionSig {
+                FunctionName = "osSetFontSize",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer },
+                ParamNames = new string[] { "drawList", "fontSize" },
+                TableIndex = 887
+            }},
+            {"osSetFontName", new FunctionSig {
+                FunctionName = "osSetFontName",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String },
+                ParamNames = new string[] { "drawList", "fontName" },
+                TableIndex = 888
+            }},
+            {"osSetPenSize", new FunctionSig {
+                FunctionName = "osSetPenSize",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer },
+                ParamNames = new string[] { "drawList", "penSize" },
+                TableIndex = 889
+            }},
+            {"osSetPenColor", new FunctionSig {
+                FunctionName = "osSetPenColor",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String },
+                ParamNames = new string[] { "drawList", "color" },
+                TableIndex = 890
+            }},
+            {"osSetPenColor__3", new FunctionSig {
+                FunctionName = "osSetPenColor",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Vector, VarType.Float },
+                ParamNames = new string[] { "drawList", "color", "alpha" },
+                TableIndex = 891
+            }},
+            {"osSetPenColour", new FunctionSig {
+                FunctionName = "osSetPenColour",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String },
+                ParamNames = new string[] { "drawList", "colour" },
+                TableIndex = 892
+            }},
+            {"osSetPenCap", new FunctionSig {
+                FunctionName = "osSetPenCap",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.String },
+                ParamNames = new string[] { "drawList", "direction", "type" },
+                TableIndex = 893
+            }},
+            {"osDrawImage", new FunctionSig {
+                FunctionName = "osDrawImage",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer, VarType.Integer, VarType.String },
+                ParamNames = new string[] { "drawList", "width", "height", "imageUrl" },
+                TableIndex = 894
+            }},
+            {"osGetDrawStringSize", new FunctionSig {
+                FunctionName = "osGetDrawStringSize",
+                ReturnType = VarType.Vector,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.String, VarType.Integer },
+                ParamNames = new string[] { "contentType", "text", "fontName", "fontSize" },
+                TableIndex = 895
+            }},
          };
 
         /// <summary>

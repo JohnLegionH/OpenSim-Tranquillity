@@ -951,6 +951,35 @@ private static string ConvToString(object o)
 								Shim_osSetTerrainTextures,            //864  PHLOX-17
 								Shim_osSetTerrainTextureHeight,       //865  PHLOX-17
 								Shim_osGetParcelDetails,              //866  PHLOX-17
+								Shim_osSetDynamicTextureURL,          //867  PHLOX-18
+								Shim_osSetDynamicTextureURLBlend,     //868  PHLOX-18
+								Shim_osSetDynamicTextureURLBlendFace, //869  PHLOX-18
+								Shim_osSetDynamicTextureData,         //870  PHLOX-18
+								Shim_osSetDynamicTextureDataBlend,    //871  PHLOX-18
+								Shim_osSetDynamicTextureDataBlendFace, //872  PHLOX-18
+								Shim_osDrawResetTransform,            //873  PHLOX-18
+								Shim_osDrawRotationTransform,         //874  PHLOX-18
+								Shim_osDrawScaleTransform,            //875  PHLOX-18
+								Shim_osDrawTranslationTransform,      //876  PHLOX-18
+								Shim_osMovePen,                       //877  PHLOX-18
+								Shim_osDrawLine,                      //878  PHLOX-18
+								Shim_osDrawLine3,                     //879  PHLOX-18
+								Shim_osDrawText,                      //880  PHLOX-18
+								Shim_osDrawEllipse,                   //881  PHLOX-18
+								Shim_osDrawFilledEllipse,             //882  PHLOX-18
+								Shim_osDrawRectangle,                 //883  PHLOX-18
+								Shim_osDrawFilledRectangle,           //884  PHLOX-18
+								Shim_osDrawFilledPolygon,             //885  PHLOX-18
+								Shim_osDrawPolygon,                   //886  PHLOX-18
+								Shim_osSetFontSize,                   //887  PHLOX-18
+								Shim_osSetFontName,                   //888  PHLOX-18
+								Shim_osSetPenSize,                    //889  PHLOX-18
+								Shim_osSetPenColor,                   //890  PHLOX-18
+								Shim_osSetPenColor3,                  //891  PHLOX-18
+								Shim_osSetPenColour,                  //892  PHLOX-18
+								Shim_osSetPenCap,                     //893  PHLOX-18
+								Shim_osDrawImage,                     //894  PHLOX-18
+								Shim_osGetDrawStringSize,             //895  PHLOX-18
         };
 
         /// <summary>
@@ -8221,6 +8250,257 @@ private static string ConvToString(object o)
             LSLList p1 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             LSLList ret = self._systemAPI.osGetParcelDetails(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+
+        // ── PHLOX-18 shims ──
+        static private void Shim_osSetDynamicTextureURL(SyscallShim self)
+        {
+            int p4 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p3 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSetDynamicTextureURL(p0, p1, p2, p3, p4);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetDynamicTextureURLBlend(SyscallShim self)
+        {
+            int p5 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p4 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p3 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSetDynamicTextureURLBlend(p0, p1, p2, p3, p4, p5);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetDynamicTextureURLBlendFace(SyscallShim self)
+        {
+            int p8 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p7 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p6 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p5 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p4 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p3 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSetDynamicTextureURLBlendFace(p0, p1, p2, p3, p4, p5, p6, p7, p8);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetDynamicTextureData(SyscallShim self)
+        {
+            int p4 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p3 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSetDynamicTextureData(p0, p1, p2, p3, p4);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetDynamicTextureDataBlend(SyscallShim self)
+        {
+            int p5 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p4 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p3 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSetDynamicTextureDataBlend(p0, p1, p2, p3, p4, p5);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetDynamicTextureDataBlendFace(SyscallShim self)
+        {
+            int p8 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p7 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p6 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p5 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p4 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p3 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSetDynamicTextureDataBlendFace(p0, p1, p2, p3, p4, p5, p6, p7, p8);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osDrawResetTransform(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osDrawResetTransform(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osDrawRotationTransform(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osDrawRotationTransform(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osDrawScaleTransform(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osDrawScaleTransform(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osDrawTranslationTransform(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osDrawTranslationTransform(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osMovePen(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osMovePen(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osDrawLine(SyscallShim self)
+        {
+            int p4 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p3 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osDrawLine(p0, p1, p2, p3, p4);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osDrawLine3(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osDrawLine(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osDrawText(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osDrawText(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osDrawEllipse(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osDrawEllipse(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osDrawFilledEllipse(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osDrawFilledEllipse(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osDrawRectangle(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osDrawRectangle(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osDrawFilledRectangle(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osDrawFilledRectangle(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osDrawFilledPolygon(SyscallShim self)
+        {
+            LSLList p2 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            LSLList p1 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osDrawFilledPolygon(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osDrawPolygon(SyscallShim self)
+        {
+            LSLList p2 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            LSLList p1 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osDrawPolygon(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetFontSize(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSetFontSize(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetFontName(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSetFontName(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetPenSize(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSetPenSize(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetPenColor(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSetPenColor(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetPenColor3(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSetPenColor(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetPenColour(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSetPenColour(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetPenCap(SyscallShim self)
+        {
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSetPenCap(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osDrawImage(SyscallShim self)
+        {
+            string p3 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osDrawImage(p0, p1, p2, p3);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetDrawStringSize(SyscallShim self)
+        {
+            int p3 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 ret = self._systemAPI.osGetDrawStringSize(p0, p1, p2, p3);
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }
 

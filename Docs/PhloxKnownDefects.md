@@ -2034,3 +2034,43 @@ calls `osSetRot` - the live denial): engine 1 says "up" once, is `Killed`, `GetS
 intact**; `ResetScript` then says "up" once more and is killed again. `TriggerStartScript` on a crashed script
 runs `state_entry` a second time from a fresh state. An item rezzed with `ScriptRunning = false` loads held,
 says nothing, and runs when ticked. Suite **173 -> 176**.
+
+### PART 1 - OSSL draw and dynamic textures (`<p1 commit>`)
+
+**The renderer is real here.** `DynamicTextureModule` (`OpenSim.Region.CoreModules/Scripting/DynamicTexture/`,
+registers `IDynamicTextureManager` in `AddRegion`, :349-356) and `VectorRenderModule`
+(`Scripting/VectorRender/`, SkiaSharp, registers as content type `"vector"`, :98-100 / :233) both exist,
+both compile, and the render is **synchronous** (`AsyncConvertData` :134-143, upstream's own "XXX: This isn't
+actually being done asynchronously!"). Not stubbed, so this stayed a Phlox session.
+
+**27 names, 29 dispatch entries (867-895)** from PHLOX-12's draw/dynamic-texture row (28), ported from
+`OSSL_Api.cs` with the line range in each `<summary>`: the six texture calls (`URL` x3 **VeryHigh**, `Data`,
+`DataBlend`, `DataBlendFace` **VeryLow** under the `osSetDynamicTextureData` family keys) hand the draw list to
+the manager, `""` extraParams meaning 256 as upstream; the twenty draw-list helpers append the command string
+the renderer parses and are upstream's bare `CheckThreatLevel()` - the master switch; `osGetDrawStringSize` asks
+the renderer to measure. **Not landed, with reason - both are same-arity overloads and Phlox keys overloads by
+arity:** `osSetDynamicTextureDataFace(6)` beside `DataBlend(6)` (the five-argument `Data` is `DataFace` with face
+-1, so all faces are covered), and `osSetPenColor(string, vector)` beside `osSetPenColor(string, string)` (the
+three-argument vector-and-alpha form is landed). `dynamicID` and `timer` are accepted and unused, as upstream.
+
+**Wiki:** `osSetDynamicTextureData` (VeryLow, `${OSSL|osslParcelOG}ESTATE_MANAGER,ESTATE_OWNER`; "turn on a
+cache or you see white" - the same cache rule the test hit), `osDrawText` (no threat check; "the pen position is not updated"), `osSetPenColor` (no
+threat check; three forms) read over plain HTTP.
+
+### What pins PART 1
+
+`OsslDrawTests`: every helper in one script builds exactly
+`MoveTo 20,20;PenColor Red; PenColor 7FFF0000; FontSize 24; ... ResetTransf;RotTransf 90;ScaleTransf 2,3;TransTransf 4,5;`,
+a two-point polygon is `""`, and without a texture manager the string size is zero; **end to end**, with
+`DynamicTextureModule` and `VectorRenderModule` in the scene, `osSetDynamicTextureData("", "vector",
+"MoveTo 20,20; PenColour RED; FontSize 24; Text Hello;", "", 0)` returns the **new texture's id** (this tree's
+`AddDynamicTextureData` returns `updater.newTextureID`, not upstream's updater id), **the prim's default face
+texture changes to that id, and the asset is a LOCAL one in the asset cache** - `DataReceived` refuses to work
+without an `IAssetCache` ("this are local assets and will not work without cache", `DynamicTextureModule.cs:471-473`),
+so the test registers a memory cache and reads the rendered asset back from it (Legion runs `FlotsamAssetCache`, `GridCommon.ini:28`, so the rule is met live); the string size is non-zero;
+at VeryLow `osSetDynamicTextureURL` is denied with one stop and the face untouched. Dispatch baseline
+**regenerated** (844 -> 871 names). Suite **176 -> 179**; region server builds.
+
+**Did it land:** a prim running `osSetDynamicTextureData("", "vector", "MoveTo 20,20; PenColour RED; FontSize
+24; Text Hello;", "", 0)` shows "Hello" in red on its faces; and `phlox status <item>` on a crashed script shows
+`Running flag : False` with the `terminated :` line, and a viewer reset starts it fresh.
