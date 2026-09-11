@@ -3680,7 +3680,17 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 }
             }
         }
-        public void iwSetGround(int x1, int y1, int x2, int y2, float height) { /* ITerrainModule.SetTerrain not available in Legion */ }
+        /// <summary>PHLOX-17: real now - the heightmap over the rectangle, where the owner may terraform, then a taint (the door osSetTerrainHeight/osTerrainFlush share).</summary>
+        public void iwSetGround(int x1, int y1, int x2, int y2, float height)
+        {
+            if (World?.Heightmap == null || m_host == null) return;
+            int sx = Math.Max(0, Math.Min(x1, x2)), ex = Math.Min((int)World.RegionInfo.RegionSizeX - 1, Math.Max(x1, x2));
+            int sy = Math.Max(0, Math.Min(y1, y2)), ey = Math.Min((int)World.RegionInfo.RegionSizeY - 1, Math.Max(y1, y2));
+            bool any = false;
+            for (int x = sx; x <= ex; x++) for (int y = sy; y <= ey; y++)
+                if (World.Permissions.CanTerraformLand(m_host.OwnerID, new Vector3(x, y, 0))) { World.Heightmap[x, y] = height; any = true; }
+            if (any) World.RequestModuleInterface<ITerrainModule>()?.TaintTerrain();
+        }
         public int llCheckRezError(Vector3 pos, int isTemp, int landImpact) { /* InWorldz Scene.CheckRezError not in OpenSim */ return 0; }
         public int iwCheckRezError(Vector3 pos, int isTemp, int landImpact) { /* InWorldz Scene.CheckRezError not in OpenSim */ return 0; }
         public void llCreateLink(string target, int parent)
@@ -5845,9 +5855,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return parcel.GetSimulatorMaxPrimCount();
         }
 
-        public LSLList llGetParcelDetails(Vector3 pos, LSLList parms)
+        public LSLList llGetParcelDetails(Vector3 pos, LSLList parms) => ParcelDetailsOf(World?.GetLandData(pos.X, pos.Y), parms);
+
+        /// <summary>PHLOX-17: llGetParcelDetails over a LandData, shared with osGetParcelDetails (by parcel id).</summary>
+        private LSLList ParcelDetailsOf(LandData land, LSLList parms)
         {
-            LandData land = World.GetLandData(pos.X, pos.Y);
             if (land == null) return new LSLList(0);
             var ret = new LSLList();
             for (int idx = 0; idx < parms.Length; idx++)
@@ -7897,6 +7909,378 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             ScenePresence av = World?.GetScenePresence(sFirstName, sLastName);
             if (av == null || av.IsDeleted || av.IsChildAgent) return 0;
             return av.IsNPC ? 2 : 1;
+        }
+
+        // ── PHLOX-17: OSSL parcel, estate, terrain, wind and sun functions, ported from OSSL_Api.cs (line cited per
+        //    function), each under its upstream key and threat level through OsslGate ──
+
+        private bool TerrainInBounds(int x, int y, string fn)
+        {
+            if (World == null) return false;
+            if (x < 0 || y < 0 || x > World.RegionInfo.RegionSizeX - 1 || y > World.RegionInfo.RegionSizeY - 1)
+            {
+                ShoutError(fn + ": Coordinate out of bounds");
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>OSSL_Api.cs:548-552 (SetTerrainHeight :562-572) - High. 1 when the owner may terraform there and the height is written, else 0.</summary>
+        public int osSetTerrainHeight(int x, int y, float val)
+        {
+            OsslCheck(TlHigh, "osSetTerrainHeight");
+            if (!TerrainInBounds(x, y, "osSetTerrainHeight") || World.Heightmap == null) return 0;
+            if (!World.Permissions.CanTerraformLand(m_host.OwnerID, new Vector3(x, y, 0))) return 0;
+            World.Heightmap[x, y] = val;
+            return 1;
+        }
+
+        /// <summary>OSSL_Api.cs:555-560 - High; the deprecated name for osSetTerrainHeight, same key upstream.</summary>
+        public int osTerrainSetHeight(int x, int y, float val)
+        {
+            OsslCheck(TlHigh, "osTerrainSetHeight");
+            if (!TerrainInBounds(x, y, "osTerrainSetHeight") || World.Heightmap == null) return 0;
+            if (!World.Permissions.CanTerraformLand(m_host.OwnerID, new Vector3(x, y, 0))) return 0;
+            World.Heightmap[x, y] = val;
+            return 1;
+        }
+
+        /// <summary>OSSL_Api.cs:577-581 (GetTerrainHeight :590-596) - master switch.</summary>
+        public float osGetTerrainHeight(int x, int y)
+        {
+            OsslCheck();
+            if (!TerrainInBounds(x, y, "osGetTerrainHeight") || World.Heightmap == null) return 0f;
+            return World.Heightmap[x, y];
+        }
+
+        /// <summary>OSSL_Api.cs:583-588 - master switch; the deprecated name.</summary>
+        public float osTerrainGetHeight(int x, int y)
+        {
+            OsslCheck();
+            if (!TerrainInBounds(x, y, "osTerrainGetHeight") || World.Heightmap == null) return 0f;
+            return World.Heightmap[x, y];
+        }
+
+        private double m_lastOsTerrainFlush;
+
+        /// <summary>OSSL_Api.cs:599-609 - VeryLow, at most once a minute per script: the terrain module's taint, which sends the changed patches.</summary>
+        public void osTerrainFlush()
+        {
+            double now = Util.GetTimeStamp();
+            if (now - m_lastOsTerrainFlush < 60) return;
+            m_lastOsTerrainFlush = now;
+            OsslCheck(TlVeryLow, "osTerrainFlush");
+            World?.RequestModuleInterface<ITerrainModule>()?.TaintTerrain();
+        }
+
+        /// <summary>OSSL_Api.cs:612-626 - High, and CanIssueEstateCommand. Under 15 s aborts a pending restart; otherwise the restart module schedules it.</summary>
+        public int osRegionRestart(float seconds) => osRegionRestart(seconds, string.Empty);
+
+        /// <summary>OSSL_Api.cs:638-652 - High. The message is accepted; the restart module here takes no custom text (RegionRestart :654-658 drops it upstream too).</summary>
+        public int osRegionRestart(float seconds, string msg)
+        {
+            OsslCheck(TlHigh, "osRegionRestart");
+            IRestartModule restart = World?.RequestModuleInterface<IRestartModule>();
+            if (restart == null || m_host == null || !World.Permissions.CanIssueEstateCommand(m_host.OwnerID, false)) return 0;
+            if (seconds < 15) { restart.AbortRestart("Region restart has been aborted\n"); return 1; }
+            restart.ScheduleRestart(UUID.Zero, (int)seconds);
+            return 1;
+        }
+
+        /// <summary>OSSL_Api.cs:664-675 - High, and CanIssueEstateCommand.</summary>
+        public void osRegionNotice(string msg)
+        {
+            OsslCheck(TlHigh, "osRegionNotice");
+            IDialogModule dm = World?.RequestModuleInterface<IDialogModule>();
+            if (dm == null || m_host == null || !World.Permissions.CanIssueEstateCommand(m_host.OwnerID, false)) return;
+            dm.SendGeneralAlert(msg + "\n");
+        }
+
+        /// <summary>OSSL_Api.cs:678-697 - High. To one root, non-NPC presence.</summary>
+        public void osRegionNotice(string agentID, string msg)
+        {
+            OsslCheck(TlHigh, "osRegionNotice");
+            if (m_host == null || World == null || !World.Permissions.CanIssueEstateCommand(m_host.OwnerID, false)) return;
+            IDialogModule dm = World.RequestModuleInterface<IDialogModule>();
+            if (dm == null || !UUID.TryParse(agentID, out UUID avatarID)) return;
+            ScenePresence sp = World.GetScenePresence(avatarID);
+            if (sp == null || sp.IsChildAgent || sp.IsDeleted || sp.IsInTransit || sp.IsNPC) return;
+            dm.SendAlertToUser(sp.ControllingClient, msg + "\n", false);
+        }
+
+        /// <summary>OSSL_Api.cs:1488-1492 - High.</summary>
+        public void osSetRegionWaterHeight(float height)
+        {
+            OsslCheck(TlHigh, "osSetRegionWaterHeight");
+            World?.EventManager.TriggerRequestChangeWaterHeight(height);
+        }
+
+        /// <summary>OSSL_Api.cs:1501-1516 - High. The legacy region sun settings (hour 0-24, stored +6), saved, then the estate-tools sun update.</summary>
+        public void osSetRegionSunSettings(int useEstateSun, int sunFixed, float sunHour)
+        {
+            OsslCheck(TlHigh, "osSetRegionSunSettings");
+            if (World == null) return;
+            while (sunHour > 24.0f) sunHour -= 24.0f;
+            while (sunHour < 0) sunHour += 24.0f;
+            var rs = World.RegionInfo.RegionSettings;
+            rs.UseEstateSun = useEstateSun != 0;
+            rs.SunPosition = sunHour + 6;   // LL region sun hour is 6 to 30
+            rs.FixedSun = sunFixed != 0;
+            rs.Save();
+            World.EventManager.TriggerEstateToolsSunUpdate(World.RegionInfo.RegionHandle);
+        }
+
+        /// <summary>OSSL_Api.cs:1524-1538 - High upstream, and its whole body is commented out since EEP: a gated no-op, kept so the call compiles.</summary>
+        public void osSetEstateSunSettings(int sunFixed, float sunHour)
+        {
+            OsslCheck(TlHigh, "osSetEstateSunSettings");
+        }
+
+        /// <summary>OSSL_Api.cs:1548-1555 - master switch. 24 x the environment module's day fraction.</summary>
+        public float osGetCurrentSunHour()
+        {
+            OsslCheck();
+            IEnvironmentModule env = World?.RequestModuleInterface<IEnvironmentModule>();
+            return env == null ? 0f : 24f * env.GetRegionDayFractionTime();
+        }
+
+        /// <summary>OSSL_Api.cs:1638-1657 GetSunParam: day_length from the environment module (14400 without one), year_length 365, the rest EEP-fixed.</summary>
+        private float OsslSunParam(string param)
+        {
+            switch ((param ?? string.Empty).ToLowerInvariant())
+            {
+                case "day_length":
+                    IEnvironmentModule env = World?.RequestModuleInterface<IEnvironmentModule>();
+                    return env == null || m_host == null ? 14400f : env.GetDayLength(m_host.AbsolutePosition);
+                case "year_length": return 365f;
+                case "day_night_offset": return 0f;
+                case "update_interval": return 0.1f;
+                case "day_time_sun_hour_scale": return 1f;
+                default: return 0f;
+            }
+        }
+
+        /// <summary>OSSL_Api.cs:1633-1637 - master switch.</summary>
+        public float osGetSunParam(string param) { OsslCheck(); return OsslSunParam(param); }
+
+        /// <summary>OSSL_Api.cs:1626-1631 - None; the deprecated name.</summary>
+        public float osSunGetParam(string param) { OsslCheck(TlNone, "osSunGetParam"); return OsslSunParam(param); }
+
+        /// <summary>OSSL_Api.cs:1667-1671 (SetSunParam :1673-1677) - None. Goes to ISunModule, which no EEP region carries: a no-op there, as upstream (the wiki says so too).</summary>
+        public void osSetSunParam(string param, float value)
+        {
+            OsslCheck(TlNone, "osSetSunParam");
+            World?.RequestModuleInterface<ISunModule>()?.SetSunParameter(param, value);
+        }
+
+        /// <summary>OSSL_Api.cs:1660-1665 - None; the deprecated name.</summary>
+        public void osSunSetParam(string param, float value)
+        {
+            OsslCheck(TlNone, "osSunSetParam");
+            World?.RequestModuleInterface<ISunModule>()?.SetSunParameter(param, value);
+        }
+
+        /// <summary>OSSL_Api.cs:1679-1688 - None.</summary>
+        public string osWindActiveModelPluginName()
+        {
+            OsslCheck(TlNone, "osWindActiveModelPluginName");
+            return World?.RequestModuleInterface<IWindModule>()?.WindActiveModelPluginName ?? string.Empty;
+        }
+
+        /// <summary>OSSL_Api.cs:1692-1705 - VeryLow. The wind module's own parameter door (iwSetWind's Halcyon shape has no counterpart here).</summary>
+        public void osSetWindParam(string plugin, string param, float value)
+        {
+            OsslCheck(TlVeryLow, "osSetWindParam");
+            IWindModule wind = World?.RequestModuleInterface<IWindModule>();
+            if (wind == null) return;
+            try { wind.WindParamSet(plugin, param, value); } catch (Exception) { }
+        }
+
+        /// <summary>OSSL_Api.cs:1707-1716 - VeryLow.</summary>
+        public float osGetWindParam(string plugin, string param)
+        {
+            OsslCheck(TlVeryLow, "osGetWindParam");
+            IWindModule wind = World?.RequestModuleInterface<IWindModule>();
+            if (wind == null) return 0f;
+            try { return wind.WindParamGet(plugin, param); } catch (Exception) { return 0f; }
+        }
+
+        /// <summary>OSSL_Api.cs:1731-1740 - High. The land channel's join over the rectangle, as the owner.</summary>
+        public void osParcelJoin(Vector3 pos1, Vector3 pos2)
+        {
+            OsslCheck(TlHigh, "osParcelJoin");
+            if (World?.LandChannel == null || m_host == null) return;
+            World.LandChannel.Join((int)Math.Min(pos1.X, pos2.X), (int)Math.Min(pos1.Y, pos2.Y), (int)Math.Max(pos1.X, pos2.X), (int)Math.Max(pos1.Y, pos2.Y), m_host.OwnerID);
+        }
+
+        /// <summary>OSSL_Api.cs:1743-1752 - High.</summary>
+        public void osParcelSubdivide(Vector3 pos1, Vector3 pos2)
+        {
+            OsslCheck(TlHigh, "osParcelSubdivide");
+            if (World?.LandChannel == null || m_host == null) return;
+            World.LandChannel.Subdivide((int)Math.Min(pos1.X, pos2.X), (int)Math.Min(pos1.Y, pos2.Y), (int)Math.Max(pos1.X, pos2.X), (int)Math.Max(pos1.Y, pos2.Y), m_host.OwnerID);
+        }
+
+        /// <summary>OSSL_Api.cs:1762-1766 - High.</summary>
+        public void osSetParcelDetails(Vector3 pos, LSLList rules)
+        {
+            OsslCheck(TlHigh, "osSetParcelDetails");
+            OsslSetParcelDetails(pos, rules);
+        }
+
+        /// <summary>OSSL_Api.cs:1755-1760 - High; the deprecated name.</summary>
+        public void osParcelSetDetails(Vector3 pos, LSLList rules)
+        {
+            OsslCheck(TlHigh, "osParcelSetDetails");
+            OsslSetParcelDetails(pos, rules);
+        }
+
+        /// <summary>
+        /// OSSL_Api.cs:1768-1957 SetParcelDetails: NAME, DESC (LandOptions on the parcel), OWNER and CLAIMDATE (estate
+        /// manager or owner), GROUP (the land's owner or an estate manager; upstream's group-membership check through
+        /// the groups module is not repeated), SEE_AVATARS, ANY_AVATAR_SOUNDS, GROUP_SOUNDS; committed through
+        /// UpdateLandObject, and the parcel overlay resent when SEE_AVATARS moved.
+        /// </summary>
+        private void OsslSetParcelDetails(Vector3 pos, LSLList rules)
+        {
+            if (World?.LandChannel == null || m_host == null) return;
+            ILandObject start = World.LandChannel.GetLandObject((int)pos.X, (int)pos.Y);
+            if (start?.LandData == null) { ShoutError("There is no land at that location"); return; }
+            if (!World.Permissions.CanEditParcelProperties(m_host.OwnerID, start, GroupPowers.LandOptions, false))
+            { ShoutError("script owner does not have permission to modify the parcel"); return; }
+            LandData newLand = start.LandData.Copy();
+            EstateSettings es = World.RegionInfo.EstateSettings;
+            bool manager = es == null || es.IsEstateManagerOrOwner(m_host.OwnerID);
+            bool changed = false, changedSeeAvs = false;
+            for (int idx = 0; idx < rules.Length;)
+            {
+                int code = rules.GetLSLIntegerItem(idx++);
+                if (idx >= rules.Length) break;
+                switch (code)
+                {
+                    case 0:   // PARCEL_DETAILS_NAME
+                    { string arg = rules.GetLSLStringItem(idx++); if (newLand.Name != arg) { newLand.Name = arg; changed = true; } break; }
+                    case 1:   // PARCEL_DETAILS_DESC
+                    { string arg = rules.GetLSLStringItem(idx++); if (newLand.Description != arg) { newLand.Description = arg; changed = true; } break; }
+                    case 2:   // PARCEL_DETAILS_OWNER
+                    {
+                        string arg = rules.GetLSLStringItem(idx++);
+                        if (!manager) { ShoutError("script owner does not have permission to modify the parcel owner"); break; }
+                        if (UUID.TryParse(arg, out UUID uuid) && newLand.OwnerID != uuid) { newLand.OwnerID = uuid; newLand.GroupID = UUID.Zero; changed = true; }
+                        break;
+                    }
+                    case 3:   // PARCEL_DETAILS_GROUP
+                    {
+                        string arg = rules.GetLSLStringItem(idx++);
+                        if ((m_host.OwnerID == newLand.OwnerID || manager) && UUID.TryParse(arg, out UUID uuid) && newLand.GroupID != uuid)
+                        { newLand.GroupID = uuid; changed = true; }
+                        break;
+                    }
+                    case 10:  // PARCEL_DETAILS_CLAIMDATE
+                    {
+                        int date = rules.GetLSLIntegerItem(idx++);
+                        if (!manager) { ShoutError("script owner does not have permission to modify the parcel CLAIM DATE"); break; }
+                        if (date == 0) date = Util.UnixTimeSinceEpoch();
+                        if (newLand.ClaimDate != date) { newLand.ClaimDate = date; changed = true; }
+                        break;
+                    }
+                    case 6:   // PARCEL_DETAILS_SEE_AVATARS
+                    { bool v = rules.GetLSLIntegerItem(idx++) != 0; if (newLand.SeeAVs != v) { newLand.SeeAVs = v; changed = true; changedSeeAvs = true; } break; }
+                    case 7:   // PARCEL_DETAILS_ANY_AVATAR_SOUNDS
+                    { bool v = rules.GetLSLIntegerItem(idx++) != 0; if (newLand.AnyAVSounds != v) { newLand.AnyAVSounds = v; changed = true; } break; }
+                    case 8:   // PARCEL_DETAILS_GROUP_SOUNDS
+                    { bool v = rules.GetLSLIntegerItem(idx++) != 0; if (newLand.GroupAVSounds != v) { newLand.GroupAVSounds = v; changed = true; } break; }
+                    default:
+                        idx++;   // an unknown code and its value
+                        break;
+                }
+            }
+            if (!changed) return;
+            World.LandChannel.UpdateLandObject(newLand.LocalID, newLand);
+            if (changedSeeAvs)
+                World.ForEachRootScenePresence(avatar => { if (!avatar.IsNPC) World.LandChannel.SendParcelsOverlay(avatar.ControllingClient); });
+        }
+
+        /// <summary>OSSL_Api.cs:1958-1963 - VeryLow. The parcel under the prim.</summary>
+        public void osSetParcelMusicURL(string url)
+        {
+            OsslCheck(TlVeryLow, "osSetParcelMusicURL");
+            if (m_host == null) return;
+            World?.LandChannel?.GetLandObject(m_host.AbsolutePosition)?.SetMusicUrl(url ?? string.Empty);
+        }
+
+        /// <summary>OSSL_Api.cs:1966-1971 - VeryLow.</summary>
+        public void osSetParcelMediaURL(string url)
+        {
+            OsslCheck(TlVeryLow, "osSetParcelMediaURL");
+            if (m_host == null) return;
+            World?.LandChannel?.GetLandObject(m_host.AbsolutePosition)?.SetMediaUrl(url ?? string.Empty);
+        }
+
+        /// <summary>OSSL_Api.cs:1974-1990 - VeryLow. The land under the prim must be the owner's; the voice module takes the address.</summary>
+        public void osSetParcelSIPAddress(string SIPAddress)
+        {
+            OsslCheck(TlVeryLow, "osSetParcelSIPAddress");
+            if (m_host == null) return;
+            ILandObject land = World?.LandChannel?.GetLandObject(m_host.AbsolutePosition);
+            if (land?.LandData == null) return;
+            if (land.LandData.OwnerID != m_host.OwnerID) { ShoutError("osSetParcelSIPAddress: Sorry, you need to own the land to use this function"); return; }
+            IVoiceModule voice = World.RequestModuleInterface<IVoiceModule>();
+            if (voice == null) { ShoutError("osSetParcelSIPAddress: No voice module enabled for this land"); return; }
+            voice.setLandSIPAddress(SIPAddress, land.LandData.GlobalID);
+        }
+
+        /// <summary>OSSL_Api.cs:4091-4103 - High unless the owner is a god. Level 0-3 through the estate module (legacy viewers and the map; osSetTerrainTextures is the PBR-aware form).</summary>
+        public void osSetTerrainTexture(int level, string texture)
+        {
+            if (level < 0 || level > 3 || m_host == null) return;
+            IEstateModule estate = World?.RequestModuleInterface<IEstateModule>();
+            if (estate == null || !UUID.TryParse(texture, out UUID textureID)) return;
+            if (!World.Permissions.IsGod(m_host.OwnerID)) OsslCheck(TlHigh, "osSetTerrainTexture");
+            estate.setEstateTerrainBaseTexture(level, textureID);
+        }
+
+        /// <summary>OSSL_Api.cs:4117-4160 - High (key osSetTerrainTexture) unless the owner is a god. Four keys or inventory names; types 0 texture, 1 PBR material, 2 both.</summary>
+        public void osSetTerrainTextures(LSLList textures, int ltypes)
+        {
+            IEstateModule estate = World?.RequestModuleInterface<IEstateModule>();
+            if (estate == null || m_host == null) return;
+            if (!World.Permissions.IsGod(m_host.OwnerID)) OsslCheck(TlHigh, "osSetTerrainTexture");
+            if (textures.Length != 4) { ShoutError("osSetTerrainTextures first argument is a list of keys or names that must have 4 elements"); return; }
+            if (ltypes < 0 || ltypes > 2) { ShoutError("osSetTerrainTextures second argument must be >=0 and <= 2"); return; }
+            var ids = new List<UUID>(4);
+            bool hasChanges = false;
+            for (int i = 0; i < 4; i++)
+            {
+                string u = textures.GetLSLStringItem(i);
+                if (string.IsNullOrEmpty(u)) { ids.Add(UUID.Zero); continue; }
+                if (!UUID.TryParse(u, out UUID id))
+                {
+                    TaskInventoryItem item = FindInventoryItem(u, (int)AssetType.Texture) ?? (ltypes == 1 ? FindInventoryItem(u, (int)AssetType.Material) : null);
+                    if (item == null) { ShoutError($"Invalid key or asset type in osSetTerrainTextures texture {i}"); return; }
+                    id = item.AssetID;
+                }
+                ids.Add(id);
+                if (id != UUID.Zero) hasChanges = true;
+            }
+            if (hasChanges) estate.SetEstateTerrainTextures(ids, ltypes);
+        }
+
+        /// <summary>OSSL_Api.cs:4177-4187 - High, and only a god owner reaches the estate module (as upstream).</summary>
+        public void osSetTerrainTextureHeight(int corner, float low, float high)
+        {
+            if (corner < 0 || corner > 3 || m_host == null) return;
+            OsslCheck(TlHigh, "osSetTerrainTextureHeight");
+            if (World?.Permissions == null || !World.Permissions.IsGod(m_host.OwnerID)) return;
+            World.RequestModuleInterface<IEstateModule>()?.setEstateTerrainTextureHeights(corner, low, high);
+        }
+
+        /// <summary>OSSL_Api.cs:6427-6438 - ungated upstream. llGetParcelDetails for the parcel with that id.</summary>
+        public LSLList osGetParcelDetails(string id, LSLList param)
+        {
+            if (!UUID.TryParse(id, out UUID parcelID)) return new LSLList(0);
+            ILandObject parcel = World?.LandChannel?.GetLandObject(parcelID);
+            return ParcelDetailsOf(parcel?.LandData, param);
         }
 
         // ── PHLOX-14: osNpc* - a second door onto BotManager's bots (one BotData per NPC), ported from OSSL_Api.cs ──

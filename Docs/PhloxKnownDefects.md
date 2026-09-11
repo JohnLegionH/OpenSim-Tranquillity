@@ -1934,3 +1934,63 @@ the harness scene has no entity-transfer module, so the did-it-land carries it. 
 
 **Did it land:** from a manager's prim, `osTeleportAgent(self, "Transylvania", <128,128,30>, <1,0,0>)` moves
 you, and `osCauseDamage(self, 10.0)` shows `on_damage` in a worn attachment (region or parcel damage on).
+
+## PHLOX-17 - OSSL parcel, estate, terrain, wind and sun functions
+
+**2026-09-11. Landed; not deployed.** 29 names, 31 dispatch entries (836-866), from PHLOX-12's
+"osParcel*/osEstate*/osSetParcel*/osSetEstate*/terrain/wind/sun" row (25) plus the four the brief named that
+the row lacked (`osGetParcelDetails`, the two `osGet/SetTerrainHeight` aliases are in the row; `osSetParcelMediaURL`,
+`osSetParcelSIPAddress`, `osTerrainFlush` too). Same method: every body ported from `OSSL_Api.cs` with its line
+range in the `<summary>`, every gated function under its upstream `Allow_` key and level through `OsslGate`,
+upstream's bare `CheckThreatLevel()` as the master switch. **Doors reused:** the terrain functions write
+`Scene.Heightmap` and taint through `ITerrainModule` (the door `llModifyLand` already used); **`iwSetGround` is
+real now as a side effect** - the heightmap over the rectangle where the owner may terraform, then a taint - it
+was a stub that said `ITerrainModule.SetTerrain` was unavailable, and the channel indexer is the door;
+`iwSetWind` stays a no-op (Halcyon's `WindSet(type, pos, speed)` has no counterpart; the wind module's
+parameter door is `osSetWindParam`). `llGetParcelDetails` was split over a `LandData` so `osGetParcelDetails`
+(by parcel id) shares it. Sun: EEP - `osGetCurrentSunHour` and `day_length` come from `IEnvironmentModule`,
+as upstream; `osSetSunParam` / `osSunSetParam` go to `ISunModule`, which no EEP region carries, so they are
+the no-op upstream ships (the wiki says the same).
+
+| landed | gate |
+|---|---|
+| osTerrainFlush (once a minute per script), osSetParcelMusicURL, osSetParcelMediaURL, osSetParcelSIPAddress (land owner, `IVoiceModule`), osSetWindParam, osGetWindParam | VeryLow |
+| osSunGetParam, osSetSunParam, osSunSetParam, osWindActiveModelPluginName | None |
+| osSetTerrainHeight, osTerrainSetHeight (0/1, `CanTerraformLand`), osRegionRestart x2 (`CanIssueEstateCommand`; <15 s aborts), osRegionNotice x2, osSetRegionWaterHeight, osSetRegionSunSettings, osSetEstateSunSettings (see below), osParcelJoin, osParcelSubdivide, osSetParcelDetails, osParcelSetDetails, osSetTerrainTexture and osSetTerrainTextures (skipped for a god owner), osSetTerrainTextureHeight (High, and god only reaches the estate module) | High |
+| osGetTerrainHeight, osTerrainGetHeight, osGetCurrentSunHour, osGetSunParam | master switch |
+| osGetParcelDetails | ungated upstream |
+
+**Not landed, with reason:** `osReplaceParcelEnvironment` (the environment door Phlox does not have - the
+same as PHLOX-15's region/agent forms); `osEstateOwnerMessage` **does not exist in `OSSL_Api.cs`** - the
+map row carried it, nothing upstream defines it. **Landed as the no-op upstream ships:**
+`osSetEstateSunSettings` - its whole body is commented out since EEP (`OSSL_Api.cs:1524-1538`), so here it
+is the gate and nothing else, kept so the call compiles. **Ported with one simplification:**
+`osSetParcelDetails` takes NAME, DESC (LandOptions), OWNER and CLAIMDATE (estate manager or owner), GROUP
+(land owner or manager - upstream's membership check through the groups module is not repeated),
+SEE_AVATARS, ANY_AVATAR_SOUNDS, GROUP_SOUNDS; committed through `UpdateLandObject`, the overlay resent when
+SEE_AVATARS moved. `osRegionRestart(seconds, msg)`: the message is accepted and dropped, which is what
+upstream's own `RegionRestart(seconds, msg)` does (`:654-658`).
+
+**Wiki:** `osSetParcelDetails` (High; OWNER/GROUP/CLAIMDATE "VeryHigh" in the text, one High key in the
+code), `osRegionRestart` (High, managers only), `osSetTerrainTexture` (High, "obsolete, use
+osSetTerrainTextures"), `osSetSunParam` (None, "does nothing on 0.9.2") read over plain HTTP;
+**`osTerrainSetHeight` has no page of its own** ("replaced by osSetTerrainHeight").
+
+### What pins it
+
+`OsslWorldTests`, harness scene plus a real `LandManagementModule` with its default parcel,
+`OSFunctionThreatLevel = Severe`: `osSetTerrainHeight(10,10, osGetTerrainHeight(10,10)+1.0)` returns 1 and
+`Scene.Heightmap[10,10]` reads one higher, `osTerrainFlush` runs, `iwSetGround(20,20,21,21,15.0)` puts 15 on
+both corners; `osSetParcelDetails(llGetPos(), [NAME, DESC])` renames the prim's parcel in the land channel,
+`osSetParcelMusicURL` lands on its `MusicURL`, and `osGetParcelDetails(<parcel id>, [NAME])` reads the new name
+back; `osRegionRestart(120)` reaches a recording `IRestartModule` as `ScheduleRestart(120)` and
+`osRegionRestart(5, msg)` as `AbortRestart`, both returning 1 - nothing restarts; `osGetSunParam("year_length")`
+is 365 and `osWindActiveModelPluginName` is empty without a wind module; at VeryLow `osRegionRestart` and
+`osSetTerrainHeight` are each denied with one stop, the restart module untouched and the heightmap unchanged.
+Terrain textures are not pinned (they need `IEstateModule`, which the harness does not carry) - on the
+did-it-land list. Dispatch baseline **regenerated** (815 -> 844 names). Suite **169 -> 173**; region server
+builds.
+
+**Did it land (combined deploy):** from a manager's prim, `osTerrainSetHeight(10,10,
+osTerrainGetHeight(10,10)+1.0); osTerrainFlush();` then `osTerrainGetHeight(10,10)` reads 1.0 higher and the
+ground visibly moves; `osSetParcelDetails` on the prim's parcel changes its name in About Land.

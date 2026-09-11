@@ -920,6 +920,37 @@ private static string ConvToString(object o)
 								Shim_osEjectFromGroup,                //833  PHLOX-16
 								Shim_osAvatarType,                    //834  PHLOX-16
 								Shim_osAvatarType2,                   //835  PHLOX-16
+								Shim_osSetTerrainHeight,              //836  PHLOX-17
+								Shim_osTerrainSetHeight,              //837  PHLOX-17
+								Shim_osGetTerrainHeight,              //838  PHLOX-17
+								Shim_osTerrainGetHeight,              //839  PHLOX-17
+								Shim_osTerrainFlush,                  //840  PHLOX-17
+								Shim_osRegionRestart,                 //841  PHLOX-17
+								Shim_osRegionRestart2,                //842  PHLOX-17
+								Shim_osRegionNotice,                  //843  PHLOX-17
+								Shim_osRegionNotice2,                 //844  PHLOX-17
+								Shim_osSetRegionWaterHeight,          //845  PHLOX-17
+								Shim_osSetRegionSunSettings,          //846  PHLOX-17
+								Shim_osSetEstateSunSettings,          //847  PHLOX-17
+								Shim_osGetCurrentSunHour,             //848  PHLOX-17
+								Shim_osGetSunParam,                   //849  PHLOX-17
+								Shim_osSunGetParam,                   //850  PHLOX-17
+								Shim_osSetSunParam,                   //851  PHLOX-17
+								Shim_osSunSetParam,                   //852  PHLOX-17
+								Shim_osWindActiveModelPluginName,     //853  PHLOX-17
+								Shim_osSetWindParam,                  //854  PHLOX-17
+								Shim_osGetWindParam,                  //855  PHLOX-17
+								Shim_osParcelJoin,                    //856  PHLOX-17
+								Shim_osParcelSubdivide,               //857  PHLOX-17
+								Shim_osSetParcelDetails,              //858  PHLOX-17
+								Shim_osParcelSetDetails,              //859  PHLOX-17
+								Shim_osSetParcelMusicURL,             //860  PHLOX-17
+								Shim_osSetParcelMediaURL,             //861  PHLOX-17
+								Shim_osSetParcelSIPAddress,           //862  PHLOX-17
+								Shim_osSetTerrainTexture,             //863  PHLOX-17
+								Shim_osSetTerrainTextures,            //864  PHLOX-17
+								Shim_osSetTerrainTextureHeight,       //865  PHLOX-17
+								Shim_osGetParcelDetails,              //866  PHLOX-17
         };
 
         /// <summary>
@@ -7999,6 +8030,197 @@ private static string ConvToString(object o)
             string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             int ret = self._systemAPI.osAvatarType(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+
+        // ── PHLOX-17 shims ──
+        static private void Shim_osSetTerrainHeight(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osSetTerrainHeight(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osTerrainSetHeight(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osTerrainSetHeight(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetTerrainHeight(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            float ret = self._systemAPI.osGetTerrainHeight(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osTerrainGetHeight(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            float ret = self._systemAPI.osTerrainGetHeight(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osTerrainFlush(SyscallShim self)
+        {
+            self._systemAPI.osTerrainFlush();
+        }
+        static private void Shim_osRegionRestart(SyscallShim self)
+        {
+            float p0 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osRegionRestart(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osRegionRestart2(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            float p0 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osRegionRestart(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osRegionNotice(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osRegionNotice(p0);
+        }
+        static private void Shim_osRegionNotice2(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osRegionNotice(p0, p1);
+        }
+        static private void Shim_osSetRegionWaterHeight(SyscallShim self)
+        {
+            float p0 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetRegionWaterHeight(p0);
+        }
+        static private void Shim_osSetRegionSunSettings(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetRegionSunSettings(p0, p1, p2);
+        }
+        static private void Shim_osSetEstateSunSettings(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetEstateSunSettings(p0, p1);
+        }
+        static private void Shim_osGetCurrentSunHour(SyscallShim self)
+        {
+            float ret = self._systemAPI.osGetCurrentSunHour();
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetSunParam(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            float ret = self._systemAPI.osGetSunParam(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSunGetParam(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            float ret = self._systemAPI.osSunGetParam(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetSunParam(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetSunParam(p0, p1);
+        }
+        static private void Shim_osSunSetParam(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSunSetParam(p0, p1);
+        }
+        static private void Shim_osWindActiveModelPluginName(SyscallShim self)
+        {
+            string ret = self._systemAPI.osWindActiveModelPluginName();
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetWindParam(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetWindParam(p0, p1, p2);
+        }
+        static private void Shim_osGetWindParam(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            float ret = self._systemAPI.osGetWindParam(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osParcelJoin(SyscallShim self)
+        {
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osParcelJoin(p0, p1);
+        }
+        static private void Shim_osParcelSubdivide(SyscallShim self)
+        {
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osParcelSubdivide(p0, p1);
+        }
+        static private void Shim_osSetParcelDetails(SyscallShim self)
+        {
+            LSLList p1 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetParcelDetails(p0, p1);
+        }
+        static private void Shim_osParcelSetDetails(SyscallShim self)
+        {
+            LSLList p1 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osParcelSetDetails(p0, p1);
+        }
+        static private void Shim_osSetParcelMusicURL(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetParcelMusicURL(p0);
+        }
+        static private void Shim_osSetParcelMediaURL(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetParcelMediaURL(p0);
+        }
+        static private void Shim_osSetParcelSIPAddress(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetParcelSIPAddress(p0);
+        }
+        static private void Shim_osSetTerrainTexture(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetTerrainTexture(p0, p1);
+        }
+        static private void Shim_osSetTerrainTextures(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            LSLList p0 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetTerrainTextures(p0, p1);
+        }
+        static private void Shim_osSetTerrainTextureHeight(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetTerrainTextureHeight(p0, p1, p2);
+        }
+        static private void Shim_osGetParcelDetails(SyscallShim self)
+        {
+            LSLList p1 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            LSLList ret = self._systemAPI.osGetParcelDetails(p0, p1);
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }
 

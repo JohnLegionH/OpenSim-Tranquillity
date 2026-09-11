@@ -5931,6 +5931,224 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "sFirstName", "sLastName" },
                 TableIndex = 835
             }},
+            // PHLOX-17: OSSL parcel, estate, terrain, wind and sun functions, 836-866
+            {"osSetTerrainHeight", new FunctionSig {
+                FunctionName = "osSetTerrainHeight",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Integer, VarType.Float },
+                ParamNames = new string[] { "x", "y", "val" },
+                TableIndex = 836
+            }},
+            {"osTerrainSetHeight", new FunctionSig {
+                FunctionName = "osTerrainSetHeight",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Integer, VarType.Float },
+                ParamNames = new string[] { "x", "y", "val" },
+                TableIndex = 837
+            }},
+            {"osGetTerrainHeight", new FunctionSig {
+                FunctionName = "osGetTerrainHeight",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "x", "y" },
+                TableIndex = 838
+            }},
+            {"osTerrainGetHeight", new FunctionSig {
+                FunctionName = "osTerrainGetHeight",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "x", "y" },
+                TableIndex = 839
+            }},
+            {"osTerrainFlush", new FunctionSig {
+                FunctionName = "osTerrainFlush",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 840
+            }},
+            {"osRegionRestart", new FunctionSig {
+                FunctionName = "osRegionRestart",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Float },
+                ParamNames = new string[] { "seconds" },
+                TableIndex = 841
+            }},
+            {"osRegionRestart__2", new FunctionSig {
+                FunctionName = "osRegionRestart",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Float, VarType.String },
+                ParamNames = new string[] { "seconds", "msg" },
+                TableIndex = 842
+            }},
+            {"osRegionNotice", new FunctionSig {
+                FunctionName = "osRegionNotice",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "msg" },
+                TableIndex = 843
+            }},
+            {"osRegionNotice__2", new FunctionSig {
+                FunctionName = "osRegionNotice",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.String },
+                ParamNames = new string[] { "agentID", "msg" },
+                TableIndex = 844
+            }},
+            {"osSetRegionWaterHeight", new FunctionSig {
+                FunctionName = "osSetRegionWaterHeight",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Float },
+                ParamNames = new string[] { "height" },
+                TableIndex = 845
+            }},
+            {"osSetRegionSunSettings", new FunctionSig {
+                FunctionName = "osSetRegionSunSettings",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Integer, VarType.Float },
+                ParamNames = new string[] { "useEstateSun", "sunFixed", "sunHour" },
+                TableIndex = 846
+            }},
+            {"osSetEstateSunSettings", new FunctionSig {
+                FunctionName = "osSetEstateSunSettings",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Float },
+                ParamNames = new string[] { "sunFixed", "sunHour" },
+                TableIndex = 847
+            }},
+            {"osGetCurrentSunHour", new FunctionSig {
+                FunctionName = "osGetCurrentSunHour",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 848
+            }},
+            {"osGetSunParam", new FunctionSig {
+                FunctionName = "osGetSunParam",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "param" },
+                TableIndex = 849
+            }},
+            {"osSunGetParam", new FunctionSig {
+                FunctionName = "osSunGetParam",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "param" },
+                TableIndex = 850
+            }},
+            {"osSetSunParam", new FunctionSig {
+                FunctionName = "osSetSunParam",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.String, VarType.Float },
+                ParamNames = new string[] { "param", "value" },
+                TableIndex = 851
+            }},
+            {"osSunSetParam", new FunctionSig {
+                FunctionName = "osSunSetParam",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.String, VarType.Float },
+                ParamNames = new string[] { "param", "value" },
+                TableIndex = 852
+            }},
+            {"osWindActiveModelPluginName", new FunctionSig {
+                FunctionName = "osWindActiveModelPluginName",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 853
+            }},
+            {"osSetWindParam", new FunctionSig {
+                FunctionName = "osSetWindParam",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.Float },
+                ParamNames = new string[] { "plugin", "param", "value" },
+                TableIndex = 854
+            }},
+            {"osGetWindParam", new FunctionSig {
+                FunctionName = "osGetWindParam",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.String, VarType.String },
+                ParamNames = new string[] { "plugin", "param" },
+                TableIndex = 855
+            }},
+            {"osParcelJoin", new FunctionSig {
+                FunctionName = "osParcelJoin",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Vector, VarType.Vector },
+                ParamNames = new string[] { "pos1", "pos2" },
+                TableIndex = 856
+            }},
+            {"osParcelSubdivide", new FunctionSig {
+                FunctionName = "osParcelSubdivide",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Vector, VarType.Vector },
+                ParamNames = new string[] { "pos1", "pos2" },
+                TableIndex = 857
+            }},
+            {"osSetParcelDetails", new FunctionSig {
+                FunctionName = "osSetParcelDetails",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Vector, VarType.List },
+                ParamNames = new string[] { "pos", "rules" },
+                TableIndex = 858
+            }},
+            {"osParcelSetDetails", new FunctionSig {
+                FunctionName = "osParcelSetDetails",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Vector, VarType.List },
+                ParamNames = new string[] { "pos", "rules" },
+                TableIndex = 859
+            }},
+            {"osSetParcelMusicURL", new FunctionSig {
+                FunctionName = "osSetParcelMusicURL",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "url" },
+                TableIndex = 860
+            }},
+            {"osSetParcelMediaURL", new FunctionSig {
+                FunctionName = "osSetParcelMediaURL",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "url" },
+                TableIndex = 861
+            }},
+            {"osSetParcelSIPAddress", new FunctionSig {
+                FunctionName = "osSetParcelSIPAddress",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "SIPAddress" },
+                TableIndex = 862
+            }},
+            {"osSetTerrainTexture", new FunctionSig {
+                FunctionName = "osSetTerrainTexture",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Key },
+                ParamNames = new string[] { "level", "texture" },
+                TableIndex = 863
+            }},
+            {"osSetTerrainTextures", new FunctionSig {
+                FunctionName = "osSetTerrainTextures",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.List, VarType.Integer },
+                ParamNames = new string[] { "textures", "ltypes" },
+                TableIndex = 864
+            }},
+            {"osSetTerrainTextureHeight", new FunctionSig {
+                FunctionName = "osSetTerrainTextureHeight",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Float, VarType.Float },
+                ParamNames = new string[] { "corner", "low", "high" },
+                TableIndex = 865
+            }},
+            {"osGetParcelDetails", new FunctionSig {
+                FunctionName = "osGetParcelDetails",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] { VarType.Key, VarType.List },
+                ParamNames = new string[] { "id", "param" },
+                TableIndex = 866
+            }},
          };
 
         /// <summary>
