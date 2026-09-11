@@ -2229,3 +2229,103 @@ invalid name regex is a shout and -1; at VeryLow `osGetNotecardLine` is denied w
 **Did it land (combined deploy with DRAW-1):** a prim holding a notecard "cfg" with two lines says
 `osGetNumberOfNotecardLines("cfg") = 2` and `osGetNotecardLine("cfg", 0)` = its first line **with no trailing
 brace on the last line**; and the draw prim shows red "Hello" on white.
+
+## PHLOX-20 - the OSSL close-out: overloads by type, the misc row, and what is left
+
+**2026-09-11. Landed; not deployed.** Three parts, three commits.
+
+### PART 0 - overload resolution by type, not arity
+
+PHLOX-2b/2c chose a built-in's overload by the NUMBER of arguments. Two signatures of one name and one arity
+mangled to the same symbol (`name__arity`) and the second `Define` would have collided, so five OSSL forms
+could not be landed at all - they are the reason for the "not landed: Phlox keys overloads by arity" notes
+left in PHLOX-13, PHLOX-15 and PHLOX-18.
+
+The type pass now picks among the signatures of the call's arity by the argument types it has already
+computed (`Defaults.SelectOverload`): an exact match scores 2, an LSL implicit widening (integer to float, key
+and string either way) scores 1, anything else makes the candidate unviable; the best score wins and two
+viable candidates of equal score are a compile error naming both signatures. An argument whose type is unknown
+- an error subtree - matches anything and scores nothing, so a broken argument is still exactly one error.
+The chosen symbol is annotated on the call context and the gen pass emits **that**, so the two passes cannot
+disagree about which shim the `syscall` reaches. `SymbolNameFor` gives a same-arity overload a name of its own
+by appending its parameter types (`osApproxEquals__2_vv`); the arity-only name is kept wherever it is still
+unique, so every overload landed before today resolves to the symbol it always did.
+
+| landed with it | indices |
+|---|---|
+| osSetProjectionParams by prim key (OSSL_Api.cs:3921), osSetDynamicTextureDataFace (:790), osSetPenColor by vector (:1400) | 940-942 |
+| osApproxEquals for vectors and rotations, with and without a margin (:5432 :5450 :5469 :5491) | 943-946 |
+| osSlerp for vectors (:5931 - upstream's `Vector3.Slerp` does NOT normalise its inputs; mirrored) | 947 |
+
+**What pins PART 0:** `OverloadByTypeTests` - `osSetPenColor("", "Red")` and `osSetPenColor("", <1,0,0>)`
+reach two different shims (`PenColor Red; ` against `PenColor FFFF0000; `) at two table indices under two
+symbol names; the other forms answer from their own shims (the vector slerp returns a three-component value,
+the rotation one four); the chooser prefers exact over widened, finds nothing of a wrong arity and invents no
+ambiguity from unknown types; and **every signature in the table has a symbol name to itself**. Red first with
+the chooser disabled.
+
+### PART 1 - PHLOX-12's misc row and the list family
+
+Seventeen names, nineteen entries (948-966): `osGetSitTargetPos` / `osGetSitTargetRot`, `osLoadedCreationDate`
+/ `Time` / `ID` (Low), `osTemperature2sRGB`, `osOldList2ListStrided`, `osListFindListNext`,
+`osListSortInPlace` and `osListSortInPlaceStrided`, `osParticleSystem` / `osLinkParticleSystem`,
+`osPreloadSound`, `osGetInertiaData`, `osGetNPCList` (None), `osRemoveLinkInventory`, `osPerlinNoise2D` and
+`osAgentSaveAppearance` in both forms (VeryHigh).
+
+**The two functions with value semantics.** `osListSortInPlace(list, stride, ascending)` sorts *the caller's
+own list* instead of returning a new one, and it can do that here because a list argument reaches a syscall as
+the same `LSLList` instance the variable slot holds - `ConvToLSLList` is a cast, not a copy - so writing back
+into that instance's `Data` array is exactly what the script sees in its variable afterwards. The ordering
+itself is `llListSort`'s (and `llListSortStrided`'s for the strided form), so it cannot drift from LSL's.
+
+Doors reused: `PrimParticleSystem` for both particle forms, `ISoundModule.PreloadSound` per link part,
+`TerrainUtil.PerlinNoise2D` (`OpenSim.Region.Framework.Scenes`, which Phlox already references),
+`BotManager.SaveOutfitToDatabase` for `osAgentSaveAppearance` - the same store `osOwnerSaveAppearance` uses,
+with the agent required to be in this region.
+
+**What pins PART 1:** `OsslMiscRowTests`, 3 - a script sorts its own `list src = [3,1,2]` to `1,2,3` and a
+strided pair list to `a,1,b,2` **through the variable**, `osOldList2ListStrided([0..5],0,5,2)` is `0,2,4`, and
+`osListFindListNext` answers 0, 2, 2 (last) and -1 for the instances of `[1,2]`; the readers answer from the
+prim and the region (sit target after `llSitTarget`, both ends of the temperature fit, a repeatable noise
+value, no NPCs, four inertia elements) and the side-effect calls return without a shout; `osAgentSaveAppearance`
+on an absent agent is NULL_KEY and one shout.
+
+### PART 2 - the audit, fixed, and the closing state
+
+`Docs/audit/phlox-ossl-surface-audit.py` had two faults from PHLOX-12. It keyed the Phlox side by the raw
+table KEY, so every overload past the first was invisible (`osTeleportAgent__5` was not `osTeleportAgent`),
+and it printed only the first 60 absent names and the first 40 type mismatches - the list this session was
+supposed to close was never shown in full. It now keys by function name with every signature under it,
+compares each API signature against all of them, prints both lists whole, and writes `audit.json` beside
+itself instead of into one session's scratchpad.
+
+**Absent from Phlox, by name - the OSSL lane's closing state (13 of 756 API names):**
+
+| name | why |
+|---|---|
+| `osGiveLinkInventory`, `osGiveLinkInventoryList` | `llGiveInventory` is written against `m_host`; the link forms need it split by part first, as `ColorOf` was for PHLOX-19 |
+| `osMakeNotecard` (both forms) | the one real new door in the set: create the notecard asset and the prim inventory item. Not attempted here |
+| `osMessageAttachments` | needs the attachment-point filter and the three option flags |
+| `osNpcSayTo` | needs the listen manager's targeted delivery |
+| `osNpcLookAt` | **no door exists**: this tree's `BotManager` has no look-at or head rotation at all (`SetBotRotation` turns the whole body) |
+| `osResetEnvironment`, `osReplaceRegionEnvironment`, `osReplaceParcelEnvironment`, `osReplaceAgentEnvironment` | `IEnvironmentModule` **does** have setters (`StoreOnRegion`, `ResetEnvironmentSettings`, `WindlightRefresh`), so these are landable - what is missing is the `ViewerEnvironment` / day-cycle asset plumbing (`CycleFromOSD`, parcel `StoreEnvironment`) and the estate permission checks. Landable in a following session, not in this one's budget |
+| `llCastRayV3`, `llRemoteDataSetRegion`, `llRemoteLoadScript` | LSL, not OSSL; outside this lane |
+
+Everything the audit still reports as an overload gap (10 names) or a type mismatch (114) is **Key against
+String**: Phlox types a key parameter `VarType.Key` where the API writes `LSL_Key`, which the audit maps to
+String. Not a defect - the two are interchangeable by LSL's own rule and by `SelectOverload`'s widening.
+
+**Also deferred:** the notecard trio (`osGetNotecardLine`, `osGetNotecard`, `osGetNumberOfNotecardLines`) is
+still **synchronous**, and PHLOX-19's 30 s worst case on a cold asset stands. Wrapping them in `RunAsync` is
+not the one-line change it looks like: every `RunAsync` shim in the tree is a void call, and a *returning*
+async syscall has to come back through the `LastSyscallIndex` / `ResumeFromSyscall` path that PHLOX-4b built
+for restarts. That deserves its own change with a restart test, not a drive-by.
+
+**Suite hygiene, from PHLOX-18b:** `SsbNpcAppearanceTests`, `OsslAgentTests.AvatarTypeNameAndKeyAgreeOnAPresence`
+and `RemainingStubTests.TwoTouchesTenMillisecondsApartAreHandledAtLeastOneSecondApart` fail **only** in a full
+run and pass in isolation - a run-order or timing coupling between test scenes, not a product defect. A
+candidate for a session of its own.
+
+**Did it land:** a prim's script calls `osSetPenColor("", <1,0,0>)` and `osSetPenColor("", "Red")` in one
+script and gets two different draw-list strings; and a script that sorts its own list with
+`osListSortInPlace(src, 1, TRUE)` sees `src` sorted afterwards.

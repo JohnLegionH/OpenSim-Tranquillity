@@ -1,4 +1,4 @@
-import io, re, collections, json
+import io, os, re, collections, json
 
 ROOT = r"D:\tranq-ais\Source"
 
@@ -17,11 +17,15 @@ def phlox():
         types = []
         if pt and pt.group(1).strip():
             types = [t.strip().replace("VarType.", "") for t in pt.group(1).split(",") if t.strip()]
-        out[m.group("key")] = {
-            "name": name.group(1) if name else m.group("key"),
+        fn = name.group(1) if name else m.group("key")
+        # PHLOX-20: the raw key is a SYMBOL name (name, name__arity, name__arity_types) and several
+        # keys share one FUNCTION name - every one of them is a signature Phlox really has. Keying
+        # the audit by the key made every overload past the first invisible.
+        out.setdefault(fn, []).append({
+            "name": fn,
             "ret": ret.group(1) if ret else "?",
             "params": types,
-        }
+        })
     return out
 
 # ---------------- OSSL / LSL side: public methods on the Api classes
@@ -82,16 +86,15 @@ for name, sigs in sorted(A.items()):
     if name not in P:
         missing_fn.append((name, sigs))
         continue
-    p = P[name]
-    match = [s for s in sigs if s["params"] == p["params"]]
+    phlox_sigs = [tuple(x["params"]) for x in P[name]]
+    unmatched = [s for s in sigs if tuple(s["params"]) not in phlox_sigs]
+    if not unmatched:
+        continue
     if len(sigs) > 1:
-        extra_overload.append((name, p["params"], [s["params"] for s in sigs]))
-    elif not match:
-        s = sigs[0]
-        if len(s["params"]) != len(p["params"]):
-            arity.append((name, p["params"], s["params"]))
-        else:
-            types_bad.append((name, p["params"], s["params"]))
+        extra_overload.append((name, phlox_sigs, [s["params"] for s in unmatched]))
+    else:
+        s, p0 = sigs[0], phlox_sigs[0]
+        (arity if len(s["params"]) != len(p0) else types_bad).append((name, list(p0), s["params"]))
 
 res = {
     "phlox_entries": len(P),
@@ -101,7 +104,8 @@ res = {
     "arity_mismatch": arity,
     "type_mismatch": types_bad,
 }
-io.open(r"C:\Users\jarno\AppData\Local\Temp\claude\D--tranq-ssb\81dc8fae-14ea-4dc4-93b0-1e3cc39e861b\scratchpad\phlox1\audit.json",
+# PHLOX-20: beside this script, not in one session's scratchpad
+io.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "audit.json"),
         "w", encoding="utf-8").write(json.dumps(res, indent=1))
 
 print("Phlox table entries      :", len(P))
@@ -109,16 +113,17 @@ print("API function names found :", len(A))
 print()
 print("OVERLOADED IN THE API (Phlox can hold only one):", len(extra_overload))
 for n, ph, sigs in extra_overload:
-    print("  %-28s phlox=%-42s api=%s" % (n, ",".join(ph) or "()", " | ".join(",".join(s) or "()" for s in sigs)))
+    print("  %-28s phlox=%-42s missing=%s" % (
+        n, " | ".join(",".join(x) or "()" for x in ph), " | ".join(",".join(s) or "()" for s in sigs)))
 print()
 print("ARITY MISMATCH (single signature both sides):", len(arity))
 for n, ph, ap in arity:
     print("  %-28s phlox=%-42s api=%s" % (n, ",".join(ph) or "()", ",".join(ap) or "()"))
 print()
 print("TYPE MISMATCH (same arity, different types):", len(types_bad))
-for n, ph, ap in types_bad[:40]:
+for n, ph, ap in types_bad:
     print("  %-28s phlox=%-42s api=%s" % (n, ",".join(ph) or "()", ",".join(ap) or "()"))
 print()
 print("IN THE API, ABSENT FROM PHLOX:", len(missing_fn))
-for n, sigs in missing_fn[:60]:
+for n, sigs in missing_fn:
     print("  %-28s %s" % (n, " | ".join(",".join(s["params"]) or "()" for s in sigs)))
