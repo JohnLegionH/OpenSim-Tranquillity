@@ -1809,3 +1809,67 @@ owner's prim and is removed by its owner's; an `OS_NPC_NOT_OWNED` NPC reports it
 `BotData.OwnerID` zero, and is removed by anyone. At the default VeryLow, `osNpcCreate` is denied with
 one stop and no bot exists. Dispatch baseline **regenerated** (725 -> 747 names). Suite **148 -> 152**;
 region server builds.
+
+## PHLOX-15 - OSSL side-effect functions (osSet*, osForce*, sound, links, misc)
+
+**2026-09-10. Landed; not deployed.** 49 names, 50 dispatch entries (761-810), from the 39 in PHLOX-12's
+"osSet* prim/object/sound/misc side-effects" row plus the eleven the brief named from the osForce*/teleport
+row (links, attachments, `osTeleportObject`, `osSetSpeed`, `osSetOwnerSpeed`, `osGetLinkPrimitiveParams`).
+Same method as PHLOX-13/14: every body ported from `OSSL_Api.cs` with its line range cited in the
+`<summary>`, every gated function under its upstream `Allow_` key and threat level through `OsslGate`,
+upstream's bare `CheckThreatLevel()` as the master switch, an ungated upstream function left ungated. Where
+Phlox already had the door, the OSSL form is that door: `osSetRot` -> `UpdateGroupRotationR` (the llSetRot
+group path); `osForceCreateLink` / `osForceBreakLink` -> `CreateLinkCore` / `BreakLinkCore`, which are
+`llCreateLink` / `llBreakLink` split after their `PERMISSION_CHANGE_LINKS` check (the split upstream makes
+with `m_LSL_Api.CreateLink`); `osForceBreakAllLinks` -> `llBreakAllLinks` (no permission check in Phlox to
+skip); the twelve link-addressed sound forms -> `ISoundModule` through upstream's `GetSingleLinkPart` rule;
+`osSetPrimitiveParams` / `osGetPrimitiveParams` -> `SetPrimParams` / `GetPrimParams` on a same-owner prim
+by key; `osTeleportObject` -> `SceneObjectGroup.TeleportObject` (the group teleport, `OSTPOBJ_*` flags);
+`osForceAttachToAvatar` / `osForceDetachFromAvatar` -> the `IAttachmentsModule` calls llAttachToAvatar /
+llDetachFromAvatar make, onto the owner, without `PERMISSION_ATTACH`; `osMessageObject` ->
+`PostObjectEvent("dataserver", [sender, message])`; `osResetAllScripts` -> `ResetScript` / `ApiResetScript`.
+
+| landed | gate |
+|---|---|
+| osSetRot | VeryHigh |
+| osForceCreateLink, osForceBreakLink, osForceBreakAllLinks, osSetPrimFloatOnWater, osReplaceString | VeryLow |
+| osMessageObject | Low |
+| osSetSpeed, osSetOwnerSpeed (capped at 4), osRequestURL, osRequestSecureURL (`allowXss` option) | Moderate |
+| osGetLinkPrimitiveParams, osForceAttachToAvatar, osForceAttachToAvatarFromInventory, osForceDetachFromAvatar, osForceDropAttachment, osForceDropAttachmentAt | High |
+| osForceAttachToOtherAvatarFromInventory | VeryHigh |
+| osTeleportObject (another owner's object only where the land-owner rule allows, `checkAllowObjectTPbyLandOwner` ported), osSetContentType (MIME string verbatim), osConsoleCommand (plus `CanRunConsoleCommand`) | Severe |
+| osVolumeDetect, osSetPrimitiveParams, osGetPrimitiveParams, osSetInertia, osSetInertiaAsBox, osSetInertiaAsSphere, osSetInertiaAsCylinder, osClearInertia, osCollisionSound | master switch |
+| osSetProjectionParams (5- and link-addressed 6-arg), osSetSitActiveRange, osSetLinkSitActiveRange, osSetStandTarget, osSetLinkStandTarget, osAdjustSoundVolume, osSetSoundRadius, osPlaySound, osLoopSound, osLoopSoundMaster, osLoopSoundSlave, osPlaySoundSlave, osTriggerSound, osTriggerSoundLimited, osStopSound, osTriggerSoundAtPos, osResetAllScripts, osClearObjectAnimations, osLocalTeleportAgent (owner / PERMISSION_TELEPORT granter / land-owner rule) | ungated upstream |
+
+**Not landed, with reason:** `osMakeNotecard` x2 (Phlox has no notecard-asset writer door yet;
+`SaveNotecard` would be a new asset-creation path, not a port); `osMessageAttachments` (a 60-line point
+filter over the target's attachments - its own session); `osReplaceAgentEnvironment` /
+`osReplaceRegionEnvironment` (need the environment module door Phlox does not have); the key-addressed
+`osSetProjectionParams(key, ...)` (`OSSL_Api.cs:3921`) - it shares arity 6 with the link-addressed form and
+Phlox keys overloads by arity. Ported faithfully but worth knowing: `osSetInertia` uses `rot.z` where
+upstream's `:4767` has a `rot.y` typo; `osVolumeDetect` does not record the flag in the script's state as
+`llVolumeDetect` does (upstream's own note: lost on rez/restart).
+
+**Wiki:** `osForceCreateLink` read ("identical to llCreateLink except that it doesn't require the link
+permission", VeryLow, 1 s delay - the delay is llCreateLink's own `ScriptSleep(1000)` in the core);
+`osTeleportObject` read (Severe; returns 1 for a local teleport, 0 for a crossing started, negative on
+failure); **`osSetRot` has no wiki page** ("There is currently no text in this page").
+
+### What pins it
+
+`OsslSideEffectTests`, harness scene, `OSFunctionThreatLevel = Severe`: `osSetRot(llGetKey(),
+<0,0,0.707,0.707>)` leaves `GroupRotation` at z=w=0.7071; `osForceCreateLink(<other prim>, 1)` with no
+`PERMISSION_CHANGE_LINKS` ever granted makes `llGetNumberOfPrims` say **2** and `osForceBreakLink(2)` puts it
+back to **1**; the prim setters land on the scene part (`SitActiveRange` 12, `StandOffset` <1,2,3>,
+`ProjectionEntry` with FOV 1.5, `SoundRadius` 7.5, `CollisionSoundType` -1 for `""`/0, `Name` "renamed"
+through `osSetPrimitiveParams` by key and read back through `osGetPrimitiveParams`, `osReplaceString("aaa",
+"a","b",2,0)` = `bba`); `osTeleportObject` to <100,100,30> returns 1 and the linkset is there;
+`osMessageObject(llGetKey(), "ping")` raises `dataserver` with the sender's key; at VeryLow `osSetRot` is
+denied with one stop and the rotation is unchanged. **Attachments are landed but not pinned:** the harness
+attempt (`osForceAttachToAvatar(ATTACH_CHEST)` with an owner presence and the NPC-scene modules) set
+`IsAttachment` but left `AttachedAvatar` zero and stopped the script with an NRE inside the attach - a
+harness-scene gap or a real one, undetermined in the time box, so the attach family stays on the did-it-land
+list. Dispatch baseline **regenerated** (747 -> 796 names). Suite **155 -> 161**; region server builds.
+
+**Did it land:** a prim calling `osSetRot(llGetKey(), <0,0,0.707,0.707>)` then `osForceCreateLink` with a
+second prim - the prim rotates 90 degrees and `llGetNumberOfPrims` says 2.

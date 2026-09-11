@@ -3699,6 +3699,13 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 return;
             }
 
+            CreateLinkCore(target, parent);
+        }
+
+        /// <summary>PHLOX-15: llCreateLink after its PERMISSION_CHANGE_LINKS check - the door osForceCreateLink takes (OSSL_Api.cs:2784-2789 calls the same split, m_LSL_Api.CreateLink).</summary>
+        private void CreateLinkCore(string target, int parent)
+        {
+            if (m_host?.ParentGroup == null || m_host.ParentGroup.IsAttachment) return;
             if (!UUID.TryParse(target, out UUID targetUUID) || targetUUID == UUID.Zero) return;
             SceneObjectPart targetPart = World?.GetSceneObjectPart(targetUUID);
             if (targetPart?.ParentGroup == null) return;
@@ -3738,6 +3745,13 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 return;
             }
 
+            BreakLinkCore(linknum);
+        }
+
+        /// <summary>PHLOX-15: llBreakLink after its PERMISSION_CHANGE_LINKS check - the door osForceBreakLink takes (OSSL_Api.cs:2792-2797).</summary>
+        private void BreakLinkCore(int linknum)
+        {
+            if (m_host?.ParentGroup == null || m_host.ParentGroup.IsAttachment) return;
             SceneObjectGroup parentGroup = m_host.ParentGroup;
 
             if (linknum == 1) // LINK_ROOT — break all children off, leave root alone
@@ -7064,6 +7078,531 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public float osVecMagSquare(Vector3 a)
         {
             return a.LengthSquared();
+        }
+
+        // ── PHLOX-15: OSSL side-effect functions, ported from OSSL_Api.cs (line cited per function), each under its
+        //    upstream key and threat level through OsslGate; "master" = upstream's bare CheckThreatLevel() ──
+        private const int OsslLinkThis = -4, OsslLinkRoot = 1;
+        private static readonly OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel
+            TlVeryLow  = OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.VeryLow,
+            TlLow      = OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.Low,
+            TlModerate = OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.Moderate,
+            TlHigh     = OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.High,
+            TlVeryHigh = OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.VeryHigh,
+            TlSevere   = OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.Severe;
+
+        /// <summary>OSSL_Api.cs:5180-5199 GetSingleLinkPart: LINK_SET/ALL_OTHERS/ALL_CHILDREN -> none; 0/LINK_ROOT -> root; LINK_THIS -> host; n -> link n.</summary>
+        private SceneObjectPart OsslSingleLinkPart(int linkType)
+        {
+            if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return null;
+            switch (linkType)
+            {
+                case -3: case -2: case -1: return null;
+                case 0: case OsslLinkRoot: return m_host.ParentGroup.RootPart;
+                case OsslLinkThis: return m_host;
+                default:
+                    if (linkType < 0) return null;
+                    return m_host.ParentGroup.GetLinkNumPart(linkType);
+            }
+        }
+
+        /// <summary>OSSL_Api.cs:895-933 checkAllowAgentTPbyLandOwner minus the agent branches: land owner, estate manager/owner, or the land's group.</summary>
+        private bool OsslLandOwnerAllows(Vector3 pos)
+        {
+            ILandObject land = World?.LandChannel?.GetLandObject(pos);
+            LandData landdata = land?.LandData;
+            if (landdata == null) return true;
+            if (landdata.OwnerID == m_host.OwnerID) return true;
+            EstateSettings es = World.RegionInfo?.EstateSettings;
+            if (es != null && es.IsEstateManagerOrOwner(m_host.OwnerID)) return true;
+            if (!landdata.IsGroupOwned || landdata.GroupID == UUID.Zero) return false;
+            return landdata.GroupID == m_host.GroupID;
+        }
+
+        /// <summary>OSSL_Api.cs:701-720 - VeryHigh. A linkset by its key rotates as a group; a presence gets its Rotation set.</summary>
+        public void osSetRot(string target, Quaternion rotation)
+        {
+            OsslCheck(TlVeryHigh, "osSetRot");
+            if (!UUID.TryParse(target, out UUID id)) return;
+            SceneObjectGroup sog = World?.GetSceneObjectGroup(id);
+            if (sog != null && !sog.IsDeleted) { sog.UpdateGroupRotationR(rotation); return; }
+            ScenePresence sp = World?.GetScenePresence(id);
+            if (sp != null) sp.Rotation = rotation;
+        }
+
+        /// <summary>OSSL_Api.cs:2784-2789 - VeryLow. llCreateLink without PERMISSION_CHANGE_LINKS.</summary>
+        public void osForceCreateLink(string target, int parent)
+        {
+            OsslCheck(TlVeryLow, "osForceCreateLink");
+            CreateLinkCore(target, parent);
+        }
+
+        /// <summary>OSSL_Api.cs:2792-2797 - VeryLow.</summary>
+        public void osForceBreakLink(int linknum)
+        {
+            OsslCheck(TlVeryLow, "osForceBreakLink");
+            BreakLinkCore(linknum);
+        }
+
+        /// <summary>OSSL_Api.cs:2800-2805 - VeryLow. Phlox's llBreakAllLinks carries no permission check, so it is the core.</summary>
+        public void osForceBreakAllLinks()
+        {
+            OsslCheck(TlVeryLow, "osForceBreakAllLinks");
+            llBreakAllLinks();
+        }
+
+        /// <summary>OSSL_Api.cs:4954-4975 - Severe. Another owner's object only where the land owner rule allows; SceneObjectGroup.TeleportObject does the move (OSTPOBJ_* flags).</summary>
+        public int osTeleportObject(string objectUUID, Vector3 targetPos, Quaternion rotation, int flags)
+        {
+            OsslCheck(TlSevere, "osTeleportObject");
+            if (!UUID.TryParse(objectUUID, out UUID id)) { ShoutError("osTeleportObject() invalid object Key"); return -1; }
+            SceneObjectGroup sog = World?.GetSceneObjectGroup(id);
+            if (sog == null || sog.IsDeleted || sog.inTransit) return -1;
+            if (sog.OwnerID != m_host.OwnerID && !OsslLandOwnerAllows(sog.AbsolutePosition)) return -1;
+            return sog.TeleportObject(m_host.ParentGroup.UUID, targetPos, rotation, flags);
+        }
+
+        /// <summary>OSSL_Api.cs:3681-3689 - Moderate.</summary>
+        public void osSetSpeed(string ID, float SpeedModifier)
+        {
+            OsslCheck(TlModerate, "osSetSpeed");
+            if (!UUID.TryParse(ID, out UUID avid)) return;
+            ScenePresence avatar = World?.GetScenePresence(avid);
+            if (avatar != null) avatar.SpeedModifier = SpeedModifier;
+        }
+
+        /// <summary>OSSL_Api.cs:3693-3701 - Moderate; capped at 4.</summary>
+        public void osSetOwnerSpeed(float SpeedModifier)
+        {
+            OsslCheck(TlModerate, "osSetOwnerSpeed");
+            if (SpeedModifier > 4) SpeedModifier = 4;
+            ScenePresence avatar = World?.GetScenePresence(m_host.OwnerID);
+            if (avatar != null) avatar.SpeedModifier = SpeedModifier;
+        }
+
+        /// <summary>OSSL_Api.cs:4475-4479 - Severe. The MIME type verbatim, unlike llSetContentType's enum.</summary>
+        public void osSetContentType(string id, string type)
+        {
+            OsslCheck(TlSevere, "osSetContentType");
+            if (!UUID.TryParse(id, out UUID reqID)) return;
+            World?.RequestModuleInterface<IUrlModule>()?.HttpContentType(reqID, type);
+        }
+
+        /// <summary>OSSL_Api.cs:889-893 - VeryLow.</summary>
+        public void osSetPrimFloatOnWater(int floatYN)
+        {
+            OsslCheck(TlVeryLow, "osSetPrimFloatOnWater");
+            m_host?.ParentGroup?.RootPart?.SetFloatOnWater(floatYN);
+        }
+
+        /// <summary>OSSL_Api.cs:4682-4688 - master switch. Unlike llVolumeDetect this does not record the flag in the script's state.</summary>
+        public void osVolumeDetect(int detect)
+        {
+            OsslCheck();
+            if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted || m_host.ParentGroup.IsAttachment) return;
+            m_host.ScriptSetVolumeDetect(detect != 0);
+        }
+
+        /// <summary>OSSL_Api.cs:3877-3882 - master switch; LSL_Api.SetPrimitiveParamsEx refuses another owner's prim.</summary>
+        public void osSetPrimitiveParams(string prim, LSLList rules)
+        {
+            OsslCheck();
+            if (!UUID.TryParse(prim, out UUID id)) return;
+            SceneObjectPart part = World?.GetSceneObjectPart(id);
+            if (part == null || part.OwnerID != m_host.OwnerID) return;
+            SetPrimParams(part, rules);
+        }
+
+        /// <summary>OSSL_Api.cs:3869-3874 - master switch; LSL_Api.GetPrimitiveParamsEx answers only for the same owner.</summary>
+        public LSLList osGetPrimitiveParams(string prim, LSLList rules)
+        {
+            OsslCheck();
+            if (!UUID.TryParse(prim, out UUID id)) return new LSLList();
+            SceneObjectPart part = World?.GetSceneObjectPart(id);
+            if (part == null || part.OwnerID != m_host.OwnerID) return new LSLList();
+            return GetPrimParams(part, rules);
+        }
+
+        /// <summary>OSSL_Api.cs:2755-2781 - High. llGetLinkPrimitiveParams behind the OSSL gate (the PRIM_LINK_TARGET re-walk is Phlox's GetPrimParams' business).</summary>
+        public LSLList osGetLinkPrimitiveParams(int linknumber, LSLList rules)
+        {
+            OsslCheck(TlHigh, "osGetLinkPrimitiveParams");
+            return llGetLinkPrimitiveParams(linknumber, rules);
+        }
+
+        /// <summary>OSSL_Api.cs:3936-3962 SetProjectionParams - ungated upstream.</summary>
+        private static void OsslSetProjectionParams(SceneObjectPart obj, int projection, string texture, float fov, float focus, float amb)
+        {
+            if (obj == null || obj.IsDeleted || obj.Shape == null) return;
+            if (projection != 0)
+            {
+                if (!UUID.TryParse(texture, out UUID texID)) return;
+                obj.Shape.ProjectionEntry = true;
+                obj.Shape.ProjectionTextureUUID = texID;
+                obj.Shape.ProjectionFOV = Math.Clamp(fov, 0f, 3.0f);
+                obj.Shape.ProjectionFocus = Math.Clamp(focus, -20.0f, 20.0f);
+                obj.Shape.ProjectionAmbiance = Math.Clamp(amb, 0f, 1.0f);
+                obj.ParentGroup.HasGroupChanged = true;
+                obj.ScheduleFullUpdate();
+                return;
+            }
+            if (obj.Shape.ProjectionEntry)
+            {
+                obj.Shape.ProjectionEntry = false;
+                obj.ParentGroup.HasGroupChanged = true;
+                obj.ScheduleFullUpdate();
+            }
+        }
+
+        /// <summary>OSSL_Api.cs:3888-3891 - ungated upstream.</summary>
+        public void osSetProjectionParams(int projection, string texture, float fov, float focus, float amb)
+            => OsslSetProjectionParams(m_host, projection, texture, fov, focus, amb);
+
+        /// <summary>OSSL_Api.cs:3896-3914 - ungated upstream. (The key-addressed form at :3921 is not landed: Phlox keys overloads by arity and this one shares arity 6.)</summary>
+        public void osSetProjectionParams(int linknum, int projection, string texture, float fov, float focus, float amb)
+        {
+            if (m_host?.ParentGroup == null) return;
+            if (linknum == OsslLinkThis || linknum == m_host.LinkNum) { OsslSetProjectionParams(m_host, projection, texture, fov, focus, amb); return; }
+            if (linknum < 0 || linknum > m_host.ParentGroup.PrimCount) return;
+            if (linknum < 2 && m_host.LinkNum < 2) { OsslSetProjectionParams(m_host, projection, texture, fov, focus, amb); return; }
+            OsslSetProjectionParams(m_host.ParentGroup.GetLinkNumPart(linknum), projection, texture, fov, focus, amb);
+        }
+
+        private static Vector4 OsslNormalisedRot(Quaternion q)
+        {
+            var v = new Vector4(q.X, q.Y, q.Z, q.W);
+            v.Normalize();
+            return v;
+        }
+
+        /// <summary>OSSL_Api.cs:4747-4770 - master switch. Note upstream's rot.y typo for z (:4767); the port uses z.</summary>
+        public void osSetInertia(float mass, Vector3 centerOfMass, Vector3 principalInertiaScaled, Quaternion lslrot)
+        {
+            OsslCheck();
+            SceneObjectGroup sog = m_host?.ParentGroup;
+            if (sog == null || sog.IsDeleted) return;
+            if (mass < 0 || principalInertiaScaled.X < 0 || principalInertiaScaled.Y < 0 || principalInertiaScaled.Z < 0) return;
+            sog.SetInertiaData(mass, centerOfMass, principalInertiaScaled * mass, OsslNormalisedRot(lslrot));
+        }
+
+        /// <summary>OSSL_Api.cs:4785-4811 - master switch.</summary>
+        public void osSetInertiaAsBox(float mass, Vector3 boxSize, Vector3 centerOfMass, Quaternion lslrot)
+        {
+            OsslCheck();
+            SceneObjectGroup sog = m_host?.ParentGroup;
+            if (sog == null || sog.IsDeleted || mass < 0) return;
+            float lx = boxSize.X, ly = boxSize.Y, lz = boxSize.Z, t = mass / 12.0f;
+            sog.SetInertiaData(mass, centerOfMass, new Vector3(t * (ly * ly + lz * lz), t * (lx * lx + lz * lz), t * (lx * lx + ly * ly)), OsslNormalisedRot(lslrot));
+        }
+
+        /// <summary>OSSL_Api.cs:4825-4841 - master switch.</summary>
+        public void osSetInertiaAsSphere(float mass, float radius, Vector3 centerOfMass)
+        {
+            OsslCheck();
+            SceneObjectGroup sog = m_host?.ParentGroup;
+            if (sog == null || sog.IsDeleted || mass < 0) return;
+            float t = 0.4f * mass * radius * radius;
+            sog.SetInertiaData(mass, centerOfMass, new Vector3(t, t, t), new Vector4(0f, 0f, 0f, 1.0f));
+        }
+
+        /// <summary>OSSL_Api.cs:4860-4883 - master switch.</summary>
+        public void osSetInertiaAsCylinder(float mass, float radius, float length, Vector3 centerOfMass, Quaternion lslrot)
+        {
+            OsslCheck();
+            SceneObjectGroup sog = m_host?.ParentGroup;
+            if (sog == null || sog.IsDeleted || mass < 0) return;
+            float r = radius * radius;
+            float t = length * length;
+            t += 3.0f * r;
+            t *= 8.333333e-2f * mass;
+            sog.SetInertiaData(mass, centerOfMass, new Vector3(t, t, 0.5f * mass * r), OsslNormalisedRot(lslrot));
+        }
+
+        /// <summary>OSSL_Api.cs:4896-4903 - master switch.</summary>
+        public void osClearInertia()
+        {
+            OsslCheck();
+            SceneObjectGroup sog = m_host?.ParentGroup;
+            if (sog == null || sog.IsDeleted) return;
+            sog.SetInertiaData(-1, Vector3.Zero, Vector3.Zero, Vector4.Zero);
+        }
+
+        /// <summary>OSSL_Api.cs:5995-6005 - ungated upstream; capped at 128.</summary>
+        public void osSetSitActiveRange(float v)
+        {
+            if (m_host == null) return;
+            if (v > 128f) v = 128f;
+            if (m_host.SitActiveRange != v) { m_host.SitActiveRange = v; if (m_host.ParentGroup != null) m_host.ParentGroup.HasGroupChanged = true; }
+        }
+
+        /// <summary>OSSL_Api.cs:6008-6025 - ungated upstream.</summary>
+        public void osSetLinkSitActiveRange(int linkNumber, float v)
+        {
+            if (m_host == null) return;
+            if (v > 128f) v = 128f;
+            bool changed = false;
+            foreach (SceneObjectPart sop in GetLinkParts(linkNumber))
+                if (sop.SitActiveRange != v) { sop.SitActiveRange = v; changed = true; }
+            if (changed && m_host.ParentGroup != null) m_host.ParentGroup.HasGroupChanged = true;
+        }
+
+        /// <summary>OSSL_Api.cs:6051-6058 - ungated upstream.</summary>
+        public void osSetStandTarget(Vector3 v)
+        {
+            if (m_host == null) return;
+            Vector3 old = m_host.StandOffset;
+            m_host.StandOffset = v;
+            if (!old.ApproxEquals(v) && m_host.ParentGroup != null) m_host.ParentGroup.HasGroupChanged = true;
+        }
+
+        /// <summary>OSSL_Api.cs:6060-6080 - ungated upstream: LINK_THIS -> host, negative -> nothing, 0/1 -> root, n -> link n.</summary>
+        public void osSetLinkStandTarget(int linkNumber, Vector3 v)
+        {
+            if (m_host?.ParentGroup == null) return;
+            SceneObjectPart target;
+            if (linkNumber == OsslLinkThis) target = m_host;
+            else if (linkNumber < 0) return;
+            else if (linkNumber < 2) target = m_host.ParentGroup.RootPart;
+            else target = m_host.ParentGroup.GetLinkNumPart(linkNumber);
+            if (target == null) return;
+            Vector3 old = target.StandOffset;
+            target.StandOffset = v;
+            if (!old.ApproxEquals(v)) m_host.ParentGroup.HasGroupChanged = true;
+        }
+
+        // sound family, OSSL_Api.cs:5017-5178 - every one ungated upstream; the link-addressed forms of the ll* calls
+        /// <summary>OSSL_Api.cs:5017-5021.</summary>
+        public void osAdjustSoundVolume(int linknum, float volume) => OsslSingleLinkPart(linknum)?.AdjustSoundGain(volume);
+        /// <summary>OSSL_Api.cs:5023-5028.</summary>
+        public void osSetSoundRadius(int linknum, float radius) { var sop = OsslSingleLinkPart(linknum); if (sop != null) sop.SoundRadius = radius; }
+        private void OsslSound(int linknum, string sound, float volume, bool trigger, bool loop, bool master, bool slave)
+        {
+            ISoundModule sm = World?.RequestModuleInterface<ISoundModule>();
+            SceneObjectPart sop = OsslSingleLinkPart(linknum);
+            if (sm == null || sop == null) return;
+            UUID soundID = KeyOrName(sound);
+            if (soundID == UUID.Zero) return;
+            if (loop) sm.LoopSound(sop, soundID, volume, master, slave);
+            else sm.SendSound(sop, soundID, volume, trigger, 0, slave, false);
+        }
+        /// <summary>OSSL_Api.cs:5030-5044.</summary>
+        public void osPlaySound(int linknum, string sound, float volume) => OsslSound(linknum, sound, volume, false, false, false, false);
+        /// <summary>OSSL_Api.cs:5047-5060.</summary>
+        public void osLoopSound(int linknum, string sound, float volume) => OsslSound(linknum, sound, volume, false, true, false, false);
+        /// <summary>OSSL_Api.cs:5063-5076.</summary>
+        public void osLoopSoundMaster(int linknum, string sound, float volume) => OsslSound(linknum, sound, volume, false, true, true, false);
+        /// <summary>OSSL_Api.cs:5079-5090.</summary>
+        public void osLoopSoundSlave(int linknum, string sound, float volume) => OsslSound(linknum, sound, volume, false, true, false, true);
+        /// <summary>OSSL_Api.cs:5093-5104.</summary>
+        public void osPlaySoundSlave(int linknum, string sound, float volume) => OsslSound(linknum, sound, volume, false, false, false, true);
+        /// <summary>OSSL_Api.cs:5107-5118.</summary>
+        public void osTriggerSound(int linknum, string sound, float volume) => OsslSound(linknum, sound, volume, true, false, false, false);
+        /// <summary>OSSL_Api.cs:5121-5134.</summary>
+        public void osTriggerSoundLimited(int linknum, string sound, float volume, Vector3 top_north_east, Vector3 bottom_south_west)
+        {
+            ISoundModule sm = World?.RequestModuleInterface<ISoundModule>();
+            SceneObjectPart sop = OsslSingleLinkPart(linknum);
+            if (sm == null || sop == null) return;
+            UUID soundID = KeyOrName(sound);
+            if (soundID != UUID.Zero) sm.TriggerSoundLimited(sop.UUID, soundID, volume, bottom_south_west, top_north_east);
+        }
+        /// <summary>OSSL_Api.cs:5137-5148 - every part the link number names.</summary>
+        public void osStopSound(int linknum)
+        {
+            ISoundModule sm = World?.RequestModuleInterface<ISoundModule>();
+            if (sm == null || m_host == null) return;
+            foreach (SceneObjectPart sop in GetLinkParts(linknum)) sm.StopSound(sop);
+        }
+        /// <summary>OSSL_Api.cs:5167-5177.</summary>
+        public void osTriggerSoundAtPos(string sound, Vector3 position, float gain)
+        {
+            ISoundModule sm = World?.RequestModuleInterface<ISoundModule>();
+            if (sm == null || m_host == null) return;
+            UUID soundID = KeyOrName(sound);
+            if (soundID == UUID.Zero) return;
+            sm.TriggerSound(soundID, m_host.OwnerID, m_host.UUID, UUID.Zero, gain, position, m_host.RegionHandle);
+        }
+        /// <summary>OSSL_Api.cs:4650-4677 - master switch. "" with volume 0 disables collision sounds, 1 restores the defaults, otherwise defaults at that volume.</summary>
+        public void osCollisionSound(string impact_sound, float impact_volume)
+        {
+            OsslCheck();
+            if (m_host == null) return;
+            if (string.IsNullOrEmpty(impact_sound))
+            {
+                m_host.CollisionSoundVolume = impact_volume;
+                m_host.CollisionSound = m_host.invalidCollisionSoundUUID;
+                m_host.CollisionSoundType = impact_volume == 0.0f ? (sbyte)-1 : impact_volume == 1.0f ? (sbyte)0 : (sbyte)2;
+                m_host.aggregateScriptEvents();
+                return;
+            }
+            UUID soundId = KeyOrName(impact_sound);
+            if (soundId == UUID.Zero) m_host.CollisionSoundType = -1;
+            else { m_host.CollisionSound = soundId; m_host.CollisionSoundVolume = impact_volume; m_host.CollisionSoundType = 1; }
+            m_host.aggregateScriptEvents();
+        }
+
+        // attachments, OSSL_Api.cs:4193-4265 and :4537-4555
+        /// <summary>OSSL_Api.cs:4193-4198 - High. llAttachToAvatar without PERMISSION_ATTACH, onto the owner.</summary>
+        public void osForceAttachToAvatar(int attachmentPoint)
+        {
+            OsslCheck(TlHigh, "osForceAttachToAvatar");
+            if (m_host?.ParentGroup == null) return;
+            IAttachmentsModule attachMod = World?.RequestModuleInterface<IAttachmentsModule>();
+            ScenePresence sp = World?.GetScenePresence(m_host.OwnerID);
+            if (attachMod == null || sp == null || sp.IsChildAgent) return;
+            attachMod.AttachObject(sp, m_host.ParentGroup, (uint)attachmentPoint, false, true, false, GetScriptExperienceId());
+        }
+
+        /// <summary>OSSL_Api.cs:4213-4252 ForceAttachToAvatarFromInventory: the object moves from the prim's inventory to the avatar's and is rezzed as an attachment.</summary>
+        private void OsslForceAttachFromInventory(UUID avatarId, string itemName, int attachmentPoint)
+        {
+            IAttachmentsModule attachMod = World?.RequestModuleInterface<IAttachmentsModule>();
+            if (attachMod == null || m_host == null) return;
+            TaskInventoryItem item = m_host.Inventory.GetInventoryItem(itemName);
+            if (item == null) { ShoutError($"Could not find object '{itemName}'"); return; }
+            if (item.InvType != (int)InventoryType.Object) { ShoutError($"Unable to attach, item '{itemName}' is not an object."); return; }
+            if ((item.Flags & (uint)InventoryItemFlags.ObjectHasMultipleItems) != 0) { ShoutError($"Unable to attach coalesced object, item '{itemName}'"); return; }
+            ScenePresence sp = World.GetScenePresence(avatarId);
+            if (sp == null) return;
+            InventoryItemBase newItem = World.MoveTaskInventoryItem(sp.UUID, UUID.Zero, m_host, item.ItemID, out string message);
+            if (newItem == null) { ShoutError(message); return; }
+            attachMod.RezSingleAttachmentFromInventory(sp, newItem.ID, (uint)attachmentPoint);
+        }
+
+        /// <summary>OSSL_Api.cs:4201-4205 - High.</summary>
+        public void osForceAttachToAvatarFromInventory(string itemName, int attachmentPoint)
+        {
+            OsslCheck(TlHigh, "osForceAttachToAvatarFromInventory");
+            OsslForceAttachFromInventory(m_host.OwnerID, itemName, attachmentPoint);
+        }
+
+        /// <summary>OSSL_Api.cs:4208-4214 - VeryHigh.</summary>
+        public void osForceAttachToOtherAvatarFromInventory(string rawAvatarId, string itemName, int attachmentPoint)
+        {
+            OsslCheck(TlVeryHigh, "osForceAttachToOtherAvatarFromInventory");
+            if (!UUID.TryParse(rawAvatarId, out UUID avatarId)) return;
+            OsslForceAttachFromInventory(avatarId, itemName, attachmentPoint);
+        }
+
+        /// <summary>OSSL_Api.cs:4263-4268 - High. llDetachFromAvatar without PERMISSION_ATTACH.</summary>
+        public void osForceDetachFromAvatar()
+        {
+            OsslCheck(TlHigh, "osForceDetachFromAvatar");
+            if (m_host?.ParentGroup == null || !m_host.ParentGroup.IsAttachment) return;
+            IAttachmentsModule attachMod = World?.RequestModuleInterface<IAttachmentsModule>();
+            ScenePresence sp = World?.GetScenePresence(m_host.ParentGroup.AttachedAvatar);
+            if (attachMod == null || sp == null) return;
+            attachMod.DetachSingleAttachmentToInv(sp, m_host.ParentGroup);
+        }
+
+        /// <summary>OSSL_Api.cs:4537-4541 (DropAttachment :4500-4509) - High.</summary>
+        public void osForceDropAttachment()
+        {
+            OsslCheck(TlHigh, "osForceDropAttachment");
+            if (m_host?.ParentGroup == null || !m_host.ParentGroup.IsAttachment) return;
+            IAttachmentsModule attachMod = World?.RequestModuleInterface<IAttachmentsModule>();
+            ScenePresence sp = World?.GetScenePresence(m_host.ParentGroup.OwnerID);
+            if (attachMod != null && sp != null) attachMod.DetachSingleAttachmentToGround(sp, m_host.ParentGroup.LocalId);
+        }
+
+        /// <summary>OSSL_Api.cs:4551-4555 (DropAttachmentAt :4511-4520) - High.</summary>
+        public void osForceDropAttachmentAt(Vector3 pos, Quaternion rot)
+        {
+            OsslCheck(TlHigh, "osForceDropAttachmentAt");
+            if (m_host?.ParentGroup == null || !m_host.ParentGroup.IsAttachment) return;
+            IAttachmentsModule attachMod = World?.RequestModuleInterface<IAttachmentsModule>();
+            ScenePresence sp = World?.GetScenePresence(m_host.ParentGroup.OwnerID);
+            if (attachMod != null && sp != null) attachMod.DetachSingleAttachmentToGround(sp, m_host.ParentGroup.LocalId, pos, rot);
+        }
+
+        /// <summary>OSSL_Api.cs:2099-2124 - Low. A dataserver event (sender key, message) on every script in the target prim.</summary>
+        public void osMessageObject(string objectUUID, string message)
+        {
+            OsslCheck(TlLow, "osMessageObject");
+            if (!UUID.TryParse(objectUUID, out UUID objUUID)) { ShoutError("osMessageObject() cannot send messages to objects with invalid UUIDs"); return; }
+            SceneObjectPart sceneOP = World?.GetSceneObjectPart(objUUID);
+            if (sceneOP == null) { ShoutError("osMessageObject() cannot send message to " + objUUID + ", object was not found in scene."); return; }
+            m_ScriptEngine.PostObjectEvent(sceneOP.LocalId, new EventParams("dataserver",
+                new object[] { m_host.UUID.ToString(), message ?? string.Empty }, new DetectParams[0]));
+        }
+
+        /// <summary>OSSL_Api.cs:5941-5966 - ungated upstream. Every other script in the prim (or the linkset) is reset, then this one.</summary>
+        public void osResetAllScripts(int linkset)
+        {
+            if (m_host?.ParentGroup == null) return;
+            var scripts = new List<TaskInventoryItem>();
+            if (linkset != 0)
+            {
+                SceneObjectGroup sog = m_host.ParentGroup;
+                if (sog.inTransit || sog.IsDeleted) return;
+                foreach (SceneObjectPart part in sog.Parts) scripts.AddRange(part.Inventory.GetInventoryItems(InventoryType.LSL));
+            }
+            else scripts.AddRange(m_host.Inventory.GetInventoryItems(InventoryType.LSL));
+            foreach (TaskInventoryItem script in scripts)
+                if (script.ItemID != m_itemID) m_ScriptEngine.ResetScript(script.ItemID);
+            World?.RequestModuleInterface<IUrlModule>()?.ScriptRemoved(m_itemID);
+            m_ScriptEngine.ApiResetScript(m_itemID);
+        }
+
+        private static System.Collections.Hashtable OsslUrlOptions(LSLList options)
+        {
+            var opts = new System.Collections.Hashtable();
+            for (int i = 0; i < options.Length; i++)
+                if (options.Data[i]?.ToString() == "allowXss") opts["allowXss"] = true;
+            return opts;
+        }
+
+        /// <summary>OSSL_Api.cs:4615-4629 - Moderate. llRequestURL with options ("allowXss").</summary>
+        public string osRequestURL(LSLList options)
+        {
+            OsslCheck(TlModerate, "osRequestURL");
+            IUrlModule urlMod = World?.RequestModuleInterface<IUrlModule>();
+            if (urlMod == null) return UUID.Zero.ToString();
+            return urlMod.RequestURL(m_ScriptEngine, m_host, m_itemID, OsslUrlOptions(options)).ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:4633-4647 - Moderate.</summary>
+        public string osRequestSecureURL(LSLList options)
+        {
+            OsslCheck(TlModerate, "osRequestSecureURL");
+            IUrlModule urlMod = World?.RequestModuleInterface<IUrlModule>();
+            if (urlMod == null) return UUID.Zero.ToString();
+            return urlMod.RequestSecureURL(m_ScriptEngine, m_host, m_itemID, OsslUrlOptions(options)).ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:2697-2710 - VeryLow. Regex replace of at most count matches from start (negative start counts from the end).</summary>
+        public string osReplaceString(string src, string pattern, string replace, int count, int start)
+        {
+            OsslCheck(TlVeryLow, "osReplaceString");
+            src ??= string.Empty;
+            if (start < 0) start = src.Length + start;
+            if (start < 0 || start >= src.Length) return src;
+            return new System.Text.RegularExpressions.Regex(pattern ?? string.Empty).Replace(src, replace ?? string.Empty, count, start);
+        }
+
+        /// <summary>OSSL_Api.cs:6103-6106 - ungated upstream.</summary>
+        public int osClearObjectAnimations() => m_host?.ClearObjectAnimations() ?? 0;
+
+        /// <summary>OSSL_Api.cs:936-949 - ungated upstream, but only the owner, a PERMISSION_TELEPORT granter, or an agent standing on land the owner rule allows.</summary>
+        public void osLocalTeleportAgent(string agent, Vector3 position, Vector3 velocity, Vector3 lookat, int flags)
+        {
+            if (!UUID.TryParse(agent, out UUID agentId)) return;
+            ScenePresence presence = World?.GetScenePresence(agentId);
+            if (presence == null || presence.IsDeleted || presence.IsInTransit) return;
+            bool allowed = m_host.OwnerID == agentId
+                || (OsslItem?.PermsGranter == agentId && (OsslItem.PermsMask & 0x1000) != 0)   // PERMISSION_TELEPORT
+                || OsslLandOwnerAllows(presence.AbsolutePosition);
+            if (!allowed) return;
+            World.RequestLocalTeleport(presence, position, velocity, lookat, flags);
+        }
+
+        /// <summary>OSSL_Api.cs:875-886 - Severe, and a second check: the owner must be allowed console commands by the permissions module.</summary>
+        public int osConsoleCommand(string command)
+        {
+            OsslCheck(TlSevere, "osConsoleCommand");
+            if (World?.Permissions == null || !World.Permissions.CanRunConsoleCommand(m_host.OwnerID)) return 0;
+            OpenSim.Framework.MainConsole.Instance?.RunCommand(command);
+            return 1;
         }
 
         // ── PHLOX-14: osNpc* - a second door onto BotManager's bots (one BotData per NPC), ported from OSSL_Api.cs ──

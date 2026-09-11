@@ -5404,6 +5404,357 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "npc", "object_key", "link_num" },
                 TableIndex = 760
             }},
+            // PHLOX-15: OSSL side-effect functions, 761-810
+            {"osSetRot", new FunctionSig {
+                FunctionName = "osSetRot",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.Rotation },
+                ParamNames = new string[] { "target", "rotation" },
+                TableIndex = 761
+            }},
+            {"osForceCreateLink", new FunctionSig {
+                FunctionName = "osForceCreateLink",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.Integer },
+                ParamNames = new string[] { "target", "parent" },
+                TableIndex = 762
+            }},
+            {"osForceBreakLink", new FunctionSig {
+                FunctionName = "osForceBreakLink",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer },
+                ParamNames = new string[] { "linknum" },
+                TableIndex = 763
+            }},
+            {"osForceBreakAllLinks", new FunctionSig {
+                FunctionName = "osForceBreakAllLinks",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 764
+            }},
+            {"osTeleportObject", new FunctionSig {
+                FunctionName = "osTeleportObject",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Key, VarType.Vector, VarType.Rotation, VarType.Integer },
+                ParamNames = new string[] { "objectUUID", "targetPos", "rotation", "flags" },
+                TableIndex = 765
+            }},
+            {"osSetSpeed", new FunctionSig {
+                FunctionName = "osSetSpeed",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.Float },
+                ParamNames = new string[] { "ID", "SpeedModifier" },
+                TableIndex = 766
+            }},
+            {"osSetOwnerSpeed", new FunctionSig {
+                FunctionName = "osSetOwnerSpeed",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Float },
+                ParamNames = new string[] { "SpeedModifier" },
+                TableIndex = 767
+            }},
+            {"osSetContentType", new FunctionSig {
+                FunctionName = "osSetContentType",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.String },
+                ParamNames = new string[] { "id", "type" },
+                TableIndex = 768
+            }},
+            {"osSetPrimFloatOnWater", new FunctionSig {
+                FunctionName = "osSetPrimFloatOnWater",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer },
+                ParamNames = new string[] { "floatYN" },
+                TableIndex = 769
+            }},
+            {"osVolumeDetect", new FunctionSig {
+                FunctionName = "osVolumeDetect",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer },
+                ParamNames = new string[] { "detect" },
+                TableIndex = 770
+            }},
+            {"osSetPrimitiveParams", new FunctionSig {
+                FunctionName = "osSetPrimitiveParams",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.List },
+                ParamNames = new string[] { "prim", "rules" },
+                TableIndex = 771
+            }},
+            {"osGetPrimitiveParams", new FunctionSig {
+                FunctionName = "osGetPrimitiveParams",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] { VarType.Key, VarType.List },
+                ParamNames = new string[] { "prim", "rules" },
+                TableIndex = 772
+            }},
+            {"osGetLinkPrimitiveParams", new FunctionSig {
+                FunctionName = "osGetLinkPrimitiveParams",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.List },
+                ParamNames = new string[] { "linknumber", "rules" },
+                TableIndex = 773
+            }},
+            {"osSetProjectionParams", new FunctionSig {
+                FunctionName = "osSetProjectionParams",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Key, VarType.Float, VarType.Float, VarType.Float },
+                ParamNames = new string[] { "projection", "texture", "fov", "focus", "amb" },
+                TableIndex = 774
+            }},
+            {"osSetProjectionParams__6", new FunctionSig {
+                FunctionName = "osSetProjectionParams",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Integer, VarType.Key, VarType.Float, VarType.Float, VarType.Float },
+                ParamNames = new string[] { "linknum", "projection", "texture", "fov", "focus", "amb" },
+                TableIndex = 775
+            }},
+            {"osSetInertia", new FunctionSig {
+                FunctionName = "osSetInertia",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Float, VarType.Vector, VarType.Vector, VarType.Rotation },
+                ParamNames = new string[] { "mass", "centerOfMass", "principalInertiaScaled", "lslrot" },
+                TableIndex = 776
+            }},
+            {"osSetInertiaAsBox", new FunctionSig {
+                FunctionName = "osSetInertiaAsBox",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Float, VarType.Vector, VarType.Vector, VarType.Rotation },
+                ParamNames = new string[] { "mass", "boxSize", "centerOfMass", "lslrot" },
+                TableIndex = 777
+            }},
+            {"osSetInertiaAsSphere", new FunctionSig {
+                FunctionName = "osSetInertiaAsSphere",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Float, VarType.Float, VarType.Vector },
+                ParamNames = new string[] { "mass", "radius", "centerOfMass" },
+                TableIndex = 778
+            }},
+            {"osSetInertiaAsCylinder", new FunctionSig {
+                FunctionName = "osSetInertiaAsCylinder",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Float, VarType.Float, VarType.Float, VarType.Vector, VarType.Rotation },
+                ParamNames = new string[] { "mass", "radius", "length", "centerOfMass", "lslrot" },
+                TableIndex = 779
+            }},
+            {"osClearInertia", new FunctionSig {
+                FunctionName = "osClearInertia",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 780
+            }},
+            {"osSetSitActiveRange", new FunctionSig {
+                FunctionName = "osSetSitActiveRange",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Float },
+                ParamNames = new string[] { "v" },
+                TableIndex = 781
+            }},
+            {"osSetLinkSitActiveRange", new FunctionSig {
+                FunctionName = "osSetLinkSitActiveRange",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Float },
+                ParamNames = new string[] { "linkNumber", "v" },
+                TableIndex = 782
+            }},
+            {"osSetStandTarget", new FunctionSig {
+                FunctionName = "osSetStandTarget",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Vector },
+                ParamNames = new string[] { "v" },
+                TableIndex = 783
+            }},
+            {"osSetLinkStandTarget", new FunctionSig {
+                FunctionName = "osSetLinkStandTarget",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Vector },
+                ParamNames = new string[] { "linkNumber", "v" },
+                TableIndex = 784
+            }},
+            {"osAdjustSoundVolume", new FunctionSig {
+                FunctionName = "osAdjustSoundVolume",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Float },
+                ParamNames = new string[] { "linknum", "volume" },
+                TableIndex = 785
+            }},
+            {"osSetSoundRadius", new FunctionSig {
+                FunctionName = "osSetSoundRadius",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Float },
+                ParamNames = new string[] { "linknum", "radius" },
+                TableIndex = 786
+            }},
+            {"osPlaySound", new FunctionSig {
+                FunctionName = "osPlaySound",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.String, VarType.Float },
+                ParamNames = new string[] { "linknum", "sound", "volume" },
+                TableIndex = 787
+            }},
+            {"osLoopSound", new FunctionSig {
+                FunctionName = "osLoopSound",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.String, VarType.Float },
+                ParamNames = new string[] { "linknum", "sound", "volume" },
+                TableIndex = 788
+            }},
+            {"osLoopSoundMaster", new FunctionSig {
+                FunctionName = "osLoopSoundMaster",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.String, VarType.Float },
+                ParamNames = new string[] { "linknum", "sound", "volume" },
+                TableIndex = 789
+            }},
+            {"osLoopSoundSlave", new FunctionSig {
+                FunctionName = "osLoopSoundSlave",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.String, VarType.Float },
+                ParamNames = new string[] { "linknum", "sound", "volume" },
+                TableIndex = 790
+            }},
+            {"osPlaySoundSlave", new FunctionSig {
+                FunctionName = "osPlaySoundSlave",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.String, VarType.Float },
+                ParamNames = new string[] { "linknum", "sound", "volume" },
+                TableIndex = 791
+            }},
+            {"osTriggerSound", new FunctionSig {
+                FunctionName = "osTriggerSound",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.String, VarType.Float },
+                ParamNames = new string[] { "linknum", "sound", "volume" },
+                TableIndex = 792
+            }},
+            {"osTriggerSoundLimited", new FunctionSig {
+                FunctionName = "osTriggerSoundLimited",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.String, VarType.Float, VarType.Vector, VarType.Vector },
+                ParamNames = new string[] { "linknum", "sound", "volume", "top_north_east", "bottom_south_west" },
+                TableIndex = 793
+            }},
+            {"osStopSound", new FunctionSig {
+                FunctionName = "osStopSound",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer },
+                ParamNames = new string[] { "linknum" },
+                TableIndex = 794
+            }},
+            {"osTriggerSoundAtPos", new FunctionSig {
+                FunctionName = "osTriggerSoundAtPos",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.String, VarType.Vector, VarType.Float },
+                ParamNames = new string[] { "sound", "position", "gain" },
+                TableIndex = 795
+            }},
+            {"osCollisionSound", new FunctionSig {
+                FunctionName = "osCollisionSound",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.String, VarType.Float },
+                ParamNames = new string[] { "impact_sound", "impact_volume" },
+                TableIndex = 796
+            }},
+            {"osForceAttachToAvatar", new FunctionSig {
+                FunctionName = "osForceAttachToAvatar",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer },
+                ParamNames = new string[] { "attachmentPoint" },
+                TableIndex = 797
+            }},
+            {"osForceAttachToAvatarFromInventory", new FunctionSig {
+                FunctionName = "osForceAttachToAvatarFromInventory",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.String, VarType.Integer },
+                ParamNames = new string[] { "itemName", "attachmentPoint" },
+                TableIndex = 798
+            }},
+            {"osForceAttachToOtherAvatarFromInventory", new FunctionSig {
+                FunctionName = "osForceAttachToOtherAvatarFromInventory",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.String, VarType.Integer },
+                ParamNames = new string[] { "rawAvatarId", "itemName", "attachmentPoint" },
+                TableIndex = 799
+            }},
+            {"osForceDetachFromAvatar", new FunctionSig {
+                FunctionName = "osForceDetachFromAvatar",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 800
+            }},
+            {"osForceDropAttachment", new FunctionSig {
+                FunctionName = "osForceDropAttachment",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 801
+            }},
+            {"osForceDropAttachmentAt", new FunctionSig {
+                FunctionName = "osForceDropAttachmentAt",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Vector, VarType.Rotation },
+                ParamNames = new string[] { "pos", "rot" },
+                TableIndex = 802
+            }},
+            {"osMessageObject", new FunctionSig {
+                FunctionName = "osMessageObject",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.String },
+                ParamNames = new string[] { "objectUUID", "message" },
+                TableIndex = 803
+            }},
+            {"osResetAllScripts", new FunctionSig {
+                FunctionName = "osResetAllScripts",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer },
+                ParamNames = new string[] { "linkset" },
+                TableIndex = 804
+            }},
+            {"osRequestURL", new FunctionSig {
+                FunctionName = "osRequestURL",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] { VarType.List },
+                ParamNames = new string[] { "options" },
+                TableIndex = 805
+            }},
+            {"osRequestSecureURL", new FunctionSig {
+                FunctionName = "osRequestSecureURL",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] { VarType.List },
+                ParamNames = new string[] { "options" },
+                TableIndex = 806
+            }},
+            {"osReplaceString", new FunctionSig {
+                FunctionName = "osReplaceString",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.String, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "src", "pattern", "replace", "count", "start" },
+                TableIndex = 807
+            }},
+            {"osClearObjectAnimations", new FunctionSig {
+                FunctionName = "osClearObjectAnimations",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 808
+            }},
+            {"osLocalTeleportAgent", new FunctionSig {
+                FunctionName = "osLocalTeleportAgent",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.Vector, VarType.Vector, VarType.Vector, VarType.Integer },
+                ParamNames = new string[] { "agent", "position", "velocity", "lookat", "flags" },
+                TableIndex = 809
+            }},
+            {"osConsoleCommand", new FunctionSig {
+                FunctionName = "osConsoleCommand",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.String },
+                ParamNames = new string[] { "command" },
+                TableIndex = 810
+            }},
          };
 
         /// <summary>

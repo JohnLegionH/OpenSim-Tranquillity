@@ -845,6 +845,56 @@ private static string ConvToString(object o)
 								Shim_osNpcPlayAnimation,             //758  PHLOX-14
 								Shim_osNpcStopAnimation,             //759  PHLOX-14
 								Shim_osNpcTouch,                     //760  PHLOX-14
+								Shim_osSetRot,                        //761  PHLOX-15
+								Shim_osForceCreateLink,               //762  PHLOX-15
+								Shim_osForceBreakLink,                //763  PHLOX-15
+								Shim_osForceBreakAllLinks,            //764  PHLOX-15
+								Shim_osTeleportObject,                //765  PHLOX-15
+								Shim_osSetSpeed,                      //766  PHLOX-15
+								Shim_osSetOwnerSpeed,                 //767  PHLOX-15
+								Shim_osSetContentType,                //768  PHLOX-15
+								Shim_osSetPrimFloatOnWater,           //769  PHLOX-15
+								Shim_osVolumeDetect,                  //770  PHLOX-15
+								Shim_osSetPrimitiveParams,            //771  PHLOX-15
+								Shim_osGetPrimitiveParams,            //772  PHLOX-15
+								Shim_osGetLinkPrimitiveParams,        //773  PHLOX-15
+								Shim_osSetProjectionParams,           //774  PHLOX-15
+								Shim_osSetProjectionParams6,          //775  PHLOX-15
+								Shim_osSetInertia,                    //776  PHLOX-15
+								Shim_osSetInertiaAsBox,               //777  PHLOX-15
+								Shim_osSetInertiaAsSphere,            //778  PHLOX-15
+								Shim_osSetInertiaAsCylinder,          //779  PHLOX-15
+								Shim_osClearInertia,                  //780  PHLOX-15
+								Shim_osSetSitActiveRange,             //781  PHLOX-15
+								Shim_osSetLinkSitActiveRange,         //782  PHLOX-15
+								Shim_osSetStandTarget,                //783  PHLOX-15
+								Shim_osSetLinkStandTarget,            //784  PHLOX-15
+								Shim_osAdjustSoundVolume,             //785  PHLOX-15
+								Shim_osSetSoundRadius,                //786  PHLOX-15
+								Shim_osPlaySound,                     //787  PHLOX-15
+								Shim_osLoopSound,                     //788  PHLOX-15
+								Shim_osLoopSoundMaster,               //789  PHLOX-15
+								Shim_osLoopSoundSlave,                //790  PHLOX-15
+								Shim_osPlaySoundSlave,                //791  PHLOX-15
+								Shim_osTriggerSound,                  //792  PHLOX-15
+								Shim_osTriggerSoundLimited,           //793  PHLOX-15
+								Shim_osStopSound,                     //794  PHLOX-15
+								Shim_osTriggerSoundAtPos,             //795  PHLOX-15
+								Shim_osCollisionSound,                //796  PHLOX-15
+								Shim_osForceAttachToAvatar,           //797  PHLOX-15
+								Shim_osForceAttachToAvatarFromInventory, //798  PHLOX-15
+								Shim_osForceAttachToOtherAvatarFromInventory, //799  PHLOX-15
+								Shim_osForceDetachFromAvatar,         //800  PHLOX-15
+								Shim_osForceDropAttachment,           //801  PHLOX-15
+								Shim_osForceDropAttachmentAt,         //802  PHLOX-15
+								Shim_osMessageObject,                 //803  PHLOX-15
+								Shim_osResetAllScripts,               //804  PHLOX-15
+								Shim_osRequestURL,                    //805  PHLOX-15
+								Shim_osRequestSecureURL,              //806  PHLOX-15
+								Shim_osReplaceString,                 //807  PHLOX-15
+								Shim_osClearObjectAnimations,         //808  PHLOX-15
+								Shim_osLocalTeleportAgent,            //809  PHLOX-15
+								Shim_osConsoleCommand,                //810  PHLOX-15
         };
 
         /// <summary>
@@ -7448,6 +7498,328 @@ private static string ConvToString(object o)
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             self._systemAPI.osNpcStopAnimation(p0, p1);
         }
+        // ── PHLOX-15 shims ──
+        static private void Shim_osSetRot(SyscallShim self)
+        {
+            Quaternion p1 = ConvToQuat(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetRot(p0, p1);
+        }
+        static private void Shim_osForceCreateLink(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osForceCreateLink(p0, p1);
+        }
+        static private void Shim_osForceBreakLink(SyscallShim self)
+        {
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osForceBreakLink(p0);
+        }
+        static private void Shim_osForceBreakAllLinks(SyscallShim self)
+        {
+            self._systemAPI.osForceBreakAllLinks();
+        }
+        static private void Shim_osTeleportObject(SyscallShim self)
+        {
+            int p3 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            Quaternion p2 = ConvToQuat(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osTeleportObject(p0, p1, p2, p3);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetSpeed(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetSpeed(p0, p1);
+        }
+        static private void Shim_osSetOwnerSpeed(SyscallShim self)
+        {
+            float p0 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetOwnerSpeed(p0);
+        }
+        static private void Shim_osSetContentType(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetContentType(p0, p1);
+        }
+        static private void Shim_osSetPrimFloatOnWater(SyscallShim self)
+        {
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetPrimFloatOnWater(p0);
+        }
+        static private void Shim_osVolumeDetect(SyscallShim self)
+        {
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osVolumeDetect(p0);
+        }
+        static private void Shim_osSetPrimitiveParams(SyscallShim self)
+        {
+            LSLList p1 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetPrimitiveParams(p0, p1);
+        }
+        static private void Shim_osGetPrimitiveParams(SyscallShim self)
+        {
+            LSLList p1 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            LSLList ret = self._systemAPI.osGetPrimitiveParams(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetLinkPrimitiveParams(SyscallShim self)
+        {
+            LSLList p1 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            LSLList ret = self._systemAPI.osGetLinkPrimitiveParams(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetProjectionParams(SyscallShim self)
+        {
+            float p4 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p3 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetProjectionParams(p0, p1, p2, p3, p4);
+        }
+        static private void Shim_osSetProjectionParams6(SyscallShim self)
+        {
+            float p5 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p4 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p3 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetProjectionParams(p0, p1, p2, p3, p4, p5);
+        }
+        static private void Shim_osSetInertia(SyscallShim self)
+        {
+            Quaternion p3 = ConvToQuat(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p2 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            float p0 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetInertia(p0, p1, p2, p3);
+        }
+        static private void Shim_osSetInertiaAsBox(SyscallShim self)
+        {
+            Quaternion p3 = ConvToQuat(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p2 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            float p0 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetInertiaAsBox(p0, p1, p2, p3);
+        }
+        static private void Shim_osSetInertiaAsSphere(SyscallShim self)
+        {
+            Vector3 p2 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p0 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetInertiaAsSphere(p0, p1, p2);
+        }
+        static private void Shim_osSetInertiaAsCylinder(SyscallShim self)
+        {
+            Quaternion p4 = ConvToQuat(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p3 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p0 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetInertiaAsCylinder(p0, p1, p2, p3, p4);
+        }
+        static private void Shim_osClearInertia(SyscallShim self)
+        {
+            self._systemAPI.osClearInertia();
+        }
+        static private void Shim_osSetSitActiveRange(SyscallShim self)
+        {
+            float p0 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetSitActiveRange(p0);
+        }
+        static private void Shim_osSetLinkSitActiveRange(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetLinkSitActiveRange(p0, p1);
+        }
+        static private void Shim_osSetStandTarget(SyscallShim self)
+        {
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetStandTarget(p0);
+        }
+        static private void Shim_osSetLinkStandTarget(SyscallShim self)
+        {
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetLinkStandTarget(p0, p1);
+        }
+        static private void Shim_osAdjustSoundVolume(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osAdjustSoundVolume(p0, p1);
+        }
+        static private void Shim_osSetSoundRadius(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetSoundRadius(p0, p1);
+        }
+        static private void Shim_osPlaySound(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osPlaySound(p0, p1, p2);
+        }
+        static private void Shim_osLoopSound(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osLoopSound(p0, p1, p2);
+        }
+        static private void Shim_osLoopSoundMaster(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osLoopSoundMaster(p0, p1, p2);
+        }
+        static private void Shim_osLoopSoundSlave(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osLoopSoundSlave(p0, p1, p2);
+        }
+        static private void Shim_osPlaySoundSlave(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osPlaySoundSlave(p0, p1, p2);
+        }
+        static private void Shim_osTriggerSound(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osTriggerSound(p0, p1, p2);
+        }
+        static private void Shim_osTriggerSoundLimited(SyscallShim self)
+        {
+            Vector3 p4 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p3 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osTriggerSoundLimited(p0, p1, p2, p3, p4);
+        }
+        static private void Shim_osStopSound(SyscallShim self)
+        {
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osStopSound(p0);
+        }
+        static private void Shim_osTriggerSoundAtPos(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osTriggerSoundAtPos(p0, p1, p2);
+        }
+        static private void Shim_osCollisionSound(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osCollisionSound(p0, p1);
+        }
+        static private void Shim_osForceAttachToAvatar(SyscallShim self)
+        {
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osForceAttachToAvatar(p0);
+        }
+        static private void Shim_osForceAttachToAvatarFromInventory(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osForceAttachToAvatarFromInventory(p0, p1);
+        }
+        static private void Shim_osForceAttachToOtherAvatarFromInventory(SyscallShim self)
+        {
+            int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osForceAttachToOtherAvatarFromInventory(p0, p1, p2);
+        }
+        static private void Shim_osForceDetachFromAvatar(SyscallShim self)
+        {
+            self._systemAPI.osForceDetachFromAvatar();
+        }
+        static private void Shim_osForceDropAttachment(SyscallShim self)
+        {
+            self._systemAPI.osForceDropAttachment();
+        }
+        static private void Shim_osForceDropAttachmentAt(SyscallShim self)
+        {
+            Quaternion p1 = ConvToQuat(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osForceDropAttachmentAt(p0, p1);
+        }
+        static private void Shim_osMessageObject(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osMessageObject(p0, p1);
+        }
+        static private void Shim_osResetAllScripts(SyscallShim self)
+        {
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osResetAllScripts(p0);
+        }
+        static private void Shim_osRequestURL(SyscallShim self)
+        {
+            LSLList p0 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osRequestURL(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osRequestSecureURL(SyscallShim self)
+        {
+            LSLList p0 = ConvToLSLList(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osRequestSecureURL(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osReplaceString(SyscallShim self)
+        {
+            int p4 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p3 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osReplaceString(p0, p1, p2, p3, p4);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osClearObjectAnimations(SyscallShim self)
+        {
+            int ret = self._systemAPI.osClearObjectAnimations();
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osLocalTeleportAgent(SyscallShim self)
+        {
+            int p4 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p3 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p2 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osLocalTeleportAgent(p0, p1, p2, p3, p4);
+        }
+        static private void Shim_osConsoleCommand(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osConsoleCommand(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+
         static private void Shim_osNpcTouch(SyscallShim self)
         {
             int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
