@@ -1873,3 +1873,64 @@ list. Dispatch baseline **regenerated** (747 -> 796 names). Suite **155 -> 161**
 
 **Did it land:** a prim calling `osSetRot(llGetKey(), <0,0,0.707,0.707>)` then `osForceCreateLink` with a
 second prim - the prim rotates 90 degrees and `llGetNumberOfPrims` says 2.
+
+## PHLOX-16 - OSSL agent, teleport, kick, animation and group functions
+
+**2026-09-10. Landed; not deployed.** 19 names, 25 dispatch entries (811-835): what was left of PHLOX-12's
+"osAgent*/osAvatar*/osForce*/osKick*/osCause*/osTeleport*" row after PHLOX-15 took the link, attachment,
+teleport-object and speed functions, plus `osKey2Name` and `osGetAgentIP` from the brief. Same method: every
+body ported from `OSSL_Api.cs` with its line range in the `<summary>`, every gated function under its upstream
+`Allow_` key and level through `OsslGate`, existing Phlox doors reused - `osTeleportOwner` x3 through
+`iwTeleportAgent` and the PHLOX-2b five-argument `osTeleportAgent` (the owner's key as the agent);
+`osCauseDamage` and a lowering `osSetHealth` through **PHLOX-10's `ApplyDamage` door** with this prim as the
+source, on an async shim like `llDamage` because the door waits on `on_damage`; `osOwnerSaveAppearance` x2
+into **BotManager's outfit store** under the owner (`SaveOutfitToDatabase`, the same mapping as PHLOX-14's
+`osNpcSaveAppearance`, returning the outfit's key; `includeHuds` accepted, not applied); the animation pair on
+`ScenePresenceAnimator` as `llStartAnimation` does; `osForceOtherSit` through `HandleAgentRequestSit`.
+**`osTeleportAgent` needed nothing** - its three arities (region name, grid x/y, local) have been in Phlox
+since PHLOX-2b (`Defaults.cs:4744-4780`).
+
+| landed | gate |
+|---|---|
+| osTeleportOwner (3 arities) | None |
+| osInviteToGroup, osEjectFromGroup (IGroupsModule; owner needs Invite / Eject power) | VeryLow |
+| osAvatarName2Key, osKey2Name, osDie (same owner, rezzed by this linkset, never itself) | Low |
+| osDropAttachment, osDropAttachmentAt (PERMISSION_ATTACH = 0x20 or a shout) | Moderate |
+| osCauseDamage, osCauseHealing (capped 100), osSetHealth (1..100), osSetHealRate, osOwnerSaveAppearance x2 | High |
+| osAvatarPlayAnimation, osAvatarStopAnimation, osForceOtherSit x2 | VeryHigh |
+| osKickAvatar x2 (Kick with the alert, then CloseAgent), osGetAgentIP (plus `IsGod`) | Severe |
+| osAvatarType x2 (-1 not a key, 0 absent, 1 avatar, 2 NPC) | ungated upstream |
+
+**Not landed, with reason:** `osAgentSaveAppearance` x2 - the outfit store is keyed by the presence being
+saved, and neither `SaveOutfitToDatabase` (the owner's own appearance) nor PHLOX-14's `SaveBotOutfit` (bots
+only) saves *another* agent's appearance into the *caller's* store; that is a new IBotManager door, not a
+port. `osSetSpeed`, `osSetOwnerSpeed`, `osTeleportObject` and the nine `osForce*` in the row were PHLOX-15.
+**Deliberate deviations, both toward this tree's rules:** `osCauseDamage` is admitted by the parcel's
+`AllowDamage` flag (upstream) **or** the region's `AllowDamage` setting (the rule `llDamage` applies here);
+`osAvatarPlayAnimation` also accepts a key, as the stop form and `llStartAnimation` do (upstream's play form
+takes an inventory name or a default-animation name only). Death on a lowered health is the door's business
+and is not repeated from upstream's body.
+
+**Wiki:** `osCauseDamage` (High, `${OSSL|osslParcelO}ESTATE_MANAGER,ESTATE_OWNER`), `osTeleportOwner`
+(None, 5 s delay in the wiki - Phlox's teleport door carries no sleep), `osKickAvatar` (Severe, key form
+added 2019), `osForceOtherSit` (VeryHigh, "always disabled by default") read over plain HTTP.
+
+**Verify scripts:** the "expect 1: a0d421cb" note in `verify-phlox12-13`, `-14` and `-15-restart.sh` now
+reads **expect 0** - the divide-by-zero test prim is gone.
+
+### What pins it
+
+`OsslAgentTests`, harness scene, `OSFunctionThreatLevel = Severe`: **`osCauseDamage(avatar, 10.0)` from the
+harness prim reaches a worn attachment's `on_damage` with the prim as `llDetectedKey(0)` and 10.0 as the
+damage, and the presence's Health is 90** (the recipe of PHLOX-10's llDamage test); `osSetHealRate` 2.5 lands
+on `HealRate`, `osCauseHealing` 5 on a 50 reads back 55, `osSetHealth` 30 goes through the door to 30;
+`osAvatarType` says 1 by key and by name and -1 for a non-key, `osKey2Name` and `osAvatarName2Key` agree
+with the presence; `osAvatarPlayAnimation` puts the key on the animator (`HasAnimation`) and the stop form
+takes it off; `osForceOtherSit` seats the presence on the prim (`IsSatOnObject`, `ParentID` = the prim);
+`osKickAvatar` removes the presence from the scene; `osDie` deletes the object this linkset rezzed and not
+the other; at VeryLow `osKickAvatar` is denied with one stop and the presence stays. Teleport is not pinned:
+the harness scene has no entity-transfer module, so the did-it-land carries it. Dispatch baseline
+**regenerated** (796 -> 815 names). Suite **161 -> 169**; region server builds.
+
+**Did it land:** from a manager's prim, `osTeleportAgent(self, "Transylvania", <128,128,30>, <1,0,0>)` moves
+you, and `osCauseDamage(self, 10.0)` shows `on_damage` in a worn attachment (region or parcel damage on).

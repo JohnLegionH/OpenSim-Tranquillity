@@ -895,6 +895,31 @@ private static string ConvToString(object o)
 								Shim_osClearObjectAnimations,         //808  PHLOX-15
 								Shim_osLocalTeleportAgent,            //809  PHLOX-15
 								Shim_osConsoleCommand,                //810  PHLOX-15
+								Shim_osTeleportOwner,                 //811  PHLOX-16
+								Shim_osTeleportOwner4,                //812  PHLOX-16
+								Shim_osTeleportOwner2,                //813  PHLOX-16
+								Shim_osKickAvatar,                    //814  PHLOX-16
+								Shim_osKickAvatar2,                   //815  PHLOX-16
+								Shim_osAvatarPlayAnimation,           //816  PHLOX-16
+								Shim_osAvatarStopAnimation,           //817  PHLOX-16
+								Shim_osAvatarName2Key,                //818  PHLOX-16
+								Shim_osKey2Name,                      //819  PHLOX-16
+								Shim_osGetAgentIP,                    //820  PHLOX-16
+								Shim_osOwnerSaveAppearance,           //821  PHLOX-16
+								Shim_osOwnerSaveAppearance2,          //822  PHLOX-16
+								Shim_osCauseDamage,                   //823  PHLOX-16
+								Shim_osCauseHealing,                  //824  PHLOX-16
+								Shim_osSetHealth,                     //825  PHLOX-16
+								Shim_osSetHealRate,                   //826  PHLOX-16
+								Shim_osForceOtherSit,                 //827  PHLOX-16
+								Shim_osForceOtherSit2,                //828  PHLOX-16
+								Shim_osDie,                           //829  PHLOX-16
+								Shim_osDropAttachment,                //830  PHLOX-16
+								Shim_osDropAttachmentAt,              //831  PHLOX-16
+								Shim_osInviteToGroup,                 //832  PHLOX-16
+								Shim_osEjectFromGroup,                //833  PHLOX-16
+								Shim_osAvatarType,                    //834  PHLOX-16
+								Shim_osAvatarType2,                   //835  PHLOX-16
         };
 
         /// <summary>
@@ -7817,6 +7842,163 @@ private static string ConvToString(object o)
         {
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             int ret = self._systemAPI.osConsoleCommand(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+
+        // ── PHLOX-16 shims ──
+        static private void Shim_osTeleportOwner(SyscallShim self)
+        {
+            Vector3 p2 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osTeleportOwner(p0, p1, p2);
+        }
+        static private void Shim_osTeleportOwner4(SyscallShim self)
+        {
+            Vector3 p3 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p2 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osTeleportOwner(p0, p1, p2, p3);
+        }
+        static private void Shim_osTeleportOwner2(SyscallShim self)
+        {
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osTeleportOwner(p0, p1);
+        }
+        static private void Shim_osKickAvatar(SyscallShim self)
+        {
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osKickAvatar(p0, p1, p2);
+        }
+        static private void Shim_osKickAvatar2(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osKickAvatar(p0, p1);
+        }
+        static private void Shim_osAvatarPlayAnimation(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osAvatarPlayAnimation(p0, p1);
+        }
+        static private void Shim_osAvatarStopAnimation(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osAvatarStopAnimation(p0, p1);
+        }
+        static private void Shim_osAvatarName2Key(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osAvatarName2Key(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osKey2Name(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osKey2Name(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osGetAgentIP(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osGetAgentIP(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osOwnerSaveAppearance(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osOwnerSaveAppearance(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osOwnerSaveAppearance2(SyscallShim self)
+        {
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osOwnerSaveAppearance(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osCauseDamage(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            // PHLOX-10 door: ApplyDamage waits on on_damage - never from the script thread
+            RunAsync(self, delegate() { self._systemAPI.osCauseDamage(p0, p1); });
+        }
+        static private void Shim_osCauseHealing(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osCauseHealing(p0, p1);
+        }
+        static private void Shim_osSetHealth(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            // PHLOX-10 door: ApplyDamage waits on on_damage - never from the script thread
+            RunAsync(self, delegate() { self._systemAPI.osSetHealth(p0, p1); });
+        }
+        static private void Shim_osSetHealRate(SyscallShim self)
+        {
+            float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetHealRate(p0, p1);
+        }
+        static private void Shim_osForceOtherSit(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osForceOtherSit(p0);
+        }
+        static private void Shim_osForceOtherSit2(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osForceOtherSit(p0, p1);
+        }
+        static private void Shim_osDie(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osDie(p0);
+        }
+        static private void Shim_osDropAttachment(SyscallShim self)
+        {
+            self._systemAPI.osDropAttachment();
+        }
+        static private void Shim_osDropAttachmentAt(SyscallShim self)
+        {
+            Quaternion p1 = ConvToQuat(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osDropAttachmentAt(p0, p1);
+        }
+        static private void Shim_osInviteToGroup(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osInviteToGroup(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osEjectFromGroup(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osEjectFromGroup(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osAvatarType(SyscallShim self)
+        {
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osAvatarType(p0);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osAvatarType2(SyscallShim self)
+        {
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osAvatarType(p0, p1);
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }
 

@@ -7605,6 +7605,300 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return 1;
         }
 
+        // ── PHLOX-16: OSSL agent, teleport, kick, animation and group functions, ported from OSSL_Api.cs (line cited per
+        //    function), each under its upstream key and threat level through OsslGate ──
+        private static readonly OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel
+            TlNone = OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.None;
+
+        /// <summary>OSSL_Api.cs:1077-1081 - None. The owner through the region-name teleport door (iwTeleportAgent).</summary>
+        public void osTeleportOwner(string regionName, Vector3 position, Vector3 lookat)
+        {
+            OsslCheck(TlNone, "osTeleportOwner");
+            if (m_host == null) return;
+            iwTeleportAgent(m_host.OwnerID.ToString(), regionName, position, lookat);
+        }
+
+        /// <summary>OSSL_Api.cs:1085-1089 - None. Grid coordinates, through the PHLOX-2b five-argument osTeleportAgent.</summary>
+        public void osTeleportOwner(int regionGridX, int regionGridY, Vector3 position, Vector3 lookat)
+        {
+            OsslCheck(TlNone, "osTeleportOwner");
+            if (m_host == null) return;
+            osTeleportAgent(m_host.OwnerID.ToString(), regionGridX, regionGridY, position, lookat);
+        }
+
+        /// <summary>OSSL_Api.cs:1092-1096 - None. Within this region.</summary>
+        public void osTeleportOwner(Vector3 position, Vector3 lookat)
+        {
+            OsslCheck(TlNone, "osTeleportOwner");
+            if (m_host == null) return;
+            iwTeleportAgent(m_host.OwnerID.ToString(), string.Empty, position, lookat);
+        }
+
+        /// <summary>OSSL_Api.cs:3705-3727 - Severe. Every root presence with that name: Kick with the alert when there is one, then CloseAgent.</summary>
+        public void osKickAvatar(string FirstName, string SurName, string alert)
+        {
+            OsslCheck(TlSevere, "osKickAvatar");
+            var victims = new List<ScenePresence>();
+            World?.ForEachRootScenePresence(sp => { if (sp.Firstname == FirstName && sp.Lastname == SurName) victims.Add(sp); });
+            foreach (ScenePresence sp in victims)
+            {
+                if (!string.IsNullOrEmpty(alert)) sp.ControllingClient.Kick(alert);
+                sp.Scene.CloseAgent(sp.UUID, false);
+            }
+        }
+
+        /// <summary>OSSL_Api.cs:3730-3741 - Severe.</summary>
+        public void osKickAvatar(string agentKey, string alert)
+        {
+            OsslCheck(TlSevere, "osKickAvatar");
+            if (!UUID.TryParse(agentKey, out UUID id) || id == UUID.Zero) return;
+            ScenePresence sp = World?.GetScenePresence(id);
+            if (sp == null) return;
+            if (!string.IsNullOrEmpty(alert)) sp.ControllingClient.Kick(alert);
+            sp.Scene.CloseAgent(id, false);
+        }
+
+        /// <summary>OSSL_Api.cs:1178-1206 - VeryHigh. An animation from the prim's inventory by name, else a key (this tree, like the stop form), else a default animation by name, on any presence.</summary>
+        public void osAvatarPlayAnimation(string avatar, string animation)
+        {
+            OsslCheck(TlVeryHigh, "osAvatarPlayAnimation");
+            if (!UUID.TryParse(avatar, out UUID avatarID)) return;
+            ScenePresence target = World?.GetScenePresence(avatarID);
+            if (target?.Animator == null) return;
+            UUID animID = FindInventoryItem(animation, (int)AssetType.Animation)?.AssetID ?? UUID.Zero;
+            if (animID == UUID.Zero && !UUID.TryParse(animation, out animID)) animID = UUID.Zero;   // a key as well, as the stop form and llStartAnimation take
+            if (animID == UUID.Zero) target.Animator.AddAnimation(animation, m_host.UUID);          // a default animation by name
+            else target.Animator.AddAnimation(animID, m_host.UUID);
+            target.TriggerScenePresenceUpdated();
+        }
+
+        /// <summary>OSSL_Api.cs:1210-1232 - VeryHigh.</summary>
+        public void osAvatarStopAnimation(string avatar, string animation)
+        {
+            OsslCheck(TlVeryHigh, "osAvatarStopAnimation");
+            if (!UUID.TryParse(avatar, out UUID avatarID)) return;
+            ScenePresence target = World?.GetScenePresence(avatarID);
+            if (target?.Animator == null) return;
+            if (!UUID.TryParse(animation, out UUID animID))
+                animID = FindInventoryItem(animation, (int)AssetType.Animation)?.AssetID ?? UUID.Zero;
+            if (animID == UUID.Zero) target.Animator.RemoveAnimation(animation);
+            else target.Animator.RemoveAnimation(animID, true);
+            target.TriggerScenePresenceUpdated();
+        }
+
+        /// <summary>OSSL_Api.cs:2432-2450 - Low. A presence here first, then the user-management lookup.</summary>
+        public string osAvatarName2Key(string firstname, string lastname)
+        {
+            OsslCheck(TlLow, "osAvatarName2Key");
+            ScenePresence sp = World?.GetScenePresence(firstname, lastname);
+            if (sp != null) return sp.UUID.ToString();
+            IUserManagement um = World?.RequestModuleInterface<IUserManagement>();
+            if (um == null) { ShoutError("osAvatarName2Key: UserManagement module not available"); return string.Empty; }
+            UUID userID = um.GetUserIdByName(firstname, lastname);
+            return userID == UUID.Zero ? string.Empty : userID.ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:2478-2508 - Low. A presence here, then the account service, then the user-management name (which knows HG visitors).</summary>
+        public string osKey2Name(string id)
+        {
+            OsslCheck(TlLow, "osKey2Name");
+            if (!UUID.TryParse(id, out UUID key)) return string.Empty;
+            ScenePresence sp = World?.GetScenePresence(key);
+            if (sp != null) return sp.Name;
+            UserAccount account = World?.UserAccountService?.GetUserAccount(World.RegionInfo.ScopeID, key);
+            if (account != null) return account.Name;
+            return World?.RequestModuleInterface<IUserManagement>()?.GetUserName(key) ?? string.Empty;
+        }
+
+        /// <summary>OSSL_Api.cs:1159-1173 - Severe, and the owner must be a god as well.</summary>
+        public string osGetAgentIP(string agent)
+        {
+            OsslCheck(TlSevere, "osGetAgentIP");
+            if (World?.Permissions == null || !World.Permissions.IsGod(m_host.OwnerID)) return string.Empty;
+            if (!UUID.TryParse(agent, out UUID avatarID)) return string.Empty;
+            ScenePresence target = World.GetScenePresence(avatarID);
+            return target?.ControllingClient?.RemoteEndPoint?.Address?.ToString() ?? string.Empty;
+        }
+
+        /// <summary>
+        /// OSSL_Api.cs:3475-3479 - High. Upstream writes the appearance into a notecard; here, as for osNpcSaveAppearance
+        /// (PHLOX-14), the "notecard" is an outfit name in BotManager's store, scoped to the owner - which is exactly
+        /// what SaveOutfitToDatabase captures. The key returned is the outfit's key in that store.
+        /// </summary>
+        public string osOwnerSaveAppearance(string notecard) => osOwnerSaveAppearance(notecard, 1);
+
+        /// <summary>OSSL_Api.cs:3482-3486 - High. includeHuds is accepted, not applied: the store keeps the whole appearance.</summary>
+        public string osOwnerSaveAppearance(string notecard, int includeHuds)
+        {
+            OsslCheck(TlHigh, "osOwnerSaveAppearance");
+            var mgr = NpcMgr(); if (mgr == null || m_host == null) return UUID.Zero.ToString();
+            mgr.SaveOutfitToDatabase(m_host.OwnerID, notecard, out string reason);
+            if (reason != null) { ShoutError("osOwnerSaveAppearance: " + reason); return UUID.Zero.ToString(); }
+            return OpenSim.Region.OptionalModules.World.NPC.BotManager.OutfitKey(m_host.OwnerID, notecard).ToString();
+        }
+
+        /// <summary>
+        /// OSSL_Api.cs:3764-3792 - High. Through PHLOX-10's one door with this prim as the source, so the target's
+        /// attachments get on_damage with this prim as the detected key; the parcel (upstream) or the region must allow damage.
+        /// Death (health at or below 0) is the door's business, not repeated here.
+        /// </summary>
+        public void osCauseDamage(string avatar, float damage)
+        {
+            OsslCheck(TlHigh, "osCauseDamage");
+            if (World == null || m_host == null || !UUID.TryParse(avatar, out UUID avatarId)) return;
+            ScenePresence presence = World.GetScenePresence(avatarId);
+            if (presence == null || presence.IsChildAgent) return;
+            // upstream admits the call on the parcel flag alone; here the region's AllowDamage (the rule PHLOX-10's
+            // llDamage applies in this tree) admits it as well, so a damage-enabled region needs no per-parcel flag
+            LandData land = World.GetLandData(m_host.GetWorldPosition());
+            bool parcelAllows = land != null && (land.Flags & (uint)ParcelFlags.AllowDamage) != 0;
+            if (!parcelAllows && !World.RegionInfo.RegionSettings.AllowDamage) return;
+            try { presence.ApplyDamage(m_host.UUID, m_host.OwnerID, m_host.LocalId, damage, DamageEntry.TYPE_GENERIC, true); }
+            catch (Exception e) { m_log.LogWarning(e, "[Phlox] osCauseDamage from {Prim} to {Avatar} threw", m_host.UUID, avatarId); }
+        }
+
+        /// <summary>OSSL_Api.cs:3800-3813 - High. Health up by the amount, capped at 100.</summary>
+        public void osCauseHealing(string avatar, float healing)
+        {
+            OsslCheck(TlHigh, "osCauseHealing");
+            if (!UUID.TryParse(avatar, out UUID avatarId)) return;
+            ScenePresence presence = World?.GetScenePresence(avatarId);
+            if (presence == null) return;
+            presence.setHealthWithUpdate(Math.Min(100f, presence.Health + healing));
+        }
+
+        /// <summary>
+        /// OSSL_Api.cs:3820-3835 - High. Clamped to 1..100; a decrease goes through PHLOX-10's door as damage from
+        /// this prim (the llSetHealth rule), an increase is set directly.
+        /// </summary>
+        public void osSetHealth(string avatar, float health)
+        {
+            OsslCheck(TlHigh, "osSetHealth");
+            if (World == null || m_host == null || !UUID.TryParse(avatar, out UUID avatarId)) return;
+            ScenePresence presence = World.GetScenePresence(avatarId);
+            if (presence == null || presence.IsChildAgent) return;
+            health = Math.Clamp(health, 1f, 100f);
+            if (health < presence.Health)
+            {
+                try { presence.ApplyDamage(m_host.UUID, m_host.OwnerID, m_host.LocalId, presence.Health - health, DamageEntry.TYPE_GENERIC, true); }
+                catch (Exception e) { m_log.LogWarning(e, "[Phlox] osSetHealth from {Prim} to {Avatar} threw", m_host.UUID, avatarId); }
+            }
+            else presence.setHealthWithUpdate(health);
+        }
+
+        /// <summary>OSSL_Api.cs:3840-3849 - High.</summary>
+        public void osSetHealRate(string avatar, float healrate)
+        {
+            OsslCheck(TlHigh, "osSetHealRate");
+            if (!UUID.TryParse(avatar, out UUID avatarId)) return;
+            ScenePresence presence = World?.GetScenePresence(avatarId);
+            if (presence != null) presence.HealRate = healrate;
+        }
+
+        /// <summary>OSSL_Api.cs:1125-1139 ForceSit: the presence requests a sit on the target as if it had clicked it, if nobody sits there.</summary>
+        private void OsslForceSit(string avatar, UUID targetID)
+        {
+            if (!UUID.TryParse(avatar, out UUID agentID)) return;
+            ScenePresence presence = World?.GetScenePresence(agentID);
+            if (presence == null) return;
+            SceneObjectPart part = World.GetSceneObjectPart(targetID);
+            if (part != null && part.SitTargetAvatar == UUID.Zero)
+                presence.HandleAgentRequestSit(presence.ControllingClient, agentID, targetID, part.SitTargetPosition);
+        }
+
+        /// <summary>OSSL_Api.cs:1106-1110 - VeryHigh. Onto this prim.</summary>
+        public void osForceOtherSit(string avatar)
+        {
+            OsslCheck(TlVeryHigh, "osForceOtherSit");
+            if (m_host != null) OsslForceSit(avatar, m_host.UUID);
+        }
+
+        /// <summary>OSSL_Api.cs:1119-1123 - VeryHigh. Onto the prim named.</summary>
+        public void osForceOtherSit(string avatar, string target)
+        {
+            OsslCheck(TlVeryHigh, "osForceOtherSit");
+            if (UUID.TryParse(target, out UUID targetID)) OsslForceSit(avatar, targetID);
+        }
+
+        /// <summary>OSSL_Api.cs:2136-2160 - Low. Deletes an object this prim's linkset rezzed, same owner, not an attachment, never itself.</summary>
+        public void osDie(string objectUUID)
+        {
+            OsslCheck(TlLow, "osDie");
+            if (!UUID.TryParse(objectUUID, out UUID objUUID)) { ShoutError("osDie() cannot delete objects with invalid UUIDs"); return; }
+            if (objUUID == UUID.Zero || m_host?.ParentGroup == null) return;
+            SceneObjectGroup sog = World?.GetSceneObjectGroup(objUUID);
+            if (sog == null || sog.IsDeleted || sog.IsAttachment) return;
+            if (sog.OwnerID != m_host.OwnerID) return;
+            if (sog.RezzerID == m_host.ParentGroup.UUID && sog.UUID != m_host.ParentGroup.UUID)
+                World.DeleteSceneObject(sog, false);
+        }
+
+        /// <summary>OSSL_Api.cs:4530-4534 (DropAttachment :4500-4509 with the check) - Moderate: PERMISSION_ATTACH or a shout.</summary>
+        public void osDropAttachment()
+        {
+            OsslCheck(TlModerate, "osDropAttachment");
+            if (((OsslItem?.PermsMask ?? 0) & 0x20) == 0) { ShoutError("Cannot drop attachment. Permissions not granted."); return; }
+            if (m_host?.ParentGroup == null || !m_host.ParentGroup.IsAttachment) return;
+            IAttachmentsModule attachMod = World?.RequestModuleInterface<IAttachmentsModule>();
+            ScenePresence sp = World?.GetScenePresence(m_host.ParentGroup.OwnerID);
+            if (attachMod != null && sp != null) attachMod.DetachSingleAttachmentToGround(sp, m_host.ParentGroup.LocalId);
+        }
+
+        /// <summary>OSSL_Api.cs:4544-4548 (DropAttachmentAt :4511-4520 with the check) - Moderate.</summary>
+        public void osDropAttachmentAt(Vector3 pos, Quaternion rot)
+        {
+            OsslCheck(TlModerate, "osDropAttachmentAt");
+            if (((OsslItem?.PermsMask ?? 0) & 0x20) == 0) { ShoutError("Cannot drop attachment. Permissions not granted."); return; }
+            if (m_host?.ParentGroup == null || !m_host.ParentGroup.IsAttachment) return;
+            IAttachmentsModule attachMod = World?.RequestModuleInterface<IAttachmentsModule>();
+            ScenePresence sp = World?.GetScenePresence(m_host.ParentGroup.OwnerID);
+            if (attachMod != null && sp != null) attachMod.DetachSingleAttachmentToGround(sp, m_host.ParentGroup.LocalId, pos, rot);
+        }
+
+        /// <summary>OSSL_Api.cs:4022-4046 - VeryLow. 0 = no groups module / no group / not present / owner lacks Invite; 2 = already a member; 1 = invited.</summary>
+        public int osInviteToGroup(string agentId)
+        {
+            OsslCheck(TlVeryLow, "osInviteToGroup");
+            IGroupsModule groups = World?.RequestModuleInterface<IGroupsModule>();
+            if (groups == null || m_host == null || !UUID.TryParse(agentId, out UUID agent)) return 0;
+            if (m_host.GroupID == UUID.Zero || m_host.GroupID == m_host.OwnerID) return 0;
+            ScenePresence sp = World.GetScenePresence(agent);
+            if (sp == null || sp.IsNPC || sp.IsChildAgent || !sp.ControllingClient.IsActive) return 0;
+            if (sp.ControllingClient.IsGroupMember(m_host.GroupID)) return 2;
+            if ((groups.GetFullGroupPowers(m_host.OwnerID, m_host.GroupID) & (ulong)GroupPowers.Invite) == 0) return 0;
+            groups.InviteGroup(null, m_host.OwnerID, m_host.GroupID, agent, UUID.Zero);
+            return 1;
+        }
+
+        /// <summary>OSSL_Api.cs:4060-4078 - VeryLow.</summary>
+        public int osEjectFromGroup(string agentId)
+        {
+            OsslCheck(TlVeryLow, "osEjectFromGroup");
+            IGroupsModule groups = World?.RequestModuleInterface<IGroupsModule>();
+            if (groups == null || m_host == null || !UUID.TryParse(agentId, out UUID agent)) return 0;
+            if (m_host.GroupID == UUID.Zero || m_host.GroupID == m_host.OwnerID) return 0;
+            if ((groups.GetFullGroupPowers(m_host.OwnerID, m_host.GroupID) & (ulong)GroupPowers.Eject) == 0) return 0;
+            groups.EjectGroupMember(null, m_host.OwnerID, m_host.GroupID, agent);
+            return 1;
+        }
+
+        /// <summary>OSSL_Api.cs:6396-6404 - ungated upstream. -1 not a key, 0 not here (or a child), 1 an avatar, 2 an NPC.</summary>
+        public int osAvatarType(string avkey)
+        {
+            if (!UUID.TryParse(avkey, out UUID avId)) return -1;
+            ScenePresence av = World?.GetScenePresence(avId);
+            if (av == null || av.IsDeleted || av.IsChildAgent) return 0;
+            return av.IsNPC ? 2 : 1;
+        }
+
+        /// <summary>OSSL_Api.cs:6408-6414 - ungated upstream.</summary>
+        public int osAvatarType(string sFirstName, string sLastName)
+        {
+            ScenePresence av = World?.GetScenePresence(sFirstName, sLastName);
+            if (av == null || av.IsDeleted || av.IsChildAgent) return 0;
+            return av.IsNPC ? 2 : 1;
+        }
+
         // ── PHLOX-14: osNpc* - a second door onto BotManager's bots (one BotData per NPC), ported from OSSL_Api.cs ──
         private const int OS_NPC_NOT_OWNED = 0x2, OS_NPC_SENSE_AS_AGENT = 0x4, OS_NPC_OBJECT_GROUP = 0x8, OS_NPC_NO_FLY = 1, OS_NPC_RUNNING = 4;
         private IBotManager NpcMgr() => World?.RequestModuleInterface<IBotManager>();
