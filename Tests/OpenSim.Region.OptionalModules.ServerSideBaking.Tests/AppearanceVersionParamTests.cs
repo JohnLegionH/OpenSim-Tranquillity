@@ -79,8 +79,15 @@ public class AppearanceVersionParamTests
     /// The choice ScenePresence.SendAppearanceToAgentNF makes, replayed. Pinned against the source below so it
     /// cannot drift.
     /// </summary>
-    private static byte[] ParamsForSend(byte[] stored, int cofVersion)
-        => cofVersion < 0 ? stored : AvatarAppearance.WithAppearanceVersion(stored, 1);
+    /// <summary>
+    /// The choice <c>ScenePresence.SendAppearanceToAgentNF</c> makes, replayed: 1 on a copy for an avatar this region
+    /// baked; the stored array itself otherwise - except for an NPC, which is never baked anywhere and says 0 on a
+    /// copy (SSB-NPC-1: its stored byte is the owner's, which is 1 on a server-bake region).
+    /// </summary>
+    private static byte[] ParamsForSend(byte[] stored, int cofVersion, bool isNpc = false)
+        => cofVersion >= 0 ? AvatarAppearance.WithAppearanceVersion(stored, 1)
+         : isNpc ? AvatarAppearance.WithAppearanceVersion(stored, 0)
+         : stored;
 
     [Fact]
     public void OnAnSsbRegionTheParameterAndTheBlockAgree()
@@ -140,6 +147,31 @@ public class AppearanceVersionParamTests
         Assert.Equal(AppearanceBodyBeforeS3(stored), AppearanceBody(off, -1));
     }
 
+    /// <summary>
+    /// SSB-NPC-1: an NPC's stored parameters are a clone of its owner's, so on a server-bake region slot 251 holds
+    /// the owner's 1 - while the region never baked the NPC and sends no block. A 1 beside no block sends the viewer
+    /// to the appearance service under the NPC's UUID, where there is no index. The NPC's message says 0, on a
+    /// copy: the stored clone is untouched, and the body is the pre-S3 form for the same parameters with 0 in it.
+    /// </summary>
+    [Fact]
+    public void AnUnbakedNpcSaysZeroOnACopyWhateverItsOwnerStored()
+    {
+        var stored = Params();
+        stored[AvatarAppearance.APPEARANCE_VERSION_PARAM_INDEX] = 1;   // the owner's byte, inherited by the clone
+        var storedBefore = (byte[])stored.Clone();
+
+        var sent = ParamsForSend(stored, -1, isNpc: true);
+
+        Assert.NotSame(stored, sent);
+        Assert.Equal(storedBefore, stored);
+        Assert.Equal(0, sent[AvatarAppearance.APPEARANCE_VERSION_PARAM_INDEX]);
+        var expected = (byte[])stored.Clone(); expected[AvatarAppearance.APPEARANCE_VERSION_PARAM_INDEX] = 0;
+        Assert.Equal(AppearanceBodyBeforeS3(expected), AppearanceBody(sent, -1));
+
+        // and a human with the same stored byte and no bake here is still sent as-is: the exception is the NPC alone
+        Assert.Same(stored, ParamsForSend(stored, -1));
+    }
+
     /// <summary>The replay above is only worth anything if it matches the shipped code.</summary>
     [Fact]
     public void TheReplayedChoiceMatchesWhatScenePresenceActuallyDoes()
@@ -147,7 +179,8 @@ public class AppearanceVersionParamTests
         var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
         var src = File.ReadAllText(Path.Combine(root, "Source", "OpenSim.Region.Framework", "Scenes", "ScenePresence.cs")).Replace("\r\n", "\n");
 
-        Assert.Contains("byte[] visualParams = cofVersion < 0\n            ? Appearance.VisualParams\n            : AvatarAppearance.WithAppearanceVersion(Appearance.VisualParams, 1);", src);
+        Assert.Contains("byte[] visualParams;\n        if (cofVersion >= 0)\n            visualParams = AvatarAppearance.WithAppearanceVersion(Appearance.VisualParams, 1);\n        else if (IsNPC)", src);
+        Assert.Contains("            visualParams = AvatarAppearance.WithAppearanceVersion(Appearance.VisualParams, 0);\n        else\n            visualParams = Appearance.VisualParams;", src);
         Assert.Contains("avatar.ControllingClient.SendAppearance(UUID, visualParams, Appearance.Texture.GetBakesBytes(), Appearance.AvatarPreferencesHoverZ, cofVersion);", src);
         // the stored array must never be written through
         Assert.DoesNotContain("Appearance.VisualParams[", src);
