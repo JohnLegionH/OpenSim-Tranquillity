@@ -249,8 +249,9 @@ namespace Phlox.ScriptEngine
                 // unrelated event pushes on top of it (RuntimeState.cs:335-336) and the interrupted
                 // handler resumes NESTED inside the new event, after it.
                 //
-                // ScriptUnloaded saves at shutdown, so a script mid-llSleep when the region stopped
-                // was saved in exactly the state that never resumed.
+                // The flush loop and StateManager.Stop() at shutdown save whatever is dirty (ScriptUnloaded
+                // is the OnRemoveScript path, not shutdown - PHLOX-18b), so a script mid-llSleep when the
+                // region stopped was saved in exactly the state that never resumed.
                 var restoredRunState = interp.ScriptState.RunState;
                 switch (restoredRunState)
                 {
@@ -285,6 +286,16 @@ namespace Phlox.ScriptEngine
                     default:
                         interp.ScriptState.RunState = RuntimeState.Status.Waiting;
                         break;
+                }
+
+                if (!interp.ScriptState.GeneralEnable)
+                {
+                    // PHLOX-18b: the row says stopped (a crash, or the checkbox) but the item came out of the region DB
+                    // with its Running flag at the default, true - the DB never stores it. Push it off so the viewer's
+                    // checkbox and `phlox status` agree with the state, and say why, as "loaded STOPPED" does.
+                    m_Engine.SetItemRunningFlag(req.Prim.LocalId, req.ItemID, false);
+                    m_log.LogInformation("[PhloxExe]: {0} restored STOPPED ({1}); no run until reset or Running is ticked",
+                        req.ItemID, interp.ScriptState.TerminatedReason != null ? "terminated: " + interp.ScriptState.TerminatedReason : "Running flag off");
                 }
 
                 // A script saved while Waiting can still hold events on its OWN queue
@@ -984,6 +995,7 @@ namespace Phlox.ScriptEngine
                     script.ScriptState.GeneralEnable = false;
                     RemoveFromRunQueue(req.ItemId);
                     UnregisterFromNotifications(script);
+                    m_Engine.StateManager?.ScriptChanged(script);   // PHLOX-18b: a stopped script never runs again to get itself saved
                 }
                 script.SetScriptEventFlags();
             }
@@ -1372,6 +1384,12 @@ namespace Phlox.ScriptEngine
             script.ScriptState.TerminatedReason = e.Message;
             UnregisterFromNotifications(script);
             m_Engine.SetItemRunningFlag(script.HostLocalId, script.ItemId, false);
+            // PHLOX-18b: the crash branch of RunNextScript returns before its ScriptChanged, so a script that died in
+            // its first slice was never dirty - and a region stop calls StateManager.Stop(), which flushes the DIRTY
+            // set only (no ScriptUnloaded at shutdown). The killed state never reached the row; the next start found
+            // the previous asset's row, discarded it as stale, and ran state_entry again (item 9262c036, 1.1.344).
+            // The item's Running flag cannot carry it either: the region DB does not store it. Mark it dirty here.
+            m_Engine.StateManager?.ScriptChanged(script);
             m_log.LogError("[PhloxExe]: Script {0} asset {1} terminated: {2}",
                 script.ItemId, script.Script.AssetId, e);
             try

@@ -2035,6 +2035,49 @@ intact**; `ResetScript` then says "up" once more and is killed again. `TriggerSt
 runs `state_entry` a second time from a fresh state. An item rezzed with `ScriptRunning = false` loads held,
 says nothing, and runs when ticked. Suite **173 -> 176**.
 
+### PART 0b - the live restart re-ran a killed script (PHLOX-18b)
+
+**2026-09-11. Landed; not deployed.** Item `9262c036` (divide by zero, asset `b1c1b9d1`) crashed at 15:35 on
+1.1.341 and `phlox status` showed Killed / Running False. At the 16:31 start of 1.1.344 it ran `state_entry`
+again and crashed again (log line 11842), and the verify script's held count was 0. PART 0's round trip passed
+because it saved through `SaveState` = `StateManager.ScriptUnloaded`, **which a region stop never calls.**
+
+**The path the live restart takes.** `PhloxEngine.OnShutdown` calls `StateManager.Stop()` and nothing else
+(`PhloxEngine.cs:489-493`); `Stop()` runs `FlushAllDirty()` (`StateManager.cs:114-123`), which writes the
+**dirty set only** (`:285-289`). A script becomes dirty through `ScriptChanged`, called once per finished
+slice at `PhloxExecutionScheduler.cs:813` - and the crash branch just above it (`:803-808`) returns
+**before** that line. A script that died in its first slice was therefore never dirty, and the state
+PART 0 set (`RunState = Killed`, `GeneralEnable = false`, `TerminatedReason`) never reached the row. The row
+still carried the item's *previous* asset (`2074003b`, the 15:33 compile), so the 16:31 load logged
+`Discarding stale state ... (saved asset 2074003b, current b1c1b9d1)` (line 11841) and took the fresh-start
+branch. That branch reads the item's `ScriptRunning` flag - and the region DB does not store it:
+`TaskInventoryItem.ScriptRunning` (`TaskInventoryItem.cs:146`) has no column in the MySQL prim-item store and
+defaults to `true` on every load (`:174`). PART 0's `SetItemRunningFlag(false)` + `ForceInventoryPersistence`
+persisted nothing that survives a restart; the only carrier across a restart is the Phlox state row. Of the
+brief's three suspects: the shutdown save not carrying the killed state is the cause, the flag being re-read as
+`true` is the consequence of the DB not storing it, and nothing forces `GeneralEnable` on a restored instance
+(`SerializedRuntimeState.ToRuntimeState` restores it as saved, `:250`; the PROPS-1 code is a name/description
+path in `LSLSystemAPI`, not the loader).
+
+**Fix.** `TerminateWithError` marks the script dirty (`StateManager.ScriptChanged`) after turning it off, so
+the flush loop and `Stop()` write the killed state; the disable branch of `ProcessEnableDisable` does the same,
+because a script the viewer's checkbox (or `llSetScriptState(FALSE)`) stopped never runs again to get itself
+saved - the same hole for the checkbox across a restart. And the restored branch of `FinishedLoading`, when the
+row says `GeneralEnable = false`, pushes the item's Running flag off (the DB gave it the default) and logs
+`{id} restored STOPPED (terminated: ...)` / `(Running flag off)`, the restored twin of PART 0's `loaded STOPPED`,
+so the checkbox, `phlox status` and the verify script agree with the state. The PHLOX-4 comment that said
+"ScriptUnloaded saves at shutdown" now says what does.
+
+**What pins it:** `Crashed_script_stays_stopped_across_the_live_shutdown_path` in
+`TerminatedScriptStaysStoppedTests` - engine 1 crashes the script and then calls **`StateManager.Stop()` only**
+(new harness `ShutdownStateManager`, exactly `OnShutdown`); engine 2 rezzes the same item and asset with the
+item's flag at its default `true`, as the DB presents it: **no "up", no error line, `GetScriptState` false, the
+item's flag false, not on the run queue, reason intact.** Red before the fix with the live symptom verbatim
+(`said=[up | Script error: ... osSetRot permission denied ...] RunState=Killed`). Suite **186 -> 187**.
+
+**Did it land:** a crashed prim stays Running=False across a restart, with `terminated:` = 0 at load and one
+`restored STOPPED (terminated: ...)` line for it in the start-up log.
+
 ### PART 1 - OSSL draw and dynamic textures (`<p1 commit>`)
 
 **The renderer is real here.** `DynamicTextureModule` (`OpenSim.Region.CoreModules/Scripting/DynamicTexture/`,

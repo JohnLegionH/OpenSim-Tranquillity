@@ -130,6 +130,18 @@ public sealed class SchedulerHarness : IDisposable
         sm.GetType().GetMethod("ScriptUnloaded")!.Invoke(sm, new[] { interp });
     }
 
+    /// <summary>
+    /// PHLOX-18b: the LIVE shutdown save. PhloxEngine.OnShutdown calls StateManager.Stop() and nothing else - no
+    /// ScriptUnloaded for any script - so only the dirty set reaches the row. SaveState above is the unload path,
+    /// which a region stop never takes.
+    /// </summary>
+    public void ShutdownStateManager()
+    {
+        var sm = StateManagerOf();
+        Assert.NotNull(sm);
+        sm.GetType().GetMethod("Stop")!.Invoke(sm, null);
+    }
+
     public UUID RezScript(string source, UUID assetId = default)
     {
         var item = TaskInventoryHelpers.AddScript(

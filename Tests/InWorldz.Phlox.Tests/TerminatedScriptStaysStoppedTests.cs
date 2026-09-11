@@ -111,4 +111,39 @@ public class TerminatedScriptStaysStoppedTests
         Assert.Contains("up", h.Said);
         Assert.True(h.Engine.GetScriptState(itemId));
     }
+
+    /// <summary>
+    /// PHLOX-18b. The path the LIVE restart takes and the round trip above does not. A region stop never calls
+    /// ScriptUnloaded: PhloxEngine.OnShutdown calls StateManager.Stop(), which flushes the DIRTY set only, and a script
+    /// that crashed in its first slice was never marked dirty - the crash branch of RunNextScript returns before
+    /// ScriptChanged. Its row still carried the previous asset, was discarded as stale at the next load, and the script
+    /// started fresh with the item's Running flag at its default - the region DB does not store that flag. Item
+    /// 9262c036 on 1.1.344: crashed at 15:35, ran state_entry again and crashed again at the 16:31 start.
+    /// </summary>
+    [Fact]
+    public void Crashed_script_stays_stopped_across_the_live_shutdown_path()
+    {
+        var assetId = UUID.Random();
+        var itemId = UUID.Random();
+        using (var h1 = Scene())
+        {
+            h1.RezScript(Crasher, assetId, itemId);
+            h1.PumpFor(TimeSpan.FromSeconds(1));
+            Assert.Equal(1, h1.Said.Count(s => s == "up"));
+            Assert.Equal("Killed", h1.RunStateOf(itemId));
+            h1.ShutdownStateManager();   // the only save a region stop makes - no SaveState / ScriptUnloaded
+        }
+
+        using var h2 = Scene();
+        h2.RezScript(Crasher, assetId, itemId);   // the item as the region DB presents it: Running flag at its default, true
+        h2.PumpFor(TimeSpan.FromSeconds(1));
+        _out.WriteLine("engine 2 after the live path: said=[" + string.Join(" | ", h2.Said) + "] errors=[" + Errors(h2) + "] RunState=" + h2.RunStateOf(itemId));
+
+        Assert.DoesNotContain("up", h2.Said);                                        // no state_entry
+        Assert.Empty(Errors(h2));                                                    // 0 terminated at load
+        Assert.False(h2.Engine.GetScriptState(itemId));                              // Running=False
+        Assert.False(h2.Prim.Inventory.GetInventoryItem(itemId).ScriptRunning);      // and the item's flag agrees
+        Assert.False(h2.IsOnRunQueue(itemId));
+        Assert.Contains("osSetRot", h2.StatusOf(itemId));                            // still with its reason
+    }
 }
