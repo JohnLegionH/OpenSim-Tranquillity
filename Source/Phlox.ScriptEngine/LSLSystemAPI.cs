@@ -6863,6 +6863,26 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return (a > b + e || a < b - e) ? 0 : 1;
         }
 
+        /// <summary>PHLOX-20: OSSL_Api.cs:5432-5447 - ungated upstream, the fixed 1.0e-6 of the float form on each component.</summary>
+        public int osApproxEquals(Vector3 va, Vector3 vb) => OsslApproxEquals(va, vb, 1.0e-6f);
+
+        /// <summary>PHLOX-20: OSSL_Api.cs:5450-5466 - the same with the caller's margin.</summary>
+        public int osApproxEquals(Vector3 va, Vector3 vb, float margin) => OsslApproxEquals(va, vb, Math.Abs(margin));
+
+        /// <summary>PHLOX-20: OSSL_Api.cs:5469-5488 - all four components of the rotation.</summary>
+        public int osApproxEquals(Quaternion ra, Quaternion rb) => OsslApproxEquals(ra, rb, 1.0e-6f);
+
+        /// <summary>PHLOX-20: OSSL_Api.cs:5491-5510 - the same with the caller's margin.</summary>
+        public int osApproxEquals(Quaternion ra, Quaternion rb, float margin) => OsslApproxEquals(ra, rb, Math.Abs(margin));
+
+        private static int OsslApproxEquals(Vector3 a, Vector3 b, float e)
+            => (Off(a.X, b.X, e) || Off(a.Y, b.Y, e) || Off(a.Z, b.Z, e)) ? 0 : 1;
+
+        private static int OsslApproxEquals(Quaternion a, Quaternion b, float e)
+            => (Off(a.X, b.X, e) || Off(a.Y, b.Y, e) || Off(a.Z, b.Z, e) || Off(a.W, b.W, e)) ? 0 : 1;
+
+        private static bool Off(float a, float b, float e) => a > b + e || a < b - e;
+
         /// <summary>OSSL_Api.cs:2026 - bare CheckThreatLevel (master switch).</summary>
         public int osCheckODE()
         {
@@ -6986,6 +7006,34 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (amount < 0) amount = 0; else if (amount > 1f) amount = 1f;
             a.Normalize(); b.Normalize();
             return Quaternion.Slerp(a, b, amount);
+        }
+
+        /// <summary>
+        /// PHLOX-20: OSSL_Api.cs:5931-5940 - the vector form, ungated upstream. Upstream's
+        /// LSL_Types.Vector3.Slerp (LSL_Types.cs:417-438) does NOT normalise its inputs and falls back
+        /// to a straight lerp when the vectors are nearly parallel; mirrored exactly.
+        /// </summary>
+        public Vector3 osSlerp(Vector3 a, Vector3 b, float amount)
+        {
+            if (amount < 0) amount = 0; else if (amount > 1f) amount = 1f;
+            double angle = (a.X * b.X) + (a.Y * b.Y) + (a.Z * b.Z);
+            double scale, invscale;
+            if (angle < 0.999f)
+            {
+                angle = Math.Acos(angle);
+                invscale = 1.0 / Math.Sin(angle);
+                scale = Math.Sin((1.0 - amount) * angle) * invscale;
+                invscale *= Math.Sin(amount * angle);
+            }
+            else
+            {
+                scale = 1.0 - amount;
+                invscale = amount;
+            }
+            return new Vector3(
+                (float)(a.X * scale + b.X * invscale),
+                (float)(a.Y * scale + b.Y * invscale),
+                (float)(a.Z * scale + b.Z * invscale));
         }
 
         /// <summary>OSSL_Api.cs:5284 - bare CheckThreatLevel (master switch).</summary>
@@ -7273,7 +7321,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public void osSetProjectionParams(int projection, string texture, float fov, float focus, float amb)
             => OsslSetProjectionParams(m_host, projection, texture, fov, focus, amb);
 
-        /// <summary>OSSL_Api.cs:3896-3914 - ungated upstream. (The key-addressed form at :3921 is not landed: Phlox keys overloads by arity and this one shares arity 6.)</summary>
+        /// <summary>OSSL_Api.cs:3896-3914 - ungated upstream.</summary>
         public void osSetProjectionParams(int linknum, int projection, string texture, float fov, float focus, float amb)
         {
             if (m_host?.ParentGroup == null) return;
@@ -7281,6 +7329,23 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (linknum < 0 || linknum > m_host.ParentGroup.PrimCount) return;
             if (linknum < 2 && m_host.LinkNum < 2) { OsslSetProjectionParams(m_host, projection, texture, fov, focus, amb); return; }
             OsslSetProjectionParams(m_host.ParentGroup.GetLinkNumPart(linknum), projection, texture, fov, focus, amb);
+        }
+
+        /// <summary>
+        /// PHLOX-20: OSSL_Api.cs:3921-3935 - ungated upstream. The prim is addressed by key and must be
+        /// owned by this prim's owner; a key that is not a UUID, or zero, means this prim. Arity 6 like
+        /// the link form above, told apart by the first argument's type.
+        /// </summary>
+        public void osSetProjectionParams(string prim, int projection, string texture, float fov, float focus, float amb)
+        {
+            if (UUID.TryParse(prim, out UUID pID) && pID != UUID.Zero)
+            {
+                SceneObjectPart obj = World?.GetSceneObjectPart(pID);
+                if (obj != null && m_host != null && obj.OwnerID == m_host.OwnerID)
+                    OsslSetProjectionParams(obj, projection, texture, fov, focus, amb);
+                return;
+            }
+            OsslSetProjectionParams(m_host, projection, texture, fov, focus, amb);
         }
 
         private static Vector4 OsslNormalisedRot(Quaternion q)
@@ -8333,7 +8398,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return tm.AddDynamicTextureData(World.RegionInfo.RegionID, m_host.UUID, contentType, data ?? string.Empty, extraParams, blend, disp, alpha, face).ToString();
         }
 
-        /// <summary>OSSL_Api.cs:819-841 - VeryLow. (DataFace at :790 shares arity 6 with this form and Phlox keys overloads by arity: not landed.)</summary>
+        /// <summary>PHLOX-20: OSSL_Api.cs:790-813 - VeryLow, the data form with a face; the five-argument form is this with face -1.</summary>
+        public string osSetDynamicTextureDataFace(string dynamicID, string contentType, string data, string extraParams, int timer, int face)
+            => OsslDynamicTextureData("osSetDynamicTextureData", dynamicID, contentType, data, extraParams, false, 3, 255, face);
+
+        /// <summary>OSSL_Api.cs:819-841 - VeryLow.</summary>
         public string osSetDynamicTextureDataBlend(string dynamicID, string contentType, string data, string extraParams, int timer, int alpha)
         {
             OsslCheck(TlVeryLow, "osSetDynamicTextureDataBlend");
@@ -8392,7 +8461,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public string osSetPenSize(string drawList, int penSize) { OsslCheck(); return drawList + "PenSize " + penSize + "; "; }
         /// <summary>OSSL_Api.cs:1392-1397 - a colour name or hex.</summary>
         public string osSetPenColor(string drawList, string color) { OsslCheck(); return drawList + "PenColor " + color + "; "; }
-        /// <summary>OSSL_Api.cs:1422-1446 - vector and alpha as AARRGGBB. (The two-argument vector form at :1400 shares arity 2 with the string form: not landed.)</summary>
+        /// <summary>PHLOX-20: OSSL_Api.cs:1400-1419 - the vector form, opaque; arity 2 like the colour-name form and told apart by type.</summary>
+        public string osSetPenColor(string drawList, Vector3 color) => osSetPenColor(drawList, color, 1.0f);
+
+        /// <summary>OSSL_Api.cs:1422-1446 - vector and alpha as AARRGGBB.</summary>
         public string osSetPenColor(string drawList, Vector3 color, float alpha)
         {
             OsslCheck();

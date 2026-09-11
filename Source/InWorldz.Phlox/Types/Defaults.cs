@@ -6662,6 +6662,66 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "linkNumber", "type" },
                 TableIndex = 939
             }},
+
+            // ---------------------------------------------------------------- PHLOX-20 overloads
+            // Chosen by argument TYPE, not arity: every one of these shares its arity with a
+            // signature of the same name that Phlox already had.
+            {"osSetProjectionParams__6_kikfff", new FunctionSig {
+                FunctionName = "osSetProjectionParams",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Key, VarType.Integer, VarType.Key, VarType.Float, VarType.Float, VarType.Float },
+                ParamNames = new string[] { "prim", "projection", "texture", "fov", "focus", "amb" },
+                TableIndex = 940
+            }},
+            {"osSetDynamicTextureDataFace", new FunctionSig {
+                FunctionName = "osSetDynamicTextureDataFace",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.String, VarType.String, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "dynamicID", "contentType", "data", "extraParams", "timer", "face" },
+                TableIndex = 941
+            }},
+            {"osSetPenColor__2", new FunctionSig {
+                FunctionName = "osSetPenColor",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] { VarType.String, VarType.Vector },
+                ParamNames = new string[] { "drawList", "color" },
+                TableIndex = 942
+            }},
+            {"osApproxEquals__2_vv", new FunctionSig {
+                FunctionName = "osApproxEquals",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Vector, VarType.Vector },
+                ParamNames = new string[] { "va", "vb" },
+                TableIndex = 943
+            }},
+            {"osApproxEquals__2_rr", new FunctionSig {
+                FunctionName = "osApproxEquals",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Rotation, VarType.Rotation },
+                ParamNames = new string[] { "ra", "rb" },
+                TableIndex = 944
+            }},
+            {"osApproxEquals__3_vvf", new FunctionSig {
+                FunctionName = "osApproxEquals",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Vector, VarType.Vector, VarType.Float },
+                ParamNames = new string[] { "va", "vb", "margin" },
+                TableIndex = 945
+            }},
+            {"osApproxEquals__3_rrf", new FunctionSig {
+                FunctionName = "osApproxEquals",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.Rotation, VarType.Rotation, VarType.Float },
+                ParamNames = new string[] { "ra", "rb", "margin" },
+                TableIndex = 946
+            }},
+            {"osSlerp__3", new FunctionSig {
+                FunctionName = "osSlerp",
+                ReturnType = VarType.Vector,
+                ParamTypes = new VarType[] { VarType.Vector, VarType.Vector, VarType.Float },
+                ParamNames = new string[] { "a", "b", "amount" },
+                TableIndex = 947
+            }},
          };
 
         /// <summary>
@@ -6702,10 +6762,101 @@ namespace InWorldz.Phlox.Types
         static public string SymbolNameFor(FunctionSig sig)
         {
             List<FunctionSig> list = SystemMethods[sig.FunctionName];
-            return list.Count < 2 || list[0].TableIndex == sig.TableIndex
-                ? sig.FunctionName
-                : sig.FunctionName + OverloadSeparator + sig.ParamTypes.Length;
+            if (list.Count < 2 || list[0].TableIndex == sig.TableIndex)
+                return sig.FunctionName;
+
+            string mangled = sig.FunctionName + OverloadSeparator + sig.ParamTypes.Length;
+
+            // PHLOX-20: two signatures of the SAME arity would both mangle to that, and the second
+            // Define would collide - which is why the type-discriminated forms (osSetPenColor by
+            // vector, osApproxEquals by vector or rotation, osSlerp by vector, osSetProjectionParams
+            // by key) could not be landed before. Give every one of them a name of its own by
+            // appending the parameter types; the arity-only name is kept where it is still unique,
+            // so every overload landed before PHLOX-20 resolves to exactly the symbol it did.
+            int shareArity = 0;
+            foreach (FunctionSig other in list)
+                if (other.TableIndex != list[0].TableIndex && other.ParamTypes.Length == sig.ParamTypes.Length)
+                    shareArity++;
+            if (shareArity < 2) return mangled;
+
+            var codes = new System.Text.StringBuilder(mangled);
+            codes.Append('_');
+            foreach (VarType t in sig.ParamTypes) codes.Append(TypeCode(t));
+            return codes.ToString();
         }
+
+        /// <summary>PHLOX-20. One character per type, for the symbol name of a same-arity overload.</summary>
+        static private char TypeCode(VarType t)
+        {
+            switch (t)
+            {
+                case VarType.Integer:  return 'i';
+                case VarType.Float:    return 'f';
+                case VarType.Vector:   return 'v';
+                case VarType.Rotation: return 'r';
+                case VarType.List:     return 'l';
+                case VarType.Key:      return 'k';
+                case VarType.String:   return 's';
+                default:               return 'z';
+            }
+        }
+
+        /// <summary>
+        /// PHLOX-20. Choose among a built-in's signatures by the ARGUMENT TYPES, not just their
+        /// number - the rule PHLOX-2b left for later, and the reason five OSSL forms sat unlandable.
+        /// Only signatures of the call's arity are candidates. An argument that matches its parameter
+        /// exactly is worth more than one that reaches it through an LSL implicit widening
+        /// (integer to float, key and string either way); anything else makes the candidate unviable.
+        /// The best-scoring candidate wins; two of equal score are an ambiguity, and the caller
+        /// reports it naming both. An argument whose type is unknown (an error subtree) matches
+        /// anything and scores nothing, so a broken argument never turns into a second error here.
+        /// </summary>
+        static public FunctionSig? SelectOverload(string functionName, IList<VarType?> argTypes, out FunctionSig? ambiguousWith)
+        {
+            ambiguousWith = null;
+            if (functionName == null || argTypes == null) return null;
+            if (!SystemMethods.TryGetValue(functionName, out List<FunctionSig> sigs)) return null;
+
+            FunctionSig? best = null, tiedWith = null;
+            int bestScore = -1, known = 0;
+            foreach (VarType? a in argTypes) if (a.HasValue) known++;
+
+            foreach (FunctionSig sig in sigs)
+            {
+                if (sig.ParamTypes.Length != argTypes.Count) continue;
+                if (known == 0) return sig;   // nothing to choose on: the first of the arity, as before
+
+                int score = 0;
+                bool viable = true;
+                for (int i = 0; i < argTypes.Count; i++)
+                {
+                    VarType? a = argTypes[i];
+                    if (!a.HasValue) continue;
+                    VarType p = sig.ParamTypes[i];
+                    if (a.Value == p) { score += 2; continue; }
+                    if (CanWiden(a.Value, p)) { score += 1; continue; }
+                    viable = false;
+                    break;
+                }
+                if (!viable) continue;
+
+                if (score > bestScore) { best = sig; bestScore = score; tiedWith = null; }
+                else if (score == bestScore) tiedWith = sig;
+            }
+
+            if (best.HasValue && tiedWith.HasValue) ambiguousWith = tiedWith;
+            return best;
+        }
+
+        /// <summary>PHLOX-20. LSL's implicit argument conversions - the same pair the type pass allows.</summary>
+        static private bool CanWiden(VarType from, VarType to)
+            => (from == VarType.Integer && to == VarType.Float)
+            || (from == VarType.Key && to == VarType.String)
+            || (from == VarType.String && to == VarType.Key);
+
+        /// <summary>PHLOX-20. A signature as a script author writes it, for the ambiguity message.</summary>
+        static public string DescribeSignature(FunctionSig sig)
+            => sig.FunctionName + "(" + string.Join(", ", Array.ConvertAll(sig.ParamTypes, t => t.ToString().ToLowerInvariant())) + ")";
 
         /// <summary>The symbol name a call of this arity should resolve to, bare name first.</summary>
         static public IEnumerable<string> CandidateSymbolNames(string functionName, int argCount)

@@ -83,7 +83,9 @@ public class DispatchIndexGuardTests
         // 674 at 34fb6d201b; PHLOX-5 added two NEW names (llsRGB2Linear, llListSortStrided) - the
         // four SL-arity overloads share existing names and do not add entries. Regenerated with
         // RegenerateBaseline below, never by hand.
-        Assert.Equal(913, baseline.Count);
+        // PHLOX-20 added eight signatures but only ONE new NAME (osSetDynamicTextureDataFace): the other
+        // seven are type-discriminated overloads of names already here, and the baseline is keyed by name.
+        Assert.Equal(914, baseline.Count);
     }
 
     /// <summary>
@@ -170,8 +172,12 @@ public class TableKeyTests
             var key = (string)e.Key;
             var sig = (InWorldz.Phlox.Types.FunctionSig)e.Value!;
             var expectedOverload = sig.FunctionName + InWorldz.Phlox.Types.Defaults.OverloadSeparator + sig.ParamTypes.Length;
-            if (key != sig.FunctionName && key != expectedOverload)
-                wrong.Add($"key '{key}' is neither '{sig.FunctionName}' nor '{expectedOverload}'");
+            // PHLOX-20: a signature that shares its arity with another of the same name is keyed by type
+            // as well, which is exactly what SymbolNameFor calls it. The arity-only form stays legal for
+            // the entries that had it before the type codes existed.
+            var expectedTyped = InWorldz.Phlox.Types.Defaults.SymbolNameFor(sig);
+            if (key != sig.FunctionName && key != expectedOverload && key != expectedTyped)
+                wrong.Add($"key '{key}' is none of '{sig.FunctionName}', '{expectedOverload}', '{expectedTyped}'");
         }
 
         Assert.True(wrong.Count == 0, string.Join("; ", wrong));

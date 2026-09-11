@@ -916,3 +916,4 @@ osGetLinkInventoryKeys 936
 osGetLinkInventoryItemKey 937
 osGetLinkInventoryItemKeys 938
 osGetLinkInventoryNames 939
+osSetDynamicTextureDataFace 941

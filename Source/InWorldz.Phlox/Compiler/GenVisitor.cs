@@ -622,7 +622,8 @@ namespace InWorldz.Phlox.Compiler
         {
             string funcName = GetCallName(context.postfixExpression());
             MethodSymbol methSym = funcName != null
-                ? ResolveCallForGen(funcName, context.callParamList()?.expr()?.Length ?? 0) : null;
+                ? (GetSymbol(context) as MethodSymbol      // PHLOX-20: the type pass's choice, types and all
+                   ?? ResolveCallForGen(funcName, context.callParamList()?.expr()?.Length ?? 0)) : null;
 
             var exprs = new List<string>();
             if (context.callParamList() != null)
@@ -713,7 +714,8 @@ namespace InWorldz.Phlox.Compiler
         public override string VisitFuncCall([NotNull] LSLParser.FuncCallContext context)
         {
             string funcName = context.ID().GetText();
-            MethodSymbol methSym = ResolveCallForGen(funcName, context.callParamList()?.expr()?.Length ?? 0);
+            MethodSymbol methSym = GetSymbol(context) as MethodSymbol   // PHLOX-20: the type pass's choice, types and all
+                ?? ResolveCallForGen(funcName, context.callParamList()?.expr()?.Length ?? 0);
 
             var exprs = new List<string>();
             if (context.callParamList() != null)
@@ -953,6 +955,10 @@ namespace InWorldz.Phlox.Compiler
         }
 
         /// <summary>
+        /// PHLOX-20: the type pass now annotates the call with the symbol it chose, by argument type,
+        /// and this is the fallback for a call it never annotated (an error subtree, or a tree the type
+        /// pass did not reach). The two agree on every call that type-checked.
+        ///
         /// PHLOX-2b. The same overload choice the type pass made, by the same rule - the bare name
         /// unless its arity does not fit and a <c>name$&lt;arity&gt;</c> sibling does. Both passes
         /// deriving the symbol the same way is what makes the emitted <c>syscall &lt;name&gt;</c>

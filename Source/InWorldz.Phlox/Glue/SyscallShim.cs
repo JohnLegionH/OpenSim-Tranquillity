@@ -1024,6 +1024,14 @@ private static string ConvToString(object o)
 								Shim_osGetLinkInventoryItemKey,       //937  PHLOX-19
 								Shim_osGetLinkInventoryItemKeys,      //938  PHLOX-19
 								Shim_osGetLinkInventoryNames,         //939  PHLOX-19
+								Shim_osSetProjectionParamsKey,        //940  PHLOX-20
+								Shim_osSetDynamicTextureDataFace,     //941  PHLOX-20
+								Shim_osSetPenColorVec,                //942  PHLOX-20
+								Shim_osApproxEqualsVec,               //943  PHLOX-20
+								Shim_osApproxEqualsRot,               //944  PHLOX-20
+								Shim_osApproxEqualsVec3,              //945  PHLOX-20
+								Shim_osApproxEqualsRot3,              //946  PHLOX-20
+								Shim_osSlerpVec,                      //947  PHLOX-20
         };
 
         /// <summary>
@@ -7241,6 +7249,73 @@ private static string ConvToString(object o)
             Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
             Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
             float ret = self._systemAPI.osAngleBetween(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        // PHLOX-20: the type-discriminated overloads
+        static private void Shim_osSetProjectionParamsKey(SyscallShim self)
+        {
+            float p5 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p4 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            float p3 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            self._systemAPI.osSetProjectionParams(p0, p1, p2, p3, p4, p5);
+        }
+        static private void Shim_osSetDynamicTextureDataFace(SyscallShim self)
+        {
+            int p5 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            int p4 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
+            string p3 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSetDynamicTextureDataFace(p0, p1, p2, p3, p4, p5);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSetPenColorVec(SyscallShim self)
+        {
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
+            string ret = self._systemAPI.osSetPenColor(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osApproxEqualsVec(SyscallShim self)
+        {
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osApproxEquals(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osApproxEqualsRot(SyscallShim self)
+        {
+            Quaternion p1 = ConvToQuat(self._interpreter.ScriptState.Operands.Pop());
+            Quaternion p0 = ConvToQuat(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osApproxEquals(p0, p1);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osApproxEqualsVec3(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osApproxEquals(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osApproxEqualsRot3(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            Quaternion p1 = ConvToQuat(self._interpreter.ScriptState.Operands.Pop());
+            Quaternion p0 = ConvToQuat(self._interpreter.ScriptState.Operands.Pop());
+            int ret = self._systemAPI.osApproxEquals(p0, p1, p2);
+            self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
+        }
+        static private void Shim_osSlerpVec(SyscallShim self)
+        {
+            float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p1 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
+            Vector3 ret = self._systemAPI.osSlerp(p0, p1, p2);
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }
         static private void Shim_osApproxEquals(SyscallShim self)

@@ -606,7 +606,8 @@ namespace InWorldz.Phlox.Compiler
                     argTypes.Add(Visit(expr));
             }
 
-            MethodSymbol methSym = ResolveCall(funcName, argTypes.Count);
+            MethodSymbol methSym = ResolveCall(context, funcName, argTypes);
+            if (methSym != null) _annotations.SetSymbol(context, methSym);   // PHLOX-20: the gen pass reads this choice
 
             if (methSym == null)
             {
@@ -757,7 +758,8 @@ namespace InWorldz.Phlox.Compiler
                 foreach (var expr in context.callParamList().expr())
                     argTypes.Add(Visit(expr));
 
-            MethodSymbol methSym = ResolveCall(funcName, argTypes.Count);
+            MethodSymbol methSym = ResolveCall(context, funcName, argTypes);
+            if (methSym != null) _annotations.SetSymbol(context, methSym);   // PHLOX-20: the gen pass reads this choice
 
             if (methSym == null)
             {
@@ -875,20 +877,46 @@ namespace InWorldz.Phlox.Compiler
         /// implicit-conversion rule - <c>SymbolTable.promoteFromTo</c> plus <c>CanAssignTo</c>,
         /// which is LSL's integer-to-float widening and its interchangeable key and string.</para>
         /// </summary>
-        private MethodSymbol ResolveCall(string funcName, int argCount)
+        private MethodSymbol ResolveCall(ParserRuleContext context, string funcName, List<ISymbolType> argTypes)
         {
             if (funcName == null) return null;
 
             MethodSymbol bare = _symtab.Globals.Resolve(funcName + "()") as MethodSymbol;
             if (bare == null) return null;
-            if (bare.Members.Count == argCount) return bare;
 
-            // Wrong arity for the first signature: this is an overloaded built-in or a genuine
-            // mistake. Only the former has a mangled sibling.
-            if (_symtab.Globals.Resolve(funcName + Defaults.OverloadSeparator + argCount + "()") is MethodSymbol overload)
-                return overload;
+            int argCount = argTypes.Count;
 
-            return bare;   // report against the first signature, as before
+            // A user function or a built-in with one signature: exactly the old path, no selection.
+            if (!Defaults.SystemMethods.TryGetValue(funcName, out var sigs) || sigs.Count < 2)
+                return bare;
+
+            // PHLOX-20: among the signatures of this arity, the argument TYPES choose.
+            var argVarTypes = new List<VarType?>(argCount);
+            foreach (ISymbolType t in argTypes)
+            {
+                int i = Idx(t);
+                argVarTypes.Add(i >= 0 && i < (int)VarType.Void ? (VarType?)i : null);
+            }
+
+            FunctionSig? chosen = Defaults.SelectOverload(funcName, argVarTypes, out FunctionSig? other);
+            if (!chosen.HasValue)
+            {
+                // No signature of this arity at all, or none whose types can be reached: fall back
+                // to the arity sibling so the argument-count / argument-type error below reads as it
+                // always did, against a signature of the right size where one exists.
+                if (bare.Members.Count == argCount) return bare;
+                if (_symtab.Globals.Resolve(funcName + Defaults.OverloadSeparator + argCount + "()") is MethodSymbol byArity)
+                    return byArity;
+                return bare;
+            }
+
+            if (other.HasValue)
+            {
+                ErrorAtContext(context,
+                    $"Call to '{funcName}' is ambiguous between {Defaults.DescribeSignature(chosen.Value)} and {Defaults.DescribeSignature(other.Value)}");
+            }
+
+            return _symtab.Globals.Resolve(Defaults.SymbolNameFor(chosen.Value) + "()") as MethodSymbol ?? bare;
         }
 
         /// <summary>Every arity a built-in accepts, for the error message when none of them match.</summary>

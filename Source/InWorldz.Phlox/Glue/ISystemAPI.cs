@@ -443,6 +443,14 @@ namespace InWorldz.Phlox.Glue
         float osAngleBetween(Vector3 a, Vector3 b);
         int osApproxEquals(float a, float b);
         int osApproxEquals(float a, float b, float margin);
+        /// <summary>PHLOX-20: OSSL_Api.cs:5432 - the vector form, chosen by type over the float pair.</summary>
+        int osApproxEquals(Vector3 va, Vector3 vb);
+        /// <summary>PHLOX-20: OSSL_Api.cs:5469 - the rotation form.</summary>
+        int osApproxEquals(Quaternion ra, Quaternion rb);
+        /// <summary>PHLOX-20: OSSL_Api.cs:5450 - the vector form with a margin.</summary>
+        int osApproxEquals(Vector3 va, Vector3 vb, float margin);
+        /// <summary>PHLOX-20: OSSL_Api.cs:5491 - the rotation form with a margin.</summary>
+        int osApproxEquals(Quaternion ra, Quaternion rb, float margin);
         int osCheckODE();
         string osFormatString(string str, LSLList strings);
         int osIsNotValidNumber(float v);
@@ -459,6 +467,8 @@ namespace InWorldz.Phlox.Glue
         float osRound(float value, int ndigits);
         string osSHA256(string input);
         Quaternion osSlerp(Quaternion a, Quaternion b, float amount);
+        /// <summary>PHLOX-20: OSSL_Api.cs:5931 - the vector form, chosen by type over the rotation one.</summary>
+        Vector3 osSlerp(Vector3 a, Vector3 b, float amount);
         int osStringStartsWith(string src, string value, int ignorecase);
         int osStringEndsWith(string src, string value, int ignorecase);
         int osStringIndexOf(string src, string value, int ignorecase);
@@ -514,6 +524,8 @@ namespace InWorldz.Phlox.Glue
         LSLList osGetLinkPrimitiveParams(int linknumber, LSLList rules);
         void osSetProjectionParams(int projection, string texture, float fov, float focus, float amb);
         void osSetProjectionParams(int linknum, int projection, string texture, float fov, float focus, float amb);
+        /// <summary>PHLOX-20: OSSL_Api.cs:3921 - the prim-by-key form, arity 6 like the link form and told apart by type.</summary>
+        void osSetProjectionParams(string prim, int projection, string texture, float fov, float focus, float amb);
         void osSetInertia(float mass, Vector3 centerOfMass, Vector3 principalInertiaScaled, Quaternion lslrot);
         void osSetInertiaAsBox(float mass, Vector3 boxSize, Vector3 centerOfMass, Quaternion lslrot);
         void osSetInertiaAsSphere(float mass, float radius, Vector3 centerOfMass);
@@ -612,6 +624,8 @@ namespace InWorldz.Phlox.Glue
         string osSetDynamicTextureURLBlend(string dynamicID, string contentType, string url, string extraParams, int timer, int alpha);
         string osSetDynamicTextureURLBlendFace(string dynamicID, string contentType, string url, string extraParams, int blend, int disp, int timer, int alpha, int face);
         string osSetDynamicTextureData(string dynamicID, string contentType, string data, string extraParams, int timer);
+        /// <summary>PHLOX-20: OSSL_Api.cs:790 - the face form, arity 6 like DataBlend and told apart by nothing but its name.</summary>
+        string osSetDynamicTextureDataFace(string dynamicID, string contentType, string data, string extraParams, int timer, int face);
         string osSetDynamicTextureDataBlend(string dynamicID, string contentType, string data, string extraParams, int timer, int alpha);
         string osSetDynamicTextureDataBlendFace(string dynamicID, string contentType, string data, string extraParams, int blend, int disp, int timer, int alpha, int face);
         string osDrawResetTransform(string drawList);
@@ -632,6 +646,8 @@ namespace InWorldz.Phlox.Glue
         string osSetFontName(string drawList, string fontName);
         string osSetPenSize(string drawList, int penSize);
         string osSetPenColor(string drawList, string color);
+        /// <summary>PHLOX-20: OSSL_Api.cs:1400 - the vector form, arity 2 like the colour-name one.</summary>
+        string osSetPenColor(string drawList, Vector3 color);
         string osSetPenColor(string drawList, Vector3 color, float alpha);
         string osSetPenColour(string drawList, string colour);
         string osSetPenCap(string drawList, string direction, string type);
