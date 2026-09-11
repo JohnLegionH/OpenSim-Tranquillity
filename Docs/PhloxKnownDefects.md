@@ -2074,3 +2074,50 @@ at VeryLow `osSetDynamicTextureURL` is denied with one stop and the face untouch
 **Did it land:** a prim running `osSetDynamicTextureData("", "vector", "MoveTo 20,20; PenColour RED; FontSize
 24; Text Hello;", "", 0)` shows "Hello" in red on its faces; and `phlox status <item>` on a crashed script shows
 `Running flag : False` with the `terminated :` line, and a viewer reset starts it fresh.
+
+## DRAW-1 - osSetDynamicTextureData renders a flat grey prim (a renderer defect surfaced by PHLOX-18)
+
+**2026-09-11. Landed; not deployed.** Cross-reference: PHLOX-18 PART 1 landed the `osSetDynamicTexture*` doors
+and pinned a new texture id on the face; live on 1.1.341 the brief's draw list turned the prim flat grey.
+The defect is in `VectorRenderModule`, not in the Phlox port - a texture the sim considered valid that the
+viewer could not decode.
+
+**Diagnosis, in the order the brief asked.** A pixel test (`OsslDrawPixelTests`) renders the live draw list
+through the real modules and decodes the bytes the face points at with CoreJ2K, the sim's own decoder.
+**Font:** resolved - "Arial" exists on both hosts (`SKTypeface.FromFamilyName`, `VectorRenderModule.cs:551`)
+and 220 red pixels were drawn. **Clear colour:** right - the background default is `SKColors.White`
+(`:265`), the pixel at (200,200) decodes white. **Alpha:** right - `Rgba8888`/`Premul`, alpha 255, decoded
+254 after the lossy 9/7 wavelet; not what a viewer shows as grey. **Container - the defect:** the bytes
+began `00 00 00 0C 6A 50 20 20`, the **JP2 signature box**. CoreJ2K's `J2kImage.ToBytes` wraps the codestream
+in a JP2 file by default (`jP` at 0, `ftyp` at 12, `jp2h` at 32, `jp2c` at 77 - the codestream itself,
+`FF 4F FF 51`, starts at byte 85), and **the live asset pulled from Legion's Flotsam cache
+(`DynamicImage9372`, `5b45234d-...`, 3047 bytes, cached 15:31:33) walks exactly so and is byte-for-byte the
+harness's render.** The viewer's decoder is created for bare codestreams only:
+`opj_create_decompress(OPJ_CODEC_J2K)` (`indra/llimagej2coj/llimagej2coj.cpp:311`, `:385`), so
+`opj_read_header` fails on the signature box, `decodeImpl: failed to decode image!` (`:872`, DEBUG only),
+and the texture is the viewer's missing-texture grey. Nothing on the sim side logs anything: the asset is
+valid, cached, served. The server-side bake codec hit the same thing and already carries the answer -
+`WithFileFormat(false)` (`OpenSimNGC.Appearance.Baking/J2kCodec.cs:72`, "raw codestream (no JP2 wrapper)") -
+and its bakes render.
+
+**A second, smaller defect found by the same test:** SkiaSharp's `DrawText` takes the **baseline** where
+System.Drawing's `DrawString` took the **top-left**, so `MoveTo 20,20; Text Hello` drew its glyphs at y 3-19,
+above the pen, and the brief's pixel at (30,30) was white even with a decodable texture. Every script written
+against upstream places text by its top-left.
+
+**Fixed:** `BuildEncoderConfig` ends in `.WithFileFormat(false)` (`VectorRenderModule.cs:87-94`), and the
+text baseline is offset by the font's ascent so the pen is the top-left again (`:587`). **Not touched, same
+defect:** `MapImageModule.BuildEncoderConfig` (`World/LegacyMap/MapImageModule.cs:93-99`) has no
+`WithFileFormat(false)` either, so the region's J2K map-tile asset is a JP2 file too - a map session, one line.
+
+### What pins it
+
+`OsslDrawPixelTests`: (1) the renderer alone, `ConvertData(<live draw list>, "256")`, decodes to 256x256 with
+a **raw-codestream magic `FF-4F-FF-51`**, white at (200,200), more than 50 red pixels, the red box starting
+at or below the pen y, red within 3 px of (30,30); (2) the same through `osSetDynamicTextureData` in a scene
+with `DynamicTextureModule`, `VectorRenderModule` and a memory `IAssetCache`, on the bytes the face now points
+at. **Red first:** magic `00-00-00-0C-6A-50-20-20` and the red box at y 3-19. Suite **179 -> 181**; region
+server builds.
+
+**Did it land:** the same prim, `osSetDynamicTextureData("", "vector", "MoveTo 20,20; PenColour RED;
+FontSize 24; Text Hello;", "", 0)`, shows red "Hello" on white - and the word sits below y=20, not above.
