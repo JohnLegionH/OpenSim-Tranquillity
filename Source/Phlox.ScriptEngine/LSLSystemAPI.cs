@@ -6850,6 +6850,280 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return (float)Math.Atan2(mcross, dot);
         }
 
+        // ── PHLOX-20 PART 1: PHLOX-12's misc row and the list family ──────────────
+
+        /// <summary>OSSL_Api.cs:5985-5988 - ungated upstream: this prim's sit target offset.</summary>
+        public Vector3 osGetSitTargetPos() => m_host?.SitTargetPosition ?? Vector3.Zero;
+
+        /// <summary>OSSL_Api.cs:5990-5993 - ungated upstream.</summary>
+        public Quaternion osGetSitTargetRot() => m_host?.SitTargetOrientation ?? Quaternion.Identity;
+
+        /// <summary>OSSL_Api.cs:2721-2726 - Low.</summary>
+        public string osLoadedCreationDate()
+        {
+            OsslCheck(TlLow, "osLoadedCreationDate");
+            return World?.RegionInfo?.RegionSettings?.LoadedCreationDate ?? string.Empty;
+        }
+
+        /// <summary>OSSL_Api.cs:2728-2733 - Low.</summary>
+        public string osLoadedCreationTime()
+        {
+            OsslCheck(TlLow, "osLoadedCreationTime");
+            return World?.RegionInfo?.RegionSettings?.LoadedCreationTime ?? string.Empty;
+        }
+
+        /// <summary>OSSL_Api.cs:2735-2740 - Low.</summary>
+        public string osLoadedCreationID()
+        {
+            OsslCheck(TlLow, "osLoadedCreationID");
+            return World?.RegionInfo?.RegionSettings?.LoadedCreationID ?? string.Empty;
+        }
+
+        /// <summary>
+        /// OSSL_Api.cs:6660-6692 - ungated upstream. The blackbody fit to the vendian.org 10-degree D65
+        /// tables, component for component as upstream writes it.
+        /// </summary>
+        public Vector3 osTemperature2sRGB(float dtemp)
+        {
+            float temp = dtemp;
+            if (temp <= 1000f) return new Vector3(1.0f, 0.0401f, 0f);
+            if (temp >= 40000f) return new Vector3(0.3277f, 0.5022f, 1.0f);
+
+            float green;
+            if (temp < 6600f)
+            {
+                green = temp - 1000f;
+                green = ((((-7.87308e-13f * green) - 7.10085e-9f) * green) + 0.00022693f) * green + 0.0374249f;
+                green = Math.Clamp(green, 0f, 1.0f);
+                if (temp <= 19.0f) return new Vector3(1.0f, green, 0f);
+
+                float blue = temp - 1900f;
+                blue = ((((-5.97E-12f * blue) + 5.49E-08f) * blue) + 8.85465E-05f) * blue - 0.0058959f;
+                blue = Math.Clamp(blue, 0f, 1.0f);
+                return new Vector3(1.0f, green, blue);
+            }
+
+            temp = 0.01f * (temp - 6000f);
+            float red = 1.897315f * MathF.Pow(temp, -0.346837f) + 0.0622044f;
+            red = Math.Clamp(red, 0f, 1.0f);
+            green = 1.261989f * MathF.Pow(temp, -0.251708f) + 0.200836f;
+            green = Math.Clamp(green, 0f, 1.0f);
+            return new Vector3(red, green, 1.0f);
+        }
+
+        /// <summary>
+        /// OSSL_Api.cs:6477-6540 - ungated upstream. The pre-2010 llList2ListStrided: a start past end
+        /// wraps into two passes, and the stride is counted from index 0 of the whole list, not from start.
+        /// </summary>
+        public LSLList osOldList2ListStrided(LSLList src, int start, int end, int stride)
+        {
+            var data = src?.Data ?? Array.Empty<object>();
+            var result = new List<object>();
+            int len = data.Length;
+
+            if (start < 0) start += len;
+            if (end < 0) end += len;
+            if (start > len) start = len;
+            if (end > len) end = len;
+            if (stride == 0) stride = 1;
+            if (stride < 0) stride = -stride;
+
+            var si = new int[2];
+            var ei = new int[2];
+            bool twopass = false;
+            if (start != end)
+            {
+                if (start <= end) { si[0] = start; ei[0] = end; }
+                else { si[1] = start; ei[1] = len; si[0] = 0; ei[0] = end; twopass = true; }
+            }
+            else
+            {
+                si[0] = 0; ei[0] = len;
+            }
+
+            for (int i = si[0]; i < ei[0]; i++)
+                if (i % stride == 0) result.Add(data[i]);
+
+            if (twopass)
+                for (int i = si[1]; i < ei[1]; i++)
+                    if (i % stride == 0) result.Add(data[i]);
+
+            return new LSLList(result);
+        }
+
+        /// <summary>
+        /// OSSL_Api.cs:6695-6780 - ungated upstream. The instance-th occurrence of ltest inside lsrc between
+        /// lstart and lend; a negative instance counts back from the last occurrence, a negative index from the
+        /// end of the list, an empty test list answers with the index itself. -1 when there is no such match.
+        /// </summary>
+        public int osListFindListNext(LSLList lsrc, LSLList ltest, int lstart, int lend, int linstance)
+        {
+            var src = lsrc?.Data ?? Array.Empty<object>();
+            var test = ltest?.Data ?? Array.Empty<object>();
+            int srclen = src.Length, testlen = test.Length;
+            if (srclen == 0) return testlen == 0 ? 0 : -1;
+
+            if (testlen == 0)
+            {
+                if (linstance >= 0) return linstance < srclen ? linstance : -1;
+                int back = linstance + srclen;
+                return back >= 0 ? back : -1;
+            }
+            if (testlen > srclen) return -1;
+
+            int start = lstart;
+            if (start < 0) { start += srclen; if (start < 0) return -1; }
+            else if (start >= srclen) return -1;
+
+            int end = lend;
+            if (end < 0) { end += srclen; if (end < 0) return -1; }
+            else if (end >= srclen) end = srclen - 1;
+            if (end < start) return -1;
+
+            var hits = new List<int>();
+            for (int i = start; i <= end - testlen + 1; i++)
+            {
+                bool all = true;
+                for (int j = 0; j < testlen; j++)
+                {
+                    // the same comparison llListFindList makes: the string form of each item
+                    string a = src[i + j]?.ToString() ?? string.Empty;
+                    string b = test[j]?.ToString() ?? string.Empty;
+                    if (a != b) { all = false; break; }
+                }
+                if (all) hits.Add(i);
+            }
+            if (hits.Count == 0) return -1;
+            if (linstance >= 0) return linstance < hits.Count ? hits[linstance] : -1;
+            int fromEnd = hits.Count + linstance;
+            return fromEnd >= 0 ? hits[fromEnd] : -1;
+        }
+
+        /// <summary>
+        /// OSSL_Api.cs:6417-6420 - ungated upstream, and the one OSSL function with VALUE semantics: it sorts
+        /// the caller's own list rather than returning a new one. It can do that here because a list argument
+        /// reaches a syscall as the same <see cref="LSLList"/> the variable slot holds - the shim casts, it does
+        /// not copy - so writing back into that instance's Data array is what the script sees in its variable.
+        /// The sort itself is llListSort's, so the ordering cannot drift from LSL's.
+        /// </summary>
+        public void osListSortInPlace(LSLList src, int stride, int ascending)
+        {
+            OsslCheck();
+            if (src?.Data == null || src.Data.Length == 0) return;
+            var sorted = llListSort(src, stride, ascending);
+            Array.Copy(sorted.Data, src.Data, src.Data.Length);
+        }
+
+        /// <summary>OSSL_Api.cs:6422-6425 - the same, keyed on one element of each stride (llListSortStrided's order).</summary>
+        public void osListSortInPlaceStrided(LSLList src, int stride, int strideIndex, int ascending)
+        {
+            OsslCheck();
+            if (src?.Data == null || src.Data.Length == 0) return;
+            var sorted = llListSortStrided(src, stride, strideIndex, ascending);
+            Array.Copy(sorted.Data, src.Data, src.Data.Length);
+        }
+
+        /// <summary>OSSL_Api.cs:6318-6322 - ungated upstream: llParticleSystem without its sleep.</summary>
+        public void osParticleSystem(LSLList rules)
+        {
+            OsslCheck();
+            if (m_host == null) return;
+            PrimParticleSystem(m_host, rules);
+        }
+
+        /// <summary>OSSL_Api.cs:6324-6333 - ungated upstream: every part the link number names.</summary>
+        public void osLinkParticleSystem(int linknumber, LSLList rules)
+        {
+            OsslCheck();
+            foreach (var part in GetLinkParts(linknumber))
+                PrimParticleSystem(part, rules);
+        }
+
+        /// <summary>OSSL_Api.cs:5150-5165 - ungated upstream: llPreloadSound for a link, and without its 1 s sleep.</summary>
+        public void osPreloadSound(int linknum, string sound)
+        {
+            OsslCheck();
+            UUID soundID = KeyOrName(sound);
+            if (soundID == UUID.Zero) return;
+            var sm = World?.RequestModuleInterface<ISoundModule>();
+            if (sm == null) return;
+            foreach (var part in GetLinkParts(linknum))
+                sm.PreloadSound(part, soundID);
+        }
+
+        /// <summary>
+        /// OSSL_Api.cs:4704-4740 - bare CheckThreatLevel (master switch). Mass, centre of mass, the inertia
+        /// tensor divided by the mass, and the off-diagonal terms as a rotation - empty for a deleted group.
+        /// </summary>
+        public LSLList osGetInertiaData()
+        {
+            OsslCheck();
+            var result = new List<object>();
+            var sog = m_host?.ParentGroup;
+            if (sog == null || sog.IsDeleted) return new LSLList(result);
+
+            sog.GetInertiaData(out float totalMass, out Vector3 centerOfMass, out Vector3 inertia, out Vector4 aux);
+            if (totalMass > 0)
+            {
+                float t = 1.0f / totalMass;
+                inertia.X *= t; inertia.Y *= t; inertia.Z *= t;
+                aux.X *= t; aux.Y *= t; aux.Z *= t;
+            }
+            result.Add(totalMass);
+            result.Add(centerOfMass);
+            result.Add(inertia);
+            result.Add(new Quaternion(aux.X, aux.Y, aux.Z, aux.W));
+            return new LSLList(result);
+        }
+
+        /// <summary>OSSL_Api.cs:3988-3998 - None. Every NPC the region's bot manager knows.</summary>
+        public LSLList osGetNPCList()
+        {
+            OsslCheck(TlNone, "osGetNPCList");
+            var result = new List<object>();
+            var mgr = NpcMgr();
+            if (mgr == null) return new LSLList(result);
+            foreach (var id in mgr.GetAllBots())
+                result.Add(id.ToString());
+            return new LSLList(result);
+        }
+
+        /// <summary>OSSL_Api.cs:5724-5745 - ungated upstream: llRemoveInventory on a linked prim.</summary>
+        public void osRemoveLinkInventory(int linkNumber, string name)
+        {
+            OsslCheck();
+            var part = OsslSingleLinkPart(linkNumber);
+            if (part == null) return;
+            var item = part.Inventory?.GetInventoryItem(name);
+            if (item == null) return;
+            part.Inventory.RemoveInventoryItem(item.ItemID);
+        }
+
+        /// <summary>OSSL_Api.cs:6313-6316 - ungated upstream, the sim's own terrain noise.</summary>
+        public float osPerlinNoise2D(float x, float y, int octaves, float persistence)
+        {
+            OsslCheck();
+            return (float)OpenSim.Region.Framework.Scenes.TerrainUtil.PerlinNoise2D(x, y, octaves, persistence);
+        }
+
+        /// <summary>OSSL_Api.cs:3489-3497 - VeryHigh. The agent must be in this region; the outfit goes to the store osOwnerSaveAppearance uses.</summary>
+        public string osAgentSaveAppearance(string avatarKey, string notecard) => osAgentSaveAppearance(avatarKey, notecard, 1);
+
+        /// <summary>OSSL_Api.cs:3499-3507 - VeryHigh. includeHuds is accepted, not applied: the store keeps the whole appearance.</summary>
+        public string osAgentSaveAppearance(string avatarKey, string notecard, int includeHuds)
+        {
+            OsslCheck(TlVeryHigh, "osAgentSaveAppearance");
+            if (World == null || !UUID.TryParse(avatarKey, out UUID agentId) || agentId == UUID.Zero)
+                return UUID.Zero.ToString();
+            var sp = World.GetScenePresence(agentId);
+            if (sp == null || sp.IsChildAgent) { ShoutError("osAgentSaveAppearance: no such agent in this region"); return UUID.Zero.ToString(); }
+            var mgr = NpcMgr();
+            if (mgr == null) return UUID.Zero.ToString();
+            mgr.SaveOutfitToDatabase(agentId, notecard, out string reason);
+            if (reason != null) { ShoutError("osAgentSaveAppearance: " + reason); return UUID.Zero.ToString(); }
+            return OpenSim.Region.OptionalModules.World.NPC.BotManager.OutfitKey(agentId, notecard).ToString();
+        }
+
         /// <summary>OSSL_Api.cs:5417 - ungated upstream.</summary>
         public int osApproxEquals(float a, float b)
         {

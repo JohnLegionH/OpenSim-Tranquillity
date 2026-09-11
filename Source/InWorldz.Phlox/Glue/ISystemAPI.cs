@@ -441,6 +441,47 @@ namespace InWorldz.Phlox.Glue
         string osAESEncryptTo(string secret, string plainText, string ivString);
         string osAESDecryptFrom(string secret, string encryptedText, string ivString);
         float osAngleBetween(Vector3 a, Vector3 b);
+
+        // ── PHLOX-20 PART 1: PHLOX-12's misc row and the list family ──────────────
+        /// <summary>PHLOX-20: OSSL_Api.cs:5985 - this prim's sit target offset.</summary>
+        Vector3 osGetSitTargetPos();
+        /// <summary>PHLOX-20: OSSL_Api.cs:5990 - this prim's sit target rotation.</summary>
+        Quaternion osGetSitTargetRot();
+        /// <summary>PHLOX-20: OSSL_Api.cs:2721 - Low.</summary>
+        string osLoadedCreationDate();
+        /// <summary>PHLOX-20: OSSL_Api.cs:2728 - Low.</summary>
+        string osLoadedCreationTime();
+        /// <summary>PHLOX-20: OSSL_Api.cs:2735 - Low.</summary>
+        string osLoadedCreationID();
+        /// <summary>PHLOX-20: OSSL_Api.cs:6660 - blackbody temperature to linear sRGB.</summary>
+        Vector3 osTemperature2sRGB(float dtemp);
+        /// <summary>PHLOX-20: OSSL_Api.cs:6477 - the pre-2010 llList2ListStrided semantics.</summary>
+        LSLList osOldList2ListStrided(LSLList src, int start, int end, int stride);
+        /// <summary>PHLOX-20: OSSL_Api.cs:6695 - the nth occurrence of a sublist within a range.</summary>
+        int osListFindListNext(LSLList lsrc, LSLList ltest, int lstart, int lend, int linstance);
+        /// <summary>PHLOX-20: OSSL_Api.cs:6417 - sorts the caller's list itself.</summary>
+        void osListSortInPlace(LSLList src, int stride, int ascending);
+        /// <summary>PHLOX-20: OSSL_Api.cs:6422 - the same, keyed on one element of the stride.</summary>
+        void osListSortInPlaceStrided(LSLList src, int stride, int strideIndex, int ascending);
+        /// <summary>PHLOX-20: OSSL_Api.cs:6318 - llParticleSystem without the 0.1 s sleep.</summary>
+        void osParticleSystem(LSLList rules);
+        /// <summary>PHLOX-20: OSSL_Api.cs:6324 - the same for a link.</summary>
+        void osLinkParticleSystem(int linknumber, LSLList rules);
+        /// <summary>PHLOX-20: OSSL_Api.cs:5150 - llPreloadSound for a link, without its sleep.</summary>
+        void osPreloadSound(int linknum, string sound);
+        /// <summary>PHLOX-20: OSSL_Api.cs:4704 - mass, centre of mass, inertia, aux.</summary>
+        LSLList osGetInertiaData();
+        /// <summary>PHLOX-20: OSSL_Api.cs:3988 - None. Every NPC in the region.</summary>
+        LSLList osGetNPCList();
+        /// <summary>PHLOX-20: OSSL_Api.cs:5724 - removes an item from a linked prim.</summary>
+        void osRemoveLinkInventory(int linkNumber, string name);
+        /// <summary>PHLOX-20: OSSL_Api.cs:6313 - TerrainUtil's Perlin noise.</summary>
+        float osPerlinNoise2D(float x, float y, int octaves, float persistence);
+        /// <summary>PHLOX-20: OSSL_Api.cs:3489 - VeryHigh. Saves another agent's outfit.</summary>
+        string osAgentSaveAppearance(string avatarKey, string notecard);
+        /// <summary>PHLOX-20: OSSL_Api.cs:3499 - VeryHigh.</summary>
+        string osAgentSaveAppearance(string avatarKey, string notecard, int includeHuds);
+
         int osApproxEquals(float a, float b);
         int osApproxEquals(float a, float b, float margin);
         /// <summary>PHLOX-20: OSSL_Api.cs:5432 - the vector form, chosen by type over the float pair.</summary>

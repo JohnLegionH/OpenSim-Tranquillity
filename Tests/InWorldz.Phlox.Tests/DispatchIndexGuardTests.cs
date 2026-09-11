@@ -85,7 +85,7 @@ public class DispatchIndexGuardTests
         // RegenerateBaseline below, never by hand.
         // PHLOX-20 added eight signatures but only ONE new NAME (osSetDynamicTextureDataFace): the other
         // seven are type-discriminated overloads of names already here, and the baseline is keyed by name.
-        Assert.Equal(914, baseline.Count);
+        Assert.Equal(932, baseline.Count);
     }
 
     /// <summary>

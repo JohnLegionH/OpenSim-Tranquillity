@@ -6722,6 +6722,142 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "a", "b", "amount" },
                 TableIndex = 947
             }},
+
+            // ---------------------------------------------------------------- PHLOX-20 PART 1
+            // PHLOX-12's "misc" row and the list family.
+            {"osGetSitTargetPos", new FunctionSig {
+                FunctionName = "osGetSitTargetPos",
+                ReturnType = VarType.Vector,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 948
+            }},
+            {"osGetSitTargetRot", new FunctionSig {
+                FunctionName = "osGetSitTargetRot",
+                ReturnType = VarType.Rotation,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 949
+            }},
+            {"osLoadedCreationDate", new FunctionSig {
+                FunctionName = "osLoadedCreationDate",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 950
+            }},
+            {"osLoadedCreationTime", new FunctionSig {
+                FunctionName = "osLoadedCreationTime",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 951
+            }},
+            {"osLoadedCreationID", new FunctionSig {
+                FunctionName = "osLoadedCreationID",
+                ReturnType = VarType.String,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 952
+            }},
+            {"osTemperature2sRGB", new FunctionSig {
+                FunctionName = "osTemperature2sRGB",
+                ReturnType = VarType.Vector,
+                ParamTypes = new VarType[] { VarType.Float },
+                ParamNames = new string[] { "dtemp" },
+                TableIndex = 953
+            }},
+            {"osOldList2ListStrided", new FunctionSig {
+                FunctionName = "osOldList2ListStrided",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] { VarType.List, VarType.Integer, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "src", "start", "end", "stride" },
+                TableIndex = 954
+            }},
+            {"osListFindListNext", new FunctionSig {
+                FunctionName = "osListFindListNext",
+                ReturnType = VarType.Integer,
+                ParamTypes = new VarType[] { VarType.List, VarType.List, VarType.Integer, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "lsrc", "ltest", "lstart", "lend", "linstance" },
+                TableIndex = 955
+            }},
+            {"osListSortInPlace", new FunctionSig {
+                FunctionName = "osListSortInPlace",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.List, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "src", "stride", "ascending" },
+                TableIndex = 956
+            }},
+            {"osListSortInPlaceStrided", new FunctionSig {
+                FunctionName = "osListSortInPlaceStrided",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.List, VarType.Integer, VarType.Integer, VarType.Integer },
+                ParamNames = new string[] { "src", "stride", "strideIndex", "ascending" },
+                TableIndex = 957
+            }},
+            {"osParticleSystem", new FunctionSig {
+                FunctionName = "osParticleSystem",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.List },
+                ParamNames = new string[] { "rules" },
+                TableIndex = 958
+            }},
+            {"osLinkParticleSystem", new FunctionSig {
+                FunctionName = "osLinkParticleSystem",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.List },
+                ParamNames = new string[] { "linknumber", "rules" },
+                TableIndex = 959
+            }},
+            {"osPreloadSound", new FunctionSig {
+                FunctionName = "osPreloadSound",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.String },
+                ParamNames = new string[] { "linknum", "sound" },
+                TableIndex = 960
+            }},
+            {"osGetInertiaData", new FunctionSig {
+                FunctionName = "osGetInertiaData",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 961
+            }},
+            {"osGetNPCList", new FunctionSig {
+                FunctionName = "osGetNPCList",
+                ReturnType = VarType.List,
+                ParamTypes = new VarType[] {  },
+                ParamNames = new string[] {  },
+                TableIndex = 962
+            }},
+            {"osRemoveLinkInventory", new FunctionSig {
+                FunctionName = "osRemoveLinkInventory",
+                ReturnType = VarType.Void,
+                ParamTypes = new VarType[] { VarType.Integer, VarType.String },
+                ParamNames = new string[] { "linkNumber", "name" },
+                TableIndex = 963
+            }},
+            {"osPerlinNoise2D", new FunctionSig {
+                FunctionName = "osPerlinNoise2D",
+                ReturnType = VarType.Float,
+                ParamTypes = new VarType[] { VarType.Float, VarType.Float, VarType.Integer, VarType.Float },
+                ParamNames = new string[] { "x", "y", "octaves", "persistence" },
+                TableIndex = 964
+            }},
+            {"osAgentSaveAppearance", new FunctionSig {
+                FunctionName = "osAgentSaveAppearance",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] { VarType.Key, VarType.String },
+                ParamNames = new string[] { "avatarKey", "notecard" },
+                TableIndex = 965
+            }},
+            {"osAgentSaveAppearance__3", new FunctionSig {
+                FunctionName = "osAgentSaveAppearance",
+                ReturnType = VarType.Key,
+                ParamTypes = new VarType[] { VarType.Key, VarType.String, VarType.Integer },
+                ParamNames = new string[] { "avatarKey", "notecard", "includeHuds" },
+                TableIndex = 966
+            }},
          };
 
         /// <summary>
