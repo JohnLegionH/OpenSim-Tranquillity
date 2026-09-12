@@ -20,6 +20,28 @@ public sealed class FakeAisBackend : IAisInventoryBackend
     public readonly List<string> Calls = new();
 
     /// <summary>
+    /// AIS-SEC-3. Invoked at the start of every backend call with the same label <see cref="Calls"/> records, and
+    /// <b>before the call touches the store</b>. A test blocks in here on a <c>ManualResetEventSlim</c> to pin an
+    /// interleaving exactly — a sleep-based race test passes or fails on machine load, which is worse than no test.
+    ///
+    /// <para>It fires outside every lock this class takes, deliberately. A thread parked in here holds nothing, so
+    /// the other thread can run to completion — which is what lets the concurrency tests produce a deterministic
+    /// interleaving with no two threads ever inside the store at once, and is also why the "different folders must
+    /// not block each other" test cannot pass for the wrong reason.</para>
+    /// </summary>
+    public Action<string> BeforeCall;
+
+    /// <summary>Records the call, then gives <see cref="BeforeCall"/> the chance to park this thread.</summary>
+    private void Record(string label)
+    {
+        lock (Calls) Calls.Add(label);   // two threads append in the concurrency tests
+        BeforeCall?.Invoke(label);
+    }
+
+    /// <summary>A snapshot of <see cref="Calls"/> safe to take while another thread may still be recording.</summary>
+    public IReadOnlyList<string> CallSnapshot() { lock (Calls) return Calls.ToList(); }
+
+    /// <summary>
     /// The subset of <see cref="Calls"/> that could change inventory — every backend member that writes, whether
     /// or not it went on to succeed, because the member being <i>reached at all</i> is what AIS-SEC-2 is about.
     /// A malformed body must leave this empty: not "a write that failed", but no write attempted.
@@ -75,7 +97,7 @@ public sealed class FakeAisBackend : IAisInventoryBackend
 
     public InventoryFolderBase GetFolderForType(UUID agentId, FolderType type)
     {
-        Calls.Add($"GetFolderForType({type})");
+        Record($"GetFolderForType({type})");
         if (agentId != Owner) return null;
         if (type == FolderType.CurrentOutfit && !CurrentOutfitId.IsZero())
             return Folders.TryGetValue(CurrentOutfitId, out var cof) ? cof : null;
@@ -84,14 +106,14 @@ public sealed class FakeAisBackend : IAisInventoryBackend
 
     public InventoryFolderBase GetFolder(UUID agentId, UUID folderId)
     {
-        Calls.Add($"GetFolder({folderId})");
+        Record($"GetFolder({folderId})");
         if (agentId != Owner) return null;
         return Folders.TryGetValue(folderId, out var folder) ? folder : null;
     }
 
     public InventoryCollection GetFolderContent(UUID agentId, UUID folderId)
     {
-        Calls.Add($"GetFolderContent({folderId})");
+        Record($"GetFolderContent({folderId})");
         if (agentId != Owner || !Folders.TryGetValue(folderId, out var folder)) return null;
         return new InventoryCollection
         {
@@ -105,20 +127,20 @@ public sealed class FakeAisBackend : IAisInventoryBackend
 
     public IReadOnlyList<InventoryFolderBase> GetSubFolders(UUID agentId, UUID folderId)
     {
-        Calls.Add($"GetSubFolders({folderId})");
+        Record($"GetSubFolders({folderId})");
         if (agentId != Owner || !Folders.ContainsKey(folderId)) return Array.Empty<InventoryFolderBase>();
         return Folders.Values.Where(f => f.ParentID == folderId).ToList();
     }
 
     public IReadOnlyList<InventoryFolderBase> GetInventorySkeleton(UUID agentId)
     {
-        Calls.Add("GetInventorySkeleton");
+        Record("GetInventorySkeleton");
         return agentId != Owner ? Array.Empty<InventoryFolderBase>() : Folders.Values.ToList();
     }
 
     public IReadOnlyList<InventoryItemBase> GetItems(UUID agentId, IReadOnlyList<UUID> itemIds)
     {
-        Calls.Add($"GetItems[{itemIds.Count}]");
+        Record($"GetItems[{itemIds.Count}]");
         if (agentId != Owner) return Array.Empty<InventoryItemBase>();
         var found = new List<InventoryItemBase>();
         foreach (var id in itemIds) if (Items.TryGetValue(id, out var item)) found.Add(item);
@@ -127,7 +149,7 @@ public sealed class FakeAisBackend : IAisInventoryBackend
 
     public InventoryItemBase GetItem(UUID agentId, UUID itemId)
     {
-        Calls.Add($"GetItem({itemId})");
+        Record($"GetItem({itemId})");
         if (agentId != Owner) return null;
         return Items.TryGetValue(itemId, out var item) ? item : null;
     }
@@ -167,7 +189,7 @@ public sealed class FakeAisBackend : IAisInventoryBackend
 
     public bool AddFolder(InventoryFolderBase folder)
     {
-        Calls.Add($"AddFolder({folder.ID})");
+        Record($"AddFolder({folder.ID})");
         if (!AllowWrite) return false;
         Folders[folder.ID] = folder;
         Bump(folder.ParentID);
@@ -177,7 +199,7 @@ public sealed class FakeAisBackend : IAisInventoryBackend
 
     public bool AddItem(InventoryItemBase item)
     {
-        Calls.Add($"AddItem({item.Name})");
+        Record($"AddItem({item.Name})");
         if (!AllowWrite) return false;
         if (AddItemGate is not null && !AddItemGate(item)) return false;
         Items[item.ID] = item;
@@ -205,7 +227,7 @@ public sealed class FakeAisBackend : IAisInventoryBackend
 
     public AisAssetTransaction ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item)
     {
-        Calls.Add($"ApplyAssetTransaction({transactionId})");
+        Record($"ApplyAssetTransaction({transactionId})");
         if (!ResolvesTransactions || agentId != Owner) return AisAssetTransaction.NotResolvable;
         if (RefusedTransactions.Contains(transactionId)) return AisAssetTransaction.Refused;
         // An unknown transaction opens a pending uploader and the asset lands with the xfer; nothing is stored yet.
@@ -220,13 +242,13 @@ public sealed class FakeAisBackend : IAisInventoryBackend
 
     public void OnItemAssetChanged(UUID agentId, UUID itemId, UUID newAssetId)
     {
-        Calls.Add($"OnItemAssetChanged({itemId})");
+        Record($"OnItemAssetChanged({itemId})");
         if (agentId == Owner) AssetChanges.Add((itemId, newAssetId));
     }
 
     public bool UpdateItem(InventoryItemBase item)
     {
-        Calls.Add($"UpdateItem({item.ID})");
+        Record($"UpdateItem({item.ID})");
         if (!AllowWrite || !Items.ContainsKey(item.ID)) return false;
         Items[item.ID] = item;
         Bump(item.Folder);
@@ -236,7 +258,7 @@ public sealed class FakeAisBackend : IAisInventoryBackend
 
     public bool UpdateFolder(InventoryFolderBase folder)
     {
-        Calls.Add($"UpdateFolder({folder.ID})");
+        Record($"UpdateFolder({folder.ID})");
         if (!AllowWrite || !Folders.ContainsKey(folder.ID)) return false;
         Folders[folder.ID] = folder;
         Bump(folder.ParentID);
@@ -246,7 +268,7 @@ public sealed class FakeAisBackend : IAisInventoryBackend
 
     public bool DeleteItems(UUID agentId, IReadOnlyList<UUID> itemIds)
     {
-        Calls.Add($"DeleteItems[{itemIds.Count}]");
+        Record($"DeleteItems[{itemIds.Count}]");
         if (!AllowWrite || agentId != Owner) return false;
         if (DeleteItemsGate is not null && !DeleteItemsGate(itemIds)) return false;
         foreach (var id in itemIds)
@@ -258,7 +280,7 @@ public sealed class FakeAisBackend : IAisInventoryBackend
     /// <summary>Recursive, and with the real service's trash gate available for a test to switch on.</summary>
     public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds, bool onlyIfTrash)
     {
-        Calls.Add($"DeleteFolders[{folderIds.Count}, onlyIfTrash={onlyIfTrash}]");
+        Record($"DeleteFolders[{folderIds.Count}, onlyIfTrash={onlyIfTrash}]");
         if (!AllowWrite || agentId != Owner) return false;
         if (DeleteFoldersGate is not null && !DeleteFoldersGate(folderIds)) return false;
         foreach (var id in folderIds)
@@ -275,7 +297,7 @@ public sealed class FakeAisBackend : IAisInventoryBackend
 
     public bool PurgeFolder(InventoryFolderBase folder)
     {
-        Calls.Add($"PurgeFolder({folder.ID})");
+        Record($"PurgeFolder({folder.ID})");
         if (!AllowWrite) return false;
         if (PurgeFolderGate is not null && !PurgeFolderGate(folder)) return false;
         Purge(folder.ID);
