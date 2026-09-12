@@ -19,6 +19,17 @@ public sealed class FakeAisBackend : IAisInventoryBackend
     public readonly Dictionary<UUID, InventoryItemBase> Items = new();
     public readonly List<string> Calls = new();
 
+    /// <summary>
+    /// The subset of <see cref="Calls"/> that could change inventory — every backend member that writes, whether
+    /// or not it went on to succeed, because the member being <i>reached at all</i> is what AIS-SEC-2 is about.
+    /// A malformed body must leave this empty: not "a write that failed", but no write attempted.
+    /// </summary>
+    public IReadOnlyList<string> Writes => Calls.Where(c =>
+        c.StartsWith("AddFolder(") || c.StartsWith("AddItem(") ||
+        c.StartsWith("UpdateItem(") || c.StartsWith("UpdateFolder(") ||
+        c.StartsWith("DeleteItems[") || c.StartsWith("DeleteFolders[") ||
+        c.StartsWith("PurgeFolder(") || c.StartsWith("ApplyAssetTransaction(")).ToList();
+
     public UUID Owner;
     public UUID CurrentOutfitId = UUID.Zero;
 

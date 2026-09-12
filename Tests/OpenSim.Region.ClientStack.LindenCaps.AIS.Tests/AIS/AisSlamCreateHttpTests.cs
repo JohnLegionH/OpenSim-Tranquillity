@@ -45,6 +45,17 @@ public class AisSlamCreateHttpTests
             HttpMethod = verb; Url = new Uri("http://sim.test" + url); RawUrl = url;
             InputStream = body is null ? new MemoryStream() : new MemoryStream(OSDParser.SerializeLLSDXmlBytes(body));
         }
+
+        /// <summary>
+        /// AIS-SEC-2: a body the serialiser would never produce — truncated XML, XML that is not LLSD, or simply
+        /// too much of it. These are the shapes a real client hits on a dropped connection and an attacker sends
+        /// on purpose, and neither can be expressed through the <see cref="OSD"/> constructor above.
+        /// </summary>
+        public SlamTestRequest(string verb, string url, byte[] raw)
+        {
+            HttpMethod = verb; Url = new Uri("http://sim.test" + url); RawUrl = url;
+            InputStream = new MemoryStream(raw ?? Array.Empty<byte>());
+        }
         public string HttpMethod { get; }
         public Uri Url { get; }
         public string RawUrl { get; }
@@ -103,6 +114,17 @@ public class AisSlamCreateHttpTests
         var handler = new AisHandler(Cap, Agent, backend, mode);
         var response = new TestOSHttpResponse();
         handler.Handle(new SlamTestRequest(verb, Cap + path, body), response);
+        var parsed = OSDParser.DeserializeLLSDXml(response.RawBuffer);
+        Assert.That(parsed, Is.InstanceOf<OSDMap>());
+        return (response.StatusCode, (OSDMap)parsed);
+    }
+
+    /// <summary>AIS-SEC-2: the same round trip, but with the request body given as raw bytes.</summary>
+    private static (int Status, OSDMap Body) SendRaw(FakeAisBackend backend, string verb, string path, byte[] raw)
+    {
+        var handler = new AisHandler(Cap, Agent, backend);
+        var response = new TestOSHttpResponse();
+        handler.Handle(new SlamTestRequest(verb, Cap + path, raw), response);
         var parsed = OSDParser.DeserializeLLSDXml(response.RawBuffer);
         Assert.That(parsed, Is.InstanceOf<OSDMap>());
         return (response.StatusCode, (OSDMap)parsed);
@@ -446,5 +468,230 @@ public class AisSlamCreateHttpTests
         Assert.That(folder.Type, Is.EqualTo((short)FolderType.Outfit), "type_default is the integer folder type");
         Assert.That(folder.ParentID, Is.EqualTo(Clothing));
         Assert.That(folder.Owner, Is.EqualTo(Agent));
+    }
+
+    // ================================================================== AIS-SEC-2
+    //
+    // A slam has REPLACEMENT semantics, so "I could not understand this body" and "this body asks for no links"
+    // are one keystroke apart in effect and a universe apart in meaning. Before this, ReadBodyOsd ended in
+    // `catch { return new OSDMap(); }` and ParseBody treated an empty map as an empty slam, so a truncated
+    // PUT /category/{COF}/links — a dropped connection is enough — was read as "remove every link" and emptied
+    // the wearer's Current Outfit.
+    //
+    // Every case below asserts the same two things: the status, and that NOT ONE backend write was attempted.
+    // The second is the real assertion. A 400 that had already called DeleteItems would be no fix at all.
+
+    /// <summary>
+    /// The body ceiling the handler is required to enforce. Step 2 adds a cross-check against
+    /// <c>AisHandler.MaxBodyBytes</c> inside the 413 test, so the two cannot drift apart.
+    /// </summary>
+    private const int BodyCeiling = 1024 * 1024;
+
+    /// <summary>The COF's link rows, id -> (name, target), so a test can prove they are untouched field by field.</summary>
+    private static Dictionary<UUID, (string Name, UUID Target)> LinkRows(FakeAisBackend b, UUID folder)
+        => b.Items.Values
+            .Where(i => i.Folder == folder && (i.AssetType == (int)AssetType.Link || i.AssetType == (int)AssetType.LinkFolder))
+            .ToDictionary(i => i.ID, i => (i.Name, i.AssetID));
+
+    /// <summary>A well-formed slam body, so the invalid cases differ from a good one in exactly one respect.</summary>
+    private static OSDMap GoodLink(UUID target) => new()
+    {
+        ["name"] = "link to " + target,
+        ["desc"] = "",
+        ["linked_id"] = target,
+        ["type"] = (int)AssetType.Link,
+    };
+
+    private static void AssertRefused(FakeAisBackend b, Dictionary<UUID, (string Name, UUID Target)> before,
+        int status, OSDMap body, int expected)
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(status, Is.EqualTo(expected));
+            Assert.That(body["error_code"].AsInteger(), Is.EqualTo(expected));
+            Assert.That(b.Writes, Is.Empty, "a refused body must not reach a single backend write");
+            Assert.That(LinkRows(b, Cof), Is.EqualTo(before), "the COF's link rows must be byte-for-byte what they were");
+            Assert.That(body.ContainsKey("_removed_items"), Is.False, "and nothing may be reported as removed");
+            Assert.That(body.ContainsKey("_updated_category_versions"), Is.False,
+                "no version delta either, or the viewer advances past a state the server never reached");
+        });
+    }
+
+    [Test]
+    public void a_slam_body_of_truncated_xml_is_400_and_writes_nothing()
+    {
+        var b = Inventory();
+        var before = LinkRows(b, Cof);
+        var raw = System.Text.Encoding.UTF8.GetBytes("<llsd><array><map>");
+        var (status, body) = SendRaw(b, "PUT", $"/category/{Cof}/links", raw);
+        AssertRefused(b, before, status, body, 400);
+    }
+
+    [Test]
+    public void a_slam_body_of_valid_xml_that_is_not_llsd_is_400_and_writes_nothing()
+    {
+        var b = Inventory();
+        var before = LinkRows(b, Cof);
+        var raw = System.Text.Encoding.UTF8.GetBytes("<?xml version=\"1.0\"?><outfit><wear id=\"x\"/></outfit>");
+        var (status, body) = SendRaw(b, "PUT", $"/category/{Cof}/links", raw);
+        AssertRefused(b, before, status, body, 400);
+    }
+
+    /// <summary>
+    /// No body at all. This is the one that made the defect reachable without malice: an interrupted PUT arrives
+    /// with nothing in it, and "nothing" used to mean "empty slam".
+    /// </summary>
+    [Test]
+    public void a_slam_with_no_body_is_400_and_writes_nothing()
+    {
+        var b = Inventory();
+        var before = LinkRows(b, Cof);
+        var (status, body) = SendRaw(b, "PUT", $"/category/{Cof}/links", Array.Empty<byte>());
+        AssertRefused(b, before, status, body, 400);
+    }
+
+    /// <summary>
+    /// An empty MAP is not an empty slam. The viewer sends a bare LLSD <b>array</b> and never <c>{}</c>
+    /// (spec A-Q3, <c>llappearancemgr.cpp:2209-2245</c>), so <c>{}</c> can only be a client we do not know or a
+    /// body that arrived damaged — and under replacement semantics the safe reading of both is "refuse".
+    /// </summary>
+    [Test]
+    public void a_slam_body_of_an_empty_map_is_400_and_writes_nothing()
+    {
+        var b = Inventory();
+        var before = LinkRows(b, Cof);
+        var (status, body) = Send(b, "PUT", $"/category/{Cof}/links", new OSDMap());
+        AssertRefused(b, before, status, body, 400);
+    }
+
+    /// <summary>
+    /// All-or-nothing. Accepting the good entries and dropping the bad one would delete the old links the viewer
+    /// meant to keep, which is the same outfit loss by a quieter route.
+    /// </summary>
+    [Test]
+    public void a_slam_array_holding_a_non_map_entry_is_400_and_writes_nothing()
+    {
+        var b = Inventory();
+        var before = LinkRows(b, Cof);
+        var slam = new OSDArray { GoodLink(Targets[0]), OSD.FromString("not a link map"), GoodLink(Targets[1]) };
+        var (status, body) = Send(b, "PUT", $"/category/{Cof}/links", slam);
+        AssertRefused(b, before, status, body, 400);
+    }
+
+    [Test]
+    public void a_slam_link_with_a_zero_linked_id_is_400_and_writes_nothing()
+    {
+        var b = Inventory();
+        var before = LinkRows(b, Cof);
+        var bad = GoodLink(Targets[0]);
+        bad["linked_id"] = UUID.Zero;
+        var (status, body) = Send(b, "PUT", $"/category/{Cof}/links", new OSDArray { GoodLink(Targets[1]), bad });
+        AssertRefused(b, before, status, body, 400);
+    }
+
+    /// <summary>
+    /// A slam body describes links and nothing else: both builders switch on <c>AT_LINK</c> / <c>AT_LINK_FOLDER</c>
+    /// (<c>llappearancemgr.cpp:1795-1833</c>). A type-0 (Texture) entry would have been stored as a link row with
+    /// an asset type no fetch route knows how to present.
+    /// </summary>
+    [Test]
+    public void a_slam_link_of_a_type_that_is_not_a_link_is_400_and_writes_nothing()
+    {
+        var b = Inventory();
+        var before = LinkRows(b, Cof);
+        var bad = GoodLink(Targets[0]);
+        bad["type"] = (int)AssetType.Texture;   // 0
+        var (status, body) = Send(b, "PUT", $"/category/{Cof}/links", new OSDArray { GoodLink(Targets[1]), bad });
+        AssertRefused(b, before, status, body, 400);
+    }
+
+    /// <summary>
+    /// The ceiling is enforced while the stream is copied, so an oversized body is refused without ever being
+    /// held in memory — the point being that a body too big to trust is also a body too big to buffer.
+    /// </summary>
+    [Test]
+    public void a_slam_body_over_the_size_ceiling_is_413_and_writes_nothing()
+    {
+        var b = Inventory();
+        var before = LinkRows(b, Cof);
+        var raw = new byte[BodyCeiling + 1];
+        for (var i = 0; i < raw.Length; i++) raw[i] = (byte)'a';
+        var (status, body) = SendRaw(b, "PUT", $"/category/{Cof}/links", raw);
+        AssertRefused(b, before, status, body, 413);
+    }
+
+    /// <summary>
+    /// Positive control. An empty ARRAY stays an intentional empty slam — that is how the viewer takes off the
+    /// last garment — and is the case the negative ones must not sweep up with them.
+    /// (<c>a_slam_of_an_empty_array_empties_the_folders_links</c> is the same assertion from A3's side.)
+    /// </summary>
+    [Test]
+    public void the_empty_array_is_still_an_intentional_empty_slam()
+    {
+        var b = Inventory();
+        var oldIds = LinkIds(b, Cof);
+        var (status, body) = Send(b, "PUT", $"/category/{Cof}/links", new OSDArray());
+
+        Assert.That(status, Is.EqualTo(200));
+        Assert.That(LinkIds(b, Cof), Is.Empty);
+        Assert.That(((OSDArray)body["_removed_items"]).Select(o => o.AsUUID()), Is.EquivalentTo(oldIds));
+        Assert.That(b.Writes, Is.Not.Empty, "an intentional empty slam DOES write - it removes the old links");
+    }
+
+    /// <summary>Positive control: an ordinary two-link slam still replaces the folder's links.</summary>
+    [Test]
+    public void a_valid_two_link_slam_still_replaces_the_links()
+    {
+        var b = Inventory();
+        var oldIds = LinkIds(b, Cof);
+        var (status, body) = Send(b, "PUT", $"/category/{Cof}/links",
+            new OSDArray { GoodLink(Targets[2]), GoodLink(Targets[3]) });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(status, Is.EqualTo(200));
+            Assert.That(LinkTargets(b, Cof), Is.EquivalentTo(new[] { Targets[2], Targets[3] }));
+            Assert.That(LinkIds(b, Cof).Intersect(oldIds), Is.Empty, "the previous link rows are gone");
+            Assert.That(((OSDArray)body["_created_items"]), Has.Count.EqualTo(2));
+            Assert.That(((OSDArray)body["_removed_items"]).Select(o => o.AsUUID()), Is.EquivalentTo(oldIds));
+        });
+    }
+
+    // ------------------------------------------------------------------ the other body-carrying mutations
+
+    [Test]
+    public void a_PATCH_item_with_a_malformed_body_is_400_and_writes_nothing()
+    {
+        var b = Inventory();
+        var nameBefore = b.Items[PlainItem].Name;
+        var raw = System.Text.Encoding.UTF8.GetBytes("<llsd><map><key>name</key>");
+        var (status, body) = SendRaw(b, "PATCH", $"/item/{PlainItem}", raw);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(status, Is.EqualTo(400));
+            Assert.That(body["error_code"].AsInteger(), Is.EqualTo(400));
+            Assert.That(b.Writes, Is.Empty);
+            Assert.That(b.Items[PlainItem].Name, Is.EqualTo(nameBefore));
+        });
+    }
+
+    [Test]
+    public void a_PATCH_category_with_a_malformed_body_is_400_and_writes_nothing()
+    {
+        var b = Inventory();
+        var nameBefore = b.Folders[Clothing].Name;
+        var versionBefore = b.Folders[Clothing].Version;
+        var raw = System.Text.Encoding.UTF8.GetBytes("<llsd><map><key>name</key><string>x");
+        var (status, body) = SendRaw(b, "PATCH", $"/category/{Clothing}", raw);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(status, Is.EqualTo(400));
+            Assert.That(body["error_code"].AsInteger(), Is.EqualTo(400));
+            Assert.That(b.Writes, Is.Empty);
+            Assert.That(b.Folders[Clothing].Name, Is.EqualTo(nameBefore));
+            Assert.That(b.Folders[Clothing].Version, Is.EqualTo(versionBefore));
+        });
     }
 }
