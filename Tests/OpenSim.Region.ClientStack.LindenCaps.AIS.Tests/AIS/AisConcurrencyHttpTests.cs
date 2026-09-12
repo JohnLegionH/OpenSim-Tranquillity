@@ -157,10 +157,16 @@ public class AisConcurrencyHttpTests
         var t2 = new Thread(() => { Role.Value = "second"; try { secondResult = second(); } catch (Exception ex) { secondError = ex; } finally { secondDone.Set(); } });
 
         t1.Start();
-        Assert.That(parked.Wait(TimeSpan.FromSeconds(10)), Is.True, $"the first request never reached {parkAt}");
-        t2.Start();
-        secondDone.Wait(TimeSpan.FromMilliseconds(750));   // finishes at once when nothing serialises
-        release.Set();
+        try
+        {
+            Assert.That(parked.Wait(TimeSpan.FromSeconds(10)), Is.True, $"the first request never reached {parkAt}");
+            t2.Start();
+            secondDone.Wait(TimeSpan.FromMilliseconds(750));   // finishes at once when nothing serialises
+        }
+        finally
+        {
+            release.Set();   // a parked thread holds the folder lock; leaking it would poison later tests
+        }
         Assert.That(t1.Join(TimeSpan.FromSeconds(30)), Is.True, "the first request did not finish");
         Assert.That(t2.Join(TimeSpan.FromSeconds(30)), Is.True, "the second request did not finish");
         b.BeforeCall = null;
@@ -321,15 +327,29 @@ public class AisConcurrencyHttpTests
         var t1 = new Thread(() => { Role.Value = "first"; cofResult = Send(b, Alice, "PUT", $"/category/{Cof}/links", Slam(TargetX)); });
         var t2 = new Thread(() => { Role.Value = "second"; otherResult = Send(b, Alice, "PUT", $"/category/{Other}/links", Slam(TargetZ)); secondDone.Set(); });
 
+        // The stripe array means two unrelated keys CAN share a lock; that is only ever slower, never wrong,
+        // but it would make this test fail for a reason that has nothing to do with the property under test.
+        // Assert it up front so a future UUID change says so instead of timing out mysteriously.
+        Assert.That(AisFolderLocks.StripeOf(Alice, Cof), Is.Not.EqualTo(AisFolderLocks.StripeOf(Alice, Other)),
+            "these two folder keys share a lock stripe; pick different test UUIDs");
+
         t1.Start();
-        Assert.That(parked.Wait(TimeSpan.FromSeconds(10)), Is.True, "the first slam never reached its creates");
-        t2.Start();
-        Assert.That(secondDone.Wait(TimeSpan.FromSeconds(5)), Is.True,
-            "a slam on a DIFFERENT folder waited on the parked one - the lock is too coarse");
-        release.Set();
-        t1.Join(TimeSpan.FromSeconds(30));
-        t2.Join(TimeSpan.FromSeconds(30));
-        b.BeforeCall = null;
+        try
+        {
+            Assert.That(parked.Wait(TimeSpan.FromSeconds(10)), Is.True, "the first slam never reached its creates");
+            t2.Start();
+            Assert.That(secondDone.Wait(TimeSpan.FromSeconds(5)), Is.True,
+                "a slam on a DIFFERENT folder waited on the parked one - the lock is too coarse");
+        }
+        finally
+        {
+            // Always release: a parked thread holds the folder lock, and leaking it would break every later
+            // test in this process rather than just this one.
+            release.Set();
+            t1.Join(TimeSpan.FromSeconds(30));
+            t2.Join(TimeSpan.FromSeconds(30));
+            b.BeforeCall = null;
+        }
 
         Assert.Multiple(() =>
         {
@@ -363,15 +383,24 @@ public class AisConcurrencyHttpTests
         var t1 = new Thread(() => { Role.Value = "first"; aliceResult = Send(alice, Alice, "PUT", $"/category/{Cof}/links", Slam(TargetX)); });
         var t2 = new Thread(() => { Role.Value = "second"; bobResult = Send(bob, Bob, "PUT", $"/category/{Cof}/links", Slam(TargetZ)); secondDone.Set(); });
 
+        Assert.That(AisFolderLocks.StripeOf(Alice, Cof), Is.Not.EqualTo(AisFolderLocks.StripeOf(Bob, Cof)),
+            "Alice's and Bob's COF keys share a lock stripe; pick different test agent UUIDs");
+
         t1.Start();
-        Assert.That(parked.Wait(TimeSpan.FromSeconds(10)), Is.True, "Alice's slam never reached its creates");
-        t2.Start();
-        Assert.That(secondDone.Wait(TimeSpan.FromSeconds(5)), Is.True,
-            "Bob waited on Alice - the lock key is missing the agent, so two residents whose COF ids collide would serialise");
-        release.Set();
-        t1.Join(TimeSpan.FromSeconds(30));
-        t2.Join(TimeSpan.FromSeconds(30));
-        alice.BeforeCall = null;
+        try
+        {
+            Assert.That(parked.Wait(TimeSpan.FromSeconds(10)), Is.True, "Alice's slam never reached its creates");
+            t2.Start();
+            Assert.That(secondDone.Wait(TimeSpan.FromSeconds(5)), Is.True,
+                "Bob waited on Alice - the lock key is missing the agent, so two residents whose COF ids collide would serialise");
+        }
+        finally
+        {
+            release.Set();
+            t1.Join(TimeSpan.FromSeconds(30));
+            t2.Join(TimeSpan.FromSeconds(30));
+            alice.BeforeCall = null;
+        }
 
         Assert.Multiple(() =>
         {

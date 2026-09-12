@@ -335,6 +335,52 @@ public sealed class AisHandler : SimpleStreamHandler
         Write(response, new OSDMap { [AisEnvelope.Embedded] = embedded }, route);
     }
 
+    // ------------------------------------------------------------------ AIS-SEC-3: the folder mutation lock
+
+    /// <summary>
+    /// Runs <paramref name="body"/> holding the <c>(agent, folder)</c> lock, or answers 503 and runs nothing.
+    ///
+    /// <para>Every mutating route takes exactly <b>one</b> key, so there is no lock-ordering problem to solve and
+    /// deadlock is structurally impossible rather than merely avoided. That holds because AIS-SEC-2 made
+    /// <c>POST /category/{parent}</c> refuse a body whose <c>parent_id</c> disagrees with the URL (400), so a
+    /// create can only ever write into the folder it addressed. <b>If a future route genuinely needs two
+    /// folders</b> - a create whose categories carry links destined for a child, say - take them in ascending
+    /// <c>UUID</c> string order and say so at the call site; that total order is what keeps it deadlock-free.</para>
+    ///
+    /// <para><b>503 and not 409.</b> 409 Conflict says the request disagrees with the current state and the client
+    /// must resolve it - re-fetch, merge, decide. Nothing is wrong with this request: it is valid and would
+    /// succeed, and the server simply declined to queue behind another change any longer. That is "temporarily
+    /// unavailable", which is 503, and it is the status that carries <c>Retry-After</c>. The viewer treats any
+    /// non-2xx here alike (<c>llaisapi.cpp:851-951</c>), so the header is for well-behaved clients and the
+    /// operator reading the log.</para>
+    /// </summary>
+    private void WithFolderLock(UUID folderId, AisRoute route, IOSHttpResponse response, Action body)
+        => WithFolderLock(m_agentId, folderId, route, response, body);
+
+    /// <summary>
+    /// As above, for the one route that writes as somebody other than this cap's owner: a library COPY writes into
+    /// the <i>viewing</i> agent's inventory, so its key is that agent and the destination folder. Keying it on the
+    /// library owner would order library copies against each other and not against the resident's own slams into
+    /// the same folder, which is the pairing that actually races.
+    /// </summary>
+    private void WithFolderLock(UUID lockAgentId, UUID folderId, AisRoute route, IOSHttpResponse response, Action body)
+    {
+        if (!AisFolderLocks.TryEnter(lockAgentId, folderId))
+        {
+            m_log.LogWarning(
+                "[AIS]: {Operation} on folder {Folder} for agent {Agent} waited {Seconds}s for the folder lock and "
+                + "gave up; answered 503 rather than mutating unserialised", route.Operation, folderId, lockAgentId,
+                AisFolderLocks.Timeout.TotalSeconds);
+            response.AddHeader("Retry-After", "2");
+            WriteError(response, HttpStatusCode.ServiceUnavailable,
+                $"another change to category {folderId} is already in progress; retry", route);
+            return;
+        }
+
+        try { body(); }
+        finally { AisFolderLocks.Exit(lockAgentId, folderId); }
+    }
+
     // ------------------------------------------------------------------ the mutation routes (A2)
 
     /// <summary>
@@ -433,50 +479,54 @@ public sealed class AisHandler : SimpleStreamHandler
     {
         var item = m_backend.GetItem(m_agentId, route.Id);
         if (item is null) { WriteError(response, HttpStatusCode.NotFound, $"no item {route.Id}", route); return; }
-
-        // S9: captured before ApplyToItem, which mutates the item in place.
-        var assetBefore = item.AssetID;
-
-        var applied = AisMutation.ApplyToItem(body, item);
-        if (applied.Any && !m_backend.UpdateItem(item))
+        // AIS-SEC-3: key on item.Folder - the item's parent folder, whose version the store bumps.
+        WithFolderLock(item.Folder, route, response, () =>
         {
-            WriteError(response, HttpStatusCode.InternalServerError, $"the inventory service refused the update of item {route.Id}", route);
-            return;
-        }
 
-        if (applied.Transaction.IsNotZero())
-        {
-            // Unknown transaction ids are not an error here: the module opens a pending uploader for one and the
-            // asset lands when the xfer does, exactly as it does for the legacy route (AgentAssetsTransactions.cs:68-90).
-            // A19: a refused transaction is a FAILED save and must be answered as one. Before this, the verdict
-            // was discarded and the cap answered 200 with the item's old asset id in the envelope, so the viewer
-            // recorded a save that had not happened - observed 2026-09-06 09:52:55, a wearable referencing a
-            // library texture refused by the uploader and reported as "UpdateItem -> 200".
-            //
-            // 403 rather than 500: the refusal is always a permission verdict on the referenced assets
-            // (AssetXferUploader.ValidateAssets), and the viewer treats a non-2xx as an error without special
-            // handling for this command (llaisapi.cpp:880-948). The error body carries no
-            // _updated_category_versions, so the folder version the viewer holds does NOT advance and its next
-            // fetch of that folder still sees the true state.
-            if (m_backend.ApplyAssetTransaction(m_agentId, applied.Transaction, item) == AisAssetTransaction.Refused)
+            // S9: captured before ApplyToItem, which mutates the item in place.
+            var assetBefore = item.AssetID;
+
+            var applied = AisMutation.ApplyToItem(body, item);
+            if (applied.Any && !m_backend.UpdateItem(item))
             {
-                WriteError(response, HttpStatusCode.Forbidden,
-                    $"the asset uploaded by transaction {applied.Transaction} was refused for item {route.Id}; the item still points at its previous asset", route);
+                WriteError(response, HttpStatusCode.InternalServerError, $"the inventory service refused the update of item {route.Id}", route);
                 return;
             }
-            item = m_backend.GetItem(m_agentId, route.Id) ?? item;
-        }
 
-        // S9: an edit to a WORN wearable is the one appearance change nothing else tells the region about. The
-        // worn set does not move (the viewer keeps the item id), so no AgentIsNowWearing follows, and the
-        // UpdateAvatarAppearance POST is deferred behind pending uploads and can arrive stale. This PATCH is the
-        // moment the new asset exists and is known, so it is where the save is queued.
-        if (item.AssetID != assetBefore && item.AssetID.IsNotZero())
-            m_backend.OnItemAssetChanged(m_agentId, route.Id, item.AssetID);
+            if (applied.Transaction.IsNotZero())
+            {
+                // Unknown transaction ids are not an error here: the module opens a pending uploader for one and the
+                // asset lands when the xfer does, exactly as it does for the legacy route (AgentAssetsTransactions.cs:68-90).
+                // A19: a refused transaction is a FAILED save and must be answered as one. Before this, the verdict
+                // was discarded and the cap answered 200 with the item's old asset id in the envelope, so the viewer
+                // recorded a save that had not happened - observed 2026-09-06 09:52:55, a wearable referencing a
+                // library texture refused by the uploader and reported as "UpdateItem -> 200".
+                //
+                // 403 rather than 500: the refusal is always a permission verdict on the referenced assets
+                // (AssetXferUploader.ValidateAssets), and the viewer treats a non-2xx as an error without special
+                // handling for this command (llaisapi.cpp:880-948). The error body carries no
+                // _updated_category_versions, so the folder version the viewer holds does NOT advance and its next
+                // fetch of that folder still sees the true state.
+                if (m_backend.ApplyAssetTransaction(m_agentId, applied.Transaction, item) == AisAssetTransaction.Refused)
+                {
+                    WriteError(response, HttpStatusCode.Forbidden,
+                        $"the asset uploaded by transaction {applied.Transaction} was refused for item {route.Id}; the item still points at its previous asset", route);
+                    return;
+                }
+                item = m_backend.GetItem(m_agentId, route.Id) ?? item;
+            }
 
-        var envelope = AisEnvelope.Item(item, m_agentId);
-        AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, item.Folder));
-        Write(response, envelope, route);
+            // S9: an edit to a WORN wearable is the one appearance change nothing else tells the region about. The
+            // worn set does not move (the viewer keeps the item id), so no AgentIsNowWearing follows, and the
+            // UpdateAvatarAppearance POST is deferred behind pending uploads and can arrive stale. This PATCH is the
+            // moment the new asset exists and is known, so it is where the save is queued.
+            if (item.AssetID != assetBefore && item.AssetID.IsNotZero())
+                m_backend.OnItemAssetChanged(m_agentId, route.Id, item.AssetID);
+
+            var envelope = AisEnvelope.Item(item, m_agentId);
+            AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, item.Folder));
+            Write(response, envelope, route);
+        });
     }
 
     /// <summary>
@@ -486,21 +536,25 @@ public sealed class AisHandler : SimpleStreamHandler
     /// </summary>
     private void UpdateCategory(AisRoute route, OSDMap body, IOSHttpResponse response)
     {
-        var folder = m_backend.GetFolder(m_agentId, route.Id);
-        if (folder is null) { WriteError(response, HttpStatusCode.NotFound, $"no category {route.Id}", route); return; }
-
-        var applied = AisMutation.ApplyToFolder(body, folder);
-        if (applied.Any && !m_backend.UpdateFolder(folder))
+        // AIS-SEC-3: key on route.Id - the folder itself.
+        WithFolderLock(route.Id, route, response, () =>
         {
-            WriteError(response, HttpStatusCode.InternalServerError, $"the inventory service refused the update of category {route.Id}", route);
-            return;
-        }
+            var folder = m_backend.GetFolder(m_agentId, route.Id);
+            if (folder is null) { WriteError(response, HttpStatusCode.NotFound, $"no category {route.Id}", route); return; }
 
-        var fresh = m_backend.GetFolder(m_agentId, route.Id) ?? folder;
-        var envelope = AisEnvelope.Category(fresh, m_agentId);
-        AisMutation.ReportVersion(envelope, fresh);
-        AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, fresh.ParentID));
-        Write(response, envelope, route);
+            var applied = AisMutation.ApplyToFolder(body, folder);
+            if (applied.Any && !m_backend.UpdateFolder(folder))
+            {
+                WriteError(response, HttpStatusCode.InternalServerError, $"the inventory service refused the update of category {route.Id}", route);
+                return;
+            }
+
+            var fresh = m_backend.GetFolder(m_agentId, route.Id) ?? folder;
+            var envelope = AisEnvelope.Category(fresh, m_agentId);
+            AisMutation.ReportVersion(envelope, fresh);
+            AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, fresh.ParentID));
+            Write(response, envelope, route);
+        });
     }
 
     /// <summary>
@@ -513,17 +567,21 @@ public sealed class AisHandler : SimpleStreamHandler
         var item = m_backend.GetItem(m_agentId, route.Id);
         if (item is null) { WriteError(response, HttpStatusCode.NotFound, $"no item {route.Id}", route); return; }
         var parentId = item.Folder;
-
-        if (!m_backend.DeleteItems(m_agentId, new[] { route.Id }))
+        // AIS-SEC-3: key on parentId - the item's parent: its child list changes.
+        WithFolderLock(parentId, route, response, () =>
         {
-            WriteError(response, HttpStatusCode.InternalServerError, $"the inventory service refused the delete of item {route.Id}", route);
-            return;
-        }
 
-        var envelope = new OSDMap();
-        AisMutation.ReportRemoved(envelope, AisMutation.RemovedItems, route.Id);
-        AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, parentId));
-        Write(response, envelope, route);
+            if (!m_backend.DeleteItems(m_agentId, new[] { route.Id }))
+            {
+                WriteError(response, HttpStatusCode.InternalServerError, $"the inventory service refused the delete of item {route.Id}", route);
+                return;
+            }
+
+            var envelope = new OSDMap();
+            AisMutation.ReportRemoved(envelope, AisMutation.RemovedItems, route.Id);
+            AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, parentId));
+            Write(response, envelope, route);
+        });
     }
 
     /// <summary>
@@ -566,47 +624,54 @@ public sealed class AisHandler : SimpleStreamHandler
         }
 
         // ",depth=0" on the tid means this folder only (llaisapi.cpp:275-278)
-        var copySubfolders = route.Depth != 0;
-
-        var outcome = AisCopy.Run(m_backend, m_destination, m_agentId, m_destinationAgentId,
-            route.Id, destinationId, copySubfolders);
-
-        var envelope = new OSDMap();
-        var categoryIds = new OSDArray();
-        var itemIds = new OSDArray();
-        var embeddedCategories = new OSDMap();
-        var embeddedItems = new OSDMap();
-        foreach (var folder in outcome.Categories)
+        // AIS-SEC-3: COPY writes into the DESTINATION folder as the DESTINATION agent, not as this cap's
+        // owner (which is the library). So the key is (m_destinationAgentId, destinationId) - keying it on
+        // the library owner would order library copies against each other and not against the resident's
+        // own slams into the same folder, which is the pairing that actually races.
+        WithFolderLock(m_destinationAgentId, destinationId, route, response, () =>
         {
-            categoryIds.Add(OSD.FromUUID(folder.ID));
-            embeddedCategories[folder.ID.ToString()] = AisEnvelope.Category(folder, m_destinationAgentId,
-                AisEnvelope.EmbeddedMap(new OSDMap(), new OSDMap(), new OSDMap()));
-        }
-        foreach (var item in outcome.Items)
-        {
-            itemIds.Add(OSD.FromUUID(item.ID));
-            embeddedItems[item.ID.ToString()] = AisEnvelope.Item(item, m_destinationAgentId);
-        }
+            var copySubfolders = route.Depth != 0;
 
-        if (!outcome.Ok)
-        {
-            // additive, so a partial copy leaves what it made and risks nothing that existed before
-            WriteError(response, HttpStatusCode.InternalServerError,
-                $"{outcome.Failure}; {categoryIds.Count} categories and {itemIds.Count} items were created before the failure", route);
-            return;
-        }
+            var outcome = AisCopy.Run(m_backend, m_destination, m_agentId, m_destinationAgentId,
+                route.Id, destinationId, copySubfolders);
 
-        if (categoryIds.Count > 0) envelope[AisMutation.CreatedCategories] = categoryIds;
-        if (itemIds.Count > 0) envelope[AisMutation.CreatedItems] = itemIds;
-        if (embeddedCategories.Count > 0 || embeddedItems.Count > 0)
-        {
-            var embedded = new OSDMap();
-            if (embeddedCategories.Count > 0) embedded[AisEnvelope.Categories] = embeddedCategories;
-            if (embeddedItems.Count > 0) embedded[AisEnvelope.Items] = embeddedItems;
-            envelope[AisEnvelope.Embedded] = embedded;
-        }
-        AisMutation.ReportVersion(envelope, m_destination.GetFolder(m_destinationAgentId, destinationId));
-        Write(response, envelope, route);
+            var envelope = new OSDMap();
+            var categoryIds = new OSDArray();
+            var itemIds = new OSDArray();
+            var embeddedCategories = new OSDMap();
+            var embeddedItems = new OSDMap();
+            foreach (var folder in outcome.Categories)
+            {
+                categoryIds.Add(OSD.FromUUID(folder.ID));
+                embeddedCategories[folder.ID.ToString()] = AisEnvelope.Category(folder, m_destinationAgentId,
+                    AisEnvelope.EmbeddedMap(new OSDMap(), new OSDMap(), new OSDMap()));
+            }
+            foreach (var item in outcome.Items)
+            {
+                itemIds.Add(OSD.FromUUID(item.ID));
+                embeddedItems[item.ID.ToString()] = AisEnvelope.Item(item, m_destinationAgentId);
+            }
+
+            if (!outcome.Ok)
+            {
+                // additive, so a partial copy leaves what it made and risks nothing that existed before
+                WriteError(response, HttpStatusCode.InternalServerError,
+                    $"{outcome.Failure}; {categoryIds.Count} categories and {itemIds.Count} items were created before the failure", route);
+                return;
+            }
+
+            if (categoryIds.Count > 0) envelope[AisMutation.CreatedCategories] = categoryIds;
+            if (itemIds.Count > 0) envelope[AisMutation.CreatedItems] = itemIds;
+            if (embeddedCategories.Count > 0 || embeddedItems.Count > 0)
+            {
+                var embedded = new OSDMap();
+                if (embeddedCategories.Count > 0) embedded[AisEnvelope.Categories] = embeddedCategories;
+                if (embeddedItems.Count > 0) embedded[AisEnvelope.Items] = embeddedItems;
+                envelope[AisEnvelope.Embedded] = embedded;
+            }
+            AisMutation.ReportVersion(envelope, m_destination.GetFolder(m_destinationAgentId, destinationId));
+            Write(response, envelope, route);
+        });
     }
     /// <summary>
     /// DELETE /category/{id}/children — empty the folder, keeping the folder (<see cref="AisPurge"/>, which
@@ -628,22 +693,26 @@ public sealed class AisHandler : SimpleStreamHandler
         var folder = m_backend.GetFolder(m_agentId, folderId);
         if (folder is null) { WriteError(response, HttpStatusCode.NotFound, $"no category {folderId}", route); return; }
 
-        var outcome = AisPurge.Run(m_backend, m_agentId, folder);
-
-        var envelope = new OSDMap();
-        foreach (var id in outcome.RemovedCategories) AisMutation.ReportRemoved(envelope, AisMutation.CategoriesRemoved, id);
-        foreach (var id in outcome.RemovedItems) AisMutation.ReportRemoved(envelope, AisMutation.RemovedItems, id);
-        AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, folderId));
-
-        if (!outcome.Ok)
+        // AIS-SEC-3: key on folderId - snapshot -> delete, the other side of the same race.
+        WithFolderLock(folderId, route, response, () =>
         {
-            // Partly purged. A purge cannot be rolled back, so the honest answer is to say which children
-            // survived; re-issuing the purge finishes the job (see AisPurge.Run).
-            WriteError(response, HttpStatusCode.InternalServerError,
-                $"category {folderId} was only partly purged; these children remain: {string.Join(", ", outcome.Survivors)}", route);
-            return;
-        }
-        Write(response, envelope, route);
+            var outcome = AisPurge.Run(m_backend, m_agentId, folder);
+
+            var envelope = new OSDMap();
+            foreach (var id in outcome.RemovedCategories) AisMutation.ReportRemoved(envelope, AisMutation.CategoriesRemoved, id);
+            foreach (var id in outcome.RemovedItems) AisMutation.ReportRemoved(envelope, AisMutation.RemovedItems, id);
+            AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, folderId));
+
+            if (!outcome.Ok)
+            {
+                // Partly purged. A purge cannot be rolled back, so the honest answer is to say which children
+                // survived; re-issuing the purge finishes the job (see AisPurge.Run).
+                WriteError(response, HttpStatusCode.InternalServerError,
+                    $"category {folderId} was only partly purged; these children remain: {string.Join(", ", outcome.Survivors)}", route);
+                return;
+            }
+            Write(response, envelope, route);
+        });
     }
     /// <summary>
     /// POST /category/{parentId}?tid= — create categories, items and links in that folder.
@@ -678,100 +747,104 @@ public sealed class AisHandler : SimpleStreamHandler
     ///    /// </summary>
     private void CreateInventory(AisRoute route, OSDMap body, IOSHttpResponse response)
     {
-        var parent = m_backend.GetFolder(m_agentId, route.Id);
-        if (parent is null) { WriteError(response, HttpStatusCode.NotFound, $"no category {route.Id}", route); return; }
-
-        // Refused before anything is written, so a mixed body does not half-succeed. See the remarks above:
-        // the viewer's own items builder is compiled out and expects the server to create the asset.
-        if (body["items"] is OSDArray requested && requested.Count > 0)
+        // AIS-SEC-3: key on route.Id - the addressed folder, and it is the only one written: AIS-SEC-2 refuses a body parent_id that disagrees (400).
+        WithFolderLock(route.Id, route, response, () =>
         {
-            WriteError(response, HttpStatusCode.NotImplemented,
-                "creating inventory items through AIS is not implemented: the body carries a null asset_id for the server to fill, and this region does not create assets. The viewer's own path is disabled (USE_AIS_FOR_NC).", route);
-            return;
-        }
+            var parent = m_backend.GetFolder(m_agentId, route.Id);
+            if (parent is null) { WriteError(response, HttpStatusCode.NotFound, $"no category {route.Id}", route); return; }
 
-        // AIS-SEC-1. asAISCreateCatLLSD repeats the parent in the body (llinventory.cpp:1256-1276) and
-        // link_inventory_array sends none at all (llviewerinventory.cpp:1352-1370), so a body parent that
-        // disagrees with the URL is not something a viewer sends. The URL is the authority
-        // (AISAPI::CreateInventory builds {inv}/category/{parentId}, llaisapi.cpp:115) and the disagreement is
-        // refused rather than resolved: honouring the body would let a create addressed to a folder the caller
-        // owns plant objects in a folder they do not. The backend's own parent check would refuse the write in
-        // any case; this makes the refusal say why, and says it before anything is written, so a mixed body
-        // cannot half-succeed.
-        foreach (var key in new[] { "categories", "links" })
-        {
-            if (body[key] is not OSDArray entries) continue;
-            foreach (var entry in entries)
+            // Refused before anything is written, so a mixed body does not half-succeed. See the remarks above:
+            // the viewer's own items builder is compiled out and expects the server to create the asset.
+            if (body["items"] is OSDArray requested && requested.Count > 0)
             {
-                if (entry is not OSDMap m || !m.ContainsKey("parent_id")) continue;
-                var named = m["parent_id"].AsUUID();
-                if (named.IsZero() || named.Equals(route.Id)) continue;
-                WriteError(response, HttpStatusCode.BadRequest,
-                    $"the body names parent_id {named} but the request addressed category {route.Id}; the URL is the authority", route);
+                WriteError(response, HttpStatusCode.NotImplemented,
+                    "creating inventory items through AIS is not implemented: the body carries a null asset_id for the server to fill, and this region does not create assets. The viewer's own path is disabled (USE_AIS_FOR_NC).", route);
                 return;
             }
-        }
 
-        var createdCategories = new OSDMap();
-        var createdItems = new OSDMap();
-        var createdLinks = new OSDMap();
-        var categoryIds = new OSDArray();
-        var itemIds = new OSDArray();
-
-        if (body["categories"] is OSDArray categories)
-        {
-            foreach (var entry in categories)
+            // AIS-SEC-1. asAISCreateCatLLSD repeats the parent in the body (llinventory.cpp:1256-1276) and
+            // link_inventory_array sends none at all (llviewerinventory.cpp:1352-1370), so a body parent that
+            // disagrees with the URL is not something a viewer sends. The URL is the authority
+            // (AISAPI::CreateInventory builds {inv}/category/{parentId}, llaisapi.cpp:115) and the disagreement is
+            // refused rather than resolved: honouring the body would let a create addressed to a folder the caller
+            // owns plant objects in a folder they do not. The backend's own parent check would refuse the write in
+            // any case; this makes the refusal say why, and says it before anything is written, so a mixed body
+            // cannot half-succeed.
+            foreach (var key in new[] { "categories", "links" })
             {
-                if (entry is not OSDMap m) continue;
-                // asAISCreateCatLLSD sends parent_id alongside the URL parent; honour it when it names a real
-                // folder, and fall back to the folder the POST addressed, as an item create does.
-                var bodyParent = m["parent_id"].AsUUID();
-                var folder = new InventoryFolderBase(UUID.Random(), m["name"].AsString() ?? "", m_agentId,
-                    (short)(m.ContainsKey("type_default") ? m["type_default"].AsInteger()
-                        : m.ContainsKey("type") ? m["type"].AsInteger() : -1),
-                    bodyParent.IsZero() ? route.Id : bodyParent, 1);
-                if (!m_backend.AddFolder(folder))
+                if (body[key] is not OSDArray entries) continue;
+                foreach (var entry in entries)
                 {
-                    WriteError(response, HttpStatusCode.InternalServerError, $"could not create the category {folder.Name}", route);
+                    if (entry is not OSDMap m || !m.ContainsKey("parent_id")) continue;
+                    var named = m["parent_id"].AsUUID();
+                    if (named.IsZero() || named.Equals(route.Id)) continue;
+                    WriteError(response, HttpStatusCode.BadRequest,
+                        $"the body names parent_id {named} but the request addressed category {route.Id}; the URL is the authority", route);
                     return;
                 }
-                categoryIds.Add(OSD.FromUUID(folder.ID));
-                createdCategories[folder.ID.ToString()] = AisEnvelope.Category(folder, m_agentId,
-                    AisEnvelope.EmbeddedMap(new OSDMap(), new OSDMap(), new OSDMap()));
             }
-        }
 
-        foreach (var (key, isLink) in new[] { ("links", true) })
-        {
-            if (body[key] is not OSDArray array) continue;
-            foreach (var entry in array)
+            var createdCategories = new OSDMap();
+            var createdItems = new OSDMap();
+            var createdLinks = new OSDMap();
+            var categoryIds = new OSDArray();
+            var itemIds = new OSDArray();
+
+            if (body["categories"] is OSDArray categories)
             {
-                if (entry is not OSDMap m) continue;
-                var row = NewItem(m, isLink, route.Id);
-                if (!m_backend.AddItem(row))
+                foreach (var entry in categories)
                 {
-                    WriteError(response, HttpStatusCode.InternalServerError, $"could not create {(isLink ? "the link" : "the item")} {row.Name}", route);
-                    return;
+                    if (entry is not OSDMap m) continue;
+                    // asAISCreateCatLLSD sends parent_id alongside the URL parent; honour it when it names a real
+                    // folder, and fall back to the folder the POST addressed, as an item create does.
+                    var bodyParent = m["parent_id"].AsUUID();
+                    var folder = new InventoryFolderBase(UUID.Random(), m["name"].AsString() ?? "", m_agentId,
+                        (short)(m.ContainsKey("type_default") ? m["type_default"].AsInteger()
+                            : m.ContainsKey("type") ? m["type"].AsInteger() : -1),
+                        bodyParent.IsZero() ? route.Id : bodyParent, 1);
+                    if (!m_backend.AddFolder(folder))
+                    {
+                        WriteError(response, HttpStatusCode.InternalServerError, $"could not create the category {folder.Name}", route);
+                        return;
+                    }
+                    categoryIds.Add(OSD.FromUUID(folder.ID));
+                    createdCategories[folder.ID.ToString()] = AisEnvelope.Category(folder, m_agentId,
+                        AisEnvelope.EmbeddedMap(new OSDMap(), new OSDMap(), new OSDMap()));
                 }
-                itemIds.Add(OSD.FromUUID(row.ID));
-                if (AisEnvelope.IsLink(row)) createdLinks[row.ID.ToString()] = AisEnvelope.Link(row, m_agentId);
-                else createdItems[row.ID.ToString()] = AisEnvelope.Item(row, m_agentId);
             }
-        }
 
-        var envelope = new OSDMap();
-        if (categoryIds.Count > 0) envelope[AisMutation.CreatedCategories] = categoryIds;
-        if (itemIds.Count > 0) envelope[AisMutation.CreatedItems] = itemIds;
-        if (createdCategories.Count > 0 || createdItems.Count > 0 || createdLinks.Count > 0)
-        {
-            var embedded = new OSDMap();
-            if (createdCategories.Count > 0) embedded[AisEnvelope.Categories] = createdCategories;
-            if (createdItems.Count > 0) embedded[AisEnvelope.Items] = createdItems;
-            if (createdLinks.Count > 0) embedded[AisEnvelope.Links] = createdLinks;
-            envelope[AisEnvelope.Embedded] = embedded;
-        }
-        AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, route.Id));
-        Write(response, envelope, route);
+            foreach (var (key, isLink) in new[] { ("links", true) })
+            {
+                if (body[key] is not OSDArray array) continue;
+                foreach (var entry in array)
+                {
+                    if (entry is not OSDMap m) continue;
+                    var row = NewItem(m, isLink, route.Id);
+                    if (!m_backend.AddItem(row))
+                    {
+                        WriteError(response, HttpStatusCode.InternalServerError, $"could not create {(isLink ? "the link" : "the item")} {row.Name}", route);
+                        return;
+                    }
+                    itemIds.Add(OSD.FromUUID(row.ID));
+                    if (AisEnvelope.IsLink(row)) createdLinks[row.ID.ToString()] = AisEnvelope.Link(row, m_agentId);
+                    else createdItems[row.ID.ToString()] = AisEnvelope.Item(row, m_agentId);
+                }
+            }
+
+            var envelope = new OSDMap();
+            if (categoryIds.Count > 0) envelope[AisMutation.CreatedCategories] = categoryIds;
+            if (itemIds.Count > 0) envelope[AisMutation.CreatedItems] = itemIds;
+            if (createdCategories.Count > 0 || createdItems.Count > 0 || createdLinks.Count > 0)
+            {
+                var embedded = new OSDMap();
+                if (createdCategories.Count > 0) embedded[AisEnvelope.Categories] = createdCategories;
+                if (createdItems.Count > 0) embedded[AisEnvelope.Items] = createdItems;
+                if (createdLinks.Count > 0) embedded[AisEnvelope.Links] = createdLinks;
+                envelope[AisEnvelope.Embedded] = embedded;
+            }
+            AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, route.Id));
+            Write(response, envelope, route);
+        });
     }
 
     /// <summary>An item or link row from a create body. Unknown keys are ignored, as they are for a PATCH.</summary>
@@ -828,43 +901,47 @@ public sealed class AisHandler : SimpleStreamHandler
             folderId = cof.ID;
         }
 
-        var contents = AisInventory.GetContents(m_backend, m_agentId, folderId);
-        if (contents is null) { WriteError(response, HttpStatusCode.NotFound, $"no category {folderId}", route); return; }
+        // AIS-SEC-3: key on folderId - the whole snapshot -> create -> delete window, which is the AIS-SEC-3 defect itself.
+        WithFolderLock(folderId, route, response, () =>
+        {
+            var contents = AisInventory.GetContents(m_backend, m_agentId, folderId);
+            if (contents is null) { WriteError(response, HttpStatusCode.NotFound, $"no category {folderId}", route); return; }
 
-        var wanted = AisSlam.ParseBody(rawBody);
-        if (wanted is null)
-        {
-            WriteError(response, HttpStatusCode.BadRequest,
-                "a slam body must be an LLSD array of link maps (name, desc, linked_id, type)", route);
-            return;
-        }
+            var wanted = AisSlam.ParseBody(rawBody);
+            if (wanted is null)
+            {
+                WriteError(response, HttpStatusCode.BadRequest,
+                    "a slam body must be an LLSD array of link maps (name, desc, linked_id, type)", route);
+                return;
+            }
 
-        var outcome = AisSlam.Run(m_backend, m_agentId, folderId, contents.Links, wanted);
-        if (!outcome.Ok)
-        {
-            var detail = outcome.CompensationFailed
-                ? $"{outcome.Failure}; the rollback also failed and these links remain: {string.Join(", ", outcome.Leftover)}"
-                : outcome.Failure;
-            WriteError(response, HttpStatusCode.InternalServerError, detail, route);
-            return;
-        }
+            var outcome = AisSlam.Run(m_backend, m_agentId, folderId, contents.Links, wanted);
+            if (!outcome.Ok)
+            {
+                var detail = outcome.CompensationFailed
+                    ? $"{outcome.Failure}; the rollback also failed and these links remain: {string.Join(", ", outcome.Leftover)}"
+                    : outcome.Failure;
+                WriteError(response, HttpStatusCode.InternalServerError, detail, route);
+                return;
+            }
 
-        var envelope = new OSDMap();
-        var createdIds = new OSDArray();
-        var links = new OSDMap();
-        foreach (var link in outcome.Created)
-        {
-            createdIds.Add(OSD.FromUUID(link.ID));
-            links[link.ID.ToString()] = AisEnvelope.Link(link, m_agentId);
-        }
-        if (createdIds.Count > 0)
-        {
-            envelope[AisMutation.CreatedItems] = createdIds;
-            envelope[AisEnvelope.Embedded] = new OSDMap { [AisEnvelope.Links] = links };
-        }
-        foreach (var removed in outcome.Removed) AisMutation.ReportRemoved(envelope, AisMutation.RemovedItems, removed);
-        AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, folderId));
-        Write(response, envelope, route);
+            var envelope = new OSDMap();
+            var createdIds = new OSDArray();
+            var links = new OSDMap();
+            foreach (var link in outcome.Created)
+            {
+                createdIds.Add(OSD.FromUUID(link.ID));
+                links[link.ID.ToString()] = AisEnvelope.Link(link, m_agentId);
+            }
+            if (createdIds.Count > 0)
+            {
+                envelope[AisMutation.CreatedItems] = createdIds;
+                envelope[AisEnvelope.Embedded] = new OSDMap { [AisEnvelope.Links] = links };
+            }
+            foreach (var removed in outcome.Removed) AisMutation.ReportRemoved(envelope, AisMutation.RemovedItems, removed);
+            AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, folderId));
+            Write(response, envelope, route);
+        });
     }
     /// <summary>
     /// DELETE /category/{id}. Only the folder id goes in <c>_categories_removed</c>: the viewer purges the
@@ -891,26 +968,30 @@ public sealed class AisHandler : SimpleStreamHandler
         var folder = m_backend.GetFolder(m_agentId, route.Id);
         if (folder is null) { WriteError(response, HttpStatusCode.NotFound, $"no category {route.Id}", route); return; }
         var parentId = folder.ParentID;
-
-        if (IsProtected(folder))
+        // AIS-SEC-3: key on parentId - the PARENT's child list is what changes, so the parent is the key - two deletes of siblings must order.
+        WithFolderLock(parentId, route, response, () =>
         {
-            WriteError(response, HttpStatusCode.Forbidden,
-                $"category {route.Id} is a protected system folder and cannot be deleted", route);
-            return;
-        }
 
-        m_backend.DeleteFolders(m_agentId, new[] { route.Id }, onlyIfTrash: false);
-        if (m_backend.GetFolder(m_agentId, route.Id) is not null)
-        {
-            WriteError(response, HttpStatusCode.InternalServerError,
-                $"the inventory service did not delete category {route.Id}", route);
-            return;
-        }
+            if (IsProtected(folder))
+            {
+                WriteError(response, HttpStatusCode.Forbidden,
+                    $"category {route.Id} is a protected system folder and cannot be deleted", route);
+                return;
+            }
 
-        var envelope = new OSDMap();
-        AisMutation.ReportRemoved(envelope, AisMutation.CategoriesRemoved, route.Id);
-        AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, parentId));
-        Write(response, envelope, route);
+            m_backend.DeleteFolders(m_agentId, new[] { route.Id }, onlyIfTrash: false);
+            if (m_backend.GetFolder(m_agentId, route.Id) is not null)
+            {
+                WriteError(response, HttpStatusCode.InternalServerError,
+                    $"the inventory service did not delete category {route.Id}", route);
+                return;
+            }
+
+            var envelope = new OSDMap();
+            AisMutation.ReportRemoved(envelope, AisMutation.CategoriesRemoved, route.Id);
+            AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, parentId));
+            Write(response, envelope, route);
+        });
     }
 
     /// <summary>
