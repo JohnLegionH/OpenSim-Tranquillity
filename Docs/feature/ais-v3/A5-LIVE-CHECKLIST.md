@@ -399,6 +399,32 @@ WHERE f.type=0 AND f.parentFolderID=r.folderID AND f.agentID='<agent>';
 nothing. A line there means a root-level duplicate has come back, which after this session should be
 impossible on a single Robust.
 
+### 22. Two slams at once on Truly's COF: one outfit wins, never both
+
+**Do:** as **Truly**, run `two-slam-race.sh` from the AIS-SEC-3 handoff
+(`D:\legiongrid\_ops\handoffs\HANDOFF-AIS-SEC-3-20260912.md`). Fill in only the **cap path** and the **two
+link sets**; the script targets `category/current/links`, so the COF id is resolved server-side and is not a
+placeholder. It fires both `PUT`s concurrently and prints both status codes.
+
+**Expected:**
+
+- the two status codes are **both 200**, or **one 200 and one 503** (with `Retry-After: 2`). A 503 is a pass,
+  not a failure - it means the second slam waited 15 s for the folder and declined to proceed unserialised.
+- `GET <cap>/category/current/links` afterwards returns **exactly one of the two sets** - never the union,
+  and never a mixture.
+- the region log shows two `SlamFolder ->` lines whose statuses match the two above. If one is 503, it is
+  preceded by a `WARN [AIS]: SlamFolder on folder <cof> for agent <truly> waited 15s for the folder lock`.
+
+**Then confirm the ordinary path still works:** a viewer **Replace Outfit** between two saved outfits, twice.
+Both must apply, with `SlamFolder -> 200` each time and SSB following. A lock that serialises correctly and a
+lock that deadlocks look identical until you try the normal case.
+
+**Why this step exists.** AIS-SEC-3 (ledger row A23). A slam snapshots a folder's links, creates the wanted
+set, then deletes the snapshot; nothing ordered two of them. Two slams that both snapshotted the old links,
+both created their own set and both deleted only what they saw left the folder holding the **union of two
+outfits** - reproduced deterministically in `AisConcurrencyHttpTests`. Before
+`1.1.367-alpha+24fedc52b9` the script above would leave Truly wearing both sets at once.
+
 ---
 
 ## The Robust question — RESOLVED, and it was never about step 7
