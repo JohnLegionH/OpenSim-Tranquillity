@@ -46,7 +46,28 @@ public sealed record SlamOutcome(
 /// </summary>
 public static class AisSlam
 {
-    /// <summary>Parses a slam body. Returns null when it is not a shape we recognise.</summary>
+    /// <summary>
+    /// Parses a slam body. Returns null when it is not a shape we recognise, and the caller answers 400.
+    ///
+    /// <para><b>AIS-SEC-2: the guarantee is that a body which fails validation produces zero inventory writes.</b>
+    /// Validation completes before <see cref="Run"/> is entered, so a rejected body never reaches an
+    /// <c>AddItem</c> or a <c>DeleteItems</c> at all. It is not a write that failed; it is a write not attempted.</para>
+    ///
+    /// <para><b>An empty MAP is not an empty slam.</b> That branch used to exist and it is what made the defect
+    /// reachable: <c>AisHandler</c> produced an empty <c>OSDMap</c> both for a body it could not parse and for no
+    /// body at all, so a truncated <c>PUT</c> — a dropped connection is enough — was read as "replace every link
+    /// with none" and emptied the wearer's Current Outfit. The viewer sends a bare LLSD <b>array</b> and never
+    /// <c>{}</c> (spec A-Q3, <c>llappearancemgr.cpp:2209-2245</c>, <c>:1795-1833</c>), so <c>{}</c> can only be a
+    /// client we do not know or a body that arrived damaged, and under replacement semantics the safe reading of
+    /// both is "refuse". An empty <b>array</b> stays an intentional empty slam: that is how the viewer takes off
+    /// the last garment.</para>
+    ///
+    /// <para><b>All-or-nothing.</b> One bad entry rejects the whole body rather than being skipped. Skipping was
+    /// the old behaviour and it is the same outfit loss by a quieter route — a slam replaces, so dropping an entry
+    /// the viewer meant to keep deletes the link it was asking to preserve. A link must carry a non-zero
+    /// <c>linked_id</c> and a type of <c>AT_LINK</c> or <c>AT_LINK_FOLDER</c>, the only two either builder emits;
+    /// anything else would be stored as a link row no fetch route knows how to present.</para>
+    /// </summary>
     public static IReadOnlyList<SlamLink> ParseBody(OSD body)
     {
         var array = body as OSDArray;
@@ -54,19 +75,25 @@ public static class AisSlam
         {
             if (map["links"] is OSDArray fromLinks) array = fromLinks;
             else if (map["contents"] is OSDArray fromContents) array = fromContents;
-            else if (map.Count == 0) array = new OSDArray();     // an empty map is an empty slam
         }
         if (array is null) return null;
 
         var links = new List<SlamLink>(array.Count);
         foreach (var entry in array)
         {
-            if (entry is not OSDMap m) continue;
+            if (entry is not OSDMap m) return null;
+
             var type = m.ContainsKey("type") ? m["type"].AsInteger() : (int)OpenMetaverse.AssetType.Link;
+            if (type != (int)OpenMetaverse.AssetType.Link && type != (int)OpenMetaverse.AssetType.LinkFolder)
+                return null;
+
+            var linkedId = m["linked_id"].AsUUID();
+            if (linkedId.IsZero()) return null;
+
             links.Add(new SlamLink(
                 m["name"].AsString() ?? "",
                 m["desc"].AsString() ?? "",
-                m["linked_id"].AsUUID(),
+                linkedId,
                 type));
         }
         return links;

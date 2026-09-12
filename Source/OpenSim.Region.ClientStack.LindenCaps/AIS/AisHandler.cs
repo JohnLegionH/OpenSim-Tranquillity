@@ -85,7 +85,48 @@ public sealed class AisHandler : SimpleStreamHandler
     /// <summary>Dispatch a parsed route. Public so the HTTP-level tests can drive it without a scene.</summary>
     public void Dispatch(AisRoute route, IOSHttpRequest httpRequest, IOSHttpResponse httpResponse)
     {
-        var raw = ReadBodyOsd(httpRequest);
+        var read = ReadBody(httpRequest);
+
+        // AIS-SEC-2. A mutating route never runs on a body we could not read. The fetch routes are untouched:
+        // they ignore the body entirely, and refusing one over a body nobody looks at would break clients that
+        // send a stray one. Checked here, before the switch, so no handler can see a body it should not.
+        //
+        // The library cap is the exception, and the ordering matters: there every mutation but COPY is refused
+        // 405 because the cap is read-only, and that answer is true whatever the body says. Letting the body
+        // gate run first would turn "this cap does not do mutations" into "your body was malformed", which is
+        // both less informative and wrong about the reason. COPY keeps the gate - it is a genuine library
+        // operation, so its body is worth bounding.
+        var refusedAsReadOnly = m_mode == AisMode.Library && route.Operation != AisOperation.CopyCategory;
+        if (AisOperations.IsMutation(route.Operation) && !refusedAsReadOnly)
+        {
+            switch (read.Status)
+            {
+                case AisBodyStatus.TooLarge:
+                    m_log.LogWarning("[AIS]: {Operation} on {Path} from agent {Agent} sent a body over the {Limit} byte limit ({Bytes} bytes and still coming); refused unread",
+                        route.Operation, route.Path, m_agentId, MaxBodyBytes, read.Bytes);
+                    WriteError(httpResponse, HttpStatusCode.RequestEntityTooLarge,
+                        $"the request body exceeds the {MaxBodyBytes} byte limit", route);
+                    return;
+
+                case AisBodyStatus.ParseFailure:
+                    // Byte count only, never the body: it is attacker-controlled and may carry anything.
+                    m_log.LogWarning("[AIS]: {Operation} on {Path} from agent {Agent} sent a body that is not LLSD ({Bytes} bytes); refused without writing",
+                        route.Operation, route.Path, m_agentId, read.Bytes);
+                    WriteError(httpResponse, HttpStatusCode.BadRequest, "malformed LLSD body", route);
+                    return;
+
+                // A slam REPLACES a folder's links, so an absent body cannot be read as "replace them with
+                // nothing" - that is the defect this session closed. The other mutating routes keep today's
+                // empty-map behaviour deliberately: their semantics are not in scope here.
+                case AisBodyStatus.NoBody when route.Operation == AisOperation.SlamFolder:
+                    m_log.LogWarning("[AIS]: SlamFolder on {Path} from agent {Agent} arrived with no body; refused rather than read as an empty slam",
+                        route.Path, m_agentId);
+                    WriteError(httpResponse, HttpStatusCode.BadRequest, "missing body", route);
+                    return;
+            }
+        }
+
+        var raw = read.Value ?? new OSDMap();
         var body = raw as OSDMap ?? new OSDMap();
         try
         {
@@ -297,22 +338,77 @@ public sealed class AisHandler : SimpleStreamHandler
     // ------------------------------------------------------------------ the mutation routes (A2)
 
     /// <summary>
+    /// The largest AIS request body this handler will read. A real slam is a few kilobytes — the viewer sends one
+    /// link map per worn item — so a megabyte is far above anything legitimate and still small enough that
+    /// refusing it costs nothing. Public so the tests assert against the same number the handler enforces.
+    /// </summary>
+    public const int MaxBodyBytes = 1024 * 1024;
+
+    /// <summary>What became of the request body. Four states, because three of them must not reach a handler.</summary>
+    private enum AisBodyStatus
+    {
+        /// <summary>The request carried no body at all.</summary>
+        NoBody,
+        /// <summary>The body parsed as LLSD.</summary>
+        Parsed,
+        /// <summary>There was a body and it is not LLSD.</summary>
+        ParseFailure,
+        /// <summary>The body exceeded <see cref="MaxBodyBytes"/> and was not read to the end.</summary>
+        TooLarge,
+    }
+
+    private readonly record struct AisBody(AisBodyStatus Status, OSD Value, long Bytes)
+    {
+        public static AisBody None() => new(AisBodyStatus.NoBody, null, 0);
+        public static AisBody Ok(OSD value, long bytes) => new(AisBodyStatus.Parsed, value, bytes);
+        public static AisBody Failure(long bytes) => new(AisBodyStatus.ParseFailure, null, bytes);
+        public static AisBody Oversize(long bytes) => new(AisBodyStatus.TooLarge, null, bytes);
+    }
+
+    /// <summary>
     /// The request body as LLSD, whatever its top-level type. A slam body is a bare **array**
     /// (<c>llappearancemgr.cpp:2209-2245</c>, <c>:1795-1833</c>), so it cannot be forced to a map here.
+    ///
+    /// <para><b>AIS-SEC-2: the guarantee is that a body which fails validation produces zero inventory writes.</b>
+    /// This used to end in <c>catch { return new OSDMap(); }</c> and return that same empty map for an absent
+    /// body, which handed <see cref="AisSlam.ParseBody"/> something it read as an intentional empty slam — so a
+    /// truncated <c>PUT /category/{COF}/links</c>, and a dropped connection is enough, emptied the wearer's
+    /// Current Outfit. A body that cannot be understood is now a distinct answer from a body that asks for
+    /// nothing, and only the caller decides what to do with each.</para>
+    ///
+    /// <para><b>Do not reduce the failure test to a try/catch and a null check.</b> Verified against the shipped
+    /// parser on 2026-09-12: <c>OSDParser.DeserializeLLSDXml</c> neither throws nor returns null for truncated
+    /// XML or for well-formed XML that is not LLSD — it returns a bare <see cref="OSD"/> whose
+    /// <see cref="OSD.Type"/> is <c>OSDType.Unknown</c>. That value is the actual signal, and without it a
+    /// malformed <c>PATCH</c> body still becomes an empty map and still answers 200.</para>
+    ///
+    /// <para>The ceiling is enforced <b>while</b> the stream is copied, never after: a body too large to trust is
+    /// also a body too large to hold, so reading stops the moment the limit is passed.</para>
     /// </summary>
-    private static OSD ReadBodyOsd(IOSHttpRequest request)
+    private static AisBody ReadBody(IOSHttpRequest request)
     {
+        var stream = request?.InputStream;
+        if (stream is null) return AisBody.None();
         try
         {
-            var stream = request.InputStream;
-            if (stream is null) return new OSDMap();
+            var buffer = new byte[8192];
             using var ms = new System.IO.MemoryStream();
-            stream.CopyTo(ms);
+            int read;
+            while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                if (ms.Length + read > MaxBodyBytes) return AisBody.Oversize(ms.Length + read);
+                ms.Write(buffer, 0, read);
+            }
+            if (ms.Length == 0) return AisBody.None();
+
             var bytes = ms.ToArray();
-            if (bytes.Length == 0) return new OSDMap();
-            return OSDParser.DeserializeLLSDXml(bytes) ?? new OSDMap();
+            OSD parsed;
+            try { parsed = OSDParser.DeserializeLLSDXml(bytes); }
+            catch { return AisBody.Failure(bytes.Length); }
+            if (parsed is null || parsed.Type == OSDType.Unknown) return AisBody.Failure(bytes.Length);
+            return AisBody.Ok(parsed, bytes.Length);
         }
-        catch { return new OSDMap(); }
+        catch { return AisBody.Failure(-1); }
         finally { try { request.InputStream?.Dispose(); } catch { } }
     }
 

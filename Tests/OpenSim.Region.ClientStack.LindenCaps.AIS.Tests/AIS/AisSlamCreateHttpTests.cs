@@ -614,6 +614,8 @@ public class AisSlamCreateHttpTests
     {
         var b = Inventory();
         var before = LinkRows(b, Cof);
+        Assert.That(AisHandler.MaxBodyBytes, Is.EqualTo(BodyCeiling),
+            "the handler's ceiling and the one this test exercises must be the same number");
         var raw = new byte[BodyCeiling + 1];
         for (var i = 0; i < raw.Length; i++) raw[i] = (byte)'a';
         var (status, body) = SendRaw(b, "PUT", $"/category/{Cof}/links", raw);
