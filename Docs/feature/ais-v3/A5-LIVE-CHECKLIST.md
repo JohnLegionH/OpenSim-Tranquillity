@@ -425,6 +425,47 @@ both created their own set and both deleted only what they saw left the folder h
 outfits** - reproduced deterministically in `AisConcurrencyHttpTests`. Before
 `1.1.367-alpha+24fedc52b9` the script above would leave Truly wearing both sets at once.
 
+### 23. A legacy WindLight setting applies, and a malformed one leaves the environment alone
+
+**Not an AIS step** - it belongs to ENV-1 and lives here because this is the grid's only live checklist.
+Needs an **estate manager** and, for the first half, a viewer old enough to use the legacy WindLight route
+(a modern viewer uses the checked ExtEnvironment handler at `EnvironmentModule.cs:637` instead and will not
+exercise this path at all).
+
+**Do, part 1 - the ordinary case still works.** As an estate manager on Ebony, apply a legacy WindLight
+environment setting (Region/Estate > Environment on an older viewer). **Expected:** it applies, and the region
+log shows `New Environment settings has been saved from agentID <you> in region Ebony`.
+
+**Do, part 2 - a malformed body is refused and changes nothing.** Note the region's current environment first.
+Then, as the same estate manager, `curl` a deliberately broken body at the legacy setter:
+
+```
+curl -X POST -H "Content-Type: application/llsd+xml" \
+  --data-binary '<llsd><array><map>' \
+  "<capurl>/EnvironmentSettings"
+```
+
+**Expected:** the response is the handler's ordinary refusal shape - `success: false` with a `fail_reason` of
+*"Environment settings for region Ebony were not in the expected format, settings not saved."* - and the region
+log carries a **WARN**:
+
+```
+[Environment ...]: rejected a legacy WindLight setting for region Ebony from agentID <you>:
+the body is Unknown, an LLSD array was expected
+```
+
+Then re-check the environment: **unchanged**. Before ENV-1 that request instead produced a
+`NullReferenceException` in the log and a generic *"Environment Set for region ... has failed"* - it also left
+the environment alone, but only because the exception happened to land before the write.
+
+**Why this step is worth running even though the outcome looks the same.** The fix removed a *throw* that was
+accidentally protecting a write. The point of part 2 is that the refusal is now deliberate and legible - a WARN
+naming the body's type - rather than a stack trace; and the point of part 1 is that the new type check did not
+break the legitimate path. **Part 1 is the half that would catch a mistake here**, because refusing everything
+would also satisfy part 2.
+
+See `Docs/feature/ais-v3/AUDIT-1-MALFORMED-LLSD.md` §5 for how this was found, and ledger row A26.
+
 ---
 
 ## The Robust question — RESOLVED, and it was never about step 7
