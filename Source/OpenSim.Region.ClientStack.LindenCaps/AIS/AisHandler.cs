@@ -744,7 +744,29 @@ public sealed class AisHandler : SimpleStreamHandler
     ///   <c>thumbnail</c> and <c>favorite</c> have no column in this tree and are dropped, as they are for a
     ///   PATCH.</item>
     /// </list>
-    ///    /// </summary>
+    ///
+    /// <para><b>AIS-SEC-4: a failure partway reports what it already created, and does not roll back.</b>
+    /// Categories are added one at a time and then links one at a time, so a refusal on the third write leaves the
+    /// first two in the database. Before this, the response carried only the error keys, so those objects were
+    /// invisible to the client: it could neither adopt nor remove them, and its retry made duplicates. The failure
+    /// path now returns the <b>same</b> delta envelope the success path builds — <c>_created_categories</c>,
+    /// <c>_created_items</c>, <c>_embedded</c> and a re-read <c>_updated_category_versions</c> — so a client parses
+    /// one shape either way, and the viewer genuinely adopts it: it applies every response body as an update, error
+    /// or not (<c>onUpdateReceived</c>, <c>llaisapi.cpp:946</c>, spec §1f), firing its completion callback per
+    /// created id (§1c).</para>
+    ///
+    /// <para><b>No rollback, deliberately</b>, and <see cref="AisCopy"/> is the precedent: a create is purely
+    /// additive, so a partial one leaves what it made and risks nothing that existed before, whereas a rollback
+    /// that itself failed would leave a worse and less describable state than the one it tried to repair — and it
+    /// would have to delete objects a concurrent operation may already have touched. Reporting beats repairing
+    /// here. A slam is the opposite case and does roll back (<see cref="AisSlam.Run"/>), because there the
+    /// dangerous outcome is a folder left with fewer links than it started with.</para>
+    ///
+    /// <para>The status stays <b>500</b>. 207 would be a 2xx, and <c>llaisapi</c> would then treat the response as
+    /// success and never log the failure at all (§1f's table: "any other failure (4xx/5xx, timeout) → warn with
+    /// status and pretty-printed body"). 500 with a populated body keeps the failure visible and still hands the
+    /// client what it needs.</para>
+    /// </summary>
     private void CreateInventory(AisRoute route, OSDMap body, IOSHttpResponse response)
     {
         // AIS-SEC-3: key on route.Id - the addressed folder, and it is the only one written: AIS-SEC-2 refuses a body parent_id that disagrees (400).
@@ -790,6 +812,39 @@ public sealed class AisHandler : SimpleStreamHandler
             var categoryIds = new OSDArray();
             var itemIds = new OSDArray();
 
+            // AIS-SEC-4. Built the same way whether this request succeeds or fails partway, so a client parses
+            // one shape either way. See WriteErrorWithDeltas and the remarks on this method.
+            OSDMap BuildEnvelope()
+            {
+                var env = new OSDMap();
+                if (categoryIds.Count > 0) env[AisMutation.CreatedCategories] = categoryIds;
+                if (itemIds.Count > 0) env[AisMutation.CreatedItems] = itemIds;
+                if (createdCategories.Count > 0 || createdItems.Count > 0 || createdLinks.Count > 0)
+                {
+                    var emb = new OSDMap();
+                    if (createdCategories.Count > 0) emb[AisEnvelope.Categories] = createdCategories;
+                    if (createdItems.Count > 0) emb[AisEnvelope.Items] = createdItems;
+                    if (createdLinks.Count > 0) emb[AisEnvelope.Links] = createdLinks;
+                    env[AisEnvelope.Embedded] = emb;
+                }
+                // Re-read: the parent's version moved with every write that landed, and without it the viewer
+                // skips the folder entirely (§1d-bis, llaisapi.cpp:1625-1629) - which on a partial failure would
+                // leave it never re-reading the folder it half-filled.
+                AisMutation.ReportVersion(env, m_backend.GetFolder(m_agentId, route.Id));
+                return env;
+            }
+
+            // Reports the failure with everything created before it. No rollback; see the method remarks.
+            void Fail(string what)
+            {
+                m_log.LogWarning(
+                    "[AIS]: CreateInventory into folder {Folder} for agent {Agent} failed after creating "
+                    + "{Categories} categories and {Items} items: {What}. The created objects are reported in the "
+                    + "response so the client can reconcile; nothing is rolled back.",
+                    route.Id, m_agentId, categoryIds.Count, itemIds.Count, what);
+                WriteErrorWithDeltas(response, HttpStatusCode.InternalServerError, what, route, BuildEnvelope());
+            }
+
             if (body["categories"] is OSDArray categories)
             {
                 foreach (var entry in categories)
@@ -804,7 +859,7 @@ public sealed class AisHandler : SimpleStreamHandler
                         bodyParent.IsZero() ? route.Id : bodyParent, 1);
                     if (!m_backend.AddFolder(folder))
                     {
-                        WriteError(response, HttpStatusCode.InternalServerError, $"could not create the category {folder.Name}", route);
+                        Fail($"could not create the category {folder.Name}");
                         return;
                     }
                     categoryIds.Add(OSD.FromUUID(folder.ID));
@@ -822,7 +877,7 @@ public sealed class AisHandler : SimpleStreamHandler
                     var row = NewItem(m, isLink, route.Id);
                     if (!m_backend.AddItem(row))
                     {
-                        WriteError(response, HttpStatusCode.InternalServerError, $"could not create {(isLink ? "the link" : "the item")} {row.Name}", route);
+                        Fail($"could not create {(isLink ? "the link" : "the item")} {row.Name}");
                         return;
                     }
                     itemIds.Add(OSD.FromUUID(row.ID));
@@ -831,19 +886,7 @@ public sealed class AisHandler : SimpleStreamHandler
                 }
             }
 
-            var envelope = new OSDMap();
-            if (categoryIds.Count > 0) envelope[AisMutation.CreatedCategories] = categoryIds;
-            if (itemIds.Count > 0) envelope[AisMutation.CreatedItems] = itemIds;
-            if (createdCategories.Count > 0 || createdItems.Count > 0 || createdLinks.Count > 0)
-            {
-                var embedded = new OSDMap();
-                if (createdCategories.Count > 0) embedded[AisEnvelope.Categories] = createdCategories;
-                if (createdItems.Count > 0) embedded[AisEnvelope.Items] = createdItems;
-                if (createdLinks.Count > 0) embedded[AisEnvelope.Links] = createdLinks;
-                envelope[AisEnvelope.Embedded] = embedded;
-            }
-            AisMutation.ReportVersion(envelope, m_backend.GetFolder(m_agentId, route.Id));
-            Write(response, envelope, route);
+            Write(response, BuildEnvelope(), route);
         });
     }
 
@@ -1089,6 +1132,34 @@ public sealed class AisHandler : SimpleStreamHandler
             ["verb"] = route.Verb,
             ["path"] = route.Path,
         };
+    }
+
+    /// <summary>
+    /// AIS-SEC-4. An error response that also carries a delta envelope — the objects a mutation had already
+    /// created when it failed.
+    ///
+    /// <para>This is not a courtesy. The viewer parses <b>every</b> response body as an update, success or failure
+    /// (<c>onUpdateReceived</c>, <c>llaisapi.cpp:946</c>, spec §1f), and its completion callback fires per entry in
+    /// <c>_created_categories</c> / <c>_created_items</c> (§1c) — so ids placed here are genuinely adopted, and a
+    /// client that would otherwise retry and duplicate them does not have to.</para>
+    ///
+    /// <para>The error keys are layered <b>under</b> the envelope, so a delta key can never be shadowed by one of
+    /// them, and the envelope's own keys are the same ones the success path emits. Nothing adds a top-level
+    /// <c>item_id</c> or <c>category_id</c>, which §1f forbids in a body that does not mean them.</para>
+    /// </summary>
+    private static void WriteErrorWithDeltas(IOSHttpResponse response, HttpStatusCode status, string message,
+        AisRoute route, OSDMap envelope)
+    {
+        var body = ErrorBody(status, message, route);
+        foreach (KeyValuePair<string, OSD> kv in envelope) body[kv.Key] = kv.Value;
+
+        response.StatusCode = (int)status;
+        response.ContentType = "application/llsd+xml";
+        response.RawBuffer = OSDParser.SerializeLLSDXmlBytes(body);
+
+        if (AisOperations.IsMutation(route.Operation) && m_log.IsEnabled(LogLevel.Debug))
+            m_log.LogDebug("[AIS]: {Operation} -> {Status} {Message} {Deltas}",
+                route.Operation, (int)status, message, AisMutation.SummariseDeltas(body));
     }
 
     private static void WriteError(IOSHttpResponse response, HttpStatusCode status, string message, AisRoute route)
