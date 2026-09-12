@@ -182,7 +182,20 @@ public sealed class AisHandler : SimpleStreamHandler
         }
         catch (Exception ex)
         {
-            WriteError(httpResponse, HttpStatusCode.InternalServerError, ex.Message, route);
+            // AIS-SEC-5. The exception goes to the LOG, never to the client. It used to be the other way round:
+            // `WriteError(..., ex.Message, ...)` with no logging at all, so a connector or database fault
+            // travelled to an untrusted client as text - credentials, host names, internal type names, whatever
+            // the message happened to carry - while the operator who needs the stack got nothing. Both halves
+            // were the same line.
+            //
+            // The client gets a fixed string. There is nothing useful it could do with the detail, the viewer
+            // does not read the message (spec 1f: nothing in the permitted files reads `message`), and the route
+            // and verb it already knows are echoed by ErrorBody anyway.
+            m_log.LogError(ex,
+                "[AIS]: {Operation} on {Path} for agent {Agent} failed with an unhandled exception; answered 500",
+                route.Operation, route.Path, m_agentId);
+            WriteError(httpResponse, HttpStatusCode.InternalServerError,
+                "the request could not be completed", route);
         }
     }
 
@@ -211,33 +224,43 @@ public sealed class AisHandler : SimpleStreamHandler
 
         var expanded = new Dictionary<UUID, AisFolderContents>();
         foreach (var c in walked) expanded[c.Folder.ID] = c;
-        Write(response, Expand(walked[0], expanded), route);
+        // AIS-SEC-5: one visited set for the whole expansion, replacing the per-level dictionary clone.
+        Write(response, Expand(walked[0], expanded, new HashSet<UUID>()), route);
     }
 
     /// <summary>
     /// A folder as a category map with all three collections; each sub-folder is expanded in turn when the walk
     /// reached it, and appears as a bare category map (no <c>_embedded</c>) when it did not.
     /// </summary>
-    private OSDMap Expand(AisFolderContents contents, Dictionary<UUID, AisFolderContents> expanded)
+    /// <summary>
+    /// AIS-SEC-5: <paramref name="visited"/> replaces the per-level dictionary clone this used to make.
+    ///
+    /// <para><b>Why that substitution is equivalence and not an approximation.</b> The old <c>Without()</c>
+    /// copied the whole expanded map minus the current folder and handed the <i>same</i> copy to every sibling,
+    /// so it implemented <b>ancestor-path exclusion</b>: a folder excluded down one branch was still available
+    /// to a sibling branch. A single shared set is stronger - <b>global once-only</b>. The two disagree exactly
+    /// when a folder is reachable by two distinct paths, i.e. a diamond.
+    /// <c>InventoryFolderBase.ParentID</c> is a single scalar and <c>GetFolderContent</c> selects children by
+    /// <c>ParentID == folderId</c>, so every folder is the child of exactly one parent: the graph is a forest
+    /// plus possible cycles, and a diamond cannot occur. <c>AisErrorHygieneTraversalTests</c> pins both the
+    /// cyclic output shape and that data-model property, so if multi-parenting ever arrives the assumption
+    /// fails loudly rather than silently.</para>
+    ///
+    /// <para>The clone was correct; it was just O(folders) of allocation at every level, which a deep tree paid
+    /// all the way down. The set is one allocation for the whole response.</para>
+    /// </summary>
+    private OSDMap Expand(AisFolderContents contents, Dictionary<UUID, AisFolderContents> expanded, HashSet<UUID> visited)
     {
+        visited.Add(contents.Folder.ID);
         var categories = new OSDMap();
-        var remaining = Without(expanded, contents.Folder.ID);
         foreach (var child in contents.SubFolders)
         {
-            categories[child.ID.ToString()] = remaining.TryGetValue(child.ID, out var childContents)
-                ? Expand(childContents, remaining)
+            categories[child.ID.ToString()] = !visited.Contains(child.ID) && expanded.TryGetValue(child.ID, out var childContents)
+                ? Expand(childContents, expanded, visited)
                 : AisEnvelope.Category(child, m_agentId);
         }
         var embedded = AisEnvelope.EmbeddedMap(categories, AisEnvelope.ItemsMap(contents.Items, m_agentId), AisEnvelope.LinksMap(contents.Links, m_agentId));
         return AisEnvelope.Category(contents.Folder, m_agentId, embedded);
-    }
-
-    /// <summary>Guards the recursion against a cycle in the folder graph (a folder that is its own ancestor).</summary>
-    private static Dictionary<UUID, AisFolderContents> Without(Dictionary<UUID, AisFolderContents> map, UUID id)
-    {
-        var copy = new Dictionary<UUID, AisFolderContents>(map);
-        copy.Remove(id);
-        return copy;
     }
 
     /// <summary>

@@ -88,6 +88,13 @@ public static class AisInventory
         if (root is null) return expanded;
         expanded.Add(root);
 
+        // AIS-SEC-5: a visited set ALONGSIDE the depth cap, not instead of it. The cap bounds legitimate deep
+        // trees and is what the viewer's own MAX_FOLDER_DEPTH_REQUEST means; the visited set bounds a *cyclic*
+        // graph, which the cap previously only limited the damage of. A cycle A->B->A was re-walked once per
+        // level to the cap - 51 entries for two folders - and every one of those is a GetFolderContent, which on
+        // a grid deployment is a round trip to Robust. It is now two.
+        var visited = new HashSet<UUID> { root.Folder.ID };
+
         var frontier = new List<AisFolderContents> { root };
         for (var level = 0; level < depth && frontier.Count > 0; level++)
         {
@@ -95,6 +102,7 @@ public static class AisInventory
             foreach (var parent in frontier)
                 foreach (var child in parent.SubFolders)
                 {
+                    if (!visited.Add(child.ID)) continue;   // already expanded: a cycle, or a repeated row
                     var contents = GetContents(backend, agentId, child.ID);
                     if (contents is null) continue;
                     expanded.Add(contents);
