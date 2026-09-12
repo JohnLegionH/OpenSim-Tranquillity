@@ -31,11 +31,21 @@ public sealed class FakeAisBackend : IAisInventoryBackend
     /// </summary>
     public Action<string> BeforeCall;
 
-    /// <summary>Records the call, then gives <see cref="BeforeCall"/> the chance to park this thread.</summary>
+    /// <summary>
+    /// AIS-SEC-5. Return an exception from here to make a named backend call <b>throw</b>, which is the only way
+    /// to reach <c>AisHandler.Dispatch</c>'s unexpected-exception path. The existing gates all return <c>bool</c>
+    /// and model a refusal, not a fault - a database or connector error is a fault, and that is the path whose
+    /// error hygiene AIS-SEC-5 is about.
+    /// </summary>
+    public Func<string, Exception> ThrowOn;
+
+    /// <summary>Records the call, then gives the hooks a chance to park or fault this thread.</summary>
     private void Record(string label)
     {
         lock (Calls) Calls.Add(label);   // two threads append in the concurrency tests
         BeforeCall?.Invoke(label);
+        Exception fault = ThrowOn?.Invoke(label);
+        if (fault is not null) throw fault;
     }
 
     /// <summary>A snapshot of <see cref="Calls"/> safe to take while another thread may still be recording.</summary>
