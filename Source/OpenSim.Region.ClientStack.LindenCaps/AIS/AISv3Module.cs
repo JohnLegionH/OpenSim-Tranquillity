@@ -159,7 +159,10 @@ public class AISv3Module : ISharedRegionModule
         var inventory = scene.InventoryService;
         var library = scene.LibraryService;
 
-        var invHandler = new AisHandler("/" + UUID.Random(), agentID, new InventoryServiceBackend(inventory, TransactionResolverFor(scene), WornAssetObserverFor(scene)));
+        // AIS-SEC-1: the backend is bound to the agent this cap belongs to. The cap URL is unguessable, but a cap
+        // that leaked (or a client of the agent's own) could otherwise name any resident's object UUID and the
+        // inventory service would serve it, because it resolves by id and ignores the principal.
+        var invHandler = new AisHandler("/" + UUID.Random(), agentID, new InventoryServiceBackend(inventory, agentID, TransactionResolverFor(scene), WornAssetObserverFor(scene)));
         caps.RegisterSimpleHandler(CapName, invHandler, varPath: VarPath);
         m_log.LogDebug("[AIS]: registered {Cap} at {Path} for agent {Agent} in {Region}",
             CapName, invHandler.CapPath, agentID, scene.Name);
@@ -171,9 +174,11 @@ public class AISv3Module : ISharedRegionModule
         }
         var libraryOwner = LibraryOwnerOf(library);
         // COPY reads from the library and writes into the agent's inventory, so the library handler carries both
-        // sides: itself as the source, the agent's inventory as the destination.
+        // sides: itself as the source, the agent's inventory as the destination. AIS-SEC-1 binds that destination
+        // to the agent too, so a COPY cannot be steered into another resident's folder by its Destination header.
+        // The source backend is the library's own and stays as it is: it is read-only by construction.
         var libHandler = new AisHandler("/" + UUID.Random(), libraryOwner, new LibraryServiceBackend(library), AisMode.Library,
-            new InventoryServiceBackend(inventory, TransactionResolverFor(scene), WornAssetObserverFor(scene)), agentID);
+            new InventoryServiceBackend(inventory, agentID, TransactionResolverFor(scene), WornAssetObserverFor(scene)), agentID);
         caps.RegisterSimpleHandler(LibraryCapName, libHandler, varPath: VarPath);
         m_log.LogDebug("[AIS]: registered {Cap} at {Path} for agent {Agent} in {Region}",
             LibraryCapName, libHandler.CapPath, agentID, scene.Name);
@@ -254,8 +259,35 @@ public class AISv3Module : ISharedRegionModule
     public static UUID LibraryOwnerOf(ILibraryService library) => library?.LibraryRootFolder?.Owner ?? UUID.Zero;
 
     /// <summary>
-    /// Phase 1 backend: a thin pass-through over the region's <c>IInventoryService</c>. Nothing here knows about
-    /// scenes. A0 wires it; the handler does not call it yet.
+    /// Phase 1 backend: the region's <c>IInventoryService</c>, <b>scoped to the one resident whose cap this is</b>.
+    /// Nothing here knows about scenes (Ledger P-2), so Phase 2 hosts it on Robust unchanged.
+    ///
+    /// <para><b>AIS-SEC-1: the scoping is this class's job, and nothing below it does any.</b>
+    /// <see cref="IAisInventoryBackend"/> has always documented that <c>GetFolder</c> and <c>GetItem</c> return
+    /// null for an object that is "not the agent's", and until this was written that promise was not kept: the
+    /// class was a pass-through, and <c>XInventoryService</c> resolves by UUID alone and says so — <c>GetItem</c>
+    /// queries <c>inventoryID</c> (<c>XInventoryService.cs:633-641</c>), <c>GetFolder</c> queries <c>folderID</c>
+    /// (<c>:653-663</c>), <c>GetFolderContent</c> carries the comment <i>"This method doesn't receive a valud
+    /// principal id from the connector. So we disregard the principal and look by ID"</i> (<c>:319-323</c>),
+    /// <c>DeleteFolders</c> <i>"Ignore principal ID, it's bogus at connector level"</i> (<c>:482-492</c>) and
+    /// <c>DeleteItems</c> <i>"Just use the ID... *facepalms*"</i> (<c>:602-631</c>). A valid AIS cap plus another
+    /// resident's item or folder UUID could therefore read, rename, delete, purge, slam and create across the
+    /// boundary.</para>
+    ///
+    /// <para><b>Why the fix is here and not in the service.</b> That behaviour is upstream and other connector
+    /// paths depend on it — the Robust connector really does pass a principal the service cannot trust, which is
+    /// what those comments are about. The cap, by contrast, knows exactly whose it is: it is registered per agent
+    /// from <c>OnRegisterCaps</c>, so the owner is a constructor argument and every call is checked against it.</para>
+    ///
+    /// <para><b>The rule, in one line:</b> a read answers only for an object whose <c>Owner</c> is
+    /// <see cref="OwnerId"/>, and a write happens only when the object <i>and</i> its parent folder are the
+    /// owner's. The agent id each interface method takes is still checked — it must be the owner — but it is never
+    /// <i>trusted</i> as the scope. The scope is the field, and it is the field that is handed to the service.</para>
+    ///
+    /// <para><b>What the handler sees.</b> A foreign object is indistinguishable from an absent one, so the
+    /// handler's pre-existing not-found paths fire and the route answers <b>404</b>. That is deliberate: a 403
+    /// would tell a caller that a UUID it guessed belongs to somebody, which is a membership oracle over the whole
+    /// inventory keyspace. No status mapping was invented for the security case.</para>
     /// </summary>
     public sealed class InventoryServiceBackend : IAisInventoryBackend
     {
@@ -266,46 +298,209 @@ public class AISv3Module : ISharedRegionModule
         public delegate void WornAssetObserver(UUID agentId, UUID itemId, UUID newAssetId);
 
         private readonly IInventoryService m_service;
+        private readonly UUID m_ownerId;
         private readonly AssetTransactionResolver m_transactions;
         private readonly WornAssetObserver m_wornAssets;
 
-        public InventoryServiceBackend(IInventoryService service, AssetTransactionResolver transactions = null,
-            WornAssetObserver wornAssets = null)
+        /// <param name="ownerId">
+        /// The one resident this backend serves. Zero is refused rather than defaulted: a zero owner would scope
+        /// nothing, which is exactly the state AIS-SEC-1 fixed, and a quiet guard is how that state would come back.
+        /// </param>
+        public InventoryServiceBackend(IInventoryService service, UUID ownerId,
+            AssetTransactionResolver transactions = null, WornAssetObserver wornAssets = null)
         {
             m_service = service ?? throw new ArgumentNullException(nameof(service));
+            if (ownerId.IsZero())
+                throw new ArgumentException("an AIS inventory backend must be bound to a non-zero owner", nameof(ownerId));
+            m_ownerId = ownerId;
             m_transactions = transactions;
             m_wornAssets = wornAssets;
         }
 
-        public InventoryFolderBase GetFolderForType(UUID agentId, FolderType type) => m_service.GetFolderForType(agentId, type);
-        public InventoryFolderBase GetFolder(UUID agentId, UUID folderId) => m_service.GetFolder(agentId, folderId);
-        public InventoryCollection GetFolderContent(UUID agentId, UUID folderId) => m_service.GetFolderContent(agentId, folderId);
+        /// <summary>The resident whose inventory this is, and the only principal this class ever passes down.</summary>
+        public UUID OwnerId => m_ownerId;
+
+        private bool IsCaller(UUID agentId) => agentId == m_ownerId;
+        private bool IsOwned(InventoryFolderBase folder) => folder is not null && folder.Owner == m_ownerId;
+        private bool IsOwned(InventoryItemBase item) => item is not null && item.Owner == m_ownerId;
+
+        // ---------------- reads: nothing unless the caller is the owner AND the row is theirs ----------------
+
+        public InventoryFolderBase GetFolderForType(UUID agentId, FolderType type)
+        {
+            if (!IsCaller(agentId)) return null;
+            var folder = m_service.GetFolderForType(m_ownerId, type);
+            return IsOwned(folder) ? folder : null;
+        }
+
+        public InventoryFolderBase GetFolder(UUID agentId, UUID folderId)
+        {
+            if (!IsCaller(agentId)) return null;
+            var folder = m_service.GetFolder(m_ownerId, folderId);
+            return IsOwned(folder) ? folder : null;
+        }
+
+        public InventoryItemBase GetItem(UUID agentId, UUID itemId)
+        {
+            if (!IsCaller(agentId)) return null;
+            var item = m_service.GetItem(m_ownerId, itemId);
+            return IsOwned(item) ? item : null;
+        }
+
+        /// <summary>
+        /// The folder itself must pass <see cref="GetFolder"/>, and the contents are filtered as well: a row whose
+        /// parent is the owner's folder but whose own <c>Owner</c> is somebody else is a data fault, and it is not
+        /// this cap's to hand out. The collection is rebuilt rather than edited so the caller is never handed the
+        /// service's own lists.
+        /// </summary>
+        public InventoryCollection GetFolderContent(UUID agentId, UUID folderId)
+        {
+            if (GetFolder(agentId, folderId) is null) return null;
+            var content = m_service.GetFolderContent(m_ownerId, folderId);
+            if (content is null) return null;
+
+            var folders = new List<InventoryFolderBase>();
+            if (content.Folders is not null)
+                foreach (var folder in content.Folders) if (IsOwned(folder)) folders.Add(folder);
+            var items = new List<InventoryItemBase>();
+            if (content.Items is not null)
+                foreach (var item in content.Items) if (IsOwned(item)) items.Add(item);
+
+            return new InventoryCollection
+            {
+                OwnerID = m_ownerId,
+                FolderID = folderId,
+                Version = content.Version,
+                Descendents = folders.Count + items.Count,
+                Folders = folders,
+                Items = items,
+            };
+        }
+
+        public IReadOnlyList<InventoryFolderBase> GetSubFolders(UUID agentId, UUID folderId)
+        {
+            var content = GetFolderContent(agentId, folderId);
+            return content?.Folders ?? (IReadOnlyList<InventoryFolderBase>)Array.Empty<InventoryFolderBase>();
+        }
+
+        /// <summary>
+        /// <c>GetMultipleItems</c> returns one slot per requested id and <c>null</c> where the id is unknown
+        /// (<c>XInventoryService.cs:643-651</c>), so this drops nulls as well as foreign rows. The count that comes
+        /// back is therefore meaningful, which is what <see cref="DeleteItems"/> relies on.
+        /// </summary>
         public IReadOnlyList<InventoryItemBase> GetItems(UUID agentId, IReadOnlyList<UUID> itemIds)
         {
+            if (!IsCaller(agentId) || itemIds is null || itemIds.Count == 0) return Array.Empty<InventoryItemBase>();
             var ids = new UUID[itemIds.Count];
             for (var i = 0; i < ids.Length; i++) ids[i] = itemIds[i];
-            return m_service.GetMultipleItems(agentId, ids) ?? Array.Empty<InventoryItemBase>();
+            var found = m_service.GetMultipleItems(m_ownerId, ids);
+            if (found is null) return Array.Empty<InventoryItemBase>();
+            var owned = new List<InventoryItemBase>(found.Length);
+            foreach (var item in found) if (IsOwned(item)) owned.Add(item);
+            return owned;
         }
-        public IReadOnlyList<InventoryFolderBase> GetSubFolders(UUID agentId, UUID folderId)
-            => m_service.GetFolderContent(agentId, folderId)?.Folders ?? (IReadOnlyList<InventoryFolderBase>)Array.Empty<InventoryFolderBase>();
-        public IReadOnlyList<InventoryFolderBase> GetInventorySkeleton(UUID agentId)
-            => m_service.GetInventorySkeleton(agentId) ?? (IReadOnlyList<InventoryFolderBase>)Array.Empty<InventoryFolderBase>();
-        public InventoryItemBase GetItem(UUID agentId, UUID itemId) => m_service.GetItem(agentId, itemId);
-        public bool AddFolder(InventoryFolderBase folder) => m_service.AddFolder(folder);
-        public bool AddItem(InventoryItemBase item) => m_service.AddItem(item);
-        public bool UpdateItem(InventoryItemBase item) => m_service.UpdateItem(item);
-        public bool UpdateFolder(InventoryFolderBase folder) => m_service.UpdateFolder(folder);
-        public bool DeleteItems(UUID agentId, IReadOnlyList<UUID> itemIds) => m_service.DeleteItems(agentId, new List<UUID>(itemIds));
-        public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds, bool onlyIfTrash) => m_service.DeleteFolders(agentId, new List<UUID>(folderIds), onlyIfTrash);
-        public bool PurgeFolder(InventoryFolderBase folder) => m_service.PurgeFolder(folder);
 
-        /// <summary>Only a region with a transaction module and a connected client can resolve one; see the remarks on the interface.</summary>
+        public IReadOnlyList<InventoryFolderBase> GetInventorySkeleton(UUID agentId)
+        {
+            if (!IsCaller(agentId)) return Array.Empty<InventoryFolderBase>();
+            var skeleton = m_service.GetInventorySkeleton(m_ownerId);
+            if (skeleton is null) return Array.Empty<InventoryFolderBase>();
+            var owned = new List<InventoryFolderBase>(skeleton.Count);
+            foreach (var folder in skeleton) if (IsOwned(folder)) owned.Add(folder);
+            return owned;
+        }
+
+        // ---------------- creates: the new object and its parent must both be the owner's ----------------
+
+        public bool AddFolder(InventoryFolderBase folder)
+        {
+            if (!IsOwned(folder) || folder.ParentID.IsZero()) return false;
+            if (GetFolder(m_ownerId, folder.ParentID) is null) return false;
+            return m_service.AddFolder(folder);
+        }
+
+        public bool AddItem(InventoryItemBase item)
+        {
+            if (!IsOwned(item) || item.Folder.IsZero()) return false;
+            if (GetFolder(m_ownerId, item.Folder) is null) return false;
+            return m_service.AddItem(item);
+        }
+
+        // ---------------- updates: the row must exist, be the owner's, and land in the owner's folder ----------------
+
+        public bool UpdateItem(InventoryItemBase item)
+        {
+            if (!IsOwned(item)) return false;
+            if (GetItem(m_ownerId, item.ID) is null) return false;
+            if (GetFolder(m_ownerId, item.Folder) is null) return false;
+            return m_service.UpdateItem(item);
+        }
+
+        /// <summary>
+        /// The parent is checked only when <c>ParentID</c> is non-zero: the agent's own inventory root legitimately
+        /// has none, and refusing that would refuse a rename of the root.
+        /// </summary>
+        public bool UpdateFolder(InventoryFolderBase folder)
+        {
+            if (!IsOwned(folder)) return false;
+            if (GetFolder(m_ownerId, folder.ID) is null) return false;
+            if (folder.ParentID.IsNotZero() && GetFolder(m_ownerId, folder.ParentID) is null) return false;
+            return m_service.UpdateFolder(folder);
+        }
+
+        // ---------------- deletes ----------------
+
+        /// <summary>
+        /// The whole batch is refused unless every id resolves to an item the owner holds, and the check is
+        /// <b>one</b> call: <see cref="GetItems"/> wraps <c>GetMultipleItems</c>, so a slam removing ~20 links
+        /// costs a single round trip to Robust rather than twenty. The returned count equalling the requested count
+        /// is exactly the "all of them, and all mine" test, because the service returns one slot per id.
+        /// </summary>
+        public bool DeleteItems(UUID agentId, IReadOnlyList<UUID> itemIds)
+        {
+            if (!IsCaller(agentId) || itemIds is null) return false;
+            if (GetItems(m_ownerId, itemIds).Count != itemIds.Count) return false;
+            return m_service.DeleteItems(m_ownerId, new List<UUID>(itemIds));
+        }
+
+        /// <summary>Per id rather than batched: a folder delete carries one or two ids, never a slam's twenty.</summary>
+        public bool DeleteFolders(UUID agentId, IReadOnlyList<UUID> folderIds, bool onlyIfTrash)
+        {
+            if (!IsCaller(agentId) || folderIds is null) return false;
+            foreach (var id in folderIds)
+                if (GetFolder(m_ownerId, id) is null) return false;
+            return m_service.DeleteFolders(m_ownerId, new List<UUID>(folderIds), onlyIfTrash);
+        }
+
+        public bool PurgeFolder(InventoryFolderBase folder)
+        {
+            if (!IsOwned(folder)) return false;
+            if (GetFolder(m_ownerId, folder.ID) is null) return false;
+            return m_service.PurgeFolder(folder);
+        }
+
+        /// <summary>
+        /// Only a region with a transaction module and a connected client can resolve one; see the remarks on the
+        /// interface. AIS-SEC-1 makes it <b>fail closed</b>: an item that is not the owner's, or that is not in the
+        /// store, answers <c>Refused</c> rather than <c>NotResolvable</c>, because <c>NotResolvable</c> still
+        /// yields a 200 and applying a stranger's upload is not something to be relaxed about. A region with no
+        /// resolver at all still answers <c>NotResolvable</c> for the owner's own item, which is the documented
+        /// Phase 2 / library behaviour.
+        /// </summary>
         public AisAssetTransaction ApplyAssetTransaction(UUID agentId, UUID transactionId, InventoryItemBase item)
-            => m_transactions is null ? AisAssetTransaction.NotResolvable : m_transactions(agentId, transactionId, item);
+        {
+            if (!IsCaller(agentId) || !IsOwned(item) || GetItem(m_ownerId, item.ID) is null)
+                return AisAssetTransaction.Refused;
+            return m_transactions is null ? AisAssetTransaction.NotResolvable : m_transactions(m_ownerId, transactionId, item);
+        }
 
         /// <inheritdoc/>
         public void OnItemAssetChanged(UUID agentId, UUID itemId, UUID newAssetId)
-            => m_wornAssets?.Invoke(agentId, itemId, newAssetId);
+        {
+            if (m_wornAssets is null) return;
+            if (!IsCaller(agentId) || GetItem(m_ownerId, itemId) is null) return;
+            m_wornAssets(m_ownerId, itemId, newAssetId);
+        }
     }
 
     /// <summary>

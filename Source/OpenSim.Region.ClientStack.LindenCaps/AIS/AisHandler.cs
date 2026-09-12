@@ -594,6 +594,28 @@ public sealed class AisHandler : SimpleStreamHandler
             return;
         }
 
+        // AIS-SEC-1. asAISCreateCatLLSD repeats the parent in the body (llinventory.cpp:1256-1276) and
+        // link_inventory_array sends none at all (llviewerinventory.cpp:1352-1370), so a body parent that
+        // disagrees with the URL is not something a viewer sends. The URL is the authority
+        // (AISAPI::CreateInventory builds {inv}/category/{parentId}, llaisapi.cpp:115) and the disagreement is
+        // refused rather than resolved: honouring the body would let a create addressed to a folder the caller
+        // owns plant objects in a folder they do not. The backend's own parent check would refuse the write in
+        // any case; this makes the refusal say why, and says it before anything is written, so a mixed body
+        // cannot half-succeed.
+        foreach (var key in new[] { "categories", "links" })
+        {
+            if (body[key] is not OSDArray entries) continue;
+            foreach (var entry in entries)
+            {
+                if (entry is not OSDMap m || !m.ContainsKey("parent_id")) continue;
+                var named = m["parent_id"].AsUUID();
+                if (named.IsZero() || named.Equals(route.Id)) continue;
+                WriteError(response, HttpStatusCode.BadRequest,
+                    $"the body names parent_id {named} but the request addressed category {route.Id}; the URL is the authority", route);
+                return;
+            }
+        }
+
         var createdCategories = new OSDMap();
         var createdItems = new OSDMap();
         var createdLinks = new OSDMap();

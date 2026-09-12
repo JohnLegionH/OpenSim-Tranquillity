@@ -126,7 +126,7 @@ public class AisCrossUserHttpTests
     /// is the whole of the defect: nothing downstream of it knew whose cap this was.
     /// </summary>
     private static IAisInventoryBackend Backend(PrincipalIgnoringInventoryService service, UUID owner)
-        => new AISv3Module.InventoryServiceBackend(service);   // AIS-SEC-1 Step 2 binds `owner` here
+        => new AISv3Module.InventoryServiceBackend(service, owner);
 
     private static (int Status, OSDMap Body) AsAlice(PrincipalIgnoringInventoryService svc, string verb, string path, OSD body = null)
     {
