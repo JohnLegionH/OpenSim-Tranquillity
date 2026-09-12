@@ -336,6 +336,36 @@ enforces the scoping the real backend lacked.
 the bug it replaces: before the fix the request answers 200 and does the work, after it the request answers 404
 and does nothing. A hash cannot tell those apart.
 
+### 20. A malformed slam body is refused, and the outfit survives it
+
+**Do:** as **Truly**, get her own `InventoryAPIv3` cap URL from the seed response and `curl` a deliberately
+broken body at her **own** Current Outfit links route:
+
+```
+curl -X PUT -H "Content-Type: application/llsd+xml" \
+  --data-binary '<llsd><array><map>' \
+  "<capurl>/category/<Truly's COF>/links"
+```
+
+**Expected: 400**, with `"message"` reading `malformed LLSD body`. Then reopen **Appearance**: the outfit is
+**unchanged** — same garments, same order. Nothing was written.
+
+**Then prove the legitimate empty slam still works**, because the fix must not have bought safety by breaking
+it: `PUT` a body of exactly `[]` to the same URL. That answers **200** and empties the COF links, which is
+what taking off the last garment does. **Re-wear from Outfits afterwards** to put Truly back.
+
+**Also worth one run each**, same URL, all expected to answer 400 and leave the outfit alone: no body at all
+(`--data-binary ''`), and `{}` (`--data-binary '<llsd><map /></llsd>'`).
+
+**Why this step exists.** AIS-SEC-2 (ledger row A21). `AisHandler.ReadBodyOsd` ended in
+`catch { return new OSDMap(); }` and returned that same empty map for an absent body, and
+`AisSlam.ParseBody` read an empty map as an empty slam — so a truncated `PUT`, and a dropped connection is
+enough, was read as *"replace every link with none"* and emptied the wearer's Current Outfit. Before
+`1.1.359-alpha+6c37b5e9d5` the first command above returned **200** and Truly came back naked.
+
+**The 400 and the `[]` case must both be observed.** Either alone proves nothing: refusing everything would
+also pass the first half, and it would break the way an outfit is taken off.
+
 ---
 
 ## The Robust question — RESOLVED, and it was never about step 7
