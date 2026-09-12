@@ -169,6 +169,13 @@ public sealed class FakeAisBackend : IAisInventoryBackend
     /// <summary>Fault injection: return false to make this AddItem fail. Null means every add succeeds.</summary>
     public Func<InventoryItemBase, bool> AddItemGate;
 
+    /// <summary>
+    /// Fault injection: return false to make this AddFolder fail. Null means every add succeeds. Added for
+    /// AIS-SEC-4, which needs a create to fail on the <i>second</i> of three categories - the whole point being
+    /// what the response says about the first one.
+    /// </summary>
+    public Func<InventoryFolderBase, bool> AddFolderGate;
+
     /// <summary>Fault injection: return false to make this PurgeFolder fail. Null means it succeeds.</summary>
     public Func<InventoryFolderBase, bool> PurgeFolderGate;
 
@@ -191,6 +198,7 @@ public sealed class FakeAisBackend : IAisInventoryBackend
     {
         Record($"AddFolder({folder.ID})");
         if (!AllowWrite) return false;
+        if (AddFolderGate is not null && !AddFolderGate(folder)) return false;
         Folders[folder.ID] = folder;
         Bump(folder.ParentID);
         OnWrite?.Invoke();
