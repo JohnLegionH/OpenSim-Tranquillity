@@ -95,7 +95,48 @@ public class XInventoryService : ServiceBase, IInventoryService
             throw new Exception("Could not find a storage interface in the given module");
     }
 
+    /// <summary>
+    /// AIS-COF-1. Serialised per principal, because two overlapping calls for the same agent both read
+    /// "missing" and both create. <see cref="EnsureSystemFolder"/> is right that nothing inside it can close
+    /// that window; a lock outside it can.
+    ///
+    /// <para><b>This closes the race for a single Robust instance only.</b> Legion Grid runs one, so it is closed
+    /// there. A multi-instance or multi-simulator deployment that calls this concurrently from two processes is
+    /// still exposed, and for those the safety net is <see cref="WarnOnDuplicateSystemFolders"/>, which reports
+    /// the damage rather than preventing it. Only a unique constraint would prevent it, and the suitcase makes
+    /// <c>(agentID, type)</c> unavailable - see the remarks on that method.</para>
+    ///
+    /// <para>Striped rather than per-UUID: a fixed array of locks cannot leak and needs no cleanup, where a
+    /// dictionary of semaphores has to be reference-counted or it grows for the lifetime of the process. Two
+    /// principals sharing a stripe serialise against each other for the duration of one inventory creation,
+    /// which costs nothing that matters and can never be wrong.</para>
+    /// </summary>
     public virtual bool CreateUserInventory(UUID principalID)
+    {
+        lock (CreateLockFor(principalID))
+            return CreateUserInventoryLocked(principalID);
+    }
+
+    /// <summary>The number of lock stripes. A power of two, and far more than the concurrent logins this serves.</summary>
+    private const int CreateLockStripes = 64;
+
+    /// <summary>
+    /// Process-wide, and static deliberately: a region connector and the local service can both hold an
+    /// <see cref="XInventoryService"/>, and a per-instance lock would not serialise between them.
+    /// </summary>
+    private static readonly object[] s_createLocks = CreateStripes();
+
+    private static object[] CreateStripes()
+    {
+        var locks = new object[CreateLockStripes];
+        for (int i = 0; i < locks.Length; i++) locks[i] = new object();
+        return locks;
+    }
+
+    private static object CreateLockFor(UUID principalID)
+        => s_createLocks[(principalID.GetHashCode() & int.MaxValue) % CreateLockStripes];
+
+    private bool CreateUserInventoryLocked(UUID principalID)
     {
         // This is braindeaad. We can't ever communicate that we fixed
         // an existing inventory. Well, just return root folder status,
@@ -112,6 +153,8 @@ public class XInventoryService : ServiceBase, IInventoryService
         }
 
         XInventoryFolder[] sysFolders = GetSystemFolders(principalID, rootFolder.ID);
+
+        WarnOnDuplicateSystemFolders(principalID, sysFolders);
 
         EnsureSystemFolder(principalID, rootFolder.ID, sysFolders, FolderType.Animation, "Animations");
 
@@ -197,6 +240,59 @@ public class XInventoryService : ServiceBase, IInventoryService
         return CreateFolder(principalID, rootID, (int)type, name);
     }
 
+    /// <summary>
+    /// AIS-COF-1. One WARN per duplicated type, for the agent whose inventory is being created or checked. It is
+    /// free: <paramref name="sysFolders"/> is the snapshot <see cref="CreateUserInventory"/> has already read, so
+    /// this adds no query.
+    ///
+    /// <para><b>Only folders directly under the agent's inventory root are counted, and that is the whole point
+    /// of the check.</b> Three things legitimately repeat a system type and none of them is a fault:</para>
+    /// <list type="bullet">
+    ///   <item><b>The HG suitcase.</b> <c>HGSuitcaseInventoryService.CreateSystemFolders</c> builds a complete
+    ///   second set of system folders under <c>My Suitcase</c> (type 100) - Current Outfit included. On Legion
+    ///   Grid that accounted for seven accounts that looked like they had two Current Outfit folders each and did
+    ///   not. <c>sysFolders</c> is parented to the root, so the suitcase subtree is already excluded.</item>
+    ///   <item><b>The calling-card chain</b>, <c>Calling Cards</c> -> <c>Friends</c> -> <c>All</c>, three folders
+    ///   deep all typed <c>CallingCard</c>, created by <see cref="CreateUserInventory"/> itself. Only the first is
+    ///   under the root, so again already excluded.</item>
+    ///   <item><b>Saved outfits</b> (<c>FolderType.Outfit</c>, 47), of which a resident may have any number, and
+    ///   <b>user folders</b> (type -1). Both are excluded explicitly below - 47 by name, -1 because
+    ///   <see cref="GetSystemFolders"/> keeps only <c>type &gt;= 0</c>.</item>
+    /// </list>
+    ///
+    /// <para>A warning here is a data fault and wants the dedupe in Docs/feature/ais-v3/A7-DUPLICATE-COF.md. It is
+    /// not self-healing: nothing in this class removes a folder.</para>
+    /// </summary>
+    private void WarnOnDuplicateSystemFolders(UUID principalID, XInventoryFolder[] sysFolders)
+    {
+        if (sysFolders is null || sysFolders.Length < 2)
+            return;
+
+        var byType = new Dictionary<int, List<XInventoryFolder>>();
+        foreach (XInventoryFolder f in sysFolders)
+        {
+            if (f.type == (int)FolderType.Outfit)      // a resident may save any number of outfits
+                continue;
+            if (!byType.TryGetValue(f.type, out List<XInventoryFolder> group))
+                byType[f.type] = group = new List<XInventoryFolder>(1);
+            group.Add(f);
+        }
+
+        foreach (KeyValuePair<int, List<XInventoryFolder>> kv in byType)
+        {
+            if (kv.Value.Count < 2)
+                continue;
+
+            m_log.LogWarning(
+                "[XINVENTORY]: agent {Principal} has {Count} folders of type {Type} directly under the inventory "
+                + "root ({Folders}); exactly one is expected. This is a data fault, not a fault of this login - see "
+                + "Docs/feature/ais-v3/A7-DUPLICATE-COF.md for the dedupe. Folders of the same type inside My "
+                + "Suitcase are expected and are not counted here.",
+                principalID, kv.Value.Count, (FolderType)kv.Key,
+                string.Join(", ", kv.Value.ConvertAll(f => $"{f.folderID} v{f.version}")));
+        }
+    }
+
     protected XInventoryFolder CreateFolder(UUID principalID, UUID parentID, int type, string name)
     {
         var newFolder = new XInventoryFolder
@@ -222,7 +318,15 @@ public class XInventoryService : ServiceBase, IInventoryService
                 [ "agentID", "parentFolderID" ],
                 [ principalID.ToString(), rootID.ToString() ]);
 
-        XInventoryFolder[] sysFolders = Array.FindAll(allFolders, f => f.type > 0);
+        // AIS-COF-1: >= 0, not > 0. FolderType.Texture IS zero, so the old filter dropped the "Textures" folder
+        // from every snapshot this returns - and EnsureSystemFolder reads that snapshot to decide whether the
+        // folder already exists. The answer was therefore always "missing" for Textures, on every call, and each
+        // call created another one. That is not a race; it is deterministic, and the data shows it exactly:
+        // type 0 was the ONLY type with root-level duplicates on Legion Grid, and the account Direct Delivery
+        // calls CreateUserInventory on for every delivery had NINE "Textures" folders, all version 1 and empty,
+        // beside the one real one. Nothing else duplicated. Only the A-R8 re-read added to EnsureSystemFolder
+        // stopped it growing further, by catching the miss one query later.
+        XInventoryFolder[] sysFolders = Array.FindAll(allFolders, f => f.type >= 0);
 
         //m_log.LogDebug(
         //    "[XINVENTORY SERVICE]: Found {0} system folders for {1}", sysFolders.Length, principalID);
