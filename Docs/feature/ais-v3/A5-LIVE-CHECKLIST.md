@@ -366,6 +366,39 @@ enough, was read as *"replace every link with none"* and emptied the wearer's Cu
 **The 400 and the `[]` case must both be observed.** Either alone proves nothing: refusing everything would
 also pass the first half, and it would break the way an outfit is taken off.
 
+### 21. Truly and Aleric after the duplicate-folder cleanup
+
+**Do:** log in as **Truly**, then as **Aleric**. For each: wear one item and remove one item. Open
+**Appearance** and confirm it still works. Show the caps list and `curl` their own
+`<capurl>/category/<their COF>/links` — the outfit comes back.
+
+**Then the database**, per agent:
+
+```sql
+SELECT f.folderID, f.version,
+       CASE WHEN f.parentFolderID = r.folderID THEN 'ROOT' ELSE 'suitcase' END AS location
+FROM inventoryfolders f JOIN inventoryfolders r ON r.agentID=f.agentID AND r.type=8
+WHERE f.type=46 AND f.agentID='<agent>';
+```
+
+**Expected: exactly one type-46 row parented to ROOT. The suitcase COF is expected and must still be
+present** — for Truly that is `52c327c4-cb7d-4365-a7f0-62a6f7545265`, for Aleric `88028d53-4a08-473c-ac52-fb301727edb8`.
+Two rows total per agent, one of each location. **A missing suitcase row is a failure, not a success.**
+
+**Also check `Textures`**, which is what AIS-COF-1 actually cleaned:
+
+```sql
+SELECT COUNT(*) FROM inventoryfolders f JOIN inventoryfolders r ON r.agentID=f.agentID AND r.type=8
+WHERE f.type=0 AND f.parentFolderID=r.folderID AND f.agentID='<agent>';
+```
+
+**Expected 1.** Aleric had **nine**; Legion Hienrichs had two, and his surviving one must still hold its
+**102 items**.
+
+**And the new WARN must be silent.** After both logins, `grep '\[XINVENTORY\]: agent' <region log>` returns
+nothing. A line there means a root-level duplicate has come back, which after this session should be
+impossible on a single Robust.
+
 ---
 
 ## The Robust question — RESOLVED, and it was never about step 7

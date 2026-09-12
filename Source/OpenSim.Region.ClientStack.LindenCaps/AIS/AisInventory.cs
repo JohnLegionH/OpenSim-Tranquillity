@@ -157,7 +157,10 @@ public static class AisInventory
         // outfit change that quietly does not stick.
         m_log.LogWarning(
             "[AIS]: agent {Agent} has {Count} folders of type {Type} ({Candidates}); using {Chosen} version {Version}. "
-            + "Duplicate system folders are a data fault, not an AIS one - see Docs/feature/ais-v3/A7-DUPLICATE-COF.md",
+            + "Duplicate system folders DIRECTLY UNDER THE ROOT are a data fault, not an AIS one - see "
+            + "Docs/feature/ais-v3/A7-DUPLICATE-COF.md. A second folder of this type inside My Suitcase is "
+            + "EXPECTED (HGSuitcaseInventoryService.CreateSystemFolders builds a full set there) and is not a "
+            + "fault; AIS-COF-1 found that every \"duplicate\" Current Outfit on this grid was the suitcase one",
             agentId, candidates.Count, type,
             string.Join(", ", candidates.Select(f => $"{f.ID} v{f.Version}")),
             chosen.ID, chosen.Version);
