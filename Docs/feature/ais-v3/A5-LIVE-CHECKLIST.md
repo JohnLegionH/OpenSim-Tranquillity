@@ -311,6 +311,31 @@ deliberately keeps the old wearables in that case rather than emptying the slot.
 
 Then swap which shirt is on top (take both off, add them in the other order) and confirm the bake follows.
 
+### 19. Fetch ANOTHER resident's folder through your own AIS cap — 404
+
+**Do:** log in as **Truly Bazar**. Get **Aleric**'s Current Outfit folder UUID out of the database (or out of
+Aleric's own region log line, `FetchCOF resolved "current" to <folder>`), then ask Truly's own `InventoryAPIv3`
+cap for it directly — a `GET <capurl>/category/<Aleric's COF>/children`. The cap URL is in Truly's seed
+response; `curl` or the viewer's own debug console will do.
+
+**Expected: 404**, with an error body and **no** `_embedded`. Nothing of Aleric's may appear, and Truly's own
+inventory must be unaffected.
+
+**Then the same UUID against the mutating routes**, one at a time, and each must also be refused with Aleric's
+row unchanged afterwards: `PATCH /category/<Aleric's COF>` with `{"name":"x"}`, `DELETE /category/<Aleric's
+COF>/children`, and `PUT /category/<Aleric's COF>/links` with an empty array. Check Aleric's folder name,
+version and link rows in the database before and after.
+
+**Why this step exists.** AIS-SEC-1 (ledger row A20): the region backend was a pure pass-through to
+`IInventoryService`, which resolves by UUID and disregards the principal it is handed — so until
+`1.1.<N>-alpha+f8263e22b8` every one of those requests **succeeded**, and the last of them would have stripped
+another resident's outfit. The suite never saw it because every HTTP fixture ran on `FakeAisBackend`, which
+enforces the scoping the real backend lacked.
+
+**This is the "did it land" check for the AIS-SEC-1 deploy** (procedure step 11) and it fails differently from
+the bug it replaces: before the fix the request answers 200 and does the work, after it the request answers 404
+and does nothing. A hash cannot tell those apart.
+
 ---
 
 ## The Robust question — RESOLVED, and it was never about step 7
