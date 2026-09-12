@@ -34,7 +34,14 @@ public class AisMutationHttpTests
 
     private sealed class MutTestRequest : OpenSim.Framework.Servers.HttpServer.IOSHttpRequest
     {
-        public MutTestRequest(string verb, string url, OSDMap body = null)
+        /// <summary>
+        /// The body is <see cref="OSD"/>, not <see cref="OSDMap"/>. It used to be <c>OSDMap</c>, and that
+        /// narrowing was not harmless: the one caller with a non-map body wrote <c>body as OSDMap</c> to satisfy
+        /// it, which silently became <c>null</c> and sent <b>no body at all</b>. A slam body is a bare LLSD
+        /// <b>array</b> (<c>llappearancemgr.cpp:2209-2245</c>) — so the one shape the viewer really sends was
+        /// exactly the shape this harness could not express.
+        /// </summary>
+        public MutTestRequest(string verb, string url, OSD body = null)
         {
             HttpMethod = verb;
             Url = new Uri("http://sim.test" + url);
@@ -78,7 +85,7 @@ public class AisMutationHttpTests
         return b;
     }
 
-    private static (int Status, OSDMap Body) Send(FakeAisBackend backend, string verb, string path, OSDMap body = null, AisMode mode = AisMode.Inventory)
+    private static (int Status, OSDMap Body) Send(FakeAisBackend backend, string verb, string path, OSD body = null, AisMode mode = AisMode.Inventory)
     {
         var handler = new AisHandler(Cap, Agent, backend, mode);
         var response = new TestOSHttpResponse();
@@ -659,8 +666,10 @@ public class AisMutationHttpTests
         {
             var handler = new AisHandler(Cap, Agent, b);
             var response = new TestOSHttpResponse();
+            // The PUT case must send the bare array it builds. `body as OSDMap` used to stand here and turned it
+            // into null, i.e. no body at all — see the remarks on MutTestRequest.
             var body = verb == "PUT" ? (OSD)new OSDArray() : new OSDMap();
-            handler.Handle(new MutTestRequest(verb, Cap + path, body as OSDMap), response);
+            handler.Handle(new MutTestRequest(verb, Cap + path, body), response);
             Assert.That(response.StatusCode, Is.EqualTo(expected), $"{verb} {path}");
         }
     }
