@@ -588,16 +588,20 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                     return;
                 }
 
-                if(map.TryGetInt("parcel_local_id", out int parcelID))
+                // O-48 (audit W-1): the parcel is derived from the avatar's position, as Vivox/FreeSwitch
+                // do (scene.GetLandData(avatar.AbsolutePosition)). It used to be looked up by the viewer's
+                // parcel_local_id, so a client could name another parcel and join its room, or omit the
+                // id and skip every check below into the -999 estate room. The client id is now a hint:
+                // it is logged on mismatch and never refused (a viewer mid-crossing can be stale, O-11).
                 {
-                    ILandObject parcel = scene.LandChannel.GetLandObject(parcelID);
+                    ILandObject parcel = scene.LandChannel.GetLandObject(sp.AbsolutePosition.X, sp.AbsolutePosition.Y);
                     if (parcel == null)
                     {
                         response.RawBuffer = llsdUndefAnswerBytes;
                         response.StatusCode = (int)HttpStatusCode.NotFound;
                         return;
                     }
-                    
+
                     LandData land = parcel.LandData;
                     if (land == null)
                     {
@@ -605,6 +609,16 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                         response.StatusCode = (int)HttpStatusCode.NotFound;
                         return;
                     }
+
+                    int? clientParcelId = map.TryGetInt("parcel_local_id", out int c) ? c : null;
+                    ParcelResolution res = ProvisionParcelResolver.Resolve(clientParcelId, land.LocalID);
+                    bool estateChan = (land.Flags & (uint)ParcelFlags.UseEstateVoiceChan) != 0;
+
+                    m_log.LogDebug("{LogHeader} [PARCEL RESOLVE] agent={AgentId} region={RegionName} client={ClientId} server={ServerLocalId} estate_chan={EstateChan} mismatch={Mismatch}",
+                        logHeader, agentID, scene.Name, clientParcelId?.ToString() ?? "-", res.ServerLocalId, estateChan, res.ClientMismatch);
+                    if (res.ClientMismatch)
+                        m_log.LogWarning("{LogHeader}[ProvisionVoice]: parcel_local_id {ClientId} from agent {AgentId} does not match the avatar's parcel {ServerLocalId} in \"{RegionName}\" — using the server parcel",
+                            logHeader, clientParcelId, agentID, res.ServerLocalId, scene.Name);
 
                     if (!scene.RegionInfo.EstateSettings.TaxFree && (land.Flags & (uint)ParcelFlags.AllowVoiceChat) == 0)
                     {
@@ -614,9 +628,15 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                         return;
                     }
 
-                    if ((land.Flags & (uint)ParcelFlags.UseEstateVoiceChan) != 0)
+                    if (estateChan)
                     {
                         map.Remove("parcel_local_id"); // estate channel
+                    }
+                    else
+                    {
+                        // The service hashes this into the mixer room (CalcRoomNumber). An honest viewer sends
+                        // the same number, so no live room renumbers.
+                        map["parcel_local_id"] = OSD.FromInteger(res.ServerLocalId);
                     }
 
                     // Defect #13 (Docs/voice/parcel-voice-semantics.md, OPEN items): this

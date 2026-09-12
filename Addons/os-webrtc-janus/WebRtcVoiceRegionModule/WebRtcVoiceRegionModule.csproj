@@ -12,6 +12,7 @@
     <Compile Include="PluginRegistration.cs" />
     <Compile Include="WebRtcVoiceRegionModule.cs" />
     <Compile Include="LandBan.cs" />
+    <Compile Include="ProvisionParcelResolver.cs" />
     <Compile Include="FeederWorldFromScene.cs" />
     <Compile Include="VoiceVisibilityService.cs" />
     <Compile Include="AgentRoomTable.cs" />
