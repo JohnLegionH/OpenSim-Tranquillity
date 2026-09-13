@@ -45,6 +45,10 @@
     JanusGatewayAdminURI = http://janus.example.org/admin
     ; APIKey to access the admin port on the Janus Gateway. Must be set to the same value as the Janus Gateway.
     AdminAPIToken = AdminAPITokenToNeverCheckIn
+    ; How long (ms) a request Janus answers with "ack" (join, leave, create room, ...) waits for its
+    ; completing event before the request fails with error.reason "timeout". Bounds the provisioning
+    ; handler thread (O-50). Default 5000.
+    ; RequestTimeoutMs = 5000
     ; Debugging: output to log file messages sent and received from Janus. Very verbose.
     MessageDetails = false
 

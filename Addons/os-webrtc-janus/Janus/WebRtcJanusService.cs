@@ -68,6 +68,9 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
 
     private bool _MessageDetails = false;
 
+    // O-50: [JanusWebRtcVoice] RequestTimeoutMs — how long an ack'd Janus request waits for its event.
+    private int _JanusRequestTimeoutMs = JanusSession.DefaultRequestTimeoutMs;
+
     // An extra "viewer session" that is created initially. Used to verify the service
     //     is working and for a handle for the console commands.
     private JanusViewerSession _ViewerSession;
@@ -103,6 +106,13 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                     _log.LogInformation($"{LogHeader} grid id for multiagent rooms = {_GridId}");
                 // Debugging options
                 _MessageDetails = janusConfig.GetBoolean("MessageDetails", false);
+                // O-50: bound on every ack'd request (join/leave/create...); the provisioning .Result (O-32) waits on it.
+                _JanusRequestTimeoutMs = janusConfig.GetInt("RequestTimeoutMs", JanusSession.DefaultRequestTimeoutMs);
+                if (_JanusRequestTimeoutMs <= 0)
+                {
+                    _log.LogWarning($"{LogHeader} RequestTimeoutMs = {_JanusRequestTimeoutMs} is not positive; using {JanusSession.DefaultRequestTimeoutMs}");
+                    _JanusRequestTimeoutMs = JanusSession.DefaultRequestTimeoutMs;
+                }
 
                 if (string.IsNullOrEmpty(_JanusServerURI) || string.IsNullOrEmpty(_JanusAPIToken) ||
                     string.IsNullOrEmpty(_JanusAdminURI) || string.IsNullOrEmpty(_JanusAdminToken))
@@ -150,6 +160,7 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     private async Task<bool> ConnectToSessionAndAudioBridge(JanusViewerSession pViewerSession)
     {
         JanusSession janusSession = new JanusSession(_JanusServerURI, _JanusAPIToken, _JanusAdminURI, _JanusAdminToken, _MessageDetails);
+        janusSession.JanusRequestTimeout = TimeSpan.FromMilliseconds(_JanusRequestTimeoutMs);
         if (await janusSession.CreateSession().ConfigureAwait(false))
         {
             _log.LogDebug("{0} JanusSession created", LogHeader);

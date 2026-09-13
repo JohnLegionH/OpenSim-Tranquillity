@@ -1173,3 +1173,22 @@ silent about being off.
 to the values the live grid runs; and log one line at `RegionLoaded` when the feeder is disabled,
 so a matrix-less region is visible in the log. Update `phase3a-feeder-acceptance.md`'s config
 table and its "no consumer" sentence at the same time.
+
+## WebRTC voice: `.Result` on the provisioning path (O-32) — ack'd Janus requests are now bounded (O-50/O-51)
+
+**Status:** O-32 open (sync-over-async unchanged); its unbounded case closed in code 2026-09-13
+by O-50/O-51 (audit W-3/W-4, `Docs/voice/webrtc-audit-20260909.md`), not deployed.
+**Legion-side (our code).**
+
+`WebRtcJanusService` still calls `ProvisionVoiceAccountRequest(...).Result` on the region's HTTP
+handler thread (O-32). Before O-50 that wait had no bound: any request Janus answered with `ack`
+(join, leave, create room, destroy on a plugin handle) parked in `JanusSession._OutstandingRequests`
+and awaited its event forever, so a lost event — for example a session destroyed between the ack
+and the event — held one caps thread for the life of the process. `JanusSession.SendToJanus` now
+waits at most `[JanusWebRtcVoice] RequestTimeoutMs` (default 5000 ms) and then returns a synthetic
+Janus error with `error.reason` `"timeout"`. It also logs `[JANUS SESSION]: request <transaction>
+(<op>) timed out after <ms> ms`. `DestroySession` and both long-poll exit arms complete every
+pending request immediately, with `"session destroyed"` or `"long poll exited"`. Every
+`_OutstandingRequests` access is under its lock (O-51). The `.Result` calls are deliberately
+unchanged: a blocked thread is now returned within `RequestTimeoutMs` rather than lost, and
+removing the sync-over-async is still O-32's own fix.
