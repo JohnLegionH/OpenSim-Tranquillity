@@ -65,6 +65,10 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     private static byte[] llsdUndefAnswerBytes = Util.UTF8.GetBytes("<llsd><undef /></llsd>"); 
     private bool _MessageDetails = false;
 
+    // O-72: replays a provision refusal (403/404/501) to the viewer's immediate retries for RefusalCacheSeconds
+    // without re-running the estate/parcel checks. Replaced from config in Initialise.
+    private ProvisionRefusalCache m_refusalCache = new ProvisionRefusalCache(TimeSpan.FromSeconds(ProvisionRefusalCache.DefaultSeconds));
+
     // Control info
     private static bool m_Enabled = false;
 
@@ -105,6 +109,9 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             if (m_Enabled)
             {
                 _MessageDetails = m_Config.GetBoolean("MessageDetails", false);
+                // O-72: [WebRtcVoice] RefusalCacheSeconds (default 5; 0 disables).
+                m_refusalCache = new ProvisionRefusalCache(TimeSpan.FromSeconds(
+                    Math.Max(0, m_Config.GetInt("RefusalCacheSeconds", ProvisionRefusalCache.DefaultSeconds))));
                 m_StunServers = m_Config.GetString("StunServers", string.Empty);
                 m_VisibilityFeederEnabled = m_Config.GetBoolean("VisibilityFeederEnabled", false);
                 m_VisibilityTickMs = m_Config.GetInt("VisibilityTickMs", 250);
@@ -489,7 +496,47 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         return channelType == "local";
     }
 
+    // O-72: what one provision call decided, read back by the wrapper once the handler has answered.
+    private sealed class ProvisionCallContext
+    {
+        public ProvisionKind? Kind;          // set once admission has decided (null: refused earlier)
+        public bool AnsweredFromCache;       // the refusal cache answered this call
+        public bool Provisioned;             // the voice service returned a success map (viewer_session)
+    }
+
+    // O-72: a cached region-level refusal (the exact status and body the viewer got).
+    private sealed record CachedRefusal(int StatusCode, byte[] Body);
+
+    private static bool IsCacheableRefusalStatus(int pStatusCode) =>
+        pStatusCode == (int)HttpStatusCode.Forbidden || pStatusCode == (int)HttpStatusCode.NotFound
+        || pStatusCode == (int)HttpStatusCode.NotImplemented;
+
+    // O-72 (refusal throttle): the stock viewer re-provisions immediately after ANY refusal (~2 Hz live). The
+    // handler below is unchanged except that, for an admitted "local" provision, a refusal recorded within
+    // RefusalCacheSeconds for this (agent, region) is answered again from the cache before the estate/parcel
+    // checks run. This wrapper records a fresh 403/404/501 refusal of a "local" provision, and clears the
+    // entry on a successful provision or a logout. At most one INFO line per (agent, region) per window.
     public void ProvisionVoiceAccountRequest(IOSHttpRequest request, IOSHttpResponse response, UUID agentID, Scene scene)
+    {
+        var ctx = new ProvisionCallContext();
+        ProvisionVoiceAccountRequestCore(request, response, agentID, scene, ctx);
+
+        UUID regionId = scene.RegionInfo.RegionID;
+        if (ctx.Kind == ProvisionKind.Logout || ctx.Provisioned)
+        {
+            m_refusalCache.Clear(agentID, regionId);
+        }
+        else if (ctx.Kind == ProvisionKind.Local && !ctx.AnsweredFromCache && IsCacheableRefusalStatus(response.StatusCode))
+        {
+            int suppressed = m_refusalCache.RecordRefusal(agentID, regionId, new CachedRefusal(response.StatusCode, response.RawBuffer));
+            if (suppressed > 0)
+                m_log.LogInformation("{LogHeader}[ProvisionVoice]: provision from {AgentId} in \"{RegionName}\" refused again (cached, {Suppressed} retries suppressed)",
+                    logHeader, agentID, scene.Name, suppressed);
+        }
+    }
+
+    private void ProvisionVoiceAccountRequestCore(IOSHttpRequest request, IOSHttpResponse response, UUID agentID, Scene scene,
+        ProvisionCallContext ctx)
     {
         // Get the voice service. If it doesn't exist, return an error.
         IWebRtcVoiceService voiceService = scene.RequestModuleInterface<IWebRtcVoiceService>();
@@ -521,7 +568,8 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         {
             if (vstosd is OSDString vst && !((string)vst).Equals("webrtc", StringComparison.OrdinalIgnoreCase))
             {
-                m_log.LogWarning($"{logHeader}[ProvisionVoice]: voice_server_type is not 'webrtc'. Request: {map}");
+                // Firestorm's Vivox module probes this cap twice per login; refused as before, logged at DEBUG.
+                m_log.LogDebug($"{logHeader}[ProvisionVoice]: voice_server_type is not 'webrtc' (viewer Vivox probe, expected). Request: {map}");
                 response.RawBuffer = llsdUndefAnswerBytes;
                 response.StatusCode = (int)HttpStatusCode.OK;
                 return;
@@ -562,6 +610,19 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             m_log.LogWarning($"{logHeader}[ProvisionVoice]: refusing provision with channel_type \"{channelType}\" ({admission.Decision}) from agent {agentID} in region \"{scene.Name}\"");
             response.RawBuffer = llsdUndefAnswerBytes;
             response.StatusCode = (int)HttpStatusCode.Forbidden;
+            return;
+        }
+
+        // O-72: record what admission decided for the wrapper, and answer a repeat of a refusal this (agent, region)
+        // got within RefusalCacheSeconds straight from the cache - before the estate/parcel checks run.
+        ctx.Kind = admission.Kind;
+        if (admission.Kind == ProvisionKind.Local
+            && m_refusalCache.TryGetRefusal(agentID, scene.RegionInfo.RegionID, out object cachedRefusal)
+            && cachedRefusal is CachedRefusal cached)
+        {
+            ctx.AnsweredFromCache = true;
+            response.RawBuffer = cached.Body;
+            response.StatusCode = cached.StatusCode;
             return;
         }
 
@@ -686,6 +747,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         if(resp is not null)
         {
             if (_MessageDetails) m_log.LogDebug($"{logHeader}[ProvisionVoice]: response: {resp}");
+            ctx.Provisioned = resp.ContainsKey("viewer_session");   // O-72: a success map clears the refusal cache
 
             // Convert the OSD to LLSDXml for the response
             string xmlResp = OSDParser.SerializeLLSDXmlString(resp);
@@ -848,6 +910,15 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         {
             m_log.LogWarning($"{logHeader} ChatSessionRequest: scene presence not found or deleted for agent {agentID}");
             response.StatusCode = (int)HttpStatusCode.NotFound;
+            return;
+        }
+
+        // O-60 (audit W-13): an A2A ring must come from the agent's ROOT region - the same presence rule the close
+        // path uses (sp == null || sp.IsChildAgent). A child agent's request is refused before any registry state.
+        if (sp.IsChildAgent)
+        {
+            m_log.LogWarning($"{logHeader} ChatSessionRequest: refusing child agent {agentID} in region \"{scene.RegionInfo.RegionName}\" (A2A requests come from the agent's root region)");
+            response.StatusCode = (int)HttpStatusCode.Forbidden;
             return;
         }
 

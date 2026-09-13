@@ -75,8 +75,20 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     //     is working and for a handle for the console commands.
     private JanusViewerSession _ViewerSession;
 
-    public WebRtcJanusService(IConfigSource pConfig) : base(pConfig)
+    // O-60 (audit W-14): serializes EnsureServiceSessionAsync, so two console commands cannot both reconnect.
+    private readonly SemaphoreSlim _serviceSessionGate = new SemaphoreSlim(1, 1);
+
+    // Test seam: builds the HttpMessageHandler for each JanusSession this service creates (null = the network).
+    // A factory, not one handler, because disposing a session's HttpClient disposes its handler.
+    private readonly Func<HttpMessageHandler> _httpHandlerFactory;
+
+    public WebRtcJanusService(IConfigSource pConfig) : this(pConfig, null)
     {
+    }
+
+    public WebRtcJanusService(IConfigSource pConfig, Func<HttpMessageHandler> pHttpHandlerFactory) : base(pConfig)
+    {
+        _httpHandlerFactory = pHttpHandlerFactory;
         Assembly assembly = Assembly.GetExecutingAssembly();
         string version = assembly.GetName().Version?.ToString() ?? "unknown";
 
@@ -159,7 +171,8 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
 
     private async Task<bool> ConnectToSessionAndAudioBridge(JanusViewerSession pViewerSession)
     {
-        JanusSession janusSession = new JanusSession(_JanusServerURI, _JanusAPIToken, _JanusAdminURI, _JanusAdminToken, _MessageDetails);
+        JanusSession janusSession = new JanusSession(_JanusServerURI, _JanusAPIToken, _JanusAdminURI, _JanusAdminToken, _MessageDetails,
+            _httpHandlerFactory?.Invoke());
         janusSession.JanusRequestTimeout = TimeSpan.FromMilliseconds(_JanusRequestTimeoutMs);
         if (await janusSession.CreateSession().ConfigureAwait(false))
         {
@@ -178,7 +191,7 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 pViewerSession.VoiceServiceSessionId = janusSession.SessionId;
                 pViewerSession.Session = janusSession;
                 pViewerSession.AudioBridge = audioBridge;
-                janusSession.OnDisconnect += Handle_Hangup;
+                janusSession.OnDisconnect += Handle_Disconnect;
                 janusSession.OnHangup += Handle_Hangup;
                 return true;
             }
@@ -197,6 +210,17 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
         return false;
     }
 
+    // O-60 (audit W-14): a session's long poll exited (GETERROR - e.g. the mixer restarted and the session id is
+    // gone). A viewer session takes the hangup path as before. The SERVICE session (console commands) was
+    // never found by that lookup, so it stayed "connected" and every later console command used a dead
+    // session until the region restarted; mark it disconnected so the next console command reconnects.
+    private void Handle_Disconnect(EventResp pResp)
+    {
+        if (MarkServiceSessionDisconnected(pResp))
+            return;
+        Handle_Hangup(pResp);
+    }
+
     private void Handle_Hangup(EventResp pResp)
     {
         if (pResp is not null)
@@ -208,11 +232,88 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 // There is a viewer session associated with this session
                 DisconnectViewerSession(viewerSession as JanusViewerSession);
             }
-            else
+            else if (!MarkServiceSessionDisconnected(pResp))
             {
                 _log.LogDebug($"{LogHeader} Handle_Hangup: no session found. SessionId={sessionId}");
             }
         }
+    }
+
+    // TRUE when the event names the service session; that session is then marked disconnected.
+    private bool MarkServiceSessionDisconnected(EventResp pResp)
+    {
+        JanusSession service = _ViewerSession?.Session;
+        if (pResp is null || service is null || string.IsNullOrEmpty(pResp.sessionId) || pResp.sessionId != service.SessionId)
+            return false;
+        service.IsConnected = false;
+        _log.LogWarning($"{LogHeader} service session {service.SessionId} lost its long poll; the next console command reconnects it");
+        return true;
+    }
+
+    /// The service (console) session's Janus session id, or null when there is none (diagnostics and tests).
+    public string ServiceSessionId => _ViewerSession?.Session?.SessionId;
+
+    /// Whether the service session is currently marked connected (diagnostics and tests).
+    public bool ServiceSessionIsConnected => _ViewerSession?.Session?.IsConnected ?? false;
+
+    // O-60 (audit W-14): the console-side service session is lazy and self-healing. Returns the live service
+    // session, replacing it first when it is missing, marked disconnected (its long poll exited), or
+    // pForceReconnect says the caller just saw a request fail on it (a session the restarted mixer no longer
+    // knows answers 458 without any disconnect event). The old session is shut down best-effort, and a fresh
+    // session + plugin handle is built by ConnectToSessionAndAudioBridge - the provisioning path. Null when
+    // Janus cannot be reached.
+    public async Task<JanusViewerSession> EnsureServiceSessionAsync(bool pForceReconnect = false)
+    {
+        await _serviceSessionGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            JanusViewerSession current = _ViewerSession;
+            if (!pForceReconnect && current?.Session is not null && current.Session.IsConnected && current.AudioBridge is not null)
+                return current;
+
+            if (current is not null)
+            {
+                try
+                {
+                    await current.Shutdown().ConfigureAwait(false);
+                }
+                catch (Exception e)
+                {
+                    _log.LogDebug($"{LogHeader} service session shutdown before reconnect threw: {e.Message}");
+                }
+            }
+
+            var fresh = new JanusViewerSession(this);
+            if (!await ConnectToSessionAndAudioBridge(fresh).ConfigureAwait(false))
+            {
+                _ViewerSession = null;
+                _log.LogWarning($"{LogHeader} service session could not be reconnected (Janus unreachable?)");
+                return null;
+            }
+            _ViewerSession = fresh;
+            _log.LogInformation($"{LogHeader} service session reconnected");
+            return fresh;
+        }
+        finally
+        {
+            _serviceSessionGate.Release();
+        }
+    }
+
+    // O-60: "janus list rooms" through the service session. If the request fails on the current session it is
+    // retried ONCE on a forced reconnect, so a mixer restart heals on the next console command.
+    public async Task<AudioBridgeResp> ServiceListRoomsAsync()
+    {
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            JanusViewerSession svc = await EnsureServiceSessionAsync(pForceReconnect: attempt > 0).ConfigureAwait(false);
+            if (svc?.AudioBridge is null)
+                return null;
+            AudioBridgeResp resp = await svc.AudioBridge.SendAudioBridgeMsg(new AudioBridgeListRoomsReq()).ConfigureAwait(false);
+            if (resp is not null && resp.isSuccess)
+                return resp;
+        }
+        return null;
     }
 
     // Disconnect the viewer session. This is called when the viewer logs out or hangs up.
@@ -387,6 +488,17 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
         OSDMap ret = null;
         JanusViewerSession viewerSession = pSession as JanusViewerSession;
         JanusMessageResp resp = null;
+        if (viewerSession is not null && viewerSession.Session is null)
+        {
+            // O-60 (audit W-12): signalling for a viewer session with no Janus session (never provisioned, or
+            // already shut down) used to throw NullReferenceException on Session. Answer the error map instead.
+            _log.LogWarning($"{LogHeader} VoiceSignalingRequest: viewer session {viewerSession.ViewerSessionID} of {pUserID} has no Janus session");
+            return new OSDMap
+            {
+                { "response", "error" },
+                { "error", "no voice session" }
+            };
+        }
         if (viewerSession is not null)
         {
             // The request should be an array of candidates
@@ -398,8 +510,25 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                     resp = await viewerSession.Session.TrickleCompleted(viewerSession).ConfigureAwait(false);
                     _log.LogDebug($"{LogHeader} VoiceSignalingRequest: candidate completed");
                 }
+                else if (candidate.TryGetString("candidate", out string candidateLine) && !string.IsNullOrEmpty(candidateLine))
+                {
+                    // O-60 (audit W-12): the singular form {candidate:{candidate, sdpMid, sdpMLineIndex}} used to fall
+                    // into an empty else and was silently dropped. Pass it on as a one-element candidate list.
+                    OSDArray single = new OSDArray
+                    {
+                        new OSDMap
+                        {
+                            { "candidate", candidateLine },
+                            { "sdpMid", candidate["sdpMid"].AsString() },
+                            { "sdpMLineIndex", candidate["sdpMLineIndex"].AsLong() }
+                        }
+                    };
+                    resp = await viewerSession.Session.TrickleCandidates(viewerSession, single).ConfigureAwait(false);
+                    _log.LogDebug($"{LogHeader} VoiceSignalingRequest: 1 candidate (singular form)");
+                }
                 else
                 {
+                    _log.LogWarning($"{LogHeader} VoiceSignalingRequest: 'candidate' has neither 'completed' nor a candidate line");
                 }
             }
             else if (pRequest.TryGetOSDArray("candidates", out OSDArray candidates))
@@ -464,7 +593,8 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     // ======================================================================================================
     private void RegisterConsoleCommands()
     {
-        if (_Enabled) {
+        // No console when the service is hosted without one (unit tests construct it directly).
+        if (_Enabled && MainConsole.Instance is not null) {
             MainConsole.Instance.Commands.AddCommand("Webrtc", false, "janus info",
                 "janus info",
                 "Show Janus server information",
@@ -480,24 +610,36 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
 
     private void HandleJanusInfo(string module, string[] cmdparms)
     {
-        if (_ViewerSession is not null && _ViewerSession.Session is not null)
+        // O-60 (audit W-14): reconnects a dead service session first instead of using it as-is.
+        JanusViewerSession svc = EnsureServiceSessionAsync().Result;
+        if (svc is not null && svc.Session is not null)
         {
-            WriteOut("{0} Janus session: {1}", LogHeader, _ViewerSession.Session.SessionId);
-            string infoURI = _ViewerSession.Session.JanusServerURI + "/info";
+            WriteOut("{0} Janus session: {1}", LogHeader, svc.Session.SessionId);
+            string infoURI = svc.Session.JanusServerURI + "/info";
 
-            var resp = _ViewerSession.Session.GetFromJanus(infoURI).Result;
-            
+            var resp = svc.Session.GetFromJanus(infoURI).Result;
+
             if (resp is not null)
                 MainConsole.Instance.Output(resp.ToJson());
+        }
+        else
+        {
+            MainConsole.Instance.Output("No Janus service session (Janus unreachable)");
         }
     }
 
     private void HandleJanusListRooms(string module, string[] cmdparms)
     {
-        if (_ViewerSession is not null && _ViewerSession.Session is not null && _ViewerSession.AudioBridge is not null)
+        // O-60 (audit W-14): ServiceListRoomsAsync reconnects the service session when it is dead and retries once,
+        // so "janus list rooms" heals after a mixer restart instead of failing until the region restarts.
+        var resp = ServiceListRoomsAsync().Result;
+        var ab = _ViewerSession?.AudioBridge;
+        if (ab is null)
         {
-            var ab = _ViewerSession.AudioBridge;
-            var resp = ab.SendAudioBridgeMsg(new AudioBridgeListRoomsReq()).Result;
+            MainConsole.Instance.Output("Failed to get room list (no Janus service session)");
+        }
+        else
+        {
             if (resp is not null && resp.isSuccess)
             {
                 if (resp.PluginRespData.TryGetValue("list", out OSD list))

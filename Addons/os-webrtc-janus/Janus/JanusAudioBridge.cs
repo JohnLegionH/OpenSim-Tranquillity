@@ -222,6 +222,16 @@ public class JanusAudioBridge : JanusPlugin
     private static readonly ConcurrentDictionary<int, SemaphoreSlim> _roomCreateLocks = new();
     private static readonly ConcurrentDictionary<int, bool> _knownRooms = new();
 
+    // O-60 (audit W-13): both tables used to grow by one entry per room number ever selected (every parcel,
+    // every A2A pair) for the life of the process. Entries idle for RoomCreateLockIdle are swept at most once
+    // a minute from SelectRoomCoalesced. Evicting is safe: a forgotten "exists" hint only costs one create
+    // that answers 486 (treated as success), and a swept gate is simply re-created on the next select; the
+    // one race - a caller that fetched a gate just before it was swept - can at worst issue a duplicate
+    // create, which the same 486 re-check absorbs (the cross-process case already relies on it).
+    public static readonly TimeSpan RoomCreateLockIdle = TimeSpan.FromMinutes(10);
+    private static readonly ConcurrentDictionary<int, long> _roomLastUseMs = new();
+    private static long _lastRoomLockSweepMs = Environment.TickCount64;
+
     // Calculate a room number for the given parameters. The room number is a hash of the parameters.
     // The attempt is to deterministicly create a room number so all regions will generate the
     //     same room number across sessions and across the grid.
@@ -296,6 +306,9 @@ public class JanusAudioBridge : JanusPlugin
         Func<Task<JanusRoom>> pCreate,
         Func<JanusRoom> pMakeExistingJoinObject)
     {
+        long now = Environment.TickCount64;
+        MaybeSweepRoomCreateLocks(now);
+        _roomLastUseMs[pRoomNumber] = now;
         SemaphoreSlim gate = _roomCreateLocks.GetOrAdd(pRoomNumber, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync().ConfigureAwait(false);
         try
@@ -313,9 +326,45 @@ public class JanusAudioBridge : JanusPlugin
         }
         finally
         {
+            _roomLastUseMs[pRoomNumber] = Environment.TickCount64;
             gate.Release();
         }
     }
+
+    // O-60 (audit W-13): at most once a minute, drop the gate and the "exists" hint of every room number idle
+    // for RoomCreateLockIdle (see the field comment for why eviction is safe).
+    private static void MaybeSweepRoomCreateLocks(long pNowMs)
+    {
+        long last = Interlocked.Read(ref _lastRoomLockSweepMs);
+        if (pNowMs - last < 60_000 || Interlocked.CompareExchange(ref _lastRoomLockSweepMs, pNowMs, last) != last)
+            return;
+        SweepRoomCreateLocks(pNowMs, RoomCreateLockIdle);
+    }
+
+    /// Evict every room number whose last select is older than pIdle and whose gate is not held right now.
+    /// Returns how many were evicted. Public so the bound is unit-testable with an explicit clock.
+    public static int SweepRoomCreateLocks(long pNowMs, TimeSpan pIdle)
+    {
+        int evicted = 0;
+        foreach (KeyValuePair<int, long> kvp in _roomLastUseMs)
+        {
+            if (pNowMs - kvp.Value < (long)pIdle.TotalMilliseconds)
+                continue;
+            if (_roomCreateLocks.TryGetValue(kvp.Key, out SemaphoreSlim held) && held.CurrentCount == 0)
+                continue;   // a select for this room is in progress
+            _roomCreateLocks.TryRemove(kvp.Key, out _);
+            _knownRooms.TryRemove(kvp.Key, out _);
+            _roomLastUseMs.TryRemove(kvp.Key, out _);
+            evicted++;
+        }
+        return evicted;
+    }
+
+    /// Room numbers currently holding a create gate (diagnostics and tests).
+    public static int RoomCreateLockCount => _roomCreateLocks.Count;
+
+    /// Whether this process currently holds the "room exists" hint for a room number (diagnostics and tests).
+    public static bool IsRoomKnown(int pRoomNumber) => _knownRooms.ContainsKey(pRoomNumber);
 
     // Drop the process-wide "exists" hint for a room number. Called when a join fails
     // (e.g. the room was destroyed out-of-band) so the next SelectRoom re-creates the

@@ -57,6 +57,8 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
 
     private static bool m_Enabled = false;
     private static bool m_allowNpcVoice = false;   // S-CON-1: [WebRtcVoice] AllowNpcVoice, default deny
+    // O-72: replays a failed provision's answer to the viewer's immediate retries (RefusalCacheSeconds).
+    private ProvisionRefusalCache m_refusalCache = new ProvisionRefusalCache(TimeSpan.FromSeconds(ProvisionRefusalCache.DefaultSeconds));
     private IConfigSource m_Config;
 
     private IWebRtcVoiceService m_spatialVoiceService;
@@ -82,6 +84,10 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
             // default — an NPC presence provisions voice only as a registered connector identity
             // or when the operator opts the whole surface open. Enforced in the provision path.
             m_allowNpcVoice = moduleConfig.GetBoolean("AllowNpcVoice", false);
+            // O-72: [WebRtcVoice] RefusalCacheSeconds (default 5; 0 disables) - how long a failed provision's
+            // answer is replayed to the viewer's immediate retries without creating a session or calling Janus.
+            int refusalSeconds = moduleConfig.GetInt("RefusalCacheSeconds", ProvisionRefusalCache.DefaultSeconds);
+            m_refusalCache = new ProvisionRefusalCache(TimeSpan.FromSeconds(Math.Max(0, refusalSeconds)));
             if (m_Enabled)
             {
                 // Get the DLLs for the two voice services
@@ -451,6 +457,17 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         return pResponse is null || !pResponse.ContainsKey("viewer_session");
     }
 
+    // O-72: the cached failure answer is copied in and out, so no caller can alter what later retries receive.
+    private static OSDMap CopyAnswer(OSDMap pAnswer)
+    {
+        if (pAnswer is null)
+            return null;
+        OSDMap copy = new OSDMap();
+        foreach (KeyValuePair<string, OSD> kvp in pAnswer)
+            copy[kvp.Key] = kvp.Value;
+        return copy;
+    }
+
     // IWebRtcVoiceService.ProvisionVoiceAccountRequest
         public OSDMap ProvisionVoiceAccountRequest(OSDMap pRequest, UUID pUserID, UUID pSceneID)
     {
@@ -477,6 +494,8 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         // ({ response: "closed" }, ProvisionResponseBuilder.BuildClosed's map) instead of falling
         // into the create branch and erroring "no channel_type in request".
         bool isLogout = pRequest.TryGetBool("logout", out bool lg) && lg;
+        if (isLogout)
+            m_refusalCache.Clear(pUserID, pSceneID);   // O-72: a logout ends any cached refusal for this region
         if (HasRealViewerSession(pRequest, out string viewerSessionId))
         {
             // request has a real viewer session. Use that to find the voice service -- it must be
@@ -523,6 +542,12 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
                 return null;
             }
 
+            // O-72: the viewer re-provisions immediately after a failed provision. Inside RefusalCacheSeconds a
+            // repeat attempt gets the same failure answer again, without creating a session or calling the
+            // voice service (Janus); the window's single log line is written when the refusal is re-evaluated.
+            if (m_refusalCache.TryGetRefusal(pUserID, pSceneID, out object cachedRefusal))
+                return CopyAnswer(cachedRefusal as OSDMap);
+
             // no (usable) viewer session -> this is an initial request
             if (pRequest.TryGetString("channel_type", out string channelType))
             {
@@ -557,8 +582,18 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
             // plugin handle would stay alive and IsAgentInRegion would report the agent voiced — one more set
             // per viewer retry. Remove it and shut down its voice-service side (the pair
             // DisconnectViewerSession uses). A pre-existing session (the viewer holds its id) is left alone.
+            if (createdHere && !IsFailedProvision(response))
+            {
+                m_refusalCache.Clear(pUserID, pSceneID);   // O-72: a successful provision ends any cached refusal
+            }
             if (createdHere && IsFailedProvision(response))
             {
+                // O-72: remember this answer for the viewer's immediate retries (RefusalCacheSeconds). The count the
+                // previous window suppressed is the one line per (agent, region) per window.
+                int suppressed = m_refusalCache.RecordRefusal(pUserID, pSceneID, CopyAnswer(response));
+                if (suppressed > 0)
+                    m_log.LogInformation("{LogHeader} ProvisionVoiceAccountRequest: provision from {UserId} in {RegionId} refused again (cached, {Suppressed} retries suppressed)",
+                        LogHeader, pUserID, pSceneID, suppressed);
                 IVoiceViewerSession failed = vSession;
                 m_log.LogDebug("{LogHeader} ProvisionVoiceAccountRequest: provision failed for new viewer session {ViewerSessionId} of {UserId} ({Error}) - removing it",
                     LogHeader, failed.ViewerSessionID, pUserID,

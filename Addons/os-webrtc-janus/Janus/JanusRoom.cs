@@ -117,6 +117,13 @@ public class JanusRoom : IDisposable
     }
     */
 
+    // Mixer JANUS_SLVOICE_ERROR_NOT_JOINED (janus_slvoice.c): the participant is already out of the room.
+    public const int NOT_JOINED_ERROR_CODE = 487;
+
+    // O-60 (audit W-12): used to discard the reply and always return false. TRUE when the mixer confirms the
+    // leave ("left"/"success") or answers NOT_JOINED (487) - the participant is already gone, which is now
+    // the normal case after a PeerConnection hangup (the mixer leaves on hangup_media, O-56), so it must not
+    // WARN on every teardown. Anything else (an error, a timeout, no reply) is FALSE with a WARN.
     public async Task<bool> LeaveRoom(JanusViewerSession pAttendeeSession)
     {
         bool ret = false;
@@ -124,6 +131,23 @@ public class JanusRoom : IDisposable
         {
             JanusMessageResp resp = await _AudioBridge.SendPluginMsg(
                 new AudioBridgeLeaveRoomReq(RoomId, pAttendeeSession.ParticipantId));
+            AudioBridgeResp leaveResp = resp is null ? null : new AudioBridgeResp(resp);
+            if (leaveResp is not null && (leaveResp.AudioBridgeReturnCode == "left" || leaveResp.isSuccess))
+            {
+                ret = true;
+            }
+            else if (leaveResp is not null && leaveResp.AudioBridgeErrorCode == NOT_JOINED_ERROR_CODE)
+            {
+                ret = true;
+                m_log.LogDebug("{LogHeader} LeaveRoom. Participant {ParticipantId} already out of room {RoomId} (NOT_JOINED)",
+                    LogHeader, pAttendeeSession.ParticipantId, RoomId);
+            }
+            else
+            {
+                m_log.LogWarning("{LogHeader} LeaveRoom. Leave of participant {ParticipantId} from room {RoomId} not confirmed (audiobridge={ReturnCode}, error_code={ErrorCode}). Resp={Resp}",
+                    LogHeader, pAttendeeSession.ParticipantId, RoomId, leaveResp?.AudioBridgeReturnCode ?? "-",
+                    leaveResp?.AudioBridgeErrorCode ?? 0, resp?.ToString() ?? "null");
+            }
         }
         catch (Exception e)
         {
