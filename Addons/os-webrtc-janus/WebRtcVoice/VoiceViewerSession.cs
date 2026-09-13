@@ -147,30 +147,59 @@ public class VoiceViewerSession : IVoiceViewerSession
     {
         List<IVoiceViewerSession> captured = new List<IVoiceViewerSession>();
         lock (ViewerSessions)
+            CaptureRegionLocked(pRegionId, pAgentId, pClientSessionId, captured);
+        return captured;
+    }
+
+    /// O-74: the same selection as CaptureSessionsForClose, applied in EVERY region where the agent holds
+    /// sessions, in one locked statement - except the regions in pSkipRegionIds (where the close handler
+    /// sees the agent currently ROOT, so those sessions belong to a live presence). Used for a ROOT client
+    /// close: the agent's neighbour-region sessions belong to the same dying viewer, and the viewer does
+    /// not reliably log them out. Token-strict exactly like the per-region capture, so a successor login's
+    /// sessions are never selected in any region.
+    public static List<IVoiceViewerSession> CaptureSessionsForCloseAllRegions(UUID pAgentId, UUID pClientSessionId,
+        ICollection<UUID> pSkipRegionIds)
+    {
+        List<IVoiceViewerSession> captured = new List<IVoiceViewerSession>();
+        lock (ViewerSessions)
         {
-            if (!AgentMembershipByRegion.TryGetValue(pRegionId, out Dictionary<UUID, List<IVoiceViewerSession>> agents)
-                || !agents.TryGetValue(pAgentId, out List<IVoiceViewerSession> sessions))
-                return captured;
-
-            for (int i = sessions.Count - 1; i >= 0; i--)
+            // Snapshot the regions first: capturing edits AgentMembershipByRegion.
+            List<UUID> regions = new List<UUID>();
+            foreach (KeyValuePair<UUID, Dictionary<UUID, List<IVoiceViewerSession>>> kvp in AgentMembershipByRegion)
             {
-                IVoiceViewerSession s = sessions[i];
-                if (s.ClientSessionId != pClientSessionId && s.ClientSessionId != UUID.Zero)
-                    continue;   // a different login's session (e.g. a racing successor) - never touch it
-                sessions.RemoveAt(i);
-                ViewerSessions.Remove(s.ViewerSessionID);
-                ClosingSessions[s] = new ClosingInfo { ParkedTick = Environment.TickCount64 };
-                captured.Add(s);
+                if (kvp.Value.ContainsKey(pAgentId) && (pSkipRegionIds is null || !pSkipRegionIds.Contains(kvp.Key)))
+                    regions.Add(kvp.Key);
             }
-
-            if (sessions.Count == 0)
-            {
-                agents.Remove(pAgentId);
-                if (agents.Count == 0)
-                    AgentMembershipByRegion.Remove(pRegionId);
-            }
+            foreach (UUID region in regions)
+                CaptureRegionLocked(region, pAgentId, pClientSessionId, captured);
         }
         return captured;
+    }
+
+    // One region's close-time selection. Assumes the ViewerSessions lock is held.
+    private static void CaptureRegionLocked(UUID pRegionId, UUID pAgentId, UUID pClientSessionId, List<IVoiceViewerSession> captured)
+    {
+        if (!AgentMembershipByRegion.TryGetValue(pRegionId, out Dictionary<UUID, List<IVoiceViewerSession>> agents)
+            || !agents.TryGetValue(pAgentId, out List<IVoiceViewerSession> sessions))
+            return;
+
+        for (int i = sessions.Count - 1; i >= 0; i--)
+        {
+            IVoiceViewerSession s = sessions[i];
+            if (s.ClientSessionId != pClientSessionId && s.ClientSessionId != UUID.Zero)
+                continue;   // a different login's session (e.g. a racing successor) - never touch it
+            sessions.RemoveAt(i);
+            ViewerSessions.Remove(s.ViewerSessionID);
+            ClosingSessions[s] = new ClosingInfo { ParkedTick = Environment.TickCount64 };
+            captured.Add(s);
+        }
+
+        if (sessions.Count == 0)
+        {
+            agents.Remove(pAgentId);
+            if (agents.Count == 0)
+                AgentMembershipByRegion.Remove(pRegionId);
+        }
     }
 
     /// A captured session's voice-service teardown succeeded - forget it.

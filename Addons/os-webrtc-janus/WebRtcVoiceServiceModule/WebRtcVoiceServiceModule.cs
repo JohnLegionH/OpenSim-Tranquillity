@@ -240,8 +240,19 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
             toShutdown.Add(s);
         }
 
-        foreach (IVoiceViewerSession s in VoiceViewerSession.CaptureSessionsForClose(
-            pScene.RegionInfo.RegionID, pClientID, generation))
+        // O-74: a ROOT close captures the agent's sessions in EVERY region of this instance, not only
+        // pScene's. The neighbour-region sessions (the viewer opens one spatial connection per adjacent
+        // region) belong to the same dying viewer, and the viewer does NOT reliably log them out on Quit
+        // (live 2026-09-13 12:06: the Transylvania session survived an ordinary quit as a ghost holding a
+        // mixer slot, because the neighbour's close is a CHILD close and the guard above ignores it).
+        // Teleport cannot lose the new root's session to this: EntityTransferModule flags the source child
+        // (TransferAgent_V2 :1194, crossing :1855) before the destination becomes root and closes the
+        // source only after MakeChildAgent (:1232 -> :1260), so that close is a child close. As a guard
+        // that does not depend on that ordering, regions where this module sees the agent ROOT right now
+        // are skipped.
+        HashSet<UUID> rootElsewhere = RegionsWhereAgentIsRoot(pClientID, pScene.RegionInfo.RegionID);
+        List<IVoiceViewerSession> captured = CaptureForClientClose(pClientID, sp.IsChildAgent, generation, rootElsewhere);
+        foreach (IVoiceViewerSession s in captured)
         {
             if (!toShutdown.Contains(s))
                 toShutdown.Add(s);
@@ -250,12 +261,62 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         if (toShutdown.Count == 0)
             return;
 
-        m_log.LogDebug("{LogHeader} Event_OnClientClosed: captured {CapturedSessionCount} voice session(s) for {ClientId} in {SceneName}",
-            LogHeader, toShutdown.Count, pClientID, pScene.Name);
+        List<UUID> regions = new List<UUID>();
+        foreach (IVoiceViewerSession s in captured)
+        {
+            if (!regions.Contains(s.RegionId))
+                regions.Add(s.RegionId);
+        }
+        foreach (UUID region in regions)
+        {
+            int n = captured.Count(s => s.RegionId == region);
+            m_log.LogDebug("{LogHeader} Event_OnClientClosed: captured {CapturedSessionCount} voice session(s) for {ClientId} in {SceneName}",
+                LogHeader, n, pClientID, RegionName(region));
+        }
+        foreach (UUID region in rootElsewhere)
+            m_log.LogDebug("{LogHeader} Event_OnClientClosed: {ClientId} is root in {SceneName}; its voice session(s) there are kept",
+                LogHeader, pClientID, RegionName(region));
+        m_log.LogDebug("{LogHeader} Event_OnClientClosed: root close of {ClientId} in {SceneName} captured {CapturedSessionCount} voice session(s) across {RegionCount} region(s)",
+            LogHeader, pClientID, pScene.Name, toShutdown.Count, regions.Count);
 
         // Asynchronous, on the captured references only — never a re-query by avatar, so a
         // session provisioned after the capture is untouchable by this teardown.
         _ = Task.Run(() => ShutdownCapturedSessions(toShutdown, $"client close {pClientID}"));
+    }
+
+    /// O-74: the close-time capture decision, Scene-free so it unit-tests. A child close (border
+    /// crossing, draw distance, the source of a completed teleport) captures nothing. A root close
+    /// captures the dying login's sessions in every region except pRootRegionsElsewhere.
+    public static List<IVoiceViewerSession> CaptureForClientClose(UUID pAgentId, bool pClosingPresenceIsChild,
+        UUID pGeneration, ICollection<UUID> pRootRegionsElsewhere)
+    {
+        if (pClosingPresenceIsChild)
+            return new List<IVoiceViewerSession>();
+        return VoiceViewerSession.CaptureSessionsForCloseAllRegions(pAgentId, pGeneration, pRootRegionsElsewhere);
+    }
+
+    // Regions (other than the closing one) where this module's scenes hold the agent as a ROOT presence.
+    private HashSet<UUID> RegionsWhereAgentIsRoot(UUID pAgentId, UUID pClosingRegionId)
+    {
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes.Values);
+        HashSet<UUID> result = new HashSet<UUID>();
+        foreach (Scene scene in scenes)
+        {
+            if (scene.RegionInfo.RegionID == pClosingRegionId)
+                continue;
+            ScenePresence other = scene.GetScenePresence(pAgentId);
+            if (other is not null && !other.IsChildAgent)
+                result.Add(scene.RegionInfo.RegionID);
+        }
+        return result;
+    }
+
+    private string RegionName(UUID pRegionId)
+    {
+        lock (m_scenes)
+            return m_scenes.TryGetValue(pRegionId, out Scene scene) ? scene.Name : pRegionId.ToString();
     }
 
     // Observed asynchronous teardown of captured sessions. Per-session failure isolation: one
