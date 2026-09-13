@@ -31,6 +31,7 @@
     <Compile Include="A2AAgentListTests.cs" />
     <Compile Include="A2ALifecycleTests.cs" />
     <Compile Include="ProvisionParcelResolverTests.cs" />
+    <Compile Include="A2AClientCloseGuardTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

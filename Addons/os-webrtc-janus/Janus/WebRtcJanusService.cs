@@ -184,7 +184,16 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
             }
             _log.LogError($"{LogHeader} JanusPluginHandle not created");
         }
-        _log.LogError($"{LogHeader} JanusSession not created");
+        else
+        {
+            _log.LogError($"{LogHeader} JanusSession not created");
+        }
+        // O-53(b): never leave a half-built session behind. Created-but-attach-failed is a live Janus session
+        // (with its long poll) that nothing references; destroy it (bounded by RequestTimeoutMs, O-50), then
+        // release its HttpClient.
+        if (janusSession.IsConnected)
+            await janusSession.DestroySession().ConfigureAwait(false);
+        janusSession.Dispose();
         return false;
     }
 
@@ -240,7 +249,15 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
             if (viewerSession.Session is null)
             {
                 // This is a new session so we must create a new session and handle to the audio bridge
-                await ConnectToSessionAndAudioBridge(viewerSession).ConfigureAwait(false);
+                if (!await ConnectToSessionAndAudioBridge(viewerSession).ConfigureAwait(false))
+                {
+                    // O-53(b) (audit W-6): the connect failed (Janus unreachable, or the plugin attach failed;
+                    // ConnectToSessionAndAudioBridge has already destroyed anything it half-built). The result used
+                    // to be ignored, and the offer's SelectRoom then threw NullReferenceException on the null
+                    // AudioBridge — a 500, not a failure map. Answer the failure-map shape the other arms return.
+                    _log.LogError($"{LogHeader} ProvisionVoiceAccountRequest: janus unavailable - no Janus session/plugin handle for agent {pUserID}");
+                    return ProvisionResponseBuilder.BuildFailure("janus unavailable", 0);
+                }
             }
 
             // TODO: need to keep count of users in a room to know when to close a room
@@ -316,6 +333,7 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                             errorMsg = "room is full";
                             errorCode = joinResult.ErrorCode;
                             _log.LogWarning($"{LogHeader} ProvisionVoiceAccountRequest: room full (ROOM_FULL {joinResult.ErrorCode})");
+                            viewerSession.Room = null;   // never joined: a later logout must not send a leave for it
                         }
                         else
                         {
@@ -325,6 +343,7 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                             // _knownRooms hint still said it existed). Drop the hint so the viewer's
                             // provision retry re-creates the room instead of looping on a stale skip.
                             JanusAudioBridge.ForgetRoom(viewerSession.Room.RoomId);
+                            viewerSession.Room = null;   // never joined: a later logout must not send a leave for it
                         }
                     }
                 }

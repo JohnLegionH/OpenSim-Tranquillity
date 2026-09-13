@@ -11,9 +11,9 @@
  * .LoadPlugin path production uses -- the DLL sits in the test bin via project reference) with no
  * [JanusWebRtcVoice] section, so no Janus connection is attempted at construction and the provision
  * path's connect attempt fails fast and caught (JanusSession.CreateSession catches, :116-118).
- * Reaching the service is proven by its OWN failure map ({response:"failed", error:"no jsep"},
- * ProvisionResponseBuilder.BuildFailure) -- which only the Janus service produces, past the seam
- * that used to throw.
+ * Reaching the service is proven by its OWN failure map ({response:"failed", error:"janus unavailable"}
+ * since O-53(b); "no jsep" before it, when the failed connect was ignored; ProvisionResponseBuilder
+ * .BuildFailure) -- which only the Janus service produces, past the seam that used to throw.
  */
 using System;
 using Nini.Config;
@@ -62,8 +62,8 @@ namespace osWebRtcVoice.Tests
             ["voice_server_type"] = OSD.FromString("webrtc"),
             ["channel"] = OSD.FromString("33333333-3333-3333-3333-333333333333"),
             ["credentials"] = OSD.FromString("token"),
-            // no viewer_session: the first provision (wire trace §2); no jsep either, so the REAL
-            // service answers its "no jsep" failure map -- the proof the dispatch reached it.
+            // no viewer_session: the first provision (wire trace §2). No Janus is configured, so the
+            // REAL service answers its own failure map -- the proof the dispatch reached it.
         };
 
         [Test]
@@ -73,9 +73,13 @@ namespace osWebRtcVoice.Tests
 
             Assert.That(resp, Is.Not.Null, "pre-fix this was a swallowed NullReferenceException (m_nonSpatialVoiceService null)");
             Assert.That(resp["response"].AsString(), Is.EqualTo("failed"), "the Janus service's own BuildFailure map: the dispatch reached the service");
-            Assert.That(resp["error"].AsString(), Is.EqualTo("no jsep"), "died exactly where a jsep-less test request should, INSIDE the service");
-            Assert.That(VoiceViewerSession.IsAgentInRegion(Region, Alice), Is.True,
-                "the first multiagent provision now creates and registers a viewer session, exactly as local does");
+            // O-53(b): the service's connect fails (no Janus configured) and it now answers that with its own
+            // failure map instead of carrying on to the jsep check ("no jsep" before O-53).
+            Assert.That(resp["error"].AsString(), Is.EqualTo("janus unavailable"), "died INSIDE the service, at its connect check");
+            // O-53(a): the dispatch created and registered a viewer session (as local does), and removes it again
+            // because the provision failed. Before O-53 this asserted True — the leak.
+            Assert.That(VoiceViewerSession.IsAgentInRegion(Region, Alice), Is.False,
+                "a failed first provision leaves no registered session behind");
         }
 
         [Test]

@@ -157,6 +157,17 @@ namespace osWebRtcVoice
         }
 
         /// <summary>
+        /// O-52 (audit W-5): should a client close mark the agent gone from its A2A records? Only a ROOT
+        /// presence closing is the party leaving. A child agent closing (border crossing / draw distance)
+        /// is not — the agent's voice lives in its root region — and no presence at all marks nothing.
+        /// The same guard WebRtcVoiceServiceModule.Event_OnClientClosed applies.
+        /// </summary>
+        public static bool ShouldMarkGone(bool presenceFound, bool isChildAgent)
+        {
+            return presenceFound && !isChildAgent;
+        }
+
+        /// <summary>
         /// A party left (logout provision, or its client closed on this instance). When
         /// <paramref name="viewerSession"/> is given, only the record that party joined under that
         /// viewer session is affected; when null, every record the agent is a party of. An Active

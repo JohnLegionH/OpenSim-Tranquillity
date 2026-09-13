@@ -383,6 +383,13 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         return pIsNpcPresence && !pAllowNpcVoice && !pIsConnectorIdentity;
     }
 
+    // O-53(a): the failure signature of a provision response — no map, or a map without viewer_session
+    // (only ProvisionResponseBuilder.BuildSuccess carries one).
+    public static bool IsFailedProvision(OSDMap pResponse)
+    {
+        return pResponse is null || !pResponse.ContainsKey("viewer_session");
+    }
+
     // IWebRtcVoiceService.ProvisionVoiceAccountRequest
         public OSDMap ProvisionVoiceAccountRequest(OSDMap pRequest, UUID pUserID, UUID pSceneID)
     {
@@ -402,6 +409,7 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
 
         OSDMap response = null;
         IVoiceViewerSession vSession = null;
+        bool createdHere = false;   // O-53(a): this call created and registered vSession
         // S-A2A-3.1: a teardown that cannot name a live session -- viewer_session absent, the zero
         // UUID (observed live from a viewer backing out of provision retries), or an id nothing
         // holds -- has nothing to tear down HERE. Answer the shape a successful logout answers
@@ -463,6 +471,7 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
                     vSession = m_spatialVoiceService.CreateViewerSession(pRequest, pUserID, pSceneID);
                     CaptureGenerationToken(vSession, pUserID, pSceneID);
                     VoiceViewerSession.AddViewerSession(vSession);
+                    createdHere = true;
                 }
                 else
                 {
@@ -470,6 +479,7 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
                     vSession = m_nonSpatialVoiceService.CreateViewerSession(pRequest, pUserID, pSceneID);
                     CaptureGenerationToken(vSession, pUserID, pSceneID);
                     VoiceViewerSession.AddViewerSession(vSession);
+                    createdHere = true;
                 }
             }
             else
@@ -480,6 +490,32 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
         if (vSession is not null)
         {
                 response = vSession.VoiceService.ProvisionVoiceAccountRequest(vSession, pRequest, pUserID, pSceneID);
+
+            // O-53(a) (audit W-6): a session THIS call created and registered must not outlive a failed
+            // provision. The viewer was never told its id, so it can never log it out; its Janus session and
+            // plugin handle would stay alive and IsAgentInRegion would report the agent voiced — one more set
+            // per viewer retry. Remove it and shut down its voice-service side (the pair
+            // DisconnectViewerSession uses). A pre-existing session (the viewer holds its id) is left alone.
+            if (createdHere && IsFailedProvision(response))
+            {
+                IVoiceViewerSession failed = vSession;
+                m_log.LogDebug("{LogHeader} ProvisionVoiceAccountRequest: provision failed for new viewer session {ViewerSessionId} of {UserId} ({Error}) - removing it",
+                    LogHeader, failed.ViewerSessionID, pUserID,
+                    response is not null && response.TryGetString("error", out string provError) ? provError : "no response");
+                VoiceViewerSession.RemoveViewerSession(failed.ViewerSessionID);
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await failed.Shutdown().ConfigureAwait(false);
+                    }
+                    catch (Exception e)
+                    {
+                        m_log.LogWarning("{LogHeader} ProvisionVoiceAccountRequest: shutdown of failed-provision viewer session {ViewerSessionId} threw: {Exception}",
+                            LogHeader, failed.ViewerSessionID, e.Message);
+                    }
+                });
+            }
         }
         return response;
     }

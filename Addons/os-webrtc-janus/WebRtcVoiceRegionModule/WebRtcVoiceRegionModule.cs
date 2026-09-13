@@ -195,6 +195,13 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             // later admitted provision re-marks the party present, so this is reversible.
             scene.EventManager.OnClientClosed += delegate (UUID clientID, Scene s)
             {
+                // O-52 (audit W-5): look the presence up in the scene the close fired for. OnClientClosed runs
+                // inside Scene.RemoveClient before the presence is removed, so it is resolvable here. Same guard
+                // as WebRtcVoiceServiceModule.Event_OnClientClosed.
+                Scene closedIn = s ?? scene;
+                ScenePresence sp = closedIn.GetScenePresence(clientID);
+                if (!A2ASessionRegistry.ShouldMarkGone(sp != null, sp != null && sp.IsChildAgent))
+                    return;   // child teardown (border crossing / draw distance) — the agent's voice lives in its root region
                 foreach (A2ASession gone in m_a2aSessions.MarkGoneSessions(clientID, null))
                 {
                     m_log.LogDebug("{LogHeader} [A2A PROVISION] agent={AgentId} session-id={SessionId} region={RegionName} decision=removed-client-closed",
