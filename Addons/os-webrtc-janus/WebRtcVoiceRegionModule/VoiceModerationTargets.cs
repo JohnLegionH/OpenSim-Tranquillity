@@ -13,10 +13,15 @@
  * other option and was rejected: it can return a user who is not muted anywhere (silently doing
  * nothing), it cannot report ambiguity, and it needs a live user service the console may not have.
  * Resolving against the muted set instead makes both failure modes nameable and exact.
+ *
+ * The console MUTE (O-63 slice) reuses Resolve with a different candidate set - the region's root
+ * avatars, since a mute is aimed at somebody still audible - plus the two pure pieces below: parsing
+ * "<uuid-or-name> [parcel-local-id]" and choosing the parcel.
  */
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using OpenMetaverse;
 
 namespace osWebRtcVoice
@@ -31,6 +36,17 @@ namespace osWebRtcVoice
         /// The name matched more than one distinct muted agent; `ambiguous` lists them so the
         /// operator can re-run with a UUID.
         Ambiguous
+    }
+
+    /// Which parcel a console mute lands on.
+    public enum VoiceModerationParcelChoice
+    {
+        /// The operator named the parcel local id.
+        Given,
+        /// No id given: the parcel the target avatar is standing on.
+        TargetPosition,
+        /// No id given and the target is not standing in the region: refuse.
+        NoParcel
     }
 
     /// One muted agent as the resolver sees it: the id the store holds, and whatever name the
@@ -110,6 +126,59 @@ namespace osWebRtcVoice
             list.Sort((a, b) => string.CompareOrdinal(a.AgentId.ToString(), b.AgentId.ToString()));
             ambiguous = list;
             return VoiceModerationTargetMatch.Ambiguous;
+        }
+
+        /// Split the words after "voice moderation mute" into the target token and an optional parcel
+        /// local id. The parcel id is recognised only as a TRAILING positive integer following at least
+        /// one other word, so an unquoted "First Last" name keeps working, a UUID is never mistaken for
+        /// it, and a lone number is a (name) target. Consequence, documented in the command help: an
+        /// avatar whose last name is a bare number must be addressed by UUID or with the parcel id
+        /// given. False when nothing but blanks was typed.
+        public static bool ParseMuteArguments(IReadOnlyList<string> words, out string target, out int? parcelLocalId)
+        {
+            target = null;
+            parcelLocalId = null;
+            if (words is null)
+                return false;
+
+            var parts = new List<string>();
+            foreach (string w in words)
+            {
+                if (!string.IsNullOrWhiteSpace(w))
+                    parts.Add(w.Trim());
+            }
+            if (parts.Count == 0)
+                return false;
+
+            if (parts.Count >= 2
+                && int.TryParse(parts[parts.Count - 1], NumberStyles.None, CultureInfo.InvariantCulture, out int localId)
+                && localId > 0)
+            {
+                parcelLocalId = localId;
+                parts.RemoveAt(parts.Count - 1);
+            }
+
+            target = string.Join(" ", parts);
+            return target.Length > 0;
+        }
+
+        /// The parcel a console mute applies to: the operator's local id when given, else the parcel
+        /// the target is standing on (null when the target is not a root avatar in the region), else
+        /// no parcel - the caller refuses with a message rather than guessing.
+        public static VoiceModerationParcelChoice ChooseMuteParcel(int? givenLocalId, int? targetStandingLocalId, out int parcelLocalId)
+        {
+            if (givenLocalId.HasValue)
+            {
+                parcelLocalId = givenLocalId.Value;
+                return VoiceModerationParcelChoice.Given;
+            }
+            if (targetStandingLocalId.HasValue)
+            {
+                parcelLocalId = targetStandingLocalId.Value;
+                return VoiceModerationParcelChoice.TargetPosition;
+            }
+            parcelLocalId = 0;
+            return VoiceModerationParcelChoice.NoParcel;
         }
     }
 }

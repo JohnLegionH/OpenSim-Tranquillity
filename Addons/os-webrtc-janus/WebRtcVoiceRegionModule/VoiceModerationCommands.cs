@@ -6,13 +6,22 @@
  * synthesised LEAVE - the roster row disappears. But the roster row is what an operator
  * right-clicks to issue the unmute. So the mute removes its own undo, and with the store being
  * in-memory and surfaced nowhere else, the only escapes were a region restart or a moderation op
- * aimed at somebody still visible. These two commands are that missing escape:
+ * aimed at somebody still visible. These commands are that missing escape, plus its mirror:
  *
- *   show voice moderation                        - what is muted, where, and on whose parcel
- *   voice moderation unmute <agent-uuid-or-name> - clear one avatar's entry, roster or no roster
+ *   show voice moderation                                       - what is muted, where, on whose parcel
+ *   voice moderation unmute <agent-uuid-or-name>                - clear one avatar's entry, roster or no roster
+ *   voice moderation mute <agent-uuid-or-name> [parcel-local-id] - add one avatar's entry on one parcel
  *
  * The unmute deliberately does NOT go through a roster, a presence, or a click target. It reaches
  * the store directly, which is why it works on an avatar nobody can see.
+ *
+ * The mute (O-63 slice) writes through the SAME store call the SpatialVoiceModerationRequest CAP's
+ * "mute" operand makes (svc.Moderation.MuteAgent(land.GlobalID, target)) - no second code path - and
+ * the feeder picks it up on its next tick exactly as it does a viewer's mute, so the console proves
+ * the real mechanism. The CAP permission-checks its REQUESTER (VoiceModerationAuth.MayModerate); the
+ * console is operator-trusted, so that check is skipped and the write is logged "moderated by console".
+ * The moderator EXEMPTION is a property of the TARGET and still applies: muting a parcel owner, estate
+ * manager or group moderator records the entry but silences nothing, and the command says so.
  *
  * Registration follows this tree's idiom (WebRtcVoiceServiceModule.RegisterConsoleCommands, which
  * registers "show voice closing"): guard a null MainConsole for unit tests and embedded hosts,
@@ -20,11 +29,8 @@
  * lines under a counted header.
  *
  * Region scoping follows the core idiom (LandManagementModule.HandleShowCommand): honour
- * MainConsole.Instance.ConsoleScene. A null ConsoleScene (the root prompt) means every region.
- *
- * This class READS and CLEARS moderation state. It never adds a mute - the authorised path for
- * that is the SpatialVoiceModerationRequest CAP, and putting a mute on the console would create a
- * second, unauthorised writer for state the CAP handler carefully permission-checks.
+ * MainConsole.Instance.ConsoleScene. A null ConsoleScene (the root prompt) means every region for the
+ * listing and the unmute; a mute always needs exactly one region.
  */
 
 using System;
@@ -79,6 +85,18 @@ namespace osWebRtcVoice
                     + "that one is still reachable from the viewer, because \"unmute everyone\" needs no\n"
                     + "roster row to click.",
                 HandleVoiceModerationUnmute);
+
+            MainConsole.Instance.Commands.AddCommand("Voice", false, "voice moderation mute",
+                "voice moderation mute <agent-uuid-or-name> [parcel-local-id]",
+                "Voice-mute one avatar on one parcel of the selected region (operator-trusted, same store as the viewer's moderation mute)",
+                "Needs exactly one region: select it with \"change region <name>\". The target may be an agent\n"
+                    + "UUID or the name of a root avatar in that region (case-insensitive; an ambiguous name is refused\n"
+                    + "with the candidate UUIDs). The parcel is the given local id, else the parcel the avatar is standing\n"
+                    + "on; an avatar not in the region needs the parcel id. A trailing number is read as the parcel id,\n"
+                    + "so address an avatar whose last name is a number by UUID. The mute is enforced on the feeder's\n"
+                    + "next tick; parcel owners, estate managers and group moderators are exempt from being muted.\n"
+                    + "Undo with \"voice moderation unmute\".",
+                HandleVoiceModerationMute);
         }
 
         // --- Handlers -------------------------------------------------------------------------
@@ -255,6 +273,98 @@ namespace osWebRtcVoice
 
             MainConsole.Instance.Output(
                 "The matrix picks this up on its next tick and the mixer restores audio. The roster row returns only if the avatar still holds a mixer session; if it does not, it reappears on their next voice reconnect.");
+        }
+
+        private void HandleVoiceModerationMute(string module, string[] args)
+        {
+            // args: voice moderation mute <token...> [parcel-local-id]
+            List<string> words = new List<string>();
+            for (int i = 3; i < args.Length; i++)
+                words.Add(args[i]);
+            if (!VoiceModerationTargets.ParseMuteArguments(words, out string token, out int? givenLocalId))
+            {
+                MainConsole.Instance.Output("Usage: voice moderation mute <agent-uuid-or-name> [parcel-local-id]");
+                return;
+            }
+
+            List<KeyValuePair<Scene, VoiceVisibilityService>> regions = SelectedRegions();
+            if (regions.Count == 0)
+            {
+                MainConsole.Instance.Output(
+                    "No region here is running the voice visibility feeder, so a mute cannot be enforced (see VisibilityFeederEnabled).");
+                return;
+            }
+            if (regions.Count > 1)
+            {
+                MainConsole.Instance.Output("A mute applies to one parcel of one region; select the region with \"change region <name>\" and re-run.");
+                return;
+            }
+            Scene scene = regions[0].Key;
+            VoiceVisibilityService svc = regions[0].Value;
+            string regionName = scene.RegionInfo.RegionName;
+
+            // Unlike the unmute, a mute targets somebody still audible, so a NAME resolves against the region's
+            // root avatars. A UUID resolves without being present (then the parcel id is required).
+            List<VoiceModerationCandidate> present = new List<VoiceModerationCandidate>();
+            scene.ForEachRootScenePresence(sp => present.Add(new VoiceModerationCandidate(sp.UUID, sp.Name)));
+            VoiceModerationTargetMatch match = VoiceModerationTargets.Resolve(
+                token, present, out UUID target, out IReadOnlyList<VoiceModerationCandidate> ambiguous);
+
+            if (match == VoiceModerationTargetMatch.Ambiguous)
+            {
+                MainConsole.Instance.Output("\"{0}\" matches {1} avatars in \"{2}\"; re-run with one of these UUIDs:",
+                    token, ambiguous.Count, regionName);
+                foreach (VoiceModerationCandidate c in ambiguous)
+                    MainConsole.Instance.Output("  {0} {1}", c.AgentId, c.Name ?? "(name unresolved)");
+                return;
+            }
+            if (match == VoiceModerationTargetMatch.NotFound)
+            {
+                MainConsole.Instance.Output("No avatar in \"{0}\" is named \"{1}\", and it is not a UUID.", regionName, token);
+                return;
+            }
+
+            ILandChannel landChannel = scene.LandChannel;
+            if (landChannel is null)
+            {
+                MainConsole.Instance.Output("Region \"{0}\" has no land data yet; nothing muted.", regionName);
+                return;
+            }
+
+            ScenePresence targetSp = scene.GetScenePresence(target);
+            int? standingLocalId = null;
+            if (targetSp is not null && !targetSp.IsChildAgent)
+                standingLocalId = landChannel.GetLandObject(targetSp.AbsolutePosition.X, targetSp.AbsolutePosition.Y)?.LandData?.LocalID;
+
+            VoiceModerationParcelChoice choice = VoiceModerationTargets.ChooseMuteParcel(givenLocalId, standingLocalId, out int parcelLocalId);
+            if (choice == VoiceModerationParcelChoice.NoParcel)
+            {
+                MainConsole.Instance.Output("{0} is not standing in \"{1}\"; name the parcel: voice moderation mute {0} <parcel-local-id>",
+                    target, regionName);
+                return;
+            }
+
+            LandData land = landChannel.GetLandObject(parcelLocalId)?.LandData;
+            if (land is null)
+            {
+                MainConsole.Instance.Output("No parcel with local id {0} in \"{1}\"; nothing muted.", parcelLocalId, regionName);
+                return;
+            }
+
+            // The SAME store write the SpatialVoiceModerationRequest "mute" operand makes. No feeder wake is needed:
+            // the feeder rebuilds the matrix from the live world on every tick (see the unmute handler).
+            svc.Moderation.MuteAgent(land.GlobalID, target);
+            m_log.LogInformation("{LogHeader} console mute: agent {AgentId} on parcel {ParcelGlobalId} (\"{ParcelName}\") in region \"{RegionName}\" - moderated by console",
+                logHeader, target, land.GlobalID, land.Name, regionName);
+
+            MainConsole.Instance.Output("muted {0} {1} on parcel {2} \"{3}\" ({4}) in \"{5}\"{6}",
+                target, NameFor(scene, target) ?? "(name unresolved)", land.LocalID, land.Name, land.GlobalID, regionName,
+                choice == VoiceModerationParcelChoice.TargetPosition ? " - the parcel the avatar is standing on" : string.Empty);
+
+            if (VoiceModerationAuth.MayModerate(scene, land, target))
+                MainConsole.Instance.Output(
+                    "  note: {0} may moderate voice on this parcel (owner, estate manager or group moderator) and is exempt; the entry is recorded but silences nothing.",
+                    target);
         }
 
         // --- Helpers --------------------------------------------------------------------------

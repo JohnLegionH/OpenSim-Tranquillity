@@ -62,6 +62,8 @@ public class VoiceConnectorModule : INonSharedRegionModule
     private string m_npcNameToken = DefaultNpcNameToken;
     private bool m_allowNpcVoice = false;   // read for visibility; ENFORCED in WebRtcVoiceServiceModule
     private float m_voiceRangeMetres = DefaultVoiceRangeMetres;
+    // O-63: the grid part of the derived connector identity - the normalised GatekeeperURI (empty if none).
+    private string m_gridId = string.Empty;
 
     private Scene m_scene;
     private INPCModule m_npcModule;
@@ -87,6 +89,8 @@ public class VoiceConnectorModule : INonSharedRegionModule
         m_npcNameToken = moduleConfig.GetString("NpcNameToken", DefaultNpcNameToken);
         m_allowNpcVoice = moduleConfig.GetBoolean("AllowNpcVoice", false);
         m_voiceRangeMetres = moduleConfig.GetFloat("VoiceRangeMetres", DefaultVoiceRangeMetres);
+        // O-63: the same grid identity the multiagent room numbers use (JanusAudioBridge.ReadGridId).
+        m_gridId = JanusAudioBridge.ReadGridId(pConfig);
 
         VoiceConnectorLoadResult result = VoiceConnectorRegistry.LoadFrom(pConfig, m_npcNameToken);
         m_registry = result.Registry;
@@ -277,9 +281,14 @@ public class VoiceConnectorModule : INonSharedRegionModule
         int estateRoom = JanusAudioBridge.CalcRoomNumber(
             string.Empty, scene.RegionInfo.RegionID.ToString(), "local", JanusAudioBridge.REGION_ROOM_ID, string.Empty);
 
+        // O-63: the NPC's agent id is DERIVED (UUIDv5 of grid/region/record, ConnectorIdentity), not random, so
+        // the peer's DISPLAY stays valid across restarts. Created through the fixed-id CreateNPC overload, which
+        // refuses (UUID.Zero) if a presence with that id is still in the scene - the registrar then logs
+        // "CreateNPC failed" and leaves the record inactive.
+        UUID derivedId = ConnectorIdentity.DeriveAgentId(m_gridId, scene.RegionInfo.RegionName, record.Name);
         bool ok = VoiceConnectorRegistrar.Register(record, estateRoom,
-            pCreateNpc: r => m_npcModule.CreateNPC(r.NpcFirstName, r.NpcLastName, r.Position,
-                scene.RegionInfo.EstateSettings.EstateOwner, false /* sense as NPC, not agent */,
+            pCreateNpc: r => m_npcModule.CreateNPC(r.NpcFirstName, r.NpcLastName, r.Position, derivedId,
+                scene.RegionInfo.EstateSettings.EstateOwner, string.Empty, UUID.Zero, false /* sense as NPC, not agent */,
                 scene, new AvatarAppearance()),
             pCreateSession: npcId =>
             {
@@ -305,8 +314,10 @@ public class VoiceConnectorModule : INonSharedRegionModule
             pDisclosure: m_disclosure);
 
         if (ok)
-            // The operator copies this line into the peer's config (S-CON-4: DISPLAY = npc, ROOM = room).
-            m_log.LogInformation("{LogHeader} registered {Name} npc={NpcId} room={Room} inject={MayInject} session={ViewerSessionId}",
+            // The operator copies this line into the peer's config (S-CON-4: DISPLAY = npc, ROOM = room). O-63: npc= is
+            // the derived id, the same on every restart; identity=derived says so (appended, so the fields before it
+            // keep the format the connector READMEs document).
+            m_log.LogInformation("{LogHeader} registered {Name} npc={NpcId} room={Room} inject={MayInject} session={ViewerSessionId} identity=derived",
                 LogHeader, record.Name, record.NpcId, estateRoom, record.MayInject, record.ViewerSessionId);
     }
 

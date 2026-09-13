@@ -56,6 +56,10 @@
 ; connector-design-brief.md Amendment 2). One [VoiceConnector.<name>] section per connector;
 ; the record IS the authorisation (operator-only by construction). The NPC name must carry
 ; [WebRtcVoice] NpcNameToken as its first or last name or the record is refused at load.
+; The connector NPC's agent id is DERIVED, not random (O-63): UUIDv5 of "<grid id>/<region name>/<record
+; name>" (ConnectorIdentity.DeriveAgentId; grid id = the normalised GatekeeperURI, empty if none), so the
+; mixer peer's DISPLAY stays the same across regionserver restarts. Renaming the section, the region or
+; the grid's GatekeeperURI gives the connector a new id.
 ;[VoiceConnector.Recorder]
 ;    Enabled = true
 ;    NpcFirstName = Recorder

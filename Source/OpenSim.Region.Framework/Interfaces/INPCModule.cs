@@ -108,7 +108,9 @@ public interface INPCModule
     /// </param>
     /// <returns>
     /// The UUID of the ScenePresence created. UUID.Zero if there was a
-    /// failure.
+    /// failure - including a non-zero agentID that a presence in the scene
+    /// already has (refused with an ERROR log, so a restart racing a
+    /// not-yet-cleaned NPC cannot double-register the id).
     /// </returns>
     UUID CreateNPC(string firstname, string lastname,
             Vector3 position, UUID agentID, UUID owner, string groupTitle, UUID groupID, bool senseAsAgent, Scene scene,

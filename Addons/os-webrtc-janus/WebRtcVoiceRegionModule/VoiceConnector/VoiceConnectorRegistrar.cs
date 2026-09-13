@@ -112,8 +112,10 @@ public static class VoiceConnectorRegistrar
     /// identity), then the NPC. Plain RemoveViewerSession is CORRECT here, unlike the O-41 logout
     /// case: this session was created but never provisioned, so no Janus session, handle, or room
     /// membership exists to shut down — there is nothing to orphan. No moderation UNMUTE is
-    /// pushed either: the mute entry keys on the (parcel, NPC id) pair, and the identity it
-    /// silences dies with the NPC — a future incarnation gets a fresh UUID and its own mute.
+    /// pushed either: the mute entry keys on the (parcel, NPC id) pair. Since O-63 the NPC id is derived
+    /// (ConnectorIdentity), so a later incarnation of the same record reuses it; the entry left behind is
+    /// exactly the one its MayInject=false registration pushes again (MuteAgent is idempotent), and a
+    /// region restart clears the in-memory store anyway.
     /// Idempotent: an inactive record is a no-op.
     /// </summary>
     public static void Unregister(VoiceConnectorRecord pRecord, DeleteNpcDelegate pDeleteNpc, ILogger pLog,
