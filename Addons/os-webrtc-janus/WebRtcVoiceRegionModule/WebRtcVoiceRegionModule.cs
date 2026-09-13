@@ -595,34 +595,49 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                     return;
                 }
 
-                // O-48 (audit W-1): the parcel is derived from the avatar's position, as Vivox/FreeSwitch
-                // do (scene.GetLandData(avatar.AbsolutePosition)). It used to be looked up by the viewer's
-                // parcel_local_id, so a client could name another parcel and join its room, or omit the
-                // id and skip every check below into the -999 estate room. The client id is now a hint:
-                // it is logged on mismatch and never refused (a viewer mid-crossing can be stale, O-11).
-                {
-                    ILandObject parcel = scene.LandChannel.GetLandObject(sp.AbsolutePosition.X, sp.AbsolutePosition.Y);
-                    if (parcel == null)
-                    {
-                        response.RawBuffer = llsdUndefAnswerBytes;
-                        response.StatusCode = (int)HttpStatusCode.NotFound;
-                        return;
-                    }
+                // O-48 (audit W-1): for a ROOT agent the parcel is derived from the avatar's position, as
+                // Vivox/FreeSwitch do (scene.GetLandData(avatar.AbsolutePosition)). It used to be looked up
+                // by the viewer's parcel_local_id, so a client could name another parcel and join its room.
+                // The client id is now a hint: logged on mismatch, never refused (a viewer mid-crossing can
+                // be stale, O-11).
+                // O-48a: a CHILD agent (the viewer's neighbour-region provision) is positioned outside this
+                // region, so position finds no parcel. It keeps the pre-slice-1 path: a client id selects the
+                // parcel and every check runs against it; no id (the stock viewer, estate channel) means no
+                // parcel checks and the service's -999 estate room. ProvisionParcelResolver decides.
+                int? clientParcelId = map.TryGetInt("parcel_local_id", out int c) ? c : null;
+                ParcelResolveInput resolveInput = new ParcelResolveInput(clientParcelId, sp.IsChildAgent);
 
-                    LandData land = parcel.LandData;
+                ILandObject parcel = null;
+                if (ProvisionParcelResolver.DerivesFromPosition(resolveInput))
+                    parcel = scene.LandChannel.GetLandObject(sp.AbsolutePosition.X, sp.AbsolutePosition.Y);
+                ParcelResolution res = ProvisionParcelResolver.Resolve(resolveInput, parcel?.LandData?.LocalID);
+                if (res.Source == ParcelSource.ClientHint)
+                    parcel = scene.LandChannel.GetLandObject(res.LocalId.Value);
+
+                LandData land = parcel?.LandData;
+                bool estateChan = land != null && (land.Flags & (uint)ParcelFlags.UseEstateVoiceChan) != 0;
+
+                // Every path logs this line, including the refusals below and the child/no-hint estate path,
+                // so no provision outcome is silent (O-48a: the NotFound arm used to return with no log).
+                m_log.LogDebug("{LogHeader} [PARCEL RESOLVE] agent={AgentId} region={RegionName} child={Child} source={Source} client={ClientId} server={ServerLocalId} parcel={ParcelId} estate_chan={EstateChan} mismatch={Mismatch}",
+                    logHeader, agentID, scene.Name, sp.IsChildAgent, res.Source, clientParcelId?.ToString() ?? "-",
+                    res.ServerLocalId?.ToString() ?? "-", land?.LocalID.ToString() ?? "-",
+                    land == null ? "-" : estateChan.ToString(), res.ClientMismatch);
+
+                // ParcelSource.None: child agent, no client id -- no parcel checks, parcel_local_id stays
+                // absent, the service defaults to the estate room. The normal neighbour-region path.
+                if (res.Source != ParcelSource.None)
+                {
                     if (land == null)
                     {
+                        if (res.Source == ParcelSource.ServerPosition)
+                            m_log.LogWarning("{LogHeader}[ProvisionVoice]: no parcel at position for root agent {AgentId} in \"{RegionName}\" — refusing",
+                                logHeader, agentID, scene.Name);
                         response.RawBuffer = llsdUndefAnswerBytes;
                         response.StatusCode = (int)HttpStatusCode.NotFound;
                         return;
                     }
 
-                    int? clientParcelId = map.TryGetInt("parcel_local_id", out int c) ? c : null;
-                    ParcelResolution res = ProvisionParcelResolver.Resolve(clientParcelId, land.LocalID);
-                    bool estateChan = (land.Flags & (uint)ParcelFlags.UseEstateVoiceChan) != 0;
-
-                    m_log.LogDebug("{LogHeader} [PARCEL RESOLVE] agent={AgentId} region={RegionName} client={ClientId} server={ServerLocalId} estate_chan={EstateChan} mismatch={Mismatch}",
-                        logHeader, agentID, scene.Name, clientParcelId?.ToString() ?? "-", res.ServerLocalId, estateChan, res.ClientMismatch);
                     if (res.ClientMismatch)
                         m_log.LogWarning("{LogHeader}[ProvisionVoice]: parcel_local_id {ClientId} from agent {AgentId} does not match the avatar's parcel {ServerLocalId} in \"{RegionName}\" — using the server parcel",
                             logHeader, clientParcelId, agentID, res.ServerLocalId, scene.Name);
@@ -639,12 +654,13 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                     {
                         map.Remove("parcel_local_id"); // estate channel
                     }
-                    else
+                    else if (res.Source == ParcelSource.ServerPosition)
                     {
                         // The service hashes this into the mixer room (CalcRoomNumber). An honest viewer sends
                         // the same number, so no live room renumbers.
-                        map["parcel_local_id"] = OSD.FromInteger(res.ServerLocalId);
+                        map["parcel_local_id"] = OSD.FromInteger(land.LocalID);
                     }
+                    // else ParcelSource.ClientHint: the client's parcel_local_id is forwarded unchanged (pre-slice-1).
 
                     // Defect #13 (Docs/voice/parcel-voice-semantics.md, OPEN items): this
                     // check used to be chained as the "else" of the UseEstateVoiceChan branch
