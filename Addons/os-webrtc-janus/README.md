@@ -43,50 +43,84 @@ features like muting and individual avatar volume are not yet implemented.
 And probably more found at [os-webrtc-janus issues](https://github.com/Misterblue/os-webrtc-janus/issues).
 
 <a id="Building"></a>
-## Building Plugin into OpenSimulator
+## Installing voice with the Legion mixer
 
-`os-webrtc-janus` is integrated as a source build into [OpenSimulator].
-It uses the [OpenSimulator] addon-module feature which makes the
-build as easy as cloning the `os-webrtc-janus` sources into the
-[OpenSimulator] source tree, running the build configuration script,
-and then building OpenSimulator.
+Working voice needs three things:
+- the region server built with this addon;
+- two INI sections in the region server's config;
+- a running Legion voice mixer, which is a Docker container.
 
-The steps are:
+It is not one INI section.
+
+### 1. Build the region server
+
+In this tree the addon is a project reference of the region server, so the normal build includes it:
 
 ```
-# Get the OpenSimulator sources
-git clone git://opensimulator.org/git/opensim
-cd opensim     # cd into the top level OpenSim directory
-
-# Fetch the WebRtc addon
-cd addon-modules
-git clone https://github.com/Misterblue/os-webrtc-janus.git
-cd ..
-
-# Build the project files
-./runprebuild.sh
-
-# Compile OpenSimulator with the webrtc addon
-./compile.sh
-
-# Copy the INI file for webrtc into a config dir that is read at boot
-mkdir bin/config
-cp addon-modules/os-webrtc-janus/os-webrtc-janus.ini bin/config
+dotnet build Source/OpenSim.Server.RegionServer/OpenSim.Server.RegionServer.csproj --configuration Release
 ```
 
-These building steps create several `.dll` files for `os-webrtc-janus`
-in `bin/WebRtc*.dll`. Some adventurous people have found that, rather
-than building the [OpenSimulator] sources, you can just copy the `.dll`s
-into an existing `/bin` directory. Just make sure the `WebRtc*.dll` files
-were built on the same version of [OpenSimulator] you are running.
+### 2. Configure the region server: two INI sections
+
+Copy `os-webrtc-janus.ini` into the `config` folder under the directory the region server runs from.
+The region server reads every `.ini` file in that folder at startup; the folder name is
+`[Startup] inidirectory`, default `config`. The file has two sections, `[WebRtcVoice]` and
+`[JanusWebRtcVoice]`, and a region using its own mixer needs both.
+
+**Keys with no working default. You must set these:**
+
+| Key | Section | Shipped value | Set it to |
+|---|---|---|---|
+| `Enabled` | `[WebRtcVoice]` | `false` | `true` |
+| `JanusGatewayURI` | `[JanusWebRtcVoice]` | placeholder | `http://MIXER_HOST:14223/voice` |
+| `APIToken` | `[JanusWebRtcVoice]` | placeholder | the mixer's `JS_API_SECRET` |
+| `JanusGatewayAdminURI` | `[JanusWebRtcVoice]` | placeholder | `http://MIXER_HOST:14225/voiceAdmin` |
+| `AdminAPIToken` | `[JanusWebRtcVoice]` | placeholder | the mixer's `JS_ADMIN_SECRET` |
+
+**Keys the shipped file sets with working values.** Change these only on purpose:
+
+| Key | Section | Shipped value | Notes |
+|---|---|---|---|
+| `StunServers` | `[WebRtcVoice]` | `stun:stun.l.google.com:19302` | Stock viewers fail without it. The code default is empty, so deleting the key breaks stock viewers. |
+| `VisibilityFeederEnabled` | `[WebRtcVoice]` | `true` | Code default `true` since V-1. With it `false`, the mixer gets no permission state and every listener hears every source in its room. |
+| `VisibilityEmitEnabled` | `[WebRtcVoice]` | `true` | Code default `true` since V-1. Needs `JanusGatewayAdminURI` and `AdminAPIToken`. |
+| `PluginName` | `[JanusWebRtcVoice]` | `janus.plugin.slvoice` | Code default since V-1. `janus.plugin.audiobridge` selects the stock Janus AudioBridge instead, which has no spatial mix, visibility or moderation. |
+
+### 3. Run the Legion voice mixer
+
+The mixer runs as a container from the `legion-voice-mixer` repository. It needs a Docker host (on
+Windows, Docker Desktop with the WSL2 backend) and pulls `ghcr.io/johnlegionh/legion-voice-mixer:latest`.
+
+1. Put that repository's `docker-compose.yml` and `env.sample` in an empty directory, then run
+   `cp env.sample .env`.
+2. Set these values in `.env`:
+
+   | Variable | If left empty | Set it to |
+   |---|---|---|
+   | `JS_API_SECRET` | the container refuses to start | the same value as `APIToken` |
+   | `JS_ADMIN_SECRET` | the container refuses to start | the same value as `AdminAPIToken` |
+   | `JS_PUBLIC_IP` | the container starts, but media fails for every viewer | the IPv4 address viewers reach this host on |
+
+3. Run `docker compose up -d`.
+4. Open the UDP media range in the firewall: `JS_RTP_PORT_RANGE`, default `10000-10200`.
+5. Check it: `curl http://MIXER_HOST:14223/voice/info` should list `janus.plugin.slvoice`.
+
+### Upgrading from a build before V-1
+
+Before V-1, `PluginName` defaulted to `janus.plugin.audiobridge`, and both visibility keys defaulted to
+`false`. An install that never set these keys now behaves differently after the upgrade:
+- it attaches to `janus.plugin.slvoice`;
+- it runs the visibility feeder and emitter.
+
+To keep the old behaviour, set `PluginName = janus.plugin.audiobridge`, or set the visibility keys to
+`false`.
 
 <a id="Configure_Simulator"></a>
 ## Configure a Region for Voice
 
-The last step in [Building](#Building) copied `os-webrtc-janus.ini` into 
-the `bin/config` directory. [OpenSimulator] reads all the `.ini` files
-in that directory so this copy operation adds the configuration for `os-webrtc-janus`
-and this is what needs to be configured for the simulator and region.
+Step 2 of [Installing](#Building) copied `os-webrtc-janus.ini` into the `config` directory. The
+region server reads every `.ini` file in that directory, so this copy adds the configuration for
+`os-webrtc-janus`. That file is what you configure for the simulator and region.
 
 The sample `.ini` file has two sections: `[WebRtcVoice]` and `[JanusWebRtcVoice]`.
 The `WebRtcVoice` section configures the what services the simulator uses

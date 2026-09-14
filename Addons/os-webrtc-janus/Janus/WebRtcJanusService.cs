@@ -49,6 +49,15 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     // inlined, so no runtime assembly/ALC crossing) instead of duplicating the 495 literal.
     public const int JANUS_ROOM_FULL_ERROR_CODE = 495;
 
+    // V-1 (SC-108/SC-115): the Legion mixer's plugin id, JANUS_SLVOICE_PACKAGE in legion-voice-mixer
+    // src/janus_slvoice.c. Before V-1 an absent PluginName selected "janus.plugin.audiobridge"; set
+    // PluginName = janus.plugin.audiobridge to keep the stock plugin.
+    public const string DefaultPluginName = "janus.plugin.slvoice";
+
+    // [JanusWebRtcVoice] PluginName, or DefaultPluginName when the key is absent.
+    public static string ReadPluginName(IConfig pJanusConfig)
+        => pJanusConfig.GetString("PluginName", DefaultPluginName);
+
     private readonly IConfigSource _Config;
     private bool _Enabled = false;
 
@@ -58,8 +67,8 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     private string _JanusAdminToken = string.Empty;
 
     // Janus plugin (mixer) to attach handles to. Configurable via
-    // [JanusWebRtcVoice] PluginName; defaults to the stock audiobridge.
-    private string _JanusPluginName = "janus.plugin.audiobridge";
+    // [JanusWebRtcVoice] PluginName; defaults to the Legion mixer (DefaultPluginName).
+    private string _JanusPluginName = DefaultPluginName;
 
     // S-A2A-4 (O-35, multiagent): the grid's identity folded into every non-spatial room number so
     // two grids on a shared mixer cannot collide on the same channel. Read once from the region's
@@ -106,10 +115,9 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                 _JanusAPIToken = janusConfig.GetString("APIToken", string.Empty);
                 _JanusAdminURI = janusConfig.GetString("JanusGatewayAdminURI", string.Empty);
                 _JanusAdminToken = janusConfig.GetString("AdminAPIToken", string.Empty);
-                // Which Janus plugin (mixer) to attach handles to. Read the same
-                // way as the other [JanusWebRtcVoice] keys; default preserves the
-                // original hardcoded behaviour when the key is absent.
-                _JanusPluginName = janusConfig.GetString("PluginName", "janus.plugin.audiobridge");
+                // Which Janus plugin (mixer) to attach handles to. V-1: an absent key now selects
+                // the Legion mixer, not the stock audiobridge (a behaviour change on upgrade).
+                _JanusPluginName = ReadPluginName(janusConfig);
                 _log.LogInformation($"{LogHeader} Janus plugin (mixer) = {_JanusPluginName}");
                 _GridId = JanusAudioBridge.ReadGridId(_Config);
                 if (string.IsNullOrEmpty(_GridId))

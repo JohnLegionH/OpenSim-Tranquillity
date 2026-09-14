@@ -24,6 +24,13 @@
     ; NOTE: value is unquoted (matches this addon's other keys); the emitted URI must
     ; have no surrounding quotes or libwebrtc rejects it.
     StunServers = stun:stun.l.google.com:19302
+    ; Per-listener visibility: the region computes who may hear whom (estate/parcel bans, parcel
+    ; SeeAVs, voice moderation) and pushes it to the Legion mixer, which enforces it in each mix.
+    ; Default true (since V-1). With either key false the mixer gets no permission state and every
+    ; listener hears every source in its room. Emission needs [JanusWebRtcVoice]
+    ; JanusGatewayAdminURI and AdminAPIToken; without them the feeder runs matrix-only.
+    VisibilityFeederEnabled = true
+    VisibilityEmitEnabled = true
     ; Voice connectors (S-CON-1, Docs/voice/connector-build-plan.md):
     ; Marker token every voice-connector NPC name must carry as a whole word (first or last
     ; name) — the stock-viewer disclosure layer (brief Amendment 2 D3(i)). Default NPC.
@@ -45,6 +52,10 @@
     JanusGatewayAdminURI = http://janus.example.org/admin
     ; APIKey to access the admin port on the Janus Gateway. Must be set to the same value as the Janus Gateway.
     AdminAPIToken = AdminAPITokenToNeverCheckIn
+    ; Janus plugin the region attaches voice handles to. janus.plugin.slvoice is the Legion mixer
+    ; (spatial mix, visibility and moderation). Default janus.plugin.slvoice since V-1; set
+    ; janus.plugin.audiobridge to use the stock Janus AudioBridge instead (non-spatial).
+    PluginName = janus.plugin.slvoice
     ; How long (ms) a request Janus answers with "ack" (join, leave, create room, ...) waits for its
     ; completing event before the request fails with error.reason "timeout". Bounds the provisioning
     ; handler thread (O-50). Default 5000.

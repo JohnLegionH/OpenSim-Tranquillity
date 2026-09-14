@@ -78,13 +78,24 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     // "stun-servers"; empty => the key is not emitted.
     private string m_StunServers = string.Empty;
 
-    // Phase-3a per-listener visibility feeder. Off by default (no Janus sender consumes it yet);
-    // enable for the in-world DEBUG smoke check. One service per region.
-    private bool m_VisibilityFeederEnabled = false;
+    // V-1 (O-78): [WebRtcVoice] VisibilityFeederEnabled / VisibilityEmitEnabled defaults. Both were
+    // false before V-1, so an install that never set them pushed no permissions to the mixer.
+    public const bool DefaultVisibilityFeederEnabled = true;
+    public const bool DefaultVisibilityEmitEnabled = true;
+
+    public static bool ReadVisibilityFeederEnabled(IConfig pConfig)
+        => pConfig.GetBoolean("VisibilityFeederEnabled", DefaultVisibilityFeederEnabled);
+
+    public static bool ReadVisibilityEmitEnabled(IConfig pConfig)
+        => pConfig.GetBoolean("VisibilityEmitEnabled", DefaultVisibilityEmitEnabled);
+
+    // Phase-3a per-listener visibility feeder, one service per region. On by default (V-1, O-78);
+    // false turns it off.
+    private bool m_VisibilityFeederEnabled = DefaultVisibilityFeederEnabled;
     private int m_VisibilityTickMs = 250;
-    // Emit the matrix to the mixer (peer_ctl_batch) — separate from running the matrix. Default
-    // FALSE: the feeder can run matrix-only for diagnostics without emitting.
-    private bool m_VisibilityEmitEnabled = false;
+    // Emit the matrix to the mixer (peer_ctl_batch), separate from running the matrix. On by default
+    // (V-1, O-78); false runs the feeder matrix-only for diagnostics.
+    private bool m_VisibilityEmitEnabled = DefaultVisibilityEmitEnabled;
     // [JanusWebRtcVoice] admin endpoint/secret for the peer_ctl_batch sink this module now OWNS
     // (option c-new): the sink is constructed here and handed directly to the feeder's sender, so
     // sink and sender share one ALC and IPeerCtlBatchSink identity matches.
@@ -113,9 +124,9 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 m_refusalCache = new ProvisionRefusalCache(TimeSpan.FromSeconds(
                     Math.Max(0, m_Config.GetInt("RefusalCacheSeconds", ProvisionRefusalCache.DefaultSeconds))));
                 m_StunServers = m_Config.GetString("StunServers", string.Empty);
-                m_VisibilityFeederEnabled = m_Config.GetBoolean("VisibilityFeederEnabled", false);
+                m_VisibilityFeederEnabled = ReadVisibilityFeederEnabled(m_Config);
                 m_VisibilityTickMs = m_Config.GetInt("VisibilityTickMs", 250);
-                m_VisibilityEmitEnabled = m_Config.GetBoolean("VisibilityEmitEnabled", false);
+                m_VisibilityEmitEnabled = ReadVisibilityEmitEnabled(m_Config);
                 // S3b: rooms addressed concurrently within one send. A latency budget, not a
                 // throughput knob � see JanusPeerCtlBatchSink.DefaultRoomSendConcurrency.
                 m_VisibilityRoomSendConcurrency = m_Config.GetInt("VisibilityRoomSendConcurrency",

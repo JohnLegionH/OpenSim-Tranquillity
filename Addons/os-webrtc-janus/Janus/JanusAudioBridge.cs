@@ -43,8 +43,8 @@ public class JanusAudioBridge : JanusPlugin
     // Wrapper around the session connection to Janus-gateway. The Janus plugin
     // name is supplied by the caller (from [JanusWebRtcVoice] PluginName) rather
     // than hardcoded, so a config-compatible mixer (e.g. janus.plugin.slvoice)
-    // can be selected without a code change. Defaults to janus.plugin.audiobridge
-    // where it is read (WebRtcJanusService), so behaviour is unchanged if unset.
+    // can be selected without a code change. Where it is read (WebRtcJanusService),
+    // an unset key defaults to janus.plugin.slvoice since V-1 (janus.plugin.audiobridge before).
     public JanusAudioBridge(JanusSession pSession, string pPluginName) : this(pSession, pPluginName, string.Empty) { }
 
     /// <param name="pGridId">The grid's identity for non-spatial room numbers (S-A2A-4, O-35): see

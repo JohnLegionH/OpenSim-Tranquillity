@@ -4,8 +4,12 @@
  * Before the feature, JanusAudioBridge hardcoded "janus.plugin.audiobridge" at
  * its single seam (JanusAudioBridge.cs:41), so the region could not attach to an
  * alternative mixer (e.g. janus.plugin.slvoice) without a code change. The
- * feature adds the PluginName key (default "janus.plugin.audiobridge") and passes
- * the name through the name-agnostic JanusPlugin base. See feature/voice-plugin-select.
+ * feature added the PluginName key and passes the name through the name-agnostic
+ * JanusPlugin base. See feature/voice-plugin-select.
+ *
+ * V-1 (SC-108/SC-115): an absent key now resolves to the Legion mixer,
+ * "janus.plugin.slvoice" (JANUS_SLVOICE_PACKAGE in legion-voice-mixer
+ * src/janus_slvoice.c), instead of the stock "janus.plugin.audiobridge".
  */
 
 using Nini.Config;
@@ -30,31 +34,36 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
-        public void JanusAudioBridge_DefaultAudiobridgeNameFlowsThrough()
+        public void JanusAudioBridge_AudiobridgeNameFlowsThrough()
         {
             var ab = new JanusAudioBridge(NewSession(), "janus.plugin.audiobridge");
             Assert.That(ab.PluginName, Is.EqualTo("janus.plugin.audiobridge"));
         }
 
-        // The [JanusWebRtcVoice] config contract WebRtcJanusService relies on: the
-        // PluginName key defaults to "janus.plugin.audiobridge" when absent.
         [Test]
-        public void PluginName_DefaultsToAudiobridge_WhenKeyAbsent()
+        public void DefaultPluginName_IsTheLegionMixer()
         {
-            var src = new IniConfigSource();
-            IConfig cfg = src.AddConfig("JanusWebRtcVoice");   // section present, key absent
-            Assert.That(cfg.GetString("PluginName", "janus.plugin.audiobridge"),
-                Is.EqualTo("janus.plugin.audiobridge"));
+            Assert.That(WebRtcJanusService.DefaultPluginName, Is.EqualTo("janus.plugin.slvoice"));
         }
 
+        // The key-absent path WebRtcJanusService takes: section present, PluginName absent.
+        [Test]
+        public void PluginName_DefaultsToLegionMixer_WhenKeyAbsent()
+        {
+            var src = new IniConfigSource();
+            IConfig cfg = src.AddConfig("JanusWebRtcVoice");
+            cfg.Set("JanusGatewayURI", "http://janus.test/voice");
+            Assert.That(WebRtcJanusService.ReadPluginName(cfg), Is.EqualTo("janus.plugin.slvoice"));
+        }
+
+        // An operator who wants the stock plugin after V-1 sets the key explicitly.
         [Test]
         public void PluginName_IsHonored_WhenKeySet()
         {
             var src = new IniConfigSource();
             IConfig cfg = src.AddConfig("JanusWebRtcVoice");
-            cfg.Set("PluginName", "janus.plugin.slvoice");
-            Assert.That(cfg.GetString("PluginName", "janus.plugin.audiobridge"),
-                Is.EqualTo("janus.plugin.slvoice"));
+            cfg.Set("PluginName", "janus.plugin.audiobridge");
+            Assert.That(WebRtcJanusService.ReadPluginName(cfg), Is.EqualTo("janus.plugin.audiobridge"));
         }
     }
 }
