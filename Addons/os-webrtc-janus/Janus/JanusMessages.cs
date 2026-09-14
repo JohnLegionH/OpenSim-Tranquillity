@@ -334,9 +334,10 @@ public class TrickleReq : JanusMessageReq
         };
 
     }
+    // O-79: the viewer's candidates, per the Janus trickle API: an array goes as "candidates", a single
+    // candidate object as "candidate". No other members (the old "viewer_session" is not part of the API).
     public TrickleReq(JanusViewerSession pVSession, OSD pCandidates) : base("trickle")
     {
-        m_message["viewer_session"] = pVSession.ViewerSessionID;
         if (pCandidates is OSDArray)
             m_message["candidates"] = pCandidates;
         else

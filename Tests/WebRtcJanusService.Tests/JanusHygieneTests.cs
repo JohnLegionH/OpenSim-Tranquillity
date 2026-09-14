@@ -278,6 +278,65 @@ namespace osWebRtcVoice.Tests
 
             Assert.That(_gw.Trickles.Count, Is.EqualTo(1), "one trickle request for the singular candidate (was an empty else)");
             Assert.That(resp.ContainsKey("response"), Is.False, "the Janus reply, not the error map");
+            Assert.That(_gw.Trickles.TryPeek(out OSDMap sent) && sent.TryGetOSDArray("candidates", out OSDArray one)
+                && one.Count == 1 && ((OSDMap)one[0])["candidate"].AsString().StartsWith("candidate:1 "), Is.True,
+                "the singular candidate is forwarded as a one-element candidates array (O-79)");
+        }
+
+        // O-79: TrickleCandidates used to send the end-of-candidates marker, dropping every trickled candidate.
+        [Test]
+        public async Task Signalling_Candidates_AreForwardedToJanus()
+        {
+            var svc = new WebRtcJanusService(NoJanusConfig());
+            var vs = new JanusViewerSession(svc) { Session = await NewSession(), AgentId = Alice, RegionId = Region };
+            var req = new OSDMap
+            {
+                ["candidates"] = new OSDArray
+                {
+                    new OSDMap
+                    {
+                        ["candidate"] = OSD.FromString("candidate:1 1 udp 2122260223 192.0.2.1 50000 typ host"),
+                        ["sdpMid"] = OSD.FromString("0"),
+                        ["sdpMLineIndex"] = OSD.FromInteger(0),
+                    },
+                    new OSDMap
+                    {
+                        ["candidate"] = OSD.FromString("candidate:2 1 udp 1686052607 203.0.113.9 61000 typ srflx raddr 192.0.2.1 rport 50000"),
+                        ["sdpMid"] = OSD.FromString("0"),
+                        ["sdpMLineIndex"] = OSD.FromInteger(0),
+                    },
+                }
+            };
+
+            OSDMap resp = svc.VoiceSignalingRequest(vs, req, Alice, Region);
+
+            Assert.That(resp.ContainsKey("response"), Is.False, "the Janus reply, not the error map");
+            Assert.That(_gw.Trickles.Count, Is.EqualTo(1), "one trickle request reached Janus");
+            Assert.That(_gw.Trickles.TryPeek(out OSDMap sent), Is.True);
+            Assert.That(sent.ContainsKey("candidate"), Is.False, "not the end-of-candidates marker");
+            Assert.That(sent.ContainsKey("viewer_session"), Is.False, "no member outside the Janus trickle API");
+            Assert.That(sent.TryGetOSDArray("candidates", out OSDArray forwarded), Is.True, "a candidates array");
+            Assert.That(forwarded.Count, Is.EqualTo(2));
+            Assert.That(((OSDMap)forwarded[0])["candidate"].AsString(), Does.Contain("typ host"));
+            Assert.That(((OSDMap)forwarded[1])["candidate"].AsString(), Does.Contain("typ srflx"));
+            Assert.That(((OSDMap)forwarded[1])["sdpMid"].AsString(), Is.EqualTo("0"));
+            Assert.That(((OSDMap)forwarded[1])["sdpMLineIndex"].AsInteger(), Is.EqualTo(0));
+        }
+
+        [Test]
+        public async Task Signalling_Completed_SendsTheEndOfCandidatesMarker()
+        {
+            var svc = new WebRtcJanusService(NoJanusConfig());
+            var vs = new JanusViewerSession(svc) { Session = await NewSession(), AgentId = Alice, RegionId = Region };
+            var req = new OSDMap { ["candidate"] = new OSDMap { ["completed"] = OSD.FromBoolean(true) } };
+
+            svc.VoiceSignalingRequest(vs, req, Alice, Region);
+
+            Assert.That(_gw.Trickles.Count, Is.EqualTo(1), "one trickle request reached Janus");
+            Assert.That(_gw.Trickles.TryPeek(out OSDMap sent), Is.True);
+            Assert.That(sent.ContainsKey("candidates"), Is.False, "the marker carries no candidates");
+            Assert.That(sent.TryGetOSDMap("candidate", out OSDMap marker) && marker["completed"].AsBoolean(), Is.True,
+                "{\"candidate\":{\"completed\":true}}");
         }
 
         // ---- bounded room-create locks (W-13) -----------------------------------------------------------

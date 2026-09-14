@@ -191,34 +191,25 @@ public class JanusSession : IDisposable
     }
 
     // ====================================================================
+    // O-79: forward the viewer's trickled candidates ({"janus":"trickle","candidates":[...]}). This used to
+    // send the end-of-candidates marker instead, so only the candidates already in the offer reached Janus.
     public async Task<JanusMessageResp> TrickleCandidates(JanusViewerSession pVSession, OSDArray pCandidates)
     {
-        JanusMessageResp ret = null;
-        // if the audiobridge is active, the trickle message is sent to it
-        if (pVSession.AudioBridge is null)
-        {
-            ret = await SendToJanusNoWait(new TrickleReq(pVSession));
-        }
-        else
-        {
-            ret = await SendToJanusNoWait(new TrickleReq(pVSession), pVSession.AudioBridge.PluginUri);
-        }
-        return ret;
+        return await SendTrickle(pVSession, new TrickleReq(pVSession, pCandidates));
     }
     // ====================================================================
+    // The viewer has finished trickling: {"janus":"trickle","candidate":{"completed":true}}.
     public async Task<JanusMessageResp> TrickleCompleted(JanusViewerSession pVSession)
     {
-        JanusMessageResp ret = null;
-        // if the audiobridge is active, the trickle message is sent to it
+        return await SendTrickle(pVSession, new TrickleReq(pVSession));
+    }
+
+    // A trickle is a handle-level request: if the audiobridge is active, it is sent to its handle.
+    private async Task<JanusMessageResp> SendTrickle(JanusViewerSession pVSession, TrickleReq pReq)
+    {
         if (pVSession.AudioBridge is null)
-        {
-            ret = await SendToJanusNoWait(new TrickleReq(pVSession));
-        }
-        else
-        {
-            ret = await SendToJanusNoWait(new TrickleReq(pVSession), pVSession.AudioBridge.PluginUri);
-        }
-        return ret;
+            return await SendToJanusNoWait(pReq);
+        return await SendToJanusNoWait(pReq, pVSession.AudioBridge.PluginUri);
     }
     // ====================================================================
     public Dictionary<string, JanusPlugin> _Plugins = new Dictionary<string, JanusPlugin>();
