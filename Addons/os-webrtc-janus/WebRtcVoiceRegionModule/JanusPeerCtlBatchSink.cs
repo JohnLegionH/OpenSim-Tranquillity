@@ -40,7 +40,7 @@ using OpenSim.Framework;
 
 namespace osWebRtcVoice
 {
-    public sealed class JanusPeerCtlBatchSink : IPeerCtlBatchSink, IDisposable
+    public sealed class JanusPeerCtlBatchSink : IPeerCtlBatchSink, IPeerCtlHeartbeatSink, IDisposable
     {
         private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
         // Reused empty excl slice for a room that has only mute changes this op.
@@ -134,6 +134,11 @@ namespace osWebRtcVoice
         /// that service (see the class comment). Null until then, and read as "nothing is recorded".</summary>
         public Func<UUID, int?> RoomOf { get; set; }
 
+        /// <summary>Phase 0 slice 0.2: set only when [WebRtcVoice] VisibilityArmingEnabled is true. Null (the default)
+        /// leaves every request exactly as before 0.2. When set, every per-room request carries room_epoch and
+        /// policy_generation (plus base on add/remove), and each room's reply is applied to it.</summary>
+        public VisAuthority Authority { get; set; }
+
         /// <summary>The room an agent with no record is addressed at, both as listener and as source.</summary>
         public int FallbackRoom => _fallbackRoom;
 
@@ -209,7 +214,9 @@ namespace osWebRtcVoice
             // Build EVERY body BEFORE sending any of them. The serializer's invariant throw stays
             // all-or-nothing as it was when there was one message: a zero UUID in any room aborts the
             // whole tick with nothing on the wire, rather than leaving some rooms updated and others not.
+            VisAuthority authority = Authority;
             var requests = new List<OSDMap>(roomKeys.Count);
+            var stamps = authority != null ? new List<(int Room, uint Generation, List<UUID> Named)>(roomKeys.Count) : null;
             foreach (int roomKey in roomKeys)
             {
                 IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> exclSlice =
@@ -218,6 +225,8 @@ namespace osWebRtcVoice
                     (muteRooms != null && muteRooms.TryGetValue(roomKey, out var ms)) ? ms : null;
                 OSDMap request = PeerCtlBatchSerializer.BuildRequest(op, exclSlice, muteSlice);
                 request["room"] = new OSDInteger(roomKey);   // the sink stamps the room, per room
+                if (authority != null)
+                    stamps.Add(StampAuthority(authority, request, op, roomKey, exclSlice, muteSlice));
                 requests.Add(request);
             }
 
@@ -234,6 +243,9 @@ namespace osWebRtcVoice
             {
                 (PeerCtlSendResult only, SlvoiceReply onlyReply) = await SendAndReadAsync(requests[0]).ConfigureAwait(false);
                 RecordStats(new[] { onlyReply });
+                if (authority != null)
+                    authority.OnBatchOutcome(stamps[0].Room, op, stamps[0].Generation, stamps[0].Named,
+                        only == PeerCtlSendResult.Ok, in onlyReply);
                 return only;
             }
 
@@ -252,9 +264,70 @@ namespace osWebRtcVoice
                 replies[i] = results[i].Reply;
                 if (Severity(results[i].Result) > Severity(worst))
                     worst = results[i].Result;
+                if (authority != null)
+                    authority.OnBatchOutcome(stamps[i].Room, op, stamps[i].Generation, stamps[i].Named,
+                        results[i].Result == PeerCtlSendResult.Ok, in replies[i]);
             }
             RecordStats(replies);
             return worst;
+        }
+
+        // Slice 0.2 (design §1): stamp the room's epoch and next generation, and on add/remove the base generation the
+        // sim believes the mixer holds for each named listener. Keys are appended after "room", so a knob-off request,
+        // which never reaches here, keeps its exact key order.
+        private static (int Room, uint Generation, List<UUID> Named) StampAuthority(VisAuthority authority, OSDMap request,
+            VisOp op, int room, IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> exclSlice,
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> muteSlice)
+        {
+            var named = new List<UUID>(exclSlice.Keys);
+            if (muteSlice != null)
+                foreach (UUID l in muteSlice.Keys)
+                    if (!exclSlice.ContainsKey(l))
+                        named.Add(l);
+            uint generation = authority.NextGeneration(room);
+            request["room_epoch"] = OSD.FromString(authority.EpochString);
+            request["policy_generation"] = OSD.FromInteger((int)generation);
+            if (op != VisOp.Replace)
+            {
+                var baseMap = new OSDMap();
+                foreach (UUID l in named)
+                    baseMap[l.ToString()] = OSD.FromInteger((int)authority.ListenerGeneration(room, l));
+                request["base"] = baseMap;
+            }
+            return (room, generation, named);
+        }
+
+        /// <summary>Slice 0.2 (design §3): send one peer_ctl_heartbeat and apply its reply to <see cref="Authority"/>.
+        /// Never throws.</summary>
+        public async Task<bool> SendHeartbeatAsync(OSDMap body)
+        {
+            AdminSendResult admin;
+            string reply;
+            try
+            {
+                (admin, reply) = await _sendOne(body).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning(e, "{LogHeader} region {RegionName}: peer_ctl_heartbeat send failed", LogHeader, _region);
+                return false;
+            }
+            bool ok = admin == AdminSendResult.Ok;
+            Authority?.OnHeartbeatOutcome(ok, ok ? VisAuthority.ParseHeartbeatReply(reply) : new VisAuthority.HeartbeatReply());
+            return ok;
+        }
+
+        /// <summary>A JSON array of UUID strings under <paramref name="key"/>, or null when absent. Unparseable entries
+        /// are skipped.</summary>
+        public static UUID[] ParseUuidList(OSDMap map, string key)
+        {
+            if (map == null || !(map.TryGetValue(key, out OSD o) && o is OSDArray arr))
+                return null;
+            var list = new List<UUID>(arr.Count);
+            foreach (OSD item in arr)
+                if (UUID.TryParse(item.AsString(), out UUID id) && id != UUID.Zero)
+                    list.Add(id);
+            return list.ToArray();
         }
 
         private async Task<(PeerCtlSendResult Result, SlvoiceReply Reply)> SendGatedAsync(OSDMap request)
@@ -353,6 +426,14 @@ namespace osWebRtcVoice
             public int Skipped;
             public int DeferredListeners;
             public string RawSummary;         // compact inner payload for the WARN log
+            // Slice 0.2 (design §3 reply): absent from a pre-Phase-0 mixer, which leaves them default.
+            public int VisProtocol;           // "vis_protocol"; 0 when absent
+            public string MixerInstance;      // "mixer_instance"
+            public string StatusField;        // "status": ok | stale_epoch | unknown_room | undeclared_room
+            public string Reason;             // "reason", e.g. unknown_room on slvoice:"error"
+            public string AuthorityEpoch;     // "authority_epoch"
+            public UUID[] StaleListeners;     // "stale_listeners"
+            public UUID[] UnarmedListeners;   // "unarmed_listeners"
         }
 
         /// <summary>Parse the mixer's peer_ctl_batch inner reply. The plugin response is nested under the
@@ -382,6 +463,13 @@ namespace osWebRtcVoice
                 Skipped = resp.TryGetValue("skipped", out OSD sk) ? sk.AsInteger() : 0,
                 DeferredListeners = resp.TryGetValue("deferred_listeners", out OSD dl) ? dl.AsInteger() : 0,
                 RawSummary = Summarize(resp),
+                VisProtocol = resp.TryGetValue("vis_protocol", out OSD vp) ? vp.AsInteger() : 0,
+                MixerInstance = resp.TryGetValue("mixer_instance", out OSD mi) ? mi.AsString() : null,
+                StatusField = resp.TryGetValue("status", out OSD sf) ? sf.AsString() : null,
+                Reason = resp.TryGetValue("reason", out OSD rs) ? rs.AsString() : null,
+                AuthorityEpoch = resp.TryGetValue("authority_epoch", out OSD ae) ? ae.AsString() : null,
+                StaleListeners = ParseUuidList(resp, "stale_listeners"),
+                UnarmedListeners = ParseUuidList(resp, "unarmed_listeners"),
             };
         }
 

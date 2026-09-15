@@ -31,6 +31,7 @@ namespace osWebRtcVoice
         // Matrix scope placeholder until the (later) sender wires real Janus room numbers.
         private const int EstateRoomPlaceholder = -999;
         private const int JoinTimeoutMs = 2000;
+        private const int StopHeartbeatWaitMs = 1000;
 
         private readonly Scene m_scene;
         private readonly int m_cadenceMs;
@@ -45,6 +46,8 @@ namespace osWebRtcVoice
         private IEstateModule m_estateModule;
         private VisibilityBatchSender m_sender;   // built in StartLoop from the injected sink
         private readonly AgentRoomTable m_rooms = new AgentRoomTable();   // S2: agent -> joined mixer room (newest wins)
+        private readonly bool m_armingEnabled;    // slice 0.2: [WebRtcVoice] VisibilityArmingEnabled (default false)
+        private VisAuthority m_authority;         // slice 0.2: one per StartLoop, so a new epoch per feeder start
 
         // The sink is passed in directly (NOT resolved via scene.RequestModuleInterface): the sink
         // and the sender live in this module's AssemblyLoadContext, so IPeerCtlBatchSink identity
@@ -52,8 +55,9 @@ namespace osWebRtcVoice
         // with a non-shared type (VoiceVisibility.dll) and the two Types never matched. A null sink
         // is tolerated — the sender runs matrix-only and logs once.
         public VoiceVisibilityService(Scene scene, int cadenceMs, bool emitEnabled = false,
-            IPeerCtlBatchSink sink = null, TimeSpan? adminTimeout = null)
+            IPeerCtlBatchSink sink = null, TimeSpan? adminTimeout = null, bool armingEnabled = false)
         {
+            m_armingEnabled = armingEnabled;
             m_scene = scene;
             m_cadenceMs = cadenceMs;
             m_emitEnabled = emitEnabled;
@@ -112,8 +116,21 @@ namespace osWebRtcVoice
             // Build the sender from the injected sink (same ALC — no registry resolve). Null-tolerant:
             // a null sink makes the sender run matrix-only and log once. The sender's own
             // VisibilityEmitEnabled gate decides whether it emits at all.
+            // Slice 0.2: with arming enabled, a NEW authority (and so a new room_epoch, design §1.1) for every feeder
+            // start. With it disabled, nothing below is built and the sender takes its pre-0.2 paths.
+            VisAuthority authority = null;
+            Func<UUID, int> resolveRoom = null;
+            if (m_armingEnabled && m_emitEnabled && m_sink is JanusPeerCtlBatchSink armingSink)
+            {
+                authority = new VisAuthority(VisAuthority.NewEpoch(), m_scene.RegionInfo.RegionName);
+                armingSink.Authority = authority;
+                int fallbackRoom = armingSink.FallbackRoom;
+                Func<UUID, int?> roomOf = RoomOf;
+                resolveRoom = agent => roomOf(agent) ?? fallbackRoom;
+                m_authority = authority;
+            }
             m_sender = new VisibilityBatchSender(m_feeder, m_sink, m_emitEnabled,
-                m_adminTimeout, m_scene.RegionInfo.RegionName);
+                m_adminTimeout, m_scene.RegionInfo.RegionName, authority: authority, resolveRoom: resolveRoom);
 
             m_running = true;
             // Register with the OpenSim Watchdog so a dead or non-heartbeating tick thread is
@@ -129,6 +146,13 @@ namespace osWebRtcVoice
                 alarmMethod: null,
                 timeout: 5000);
             m_log.LogInformation($"{logHeader} feeder started for {m_scene.RegionInfo.RegionName} @ {m_cadenceMs}ms (emit={m_emitEnabled})");
+            if (authority != null)
+                m_log.LogInformation($"{logHeader} arming ENABLED for {m_scene.RegionInfo.RegionName} ([WebRtcVoice] VisibilityArmingEnabled): " +
+                    $"room_epoch {authority.EpochString}; heartbeats every {VisAuthority.HeartbeatIntervalMs} ms once the mixer advertises " +
+                    $"vis_protocol {VisAuthority.HeartbeatProtocol}");
+            else if (m_armingEnabled)
+                m_log.LogWarning($"{logHeader} [WebRtcVoice] VisibilityArmingEnabled is true but {m_scene.RegionInfo.RegionName} has no Janus " +
+                    $"peer_ctl sink (emission off or admin config missing): arming is inactive");
         }
 
         /// Step S2: the mixer room each agent's latest successful provision joined, as a resolver for
@@ -163,6 +187,21 @@ namespace osWebRtcVoice
             m_thread = null;
             if (t != null && !t.Join(JoinTimeoutMs))
                 m_log.LogWarning($"{logHeader} feeder thread for {m_scene.RegionInfo.RegionName} did not stop within {JoinTimeoutMs}ms");
+
+            // Slice 0.2 §3: tell the mixer this authority is stopping, so it treats these rooms as stale at once. Bounded;
+            // skipped when arming is off or the mixer never advertised heartbeats.
+            if (m_authority != null && m_sender != null)
+            {
+                try
+                {
+                    if (!m_sender.PumpHeartbeatAsync(stopping: true).Wait(StopHeartbeatWaitMs))
+                        m_log.LogWarning($"{logHeader} stopping heartbeat for {m_scene.RegionInfo.RegionName} did not complete within {StopHeartbeatWaitMs}ms");
+                }
+                catch (Exception e)
+                {
+                    m_log.LogWarning(e, $"{logHeader} stopping heartbeat for {m_scene.RegionInfo.RegionName} failed");
+                }
+            }
 
             // The service owns the injected sink's lifetime (it holds a JanusAdminClient/HttpClient).
             // Dispose AFTER the tick thread has joined so no in-flight send races the dispose.
@@ -199,6 +238,8 @@ namespace osWebRtcVoice
                 // snapshot-on-a-quiet-tick still get a chance.
                 if (batch != null)
                     m_sender?.Pump(batch);
+                // Slice 0.2 §3: the heartbeat rides the tick but has its own single-flight; a no-op with arming off.
+                m_sender?.PumpHeartbeat();
 
                 m_wake.Wait(m_cadenceMs);
                 m_wake.Reset();

@@ -21,15 +21,25 @@ namespace osWebRtcVoice
         // or no moderation in force) is exactly today's behaviour.
         private readonly Dictionary<UUID, HashSet<UUID>> _muted;
 
-        private VisibilityMatrix(Dictionary<UUID, HashSet<UUID>> excluded, Dictionary<UUID, HashSet<UUID>> muted)
+        // Phase 0 slice 0.2: every agent the matrix was built from, in Build order, including agents with two empty
+        // columns. Arming (nonspatial-phase0-design.md §2) needs the population as a first-class set, because the
+        // exclusion and mute maps above store non-empty columns only.
+        private readonly IReadOnlyList<UUID> _population;
+
+        private VisibilityMatrix(Dictionary<UUID, HashSet<UUID>> excluded, Dictionary<UUID, HashSet<UUID>> muted,
+            IReadOnlyList<UUID> population)
         {
             _excluded = excluded;
             _muted = muted;
+            _population = population;
         }
 
         /// An empty matrix (no agents / no exclusions) - the Diff baseline for bootstrap.
         public static readonly VisibilityMatrix Empty =
-            new VisibilityMatrix(new Dictionary<UUID, HashSet<UUID>>(), new Dictionary<UUID, HashSet<UUID>>());
+            new VisibilityMatrix(new Dictionary<UUID, HashSet<UUID>>(), new Dictionary<UUID, HashSet<UUID>>(), new List<UUID>());
+
+        /// Every agent in the matrix's population, empty columns included (slice 0.2 arming).
+        public IReadOnlyList<UUID> Population => _population;
 
         /// Listeners that have at least one exclusion.
         public IReadOnlyCollection<UUID> Listeners => _excluded.Keys;
@@ -65,6 +75,9 @@ namespace osWebRtcVoice
 
             var excluded = new Dictionary<UUID, HashSet<UUID>>(n);
             var muted = new Dictionary<UUID, HashSet<UUID>>(n);
+            var population = new List<UUID>(n);
+            for (int i = 0; i < n; i++)
+                population.Add(agents[i].Id);
             for (int li = 0; li < n; li++)
             {
                 AgentView L = agents[li];
@@ -89,7 +102,7 @@ namespace osWebRtcVoice
                 if (muteSet != null)
                     muted[L.Id] = muteSet;
             }
-            return new VisibilityMatrix(excluded, muted);
+            return new VisibilityMatrix(excluded, muted, population);
         }
 
         /// Root: cached currentParcelUUID when known. Child (or root with unknown parcel):

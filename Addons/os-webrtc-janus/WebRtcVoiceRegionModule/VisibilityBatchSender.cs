@@ -30,6 +30,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using OpenMetaverse;
+using OpenMetaverse.StructuredData;
 using OpenSim.Framework;
 
 namespace osWebRtcVoice
@@ -83,9 +84,25 @@ namespace osWebRtcVoice
         private readonly object _pendingLock = new object();
         private readonly Dictionary<UUID, int> _pending = new Dictionary<UUID, int>();   // listener -> attempts left
 
+        // Slice 0.2 arming mode ([WebRtcVoice] VisibilityArmingEnabled, nonspatial-phase0-design.md §2-§3). Null
+        // authority = the knob is off, and every method below takes its pre-0.2 path unchanged.
+        private readonly VisAuthority _authority;
+        private readonly Func<UUID, int> _resolveRoom;   // record ?? fallback room, the sink's own policy
+        private long _heartbeatInFlight;                 // the heartbeat's OWN single-flight (design §3), 0 or 1
+        private long _lastHeartbeatMs;
+        private bool _heartbeatSent;
+        private bool _loggedHeartbeatStart;
+
+        /// <param name="authority">Slice 0.2: non-null only when arming is enabled; requires <paramref name="resolveRoom"/>.</param>
+        /// <param name="resolveRoom">The room each agent is addressed at (its record, else the fallback room).</param>
         public VisibilityBatchSender(IVisibilityFeed feed, IPeerCtlBatchSink sink, bool enabled,
-            TimeSpan? adminTimeout = null, string region = null, Func<long> nowMs = null)
+            TimeSpan? adminTimeout = null, string region = null, Func<long> nowMs = null,
+            VisAuthority authority = null, Func<UUID, int> resolveRoom = null)
         {
+            if (authority != null && resolveRoom == null)
+                throw new ArgumentNullException(nameof(resolveRoom), "arming needs the room resolver");
+            _authority = authority;
+            _resolveRoom = resolveRoom;
             _feed = feed;
             _sink = sink;
             _enabled = enabled;
@@ -103,6 +120,12 @@ namespace osWebRtcVoice
         {
             if (!_enabled || _protocolFailed || listener == UUID.Zero)
                 return;
+            if (_authority != null)
+            {
+                // Slice 0.2 §2 item 2: arm at the recorded room on the next pass, even with empty columns.
+                _authority.RequestArm(listener);
+                return;
+            }
             lock (_pendingLock)
                 _pending[listener] = PendingJoinMaxAttempts;
         }
@@ -143,8 +166,15 @@ namespace osWebRtcVoice
         {
             try
             {
-                await DrainPendingAsync().ConfigureAwait(false);
-                await EmitMainAsync(batch).ConfigureAwait(false);
+                if (_authority != null)
+                {
+                    await EmitArmedAsync(batch).ConfigureAwait(false);
+                }
+                else
+                {
+                    await DrainPendingAsync().ConfigureAwait(false);
+                    await EmitMainAsync(batch).ConfigureAwait(false);
+                }
             }
             catch (Exception e)
             {
@@ -187,6 +217,161 @@ namespace osWebRtcVoice
                 "flag and re-syncing (snapshot next); the abandoned send is left to complete or hang " +
                 "harmlessly.", LogHeader, _region, elapsed, _staleThresholdMs, StaleInFlightMultiple, _adminTimeoutMs);
             _synced = false;   // abandoned send's applied-state is unknown -> full snapshot next
+        }
+
+        // ---- slice 0.2: arming mode (design §2) ----
+        // Every pass: arm whoever is not armed at their current room, then send deltas for listeners already armed.
+        // "Arm" is a replace naming the listener with its full columns, empty ones included. A snapshot (first pass,
+        // transport error, skipped tick, in-flight guard, or a detected mixer restart) arms the whole population, and
+        // replaces the pre-0.2 clear-tracking: a departed listener is left to the heartbeat's omission rule, because an
+        // empty replace for it would ARM it.
+        private async Task EmitArmedAsync(VisibilityBatch batch)
+        {
+            VisibilityMatrix cur = _feed.Current;
+            IReadOnlyList<UUID> population = cur.Population;
+            _authority.PruneTo(population, _resolveRoom);
+            bool mixerRestarted = _authority.TakeRearmAll();
+            if (mixerRestarted)
+                _synced = false;
+            bool snapshot = !_synced;
+
+            var arm = new List<UUID>();
+            foreach (UUID l in population)
+            {
+                if (snapshot || _authority.IsRearmRequested(l)
+                    || (!_authority.IsArmed(_resolveRoom(l), l) && _authority.CanArmNow(l)))
+                    arm.Add(l);
+            }
+
+            if (arm.Count > 0)
+            {
+                var excl = new Dictionary<UUID, IReadOnlyCollection<UUID>>(arm.Count);
+                var mute = new Dictionary<UUID, IReadOnlyCollection<UUID>>(arm.Count);
+                int emptyColumns = 0;
+                foreach (UUID l in arm)
+                {
+                    var e = new List<UUID>(cur.ExcludedFor(l));
+                    var m = new List<UUID>(cur.MutedFor(l));
+                    if (e.Count == 0 && m.Count == 0)
+                        emptyColumns++;
+                    excl[l] = e;
+                    mute[l] = m;
+                }
+                PeerCtlSendResult r = await _sink.SendAsync(VisOp.Replace, excl, mute).ConfigureAwait(false);
+                switch (r)
+                {
+                    case PeerCtlSendResult.Ok:
+                        NoteOk();
+                        _synced = true;
+                        m_log.LogInformation("{LogHeader} region {RegionName}: arming replace sent for {Count} listener(s), " +
+                            "{EmptyCount} with empty columns, epoch {Epoch} ({Reason})", LogHeader, _region, arm.Count, emptyColumns,
+                            _authority.EpochString, mixerRestarted ? "mixer restarted" : snapshot ? "snapshot" : "new, moved, provisioned or reported by the mixer");
+                        break;
+                    case PeerCtlSendResult.TransportError:
+                        _synced = false;
+                        return;
+                    case PeerCtlSendResult.ProtocolError:
+                    default:
+                        NoteProtocolError("arming replace");
+                        _synced = false;
+                        return;
+                }
+            }
+            else if (snapshot)
+            {
+                _synced = true;   // an empty population: nothing to arm
+            }
+
+            if (batch == null || batch.IsEmpty)
+                return;
+            var justArmed = new HashSet<UUID>(arm);
+            Dictionary<UUID, IReadOnlyCollection<UUID>> added = ArmedOnly(batch.Added, justArmed);
+            Dictionary<UUID, IReadOnlyCollection<UUID>> removed = ArmedOnly(batch.Removed, justArmed);
+            Dictionary<UUID, IReadOnlyCollection<UUID>> muteAdded = ArmedOnly(batch.MuteAdded, justArmed);
+            Dictionary<UUID, IReadOnlyCollection<UUID>> muteRemoved = ArmedOnly(batch.MuteRemoved, justArmed);
+            PeerCtlBatchSerializer.EnsureDisjoint(added, removed);
+            PeerCtlBatchSerializer.EnsureDisjoint(muteAdded, muteRemoved);
+            bool ok = true;
+            if (added.Count > 0 || muteAdded.Count > 0)
+                ok = await SendMappedAsync(VisOp.Add, added, muteAdded).ConfigureAwait(false);
+            if (ok && (removed.Count > 0 || muteRemoved.Count > 0))
+                await SendMappedAsync(VisOp.Remove, removed, muteRemoved).ConfigureAwait(false);
+        }
+
+        // A delta entry is sent only for a listener armed at its room before this pass: a listener armed this pass
+        // already got its full column, and an unarmed one gets it when it is armed.
+        private Dictionary<UUID, IReadOnlyCollection<UUID>> ArmedOnly(
+            IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> map, HashSet<UUID> justArmed)
+        {
+            var result = new Dictionary<UUID, IReadOnlyCollection<UUID>>();
+            foreach (KeyValuePair<UUID, IReadOnlyCollection<UUID>> kv in map)
+                if (!justArmed.Contains(kv.Key) && _authority.IsArmed(_resolveRoom(kv.Key), kv.Key))
+                    result[kv.Key] = kv.Value;
+            return result;
+        }
+
+        /// <summary>Slice 0.2 §3: called every feeder tick. Sends one peer_ctl_heartbeat when arming is on, the mixer has
+        /// advertised vis_protocol 2, at least <see cref="VisAuthority.HeartbeatIntervalMs"/> has passed since the last
+        /// one, and no heartbeat is in flight. Independent of the batch single-flight. Fire-and-forget; never throws.</summary>
+        public void PumpHeartbeat() => _ = PumpHeartbeatAsync(false);
+
+        /// <summary>The awaitable core of <see cref="PumpHeartbeat"/>. <paramref name="stopping"/> sends the graceful-stop
+        /// heartbeat ("state":"stopping") at once, ignoring the interval and the in-flight flag.</summary>
+        public Task PumpHeartbeatAsync(bool stopping = false)
+        {
+            if (_authority == null || !_enabled || _protocolFailed || !(_sink is IPeerCtlHeartbeatSink heartbeatSink))
+                return Task.CompletedTask;
+            if (!_authority.HeartbeatCapable)
+                return Task.CompletedTask;
+            if (!stopping)
+            {
+                long now = _nowMs();
+                if (_heartbeatSent && now - _lastHeartbeatMs < VisAuthority.HeartbeatIntervalMs)
+                    return Task.CompletedTask;
+                if (Interlocked.CompareExchange(ref _heartbeatInFlight, 1L, 0L) != 0L)
+                    return Task.CompletedTask;
+                _lastHeartbeatMs = now;
+                _heartbeatSent = true;
+            }
+            OSDMap body = _authority.BuildHeartbeat(_feed.Current.Population, _resolveRoom, stopping);
+            return SendHeartbeatAsync(heartbeatSink, body, stopping);
+        }
+
+        private async Task SendHeartbeatAsync(IPeerCtlHeartbeatSink heartbeatSink, OSDMap body, bool stopping)
+        {
+            try
+            {
+                bool ok = await heartbeatSink.SendHeartbeatAsync(body).ConfigureAwait(false);
+                int rooms = 0, listeners = 0;
+                if (body["rooms"] is OSDMap roomMap)
+                {
+                    rooms = roomMap.Count;
+                    foreach (KeyValuePair<string, OSD> kv in roomMap)
+                        if (kv.Value is OSDMap entry && entry["listeners"] is OSDMap ls)
+                            listeners += ls.Count;
+                }
+                if (stopping)
+                    m_log.LogInformation("{LogHeader} region {RegionName}: stopping heartbeat sent for {Rooms} room(s), epoch {Epoch}: {Result}",
+                        LogHeader, _region, rooms, _authority.EpochString, ok ? "ok" : "transport failed");
+                else if (ok && !_loggedHeartbeatStart)
+                {
+                    _loggedHeartbeatStart = true;
+                    m_log.LogInformation("{LogHeader} region {RegionName}: first peer_ctl_heartbeat acknowledged: {Rooms} room(s), " +
+                        "{Listeners} listener(s), epoch {Epoch}, every {Interval} ms", LogHeader, _region, rooms, listeners,
+                        _authority.EpochString, VisAuthority.HeartbeatIntervalMs);
+                }
+                m_log.LogDebug("{LogHeader} region {RegionName}: peer_ctl_heartbeat {Rooms} room(s), {Listeners} listener(s): {Result}",
+                    LogHeader, _region, rooms, listeners, ok ? "ok" : "transport failed");
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning(e, "{LogHeader} region {RegionName}: heartbeat failed", LogHeader, _region);
+            }
+            finally
+            {
+                if (!stopping)
+                    Interlocked.Exchange(ref _heartbeatInFlight, 0L);
+            }
         }
 
         // ---- per-listener JOIN path (bounded blind re-send; distinct from _synced/_knownListeners) ----

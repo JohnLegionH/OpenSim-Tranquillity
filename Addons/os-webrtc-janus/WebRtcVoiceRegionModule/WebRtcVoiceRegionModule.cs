@@ -89,6 +89,16 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     public static bool ReadVisibilityEmitEnabled(IConfig pConfig)
         => pConfig.GetBoolean("VisibilityEmitEnabled", DefaultVisibilityEmitEnabled);
 
+    // Phase 0 slice 0.2: [WebRtcVoice] VisibilityArmingEnabled. Arming, room epochs, generations, heartbeats and
+    // acting on the mixer's reply (Docs/voice/nonspatial-phase0-design.md §1-§3). DISABLED by default: with the key
+    // absent or false the sim emits exactly the pre-0.2 payloads (VisibilityKnobOffGoldenTests). A deliberate
+    // departure from the design's §6.1, which let 0.2 ride VisibilityEmitEnabled; that key is already true on live
+    // grids, so riding it would have changed the wire on deploy.
+    public const bool DefaultVisibilityArmingEnabled = false;
+
+    public static bool ReadVisibilityArmingEnabled(IConfig pConfig)
+        => pConfig.GetBoolean("VisibilityArmingEnabled", DefaultVisibilityArmingEnabled);
+
     // Phase-3a per-listener visibility feeder, one service per region. On by default (V-1, O-78);
     // false turns it off.
     private bool m_VisibilityFeederEnabled = DefaultVisibilityFeederEnabled;
@@ -96,6 +106,8 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     // Emit the matrix to the mixer (peer_ctl_batch), separate from running the matrix. On by default
     // (V-1, O-78); false runs the feeder matrix-only for diagnostics.
     private bool m_VisibilityEmitEnabled = DefaultVisibilityEmitEnabled;
+    // Slice 0.2 arming (see ReadVisibilityArmingEnabled). Off by default.
+    private bool m_VisibilityArmingEnabled = DefaultVisibilityArmingEnabled;
     // [JanusWebRtcVoice] admin endpoint/secret for the peer_ctl_batch sink this module now OWNS
     // (option c-new): the sink is constructed here and handed directly to the feeder's sender, so
     // sink and sender share one ALC and IPeerCtlBatchSink identity matches.
@@ -127,6 +139,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 m_VisibilityFeederEnabled = ReadVisibilityFeederEnabled(m_Config);
                 m_VisibilityTickMs = m_Config.GetInt("VisibilityTickMs", 250);
                 m_VisibilityEmitEnabled = ReadVisibilityEmitEnabled(m_Config);
+                m_VisibilityArmingEnabled = ReadVisibilityArmingEnabled(m_Config);
                 // S3b: rooms addressed concurrently within one send. A latency budget, not a
                 // throughput knob � see JanusPeerCtlBatchSink.DefaultRoomSendConcurrency.
                 m_VisibilityRoomSendConcurrency = m_Config.GetInt("VisibilityRoomSendConcurrency",
@@ -255,7 +268,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 // the service/sender then runs matrix-only and logs once.
                 IPeerCtlBatchSink sink = BuildPeerCtlSinkOrNull(scene);
                 VoiceVisibilityService svc = new VoiceVisibilityService(scene, m_VisibilityTickMs, m_VisibilityEmitEnabled, sink,
-                    TimeSpan.FromMilliseconds(m_AdminTimeoutMs));
+                    TimeSpan.FromMilliseconds(m_AdminTimeoutMs), m_VisibilityArmingEnabled);
                 svc.Start();
                 lock (m_visibilityServices)
                     m_visibilityServices[scene] = svc;

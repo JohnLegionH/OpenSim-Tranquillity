@@ -49,14 +49,27 @@ public class JanusAudioBridge : JanusPlugin
 
     /// <param name="pGridId">The grid's identity for non-spatial room numbers (S-A2A-4, O-35): see
     /// <see cref="ReadGridId"/>. Empty keeps the pre-S-A2A-4 (grid-less) derivation.</param>
-    public JanusAudioBridge(JanusSession pSession, string pPluginName, string pGridId) : base(pSession, pPluginName)
+    public JanusAudioBridge(JanusSession pSession, string pPluginName, string pGridId) : this(pSession, pPluginName, pGridId, false) { }
+
+    /// <param name="pDeclareVisAuthority">Phase 0 slice 0.2: create spatial "local" rooms with vis_authority=true
+    /// (nonspatial-phase0-design.md §6.2). False keeps the pre-0.2 create body.</param>
+    public JanusAudioBridge(JanusSession pSession, string pPluginName, string pGridId, bool pDeclareVisAuthority) : base(pSession, pPluginName)
     {
         GridId = pGridId ?? string.Empty;
+        DeclareVisAuthority = pDeclareVisAuthority;
         // m_log.LogDebug("{0} JanusAudioBridge constructor (plugin={1})", LogHeader, pPluginName);
     }
 
     /// <summary>The grid id folded into every "multiagent" room number by <see cref="SelectRoom"/>.</summary>
     public string GridId { get; }
+
+    /// <summary>Slice 0.2: whether spatial "local" rooms are declared as having a sim authority.</summary>
+    public bool DeclareVisAuthority { get; }
+
+    /// <summary>Slice 0.2 §6.2: only spatial "local" rooms are declared. A2A "multiagent" rooms get no visibility batches,
+    /// so declaring them would silence every call once fail-closed is enabled.</summary>
+    public static bool ShouldDeclareVisAuthority(bool pDeclare, string pChannelType)
+        => pDeclare && string.Equals(pChannelType, "local", StringComparison.Ordinal);
 
     /// <summary>
     /// The grid identifier for room derivation (S-A2A-4): the region's GatekeeperURI, read through the
@@ -124,9 +137,13 @@ public class JanusAudioBridge : JanusPlugin
     // re-attempt returns 486 -> reuse. No in-process lock can cover that cross-process
     // case, so this re-check is the load-bearing correctness. Janus keys rooms by
     // number, so re-attempting create cannot produce a duplicate room.
-    public async Task<JanusRoom> CreateRoom(int pRoomId, bool pSpatial, string pRoomDesc)
+    public Task<JanusRoom> CreateRoom(int pRoomId, bool pSpatial, string pRoomDesc)
+        => CreateRoom(pRoomId, pSpatial, pRoomDesc, false);
+
+    /// <param name="pVisAuthority">Slice 0.2: send "vis_authority": true in the create body.</param>
+    public async Task<JanusRoom> CreateRoom(int pRoomId, bool pSpatial, string pRoomDesc, bool pVisAuthority)
     {
-        JanusRoom ret = await CreateWithRecheck(() => TryCreateRoomOnce(pRoomId, pSpatial, pRoomDesc)).ConfigureAwait(false);
+        JanusRoom ret = await CreateWithRecheck(() => TryCreateRoomOnce(pRoomId, pSpatial, pRoomDesc, pVisAuthority)).ConfigureAwait(false);
         if (ret is null)
         {
             m_log.LogError("{LogHeader} CreateRoom. Room {RoomId} creation failed after re-check", LogHeader, pRoomId);
@@ -151,12 +168,12 @@ public class JanusAudioBridge : JanusPlugin
     // A single create attempt. Returns a JanusRoom on "created" or 486 (already exists
     // -> reuse); null on any other error / unexpected return / exception (the caller
     // may re-check for a cross-process create).
-    private async Task<JanusRoom> TryCreateRoomOnce(int pRoomId, bool pSpatial, string pRoomDesc)
+    private async Task<JanusRoom> TryCreateRoomOnce(int pRoomId, bool pSpatial, string pRoomDesc, bool pVisAuthority)
     {
         JanusRoom ret = null;
         try
         {
-            JanusMessageResp resp = await SendPluginMsg(new AudioBridgeCreateRoomReq(pRoomId, pSpatial, pRoomDesc));
+            JanusMessageResp resp = await SendPluginMsg(new AudioBridgeCreateRoomReq(pRoomId, pSpatial, pRoomDesc, pVisAuthority));
             AudioBridgeResp abResp = new AudioBridgeResp(resp);
 
             m_log.LogDebug("{0} CreateRoom. ReturnCode: {1}", LogHeader, abResp.AudioBridgeReturnCode);
@@ -288,12 +305,13 @@ public class JanusAudioBridge : JanusPlugin
         m_log.LogDebug("{0} SelectRoom: roomNumber={1}", LogHeader, roomNumber);
 
         string roomDesc = pRegionId + "/" + pChannelType + "/" + pParcelLocalID + "/" + pChannelID;
+        bool visAuthority = ShouldDeclareVisAuthority(DeclareVisAuthority, pChannelType);
         // Coalesce concurrent creates of this room number across all per-session bridges
         // in this process. Each session still gets its OWN JanusRoom, bound to this
         // session's plugin handle, to join the (shared) Janus room with.
         return await SelectRoomCoalesced(
             roomNumber,
-            () => CreateRoom(roomNumber, pSpatial, roomDesc),
+            () => CreateRoom(roomNumber, pSpatial, roomDesc, visAuthority),
             () => new JanusRoom(this, roomNumber)).ConfigureAwait(false);
     }
 

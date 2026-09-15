@@ -75,6 +75,11 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     // own config (GatekeeperURI, the same chain GridInfo uses); empty when the grid has none.
     private string _GridId = string.Empty;
 
+    // Phase 0 slice 0.2 (nonspatial-phase0-design.md §6.2): create spatial "local" rooms with vis_authority=true. True
+    // only when the sim arms: [WebRtcVoice] VisibilityArmingEnabled (default false) with the feeder and emission on
+    // (default true), resolved exactly as WebRtcVoiceRegionModule resolves them.
+    private bool _DeclareVisAuthority = false;
+
     private bool _MessageDetails = false;
 
     // O-50: [JanusWebRtcVoice] RequestTimeoutMs — how long an ack'd Janus request waits for its event.
@@ -124,6 +129,11 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                     _log.LogWarning($"{LogHeader} no GatekeeperURI in [Hypergrid]/[Startup]/[Const] (nor [GatekeeperService] ExternalName / [GridService] Gatekeeper): multiagent rooms are derived without a grid id (O-35 stays open on a shared mixer)");
                 else
                     _log.LogInformation($"{LogHeader} grid id for multiagent rooms = {_GridId}");
+                _DeclareVisAuthority = webRtcVoiceConfig.GetBoolean("VisibilityArmingEnabled", false)
+                    && webRtcVoiceConfig.GetBoolean("VisibilityFeederEnabled", true)
+                    && webRtcVoiceConfig.GetBoolean("VisibilityEmitEnabled", true);
+                if (_DeclareVisAuthority)
+                    _log.LogInformation($"{LogHeader} spatial \"local\" rooms are created with vis_authority=true ([WebRtcVoice] VisibilityArmingEnabled)");
                 // Debugging options
                 _MessageDetails = janusConfig.GetBoolean("MessageDetails", false);
                 // O-50: bound on every ack'd request (join/leave/create...); the provisioning .Result (O-32) waits on it.
@@ -187,7 +197,7 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
             _log.LogDebug("{0} JanusSession created", LogHeader);
 
             // Once the session is created, create a handle to the plugin for rooms
-            JanusAudioBridge audioBridge = new JanusAudioBridge(janusSession, _JanusPluginName, _GridId);
+            JanusAudioBridge audioBridge = new JanusAudioBridge(janusSession, _JanusPluginName, _GridId, _DeclareVisAuthority);
 
             if (await audioBridge.Activate(_Config).ConfigureAwait(false))
             {
