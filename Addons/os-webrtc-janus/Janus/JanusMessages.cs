@@ -121,6 +121,12 @@ public class JanusMessage
     {
         return m_message.ToString();
     }
+    /// <summary>Slice 0.4: how a request is serialized for a LOG line, as opposed to for the wire. The default is
+    /// ToJson(); PluginMsgReq overrides it so a join capability is never printed at any level (design §11).</summary>
+    public virtual string ToJsonForLog()
+    {
+        return ToJson();
+    }
     public override string ToString()
     {
         return m_message.ToString();
@@ -420,6 +426,19 @@ public class PluginMsgReq : JanusMessageReq
         m_message["body"] = m_body;
         return base.ToJson();
     }
+
+    /// <summary>Slice 0.4 (§11): the same body with the join capability replaced, for the [JanusWebRtcVoice]
+    /// MessageDetails debug line — the one place a request body is logged. It replaces the exact minted string, so
+    /// no part of a capability can survive into a log, and leaves every other field (the session id included)
+    /// as it is: those are not secrets and are what an operator correlates on.</summary>
+    public override string ToJsonForLog()
+    {
+        string json = ToJson();
+        if (!m_body.ContainsKey("join_cap"))
+            return json;
+        string capability = m_body["join_cap"].AsString();
+        return string.IsNullOrEmpty(capability) ? json : json.Replace(capability, "<redacted join_cap>");
+    }
 }
 // A plugin response is formatted like:
 //    {
@@ -547,6 +566,17 @@ public class AudioBridgeJoinRoomReq : PluginMsgReq
                                             { "display", pAgentName }
                                         })
     {
+    }
+
+    /// <summary>Phase 0 slice 0.4 (nonspatial-phase0-design.md §11): carry the sim-issued join capability and the
+    /// viewer session it is bound to. Added after every other key, so a knob-off join body is byte-identical to the
+    /// pre-0.4 one and a pre-0.4 mixer ignores both keys. NEVER logged.</summary>
+    public void SetJoinCapability(string pCapability, string pViewerSessionId)
+    {
+        if (string.IsNullOrEmpty(pCapability) || string.IsNullOrEmpty(pViewerSessionId))
+            return;
+        AddStringToBody("join_cap", pCapability);
+        AddStringToBody("session_id", pViewerSessionId);
     }
 }
 // A successful response contains the participant ID and the SDP

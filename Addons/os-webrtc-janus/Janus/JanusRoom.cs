@@ -71,6 +71,21 @@ public class JanusRoom : IDisposable
             //    out of order. Not "cleaning" (removing the data section) seems to work.
             // string cleanSdp = CleanupSdp(pSdp);
             var joinReq = new AudioBridgeJoinRoomReq(RoomId, pVSession.AgentId.ToString());
+            // Phase 0 slice 0.4 (nonspatial-phase0-design.md §11): mint the capability for THIS join, bound to the
+            // agent, this viewer session, this room and the arming state the sim believes current. Off by default,
+            // and then this request is byte-identical to the pre-0.4 one. The capability is never logged, and the
+            // viewer never sees it: this request goes sim -> mixer.
+            if (_AudioBridge is JanusAudioBridge capBridge && capBridge.JoinCapabilityEnabled)
+            {
+                (string epoch, uint generation) = JoinCapabilityAuthority.Resolve(RoomId);
+                string capability = JoinCapability.Mint(capBridge.JoinCapabilitySecret, pVSession.AgentId.ToString(),
+                    pVSession.ViewerSessionID, RoomId, epoch, generation, JoinCapability.NowUnix());
+                if (capability is not null)
+                    joinReq.SetJoinCapability(capability, pVSession.ViewerSessionID);
+                else
+                    m_log.LogWarning("{LogHeader} JoinRoom. JoinCapabilityEnabled but nothing was minted for room {RoomId} " +
+                        "(is [JanusWebRtcVoice] JoinCapabilitySecret set?); joining without one", LogHeader, RoomId);
+            }
             // joinReq.SetJsep("offer", cleanSdp);
             joinReq.SetJsep("offer", pVSession.Offer);
 
@@ -89,6 +104,13 @@ public class JanusRoom : IDisposable
                 // Surface the mixer's error_code (0 if absent; ROOM_FULL=495 on a capacity
                 // rejection). AudioBridgeErrorCode already parses it — it was just discarded.
                 errorCode = joinResp?.AudioBridgeErrorCode ?? 0;
+                // Slice 0.4: a capability refusal answers 496 with a machine-readable `reason` (cap_expired,
+                // cap_replayed, ...). Named on its own line so an operator sees which check failed; the
+                // capability itself is never logged, and the mixer never echoes it.
+                string capReason = joinResp?.PluginRespDataString("reason");
+                if (!string.IsNullOrEmpty(capReason))
+                    m_log.LogError("{LogHeader} JoinRoom. Room {RoomId} refused the join: {JoinRefusalReason} (error_code={JoinErrorCode})",
+                        LogHeader, RoomId, capReason, errorCode);
                 m_log.LogError("{LogHeader} JoinRoom. Failed to join room {RoomId} (error_code={JoinErrorCode}). Resp={JoinResponse}",
                     LogHeader, RoomId, errorCode, joinResp?.ToString());
             }

@@ -80,6 +80,11 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     // (default true), resolved exactly as WebRtcVoiceRegionModule resolves them.
     private bool _DeclareVisAuthority = false;
 
+    // Phase 0 slice 0.4 (nonspatial-phase0-design.md §11): mint a join capability for every join. Off by default;
+    // the key lives beside the other mixer credentials in [JanusWebRtcVoice] and is never logged.
+    private bool _JoinCapabilityEnabled = false;
+    private string _JoinCapabilitySecret = string.Empty;
+
     private bool _MessageDetails = false;
 
     // O-50: [JanusWebRtcVoice] RequestTimeoutMs — how long an ack'd Janus request waits for its event.
@@ -134,6 +139,17 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                     && webRtcVoiceConfig.GetBoolean("VisibilityEmitEnabled", true);
                 if (_DeclareVisAuthority)
                     _log.LogInformation($"{LogHeader} spatial \"local\" rooms are created with vis_authority=true ([WebRtcVoice] VisibilityArmingEnabled)");
+                // Slice 0.4: the join capability. Enabling it without a secret mints nothing, so say so once and
+                // stay off rather than sending half a capability on every join.
+                _JoinCapabilityEnabled = webRtcVoiceConfig.GetBoolean("JoinCapabilityEnabled", false);
+                _JoinCapabilitySecret = janusConfig.GetString("JoinCapabilitySecret", string.Empty);
+                if (_JoinCapabilityEnabled && string.IsNullOrEmpty(_JoinCapabilitySecret))
+                {
+                    _log.LogError($"{LogHeader} [WebRtcVoice] JoinCapabilityEnabled is true but [JanusWebRtcVoice] JoinCapabilitySecret is empty: no capability can be minted, so joins carry none");
+                    _JoinCapabilityEnabled = false;
+                }
+                else if (_JoinCapabilityEnabled)
+                    _log.LogInformation($"{LogHeader} join capability enabled: every join carries one, {JoinCapability.LifetimeSeconds} s lifetime ([WebRtcVoice] JoinCapabilityEnabled)");
                 // Debugging options
                 _MessageDetails = janusConfig.GetBoolean("MessageDetails", false);
                 // O-50: bound on every ack'd request (join/leave/create...); the provisioning .Result (O-32) waits on it.
@@ -197,7 +213,12 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
             _log.LogDebug("{0} JanusSession created", LogHeader);
 
             // Once the session is created, create a handle to the plugin for rooms
-            JanusAudioBridge audioBridge = new JanusAudioBridge(janusSession, _JanusPluginName, _GridId, _DeclareVisAuthority);
+            JanusAudioBridge audioBridge = new JanusAudioBridge(janusSession, _JanusPluginName, _GridId, _DeclareVisAuthority)
+            {
+                // Slice 0.4: what JanusRoom.JoinRoom mints with. Both stay at their defaults with the knob off.
+                JoinCapabilityEnabled = _JoinCapabilityEnabled,
+                JoinCapabilitySecret = _JoinCapabilitySecret,
+            };
 
             if (await audioBridge.Activate(_Config).ConfigureAwait(false))
             {

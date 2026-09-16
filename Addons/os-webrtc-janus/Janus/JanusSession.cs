@@ -258,7 +258,9 @@ public class JanusSession : IDisposable
     {
         AddJanusHeaders(pReq);
         // m_log.LogDebug("{0} SendToJanus", LogHeader);
-        if (_MessageDetails) m_log.LogDebug("{0} SendToJanus. URI={1}, req={2}", LogHeader, pURI, pReq.ToJson());
+        // Slice 0.4: ToJsonForLog, not ToJson — this is the only place a request body reaches a log, and a join
+        // carries a capability that must never be printed at any level (design §11).
+        if (_MessageDetails) m_log.LogDebug("{0} SendToJanus. URI={1}, req={2}", LogHeader, pURI, pReq.ToJsonForLog());
 
         JanusMessageResp ret = null;
         OutstandingRequest outReq = new OutstandingRequest

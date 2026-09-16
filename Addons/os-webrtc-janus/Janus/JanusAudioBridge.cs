@@ -66,6 +66,14 @@ public class JanusAudioBridge : JanusPlugin
     /// <summary>Slice 0.2: whether spatial "local" rooms are declared as having a sim authority.</summary>
     public bool DeclareVisAuthority { get; }
 
+    /// <summary>Slice 0.4 ([WebRtcVoice] JoinCapabilityEnabled, default false): mint a join capability for every join
+    /// this bridge performs. False keeps the pre-0.4 join body exactly.</summary>
+    public bool JoinCapabilityEnabled { get; set; }
+
+    /// <summary>Slice 0.4 ([JanusWebRtcVoice] JoinCapabilitySecret): the HMAC key shared with the mixer's
+    /// JS_JOIN_CAP_SECRET, and never the same value as the API token. NEVER logged; empty mints nothing.</summary>
+    public string JoinCapabilitySecret { get; set; } = string.Empty;
+
     /// <summary>Slice 0.2 §6.2: only spatial "local" rooms are declared. A2A "multiagent" rooms get no visibility batches,
     /// so declaring them would silence every call once fail-closed is enabled.</summary>
     public static bool ShouldDeclareVisAuthority(bool pDeclare, string pChannelType)
