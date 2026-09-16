@@ -83,6 +83,14 @@ namespace osWebRtcVoice
         /// The produced feed — the boundary the later Janus sender will consume.
         public IVisibilityFeed Feed => m_feeder;
 
+        /// Slice 0.6: this region's Janus sink, or null when the region runs matrix-only (emission off,
+        /// or the [JanusWebRtcVoice] admin endpoint/secret missing). Exposed ONLY so the console reader
+        /// can print the sink's fallback counters and LastSendStats — which had no reader at all until
+        /// the shadow soak needed them. Concrete type for the same reason the constructor uses one:
+        /// IPeerCtlBatchSink stays a pure transport seam, and a test double has no counters to show.
+        /// Read-only by contract: nothing may mutate the sink through this.
+        public JanusPeerCtlBatchSink JanusSink => m_sink as JanusPeerCtlBatchSink;
+
         /// Sticky per-parcel voice-moderation state (slice 1, in-memory / NON-PERSISTENT). Written
         /// by the region module's SpatialVoiceModerationRequest CAP handler via this per-region
         /// service; purged here on parcel removal (OnLandObjectRemoved). Read by the matrix via the

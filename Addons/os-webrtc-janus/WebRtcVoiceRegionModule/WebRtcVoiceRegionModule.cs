@@ -160,6 +160,11 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 // feeder flag on purpose: with the feeder off there IS no moderation state, and the
                 // commands say so, which is a better answer to an operator than an unknown command.
                 new VoiceModerationCommands(SnapshotVisibilityServices).Register();
+                // Slice 0.6: the same treatment for the peer_ctl sink's own counters, which had no
+                // reader at all ("PLUMBING only -- read by nobody today") until the shadow soak had to
+                // report them. Same supplier, same unconditional registration, same reason: with the
+                // feeder off the command says so rather than the operator meeting an unknown command.
+                new VoiceVisibilityCommands(SnapshotVisibilityServices).Register();
 
                 m_log.LogInformation($"{logHeader}: enabled");
             }

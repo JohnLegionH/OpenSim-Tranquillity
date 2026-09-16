@@ -20,6 +20,7 @@
     <Compile Include="VoiceModerationAuth.cs" />
     <Compile Include="VoiceModerationTargets.cs" />
     <Compile Include="VoiceModerationCommands.cs" />
+    <Compile Include="VoiceVisibilityCommands.cs" />
     <Compile Include="VisibilityBatchSender.cs" />
     <Compile Include="JanusPeerCtlBatchSink.cs" />
     <Compile Include="VisAuthority.cs" />
