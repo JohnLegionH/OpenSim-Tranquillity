@@ -93,6 +93,17 @@ namespace osWebRtcVoice
         private bool _heartbeatSent;
         private bool _loggedHeartbeatStart;
 
+        // Slice 0.6: heartbeat log volume. At one send per region per second the per-tick DEBUG line was
+        // ~10,800/hour/region -- it fills an operator's console, bloats the log and slows every later grep,
+        // and a shadow soak runs for hours. State for "log a change, log every failure, summarise the rest".
+        private const int HeartbeatSummaryMs = 60_000;
+        private int _hbLastRooms = -1;        // -1 so the first send always counts as a change
+        private int _hbLastListeners = -1;
+        private bool _hbLastOk = true;
+        private long _hbWindowStartMs;
+        private int _hbSends;
+        private int _hbNonOk;
+
         /// <param name="authority">Slice 0.2: non-null only when arming is enabled; requires <paramref name="resolveRoom"/>.</param>
         /// <param name="resolveRoom">The room each agent is addressed at (its record, else the fallback room).</param>
         public VisibilityBatchSender(IVisibilityFeed feed, IPeerCtlBatchSink sink, bool enabled,
@@ -360,8 +371,36 @@ namespace osWebRtcVoice
                         "{Listeners} listener(s), epoch {Epoch}, every {Interval} ms", LogHeader, _region, rooms, listeners,
                         _authority.EpochString, VisAuthority.HeartbeatIntervalMs);
                 }
-                m_log.LogDebug("{LogHeader} region {RegionName}: peer_ctl_heartbeat {Rooms} room(s), {Listeners} listener(s): {Result}",
-                    LogHeader, _region, rooms, listeners, ok ? "ok" : "transport failed");
+                // Slice 0.6: a steady-state heartbeat is one line a MINUTE, not one a second. Three cases, and
+                // the middle one is the point: every NON-OK reply still logs at its old volume, because a
+                // failure must never be summarised away. A change in room/listener count or in the outcome
+                // logs as it happens. Everything else -- the steady state -- is folded into one summary a
+                // minute carrying the counts, so a soak leaves a readable log instead of ~10,800 lines/hour.
+                bool changed = rooms != _hbLastRooms || listeners != _hbLastListeners || ok != _hbLastOk;
+                long hbNow = _nowMs();
+                if (_hbWindowStartMs == 0)
+                    _hbWindowStartMs = hbNow;
+                _hbSends++;
+                if (!ok)
+                    _hbNonOk++;
+                if (!ok || changed)
+                {
+                    m_log.LogDebug("{LogHeader} region {RegionName}: peer_ctl_heartbeat {Rooms} room(s), {Listeners} listener(s): {Result}",
+                        LogHeader, _region, rooms, listeners, ok ? "ok" : "transport failed");
+                    _hbLastRooms = rooms;
+                    _hbLastListeners = listeners;
+                    _hbLastOk = ok;
+                }
+                if (hbNow - _hbWindowStartMs >= HeartbeatSummaryMs)
+                {
+                    m_log.LogDebug("{LogHeader} region {RegionName}: peer_ctl_heartbeat summary: {Sends} send(s) over {WindowS} s, " +
+                        "{NonOk} not ok; now {Rooms} room(s), {Listeners} listener(s), epoch {Epoch}",
+                        LogHeader, _region, _hbSends, (hbNow - _hbWindowStartMs) / 1000, _hbNonOk, rooms, listeners,
+                        _authority.EpochString);
+                    _hbWindowStartMs = hbNow;
+                    _hbSends = 0;
+                    _hbNonOk = 0;
+                }
             }
             catch (Exception e)
             {
