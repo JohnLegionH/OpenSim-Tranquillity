@@ -494,6 +494,55 @@ namespace osWebRtcVoice.Tests
             Assert.That(Keys(only["excl"]), Is.EquivalentTo(new[] { D.ToString() }));
         }
 
+        /// Slice 0.8 (O-95 follow-up): the reply is LOST after the mixer applied the batch — the admin send times out,
+        /// so the sim counts nothing applied and its as_of stays behind the generation the mixer now holds. Every
+        /// heartbeat built from here on is outdated at the mixer, and would be ignored forever if nothing repaired it.
+        /// The transport error makes the sender unsynced, so the next tick is a resync replace (design §2 trigger 3),
+        /// and once that is answered as_of is at or above what the mixer applied.
+        [Test]
+        public async Task ALostReplyAfterTheMixerApplied_IsRepairedByTheNextTicksResyncReplace()
+        {
+            var rig = new Rig();
+            rig.Advertise();
+            int mixerApplied = 0;
+            bool dropReply = true;
+            // The mixer applies every batch it receives; the first room's reply never comes back. The flag is separate
+            // from mixerApplied because the transport builds the response BEFORE it decides the result.
+            rig.T.Result = r => r["room"].AsInteger() == RoomAB && dropReply
+                ? AdminSendResult.TransportError : AdminSendResult.Ok;
+            rig.T.Response = r =>
+            {
+                if (r["room"].AsInteger() == RoomAB)
+                    mixerApplied = Math.Max(mixerApplied, r["policy_generation"].AsInteger());
+                return Applied(r, 2, "m1");
+            };
+            await rig.Tick();
+
+            int AsOf() => Path(rig.Auth.BuildHeartbeat(new[] { A, B }, a => RoomAB, false),
+                "rooms", RoomAB.ToString(), "as_of").AsInteger();
+            Assert.That(mixerApplied, Is.EqualTo(1), "the mixer applied generation 1");
+            Assert.That(AsOf(), Is.EqualTo(0), "the sim never saw the reply, so it believes nothing was applied");
+            Assert.That(AsOf(), Is.LessThan(mixerApplied), "every heartbeat built now is outdated at the mixer");
+            Assert.That(rig.Auth.IsArmed(RoomAB, A), Is.False, "and A is not armed as far as the sim knows");
+
+            rig.T.Clear();
+            dropReply = false;
+            int appliedBeforeResync = mixerApplied;
+            await rig.Tick();   // the resync
+
+            List<OSDMap> resync = rig.T.Batches();
+            OSDMap ab = ForRoom(resync, RoomAB);
+            Assert.That(ab["op"].AsString(), Is.EqualTo("replace"), "trigger 3: the next tick re-arms with a replace");
+            Assert.That(Keys(ab["excl"]), Is.EquivalentTo(new[] { A.ToString(), B.ToString() }),
+                "the whole population of that room, empty columns included");
+            Assert.That(ab["policy_generation"].AsInteger(), Is.GreaterThan(appliedBeforeResync),
+                "at a generation above the one the mixer already holds");
+            Assert.That(AsOf(), Is.GreaterThanOrEqualTo(mixerApplied),
+                "after the resync succeeds the sim's as_of is at or above what the mixer applied, so heartbeats are evaluated again");
+            Assert.That(AsOf(), Is.EqualTo(ab["policy_generation"].AsInteger()));
+            Assert.That(rig.Auth.IsArmed(RoomAB, A) && rig.Auth.IsArmed(RoomAB, B), Is.True);
+        }
+
         [Test]
         public async Task Reply_UnknownRoom_BacksOff_RetriesAfterTheInterval_AndAProvisionRetriesAtOnce()
         {
