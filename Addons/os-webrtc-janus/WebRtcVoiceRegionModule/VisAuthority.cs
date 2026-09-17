@@ -12,7 +12,9 @@
  *    ARMED at a room while it holds a generation there;
  *  - what the mixer told us (§2 item 4): its mixer_instance, whether it speaks vis_protocol 2 (heartbeats are sent
  *    only then, §6.3), and which listeners it reported stale or unarmed;
- *  - the heartbeat body (§3).
+ *  - the heartbeat body (§3), including, since slice 0.7d, each room's "as_of": the highest policy_generation this
+ *    authority has had APPLIED in that room (not merely allocated). A heartbeat is built on its own flight, so it can
+ *    arrive after a batch it predates; as_of lets the mixer recognise that and skip its listeners map (ledger O-95).
  *
  * The decision table for mixer replies (see ApplyOutcomeLocked / OnHeartbeatOutcome):
  *   transport failure                      -> nothing here; the sender re-snapshots, which re-arms everyone
@@ -75,6 +77,7 @@ namespace osWebRtcVoice
         private readonly Func<long> _nowMs;
         private readonly string _region;
         private readonly Dictionary<int, uint> _roomGen = new Dictionary<int, uint>();
+        private readonly Dictionary<int, uint> _roomAsOf = new Dictionary<int, uint>();   // slice 0.7d: highest applied per room
         private readonly Dictionary<int, Dictionary<UUID, uint>> _armed = new Dictionary<int, Dictionary<UUID, uint>>();
         private readonly Dictionary<UUID, long> _retryAt = new Dictionary<UUID, long>();
         private readonly Dictionary<UUID, long> _rearm = new Dictionary<UUID, long>();   // listener -> requested at
@@ -246,6 +249,10 @@ namespace osWebRtcVoice
                 var flagged = new HashSet<UUID>();
                 AddAll(flagged, reply.StaleListeners);
                 AddAll(flagged, reply.UnarmedListeners);
+                // Slice 0.7d: the mixer applied this batch, so its generation is what heartbeats built from now on may
+                // claim as as_of. Read under the same lock as the armed generations BuildHeartbeat reports.
+                if (!_roomAsOf.TryGetValue(room, out uint asOf) || generation > asOf)
+                    _roomAsOf[room] = generation;
                 Dictionary<UUID, uint> armed = ArmedLocked(room);
                 foreach (UUID l in named)
                 {
@@ -412,6 +419,9 @@ namespace osWebRtcVoice
                     rooms[room.Key.ToString()] = new OSDMap
                     {
                         ["policy_generation"] = OSD.FromInteger(_roomGen.TryGetValue(room.Key, out uint rg) ? (int)rg : 0),
+                        // Slice 0.7d: the highest generation APPLIED here when this body was built; policy_generation above
+                        // is the highest ALLOCATED, which a batch still in flight has already advanced.
+                        ["as_of"] = OSD.FromInteger(_roomAsOf.TryGetValue(room.Key, out uint ao) ? (int)ao : 0),
                         ["listeners"] = listeners,
                     };
                 }

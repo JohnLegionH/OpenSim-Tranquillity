@@ -337,6 +337,40 @@ namespace osWebRtcVoice.Tests
             Assert.That(Path(rooms, RoomD.ToString(), "listeners", D.ToString()).AsInteger(), Is.EqualTo(1), "the empty-column listener is listed");
         }
 
+        /// Slice 0.7d (O-95): as_of is the highest generation the mixer APPLIED in the room when the heartbeat was built,
+        /// not the highest allocated. A batch stamped but not yet answered, a transport failure, and a stale_epoch refusal
+        /// all leave it where it was.
+        [Test]
+        public void Heartbeat_AsOf_IsTheHighestAppliedGeneration_NotTheHighestAllocated()
+        {
+            var auth = new VisAuthority(VisAuthority.NewEpoch(), "asof", () => 10_000);
+            var named = new List<UUID> { A };
+            var population = new[] { A };
+            Func<UUID, int> room = _ => RoomAB;
+            int AsOf() => Path(auth.BuildHeartbeat(population, room, false), "rooms", RoomAB.ToString(), "as_of").AsInteger();
+            int Allocated() => Path(auth.BuildHeartbeat(population, room, false), "rooms", RoomAB.ToString(), "policy_generation").AsInteger();
+
+            Assert.That(AsOf(), Is.EqualTo(0), "nothing applied yet");
+            uint g1 = auth.NextGeneration(RoomAB);
+            Assert.That((Allocated(), AsOf()), Is.EqualTo((1, 0)), "stamped, still in flight: allocated 1, applied 0");
+            auth.OnBatchOutcome(RoomAB, VisOp.Replace, g1, named, true, default);
+            Assert.That(AsOf(), Is.EqualTo(1), "applied: as_of 1");
+
+            uint g2 = auth.NextGeneration(RoomAB);
+            auth.OnBatchOutcome(RoomAB, VisOp.Replace, g2, named, false, default);
+            Assert.That((Allocated(), AsOf()), Is.EqualTo((2, 1)), "a transport failure applied nothing");
+            uint g3 = auth.NextGeneration(RoomAB);
+            auth.OnBatchOutcome(RoomAB, VisOp.Replace, g3, named, true,
+                new JanusPeerCtlBatchSink.SlvoiceReply { Present = true, Status = "error", StatusField = "stale_epoch" });
+            Assert.That(AsOf(), Is.EqualTo(1), "a stale_epoch refusal applied nothing");
+            uint g4 = auth.NextGeneration(RoomAB);
+            auth.OnBatchOutcome(RoomAB, VisOp.Replace, g4, named, true,
+                new JanusPeerCtlBatchSink.SlvoiceReply { Present = true, Status = "applied" });
+            Assert.That((Allocated(), AsOf()), Is.EqualTo((4, 4)));
+            auth.OnBatchOutcome(RoomAB, VisOp.Replace, g2, named, true, default);   // a late answer for an older batch
+            Assert.That(AsOf(), Is.EqualTo(4), "as_of never goes backwards");
+        }
+
         [Test]
         public async Task Heartbeat_IsNotStarvedByABatchInFlight()
         {
