@@ -298,6 +298,36 @@ namespace osWebRtcVoice.Tests
             JoinCapabilityAuthority.Clear();
         }
 
+        /// Slice 0.7c L3: an unpinned record with a secret, in an instance with two regions, is named at startup with
+        /// "add Region="; the request-time 404 stays; a pinned record and a single-region instance warn nothing.
+        [Test]
+        public void L3_UnpinnedRecordWithSecret_InAMultiRegionInstance_WarnsAtStartup_And404Stays()
+        {
+            StartServer();
+            var ep = Endpoint(m_server);
+            VoiceConnectorRecord unpinnedA = Record("Recorder");
+            VoiceConnectorRecord pinned = new VoiceConnectorRecord("Pinned", true, "Pinned", "NPC", new Vector3(1, 1, 1),
+                VoiceConnectorScope.Estate, false, "Operator", null, "Ebony", Secret);
+            ep.Attach(new VoiceConnectorJoinCapEndpoint.Source(() => new[] { unpinnedA, pinned }, true, MintKey));
+            List<string> Warnings() { lock (m_capture.Lines) return m_capture.Lines.Where(l => l.StartsWith("Warning:")).ToList(); }
+            Assert.That(Warnings(), Is.Empty, "one region: nothing to warn about");
+
+            // The second region's instance loads the same records; the unpinned one starts there too.
+            VoiceConnectorRecord unpinnedB = Record("Recorder");
+            unpinnedB.NpcId = new UUID("0c0c0c0c-0000-4000-8000-00000000c0c1");
+            ep.Attach(new VoiceConnectorJoinCapEndpoint.Source(() => new[] { unpinnedB, pinned }, true, MintKey));
+            List<string> warned = Warnings();
+            Assert.That(warned, Has.Count.EqualTo(1), "one WARN, for the unpinned record only");
+            Assert.That(warned[0], Does.Contain("Recorder").And.Contain("Add Region="), "names the record and says add Region=");
+            Assert.That(warned[0], Does.Not.Contain(Secret));
+
+            ep.Attach(new VoiceConnectorJoinCapEndpoint.Source(() => new[] { Record("Recorder") }, true, MintKey));
+            Assert.That(Warnings(), Has.Count.EqualTo(1), "once per record, not once per region");
+            Assert.That(Post("Recorder", Secret), Is.EqualTo((404, Array.Empty<byte>(), (string)null))
+                .Using<(int, byte[], string)>((x, y) => x.Item1 == y.Item1 && x.Item2.SequenceEqual(y.Item2) && x.Item3 == y.Item3),
+                "the request-time 404 stays");
+        }
+
         [Test] public void U1_SecretUnset_NoHandlerRegistered() => FlowU1();
         [Test] public void U2_SecretUnder32Chars_Warns_NoHandler() => FlowU2();
         [Test] public void U3_WrongBearer_UnknownName_InactiveRecord_AllTheSame404() => FlowU3();

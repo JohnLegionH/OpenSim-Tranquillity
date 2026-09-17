@@ -69,6 +69,7 @@ public sealed class VoiceConnectorJoinCapEndpoint
     private readonly object m_lock = new object();
     private readonly List<Source> m_sources = new List<Source>();
     private readonly HashSet<string> m_warnedAmbiguous = new HashSet<string>(StringComparer.Ordinal);
+    private readonly HashSet<string> m_warnedUnpinned = new HashSet<string>(StringComparer.Ordinal);
     private bool m_registered;
 
     public VoiceConnectorJoinCapEndpoint(IHttpServer pServer, ILogger pLog, Func<long> pNowUnix = null)
@@ -89,7 +90,25 @@ public sealed class VoiceConnectorJoinCapEndpoint
             if (!m_sources.Contains(pSource))
                 m_sources.Add(pSource);
             UpdateRegistrationLocked();
+            WarnUnpinnedLocked();
         }
+    }
+
+    /// <summary>Slice 0.7c (L3): a record with a CapabilitySecret and no Region= pin, in an instance running more than one
+    /// region, starts in every region, so its endpoint can never choose one and answers 404 at request time. Say so at
+    /// startup, once per record, naming it: every region's module attaches here from RegionLoaded, so the second attach
+    /// is the moment an instance is known to run more than one region.</summary>
+    private void WarnUnpinnedLocked()
+    {
+        if (m_sources.Count < 2)
+            return;
+        foreach (Source s in m_sources)
+            foreach (VoiceConnectorRecord r in s.Records())
+                if (r.CapabilitySecret is not null && r.Region is null && m_warnedUnpinned.Add(r.Name))
+                    m_log?.LogWarning("[CONNECTOR] {Name}: CapabilitySecret is set but the record has no Region= pin, and this " +
+                        "instance runs {Regions} regions: the connector starts in every one of them, so its join-capability " +
+                        "endpoint cannot choose one and will answer 404. Add Region=<region name> to [VoiceConnector.{Name}]",
+                        r.Name, m_sources.Count, r.Name);
     }
 
     public void Detach(Source pSource)
