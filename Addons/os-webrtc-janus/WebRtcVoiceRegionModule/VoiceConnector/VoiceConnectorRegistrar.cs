@@ -89,6 +89,7 @@ public static class VoiceConnectorRegistrar
             pRecord.Name, session.ViewerSessionID);
 
         pRecordRoom(npcId, pEstateRoom);
+        pRecord.Room = pEstateRoom;   // slice 0.7b: the room the join-capability endpoint binds to
 
         if (!pRecord.MayInject)
         {
@@ -135,6 +136,7 @@ public static class VoiceConnectorRegistrar
             pLog?.LogDebug("[CONNECTOR] {Name}: NPC removed npc={NpcId}", pRecord.Name, pRecord.NpcId);
             pRecord.NpcId = UUID.Zero;
         }
+        pRecord.Room = null;
         // S-CON-3 door notice (brief D3(ii)): announced only if something was actually torn down
         // — an idempotent re-teardown of an inactive record stays silent.
         if (wasActive)

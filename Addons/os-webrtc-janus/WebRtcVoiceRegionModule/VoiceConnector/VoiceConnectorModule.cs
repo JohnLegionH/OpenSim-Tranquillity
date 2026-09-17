@@ -32,6 +32,7 @@ using OpenMetaverse;
 using OpenMetaverse.StructuredData;
 using OpenSim.Framework;
 using OpenSim.Framework.Console;
+using OpenSim.Framework.Servers;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 
@@ -70,6 +71,13 @@ public class VoiceConnectorModule : INonSharedRegionModule
     private IWebRtcVoiceService m_voiceService;
     private VoiceConnectorDisclosure m_disclosure;   // S-CON-3; unconditional (D3: no undisclosed mode)
     private int m_started = 0;   // one-shot latch for the first-heartbeat start
+    // Slice 0.7b (§11.10): the connector join-capability endpoint. One handler on the region HTTP server for the whole
+    // process (DefaultServer, as WorldMapModule registers its per-region handlers), shared by every region's instance.
+    // Built only when some record carries a CapabilitySecret: with none, no handler exists.
+    private static VoiceConnectorJoinCapEndpoint s_joinCapEndpoint;
+    private VoiceConnectorJoinCapEndpoint.Source m_joinCapSource;
+    private bool m_mintEnabled;
+    private string m_mintSecret = string.Empty;
 
     // Console command support: one registration process-wide, handlers span the per-region
     // instances (the non-shared-module equivalent of VoiceModerationCommands' shared owner).
@@ -97,6 +105,11 @@ public class VoiceConnectorModule : INonSharedRegionModule
 
         foreach ((string sectionName, string reason) in result.Refusals)
             m_log.LogWarning("{LogHeader} record [{Section}] REFUSED: {Reason}", LogHeader, sectionName, reason);
+        foreach ((string sectionName, string reason) in result.Warnings)
+            m_log.LogWarning("{LogHeader} record [{Section}]: {Reason}", LogHeader, sectionName, reason);
+        // Slice 0.7b: the same two keys the Janus service mints avatar capabilities with (WebRtcJanusService.cs).
+        m_mintEnabled = moduleConfig.GetBoolean("JoinCapabilityEnabled", false);
+        m_mintSecret = pConfig.Configs["JanusWebRtcVoice"]?.GetString("JoinCapabilitySecret", string.Empty) ?? string.Empty;
         foreach (string sectionName in result.SkippedDisabled)
             m_log.LogDebug("{LogHeader} record [{Section}] disabled; skipped", LogHeader, sectionName);
         foreach (VoiceConnectorRecord r in m_registry.Snapshot())
@@ -120,6 +133,12 @@ public class VoiceConnectorModule : INonSharedRegionModule
         scene.EventManager.OnRegionHeartbeatEnd -= OnHeartbeat;
         scene.EventManager.OnMakeRootAgent -= OnMakeRootAgent;
         StopAll("region close");
+        if (m_joinCapSource is not null)
+        {
+            lock (s_commandLock)
+                s_joinCapEndpoint?.Detach(m_joinCapSource);
+            m_joinCapSource = null;
+        }
         if (m_registry is not null)
             scene.UnregisterModuleInterface<IVoiceConnectorRegistry>(m_registry);
         lock (s_commandLock)
@@ -183,6 +202,22 @@ public class VoiceConnectorModule : INonSharedRegionModule
         // (the scene is provably live), every beat runs the proximity check.
         scene.EventManager.OnRegionHeartbeatEnd += OnHeartbeat;
         RegisterConsoleCommands();
+        AttachJoinCapEndpoint();
+    }
+
+    // Slice 0.7b: attach this region's records to the process-wide endpoint, only if one of them has a secret.
+    private void AttachJoinCapEndpoint()
+    {
+        if (!m_registry.Snapshot().Any(r => r.CapabilitySecret is not null))
+            return;   // the default: no CapabilitySecret anywhere in this region, no endpoint, nothing registered
+        VoiceConnectorRegistry registry = m_registry;
+        m_joinCapSource = new VoiceConnectorJoinCapEndpoint.Source(() => registry.Snapshot(),
+            m_mintEnabled && !string.IsNullOrEmpty(m_mintSecret), m_mintSecret);
+        lock (s_commandLock)
+        {
+            s_joinCapEndpoint ??= new VoiceConnectorJoinCapEndpoint(MainServer.Instance.DefaultServer, m_log);
+            s_joinCapEndpoint.Attach(m_joinCapSource);
+        }
     }
 
     public void Close()

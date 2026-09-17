@@ -38,10 +38,14 @@ public sealed class VoiceConnectorLoadResult
     public VoiceConnectorRegistry Registry { get; }
     public IReadOnlyList<(string SectionName, string Reason)> Refusals { get; }
     public IReadOnlyList<string> SkippedDisabled { get; }
+    /// <summary>Slice 0.7b: records that loaded but lost a setting, with the reason (a CapabilitySecret too short
+    /// to enforce with). The reason never contains the secret.</summary>
+    public IReadOnlyList<(string SectionName, string Reason)> Warnings { get; }
 
     internal VoiceConnectorLoadResult(VoiceConnectorRegistry pRegistry,
-        List<(string, string)> pRefusals, List<string> pSkippedDisabled)
+        List<(string, string)> pRefusals, List<string> pSkippedDisabled, List<(string, string)> pWarnings = null)
     {
+        Warnings = (IReadOnlyList<(string, string)>)pWarnings ?? Array.Empty<(string, string)>();
         Registry = pRegistry;
         Refusals = pRefusals;
         SkippedDisabled = pSkippedDisabled;
@@ -76,6 +80,7 @@ public sealed class VoiceConnectorRegistry : IVoiceConnectorRegistry
         VoiceConnectorRegistry registry = new VoiceConnectorRegistry();
         List<(string, string)> refusals = new List<(string, string)>();
         List<string> skipped = new List<string>();
+        List<(string, string)> warnings = new List<(string, string)>();
         // Duplicate detection across sections: NPC full names must be unique (two connectors
         // sharing one in-world identity would be indistinguishable in every disclosure surface).
         Dictionary<string, string> fullNameOwners = new Dictionary<string, string>();
@@ -153,14 +158,25 @@ public sealed class VoiceConnectorRegistry : IVoiceConnectorRegistry
             string region = section.GetString("Region", null);
             if (string.IsNullOrWhiteSpace(region))
                 region = null;
+            // Slice 0.7b: a weak key is never enforced with (the O-65 discipline). The record still loads; it just
+            // gets no join-capability endpoint, and the operator is told why.
+            string capSecret = section.GetString("CapabilitySecret", null);
+            if (string.IsNullOrEmpty(capSecret))
+                capSecret = null;
+            else if (capSecret.Length < VoiceConnectorJoinCapEndpoint.MinSecretLength)
+            {
+                warnings.Add((section.Name, $"CapabilitySecret is shorter than {VoiceConnectorJoinCapEndpoint.MinSecretLength} " +
+                    "characters: the join-capability endpoint is NOT served for this record"));
+                capSecret = null;
+            }
 
             VoiceConnectorRecord record = new VoiceConnectorRecord(name, true, first, last,
-                position, VoiceConnectorScope.Estate, mayInject, authorisedBy, injectUrl, region);
+                position, VoiceConnectorScope.Estate, mayInject, authorisedBy, injectUrl, region, capSecret);
             registry.m_records[name] = record;
             fullNameOwners[fullName] = name;
         }
 
-        return new VoiceConnectorLoadResult(registry, refusals, skipped);
+        return new VoiceConnectorLoadResult(registry, refusals, skipped, warnings);
     }
 
     private static bool NameCarriesToken(string pFirst, string pLast, string pToken)

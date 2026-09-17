@@ -36,6 +36,7 @@
     <Compile Include="A2AClientCloseGuardTests.cs" />
     <Compile Include="VisibilityDefaultsTests.cs" />
     <Compile Include="ConnectorArmingTests.cs" />
+    <Compile Include="ConnectorJoinCapEndpointTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

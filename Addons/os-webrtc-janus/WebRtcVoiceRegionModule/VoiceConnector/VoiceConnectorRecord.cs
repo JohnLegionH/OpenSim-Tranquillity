@@ -66,6 +66,11 @@ public sealed class VoiceConnectorRecord
     /// each gets its own non-shared module instance, so without this an enabled record would
     /// spawn its NPC in EVERY region. Null = every region (single-region instances).</summary>
     public string Region { get; }
+    /// <summary>Slice 0.7b (O-88, design §11.10): the bearer secret for this record's join-capability endpoint,
+    /// POST /voice/connector/&lt;name&gt;/join-cap. Null = no endpoint for this record (the default). A value shorter
+    /// than <see cref="VoiceConnectorJoinCapEndpoint.MinSecretLength"/> is refused at load and stored as null.
+    /// Never logged.</summary>
+    public string CapabilitySecret { get; }
 
     public string NpcFullName => $"{NpcFirstName} {NpcLastName}";
 
@@ -78,14 +83,18 @@ public sealed class VoiceConnectorRecord
     /// <summary>The registered voice session id once provisioned (S-CON-2); null until then.
     /// Public setter for the test fixtures, as NpcId.</summary>
     public string ViewerSessionId { get; set; }
+    /// <summary>Slice 0.7b: the room registration recorded for the NPC (the pRecordRoom value); null while
+    /// inactive. The join-capability endpoint binds the capability to it.</summary>
+    public int? Room { get; set; }
 
     // Public so tests (and later slices) can construct records directly; production records
     // still come only from VoiceConnectorRegistry.LoadFrom, which owns every refusal rule.
     public VoiceConnectorRecord(string pName, bool pEnabled, string pFirst, string pLast,
         Vector3 pPosition, VoiceConnectorScope pScope, bool pMayInject, string pAuthorisedBy,
-        string pInjectSourceUrl, string pRegion = null)
+        string pInjectSourceUrl, string pRegion = null, string pCapabilitySecret = null)
     {
         Region = pRegion;
+        CapabilitySecret = string.IsNullOrEmpty(pCapabilitySecret) ? null : pCapabilitySecret;
         Name = pName;
         Enabled = pEnabled;
         NpcFirstName = pFirst;

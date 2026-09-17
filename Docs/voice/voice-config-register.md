@@ -52,6 +52,7 @@ Since `3283c939f1` (fix V-1) the shipped `os-webrtc-janus.ini` carries four of t
 | `VoiceRangeMetres` | `[WebRtcVoice]` | 20 = `DefaultVoiceRangeMetres` (VCM:91) | Ex:44, commented `20`; Ini absent | unset → 20 | `d95754509d` 2026-08-31 (S-CON-3) | Feature did not exist; the value only sizes the new connector proximity notice. |
 | `StunServers` | `[WebRtcVoice]` | empty (RM:126); empty = the addon adds no `stun-servers` feature | Ex:26 and Ini:20, active `stun:stun.l.google.com:19302` (Ini since `3283c939f1`) | `stun:stun.l.google.com:19302` | `5e0f289fc1` 2026-08-15 | The addon advertised nothing. The core's own `StunServers` (`GridInfo.cs:519`, since `fc607035c8`) could already advertise `stun-servers`. The empty code default still reproduces the addon's prior behaviour; only the shipped files changed. |
 | `PluginName` | `[JanusWebRtcVoice]` | **`janus.plugin.slvoice`** since `3283c939f1` = `DefaultPluginName` (JS:55; read JS:59, called JS:120). **Before V-1:** `janus.plugin.audiobridge`. | Ex:58 and Ini:41, `janus.plugin.slvoice` (since `3283c939f1`) | `janus.plugin.slvoice` | `ade2b29f6b` 2026-08-13; default changed in `3283c939f1` 2026-09-14 (V-1, SC-108/SC-115) | Hard-coded `janus.plugin.audiobridge` (`JanusAudioBridge.cs:42` at the parent); the audiobridge default reproduced that until V-1. **Pre-rule exception, retained deliberately** (below). |
+| `CapabilitySecret` | `[VoiceConnector.<name>]` | unset = no join-capability endpoint for the record (`VoiceConnector/VoiceConnectorRegistry.cs:163`); under 32 characters = WARN and treated as unset (`:166-171`); VCM:209-213 registers the handler only when some record has one | absent | unset | slice 0.7b, 2026-09-16 (O-88, design §11.10) | No endpoint existed. Unset reproduces that exactly: no handler registered, payloads and logs unchanged. Setting it serves `POST /voice/connector/<name>/join-cap` on the region HTTP server with `Authorization: Bearer <secret>`. When the peer and the region are on different hosts the bearer crosses the network, so use TLS or a private network. |
 | `AdminTimeoutMs` | `[JanusWebRtcVoice]` | 5000 (RM:141) | absent | unset → 5000 | `fc1454ea3e` 2026-08-16 (first read in SM, moved to RM in `de7d4ad801`) | No admin sends existed. It bounds the peer_ctl_batch emission, which is on by default since `3283c939f1`. |
 
 ### Pre-rule exceptions, retained deliberately
@@ -120,7 +121,8 @@ Since `3283c939f1` (fix V-1) the shipped `os-webrtc-janus.ini` carries four of t
   - `AdminAPIToken`: JS:117, RM:140
   - `MessageDetails`: JS:128
 - Grid id (`Janus/JanusAudioBridge.cs:75-80`): `GatekeeperURI`, `[GatekeeperService] ExternalName`, `[GridService] Gatekeeper`.
-- `[VoiceConnector.<name>]` (`VoiceConnector/VoiceConnectorRegistry.cs:98-153`): `Enabled`, `NpcFirstName`, `NpcLastName`, `Scope`, `Position`, `MayInject`, `AuthorisedBy`, `InjectSourceUrl`, `Region`.
+- `[VoiceConnector.<name>]` (`VoiceConnector/VoiceConnectorRegistry.cs:98-153`): `Enabled`, `NpcFirstName`, `NpcLastName`, `Scope`, `Position`, `MayInject`, `AuthorisedBy`, `InjectSourceUrl`, `Region`. `CapabilitySecret` is registered in the knob table above (slice 0.7b).
+- Slice 0.7b: VCM also reads `[WebRtcVoice] JoinCapabilityEnabled` (VCM:111) and `[JanusWebRtcVoice] JoinCapabilitySecret` (VCM:112), the same keys JS mints avatar capabilities with, to mint connector capabilities.
 
 ## Notes
 
