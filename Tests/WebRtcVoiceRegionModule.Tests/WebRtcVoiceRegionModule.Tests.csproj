@@ -35,6 +35,7 @@
     <Compile Include="ProvisionParcelResolverTests.cs" />
     <Compile Include="A2AClientCloseGuardTests.cs" />
     <Compile Include="VisibilityDefaultsTests.cs" />
+    <Compile Include="ConnectorArmingTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

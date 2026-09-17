@@ -47,13 +47,19 @@ namespace osWebRtcVoice.Tests
 
         private static readonly UUID A = Id(1), B = Id(2), C = Id(3), D = Id(4);
         private static readonly UUID ParcelP = Id(201), ParcelQ = Id(202);
+        private static readonly UUID GoldenRegion = Id(77);
+        private static readonly UUID ConnectorNpc = Id(90);
 
         private sealed class World : IFeederWorld
         {
             public readonly List<AgentView> Agents = new();
             public bool BanAOnP = true;
             public bool ModerateC = false;
-            public IReadOnlyList<AgentView> SnapshotAgents() => Agents.ToList();
+            // Slice 0.7a T6: an id listed here is admitted only while it holds a voice session in GoldenRegion,
+            // FeederWorldFromScene's IsAgentInRegion gate. Empty in the golden scenario itself.
+            public readonly HashSet<UUID> Gated = new();
+            public IReadOnlyList<AgentView> SnapshotAgents()
+                => Agents.Where(a => !Gated.Contains(a.Id) || VoiceViewerSession.IsAgentInRegion(GoldenRegion, a.Id)).ToList();
             public ParcelView GetParcelAt(Vector3 p) => GetParcelByGlobalId(ParcelQ);
             public ParcelView GetParcelByGlobalId(UUID id) => id == ParcelP
                 ? new ParcelView(ParcelP, seeAVs: true, allowVoiceChat: true,
@@ -113,7 +119,10 @@ namespace osWebRtcVoice.Tests
             => Path.Combine(Path.GetDirectoryName(here), "Golden", "visibility-knob-off.golden.txt");
 
         /// The scenario, run against whatever the default (knob-off) construction is in this build.
-        internal static async Task<string> RunScenarioAsync()
+        /// <paramref name="withConnector"/> (slice 0.7a T6) threads a voice connector through it via the real
+        /// VoiceConnectorRegistrar: registered before tick 1, unregistered before tick 2, registered again after tick 5
+        /// for two more ticks. Anything it put on the wire lands in the transcript, so the golden comparison catches it.
+        internal static async Task<string> RunScenarioAsync(bool withConnector = false)
         {
             var world = new World();
             world.Agents.Add(new AgentView(A, false, Vector3.Zero, ParcelQ, false));   // A on Q, banned from P
@@ -122,7 +131,7 @@ namespace osWebRtcVoice.Tests
 
             var rooms = new Dictionary<UUID, int> { [A] = RoomAB, [B] = RoomAB, [D] = RoomD };   // C: no record
             var transport = new Transport();
-            var sink = new JanusPeerCtlBatchSink("http://unused", "unused", TimeSpan.FromSeconds(5), Id(77), "golden",
+            var sink = new JanusPeerCtlBatchSink("http://unused", "unused", TimeSpan.FromSeconds(5), GoldenRegion, "golden",
                 sendOne: transport.SendAsync);
             sink.RoomOf = a => rooms.TryGetValue(a, out int r) ? r : (int?)null;
             var feed = new MatrixFeed();
@@ -136,6 +145,29 @@ namespace osWebRtcVoice.Tests
                     sb.Append(body).Append('\n');
             }
 
+            var connector = new VoiceConnectorRecord("Speaker", true, "Speaker", "Connector", new Vector3(128, 128, 25),
+                VoiceConnectorScope.Estate, true, "Operator", null);
+            void RegisterConnector()
+            {
+                // VoiceConnectorModule.StartRecord's shape: the NPC presence exists, the session gates it into the
+                // population, pRecordRoom is the service's OnListenerProvisioned (room record + sender trigger).
+                bool ok = VoiceConnectorRegistrar.Register(connector, sink.FallbackRoom,
+                    r => ConnectorNpc,
+                    id => new VoiceViewerSession(null, GoldenRegion, id),
+                    (id, room) => { rooms[id] = room; sender.OnListenerProvisioned(id); },
+                    id => { },
+                    null);
+                if (!ok)
+                    throw new InvalidOperationException("connector registration failed");
+            }
+            void UnregisterConnector() => VoiceConnectorRegistrar.Unregister(connector, id => { }, null);
+            if (withConnector)
+            {
+                world.Gated.Add(ConnectorNpc);
+                world.Agents.Add(new AgentView(ConnectorNpc, false, Vector3.Zero, ParcelQ, false));
+                RegisterConnector();
+            }
+
             await sender.PumpAsync(feed.Tick(world));
             Record("tick 1: snapshot, D's column empty");
 
@@ -143,6 +175,9 @@ namespace osWebRtcVoice.Tests
             sender.OnListenerProvisioned(D);
             await sender.PumpAsync(feed.Tick(world));
             Record("join: A and D provisioned (quiet tick)");
+
+            if (withConnector)
+                UnregisterConnector();
 
             world.ModerateC = true;
             world.Agents.Add(new AgentView(C, false, Vector3.Zero, ParcelP, false));
@@ -166,7 +201,34 @@ namespace osWebRtcVoice.Tests
             create.ToJson();
             sb.Append("== room create body (spatial)\n")
               .Append(OSDParser.SerializeJsonString(create.RawBody["body"], true)).Append('\n');
+
+            if (withConnector)
+            {
+                try
+                {
+                    RegisterConnector();
+                    await sender.PumpAsync(feed.Tick(world));
+                    await sender.PumpAsync(feed.Tick(world));
+                    if (transport.Bodies.Count > 0)
+                        Record("connector registered again after tick 5 (knob-off must send nothing)");
+                }
+                finally
+                {
+                    UnregisterConnector();
+                }
+            }
             return sb.ToString();
+        }
+
+        /// Slice 0.7a T6: with the knob off, registering (and unregistering) a MayInject=true connector changes no byte.
+        /// A MayInject=false connector is outside this comparison by design: its moderation mute is enforced knob-off
+        /// too (brief Amendment 2 D2, since S-CON-2), so it legitimately adds mute entries the pre-0.2 golden never had.
+        [Test]
+        public async Task KnobOff_WithAConnectorRegistered_PayloadsAreByteIdenticalToTheGoldenFile()
+        {
+            string actual = await RunScenarioAsync(withConnector: true);
+            string golden = File.ReadAllText(GoldenPath()).Replace("\r\n", "\n");
+            Assert.That(actual, Is.EqualTo(golden));
         }
 
         [Test]
