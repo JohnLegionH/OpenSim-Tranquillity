@@ -244,8 +244,15 @@ public class JanusAudioBridge : JanusPlugin
     // failure (see ForgetRoom). If a room is destroyed out-of-band the join fails,
     // ForgetRoom clears the hint, and the viewer's provision retry re-creates the room
     // rather than looping forever skipping the create on a stale hint.
+    //
+    // Slice 0.8f (O-98): the mixer's 60 s empty-room grace destroys rooms out-of-band ALL THE TIME, so the hint is
+    // never allowed to answer for the mixer where it matters. The ensure never reads it (EnsureRoomCoalesced), a
+    // join answered 485 re-creates inside the same provision (RecreateAfterMissingCoalesced), a failed create
+    // clears it, and an unknown_room reply clears it (VisAuthority). The hint is now a VERSION (a process-wide
+    // counter), so a recreate can tell a stale hint from one another caller has just refreshed.
     private static readonly ConcurrentDictionary<int, SemaphoreSlim> _roomCreateLocks = new();
-    private static readonly ConcurrentDictionary<int, bool> _knownRooms = new();
+    private static readonly ConcurrentDictionary<int, long> _knownRooms = new();
+    private static long _hintVersion;
 
     // O-60 (audit W-13): both tables used to grow by one entry per room number ever selected (every parcel,
     // every A2A pair) for the life of the process. Entries idle for RoomCreateLockIdle are swept at most once
@@ -307,30 +314,73 @@ public class JanusAudioBridge : JanusPlugin
         => hashCode == int.MinValue ? int.MaxValue : Math.Abs(hashCode);
     public async Task<JanusRoom> SelectRoom(string pRegionId, string pChannelType, bool pSpatial, int pParcelLocalID, string pChannelID)
     {
-        int roomNumber = CalcRoomNumber(GridId, pRegionId, pChannelType, pParcelLocalID, pChannelID);
-
+        (int roomNumber, Func<Task<JanusRoom>> create, Func<JanusRoom> existing) =
+            RoomFor(pRegionId, pChannelType, pSpatial, pParcelLocalID, pChannelID);
         // Should be unique for the given use and channel type
         m_log.LogDebug("{0} SelectRoom: roomNumber={1}", LogHeader, roomNumber);
-
-        string roomDesc = pRegionId + "/" + pChannelType + "/" + pParcelLocalID + "/" + pChannelID;
-        bool visAuthority = ShouldDeclareVisAuthority(DeclareVisAuthority, pChannelType);
         // Coalesce concurrent creates of this room number across all per-session bridges
         // in this process. Each session still gets its OWN JanusRoom, bound to this
         // session's plugin handle, to join the (shared) Janus room with.
-        return await SelectRoomCoalesced(
-            roomNumber,
-            () => CreateRoom(roomNumber, pSpatial, roomDesc, visAuthority),
-            () => new JanusRoom(this, roomNumber)).ConfigureAwait(false);
+        return await SelectRoomCoalesced(roomNumber, create, existing).ConfigureAwait(false);
+    }
+
+    /// <summary>Slice 0.8f (O-98, R1): the room SelectRoom would pick, made to exist by ASKING THE MIXER - never by
+    /// the hint. Already-exists (486) is success. The connector ensure uses this.</summary>
+    public async Task<JanusRoom> EnsureRoom(string pRegionId, string pChannelType, bool pSpatial, int pParcelLocalID, string pChannelID)
+    {
+        (int roomNumber, Func<Task<JanusRoom>> create, Func<JanusRoom> existing) =
+            RoomFor(pRegionId, pChannelType, pSpatial, pParcelLocalID, pChannelID);
+        m_log.LogDebug("{0} EnsureRoom: roomNumber={1}", LogHeader, roomNumber);
+        return await EnsureRoomCoalesced(roomNumber, create, existing).ConfigureAwait(false);
+    }
+
+    /// <summary>Slice 0.8f (O-98, R2): <paramref name="pStale"/>'s join was answered 485 No such room. Re-create it,
+    /// unless another caller already has since that hint was handed out.</summary>
+    public async Task<JanusRoom> RecreateRoom(JanusRoom pStale, string pRegionId, string pChannelType, bool pSpatial,
+        int pParcelLocalID, string pChannelID)
+    {
+        (int roomNumber, Func<Task<JanusRoom>> create, Func<JanusRoom> existing) =
+            RoomFor(pRegionId, pChannelType, pSpatial, pParcelLocalID, pChannelID);
+        m_log.LogInformation("{0} RecreateRoom: room {1} was gone (485) although this process believed it existed " +
+            "(the mixer's empty-room grace destroys rooms out of band); re-creating", LogHeader, roomNumber);
+        return await RecreateAfterMissingCoalesced(roomNumber, pStale?.HintStamp ?? 0, create, existing).ConfigureAwait(false);
+    }
+
+    private (int RoomNumber, Func<Task<JanusRoom>> Create, Func<JanusRoom> Existing) RoomFor(string pRegionId,
+        string pChannelType, bool pSpatial, int pParcelLocalID, string pChannelID)
+    {
+        int roomNumber = CalcRoomNumber(GridId, pRegionId, pChannelType, pParcelLocalID, pChannelID);
+        string roomDesc = pRegionId + "/" + pChannelType + "/" + pParcelLocalID + "/" + pChannelID;
+        bool visAuthority = ShouldDeclareVisAuthority(DeclareVisAuthority, pChannelType);
+        return (roomNumber, () => CreateRoom(roomNumber, pSpatial, roomDesc, visAuthority), () => new JanusRoom(this, roomNumber));
     }
 
     // Process-wide coalescing of room creation by room number. Under the per-room lock:
     // if the room is already known to exist in this process, skip the create and let the
     // caller build a join object (pMakeExistingJoinObject); otherwise create exactly once
     // (pCreate) and record it. Func-based and static so it is unit-testable without Janus.
-    public static async Task<JanusRoom> SelectRoomCoalesced(
+    public static Task<JanusRoom> SelectRoomCoalesced(
         int pRoomNumber,
         Func<Task<JanusRoom>> pCreate,
         Func<JanusRoom> pMakeExistingJoinObject)
+        => CoalescedAsync(pRoomNumber, pCreate, pMakeExistingJoinObject, pForceCreate: false, pStaleStamp: null);
+
+    /// <summary>Slice 0.8f (O-98, R1): the ensure. ALWAYS asks the mixer to create (already-exists is success) and
+    /// never answers from the hint; concurrent ensures of one room still serialize on its gate.</summary>
+    public static Task<JanusRoom> EnsureRoomCoalesced(int pRoomNumber, Func<Task<JanusRoom>> pCreate,
+        Func<JanusRoom> pMakeExistingJoinObject)
+        => CoalescedAsync(pRoomNumber, pCreate, pMakeExistingJoinObject, pForceCreate: true, pStaleStamp: null);
+
+    /// <summary>Slice 0.8f (O-98, R2): a join into <paramref name="pRoomNumber"/> was answered 485 No such room, under
+    /// the hint version <paramref name="pStaleStamp"/>. If the hint has moved on since - another joiner found the
+    /// room gone too and has already re-created it - use that room; otherwise re-create. So N joiners that all hit
+    /// the same missing room cause one create, not N.</summary>
+    public static Task<JanusRoom> RecreateAfterMissingCoalesced(int pRoomNumber, long pStaleStamp,
+        Func<Task<JanusRoom>> pCreate, Func<JanusRoom> pMakeExistingJoinObject)
+        => CoalescedAsync(pRoomNumber, pCreate, pMakeExistingJoinObject, pForceCreate: false, pStaleStamp: pStaleStamp);
+
+    private static async Task<JanusRoom> CoalescedAsync(int pRoomNumber, Func<Task<JanusRoom>> pCreate,
+        Func<JanusRoom> pMakeExistingJoinObject, bool pForceCreate, long? pStaleStamp)
     {
         long now = Environment.TickCount64;
         MaybeSweepRoomCreateLocks(now);
@@ -339,14 +389,26 @@ public class JanusAudioBridge : JanusPlugin
         await gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_knownRooms.ContainsKey(pRoomNumber))
+            if (!pForceCreate && _knownRooms.TryGetValue(pRoomNumber, out long version)
+                && (pStaleStamp is null || version != pStaleStamp.Value))
             {
-                return pMakeExistingJoinObject();
+                JanusRoom existing = pMakeExistingJoinObject();
+                if (existing is not null)
+                    existing.HintStamp = version;
+                return existing;
             }
             JanusRoom created = await pCreate().ConfigureAwait(false);
             if (created is not null)
             {
-                _knownRooms[pRoomNumber] = true;
+                long fresh = Interlocked.Increment(ref _hintVersion);
+                _knownRooms[pRoomNumber] = fresh;
+                created.HintStamp = fresh;
+            }
+            else
+            {
+                // 0.8f: a create that did not answer created/already-exists proves nothing - drop any hint rather than
+                // let an older one keep answering for a room the mixer may not have.
+                _knownRooms.TryRemove(pRoomNumber, out _);
             }
             return created;
         }

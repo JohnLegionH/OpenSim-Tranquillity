@@ -107,7 +107,7 @@ namespace osWebRtcVoice.Tests
 
             TestContext.Out.WriteLine($"attempts in 120 s: {attempts}");
             Assert.That(attempts, Is.LessThanOrEqualTo(10),
-                "a room that stays unknown for 120 s draws at most 10 attempts (1 s doubling to a 30 s cap)");
+                "a room that stays unknown for 120 s draws at most 10 attempts (1 s doubling; 0.8f caps it at 300 s)");
             Assert.That(attempts, Is.GreaterThanOrEqualTo(5), "and it does keep trying");
         }
 
@@ -160,12 +160,12 @@ namespace osWebRtcVoice.Tests
         // ---- slice 0.8c2, ruling C: proof that the room exists releases the backoff -------------
 
         /// <summary>C1: T4 makes a room that stays unknown cheap; ruling C makes a room that STARTS EXISTING fast. A
-        /// listener that has climbed to the 30 s cap must not sit out the rest of that delay once the sim has proof
+        /// listener that has climbed its backoff (to 128 s here; the cap is 300 s since 0.8f) must not sit out the rest of that delay once the sim has proof
         /// the room is there. Two kinds of proof, both run here:
         ///   (i)  an ensure succeeded at a connector's capability fetch  - VoiceConnectorModule.cs:227;
         ///   (ii) a viewer was provisioned into the room                 - VoiceVisibilityService.cs:207.
         /// Both call VisAuthority.RoomExists, and every listener the room's absence was holding arms on the VERY NEXT
-        /// tick, not 30 s later. TWO listeners are in the room deliberately: RequestArm has always cleared the retry
+        /// tick, not minutes later. TWO listeners are in the room deliberately: RequestArm has always cleared the retry
         /// for the agent it names, so a one-listener provision case would pass without ruling C at all. What is new
         /// here is that the room existing releases the OTHERS - the listener nobody provisioned.</summary>
         [TestCase(false, TestName = "C1_EnsureSucceeded_ArmsOnTheVeryNextTick")]
@@ -206,7 +206,7 @@ namespace osWebRtcVoice.Tests
             Assert.That(auth.CanArmNow(L), Is.False, "that attempt failed too, so it is waiting again");
             clock += 25_000;
             Assert.That(auth.CanArmNow(L), Is.False,
-                "and still waiting 25 s later: the delay is at the 30 s cap, not the 1 s it started at");
+                "and still waiting 25 s later: the delay has climbed far past the 1 s it started at");
 
             // The room now exists, and the sim learns it the way the two live paths learn it.
             unknown = false;
@@ -219,7 +219,7 @@ namespace osWebRtcVoice.Tests
                 "including for the listener nobody named: it is the ROOM that was proved to exist, not one agent's "
                 + "place in it");
 
-            clock += 250;                          // ONE tick later, not 30 s
+            clock += 250;                          // ONE tick later, not minutes
             await sender.PumpAsync(feed.Tick());
 
             Assert.That(attempts, Is.EqualTo(attemptsAtCap + 1), "it armed on the very next tick");
@@ -254,6 +254,79 @@ namespace osWebRtcVoice.Tests
             Assert.That(((OSDMap)hb["rooms"]).ContainsKey(Room.ToString()), Is.False,
                 "and the old room is not in the heartbeat at all");
             Assert.That(auth.IsArmed(Room, L), Is.False, "the claim on the old room is dropped, not left standing");
+        }
+
+        // ---- slice 0.8f, ruling R4: a 300 s cap, and proof still releases it at once --------------------------
+
+        /// <summary>The real sender and authority against a room the mixer answers unknown_room for, at a 250 ms tick.
+        /// Returns the number of batch attempts; <paramref name="proveAtMs"/> (if given) is the simulated time at which
+        /// the room starts existing and RoomExists fires, after which the test checks the very next tick.</summary>
+        private static async Task<(int Attempts, bool ArmedNextTick, int AttemptsAtProof)> RunUnknownRoom(long spanMs,
+            long? proveAtMs = null)
+        {
+            long clock = 10_000, start = clock;
+            int attempts = 0;
+            bool unknown = true;
+            Task<(AdminSendResult, string)> Send(OSDMap request)
+            {
+                if (request["request"].AsString() == "peer_ctl_batch")
+                    attempts++;
+                string reply = unknown
+                    ? "{\"janus\":\"success\",\"response\":{\"slvoice\":\"error\",\"reason\":\"unknown_room\"," +
+                      "\"status\":\"unknown_room\",\"vis_protocol\":2,\"mixer_instance\":\"m1\"}}"
+                    : "{\"janus\":\"success\",\"response\":{\"slvoice\":\"applied\",\"vis_protocol\":2," +
+                      "\"mixer_instance\":\"m1\",\"room\":" + request["room"].AsInteger() + "}}";
+                return Task.FromResult((AdminSendResult.Ok, reply));
+            }
+            using var sink = new JanusPeerCtlBatchSink("http://unused", "unused", TimeSpan.FromSeconds(5), Id(77), "h7",
+                sendOne: Send);
+            var auth = new VisAuthority(0x0000018f00000001UL, "h7", () => clock);
+            sink.Authority = auth;
+            sink.RoomOf = _ => Room;
+            var feed = new Feed(new OneAgentWorld(L));
+            var sender = new VisibilityBatchSender(feed, sink, true, TimeSpan.FromSeconds(5), "h7", () => clock,
+                auth, _ => Room);
+            auth.RequestArm(L);
+
+            while (clock - start < spanMs)
+            {
+                if (proveAtMs.HasValue && clock - start >= proveAtMs.Value)
+                {
+                    unknown = false;
+                    auth.RoomExists(Room);
+                    int before = attempts;
+                    clock += 250;
+                    await sender.PumpAsync(feed.Tick());
+                    return (attempts, attempts == before + 1 && auth.IsArmed(Room, L), before);
+                }
+                clock += 250;
+                await sender.PumpAsync(feed.Tick());
+            }
+            return (attempts, false, attempts);
+        }
+
+        /// <summary>H7: a room the mixer never has, for a simulated HOUR, draws at most 20 attempts: 1 s doubling to a
+        /// 300 s cap is attempts at 0, 1, 3, 7 ... 511 s, then one every 300 s. The 30 s cap drew one per room per 30 s
+        /// - 1,512 WARNs overnight for two rooms in the 0.8d run.</summary>
+        [Test]
+        public async Task H7_ARoomUnknownForAnHour_DrawsAtMostTwentyAttempts()
+        {
+            var r = await RunUnknownRoom(3_600_000);
+            TestContext.Out.WriteLine($"attempts in one simulated hour: {r.Attempts}");
+            Assert.That(r.Attempts, Is.LessThanOrEqualTo(20), "at most 20 in an hour (R4: 300 s cap)");
+            Assert.That(r.Attempts, Is.GreaterThanOrEqualTo(15), "and it does keep trying");
+        }
+
+        /// <summary>H7, second half: however far the backoff has climbed, a RoomExists arms on the very next tick - so a
+        /// longer cap costs a proven room no latency.</summary>
+        [TestCase(10_000L, TestName = "H7_RoomExistsAfter10s_ArmsOnTheNextTick")]
+        [TestCase(700_000L, TestName = "H7_RoomExistsAfter700s_ArmsOnTheNextTick")]
+        [TestCase(3_500_000L, TestName = "H7_RoomExistsAfterAnHour_ArmsOnTheNextTick")]
+        public async Task H7_RoomExistsAtAnyPoint_ArmsOnTheNextTick(long proveAtMs)
+        {
+            var r = await RunUnknownRoom(3_600_000, proveAtMs);
+            Assert.That(r.ArmedNextTick, Is.True, $"armed on the tick after RoomExists at {proveAtMs / 1000} s " +
+                $"({r.AttemptsAtProof} attempts before it)");
         }
 
         private static HashSet<string> Listeners(OSDMap heartbeat, int room)

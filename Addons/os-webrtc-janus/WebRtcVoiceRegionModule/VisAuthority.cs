@@ -66,10 +66,12 @@ namespace osWebRtcVoice
         /// once. Slice 0.8c: each further consecutive failure doubles this, to <see cref="UnknownRoomRetryMaxMs"/>.</summary>
         public const int UnknownRoomRetryMs = 1000;
 
-        /// <summary>Slice 0.8c (O-93): the ceiling the retry delay doubles to. A room that never appears is asked for
-        /// twice a minute, not four times a second: the live 0.8 soak logged 8,933 unknown_room lines at ~3.8/s for one
-        /// connector, because a standing re-arm request bypassed the delay entirely.</summary>
-        public const int UnknownRoomRetryMaxMs = 30000;
+        /// <summary>Slice 0.8c (O-93): the ceiling the retry delay doubles to. The live 0.8 soak logged 8,933
+        /// unknown_room lines at ~3.8/s for one connector, because a standing re-arm request bypassed the delay entirely.
+        /// Slice 0.8f (O-98, R4): raised from 30 s to 300 s. At 30 s two absent rooms still drew 1,512 WARNs overnight
+        /// in the 0.8d run. The cap costs a room that turns up no latency, because anything that PROVES it exists - an
+        /// ensure, a provision, an applied reply - calls RoomExists and releases the backoff at once.</summary>
+        public const int UnknownRoomRetryMaxMs = 300000;
 
         /// <summary>§6.3: the reply vis_protocol at which the mixer understands peer_ctl_heartbeat.</summary>
         public const int HeartbeatProtocol = 2;
@@ -253,6 +255,8 @@ namespace osWebRtcVoice
                 string outcome = BatchOutcome(in reply);
                 if (outcome != "applied")
                 {
+                    if (outcome == "unknown_room")
+                        JanusAudioBridge.ForgetRoom(room);   // 0.8f (O-98, R3): the mixer says it has no such room - believe it
                     BackOffLocked(room, named, outcome);
                     return;
                 }
@@ -307,6 +311,8 @@ namespace osWebRtcVoice
                     string status = room.Value.Status ?? "ok";
                     if (status == "unknown_room" || status == "stale_epoch")
                     {
+                        if (status == "unknown_room")
+                            JanusAudioBridge.ForgetRoom(room.Key);   // 0.8f (O-98, R3)
                         List<UUID> inRoom = _armed.TryGetValue(room.Key, out var m) ? new List<UUID>(m.Keys) : new List<UUID>();
                         BackOffLocked(room.Key, inRoom, status);
                         continue;

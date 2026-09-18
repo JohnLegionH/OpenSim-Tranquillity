@@ -39,6 +39,12 @@ public class JanusRoom : IDisposable
 
     public int RoomId { get; private set; }
 
+    /// <summary>Slice 0.8f (O-98): which version of the process-wide "room exists" hint this object was handed out
+    /// under. Set once, by JanusAudioBridge.SelectRoomCoalesced, on the object it returns. A join that fails because
+    /// the room is gone passes it back, so a recreate can tell a stale hint from one another caller has already
+    /// refreshed - and two joiners that both found the room missing cause ONE create, not two.</summary>
+    public long HintStamp { get; set; }
+
     private JanusPlugin _AudioBridge;
 
     // Wrapper around the session connection to Janus-gateway

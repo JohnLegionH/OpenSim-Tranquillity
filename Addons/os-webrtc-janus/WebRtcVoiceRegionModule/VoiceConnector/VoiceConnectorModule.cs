@@ -216,15 +216,15 @@ public class VoiceConnectorModule : INonSharedRegionModule
             return null;
         LandData land = scene.LandChannel?.GetLandObject(pRecord.Position.X, pRecord.Position.Y)?.LandData;
         int room = ConnectorRoomResolver.RoomFor(scene.RegionInfo.RegionID, land);
-        int? ensured = m_voiceService?.EnsureSpatialRoom(scene.RegionInfo.RegionID,
-            ConnectorRoomResolver.ParcelLocalIdFor(land));
+        // Slice 0.8c2 (ruling C) + 0.8f (O-98, R1): the ensure now always asks the mixer, so a non-null answer means the
+        // room EXISTS - only then is the unknown_room backoff released for everyone recorded there. A failed ensure
+        // proves nothing and resets nothing.
+        int? ensured = ConnectorRoomResolver.EnsureAndProve(
+            () => m_voiceService?.EnsureSpatialRoom(scene.RegionInfo.RegionID, ConnectorRoomResolver.ParcelLocalIdFor(land)),
+            r => scene.RequestModuleInterface<VoiceVisibilityService>()?.RoomExists(r));
         if (ensured is null)
             m_log.LogWarning("{LogHeader} {Name}: could not ensure mixer room {Room} exists; the peer may have nothing to join",
                 LogHeader, pRecord.Name, room);
-        else
-            // Slice 0.8c2 (ruling C): the ensure succeeded, so the room exists now. Release the unknown_room backoff
-            // for everyone recorded there rather than making them wait out a delay the room's absence caused.
-            scene.RequestModuleInterface<VoiceVisibilityService>()?.RoomExists(ensured.Value);
         if (pRecord.Room.HasValue && pRecord.Room.Value != room)
         {
             m_log.LogInformation("{LogHeader} {Name}: room moved {Old} -> {New} (the parcel at {Position} changed its voice " +

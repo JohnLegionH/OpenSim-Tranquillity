@@ -39,4 +39,14 @@ public static class ConnectorRoomResolver
     /// <summary>True when the parcel runs the estate channel, so the connector's room is the estate room — the
     /// pre-0.8c behaviour, unchanged for that case.</summary>
     public static bool IsEstateChannel(LandData pLand) => ParcelLocalIdFor(pLand) == JanusAudioBridge.REGION_ROOM_ID;
+
+    /// <summary>Slice 0.8f (O-98, ruling R1): run the ensure and, only if it answered with a room, tell the visibility
+    /// authority that room EXISTS. A null answer proves nothing, so it resets nothing. Returns the ensure's answer.</summary>
+    public static int? EnsureAndProve(System.Func<int?> pEnsure, System.Action<int> pRoomExists)
+    {
+        int? ensured = pEnsure();
+        if (ensured.HasValue)
+            pRoomExists?.Invoke(ensured.Value);
+        return ensured;
+    }
 }

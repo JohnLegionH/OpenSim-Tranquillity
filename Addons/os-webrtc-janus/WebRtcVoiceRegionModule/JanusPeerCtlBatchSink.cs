@@ -119,14 +119,19 @@ namespace osWebRtcVoice
             _roomGate = new SemaphoreSlim(concurrency, concurrency);
 
             // Estate/shared channel room: the "local" channel at REGION_ROOM_ID (-999), hashed by
-            // the identical CalcRoomNumber the mixer computes on the Janus side. Since S3b this is
-            // the FALLBACK room, not the only room - see the class comment.
+            // the identical CalcRoomNumber the mixer computes on the Janus side. Since S3b it is not
+            // the only room, and since 0.8c2 it is not a fallback either - see the class comment.
             // The grid id (S-A2A-4) only enters the "multiagent" arm; the local derivation ignores it.
             _fallbackRoom = JanusAudioBridge.CalcRoomNumber(
                 string.Empty, regionId.ToString(), "local", JanusAudioBridge.REGION_ROOM_ID, string.Empty);
-            m_log.LogInformation("{LogHeader} region {RegionName} ({RegionId}) -> peer_ctl_batch FALLBACK room {RoomNumber} " +
-                "(the estate/local room; compare vs handle_info). Each listener's own room is addressed per send; this number is " +
-                "used only for an agent with no recorded room. Room send concurrency {Concurrency}.",
+            // Slice 0.8f (O-92): this line used to call the number the "FALLBACK room" and say it was used for an agent
+            // with no recorded room. Since 0.8c2 nothing is addressed at it merely because it is the default (an agent
+            // with no record is resolved from its parcel, else omitted), and on a parcel-channel region the label sent
+            // operators looking for a room that was never created.
+            m_log.LogInformation("{LogHeader} region {RegionName} ({RegionId}) -> estate room {RoomNumber} (the region's " +
+                "estate/local channel; compare vs handle_info). Each agent is addressed at its recorded room, else the room " +
+                "its parcel resolves to, else not at all; this number is addressed only where it IS that room. Room send " +
+                "concurrency {Concurrency}.",
                 LogHeader, regionName, regionId, _fallbackRoom, concurrency);
         }
 
@@ -549,7 +554,7 @@ namespace osWebRtcVoice
                 sb.Append("none");
 
             m_log.LogDebug("{LogHeader} region {RegionName}: {Op} addressed {RoomCount} room(s) [room:excl+mute {Rooms}]; " +
-                "fallback excl listeners {FbExclL}/sources {FbExclS}, mute listeners {FbMuteL}/sources {FbMuteS} (fallback room {FallbackRoom})",
+                "unplaced excl listeners {FbExclL}/sources {FbExclS}, mute listeners {FbMuteL}/sources {FbMuteS} (estate room {EstateRoom})",
                 LogHeader, _region, PeerCtlBatchSerializer.OpString(op), roomsAddressed, sb.ToString(),
                 part.FallbackListeners, part.FallbackSources, mutePart.FallbackListeners, mutePart.FallbackSources, _fallbackRoom);
         }
