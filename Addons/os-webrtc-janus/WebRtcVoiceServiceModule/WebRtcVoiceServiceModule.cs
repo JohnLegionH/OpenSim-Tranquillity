@@ -658,6 +658,11 @@ public class WebRtcVoiceServiceModule : ISharedRegionModule, IWebRtcVoiceService
     // session touches no Janus state (WebRtcJanusService.CreateViewerSession just builds the
     // object), so this is safe to call for an identity that will never send an offer — the
     // connector registration path, which pairs it with VoiceViewerSession.AddViewerSession.
+    // Slice 0.8c (O-93): rooms are a spatial-service concern, so this goes to the spatial leaf whatever the
+    // request's channel_type would have been.
+    public int? EnsureSpatialRoom(UUID pSceneID, int pParcelLocalID)
+        => m_spatialVoiceService?.EnsureSpatialRoom(pSceneID, pParcelLocalID);
+
     public IVoiceViewerSession CreateViewerSession(OSDMap pRequest, UUID pUserID, UUID pSceneID)
     {
         bool isSpatial = pRequest.TryGetString("channel_type", out string ct) && ct == "local";

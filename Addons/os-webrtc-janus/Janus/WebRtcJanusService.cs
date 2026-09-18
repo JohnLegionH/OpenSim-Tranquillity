@@ -339,6 +339,38 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
         }
     }
 
+    // Slice 0.8c (O-93): ensure the spatial room for a parcel exists, through the same service session the console
+    // uses. SelectRoom is the provisioning path's own call, so the room is created with the same flags a viewer's
+    // would be, including vis_authority when this sim arms (JanusAudioBridge.ShouldDeclareVisAuthority), and its
+    // process-wide coalescing makes a second call for a live room a no-op.
+    public int? EnsureSpatialRoom(UUID pSceneID, int pParcelLocalID)
+    {
+        try
+        {
+            return EnsureSpatialRoomAsync(pSceneID, pParcelLocalID).Result;
+        }
+        catch (Exception e)
+        {
+            _log.LogWarning(e, $"{LogHeader} EnsureSpatialRoom failed for scene {pSceneID} parcel {pParcelLocalID}");
+            return null;
+        }
+    }
+
+    private async Task<int?> EnsureSpatialRoomAsync(UUID pSceneID, int pParcelLocalID)
+    {
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            JanusViewerSession svc = await EnsureServiceSessionAsync(pForceReconnect: attempt > 0).ConfigureAwait(false);
+            if (svc?.AudioBridge is null)
+                return null;
+            JanusRoom room = await svc.AudioBridge.SelectRoom(pSceneID.ToString(), "local", true, pParcelLocalID,
+                string.Empty).ConfigureAwait(false);
+            if (room is not null)
+                return room.RoomId;
+        }
+        return null;
+    }
+
     // O-60: "janus list rooms" through the service session. If the request fails on the current session it is
     // retried ONCE on a forced reconnect, so a mixer restart heals on the next console command.
     public async Task<AudioBridgeResp> ServiceListRoomsAsync()

@@ -62,8 +62,14 @@ namespace osWebRtcVoice
         public const int HeartbeatIntervalMs = 1000;
 
         /// <summary>How long a listener whose room the mixer does not know (or refuses as stale_epoch) waits before
-        /// the sender arms it again. One heartbeat interval; a provision of that listener clears it at once.</summary>
+        /// the sender arms it again, the FIRST time. One heartbeat interval; a provision of that listener clears it at
+        /// once. Slice 0.8c: each further consecutive failure doubles this, to <see cref="UnknownRoomRetryMaxMs"/>.</summary>
         public const int UnknownRoomRetryMs = 1000;
+
+        /// <summary>Slice 0.8c (O-93): the ceiling the retry delay doubles to. A room that never appears is asked for
+        /// twice a minute, not four times a second: the live 0.8 soak logged 8,933 unknown_room lines at ~3.8/s for one
+        /// connector, because a standing re-arm request bypassed the delay entirely.</summary>
+        public const int UnknownRoomRetryMaxMs = 30000;
 
         /// <summary>§6.3: the reply vis_protocol at which the mixer understands peer_ctl_heartbeat.</summary>
         public const int HeartbeatProtocol = 2;
@@ -80,6 +86,8 @@ namespace osWebRtcVoice
         private readonly Dictionary<int, uint> _roomAsOf = new Dictionary<int, uint>();   // slice 0.7d: highest applied per room
         private readonly Dictionary<int, Dictionary<UUID, uint>> _armed = new Dictionary<int, Dictionary<UUID, uint>>();
         private readonly Dictionary<UUID, long> _retryAt = new Dictionary<UUID, long>();
+        private readonly Dictionary<UUID, int> _retryBackoffMs = new Dictionary<UUID, int>();   // 0.8c: doubling, per listener
+        private readonly HashSet<int> _roomsBackingOff = new HashSet<int>();                    // 0.8c: for one WARN / one INFO
         private readonly Dictionary<UUID, long> _rearm = new Dictionary<UUID, long>();   // listener -> requested at
         private bool _rearmAll;
         private string _mixerInstance;
@@ -249,6 +257,7 @@ namespace osWebRtcVoice
                 var flagged = new HashSet<UUID>();
                 AddAll(flagged, reply.StaleListeners);
                 AddAll(flagged, reply.UnarmedListeners);
+                ClearRoomBackoffLocked(room);
                 // Slice 0.7d: the mixer applied this batch, so its generation is what heartbeats built from now on may
                 // claim as as_of. Read under the same lock as the armed generations BuildHeartbeat reports.
                 if (!_roomAsOf.TryGetValue(room, out uint asOf) || generation > asOf)
@@ -263,6 +272,7 @@ namespace osWebRtcVoice
                         armed[l] = generation;
                         _rearm.Remove(l);
                         _retryAt.Remove(l);
+                        _retryBackoffMs.Remove(l);   // 0.8c: the room answered, so the next failure starts at 1 s again
                     }
                     else if (armed.ContainsKey(l))
                     {
@@ -350,17 +360,35 @@ namespace osWebRtcVoice
 
         private void BackOffLocked(int room, IEnumerable<UUID> listeners, string why)
         {
-            long retryAt = _nowMs() + UnknownRoomRetryMs;
+            // Slice 0.8c (O-93): the delay doubles per consecutive failure, 1 s to UnknownRoomRetryMaxMs, and is reset
+            // by an applied batch (above) or a provision (RequestArm). One WARN when a room enters backoff and one INFO
+            // when it recovers — never a line per attempt, which is what buried the 0.8 soak's log.
+            long now = _nowMs();
             Dictionary<UUID, uint> armed = ArmedLocked(room);
             int n = 0;
+            int delay = UnknownRoomRetryMs;
             foreach (UUID l in listeners)
             {
                 armed.Remove(l);
-                _retryAt[l] = retryAt;
+                _retryBackoffMs.TryGetValue(l, out int previous);
+                delay = previous <= 0 ? UnknownRoomRetryMs : Math.Min(previous * 2, UnknownRoomRetryMaxMs);
+                _retryBackoffMs[l] = delay;
+                _retryAt[l] = now + delay;
                 n++;
             }
-            m_log.LogInformation("{LogHeader} region {Region} room {Room}: {Why}; {Count} listener(s) not armed, retrying in {Retry} ms " +
-                "or at the listener's next provision", LogHeader, _region, room, why, n, UnknownRoomRetryMs);
+            if (_roomsBackingOff.Add(room))
+                m_log.LogWarning("{LogHeader} region {Region} room {Room}: {Why}; {Count} listener(s) not armed. Retrying in " +
+                    "{Retry} ms, doubling to {Max} ms while it persists, or at the listener's next provision. This is logged " +
+                    "once per episode, not once per attempt", LogHeader, _region, room, why, n, delay, UnknownRoomRetryMaxMs);
+        }
+
+        /// <summary>Slice 0.8c: note that a room answered again, so the next failure logs afresh. Called on any applied
+        /// outcome for the room.</summary>
+        private void ClearRoomBackoffLocked(int room)
+        {
+            if (_roomsBackingOff.Remove(room))
+                m_log.LogInformation("{LogHeader} region {Region} room {Room}: answering again; arming resumes",
+                    LogHeader, _region, room);
         }
 
         private void FlagLocked(int room, HashSet<UUID> flagged, string via)

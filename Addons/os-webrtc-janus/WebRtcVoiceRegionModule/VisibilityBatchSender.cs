@@ -249,8 +249,12 @@ namespace osWebRtcVoice
             var arm = new List<UUID>();
             foreach (UUID l in population)
             {
-                if (snapshot || _authority.IsRearmRequested(l)
-                    || (!_authority.IsArmed(_resolveRoom(l), l) && _authority.CanArmNow(l)))
+                // Slice 0.8c (O-93, finding F1): CanArmNow gates EVERY path, including a standing re-arm request and a
+                // snapshot. A connector NPC never leaves the population, so its re-arm request never expired and the
+                // first clause re-armed it into a missing room on every tick — 8,933 unknown_room lines at ~3.8/s in
+                // the 0.8 soak, with the authority's own backoff sitting there unread.
+                if ((snapshot || _authority.IsRearmRequested(l) || !_authority.IsArmed(_resolveRoom(l), l))
+                    && _authority.CanArmNow(l))
                     arm.Add(l);
             }
 

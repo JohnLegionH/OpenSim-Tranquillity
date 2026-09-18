@@ -205,6 +205,34 @@ public class VoiceConnectorModule : INonSharedRegionModule
         AttachJoinCapEndpoint();
     }
 
+    /// <summary>Slice 0.8c (O-93): the room this record belongs in, as the provisioning path would resolve it for an
+    /// avatar at the record's Position, ensured to exist. Called at registration and at every capability fetch. When
+    /// the parcel's channel has changed since the record was made, the record MOVES, the way an avatar's re-provision
+    /// moves it, with one INFO line. Returns null when there is no scene or the room could not be ensured.</summary>
+    private int? ResolveAndEnsureRoom(VoiceConnectorRecord pRecord)
+    {
+        Scene scene = m_scene;
+        if (scene is null)
+            return null;
+        LandData land = scene.LandChannel?.GetLandObject(pRecord.Position.X, pRecord.Position.Y)?.LandData;
+        int room = ConnectorRoomResolver.RoomFor(scene.RegionInfo.RegionID, land);
+        int? ensured = m_voiceService?.EnsureSpatialRoom(scene.RegionInfo.RegionID,
+            ConnectorRoomResolver.ParcelLocalIdFor(land));
+        if (ensured is null)
+            m_log.LogWarning("{LogHeader} {Name}: could not ensure mixer room {Room} exists; the peer may have nothing to join",
+                LogHeader, pRecord.Name, room);
+        if (pRecord.Room.HasValue && pRecord.Room.Value != room)
+        {
+            m_log.LogInformation("{LogHeader} {Name}: room moved {Old} -> {New} (the parcel at {Position} changed its voice " +
+                "channel); re-recording it as a re-provision would", LogHeader, pRecord.Name, pRecord.Room.Value, room,
+                pRecord.Position);
+            pRecord.Room = room;
+            if (pRecord.NpcId != UUID.Zero)
+                scene.RequestModuleInterface<VoiceVisibilityService>()?.OnListenerProvisioned(pRecord.NpcId, room);
+        }
+        return room;
+    }
+
     // Slice 0.7b: attach this region's records to the process-wide endpoint, only if one of them has a secret.
     private void AttachJoinCapEndpoint()
     {
@@ -212,7 +240,7 @@ public class VoiceConnectorModule : INonSharedRegionModule
             return;   // the default: no CapabilitySecret anywhere in this region, no endpoint, nothing registered
         VoiceConnectorRegistry registry = m_registry;
         m_joinCapSource = new VoiceConnectorJoinCapEndpoint.Source(() => registry.Snapshot(),
-            m_mintEnabled && !string.IsNullOrEmpty(m_mintSecret), m_mintSecret);
+            m_mintEnabled && !string.IsNullOrEmpty(m_mintSecret), m_mintSecret, ResolveAndEnsureRoom);
         lock (s_commandLock)
         {
             s_joinCapEndpoint ??= new VoiceConnectorJoinCapEndpoint(MainServer.Instance.DefaultServer, m_log);
@@ -311,9 +339,12 @@ public class VoiceConnectorModule : INonSharedRegionModule
             return;
         }
 
-        // The estate/local room, derived exactly as the sink's fallback (JanusPeerCtlBatchSink):
-        // the "local" channel at REGION_ROOM_ID, grid id not in this arm.
-        int estateRoom = JanusAudioBridge.CalcRoomNumber(
+        // Slice 0.8c (O-93): the room an avatar at this Position would be provisioned into - the parcel's own
+        // channel unless the parcel runs the estate channel - and then MAKE SURE IT EXISTS. Before 0.8c this was
+        // always the estate room, and a room is created on one path only (a viewer provisioning voice), so a
+        // connector on an own-channel parcel was armed at the wrong room and a connector in a region with nobody
+        // voiced was armed at a room that did not exist at all.
+        int estateRoom = ResolveAndEnsureRoom(record) ?? JanusAudioBridge.CalcRoomNumber(
             string.Empty, scene.RegionInfo.RegionID.ToString(), "local", JanusAudioBridge.REGION_ROOM_ID, string.Empty);
 
         // O-63: the NPC's agent id is DERIVED (UUIDv5 of grid/region/record, ConnectorIdentity), not random, so

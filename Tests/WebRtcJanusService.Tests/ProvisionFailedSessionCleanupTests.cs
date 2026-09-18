@@ -19,6 +19,9 @@ namespace osWebRtcVoice.Tests
     // Loaded by name ("WebRtcJanusService.Tests.dll:FakeVoiceService"); LoadPlugin needs a public top-level type.
     public class FakeVoiceService : IWebRtcVoiceService
     {
+        // Slice 0.8c: the room seam; this fake owns no rooms.
+        public int? EnsureSpatialRoom(UUID pSceneID, int pParcelLocalID) => null;
+
         public static FakeProvisionMode Mode = FakeProvisionMode.Fail;
         public static readonly List<FakeViewerSession> Created = new List<FakeViewerSession>();
 

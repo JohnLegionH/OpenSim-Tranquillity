@@ -49,12 +49,18 @@ public sealed class VoiceConnectorJoinCapEndpoint
         public Func<IEnumerable<VoiceConnectorRecord>> Records { get; }
         public bool MintEnabled { get; }
         public string MintSecret { get; }
+        /// <summary>Slice 0.8c (O-93): re-resolve this record's room the way an avatar's provision would, make sure it
+        /// EXISTS, and move the record if the parcel's channel changed. Returns the room, or null when it could not be
+        /// ensured (then the recorded room is used as it stands). Null hook = pre-0.8c behaviour.</summary>
+        public Func<VoiceConnectorRecord, int?> ResolveAndEnsureRoom { get; }
 
-        public Source(Func<IEnumerable<VoiceConnectorRecord>> pRecords, bool pMintEnabled, string pMintSecret)
+        public Source(Func<IEnumerable<VoiceConnectorRecord>> pRecords, bool pMintEnabled, string pMintSecret,
+            Func<VoiceConnectorRecord, int?> pResolveAndEnsureRoom = null)
         {
             Records = pRecords;
             MintEnabled = pMintEnabled;
             MintSecret = pMintSecret ?? string.Empty;
+            ResolveAndEnsureRoom = pResolveAndEnsureRoom;
         }
     }
 
@@ -163,7 +169,11 @@ public sealed class VoiceConnectorJoinCapEndpoint
             return NotFound;
 
         // Authenticated from here on.
-        int room = record.Room.Value;
+        // Slice 0.8c (O-93): the room is re-resolved and ensured to exist on EVERY fetch, before minting, so a
+        // capability never names a room the mixer does not have and never names the estate room for a connector
+        // standing on a parcel with its own channel. Idempotent: an existing room is reused.
+        int? ensured = source.ResolveAndEnsureRoom?.Invoke(record);
+        int room = ensured ?? record.Room.Value;
         (string epoch, uint generation) = JoinCapabilityAuthority.Resolve(room);
         long now = m_nowUnix();
         string capability = source.MintEnabled

@@ -328,6 +328,117 @@ namespace osWebRtcVoice.Tests
                 "the request-time 404 stays");
         }
 
+        // ---- slice 0.8c (O-93): the room is resolved like an avatar's and ensured to exist ----
+
+        private static LandData Land(int localId, bool estateChannel)
+        {
+            var land = new LandData { LocalID = localId };
+            if (estateChannel)
+                land.Flags |= (uint)ParcelFlags.UseEstateVoiceChan;
+            return land;
+        }
+
+        /// T1: a connector on a parcel that runs its OWN voice channel records that parcel's room; on an
+        /// estate-channel parcel it records the same number as before 0.8c.
+        [Test]
+        public void T1_TheRecordedRoomIsTheOneAnAvatarAtThatPositionWouldGet()
+        {
+            UUID region = new UUID("c44606b1-43e1-45fb-8ae8-201545dc2f6a");
+            int estateRoom = JanusAudioBridge.CalcRoomNumber(string.Empty, region.ToString(), "local",
+                JanusAudioBridge.REGION_ROOM_ID, string.Empty);
+            int parcelRoom = JanusAudioBridge.CalcRoomNumber(string.Empty, region.ToString(), "local", 1, string.Empty);
+
+            Assert.That(ConnectorRoomResolver.RoomFor(region, Land(1, estateChannel: false)), Is.EqualTo(parcelRoom),
+                "an own-channel parcel: the parcel's own room, the one an avatar standing there is provisioned into");
+            Assert.That(ConnectorRoomResolver.RoomFor(region, Land(1, estateChannel: true)), Is.EqualTo(estateRoom),
+                "an estate-channel parcel: the estate room, exactly the number 0.8b recorded");
+            Assert.That(ConnectorRoomResolver.RoomFor(region, null), Is.EqualTo(estateRoom),
+                "no parcel at all: the estate channel, as the provisioning path also treats it");
+            Assert.That(ConnectorRoomResolver.ParcelLocalIdFor(Land(7, estateChannel: false)), Is.EqualTo(7));
+            Assert.That(ConnectorRoomResolver.ParcelLocalIdFor(Land(7, estateChannel: true)),
+                Is.EqualTo(JanusAudioBridge.REGION_ROOM_ID));
+            Assert.That(parcelRoom, Is.Not.EqualTo(estateRoom), "the two rooms really are different numbers");
+        }
+
+        /// T2: a capability fetch ensures the room exists BEFORE minting, and a second fetch with the room already
+        /// present ensures again idempotently without creating anything new.
+        [Test]
+        public void T2_AFetchEnsuresTheRoomBeforeMinting_AndASecondFetchCreatesNothing()
+        {
+            StartServer();
+            VoiceConnectorRecord r = Record();
+            var ensured = new List<int>();
+            var created = new HashSet<int>();
+            int? Ensure(VoiceConnectorRecord rec)
+            {
+                ensured.Add(Room);
+                created.Add(Room);       // the real seam coalesces: a live room is reused, never re-created
+                return Room;
+            }
+            var ep = Endpoint(m_server);
+            ep.Attach(new VoiceConnectorJoinCapEndpoint.Source(() => new[] { r }, true, MintKey, Ensure));
+
+            var a = Post("Recorder", Secret);
+            Assert.That(a.Status, Is.EqualTo(200));
+            Assert.That(ensured, Has.Count.EqualTo(1), "the room was ensured on the fetch");
+            string[] f = VerifyLikeTheMixer(((OSDMap)OSDParser.DeserializeJson(Encoding.UTF8.GetString(a.Body)))["join_cap"].AsString(), MintKey);
+            Assert.That(int.Parse(f[2]), Is.EqualTo(Room), "and the capability names that room");
+
+            var b = Post("Recorder", Secret);
+            Assert.That(b.Status, Is.EqualTo(200));
+            Assert.That(ensured, Has.Count.EqualTo(2), "every fetch ensures");
+            Assert.That(created, Has.Count.EqualTo(1), "but only one room was ever needed");
+        }
+
+        /// T5 (the endpoint half): the parcel's channel changes between two fetches, so the record MOVES and the
+        /// capability names the new room.
+        [Test]
+        public void T5_WhenTheParcelChannelChanges_TheRecordMovesAndTheCapabilityFollows()
+        {
+            StartServer();
+            VoiceConnectorRecord r = Record();
+            int current = Room;
+            int? Ensure(VoiceConnectorRecord rec)
+            {
+                if (rec.Room != current)
+                    rec.Room = current;   // the module moves the record, as a re-provision would
+                return current;
+            }
+            var ep = Endpoint(m_server);
+            ep.Attach(new VoiceConnectorJoinCapEndpoint.Source(() => new[] { r }, true, MintKey, Ensure));
+
+            string[] first = VerifyLikeTheMixer(((OSDMap)OSDParser.DeserializeJson(
+                Encoding.UTF8.GetString(Post("Recorder", Secret).Body)))["join_cap"].AsString(), MintKey);
+            Assert.That(int.Parse(first[2]), Is.EqualTo(Room));
+
+            current = 1966197062;   // the parcel now runs its own channel
+            var body = (OSDMap)OSDParser.DeserializeJson(Encoding.UTF8.GetString(Post("Recorder", Secret).Body));
+            Assert.That(body["room"].AsInteger(), Is.EqualTo(current), "the grant carries the new room");
+            string[] second = VerifyLikeTheMixer(body["join_cap"].AsString(), MintKey);
+            Assert.That(int.Parse(second[2]), Is.EqualTo(current), "and so does the capability");
+            Assert.That(r.Room, Is.EqualTo(current), "the record moved with it");
+        }
+
+        /// T7: after Unregister nothing more is ensured or minted for that record.
+        [Test]
+        public void T7_AfterUnregister_NothingIsEnsuredOrMintedForThatRecord()
+        {
+            StartServer();
+            VoiceConnectorRecord r = Record();
+            int ensures = 0;
+            var ep = Endpoint(m_server);
+            ep.Attach(new VoiceConnectorJoinCapEndpoint.Source(() => new[] { r }, true, MintKey,
+                rec => { ensures++; return Room; }));
+            Assert.That(Post("Recorder", Secret).Status, Is.EqualTo(200));
+            Assert.That(ensures, Is.EqualTo(1));
+
+            VoiceConnectorRegistrar.Unregister(r, _ => { }, null);
+            var after = Post("Recorder", Secret);
+            Assert.That(after.Status, Is.EqualTo(404), "an inactive record is not served");
+            Assert.That(after.Body, Is.Empty);
+            Assert.That(ensures, Is.EqualTo(1), "and nothing was ensured for it after Unregister");
+        }
+
         [Test] public void U1_SecretUnset_NoHandlerRegistered() => FlowU1();
         [Test] public void U2_SecretUnder32Chars_Warns_NoHandler() => FlowU2();
         [Test] public void U3_WrongBearer_UnknownName_InactiveRecord_AllTheSame404() => FlowU3();
