@@ -46,6 +46,7 @@ namespace osWebRtcVoice
         private IEstateModule m_estateModule;
         private VisibilityBatchSender m_sender;   // built in StartLoop from the injected sink
         private readonly AgentRoomTable m_rooms = new AgentRoomTable();   // S2: agent -> joined mixer room (newest wins)
+        private readonly FeederWorldFromScene m_world;                   // 0.8c2: the snapshot's parcel-local-ids
         private readonly bool m_armingEnabled;    // slice 0.2: [WebRtcVoice] VisibilityArmingEnabled (default false)
         private VisAuthority m_authority;         // slice 0.2: one per StartLoop, so a new epoch per feeder start
 
@@ -66,18 +67,35 @@ namespace osWebRtcVoice
             // Pass the moderation store to the adapter so ToParcelView can populate the source-side
             // moderation predicate. Moderation is an auto-property initialiser, so it is already set
             // before this constructor body runs.
-            m_feeder = new VoiceStateFeeder(new FeederWorldFromScene(scene, Moderation), EstateRoomPlaceholder, OnDerivationError);
+            m_world = new FeederWorldFromScene(scene, Moderation);
+            m_feeder = new VoiceStateFeeder(m_world, EstateRoomPlaceholder, OnDerivationError);
             m_feeder.BatchProduced += OnBatch;
             // S2: the resolver the sink consumes (S3b). Null = no record; the SINK maps that to the
             // estate room (OQ4, one policy for listeners and sources) — this service never guesses.
             RoomOf = m_rooms.Resolve;
+            // Slice 0.8c2 (O-92): "resolve, don't guess". The room an agent is ADDRESSED at is its recorded room, else
+            // the room an avatar at its current position would be provisioned into, else nothing at all - it is left
+            // out of the batch and the heartbeat and counted. The estate number is never used as an address merely
+            // because it is the default: on an estate-channel parcel the resolved number IS that number, and on a
+            // parcel with its own channel it is the parcel's, which is where that avatar actually is.
+            ResolveRoom = agent =>
+            {
+                int? recorded = m_rooms.Resolve(agent);
+                if (recorded.HasValue)
+                    return recorded;
+                int? localId = m_world.ParcelLocalIdOf(agent);
+                return localId.HasValue
+                    ? JanusAudioBridge.CalcRoomNumber(string.Empty, m_scene.RegionInfo.RegionID.ToString(), "local",
+                        localId.Value, string.Empty)
+                    : (int?)null;
+            };
             // S3b: hand it to the sink HERE. The sink was constructed before this service
             // (WebRtcVoiceRegionModule.cs:174-176), so the resolver cannot be a ctor argument;
             // this assignment closes the window before Start() lets any tick emit. Concrete
             // type on purpose: IPeerCtlBatchSink stays a pure transport seam, so a sink that is
             // not the Janus one (a test double) needs no room knowledge at all.
             if (m_sink is JanusPeerCtlBatchSink janusSink)
-                janusSink.RoomOf = RoomOf;
+                janusSink.RoomOf = ResolveRoom;   // 0.8c2: the sink addresses what is resolved, never a default
         }
 
         /// The produced feed — the boundary the later Janus sender will consume.
@@ -90,6 +108,10 @@ namespace osWebRtcVoice
         /// IPeerCtlBatchSink stays a pure transport seam, and a test double has no counters to show.
         /// Read-only by contract: nothing may mutate the sink through this.
         public JanusPeerCtlBatchSink JanusSink => m_sink as JanusPeerCtlBatchSink;
+
+        /// <summary>Slice 0.8c2 (O-92): how many agents the last arming pass could not place, and so left out of the
+        /// send and the heartbeat entirely. Read by the console reader; zero on a healthy region.</summary>
+        public int Unplaced => m_sender?.Unplaced ?? 0;
 
         /// Sticky per-parcel voice-moderation state (slice 1, in-memory / NON-PERSISTENT). Written
         /// by the region module's SpatialVoiceModerationRequest CAP handler via this per-region
@@ -127,14 +149,12 @@ namespace osWebRtcVoice
             // Slice 0.2: with arming enabled, a NEW authority (and so a new room_epoch, design §1.1) for every feeder
             // start. With it disabled, nothing below is built and the sender takes its pre-0.2 paths.
             VisAuthority authority = null;
-            Func<UUID, int> resolveRoom = null;
+            Func<UUID, int?> resolveRoom = null;
             if (m_armingEnabled && m_emitEnabled && m_sink is JanusPeerCtlBatchSink armingSink)
             {
                 authority = new VisAuthority(VisAuthority.NewEpoch(), m_scene.RegionInfo.RegionName);
                 armingSink.Authority = authority;
-                int fallbackRoom = armingSink.FallbackRoom;
-                Func<UUID, int?> roomOf = RoomOf;
-                resolveRoom = agent => roomOf(agent) ?? fallbackRoom;
+                resolveRoom = ResolveRoom;
                 m_authority = authority;
             }
             m_sender = new VisibilityBatchSender(m_feeder, m_sink, m_emitEnabled,
@@ -168,6 +188,10 @@ namespace osWebRtcVoice
         /// (OQ4 / §7 "one policy for a missing room record"). Newest provision wins (OQ7).
         public Func<UUID, int?> RoomOf { get; }
 
+        /// <summary>Slice 0.8c2 (O-92): the room an agent is ADDRESSED at - its record, else the room its current parcel
+        /// would provision it into, else null for "cannot be placed", which means omitted and counted.</summary>
+        public Func<UUID, int?> ResolveRoom { get; }
+
         /// Forward a WebRTC provisioning result for a listener. If the result carried the joined
         /// room (the success map, S1) record it; a failure or logout map has no room, so the caller
         /// passes null and the record is left untouched. Then hand the agent to the sender's
@@ -176,13 +200,23 @@ namespace osWebRtcVoice
         public void OnListenerProvisioned(UUID listener, int? room)
         {
             if (room.HasValue)
+            {
                 m_rooms.Record(listener, room.Value);
+                // Slice 0.8c2 (ruling C): a viewer provisioned INTO this room, which is proof it exists. Every
+                // listener backing off for it may arm on the next tick.
+                RoomExists(room.Value);
+            }
             m_sender?.OnListenerProvisioned(listener);
         }
 
         /// Pre-S2 overload: no room information. Delegates with null, so the record is untouched.
         public void OnListenerProvisioned(UUID listener)
             => OnListenerProvisioned(listener, null);
+
+        /// <summary>Slice 0.8c2 (ruling C): something proved this room exists - a connector's capability fetch ensured
+        /// it, a viewer provisioned into it, or a batch to it applied. Clears that room's unknown_room backoff so
+        /// arming goes out on the very next tick. Safe before the loop starts (no authority yet: nothing to clear).</summary>
+        public void RoomExists(int room) => m_authority?.RoomExists(room);
 
         public void Stop()
         {

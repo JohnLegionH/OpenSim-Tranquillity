@@ -8,6 +8,13 @@
  * one room per request. Sibling of that serializer: dependency-free beyond OpenMetaverse - no Scene,
  * no Janus, no OSD, no I/O - and directly unit-testable.
  *
+ * Slice 0.8c2 (O-92) CHANGED THE POLICY FOR A MISSING ANSWER. roomOf now answers "the agent's record, else the room
+ * the agent's own parcel would provision it into", so a null is no longer "not recorded yet" - it is "this sim cannot
+ * place this agent". Such an agent is OMITTED from every column and every room, and counted. It is NOT addressed at
+ * the estate room: that number is a real room in every region, so the old policy quietly wrote live exclusion and mute
+ * state into a room nobody had asked for, and on an own-channel parcel into the WRONG one. What follows describes the
+ * pre-0.8c2 policy where it says record ?? estateRoom; read it as record ?? resolved ?? omitted.
+ *
  * ONE policy for a missing record, both roles: roomOf(agent) = record ?? estateRoom. A source with
  * no record is NOT dropped; it is an estate-room source, kept for estate-room listeners and filtered
  * out for per-parcel listeners. The asymmetry OQ2 first drafted (drop unrecorded sources) is
@@ -78,7 +85,8 @@ namespace osWebRtcVoice
         /// counters read the full population, which is the honest reading of an unwired or
         /// fully-skewed deployment and reproduces today's single-room behaviour rather than throwing
         /// on the send path. The counters are what make that state loud.</param>
-        /// <param name="estateRoom">The room a missing record falls back to, for BOTH roles.</param>
+        /// <param name="estateRoom">Slice 0.8c2: NO LONGER AN ADDRESS. Nothing is bucketed here any more; the
+        /// parameter is kept because the sink passes its region room and the callers' shape is unchanged.</param>
         public static PeerCtlBatchPartition Partition(
             IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>> excl,
             Func<UUID, int?> roomOf,
@@ -103,7 +111,7 @@ namespace osWebRtcVoice
 
             foreach (KeyValuePair<UUID, IReadOnlyCollection<UUID>> kv in excl)
             {
-                int lr = Resolve(kv.Key, roomOf, estateRoom, resolved, noRecord);
+                int lr = Resolve(kv.Key, roomOf, resolved, noRecord);
                 Track(lr, ref soleRoom, ref haveSoleRoom, ref manyRooms);
                 if (noRecord.Contains(kv.Key))
                     fallbackListeners++;
@@ -114,7 +122,7 @@ namespace osWebRtcVoice
                 {
                     if (!seenSources.Add(s))
                         continue;                          // distinct sources only - a source named
-                    int sr = Resolve(s, roomOf, estateRoom, resolved, noRecord);  // in twenty columns
+                    int sr = Resolve(s, roomOf, resolved, noRecord);              // in twenty columns
                     Track(sr, ref soleRoom, ref haveSoleRoom, ref manyRooms);     // is ONE agent
                     if (noRecord.Contains(s))
                         fallbackSources++;
@@ -124,7 +132,7 @@ namespace osWebRtcVoice
             // Fast path: one room holds every listener AND every source, so no column can lose a
             // source and the input map is already the answer. Hand it back as-is - no copy, and the
             // all-unrecorded skew state is byte-for-byte what a pre-S3 sink sent.
-            if (!manyRooms)
+            if (!manyRooms && noRecord.Count == 0 && haveSoleRoom)
             {
                 var one = new Dictionary<int, IReadOnlyDictionary<UUID, IReadOnlyCollection<UUID>>>(1)
                 {
@@ -138,6 +146,8 @@ namespace osWebRtcVoice
             foreach (KeyValuePair<UUID, IReadOnlyCollection<UUID>> kv in excl)
             {
                 int lr = resolved[kv.Key];
+                if (lr == Unplaced)
+                    continue;   // 0.8c2: omitted, and already counted in fallbackListeners
                 if (!work.TryGetValue(lr, out Dictionary<UUID, IReadOnlyCollection<UUID>> bucket))
                 {
                     bucket = new Dictionary<UUID, IReadOnlyCollection<UUID>>();
@@ -163,14 +173,19 @@ namespace osWebRtcVoice
             return new PeerCtlBatchPartition(rooms, fallbackListeners, fallbackSources);
         }
 
-        private static int Resolve(UUID agent, Func<UUID, int?> roomOf, int estateRoom,
+        /// <summary>Slice 0.8c2 (O-92): what an agent with no answer from the resolver is bucketed as. The resolver
+        /// now answers with the agent's RECORD, else the room its parcel would provision it into, so a null means the
+        /// sim genuinely cannot place it - and an agent it cannot place is one whose room it must not guess.</summary>
+        internal const int Unplaced = int.MinValue;
+
+        private static int Resolve(UUID agent, Func<UUID, int?> roomOf,
                                    Dictionary<UUID, int> resolved, HashSet<UUID> noRecord)
         {
             if (resolved.TryGetValue(agent, out int cached))
                 return cached;
 
             int? record = roomOf?.Invoke(agent);
-            int room = record ?? estateRoom;
+            int room = record ?? Unplaced;
             if (record == null)
                 noRecord.Add(agent);
             resolved[agent] = room;
@@ -179,6 +194,8 @@ namespace osWebRtcVoice
 
         private static void Track(int room, ref int soleRoom, ref bool haveSoleRoom, ref bool manyRooms)
         {
+            if (room == Unplaced)
+                return;   // 0.8c2: an agent nobody can place is not a room, so it cannot be THE room either
             if (!haveSoleRoom)
             {
                 soleRoom = room;

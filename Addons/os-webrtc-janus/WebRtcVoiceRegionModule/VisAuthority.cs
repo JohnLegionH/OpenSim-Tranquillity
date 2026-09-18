@@ -88,6 +88,7 @@ namespace osWebRtcVoice
         private readonly Dictionary<UUID, long> _retryAt = new Dictionary<UUID, long>();
         private readonly Dictionary<UUID, int> _retryBackoffMs = new Dictionary<UUID, int>();   // 0.8c: doubling, per listener
         private readonly HashSet<int> _roomsBackingOff = new HashSet<int>();                    // 0.8c: for one WARN / one INFO
+        private readonly Dictionary<UUID, int> _roomOfListener = new Dictionary<UUID, int>();   // 0.8c2: where a backoff came from
         private readonly Dictionary<UUID, long> _rearm = new Dictionary<UUID, long>();   // listener -> requested at
         private bool _rearmAll;
         private string _mixerInstance;
@@ -204,7 +205,7 @@ namespace osWebRtcVoice
 
         /// <summary>Forget arming for agents that left the population or moved room (§2 item 5 re-arms them at the
         /// new room), and drop re-arm requests that never met an agent.</summary>
-        public void PruneTo(IReadOnlyCollection<UUID> population, Func<UUID, int> resolveRoom)
+        public void PruneTo(IReadOnlyCollection<UUID> population, Func<UUID, int?> resolveRoom)
         {
             var present = new HashSet<UUID>(population);
             lock (_lock)
@@ -213,7 +214,8 @@ namespace osWebRtcVoice
                 {
                     List<UUID> gone = null;
                     foreach (UUID l in room.Value.Keys)
-                        if (!present.Contains(l) || resolveRoom(l) != room.Key)
+                        if (!present.Contains(l) || resolveRoom(l) != room.Key)   // 0.8c2: null != room.Key, so an
+                                                                                   // unplaced agent is forgotten too
                             (gone ??= new List<UUID>()).Add(l);
                     if (gone != null)
                         foreach (UUID l in gone)
@@ -374,12 +376,40 @@ namespace osWebRtcVoice
                 delay = previous <= 0 ? UnknownRoomRetryMs : Math.Min(previous * 2, UnknownRoomRetryMaxMs);
                 _retryBackoffMs[l] = delay;
                 _retryAt[l] = now + delay;
+                _roomOfListener[l] = room;   // 0.8c2: so RoomExists(room) can release exactly these listeners
                 n++;
             }
             if (_roomsBackingOff.Add(room))
                 m_log.LogWarning("{LogHeader} region {Region} room {Room}: {Why}; {Count} listener(s) not armed. Retrying in " +
                     "{Retry} ms, doubling to {Max} ms while it persists, or at the listener's next provision. This is logged " +
                     "once per episode, not once per attempt", LogHeader, _region, room, why, n, delay, UnknownRoomRetryMaxMs);
+        }
+
+        /// <summary>Slice 0.8c2 (ruling C): something proved this room EXISTS - a capability fetch ensured it, a viewer
+        /// provisioned into it, or a batch to it applied. Every listener backing off for it may arm on the very next
+        /// tick, and the next failure logs afresh. Idempotent and cheap: a room nobody is backing off for costs a lock
+        /// and a lookup.</summary>
+        public void RoomExists(int room)
+        {
+            lock (_lock)
+            {
+                if (_armed.TryGetValue(room, out Dictionary<UUID, uint> armed))
+                    foreach (UUID l in new List<UUID>(armed.Keys))
+                    {
+                        _retryAt.Remove(l);
+                        _retryBackoffMs.Remove(l);
+                    }
+                // A listener backing off is NOT in _armed for that room (BackOffLocked removed it), so the retry state
+                // is cleared for every listener whose backoff this room's absence caused. The backoff is per listener
+                // (F2), so without the room key it is cleared by the room's own record of who it addressed.
+                foreach (UUID l in new List<UUID>(_retryAt.Keys))
+                    if (_roomOfListener.TryGetValue(l, out int r) && r == room)
+                    {
+                        _retryAt.Remove(l);
+                        _retryBackoffMs.Remove(l);
+                    }
+                ClearRoomBackoffLocked(room);
+            }
         }
 
         /// <summary>Slice 0.8c: note that a room answered again, so the next failure logs afresh. Called on any applied
@@ -425,14 +455,19 @@ namespace osWebRtcVoice
 
         /// <summary>One peer_ctl_heartbeat for every room the population resolves to, each listing every listener
         /// addressed there with its generation (0 = not armed), empty columns included.</summary>
-        public OSDMap BuildHeartbeat(IReadOnlyCollection<UUID> population, Func<UUID, int> resolveRoom, bool stopping)
+        public OSDMap BuildHeartbeat(IReadOnlyCollection<UUID> population, Func<UUID, int?> resolveRoom, bool stopping)
         {
             var byRoom = new SortedDictionary<int, List<UUID>>();
             foreach (UUID l in population)
             {
-                int room = resolveRoom(l);
-                if (!byRoom.TryGetValue(room, out List<UUID> list))
-                    byRoom[room] = list = new List<UUID>();
+                // Slice 0.8c2 (O-92): an agent with no record and no resolved parcel is named in NO room's entry. A
+                // heartbeat that named it at a guessed room would be claiming authority over a room it cannot place it
+                // in; omission here is not a disarm, because it was never armed anywhere.
+                int? room = resolveRoom(l);
+                if (room is null)
+                    continue;
+                if (!byRoom.TryGetValue(room.Value, out List<UUID> list))
+                    byRoom[room.Value] = list = new List<UUID>();
                 list.Add(l);
             }
             var rooms = new OSDMap();

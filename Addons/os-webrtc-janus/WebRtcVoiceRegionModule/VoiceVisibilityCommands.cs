@@ -47,9 +47,10 @@ namespace osWebRtcVoice
             MainConsole.Instance.Commands.AddCommand("Voice", false, "show voice visibility",
                 "show voice visibility",
                 "Show the peer_ctl_batch sink's counters for the most recent send, per region",
-                "Every figure describes the MOST RECENT send only, except FallbackRoom which is fixed at start.\n"
-                    + "Fallback listeners/sources > 0 means an agent had no room record and was addressed at the\n"
-                    + "estate/local fallback room instead of its own (OQ4).\n"
+                "Every figure describes the MOST RECENT send only.\n"
+                    + "Slice 0.8c2 (O-92): unplaced listeners/sources > 0 means the sim could not place an agent -\n"
+                    + "no room record AND no parcel resolved for it - so it was LEFT OUT of the send rather than\n"
+                    + "addressed at the estate room. Persistent non-zero is a bug to chase, not a fallback working.\n"
                     + "Of the inner-reply stats, skipped > 0 is real loss and anomalies > 0 is protocol drift;\n"
                     + "deferred > 0 is normal (the mixer replays those at join).\n"
                     + "Reports the region selected with \"change region\", or every region at the root prompt.",
@@ -80,17 +81,32 @@ namespace osWebRtcVoice
                     continue;
                 }
 
-                PeerCtlSendStats s = sink.LastSendStats;
-                MainConsole.Instance.Output("Region \"{0}\": fallback room {1}, last send addressed {2} room(s)",
-                    region, sink.FallbackRoom, sink.LastSendRooms);
-                MainConsole.Instance.Output(
-                    "  fallback (no room record)  excl listeners {0}, excl sources {1}, mute listeners {2}, mute sources {3}",
-                    sink.LastSendFallbackListeners, sink.LastSendFallbackSources,
-                    sink.LastSendMuteFallbackListeners, sink.LastSendMuteFallbackSources);
-                MainConsole.Instance.Output(
-                    "  inner replies              parsed {0}, entries {1}, mute entries {2}, deferred {3} (normal), skipped {4} (loss), anomalies {5} (drift)",
-                    s.RepliesParsed, s.Entries, s.MuteEntries, s.DeferredListeners, s.Skipped, s.Anomalies);
+                foreach (string line in Format(region, sink, kv.Value.Unplaced))
+                    MainConsole.Instance.Output(line);
             }
+        }
+
+        /// <summary>The report for one region, as lines. Pure and public so the contract is testable: slice 0.8c2
+        /// (O-92) requires the reader to name the rooms the send RESOLVED and count what it could not place, and to
+        /// present the estate room as the region's own number rather than as anybody's address.</summary>
+        public static IReadOnlyList<string> Format(string region, JanusPeerCtlBatchSink sink, int unplaced)
+        {
+            PeerCtlSendStats s = sink.LastSendStats;
+            IReadOnlyList<int> rooms = sink.LastSendRoomNumbers;
+            string roomList = rooms.Count == 0 ? "none" : string.Join(", ", rooms);
+            return new List<string>
+            {
+                string.Format("Region \"{0}\": last send addressed {1} room(s): {2}; {3} agent(s) unplaced and "
+                    + "omitted (estate room {4})",
+                    region, sink.LastSendRooms, roomList, unplaced, sink.FallbackRoom),
+                string.Format(
+                    "  unplaced in the send       excl listeners {0}, excl sources {1}, mute listeners {2}, mute sources {3}",
+                    sink.LastSendFallbackListeners, sink.LastSendFallbackSources,
+                    sink.LastSendMuteFallbackListeners, sink.LastSendMuteFallbackSources),
+                string.Format(
+                    "  inner replies              parsed {0}, entries {1}, mute entries {2}, deferred {3} (normal), skipped {4} (loss), anomalies {5} (drift)",
+                    s.RepliesParsed, s.Entries, s.MuteEntries, s.DeferredListeners, s.Skipped, s.Anomalies),
+            };
         }
 
         // --- Helpers --------------------------------------------------------------------------

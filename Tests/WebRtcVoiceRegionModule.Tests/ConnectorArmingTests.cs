@@ -101,6 +101,13 @@ namespace osWebRtcVoice.Tests
             SceneHelpers.SetupSceneModules(rig.Scene, lmm);
             ILandObject lo = new LandObject(Owner, false, rig.Scene);
             lo.SetLandBitmap(lo.GetSquareLandBitmap(0, 0, (int)Constants.RegionSize, (int)Constants.RegionSize));
+            // Slice 0.8c2 (O-92): these tests are about a connector on the ESTATE channel - every assertion below
+            // names rig.EstateRoom - so the parcel has to say so. Since 0.8c the sim resolves a connector's room from
+            // its parcel (ConnectorRoomResolver) instead of always recording the estate room, and since 0.8c2 it
+            // resolves an agent with no room record the same way; on a parcel WITHOUT this flag both now answer with
+            // the parcel's own room, which is correct and is covered by ConnectorRoomResolverTests T1 and
+            // RoomAddressingTests O1. Without the flag T3's fresh-service case would be asserting the old guess.
+            lo.LandData.Flags |= (uint)ParcelFlags.UseEstateVoiceChan;
             rig.Parcel = lmm.AddLandObject(lo);
             rig.Scene.Permissions.OnIsAdministrator += _ => false;   // an empty test scene is otherwise god-mode for all
             rig.RegionId = rig.Scene.RegionInfo.RegionID;

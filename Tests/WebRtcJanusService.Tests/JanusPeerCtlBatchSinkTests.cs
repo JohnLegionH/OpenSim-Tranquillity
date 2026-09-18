@@ -84,6 +84,11 @@ namespace osWebRtcVoice.Tests
             }
         }
 
+        /// <summary>Slice 0.8c2 (O-92): "every agent stands on an estate-channel parcel", which is what the resolver
+        /// answers for them - and the same number the pre-0.8c2 default applied. Tests whose subject is NOT placement
+        /// use this so they keep testing what they test.</summary>
+        private static Func<UUID, int?> AllEstate(JanusPeerCtlBatchSink sink) => _ => sink.FallbackRoom;
+
         private static JanusPeerCtlBatchSink NewSink(Recorder rec, Func<UUID, int?> roomOf,
                                                      int concurrency = JanusPeerCtlBatchSink.DefaultRoomSendConcurrency)
         {
@@ -100,7 +105,8 @@ namespace osWebRtcVoice.Tests
         {
             var rec = new Recorder();
             var excl = Excl((1, new[] { 2, 3 }), (2, new[] { 1 }));
-            using var sink = NewSink(rec, null);   // no resolver at all: nothing is recorded
+            using var sink = NewSink(rec, null);
+            sink.RoomOf = AllEstate(sink);   // 0.8c2: everyone resolves to the estate room (an estate-channel parcel)
             int fallback = sink.FallbackRoom;
 
             PeerCtlSendResult r = await sink.SendAsync(VisOp.Replace, excl);
@@ -155,29 +161,32 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
-        public async Task SendAsync_MuteOnly_UnrecordedListener_CountsMuteFallback()
+        public async Task SendAsync_MuteOnly_UnplaceableListener_IsOmitted_AndCountedOnTheMuteCompanion()
         {
+            // Slice 0.8c2 (O-92): the mute channel gets the same treatment as the exclusion channel. A listener the
+            // sim cannot place used to have its MUTE stamped on the estate room; a mute is live moderation state, so
+            // sending it to a guessed room is exactly the harm this slice removes. It is omitted and counted instead.
             var rec = new Recorder();
-            using var sink = NewSink(rec, null);   // no resolver -> the mute listener falls back
-            int fallback = sink.FallbackRoom;
+            using var sink = NewSink(rec, null);   // 0.8c2: no resolver -> the mute listener cannot be placed
 
             await sink.SendAsync(VisOp.Add, Excl(), Excl((1, new[] { 2 })));
 
-            Assert.That(rec.Sent.Count, Is.EqualTo(1));
-            Assert.That(rec.Sent[0]["room"].AsInteger(), Is.EqualTo(fallback));
-            Assert.That(sink.LastSendRooms, Is.EqualTo(1), "the fallback room is addressed and counted");
+            Assert.That(rec.Sent, Is.Empty, "no room is addressed, so nothing goes on the wire");
+            Assert.That(sink.LastSendRooms, Is.Zero);
             Assert.That(sink.LastSendMuteFallbackListeners, Is.EqualTo(1),
-                "the unrecorded mute listener is counted on the mute-fallback companion");
+                "the unplaceable mute listener is counted on the mute-fallback companion");
             Assert.That(sink.LastSendFallbackListeners, Is.Zero, "the excl channel had no listeners");
         }
 
         // ---- the null-resolver window (construction order) ----
 
         [Test]
-        public async Task SendAsync_BeforeTheServiceAssignsTheResolver_FallsBackToTheEstateRoom_AndCountsEveryone()
+        public async Task SendAsync_BeforeTheServiceAssignsTheResolver_SendsNothing_AndCountsEveryone()
         {
-            // The sink is built before VoiceVisibilityService exists, so RoomOf is null until that
-            // ctor runs. A send in that window must behave exactly as it did before S3b, loudly.
+            // The sink is built before VoiceVisibilityService exists, so RoomOf is null until that ctor runs. Slice
+            // 0.8c2 (O-92): a send in that window must not throw and must not guess. Before 0.8c2 it addressed the
+            // estate room, which is a real room number in every region - the send looked successful and put live
+            // policy somewhere nobody asked for. It now sends nothing, and both counters shout.
             var rec = new Recorder();
             var sink = new JanusPeerCtlBatchSink("http://localhost/voiceAdmin", "secret", TimeSpan.FromSeconds(5),
                 Id(999), "TestRegion", 4, rec.SendAsync);
@@ -187,9 +196,9 @@ namespace osWebRtcVoice.Tests
 
                 PeerCtlSendResult r = await sink.SendAsync(VisOp.Replace, Excl((1, new[] { 2, 3 })));
 
-                Assert.That(r, Is.EqualTo(PeerCtlSendResult.Ok));
-                Assert.That(rec.Rooms(), Is.EqualTo(new[] { sink.FallbackRoom }));
-                Assert.That(sink.LastSendRooms, Is.EqualTo(1));
+                Assert.That(r, Is.EqualTo(PeerCtlSendResult.Ok), "an unwired sink degrades quietly, it does not fail");
+                Assert.That(rec.Sent, Is.Empty, "nothing on the wire, least of all to the estate room");
+                Assert.That(sink.LastSendRooms, Is.Zero);
                 Assert.That(sink.LastSendFallbackListeners, Is.EqualTo(1));
                 Assert.That(sink.LastSendFallbackSources, Is.EqualTo(2));
             }
@@ -201,13 +210,13 @@ namespace osWebRtcVoice.Tests
             var rec = new Recorder();
             using var sink = NewSink(rec, null);
             await sink.SendAsync(VisOp.Add, Excl((1, new[] { 2 })));
-            Assert.That(rec.Rooms(), Is.EqualTo(new[] { sink.FallbackRoom }));
+            Assert.That(rec.Sent, Is.Empty, "0.8c2: before the resolver is assigned there is no address, so no send");
 
             sink.RoomOf = Resolver((1, 700), (2, 700));
             await sink.SendAsync(VisOp.Add, Excl((1, new[] { 2 })));
 
-            Assert.That(rec.Sent.Count, Is.EqualTo(2));
-            Assert.That(rec.Sent[1]["room"].AsInteger(), Is.EqualTo(700));
+            Assert.That(rec.Sent.Count, Is.EqualTo(1));
+            Assert.That(rec.Sent[0]["room"].AsInteger(), Is.EqualTo(700));
         }
 
         // ---- partitioning and filtering, end to end through the sink ----
@@ -256,16 +265,17 @@ namespace osWebRtcVoice.Tests
             //
             // The bad source must land in its OWN listener's room to reach the serializer at all:
             // same-room filtering drops a cross-room source first, so a zero UUID in another room is
-            // filtered out rather than caught. Listener 3 and the zero source both have no record,
-            // so both resolve to the fallback room while listener 1 sits in room 100 - two rooms,
-            // one of which cannot be built.
+            // filtered out rather than caught. Listener 3 and the zero source are both resolved to the
+            // estate room (0.8c2: by their parcel, not by default) while listener 1 sits in room 100 -
+            // two rooms, one of which cannot be built.
             var rec = new Recorder();
             var excl = new Dictionary<UUID, IReadOnlyCollection<UUID>>
             {
                 [Id(1)] = new List<UUID> { Id(2) },
                 [Id(3)] = new List<UUID> { UUID.Zero },   // invariant violation, in the fallback room
             };
-            using var sink = NewSink(rec, Resolver((1, 100), (2, 100)));
+            using var sink = NewSink(rec, null);
+            sink.RoomOf = a => a == Id(1) || a == Id(2) ? 100 : sink.FallbackRoom;
 
             Assert.That(async () => await sink.SendAsync(VisOp.Add, excl),
                 Throws.TypeOf<InvalidOperationException>());
@@ -338,6 +348,7 @@ namespace osWebRtcVoice.Tests
         {
             var rec = new Recorder { Reply = _ => AdminSendResult.ProtocolError };
             using var sink = NewSink(rec, null);
+            sink.RoomOf = AllEstate(sink);   // 0.8c2: this test's subject is the result, not placement
 
             Assert.That(await sink.SendAsync(VisOp.Add, Excl((1, new[] { 2 }))),
                 Is.EqualTo(PeerCtlSendResult.ProtocolError));

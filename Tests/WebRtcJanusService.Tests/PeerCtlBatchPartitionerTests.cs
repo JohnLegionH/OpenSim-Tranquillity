@@ -107,39 +107,48 @@ namespace osWebRtcVoice.Tests
         // ---- fallback: listener with no record (OQ4a) ----
 
         [Test]
-        public void Partition_ListenerWithNoRecord_GoesToEstateRoom_AndIsCounted()
+        public void Partition_ListenerTheResolverCannotPlace_IsOmittedAndCounted()
         {
-            // Listener 5 is unknown to the table; listener 1 is in room 100.
+            // Slice 0.8c2 (O-92), the contract this test used to pin the other way round: the resolver now answers
+            // "the record, else the room this agent's parcel would provision it into", so a null means the sim cannot
+            // place the agent at all. An agent it cannot place is NOT addressed at the estate number because that is
+            // the default - it is left out, and counted.
             var excl = Excl((1, new[] { 2 }), (5, new[] { 6 }));
             var roomOf = Resolver((1, 100), (2, 100), (6, 100));
 
             PeerCtlBatchPartition p = PeerCtlBatchPartitioner.Partition(excl, roomOf, EstateRoom);
 
-            Assert.That(p.Rooms.ContainsKey(EstateRoom), Is.True);
-            Assert.That(p.Rooms[EstateRoom].ContainsKey(Id(5)), Is.True);
-            Assert.That(p.FallbackListeners, Is.EqualTo(1));
+            Assert.That(p.Rooms.ContainsKey(EstateRoom), Is.False, "nothing is addressed at the estate number");
+            Assert.That(p.Rooms[100].ContainsKey(Id(5)), Is.False, "and the unplaced listener is nowhere else either");
+            Assert.That(p.FallbackListeners, Is.EqualTo(1), "it is counted, so the state is loud rather than silent");
             Assert.That(p.FallbackSources, Is.Zero, "every source here has a record");
-            // Source 6 IS recorded, in room 100, so it is filtered out of the estate listener's column.
-            Assert.That(Column(p, EstateRoom, 5).Count, Is.Zero);
         }
 
         // ---- fallback: source with no record (the resolution that supersedes OQ2's draft) ----
 
         [Test]
-        public void Partition_SourceWithNoRecord_IsEstateSource_KeptForEstateListener_FilteredForParcelListener()
+        public void Partition_SourceTheResolverCannotPlace_IsFilteredOutOfEveryColumn_AndCounted()
         {
-            // Source 9 has no record. It must NOT be dropped: it is an estate-room source, so it
-            // survives for the estate-room listener (7) and is filtered out for the room-100
-            // listener (1). That asymmetry-removal is the whole point of the resolution in §7.
+            // Slice 0.8c2: a source the sim cannot place is in no room, so it survives in no column. Before 0.8c2 it
+            // was treated as an estate-room source and kept for estate-room listeners; that was the guess this slice
+            // removes. A source resolved to the estate room by its PARCEL still behaves exactly as it did - that is
+            // the case below, where listener 7 and source 9 are both placed there.
             var excl = Excl((1, new[] { 9 }), (7, new[] { 9 }));
             var roomOf = Resolver((1, 100), (7, EstateRoom));
 
             PeerCtlBatchPartition p = PeerCtlBatchPartitioner.Partition(excl, roomOf, EstateRoom);
 
-            Assert.That(Column(p, EstateRoom, 7), Is.EquivalentTo(new[] { Id(9) }), "kept for the estate listener");
-            Assert.That(Column(p, 100, 1).Count, Is.Zero, "filtered out for the per-parcel listener");
-            Assert.That(p.FallbackSources, Is.EqualTo(1));
-            Assert.That(p.FallbackListeners, Is.Zero, "listener 7's estate room is RECORDED, not a fallback");
+            Assert.That(Column(p, EstateRoom, 7).Count, Is.Zero, "the unplaced source is in nobody's column");
+            Assert.That(Column(p, 100, 1).Count, Is.Zero);
+            Assert.That(p.FallbackSources, Is.EqualTo(1), "counted once");
+            Assert.That(p.FallbackListeners, Is.Zero, "listener 7's estate room is RECORDED, not a guess");
+
+            // The same shape with source 9 PLACED at the estate room by resolution: kept for 7, filtered for 1.
+            PeerCtlBatchPartition placed = PeerCtlBatchPartitioner.Partition(
+                excl, Resolver((1, 100), (7, EstateRoom), (9, EstateRoom)), EstateRoom);
+            Assert.That(Column(placed, EstateRoom, 7), Is.EquivalentTo(new[] { Id(9) }));
+            Assert.That(Column(placed, 100, 1).Count, Is.Zero);
+            Assert.That(placed.FallbackSources, Is.Zero);
         }
 
         [Test]
@@ -201,32 +210,31 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
-        public void Partition_NoRecordsAtAll_IsTodaysBehaviour_OneEstateBatchWithFullColumns()
+        public void Partition_NobodyCanBePlaced_SendsNothingAtAll_AndCountsEveryone()
         {
-            // The connector-topology skew state: nobody has a record. Both roles fall back to the
-            // estate room, so this is the single-room fast path - one batch, full columns, exactly
-            // what a pre-S3 sink sent. This is the no-regression guarantee, as a test.
+            // Slice 0.8c2: with no answer for anyone there is nothing to address. The old behaviour - one estate-room
+            // batch carrying everybody - was the guess that sent live policy to a room that may never have existed
+            // (O-92). The counters carry the whole population so the state is impossible to miss.
             var excl = Excl((1, new[] { 2, 3 }), (2, new[] { 1, 3 }));
 
             PeerCtlBatchPartition p = PeerCtlBatchPartitioner.Partition(excl, Resolver(), EstateRoom);
 
-            Assert.That(p.RoomCount, Is.EqualTo(1));
-            Assert.That(p.Rooms[EstateRoom], Is.SameAs(excl));
+            Assert.That(p.RoomCount, Is.Zero, "no room is addressed");
             Assert.That(p.FallbackListeners, Is.EqualTo(2));
             Assert.That(p.FallbackSources, Is.EqualTo(3), "sources 1, 2 and 3, counted once each");
         }
 
         [Test]
-        public void Partition_NullResolver_ReadsAsNoRecordsAtAll()
+        public void Partition_NullResolver_SendsNothing_AndShouts()
         {
-            // An unwired sink must not throw on the send path; it must degrade to today's behaviour
-            // with both counters shouting.
+            // An unwired sink must not throw on the send path. Slice 0.8c2: it now sends NOTHING rather than sending
+            // everything to a guessed room, and both counters shout. Until the service assigns the resolver there is
+            // no honest address for anyone.
             var excl = Excl((1, new[] { 2 }));
 
             PeerCtlBatchPartition p = PeerCtlBatchPartitioner.Partition(excl, null, EstateRoom);
 
-            Assert.That(p.RoomCount, Is.EqualTo(1));
-            Assert.That(p.Rooms[EstateRoom], Is.SameAs(excl));
+            Assert.That(p.RoomCount, Is.Zero);
             Assert.That(p.FallbackListeners, Is.EqualTo(1));
             Assert.That(p.FallbackSources, Is.EqualTo(1));
         }

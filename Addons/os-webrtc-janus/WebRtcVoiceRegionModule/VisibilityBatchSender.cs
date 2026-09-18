@@ -40,6 +40,9 @@ namespace osWebRtcVoice
         private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
         private const string LogHeader = "[VISIBILITY SENDER]";
 
+        /// <summary>Slice 0.8c2 (O-92): how many agents the last arming pass could not place, and so left out.</summary>
+        public int Unplaced => _unplaced;
+
         /// <summary>Bounded blind re-sends of a joining listener's replace — no admin membership
         /// query exists to confirm presence, so we re-send this many ticks then give up loudly.</summary>
         public const int PendingJoinMaxAttempts = 6;
@@ -87,7 +90,8 @@ namespace osWebRtcVoice
         // Slice 0.2 arming mode ([WebRtcVoice] VisibilityArmingEnabled, nonspatial-phase0-design.md §2-§3). Null
         // authority = the knob is off, and every method below takes its pre-0.2 path unchanged.
         private readonly VisAuthority _authority;
-        private readonly Func<UUID, int> _resolveRoom;   // record ?? fallback room, the sink's own policy
+        private readonly Func<UUID, int?> _resolveRoom;  // 0.8c2: record, else the resolved parcel room, else null
+        private int _unplaced;                          // 0.8c2: agents left out of the last pass, for the reader
         private long _heartbeatInFlight;                 // the heartbeat's OWN single-flight (design §3), 0 or 1
         private long _lastHeartbeatMs;
         private bool _heartbeatSent;
@@ -108,7 +112,7 @@ namespace osWebRtcVoice
         /// <param name="resolveRoom">The room each agent is addressed at (its record, else the fallback room).</param>
         public VisibilityBatchSender(IVisibilityFeed feed, IPeerCtlBatchSink sink, bool enabled,
             TimeSpan? adminTimeout = null, string region = null, Func<long> nowMs = null,
-            VisAuthority authority = null, Func<UUID, int> resolveRoom = null)
+            VisAuthority authority = null, Func<UUID, int?> resolveRoom = null)
         {
             if (authority != null && resolveRoom == null)
                 throw new ArgumentNullException(nameof(resolveRoom), "arming needs the room resolver");
@@ -247,16 +251,30 @@ namespace osWebRtcVoice
             bool snapshot = !_synced;
 
             var arm = new List<UUID>();
+            int unplaced = 0;
             foreach (UUID l in population)
             {
+                // Slice 0.8c2 (O-92): an agent the sim cannot place - no room record and no parcel resolved for it -
+                // is left OUT of the batch and the heartbeat rather than addressed at a guessed number. It is counted
+                // so the state is loud instead of silent, and it is picked up as soon as either source answers.
+                int? room = _resolveRoom(l);
+                if (room is null)
+                {
+                    unplaced++;
+                    continue;
+                }
                 // Slice 0.8c (O-93, finding F1): CanArmNow gates EVERY path, including a standing re-arm request and a
                 // snapshot. A connector NPC never leaves the population, so its re-arm request never expired and the
                 // first clause re-armed it into a missing room on every tick — 8,933 unknown_room lines at ~3.8/s in
                 // the 0.8 soak, with the authority's own backoff sitting there unread.
-                if ((snapshot || _authority.IsRearmRequested(l) || !_authority.IsArmed(_resolveRoom(l), l))
+                if ((snapshot || _authority.IsRearmRequested(l) || !_authority.IsArmed(room.Value, l))
                     && _authority.CanArmNow(l))
                     arm.Add(l);
             }
+            _unplaced = unplaced;
+            if (unplaced > 0)
+                m_log.LogDebug("{LogHeader} region {RegionName}: {Count} agent(s) not addressed this pass (no room record " +
+                    "and no parcel resolved); they are omitted, never sent to a guessed room", LogHeader, _region, unplaced);
 
             if (arm.Count > 0)
             {
@@ -320,8 +338,13 @@ namespace osWebRtcVoice
         {
             var result = new Dictionary<UUID, IReadOnlyCollection<UUID>>();
             foreach (KeyValuePair<UUID, IReadOnlyCollection<UUID>> kv in map)
-                if (!justArmed.Contains(kv.Key) && _authority.IsArmed(_resolveRoom(kv.Key), kv.Key))
+            {
+                if (justArmed.Contains(kv.Key))
+                    continue;
+                int? room = _resolveRoom(kv.Key);
+                if (room is not null && _authority.IsArmed(room.Value, kv.Key))
                     result[kv.Key] = kv.Value;
+            }
             return result;
         }
 

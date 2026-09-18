@@ -52,7 +52,10 @@ namespace osWebRtcVoice.Tests
         {
             var sink = new JanusPeerCtlBatchSink("http://localhost/voiceAdmin", "secret", TimeSpan.FromSeconds(5),
                 Id(999), "TestRegion", 4, req => Task.FromResult(sendOne(req)));
-            sink.RoomOf = roomOf;
+            // Slice 0.8c2 (O-92): with no resolver the sink now addresses nobody, so these tests - whose subject is
+            // the mixer's INNER reply, not placement - stand their agents on an estate-channel parcel, which resolves
+            // to the estate room. That is the number the pre-0.8c2 default stamped on, so every body here is unchanged.
+            sink.RoomOf = roomOf ?? (_ => sink.FallbackRoom);
             return sink;
         }
 

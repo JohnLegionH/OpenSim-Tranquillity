@@ -419,6 +419,46 @@ namespace osWebRtcVoice.Tests
             Assert.That(r.Room, Is.EqualTo(current), "the record moved with it");
         }
 
+        /// <summary>C3 (slice 0.8c2; it replaces 0.8c's T3, and it is ruling A written as a test): a connector with NO
+        /// CapabilitySecret cannot authenticate, so it never reaches the capability path, so NOTHING ever ensures its
+        /// room - the sim creates nothing on its behalf and the room simply stays unknown until a viewer provisions
+        /// into it. Arming to it is then held by the backoff, which T4 measures.
+        ///
+        /// R2b - the callback from the visibility authority back into the connector registry that would have created
+        /// a room for exactly this connector - is DROPPED, not deferred. Once join capabilities are required, a
+        /// connector with no secret cannot hold one, so it cannot join a declared room: a room created for it would
+        /// be a room nothing can enter. The fix for such a connector is to give it a CapabilitySecret, which is what
+        /// the connectors README now says.</summary>
+        [Test]
+        public void C3_AConnectorWithNoCapabilitySecret_EnsuresNothing_AndItsRoomStaysUnknown()
+        {
+            StartServer();
+            VoiceConnectorRecord noSecret = Record("Plain", secret: null);
+            int ensures = 0;
+            var ep = Endpoint(m_server);
+            ep.Attach(new VoiceConnectorJoinCapEndpoint.Source(() => new[] { noSecret }, true, MintKey,
+                rec => { ensures++; return Room; }));
+
+            Assert.That(ep.IsRegistered, Is.False,
+                "with no record holding a secret the endpoint is not even served: there is nothing to authenticate");
+            foreach (string bearer in new[] { Secret, null, "" })
+            {
+                var a = Post("Plain", bearer);
+                Assert.That(a.Status, Is.EqualTo(404), "a record with no secret is not served, whatever is presented");
+            }
+            Assert.That(ensures, Is.Zero, "and so no room was ever ensured, let alone created, for it");
+
+            // The other half of the ruling: nothing was created, so the room stays unknown - and the sim's answer to
+            // that is the backoff, not a room. (How cheap it stays over two minutes is ConnectorRoomTests T4.)
+            long clock = 10_000;
+            var auth = new VisAuthority(0x0000018f00000001UL, "c3", () => clock);
+            auth.RequestArm(Npc);
+            auth.OnBatchOutcome(Room, VisOp.Replace, auth.NextGeneration(Room), new List<UUID> { Npc }, true,
+                new JanusPeerCtlBatchSink.SlvoiceReply { Present = true, Status = "error", Reason = "unknown_room" });
+            Assert.That(auth.IsArmed(Room, Npc), Is.False, "the mixer does not have the room");
+            Assert.That(auth.CanArmNow(Npc), Is.False, "so the connector waits out a backoff rather than hammering it");
+        }
+
         /// T7: after Unregister nothing more is ensured or minted for that record.
         [Test]
         public void T7_AfterUnregister_NothingIsEnsuredOrMintedForThatRecord()

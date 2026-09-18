@@ -221,6 +221,10 @@ public class VoiceConnectorModule : INonSharedRegionModule
         if (ensured is null)
             m_log.LogWarning("{LogHeader} {Name}: could not ensure mixer room {Room} exists; the peer may have nothing to join",
                 LogHeader, pRecord.Name, room);
+        else
+            // Slice 0.8c2 (ruling C): the ensure succeeded, so the room exists now. Release the unknown_room backoff
+            // for everyone recorded there rather than making them wait out a delay the room's absence caused.
+            scene.RequestModuleInterface<VoiceVisibilityService>()?.RoomExists(ensured.Value);
         if (pRecord.Room.HasValue && pRecord.Room.Value != room)
         {
             m_log.LogInformation("{LogHeader} {Name}: room moved {Old} -> {New} (the parcel at {Position} changed its voice " +

@@ -27,6 +27,7 @@ namespace osWebRtcVoice.Tests
         }
 
         private static readonly UUID L = Id(1);
+        private static readonly UUID L2 = Id(2);   // 0.8c2 C1: a second listener in the same room
         private const int Room = 226001844;
         private const string Epoch = "0000018f00000001";
 
@@ -37,6 +38,24 @@ namespace osWebRtcVoice.Tests
             public OneAgentWorld(UUID id) { _id = id; }
             public IReadOnlyList<AgentView> SnapshotAgents()
                 => new List<AgentView> { new AgentView(_id, false, Vector3.Zero, Id(200), false) };
+            public ParcelView GetParcelAt(Vector3 p) => GetParcelByGlobalId(Id(200));
+            public ParcelView GetParcelByGlobalId(UUID id)
+                => new ParcelView(Id(200), true, true, _ => false, _ => false, _ => false);
+            public EstateView Estate => new EstateView(true, false, _ => false);
+        }
+
+        /// A world whose population is exactly the ids given, all on one parcel.
+        private sealed class ManyAgentWorld : IFeederWorld
+        {
+            private readonly UUID[] _ids;
+            public ManyAgentWorld(params UUID[] ids) { _ids = ids; }
+            public IReadOnlyList<AgentView> SnapshotAgents()
+            {
+                var list = new List<AgentView>();
+                foreach (UUID id in _ids)
+                    list.Add(new AgentView(id, false, Vector3.Zero, Id(200), false));
+                return list;
+            }
             public ParcelView GetParcelAt(Vector3 p) => GetParcelByGlobalId(Id(200));
             public ParcelView GetParcelByGlobalId(UUID id)
                 => new ParcelView(Id(200), true, true, _ => false, _ => false, _ => false);
@@ -136,6 +155,113 @@ namespace osWebRtcVoice.Tests
             bool wouldArm = (snapshot || auth.IsRearmRequested(L) || !auth.IsArmed(Room, L)) && auth.CanArmNow(L);
             Assert.That(wouldArm, Is.False,
                 "and the sender does not arm through it: a re-arm request is not a licence to retry every tick");
+        }
+
+        // ---- slice 0.8c2, ruling C: proof that the room exists releases the backoff -------------
+
+        /// <summary>C1: T4 makes a room that stays unknown cheap; ruling C makes a room that STARTS EXISTING fast. A
+        /// listener that has climbed to the 30 s cap must not sit out the rest of that delay once the sim has proof
+        /// the room is there. Two kinds of proof, both run here:
+        ///   (i)  an ensure succeeded at a connector's capability fetch  - VoiceConnectorModule.cs:227;
+        ///   (ii) a viewer was provisioned into the room                 - VoiceVisibilityService.cs:207.
+        /// Both call VisAuthority.RoomExists, and every listener the room's absence was holding arms on the VERY NEXT
+        /// tick, not 30 s later. TWO listeners are in the room deliberately: RequestArm has always cleared the retry
+        /// for the agent it names, so a one-listener provision case would pass without ruling C at all. What is new
+        /// here is that the room existing releases the OTHERS - the listener nobody provisioned.</summary>
+        [TestCase(false, TestName = "C1_EnsureSucceeded_ArmsOnTheVeryNextTick")]
+        [TestCase(true, TestName = "C1_ViewerProvisioned_ArmsOnTheVeryNextTick")]
+        public async Task C1_ProofThatTheRoomExists_ReleasesTheBackoff_AndArmsOnTheVeryNextTick(bool viaProvision)
+        {
+            long clock = 10_000;
+            int attempts = 0;
+            bool unknown = true;
+            Task<(AdminSendResult, string)> Send(OSDMap request)
+            {
+                if (request["request"].AsString() == "peer_ctl_batch")
+                    attempts++;
+                string reply = unknown
+                    ? "{\"janus\":\"success\",\"response\":{\"slvoice\":\"error\",\"reason\":\"unknown_room\"," +
+                      "\"status\":\"unknown_room\",\"vis_protocol\":2,\"mixer_instance\":\"m1\"}}"
+                    : "{\"janus\":\"success\",\"response\":{\"slvoice\":\"applied\",\"vis_protocol\":2," +
+                      "\"mixer_instance\":\"m1\",\"room\":" + request["room"].AsInteger() + "}}";
+                return Task.FromResult((AdminSendResult.Ok, reply));
+            }
+            using var sink = new JanusPeerCtlBatchSink("http://unused", "unused", TimeSpan.FromSeconds(5), Id(77), "reset",
+                sendOne: Send);
+            var auth = new VisAuthority(0x0000018f00000001UL, "reset", () => clock);
+            sink.Authority = auth;
+            sink.RoomOf = _ => Room;
+            var feed = new Feed(new ManyAgentWorld(L, L2));
+            var sender = new VisibilityBatchSender(feed, sink, true, TimeSpan.FromSeconds(5), "reset", () => clock,
+                auth, _ => Room);
+
+            for (int tick = 0; tick < 480; tick++)   // 120 s of a room the mixer does not have: climb to the cap
+            {
+                clock += 250;
+                await sender.PumpAsync(feed.Tick());
+            }
+            clock += 31_000;                         // let the capped delay expire, so the next pump really tries
+            await sender.PumpAsync(feed.Tick());
+            int attemptsAtCap = attempts;
+            Assert.That(auth.CanArmNow(L), Is.False, "that attempt failed too, so it is waiting again");
+            clock += 25_000;
+            Assert.That(auth.CanArmNow(L), Is.False,
+                "and still waiting 25 s later: the delay is at the 30 s cap, not the 1 s it started at");
+
+            // The room now exists, and the sim learns it the way the two live paths learn it.
+            unknown = false;
+            auth.RoomExists(Room);
+            if (viaProvision)
+                sender.OnListenerProvisioned(L);   // what VoiceVisibilityService does after RoomExists
+
+            Assert.That(auth.CanArmNow(L), Is.True, "the proof released the backoff there and then (ruling C)");
+            Assert.That(auth.CanArmNow(L2), Is.True,
+                "including for the listener nobody named: it is the ROOM that was proved to exist, not one agent's "
+                + "place in it");
+
+            clock += 250;                          // ONE tick later, not 30 s
+            await sender.PumpAsync(feed.Tick());
+
+            Assert.That(attempts, Is.EqualTo(attemptsAtCap + 1), "it armed on the very next tick");
+            Assert.That(auth.IsArmed(Room, L) && auth.IsArmed(Room, L2), Is.True, "and the room took them both");
+        }
+
+        /// <summary>C2 (the heartbeat half of 0.8c's T5): the connector's parcel changes its voice channel, so the
+        /// resolver answers with a new room. The next heartbeat must name the NPC at the NEW room and stop naming it
+        /// at the old one. A heartbeat that kept listing it at the old room would be claiming authority over a room
+        /// the sim no longer places it in - the mixer reconciles against that list, so the claim is not cosmetic.</summary>
+        [Test]
+        public void C2_WhenTheConnectorsParcelChannelChanges_TheHeartbeatFollowsIt()
+        {
+            long clock = 10_000;
+            const int NewRoom = 1966197062;
+            int current = Room;
+            var auth = new VisAuthority(0x0000018f00000001UL, "move", () => clock);
+            var population = new List<UUID> { L };
+            Func<UUID, int?> resolve = _ => current;
+
+            auth.OnBatchOutcome(Room, VisOp.Replace, auth.NextGeneration(Room), population, true,
+                new JanusPeerCtlBatchSink.SlvoiceReply { Present = true, Status = "applied" });
+            Assert.That(auth.IsArmed(Room, L), Is.True);
+            Assert.That(Listeners(auth.BuildHeartbeat(population, resolve, false), Room),
+                Is.EquivalentTo(new[] { L.ToString() }), "named at the room it was armed in");
+
+            current = NewRoom;   // the parcel now runs its own channel
+            auth.PruneTo(population, resolve);
+            OSDMap hb = auth.BuildHeartbeat(population, resolve, false);
+
+            Assert.That(Listeners(hb, NewRoom), Is.EquivalentTo(new[] { L.ToString() }), "named at the new room");
+            Assert.That(((OSDMap)hb["rooms"]).ContainsKey(Room.ToString()), Is.False,
+                "and the old room is not in the heartbeat at all");
+            Assert.That(auth.IsArmed(Room, L), Is.False, "the claim on the old room is dropped, not left standing");
+        }
+
+        private static HashSet<string> Listeners(OSDMap heartbeat, int room)
+        {
+            var rooms = (OSDMap)heartbeat["rooms"];
+            return rooms.ContainsKey(room.ToString())
+                ? new HashSet<string>(((OSDMap)((OSDMap)rooms[room.ToString()])["listeners"]).Keys)
+                : new HashSet<string>();
         }
     }
 }

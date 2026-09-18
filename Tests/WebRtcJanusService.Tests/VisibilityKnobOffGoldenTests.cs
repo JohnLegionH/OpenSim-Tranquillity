@@ -133,7 +133,11 @@ namespace osWebRtcVoice.Tests
             var transport = new Transport();
             var sink = new JanusPeerCtlBatchSink("http://unused", "unused", TimeSpan.FromSeconds(5), GoldenRegion, "golden",
                 sendOne: transport.SendAsync);
-            sink.RoomOf = a => rooms.TryGetValue(a, out int r) ? r : (int?)null;
+            // Slice 0.8c2 (O-92): the sink's resolver now answers "record, else what this agent's parcel resolves to,
+            // else unplaced" - the service composes it. Every agent in this scenario stands on an estate-channel
+            // parcel, which resolves to the estate/fallback number, which is exactly what the pre-0.8c2 default
+            // produced: the goldens are unchanged by construction.
+            sink.RoomOf = a => rooms.TryGetValue(a, out int r) ? r : (int?)sink.FallbackRoom;
             var feed = new MatrixFeed();
             var sender = new VisibilityBatchSender(feed, sink, true, TimeSpan.FromSeconds(5), "golden");
 

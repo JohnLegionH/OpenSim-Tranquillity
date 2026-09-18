@@ -64,6 +64,7 @@ namespace osWebRtcVoice
         private readonly string _region;
 
         private volatile int _lastSendRooms;
+        private volatile int[] _lastSendRoomNumbers = Array.Empty<int>();   // 0.8c2: which ones, for the console
         private volatile int _lastSendFallbackListeners;
         private volatile int _lastSendFallbackSources;
         // Q4 counter fix: the MUTE channel's fallback counts, parallel to the excl ones above. Kept
@@ -139,8 +140,14 @@ namespace osWebRtcVoice
         /// policy_generation (plus base on add/remove), and each room's reply is applied to it.</summary>
         public VisAuthority Authority { get; set; }
 
-        /// <summary>The room an agent with no record is addressed at, both as listener and as source.</summary>
+        /// <summary>The region's estate-channel room. Slice 0.8c2 (O-92): this is NO LONGER where an agent with no
+        /// record is addressed - such an agent is omitted. It remains the room a connector without a parcel of its own
+        /// registers into, and the number the reader prints as the region's estate room.</summary>
         public int FallbackRoom => _fallbackRoom;
+
+        /// <summary>Slice 0.8c2: the room numbers the most recent send actually addressed, ascending. The console
+        /// reader prints these, so an operator sees where policy went rather than a number it might have gone to.</summary>
+        public IReadOnlyList<int> LastSendRoomNumbers => _lastSendRoomNumbers;
 
         /// <summary>Rooms addressed by the most recent send (§3's "rooms addressed per tick").</summary>
         public int LastSendRooms => _lastSendRooms;
@@ -210,6 +217,9 @@ namespace osWebRtcVoice
             if (muteRooms != null)
                 foreach (int r in muteRooms.Keys) roomKeys.Add(r);
             _lastSendRooms = roomKeys.Count;   // Q4: rooms addressed by EITHER channel (the true count)
+            var roomNumbers = new List<int>(roomKeys);
+            roomNumbers.Sort();
+            _lastSendRoomNumbers = roomNumbers.ToArray();   // 0.8c2: the reader names them
 
             // Build EVERY body BEFORE sending any of them. The serializer's invariant throw stays
             // all-or-nothing as it was when there was one message: a zero UUID in any room aborts the
