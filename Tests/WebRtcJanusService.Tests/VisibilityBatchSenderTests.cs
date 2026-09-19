@@ -14,12 +14,15 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using OpenMetaverse;
+using OpenSim.Framework;
 using osWebRtcVoice;
 
 namespace osWebRtcVoice.Tests
 {
     [TestFixture]
+    [NonParallelizable]   // the log capture swaps the ambient LoggerProvider.LoggerFactory, a process-wide static
     public class VisibilityBatchSenderTests
     {
         private const int Room = -999;
@@ -494,20 +497,44 @@ namespace osWebRtcVoice.Tests
         }
 
         // Capture the sender's log4net Error output so "logs once" is asserted against the real log.
-        private static (log4net.Appender.MemoryAppender appender, Action detach) CaptureVisibilityLog()
+        /// <summary>Captures what the sender actually logs. It logs through <see cref="ILogger"/> obtained from
+        /// <see cref="LoggerProvider"/> (commit 5d43d3e1d3, "convert the last four log4net call sites to ILogger"),
+        /// whose default factory is <c>NullLoggerFactory</c> - so a log4net appender, which is what these tests used
+        /// before, receives nothing and every assertion about a log line reads 0. O-89.</summary>
+        private sealed class LogCapture : ILoggerProvider, ILogger
         {
-            var appender = new log4net.Appender.MemoryAppender();
-            appender.ActivateOptions();
-            var repo = (log4net.Repository.Hierarchy.Hierarchy)log4net.LogManager.GetRepository(typeof(VisibilityBatchSender).Assembly);
-            repo.Root.AddAppender(appender);
-            repo.Root.Level = log4net.Core.Level.All;
-            repo.Configured = true;
-            return (appender, () => repo.Root.RemoveAppender(appender));
+            public readonly List<(LogLevel Level, string Text)> Lines = new();
+            public ILogger CreateLogger(string categoryName) => this;
+            public IDisposable BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => true;
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception exception,
+                Func<TState, Exception, string> formatter)
+            {
+                lock (Lines)
+                    Lines.Add((logLevel, formatter(state, exception)));
+            }
+            public void Dispose() { }
         }
 
-        private static int StallLogCount(log4net.Appender.MemoryAppender appender)
-            => appender.GetEvents().Count(e => e.Level == log4net.Core.Level.Error
-                && e.RenderedMessage.Contains("stuck in-flight") && e.RenderedMessage.Contains("region Ebony"));
+        private static (LogCapture capture, Action detach) CaptureVisibilityLog()
+        {
+            var capture = new LogCapture();
+            ILoggerFactory previous = LoggerProvider.LoggerFactory;
+            ILoggerFactory ours = LoggerFactory.Create(b => b.AddProvider(capture).SetMinimumLevel(LogLevel.Trace));
+            LoggerProvider.LoggerFactory = ours;
+            return (capture, () =>
+            {
+                LoggerProvider.LoggerFactory = previous;
+                ours.Dispose();
+            });
+        }
+
+        private static int StallLogCount(LogCapture capture)
+        {
+            lock (capture.Lines)
+                return capture.Lines.Count(l => l.Level == LogLevel.Error
+                    && l.Text.Contains("stuck in-flight") && l.Text.Contains("region Ebony"));
+        }
 
         private static VisibilityBatchSender NewStallSender(FakeFeed feed, IPeerCtlBatchSink sink, long[] now)
             => new VisibilityBatchSender(feed, sink, enabled: true,
@@ -527,7 +554,7 @@ namespace osWebRtcVoice.Tests
             var feed = new FakeFeed { Current = BannedPairMatrix(a, b) };
             var sink = new HangingSink { Hang = true };
             var sender = NewStallSender(feed, sink, now);
-            var (appender, detach) = CaptureVisibilityLog();
+            var (capture, detach) = CaptureVisibilityLog();
             Task hung1 = null;
             TaskCompletionSource<PeerCtlSendResult> gate1 = null;
             try
@@ -542,20 +569,20 @@ namespace osWebRtcVoice.Tests
                 System.Threading.Volatile.Write(ref now[0], 500);          // < 800
                 await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
                 Assert.That(sink.Count, Is.EqualTo(1), "still in flight; no new send");
-                Assert.That(StallLogCount(appender), Is.EqualTo(0), "guard must not fire before the threshold");
+                Assert.That(StallLogCount(capture), Is.EqualTo(0), "guard must not fire before the threshold");
 
                 // Past the threshold: the guard fires — force-clears, logs once, forces snapshot next.
                 System.Threading.Volatile.Write(ref now[0], 900);          // > 800
                 await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
                 Assert.That(sink.Count, Is.EqualTo(1), "the guard itself sends nothing");
-                Assert.That(StallLogCount(appender), Is.EqualTo(1), "guard logs exactly once");
+                Assert.That(StallLogCount(capture), Is.EqualTo(1), "guard logs exactly once");
 
                 // Next pump: flag cleared -> acquires; _synced=false -> SNAPSHOT (not a delta). Completes.
                 sink.Hang = false;
                 await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
                 Assert.That(sink.Count, Is.EqualTo(2), "emission resumed after self-heal");
                 Assert.That(sink.LastOp, Is.EqualTo(VisOp.Replace), "recovery send is a snapshot, not a delta");
-                Assert.That(StallLogCount(appender), Is.EqualTo(1), "still exactly one stall log (once per episode)");
+                Assert.That(StallLogCount(capture), Is.EqualTo(1), "still exactly one stall log (once per episode)");
             }
             finally
             {
@@ -573,7 +600,7 @@ namespace osWebRtcVoice.Tests
             var feed = new FakeFeed { Current = BannedPairMatrix(a, b) };
             var sink = new HangingSink { Hang = true };
             var sender = NewStallSender(feed, sink, now);
-            var (appender, detach) = CaptureVisibilityLog();
+            var (capture, detach) = CaptureVisibilityLog();
             Task s1 = null;
             TaskCompletionSource<PeerCtlSendResult> gate = null;
             try
@@ -587,7 +614,7 @@ namespace osWebRtcVoice.Tests
                     System.Threading.Volatile.Write(ref now[0], t);
                     await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
                 }
-                Assert.That(StallLogCount(appender), Is.EqualTo(0), "a slow send within budget must not trip the guard");
+                Assert.That(StallLogCount(capture), Is.EqualTo(0), "a slow send within budget must not trip the guard");
                 Assert.That(sink.Count, Is.EqualTo(1), "no force-clear, no extra sends");
 
                 // The send now completes normally -> its finally releases the flag.
@@ -601,7 +628,7 @@ namespace osWebRtcVoice.Tests
                 await sender.PumpAsync(VisibilityBatch.Delta(Room, Excl((3, new[] { 4 })), null));
                 Assert.That(sink.Count, Is.EqualTo(2), "emission resumed via the normal single-flight release");
                 Assert.That(sink.LastOp, Is.EqualTo(VisOp.Add));
-                Assert.That(StallLogCount(appender), Is.EqualTo(0), "guard never fired for a completing send");
+                Assert.That(StallLogCount(capture), Is.EqualTo(0), "guard never fired for a completing send");
             }
             finally
             {
@@ -619,7 +646,7 @@ namespace osWebRtcVoice.Tests
             var feed = new FakeFeed { Current = BannedPairMatrix(a, b) };
             var sink = new HangingSink { Hang = true };
             var sender = NewStallSender(feed, sink, now);
-            var (appender, detach) = CaptureVisibilityLog();
+            var (capture, detach) = CaptureVisibilityLog();
             Task hung1 = null, hung2 = null;
             TaskCompletionSource<PeerCtlSendResult> gate1 = null, gate2 = null;
             try
@@ -631,7 +658,7 @@ namespace osWebRtcVoice.Tests
                 // Guard fires -> force-clears epoch1.
                 System.Threading.Volatile.Write(ref now[0], 900);
                 await sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
-                Assert.That(StallLogCount(appender), Is.EqualTo(1));
+                Assert.That(StallLogCount(capture), Is.EqualTo(1));
 
                 // A NEW send (epoch2) acquires and ALSO hangs; it now owns the flag.
                 hung2 = sender.PumpAsync(VisibilityBatch.EmptyDelta(Room));
