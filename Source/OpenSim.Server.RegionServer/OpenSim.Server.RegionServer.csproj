@@ -84,8 +84,32 @@
          no manual DLL copying, no compile/runtime identity splits. -->
     <ProjectReference Include="../../Source/Phlox.ScriptEngine/Phlox.ScriptEngine.csproj" />
     <ProjectReference Include="../../Addons/os-webrtc-janus/WebRtcVoiceRegionModule/WebRtcVoiceRegionModule.csproj" />
+    <!-- O-100: WebRtcVoiceServiceModule implements IWebRtcVoiceService (defined in WebRtcVoice) but nothing
+         referenced it, so the region publish never emitted it. An operator upgrading by copying the publish
+         output then ran a NEW interface against the OLD implementer sitting in the live root - a type-load
+         failure, voice dead rather than degraded (slice 0.8d had to build and ship it by hand). It is a
+         discovered region module, so a reference is only about packaging: it changes nothing at runtime.
+         AssertVoiceInterfaceAssembliesPublished below keeps it that way. -->
+    <ProjectReference Include="../../Addons/os-webrtc-janus/WebRtcVoiceServiceModule/WebRtcVoiceServiceModule.csproj" />
     <ProjectReference Include="../../Addons/OpenSim.Addons.Groups/OpenSim.Addons.Groups.csproj" />
   </ItemGroup>
+
+  <!-- O-100 regression guard. Every assembly whose IL names IWebRtcVoiceService must reach the publish
+       together: the interface's definition and its implementers are a single shippable set, and a publish
+       missing one of them is the packaging bug this list exists to prevent. VoiceInterfaceAssemblyListTests
+       checks this list against a scan of the source, so a new implementer cannot be added without landing
+       here too. -->
+  <ItemGroup>
+    <VoiceInterfaceAssembly Include="WebRtcVoice" />
+    <VoiceInterfaceAssembly Include="WebRtcJanusService" />
+    <VoiceInterfaceAssembly Include="WebRtcVoiceRegionModule" />
+    <VoiceInterfaceAssembly Include="WebRtcVoiceServiceModule" />
+  </ItemGroup>
+
+  <Target Name="AssertVoiceInterfaceAssembliesPublished" AfterTargets="Publish">
+    <Error Condition="!Exists('$(PublishDir)%(VoiceInterfaceAssembly.Identity).dll')"
+           Text="O-100: %(VoiceInterfaceAssembly.Identity).dll names IWebRtcVoiceService but is not in the publish at $(PublishDir). Ship the interface and every implementer together, or a copied publish loads a new interface against an old implementer (type-load failure, voice dead)." />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="SkiaSharp" Version="4.151.1" />
