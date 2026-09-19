@@ -255,8 +255,6 @@ namespace osWebRtcVoice
                 string outcome = BatchOutcome(in reply);
                 if (outcome != "applied")
                 {
-                    if (outcome == "unknown_room")
-                        JanusAudioBridge.ForgetRoom(room);   // 0.8f (O-98, R3): the mixer says it has no such room - believe it
                     BackOffLocked(room, named, outcome);
                     return;
                 }
@@ -311,8 +309,6 @@ namespace osWebRtcVoice
                     string status = room.Value.Status ?? "ok";
                     if (status == "unknown_room" || status == "stale_epoch")
                     {
-                        if (status == "unknown_room")
-                            JanusAudioBridge.ForgetRoom(room.Key);   // 0.8f (O-98, R3)
                         List<UUID> inRoom = _armed.TryGetValue(room.Key, out var m) ? new List<UUID>(m.Keys) : new List<UUID>();
                         BackOffLocked(room.Key, inRoom, status);
                         continue;

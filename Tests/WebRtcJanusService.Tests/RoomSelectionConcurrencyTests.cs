@@ -74,84 +74,67 @@ namespace osWebRtcVoice.Tests
 
         // --- Part 2: SelectRoomCoalesced ---
 
-        // N concurrent SelectRooms for one room number -> exactly one Janus create.
+        // Slice 0.8i: every select asks the mixer, so N concurrent selects for one room number send N creates - one
+        // at a time through the per-room gate, never overlapping - and the mixer answers one "created" and N-1 486s,
+        // all of which are success. Before 0.8i the process-wide hint made the other racers skip the create; that hint
+        // is deleted (a stale one cost a viewer 5.25 s live, 0.8g PROOF D).
         [Test]
-        public async Task SelectRoomCoalesced_ConcurrentSameRoom_CreatesOnce()
+        public async Task SelectRoomCoalesced_ConcurrentSameRoom_CreatesSerialized_AllSucceed()
         {
             const int room = 900001;   // distinct per test (static process-wide state)
-            int creates = 0, existing = 0;
+            int creates = 0, inFlight = 0, maxInFlight = 0;
 
             Func<Task<JanusRoom>> create = async () =>
             {
+                int now = Interlocked.Increment(ref inFlight);
+                int seen;
+                while ((seen = Volatile.Read(ref maxInFlight)) < now
+                       && Interlocked.CompareExchange(ref maxInFlight, now, seen) != seen) { }
                 Interlocked.Increment(ref creates);
                 await Task.Delay(25);          // widen the race window
+                Interlocked.Decrement(ref inFlight);
                 return FakeRoom(room);
             };
-            Func<JanusRoom> makeExisting = () => { Interlocked.Increment(ref existing); return FakeRoom(room); };
 
             const int N = 8;
             var tasks = new Task<JanusRoom>[N];
             for (int i = 0; i < N; i++)
-            {
-                tasks[i] = JanusAudioBridge.SelectRoomCoalesced(room, create, makeExisting);
-            }
+                tasks[i] = JanusAudioBridge.SelectRoomCoalesced(room, create);
             JanusRoom[] results = await Task.WhenAll(tasks);
 
-            Assert.That(creates, Is.EqualTo(1), "concurrent SelectRooms for one room number must create exactly once");
-            Assert.That(existing, Is.EqualTo(N - 1), "the other racers reuse the created room");
+            Assert.That(creates, Is.EqualTo(N), "every select asks the mixer");
+            Assert.That(maxInFlight, Is.EqualTo(1), "but never two creates of one room at once");
             Assert.That(results, Has.All.Not.Null);
         }
 
-        // A room already known to exist in this process must not be created again.
+        // Slice 0.8i: a room this process created is asked for again on the next select - nothing is remembered.
         [Test]
-        public async Task SelectRoomCoalesced_AlreadyKnown_SkipsCreate()
+        public async Task SelectRoomCoalesced_AfterACreate_TheNextSelectAsksTheMixerAgain()
         {
             const int room = 900002;
-            int creates = 0, existing = 0;
-
-            Func<Task<JanusRoom>> create = () => { Interlocked.Increment(ref creates); return Task.FromResult(FakeRoom(room)); };
-            Func<JanusRoom> makeExisting = () => { Interlocked.Increment(ref existing); return FakeRoom(room); };
-
-            await JanusAudioBridge.SelectRoomCoalesced(room, create, makeExisting);   // establishes existence
-            await JanusAudioBridge.SelectRoomCoalesced(room, create, makeExisting);   // must skip create
-
-            Assert.That(creates, Is.EqualTo(1));
-            Assert.That(existing, Is.EqualTo(1));
-        }
-
-        // Stale-hint recovery: once a room is known, ForgetRoom (called on a JoinRoom
-        // failure) clears the hint so the next SelectRoom re-creates instead of looping.
-        [Test]
-        public async Task ForgetRoom_AfterKnown_NextSelectRecreates()
-        {
-            const int room = 900004;
             int creates = 0;
             Func<Task<JanusRoom>> create = () => { Interlocked.Increment(ref creates); return Task.FromResult(FakeRoom(room)); };
-            Func<JanusRoom> makeExisting = () => FakeRoom(room);
 
-            await JanusAudioBridge.SelectRoomCoalesced(room, create, makeExisting);   // create #1, marks known
-            JanusAudioBridge.ForgetRoom(room);                                        // join failed -> drop hint
-            await JanusAudioBridge.SelectRoomCoalesced(room, create, makeExisting);   // must create again
+            await JanusAudioBridge.SelectRoomCoalesced(room, create);
+            await JanusAudioBridge.SelectRoomCoalesced(room, create);
 
-            Assert.That(creates, Is.EqualTo(2), "after ForgetRoom, the room must be re-created, not skipped");
+            Assert.That(creates, Is.EqualTo(2));
         }
 
-        // If the create is inconclusive (null), existence is NOT recorded -> a later
-        // attempt still tries to create.
+        // An inconclusive create (null) is returned as null, and the next select simply tries again.
         [Test]
-        public async Task SelectRoomCoalesced_FailedCreate_NotMarkedKnown()
+        public async Task SelectRoomCoalesced_FailedCreate_ReturnsNull_AndTheNextSelectTriesAgain()
         {
             const int room = 900003;
             int creates = 0;
             Func<Task<JanusRoom>> failingCreate = () => { Interlocked.Increment(ref creates); return Task.FromResult<JanusRoom>(null); };
-            Func<JanusRoom> makeExisting = () => FakeRoom(room);
 
-            JanusRoom first = await JanusAudioBridge.SelectRoomCoalesced(room, failingCreate, makeExisting);
-            JanusRoom second = await JanusAudioBridge.SelectRoomCoalesced(room, failingCreate, makeExisting);
+            JanusRoom first = await JanusAudioBridge.SelectRoomCoalesced(room, failingCreate);
+            JanusRoom second = await JanusAudioBridge.SelectRoomCoalesced(room, failingCreate);
 
             Assert.That(first, Is.Null);
             Assert.That(second, Is.Null);
-            Assert.That(creates, Is.EqualTo(2), "a failed create must not mark the room known");
+            Assert.That(creates, Is.EqualTo(2));
         }
     }
 }

@@ -51,32 +51,7 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
     /// <summary>Slice 0.8f (O-98): the mixer's "No such room" on a join (`Request error 485: No such room (n)`).</summary>
     public const int JANUS_NO_SUCH_ROOM_ERROR_CODE = 485;
 
-    /// <summary>Slice 0.8f (O-98, R2): the viewer provision's join. A join answered 485 No such room means the
-    /// process-wide hint outlived the room (the mixer's empty-room grace), so the room is re-created and the join tried
-    /// ONCE more, inside this provision - before 0.8f the viewer's own retry did it, 5.2-5.6 s later. A second 485, or
-    /// any other failure except ROOM_FULL, fails as before, and the hint is forgotten. Static and Func-based so the
-    /// policy is unit-testable without Janus; the recreate runs after the create gate is released, so it cannot
-    /// deadlock on it.</summary>
-    public static async Task<(JanusRoom Room, bool Joined, int ErrorCode, int Joins)> JoinWithOneRecreate(
-        JanusRoom pFirst, Func<JanusRoom, Task<(bool Joined, int ErrorCode)>> pJoin, Func<JanusRoom, Task<JanusRoom>> pRecreate)
-    {
-        JanusRoom room = pFirst;
-        (bool joined, int errorCode) = await pJoin(room).ConfigureAwait(false);
-        int joins = 1;
-        if (!joined && errorCode == JANUS_NO_SUCH_ROOM_ERROR_CODE)
-        {
-            JanusRoom again = await pRecreate(room).ConfigureAwait(false);
-            if (again is not null)
-            {
-                room = again;
-                (joined, errorCode) = await pJoin(room).ConfigureAwait(false);
-                joins++;
-            }
-        }
-        if (!joined && errorCode != JANUS_ROOM_FULL_ERROR_CODE)
-            JanusAudioBridge.ForgetRoom(room.RoomId);
-        return (room, joined, errorCode, joins);
-    }
+
 
     // V-1 (SC-108/SC-115): the Legion mixer's plugin id, JANUS_SLVOICE_PACKAGE in legion-voice-mixer
     // src/janus_slvoice.c. Before V-1 an absent PluginName selected "janus.plugin.audiobridge"; set
@@ -392,8 +367,7 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
             JanusViewerSession svc = await EnsureServiceSessionAsync(pForceReconnect: attempt > 0).ConfigureAwait(false);
             if (svc?.AudioBridge is null)
                 return null;
-            // Slice 0.8f (O-98, R1): EnsureRoom asks the mixer every time; SelectRoom trusted a hint the mixer's
-            // empty-room grace had made stale, created nothing, and reported success.
+            // Slice 0.8f (O-98, R1): the ensure asks the mixer every time (since 0.8i every select does).
             JanusRoom room = await svc.AudioBridge.EnsureRoom(pSceneID.ToString(), "local", true, pParcelLocalID,
                 string.Empty).ConfigureAwait(false);
             if (room is not null)
@@ -518,13 +492,11 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                         viewerSession.Offer = jsepSdp;
                         viewerSession.OfferOrig = jsepSdp;
                         viewerSession.AgentId = pUserID;
-                        // Slice 0.8f (O-98, R2): a 485 re-creates and joins once more here, not on the viewer's retry.
-                        JanusAudioBridge bridge = viewerSession.AudioBridge;
-                        var joinResult = await JoinWithOneRecreate(viewerSession.Room,
-                            room => room.JoinRoom(viewerSession),
-                            stale => bridge.RecreateRoom(stale, pSceneID.ToString(), channel_type, isSpatial,
-                                parcel_local_id, channel_id)).ConfigureAwait(false);
-                        viewerSession.Room = joinResult.Room;
+                        // Slice 0.8i: ONE join. SelectRoom above has just had the mixer create (or confirm) the room, so
+                        // this JSEP join never meets a room the sim merely believed in. It is never re-sent on this handle:
+                        // Janus core builds the handle's ICE agent from the offer before the plugin looks at the room, and
+                        // refuses a second JSEP join on the same handle with 490 (0.8g PROOF D; harness S39).
+                        var joinResult = await viewerSession.Room.JoinRoom(viewerSession).ConfigureAwait(false);
                         if (joinResult.Joined)
                         {
                             // Additive: the joined room number, so the region can record which mixer room this
@@ -537,20 +509,26 @@ public class WebRtcJanusService : ServiceBase, IWebRtcVoiceService
                             // Capacity rejection: carry the code so the CAP handler returns HTTP
                             // 409 Conflict (viewer -> ERROR_CHANNEL_FULL). Distinct from every
                             // other JoinRoom failure below, which stay generic (no error_code).
-                            // Do NOT ForgetRoom: the room is fine, just full — forgetting it would
-                            // make the viewer's retry re-create and re-join, looping on the full room.
                             errorMsg = "room is full";
                             errorCode = joinResult.ErrorCode;
                             _log.LogWarning($"{LogHeader} ProvisionVoiceAccountRequest: room full (ROOM_FULL {joinResult.ErrorCode})");
                             viewerSession.Room = null;   // never joined: a later logout must not send a leave for it
                         }
+                        else if (joinResult.ErrorCode == JANUS_NO_SUCH_ROOM_ERROR_CODE)
+                        {
+                            // Slice 0.8i (A2): the room vanished between the create a moment ago and this join - the
+                            // mixer's grace sweep landing in between. Not retried here (see above); the viewer's own
+                            // retry sends a fresh create and a fresh handle. One WARN, no ERROR.
+                            errorMsg = "JoinRoom failed";   // the failure map is what it always was: no error_code
+                            _log.LogWarning("{LogHeader} ProvisionVoiceAccountRequest: room {Room} was gone at the join (485) " +
+                                "although the mixer had just answered its create; failing back to the viewer, whose retry " +
+                                "creates it again", LogHeader, viewerSession.Room.RoomId);
+                            viewerSession.Room = null;   // never joined: a later logout must not send a leave for it
+                        }
                         else
                         {
                             errorMsg = "JoinRoom failed";
-                            _log.LogError($"{LogHeader} ProvisionVoiceAccountRequest: JoinRoom failed (error_code={joinResult.ErrorCode}, " +
-                                $"{joinResult.Joins} join attempt(s))");
-                            // The hint was already forgotten by JoinWithOneRecreate (0.8f), which also made the one
-                            // inline re-create for a 485; the viewer's own retry is now the second line, not the first.
+                            _log.LogError($"{LogHeader} ProvisionVoiceAccountRequest: JoinRoom failed (error_code={joinResult.ErrorCode})");
                             viewerSession.Room = null;   // never joined: a later logout must not send a leave for it
                         }
                     }

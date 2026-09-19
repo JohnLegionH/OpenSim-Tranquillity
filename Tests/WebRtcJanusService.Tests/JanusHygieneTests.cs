@@ -33,6 +33,26 @@ namespace osWebRtcVoice.Tests
 
         public int CreateCount => CreatedSessions.Count;
 
+        // ---- Slice 0.8i: an opt-in model of the mixer's rooms and of Janus core's per-handle ICE rule ----------
+        // Off by default, so every existing test sees exactly the replies it always did. On, the plugin's "create"
+        // and "join" behave as the live mixer does (0.8g PROOF D, 2026-09-19 01:33:42Z):
+        //   create - "created", or the 486 already-exists event (which the sim treats as success);
+        //   join   - Janus CORE builds the handle's ICE agent from the join's JSEP offer BEFORE the plugin looks at
+        //            the room, so a missing room answers the plugin's 485 event while the agent stays; a second
+        //            JSEP-bearing request on that SAME handle is refused by core with a top-level 490 "Error setting
+        //            ICE locally", which never reaches the plugin; a fresh handle joins.
+        public bool ModelRooms;
+        public readonly ConcurrentDictionary<int, bool> Rooms = new();
+        public readonly ConcurrentDictionary<string, bool> IceAgents = new();
+        private int _roomCreates, _roomJoins, _roomCreated;
+        public int RoomCreates => Volatile.Read(ref _roomCreates);   // create requests the plugin saw
+        public int RoomsCreated => Volatile.Read(ref _roomCreated);  // of those, how many actually created a room
+        public int RoomJoins => Volatile.Read(ref _roomJoins);       // JSEP-bearing join requests sent
+        public void GraceDestroy(int room) => Rooms.TryRemove(room, out _);
+        /// A room number whose room the "grace sweep" removes right after the plugin answers its create - the race
+        /// between a create (or its 486) and the join that follows it.
+        public int DestroyAfterCreate;
+
         public void QueueGet(string pSessionId, HttpStatusCode pCode, string pBody) => Poll(pSessionId).Writer.TryWrite((pCode, pBody));
 
         private Channel<(HttpStatusCode Code, string Body)> Poll(string pSessionId) =>
@@ -78,6 +98,8 @@ namespace osWebRtcVoice.Tests
                     return Json(HttpStatusCode.OK, "{\"janus\":\"ack\",\"transaction\":\"" + txn + "\"}");
                 case "message":
                     string req = (msg["body"] as OSDMap)?["request"].AsString();
+                    if (ModelRooms && (req == "create" || req == "join"))
+                        return ModelRoomRequest(req, msg, sid, segs.Length > 2 ? segs[2] : null, txn);
                     if (req == "list")
                         return Json(HttpStatusCode.OK, "{\"janus\":\"success\",\"transaction\":\"" + txn +
                             "\",\"plugindata\":{\"plugin\":\"janus.plugin.slvoice\",\"data\":{\"audiobridge\":\"success\",\"list\":[]}}}");
@@ -88,6 +110,43 @@ namespace osWebRtcVoice.Tests
                 default:   // destroy, detach, keepalive
                     return Json(HttpStatusCode.OK, "{\"janus\":\"success\",\"transaction\":\"" + txn + "\"}");
             }
+        }
+
+        private HttpResponseMessage ModelRoomRequest(string req, OSDMap msg, string sid, string handle, string txn)
+        {
+            var body = (OSDMap)msg["body"];
+            int room = body["room"].AsInteger();
+            const string Plugin = "\"plugindata\":{\"plugin\":\"janus.plugin.slvoice\",\"data\":";
+            if (req == "create")
+            {
+                Interlocked.Increment(ref _roomCreates);
+                bool created = Rooms.TryAdd(room, true);
+                if (created)
+                    Interlocked.Increment(ref _roomCreated);
+                if (room == DestroyAfterCreate)
+                    Rooms.TryRemove(room, out _);
+                string data = created
+                    ? "{\"audiobridge\":\"created\",\"room\":" + room + "}"
+                    : "{\"audiobridge\":\"event\",\"error_code\":486,\"error\":\"Room " + room + " already exists\"}";
+                return Json(HttpStatusCode.OK, "{\"janus\":\"success\",\"transaction\":\"" + txn + "\"," + Plugin + data + "}}");
+            }
+            // join
+            if (msg.ContainsKey("jsep"))
+            {
+                Interlocked.Increment(ref _roomJoins);
+                if (handle is not null && !IceAgents.TryAdd(handle, true))
+                    return Json(HttpStatusCode.OK, "{\"janus\":\"error\",\"transaction\":\"" + txn +
+                        "\",\"error\":{\"code\":490,\"reason\":\"Error setting ICE locally\"}}");
+            }
+            string ev = Rooms.ContainsKey(room)
+                ? "{\"janus\":\"event\",\"transaction\":\"" + txn + "\"," + Plugin +
+                  "{\"audiobridge\":\"joined\",\"room\":" + room + ",\"id\":" + Interlocked.Increment(ref _nextId) +
+                  "}},\"jsep\":{\"type\":\"answer\",\"sdp\":\"v=0 fake-answer\"}}"
+                : "{\"janus\":\"event\",\"transaction\":\"" + txn + "\"," + Plugin +
+                  "{\"audiobridge\":\"event\",\"error_code\":485,\"error\":\"No such room (" + room + ")\"}}}";
+            if (sid is not null)
+                QueueGet(sid, HttpStatusCode.OK, ev);
+            return Json(HttpStatusCode.OK, "{\"janus\":\"ack\",\"transaction\":\"" + txn + "\"}");
         }
 
         private static HttpResponseMessage Json(HttpStatusCode code, string body) =>
@@ -345,19 +404,18 @@ namespace osWebRtcVoice.Tests
         public async Task RoomCreateLocks_IdleEntriesAreEvicted()
         {
             const int room = 777_000_060;
-            await JanusAudioBridge.SelectRoomCoalesced(room, () => Task.FromResult(new JanusRoom(null, room)), () => new JanusRoom(null, room));
-            Assert.That(JanusAudioBridge.IsRoomKnown(room), Is.True);
+            await JanusAudioBridge.SelectRoomCoalesced(room, () => Task.FromResult(new JanusRoom(null, room)));
             int before = JanusAudioBridge.RoomCreateLockCount;
+            Assert.That(before, Is.GreaterThanOrEqualTo(1), "the select left a gate behind");
 
-            JanusAudioBridge.SweepRoomCreateLocks(Environment.TickCount64, JanusAudioBridge.RoomCreateLockIdle);
-            Assert.That(JanusAudioBridge.IsRoomKnown(room), Is.True, "a room used just now is kept");
+            int keptNow = JanusAudioBridge.SweepRoomCreateLocks(Environment.TickCount64, JanusAudioBridge.RoomCreateLockIdle);
+            Assert.That(JanusAudioBridge.RoomCreateLockCount, Is.EqualTo(before - keptNow), "a gate used just now is kept");
 
             long later = Environment.TickCount64 + (long)TimeSpan.FromMinutes(11).TotalMilliseconds;
             int evicted = JanusAudioBridge.SweepRoomCreateLocks(later, JanusAudioBridge.RoomCreateLockIdle);
 
             Assert.That(evicted, Is.GreaterThanOrEqualTo(1));
-            Assert.That(JanusAudioBridge.IsRoomKnown(room), Is.False, "the idle room's hint is gone");
-            Assert.That(JanusAudioBridge.RoomCreateLockCount, Is.LessThan(before), "and its gate");
+            Assert.That(JanusAudioBridge.RoomCreateLockCount, Is.LessThan(before), "the idle room's gate is gone");
         }
     }
 }

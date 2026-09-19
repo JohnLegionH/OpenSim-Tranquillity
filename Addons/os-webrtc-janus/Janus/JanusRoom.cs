@@ -39,11 +39,6 @@ public class JanusRoom : IDisposable
 
     public int RoomId { get; private set; }
 
-    /// <summary>Slice 0.8f (O-98): which version of the process-wide "room exists" hint this object was handed out
-    /// under. Set once, by JanusAudioBridge.SelectRoomCoalesced, on the object it returns. A join that fails because
-    /// the room is gone passes it back, so a recreate can tell a stale hint from one another caller has already
-    /// refreshed - and two joiners that both found the room missing cause ONE create, not two.</summary>
-    public long HintStamp { get; set; }
 
     private JanusPlugin _AudioBridge;
 
@@ -117,8 +112,15 @@ public class JanusRoom : IDisposable
                 if (!string.IsNullOrEmpty(capReason))
                     m_log.LogError("{LogHeader} JoinRoom. Room {RoomId} refused the join: {JoinRefusalReason} (error_code={JoinErrorCode})",
                         LogHeader, RoomId, capReason, errorCode);
-                m_log.LogError("{LogHeader} JoinRoom. Failed to join room {RoomId} (error_code={JoinErrorCode}). Resp={JoinResponse}",
-                    LogHeader, RoomId, errorCode, joinResp?.ToString());
+                // Slice 0.8i (A2): a 485 means the room vanished between the create and this join; the caller logs it
+                // ONCE at WARN and fails the provision back to the viewer, so here it is only DEBUG. Every other
+                // failure is still an ERROR.
+                if (errorCode == WebRtcJanusService.JANUS_NO_SUCH_ROOM_ERROR_CODE)
+                    m_log.LogDebug("{LogHeader} JoinRoom. Room {RoomId} answered 485 No such room. Resp={JoinResponse}",
+                        LogHeader, RoomId, joinResp?.ToString());
+                else
+                    m_log.LogError("{LogHeader} JoinRoom. Failed to join room {RoomId} (error_code={JoinErrorCode}). Resp={JoinResponse}",
+                        LogHeader, RoomId, errorCode, joinResp?.ToString());
             }
         }
         catch (Exception e)

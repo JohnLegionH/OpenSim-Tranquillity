@@ -193,7 +193,9 @@ public class JanusAudioBridge : JanusPlugin
                 case "event":
                     if (abResp.AudioBridgeErrorCode == 486)
                     {
-                        m_log.LogWarning("{0} CreateRoom. Room {1} already exists. Reusing! {2}", LogHeader, pRoomId, abResp.ToString());
+                        // Slice 0.8i (A3): since every JSEP join is preceded by a create, "already exists" is the normal
+                        // answer on almost every provision - success, and DEBUG, not a warning.
+                        m_log.LogDebug("{0} CreateRoom. Room {1} already exists. Reusing! {2}", LogHeader, pRoomId, abResp.ToString());
                         // if room already exists, just use it
                         ret = new JanusRoom(this, pRoomId);
                     }
@@ -221,8 +223,6 @@ public class JanusAudioBridge : JanusPlugin
         {
             JanusMessageResp resp = await SendPluginMsg(new AudioBridgeDestroyRoomReq(janusRoom.RoomId));
             ret = true;
-            // Keep the process-wide existence hint consistent if a room is ever destroyed.
-            ForgetRoom(janusRoom.RoomId);
         }
         catch (Exception e)
         {
@@ -234,32 +234,22 @@ public class JanusAudioBridge : JanusPlugin
     // Constant used to denote that this is a spatial audio room for the region (as opposed to parcels)
     public const int REGION_ROOM_ID = -999;
 
-    // Room EXISTENCE is grid-global (Janus is the source of truth), so it is tracked
-    // PROCESS-WIDE, not per session. Per-session AudioBridge instances keep only handle
-    // state (each builds its own JanusRoom bound to its plugin handle to join with).
-    // These statics coalesce concurrent creation of the same room number in this process
-    // so N same-process racers collapse to ONE Janus create; the cross-PROCESS race is
-    // covered by CreateRoom's 486 re-check. Limits: coalescing is per-process only, and
-    // _knownRooms is a best-effort hint, invalidated on DestroyRoom and on a JoinRoom
-    // failure (see ForgetRoom). If a room is destroyed out-of-band the join fails,
-    // ForgetRoom clears the hint, and the viewer's provision retry re-creates the room
-    // rather than looping forever skipping the create on a stale hint.
+    // Room EXISTENCE is grid-global and Janus is the only source of truth for it.
     //
-    // Slice 0.8f (O-98): the mixer's 60 s empty-room grace destroys rooms out-of-band ALL THE TIME, so the hint is
-    // never allowed to answer for the mixer where it matters. The ensure never reads it (EnsureRoomCoalesced), a
-    // join answered 485 re-creates inside the same provision (RecreateAfterMissingCoalesced), a failed create
-    // clears it, and an unknown_room reply clears it (VisAuthority). The hint is now a VERSION (a process-wide
-    // counter), so a recreate can tell a stale hint from one another caller has just refreshed.
+    // Slice 0.8i (O-98): there is NO process-side "room exists" hint any more. It was deleted, not tuned: the mixer's
+    // 60 s empty-room grace destroys rooms without telling the sim, so any cached answer goes stale, and a stale one
+    // cost a viewer 5.25 s in the 0.8g live proof (the JSEP join drew 485 and the same join could not be re-sent on the
+    // same handle). Every select now asks the mixer to create, "already exists" (486) counting as success, BEFORE the
+    // JSEP join is sent. What remains is a per-room gate that serializes creates of one room number within this
+    // process, so concurrent provisions send their creates one at a time (one "created", the rest 486) instead of all
+    // at once; the cross-process race is the 486 itself.
     private static readonly ConcurrentDictionary<int, SemaphoreSlim> _roomCreateLocks = new();
-    private static readonly ConcurrentDictionary<int, long> _knownRooms = new();
-    private static long _hintVersion;
 
-    // O-60 (audit W-13): both tables used to grow by one entry per room number ever selected (every parcel,
+    // O-60 (audit W-13): the gate table used to grow by one entry per room number ever selected (every parcel,
     // every A2A pair) for the life of the process. Entries idle for RoomCreateLockIdle are swept at most once
-    // a minute from SelectRoomCoalesced. Evicting is safe: a forgotten "exists" hint only costs one create
-    // that answers 486 (treated as success), and a swept gate is simply re-created on the next select; the
-    // one race - a caller that fetched a gate just before it was swept - can at worst issue a duplicate
-    // create, which the same 486 re-check absorbs (the cross-process case already relies on it).
+    // a minute from SelectRoomCoalesced. Evicting is safe: a swept gate is simply re-created on the next select;
+    // the one race - a caller that fetched a gate just before it was swept - can at worst send two creates at
+    // once, which the 486 absorbs.
     public static readonly TimeSpan RoomCreateLockIdle = TimeSpan.FromMinutes(10);
     private static readonly ConcurrentDictionary<int, long> _roomLastUseMs = new();
     private static long _lastRoomLockSweepMs = Environment.TickCount64;
@@ -312,75 +302,29 @@ public class JanusAudioBridge : JanusPlugin
     // (int.MinValue never yielded a room before -- it threw). Extracted so the guard is unit-testable.
     public static int FoldHashToRoom(int hashCode)
         => hashCode == int.MinValue ? int.MaxValue : Math.Abs(hashCode);
+    /// <summary>The room for these parameters, made to exist by ASKING THE MIXER: a create is sent every time, and
+    /// "already exists" (486) is success (slice 0.8i, A1 - R1's rule, now on every path). The viewer provision calls
+    /// this before its JSEP join, so the join never meets a room this process merely believed in. Returns a JanusRoom
+    /// bound to THIS bridge's plugin handle, or null when the create failed.</summary>
     public async Task<JanusRoom> SelectRoom(string pRegionId, string pChannelType, bool pSpatial, int pParcelLocalID, string pChannelID)
     {
-        (int roomNumber, Func<Task<JanusRoom>> create, Func<JanusRoom> existing) =
-            RoomFor(pRegionId, pChannelType, pSpatial, pParcelLocalID, pChannelID);
-        // Should be unique for the given use and channel type
-        m_log.LogDebug("{0} SelectRoom: roomNumber={1}", LogHeader, roomNumber);
-        // Coalesce concurrent creates of this room number across all per-session bridges
-        // in this process. Each session still gets its OWN JanusRoom, bound to this
-        // session's plugin handle, to join the (shared) Janus room with.
-        return await SelectRoomCoalesced(roomNumber, create, existing).ConfigureAwait(false);
-    }
-
-    /// <summary>Slice 0.8f (O-98, R1): the room SelectRoom would pick, made to exist by ASKING THE MIXER - never by
-    /// the hint. Already-exists (486) is success. The connector ensure uses this.</summary>
-    public async Task<JanusRoom> EnsureRoom(string pRegionId, string pChannelType, bool pSpatial, int pParcelLocalID, string pChannelID)
-    {
-        (int roomNumber, Func<Task<JanusRoom>> create, Func<JanusRoom> existing) =
-            RoomFor(pRegionId, pChannelType, pSpatial, pParcelLocalID, pChannelID);
-        m_log.LogDebug("{0} EnsureRoom: roomNumber={1}", LogHeader, roomNumber);
-        return await EnsureRoomCoalesced(roomNumber, create, existing).ConfigureAwait(false);
-    }
-
-    /// <summary>Slice 0.8f (O-98, R2): <paramref name="pStale"/>'s join was answered 485 No such room. Re-create it,
-    /// unless another caller already has since that hint was handed out.</summary>
-    public async Task<JanusRoom> RecreateRoom(JanusRoom pStale, string pRegionId, string pChannelType, bool pSpatial,
-        int pParcelLocalID, string pChannelID)
-    {
-        (int roomNumber, Func<Task<JanusRoom>> create, Func<JanusRoom> existing) =
-            RoomFor(pRegionId, pChannelType, pSpatial, pParcelLocalID, pChannelID);
-        m_log.LogInformation("{0} RecreateRoom: room {1} was gone (485) although this process believed it existed " +
-            "(the mixer's empty-room grace destroys rooms out of band); re-creating", LogHeader, roomNumber);
-        return await RecreateAfterMissingCoalesced(roomNumber, pStale?.HintStamp ?? 0, create, existing).ConfigureAwait(false);
-    }
-
-    private (int RoomNumber, Func<Task<JanusRoom>> Create, Func<JanusRoom> Existing) RoomFor(string pRegionId,
-        string pChannelType, bool pSpatial, int pParcelLocalID, string pChannelID)
-    {
         int roomNumber = CalcRoomNumber(GridId, pRegionId, pChannelType, pParcelLocalID, pChannelID);
+        m_log.LogDebug("{0} SelectRoom: roomNumber={1}", LogHeader, roomNumber);
         string roomDesc = pRegionId + "/" + pChannelType + "/" + pParcelLocalID + "/" + pChannelID;
         bool visAuthority = ShouldDeclareVisAuthority(DeclareVisAuthority, pChannelType);
-        return (roomNumber, () => CreateRoom(roomNumber, pSpatial, roomDesc, visAuthority), () => new JanusRoom(this, roomNumber));
+        return await SelectRoomCoalesced(roomNumber, () => CreateRoom(roomNumber, pSpatial, roomDesc, visAuthority))
+            .ConfigureAwait(false);
     }
 
-    // Process-wide coalescing of room creation by room number. Under the per-room lock:
-    // if the room is already known to exist in this process, skip the create and let the
-    // caller build a join object (pMakeExistingJoinObject); otherwise create exactly once
-    // (pCreate) and record it. Func-based and static so it is unit-testable without Janus.
-    public static Task<JanusRoom> SelectRoomCoalesced(
-        int pRoomNumber,
-        Func<Task<JanusRoom>> pCreate,
-        Func<JanusRoom> pMakeExistingJoinObject)
-        => CoalescedAsync(pRoomNumber, pCreate, pMakeExistingJoinObject, pForceCreate: false, pStaleStamp: null);
+    /// <summary>The connector ensure (slice 0.8f, O-98 R1). Since 0.8i it is exactly SelectRoom: every select asks
+    /// the mixer. Kept as a name so the ensure's call site says what it is for.</summary>
+    public Task<JanusRoom> EnsureRoom(string pRegionId, string pChannelType, bool pSpatial, int pParcelLocalID, string pChannelID)
+        => SelectRoom(pRegionId, pChannelType, pSpatial, pParcelLocalID, pChannelID);
 
-    /// <summary>Slice 0.8f (O-98, R1): the ensure. ALWAYS asks the mixer to create (already-exists is success) and
-    /// never answers from the hint; concurrent ensures of one room still serialize on its gate.</summary>
-    public static Task<JanusRoom> EnsureRoomCoalesced(int pRoomNumber, Func<Task<JanusRoom>> pCreate,
-        Func<JanusRoom> pMakeExistingJoinObject)
-        => CoalescedAsync(pRoomNumber, pCreate, pMakeExistingJoinObject, pForceCreate: true, pStaleStamp: null);
-
-    /// <summary>Slice 0.8f (O-98, R2): a join into <paramref name="pRoomNumber"/> was answered 485 No such room, under
-    /// the hint version <paramref name="pStaleStamp"/>. If the hint has moved on since - another joiner found the
-    /// room gone too and has already re-created it - use that room; otherwise re-create. So N joiners that all hit
-    /// the same missing room cause one create, not N.</summary>
-    public static Task<JanusRoom> RecreateAfterMissingCoalesced(int pRoomNumber, long pStaleStamp,
-        Func<Task<JanusRoom>> pCreate, Func<JanusRoom> pMakeExistingJoinObject)
-        => CoalescedAsync(pRoomNumber, pCreate, pMakeExistingJoinObject, pForceCreate: false, pStaleStamp: pStaleStamp);
-
-    private static async Task<JanusRoom> CoalescedAsync(int pRoomNumber, Func<Task<JanusRoom>> pCreate,
-        Func<JanusRoom> pMakeExistingJoinObject, bool pForceCreate, long? pStaleStamp)
+    /// <summary>Send the create for <paramref name="pRoomNumber"/> under its per-room gate: creates of one room number
+    /// from this process go one at a time, so concurrent provisions produce one "created" and 486s. Always creates -
+    /// there is nothing to skip on (0.8i). Func-based and static so it is unit-testable without Janus.</summary>
+    public static async Task<JanusRoom> SelectRoomCoalesced(int pRoomNumber, Func<Task<JanusRoom>> pCreate)
     {
         long now = Environment.TickCount64;
         MaybeSweepRoomCreateLocks(now);
@@ -389,28 +333,7 @@ public class JanusAudioBridge : JanusPlugin
         await gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (!pForceCreate && _knownRooms.TryGetValue(pRoomNumber, out long version)
-                && (pStaleStamp is null || version != pStaleStamp.Value))
-            {
-                JanusRoom existing = pMakeExistingJoinObject();
-                if (existing is not null)
-                    existing.HintStamp = version;
-                return existing;
-            }
-            JanusRoom created = await pCreate().ConfigureAwait(false);
-            if (created is not null)
-            {
-                long fresh = Interlocked.Increment(ref _hintVersion);
-                _knownRooms[pRoomNumber] = fresh;
-                created.HintStamp = fresh;
-            }
-            else
-            {
-                // 0.8f: a create that did not answer created/already-exists proves nothing - drop any hint rather than
-                // let an older one keep answering for a room the mixer may not have.
-                _knownRooms.TryRemove(pRoomNumber, out _);
-            }
-            return created;
+            return await pCreate().ConfigureAwait(false);
         }
         finally
         {
@@ -418,6 +341,7 @@ public class JanusAudioBridge : JanusPlugin
             gate.Release();
         }
     }
+
 
     // O-60 (audit W-13): at most once a minute, drop the gate and the "exists" hint of every room number idle
     // for RoomCreateLockIdle (see the field comment for why eviction is safe).
@@ -441,7 +365,6 @@ public class JanusAudioBridge : JanusPlugin
             if (_roomCreateLocks.TryGetValue(kvp.Key, out SemaphoreSlim held) && held.CurrentCount == 0)
                 continue;   // a select for this room is in progress
             _roomCreateLocks.TryRemove(kvp.Key, out _);
-            _knownRooms.TryRemove(kvp.Key, out _);
             _roomLastUseMs.TryRemove(kvp.Key, out _);
             evicted++;
         }
@@ -451,16 +374,6 @@ public class JanusAudioBridge : JanusPlugin
     /// Room numbers currently holding a create gate (diagnostics and tests).
     public static int RoomCreateLockCount => _roomCreateLocks.Count;
 
-    /// Whether this process currently holds the "room exists" hint for a room number (diagnostics and tests).
-    public static bool IsRoomKnown(int pRoomNumber) => _knownRooms.ContainsKey(pRoomNumber);
-
-    // Drop the process-wide "exists" hint for a room number. Called when a join fails
-    // (e.g. the room was destroyed out-of-band) so the next SelectRoom re-creates the
-    // room instead of repeatedly trying to join a gone one.
-    public static void ForgetRoom(int pRoomNumber)
-    {
-        _knownRooms.TryRemove(pRoomNumber, out _);
-    }
 
     public override void Handle_Event(JanusMessageResp pResp)
     {
