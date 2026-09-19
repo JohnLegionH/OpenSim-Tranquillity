@@ -7,7 +7,8 @@
  * non-sim clients, which is exactly the party the capability checks. Instead the peer fetches one before every join:
  *
  *   POST /voice/connector/<name>/join-cap        Authorization: Bearer <[VoiceConnector.<name>] CapabilitySecret>
- *   200 {"display","room","session_id","join_cap","expires"}
+ *   200 {"display","room","session_id","join_cap","expires","position"}   (position: slice 0.8h, {"x","y","z"} as
+ *       global centimetres, integers - the viewer's own SLData frame)
  *
  * minted by the SAME minter as 0.4 (JoinCapability.Mint), agent = the NPC id, session = the record's
  * ViewerSessionId, room = the record's recorded room, and (epoch, generation) from JoinCapabilityAuthority, the
@@ -53,14 +54,19 @@ public sealed class VoiceConnectorJoinCapEndpoint
         /// EXISTS, and move the record if the parcel's channel changed. Returns the room, or null when it could not be
         /// ensured (then the recorded room is used as it stands). Null hook = pre-0.8c behaviour.</summary>
         public Func<VoiceConnectorRecord, int?> ResolveAndEnsureRoom { get; }
+        /// <summary>Slice 0.8h (O-62): this record's position in the viewer's SLData frame (global centimetres,
+        /// integers), computed at every fetch; the grant carries it as "position". Null hook = no position field.</summary>
+        public Func<VoiceConnectorRecord, (int X, int Y, int Z)?> PositionGlobalCm { get; }
 
         public Source(Func<IEnumerable<VoiceConnectorRecord>> pRecords, bool pMintEnabled, string pMintSecret,
-            Func<VoiceConnectorRecord, int?> pResolveAndEnsureRoom = null)
+            Func<VoiceConnectorRecord, int?> pResolveAndEnsureRoom = null,
+            Func<VoiceConnectorRecord, (int X, int Y, int Z)?> pPositionGlobalCm = null)
         {
             Records = pRecords;
             MintEnabled = pMintEnabled;
             MintSecret = pMintSecret ?? string.Empty;
             ResolveAndEnsureRoom = pResolveAndEnsureRoom;
+            PositionGlobalCm = pPositionGlobalCm;
         }
     }
 
@@ -191,6 +197,16 @@ public sealed class VoiceConnectorJoinCapEndpoint
             ["join_cap"] = OSD.FromString(capability),
             ["expires"] = OSD.FromLong(expires),
         };
+        // Slice 0.8h (O-62): the connector's position, in the viewer's SLData frame (global cm, integers), re-computed
+        // at every fetch. The peer sends it as its sp and lp once its data channel opens.
+        (int X, int Y, int Z)? position = source.PositionGlobalCm?.Invoke(record);
+        if (position.HasValue)
+            body["position"] = new OSDMap
+            {
+                ["x"] = OSD.FromInteger(position.Value.X),
+                ["y"] = OSD.FromInteger(position.Value.Y),
+                ["z"] = OSD.FromInteger(position.Value.Z),
+            };
         m_log?.LogInformation("[CONNECTOR] {Name}: join capability minted for room {Room}, expires {Expires}",
             record.Name, room, expires);
         return new Response((int)HttpStatusCode.OK, Encoding.UTF8.GetBytes(OSDParser.SerializeJsonString(body)), "application/json");

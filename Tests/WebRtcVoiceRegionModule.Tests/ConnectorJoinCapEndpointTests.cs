@@ -459,6 +459,57 @@ namespace osWebRtcVoice.Tests
             Assert.That(auth.CanArmNow(Npc), Is.False, "so the connector waits out a backoff rather than hammering it");
         }
 
+        // ---- slice 0.8h (O-62): a connector has a position, in the viewer's own SLData frame -------------------------
+
+        /// <summary>P1: a standard 256 m region at grid (1000, 1000), origin 256000 m. (origin + Position) x 100 as integers:
+        /// the global centimetres a viewer standing there would send as its sp (Firestorm llvoicewebrtc.cpp:1108,
+        /// :1241-1244).</summary>
+        [Test]
+        public void P1_GlobalCentimetres_A256Region()
+        {
+            (int x, int y, int z) = ConnectorRoomResolver.GlobalCentimetres(256000, 256000, new Vector3(128, 128, 22));
+            Assert.That((x, y, z), Is.EqualTo((25612800, 25612800, 2200)));
+        }
+
+        /// <summary>P2: a var region (1024 x 1024, like Elm) at grid (1004, 1008): the origin is still its south-west
+        /// corner, and Position runs past 256 - Elm's injector stands at (574, 719, 25).</summary>
+        [Test]
+        public void P2_GlobalCentimetres_AVarRegion_PositionPast256()
+        {
+            (int x, int y, int z) = ConnectorRoomResolver.GlobalCentimetres(1004 * 256, 1008 * 256, new Vector3(574, 719, 25));
+            Assert.That((x, y, z), Is.EqualTo(((1004 * 256 + 574) * 100, (1008 * 256 + 719) * 100, 2500)));
+        }
+
+        /// <summary>P3: the grant carries the position, re-computed at EVERY fetch: when the record's Position changes (a
+        /// config reload makes a new record under the same name), the next grant says so.</summary>
+        [Test]
+        public void P3_TheGrantCarriesThePosition_AndItFollowsTheRecordsPosition()
+        {
+            StartServer();
+            VoiceConnectorRecord current = Record();
+            var ep = Endpoint(m_server);
+            ep.Attach(new VoiceConnectorJoinCapEndpoint.Source(() => new[] { current }, true, MintKey,
+                rec => Room, rec => ConnectorRoomResolver.GlobalCentimetres(256000, 256000, rec.Position)));
+
+            OSDMap first = (OSDMap)OSDParser.DeserializeJson(Encoding.UTF8.GetString(Post("Recorder", Secret).Body));
+            Assert.That(first.ContainsKey("position"), Is.True, "the grant carries a position");
+            var p1 = (OSDMap)first["position"];
+            Assert.That((p1["x"].AsInteger(), p1["y"].AsInteger(), p1["z"].AsInteger()),
+                Is.EqualTo((25612800, 25612800, 2500)), "Record() stands at (128, 128, 25) in a region whose origin is 256000 m");
+            Assert.That(p1["x"].Type, Is.EqualTo(OSDType.Integer), "integers, as the viewer sends");
+
+            VoiceConnectorRecord moved = new VoiceConnectorRecord("Recorder", true, "Recorder", "NPC", new Vector3(140, 100, 30),
+                VoiceConnectorScope.Estate, false, "Operator", null, null, Secret)
+            {
+                NpcId = current.NpcId, ViewerSessionId = current.ViewerSessionId, Room = current.Room,
+            };
+            current = moved;
+            OSDMap second = (OSDMap)OSDParser.DeserializeJson(Encoding.UTF8.GetString(Post("Recorder", Secret).Body));
+            var p2 = (OSDMap)second["position"];
+            Assert.That((p2["x"].AsInteger(), p2["y"].AsInteger(), p2["z"].AsInteger()),
+                Is.EqualTo((25614000, 25610000, 3000)), "the next fetch carries the new Position");
+        }
+
         /// T7: after Unregister nothing more is ensured or minted for that record.
         [Test]
         public void T7_AfterUnregister_NothingIsEnsuredOrMintedForThatRecord()

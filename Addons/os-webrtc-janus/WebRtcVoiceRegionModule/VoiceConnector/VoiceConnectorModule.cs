@@ -244,7 +244,10 @@ public class VoiceConnectorModule : INonSharedRegionModule
             return;   // the default: no CapabilitySecret anywhere in this region, no endpoint, nothing registered
         VoiceConnectorRegistry registry = m_registry;
         m_joinCapSource = new VoiceConnectorJoinCapEndpoint.Source(() => registry.Snapshot(),
-            m_mintEnabled && !string.IsNullOrEmpty(m_mintSecret), m_mintSecret, ResolveAndEnsureRoom);
+            m_mintEnabled && !string.IsNullOrEmpty(m_mintSecret), m_mintSecret, ResolveAndEnsureRoom,
+            // Slice 0.8h (O-62): the region's global origin + the record's Position, at every fetch.
+            rec => m_scene is null ? ((int X, int Y, int Z)?)null
+                : ConnectorRoomResolver.GlobalCentimetres(m_scene.RegionInfo.WorldLocX, m_scene.RegionInfo.WorldLocY, rec.Position));
         lock (s_commandLock)
         {
             s_joinCapEndpoint ??= new VoiceConnectorJoinCapEndpoint(MainServer.Instance.DefaultServer, m_log);
