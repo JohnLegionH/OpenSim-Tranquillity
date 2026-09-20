@@ -19,4 +19,4 @@
 {"request":"peer_ctl_batch","op":"replace","excl":{},"mute":{"00000000-0000-0000-0000-000000000001":[],"00000000-0000-0000-0000-000000000002":[]},"room":1001}
 {"request":"peer_ctl_batch","op":"replace","excl":{},"mute":{"00000000-0000-0000-0000-000000000004":[]},"room":1002}
 == room create body (spatial)
-{"room":1001,"request":"create","is_private":false,"permanent":false,"sampling_rate":48000,"spatial_audio":true,"denoise":false,"record":false,"description":"golden"}
+{"room":1001,"request":"create","is_private":false,"permanent":false,"sampling_rate":48000,"spatial_audio":true,"denoise":false,"record":false,"description":"golden","sim_created":true}

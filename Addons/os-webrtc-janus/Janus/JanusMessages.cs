@@ -544,6 +544,12 @@ public class AudioBridgeCreateRoomReq : PluginMsgReq
             AddStringToBody("description", pDesc);
         if (pVisAuthority)
             AddBoolToBody("vis_authority", true);
+        // Slice 1.4 (ledger O-105): every room the SIM creates says so, spatial and "multiagent" alike. The mixer's
+        // join-capability requirement keys on this rather than on vis_authority, so an undeclared sim room - an A2A
+        // call today, an ADHOC conference tomorrow - is gated too, instead of admitting anything that holds the API
+        // secret. Sent unconditionally: a pre-1.4 mixer reads its create fields by name and ignores the rest
+        // (janus_slvoice.c, the "create" arm), so an old mixer under a new sim behaves exactly as before.
+        AddBoolToBody("sim_created", true);
     }
 }
 // ==============================================================
