@@ -43,6 +43,17 @@ namespace osWebRtcVoice
 
         private Thread m_thread;
         private volatile bool m_running;
+        /// <summary>Slice V-1b (O-120): Environment.TickCount64 at the end of the last completed feeder tick.
+        /// The heartbeat reports how old this is; the MIXER decides whether that counts as live.</summary>
+        private long m_lastTickMs;
+        /// <summary>Slice V-1b: tripped by the Watchdog's alarm when this feeder misses its 5000 ms deadline,
+        /// consumed by the next tick, which then rebuilds from the scene (ruling 4) instead of replaying a stale
+        /// view. Its own type so the alarm-to-rebuild wiring is testable without a Scene.</summary>
+        private readonly FeederResumeLatch m_resume = new FeederResumeLatch();
+        /// <summary>Slice V-1b (ruling 1): the heartbeat's own timer. It no longer rides the feeder tick, so a
+        /// starved feeder no longer looks like a dead sim -- it looks like a sim reporting a stale feed.</summary>
+        private Timer m_heartbeatTimer;
+        private int m_heartbeatReentry;
         private IEstateModule m_estateModule;
         private VisibilityBatchSender m_sender;   // built in StartLoop from the injected sink
         private readonly AgentRoomTable m_rooms = new AgentRoomTable();   // S2: agent -> joined mixer room (newest wins)
@@ -165,14 +176,27 @@ namespace osWebRtcVoice
             // reported instead of failing silently. StartThread creates, names, registers, and
             // starts the thread. 5000ms timeout = 20x the 250ms cadence; Pump is fire-and-forget
             // so the tick thread never blocks on a send, leaving that headroom safe.
+            // Slice V-1b: the feed is "fresh" the moment the loop starts, so a heartbeat that beats the first
+            // tick does not report a bogus age measured from process start.
+            Volatile.Write(ref m_lastTickMs, Environment.TickCount64);
             m_thread = WorkManager.StartThread(
                 RunLoop,
                 "VoiceVisibilityFeeder:" + m_scene.RegionInfo.RegionName,
                 ThreadPriority.Normal,
                 isBackground: true,
                 alarmIfTimeout: true,
-                alarmMethod: null,
+                // Slice V-1b (ruling 3): the Watchdog already notices this feeder 3 s before the mixer's 8000 ms
+                // window gives up on it; that signal used to be logged and dropped. OnFeederAlarm records it so
+                // the tick that finally runs knows it is a RESUME and rebuilds from the scene.
+                alarmMethod: OnFeederAlarm,
                 timeout: 5000);
+            // Ruling 1: the heartbeat on its own timer, at the authority's own cadence.
+            if (authority != null)
+            {
+                authority.FeedAgeMs = () => Environment.TickCount64 - Volatile.Read(ref m_lastTickMs);
+                m_heartbeatTimer = new Timer(OnHeartbeatTimer, null,
+                    VisAuthority.HeartbeatIntervalMs, VisAuthority.HeartbeatIntervalMs);
+            }
             m_log.LogInformation($"{logHeader} feeder started for {m_scene.RegionInfo.RegionName} @ {m_cadenceMs}ms (emit={m_emitEnabled})");
             if (authority != null)
                 m_log.LogInformation($"{logHeader} arming ENABLED for {m_scene.RegionInfo.RegionName} ([WebRtcVoice] VisibilityArmingEnabled): " +
@@ -223,6 +247,13 @@ namespace osWebRtcVoice
             m_running = false;
             m_wake.Set();
 
+            // Slice V-1b: stop the heartbeat timer first. Its callback and the graceful "stopping" heartbeat both
+            // go through the same sender, and a timer tick arriving after that stop would re-assert an authority
+            // this region has just given up.
+            Timer hb = m_heartbeatTimer;
+            m_heartbeatTimer = null;
+            hb?.Dispose();
+
             UnwireEvents();
 
             Thread t = m_thread;
@@ -250,6 +281,44 @@ namespace osWebRtcVoice
             (m_sink as IDisposable)?.Dispose();
         }
 
+        /// <summary>Slice V-1b (ruling 3): the Watchdog's alarm for this feeder. Records the stall for the next
+        /// tick to act on. Deliberately does no work and takes no lock: it runs on the Watchdog's own thread, which
+        /// O-120 measured being starved too, and anything slow here would delay every other thread it checks.</summary>
+        private string OnFeederAlarm()
+        {
+            m_resume.Trip();
+            long age = Environment.TickCount64 - Volatile.Read(ref m_lastTickMs);
+            return $"visibility feeder for {m_scene.RegionInfo.RegionName} has not ticked for {age} ms; " +
+                "the heartbeat keeps reporting that age and the mixer decides (O-120)";
+        }
+
+        /// <summary>Slice V-1b (ruling 1): the heartbeat, on its own timer.
+        ///
+        /// It is a <see cref="Timer"/> callback, so it runs on the THREAD POOL rather than on the feeder thread.
+        /// That is the point: the feeder is one named thread doing a scene walk, and when it is starved -- by a
+        /// Phlox timeslice, by GC, by startup -- it is starved alone, while the pool keeps servicing work. The
+        /// heartbeat therefore keeps its 1000 ms cadence through exactly the stalls that used to silence it.
+        /// PumpHeartbeat is fire-and-forget with its own interval gate and single-flight, so a slow send cannot
+        /// queue callbacks on top of each other; the re-entry guard here is belt and braces for a pool so starved
+        /// that a second tick fires before the first returns.</summary>
+        private void OnHeartbeatTimer(object _)
+        {
+            if (Interlocked.Exchange(ref m_heartbeatReentry, 1) != 0)
+                return;
+            try
+            {
+                m_sender?.PumpHeartbeat();
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning(e, $"{logHeader} heartbeat timer for {m_scene.RegionInfo.RegionName} threw");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref m_heartbeatReentry, 0);
+            }
+        }
+
         private void UnwireEvents()
         {
             m_scene.EventManager.OnAvatarEnteringNewParcel -= OnAvatarEnteringNewParcel;
@@ -263,6 +332,17 @@ namespace osWebRtcVoice
         {
             while (m_running)
             {
+                // Slice V-1b (ruling 4): the Watchdog says this feeder missed its deadline, so this tick is a
+                // RESUME. Invalidate BEFORE deriving, which makes Tick() recompute the matrix from the scene and
+                // emit a full REPLACE. Replaying the cached pre-stall view would be worse than useless: after the
+                // 60 s stalls O-120 measured, who is in the region and on which parcel may be entirely different.
+                long stalledFor = Environment.TickCount64 - Volatile.Read(ref m_lastTickMs);
+                if (m_resume.ResumeIfStalled(m_feeder.Invalidate))
+                {
+                    long age = stalledFor;
+                    m_log.LogWarning($"{logHeader} feeder for {m_scene.RegionInfo.RegionName} resumed after {age} ms " +
+                        "without a tick: rebuilding the matrix from the scene and re-arming (O-120)");
+                }
                 VisibilityBatch batch = null;
                 try
                 {
@@ -280,8 +360,10 @@ namespace osWebRtcVoice
                 // snapshot-on-a-quiet-tick still get a chance.
                 if (batch != null)
                     m_sender?.Pump(batch);
-                // Slice 0.2 §3: the heartbeat rides the tick but has its own single-flight; a no-op with arming off.
-                m_sender?.PumpHeartbeat();
+                // Slice V-1b (ruling 1): the heartbeat NO LONGER rides this tick -- OnHeartbeatTimer owns it. This
+                // loop's only remaining duty to liveness is to stamp when it last completed, which the heartbeat
+                // reports as feed_age_ms and the mixer judges.
+                Volatile.Write(ref m_lastTickMs, Environment.TickCount64);
 
                 m_wake.Wait(m_cadenceMs);
                 m_wake.Reset();

@@ -460,5 +460,83 @@ namespace osWebRtcVoice.Tests
                 }
             }
         }
+        // ======================================================================================
+        // Slice V-1b (O-120) ruling 4: RESUME REBUILDS FROM THE WORLD.
+        //
+        // When the feeder is starved past the mixer's staleness window, the service calls Invalidate() before the
+        // tick that finally runs. That tick must describe the world as it is NOW -- after the 60 s stalls O-120
+        // measured, who is in the region and on which parcel can be entirely different -- and not replay the view
+        // cached before the stall.
+        // ======================================================================================
+
+        [Test]
+        public void AfterInvalidate_TheNextTickDescribesTheCurrentWorld_NotThePreStallView()
+        {
+            var w = new FakeWorld();
+            ParcelView P = w.AddZone(1, Parcel(Id(201), banned: new HashSet<UUID> { Id(1) }));
+            ParcelView Q = w.AddZone(2, Parcel(Id(202)));
+            UUID a = Id(1), b = Id(2);
+            w.Agents.Add(Root(a, Q));   // A on Q, banned from P
+            w.Agents.Add(Root(b, P));   // B occupies P
+
+            var feeder = new VoiceStateFeeder(w, Room);
+            Assert.That(feeder.Current.IsExcluded(b, a), Is.True, "before the stall: B cannot hear the banned A");
+
+            // The stall. While the feeder is not ticking the world moves on: B leaves P for Q, and a newcomer C
+            // arrives. A cached view would still be hiding A from B and would not know C exists at all.
+            w.Agents[1] = Root(b, Q);
+            UUID c = Id(3);
+            w.Agents.Add(Root(c, Q));
+
+            feeder.Invalidate();
+            Assert.That(feeder.HasPendingInvalidation, Is.True, "Invalidate arms the rebuild the resume path needs");
+            feeder.Tick();
+
+            Assert.That(feeder.HasPendingInvalidation, Is.False, "the rebuild consumed the invalidation");
+            Assert.That(feeder.Current.IsExcluded(b, a), Is.False,
+                "after the resume B is on Q with A: the pre-stall exclusion must be gone");
+            Assert.That(feeder.Current.IsExcluded(a, b), Is.False);
+            // and the newcomer is known, which a replayed snapshot could not have told us
+            Assert.That(feeder.Current.IsExcluded(c, a), Is.False, "C arrived during the stall and hears A");
+            Assert.That(feeder.Current.IsExcluded(a, c), Is.False);
+        }
+
+        // ======================================================================================
+        // Slice V-1b (O-120) rulings 3 + 4 TOGETHER: the alarm must actually reach the rebuild.
+        //
+        // The test above proves Invalidate() rebuilds from the world. This one proves the wiring around it: the
+        // Watchdog's alarm trips the latch by the same route OnFeederAlarm uses, and the tick that follows
+        // CONSUMES it and calls Invalidate. The failure being excluded is the quiet one -- alarm fires, flag is
+        // set, nothing consumes it, and the next tick derives happily from the pre-stall cache.
+        // ======================================================================================
+
+        [Test]
+        public void AWatchdogAlarm_MakesTheNextTickRebuild_AndOnlyThatTick()
+        {
+            var latch = new FeederResumeLatch();
+            int invalidated = 0;
+
+            // A tick with no alarm behind it must not rebuild: rebuilding every tick would throw away the delta
+            // machinery the feeder exists for.
+            Assert.That(latch.ResumeIfStalled(() => invalidated++), Is.False, "no alarm, no resume");
+            Assert.That(invalidated, Is.EqualTo(0));
+
+            latch.Trip();                       // <- exactly what OnFeederAlarm does, off the Watchdog's thread
+            Assert.That(latch.IsTripped, Is.True);
+
+            Assert.That(latch.ResumeIfStalled(() => invalidated++), Is.True, "the tick after the alarm resumes");
+            Assert.That(invalidated, Is.EqualTo(1), "and it invalidated, so the derivation rebuilds from the world");
+            Assert.That(latch.IsTripped, Is.False, "the latch is consumed");
+
+            // One alarm, one rebuild. The tick after that is an ordinary delta tick again.
+            Assert.That(latch.ResumeIfStalled(() => invalidated++), Is.False, "a consumed latch does not re-fire");
+            Assert.That(invalidated, Is.EqualTo(1));
+
+            // A stall that begins again is a fresh resume, not swallowed by the previous one.
+            latch.Trip();
+            Assert.That(latch.ResumeIfStalled(() => invalidated++), Is.True, "a second stall rebuilds again");
+            Assert.That(invalidated, Is.EqualTo(2));
+        }
+
     }
 }

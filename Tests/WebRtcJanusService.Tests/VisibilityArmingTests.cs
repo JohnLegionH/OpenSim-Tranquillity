@@ -632,5 +632,53 @@ namespace osWebRtcVoice.Tests
             await rig.Tick(1000);
             Assert.That(rig.T.Batches().Single()["room"].AsInteger(), Is.EqualTo(RoomD));
         }
+        // ---- Slice V-1b (O-120): the heartbeat reports the feeder's age; the MIXER judges it ----
+
+        [Test]
+        public void BuildHeartbeat_WithNoFeedAgeSource_OmitsTheField()
+        {
+            var auth = new VisAuthority(0x0000018f3a2b4c5dUL, "R");
+            OSDMap body = auth.BuildHeartbeat(new[] { A }, a => RoomAB, false);
+            // A pre-V1b sim sends no feed_age_ms, and the mixer reads absent as live. Anything else here would
+            // change behaviour for every sim that has not opted in.
+            Assert.That(body.ContainsKey("feed_age_ms"), Is.False, "feed_age_ms must be absent when nothing supplies it");
+        }
+
+        [Test]
+        public void BuildHeartbeat_ReportsTheFeedAge_AtBuildTime()
+        {
+            var auth = new VisAuthority(0x0000018f3a2b4c5dUL, "R");
+            long age = 37;
+            auth.FeedAgeMs = () => age;
+            Assert.That(auth.BuildHeartbeat(new[] { A }, a => RoomAB, false)["feed_age_ms"].AsInteger(), Is.EqualTo(37));
+            // The age is read when the BODY is built, not when the source was attached: a heartbeat must describe
+            // the matrix it is actually carrying.
+            age = 12345;
+            Assert.That(auth.BuildHeartbeat(new[] { A }, a => RoomAB, false)["feed_age_ms"].AsInteger(), Is.EqualTo(12345));
+        }
+
+        [Test]
+        public void BuildHeartbeat_OmitsAnUnreadableOrNegativeFeedAge()
+        {
+            var auth = new VisAuthority(0x0000018f3a2b4c5dUL, "R");
+            auth.FeedAgeMs = () => -1;
+            Assert.That(auth.BuildHeartbeat(new[] { A }, a => RoomAB, false).ContainsKey("feed_age_ms"), Is.False,
+                "a negative age is malformed: omit it rather than let a bad clock silence the grid");
+            auth.FeedAgeMs = () => throw new InvalidOperationException("feeder gone");
+            Assert.That(auth.BuildHeartbeat(new[] { A }, a => RoomAB, false).ContainsKey("feed_age_ms"), Is.False,
+                "a throwing source must not take the heartbeat down with it");
+        }
+
+        [Test]
+        public void BuildHeartbeat_StillReportsTheAgeOnAStoppingBody()
+        {
+            var auth = new VisAuthority(0x0000018f3a2b4c5dUL, "R");
+            auth.FeedAgeMs = () => 99;
+            OSDMap body = auth.BuildHeartbeat(new[] { A }, a => RoomAB, true);
+            Assert.That(body["state"].AsString(), Is.EqualTo("stopping"));
+            Assert.That(body["feed_age_ms"].AsInteger(), Is.EqualTo(99),
+                "the mixer honours a stopping heartbeat at any age, but the age is still the truth we owe it");
+        }
+
     }
 }

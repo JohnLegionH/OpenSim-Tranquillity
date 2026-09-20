@@ -14,6 +14,7 @@
     <Compile Include="LandBan.cs" />
     <Compile Include="ProvisionParcelResolver.cs" />
     <Compile Include="FeederWorldFromScene.cs" />
+    <Compile Include="FeederResumeLatch.cs" />
     <Compile Include="VoiceVisibilityService.cs" />
     <Compile Include="AgentRoomTable.cs" />
     <Compile Include="VoiceModerationStore.cs" />

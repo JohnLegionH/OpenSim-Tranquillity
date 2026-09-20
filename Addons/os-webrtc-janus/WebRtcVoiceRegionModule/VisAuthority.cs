@@ -104,6 +104,13 @@ namespace osWebRtcVoice
             _nowMs = nowMs ?? (() => Environment.TickCount64);
         }
 
+        /// <summary>Slice V-1b (O-120): how old this region's visibility feed is, in ms, asked at the moment a
+        /// heartbeat body is built. The heartbeat now runs on a timer of its own, so it keeps arriving while the
+        /// feeder is starved; this is what lets the MIXER tell those two apart. Null (the default) omits
+        /// feed_age_ms entirely, which is exactly what a pre-V1b sim sends -- so nothing that does not set this
+        /// changes behaviour. The sim does NOT judge the value: it reports, the mixer rules (design V-1b §2).</summary>
+        public Func<long> FeedAgeMs { get; set; }
+
         /// <summary>§1.1: a new epoch, strictly greater than any earlier one in this process.</summary>
         public static ulong NewEpoch(long unixMs, int random16)
         {
@@ -498,6 +505,25 @@ namespace osWebRtcVoice
                 ["interval_ms"] = OSD.FromInteger(HeartbeatIntervalMs),
                 ["rooms"] = rooms,
             };
+            // Slice V-1b (O-120): report the feed's age as it is RIGHT NOW, at build time, not when the timer
+            // fired -- the mixer judges the matrix this body describes. A thrown or negative reading is omitted
+            // rather than guessed at: absent means "pre-V1b sim" to the mixer, which is the safe reading, and a
+            // sim must never be able to silence its own grid with a bad clock.
+            Func<long> feedAge = FeedAgeMs;
+            if (feedAge != null)
+            {
+                try
+                {
+                    long age = feedAge();
+                    if (age >= 0)
+                        body["feed_age_ms"] = OSD.FromInteger(age > int.MaxValue ? int.MaxValue : (int)age);
+                }
+                catch (Exception e)
+                {
+                    m_log.LogWarning(e, "{LogHeader} region {Region}: reading the feed age failed; feed_age_ms omitted",
+                        LogHeader, _region);
+                }
+            }
             if (stopping)
                 body["state"] = OSD.FromString("stopping");
             return body;
