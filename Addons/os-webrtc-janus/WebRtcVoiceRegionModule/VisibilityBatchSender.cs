@@ -348,9 +348,13 @@ namespace osWebRtcVoice
             return result;
         }
 
-        /// <summary>Slice 0.2 §3: called every feeder tick. Sends one peer_ctl_heartbeat when arming is on, the mixer has
-        /// advertised vis_protocol 2, at least <see cref="VisAuthority.HeartbeatIntervalMs"/> has passed since the last
-        /// one, and no heartbeat is in flight. Independent of the batch single-flight. Fire-and-forget; never throws.</summary>
+        /// <summary>Sends one peer_ctl_heartbeat when arming is on, the mixer has advertised vis_protocol 2, and no
+        /// heartbeat is already in flight. Independent of the batch single-flight. Fire-and-forget; never throws.
+        ///
+        /// Slice V-1b: the CALLER decides how often this runs - VoiceVisibilityService's heartbeat timer, every
+        /// VisAuthority.HeartbeatIntervalMs. It used to be called from the feeder tick (four times as often) and
+        /// throttled here, which is why the throttle existed; with the timer owning cadence the throttle only
+        /// dropped beats, so it is gone. Calling this faster than the interval now really does send faster.</summary>
         public void PumpHeartbeat() => _ = PumpHeartbeatAsync(false);
 
         /// <summary>The awaitable core of <see cref="PumpHeartbeat"/>. <paramref name="stopping"/> sends the graceful-stop
@@ -363,12 +367,17 @@ namespace osWebRtcVoice
                 return Task.CompletedTask;
             if (!stopping)
             {
-                long now = _nowMs();
-                if (_heartbeatSent && now - _lastHeartbeatMs < VisAuthority.HeartbeatIntervalMs)
-                    return Task.CompletedTask;
+                // Slice V-1b: NO interval gate here. The caller's timer owns the cadence, and two owners of one
+                // cadence can only subtract ticks: the timer fires every HeartbeatIntervalMs, and a callback
+                // landing a hair UNDER that (scheduler jitter, which is normal) was refused by a gate measured
+                // from the previous send's START, so that beat was dropped and the next arrived a whole period
+                // later. MEASURED live over 21 minutes before this change: 0.88 heartbeats/s against an intended
+                // 1.0, worst gap 1987 ms - almost exactly two periods, i.e. one skipped beat, not starvation.
+                // Single-flight still stands: it stops two sends OVERLAPPING, which is a different question from
+                // how often to send. _lastHeartbeatMs / _heartbeatSent are kept for diagnostics only.
                 if (Interlocked.CompareExchange(ref _heartbeatInFlight, 1L, 0L) != 0L)
                     return Task.CompletedTask;
-                _lastHeartbeatMs = now;
+                _lastHeartbeatMs = _nowMs();
                 _heartbeatSent = true;
             }
             OSDMap body = _authority.BuildHeartbeat(_feed.Current.Population, _resolveRoom, stopping);

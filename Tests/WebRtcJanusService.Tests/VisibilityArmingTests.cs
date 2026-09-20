@@ -320,15 +320,9 @@ namespace osWebRtcVoice.Tests
 
             await rig.Heartbeat();
             Assert.That(rig.T.Heartbeats().Count, Is.EqualTo(1));
-            for (int i = 0; i < 3; i++)
-            {
-                rig.Clock += 250;
-                await rig.Heartbeat();
-            }
-            Assert.That(rig.T.Heartbeats().Count, Is.EqualTo(1), "nothing before 1000 ms");
-            rig.Clock += 250;
+            rig.Clock += 1000;
             await rig.Heartbeat();
-            Assert.That(rig.T.Heartbeats().Count, Is.EqualTo(2), "the next one at 1000 ms");
+            Assert.That(rig.T.Heartbeats().Count, Is.EqualTo(2), "the caller's next beat sends");
 
             OSDMap hb = rig.T.Heartbeats()[1];
             Assert.That(hb["room_epoch"].AsString(), Is.EqualTo(rig.Auth.EpochString));
@@ -340,6 +334,37 @@ namespace osWebRtcVoice.Tests
             Assert.That(Path(rooms, RoomAB.ToString(), "listeners", A.ToString()).AsInteger(), Is.EqualTo(1));
             Assert.That(Path(rooms, RoomAB.ToString(), "listeners", B.ToString()).AsInteger(), Is.EqualTo(1));
             Assert.That(Path(rooms, RoomD.ToString(), "listeners", D.ToString()).AsInteger(), Is.EqualTo(1), "the empty-column listener is listed");
+        }
+
+        /// Slice V-1b: the CALLER owns the cadence. This used to throttle itself to HeartbeatIntervalMs measured
+        /// from the previous send's start, back when the feeder tick called it four times a second. Now
+        /// VoiceVisibilityService's timer calls it once per interval, and the throttle could only subtract beats:
+        /// a timer callback landing a hair under the interval was refused, and the next arrived a whole period
+        /// later. MEASURED live before this change: 0.88 heartbeats/s against an intended 1.0, worst gap 1987 ms
+        /// -- one skipped beat. Two owners of one cadence is the same fault V-1b removed from the feeder.
+        [Test]
+        public async Task Heartbeat_DoesNotThrottleItself_TheCallerOwnsTheCadence()
+        {
+            var rig = new Rig();
+            rig.Advertise();
+            await rig.Tick();
+
+            await rig.Heartbeat();
+            Assert.That(rig.T.Heartbeats().Count, Is.EqualTo(1));
+
+            // Four calls inside one interval: with the old gate this sent nothing, because each was "too soon".
+            for (int i = 0; i < 4; i++)
+            {
+                rig.Clock += 100;
+                await rig.Heartbeat();
+            }
+            Assert.That(rig.T.Heartbeats().Count, Is.EqualTo(5),
+                "every call sends: how often to beat is the timer's business, not this method's");
+
+            // And the clock not moving at all must not stop it either - that was the exact shape of the drift,
+            // a callback arriving fractionally early being dropped entirely.
+            await rig.Heartbeat();
+            Assert.That(rig.T.Heartbeats().Count, Is.EqualTo(6), "a beat with no elapsed time still sends");
         }
 
         /// Slice 0.7d (O-95): as_of is the highest generation the mixer APPLIED in the room when the heartbeat was built,
