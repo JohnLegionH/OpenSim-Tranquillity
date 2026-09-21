@@ -178,14 +178,24 @@ namespace osWebRtcVoice.NonSpatial
 
             if (!created)
             {
-                // A repeat start refreshes and re-seats the creator (it may have departed and come
-                // back) but never duplicates the session, the members or the room.
+                // A repeat start refreshes and re-seats the ORIGINAL creator (it may have departed
+                // and come back) but never duplicates the session, the members or the room.
+                //
+                // P1.2G found the sharp edge here: for GROUP, every member calls Start, not just the
+                // opener, so seating `creator` unconditionally would hand a seat to an arbitrary
+                // caller WITHOUT the cap check that lives in Accept -- the 51st member would walk
+                // straight in. Two guards: only the session's own creator is re-seated here, and
+                // only when there is room. Everyone else takes their seat through Accept, which is
+                // where admission and the cap are decided.
                 _store.Mutate<object>(sessionId, sess =>
                 {
                     sess.LastSeenUtc = now;
                     NonSpatialMember me = sess.Find(creator);
                     if (me == null || me.State == MemberState.Departed)
-                        sess.Upsert(creator, MemberState.Accepted, originRegion, now);
+                    {
+                        if (sess.Creator == creator && !sess.IsFull)
+                            sess.Upsert(creator, MemberState.Accepted, originRegion, now);
+                    }
                     else
                         me.LastSeenUtc = now;
                     if (invitees != null)
@@ -340,6 +350,52 @@ namespace osWebRtcVoice.NonSpatial
                 if (o.Ok) touched.Add(s);
             }
             return touched;
+        }
+
+        // ---- credentials -----------------------------------------------------------------------
+
+        /// <summary>Token size in bytes, rendered as lowercase hex. Matches A2ASessionRegistry.TokenBytes.</summary>
+        public const int TokenBytes = 32;
+
+        /// <summary>
+        /// The session's credential, minted on first call and stable afterwards so a retried "call"
+        /// does not invalidate credentials already in a viewer's hands. Returns null when the agent
+        /// is not a member of the session, so a token can never be handed to a stranger.
+        /// </summary>
+        public string IssueToken(UUID sessionId, UUID agent)
+        {
+            DateTime now = _clock();
+            return _store.Mutate<string>(sessionId, sess =>
+            {
+                NonSpatialMember m = sess.Find(agent);
+                if (m == null || m.State == MemberState.Departed || m.State == MemberState.Declined)
+                    return null;
+                if (string.IsNullOrEmpty(sess.Token))
+                    sess.Token = NewToken();
+                sess.LastSeenUtc = now;
+                return sess.Token;
+            });
+        }
+
+        /// <summary>
+        /// Constant-time-ish comparison of a presented credential against the session's. False for a
+        /// session with no token yet, so a provision can never arrive before its "call".
+        /// </summary>
+        public static bool TokenMatches(NonSpatialVoiceSession session, string presented)
+        {
+            string held = session?.Token;
+            if (string.IsNullOrEmpty(held) || string.IsNullOrEmpty(presented) || held.Length != presented.Length)
+                return false;
+            int diff = 0;
+            for (int i = 0; i < held.Length; i++) diff |= held[i] ^ presented[i];
+            return diff == 0;
+        }
+
+        private static string NewToken()
+        {
+            byte[] raw = new byte[TokenBytes];
+            System.Security.Cryptography.RandomNumberGenerator.Fill(raw);
+            return Convert.ToHexString(raw).ToLowerInvariant();
         }
 
         // ---- sweep ---------------------------------------------------------------------------

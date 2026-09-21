@@ -42,6 +42,7 @@ using OSDMap = OpenMetaverse.StructuredData.OSDMap;
 
 using Nini.Config;
 using Microsoft.Extensions.Logging;
+using osWebRtcVoice.NonSpatial;   // P1.2G: the non-spatial engine and the group arm
 
 namespace osWebRtcVoice;
 
@@ -99,6 +100,26 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     public static bool ReadVisibilityArmingEnabled(IConfig pConfig)
         => pConfig.GetBoolean("VisibilityArmingEnabled", DefaultVisibilityArmingEnabled);
 
+    // P1.2G item 6: [WebRtcVoice] GroupVoiceEnabled. OFF by default, so an install that never sets
+    // it behaves exactly as it does today -- a group "call" falls through to the A2A arm and 404s,
+    // and a group provision cannot exist because no room key was ever handed out. Opt-in only.
+    public const bool DefaultGroupVoiceEnabled = false;
+
+    public static bool ReadGroupVoiceEnabled(IConfig pConfig)
+        => pConfig.GetBoolean("GroupVoiceEnabled", DefaultGroupVoiceEnabled);
+
+    // [WebRtcVoice] GroupVoiceRequireVoicePower. The viewer separates GP_SESSION_JOIN (may be in the
+    // session, roles_constants.h:144) from GP_SESSION_VOICE (may hear/talk, :145); we require both by
+    // default so a role explicitly denied voice is not admitted. False requires JOIN only.
+    public const bool DefaultGroupVoiceRequireVoicePower = true;
+
+    public static bool ReadGroupVoiceRequireVoicePower(IConfig pConfig)
+        => pConfig.GetBoolean("GroupVoiceRequireVoicePower", DefaultGroupVoiceRequireVoicePower);
+
+    // [WebRtcVoice] GroupVoiceCap. Clamped by NonSpatialCaps.Effective to the mixer's SLV_MAX_MIX.
+    public static int ReadGroupVoiceCap(IConfig pConfig)
+        => pConfig.GetInt("GroupVoiceCap", NonSpatialCaps.DefaultConferenceCap);
+
     // Phase-3a per-listener visibility feeder, one service per region. On by default (V-1, O-78);
     // false turns it off.
     private bool m_VisibilityFeederEnabled = DefaultVisibilityFeederEnabled;
@@ -122,6 +143,15 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     // because ChatSessionRequest arrives on cap HTTP threads. Cross-instance A2A is out of scope (§1.7).
     private readonly A2ASessionRegistry m_a2aSessions = new();
 
+    // P1.2G: the non-spatial engine (P1.1) and the group policy. The engine is constructed
+    // unconditionally and costs nothing when idle; the POLICY is what gates every group arm, and it
+    // is GroupVoicePolicy.Disabled unless [WebRtcVoice] GroupVoiceEnabled is set. The store is the
+    // in-process one for this slice; P1.x swaps it for a service behind INonSpatialSessionStore
+    // without touching anything here (O-110).
+    private readonly InMemoryNonSpatialSessionStore m_nonSpatialStore = new();
+    private NonSpatialVoiceSessionEngine m_nonSpatial;
+    private GroupVoicePolicy m_groupVoice = GroupVoicePolicy.Disabled;
+
     // ISharedRegionModule.Initialize
     public void Initialise(IConfigSource config)
     {
@@ -140,6 +170,33 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                 m_VisibilityTickMs = m_Config.GetInt("VisibilityTickMs", 250);
                 m_VisibilityEmitEnabled = ReadVisibilityEmitEnabled(m_Config);
                 m_VisibilityArmingEnabled = ReadVisibilityArmingEnabled(m_Config);
+
+                // P1.2G: group voice, opt-in. The membership and power lookups are bound per-request
+                // to the scene's IGroupsModule (grid state via the groups service, so the same answer
+                // on every region and every host), not captured here, because scenes are added later.
+                if (ReadGroupVoiceEnabled(m_Config))
+                {
+                    m_groupVoice = new GroupVoicePolicy
+                    {
+                        Enabled = true,
+                        RequireVoicePower = ReadGroupVoiceRequireVoicePower(m_Config),
+                        Cap = ReadGroupVoiceCap(m_Config),
+                        IsMember = GroupIsMember,
+                        Powers = GroupPowersOf,
+                    };
+                    m_log.LogInformation(
+                        "{LogHeader} GROUP VOICE enabled ([WebRtcVoice] GroupVoiceEnabled): cap {Cap}, required powers 0x{Mask:X}{Note}",
+                        logHeader, NonSpatialCaps.Effective(NonSpatialSessionType.Group, m_groupVoice.Cap),
+                        m_groupVoice.RequiredMask,
+                        m_groupVoice.RequireVoicePower ? " (GP_SESSION_JOIN + GP_SESSION_VOICE)" : " (GP_SESSION_JOIN only)");
+                }
+
+                // The SAME grid id the room numbers are hashed from (S-A2A-4, O-35), so a group room
+                // key derived here and a room number derived in the bridge agree across the grid.
+                m_nonSpatial = new NonSpatialVoiceSessionEngine(
+                    m_nonSpatialStore,
+                    new INonSpatialAdmission[] { new P2PAdmission(), new AdhocAdmission(), m_groupVoice.ToAdmissionOrNull() },
+                    JanusAudioBridge.ReadGridId(config));
                 // S3b: rooms addressed concurrently within one send. A latency budget, not a
                 // throughput knob � see JanusPeerCtlBatchSink.DefaultRoomSendConcurrency.
                 m_VisibilityRoomSendConcurrency = m_Config.GetInt("VisibilityRoomSendConcurrency",
@@ -623,7 +680,43 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         // the voice service by viewer_session -- the O-29 guard had been refusing every logout provision
         // since it shipped (live logs: 'refusing provision with channel_type ""' at each teardown), leaving
         // mixer teardown to the close-capture path. Everything else stays refused exactly as O-29 left it.
-        ProvisionAdmission admission = A2AProvisionAdmission.Decide(map, agentID, m_a2aSessions);
+        // P1.2G: a GROUP provision is a "multiagent" body whose `channel` is one of our room keys
+        // ("nsv1:group:<uuid>"), which can never be an A2A channel because that lookup is
+        // UUID.TryParse. Anything else -- every body that exists today -- goes to the untouched
+        // A2AProvisionAdmission.Decide below with the same arguments it has always had.
+        ProvisionAdmission admission;
+        if (NonSpatialProvisionAdmission.IsGroupProvision(map))
+        {
+            NonSpatialProvisionResult g = NonSpatialProvisionAdmission.Decide(
+                map, agentID, m_groupVoice, m_nonSpatial, scene.RegionInfo.RegionID);
+            map.TryGetString("channel", out string gch);
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                NonSpatialProvisionAdmission.Line(agentID, scene.Name, gch,
+                    map.TryGetString("credentials", out string gcr) && !string.IsNullOrEmpty(gcr), g.Decision));
+            if (!g.Admitted)
+            {
+                m_log.LogWarning($"{logHeader}[ProvisionVoice]: refusing group provision ({g.Decision}) from agent {agentID} in region \"{scene.Name}\"");
+                response.RawBuffer = llsdUndefAnswerBytes;
+                response.StatusCode = g.Status;
+                return;
+            }
+            // Admitted. Hand the rest of the request to the SAME flow an admitted A2A multiagent
+            // provision takes: it skips the parcel/estate checks (their authorization is the
+            // registry / the group service) and calls the voice service with the body unchanged,
+            // which selects the room by (gridId, channel, "multiagent") using the existing bridge.
+            // Nothing below this line knows or needs to know that it was a group.
+            admission = new ProvisionAdmission
+            {
+                Kind = ProvisionKind.Multiagent,
+                Decision = g.Decision,
+                ChannelType = A2AProvisionAdmission.ChannelTypeMultiagent,
+                Channel = gch ?? "-",
+            };
+        }
+        else
+        {
+            admission = A2AProvisionAdmission.Decide(map, agentID, m_a2aSessions);
+        }
         string channelType = admission.ChannelType;
         string a2aVs = map.TryGetString("viewer_session", out string vsRaw) && !string.IsNullOrEmpty(vsRaw) ? vsRaw : "-";
 
@@ -965,6 +1058,20 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             logHeader, ChatSessionRequestLogic.InstrumentTag, agentID, scene.RegionInfo.RegionName,
             OSDParser.SerializeJsonString(reqmap));
 
+        // P1.2G: a GROUP voice "call" is answered here, BEFORE the A2A arm, and only when group voice
+        // is enabled and the session-id names a group this agent belongs to. TryHandleCall returns
+        // false having done nothing for everything else, so the A2A path below is reached with
+        // exactly the arguments and the state it would have had. A group "call" from a NON-member
+        // falls through on purpose: it reaches the A2A arm and 404s there, which is the pre-slice
+        // answer for an unknown session and the one the viewer already survives.
+        if (GroupVoiceChatSession.TryHandleCall(reqmap, agentID, m_groupVoice, m_nonSpatial,
+                                                scene.RegionInfo.RegionID, out ChatSessionOutcome groupOutcome))
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader, groupOutcome.Instrument);
+            ApplyChatSessionOutcome(groupOutcome, response);
+            return;
+        }
+
         // S-A2A-1: the decision is pure and unit-tested (ChatSessionRequestLogic); this adapter applies it.
         // "start p2p voice" records the pair in the invitation registry (params = callee; absent -> 400,
         // replacing the old UUID.Random fallback); "call" mints the per-session token and answers in the
@@ -1016,10 +1123,70 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                     agentID);
         }
 
+        ApplyChatSessionOutcome(outcome, response);
+    }
+
+    /// <summary>
+    /// Write a ChatSessionRequest outcome's body and status. Extracted verbatim from the tail of
+    /// <see cref="ChatSessionRequest"/> so the P1.2G group arm answers through exactly the same code
+    /// the A2A arm does; it carries no event-queue or invitation work, which only the A2A arm has.
+    /// </summary>
+    private static void ApplyChatSessionOutcome(ChatSessionOutcome outcome, IOSHttpResponse response)
+    {
         if (outcome.Body is not null)
             response.RawBuffer = Util.UTF8.GetBytes(OSDParser.SerializeLLSDXmlString(outcome.Body));
 
         response.StatusCode = (int)outcome.Status;
+    }
+
+    // ---- P1.2G: group membership and powers, resolved as GRID state ------------------------------
+    //
+    // IGroupsModule answers through the groups service (local or remote connector), so these are the
+    // same on every region of the grid and on every host -- which is what lets the session be
+    // grid-wide while admission stays correct wherever the agent happens to be standing. Any scene in
+    // this process can answer; the first one with the module wins. No scene means no groups, which is
+    // a refusal, never an admission.
+
+    private IGroupsModule GroupsModule()
+    {
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+        foreach (Scene s in scenes)
+        {
+            IGroupsModule g = s.RequestModuleInterface<IGroupsModule>();
+            if (g is not null)
+                return g;
+        }
+        return null;
+    }
+
+    private bool GroupIsMember(UUID agentID, UUID groupID)
+    {
+        try
+        {
+            return GroupsModule()?.GetMembershipData(groupID, agentID) is not null;
+        }
+        catch (Exception e)
+        {
+            m_log.LogWarning(e, "{LogHeader} group membership lookup failed for agent {AgentId} group {GroupId}; refusing",
+                logHeader, agentID, groupID);
+            return false;
+        }
+    }
+
+    private ulong GroupPowersOf(UUID agentID, UUID groupID)
+    {
+        try
+        {
+            return GroupsModule()?.GetFullGroupPowers(agentID, groupID) ?? 0UL;
+        }
+        catch (Exception e)
+        {
+            m_log.LogWarning(e, "{LogHeader} group power lookup failed for agent {AgentId} group {GroupId}; refusing",
+                logHeader, agentID, groupID);
+            return 0UL;
+        }
     }
 
     /// <summary>

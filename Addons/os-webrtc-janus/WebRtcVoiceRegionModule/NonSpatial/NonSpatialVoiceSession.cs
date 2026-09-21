@@ -144,6 +144,15 @@ namespace osWebRtcVoice.NonSpatial
         /// <summary>The seat ceiling actually in force; see <see cref="NonSpatialCaps"/>.</summary>
         public int Cap { get; }
 
+        /// <summary>
+        /// The per-session secret the viewer echoes back as provision <c>credentials</c>, exactly as
+        /// the A2A path does (<c>A2ASession.Token</c>). Minted once on first issue and stable
+        /// afterwards, so a retried "call" does not invalidate credentials already handed out.
+        /// It BINDS a provision to a session; it is NOT the authority on its own -- the provision
+        /// arm re-checks membership and powers, because in a group anyone who can call can learn it.
+        /// </summary>
+        public string Token { get; internal set; }
+
         private readonly Dictionary<UUID, NonSpatialMember> _members = new Dictionary<UUID, NonSpatialMember>();
 
         internal NonSpatialVoiceSession(NonSpatialSessionType type, UUID sessionId, UUID tempSessionId,
