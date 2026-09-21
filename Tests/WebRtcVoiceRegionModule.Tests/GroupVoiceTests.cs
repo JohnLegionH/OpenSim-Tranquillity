@@ -406,6 +406,172 @@ namespace osWebRtcVoice.Tests
             Assert.That(d.Kind, Is.EqualTo(ProvisionKind.Multiagent));
         }
 
+        // ---- seat inflation: what 56 failed provisions actually did ----------------------------
+
+        [Test]
+        public void RepeatedFailedProvisionsByOneAgent_DoNotInflateTheSeatCount()
+        {
+            // The live NRE produced 112 admitted provisions and 56 exceptions from ONE agent in four
+            // minutes. Each admitted provision calls Accept. If Accept were not idempotent per agent,
+            // the group would have burned through its 50 seats in under two minutes.
+            (GroupVoicePolicy p, NonSpatialVoiceSessionEngine e, _, UUID group, string room, string token) = Called();
+            for (int i = 0; i < 112; i++)
+            {
+                NonSpatialProvisionResult r = NonSpatialProvisionAdmission.Decide(ProvisionBody(room, token), Alice, p, e, RegionA);
+                Assert.That(r.Admitted, Is.True, "retry " + i);
+            }
+            NonSpatialVoiceSession s = e.Store.Get(group);
+            Assert.That(s.SeatsHeld, Is.EqualTo(1), "one agent holds exactly one seat however many times it retries");
+            Assert.That(s.Members.Count, Is.EqualTo(1));
+            Assert.That(s.IsFull, Is.False);
+        }
+
+        [Test]
+        public void DistinctAgentsRetrying_EachHoldExactlyOneSeat()
+        {
+            (GroupVoicePolicy p, NonSpatialVoiceSessionEngine e, Grid_ g) = Setup();
+            UUID group = UUID.Random();
+            UUID[] agents = { Alice, Bob, Carol };
+            foreach (UUID a in agents) g.Join(a, group);
+            foreach (UUID a in agents)
+                GroupVoiceChatSession.TryHandleCall(CallBody(group), a, p, e, RegionA, out _);
+            string room = NonSpatialRoomKey.Derive(Grid, NonSpatialSessionType.Group, group);
+            string token = e.IssueToken(group, Alice);
+            for (int i = 0; i < 20; i++)
+                foreach (UUID a in agents)
+                    NonSpatialProvisionAdmission.Decide(ProvisionBody(room, token), a, p, e, RegionA);
+            Assert.That(e.Store.Get(group).SeatsHeld, Is.EqualTo(3));
+        }
+
+        // ---- teardown: the same A2A assumption, found in the logout arm -------------------------
+
+        [Test]
+        public void AVoiceTeardownReleasesTheGroupSeat_KeyedByViewerSession()
+        {
+            (GroupVoicePolicy p, NonSpatialVoiceSessionEngine e, Grid_ g) = Setup();
+            UUID group = UUID.Random();
+            g.Join(Alice, group);
+            g.Join(Bob, group);
+            foreach (UUID a in new[] { Alice, Bob })
+                GroupVoiceChatSession.TryHandleCall(CallBody(group), a, p, e, RegionA, out _);
+            // the service's success map is what carries viewer_session; the module tags the seat with it
+            e.MarkPresent(group, Alice, RegionA, "vs-alice");
+            e.MarkPresent(group, Bob, RegionA, "vs-bob");
+            Assert.That(e.Store.Get(group).SeatsHeld, Is.EqualTo(2));
+
+            var gone = e.DepartByViewerSession(Alice, "vs-alice", DepartureReason.VoiceTeardown);
+
+            Assert.That(gone.Count, Is.EqualTo(1));
+            Assert.That(e.Store.Get(group).SeatsHeld, Is.EqualTo(1), "Alice's seat is freed");
+            Assert.That(e.Store.Get(group).Find(Bob).HoldsSeat, Is.True, "Bob keeps his");
+            Assert.That(e.Store.Get(group).Find(Alice).Departure, Is.EqualTo(DepartureReason.VoiceTeardown));
+        }
+
+        [Test]
+        public void ATeardownForAnotherViewerSessionFreesNothing()
+        {
+            (GroupVoicePolicy p, NonSpatialVoiceSessionEngine e, Grid_ g) = Setup();
+            UUID group = UUID.Random();
+            g.Join(Alice, group);
+            GroupVoiceChatSession.TryHandleCall(CallBody(group), Alice, p, e, RegionA, out _);
+            e.MarkPresent(group, Alice, RegionA, "vs-alice");
+
+            Assert.That(e.DepartByViewerSession(Alice, "vs-someone-else", DepartureReason.VoiceTeardown), Is.Empty);
+            Assert.That(e.DepartByViewerSession(Alice, null, DepartureReason.VoiceTeardown), Is.Empty,
+                        "a null viewer session must match nothing - departing everything is DepartAll, a different lifecycle");
+            Assert.That(e.DepartByViewerSession(Bob, "vs-alice", DepartureReason.VoiceTeardown), Is.Empty,
+                        "and it is scoped to the agent, not just the session string");
+            Assert.That(e.Store.Get(group).SeatsHeld, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void APresenceCloseReleasesEveryGroupSeatTheAgentHolds()
+        {
+            (GroupVoicePolicy p, NonSpatialVoiceSessionEngine e, Grid_ g) = Setup();
+            UUID g1 = UUID.Random(), g2 = UUID.Random();
+            foreach (UUID grp in new[] { g1, g2 }) { g.Join(Alice, grp); g.Join(Bob, grp); }
+            foreach (UUID grp in new[] { g1, g2 })
+                foreach (UUID a in new[] { Alice, Bob })
+                    GroupVoiceChatSession.TryHandleCall(CallBody(grp), a, p, e, RegionA, out _);
+
+            var gone = e.DepartAll(Alice, DepartureReason.PresenceLost);
+
+            Assert.That(gone.Count, Is.EqualTo(2));
+            foreach (UUID grp in new[] { g1, g2 })
+            {
+                Assert.That(e.Store.Get(grp).SeatsHeld, Is.EqualTo(1));
+                Assert.That(e.Store.Get(grp).Find(Alice).Departure, Is.EqualTo(DepartureReason.PresenceLost));
+            }
+        }
+
+        [Test]
+        public void ASeatFreedByTeardownIsImmediatelyReusableByTheCap()
+        {
+            (GroupVoicePolicy p, NonSpatialVoiceSessionEngine e, Grid_ g) = Setup(cap: 2);
+            UUID group = UUID.Random();
+            foreach (UUID a in new[] { Alice, Bob, Carol }) g.Join(a, group);
+            GroupVoiceChatSession.TryHandleCall(CallBody(group), Alice, p, e, RegionA, out _);
+            GroupVoiceChatSession.TryHandleCall(CallBody(group), Bob, p, e, RegionA, out _);
+            e.MarkPresent(group, Bob, RegionA, "vs-bob");
+            GroupVoiceChatSession.TryHandleCall(CallBody(group), Carol, p, e, RegionA, out ChatSessionOutcome full);
+            Assert.That((int)full.Status, Is.EqualTo(409));
+
+            e.DepartByViewerSession(Bob, "vs-bob", DepartureReason.VoiceTeardown);
+
+            GroupVoiceChatSession.TryHandleCall(CallBody(group), Carol, p, e, RegionA, out ChatSessionOutcome now);
+            Assert.That(now.Status, Is.EqualTo(HttpStatusCode.OK), "the hung-up seat is reusable at once");
+        }
+
+        // ---- the NRE that reached production, and the guard that now stops it ------------------
+
+        [Test]
+        public void AGroupAdmissionIsItsOwnKind_AndCarriesNoA2ASession()
+        {
+            // The first cut filed a group provision as ProvisionKind.Multiagent so the handler would
+            // treat it like an admitted A2A one. It carries no A2ASession, so the A2A post-provision
+            // bookkeeping dereferenced null on the first live group call.
+            ProvisionAdmission group = new ProvisionAdmission
+            {
+                Kind = ProvisionKind.Group,
+                Decision = NonSpatialProvisionAdmission.DecisionAdmitted,
+                ChannelType = "multiagent",
+                Channel = "nsv1:group:" + UUID.Random(),
+            };
+            Assert.That(group.Admitted, Is.True, "a group admission is still an admission");
+            Assert.That(group.Session, Is.Null, "and it never carries an A2ASession");
+            Assert.That(A2AProvisionAdmission.RecordsA2ASession(group), Is.False,
+                        "so it must never enter the A2A bookkeeping that dereferences Session");
+        }
+
+        [Test]
+        public void RecordsA2ASession_IsFalseForEveryKindExceptAMultiagentWithASession()
+        {
+            foreach (ProvisionKind k in Enum.GetValues(typeof(ProvisionKind)))
+            {
+                ProvisionAdmission a = new ProvisionAdmission { Kind = k, Decision = "x" };
+                Assert.That(A2AProvisionAdmission.RecordsA2ASession(a), Is.False,
+                            k + " with a null Session must not record");
+            }
+            Assert.That(A2AProvisionAdmission.RecordsA2ASession(null), Is.False);
+
+            A2ASessionRegistry live = new A2ASessionRegistry();
+            A2ASession s = live.Record(Alice, Bob, out _);
+            ProvisionAdmission real = new ProvisionAdmission
+            {
+                Kind = ProvisionKind.Multiagent, Decision = "multiagent-admitted", Session = s,
+            };
+            Assert.That(A2AProvisionAdmission.RecordsA2ASession(real), Is.True,
+                        "the one case that must still work: a real A2A admission");
+        }
+
+        [Test]
+        public void AGroupAdmissionNeverRecordsTheListenerRoom()
+        {
+            // A group room is not the agent's spatial room; recording it would send exclusion
+            // batches to the wrong room (the same reasoning as multiagent, plan 1.4(a)).
+            Assert.That(A2AProvisionAdmission.RecordsListenerRoom(ProvisionKind.Group), Is.False);
+        }
+
         [Test]
         public void AGroupRoomKeyIsNeverResolvableByTheA2ARegistry()
         {

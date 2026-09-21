@@ -39,6 +39,7 @@
     <Compile Include="NonSpatial/GroupVoicePolicy.cs" />
     <Compile Include="NonSpatial/GroupVoiceChatSession.cs" />
     <Compile Include="NonSpatial/NonSpatialProvisionAdmission.cs" />
+    <Compile Include="NonSpatial/GroupVoiceInvite.cs" />
     <Compile Include="VoiceConnector/ConnectorIdentity.cs" />
     <Compile Include="VoiceConnector/VoiceConnectorRecord.cs" />
     <Compile Include="VoiceConnector/VoiceConnectorRegistry.cs" />

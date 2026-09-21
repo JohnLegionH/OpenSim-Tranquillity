@@ -28,12 +28,21 @@ namespace osWebRtcVoice.NonSpatial
         public NonSpatialVoiceSession Session { get; }
         public bool Created { get; }
 
-        public SessionOutcome(bool ok, string decision, NonSpatialVoiceSession session, bool created = false)
+        /// <summary>
+        /// P1.2G-b: this operation took the room from 0 seats to 1 -- the moment a group voice call
+        /// BEGINS, and the only moment the fan-out fires. Decided inside the store mutation, so two
+        /// simultaneous first-joiners cannot both claim it and double-ring the group.
+        /// </summary>
+        public bool StartedRinging { get; }
+
+        public SessionOutcome(bool ok, string decision, NonSpatialVoiceSession session, bool created = false,
+                              bool startedRinging = false)
         {
             Ok = ok;
             Decision = decision;
             Session = session;
             Created = created;
+            StartedRinging = startedRinging;
         }
 
         public static SessionOutcome Fail(string decision, NonSpatialVoiceSession s = null) => new SessionOutcome(false, decision, s);
@@ -205,7 +214,10 @@ namespace osWebRtcVoice.NonSpatial
                     return null;
                 });
             }
-            return new SessionOutcome(true, created ? "started" : "start-idempotent", s, created);
+            // The creator took the first seat inside the factory (or was re-seated above), so THIS
+            // is where a group call begins for the agent that opens it.
+            bool ring = ClaimRing(sessionId);
+            return new SessionOutcome(true, created ? "started" : "start-idempotent", s, created, ring);
         }
 
         // ---- invite / accept / decline ---------------------------------------------------------
@@ -273,10 +285,16 @@ namespace osWebRtcVoice.NonSpatial
                 }
                 if (sess.IsFull)
                     return SessionOutcome.Fail(SessionOutcome.Capacity, sess);
+                bool wasEmpty = sess.SeatsHeld == 0;
                 NonSpatialMember seated = sess.Upsert(agent, MemberState.Accepted, originRegion, now);
                 if (!string.IsNullOrEmpty(viewerSession)) seated.ViewerSession = viewerSession;
                 sess.LastSeenUtc = now;
-                return new SessionOutcome(true, "accepted", sess);
+                // P1.2G-b: 0 -> 1 is the moment the call begins. Claimed INSIDE the mutation and
+                // latched by RingSent, so two simultaneous first-joiners cannot both ring the group.
+                bool ring = wasEmpty && sess.SeatsHeld == 1 && !sess.RingSent;
+                if (ring) sess.RingSent = true;
+                return new SessionOutcome(true, "accepted", sess, created: false, startedRinging: ring);
+
             }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
         }
 
@@ -331,8 +349,40 @@ namespace osWebRtcVoice.NonSpatial
                 m.LastSeenUtc = now;
                 m.ViewerSession = null;
                 sess.LastSeenUtc = now;
+                // P1.2G-b: the room emptied, so the ring cycle is over. Clearing it is what makes a
+                // LATER start ring the group again; without it a group is rung once per process.
+                if (sess.SeatsHeld == 0) sess.EndRingCycle();
                 return new SessionOutcome(true, terminal == MemberState.Declined ? "declined" : "departed", sess);
             }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
+        }
+
+        /// <summary>
+        /// Release the seat the agent holds UNDER THIS VIEWER SESSION, and only that one. This is the
+        /// voice-teardown lifecycle's entry point: the viewer's logout provision carries
+        /// {logout, viewer_session} and no channel, so the viewer session is the only thing that
+        /// identifies which seat to free.
+        ///
+        /// P1.2G found this missing: the logout arm released A2A records and nothing else, so a group
+        /// member who hung up kept their seat until the idle TTL -- and with the 50 cap load-bearing,
+        /// enough hang-ups would have locked a group out of its own room for eight hours.
+        ///
+        /// A null or empty viewer session matches NOTHING here on purpose. Departing every session an
+        /// agent holds is <see cref="DepartAll"/>, which is the presence-close lifecycle, not this one.
+        /// </summary>
+        public IReadOnlyList<NonSpatialVoiceSession> DepartByViewerSession(UUID agent, string viewerSession, DepartureReason reason)
+        {
+            List<NonSpatialVoiceSession> touched = new List<NonSpatialVoiceSession>();
+            if (string.IsNullOrEmpty(viewerSession))
+                return touched;
+            foreach (NonSpatialVoiceSession s in _store.All())
+            {
+                NonSpatialMember m = s.Find(agent);
+                if (m == null || !m.HoldsSeat || !string.Equals(m.ViewerSession, viewerSession, StringComparison.Ordinal))
+                    continue;
+                if (Depart(s.SessionId, agent, reason).Ok)
+                    touched.Add(s);
+            }
+            return touched;
         }
 
         /// <summary>
@@ -435,10 +485,42 @@ namespace osWebRtcVoice.NonSpatial
 
         // ---- helpers -------------------------------------------------------------------------
 
+        /// <summary>
+        /// Record that these agents have been rung for the current ring cycle, so a later joiner's
+        /// fan-out skips them (GroupVoiceInvite.Targets). Called after delivery whatever the outcome:
+        /// a member we could not reach is then not re-rung on every subsequent join, which would be
+        /// worse than one missed ring.
+        /// </summary>
+        public void MarkInvited(UUID sessionId, IEnumerable<UUID> agents)
+        {
+            if (agents == null) return;
+            _store.Mutate<object>(sessionId, sess =>
+            {
+                foreach (UUID a in agents) sess.MarkInvited(a);
+                return null;
+            });
+        }
+
         private INonSpatialAdmission Admission(NonSpatialSessionType type)
             => _admission.TryGetValue(type, out INonSpatialAdmission a)
                 ? a
                 : throw new InvalidOperationException("no admission policy registered for " + type);
+
+        /// <summary>
+        /// Claim the ring for this session if it is the first seat of a cycle. Atomic under the
+        /// store, and latched by RingSent so exactly one caller ever claims it per cycle.
+        ///
+        /// P1.2G-b found this the hard way: the 0 -> 1 transition does NOT happen in Accept for the
+        /// agent that opens the room, because Start seats the creator itself. Claiming only in
+        /// Accept meant the opener never rang the group -- which is the one case that always matters.
+        /// </summary>
+        private bool ClaimRing(UUID sessionId)
+            => _store.Mutate(sessionId, sess =>
+            {
+                if (sess.SeatsHeld != 1 || sess.RingSent) return false;
+                sess.RingSent = true;
+                return true;
+            }, false);
 
         private void Touch(UUID sessionId)
         {

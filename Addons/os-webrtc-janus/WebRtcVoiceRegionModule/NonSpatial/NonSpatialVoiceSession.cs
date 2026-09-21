@@ -155,6 +155,28 @@ namespace osWebRtcVoice.NonSpatial
 
         private readonly Dictionary<UUID, NonSpatialMember> _members = new Dictionary<UUID, NonSpatialMember>();
 
+        /// <summary>
+        /// P1.2G-b send-once: who has already been rung for the CURRENT ring cycle. A ring cycle begins
+        /// when the room goes 0 -> 1 seats and ends when it returns to 0, at which point this is cleared
+        /// (<see cref="EndRingCycle"/>) so that starting the call again later rings everyone again.
+        /// Without the clear, a group could be rung exactly once for the lifetime of the process.
+        /// </summary>
+        private readonly HashSet<UUID> _invited = new HashSet<UUID>();
+
+        /// <summary>True once the 0 -> 1 transition has fired its fan-out for this cycle.</summary>
+        public bool RingSent { get; internal set; }
+
+        public bool WasInvited(UUID agent) => _invited.Contains(agent);
+
+        internal void MarkInvited(UUID agent) => _invited.Add(agent);
+
+        /// <summary>The room emptied: forget the ring so a later start rings the group again.</summary>
+        internal void EndRingCycle()
+        {
+            _invited.Clear();
+            RingSent = false;
+        }
+
         internal NonSpatialVoiceSession(NonSpatialSessionType type, UUID sessionId, UUID tempSessionId,
                                         string roomKey, UUID owner, UUID creator, int cap, DateTime nowUtc)
         {

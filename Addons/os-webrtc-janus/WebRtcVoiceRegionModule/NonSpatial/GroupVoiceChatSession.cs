@@ -36,11 +36,80 @@ namespace osWebRtcVoice.NonSpatial
     {
         public const string MethodCall = "call";
 
+        /// <summary>
+        /// P1.2G-b item 1. The group/adhoc accept path posts THIS, not "call": Accept on the popup
+        /// runs chatterBoxInvitationCoro, which POSTs {method:"accept invitation", session-id} and
+        /// calls startCall(voice_channel_info) only when it succeeds (llimview.cpp:3382-3385 and the
+        /// coroutine tail). We answered 400 for it -- no case in ChatSessionRequestLogic.Decide -- so
+        /// the accept failed, the invitation was cleared and no call started. Without this handler
+        /// the popup would be decorative.
+        /// </summary>
+        public const string MethodAcceptInvitation = "accept invitation";
+
         public const string DecisionCallAdmitted = "group-call-admitted";
+        public const string DecisionAcceptAdmitted = "group-accept-admitted";
         public const string DecisionNotMember = "group-refused-not-a-member";
         public const string DecisionNoPower = "group-refused-no-power";
         public const string DecisionFull = "group-refused-capacity";
         public const string InstrumentTag = "[GROUP VOICE]";
+
+        /// <summary>
+        /// Answer "accept invitation" for a group session. Returns false -- untouched -- for anything
+        /// else, so the A2A path keeps its behaviour, including its 400 for an accept it does not know.
+        ///
+        /// The reply is 200 with no body: the coroutine feeds the body to LLIMSpeakerMgr::setSpeakers,
+        /// which tolerates an empty map, and the participant surface is
+        /// ChatterBoxSessionAgentListUpdates rather than this reply. What matters is the STATUS --
+        /// any failure makes the coroutine clear the invitation and never call startCall.
+        /// </summary>
+        public static bool TryHandleAcceptInvitation(OSDMap reqmap, UUID agentID, GroupVoicePolicy policy,
+                                                     NonSpatialVoiceSessionEngine engine,
+                                                     out ChatSessionOutcome outcome)
+        {
+            outcome = null;
+            if (policy == null || !policy.IsUsable || engine == null || reqmap == null)
+                return false;
+            if (!reqmap.TryGetString("method", out string method)
+                || !string.Equals(method, MethodAcceptInvitation, StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (!reqmap.TryGetUUID("session-id", out UUID groupID) || groupID == UUID.Zero)
+                return false;
+            // Ours only if this names a live GROUP session the agent belongs to; an accept for an
+            // ad-hoc or an unknown session falls through untouched.
+            NonSpatialVoiceSession s = engine.Store.Get(groupID);
+            if (s == null || s.Type != NonSpatialSessionType.Group || !policy.IsMember(agentID, s.Owner))
+                return false;
+
+            if (!policy.HasRequiredPowers(agentID, s.Owner))
+            {
+                outcome = Refuse(HttpStatusCode.Forbidden, agentID, s.Owner, DecisionNoPower,
+                                 "accept invitation without GP_SESSION_JOIN/GP_SESSION_VOICE");
+                return true;
+            }
+
+            // Accepting the popup IS the join: the viewer goes straight to startCall with the
+            // invitation channel info and never posts "call", so this is the only place a
+            // popup-accepted member takes its seat.
+            SessionOutcome seat = engine.Accept(s.SessionId, agentID, UUID.Zero);
+            if (!seat.Ok)
+            {
+                HttpStatusCode code = seat.Decision == SessionOutcome.Capacity
+                    ? (HttpStatusCode)NonSpatialCaps.CapacityHttpStatus
+                    : HttpStatusCode.Forbidden;
+                string word = seat.Decision == SessionOutcome.Capacity ? DecisionFull : "group-refused-" + seat.Decision;
+                outcome = Refuse(code, agentID, s.Owner, word, seat.Decision);
+                return true;
+            }
+
+            outcome = new ChatSessionOutcome
+            {
+                Status = HttpStatusCode.OK,
+                StartedRinging = seat.StartedRinging,
+                Instrument = Line(agentID, s.Owner, DecisionAcceptAdmitted,
+                                  "room=" + s.RoomKey + " seats=" + (engine.Store.Get(s.SessionId)?.SeatsHeld) + "/" + s.Cap),
+            };
+            return true;
+        }
 
         /// <summary>
         /// Try to answer a ChatSessionRequest as a group voice call. Returns false -- having done
@@ -105,6 +174,9 @@ namespace osWebRtcVoice.NonSpatial
             return new ChatSessionOutcome
             {
                 Status = HttpStatusCode.OK,
+                // Either half can be the first seat: Start seats the opener, Accept seats everyone
+                // else. Only one of them can ever claim the ring, so OR is safe.
+                StartedRinging = start.StartedRinging || seat.StartedRinging,
                 Body = new OSDMap { ["voice_credentials"] = creds },
                 Instrument = Line(agentID, groupID, DecisionCallAdmitted,
                                   $"room={start.Session.RoomKey} seats={engine.Store.Get(start.Session.SessionId)?.SeatsHeld}/{start.Session.Cap}"),

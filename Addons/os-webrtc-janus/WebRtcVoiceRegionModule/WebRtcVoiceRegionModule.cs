@@ -307,6 +307,18 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                     if (line != null)
                         m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
                 }
+                // P1.2G: a ROOT presence closing releases the agent's group seats too. Same guard as
+                // above (ShouldMarkGone): a child teardown is a border crossing, not a departure, and
+                // must not free a seat the agent still holds from its root region. This is O-108's
+                // presence backstop -- departure never waits on a POST that may never come.
+                foreach (NonSpatialVoiceSession gone in
+                         m_nonSpatial?.DepartAll(clientID, DepartureReason.PresenceLost)
+                         ?? (IReadOnlyList<NonSpatialVoiceSession>)Array.Empty<NonSpatialVoiceSession>())
+                {
+                    m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                        GroupVoiceChatSession.Line(clientID, gone.Owner, "group-seat-released-client-closed",
+                            $"room={gone.RoomKey} region={s?.Name ?? scene.Name} seats={gone.SeatsHeld}/{gone.Cap}"));
+                }
             };
 
             ISimulatorFeaturesModule simFeatures = scene.RequestModuleInterface<ISimulatorFeaturesModule>();
@@ -707,7 +719,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             // Nothing below this line knows or needs to know that it was a group.
             admission = new ProvisionAdmission
             {
-                Kind = ProvisionKind.Multiagent,
+                Kind = ProvisionKind.Group,
                 Decision = g.Decision,
                 ChannelType = A2AProvisionAdmission.ChannelTypeMultiagent,
                 Channel = gch ?? "-",
@@ -905,7 +917,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                     m_visibilityServices.TryGetValue(scene, out svc);
                 svc?.OnListenerProvisioned(agentID, provisionedRoom);
             }
-            else if (admission.Kind == ProvisionKind.Multiagent && resp.TryGetString("viewer_session", out string provVs) && !string.IsNullOrEmpty(provVs))
+            else if (A2AProvisionAdmission.RecordsA2ASession(admission) && resp.TryGetString("viewer_session", out string provVs) && !string.IsNullOrEmpty(provVs))
             {
                 // Admitted AND joined -- only the service's success map carries viewer_session
                 // (ProvisionResponseBuilder.BuildSuccess); a failure map ({response:"failed"}, with or
@@ -935,6 +947,21 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                         m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
                 }
             }
+            else if (admission.Kind == ProvisionKind.Group && resp.TryGetString("viewer_session", out string groupVs) && !string.IsNullOrEmpty(groupVs))
+            {
+                // P1.2G: the viewer_session exists only in the SERVICE's success map, so this is the
+                // first moment the seat can be tagged with it -- and tagging it is what makes the
+                // logout teardown able to find the seat later (DepartByViewerSession). Also promotes
+                // Accepted -> Present: the agent is now actually in the mixer room.
+                NonSpatialVoiceSession gsess = m_nonSpatial?.Store.GetByRoomKey(admission.Channel);
+                if (gsess is not null)
+                {
+                    SessionOutcome pres = m_nonSpatial.MarkPresent(gsess.SessionId, agentID, scene.RegionInfo.RegionID, groupVs);
+                    m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                        GroupVoiceChatSession.Line(agentID, gsess.Owner, "group-present-" + pres.Decision,
+                            $"room={admission.Channel} seats={m_nonSpatial.Store.Get(gsess.SessionId)?.SeatsHeld}/{gsess.Cap}"));
+                }
+            }
             else if (admission.Kind == ProvisionKind.Logout && a2aVs != "-")
             {
                 // Teardown by viewer session: only the record this party joined under that session is
@@ -951,6 +978,20 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                     string line = A2AAgentListDelivery.SendLeave(scenes, gone, agentID, null);
                     if (line != null)
                         m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
+                }
+
+                // P1.2G: the SAME teardown releases a group seat. Before this, the logout arm knew
+                // only about A2A records, so a group member who hung up held their seat until the
+                // 8 h idle TTL -- with the 50 cap load-bearing, enough hang-ups would lock a group
+                // out of its own room. Keyed by viewer session, so it frees exactly the seat this
+                // logout is for and never another region's.
+                foreach (NonSpatialVoiceSession gone in
+                         m_nonSpatial?.DepartByViewerSession(agentID, a2aVs, DepartureReason.VoiceTeardown)
+                         ?? (IReadOnlyList<NonSpatialVoiceSession>)Array.Empty<NonSpatialVoiceSession>())
+                {
+                    m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                        GroupVoiceChatSession.Line(agentID, gone.Owner, "group-seat-released",
+                            $"room={gone.RoomKey} viewer_session={a2aVs} seats={gone.SeatsHeld}/{gone.Cap}"));
                 }
             }
         }
@@ -1069,6 +1110,22 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         {
             m_log.LogDebug("{LogHeader} {Line}", logHeader, groupOutcome.Instrument);
             ApplyChatSessionOutcome(groupOutcome, response);
+            if (groupOutcome.StartedRinging)
+                RingGroupMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, GroupNameOf(GroupSessionIdOf(reqmap)));
+            return;
+        }
+
+        // P1.2G-b item 1: the popup's Accept posts "accept invitation", which the A2A arm answers
+        // with 400 (it has no case for it), and a failed accept makes the viewer clear the invitation
+        // and never call startCall. Handled here for a group session only; everything else still
+        // falls through untouched.
+        if (GroupVoiceChatSession.TryHandleAcceptInvitation(reqmap, agentID, m_groupVoice, m_nonSpatial,
+                                                            out ChatSessionOutcome acceptOutcome))
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader, acceptOutcome.Instrument);
+            ApplyChatSessionOutcome(acceptOutcome, response);
+            if (acceptOutcome.StartedRinging)
+                RingGroupMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, GroupNameOf(GroupSessionIdOf(reqmap)));
             return;
         }
 
@@ -1137,6 +1194,78 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             response.RawBuffer = Util.UTF8.GetBytes(OSDParser.SerializeLLSDXmlString(outcome.Body));
 
         response.StatusCode = (int)outcome.Status;
+    }
+
+    /// <summary>
+    /// P1.2G-b items 2 and 3: ring every eligible member in THIS process when a group call begins.
+    ///
+    /// Fired only on the engine's 0 -> 1 seat transition, which the engine claims inside its own
+    /// mutation, so two simultaneous first-joiners cannot both ring. Targets are agents present in
+    /// any scene this module serves, holding both powers, excluding the initiator and anyone already
+    /// seated or already rung this cycle. Delivery reuses A2AInviteDelivery, which already walks
+    /// every scene in the process and prefers a root presence -- that is what makes the ring reach
+    /// all three regions and not just the initiator's.
+    ///
+    /// Cross-HOST delivery is P1.2G-c: a member on another region server has no presence here and is
+    /// simply not rung, exactly as the A2A path behaves today.
+    /// </summary>
+    /// <summary>The session-id a ChatSessionRequest body carries, or Zero.</summary>
+    private static UUID GroupSessionIdOf(OSDMap reqmap)
+        => reqmap is not null && reqmap.TryGetUUID("session-id", out UUID id) ? id : UUID.Zero;
+
+    /// <summary>
+    /// The group's name for the callee's incoming-call UI. Best effort: the groups service knows it,
+    /// and a blank name is survivable (GroupVoiceInvite.BuildBody substitutes a default) whereas an
+    /// exception here would lose the ring.
+    /// </summary>
+    private string GroupNameOf(UUID groupID)
+    {
+        try
+        {
+            return GroupsModule()?.GetGroupRecord(groupID)?.GroupName ?? string.Empty;
+        }
+        catch (Exception e)
+        {
+            m_log.LogWarning(e, "{LogHeader} group name lookup failed for {GroupId}", logHeader, groupID);
+            return string.Empty;
+        }
+    }
+
+    private void RingGroupMembers(NonSpatialVoiceSession session, UUID initiator, string initiatorName, string groupName)
+    {
+        if (session is null || m_nonSpatial is null || !m_groupVoice.IsUsable)
+            return;
+
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+
+        List<UUID> targets = GroupVoiceInvite.Targets(GroupVoiceInvite.PresentAgents(scenes), session,
+                                                      initiator, m_groupVoice);
+        if (targets.Count == 0)
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                GroupVoiceInvite.Line(UUID.Zero, session.Owner, "-", "no-targets"));
+            return;
+        }
+
+        string token = m_nonSpatial.IssueToken(session.SessionId, initiator);
+        if (string.IsNullOrEmpty(token))
+        {
+            m_log.LogWarning("{LogHeader} group ring for {GroupId} has no token; not ringing", logHeader, session.Owner);
+            return;
+        }
+
+        OSDMap body = GroupVoiceInvite.BuildBody(session, token, initiator, initiatorName, groupName);
+        foreach (UUID target in targets)
+        {
+            string decision = A2AInviteDelivery.Deliver(scenes, target, body, null, out string region);
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                GroupVoiceInvite.Line(target, session.Owner, region, decision));
+        }
+        // Marked whatever the delivery said: a member we could not reach must not be re-rung on
+        // every later join. One ring per member per cycle; the cycle resets when the room empties.
+        m_nonSpatial.MarkInvited(session.SessionId, targets);
     }
 
     // ---- P1.2G: group membership and powers, resolved as GRID state ------------------------------

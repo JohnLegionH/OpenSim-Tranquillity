@@ -35,6 +35,13 @@ namespace osWebRtcVoice
         public string Instrument { get; init; }
 
         /// <summary>
+        /// P1.2G-b: this request took a GROUP room from 0 seats to 1, so the module should ring the
+        /// group. Set only by the group arms; every A2A path leaves it false and no A2A code reads
+        /// it, so the A2A decisions are unchanged.
+        /// </summary>
+        public bool StartedRinging { get; init; }
+
+        /// <summary>
         /// When non-null (S-A2A-2), deliver this ChatterBoxInvitation body to <see cref="Invitation.Callee"/>
         /// via IEventQueue.BuildEvent + Enqueue. Set ONLY by "call" (never by "start p2p voice", which the
         /// viewer fires on every P2P IM window open and must not ring anyone).

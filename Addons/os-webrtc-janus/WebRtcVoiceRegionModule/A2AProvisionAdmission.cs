@@ -28,6 +28,14 @@ namespace osWebRtcVoice
         Local = 1,
         Multiagent = 2,
         Logout = 3,
+        /// <summary>
+        /// P1.2G: a GROUP provision, admitted by the non-spatial engine. DISTINCT from
+        /// <see cref="Multiagent"/> on purpose: a group admission carries no <see cref="A2ASession"/>,
+        /// so anything that reads <c>Session</c> must never see this kind. It was filed as Multiagent
+        /// in the first cut and the A2A post-provision bookkeeping dereferenced the null Session on
+        /// the very first live group call (NullReferenceException in ProvisionVoiceAccountRequestCore).
+        /// </summary>
+        Group = 4,
     }
 
     public sealed class ProvisionAdmission
@@ -67,6 +75,15 @@ namespace osWebRtcVoice
         /// no room; a refusal never reaches the service.
         /// </summary>
         public static bool RecordsListenerRoom(ProvisionKind kind) => kind == ProvisionKind.Local;
+
+        /// <summary>
+        /// May this admission enter the A2A post-provision bookkeeping (MarkProvisioned, the agent-list
+        /// delivery)? ONLY an A2A multiagent admission that actually carries its session may. The null
+        /// check is not belt-and-braces: it is the guard whose absence threw on the first live group
+        /// call, and it is tested for every ProvisionKind so a new kind cannot quietly re-enter here.
+        /// </summary>
+        public static bool RecordsA2ASession(ProvisionAdmission admission)
+            => admission is not null && admission.Kind == ProvisionKind.Multiagent && admission.Session is not null;
 
         public static ProvisionAdmission Decide(OSDMap map, UUID agentID, A2ASessionRegistry registry)
         {
