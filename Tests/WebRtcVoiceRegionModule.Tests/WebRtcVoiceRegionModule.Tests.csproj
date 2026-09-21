@@ -37,6 +37,12 @@
     <Compile Include="VisibilityDefaultsTests.cs" />
     <Compile Include="ConnectorArmingTests.cs" />
     <Compile Include="ConnectorJoinCapEndpointTests.cs" />
+    <Compile Include="NonSpatialIdentityTests.cs" />
+    <Compile Include="NonSpatialRoomKeyTests.cs" />
+    <Compile Include="NonSpatialMembershipTests.cs" />
+    <Compile Include="NonSpatialCapTests.cs" />
+    <Compile Include="NonSpatialIdempotencyTests.cs" />
+    <Compile Include="NonSpatialGridSeamTests.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -66,6 +72,7 @@
     <ProjectReference Include="..\..\Source\OpenSim.Services.PresenceService\OpenSim.Services.PresenceService.csproj" />
     <ProjectReference Include="..\..\Addons\os-webrtc-janus\Visibility\Visibility.csproj" />
     <ProjectReference Include="..\..\Addons\os-webrtc-janus\WebRtcVoiceRegionModule\WebRtcVoiceRegionModule.csproj" />
+    <ProjectReference Include="..\..\Addons\os-webrtc-janus\Janus\WebRtcJanusService.csproj" />
   </ItemGroup>
 
   <ItemGroup>

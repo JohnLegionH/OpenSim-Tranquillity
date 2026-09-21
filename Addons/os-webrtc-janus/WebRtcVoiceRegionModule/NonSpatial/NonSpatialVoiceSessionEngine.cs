@@ -1,0 +1,402 @@
+/*
+ * P1.1: the engine. Start / Invite / Accept / Decline / Depart, plus the sweep.
+ *
+ * NOTHING IS WIRED. No cap handler calls this, no transport, no deploy. The live A2A path
+ * (ChatSessionRequestLogic + A2ASessionRegistry + A2AProvisionAdmission) is untouched and keeps
+ * running exactly as it does today; P1.6 migrates it onto this engine.
+ *
+ * IDEMPOTENCY (item 6) is not sprinkled through the methods -- it falls out of two rules:
+ *   - identity is DERIVED, never generated, everywhere it can be (DeriveSessionId), so the same
+ *     request always addresses the same session. ADHOC is the one exception and it is handled by
+ *     keying the creation on the viewer's temp id (see StartAdhoc);
+ *   - every read-modify-write goes through INonSpatialSessionStore.StartOrGet / Mutate, which are
+ *     atomic, so concurrent duplicates collapse instead of racing.
+ * That is what makes a repeated start, a retried invite, a double accept, a reconnect and a region
+ * crossing all no-ops rather than duplicates.
+ */
+using System;
+using System.Collections.Generic;
+using OpenMetaverse;
+
+namespace osWebRtcVoice.NonSpatial
+{
+    /// <summary>What an engine operation did. Decision is the greppable instrument word.</summary>
+    public readonly struct SessionOutcome
+    {
+        public bool Ok { get; }
+        public string Decision { get; }
+        public NonSpatialVoiceSession Session { get; }
+        public bool Created { get; }
+
+        public SessionOutcome(bool ok, string decision, NonSpatialVoiceSession session, bool created = false)
+        {
+            Ok = ok;
+            Decision = decision;
+            Session = session;
+            Created = created;
+        }
+
+        public static SessionOutcome Fail(string decision, NonSpatialVoiceSession s = null) => new SessionOutcome(false, decision, s);
+
+        public const string NoSuchSession = "refused-no-session";
+        public const string Capacity = "refused-capacity";
+        public const string AlreadyDeparted = "refused-departed";
+    }
+
+    public sealed class NonSpatialVoiceSessionEngine
+    {
+        /// <summary>An unanswered invitation's lifetime. Matches the live A2A invite TTL for consistency.</summary>
+        public static readonly TimeSpan DefaultInviteTtl = TimeSpan.FromMinutes(2);
+
+        /// <summary>Idle backstop for a formed session; the same reasoning as A2ASessionRegistry.DefaultActiveIdleTtl.</summary>
+        public static readonly TimeSpan DefaultIdleTtl = TimeSpan.FromHours(8);
+
+        private readonly INonSpatialSessionStore _store;
+        private readonly Dictionary<NonSpatialSessionType, INonSpatialAdmission> _admission;
+        private readonly string _gridId;
+        private readonly Func<DateTime> _clock;
+        private readonly TimeSpan _inviteTtl;
+        private readonly TimeSpan _idleTtl;
+
+        public NonSpatialVoiceSessionEngine(INonSpatialSessionStore store,
+                                            IEnumerable<INonSpatialAdmission> admissions,
+                                            string gridId,
+                                            Func<DateTime> clock = null,
+                                            TimeSpan? inviteTtl = null,
+                                            TimeSpan? idleTtl = null)
+        {
+            _store = store ?? throw new ArgumentNullException(nameof(store));
+            _admission = new Dictionary<NonSpatialSessionType, INonSpatialAdmission>();
+            if (admissions != null)
+                foreach (INonSpatialAdmission a in admissions)
+                    _admission[a.Type] = a;
+            _gridId = gridId ?? string.Empty;
+            _clock = clock ?? (() => DateTime.UtcNow);
+            _inviteTtl = inviteTtl ?? DefaultInviteTtl;
+            _idleTtl = idleTtl ?? DefaultIdleTtl;
+        }
+
+        public INonSpatialSessionStore Store => _store;
+        public TimeSpan InviteTtl => _inviteTtl;
+        public TimeSpan IdleTtl => _idleTtl;
+
+        // ---- identity ------------------------------------------------------------------------
+
+        /// <summary>
+        /// The AUTHORITATIVE session id. Derived wherever the viewer already agrees, so the start
+        /// reply is a no-op re-key and a repeat addresses the same session:
+        ///   P2P   the XOR of the two agents -- what the viewer computed (llimview.cpp:2551-2570)
+        ///         and what the live path already re-derives (A2ASessionRegistry.ComputeSessionId).
+        ///   GROUP the group id -- the viewer slams it (llimview.cpp:2535-2538).
+        ///   ADHOC server-owned and RANDOM, because the viewer's id is itself random
+        ///         (llimview.cpp:2542) and means nothing to anyone else. This is the only type that
+        ///         needs the re-key, and giving the server the id is the point: it is what lets a
+        ///         conference be addressed grid-wide by something other than one viewer's guess.
+        /// </summary>
+        public static UUID DeriveSessionId(NonSpatialSessionType type, UUID creator, UUID otherOrOwner)
+        {
+            switch (type)
+            {
+                case NonSpatialSessionType.P2P:
+                    return new UUID(creator.ulonga ^ otherOrOwner.ulonga, creator.ulongb ^ otherOrOwner.ulongb);
+                case NonSpatialSessionType.Group:
+                    return otherOrOwner;
+                case NonSpatialSessionType.Adhoc:
+                    return UUID.Random();
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(type), type, "unknown non-spatial session type");
+            }
+        }
+
+        // ---- start ---------------------------------------------------------------------------
+
+        /// <summary>
+        /// Open (or re-find) a P2P or GROUP session. Idempotent by derivation: the id is a function
+        /// of the parties, so a repeat -- including the other party starting it simultaneously --
+        /// lands on the same record through StartOrGet.
+        /// </summary>
+        public SessionOutcome Start(NonSpatialSessionType type, UUID creator, UUID otherOrOwner,
+                                    UUID tempSessionId, UUID originRegion, int requestedCap = 0)
+        {
+            if (type == NonSpatialSessionType.Adhoc)
+                throw new ArgumentException("use StartAdhoc: an ad-hoc id is server-owned and keyed on the viewer's temp id", nameof(type));
+
+            List<UUID> invitees = type == NonSpatialSessionType.P2P ? new List<UUID> { otherOrOwner } : new List<UUID>();
+            AdmissionVerdict v = Admission(type).CanStart(creator, type == NonSpatialSessionType.Group ? otherOrOwner : UUID.Zero, invitees);
+            if (!v.Admitted) return SessionOutcome.Fail(v.Decision);
+
+            UUID sessionId = DeriveSessionId(type, creator, otherOrOwner);
+            return StartWithId(type, sessionId, tempSessionId == UUID.Zero ? sessionId : tempSessionId,
+                               creator, type == NonSpatialSessionType.Group ? otherOrOwner : UUID.Zero,
+                               originRegion, requestedCap,
+                               type == NonSpatialSessionType.P2P ? new List<UUID> { otherOrOwner } : null);
+        }
+
+        /// <summary>
+        /// Open (or re-find) an ADHOC conference. The authoritative id is server-owned, so
+        /// idempotency cannot come from derivation -- it comes from the (creator, tempSessionId)
+        /// pair the viewer retries with. A viewer that re-POSTs "start conference" after a timeout
+        /// sends the SAME temp id (it is minted once, at session creation), so the second call finds
+        /// the first session instead of opening a second room and a second start reply.
+        /// </summary>
+        public SessionOutcome StartAdhoc(UUID creator, UUID tempSessionId, UUID originRegion,
+                                         IReadOnlyList<UUID> invitees = null, int requestedCap = 0)
+        {
+            AdmissionVerdict v = Admission(NonSpatialSessionType.Adhoc).CanStart(creator, UUID.Zero, invitees ?? new List<UUID>());
+            if (!v.Admitted) return SessionOutcome.Fail(v.Decision);
+
+            NonSpatialVoiceSession prior = FindAdhocByTemp(creator, tempSessionId);
+            if (prior != null)
+            {
+                Touch(prior.SessionId);
+                return new SessionOutcome(true, "start-idempotent", prior, created: false);
+            }
+            return StartWithId(NonSpatialSessionType.Adhoc, UUID.Random(), tempSessionId, creator, UUID.Zero,
+                               originRegion, requestedCap, invitees);
+        }
+
+        private SessionOutcome StartWithId(NonSpatialSessionType type, UUID sessionId, UUID tempSessionId,
+                                           UUID creator, UUID owner, UUID originRegion, int requestedCap,
+                                           IReadOnlyList<UUID> invitees)
+        {
+            DateTime now = _clock();
+            int cap = NonSpatialCaps.Effective(type, requestedCap);
+            string roomKey = NonSpatialRoomKey.Derive(_gridId, type, sessionId);
+
+            NonSpatialVoiceSession s = _store.StartOrGet(sessionId, () =>
+            {
+                NonSpatialVoiceSession made = new NonSpatialVoiceSession(type, sessionId, tempSessionId, roomKey,
+                                                                         owner, creator, cap, now);
+                // the creator takes its seat at start; it is the one party that never needs inviting
+                made.Upsert(creator, MemberState.Accepted, originRegion, now);
+                if (invitees != null)
+                    foreach (UUID a in invitees)
+                        if (a != UUID.Zero && a != creator)
+                            made.Upsert(a, MemberState.Invited, UUID.Zero, now);
+                return made;
+            }, out bool created);
+
+            if (!created)
+            {
+                // A repeat start refreshes and re-seats the creator (it may have departed and come
+                // back) but never duplicates the session, the members or the room.
+                _store.Mutate<object>(sessionId, sess =>
+                {
+                    sess.LastSeenUtc = now;
+                    NonSpatialMember me = sess.Find(creator);
+                    if (me == null || me.State == MemberState.Departed)
+                        sess.Upsert(creator, MemberState.Accepted, originRegion, now);
+                    else
+                        me.LastSeenUtc = now;
+                    if (invitees != null)
+                        foreach (UUID a in invitees)
+                            if (a != UUID.Zero && a != creator && sess.Find(a) == null)
+                                sess.Upsert(a, MemberState.Invited, UUID.Zero, now);
+                    return null;
+                });
+            }
+            return new SessionOutcome(true, created ? "started" : "start-idempotent", s, created);
+        }
+
+        // ---- invite / accept / decline ---------------------------------------------------------
+
+        /// <summary>
+        /// Invite an agent. Idempotent: a repeated invite of the same agent refreshes the existing
+        /// invitation rather than adding a second membership, and an invite of someone who already
+        /// holds a seat is a no-op rather than a demotion back to Invited.
+        /// </summary>
+        public SessionOutcome Invite(UUID sessionId, UUID inviter, UUID invitee)
+        {
+            DateTime now = _clock();
+            NonSpatialVoiceSession s = _store.Get(sessionId);
+            if (s == null) return SessionOutcome.Fail(SessionOutcome.NoSuchSession);
+
+            AdmissionVerdict v = Admission(s.Type).CanInvite(s, inviter, invitee);
+            if (!v.Admitted) return SessionOutcome.Fail(v.Decision, s);
+
+            // An invitation reserves no seat, but inviting INTO a room that is already full is a
+            // refusal now rather than a disappointment later.
+            return _store.Mutate(sessionId, sess =>
+            {
+                NonSpatialMember existing = sess.Find(invitee);
+                if (existing != null && existing.HoldsSeat)
+                {
+                    existing.LastSeenUtc = now;
+                    sess.LastSeenUtc = now;
+                    return new SessionOutcome(true, "invite-idempotent-seated", sess);
+                }
+                if (sess.IsFull)
+                    return SessionOutcome.Fail(SessionOutcome.Capacity, sess);
+                bool repeat = existing != null;
+                sess.Upsert(invitee, MemberState.Invited, existing?.OriginRegion ?? UUID.Zero, now);
+                sess.LastSeenUtc = now;
+                return new SessionOutcome(true, repeat ? "invite-idempotent" : "invited", sess);
+            }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
+        }
+
+        /// <summary>
+        /// Take a seat. This is the cap's decision point and it is made INSIDE the store mutation,
+        /// so N simultaneous accepts at the boundary produce exactly Cap seats and the rest a
+        /// capacity refusal -- never Cap+1 (item 6).
+        /// </summary>
+        public SessionOutcome Accept(UUID sessionId, UUID agent, UUID originRegion, string viewerSession = null)
+        {
+            DateTime now = _clock();
+            NonSpatialVoiceSession snapshot = _store.Get(sessionId);
+            if (snapshot == null) return SessionOutcome.Fail(SessionOutcome.NoSuchSession);
+
+            AdmissionVerdict v = Admission(snapshot.Type).CanJoin(snapshot, agent);
+            if (!v.Admitted) return SessionOutcome.Fail(v.Decision, snapshot);
+
+            return _store.Mutate(sessionId, sess =>
+            {
+                NonSpatialMember m = sess.Find(agent);
+                if (m != null && m.HoldsSeat)
+                {
+                    // Repeat accept, reconnect, or the same agent arriving from a new region: refresh
+                    // in place. The region is re-pointed, NOT duplicated (O-110).
+                    m.OriginRegion = originRegion;
+                    m.LastSeenUtc = now;
+                    if (!string.IsNullOrEmpty(viewerSession)) m.ViewerSession = viewerSession;
+                    sess.LastSeenUtc = now;
+                    return new SessionOutcome(true, "accept-idempotent", sess);
+                }
+                if (sess.IsFull)
+                    return SessionOutcome.Fail(SessionOutcome.Capacity, sess);
+                NonSpatialMember seated = sess.Upsert(agent, MemberState.Accepted, originRegion, now);
+                if (!string.IsNullOrEmpty(viewerSession)) seated.ViewerSession = viewerSession;
+                sess.LastSeenUtc = now;
+                return new SessionOutcome(true, "accepted", sess);
+            }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
+        }
+
+        /// <summary>The member is in the media room (its provision was admitted). Accepted -> Present.</summary>
+        public SessionOutcome MarkPresent(UUID sessionId, UUID agent, UUID originRegion, string viewerSession = null)
+        {
+            DateTime now = _clock();
+            return _store.Mutate(sessionId, sess =>
+            {
+                NonSpatialMember m = sess.Find(agent);
+                if (m == null || m.State == MemberState.Departed || m.State == MemberState.Declined)
+                    return SessionOutcome.Fail(SessionOutcome.AlreadyDeparted, sess);
+                if (!m.HoldsSeat && sess.IsFull)
+                    return SessionOutcome.Fail(SessionOutcome.Capacity, sess);
+                m.State = MemberState.Present;
+                m.OriginRegion = originRegion;
+                m.LastSeenUtc = now;
+                if (!string.IsNullOrEmpty(viewerSession)) m.ViewerSession = viewerSession;
+                sess.LastSeenUtc = now;
+                return new SessionOutcome(true, "present", sess);
+            }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
+        }
+
+        /// <summary>
+        /// Decline an invitation -- O-108 lifecycle (2). Separate from departing a session the agent
+        /// had joined: declining never touches a seat, because an invitation never held one.
+        /// </summary>
+        public SessionOutcome Decline(UUID sessionId, UUID agent)
+            => DepartInternal(sessionId, agent, DepartureReason.InvitationDeclined, MemberState.Declined);
+
+        /// <summary>
+        /// Leave, from any of the lifecycles. The engine does not care which one fired and never
+        /// waits for the others: whichever arrives first releases the seat.
+        /// </summary>
+        public SessionOutcome Depart(UUID sessionId, UUID agent, DepartureReason reason)
+            => DepartInternal(sessionId, agent, reason, MemberState.Departed);
+
+        private SessionOutcome DepartInternal(UUID sessionId, UUID agent, DepartureReason reason, MemberState terminal)
+        {
+            DateTime now = _clock();
+            return _store.Mutate(sessionId, sess =>
+            {
+                NonSpatialMember m = sess.Find(agent);
+                if (m == null) return SessionOutcome.Fail(SessionOutcome.NoSuchSession, sess);
+                if (m.State == terminal)
+                {
+                    sess.LastSeenUtc = now;
+                    return new SessionOutcome(true, "depart-idempotent", sess);
+                }
+                m.State = terminal;
+                m.Departure = reason;
+                m.LastSeenUtc = now;
+                m.ViewerSession = null;
+                sess.LastSeenUtc = now;
+                return new SessionOutcome(true, terminal == MemberState.Declined ? "declined" : "departed", sess);
+            }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
+        }
+
+        /// <summary>
+        /// The agent left every session it was in, for one reason -- the shape a presence close or a
+        /// grid-wide logout needs. Returns the sessions actually touched.
+        /// </summary>
+        public IReadOnlyList<NonSpatialVoiceSession> DepartAll(UUID agent, DepartureReason reason)
+        {
+            List<NonSpatialVoiceSession> touched = new List<NonSpatialVoiceSession>();
+            foreach (NonSpatialVoiceSession s in _store.All())
+            {
+                NonSpatialMember m = s.Find(agent);
+                if (m == null || m.State == MemberState.Departed || m.State == MemberState.Declined) continue;
+                SessionOutcome o = Depart(s.SessionId, agent, reason);
+                if (o.Ok) touched.Add(s);
+            }
+            return touched;
+        }
+
+        // ---- sweep ---------------------------------------------------------------------------
+
+        /// <summary>
+        /// Expire unanswered invitations and collect dead sessions. This is the backstop that makes
+        /// "departure never waits on a POST that does not come" true even when NO lifecycle fires --
+        /// a viewer that is simply gone leaves an invitation that ages out and a session that dies.
+        /// Returns the ids removed.
+        /// </summary>
+        public IReadOnlyList<UUID> Sweep()
+        {
+            DateTime now = _clock();
+            List<UUID> removed = new List<UUID>();
+            foreach (NonSpatialVoiceSession s in _store.All())
+            {
+                _store.Mutate<object>(s.SessionId, sess =>
+                {
+                    foreach (NonSpatialMember m in sess.Members)
+                        if (m.State == MemberState.Invited && now - m.InvitedUtc >= _inviteTtl)
+                        {
+                            m.State = MemberState.Departed;
+                            m.Departure = DepartureReason.Expired;
+                            m.LastSeenUtc = now;
+                        }
+                    return null;
+                });
+                NonSpatialVoiceSession after = _store.Get(s.SessionId);
+                if (after == null) continue;
+                if (after.IsDead || now - after.LastSeenUtc >= _idleTtl)
+                {
+                    if (_store.Remove(after.SessionId)) removed.Add(after.SessionId);
+                }
+            }
+            return removed;
+        }
+
+        // ---- helpers -------------------------------------------------------------------------
+
+        private INonSpatialAdmission Admission(NonSpatialSessionType type)
+            => _admission.TryGetValue(type, out INonSpatialAdmission a)
+                ? a
+                : throw new InvalidOperationException("no admission policy registered for " + type);
+
+        private void Touch(UUID sessionId)
+        {
+            DateTime now = _clock();
+            _store.Mutate<object>(sessionId, s => { s.LastSeenUtc = now; return null; });
+        }
+
+        private NonSpatialVoiceSession FindAdhocByTemp(UUID creator, UUID tempSessionId)
+        {
+            if (tempSessionId == UUID.Zero) return null;
+            foreach (NonSpatialVoiceSession s in _store.All())
+                if (s.Type == NonSpatialSessionType.Adhoc && s.TempSessionId == tempSessionId && s.Creator == creator)
+                    return s;
+            return null;
+        }
+    }
+}

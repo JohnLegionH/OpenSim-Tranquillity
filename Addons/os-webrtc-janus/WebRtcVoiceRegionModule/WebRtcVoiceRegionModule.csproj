@@ -30,6 +30,12 @@
     <Compile Include="A2AAgentListDelivery.cs" />
     <Compile Include="A2AInviteDelivery.cs" />
     <Compile Include="A2AProvisionAdmission.cs" />
+    <Compile Include="NonSpatial/NonSpatialVoiceSession.cs" />
+    <Compile Include="NonSpatial/NonSpatialRoomKey.cs" />
+    <Compile Include="NonSpatial/NonSpatialCaps.cs" />
+    <Compile Include="NonSpatial/INonSpatialAdmission.cs" />
+    <Compile Include="NonSpatial/INonSpatialSessionStore.cs" />
+    <Compile Include="NonSpatial/NonSpatialVoiceSessionEngine.cs" />
     <Compile Include="VoiceConnector/ConnectorIdentity.cs" />
     <Compile Include="VoiceConnector/VoiceConnectorRecord.cs" />
     <Compile Include="VoiceConnector/VoiceConnectorRegistry.cs" />
