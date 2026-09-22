@@ -352,6 +352,10 @@ namespace osWebRtcVoice.NonSpatial
                 // P1.2G-b: the room emptied, so the ring cycle is over. Clearing it is what makes a
                 // LATER start ring the group again; without it a group is rung once per process.
                 if (sess.SeatsHeld == 0) sess.EndRingCycle();
+                // P1.4b: a DECLINE also forgets that this agent was rung, so a later invite can ring
+                // them again. A departure does not: leaving a call you were in is not an invitation
+                // to be re-rung by every subsequent joiner.
+                else if (terminal == MemberState.Declined) sess.ClearInvited(agent);
                 return new SessionOutcome(true, terminal == MemberState.Declined ? "declined" : "departed", sess);
             }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
         }
@@ -419,24 +423,28 @@ namespace osWebRtcVoice.NonSpatial
         /// count is its own slice only (the stated per-instance cap limitation).
         /// </summary>
         public SessionOutcome AdoptRemoteRing(UUID groupId, string carriedRoomKey, string token, int cap,
-                                              UUID creator, IEnumerable<UUID> alreadyRung)
+                                              UUID creator, IEnumerable<UUID> alreadyRung,
+                                              NonSpatialSessionType type = NonSpatialSessionType.Group)
         {
             if (groupId == UUID.Zero)
                 return SessionOutcome.Fail(SessionOutcome.NoSuchSession);
-            string local = NonSpatialRoomKey.Derive(_gridId, NonSpatialSessionType.Group, groupId);
+            string local = NonSpatialRoomKey.Derive(_gridId, type, groupId);
             if (!string.IsNullOrEmpty(carriedRoomKey) && !string.Equals(local, carriedRoomKey, StringComparison.Ordinal))
                 return SessionOutcome.Fail("refused-room-key-mismatch");
 
             DateTime now = _clock();
-            int effective = NonSpatialCaps.Effective(NonSpatialSessionType.Group, cap);
+            int effective = NonSpatialCaps.Effective(type, cap);
+            // Owner is the group for a group session; an ad-hoc conference has no owning object.
+            UUID owner = type == NonSpatialSessionType.Group ? groupId : UUID.Zero;
             NonSpatialVoiceSession s = _store.StartOrGet(groupId, () =>
             {
-                NonSpatialVoiceSession made = new NonSpatialVoiceSession(NonSpatialSessionType.Group, groupId, groupId,
-                                                                          local, groupId, creator, effective, now);
+                NonSpatialVoiceSession made = new NonSpatialVoiceSession(type, groupId, groupId,
+                                                                          local, owner, creator, effective, now);
                 made.Token = token;                 // the ring carries the credential the viewer will echo
                 made.RingSent = true;               // never re-ring a call this instance did not start
                 if (alreadyRung != null)
                     foreach (UUID a2 in alreadyRung) made.MarkInvited(a2);
+                SeedAdoptedMembership(made, type, alreadyRung, now);
                 return made;
             }, out bool created);
 
@@ -449,10 +457,32 @@ namespace osWebRtcVoice.NonSpatial
                     sess.RingSent = true;
                     if (alreadyRung != null)
                         foreach (UUID a2 in alreadyRung) sess.MarkInvited(a2);
+                    SeedAdoptedMembership(sess, type, alreadyRung, now);
                     return null;
                 });
             }
             return new SessionOutcome(true, created ? "ring-adopted" : "ring-adopt-idempotent", s, created);
+        }
+
+        /// <summary>
+        /// P1.4b: an ADOPTED ad-hoc session must carry the membership, because AdhocAdmission.CanJoin
+        /// admits on the member record alone -- an ad-hoc conference has no roster to fall back on.
+        /// Without this, a member rung across instances would be refused at the accept that lands
+        /// here, which is exactly the cross-instance case this slice exists to make work.
+        ///
+        /// Group is deliberately left alone: its CanJoin re-checks membership and powers against the
+        /// groups service, so records here would buy nothing and would change what
+        /// GroupVoiceInvite.Targets sees on the adopting instance.
+        /// </summary>
+        private static void SeedAdoptedMembership(NonSpatialVoiceSession sess, NonSpatialSessionType type,
+                                                  IEnumerable<UUID> rung, DateTime now)
+        {
+            if (type != NonSpatialSessionType.Adhoc || rung == null) return;
+            foreach (UUID a in rung)
+            {
+                if (a == UUID.Zero) continue;
+                if (sess.Find(a) == null) sess.Upsert(a, MemberState.Invited, UUID.Zero, now);
+            }
         }
 
         // ---- credentials -----------------------------------------------------------------------

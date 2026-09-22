@@ -170,6 +170,15 @@ namespace osWebRtcVoice.NonSpatial
 
         internal void MarkInvited(UUID agent) => _invited.Add(agent);
 
+        /// <summary>
+        /// P1.4b: forget that ONE agent was rung, without ending the cycle for everyone else.
+        /// Declining clears the latch so a later "invite" of the same agent rings them again -- a
+        /// mis-clicked decline must not make someone unreachable for the rest of the call. Safe
+        /// against a re-ring storm because only an explicit invite puts them back in Invited, and
+        /// AdhocVoiceInvite.Targets rings Invited members only.
+        /// </summary>
+        internal void ClearInvited(UUID agent) => _invited.Remove(agent);
+
         /// <summary>The room emptied: forget the ring so a later start rings the group again.</summary>
         internal void EndRingCycle()
         {

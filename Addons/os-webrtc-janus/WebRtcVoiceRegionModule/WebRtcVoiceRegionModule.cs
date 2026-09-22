@@ -1158,6 +1158,28 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         // waiting on. Deliberately NOT an early return like the group arms: the outcome falls into
         // the shared tail below, whose Reply path already sends the event-queue
         // ChatterBoxSessionStartReply. One sender for that event, not two.
+        // P1.4b: "invite" adds people to a conference already running. Early return like the group
+        // arms, because the ring list is the arm's own output and there is nothing for the shared
+        // tail to do with it.
+        if (AdhocVoiceChatSession.TryHandleInvite(reqmap, agentID, m_nonSpatial, m_adhocVoiceEnabled,
+                                                  out ChatSessionOutcome inviteOutcome, out List<UUID> addedToCall))
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader, inviteOutcome.Instrument);
+            ApplyChatSessionOutcome(inviteOutcome, response);
+            if (addedToCall.Count > 0)
+                RingAdhocMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, addedToCall);
+            return;
+        }
+
+        // P1.4b: "decline invitation" for a conference. No ring, no seat, nothing to fan out.
+        if (AdhocVoiceChatSession.TryHandleDeclineInvitation(reqmap, agentID, m_nonSpatial, m_adhocVoiceEnabled,
+                                                             out ChatSessionOutcome declineOutcome))
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader, declineOutcome.Instrument);
+            ApplyChatSessionOutcome(declineOutcome, response);
+            return;
+        }
+
         if (!AdhocVoiceChatSession.TryHandleStartConference(reqmap, agentID, m_nonSpatial,
                                                             scene.RegionInfo.RegionID, m_adhocVoiceEnabled,
                                                             out ChatSessionOutcome outcome))
@@ -1207,6 +1229,13 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                     true,
                     string.Empty,
                     agentID);
+
+            // P1.4b: the conference just opened, so ring the invitees the viewer named in `params`.
+            // Fired on the engine's 0 -> 1 seat transition, which for AD-HOC is the creator's own
+            // seat inside Start -- there is no other accept to hang it on. Placed AFTER the re-key
+            // event so a ring failure can never cost the initiator the reply it is blocked on.
+            if (outcome.StartedRinging)
+                RingAdhocMembers(m_nonSpatial?.Store.Get(outcome.Reply.SessionId), agentID, sp.Name, null);
         }
 
         ApplyChatSessionOutcome(outcome, response);
@@ -1355,7 +1384,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     /// </summary>
     private void OnIncomingGroupRing(GridInstantMessage msg)
     {
-        if (!m_groupVoice.IsUsable || m_nonSpatial is null)
+        if (m_nonSpatial is null || (!m_groupVoice.IsUsable && !m_adhocVoiceEnabled))
             return;
         if (!GroupVoiceRingTransport.TryParse(msg, out UUID target, out UUID groupID, out OSDMap body))
             return;   // not ours: every other subscriber still sees it untouched
@@ -1365,8 +1394,22 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         string token = voice is not null && voice.TryGetString("channel_credentials", out string tk) ? tk : null;
         body.TryGetUUID("from_id", out UUID caller);
 
-        SessionOutcome adopted = m_nonSpatial.AdoptRemoteRing(groupID, roomKey, token, m_groupVoice.Cap,
-                                                              caller, new[] { target });
+        // P1.4b: group and conference rings share the carrier, and invitation_type is what tells them
+        // apart -- it is already in the body the viewer will receive, so nothing new goes on the wire.
+        // Reading it from the BODY rather than adding a transport field also means the discriminator
+        // and the thing the viewer acts on can never disagree.
+        bool isConference = voice is not null
+                            && voice.TryGetValue("invitation_type", out OSD invType)
+                            && invType.AsInteger() == AdhocVoiceInvite.InvitationTypeConference;
+        NonSpatialSessionType ringType = isConference ? NonSpatialSessionType.Adhoc : NonSpatialSessionType.Group;
+
+        if (isConference ? !m_adhocVoiceEnabled : !m_groupVoice.IsUsable)
+            return;   // that half is switched off on this instance
+
+        SessionOutcome adopted = m_nonSpatial.AdoptRemoteRing(groupID, roomKey, token,
+                                                              isConference ? NonSpatialCaps.DefaultConferenceCap
+                                                                           : m_groupVoice.Cap,
+                                                              caller, new[] { target }, ringType);
         if (!adopted.Ok)
         {
             m_log.LogWarning("{LogHeader} {Line}", logHeader,
@@ -1441,6 +1484,135 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
 
         // P1.2G-c: everyone the local walk could not reach -- i.e. on another regionserver.
         RingRemoteGroupMembers(session, initiator, initiatorName, body, targets);
+    }
+
+    /// <summary>
+    /// P1.4b: ring an ad-hoc conference's invitees -- local first, then anyone this process cannot
+    /// reach, over P1.2G-c's carrier.
+    ///
+    /// SIMPLER THAN THE GROUP FAN-OUT IN ONE IMPORTANT WAY: there is no roster to consult. An ad-hoc
+    /// conference's membership IS its invitation list, so the targets come from the session itself
+    /// and the groups service is never touched. That is also why the target list and
+    /// AdhocAdmission.CanJoin agree by construction -- both read the same records.
+    ///
+    /// <paramref name="only"/> narrows the ring to specific agents, which is what "invite" needs:
+    /// adding one person to a running call must ring that person and nobody already in it.
+    /// </summary>
+    private void RingAdhocMembers(NonSpatialVoiceSession session, UUID initiator, string initiatorName,
+                                  List<UUID> only)
+    {
+        if (session is null || m_nonSpatial is null || !m_adhocVoiceEnabled)
+            return;
+
+        List<UUID> targets = AdhocVoiceInvite.Targets(session, initiator, only);
+        if (targets.Count == 0)
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                AdhocVoiceInvite.Line(UUID.Zero, session.SessionId, "no-targets"));
+            return;
+        }
+
+        string token = m_nonSpatial.IssueToken(session.SessionId, initiator);
+        if (string.IsNullOrEmpty(token))
+        {
+            m_log.LogWarning("{LogHeader} conference ring for {SessionId} has no token; not ringing",
+                logHeader, session.SessionId);
+            return;
+        }
+
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+
+        OSDMap body = AdhocVoiceInvite.BuildBody(session, token, initiator, initiatorName);
+
+        // (a) anyone with a presence in THIS process, exactly as a group ring reaches them
+        HashSet<UUID> presentHere = new HashSet<UUID>(GroupVoiceInvite.PresentAgents(scenes));
+        List<UUID> local = new List<UUID>();
+        List<UUID> remote = new List<UUID>();
+        foreach (UUID t in targets)
+            (presentHere.Contains(t) ? local : remote).Add(t);
+
+        foreach (UUID target in local)
+        {
+            string decision = A2AInviteDelivery.Deliver(scenes, target, body, null, out string region);
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                AdhocVoiceInvite.Line(target, session.SessionId, decision, "region=\"" + region + "\""));
+        }
+
+        // (b) everyone else: another regionserver, or offline. The presence service decides which,
+        // and an offline invitee is simply not rung -- a conference ring is worthless once stored and
+        // replayed at the next login, announcing a call that ended hours ago.
+        RingRemoteAdhocMembers(session, initiator, initiatorName, body, scenes, remote);
+
+        // Marked whatever delivery said, local and remote alike: a member we could not reach must not
+        // be re-rung by every later join. One ring per member per cycle.
+        m_nonSpatial.MarkInvited(session.SessionId, local);
+    }
+
+    /// <summary>
+    /// P1.4b: carry a conference ring to invitees on another regionserver, over exactly the transport
+    /// P1.2G-c built for groups. Nothing in GroupVoiceRingTransport is group-specific -- it is a
+    /// module-to-module carrier -- so the only thing that distinguishes the two on receipt is the
+    /// invitation_type already inside the body.
+    /// </summary>
+    private void RingRemoteAdhocMembers(NonSpatialVoiceSession session, UUID initiator, string initiatorName,
+                                        OSDMap body, List<Scene> scenes, List<UUID> candidates)
+    {
+        if (candidates is null || candidates.Count == 0 || body is null)
+            return;
+
+        IMessageTransferModule transfer = null;
+        Scene originScene = null;
+        foreach (Scene sc in scenes)
+        {
+            transfer ??= sc.RequestModuleInterface<IMessageTransferModule>();
+            if (sc.GetScenePresence(initiator) is not null) originScene = sc;
+        }
+        if (transfer is null)
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                GroupVoiceRingTransport.Line(UUID.Zero, session.SessionId, GroupVoiceRingTransport.DecisionNoTransfer));
+            return;
+        }
+
+        IPresenceService presence = null;
+        foreach (Scene sc in scenes)
+        {
+            presence = sc.PresenceService;
+            if (presence is not null) break;
+        }
+        int before = candidates.Count;
+        List<UUID> online = GroupVoiceInvite.OnlineOnly(candidates, agent =>
+        {
+            if (presence is null) return UUID.Zero;          // no presence service: send nothing
+            OpenSim.Services.Interfaces.PresenceInfo[] found = presence.GetAgents(new[] { agent.ToString() });
+            return found is { Length: > 0 } ? found[0].RegionID : UUID.Zero;
+        });
+        if (online.Count != before)
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                AdhocVoiceInvite.Line(UUID.Zero, session.SessionId, GroupVoiceInvite.DecisionOffline,
+                    $"{before - online.Count} of {before} candidate(s) are offline"));
+        if (online.Count == 0)
+            return;
+
+        UUID originRegion = originScene?.RegionInfo?.RegionID ?? UUID.Zero;
+        foreach (UUID target in online)
+        {
+            try
+            {
+                GridInstantMessage im = GroupVoiceRingTransport.Build(target, initiator, initiatorName,
+                                                                      session.SessionId, originRegion, body);
+                transfer.SendInstantMessage(im, _ => { });
+                m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                    GroupVoiceRingTransport.Line(target, session.SessionId, GroupVoiceRingTransport.DecisionSent));
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning(e, "{LogHeader} cross-instance conference ring to {Target} failed", logHeader, target);
+            }
+        }
+        m_nonSpatial?.MarkInvited(session.SessionId, online);
     }
 
     // ---- P1.2G: group membership and powers, resolved as GRID state ------------------------------
