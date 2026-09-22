@@ -42,6 +42,7 @@ using OSDMap = OpenMetaverse.StructuredData.OSDMap;
 
 using Nini.Config;
 using Microsoft.Extensions.Logging;
+using OpenSim.Services.Interfaces;   // P1.2G-c: IPresenceService, for the online-only ring filter
 using osWebRtcVoice.NonSpatial;   // P1.2G: the non-spatial engine and the group arm
 
 namespace osWebRtcVoice;
@@ -286,6 +287,9 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             // between the same pair. Treat the close as that party gone from every record it is in;
             // the record is removed only when the other party is gone too (both-logout semantics), and a
             // later admitted provision re-marks the party present, so this is reversible.
+            // P1.2G-c: incoming group voice rings from ANOTHER regionserver process arrive as
+            // grid instant messages; this is the receive half of GroupVoiceRingTransport.
+            scene.EventManager.OnIncomingInstantMessage += OnIncomingGroupRing;
             scene.EventManager.OnClientClosed += delegate (UUID clientID, Scene s)
             {
                 // O-52 (audit W-5): look the presence up in the scene the close fired for. OnClientClosed runs
@@ -1209,6 +1213,151 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     /// Cross-HOST delivery is P1.2G-c: a member on another region server has no presence here and is
     /// simply not rung, exactly as the A2A path behaves today.
     /// </summary>
+    /// <summary>
+    /// P1.2G-c: ring the members this process CANNOT reach -- those on another regionserver.
+    ///
+    /// The roster comes from the groups service through the INITIATOR's own client, which is present
+    /// here by construction (it just started the call). IGroupsModule.GroupMembersRequest
+    /// dereferences its IClientAPI (GroupsModule.cs:741,743), so a null is not an option and the
+    /// initiator's client is the correct requester anyway.
+    ///
+    /// Anyone already rung locally is excluded, so a member never gets two popups: the local walk and
+    /// this list are disjoint by construction, and both are marked invited in the same cycle.
+    /// </summary>
+    private void RingRemoteGroupMembers(NonSpatialVoiceSession session, UUID initiator, string initiatorName,
+                                        OSDMap body, List<UUID> alreadyRungLocally)
+    {
+        if (session is null || !m_groupVoice.IsUsable || body is null)
+            return;
+
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+
+        IMessageTransferModule transfer = null;
+        Scene originScene = null;
+        foreach (Scene sc in scenes)
+        {
+            transfer ??= sc.RequestModuleInterface<IMessageTransferModule>();
+            if (sc.GetScenePresence(initiator) is not null) originScene = sc;
+        }
+        if (transfer is null)
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                GroupVoiceRingTransport.Line(UUID.Zero, session.Owner, GroupVoiceRingTransport.DecisionNoTransfer));
+            return;
+        }
+
+        List<GroupMembersData> roster;
+        try
+        {
+            IClientAPI client = originScene?.GetScenePresence(initiator)?.ControllingClient;
+            if (client is null) return;
+            roster = GroupsModule()?.GroupMembersRequest(client, session.Owner);
+        }
+        catch (Exception e)
+        {
+            m_log.LogWarning(e, "{LogHeader} group roster lookup failed for {GroupId}; no cross-instance ring",
+                logHeader, session.Owner);
+            return;
+        }
+        if (roster is null) return;
+
+        HashSet<UUID> local = new HashSet<UUID>(alreadyRungLocally ?? new List<UUID>());
+        HashSet<UUID> presentHere = new HashSet<UUID>(GroupVoiceInvite.PresentAgents(scenes));
+        List<UUID> remote = new List<UUID>();
+        foreach (GroupMembersData m in roster)
+        {
+            if (m.AgentID == UUID.Zero || m.AgentID == initiator) continue;
+            if (local.Contains(m.AgentID) || presentHere.Contains(m.AgentID)) continue;   // the local walk has them
+            if (session.Find(m.AgentID)?.HoldsSeat == true) continue;
+            if (session.WasInvited(m.AgentID)) continue;
+            if ((m.AgentPowers & m_groupVoice.RequiredMask) != m_groupVoice.RequiredMask) continue;
+            remote.Add(m.AgentID);
+        }
+        if (remote.Count == 0)
+            return;
+
+        // (a) Only members the PRESENCE SERVICE reports online somewhere. An offline member cannot
+        // answer a ring, and a ring delivered at their next login announces a call that ended hours
+        // ago. The offline modules would not store this dialog anyway (see below), but not sending
+        // is the correct behaviour rather than relying on the receiver to discard it.
+        IPresenceService presence = null;
+        foreach (Scene sc in scenes)
+        {
+            presence = sc.PresenceService;
+            if (presence is not null) break;
+        }
+        int before = remote.Count;
+        remote = GroupVoiceInvite.OnlineOnly(remote, agent =>
+        {
+            if (presence is null) return UUID.Zero;          // no presence service: send nothing
+            OpenSim.Services.Interfaces.PresenceInfo[] found = presence.GetAgents(new[] { agent.ToString() });
+            return found is { Length: > 0 } ? found[0].RegionID : UUID.Zero;
+        });
+        if (remote.Count != before)
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                GroupVoiceRingTransport.Line(UUID.Zero, session.Owner, GroupVoiceInvite.DecisionOffline,
+                    $"{before - remote.Count} of {before} candidate(s) are offline"));
+        if (remote.Count == 0)
+            return;
+
+        UUID originRegion = originScene?.RegionInfo?.RegionID ?? UUID.Zero;
+        foreach (UUID target in remote)
+        {
+            try
+            {
+                GridInstantMessage im = GroupVoiceRingTransport.Build(target, initiator, initiatorName,
+                                                                      session.Owner, originRegion, body);
+                transfer.SendInstantMessage(im, _ => { });
+                m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                    GroupVoiceRingTransport.Line(target, session.Owner, GroupVoiceRingTransport.DecisionSent));
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning(e, "{LogHeader} cross-instance ring to {Target} failed", logHeader, target);
+            }
+        }
+        m_nonSpatial?.MarkInvited(session.SessionId, remote);
+    }
+
+    /// <summary>
+    /// P1.2G-c: a ring arrived from another regionserver. Adopt the session locally so the accept
+    /// that follows can be admitted here, then deliver the invitation exactly as a local ring would
+    /// -- same body, same A2AInviteDelivery, so the viewer cannot tell the two paths apart.
+    ///
+    /// This instance never fans out from an adopted session: AdoptRemoteRing latches RingSent.
+    /// </summary>
+    private void OnIncomingGroupRing(GridInstantMessage msg)
+    {
+        if (!m_groupVoice.IsUsable || m_nonSpatial is null)
+            return;
+        if (!GroupVoiceRingTransport.TryParse(msg, out UUID target, out UUID groupID, out OSDMap body))
+            return;   // not ours: every other subscriber still sees it untouched
+
+        OSDMap voice = body.TryGetOSDMap("voice", out OSDMap v) ? v : null;
+        string roomKey = voice is not null && voice.TryGetString("channel_uri", out string ru) ? ru : null;
+        string token = voice is not null && voice.TryGetString("channel_credentials", out string tk) ? tk : null;
+        body.TryGetUUID("from_id", out UUID caller);
+
+        SessionOutcome adopted = m_nonSpatial.AdoptRemoteRing(groupID, roomKey, token, m_groupVoice.Cap,
+                                                              caller, new[] { target });
+        if (!adopted.Ok)
+        {
+            m_log.LogWarning("{LogHeader} {Line}", logHeader,
+                GroupVoiceRingTransport.Line(target, groupID, adopted.Decision,
+                    "carried room key does not match this instance's derivation - check GatekeeperURI on both"));
+            return;
+        }
+
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+        string decision = A2AInviteDelivery.Deliver(scenes, target, body, null, out string region);
+        m_log.LogDebug("{LogHeader} {Line}", logHeader,
+            GroupVoiceRingTransport.Line(target, groupID, decision, "region=\"" + region + "\" adopted=" + adopted.Decision));
+    }
+
     /// <summary>The session-id a ChatSessionRequest body carries, or Zero.</summary>
     private static UUID GroupSessionIdOf(OSDMap reqmap)
         => reqmap is not null && reqmap.TryGetUUID("session-id", out UUID id) ? id : UUID.Zero;
@@ -1242,12 +1391,10 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
 
         List<UUID> targets = GroupVoiceInvite.Targets(GroupVoiceInvite.PresentAgents(scenes), session,
                                                       initiator, m_groupVoice);
-        if (targets.Count == 0)
-        {
+        bool noLocalTargets = targets.Count == 0;
+        if (noLocalTargets)
             m_log.LogDebug("{LogHeader} {Line}", logHeader,
-                GroupVoiceInvite.Line(UUID.Zero, session.Owner, "-", "no-targets"));
-            return;
-        }
+                GroupVoiceInvite.Line(UUID.Zero, session.Owner, "-", "no-local-targets"));
 
         string token = m_nonSpatial.IssueToken(session.SessionId, initiator);
         if (string.IsNullOrEmpty(token))
@@ -1266,6 +1413,9 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         // Marked whatever the delivery said: a member we could not reach must not be re-rung on
         // every later join. One ring per member per cycle; the cycle resets when the room empties.
         m_nonSpatial.MarkInvited(session.SessionId, targets);
+
+        // P1.2G-c: everyone the local walk could not reach -- i.e. on another regionserver.
+        RingRemoteGroupMembers(session, initiator, initiatorName, body, targets);
     }
 
     // ---- P1.2G: group membership and powers, resolved as GRID state ------------------------------

@@ -46,6 +46,7 @@
     <Compile Include="GroupVoiceTests.cs" />
     <Compile Include="GroupProvisionHandlerTests.cs" />
     <Compile Include="GroupVoiceInviteTests.cs" />
+    <Compile Include="GroupVoiceCrossHostTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

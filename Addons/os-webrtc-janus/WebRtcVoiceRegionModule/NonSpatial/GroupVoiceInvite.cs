@@ -119,6 +119,36 @@ namespace osWebRtcVoice.NonSpatial
             return agents;
         }
 
+        /// <summary>
+        /// P1.2G-c pre-ship check (a): of the candidate remote targets, keep only those the PRESENCE
+        /// SERVICE reports online in some region. <paramref name="onlineRegionOf"/> returns the region
+        /// a member is currently in, or UUID.Zero when the presence service does not know them --
+        /// which is what "offline" looks like from here.
+        ///
+        /// Why this matters beyond politeness: an undeliverable ring becomes an OnUndeliveredMessage,
+        /// and a ring that arrives at the next login is worse than useless -- the call it announces
+        /// ended hours ago. Not sending is the correct behaviour, not merely the tidy one.
+        ///
+        /// Pure, so the whole rule is unit-testable without a grid.
+        /// </summary>
+        public static List<UUID> OnlineOnly(IEnumerable<UUID> candidates, Func<UUID, UUID> onlineRegionOf)
+        {
+            List<UUID> online = new List<UUID>();
+            if (candidates == null || onlineRegionOf == null)
+                return online;
+            foreach (UUID a in candidates)
+            {
+                UUID region;
+                try { region = onlineRegionOf(a); }
+                catch { continue; }            // a presence lookup that throws is treated as offline
+                if (region != UUID.Zero)
+                    online.Add(a);
+            }
+            return online;
+        }
+
+        public const string DecisionOffline = "skipped-offline";
+
         public static string Line(UUID target, UUID group, string region, string decision)
             => $"{InstrumentTag} target={target} group={group} region=\"{region}\" decision={decision}";
     }

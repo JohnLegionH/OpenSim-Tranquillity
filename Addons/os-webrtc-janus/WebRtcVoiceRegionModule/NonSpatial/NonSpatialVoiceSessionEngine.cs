@@ -402,6 +402,59 @@ namespace osWebRtcVoice.NonSpatial
             return touched;
         }
 
+        /// <summary>
+        /// P1.2G-c: adopt a group session this instance learned about from an INCOMING RING rather
+        /// than from a local start. Needed because the accept that follows a remote ring lands HERE,
+        /// and TryHandleAcceptInvitation can only admit into a session this store knows.
+        ///
+        /// The room key is DERIVED locally, not taken from the wire, and compared against the one the
+        /// ring carried. They must agree: the derivation is (gridId, tag, sessionId) and gridId is the
+        /// shared GatekeeperURI, so a mismatch means the two instances disagree about the grid id --
+        /// a misconfiguration that would silently put the two halves of a call in different mixer
+        /// rooms. Better to refuse loudly here than to be inaudible in production.
+        ///
+        /// Born with RingSent LATCHED and the invited set pre-seeded, which is what makes send-once
+        /// hold across instances (P1.2G-c item 2): this instance must never re-ring a call it did not
+        /// start. It carries NO seats -- the ringing instance owns those, and this instance's seat
+        /// count is its own slice only (the stated per-instance cap limitation).
+        /// </summary>
+        public SessionOutcome AdoptRemoteRing(UUID groupId, string carriedRoomKey, string token, int cap,
+                                              UUID creator, IEnumerable<UUID> alreadyRung)
+        {
+            if (groupId == UUID.Zero)
+                return SessionOutcome.Fail(SessionOutcome.NoSuchSession);
+            string local = NonSpatialRoomKey.Derive(_gridId, NonSpatialSessionType.Group, groupId);
+            if (!string.IsNullOrEmpty(carriedRoomKey) && !string.Equals(local, carriedRoomKey, StringComparison.Ordinal))
+                return SessionOutcome.Fail("refused-room-key-mismatch");
+
+            DateTime now = _clock();
+            int effective = NonSpatialCaps.Effective(NonSpatialSessionType.Group, cap);
+            NonSpatialVoiceSession s = _store.StartOrGet(groupId, () =>
+            {
+                NonSpatialVoiceSession made = new NonSpatialVoiceSession(NonSpatialSessionType.Group, groupId, groupId,
+                                                                          local, groupId, creator, effective, now);
+                made.Token = token;                 // the ring carries the credential the viewer will echo
+                made.RingSent = true;               // never re-ring a call this instance did not start
+                if (alreadyRung != null)
+                    foreach (UUID a2 in alreadyRung) made.MarkInvited(a2);
+                return made;
+            }, out bool created);
+
+            if (!created)
+            {
+                _store.Mutate<object>(groupId, sess =>
+                {
+                    sess.LastSeenUtc = now;
+                    if (string.IsNullOrEmpty(sess.Token) && !string.IsNullOrEmpty(token)) sess.Token = token;
+                    sess.RingSent = true;
+                    if (alreadyRung != null)
+                        foreach (UUID a2 in alreadyRung) sess.MarkInvited(a2);
+                    return null;
+                });
+            }
+            return new SessionOutcome(true, created ? "ring-adopted" : "ring-adopt-idempotent", s, created);
+        }
+
         // ---- credentials -----------------------------------------------------------------------
 
         /// <summary>Token size in bytes, rendered as lowercase hex. Matches A2ASessionRegistry.TokenBytes.</summary>
