@@ -50,6 +50,7 @@
     <Compile Include="AdhocConferenceTests.cs" />
     <Compile Include="AdhocInvitationTests.cs" />
     <Compile Include="AdhocVoiceTests.cs" />
+    <Compile Include="AdhocConferenceTextTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

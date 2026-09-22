@@ -43,6 +43,9 @@
     <Compile Include="NonSpatial/GroupVoiceRingTransport.cs" />
     <Compile Include="NonSpatial/AdhocVoiceChatSession.cs" />
     <Compile Include="NonSpatial/AdhocVoiceInvite.cs" />
+    <Compile Include="NonSpatial/AdhocTextTransport.cs" />
+    <Compile Include="NonSpatial/AdhocTextSession.cs" />
+    <Compile Include="NonSpatial/AdhocConferenceRoster.cs" />
     <Compile Include="VoiceConnector/ConnectorIdentity.cs" />
     <Compile Include="VoiceConnector/VoiceConnectorRecord.cs" />
     <Compile Include="VoiceConnector/VoiceConnectorRegistry.cs" />

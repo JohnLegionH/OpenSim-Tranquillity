@@ -306,6 +306,16 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             // P1.2G-c: incoming group voice rings from ANOTHER regionserver process arrive as
             // grid instant messages; this is the receive half of GroupVoiceRingTransport.
             scene.EventManager.OnIncomingInstantMessage += OnIncomingGroupRing;
+            // A2a: conference TEXT from another regionserver arrives the same way a ring does. The
+            // two are told apart by the bucket magic, never by dialog -- AdhocTextTransport's header
+            // has the whole argument. Order of these two subscriptions is irrelevant: the magics are
+            // distinct prefixes, so at most one of the two parsers can claim any given message.
+            scene.EventManager.OnIncomingInstantMessage += OnIncomingConferenceText;
+            // A2a: a member's OWN typed line is a CLIENT IM, not a grid IM, so it needs the client
+            // hook -- the same one GroupsMessagingModule uses for group chat (:427-436). Root only:
+            // a child agent's client would deliver the line a second time on every border crossing.
+            scene.EventManager.OnMakeRootAgent += OnMakeRootAgentConferenceText;
+            scene.EventManager.OnMakeChildAgent += OnMakeChildAgentConferenceText;
             scene.EventManager.OnClientClosed += delegate (UUID clientID, Scene s)
             {
                 // O-52 (audit W-5): look the presence up in the scene the close fired for. OnClientClosed runs
@@ -338,6 +348,10 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                     m_log.LogDebug("{LogHeader} {Line}", logHeader,
                         GroupVoiceChatSession.Line(clientID, gone.Owner, "group-seat-released-client-closed",
                             $"room={gone.RoomKey} region={s?.Name ?? scene.Name} seats={gone.SeatsHeld}/{gone.Cap}"));
+                    // A2a item 1: the presence backstop is a departure like any other, so the
+                    // conference roster has to lose the name here too -- otherwise a crashed member
+                    // sits in everyone's panel until the idle TTL.
+                    SendConferenceRoster(gone, clientID, joined: false);
                 }
             };
 
@@ -1026,6 +1040,9 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                         gone.Type == NonSpatialSessionType.Adhoc
                             ? AdhocVoiceChatSession.Line(agentID, gone.SessionId, "adhoc-seat-released", releaseDetail)
                             : GroupVoiceChatSession.Line(agentID, gone.Owner, "group-seat-released", releaseDetail));
+                    // A2a item 1: the seat is already released above, so SeatHolders no longer
+                    // contains this agent and the remaining members get its LEAVE.
+                    SendConferenceRoster(gone, agentID, joined: false);
                 }
             }
         }
@@ -1188,6 +1205,11 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             ApplyChatSessionOutcome(adhocCall, response);
             if (adhocCall.StartedRinging)
                 RingAdhocMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, null);
+            // A2a item 1: this arm seats the caller, so the roster moved. AFTER the response is
+            // applied, for the same reason the ring is: a roster send must never cost the caller
+            // the answer it is blocked on.
+            if (adhocCall.Status == HttpStatusCode.OK)
+                SendConferenceRoster(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, joined: true);
             return;
         }
 
@@ -1198,6 +1220,10 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             ApplyChatSessionOutcome(adhocAccept, response);
             if (adhocAccept.StartedRinging)
                 RingAdhocMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, null);
+            // A2a item 1: accepting IS the join (llimview.cpp:3382-3385), so this is the roster's
+            // main event -- the invitee's panel gets the whole room and the room gets the invitee.
+            if (adhocAccept.Status == HttpStatusCode.OK)
+                SendConferenceRoster(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, joined: true);
             return;
         }
 
@@ -1279,6 +1305,10 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             // event so a ring failure can never cost the initiator the reply it is blocked on.
             if (outcome.StartedRinging)
                 RingAdhocMembers(m_nonSpatial?.Store.Get(outcome.Reply.SessionId), agentID, sp.Name, null);
+            // A2a item 1: the creator took the first seat inside Start, so the roster exists from
+            // this moment. One entry, the creator's own -- which is what the group path also sends
+            // to an agent opening a session (GroupsMessagingModule.cs:661-664).
+            SendConferenceRoster(m_nonSpatial?.Store.Get(outcome.Reply.SessionId), agentID, joined: true);
         }
 
         ApplyChatSessionOutcome(outcome, response);
@@ -1467,6 +1497,240 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         string decision = A2AInviteDelivery.Deliver(scenes, target, body, null, out string region);
         m_log.LogDebug("{LogHeader} {Line}", logHeader,
             GroupVoiceRingTransport.Line(target, groupID, decision, "region=\"" + region + "\" adopted=" + adopted.Decision));
+    }
+
+    // ---- A2a: ad-hoc conference TEXT -------------------------------------------------------------
+
+    private void OnMakeRootAgentConferenceText(ScenePresence sp)
+    {
+        if (sp?.ControllingClient is not null)
+            sp.ControllingClient.OnInstantMessage += OnViewerConferenceText;
+    }
+
+    private void OnMakeChildAgentConferenceText(ScenePresence sp)
+    {
+        if (sp?.ControllingClient is not null)
+            sp.ControllingClient.OnInstantMessage -= OnViewerConferenceText;
+    }
+
+    /// <summary>
+    /// A2a item 2: a member typed into a conference. The viewer sends ImprovedInstantMessage with
+    /// dialog SessionSend and the AUTHORITATIVE session id (the start reply re-keyed it), and before
+    /// this slice nothing claimed it -- InstantMessageModule drops SessionSend in its default arm
+    /// and GroupsMessagingModule only takes a GROUP id.
+    ///
+    /// GROUP TEXT IS UNTOUCHED: TryPlan returns false for any id the engine does not hold as ADHOC,
+    /// and this handler then does nothing at all, so GroupsMessagingModule sees the event exactly as
+    /// it does today.
+    /// </summary>
+    private void OnViewerConferenceText(IClientAPI client, GridInstantMessage im)
+    {
+        if (im is null || im.dialog != AdhocTextSession.DialogSessionSend || m_nonSpatial is null)
+            return;
+
+        UUID sessionId = new UUID(im.imSessionID);
+        UUID sender = new UUID(im.fromAgentID);
+        if (!AdhocTextSession.TryPlan(m_nonSpatial, m_adhocVoiceEnabled, sessionId, sender, im.message,
+                                      out AdhocTextPlan plan, out string decision))
+            return;   // not a conference of ours -- the group module and everyone else still see it
+
+        if (plan is null)
+        {
+            // Item 4: a non-member's SessionSend for this session is refused AND LOGGED. Warning,
+            // not debug: a stranger addressing a conference id is worth seeing without turning
+            // debug on.
+            m_log.LogWarning("{LogHeader} {Line}", logHeader,
+                AdhocTextSession.Line(sender, sessionId, decision,
+                    "region=\"" + (client?.Scene?.RegionInfo?.RegionName ?? string.Empty) + "\""));
+            return;
+        }
+
+        FanOutConferenceText(plan, client?.Name ?? im.fromAgentName,
+                             client?.Scene?.RegionInfo?.RegionID ?? UUID.Zero, decision);
+    }
+
+    /// <summary>
+    /// Deliver one conference line to every other seat holder: local clients directly, everyone else
+    /// over the P1.2G-c carrier with the text magic. The SENDER IS NEVER IN Recipients (item 4), so
+    /// there is no echo -- a deliberate divergence from the group path, which does echo; see
+    /// AdhocTextSession's header for why.
+    /// </summary>
+    private void FanOutConferenceText(AdhocTextPlan plan, string fromName, UUID originRegion, string decision)
+    {
+        if (plan is null)
+            return;
+
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+
+        m_log.LogDebug("{LogHeader} {Line}", logHeader,
+            AdhocTextSession.Line(plan.Sender, plan.Session.SessionId, decision,
+                $"recipients={plan.Recipients.Count}"));
+        if (plan.Recipients.Count == 0)
+            return;
+
+        // Local vs remote by the same presence test the ring fan-out uses, so text and ring agree
+        // about who is reachable in this process.
+        HashSet<UUID> presentHere = new HashSet<UUID>(GroupVoiceInvite.PresentAgents(scenes));
+        List<UUID> remote = new List<UUID>();
+        foreach (UUID target in plan.Recipients)
+        {
+            if (!presentHere.Contains(target))
+            {
+                remote.Add(target);
+                continue;
+            }
+            DeliverConferenceTextLocally(scenes, target, plan.Sender, fromName, plan.Session.SessionId,
+                                         originRegion, plan.Message);
+        }
+
+        SendRemoteConferenceText(plan, fromName, originRegion, scenes, remote);
+    }
+
+    /// <summary>Hand one rebuilt SessionSend to a client in this process.</summary>
+    private void DeliverConferenceTextLocally(List<Scene> scenes, UUID target, UUID sender, string fromName,
+                                              UUID sessionId, UUID originRegion, string message)
+    {
+        Scene scene = A2AInviteDelivery.ResolveCalleeScene(scenes, target, out _);
+        IClientAPI to = scene?.GetScenePresence(target)?.ControllingClient;
+        if (to is null)
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                AdhocTextSession.Line(sender, sessionId, A2AAgentListDelivery.DecisionNoPresence,
+                    "target=" + target));
+            return;
+        }
+        try
+        {
+            to.SendInstantMessage(AdhocTextSession.BuildForViewer(target, sender, fromName, sessionId,
+                                                                  originRegion, message));
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                AdhocTextSession.Line(sender, sessionId, AdhocTextSession.DecisionDelivered,
+                    "target=" + target + " path=local"));
+        }
+        catch (Exception e)
+        {
+            m_log.LogWarning(e, "{LogHeader} local conference text to {Target} failed", logHeader, target);
+        }
+    }
+
+    /// <summary>
+    /// Carry the line to members on another regionserver. Same transport family as the ring, same
+    /// online-only rule: an offline member is simply not sent to. Nothing is stored for them -- both
+    /// offline-IM allowlists reject SessionSend (OfflineMessageModule.cs:228-233,
+    /// OfflineIMRegionModule.cs:195-199) and the carrier sets offline = 0 besides.
+    /// </summary>
+    private void SendRemoteConferenceText(AdhocTextPlan plan, string fromName, UUID originRegion,
+                                          List<Scene> scenes, List<UUID> candidates)
+    {
+        if (candidates is null || candidates.Count == 0)
+            return;
+
+        IMessageTransferModule transfer = null;
+        foreach (Scene sc in scenes)
+        {
+            transfer ??= sc.RequestModuleInterface<IMessageTransferModule>();
+            if (transfer is not null) break;
+        }
+        if (transfer is null)
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                AdhocTextTransport.Line(UUID.Zero, plan.Session.SessionId, AdhocTextTransport.DecisionNoTransfer));
+            return;
+        }
+
+        IPresenceService presence = null;
+        foreach (Scene sc in scenes)
+        {
+            presence = sc.PresenceService;
+            if (presence is not null) break;
+        }
+        List<UUID> online = GroupVoiceInvite.OnlineOnly(candidates, agent =>
+        {
+            if (presence is null) return UUID.Zero;
+            OpenSim.Services.Interfaces.PresenceInfo[] found = presence.GetAgents(new[] { agent.ToString() });
+            return found is { Length: > 0 } ? found[0].RegionID : UUID.Zero;
+        });
+
+        foreach (UUID target in online)
+        {
+            try
+            {
+                transfer.SendInstantMessage(
+                    AdhocTextTransport.Build(target, plan.Sender, fromName, plan.Session.SessionId,
+                                             originRegion, plan.Message), _ => { });
+                m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                    AdhocTextTransport.Line(target, plan.Session.SessionId, AdhocTextTransport.DecisionSent));
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning(e, "{LogHeader} cross-instance conference text to {Target} failed", logHeader, target);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A2a item 2, receive half: a conference line arrived from another regionserver. Rebuild the
+    /// viewer's SessionSend locally so the two paths are indistinguishable at the client.
+    ///
+    /// THE MEMBERSHIP RE-CHECK IS NOT REDUNDANT. The sending instance already decided the sender is
+    /// a member, but this instance holds its own adopted copy of the session, and a carrier is a
+    /// grid IM anyone could in principle synthesise. Re-checking here means a forged carrier cannot
+    /// inject text into a conference on this host.
+    /// </summary>
+    private void OnIncomingConferenceText(GridInstantMessage msg)
+    {
+        if (m_nonSpatial is null || !m_adhocVoiceEnabled)
+            return;
+        if (!AdhocTextTransport.TryParse(msg, out UUID target, out UUID sessionId, out string message,
+                                         out string fromName, out _))
+            return;   // not ours -- a P1.2G-c ring lands here and falls straight through
+
+        UUID sender = new UUID(msg.fromAgentID);
+        NonSpatialVoiceSession session = m_nonSpatial.Store.Get(sessionId);
+        if (session is null || session.Type != NonSpatialSessionType.Adhoc)
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader,
+                AdhocTextTransport.Line(target, sessionId, SessionOutcome.NoSuchSession));
+            return;
+        }
+        NonSpatialMember from = session.Find(sender);
+        NonSpatialMember to = session.Find(target);
+        if (from is null || !from.HoldsSeat || to is null || !to.HoldsSeat)
+        {
+            m_log.LogWarning("{LogHeader} {Line}", logHeader,
+                AdhocTextTransport.Line(target, sessionId, AdhocTextSession.DecisionNotMember,
+                    "from=" + sender));
+            return;
+        }
+
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+        DeliverConferenceTextLocally(scenes, target, sender, fromName, sessionId,
+                                     new UUID(msg.RegionID), message);
+    }
+
+    /// <summary>
+    /// A2a item 1: push the participant list after a seat changed hands. Local-only by nature -- the
+    /// event queue is per-instance -- and every recipient's outcome is logged, so an unreachable
+    /// member is visible rather than silent.
+    /// </summary>
+    private void SendConferenceRoster(NonSpatialVoiceSession session, UUID who, bool joined)
+    {
+        if (session is null || session.Type != NonSpatialSessionType.Adhoc || !m_adhocVoiceEnabled)
+            return;
+
+        List<Scene> scenes;
+        lock (m_scenes)
+            scenes = new List<Scene>(m_scenes);
+
+        List<string> lines = joined
+            ? AdhocConferenceRoster.SendJoin(scenes, session, who)
+            : AdhocConferenceRoster.SendLeave(scenes, session, who);
+        foreach (string line in lines)
+            m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
     }
 
     /// <summary>The session-id a ChatSessionRequest body carries, or Zero.</summary>
