@@ -720,7 +720,7 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         if (NonSpatialProvisionAdmission.IsGroupProvision(map))
         {
             NonSpatialProvisionResult g = NonSpatialProvisionAdmission.Decide(
-                map, agentID, m_groupVoice, m_nonSpatial, scene.RegionInfo.RegionID);
+                map, agentID, m_groupVoice, m_nonSpatial, scene.RegionInfo.RegionID, m_adhocVoiceEnabled);
             map.TryGetString("channel", out string gch);
             m_log.LogDebug("{LogHeader} {Line}", logHeader,
                 NonSpatialProvisionAdmission.Line(agentID, scene.Name, gch,
@@ -739,7 +739,9 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
             // Nothing below this line knows or needs to know that it was a group.
             admission = new ProvisionAdmission
             {
-                Kind = ProvisionKind.Group,
+                // P1.4c: the kind follows the SESSION's type, so a conference seat is never logged or
+                // torn down as a group one.
+                Kind = g.Session?.Type == NonSpatialSessionType.Adhoc ? ProvisionKind.Adhoc : ProvisionKind.Group,
                 Decision = g.Decision,
                 ChannelType = A2AProvisionAdmission.ChannelTypeMultiagent,
                 Channel = gch ?? "-",
@@ -967,19 +969,26 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                         m_log.LogDebug("{LogHeader} {Line}", logHeader, line);
                 }
             }
-            else if (admission.Kind == ProvisionKind.Group && resp.TryGetString("viewer_session", out string groupVs) && !string.IsNullOrEmpty(groupVs))
+            else if ((admission.Kind == ProvisionKind.Group || admission.Kind == ProvisionKind.Adhoc)
+                     && resp.TryGetString("viewer_session", out string groupVs) && !string.IsNullOrEmpty(groupVs))
             {
                 // P1.2G: the viewer_session exists only in the SERVICE's success map, so this is the
                 // first moment the seat can be tagged with it -- and tagging it is what makes the
                 // logout teardown able to find the seat later (DepartByViewerSession). Also promotes
                 // Accepted -> Present: the agent is now actually in the mixer room.
+                //
+                // P1.4c: ad-hoc takes this SAME arm, and it has to. Leaving conferences out would
+                // repeat the exact defect P1.2G found for groups -- a hang-up holding its seat until
+                // the 8 h idle TTL, with the cap load-bearing.
                 NonSpatialVoiceSession gsess = m_nonSpatial?.Store.GetByRoomKey(admission.Channel);
                 if (gsess is not null)
                 {
                     SessionOutcome pres = m_nonSpatial.MarkPresent(gsess.SessionId, agentID, scene.RegionInfo.RegionID, groupVs);
+                    bool conf = gsess.Type == NonSpatialSessionType.Adhoc;
+                    string detail = $"room={admission.Channel} seats={m_nonSpatial.Store.Get(gsess.SessionId)?.SeatsHeld}/{gsess.Cap}";
                     m_log.LogDebug("{LogHeader} {Line}", logHeader,
-                        GroupVoiceChatSession.Line(agentID, gsess.Owner, "group-present-" + pres.Decision,
-                            $"room={admission.Channel} seats={m_nonSpatial.Store.Get(gsess.SessionId)?.SeatsHeld}/{gsess.Cap}"));
+                        conf ? AdhocVoiceChatSession.Line(agentID, gsess.SessionId, "adhoc-present-" + pres.Decision, detail)
+                             : GroupVoiceChatSession.Line(agentID, gsess.Owner, "group-present-" + pres.Decision, detail));
                 }
             }
             else if (admission.Kind == ProvisionKind.Logout && a2aVs != "-")
@@ -1009,9 +1018,14 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                          m_nonSpatial?.DepartByViewerSession(agentID, a2aVs, DepartureReason.VoiceTeardown)
                          ?? (IReadOnlyList<NonSpatialVoiceSession>)Array.Empty<NonSpatialVoiceSession>())
                 {
+                    // P1.4c: the same teardown already covered conferences -- DepartByViewerSession is
+                    // type-blind and always was -- but it logged every release as a group one. The
+                    // line now names what actually ended.
+                    string releaseDetail = $"room={gone.RoomKey} viewer_session={a2aVs} seats={gone.SeatsHeld}/{gone.Cap}";
                     m_log.LogDebug("{LogHeader} {Line}", logHeader,
-                        GroupVoiceChatSession.Line(agentID, gone.Owner, "group-seat-released",
-                            $"room={gone.RoomKey} viewer_session={a2aVs} seats={gone.SeatsHeld}/{gone.Cap}"));
+                        gone.Type == NonSpatialSessionType.Adhoc
+                            ? AdhocVoiceChatSession.Line(agentID, gone.SessionId, "adhoc-seat-released", releaseDetail)
+                            : GroupVoiceChatSession.Line(agentID, gone.Owner, "group-seat-released", releaseDetail));
                 }
             }
         }
@@ -1158,6 +1172,35 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         // waiting on. Deliberately NOT an early return like the group arms: the outcome falls into
         // the shared tail below, whose Reply path already sends the event-queue
         // ChatterBoxSessionStartReply. One sender for that event, not two.
+        // P1.4c: voice on an ad-hoc conference -- the same two methods the group arms above answer,
+        // for a conference id instead of a group id.
+        //
+        // Order does not matter here, and that is worth stating rather than relying on. The group
+        // arms take a "call" only when the session-id is a GROUP THIS AGENT BELONGS TO; a conference
+        // id is a server-minted random UUID and is never a group id, so they always decline it. These
+        // arms take it only when the store holds a genuinely AD-HOC session with this agent as a
+        // member, so they can never capture a group call either. The two discriminators are disjoint
+        // by construction, not by sequence.
+        if (AdhocVoiceChatSession.TryHandleCall(reqmap, agentID, m_nonSpatial, scene.RegionInfo.RegionID,
+                                                m_adhocVoiceEnabled, out ChatSessionOutcome adhocCall))
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader, adhocCall.Instrument);
+            ApplyChatSessionOutcome(adhocCall, response);
+            if (adhocCall.StartedRinging)
+                RingAdhocMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, null);
+            return;
+        }
+
+        if (AdhocVoiceChatSession.TryHandleAcceptInvitation(reqmap, agentID, m_nonSpatial, scene.RegionInfo.RegionID,
+                                                            m_adhocVoiceEnabled, out ChatSessionOutcome adhocAccept))
+        {
+            m_log.LogDebug("{LogHeader} {Line}", logHeader, adhocAccept.Instrument);
+            ApplyChatSessionOutcome(adhocAccept, response);
+            if (adhocAccept.StartedRinging)
+                RingAdhocMembers(m_nonSpatial.Store.Get(GroupSessionIdOf(reqmap)), agentID, sp.Name, null);
+            return;
+        }
+
         // P1.4b: "invite" adds people to a conference already running. Early return like the group
         // arms, because the ring list is the arm's own output and there is nothing for the shared
         // tail to do with it.

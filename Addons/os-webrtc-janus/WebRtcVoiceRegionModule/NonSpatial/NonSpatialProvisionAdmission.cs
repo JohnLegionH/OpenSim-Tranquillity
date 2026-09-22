@@ -52,10 +52,28 @@ namespace osWebRtcVoice.NonSpatial
         public const string DecisionBadToken = "group-refused-bad-token";
         public const string DecisionCapacity = "group-refused-capacity";
 
+        // P1.4c: the ad-hoc arm's own words. Separate from the group ones so a grep for a conference
+        // refusal cannot pick up a group one, and so the two paths can never be confused in a log.
+        public const string DecisionAdhocAdmitted = "adhoc-provision-admitted";
+        public const string DecisionAdhocNoSession = "adhoc-refused-no-session";
+        public const string DecisionAdhocNotMember = "adhoc-refused-not-invited";
+        public const string DecisionAdhocBadToken = "adhoc-refused-bad-token";
+        public const string DecisionAdhocCapacity = "adhoc-refused-capacity";
+        public const string DecisionAdhocDisabled = "adhoc-refused-disabled";
+
         /// <summary>
         /// True when this provision body is addressed to a non-spatial room key rather than an A2A
         /// channel. Cheap and total: no registry, no group service, no allocation.
+        ///
+        /// P1.4c: this gate was always type-blind -- <see cref="NonSpatialRoomKey.IsRoomKey"/> matches
+        /// "nsv1:adhoc:" as readily as "nsv1:group:" -- so a conference provision was ALREADY arriving
+        /// here and being refused with group-refused-no-session, because Decide insisted on a Group
+        /// session. That is the bug this slice closes; the name is kept because callers and tests use
+        /// it, and <see cref="IsNonSpatialProvision"/> is the honest one to reach for from now on.
         /// </summary>
+        public static bool IsNonSpatialProvision(OSDMap map) => IsGroupProvision(map);
+
+        /// <inheritdoc cref="IsNonSpatialProvision"/>
         public static bool IsGroupProvision(OSDMap map)
         {
             if (map == null || A2AProvisionAdmission.IsLogout(map)) return false;
@@ -68,14 +86,24 @@ namespace osWebRtcVoice.NonSpatial
         /// other body belongs to <see cref="A2AProvisionAdmission.Decide"/>, untouched.
         /// </summary>
         public static NonSpatialProvisionResult Decide(OSDMap map, UUID agentID, GroupVoicePolicy policy,
-                                                       NonSpatialVoiceSessionEngine engine, UUID originRegion)
+                                                       NonSpatialVoiceSessionEngine engine, UUID originRegion,
+                                                       bool adhocEnabled = false)
         {
             map.TryGetString("channel", out string channel);
 
-            if (policy == null || !policy.IsUsable || engine == null)
+            if (engine == null)
                 return Refuse(DecisionNoSession, 403);
 
             NonSpatialVoiceSession s = engine.Store.GetByRoomKey(channel);
+
+            // P1.4c: dispatch on the session's OWN type rather than assuming group. The room key tag
+            // and the stored type must agree -- they are both derived from the same Start -- so this
+            // is the session telling us what it is, not the wire.
+            if (s != null && s.Type == NonSpatialSessionType.Adhoc)
+                return DecideAdhoc(map, agentID, engine, originRegion, adhocEnabled, s);
+
+            if (policy == null || !policy.IsUsable)
+                return Refuse(DecisionNoSession, 403);
             if (s == null || s.Type != NonSpatialSessionType.Group)
                 return Refuse(DecisionNoSession, 403);
 
@@ -101,6 +129,44 @@ namespace osWebRtcVoice.NonSpatial
                     : Refuse("group-refused-" + seat.Decision, 403, s);
 
             return new NonSpatialProvisionResult { Session = s, Admitted = true, Decision = DecisionAdmitted, Status = 200 };
+        }
+
+        /// <summary>
+        /// P1.4c: admission for an AD-HOC CONFERENCE provision.
+        ///
+        /// Same defence in depth as the group arm, with the membership authority swapped: a
+        /// conference has no roster and no powers, so the authority is the invitation list itself --
+        /// exactly what AdhocAdmission.CanJoin reads, and exactly what AdhocVoiceInvite.Targets rang.
+        /// A leaked token is still not sufficient, because an agent who was never invited has no
+        /// member record and is refused before the token is even looked at.
+        ///
+        /// Order of refusal is deliberate and mirrors the group arm: disabled, no-session,
+        /// not-invited, bad-token, capacity -- each a different operator problem, each its own
+        /// greppable word.
+        /// </summary>
+        private static NonSpatialProvisionResult DecideAdhoc(OSDMap map, UUID agentID,
+                                                             NonSpatialVoiceSessionEngine engine, UUID originRegion,
+                                                             bool adhocEnabled, NonSpatialVoiceSession s)
+        {
+            if (!adhocEnabled)
+                return Refuse(DecisionAdhocDisabled, 403, s);
+
+            if (s.Find(agentID) is null)
+                return Refuse(DecisionAdhocNotMember, 403, s);
+
+            map.TryGetString("credentials", out string presented);
+            if (!NonSpatialVoiceSessionEngine.TokenMatches(s, presented))
+                return Refuse(DecisionAdhocBadToken, 403, s);
+
+            // Re-affirms the seat taken at "call" or "accept invitation", and is where a reconnect or
+            // a region crossing re-points the membership rather than duplicating it.
+            SessionOutcome seat = engine.Accept(s.SessionId, agentID, originRegion);
+            if (!seat.Ok)
+                return seat.Decision == SessionOutcome.Capacity
+                    ? Refuse(DecisionAdhocCapacity, NonSpatialCaps.CapacityHttpStatus, s)
+                    : Refuse("adhoc-refused-" + seat.Decision, 403, s);
+
+            return new NonSpatialProvisionResult { Session = s, Admitted = true, Decision = DecisionAdhocAdmitted, Status = 200 };
         }
 
         private static NonSpatialProvisionResult Refuse(string decision, int status, NonSpatialVoiceSession s = null)

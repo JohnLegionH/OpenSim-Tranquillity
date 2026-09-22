@@ -36,6 +36,14 @@ namespace osWebRtcVoice
         /// the very first live group call (NullReferenceException in ProvisionVoiceAccountRequestCore).
         /// </summary>
         Group = 4,
+        /// <summary>
+        /// P1.4c: an AD-HOC CONFERENCE provision. Distinct from <see cref="Group"/> for the same
+        /// reason Group is distinct from <see cref="Multiagent"/> -- it carries no
+        /// <see cref="A2ASession"/>, and the kind is what the post-provision bookkeeping switches on.
+        /// Sharing Group's value would also make a conference seat log itself as a group seat, which
+        /// is the kind of small lie that costs an hour during a live incident.
+        /// </summary>
+        Adhoc = 5,
     }
 
     public sealed class ProvisionAdmission

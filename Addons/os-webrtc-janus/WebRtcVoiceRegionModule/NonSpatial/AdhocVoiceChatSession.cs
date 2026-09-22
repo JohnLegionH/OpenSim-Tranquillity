@@ -54,9 +54,29 @@ namespace osWebRtcVoice.NonSpatial
         /// </summary>
         public const string MethodDeclineInvitation = "decline invitation";
 
+        /// <summary>
+        /// P1.4c: the conference's voice channel. Identical shape to the group one -- and it is the
+        /// call P1.4a's re-key QUEUES: processSessionInitializedReply fires the pending call when
+        /// mStartCallOnInitialize is set (llimview.cpp:1731-1734), which reaches
+        /// LLVoiceChannelGroup::activate -> voiceCallCapCoro -> {method:"call", session-id}
+        /// (llvoicechannel.cpp:492-502, :631). The session-id is the AUTHORITATIVE id, because the
+        /// re-key has already replaced the viewer's temp one.
+        /// </summary>
+        public const string MethodCall = "call";
+
+        /// <summary>
+        /// P1.4c: the invitee's side. Accept on the popup runs chatterBoxInvitationCoro, which POSTs
+        /// {method:"accept invitation", session-id} and calls startCall(voice_channel_info) only when
+        /// it succeeds (llimview.cpp:3382-3385). Without this arm the P1.4b popup is decorative.
+        /// </summary>
+        public const string MethodAcceptInvitation = "accept invitation";
+
         public const string DecisionStarted = "adhoc-conference-started";
         public const string DecisionIdempotent = "adhoc-conference-idempotent";
         public const string DecisionNoParams = "adhoc-refused-no-invitees";
+        public const string DecisionCallAdmitted = "adhoc-call-admitted";
+        public const string DecisionAcceptAdmitted = "adhoc-accept-admitted";
+        public const string DecisionFull = "adhoc-refused-capacity";
         public const string DecisionInvited = "adhoc-invited";
         public const string DecisionInviteNothingNew = "adhoc-invite-nothing-new";
         public const string DecisionDeclined = "adhoc-declined";
@@ -226,6 +246,112 @@ namespace osWebRtcVoice.NonSpatial
                                   + $"seats={engine.Store.Get(sessionId)?.SeatsHeld}"),
             };
             return true;
+        }
+
+        /// <summary>
+        /// P1.4c: answer "call" for an ad-hoc conference -- the initiator's own voice join, and the
+        /// one P1.4a's re-key queues.
+        ///
+        /// THE ASYMMETRY WITH GROUP IS DELIBERATE AND IS THE INTERESTING PART. A group "call" CREATES
+        /// the session, because for a group the session id IS the group id and the first caller is
+        /// simply the first. A conference cannot work that way: its id is server-minted and means
+        /// nothing until "start conference" has produced it. So this arm never starts anything -- if
+        /// the store has no such conference we are not ours, fall through, and the A2A arm 404s
+        /// exactly as it does for any unknown session, which is the pre-slice behaviour the viewer
+        /// already survives.
+        ///
+        /// Admission is the engine's: AdhocAdmission.CanJoin admits on a member record, so the
+        /// creator and the invitees get in and nobody else does. The same rule the ring list uses.
+        /// </summary>
+        public static bool TryHandleCall(OSDMap reqmap, UUID agentID, NonSpatialVoiceSessionEngine engine,
+                                         UUID originRegion, bool enabled, out ChatSessionOutcome outcome)
+        {
+            outcome = null;
+            if (!Ours(reqmap, engine, enabled, MethodCall, out UUID sessionId, out NonSpatialVoiceSession session))
+                return false;
+            // The discriminator, mirroring the group arm's membership test: someone with no record in
+            // this conference is not ours and must fall through untouched.
+            if (session.Find(agentID) is null)
+                return false;
+
+            outcome = Seat(agentID, session, engine, originRegion, DecisionCallAdmitted, withCredentials: true);
+            return true;
+        }
+
+        /// <summary>
+        /// P1.4c: answer "accept invitation" for an ad-hoc conference. Accepting the popup IS the
+        /// join -- the viewer goes straight to startCall with the channel info the P1.4b ring carried
+        /// and never posts "call" -- so this is the only place an invitee takes its seat.
+        ///
+        /// 200 with no body, like the group arm: the coroutine feeds the body to
+        /// LLIMSpeakerMgr::setSpeakers, which tolerates an empty map, and what actually matters is the
+        /// STATUS, because any failure makes it clear the invitation and never call startCall.
+        /// </summary>
+        public static bool TryHandleAcceptInvitation(OSDMap reqmap, UUID agentID, NonSpatialVoiceSessionEngine engine,
+                                                     UUID originRegion, bool enabled, out ChatSessionOutcome outcome)
+        {
+            outcome = null;
+            if (!Ours(reqmap, engine, enabled, MethodAcceptInvitation, out UUID sessionId, out NonSpatialVoiceSession session))
+                return false;
+            if (session.Find(agentID) is null)
+                return false;      // uninvited: not ours, and AdhocAdmission would refuse anyway
+
+            outcome = Seat(agentID, session, engine, originRegion, DecisionAcceptAdmitted, withCredentials: false);
+            return true;
+        }
+
+        /// <summary>
+        /// Take the seat and build the answer. Shared by "call" and "accept invitation" because the
+        /// seat, the cap and the refusals are identical between them; only whether the reply carries
+        /// voice_credentials differs, since the accept path already has them from the ring.
+        /// </summary>
+        private static ChatSessionOutcome Seat(UUID agentID, NonSpatialVoiceSession session,
+                                               NonSpatialVoiceSessionEngine engine, UUID originRegion,
+                                               string decision, bool withCredentials)
+        {
+            SessionOutcome seat = engine.Accept(session.SessionId, agentID, originRegion);
+            if (!seat.Ok)
+            {
+                // Capacity is the one refusal with a required status: 409, which the viewer maps to
+                // ERROR_CHANNEL_FULL -- the same thing the mixer's own 495 produces.
+                HttpStatusCode code = seat.Decision == SessionOutcome.Capacity
+                    ? (HttpStatusCode)NonSpatialCaps.CapacityHttpStatus
+                    : HttpStatusCode.Forbidden;
+                string word = seat.Decision == SessionOutcome.Capacity ? DecisionFull : "adhoc-refused-" + seat.Decision;
+                return new ChatSessionOutcome
+                {
+                    Status = code,
+                    Instrument = Line(agentID, session.SessionId, word, seat.Decision),
+                };
+            }
+
+            OSDMap body = null;
+            if (withCredentials)
+            {
+                // channel_uri is the AD-HOC room key, not the session id. The viewer treats it as
+                // opaque (P1-VERIFY) and the mixer hashes it as the multiagent channel, so the
+                // conference gets a room distinct from every group, A2A and parcel room with no
+                // change to JanusAudioBridge.
+                body = new OSDMap
+                {
+                    ["voice_credentials"] = new OSDMap
+                    {
+                        ["voice_server_type"] = OSD.FromString(A2AInvitation.VoiceServerType),
+                        ["channel_uri"] = OSD.FromString(session.RoomKey),
+                        ["channel_credentials"] = OSD.FromString(engine.IssueToken(session.SessionId, agentID)),
+                    },
+                };
+            }
+
+            return new ChatSessionOutcome
+            {
+                Status = HttpStatusCode.OK,
+                StartedRinging = seat.StartedRinging,
+                Body = body,
+                Instrument = Line(agentID, session.SessionId, decision,
+                                  $"room={session.RoomKey} "
+                                  + $"seats={engine.Store.Get(session.SessionId)?.SeatsHeld}/{session.Cap}"),
+            };
         }
 
         /// <summary>

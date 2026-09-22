@@ -49,6 +49,7 @@
     <Compile Include="GroupVoiceCrossHostTests.cs" />
     <Compile Include="AdhocConferenceTests.cs" />
     <Compile Include="AdhocInvitationTests.cs" />
+    <Compile Include="AdhocVoiceTests.cs" />
   </ItemGroup>
 
   <ItemGroup>
