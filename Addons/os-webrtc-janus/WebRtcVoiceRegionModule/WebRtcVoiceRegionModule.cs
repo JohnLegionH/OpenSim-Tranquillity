@@ -121,6 +121,14 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     public static int ReadGroupVoiceCap(IConfig pConfig)
         => pConfig.GetInt("GroupVoiceCap", NonSpatialCaps.DefaultConferenceCap);
 
+    // P1.4a: [WebRtcVoice] AdhocVoiceEnabled. OFF by default, so this deploy changes nothing until
+    // it is set: "start conference" keeps its pre-P1.4a 200-and-no-body behaviour and the viewer
+    // keeps timing out exactly as it does today. Opt-in only.
+    public const bool DefaultAdhocVoiceEnabled = false;
+
+    public static bool ReadAdhocVoiceEnabled(IConfig pConfig)
+        => pConfig.GetBoolean("AdhocVoiceEnabled", DefaultAdhocVoiceEnabled);
+
     // Phase-3a per-listener visibility feeder, one service per region. On by default (V-1, O-78);
     // false turns it off.
     private bool m_VisibilityFeederEnabled = DefaultVisibilityFeederEnabled;
@@ -152,6 +160,9 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     private readonly InMemoryNonSpatialSessionStore m_nonSpatialStore = new();
     private NonSpatialVoiceSessionEngine m_nonSpatial;
     private GroupVoicePolicy m_groupVoice = GroupVoicePolicy.Disabled;
+
+    /// <summary>P1.4a: [WebRtcVoice] AdhocVoiceEnabled. False keeps the pre-P1.4a stub behaviour.</summary>
+    private bool m_adhocVoiceEnabled = DefaultAdhocVoiceEnabled;
 
     // ISharedRegionModule.Initialize
     public void Initialise(IConfigSource config)
@@ -191,6 +202,11 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                         m_groupVoice.RequiredMask,
                         m_groupVoice.RequireVoicePower ? " (GP_SESSION_JOIN + GP_SESSION_VOICE)" : " (GP_SESSION_JOIN only)");
                 }
+
+                m_adhocVoiceEnabled = ReadAdhocVoiceEnabled(m_Config);
+                if (m_adhocVoiceEnabled)
+                    m_log.LogInformation("{LogHeader} ADHOC VOICE enabled ([WebRtcVoice] AdhocVoiceEnabled): "
+                        + "\"start conference\" answers with an event-queue ChatterBoxSessionStartReply", logHeader);
 
                 // The SAME grid id the room numbers are hashed from (S-A2A-4, O-35), so a group room
                 // key derived here and a room number derived in the bridge agree across the grid.
@@ -1138,7 +1154,16 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
         // replacing the old UUID.Random fallback); "call" mints the per-session token and answers in the
         // HTTP body with voice_credentials { channel_uri, channel_credentials } (llvoicechannel.cpp:687).
         // Nothing here admits a multiagent provision yet -- the O-29 deny still holds until S-A2A-3.
-        ChatSessionOutcome outcome = ChatSessionRequestLogic.Decide(reqmap, agentID, sp.Name, m_a2aSessions);
+        // P1.4a: "start conference" opens the ADHOC session and produces the two ids the viewer is
+        // waiting on. Deliberately NOT an early return like the group arms: the outcome falls into
+        // the shared tail below, whose Reply path already sends the event-queue
+        // ChatterBoxSessionStartReply. One sender for that event, not two.
+        if (!AdhocVoiceChatSession.TryHandleStartConference(reqmap, agentID, m_nonSpatial,
+                                                            scene.RegionInfo.RegionID, m_adhocVoiceEnabled,
+                                                            out ChatSessionOutcome outcome))
+        {
+            outcome = ChatSessionRequestLogic.Decide(reqmap, agentID, sp.Name, m_a2aSessions);
+        }
 
         m_log.LogDebug("{LogHeader} {Line}", logHeader, outcome.Instrument);
 
