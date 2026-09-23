@@ -51,6 +51,8 @@
     <Compile Include="AdhocInvitationTests.cs" />
     <Compile Include="AdhocVoiceTests.cs" />
     <Compile Include="AdhocConferenceTextTests.cs" />
+    <Compile Include="AdhocChatLifecycleTests.cs" />
+    <Compile Include="GroupChatSessionGuardTests.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -80,6 +82,8 @@
     <ProjectReference Include="..\..\Source\OpenSim.Services.PresenceService\OpenSim.Services.PresenceService.csproj" />
     <ProjectReference Include="..\..\Addons\os-webrtc-janus\Visibility\Visibility.csproj" />
     <ProjectReference Include="..\..\Addons\os-webrtc-janus\WebRtcVoiceRegionModule\WebRtcVoiceRegionModule.csproj" />
+    <!-- O-136: the SessionSend guard lives in the Groups addon, so the fixture needs to see it. -->
+    <ProjectReference Include="..\..\Addons\OpenSim.Addons.Groups\OpenSim.Addons.Groups.csproj" />
     <ProjectReference Include="..\..\Addons\os-webrtc-janus\Janus\WebRtcJanusService.csproj" />
   </ItemGroup>
 

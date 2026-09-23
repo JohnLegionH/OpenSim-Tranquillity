@@ -29,6 +29,15 @@ namespace osWebRtcVoice
         public HttpStatusCode Status { get; init; }
         /// <summary>LLSD map to serialise as the response body, or null for an empty body.</summary>
         public OSDMap Body { get; init; }
+
+        /// <summary>
+        /// A2b: LLSD ARRAY to serialise as the response body. Separate from <see cref="Body"/>
+        /// because "fetch history" is the one method whose reply is an array, not a map, and the
+        /// viewer type-checks it: LLSD history = result[HTTP_RESULTS_CONTENT] followed by
+        /// history.isArray() (llimview.cpp:816-822). A map here would take the else-branch and log
+        /// "Bad array data fetching chat history". Ignored when <see cref="Body"/> is set.
+        /// </summary>
+        public OSDArray BodyArray { get; init; }
         /// <summary>When non-null, enqueue a ChatterBoxSessionStartReply with these values to the requester.</summary>
         public StartReply Reply { get; init; }
         /// <summary>Single-line, greppable instrument text (plan §1.8). Always set.</summary>
@@ -171,10 +180,35 @@ namespace osWebRtcVoice
                     };
                 }
 
+                // A2b: "fetch history", answered HONESTLY instead of stubbed.
+                //
+                // WHAT HONEST MEANS HERE, decided from what the viewer actually does with each
+                // shape (chatterBoxHistoryCoro, llimview.cpp:815-865):
+                //   an ARRAY with entries  -> parsed into the panel as past messages
+                //   an EMPTY ARRAY         -> "Empty history from chat server, nothing to add",
+                //                             a clean, silent no-op (:852-855)
+                //   ANYTHING NOT AN ARRAY  -> "Bad array data fetching chat history", a WARNING
+                //                             in the viewer's log (:856-859)
+                // The 200-with-no-body stub was the third case: every conference and every group
+                // chat that opened made the viewer log a complaint. We keep no history -- there is
+                // no store for one and A2b does not add one -- so the truthful answer is the EMPTY
+                // ARRAY. It says "none", which is the fact, and it is the only shape that says it
+                // without the viewer treating the reply as malformed.
+                //
+                // A non-empty array is what a future history slice would return; nothing else about
+                // this arm would change.
+                case MethodFetchHistory:
+                    return new ChatSessionOutcome
+                    {
+                        Status = HttpStatusCode.OK,
+                        BodyArray = new OSDArray(),
+                        Instrument = Line(agentID, method, sessionID, "history-empty",
+                                          "no history is kept; empty array is the honest answer"),
+                    };
+
                 // Stubs carried over unchanged: 200, no body.
                 case MethodDeclineInvitation:
                 case MethodStartConference:
-                case MethodFetchHistory:
                     return new ChatSessionOutcome
                     {
                         Status = HttpStatusCode.OK,

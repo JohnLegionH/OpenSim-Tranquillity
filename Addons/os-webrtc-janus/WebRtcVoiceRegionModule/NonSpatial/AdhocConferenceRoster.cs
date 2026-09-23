@@ -9,16 +9,22 @@
  *                                    brought into the session by an incoming message
  * Both send a ONE-ENTRY update list describing the agent who just moved, addressed to one
  * recipient. That is the shape; what differs for a conference is the fan-out, because a group
- * session discovers its members lazily from traffic while a conference knows its seat list exactly.
+ * session discovers its members lazily from traffic while a conference knows its membership exactly.
  *
  * SO THE RULE HERE IS: one join produces N sends, not one.
- *   - every OTHER seat holder receives the joiner's ENTER, so their panel gains the new name;
+ *   - every OTHER chat member receives the joiner's ENTER, so their panel gains the new name;
  *   - the JOINER receives the WHOLE roster as ENTERs, including its own entry, so its panel is
  *     correct immediately instead of filling in as people happen to speak. A2AAgentListDelivery
  *     does the same for the two-party case (EnterUpdates sends the other party plus self), and a
  *     conference is that generalised to N.
- * A departure is the mirror: every REMAINING seat holder receives the departed agent's LEAVE. The
+ * A departure is the mirror: every REMAINING chat member receives the departed agent's LEAVE. The
  * departed agent is sent nothing -- it has left, and on a presence close there is nothing to send to.
+ *
+ * A2b MOVED THE AUDIENCE FROM THE SEAT LIST TO THE CHAT LIST. This is the CHAT session's roster,
+ * so it follows the chat lifecycle (O-108 lifecycle 1), not the voice one. A member who hangs up
+ * voice stays in the panel; one who closes the window leaves it even while still holding a seat.
+ * Both departures reach SendLeave -- the caller says which happened -- and only the chat one
+ * changes the roster.
  *
  * can_voice_chat IS TRUE ON EVERY ENTRY, by construction, because this class never uses the 1-arg
  * GroupChatListAgentUpdateData ctor -- it delegates to A2AAgentListDelivery.Update, which uses the
@@ -26,7 +32,7 @@
  * O-42 found what that costs on a voice channel: the viewer reads can_voice_chat:false for a peer
  * as a decline and hangs the call up (llimview.cpp:4366-4382). That trace was P2P, so the hang-up
  * is not proven for a conference; cv:true is nonetheless the truthful value here -- this IS a voice
- * conference and every seat holder can speak in it -- so there is no reason to risk the other one.
+ * conference and every member can speak in it -- so there is no reason to risk the other one.
  *
  * DELIVERY IS LOCAL-ONLY AND THAT IS NOT A DEFECT. The event queue is per-instance: a member on
  * another regionserver has no queue here, and A2AAgentListDelivery.Deliver answers
@@ -48,8 +54,20 @@ namespace osWebRtcVoice.NonSpatial
         public const string InstrumentTag = "[ADHOC ROSTER]";
 
         /// <summary>
-        /// Every seat holder, in the store's order. The same seat test the cap, admission and the
-        /// text fan-out use, so the roster cannot disagree with who is actually in the room.
+        /// Who the participant panel shows: the CHAT members, in the store's order.
+        ///
+        /// A2b moved this off the seat list. ChatterBoxSessionAgentListUpdates is the CHAT
+        /// session's roster, so it has to follow the chat lifecycle -- a member who hangs up voice
+        /// stays in the panel, and one who closes the window leaves it even while still seated.
+        /// Voice, ringing and the cap continue to read <see cref="SeatHolders"/>; the two lists are
+        /// allowed to differ and A2b exists because they do.
+        /// </summary>
+        public static List<UUID> Roster(NonSpatialVoiceSession session)
+            => session is null ? new List<UUID>() : session.ChatMembers();
+
+        /// <summary>
+        /// Every seat holder. Still the authority for VOICE -- the cap, admission and the ring all
+        /// read this -- and no longer the authority for the roster or for text.
         /// </summary>
         public static List<UUID> SeatHolders(NonSpatialVoiceSession session)
         {
@@ -66,7 +84,7 @@ namespace osWebRtcVoice.NonSpatial
         public static List<GroupChatListAgentUpdateData> FullRosterUpdates(NonSpatialVoiceSession session)
         {
             List<GroupChatListAgentUpdateData> updates = new List<GroupChatListAgentUpdateData>();
-            foreach (UUID a in SeatHolders(session))
+            foreach (UUID a in Roster(session))
                 updates.Add(A2AAgentListDelivery.Update(a, true));
             return updates;
         }
@@ -91,20 +109,20 @@ namespace osWebRtcVoice.NonSpatial
             if (session is null || session.Type != NonSpatialSessionType.Adhoc || joiner == UUID.Zero)
                 return lines;
 
-            List<UUID> seats = SeatHolders(session);
+            List<UUID> roster = Roster(session);
 
             // The joiner's own panel: the entire room at once, its own entry included.
-            if (seats.Contains(joiner))
+            if (roster.Contains(joiner))
             {
                 string d = A2AAgentListDelivery.Deliver(scenes, joiner, session.SessionId,
                                                         FullRosterUpdates(session), queueOf);
                 lines.Add(Line(joiner, session.SessionId, A2AAgentListDelivery.TransitionEnter, joiner,
-                               d, "roster=" + seats.Count));
+                               d, "roster=" + roster.Count));
             }
 
             // Everybody else: just the one new name.
             List<GroupChatListAgentUpdateData> entered = EnterUpdates(joiner);
-            foreach (UUID a in seats)
+            foreach (UUID a in roster)
             {
                 if (a == joiner)
                     continue;
@@ -115,9 +133,12 @@ namespace osWebRtcVoice.NonSpatial
         }
 
         /// <summary>
-        /// A member left, for any of the O-108 lifecycles. Every REMAINING seat holder is told.
-        /// Call this AFTER the engine has recorded the departure, so the departed agent is already
-        /// out of <see cref="SeatHolders"/> and cannot be sent its own LEAVE.
+        /// A member left the CONVERSATION -- chat leave, or a presence close that ends everything.
+        /// Every REMAINING chat member is told. Call this AFTER the engine has recorded it, so the
+        /// departed agent is already out of <see cref="Roster"/> and cannot be sent its own LEAVE.
+        ///
+        /// A VOICE teardown does NOT come here: it changes no roster, which is the whole point of
+        /// keeping the lifecycles apart.
         /// </summary>
         public static List<string> SendLeave(IEnumerable<Scene> scenes, NonSpatialVoiceSession session,
                                              UUID departed, Func<Scene, IEventQueue> queueOf = null)
@@ -127,7 +148,7 @@ namespace osWebRtcVoice.NonSpatial
                 return lines;
 
             List<GroupChatListAgentUpdateData> left = LeaveUpdates(departed);
-            foreach (UUID a in SeatHolders(session))
+            foreach (UUID a in Roster(session))
             {
                 if (a == departed)
                     continue;   // defensive: a caller that ran this before the engine recorded the departure

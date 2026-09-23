@@ -177,7 +177,9 @@ namespace osWebRtcVoice.NonSpatial
                 NonSpatialVoiceSession made = new NonSpatialVoiceSession(type, sessionId, tempSessionId, roomKey,
                                                                          owner, creator, cap, now);
                 // the creator takes its seat at start; it is the one party that never needs inviting
-                made.Upsert(creator, MemberState.Accepted, originRegion, now);
+                // A2b: taking the first seat also JOINS THE CONVERSATION. The two axes are
+                // separate from here on -- a later voice hang-up clears the seat and leaves this.
+                made.Upsert(creator, MemberState.Accepted, originRegion, now).InChat = true;
                 if (invitees != null)
                     foreach (UUID a in invitees)
                         if (a != UUID.Zero && a != creator)
@@ -203,7 +205,7 @@ namespace osWebRtcVoice.NonSpatial
                     if (me == null || me.State == MemberState.Departed)
                     {
                         if (sess.Creator == creator && !sess.IsFull)
-                            sess.Upsert(creator, MemberState.Accepted, originRegion, now);
+                            sess.Upsert(creator, MemberState.Accepted, originRegion, now).InChat = true;
                     }
                     else
                         me.LastSeenUtc = now;
@@ -280,6 +282,11 @@ namespace osWebRtcVoice.NonSpatial
                     m.OriginRegion = originRegion;
                     m.LastSeenUtc = now;
                     if (!string.IsNullOrEmpty(viewerSession)) m.ViewerSession = viewerSession;
+                    // A2b: an accept is an explicit join, so a repeat accept by someone who had left
+                    // the CHAT while keeping their seat is a rejoin of the conversation. Without this
+                    // they would sit in voice with no chat panel and the accept would do nothing
+                    // they could see.
+                    m.InChat = true;
                     sess.LastSeenUtc = now;
                     return new SessionOutcome(true, "accept-idempotent", sess);
                 }
@@ -287,6 +294,8 @@ namespace osWebRtcVoice.NonSpatial
                     return SessionOutcome.Fail(SessionOutcome.Capacity, sess);
                 bool wasEmpty = sess.SeatsHeld == 0;
                 NonSpatialMember seated = sess.Upsert(agent, MemberState.Accepted, originRegion, now);
+                // A2b: accepting IS joining the conversation as well as taking the seat.
+                seated.InChat = true;
                 if (!string.IsNullOrEmpty(viewerSession)) seated.ViewerSession = viewerSession;
                 sess.LastSeenUtc = now;
                 // P1.2G-b: 0 -> 1 is the moment the call begins. Claimed INSIDE the mutation and
@@ -332,6 +341,40 @@ namespace osWebRtcVoice.NonSpatial
         public SessionOutcome Depart(UUID sessionId, UUID agent, DepartureReason reason)
             => DepartInternal(sessionId, agent, reason, MemberState.Departed);
 
+        /// <summary>
+        /// A2b: lifecycle (1) ON ITS OWN -- the viewer's UDP chat-session leave, dialog 18
+        /// (<c>IM_SESSION_LEAVE</c> = libomv <c>SessionDrop</c>; measured, they are the same value).
+        /// The member leaves the CONVERSATION and KEEPS THEIR VOICE SEAT.
+        ///
+        /// THIS IS NOT <see cref="Depart"/> WITH A DIFFERENT REASON, and the distinction is the
+        /// whole point of the slice. <c>Depart(.., ChatLeave)</c> sets the member Departed, which
+        /// releases the seat -- so before A2b, closing the chat tab hung up your voice. O-108 says
+        /// the three lifecycles are independent and an agent may hold any one without the others;
+        /// this is the method that makes that true in the engine rather than only in the ledger.
+        ///
+        /// Idempotent: leaving a conversation you are not in is a no-op, not a failure, because the
+        /// viewer sends this on window close and can send it more than once.
+        /// </summary>
+        public SessionOutcome LeaveChat(UUID sessionId, UUID agent)
+        {
+            DateTime now = _clock();
+            return _store.Mutate(sessionId, sess =>
+            {
+                NonSpatialMember m = sess.Find(agent);
+                if (m == null) return SessionOutcome.Fail(SessionOutcome.NoSuchSession, sess);
+                if (!m.InChat)
+                {
+                    sess.LastSeenUtc = now;
+                    return new SessionOutcome(true, "chat-leave-idempotent", sess);
+                }
+                m.InChat = false;
+                m.LastSeenUtc = now;
+                sess.LastSeenUtc = now;
+                // The seat, the invitation state and the ring latch are all deliberately untouched.
+                return new SessionOutcome(true, "chat-left", sess);
+            }, SessionOutcome.Fail(SessionOutcome.NoSuchSession));
+        }
+
         private SessionOutcome DepartInternal(UUID sessionId, UUID agent, DepartureReason reason, MemberState terminal)
         {
             DateTime now = _clock();
@@ -348,6 +391,16 @@ namespace osWebRtcVoice.NonSpatial
                 m.Departure = reason;
                 m.LastSeenUtc = now;
                 m.ViewerSession = null;
+                // A2b, the lifecycle rule in one line. Depart is a FULL departure -- seat and
+                // conversation both -- with exactly one exception: VoiceTeardown is lifecycle (3)
+                // by definition, so it releases the seat and leaves the member in the chat. That
+                // is "still in the chat with voice hung up" (O-108), the case this axis exists for.
+                //
+                // Chat-only departure is NOT Depart with some reason: it is LeaveChat. Keeping
+                // Depart a full departure is what stops DepartureReason becoming a second, subtly
+                // different way of saying which lifecycle fired.
+                if (reason != DepartureReason.VoiceTeardown)
+                    m.InChat = false;
                 sess.LastSeenUtc = now;
                 // P1.2G-b: the room emptied, so the ring cycle is over. Clearing it is what makes a
                 // LATER start ring the group again; without it a group is rung once per process.

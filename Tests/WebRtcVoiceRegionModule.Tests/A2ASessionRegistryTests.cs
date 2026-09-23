@@ -362,7 +362,6 @@ namespace osWebRtcVoice.Tests
 
         [TestCase("decline invitation")]
         [TestCase("start conference")]
-        [TestCase("fetch history")]
         public void Stubs_Return200_NoBody(string method)
         {
             var reg = new A2ASessionRegistry();
@@ -372,6 +371,32 @@ namespace osWebRtcVoice.Tests
             Assert.That(o.Body, Is.Null);
             Assert.That(o.Reply, Is.Null);
             Assert.That(o.Instrument, Does.Contain("decision=stub-ok"));
+        }
+
+        /// <summary>
+        /// A2b: "fetch history" left the stub list. It used to answer 200 with NO BODY, which the
+        /// viewer's chatterBoxHistoryCoro type-checks and rejects -- LLSD history =
+        /// result[HTTP_RESULTS_CONTENT]; if (session and history.isArray()) ... else
+        /// LL_WARNS("Bad array data fetching chat history") (llimview.cpp:816-859). So every
+        /// conference and every group chat that opened made the viewer log a complaint.
+        ///
+        /// We keep no history, so the honest answer is an EMPTY ARRAY: the viewer's size()==0
+        /// branch is a silent no-op ("Empty history from chat server, nothing to add", :852-855).
+        /// It says "none", which is true, in the one shape that says it without being malformed.
+        /// </summary>
+        [Test]
+        public void FetchHistory_AnswersAnEmptyArray_NotAnEmptyBody()
+        {
+            var reg = new A2ASessionRegistry();
+            var m = new OSDMap { ["method"] = OSD.FromString("fetch history"), ["session-id"] = OSD.FromUUID(Xor) };
+            ChatSessionOutcome o = ChatSessionRequestLogic.Decide(m, Alice, reg);
+
+            Assert.That(o.Status, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That(o.BodyArray, Is.Not.Null, "an ARRAY, or the viewer logs 'Bad array data'");
+            Assert.That(o.BodyArray.Count, Is.EqualTo(0), "we keep no history; empty is the truthful answer");
+            Assert.That(o.Body, Is.Null, "a MAP here would take the viewer's bad-data branch");
+            Assert.That(o.Reply, Is.Null);
+            Assert.That(o.Instrument, Does.Contain("decision=history-empty"));
         }
 
         [Test]

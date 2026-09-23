@@ -12,15 +12,22 @@
  * id as an ADHOC session. A group id is not in that store, so TryPlan returns false and
  * GroupsMessagingModule handles it exactly as it does today, byte for byte.
  *
- * THE MEMBERSHIP RULE (item 4) IS THE SESSION'S OWN SEAT LIST, not a roster and not a power.
- * An ad-hoc conference has no roster -- "being invited is the whole of the membership"
- * (AdhocVoiceInvite.cs:7-8) -- so the authority for who may speak is the same seat list that
- * AdhocAdmission.CanJoin reads and that AdhocVoiceInvite.Targets rings. Using the same list for
- * text as for voice and for ringing is the point: they cannot disagree about who is in the room.
- *   - the SENDER must hold a seat (Accepted or Present). Invited-but-not-accepted is NOT enough:
- *     someone who was rung and never answered is not in the conversation, and letting them type
- *     into it would make an invitation a write capability.
- *   - the RECIPIENTS are every OTHER seat holder. Invited, Declined and Departed get nothing.
+ * THE MEMBERSHIP RULE (item 4) IS CHAT MEMBERSHIP -- NonSpatialMember.InChat -- not a roster, not
+ * a power, and (since A2b) NOT THE VOICE SEAT. An ad-hoc conference has no roster; "being invited
+ * is the whole of the membership" (AdhocVoiceInvite.cs:7-8), and joining is what puts an agent in
+ * the conversation.
+ *   - the SENDER must be InChat. Invited-but-not-accepted is NOT enough: someone who was rung and
+ *     never answered is not in the conversation, and letting them type into it would make an
+ *     invitation a write capability.
+ *   - the RECIPIENTS are every OTHER chat member. Invited, Declined and anyone who left the chat
+ *     get nothing.
+ *
+ * A2a USED THE SEAT LIST HERE AND A2b CORRECTED IT. With no separate chat axis in the model, A2a
+ * had to use HoldsSeat as a proxy for membership, and that proxy is wrong in BOTH directions once
+ * the lifecycles are honoured (O-108): it would silence a member who hung up voice but still has
+ * the window open, and keep one who closed the window while still holding a seat. Voice, ringing
+ * and the cap still read the SEAT list; text and the roster read the CHAT list. They are allowed
+ * to differ, and representing that difference is the point of A2b.
  *
  * NO ECHO TO THE SENDER (item 4), AND THIS IS A DELIBERATE DIVERGENCE FROM THE GROUP PATTERN.
  * GroupsMessagingModule sends to self first of all (GroupsMessagingModule.cs:330-333) because a
@@ -118,11 +125,16 @@ namespace osWebRtcVoice.NonSpatial
             }
 
             NonSpatialMember from = session.Find(sender);
-            if (from is null || !from.HoldsSeat)
+            if (from is null || !from.InChat)
             {
                 // Item 4: a non-member's SessionSend for this session is refused and logged. This
                 // covers the stranger, the invitee who never accepted, the decliner and the member
                 // who already left -- none of them is in the conversation.
+                //
+                // A2b CORRECTED THE TEST FROM HoldsSeat TO InChat. A2a used the voice seat as the
+                // proxy for membership because the model had no separate chat axis; that was wrong
+                // in both directions -- it would have silenced someone who hung up voice but was
+                // still typing, and kept someone who closed the chat window in the conversation.
                 decision = DecisionNotMember;
                 return true;
             }
@@ -142,9 +154,13 @@ namespace osWebRtcVoice.NonSpatial
         }
 
         /// <summary>
-        /// Every seat holder except the sender. Order is the store's; nothing downstream depends on
-        /// it. Invited / Declined / Departed are excluded by <see cref="NonSpatialMember.HoldsSeat"/>,
-        /// which is the same test the cap and the admission arms use.
+        /// Every CHAT MEMBER except the sender. Order is the store's; nothing downstream depends on
+        /// it.
+        ///
+        /// A2b moved this off the seat list. Text is the chat lifecycle, so its audience is who is
+        /// in the CONVERSATION -- which includes a member who hung up voice and still has the
+        /// window open, and excludes one who closed the window while a voice seat is still held.
+        /// Invited-but-never-accepted is excluded either way: joining is what sets InChat.
         /// </summary>
         public static List<UUID> Recipients(NonSpatialVoiceSession session, UUID sender)
         {
@@ -152,7 +168,7 @@ namespace osWebRtcVoice.NonSpatial
             if (session is null)
                 return to;
             foreach (NonSpatialMember m in session.Members)
-                if (m.HoldsSeat && m.AgentId != sender)
+                if (m.InChat && m.AgentId != sender)
                     to.Add(m.AgentId);
             return to;
         }

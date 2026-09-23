@@ -97,6 +97,21 @@ namespace osWebRtcVoice.NonSpatial
         /// <summary>Accepted or Present. This, and only this, counts against the cap.</summary>
         public bool HoldsSeat => State == MemberState.Accepted || State == MemberState.Present;
 
+        /// <summary>
+        /// A2b: CHAT-SESSION membership, which is a SEPARATE AXIS from the voice seat and from the
+        /// invitation. O-108 named the three lifecycles and said nobody may conflate them; before
+        /// A2b this type had only two of them, so "in the chat" and "holding a voice seat" were the
+        /// same bit and a voice hang-up silently removed the member from the text conversation.
+        ///
+        /// Set when the agent joins the conversation (the creator at start, an invitee at accept)
+        /// and cleared ONLY by the chat lifecycle -- UDP dialog 18 -- or by the presence backstop,
+        /// which ends everything at once because the client itself is gone.
+        ///
+        /// A voice teardown does NOT clear it: "still in the chat with voice hung up" is the exact
+        /// case O-108 calls out, and it is the one this flag exists to represent.
+        /// </summary>
+        public bool InChat { get; internal set; }
+
         internal NonSpatialMember(UUID agentId, MemberState state, UUID originRegion, DateTime nowUtc)
         {
             AgentId = agentId;
@@ -218,15 +233,34 @@ namespace osWebRtcVoice.NonSpatial
 
         public bool IsFull => SeatsHeld >= Cap;
 
-        /// <summary>Nobody holds a seat and nothing is outstanding: the session is collectable.</summary>
+        /// <summary>
+        /// Nobody holds a seat, nobody is still in the chat, and nothing is outstanding: the
+        /// session is collectable.
+        ///
+        /// A2b added the chat clause. Without it a conference whose members had all hung up voice
+        /// but were still typing would be swept out from under them, because before A2b "holds a
+        /// seat" was the only sign of life this could see.
+        /// </summary>
         public bool IsDead
         {
             get
             {
                 foreach (NonSpatialMember m in _members.Values)
-                    if (m.State == MemberState.Invited || m.HoldsSeat) return false;
+                    if (m.State == MemberState.Invited || m.HoldsSeat || m.InChat) return false;
                 return true;
             }
+        }
+
+        /// <summary>
+        /// Everyone currently in the CHAT conversation. This -- not the seat list -- is the roster
+        /// the viewer's participant panel shows and the audience a typed line reaches.
+        /// </summary>
+        public List<UUID> ChatMembers()
+        {
+            List<UUID> all = new List<UUID>();
+            foreach (NonSpatialMember m in _members.Values)
+                if (m.InChat) all.Add(m.AgentId);
+            return all;
         }
 
         internal NonSpatialMember Upsert(UUID agent, MemberState state, UUID originRegion, DateTime nowUtc)

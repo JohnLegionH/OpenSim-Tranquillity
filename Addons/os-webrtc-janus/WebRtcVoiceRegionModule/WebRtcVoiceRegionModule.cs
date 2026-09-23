@@ -1040,9 +1040,11 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
                         gone.Type == NonSpatialSessionType.Adhoc
                             ? AdhocVoiceChatSession.Line(agentID, gone.SessionId, "adhoc-seat-released", releaseDetail)
                             : GroupVoiceChatSession.Line(agentID, gone.Owner, "group-seat-released", releaseDetail));
-                    // A2a item 1: the seat is already released above, so SeatHolders no longer
-                    // contains this agent and the remaining members get its LEAVE.
-                    SendConferenceRoster(gone, agentID, joined: false);
+                    // A2b CORRECTS A2a HERE. A2a sent a roster LEAVE on the voice teardown, which
+                    // conflated lifecycles (3) and (1): hanging up took the member out of everyone's
+                    // participant panel although they were still in the conversation and could still
+                    // type. The seat is released above; the roster is deliberately NOT touched. The
+                    // member leaves the roster only on a chat leave (dialog 18) or a presence close.
                 }
             }
         }
@@ -1323,6 +1325,10 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     {
         if (outcome.Body is not null)
             response.RawBuffer = Util.UTF8.GetBytes(OSDParser.SerializeLLSDXmlString(outcome.Body));
+        // A2b: "fetch history" answers with an ARRAY, which the viewer type-checks before reading
+        // (llimview.cpp:816-822). Same serialiser, different root node.
+        else if (outcome.BodyArray is not null)
+            response.RawBuffer = Util.UTF8.GetBytes(OSDParser.SerializeLLSDXmlString(outcome.BodyArray));
 
         response.StatusCode = (int)outcome.Status;
     }
@@ -1525,7 +1531,19 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
     /// </summary>
     private void OnViewerConferenceText(IClientAPI client, GridInstantMessage im)
     {
-        if (im is null || im.dialog != AdhocTextSession.DialogSessionSend || m_nonSpatial is null)
+        if (im is null || m_nonSpatial is null)
+            return;
+
+        // A2b items 1 and 3: the chat-session LEAVE. Dialog 18 is IM_SESSION_LEAVE and libomv's
+        // SessionDrop at once -- one value, two names, measured from the deployed enum -- so this
+        // single arm covers both. It releases CHAT membership and never the voice seat.
+        if (im.dialog == AdhocChatMembership.DialogSessionLeave)
+        {
+            OnViewerConferenceChatLeave(client, im);
+            return;
+        }
+
+        if (im.dialog != AdhocTextSession.DialogSessionSend)
             return;
 
         UUID sessionId = new UUID(im.imSessionID);
@@ -1547,6 +1565,32 @@ public class WebRtcVoiceRegionModule : ISharedRegionModule
 
         FanOutConferenceText(plan, client?.Name ?? im.fromAgentName,
                              client?.Scene?.RegionInfo?.RegionID ?? UUID.Zero, decision);
+    }
+
+    /// <summary>
+    /// A2b: the viewer left the conference CHAT (UDP dialog 18). The member leaves the roster and
+    /// KEEPS THEIR VOICE SEAT -- O-108's lifecycles are independent, and this is lifecycle (1)
+    /// alone. The roster update goes out after the engine has recorded it, so the departing member
+    /// is already off the roster and is not sent their own LEAVE.
+    /// </summary>
+    private void OnViewerConferenceChatLeave(IClientAPI client, GridInstantMessage im)
+    {
+        UUID sessionId = new UUID(im.imSessionID);
+        UUID agent = new UUID(im.fromAgentID);
+
+        if (!AdhocChatMembership.TryHandleLeave(m_nonSpatial, m_adhocVoiceEnabled, sessionId, agent,
+                                                out string decision, out bool stillSeated))
+            return;   // a group or P2P leave -- not ours, and every other subscriber still sees it
+
+        NonSpatialVoiceSession session = m_nonSpatial.Store.Get(sessionId);
+        m_log.LogDebug("{LogHeader} {Line}", logHeader,
+            AdhocChatMembership.Line(agent, sessionId, decision, stillSeated,
+                $"region=\"{client?.Scene?.RegionInfo?.RegionName ?? string.Empty}\" "
+                + $"roster={(session is null ? 0 : AdhocConferenceRoster.Roster(session).Count)} "
+                + $"seats={session?.SeatsHeld ?? 0}"));
+
+        if (decision == AdhocChatMembership.DecisionLeft)
+            SendConferenceRoster(session, agent, joined: false);
     }
 
     /// <summary>

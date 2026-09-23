@@ -196,17 +196,38 @@ namespace osWebRtcVoice.Tests
         }
 
         [Test]
-        public void ASessionWithNoSeatsAndNoInvitationsIsCollected()
+        public void ASessionWithNoSeatsNoInvitationsAndNobodyInTheChatIsCollected()
         {
             FakeClock clock = new FakeClock();
             (NonSpatialVoiceSessionEngine e, UUID id) = SeatedAdhoc(clock, Bob);
             e.Depart(id, Alice, DepartureReason.ChatLeave);
-            e.Depart(id, Bob, DepartureReason.VoiceTeardown);
+            e.Depart(id, Bob, DepartureReason.ChatLeave);
 
             var removed = e.Sweep();
 
             Assert.That(removed, Does.Contain(id));
             Assert.That(e.Store.Get(id), Is.Null);
+        }
+
+        /// <summary>
+        /// A2b changed what "dead" means, and this is the case that changed it. Before the chat
+        /// axis existed, everyone hanging up voice made the session collectable -- which would have
+        /// swept a conference out from under members who were still typing in it.
+        /// </summary>
+        [Test]
+        public void ASessionWhoseMembersHungUpVoiceButAreStillTypingIsNOTCollected()
+        {
+            FakeClock clock = new FakeClock();
+            (NonSpatialVoiceSessionEngine e, UUID id) = SeatedAdhoc(clock, Bob);
+            e.Depart(id, Alice, DepartureReason.VoiceTeardown);
+            e.Depart(id, Bob, DepartureReason.VoiceTeardown);
+
+            NonSpatialVoiceSession s = e.Store.Get(id);
+            Assert.That(s.SeatsHeld, Is.EqualTo(0), "no voice seats left");
+            Assert.That(s.ChatMembers(), Is.Not.Empty, "but the conversation is still open");
+            Assert.That(s.IsDead, Is.False);
+            Assert.That(e.Sweep(), Does.Not.Contain(id));
+            Assert.That(e.Store.Get(id), Is.Not.Null);
         }
 
         [Test]
