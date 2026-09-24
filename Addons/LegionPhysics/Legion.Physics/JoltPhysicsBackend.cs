@@ -686,11 +686,39 @@ namespace Legion.Physics.Jolt
                     // Last region out: dispose the shared job pools (design item #1) BEFORE Foundation.
                     if (s_pools != null)
                         foreach (JobPool p in s_pools)
-                            p.System.Dispose();
+                            DestroyJobSystem(p.System);
                     s_pools = null;
                     Foundation.Shutdown();
                 }
             }
+        }
+
+        // =====================================================================
+        // JOLT-7e - the job pools' native job systems are destroyed by us.
+        //
+        // JoltPhysicsSharp 2.19.1's JobSystem sets its handle through the parameterless NativeObject constructor,
+        // so NativeObject.OwnsHandle stays false and JobSystemThreadPool.Dispose() skips DisposeNative - i.e.
+        // JPH_JobSystem_Destroy is never called and the pool's workers are never stopped or joined (the finalizer
+        // path checks the same flag). Measured in JOLT-7: +19 threads per create/dispose cycle (20 -> 116 over
+        // five), still there after GC. Jolt's own destructor (~JobSystemThreadPool -> StopThreads) joins them,
+        // so we call joltc's existing JPH_JobSystem_Destroy export ourselves, then dispose the wrapper (which,
+        // OwnsHandle being false, destroys nothing a second time). If a future binding sets OwnsHandle, we skip
+        // our destroy and its Dispose does it. No native change: the export ships in joltc.dll.
+        // =====================================================================
+        [System.Runtime.InteropServices.DllImport("joltc", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern void JPH_JobSystem_Destroy(IntPtr jobSystem);
+
+        // NativeObject.OwnsHandle is `protected internal` in the binding - read it by reflection.
+        private static readonly System.Reflection.PropertyInfo? s_ownsHandle = typeof(NativeObject).GetProperty(
+            "OwnsHandle", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+
+        private static void DestroyJobSystem(JobSystemThreadPool pool)
+        {
+            // Unknown binding shape (no such property): assume it does NOT own the handle, as 2.19.1 does not.
+            bool bindingDestroys = s_ownsHandle?.GetValue(pool) is true;
+            if (!bindingDestroys && !pool.IsDisposed && pool.Handle != IntPtr.Zero)
+                JPH_JobSystem_Destroy(pool.Handle);   // ~JobSystemThreadPool joins the workers
+            pool.Dispose();
         }
 
         // The native + managed teardown, run under _simLock (see Dispose). Everything that frees a native
