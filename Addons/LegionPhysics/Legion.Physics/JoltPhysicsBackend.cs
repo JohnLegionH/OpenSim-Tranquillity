@@ -106,6 +106,15 @@ namespace Legion.Physics.Jolt
         private readonly List<uint> _justDeactivated = new List<uint>();      // scratch, per-step
         private readonly List<uint> _staleActive = new List<uint>();          // scratch, per-step
 
+        // JOLT-4 (S-4d/S-4e): a fair drain. Settle (JustDeactivated) states that do not fit the caller's buffer
+        // wait here for the next Step instead of being dropped; active bodies are emitted round-robin from a
+        // cursor that persists across Steps, so an overflowing region rotates through every active body rather
+        // than starving the same tail. Step-thread only; reused, so no allocation after warm-up.
+        private readonly Queue<uint> _pendingSettle = new Queue<uint>();
+        private readonly List<uint> _activeSnapshot = new List<uint>();
+        private int _activeCursor;
+        private int _characterCursor;   // same rotation for the character drain (under _characterGate)
+
         // Reverse map: Jolt BodyID.ID -> our record. Written on Create/Remove (scene thread),
         // read from Step and from the contact/activation callbacks (worker threads).
         private readonly ConcurrentDictionary<uint, JoltBodyRecord> _joltToRecord =
@@ -712,6 +721,10 @@ namespace Legion.Physics.Jolt
                 !((ra?.WantsContactEvents ?? false) || (rb?.WantsContactEvents ?? false)))
                 return;
 
+            // JOLT-4 (I-3): the impulse estimate feeds collision sound / damage for a listener. Nobody subscribed
+            // on either side -> nobody reads it, so skip the estimator (it ran for every Begin contact before).
+            bool listening = (ra?.WantsContactEvents ?? false) || (rb?.WantsContactEvents ?? false);
+
             // Point on body 1, and the manifold normal. Jolt's WorldSpaceNormal points body1 -> body2,
             // which IS our A->B convention (A = body1) - verified on a box-on-ground drop (normal +Z,
             // ground=A -> box=B). No sign flip.
@@ -723,15 +736,18 @@ namespace Legion.Physics.Jolt
             // two bodies Jolt already handed us (NOT a lock we take) plus the manifold, and is
             // allocation-free (measured ~0 bytes/call). Sum the per-point NORMAL impulses -> newton-seconds.
             float impulse = 0f;
-            // Fully qualified: our own namespace is Legion.Physics.Jolt, which would otherwise shadow
-            // the JoltPhysicsSharp.Jolt static helper class.
-            JoltPhysicsSharp.Jolt.EstimateCollisionResponse(
-                body1, body2, manifold, out CollisionEstimationResult response,
-                settings.CombinedFriction, settings.CombinedRestitution,
-                MinVelocityForRestitution, Math.Max(1, _settings.VelocityIterations));
-            ReadOnlySpan<CollisionEstimationResult.Impulse> impulses = response.Impulses;
-            for (int i = 0; i < impulses.Length; i++)
-                impulse += impulses[i].ContactImpulse;
+            if (listening)
+            {
+                // Fully qualified: our own namespace is Legion.Physics.Jolt, which would otherwise shadow
+                // the JoltPhysicsSharp.Jolt static helper class.
+                JoltPhysicsSharp.Jolt.EstimateCollisionResponse(
+                    body1, body2, manifold, out CollisionEstimationResult response,
+                    settings.CombinedFriction, settings.CombinedRestitution,
+                    MinVelocityForRestitution, Math.Max(1, _settings.VelocityIterations));
+                ReadOnlySpan<CollisionEstimationResult.Impulse> impulses = response.Impulses;
+                for (int i = 0; i < impulses.Length; i++)
+                    impulse += impulses[i].ContactImpulse;
+            }
 
             // Name the struck part on each side from the contact sub-shape (child of a linkset, or the body
             // itself) - the per-child collision identity behind llDetectedLinkNumber.
@@ -2599,17 +2615,59 @@ namespace Legion.Physics.Jolt
             int bodyCount = 0;
             bool bodyOverflow = false;
 
-            // Drain the ACTIVE set: O(active), NOT O(total). foreach over the concrete HashSet
-            // uses a struct enumerator - no allocation. For static-only M1 this set is empty and
-            // bodyCount stays 0, which is the correct result, not a failure.
-            foreach (uint joltId in _activeBodies)
+            // JOLT-4 (S-4e): settle states FIRST. Bodies that slept this step get one final state with
+            // JustDeactivated set - without it the viewer keeps interpolating and settled objects visibly drift.
+            // They used to be skipped outright whenever the active drain overflowed; now any that do not fit wait
+            // in _pendingSettle (FIFO, oldest first) for the next Step. A body that woke again in the meantime is
+            // no longer settled, so its stale settle state is discarded.
+            for (int i = 0; i < _justDeactivated.Count; i++)
+                _pendingSettle.Enqueue(_justDeactivated[i]);
+            while (_pendingSettle.Count > 0)
             {
+                uint joltId = _pendingSettle.Peek();
+                if (!_joltToRecord.TryGetValue(joltId, out JoltBodyRecord? rec) || _activeBodies.Contains(joltId))
+                {
+                    _pendingSettle.Dequeue();   // removed, or awake again - nothing to settle
+                    continue;
+                }
+                if (bodyCount >= bodyUpdates.Length) { bodyOverflow = true; break; }
+                _pendingSettle.Dequeue();
+
+                var jid = new BodyID(joltId);
+                bodyUpdates[bodyCount++] = new BodyState
+                {
+                    Body = new BodyId(rec.Handle),
+                    UserData = rec.UserData,
+                    Position = _bodyInterface.GetPosition(jid),
+                    Orientation = _bodyInterface.GetRotation(jid),
+                    LinearVelocity = _bodyInterface.GetLinearVelocity(jid),
+                    AngularVelocity = _bodyInterface.GetAngularVelocity(jid),
+                    Flags = BodyStateFlags.JustDeactivated,
+                };
+            }
+
+            // Then the ACTIVE set: O(active), NOT O(total), round-robin (S-4d). Snapshot the step-thread-owned set
+            // into a reused list (List.AddRange over a HashSet copies, no allocation once warm) and start where the
+            // last overflowing Step stopped, so every active body is emitted within ceil(active / buffer) Steps.
+            _activeSnapshot.Clear();
+            _activeSnapshot.AddRange(_activeBodies);
+            int activeN = _activeSnapshot.Count;
+            int start = activeN > 0 ? _activeCursor % activeN : 0;
+            for (int k = 0; k < activeN; k++)
+            {
+                int idx = (start + k) % activeN;
+                uint joltId = _activeSnapshot[idx];
                 if (!_joltToRecord.TryGetValue(joltId, out JoltBodyRecord? rec))
                 {
                     _staleActive.Add(joltId); // removed out from under us; clean up after the loop
                     continue;
                 }
-                if (bodyCount >= bodyUpdates.Length) { bodyOverflow = true; break; }
+                if (bodyCount >= bodyUpdates.Length)
+                {
+                    bodyOverflow = true;
+                    _activeCursor = idx;      // resume here next Step
+                    break;
+                }
 
                 var jid = new BodyID(joltId);
                 BodyStateFlags flags = BodyStateFlags.Active;
@@ -2628,37 +2686,24 @@ namespace Legion.Physics.Jolt
             for (int i = 0; i < _staleActive.Count; i++)
                 _activeBodies.Remove(_staleActive[i]);
 
-            // Bodies that slept THIS step get one final state with JustDeactivated set - without
-            // it the viewer keeps interpolating and settled objects visibly drift.
-            for (int i = 0; i < _justDeactivated.Count && !bodyOverflow; i++)
-            {
-                uint joltId = _justDeactivated[i];
-                if (!_joltToRecord.TryGetValue(joltId, out JoltBodyRecord? rec))
-                    continue; // deactivated AND removed same frame - nothing to emit.
-                if (bodyCount >= bodyUpdates.Length) { bodyOverflow = true; break; }
-
-                var jid = new BodyID(joltId);
-                bodyUpdates[bodyCount++] = new BodyState
-                {
-                    Body = new BodyId(rec.Handle),
-                    UserData = rec.UserData,
-                    Position = _bodyInterface.GetPosition(jid),
-                    Orientation = _bodyInterface.GetRotation(jid),
-                    LinearVelocity = _bodyInterface.GetLinearVelocity(jid),
-                    AngularVelocity = _bodyInterface.GetAngularVelocity(jid),
-                    Flags = BodyStateFlags.JustDeactivated,
-                };
-            }
-
-            // 4. Drain character state (post-ExtendedUpdate position + the ground each one found).
+            // 4. Drain character state (post-ExtendedUpdate position + the ground each one found). Round-robin
+            //    like the bodies (JOLT-4): characters that do not fit are first in line next Step.
             int charCount = 0;
             lock (_characterGate)
             {
-                for (int i = 0; i < _characterList.Count && charCount < characterUpdates.Length; i++)
+                int charN = _characterList.Count;
+                int charStart = charN > 0 ? _characterCursor % charN : 0;
+                for (int k = 0; k < charN; k++)
                 {
-                    if (_characterList[i].Character == null)
+                    int idx = (charStart + k) % charN;
+                    if (_characterList[idx].Character == null)
                         continue;
-                    characterUpdates[charCount++] = BuildCharacterState(_characterList[i]);
+                    if (charCount >= characterUpdates.Length)
+                    {
+                        _characterCursor = idx;
+                        break;
+                    }
+                    characterUpdates[charCount++] = BuildCharacterState(_characterList[idx]);
                 }
             }
 

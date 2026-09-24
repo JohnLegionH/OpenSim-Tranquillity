@@ -173,16 +173,24 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         private long _charFrameUntil = -1;  // window: log per-frame avatar Z/support/vZ ([charframe] toggle)
 
         // Caller-owned step buffers (M1 contract: nothing allocates per frame). Simulate drains all
-        // three every step; they are fixed-size, and an overflow is reported rather than grown.
+        // three every step. JOLT-4 (S-4f): they start at these sizes and DOUBLE on overflow, up to the caps below
+        // (the backend drain is fair, so an overflowing frame loses nothing, it only delays), and allocate only
+        // when they grow. The contact cap defaults to the backend's ring capacity - past that, growing is useless.
         private BodyState[] _bodyBuf = new BodyState[1024];
         private CharacterState[] _charBuf = new CharacterState[256];
         private ContactReport[] _contactBuf = new ContactReport[2048];
+        private int _bodyBufMax = 65536;
+        private int _charBufMax = 1024;
+        private int _contactBufMax = 2048;   // set to the ring capacity in AddRegion
+        private long _overflowLastWarnTicks;
 
-        // Collision dispatch (M7 Task 3, base): per-frame accumulation of colliders per subscribed prim,
+        // Collision dispatch (M7 Task 3, base; JOLT-4): per-frame accumulation of colliders per subscribed prim,
         // and the set of prims that reported collisions LAST frame - so a prim that stops touching gets one
         // empty CollisionEventUpdate this frame, which is how OpenSim's SOP.PhysicsCollision fires collision_end.
-        private readonly Dictionary<uint, CollisionEventUpdate> _collisionAccum = new Dictionary<uint, CollisionEventUpdate>();
-        private readonly HashSet<uint> _collidedLastFrame = new HashSet<uint>();
+        private readonly CollisionFrameTracker _collisions = new CollisionFrameTracker();
+        // JOLT-4: this frame's prims, resolved under ONE lock(_prims) (was two or three locks per contact).
+        private readonly HashSet<uint> _frameIds = new HashSet<uint>();
+        private readonly Dictionary<uint, JoltPrim> _framePrims = new Dictionary<uint, JoltPrim>();
 
         // JOLT-3 (S-4a/S-4b): capacity surfacing. Step-thread only. The warning window starts at the last logged
         // snapshot; a failure inside the quiet period accumulates into the next line instead of being lost.
@@ -260,6 +268,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             long rssBefore = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64;
             _backend = new LegionJoltBackend();
             _backend.Initialize(settings);
+            _contactBufMax = System.Math.Max(_contactBuf.Length, _backend.GetCapacityStats().ContactRingCapacity);
             DefaultGravity = settings.Gravity;   // the vehicle controller applies this manually
             JoltMetrics.RecordRegionInit(RegionName,
                 System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 - rssBefore);
@@ -3557,11 +3566,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 m_log.LogDebug($"{LogHeader} [dropframe] step={_stepCount} dt={timeStep:0.0000} active={r.ActiveBodyCount} updates={r.BodyUpdateCount} box(id={td.LocalId}) liveZ={lz:0.000} vZ={vz:0.000} joltActive={ja}");
             }
 
-            if (r.BodyBufferOverflowed)
-            {
-                _bodyOverflowFrames++;
-                m_log.LogWarning($"{LogHeader} body update buffer overflowed ({_bodyBuf.Length}); some terse updates dropped this step.");
-            }
+            if (r.BodyBufferOverflowed) _bodyOverflowFrames++;
             if (r.CharacterUpdateCount >= _charBuf.Length) _charFullFrames++;
             if (r.ContactBufferOverflowed) _contactOverflowFrames++;
             CheckCapacity();
@@ -3592,7 +3597,34 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 a?.ApplyCharacterState(in cs);
             }
 
-            DispatchContacts(r.ContactCount);
+            DispatchContacts(r.ContactCount, r.ContactBufferOverflowed);
+
+            // JOLT-4 (S-4f): grow any buffer this frame filled, now that it has been read. Overflow no longer loses
+            // updates (the backend carries them over), so the warning is rate-limited like the capacity one.
+            bool charFull = r.CharacterUpdateCount >= _charBuf.Length;
+            if (r.BodyBufferOverflowed || charFull || r.ContactBufferOverflowed)
+            {
+                string grew = "";
+                if (r.BodyBufferOverflowed) grew += GrowBuffer(ref _bodyBuf, _bodyBufMax, "body");
+                if (charFull) grew += GrowBuffer(ref _charBuf, _charBufMax, "character");
+                if (r.ContactBufferOverflowed) grew += GrowBuffer(ref _contactBuf, _contactBufMax, "contact");
+                long now = System.DateTime.UtcNow.Ticks;
+                if (_overflowLastWarnTicks == 0 || now - _overflowLastWarnTicks >= CapacityLogIntervalTicks)
+                {
+                    _overflowLastWarnTicks = now;
+                    m_log.LogWarning($"{LogHeader} {RegionName}: step buffer overflow (bodies {r.BodyUpdateCount}/{r.ActiveBodyCount} active, contacts overflowed={r.ContactBufferOverflowed});{grew} updates carry over to the next step.");
+                }
+            }
+        }
+
+        // Double a step buffer up to its cap. Returns a note for the overflow warning.
+        private static string GrowBuffer<T>(ref T[] buf, int max, string what)
+        {
+            if (buf.Length >= max)
+                return $" {what} buffer at its max {buf.Length};";
+            int size = (int)System.Math.Min((long)max, buf.Length * 2L);
+            buf = new T[size];
+            return $" {what} buffer grown to {size};";
         }
 
         // JOLT-3: after each Step, warn (at most once per CapacityLogIntervalTicks per region) when the update
@@ -3650,10 +3682,30 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         // Per-child (landing 2): each contact names the STRUCK part on each side (ChildUserData - the
         // compound child hit, resolved from the contact sub-shape), so a linkset reports against the specific
         // child and llDetectedLinkNumber returns that child's link (see the AddCollider block below).
-        private void DispatchContacts(int contactCount)
+        private void DispatchContacts(int contactCount, bool contactsOverflowed)
         {
-            _collisionAccum.Clear();
+            // Resolve every prim this frame can touch - both sides of each contact, plus last frame's colliders
+            // (the collision_end candidates) - under ONE lock(_prims), into a reused per-frame map.
+            _frameIds.Clear();
+            for (int i = 0; i < contactCount; i++)
+            {
+                ref ContactReport c = ref _contactBuf[i];
+                if (c.Phase == ContactPhase.End)
+                    continue;
+                _frameIds.Add(c.ChildUserDataA);
+                _frameIds.Add(c.ChildUserDataB);
+            }
+            foreach (uint id in _collisions.CollidedLastFrame)
+                _frameIds.Add(id);
+            _framePrims.Clear();
+            lock (_prims)
+            {
+                foreach (uint id in _frameIds)
+                    if (_prims.TryGetValue(id, out JoltPrim p))
+                        _framePrims[id] = p;
+            }
 
+            _collisions.BeginFrame();
             for (int i = 0; i < contactCount; i++)
             {
                 ref ContactReport c = ref _contactBuf[i];
@@ -3669,53 +3721,27 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 // ContactReport carries System.Numerics vectors (SVector3); OpenSim's ContactPoint is OMV.
                 Vector3 pt = new Vector3(c.Point.X, c.Point.Y, c.Point.Z);
                 if (IsSubscribedPrim(c.ChildUserDataA))
-                    AccumFor(c.ChildUserDataA).AddCollider(c.ChildUserDataB, new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f));
+                    _collisions.AddCollider(c.ChildUserDataA, c.ChildUserDataB, new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f));
                 if (IsSubscribedPrim(c.ChildUserDataB))
-                    AccumFor(c.ChildUserDataB).AddCollider(c.ChildUserDataA, new ContactPoint(pt, new Vector3(-c.Normal.X, -c.Normal.Y, -c.Normal.Z), 0f));
+                    _collisions.AddCollider(c.ChildUserDataB, c.ChildUserDataA, new ContactPoint(pt, new Vector3(-c.Normal.X, -c.Normal.Y, -c.Normal.Z), 0f));
             }
 
-            // Deliver this frame's sets.
-            foreach (KeyValuePair<uint, CollisionEventUpdate> kv in _collisionAccum)
-            {
-                JoltPrim p;
-                lock (_prims) _prims.TryGetValue(kv.Key, out p);
-                p?.SendCollisionUpdate(kv.Value);
-            }
+            // Deliver this frame's sets (outside the lock).
+            foreach (KeyValuePair<uint, CollisionEventUpdate> kv in _collisions.Current)
+                if (_framePrims.TryGetValue(kv.Key, out JoltPrim p))
+                    p.SendCollisionUpdate(kv.Value);
 
-            // Flush an EMPTY update to prims that collided last frame but not now (fires collision_end),
-            // then roll the "collided last frame" set forward to this frame's colliders.
-            foreach (uint id in _collidedLastFrame)
-            {
-                if (_collisionAccum.ContainsKey(id))
-                    continue;
-                JoltPrim p;
-                lock (_prims) _prims.TryGetValue(id, out p);
-                if (p != null && p.SubscribedEvents())
+            // Flush an EMPTY update to prims that collided last frame but not now (fires collision_end). On a
+            // frame whose contact buffer overflowed the tracker ends nobody (JOLT-4, I-2): absence is not proof.
+            foreach (uint id in _collisions.EndFrame(contactsOverflowed))
+                if (_framePrims.TryGetValue(id, out JoltPrim p) && p.SubscribedEvents())
                     p.SendCollisionUpdate(new CollisionEventUpdate());
-            }
-            _collidedLastFrame.Clear();
-            foreach (uint id in _collisionAccum.Keys)
-                _collidedLastFrame.Add(id);
         }
 
-        // A LocalID resolves to a prim that currently has a collision-script subscription (M7 Task 3 base
-        // is prim-scoped; avatar-as-subscriber ScenePresence collisions are a noted follow-up).
+        // A LocalID resolves (this frame) to a prim that currently has a collision-script subscription (M7 Task 3
+        // base is prim-scoped; avatar-as-subscriber ScenePresence collisions are a noted follow-up).
         private bool IsSubscribedPrim(uint localID)
-        {
-            JoltPrim p;
-            lock (_prims) _prims.TryGetValue(localID, out p);
-            return p != null && p.SubscribedEvents();
-        }
-
-        private CollisionEventUpdate AccumFor(uint localID)
-        {
-            if (!_collisionAccum.TryGetValue(localID, out CollisionEventUpdate u))
-            {
-                u = new CollisionEventUpdate();
-                _collisionAccum[localID] = u;
-            }
-            return u;
-        }
+            => _framePrims.TryGetValue(localID, out JoltPrim p) && p.SubscribedEvents();
 
         public override void SetTerrain(float[] heightMap)
         {
