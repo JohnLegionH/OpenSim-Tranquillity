@@ -134,7 +134,7 @@ public class RobustnessTests
     }
 
     [Fact]
-    public void ARegexListenerThatTimesOutDoesNotStopChatForEveryoneElse()
+    public async Task ARegexListenerThatTimesOutDoesNotStopChatForEveryoneElse()
     {
         using var h = new SchedulerHarness();
         var evil = h.RezScript("default { state_entry() { } listen(integer c, string n, key k, string m) { llSay(0, \"evil heard\"); } }");
@@ -144,7 +144,7 @@ public class RobustnessTests
 
         var sw = Stopwatch.StartNew();
         var deliver = Task.Run(() => h.Engine.ListenManager.DeliverChat(5, "someone", UUID.Random(), Victim));
-        Assert.True(deliver.Wait(TimeSpan.FromSeconds(5)), "chat delivery was still inside the regex after 5 s");
+        Assert.True(await Task.WhenAny(deliver, Task.Delay(TimeSpan.FromSeconds(5))) == deliver, "chat delivery was still inside the regex after 5 s");
         Assert.Null(deliver.Exception);
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(1), $"delivery took {sw.Elapsed.TotalMilliseconds:F0} ms");
         h.Pump();

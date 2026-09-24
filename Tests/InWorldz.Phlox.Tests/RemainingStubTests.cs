@@ -52,27 +52,42 @@ public class RemainingStubTests
     /// wiki: "Set the minimum time between events being handled" - a floor between handler starts,
     /// events inside the window queued. Two touch_starts posted 10 ms apart with delay=1.0 must be
     /// handled at least 1 s apart, and BOTH must be handled - nothing is dropped.
+    /// <para>
+    /// The engine holds the floor on its own clock (Clock.Now, Environment.TickCount64 by default), which
+    /// on Windows advances in 15-16 ms steps; the script reads llGetTime from DateTime.UtcNow. Measured
+    /// that way, a floor the engine kept exactly could read up to one step short of 1.0 s (0.987 s was
+    /// seen). So for this test the engine's clock is DateTime.UtcNow in whole milliseconds - the same
+    /// clock llGetTime reads - and the gap is then short of the floor by at most 1 ms of rounding.
+    /// </para>
     /// </summary>
     [Fact]
     public void TwoTouchesTenMillisecondsApartAreHandledAtLeastOneSecondApart()
     {
-        using var h = new SchedulerHarness();
-        var item = h.RezScript(@"default {
-            state_entry() { llMinEventDelay(1.0); llResetTime(); llSay(0, ""armed""); }
-            touch_start(integer n) { llSay(0, ""t="" + (string)llGetTime()); }
-        }");
-        h.Pump();
-        Assert.Contains("armed", h.Said);
+        InWorldz.Phlox.Util.Clock.SetSourceForTesting(() => (ulong)(DateTime.UtcNow.Ticks / TimeSpan.TicksPerMillisecond));
+        try
+        {
+            using var h = new SchedulerHarness();
+            var item = h.RezScript(@"default {
+                state_entry() { llMinEventDelay(1.0); llResetTime(); llSay(0, ""armed""); }
+                touch_start(integer n) { llSay(0, ""t="" + (string)llGetTime()); }
+            }");
+            h.Pump();
+            Assert.Contains("armed", h.Said);
 
-        h.PostTouch(item);
-        h.PumpFor(TimeSpan.FromMilliseconds(10));
-        h.PostTouch(item);
-        h.PumpFor(TimeSpan.FromSeconds(2.5));
+            h.PostTouch(item);
+            h.PumpFor(TimeSpan.FromMilliseconds(10));
+            h.PostTouch(item);
+            h.PumpFor(TimeSpan.FromSeconds(2.5));
 
-        var times = h.Said.Where(s => s.StartsWith("t=")).Select(s => float.Parse(s[2..], System.Globalization.CultureInfo.InvariantCulture)).ToList();
-        _out.WriteLine("touch handler starts at: " + string.Join(", ", times));
-        Assert.Equal(2, times.Count);                     // queued, not dropped
-        Assert.True(times[1] - times[0] >= 0.99f, $"handled {times[1] - times[0]:F3}s apart; the floor is 1.0s");
+            var times = h.Said.Where(s => s.StartsWith("t=")).Select(s => float.Parse(s[2..], System.Globalization.CultureInfo.InvariantCulture)).ToList();
+            _out.WriteLine("touch handler starts at: " + string.Join(", ", times));
+            Assert.Equal(2, times.Count);                     // queued, not dropped
+            Assert.True(times[1] - times[0] >= 0.99f, $"handled {times[1] - times[0]:F3}s apart; the floor is 1.0s");
+        }
+        finally
+        {
+            InWorldz.Phlox.Util.Clock.SetSourceForTesting(null);
+        }
     }
 
     // ------------------------------------------------------------------ profiler

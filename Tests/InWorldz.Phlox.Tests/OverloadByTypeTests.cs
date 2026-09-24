@@ -76,7 +76,7 @@ public class OverloadByTypeTests
         // the vector form returns a VECTOR: the rotation shim would have pushed a four-component value
         Assert.Single(h.Said, s => s.StartsWith("slerpv=<") && s.Count(c => c == ',') == 2);
         Assert.Single(h.Said, s => s.StartsWith("slerpr=<") && s.Count(c => c == ',') == 3);
-        Assert.Empty(h.SaidOn.Where(s => s.Channel == DebugChannel));
+        Assert.DoesNotContain(h.SaidOn, s => s.Channel == DebugChannel);
     }
 
     /// <summary>

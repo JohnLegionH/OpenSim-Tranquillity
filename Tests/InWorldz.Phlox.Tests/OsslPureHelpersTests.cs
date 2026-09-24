@@ -65,7 +65,7 @@ public class OsslPureHelpersTests
         Assert.Contains("str=10|2|3|3|-1|ho|heLLo|llo|ell", h.Said);
         Assert.Contains("ts=1970-01-01T00:00:00.0000000Z", h.Said);
         Assert.Contains("vec=25.000000|25.000000", h.Said);
-        Assert.Empty(h.SaidOn.Where(s => s.Channel == DebugChannel));
+        Assert.DoesNotContain(h.SaidOn, s => s.Channel == DebugChannel);
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public class OsslPureHelpersTests
             h.RezScript(@"default { state_entry() { llSay(0, ""rx="" + (string)osRegexIsMatch(""abc"", ""^a"")); } }");
             h.PumpFor(TimeSpan.FromSeconds(1));
             Assert.DoesNotContain(h.Said, s => s.StartsWith("rx="));
-            Assert.Single(h.SaidOn.Where(s => s.Channel == DebugChannel && s.Message.Contains("osRegexIsMatch permission denied")));
+            Assert.Single(h.SaidOn, s => s.Channel == DebugChannel && s.Message.Contains("osRegexIsMatch permission denied"));
         }
         using (var h = new SchedulerHarness(cfg => cfg.AddConfig("OSSL").Set("OSFunctionThreatLevel", "Low")))
         {

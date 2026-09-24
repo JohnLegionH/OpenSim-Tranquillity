@@ -23,7 +23,7 @@ public class ListenRegexTimeoutTests
     private const string Notice = "osListenRegex: pattern timed out; listener disabled";
 
     [Fact]
-    public void ATimedOutListenRegexDisablesItsListenerAndCostsOneTimeout()
+    public async Task ATimedOutListenRegexDisablesItsListenerAndCostsOneTimeout()
     {
         using var h = new SchedulerHarness(cfg => cfg.AddConfig("OSSL").Set("OSFunctionThreatLevel", "Severe"));
         var s1 = h.RezScript("default { state_entry() { llSay(0, \"h=\" + (string)osListenRegex(5, \"\", NULL_KEY, \"" + Evil + "\", OS_LISTEN_REGEX_MESSAGE)); } " +
@@ -48,7 +48,8 @@ public class ListenRegexTimeoutTests
                 perLine[i] = sw.Elapsed.TotalMilliseconds;
             }
         });
-        Assert.True(deliver.Wait(TimeSpan.FromSeconds(30)), "delivery of 20 lines did not finish in 30 s");
+        Assert.True(await Task.WhenAny(deliver, Task.Delay(TimeSpan.FromSeconds(30))) == deliver, "delivery of 20 lines did not finish in 30 s");
+        await deliver;   // surfaces a delivery exception, as Wait did
         total.Stop();
         _out.WriteLine($"total={total.Elapsed.TotalMilliseconds:F0} ms per line=[{string.Join(", ", perLine.Select(t => t.ToString("F0")))}]");
 

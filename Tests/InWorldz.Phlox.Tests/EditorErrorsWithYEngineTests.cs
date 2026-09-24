@@ -84,19 +84,20 @@ public class EditorErrorsWithYEngineTests
     }
 
     [Fact]
-    public void YEngineStillReportsItsOwnScriptsErrors()
+    public async Task YEngineStillReportsItsOwnScriptsErrors()
     {
         using var h = new SchedulerHarness(withYEngine: true);
         var item = TaskInventoryHelpers.AddScript(h.Scene.AssetService, h.Prim, UUID.Random(), UUID.Random(), "yscript",
             "default { state_entry() { llSay(0, \"x\") } }").ItemID;
         var save = Task.Run(() => h.Prim.Inventory.CreateScriptInstanceEr(item, 0, false, h.YEngine.ScriptEngineName, 1));
-        Assert.True(save.Wait(TimeSpan.FromSeconds(60)), "a YEngine save did not return");
-        _out.WriteLine($"[{string.Join(" | ", save.Result.Cast<object>())}]");
-        Assert.NotEmpty(save.Result);
+        Assert.True(await Task.WhenAny(save, Task.Delay(TimeSpan.FromSeconds(60))) == save, "a YEngine save did not return");
+        var errors = await save;
+        _out.WriteLine($"[{string.Join(" | ", errors.Cast<object>())}]");
+        Assert.NotEmpty(errors);
     }
 
     [Fact]
-    public void ACompileThatFailsBeforeTheEditorAsksReachesTheEditorOnceWithNoPopUp()
+    public async Task ACompileThatFailsBeforeTheEditorAsksReachesTheEditorOnceWithNoPopUp()
     {
         using var h = new SchedulerHarness();
         h.Scene.RegisterModuleInterface<IDialogModule>(RecordingDialogs.Create(out var rec));
@@ -106,9 +107,10 @@ public class EditorErrorsWithYEngineTests
         PumpFor(h, TimeSpan.FromMilliseconds(500));
         var ask = Task.Run(() => h.Engine.GetScriptErrors(item));   // the caps thread, not the scheduler's
         while (!ask.IsCompleted) { h.PumpOnce(); Thread.Sleep(1); }
+        var errors = await ask;   // already complete, so this continues on the pumping thread
         PumpFor(h, TimeSpan.FromSeconds(3));   // past the owner-alert grace
-        _out.WriteLine($"[{string.Join(" | ", ask.Result.Cast<object>())}] alerts=[{string.Join(" | ", rec.Alerts)}]");
-        Assert.Equal(new[] { "(8,4) Error: missing ';' at '}'" }, ask.Result.Cast<string>().ToArray());   // the outcome is not lost
+        _out.WriteLine($"[{string.Join(" | ", errors.Cast<object>())}] alerts=[{string.Join(" | ", rec.Alerts)}]");
+        Assert.Equal(new[] { "(8,4) Error: missing ';' at '}'" }, errors.Cast<string>().ToArray());   // the outcome is not lost
         Assert.Empty(rec.Alerts);                                                                         // and not reported twice
     }
 

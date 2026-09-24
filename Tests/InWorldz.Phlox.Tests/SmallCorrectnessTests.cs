@@ -142,7 +142,7 @@ public class SmallCorrectnessTests
         var ops = h.StateOf(item)?.GetType().GetProperty("Operands")?.GetValue(h.StateOf(item)) as System.Collections.ICollection
                   ?? h.StateOf(item)?.GetType().GetField("Operands")?.GetValue(h.StateOf(item)) as System.Collections.ICollection;
         Assert.NotNull(ops);
-        Assert.Equal(0, ops.Count);
+        Assert.Empty(ops);
     }
 
     [Fact]

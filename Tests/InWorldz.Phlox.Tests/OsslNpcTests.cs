@@ -139,7 +139,7 @@ public class OsslNpcTests
         h.RezScript(@"default { state_entry() { osNpcCreate(""No"", ""Npc"", llGetPos(), """"); llSay(0, ""after""); } }");
         h.PumpFor(TimeSpan.FromSeconds(1));
         Assert.DoesNotContain("after", h.Said);
-        Assert.Single(h.SaidOn.Where(s => s.Channel == DebugChannel && s.Message.Contains("osNpcCreate permission denied")));
+        Assert.Single(h.SaidOn, s => s.Channel == DebugChannel && s.Message.Contains("osNpcCreate permission denied"));
         Assert.Empty(h.Scene.RequestModuleInterface<IBotManager>().GetAllBots());
     }
 }

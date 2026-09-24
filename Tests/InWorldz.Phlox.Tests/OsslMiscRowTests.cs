@@ -50,7 +50,7 @@ public class OsslMiscRowTests
         Assert.Contains("next1=2", h.Said);
         Assert.Contains("nextlast=2", h.Said);
         Assert.Contains("nextmiss=-1", h.Said);
-        Assert.Empty(h.SaidOn.Where(s => s.Channel == DebugChannel));
+        Assert.DoesNotContain(h.SaidOn, s => s.Channel == DebugChannel);
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public class OsslMiscRowTests
         Assert.Contains("npcs=0", h.Said);          // no bots in the harness
         Assert.Contains("inertia=4", h.Said);       // mass, centre, inertia, aux
         Assert.Contains("done", h.Said);            // the side-effect calls did not throw
-        Assert.Empty(h.SaidOn.Where(s => s.Channel == DebugChannel));
+        Assert.DoesNotContain(h.SaidOn, s => s.Channel == DebugChannel);
     }
 
     /// <summary>osAgentSaveAppearance is VeryHigh and needs the agent here; the gate and the absence both answer.</summary>
