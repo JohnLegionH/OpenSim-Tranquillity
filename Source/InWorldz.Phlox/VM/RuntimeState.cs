@@ -106,6 +106,45 @@ namespace InWorldz.Phlox.VM
         public bool GeneralEnable;
 
         /// <summary>
+        /// PHLOX-2g: the TableIndex of the syscall most recently dispatched, so a script parked in
+        /// Status.Syscall can say WHICH call it is parked in. Diagnostic only - never persisted,
+        /// never read by the VM.
+        /// </summary>
+        public int LastSyscallIndex = -1;
+
+        /// <summary>
+        /// B2 (O-121): the sequence number of the syscall this script most recently parked in
+        /// Status.Syscall. Every off-thread call takes a process-wide unique number
+        /// (SyscallContext.NextSeq, so a reset's fresh state cannot reuse one); a return is applied only if
+        /// it carries the current one, so a result that arrives after a reset, a state change or a
+        /// timeout cannot be pushed into a later call. Not persisted: a restored script has no
+        /// off-thread call outstanding.
+        /// </summary>
+        public int SyscallSeq;
+
+        /// <summary>PHLOX-7b. llMinEventDelay: the floor, in ms, between event handler starts for
+        /// this script. 0 = none. Persisted (tag 23); old rows load as 0.</summary>
+        public int MinEventDelayMs = 0;
+
+        /// <summary>PHLOX-7b. The Clock tick before which the next handler may not start. Not
+        /// persisted - it is relative to this process's clock and a restore starts allowed.</summary>
+        public ulong NextEventAllowedOn = 0;
+
+        /// <summary>PHLOX-7b. llScriptProfiler(PROFILE_SCRIPT_MEMORY) is on (tag 24).</summary>
+        public bool ProfilingMemory = false;
+
+        /// <summary>PHLOX-7b. High-water mark of MemInfo.MemoryUsed since profiling last started,
+        /// sampled at event boundaries and at the two API reads (tag 25).</summary>
+        public int PeakMemoryUsed = 0;
+
+        /// <summary>PHLOX-7b: fold the current usage into the peak while profiling.</summary>
+        public void SampleMemoryPeak()
+        {
+            if (ProfilingMemory && MemInfo != null && MemInfo.MemoryUsed > PeakMemoryUsed)
+                PeakMemoryUsed = MemInfo.MemoryUsed;
+        }
+
+        /// <summary>
         /// The next time this script should be woken up from a sleep
         /// </summary>
         public UInt64 NextWakeup;
@@ -212,7 +251,14 @@ namespace InWorldz.Phlox.VM
             /// <summary>
             /// Script has been disabled until the avatar is crossed into the region
             /// </summary>
-            CrossingWait    = (1 << 1)
+            CrossingWait    = (1 << 1),
+
+            /// <summary>
+            /// PHLOX-11. The script's saved state row could not be read at load; the script is held
+            /// here, with a fresh interpreter that must never run or save, so the row survives for
+            /// the next process to try again.
+            /// </summary>
+            StateLoadFailed = (1 << 2)
         }
 
         /// <summary>
@@ -221,6 +267,13 @@ namespace InWorldz.Phlox.VM
         /// This is a transient property and not persisted
         /// </summary>
         public LocalDisableFlag LocalDisable;
+
+        /// <summary>
+        /// PHLOX-18: why TerminateWithError stopped this script, or null. Persisted (SerializedRuntimeState tag 26)
+        /// so a crashed script restores stopped and `phlox status` can say why; cleared by a reset, which is how
+        /// it comes back.
+        /// </summary>
+        public string TerminatedReason;
 
         /// <summary>
         /// Combines the persisted disabled flag with the local simulator flag
@@ -262,6 +315,15 @@ namespace InWorldz.Phlox.VM
         /// <param name="numGlobals">Number of global variables in the associated script</param>
         public RuntimeState(int numGlobals)
         {
+            // PHLOX-2f: a brand-new script is ENABLED. Only Reset() used to set this, so a fresh
+            // instance was born with GeneralEnable false, and PhloxExecutionScheduler.FinishedLoading
+            // computes the script's event mask (:184) BEFORE the freshStart branch resets it (:190).
+            // LSLSystemAPI.SetScriptEventFlags gates the whole mask on GeneralEnable
+            // (LSLSystemAPI.cs:96), so the mask went to the part as ZERO: the region never learned
+            // the prim was touchable, the viewer showed no touch cursor, and touch_start could never
+            // fire. state_entry still ran, because ProcessEventQueue lets STATE_ENTRY past a
+            // disabled script (:664) - which is exactly what was seen in world on 1.1.277.
+            GeneralEnable = true;
             MemInfo = new MemoryInfo();
             Globals = new object[numGlobals];
 
@@ -289,7 +351,7 @@ namespace InWorldz.Phlox.VM
             TopFrame = null;
             Calls.Clear();
             Operands.Clear();
-            EventQueue.Clear();
+            lock (EventQueueLock) EventQueue.Clear();   // PHLOX-12 0b: every mutation under the lock the saver snapshots under
             NextWakeup = 0;
             StateCapturedOn = 0;
             TimerLastScheduledOn = 0;
@@ -393,7 +455,7 @@ namespace InWorldz.Phlox.VM
             TopFrame = null;
             Calls.Clear();
             Operands.Clear();
-            EventQueue.Clear();
+            lock (EventQueueLock) EventQueue.Clear();   // PHLOX-12 0b
         }
 
         public DetectVariables GetDetectVariables(int index)
@@ -434,14 +496,17 @@ namespace InWorldz.Phlox.VM
         {
             PostedEvent foundEvt;
 
-            if (EventQueue.Find(
-                delegate (PostedEvent evt) {
-                    if (evt.EventType == Types.SupportedEventList.Events.TIMER) return true;
-                    return false;
-                },
-                out foundEvt))
+            lock (EventQueueLock)   // PHLOX-12 0b
             {
-                EventQueue.Remove(foundEvt);
+                if (EventQueue.Find(
+                    delegate (PostedEvent evt) {
+                        if (evt.EventType == Types.SupportedEventList.Events.TIMER) return true;
+                        return false;
+                    },
+                    out foundEvt))
+                {
+                    EventQueue.Remove(foundEvt);
+                }
             }
         }
     }

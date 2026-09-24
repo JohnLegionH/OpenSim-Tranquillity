@@ -2008,7 +2008,7 @@ namespace InWorldz.Phlox.VM
             if (_detMethods == null)
             {
                 var map = new Dictionary<string, int>();
-                void Add(string method, string ll) { if (Defaults.SystemMethods.TryGetValue(ll, out var s)) map[method] = s.TableIndex; }
+                void Add(string method, string ll) { if (Defaults.TryGetMethod(ll, out var s)) map[method] = s.TableIndex; }
                 Add("getKey", "llDetectedKey"); Add("getName", "llDetectedName"); Add("getPos", "llDetectedPos");
                 Add("getOwner", "llDetectedOwner"); Add("getGroup", "llDetectedGroup"); Add("getType", "llDetectedType");
                 Add("getVel", "llDetectedVel"); Add("getRot", "llDetectedRot"); Add("getLinkNumber", "llDetectedLinkNumber");
@@ -2561,12 +2561,17 @@ namespace InWorldz.Phlox.VM
             _state.TopFrame.Locals[lidx] = newVal;
         }
 
+        /// <summary>
+        /// PHLOX-9. SL: <c>a != b</c> on lists is <c>llGetListLength(a) - llGetListLength(b)</c> - the length
+        /// difference, not 0/1 ("Equality test on lists does not compare contents, only the length").
+        /// <c>==</c> (Op_Leq) stays 0/1: TRUE when the lengths match.
+        /// </summary>
         private void Op_Lneq()
         {
             LSLList rhs = (LSLList)_state.Operands.Pop();
             LSLList lhs = (LSLList)_state.Operands.Pop();
 
-            SafeOperandsPush(lhs.Members.Count == rhs.Members.Count ? 0 : 1);
+            SafeOperandsPush(lhs.Members.Count - rhs.Members.Count);
         }
 
         private const string ZERO_GUID = "00000000-0000-0000-0000-000000000000";

@@ -123,7 +123,11 @@ namespace InWorldz.Phlox.ByteCompiler
 
             foreach (FunctionSig sig in systemMethods)
             {
-                _functions.Add(sig.FunctionName, new FunctionSymbol(sig.FunctionName, sig.TableIndex));
+                // PHLOX-2b: keyed by the symbol name the compiler emitted, which is the bare
+                // function name for a single-signature built-in and name$arity for an overload.
+                // Derived from Defaults so the assembler and the symbol table cannot disagree.
+                string symbolName = Defaults.SymbolNameFor(sig);
+                _functions.Add(symbolName, new FunctionSymbol(symbolName, sig.TableIndex));
             }
         }
 

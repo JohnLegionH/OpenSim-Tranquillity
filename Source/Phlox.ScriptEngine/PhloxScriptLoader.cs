@@ -9,10 +9,14 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Services.Interfaces;
+using OpenSim.Region.Framework.Interfaces;
+using OpenSim.Region.Framework.Scenes;
 using InWorldz.Phlox.VM;
 using InWorldz.Phlox.Glue;
 using InWorldz.Phlox.Serialization;
@@ -64,7 +68,44 @@ namespace Phlox.ScriptEngine
         private readonly Queue<PendingCompile> m_WaitingForCompile = new();
 
         private readonly object m_AssetLock = new();
-        private readonly Stopwatch m_CompileTimer = new();
+
+        // ── PHLOX-22 B: compiles run on ONE long-lived "Phlox compile" thread, never on the master scheduler ──
+        // DoWork hands a CompileJob to the thread and returns; the thread posts the finished job to
+        // m_FinishedCompiles and wakes the scheduler; a later DoWork starts it. Everything below except the two
+        // queues is touched only on the master scheduler thread (DoWork), as the rest of the loader always was.
+        private readonly System.Collections.Concurrent.BlockingCollection<CompileJob> m_CompileQueue = new();
+        private readonly System.Collections.Concurrent.ConcurrentQueue<CompileJob> m_FinishedCompiles = new();
+        private readonly System.Threading.Thread m_CompileThread;
+        private volatile bool m_Stopped;
+        // The text-compile job in flight per asset: a second load of the same asset joins it instead of compiling again.
+        private readonly Dictionary<UUID, CompileJob> m_InFlight = new();
+        // Each load and each unload of an item bumps its generation; a finished compile starts only the requests
+        // whose generation is still current (a re-save or a removal while compiling discards the stale result).
+        private readonly Dictionary<UUID, long> m_ItemGeneration = new();
+        // Start order within a prim: while a prim has a compile outstanding, its later loads wait here, in order.
+        private readonly Dictionary<uint, int> m_PrimBlocks = new();
+        private readonly Dictionary<uint, List<PhloxLoadRequest>> m_DeferredByPrim = new();
+        // llSetScriptState / reset aimed at an item that is still loading: applied when it starts.
+        private readonly Dictionary<UUID, PendingScriptOps> m_PendingOps = new();
+
+        private sealed class CompileJob
+        {
+            public UUID AssetId;
+            public string ScriptText;
+            public bool FromAssetServer;
+            public readonly List<PhloxLoadRequest> Requests = new();   // master thread only
+            // Set by the compile thread before the job is posted back:
+            public CompiledScript Compiled;
+            public List<string> Errors = new();
+            public Exception Failure;
+            public long ElapsedMs;
+        }
+
+        private sealed class PendingScriptOps
+        {
+            public bool? Enable;
+            public bool Reset;
+        }
 
         private class LoadedScript
         {
@@ -89,6 +130,10 @@ namespace Phlox.ScriptEngine
 
             Directory.CreateDirectory(CACHE_DIR);
             EnsureCacheSchemaVersion();
+
+            m_CompileThread = new System.Threading.Thread(CompileLoop, CompileStackSize)
+            { IsBackground = true, Name = "Phlox compile" };
+            m_CompileThread.Start();
         }
 
         /// <summary>
@@ -129,6 +174,11 @@ namespace Phlox.ScriptEngine
 
         public void PostLoadRequest(PhloxLoadRequest req)
         {
+            lock (m_Outcomes)
+            {
+                req.Serial = ++m_SerialCounter;
+                m_LatestSerial[req.ItemID] = req.Serial;
+            }
             lock (m_PendingLoads)
                 m_PendingLoads.AddLast(req);
             m_WorkArrived();
@@ -149,11 +199,13 @@ namespace Phlox.ScriptEngine
             // PerformLoad already guards per-request; this covers the unload/compile paths too, so
             // one failure can never stop the worker from draining the queue (which would strand the
             // RegionReady LoginLock signal). Per-failure logging only — no summary/barrier machinery.
+            if (m_Stopped) return new WorkStatus { WorkWasDone = false, WorkIsPending = false, NextWakeUpTime = ulong.MaxValue };
             try
             {
                 didWork |= ProcessNextUnload();
                 didWork |= ProcessNextLoad();
                 didWork |= ProcessNextCompile();
+                didWork |= ProcessFinishedCompiles();
             }
             catch (Exception ex)
             {
@@ -176,6 +228,7 @@ namespace Phlox.ScriptEngine
                 if (m_PendingUnloads.Count > 0) return true;
             lock (m_AssetLock)
                 if (m_WaitingForCompile.Count > 0) return true;
+            if (!m_FinishedCompiles.IsEmpty) return true;
             return false;
         }
 
@@ -194,6 +247,9 @@ namespace Phlox.ScriptEngine
 
         private void PerformUnload(PhloxUnloadRequest req)
         {
+            // PHLOX-22 B: a compile of this item still running is now stale.
+            BumpGeneration(req.ItemID);
+            lock (m_PendingOps) m_PendingOps.Remove(req.ItemID);
             Interpreter script = m_ExeScheduler.FindScript(req.ItemID);
             if (script == null) return;
 
@@ -219,6 +275,14 @@ namespace Phlox.ScriptEngine
                 req = m_PendingLoads.First.Value;
                 m_PendingLoads.RemoveFirst();
             }
+            // PHLOX-22 B: a prim with a compile outstanding starts its scripts in rez order - later loads wait.
+            if (req.Prim != null && m_PrimBlocks.ContainsKey(req.Prim.LocalId))
+            {
+                if (!m_DeferredByPrim.TryGetValue(req.Prim.LocalId, out var list))
+                    m_DeferredByPrim[req.Prim.LocalId] = list = new List<PhloxLoadRequest>();
+                list.Add(req);
+                return true;
+            }
             PerformLoad(req);
             return true;
         }
@@ -231,23 +295,26 @@ namespace Phlox.ScriptEngine
             // fails alone, with a full diagnostic; every other script still loads.
             try
             {
+                req.Generation = BumpGeneration(req.ItemID);
+
                 // Find asset UUID from prim inventory
                 UUID assetId = FindAssetId(req);
-                if (assetId == UUID.Zero) return;
+                if (assetId == UUID.Zero) { PublishOutcome(req, new List<string> { "script item not found" }); return; }
 
                 // 1. Already loaded and running (shared script)
-                if (TryStartSharedScript(assetId, req)) return;
+                if (TryStartSharedScript(assetId, req)) { Started(req); return; }
 
                 // 2. Recently unloaded — still in memory
-                if (TryStartFromUnloadedCache(assetId, req)) return;
+                if (TryStartFromUnloadedCache(assetId, req)) { Started(req); return; }
 
                 // 3. Compiled bytecode on disk
-                if (TryStartFromDiskCache(assetId, req)) return;
+                if (TryStartFromDiskCache(assetId, req)) { Started(req); return; }
 
-                // 4. Need to compile from source text (already in req.ScriptText from OnRezScript)
+                // 4. Need to compile from source text (already in req.ScriptText from OnRezScript).
+                // PHLOX-22 B: handed to the compile thread; a later DoWork starts it.
                 if (!string.IsNullOrEmpty(req.ScriptText))
                 {
-                    CompileAndStart(assetId, req);
+                    SubmitTextCompile(assetId, req);
                     return;
                 }
 
@@ -257,6 +324,7 @@ namespace Phlox.ScriptEngine
             catch (Exception ex)
             {
                 LogLoadFailure(req, ex);
+                PublishOutcome(req, new List<string> { "script load failed: " + ex.Message });   // PHLOX-22 C: never leave an editor waiting
             }
         }
 
@@ -385,43 +453,353 @@ namespace Phlox.ScriptEngine
             }
         }
 
+        /// <summary>
+        /// PHLOX-2: tell the owner once, with the script's name, that their script did not compile.
+        /// The log line above stays exactly as it was - this is in addition to it, not instead.
+        /// </summary>
+        private static void ReportCompileFailureToOwner(PhloxLoadRequest req, IReadOnlyList<string> errors)
+        {
+            if (req?.Prim is null || errors is null || errors.Count == 0) return;
+            string scriptName = req.Prim.Inventory?.GetInventoryItem(req.ItemID)?.Name;
+            PhloxCompileErrorReport.ToOwner(req.Prim, scriptName, errors);
+        }
+
         private static void SafeDeleteCache(string path)
         {
             try { File.Delete(path); }
             catch { /* best-effort */ }
         }
 
-        private void CompileAndStart(UUID assetId, PhloxLoadRequest req)
+        /// <summary>
+        /// PHLOX-21: the stack a compile runs on. Both front ends recurse once per level of the
+        /// script's nesting. PHLOX-22 A: the limit is COUNTED (InWorldz.Phlox.Compiler.NestingLimits -
+        /// 1,000 expression levels, 500 blocks, 2,500 else-if branches, 64 chained assignments), the same
+        /// in a cold or a warm process. The stack guard (DepthGuard) is only the backstop: how many levels
+        /// 16 MB holds depends on JIT warm-up (~2,410 expression levels cold in the lowest pass, ~7,668
+        /// warm), which is why PHLOX-21's "about 4,000" was never a real limit.
+        /// </summary>
+        internal const int CompileStackSize = 16 * 1024 * 1024;
+
+        /// <summary>PHLOX-22 B, tests only: milliseconds a compile of this script text should take extra (0 = none).</summary>
+        internal static Func<string, int> CompileDelayForTest;
+
+        /// <summary>
+        /// PHLOX-21: compile on a fresh thread with <see cref="CompileStackSize"/> and wait for it. PHLOX-22 B: the
+        /// loader no longer uses this - DoWork never waits on a compile (<see cref="CompileLoop"/>); it stays for
+        /// callers that want one compile on the loader's stack size, synchronously (RobustnessTests).
+        /// </summary>
+        internal static CompiledScript CompileOnCompilerThread(CompilerFrontend frontend, string scriptText)
         {
-            var frontend = new CompilerFrontend(new LogOutputListener(req.ItemID), ".");
+            CompiledScript result = null;
+            Exception failure = null;
+            var t = new System.Threading.Thread(() =>
+            {
+                try
+                {
+                    result = InWorldz.Phlox.SLua.SLuaCompiler.IsLuaScript(scriptText)
+                        ? frontend.CompileLua(scriptText)
+                        : frontend.Compile(scriptText);
+                }
+                catch (Exception e) { failure = e; }
+            }, CompileStackSize)
+            { IsBackground = true, Name = "Phlox compile (sync)" };
+            t.Start();
+            t.Join();
+            if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            return result;
+        }
+
+        /// <summary>PHLOX-22 B: is the compile thread still running? (False after <see cref="Stop"/> once it has finished.)</summary>
+        internal bool CompileThreadAlive => m_CompileThread != null && m_CompileThread.IsAlive;
+
+        /// <summary>
+        /// PHLOX-22 B: the compile thread. It compiles one job at a time on its <see cref="CompileStackSize"/> stack,
+        /// saves the bytecode to the disk cache and posts the job back; it never touches the scheduler or a script.
+        /// </summary>
+        private void CompileLoop()
+        {
             try
             {
-                m_CompileTimer.Restart();
-                CompiledScript compiled = InWorldz.Phlox.SLua.SLuaCompiler.IsLuaScript(req.ScriptText)
-                    ? frontend.CompileLua(req.ScriptText)
-                    : frontend.Compile(req.ScriptText);
-                m_CompileTimer.Stop();
-
-                if (compiled == null)
+                foreach (CompileJob job in m_CompileQueue.GetConsumingEnumerable())
                 {
-                    m_log.LogError("[PhloxLoader]: Compilation failed for {0} item {1}", assetId, req.ItemID);
-                    return;
+                    if (m_Stopped) break;
+                    RunCompile(job);
+                    if (m_Stopped) break;
+                    m_FinishedCompiles.Enqueue(job);
+                    m_WorkArrived();
                 }
-
-                compiled.AssetId = assetId;
-                SaveToDiskCache(compiled);
-                m_log.LogInformation("[PhloxLoader]: Compiled {0} ({1}ms)", assetId, m_CompileTimer.ElapsedMilliseconds);
-
-                BeginScriptRun(req, compiled);
-                m_LoadedScripts[assetId] = new LoadedScript { Script = compiled, RefCount = 1 };
             }
-            catch (Exception e)
+            catch (Exception e) { m_log.LogError(e, "[PhloxLoader]: compile thread stopped by an exception"); }
+        }
+
+        private static void RunCompile(CompileJob job)
+        {
+            var listener = new LogOutputListener(job.Requests.Count > 0 ? job.Requests[0].ItemID : UUID.Zero);
+            var frontend = new CompilerFrontend(listener, ".");
+            var sw = Stopwatch.StartNew();
+            try
             {
-                m_log.LogError("[PhloxLoader]: Exception compiling {0} item {1}: {2}", assetId, req.ItemID, e);
+                int delay = CompileDelayForTest?.Invoke(job.ScriptText) ?? 0;
+                if (delay > 0) System.Threading.Thread.Sleep(delay);
+                job.Compiled = InWorldz.Phlox.SLua.SLuaCompiler.IsLuaScript(job.ScriptText)
+                    ? frontend.CompileLua(job.ScriptText)
+                    : frontend.Compile(job.ScriptText);
+                if (job.Compiled != null)
+                {
+                    job.Compiled.AssetId = job.AssetId;
+                    SaveToDiskCache(job.Compiled);
+                }
             }
-            finally
+            catch (Exception e) { job.Failure = e; job.Compiled = null; }
+            sw.Stop();
+            job.ElapsedMs = sw.ElapsedMilliseconds;
+            job.Errors = new List<string>(listener.Errors);
+        }
+
+        /// <summary>PHLOX-22 B: compile this script's text off the scheduler, joining a compile of the same asset if one is running.</summary>
+        private void SubmitTextCompile(UUID assetId, PhloxLoadRequest req)
+        {
+            BlockPrim(req);
+            if (m_InFlight.TryGetValue(assetId, out CompileJob job))
             {
-                m_CompileTimer.Reset();
+                job.Requests.Add(req);
+                return;
+            }
+            job = new CompileJob { AssetId = assetId, ScriptText = req.ScriptText };
+            job.Requests.Add(req);
+            m_InFlight[assetId] = job;
+            if (!m_Stopped) m_CompileQueue.Add(job);
+        }
+
+        private void BlockPrim(PhloxLoadRequest req)
+        {
+            if (req.Prim == null) return;
+            m_PrimBlocks.TryGetValue(req.Prim.LocalId, out int n);
+            m_PrimBlocks[req.Prim.LocalId] = n + 1;
+        }
+
+        /// <summary>The prim's outstanding compile is done: its waiting loads go back to the FRONT of the queue, in order.</summary>
+        private void UnblockPrim(PhloxLoadRequest req)
+        {
+            if (req.Prim == null) return;
+            uint id = req.Prim.LocalId;
+            if (!m_PrimBlocks.TryGetValue(id, out int n)) return;
+            if (n > 1) { m_PrimBlocks[id] = n - 1; return; }
+            m_PrimBlocks.Remove(id);
+            if (!m_DeferredByPrim.TryGetValue(id, out var waiting)) return;
+            m_DeferredByPrim.Remove(id);
+            lock (m_PendingLoads)
+                for (int k = waiting.Count - 1; k >= 0; k--)
+                    m_PendingLoads.AddFirst(waiting[k]);
+        }
+
+        private long BumpGeneration(UUID itemId)
+        {
+            m_ItemGeneration.TryGetValue(itemId, out long g);
+            m_ItemGeneration[itemId] = ++g;
+            return g;
+        }
+
+        private bool IsCurrent(PhloxLoadRequest req)
+            => m_ItemGeneration.TryGetValue(req.ItemID, out long g) && g == req.Generation;
+
+        /// <summary>PHLOX-22 B: start the finished compiles (master scheduler thread).</summary>
+        private bool ProcessFinishedCompiles()
+        {
+            bool any = false;
+            while (m_FinishedCompiles.TryDequeue(out CompileJob job))
+            {
+                any = true;
+                if (m_InFlight.TryGetValue(job.AssetId, out var current) && current == job) m_InFlight.Remove(job.AssetId);
+                try { FinishJob(job); }
+                catch (Exception e) { m_log.LogError(e, "[PhloxLoader]: starting compiled {0} failed", job.AssetId); }
+                finally
+                {
+                    if (!job.FromAssetServer)
+                        foreach (var req in job.Requests) UnblockPrim(req);
+                }
+            }
+            return any;
+        }
+
+        private void FinishJob(CompileJob job)
+        {
+            var live = job.Requests.Where(IsCurrent).ToList();
+            foreach (var stale in job.Requests.Where(r => !IsCurrent(r)))
+                m_log.LogInformation("[PhloxLoader]: Discarding stale compile of {0} for item {1} (re-saved or removed while compiling)", job.AssetId, stale.ItemID);
+
+            if (job.Compiled == null)
+            {
+                if (job.Failure != null)
+                    m_log.LogError("[PhloxLoader]: Exception compiling {0}: {1}", job.AssetId, job.Failure);
+                foreach (var req in live)
+                {
+                    m_log.LogError(job.FromAssetServer ? "[PhloxLoader]: Compilation failed (from asset server) for {0} item {1}" : "[PhloxLoader]: Compilation failed for {0} item {1}",
+                        job.AssetId, req.ItemID);
+                    var errors = job.Errors.Count > 0 ? job.Errors
+                        : new List<string> { job.Failure != null ? "internal compiler error: " + job.Failure.Message : "script failed to compile" };
+                    // PHLOX-22 C: an editor save gets its errors in the editor; anything else is told as before.
+                    if (!PublishOutcome(req, errors))
+                        ReportUnlessClaimed(req, errors);
+                }
+                return;
+            }
+
+            m_log.LogInformation(job.FromAssetServer ? "[PhloxLoader]: Compiled (from asset) {0} ({1}ms)" : "[PhloxLoader]: Compiled {0} ({1}ms)", job.AssetId, job.ElapsedMs);
+            int started = 0;
+            foreach (var req in live)
+            {
+                BeginScriptRun(req, job.Compiled);
+                started++;
+                Started(req);
+            }
+            if (started > 0)
+            {
+                if (m_LoadedScripts.TryGetValue(job.AssetId, out var ls)) ls.RefCount += started;
+                else m_LoadedScripts[job.AssetId] = new LoadedScript { Script = job.Compiled, RefCount = started };
+            }
+        }
+
+        /// <summary>A request's script has started: publish success for an editor, then apply any state change made while it loaded.</summary>
+        private void Started(PhloxLoadRequest req)
+        {
+            PublishOutcome(req, new List<string>());
+            PendingScriptOps ops;
+            lock (m_PendingOps)
+            {
+                if (!m_PendingOps.TryGetValue(req.ItemID, out ops)) return;
+                m_PendingOps.Remove(req.ItemID);
+            }
+            // Queued on the execution scheduler: its next pass applies them before the new script's first timeslice.
+            if (ops.Enable.HasValue) m_ExeScheduler.ChangeEnabledStatus(req.ItemID, ops.Enable.Value);
+            if (ops.Reset) m_ExeScheduler.ResetScript(req.ItemID);
+        }
+
+        /// <summary>PHLOX-22 B: is a load of this item posted, waiting or compiling (so the scheduler does not have it yet)?</summary>
+        internal bool IsLoading(UUID itemId)
+        {
+            lock (m_Outcomes)
+            {
+                if (!m_LatestSerial.TryGetValue(itemId, out long serial)) return false;
+                return !m_Outcomes.TryGetValue(itemId, out var o) || o.Serial < serial;
+            }
+        }
+
+        /// <summary>PHLOX-22 B: llSetScriptState / the Running checkbox on an item still loading - applied when it starts.</summary>
+        internal void NoteScriptState(UUID itemId, bool enable)
+        {
+            if (!IsLoading(itemId)) return;
+            lock (m_PendingOps)
+            {
+                if (!m_PendingOps.TryGetValue(itemId, out var ops)) m_PendingOps[itemId] = ops = new PendingScriptOps();
+                ops.Enable = enable;
+            }
+        }
+
+        /// <summary>PHLOX-22 B: a reset of an item still loading - applied when it starts.</summary>
+        internal void NoteReset(UUID itemId)
+        {
+            if (!IsLoading(itemId)) return;
+            lock (m_PendingOps)
+            {
+                if (!m_PendingOps.TryGetValue(itemId, out var ops)) m_PendingOps[itemId] = ops = new PendingScriptOps();
+                ops.Reset = true;
+            }
+        }
+
+        // ── PHLOX-22 C: the result of an item's latest load, for GetScriptErrors (the script editor's Save) ──
+        //
+        // YEngine's GetScriptErrors (XMREngine.cs:1967) blocks until the compile of the item just rezzed has posted
+        // its errors - an empty list for success. The region calls it synchronously from CreateScriptInstanceEr,
+        // on the caps thread that answers the viewer's Save, right after OnRezScript posted the load; it is never
+        // the scheduler thread. Phlox waits the same way, bounded by the region's own 15 s
+        // (SceneObjectPartInventory.CreateScriptInstanceEr) and answering its "timedout waiting for errors".
+
+        /// <summary>How long GetScriptErrors waits for a compile before answering the timeout.</summary>
+        internal static TimeSpan ErrorWaitTimeout = TimeSpan.FromSeconds(15);
+        internal const string ErrorWaitTimedOut = "timedout waiting for errors";
+
+        private readonly Dictionary<UUID, (long Serial, List<string> Errors)> m_Outcomes = new();
+        private readonly Dictionary<UUID, long> m_LatestSerial = new();
+        private readonly Dictionary<UUID, int> m_EditorWaiters = new();
+        private long m_SerialCounter;
+
+        /// <summary>
+        /// How long a compile failure no editor is waiting for is held before it goes to the owner as a pop-up. The
+        /// editor's GetScriptErrors runs on the caps thread right after OnRezScript posts the load, but a compile can
+        /// fail first (17 ms on live, 2026-09-23 20:10:48); the editor then collects the stored outcome, and without
+        /// this the owner got the same errors twice - in the editor and as a pop-up.
+        /// </summary>
+        internal static TimeSpan OwnerAlertGrace = TimeSpan.FromSeconds(2);
+
+        /// <summary>Failures awaiting the owner pop-up, by item: the serial of the load that failed. Guarded by m_Outcomes.</summary>
+        private readonly Dictionary<UUID, long> m_UnclaimedFailures = new();
+
+        /// <summary>
+        /// Tell the owner about a failed compile unless an editor collects its errors within <see cref="OwnerAlertGrace"/>
+        /// (WaitForCompileErrors claims it). Nothing collects a rez or a restart, so those still get the pop-up.
+        /// </summary>
+        private void ReportUnlessClaimed(PhloxLoadRequest req, List<string> errors)
+        {
+            lock (m_Outcomes) m_UnclaimedFailures[req.ItemID] = req.Serial;
+            Task.Delay(OwnerAlertGrace).ContinueWith(_ =>
+            {
+                lock (m_Outcomes)
+                {
+                    if (!m_UnclaimedFailures.TryGetValue(req.ItemID, out long serial) || serial != req.Serial) return;
+                    m_UnclaimedFailures.Remove(req.ItemID);
+                }
+                ReportCompileFailureToOwner(req, errors);
+            }, TaskScheduler.Default);
+        }
+
+        /// <summary>
+        /// Record the outcome of <paramref name="req"/> and wake a waiting editor. Returns true when an editor is
+        /// waiting on this item (so the caller does not also send the owner an alert).
+        /// </summary>
+        private bool PublishOutcome(PhloxLoadRequest req, List<string> errors)
+        {
+            lock (m_Outcomes)
+            {
+                if (!m_Outcomes.TryGetValue(req.ItemID, out var prev) || prev.Serial <= req.Serial)
+                    m_Outcomes[req.ItemID] = (req.Serial, errors);
+                System.Threading.Monitor.PulseAll(m_Outcomes);
+                return m_EditorWaiters.TryGetValue(req.ItemID, out int n) && n > 0;
+            }
+        }
+
+        /// <summary>
+        /// PHLOX-22 C: the compile errors of this item's latest load - empty when it compiled and started - waiting
+        /// for that load to finish. Null when Phlox has no load of this item (another engine's script).
+        /// </summary>
+        internal List<string> WaitForCompileErrors(UUID itemId, TimeSpan timeout)
+        {
+            var until = DateTime.UtcNow + timeout;
+            lock (m_Outcomes)
+            {
+                if (!m_LatestSerial.TryGetValue(itemId, out long wanted)) return null;
+                m_EditorWaiters.TryGetValue(itemId, out int n);
+                m_EditorWaiters[itemId] = n + 1;
+                try
+                {
+                    while (true)
+                    {
+                        if (m_Outcomes.TryGetValue(itemId, out var o) && o.Serial >= wanted)
+                        {
+                            // The editor has it: no pop-up for the same failure (see ReportUnlessClaimed).
+                            if (m_UnclaimedFailures.TryGetValue(itemId, out long failed) && failed <= o.Serial) m_UnclaimedFailures.Remove(itemId);
+                            return new List<string>(o.Errors);
+                        }
+                        if (m_Stopped) return new List<string> { ErrorWaitTimedOut };
+                        var left = until - DateTime.UtcNow;
+                        if (left <= TimeSpan.Zero) return new List<string> { ErrorWaitTimedOut };
+                        System.Threading.Monitor.Wait(m_Outcomes, left);
+                    }
+                }
+                finally
+                {
+                    if (--m_EditorWaiters[itemId] <= 0) m_EditorWaiters.Remove(itemId);
+                }
             }
         }
 
@@ -434,43 +812,11 @@ namespace Phlox.ScriptEngine
                 pending = m_WaitingForCompile.Dequeue();
             }
 
-            var frontend = new CompilerFrontend(new LogOutputListener(pending.Requests[0].ItemID), ".");
-            try
-            {
-                m_CompileTimer.Restart();
-                CompiledScript compiled = InWorldz.Phlox.SLua.SLuaCompiler.IsLuaScript(pending.ScriptText)
-                    ? frontend.CompileLua(pending.ScriptText)
-                    : frontend.Compile(pending.ScriptText);
-                m_CompileTimer.Stop();
-
-                if (compiled == null)
-                {
-                    m_log.LogError("[PhloxLoader]: Compilation failed (from asset server) for {0}", pending.AssetId);
-                    return true;
-                }
-
-                compiled.AssetId = pending.AssetId;
-                SaveToDiskCache(compiled);
-                m_log.LogInformation("[PhloxLoader]: Compiled (from asset) {0} ({1}ms)", pending.AssetId, m_CompileTimer.ElapsedMilliseconds);
-
-                foreach (var req in pending.Requests)
-                    BeginScriptRun(req, compiled);
-
-                m_LoadedScripts[pending.AssetId] = new LoadedScript
-                {
-                    Script = compiled,
-                    RefCount = pending.Requests.Count
-                };
-            }
-            catch (Exception e)
-            {
-                m_log.LogError("[PhloxLoader]: Exception compiling from asset {0}: {1}", pending.AssetId, e);
-            }
-            finally
-            {
-                m_CompileTimer.Reset();
-            }
-
+            // PHLOX-22 B: to the compile thread like every other compile. Asset-server loads never kept rez order
+            // (the fetch is asynchronous), so they block no prim.
+            var job = new CompileJob { AssetId = pending.AssetId, ScriptText = pending.ScriptText, FromAssetServer = true };
+            job.Requests.AddRange(pending.Requests);
+            if (!m_Stopped) m_CompileQueue.Add(job);
             return true;
         }
 
@@ -525,7 +871,7 @@ namespace Phlox.ScriptEngine
             m_ExeScheduler.FinishedLoading(req, compiled);
         }
 
-        private void SaveToDiskCache(CompiledScript compiled)
+        private static void SaveToDiskCache(CompiledScript compiled)
         {
             try
             {
@@ -541,7 +887,7 @@ namespace Phlox.ScriptEngine
             }
         }
 
-        private string GetCachePath(UUID assetId)
+        private static string GetCachePath(UUID assetId)
         {
             string prefix = assetId.ToString().Substring(0, CACHE_PREFIX_LEN);
             return Path.Combine(CACHE_DIR, prefix, assetId.ToString() + SCRIPT_EXT);
@@ -559,7 +905,16 @@ namespace Phlox.ScriptEngine
             m_UnloadedCacheOrder.AddLast(assetId);
         }
 
-        internal void Stop() { }
+        /// <summary>
+        /// PHLOX-22 B: region shutdown. Queued compiles are dropped; one already running finishes on its thread and is
+        /// thrown away, never half-started; the thread then ends. Does not wait for it.
+        /// </summary>
+        internal void Stop()
+        {
+            m_Stopped = true;
+            try { m_CompileQueue.CompleteAdding(); } catch (ObjectDisposedException) { }
+            lock (m_Outcomes) System.Threading.Monitor.PulseAll(m_Outcomes);
+        }
     }
 
     /// <summary>
@@ -574,9 +929,16 @@ namespace Phlox.ScriptEngine
 
         public LogOutputListener(UUID itemId) { m_ItemId = itemId; }
 
+        /// <summary>PHLOX-2: every error, in order, so the owner can be told what the log already says.</summary>
+        private readonly List<string> m_Errors = new List<string>();
+
+        /// <summary>The compiler's errors for this script, in the order it reported them.</summary>
+        public IReadOnlyList<string> Errors => m_Errors;
+
         public void Error(string message)
         {
             m_ErrorCount++;
+            m_Errors.Add(message);
             m_log.LogError("[PhloxCompile]: {0}: {1}", m_ItemId, message);
         }
 
@@ -587,5 +949,108 @@ namespace Phlox.ScriptEngine
             => m_log.LogDebug("[PhloxCompile]: Finished {0}", m_ItemId);
 
         public bool HasErrors() => m_ErrorCount > 0;
+    }
+
+    /// <summary>
+    /// PHLOX-2. A script that will not compile has always been a log line and nothing else
+    /// (<see cref="LogOutputListener.Error"/>), so the resident whose object is broken is never
+    /// told and the object gives no sign. SL sends the owner the compiler's message; this is that.
+    ///
+    /// <para>The build is separated from the send so the wording is a unit test and the delivery
+    /// is one line.</para>
+    /// </summary>
+    public static class PhloxCompileErrorReport
+    {
+        /// <summary>
+        /// PHLOX-22 C: compiler messages in YEngine's editor format, "(line,col) Error: message"
+        /// (XMRInstCtor.ErrorHandler), which the viewer's script editor shows in its error pane. The
+        /// "N syntax error(s)" summary is dropped - each error already has its own line.
+        /// </summary>
+        public static List<string> ForEditor(IEnumerable<string> errors)
+        {
+            var result = new List<string>();
+            foreach (string e in errors ?? Array.Empty<string>())
+            {
+                if (string.IsNullOrWhiteSpace(e)) continue;
+                if (System.Text.RegularExpressions.Regex.IsMatch(e, @"^\d+ syntax error\(s\)$")) continue;
+                var m = System.Text.RegularExpressions.Regex.Match(e, @"^line:?\s*(\d+):(\d+)\s*(.*)$", System.Text.RegularExpressions.RegexOptions.Singleline);
+                if (m.Success) { result.Add($"({m.Groups[1].Value},{m.Groups[2].Value}) Error: {m.Groups[3].Value}"); continue; }
+                var lua = System.Text.RegularExpressions.Regex.Match(e, @"^SLua: (.*) \(line (\d+)\)$", System.Text.RegularExpressions.RegexOptions.Singleline);
+                if (lua.Success) { result.Add($"({lua.Groups[2].Value},0) Error: {lua.Groups[1].Value}"); continue; }
+                result.Add(e == PhloxScriptLoader.ErrorWaitTimedOut ? e : "(0,0) Error: " + e);
+            }
+            if (result.Count == 0 && errors != null && errors.Any()) result.Add("(0,0) Error: script failed to compile");
+            return result;
+        }
+
+        /// <summary>
+        /// The message SL sends the owner: the object, the script, and each error with its
+        /// position. One message per failed compile however many errors it carried - a script
+        /// with twenty errors must not be twenty dialogs.
+        /// </summary>
+        public static string Build(string objectName, string scriptName, IReadOnlyList<string> errors)
+        {
+            // PHLOX-3a: a compiler crash is not a script error and must not be reported as one.
+            // The resident gets the exception TYPE and the fact that the operator has it; the
+            // stack stays in the region log, where LogOutputListener already put it.
+            string crash = errors is null ? null
+                : errors.FirstOrDefault(InWorldz.Phlox.Types.CompilerCrash.IsCrash);
+            if (crash != null)
+            {
+                return "Script " + (string.IsNullOrEmpty(scriptName) ? "Script" : scriptName)
+                     + ": compiler error (not a script syntax error) \u2014 "
+                     + InWorldz.Phlox.Types.CompilerCrash.TypeNameOf(crash)
+                     + "; reported to the grid operator";
+            }
+
+            var sb = new System.Text.StringBuilder();
+            sb.Append(string.IsNullOrEmpty(objectName) ? "Object" : objectName);
+            sb.Append(" [");
+            sb.Append(string.IsNullOrEmpty(scriptName) ? "Script" : scriptName);
+            sb.Append("]: script failed to compile");
+
+            if (errors is null || errors.Count == 0)
+                return sb.ToString();
+
+            // The compiler already prefixes "line <l>:<c> " where it knows the position, so the
+            // errors are passed through rather than reformatted - reformatting would lose the
+            // positions on the messages that carry them differently.
+            const int Max = 10;
+            for (int i = 0; i < errors.Count && i < Max; i++)
+            {
+                sb.Append(Environment.NewLine);
+                sb.Append(errors[i]);
+            }
+            if (errors.Count > Max)
+            {
+                sb.Append(Environment.NewLine);
+                sb.Append("... and ");
+                sb.Append(errors.Count - Max);
+                sb.Append(" more; the rest are in the region log.");
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Send it, once, to the part's owner. Silent when the region has no dialog module or no
+        /// part - a missing notification must never take down a script load.
+        /// </summary>
+        public static void ToOwner(SceneObjectPart part, string scriptName, IReadOnlyList<string> errors)
+        {
+            if (part is null || errors is null || errors.Count == 0) return;
+            try
+            {
+                var dm = part.ParentGroup?.Scene?.RequestModuleInterface<IDialogModule>();
+                if (dm is null) return;
+                dm.SendAlertToUser(part.OwnerID, Build(part.Name, scriptName, errors), false);
+            }
+            catch (Exception ex)
+            {
+                m_reportLog.LogWarning(ex, "[PhloxCompile]: could not tell {Owner} that {Script} failed to compile",
+                    part.OwnerID, scriptName);
+            }
+        }
+
+        private static readonly ILogger m_reportLog = LoggerProvider.CreateLogger(typeof(PhloxCompileErrorReport));
     }
 }

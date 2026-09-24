@@ -72,7 +72,7 @@ label_
 
 funcBlockContent
     : SEMI                                                                                                                      # semiStmt
-    | LPAREN? lhs ('.' subscript=ID)? op=('=' | '+=' | '-=' | '*=' | '/=' | '%=' | '<<=' | '>>=') expression RPAREN? SEMI    # assignmentStmt
+    | LPAREN? lhs ('.' subscript=ID)? op=('=' | '+=' | '-=' | '*=' | '/=' | '%=') expression RPAREN? SEMI                    # assignmentStmt
     | i='if' '(' expression ')' s=statement ('else' e=statement)?                                                             # ifStmt
     | w='while' '(' expression ')' statement                                                                                   # whileStmt
     | f='for' '(' init=exprStatement cond=exprStatement loop=expression? ')' statement                                        # forStmt
@@ -128,7 +128,7 @@ expr
     ;
 
 assignmentExpression
-    : booleanExpression (('=' | '+=' | '-=' | '*=' | '/=' | '%=' | '<<=' | '>>=') assignmentExpression)*
+    : booleanExpression (('=' | '+=' | '-=' | '*=' | '/=' | '%=') assignmentExpression)*    // PHLOX-9: no <<= / >>= - SL has none; YEngine's is an extension
     ;
 
 booleanExpression
@@ -226,6 +226,7 @@ TYPE
     | 'key'
     | 'vector'
     | 'rotation'
+    | 'quaternion'   // PHLOX-9: SL keyword, interchangeable with rotation (wiki: Quaternion)
     | 'string'
     | 'list'
     ;

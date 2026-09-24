@@ -16,6 +16,35 @@ namespace InWorldz.Phlox.Compiler
     /// </summary>
     public class GenVisitor : LSLBaseVisitor<string>
     {
+        // PHLOX-21: the recursive dispatch runs out of stack before a deeply nested tree does (DepthGuard).
+        // PHLOX-22 A: the counted limits (NestingLimits) are the rule, the same levels the parser counted;
+        // DepthGuard stays as the backstop. VisitChildren goes through Visit so every child is counted.
+        private readonly NestingCounter _nesting = new NestingCounter();
+
+        public override string Visit(Antlr4.Runtime.Tree.IParseTree tree)
+        {
+            DepthGuard.Check(tree);
+            NestingKind? kind = NestingCounter.Classify(tree);
+            if (!kind.HasValue) return base.Visit(tree);
+            var start = (tree as Antlr4.Runtime.ParserRuleContext)?.Start;
+            _nesting.Enter(kind.Value, start?.Line ?? 0, start?.Column ?? 0);
+            try { return base.Visit(tree); }
+            finally { _nesting.Exit(kind.Value); }
+        }
+
+        public override string VisitChildren(Antlr4.Runtime.Tree.IRuleNode node)
+        {
+            DepthGuard.Check(node);
+            string result = DefaultResult;
+            int n = node.ChildCount;
+            for (int i = 0; i < n; i++)
+            {
+                if (!ShouldVisitNextChild(node, result)) break;
+                result = AggregateResult(result, Visit(node.GetChild(i)));
+            }
+            return result;
+        }
+
         private readonly SymbolTable _symtab;
         private readonly LSLNodeAnnotations _annotations;
 
@@ -622,7 +651,8 @@ namespace InWorldz.Phlox.Compiler
         {
             string funcName = GetCallName(context.postfixExpression());
             MethodSymbol methSym = funcName != null
-                ? _symtab.Globals.Resolve(funcName + "()") as MethodSymbol : null;
+                ? (GetSymbol(context) as MethodSymbol      // PHLOX-20: the type pass's choice, types and all
+                   ?? ResolveCallForGen(funcName, context.callParamList()?.expr()?.Length ?? 0)) : null;
 
             var exprs = new List<string>();
             if (context.callParamList() != null)
@@ -713,7 +743,8 @@ namespace InWorldz.Phlox.Compiler
         public override string VisitFuncCall([NotNull] LSLParser.FuncCallContext context)
         {
             string funcName = context.ID().GetText();
-            MethodSymbol methSym = _symtab.Globals.Resolve(funcName + "()") as MethodSymbol;
+            MethodSymbol methSym = GetSymbol(context) as MethodSymbol   // PHLOX-20: the type pass's choice, types and all
+                ?? ResolveCallForGen(funcName, context.callParamList()?.expr()?.Length ?? 0);
 
             var exprs = new List<string>();
             if (context.callParamList() != null)
@@ -951,5 +982,31 @@ namespace InWorldz.Phlox.Compiler
             if (tree.ChildCount == 1) return IsConstantExpr(tree.GetChild(0));
             return false;
         }
+
+        /// <summary>
+        /// PHLOX-20: the type pass now annotates the call with the symbol it chose, by argument type,
+        /// and this is the fallback for a call it never annotated (an error subtree, or a tree the type
+        /// pass did not reach). The two agree on every call that type-checked.
+        ///
+        /// PHLOX-2b. The same overload choice the type pass made, by the same rule - the bare name
+        /// unless its arity does not fit and a <c>name$&lt;arity&gt;</c> sibling does. Both passes
+        /// deriving the symbol the same way is what makes the emitted <c>syscall &lt;name&gt;</c>
+        /// reach the shim the type checker approved; the assembler keys its table off the same
+        /// <c>Defaults.SymbolNameFor</c>.
+        /// </summary>
+        private MethodSymbol ResolveCallForGen(string funcName, int argCount)
+        {
+            if (funcName == null) return null;
+
+            MethodSymbol bare = _symtab.Globals.Resolve(funcName + "()") as MethodSymbol;
+            if (bare == null) return null;
+            if (bare.Members.Count == argCount) return bare;
+
+            if (_symtab.Globals.Resolve(funcName + InWorldz.Phlox.Types.Defaults.OverloadSeparator + argCount + "()") is MethodSymbol overload)
+                return overload;
+
+            return bare;
+        }
+
     }
 }

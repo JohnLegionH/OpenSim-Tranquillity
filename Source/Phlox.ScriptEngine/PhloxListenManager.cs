@@ -38,6 +38,9 @@ namespace Phlox.ScriptEngine
         public string FilterName;   // empty string = wildcard
         public UUID FilterKey;      // UUID.Zero = wildcard
         public string FilterMsg;    // empty string = wildcard
+        /// <summary>PHLOX-19 (osListenRegex): when set, the name / message filter is a regular expression instead of an exact match.</summary>
+        public System.Text.RegularExpressions.Regex NameRegex;
+        public System.Text.RegularExpressions.Regex MsgRegex;
         public bool Active;
     }
 
@@ -69,6 +72,11 @@ namespace Phlox.ScriptEngine
 
         public int Add(uint localID, UUID itemID, UUID hostID,
                        int channel, string name, UUID key, string msg)
+            => Add(localID, itemID, hostID, channel, name, key, msg, 0);
+
+        /// <summary>PHLOX-19: osListenRegex - bit 1 (OS_LISTEN_REGEX_NAME) makes the name a regex, bit 2 (OS_LISTEN_REGEX_MESSAGE) the message; the caller has validated them.</summary>
+        public int Add(uint localID, UUID itemID, UUID hostID,
+                       int channel, string name, UUID key, string msg, int regexBitfield)
         {
             lock (m_Lock)
             {
@@ -85,6 +93,8 @@ namespace Phlox.ScriptEngine
                     FilterName  = name  ?? string.Empty,
                     FilterKey   = key,
                     FilterMsg   = msg   ?? string.Empty,
+                    NameRegex   = (regexBitfield & 1) != 0 && !string.IsNullOrEmpty(name) ? ScriptRegex.Create(name) : null,
+                    MsgRegex    = (regexBitfield & 2) != 0 && !string.IsNullOrEmpty(msg) ? ScriptRegex.Create(msg) : null,
                     Active      = true
                 };
 
@@ -113,6 +123,14 @@ namespace Phlox.ScriptEngine
                     entry.Active = active;
                 }
             }
+        }
+
+        /// <summary>PHLOX-21b B: is this listen registered and active? Null if it is not registered.</summary>
+        internal bool? IsActive(UUID itemID, int handle)
+        {
+            lock (m_Lock)
+                return m_ByItem.TryGetValue(itemID, out var byHandle) && byHandle.TryGetValue(handle, out var entry)
+                    ? entry.Active : (bool?)null;
         }
 
         // ── Called from llListenRemove ─────────────────────────────────────────
@@ -166,8 +184,8 @@ namespace Phlox.ScriptEngine
                 if (entry.Channel != channel) continue;
 
                 // Name filter (empty = wildcard)
-                if (entry.FilterName.Length > 0 &&
-                    !string.Equals(entry.FilterName, speakerName, StringComparison.OrdinalIgnoreCase))
+                if (entry.NameRegex != null ? !RegexMatches(entry, entry.NameRegex, speakerName)
+                    : entry.FilterName.Length > 0 && !string.Equals(entry.FilterName, speakerName, StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 // Key filter (UUID.Zero = wildcard)
@@ -175,8 +193,8 @@ namespace Phlox.ScriptEngine
                     continue;
 
                 // Message filter (empty = wildcard)
-                if (entry.FilterMsg.Length > 0 &&
-                    !string.Equals(entry.FilterMsg, message, StringComparison.Ordinal))
+                if (entry.MsgRegex != null ? !RegexMatches(entry, entry.MsgRegex, message)
+                    : entry.FilterMsg.Length > 0 && !string.Equals(entry.FilterMsg, message, StringComparison.Ordinal))
                     continue;
 
                 // Rate limit: drop if this script has received too many listens this second
@@ -186,6 +204,38 @@ namespace Phlox.ScriptEngine
                 PostListenEvent(entry, channel, speakerName, speakerKey, message);
             }
         }
+
+        /// <summary>
+        /// PHLOX-21: an osListenRegex filter that times out (ScriptRegex.MatchTimeout) does not match,
+        /// and delivery to every other listener carries on.
+        /// PHLOX-21b B: it also switches the listener off, exactly as llListenControl(handle, FALSE)
+        /// would, so the pattern cannot cost a timeout on every later line of the channel. The owner
+        /// is told once on DEBUG_CHANNEL and the region logs it once; llListenControl(handle, TRUE)
+        /// turns it back on.
+        /// </summary>
+        private bool RegexMatches(ListenEntry entry, System.Text.RegularExpressions.Regex regex, string input)
+        {
+            try { return regex.IsMatch(input ?? string.Empty); }
+            catch (System.Text.RegularExpressions.RegexMatchTimeoutException)
+            {
+                bool disabledNow;
+                lock (m_Lock)
+                {
+                    disabledNow = entry.Active;
+                    entry.Active = false;
+                }
+                if (disabledNow)
+                {
+                    m_log.LogWarning("[PhloxListen]: {0} for listen handle {1} of item {2}; listener disabled",
+                        ScriptRegex.TimedOutMessage, entry.Handle, entry.ItemID);
+                    try { m_Scheduler.FindScript(entry.ItemID)?.ShoutError(ListenRegexTimedOutNotice); }
+                    catch (Exception e) { m_log.LogWarning("[PhloxListen]: could not tell the owner: {0}", e.Message); }
+                }
+                return false;
+            }
+        }
+
+        internal const string ListenRegexTimedOutNotice = "osListenRegex: pattern timed out; listener disabled";
 
         private bool IsRateLimited(UUID itemID)
         {
