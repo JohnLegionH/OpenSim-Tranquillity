@@ -123,6 +123,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             desc.CapsuleHalfHeight = _capsuleHalfHeight;
             desc.CapsuleRadius = _capsuleRadius;
             desc.Mass = _mass;
+            desc.JumpSpeed = _module.AvatarJumpSpeed;   // JOLT-5: [Jolt] AvatarJumpSpeed (default 4.0 = CharacterDesc.Default)
             desc.WantsContactEvents = _subscribedMs > 0;
             desc.UserData = LocalID;   // echoed in every query hit / drain - the M4.5 query-marker identity
 

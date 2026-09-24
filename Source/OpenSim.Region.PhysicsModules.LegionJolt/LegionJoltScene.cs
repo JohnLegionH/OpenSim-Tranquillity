@@ -53,6 +53,14 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         private bool m_Enabled = false;
         private IConfigSource m_Config;
 
+        // JOLT-5: the [Jolt] section, parsed once in Initialise. Defaults reproduce the pre-JOLT-5 constants.
+        private JoltConfig _joltConfig = new JoltConfig();
+        internal float AvatarJumpSpeed => _joltConfig.AvatarJumpSpeed;
+
+        // J-9: the job pool is process-wide; log its size once, whichever region creates it.
+        private static readonly object s_poolLogGate = new object();
+        private static bool s_poolLogged;
+
         // The engine-agnostic backend (the deliverable proven in the clean-room harness).
         private ILegionPhysicsBackend _backend;
 
@@ -179,9 +187,9 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         private BodyState[] _bodyBuf = new BodyState[1024];
         private CharacterState[] _charBuf = new CharacterState[256];
         private ContactReport[] _contactBuf = new ContactReport[2048];
-        private int _bodyBufMax = 65536;
-        private int _charBufMax = 1024;
-        private int _contactBufMax = 2048;   // set to the ring capacity in AddRegion
+        private int _bodyBufMax = 65536;      // [Jolt] BodyUpdateBufferMax
+        private int _charBufMax = 1024;       // [Jolt] CharacterUpdateBufferMax
+        private int _contactBufMax = 2048;    // [Jolt] ContactBufferMax; 0 there = the ring capacity (set in AddRegion)
         private long _overflowLastWarnTicks;
 
         // Collision dispatch (M7 Task 3, base; JOLT-4): per-frame accumulation of colliders per subscribed prim,
@@ -194,7 +202,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
         // JOLT-3 (S-4a/S-4b): capacity surfacing. Step-thread only. The warning window starts at the last logged
         // snapshot; a failure inside the quiet period accumulates into the next line instead of being lost.
-        internal static long CapacityLogIntervalTicks = System.TimeSpan.FromSeconds(10).Ticks;
+        private long _capacityLogIntervalTicks = System.TimeSpan.FromSeconds(10).Ticks;   // [Jolt] CapacityLogIntervalSeconds
         private PhysicsCapacityStats _capBase;
         private long _capBaseTicks;
         private bool _capBaseSet;
@@ -227,6 +235,10 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
                     m_Enabled = true;
                     m_Config = source;
+                    var warnings = new List<string>();
+                    _joltConfig = JoltConfig.FromConfig(source, warnings);
+                    foreach (string w in warnings)
+                        m_log.LogWarning($"{LogHeader} {w}");
                     m_log.LogInformation($"{LogHeader} enabled (physics = {Name}).");
                 }
             }
@@ -253,22 +265,25 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             _regionSizeX = (int)sizeX;
             _regionSizeY = (int)sizeY;
 
-            var settings = PhysicsBackendSettings.Default;
-            settings.MaxBodies = ComputeMaxBodies(sizeX, sizeY);   // decision #3: 65536 / 256 m, scaled by area
-
-            // Sub-step the RIGID-BODY solver 6x inside _system.Update (M6.5 finding #3). At OpenSim's ~11 fps
-            // (0.0908 s/frame) a single integration lets a fast prim move ~1.5 m and tunnel through the terrain
-            // heightfield (discrete narrowphase; per-body LinearCast/CCD does NOT catch the heightfield - see
-            // the harness). CollisionSteps slices the SOLVER only, NOT the character step (which runs once per
-            // Step, before Update), so dropped prims rest WITHOUT disturbing the avatar's known-good 1-step path.
-            settings.CollisionSteps = 6;
+            // JOLT-5: every knob comes from [Jolt] (JoltConfig). The defaults are exactly what this used to hardcode:
+            // the backend's default settings, MaxBodies = 65536 per 256 m scaled by area (decision #3), and
+            // CollisionSteps = 6 - the RIGID-BODY solver sub-stepped 6x inside _system.Update (M6.5 finding #3): at
+            // OpenSim's ~11 fps a single integration lets a fast prim move ~1.5 m and tunnel through the terrain
+            // heightfield. CollisionSteps slices the SOLVER only, NOT the character step (once per Step, before
+            // Update), so dropped prims rest WITHOUT disturbing the avatar's known-good 1-step path.
+            PhysicsBackendSettings settings = _joltConfig.ToBackendSettings(sizeX, sizeY);
+            _bodyBufMax = _joltConfig.BodyUpdateBufferMax;
+            _charBufMax = _joltConfig.CharacterUpdateBufferMax;
+            _capacityLogIntervalTicks = System.TimeSpan.FromSeconds(_joltConfig.CapacityLogIntervalSeconds).Ticks;
 
             // SLICE-4 instrumentation: per-region RSS delta across backend init (8MB TempAllocator +
             // MaxBodies preallocation + JobSystemThreadPool) — feeds the scaling measurement gate.
             long rssBefore = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64;
             _backend = new LegionJoltBackend();
             _backend.Initialize(settings);
-            _contactBufMax = System.Math.Max(_contactBuf.Length, _backend.GetCapacityStats().ContactRingCapacity);
+            PhysicsCapacityStats initStats = _backend.GetCapacityStats();
+            _contactBufMax = _joltConfig.ContactBufferMax > 0 ? _joltConfig.ContactBufferMax : initStats.ContactRingCapacity;
+            LogJobPool(initStats.JobThreadCount);
             DefaultGravity = settings.Gravity;   // the vehicle controller applies this manually
             JoltMetrics.RecordRegionInit(RegionName,
                 System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 - rssBefore);
@@ -284,6 +299,23 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 (float)scene.RegionInfo.RegionSettings.WaterHeight);
 
             m_log.LogInformation($"{LogHeader} region '{RegionName}' {sizeX}x{sizeY}m: backend initialised, MaxBodies={settings.MaxBodies}. {EngineName}");
+        }
+
+        // J-9: the shared job pool is sized once, by the first region's request; every region reads the same
+        // [Jolt] ThreadCount, so they agree unless the pool predates this config (or a harness sized it).
+        private void LogJobPool(int poolThreads)
+        {
+            lock (s_poolLogGate)
+            {
+                if (!s_poolLogged)
+                {
+                    s_poolLogged = true;
+                    m_log.LogInformation($"{LogHeader} shared Jolt job pool: {poolThreads} worker threads (process-wide; [Jolt] ThreadCount={_joltConfig.ThreadCount}).");
+                }
+            }
+            int requested = _joltConfig.RequestedThreadCount;
+            if (requested != poolThreads)
+                m_log.LogWarning($"{LogHeader} region '{RegionName}' asked for {requested} job threads but the shared pool already has {poolThreads}; the first region's size wins.");
         }
 
         public void RemoveRegion(Scene scene)
@@ -2512,17 +2544,6 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             MainConsole.Instance.Output($"     (>=2 always empty, orientation-independent), so a box/bbox fallback would hit all 5 - corner misses prove the real triangle surface.");
         }
 
-        // Decision #3: MaxBodies ceiling tracks TOTAL prim count (every prim is a body), default
-        // 65536 for a standard 256 m region, scaling with region AREA for varregions.
-        private static int ComputeMaxBodies(uint sizeX, uint sizeY)
-        {
-            const long baseBodies = 65536;
-            const long baseArea = 256 * 256;
-            long area = (long)sizeX * sizeY;
-            long scaled = baseBodies * System.Math.Max(area, baseArea) / baseArea;
-            return (int)System.Math.Min(scaled, int.MaxValue);
-        }
-
         // ---------------------------------------------------------------------
         // PhysicsScene - actor creation (avatars M6.5; prims M6.3 cook / M6.4 dynamics)
         // ---------------------------------------------------------------------
@@ -3609,7 +3630,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 if (charFull) grew += GrowBuffer(ref _charBuf, _charBufMax, "character");
                 if (r.ContactBufferOverflowed) grew += GrowBuffer(ref _contactBuf, _contactBufMax, "contact");
                 long now = System.DateTime.UtcNow.Ticks;
-                if (_overflowLastWarnTicks == 0 || now - _overflowLastWarnTicks >= CapacityLogIntervalTicks)
+                if (_overflowLastWarnTicks == 0 || now - _overflowLastWarnTicks >= _capacityLogIntervalTicks)
                 {
                     _overflowLastWarnTicks = now;
                     m_log.LogWarning($"{LogHeader} {RegionName}: step buffer overflow (bodies {r.BodyUpdateCount}/{r.ActiveBodyCount} active, contacts overflowed={r.ContactBufferOverflowed});{grew} updates carry over to the next step.");
@@ -3627,7 +3648,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             return $" {what} buffer grown to {size};";
         }
 
-        // JOLT-3: after each Step, warn (at most once per CapacityLogIntervalTicks per region) when the update
+        // JOLT-3: after each Step, warn (at most once per [Jolt] CapacityLogIntervalSeconds per region) when the update
         // reported a capacity error or CreateBody was refused since the last warning, naming the [Jolt] key to raise.
         private void CheckCapacity()
         {
@@ -3650,7 +3671,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 _capBaseTicks = now;
                 return;
             }
-            if (_capLastWarnTicks != 0 && now - _capLastWarnTicks < CapacityLogIntervalTicks)
+            if (_capLastWarnTicks != 0 && now - _capLastWarnTicks < _capacityLogIntervalTicks)
                 return;                // quiet period: let the counts accumulate into the next line
             string msg = CapacityReport.Warning(RegionName,
                 _capBase, s, System.Math.Max(1.0, (now - _capBaseTicks) / (double)System.TimeSpan.TicksPerSecond));

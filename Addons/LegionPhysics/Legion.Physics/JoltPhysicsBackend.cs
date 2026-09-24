@@ -442,16 +442,23 @@ namespace Legion.Physics.Jolt
         // Lifecycle
         // =====================================================================
 
+        /// <summary>
+        /// The worker count a region's settings ask the shared job pool for: ThreadCount, or ProcessorCount - 1 when
+        /// 0, or 1 in DeterministicMode. Only the FIRST region's request sizes the process-wide pool (J-9); the
+        /// module compares its own request against <see cref="PhysicsCapacityStats.JobThreadCount"/> and warns.
+        /// </summary>
+        public static int ResolveThreadCount(int threadCount, bool deterministicMode)
+        {
+            if (deterministicMode)
+                return 1;
+            return threadCount > 0 ? threadCount : Math.Max(1, Environment.ProcessorCount - 1);
+        }
+
         public void Initialize(in PhysicsBackendSettings settings)
         {
             _settings = settings;
 
-            int threads = settings.ThreadCount > 0
-                ? settings.ThreadCount
-                : Math.Max(1, Environment.ProcessorCount - 1);
-
-            if (settings.DeterministicMode)
-                threads = 1;
+            int threads = ResolveThreadCount(settings.ThreadCount, settings.DeterministicMode);
 
             // Native boot. false => single precision (joltc.dll), decision #2 closed.
             // PROCESS-GLOBAL and REF-COUNTED: only the first region to come up actually calls
