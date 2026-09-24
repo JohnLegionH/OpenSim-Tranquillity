@@ -3844,6 +3844,10 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             // corner (physics runs in region-local coords - decision #2).
             ShapeId newShape = _backend.CreateHeightFieldShape(field, m, m, new SVector3(1f, 1f, 1f));
             _backend.SetTerrain(newShape, SVector3.Zero);
+            // JOLT-7c: at MaxBodies the engine refuses the terrain body - a region with no terrain collision is broken.
+            if (_backend.GetCapacityStats().TerrainBodyMissing)
+                m_log.LogError($"{LogHeader} region '{RegionName}': the physics engine refused the terrain body (MaxBodies reached); " +
+                               "this region has NO terrain collision - raise [Jolt] MaxBodies.");
 
             // Retain the cooked samples for TerrainHeightAt (vehicle hover/ground inputs) - the
             // exact field the collision surface was built from, so heights agree with contacts.

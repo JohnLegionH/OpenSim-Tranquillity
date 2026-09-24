@@ -473,8 +473,13 @@ namespace Legion.Physics
         public long ContactConstraintsFullSteps;
         /// <summary>The most recent non-None update error (None if there has never been one).</summary>
         public PhysicsUpdateErrors LastUpdateError;
-        /// <summary>CreateBody calls refused by the engine (MaxBodies reached); each returned BodyId.Invalid.</summary>
+        /// <summary>
+        /// Bodies refused by the engine (MaxBodies reached): CreateBody calls (each returned BodyId.Invalid), terrain
+        /// bodies and avatar query markers.
+        /// </summary>
         public long BodyCreateFailures;
+        /// <summary>The last SetTerrain was refused a body (MaxBodies reached): the region has no terrain collision.</summary>
+        public bool TerrainBodyMissing;
 
         public int LiveBodyCount;
         public int ActiveBodyCount;

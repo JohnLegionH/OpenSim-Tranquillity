@@ -180,6 +180,7 @@ namespace Legion.Physics.Jolt
         private long _contactConstraintsFullSteps;
         private int _lastUpdateError;   // PhysicsUpdateErrors
         private long _bodyCreateFailures;
+        private bool _terrainBodyMissing;   // JOLT-7c: the last SetTerrain got no body (MaxBodies); Volatile
 
         // Region water plane height (metres, region-local Z). Stored for buoyancy (M8) and queries;
         // no water collision body in the solve yet - water is a force field, not a surface.
@@ -950,7 +951,7 @@ namespace Legion.Physics.Jolt
                     throw new ArgumentException($"CreateCompoundShape: child {i} ({c.Shape}) is not a live shape.");
                 // Create() AddRefs each child, so the child native survives via the compound even after
                 // the caller releases the child's Legion handle.
-                settings.AddShape(c.Position, c.Orientation, childRec.NativeShape, c.UserData);
+                settings.AddShape(c.Position, c.Orientation, childRec.NativeShape!, c.UserData);
                 childUserData[i] = c.UserData;
             }
 
@@ -1073,7 +1074,7 @@ namespace Legion.Physics.Jolt
             if (!_shapes.TryGet(baseShape.Value, out JoltShapeRecord baseRec) || !IsLive(baseRec))
                 throw new ArgumentException($"CreateScaledShape: {baseShape} is not a live shape.");
 
-            Vector3 valid = baseRec.NativeShape.MakeScaleValid(scale);
+            Vector3 valid = baseRec.NativeShape!.MakeScaleValid(scale);
             using var settings = new ScaledShapeSettings(baseRec.NativeShape, valid);
             var rec = new JoltShapeRecord
             {
@@ -1173,7 +1174,7 @@ namespace Legion.Physics.Jolt
 
             var objectLayer = new ObjectLayer((uint)desc.Layer);
             var bcs = new BodyCreationSettings(
-                shapeRec.NativeShape, desc.Position, desc.Orientation, joltMotion, objectLayer);
+                shapeRec.NativeShape!, desc.Position, desc.Orientation, joltMotion, objectLayer);
             float mass = 0f;
             try
             {
@@ -1330,7 +1331,7 @@ namespace Legion.Physics.Jolt
             if (!_shapes.TryGet(shape.Value, out JoltShapeRecord shapeRec) || !IsLive(shapeRec))
                 throw new ArgumentException($"SetBodyShape: {shape} is not a live shape handle.");
             // Do not wake the body just because its shape changed (activation stays the caller's call).
-            _bodyInterface.SetShape(jid, shapeRec.NativeShape, recomputeMass, Activation.DontActivate);
+            _bodyInterface.SetShape(jid, shapeRec.NativeShape!, recomputeMass, Activation.DontActivate);
             rec.Shape = shape;
             }   // _simLock
         }
@@ -1808,21 +1809,31 @@ namespace Legion.Physics.Jolt
                 try { markerId = _bodyInterface.CreateAndAddBody(markerBcs, Activation.DontActivate); }
                 finally { markerBcs.Dispose(); }
 
-                var markerRec = new JoltBodyRecord
+                // JOLT-7c: CreateBody's invalid-id policy (JOLT-3, S-4b). At MaxBodies the avatar gets no query
+                // marker (queries will not see it; it still walks and collides): count it, record nothing against
+                // 0xFFFFFFFF, and leave MarkerBodyId 0 - "none" to Step and RemoveCharacter.
+                if (markerId.IsInvalid)
                 {
-                    NativeBodyId = markerId.ID,
-                    Shape = ShapeId.Invalid,
-                    Layer = PhysicsLayer.AvatarQuery,
-                    MotionType = BodyMotionType.Kinematic,
-                    UserData = desc.UserData,
-                    WantsContactEvents = false,
-                    IsCharacterMarker = true,
-                };
-                uint markerHandle = _bodies.Add(markerRec);
-                markerRec.Handle = markerHandle;
-                _joltToRecord[markerId.ID] = markerRec;
-                rec.MarkerBodyId = markerId.ID;
-                rec.MarkerRecord = markerRec;
+                    Interlocked.Increment(ref _bodyCreateFailures);
+                }
+                else
+                {
+                    var markerRec = new JoltBodyRecord
+                    {
+                        NativeBodyId = markerId.ID,
+                        Shape = ShapeId.Invalid,
+                        Layer = PhysicsLayer.AvatarQuery,
+                        MotionType = BodyMotionType.Kinematic,
+                        UserData = desc.UserData,
+                        WantsContactEvents = false,
+                        IsCharacterMarker = true,
+                    };
+                    uint markerHandle = _bodies.Add(markerRec);
+                    markerRec.Handle = markerHandle;
+                    _joltToRecord[markerId.ID] = markerRec;
+                    rec.MarkerBodyId = markerId.ID;
+                    rec.MarkerRecord = markerRec;
+                }
 
                 // Avatar as a COLLISION CITIZEN. Rather than an inner rigid body (which in 2.18.6
                 // cannot report kinematic-vs-static/terrain, whose CollideKinematicVsNonDynamic fix
@@ -2237,6 +2248,17 @@ namespace Legion.Physics.Jolt
                 bcs.Friction = 0.6f;
                 BodyID joltId = _bodyInterface.CreateAndAddBody(bcs, Activation.DontActivate);
 
+                // JOLT-7c: CreateBody's invalid-id policy (JOLT-3, S-4b). At MaxBodies there is no terrain body:
+                // record nothing against 0xFFFFFFFF, count it, and flag it - the module logs an error, because a
+                // region with no terrain collision is broken.
+                if (joltId.IsInvalid)
+                {
+                    Interlocked.Increment(ref _bodyCreateFailures);
+                    Volatile.Write(ref _terrainBodyMissing, true);
+                    return;
+                }
+                Volatile.Write(ref _terrainBodyMissing, false);
+
                 var rec = new JoltBodyRecord
                 {
                     NativeBodyId = joltId.ID,
@@ -2578,6 +2600,7 @@ namespace Legion.Physics.Jolt
                 ContactConstraintsFullSteps = Interlocked.Read(ref _contactConstraintsFullSteps),
                 LastUpdateError = (PhysicsUpdateErrors)Volatile.Read(ref _lastUpdateError),
                 BodyCreateFailures = Interlocked.Read(ref _bodyCreateFailures),
+                TerrainBodyMissing = Volatile.Read(ref _terrainBodyMissing),
                 MaxBodies = _settings.MaxBodies,
                 MaxBodyPairs = _settings.MaxBodyPairs,
                 MaxContactConstraints = _settings.MaxContactConstraints,

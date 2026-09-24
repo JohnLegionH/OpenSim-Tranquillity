@@ -50,6 +50,56 @@ public class CapacityTests
         Assert.Equal(16, stats.MaxBodies);
     }
 
+    /// <summary>The backend's Jolt-id -> record map: 0xFFFFFFFF must never be a key.</summary>
+    private static System.Collections.IDictionary JoltToRecord(Legion.Physics.Jolt.JoltPhysicsBackend b)
+        => (System.Collections.IDictionary)typeof(Legion.Physics.Jolt.JoltPhysicsBackend)
+            .GetField("_joltToRecord", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(b)!;
+
+    [Fact]
+    public void Terrain_and_avatar_marker_past_MaxBodies_are_refused_and_counted()
+    {
+        // JOLT-7c: CreateBody's invalid-id policy at the terrain body and the avatar query marker.
+        using var t = new JoltTestBackend(JoltTestBackend.Settings(maxBodies: 16));
+        var box = t.B.CreateBoxShape(new Vector3(0.5f));
+        for (var i = 0; i < 16; i++)
+        {
+            var d = BodyDesc.Default;
+            d.Shape = box;
+            d.Position = new Vector3(10f + i * 2f, 10f, 10f);
+            Assert.True(t.B.CreateBody(d).IsValid);
+        }
+        Assert.Equal(0, t.B.GetCapacityStats().BodyCreateFailures);
+
+        var heights = new float[17 * 17];
+        var field = t.B.CreateHeightFieldShape(heights, 17, 17, Vector3.One);
+        t.B.SetTerrain(field, Vector3.Zero);
+        var s = t.B.GetCapacityStats();
+        Assert.Equal(1, s.BodyCreateFailures);
+        Assert.True(s.TerrainBodyMissing);
+
+        var cd = CharacterDesc.Default;
+        cd.Position = new Vector3(100f, 100f, 1.5f);
+        var avatar = t.B.CreateCharacter(cd);
+        Assert.True(avatar.Value != 0);   // the avatar itself still exists; only its query marker is refused
+        s = t.B.GetCapacityStats();
+        Assert.Equal(2, s.BodyCreateFailures);
+        Assert.Equal(1, s.CharacterCount);
+        Assert.Equal(16, s.LiveBodyCount);
+
+        var map = JoltToRecord(t.B);
+        Assert.False(map.Contains(0xFFFFFFFFu), "an invalid Jolt BodyID was recorded");
+        Assert.Equal(16, map.Count);
+
+        // Stepping, a second terrain attempt and removing the avatar must not touch the invalid id.
+        t.Step();
+        t.B.SetTerrain(field, Vector3.Zero);
+        Assert.Equal(3, t.B.GetCapacityStats().BodyCreateFailures);
+        t.B.RemoveCharacter(avatar);
+        t.Step();
+        Assert.False(JoltToRecord(t.B).Contains(0xFFFFFFFFu));
+    }
+
     [Fact]
     public void Tiny_pair_and_contact_caps_record_the_update_error()
     {
