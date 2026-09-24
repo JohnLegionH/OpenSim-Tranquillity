@@ -24,7 +24,45 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
         internal bool IsTracked(uint localId) => _collidedLastFrame.Contains(localId);
 
-        internal void BeginFrame() => _accum.Clear();
+        // JOLT-6 (C-4): Top Colliders, ubODE's model - a prim's CollisionScore is the number of Begin/Persist
+        // contact reports that named it this frame, counted BEFORE the subscription filter, and reset every frame.
+        // _prevScored is last frame's scored set, so the module can zero the prims that dropped out.
+        private readonly Dictionary<uint, int> _scores = new Dictionary<uint, int>();
+        private readonly List<uint> _prevScored = new List<uint>();
+
+        /// <summary>This frame's contact count per struck prim.</summary>
+        internal Dictionary<uint, int> Scores => _scores;
+
+        /// <summary>The prims that had a score last frame (valid after <see cref="BeginFrame"/>).</summary>
+        internal List<uint> PreviouslyScored => _prevScored;
+
+        internal void BeginFrame()
+        {
+            _accum.Clear();
+            _prevScored.Clear();
+            foreach (uint id in _scores.Keys)
+                _prevScored.Add(id);
+            _scores.Clear();
+        }
+
+        /// <summary>One Begin/Persist report named <paramref name="struckPrim"/> (0 = terrain, not scored).</summary>
+        internal void CountContact(uint struckPrim)
+        {
+            if (struckPrim == 0)
+                return;
+            _scores.TryGetValue(struckPrim, out int n);
+            _scores[struckPrim] = n + 1;
+        }
+
+        /// <summary>The <paramref name="cap"/> highest-scored entries, highest first.</summary>
+        internal static List<KeyValuePair<uint, float>> TopColliders(List<KeyValuePair<uint, float>> scored, int cap)
+        {
+            var sorted = new List<KeyValuePair<uint, float>>(scored);
+            sorted.Sort((a, b) => b.Value.CompareTo(a.Value));
+            if (sorted.Count > cap)
+                sorted.RemoveRange(cap, sorted.Count - cap);
+            return sorted;
+        }
 
         /// <summary>Record that subscribed prim <paramref name="prim"/> touches <paramref name="collider"/> this frame.</summary>
         internal void AddCollider(uint prim, uint collider, ContactPoint contact)

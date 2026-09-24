@@ -3718,6 +3718,8 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             }
             foreach (uint id in _collisions.CollidedLastFrame)
                 _frameIds.Add(id);
+            foreach (uint id in _collisions.Scores.Keys)   // last frame's scored prims (JOLT-6: zeroed if gone)
+                _frameIds.Add(id);
             _framePrims.Clear();
             lock (_prims)
             {
@@ -3732,6 +3734,10 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 ref ContactReport c = ref _contactBuf[i];
                 if (c.Phase == ContactPhase.End)
                     continue;   // OpenSim derives "ended" from absence in the current set
+
+                // JOLT-6 (C-4): every Begin/Persist report scores both struck parts, subscribed or not.
+                _collisions.CountContact(c.ChildUserDataA);
+                _collisions.CountContact(c.ChildUserDataB);
 
                 // Per-child identity (M7 Task 3 landing 2): dispatch to the STRUCK part on each side
                 // (ChildUserData - the compound child hit, or the body itself for a single prim), and name
@@ -3757,6 +3763,14 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             foreach (uint id in _collisions.EndFrame(contactsOverflowed))
                 if (_framePrims.TryGetValue(id, out JoltPrim p) && p.SubscribedEvents())
                     p.SendCollisionUpdate(new CollisionEventUpdate());
+
+            // JOLT-6: publish this frame's scores; a prim scored last frame and not now drops back to 0.
+            foreach (uint id in _collisions.PreviouslyScored)
+                if (!_collisions.Scores.ContainsKey(id) && _framePrims.TryGetValue(id, out JoltPrim p))
+                    p.CollisionScore = 0f;
+            foreach (KeyValuePair<uint, int> kv in _collisions.Scores)
+                if (_framePrims.TryGetValue(kv.Key, out JoltPrim p))
+                    p.CollisionScore = kv.Value;
         }
 
         // A LocalID resolves (this frame) to a prim that currently has a collision-script subscription (M7 Task 3
@@ -3910,7 +3924,21 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             _terrainShape = ShapeId.Invalid;
         }
 
-        public override Dictionary<uint, float> GetTopColliders() => new Dictionary<uint, float>();
+        // JOLT-6 (C-4): up to 25 prims with a non-zero CollisionScore (this frame's contact count), highest first,
+        // keyed by LocalID - ubODE's model. Note: Persist contacts are only generated for subscribed pairs, so a
+        // resting pile of unscripted objects scores only on its Begin frames.
+        public override Dictionary<uint, float> GetTopColliders()
+        {
+            var scored = new List<KeyValuePair<uint, float>>();
+            lock (_prims)
+                foreach (KeyValuePair<uint, JoltPrim> kv in _prims)
+                    if (kv.Value.CollisionScore > 0f)
+                        scored.Add(new KeyValuePair<uint, float>(kv.Key, kv.Value.CollisionScore));
+            var top = new Dictionary<uint, float>();
+            foreach (KeyValuePair<uint, float> kv in CollisionFrameTracker.TopColliders(scored, 25))
+                top[kv.Key] = kv.Value;
+            return top;
+        }
 
         public override void Dispose()
         {

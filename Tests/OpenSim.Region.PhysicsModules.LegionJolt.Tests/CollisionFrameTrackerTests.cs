@@ -57,3 +57,55 @@ public class CollisionFrameTrackerTests
         Assert.True(t.IsTracked(9));
     }
 }
+
+/// <summary>
+/// JOLT-6 (audit C-4). Top Colliders, ubODE's model: CollisionScore = the Begin/Persist contact reports that named
+/// the prim this frame (counted before the subscription filter), reset every frame; the top 25 by score.
+/// </summary>
+public class TopCollidersTests
+{
+    [Fact]
+    public void Scores_count_contacts_per_prim()
+    {
+        var t = new CollisionFrameTracker();
+        t.BeginFrame();
+        t.CountContact(7);
+        t.CountContact(7);
+        t.CountContact(7);
+        t.CountContact(8);
+        t.CountContact(0);   // terrain is not a prim
+        Assert.Equal(3, t.Scores[7]);
+        Assert.Equal(1, t.Scores[8]);
+        Assert.False(t.Scores.ContainsKey(0));
+    }
+
+    [Fact]
+    public void Scores_reset_next_frame()
+    {
+        var t = new CollisionFrameTracker();
+        t.BeginFrame();
+        t.CountContact(7);
+        t.CountContact(8);
+        t.EndFrame(false);
+
+        t.BeginFrame();
+        t.CountContact(8);
+        Assert.False(t.Scores.ContainsKey(7));
+        Assert.Equal(1, t.Scores[8]);
+        Assert.Equal(new uint[] { 7, 8 }, t.PreviouslyScored.OrderBy(x => x));   // the module zeroes 7's CollisionScore
+    }
+
+    [Fact]
+    public void Top_colliders_are_the_25_highest_in_order()
+    {
+        var scored = Enumerable.Range(1, 30).Select(i => new KeyValuePair<uint, float>((uint)i, i % 7 == 0 ? 100f + i : i)).ToList();
+        var top = CollisionFrameTracker.TopColliders(scored, 25);
+        Assert.Equal(25, top.Count);
+        Assert.Equal(new uint[] { 28, 21, 14, 7 }, top.Take(4).Select(kv => kv.Key));
+        for (var i = 1; i < top.Count; i++)
+            Assert.True(top[i - 1].Value >= top[i].Value);
+        Assert.DoesNotContain(top, kv => kv.Key is 1 or 2 or 3 or 4 or 5);   // the five lowest are cut
+
+        Assert.Empty(CollisionFrameTracker.TopColliders(new List<KeyValuePair<uint, float>>(), 25));
+    }
+}
