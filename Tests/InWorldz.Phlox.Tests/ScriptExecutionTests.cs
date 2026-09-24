@@ -5,7 +5,7 @@ using InWorldz.Phlox.VM;
 using Xunit;
 namespace InWorldz.Phlox.Tests;
 /// <summary>
-/// PHLOX-2d. Everything before this ran the compiler; nothing ran a script. On 1.1.275 the manhole
+/// PHLOX-2d. Everything before this ran the compiler; nothing ran a script. In world the manhole
 /// compiled and then did nothing — no <c>state_entry</c>, no error — and the suite could not say
 /// whether compiled bytecode still executes.
 ///

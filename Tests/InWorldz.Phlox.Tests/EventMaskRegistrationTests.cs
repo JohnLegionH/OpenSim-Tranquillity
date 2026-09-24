@@ -8,7 +8,7 @@ namespace InWorldz.Phlox.Tests;
 /// <summary>
 /// PHLOX-2f. A fresh script instance runs its <c>state_entry</c> but never registers its event
 /// mask, so the region does not know the prim is touchable: no touch cursor, and
-/// <c>touch_start</c> never fires. Observed live on 1.1.277 at 15:48-15:53 — llSetColor, llSetText,
+/// <c>touch_start</c> never fires. Observed in world — llSetColor, llSetText,
 /// llSay and llOwnerSay all ran, the Running box was ticked, and the prim could not be clicked.
 /// </summary>
 [Collection("phlox-state")]

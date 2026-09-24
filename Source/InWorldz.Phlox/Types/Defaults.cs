@@ -4791,7 +4791,7 @@ namespace InWorldz.Phlox.Types
 
             // ---------------------------------------------------------------- PHLOX-5 SL names and arities
             // SL is the authority for names and signatures; every older Phlox spelling and arity stays
-            // above, so current Legion content compiles unchanged. Appended, so nothing moves.
+            // above, so existing content compiles unchanged. Appended, so nothing moves.
 
             // wiki.secondlife.com/wiki/LlsRGB2Linear - "vector llsRGB2Linear( vector srgb )". Lowercase s.
             // Phlox carried it as llSRGB2Linear (570); that spelling remains an alias.

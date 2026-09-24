@@ -22,9 +22,8 @@ Phlox persists script state through its own `StateManager` (constructed in
   loop (2.5 s) on change (`ScriptChanged`). **Delete** on script reset (`DeleteState`).
 
 Because of this, state **survives** anything that stays inside one process with the
-`item_id` intact: in-place region/sim restart, in-process region crossings (all live
-regions are one process today — this is why crossings and attachments have worked
-for months), and local attach/detach and take→rez where the item id is preserved.
+`item_id` intact: in-place region/sim restart, in-process region crossings (while all
+regions share one process, crossings and attachments keep their state), and local attach/detach and take→rez where the item id is preserved.
 
 ### The gap (the stubbed framework serializer)
 `IScriptModule.GetXMLState`, `SetXMLState`, and `SaveAllState` are stubs on Phlox
@@ -40,7 +39,7 @@ object rather than sit in the local SQLite DB:
 - **Cross-process / cross-host** region crossing or teleport-with-attachments — the
   destination process has a different `script_state.db` with no row for that item id.
 - **Hypergrid teleport** to/from a foreign grid — the foreign sim cannot reach
-  Legion's SQLite DB; embedded object state is the only possible transport.
+  the home region server's SQLite DB; embedded object state is the only possible transport.
 - Operations that assign a **new item id** to the rezzed copy (rez-a-copy,
   give-to-another-avatar) resolve to default state (arguably correct for a fresh copy,
   but noted so it is not mistaken for the cross-process gap).
@@ -53,10 +52,9 @@ processes, OARs, and HG — the only cases the SQLite path cannot cover.
 
 ---
 
-## PHLOX-1 — the two live compile failures, and an OSSL surface audit
+## PHLOX-1 — two in-world compile failures, and an OSSL surface audit
 
-**Logged:** 2026-09-07, against `1.1.264-alpha+bb4bcd03dc`. Both failures are from the
-Ebony startup at 08:35 UTC. **Nothing was fixed in this pass** — see "What this needs"
+**Logged:** 2026-09-07. Both failures are from one region's startup log. **Nothing was fixed in this pass** — see "What this needs"
 at the end, and the decision it turns on.
 
 ### The two failures, and they are not the same kind of thing
@@ -149,13 +147,13 @@ change, not a data change.
 overloading are one capability: resolve a call by name *and* argument signature instead
 of by name alone. Do it once and both the manhole script and the airship script compile.
 
-So the choice is a real one and it belongs to John:
+So the choice is a real one and it belongs to the maintainer:
 
-- **(A)** Give Phlox signature-keyed symbol resolution — fixes both live failures, closes
+- **(A)** Give Phlox signature-keyed symbol resolution — fixes both in-world failures, closes
   the 2 overload rows, and makes Phlox and YEngine agree. Largest change; touches the
   symbol table, call-site resolution and codegen.
 - **(B)** Add only the missing *non-overloaded* functions from the 271 — real value, no
-  compiler change, does nothing for either live failure.
+  compiler change, does nothing for either in-world failure.
 - **(C)** Fix neither and treat both scripts as content bugs. Defensible for the airship
   (SL would reject it too); **not** defensible for the manhole, whose `osTeleportAgent`
   call is valid OSSL that this simulator advertises.
@@ -206,8 +204,8 @@ frontend takes is stored and never read, so a compile needs no scene, no region 
 This is the harness whose absence made PHLOX-1 report YEngine's verdict from reading source
 rather than running a compile.
 
-**It reproduces the live failure verbatim** — `line 8:8 Function 'osTeleportAgent' expects 4
-arguments, got 3`, the same message the region logged for `9898c41e-…` at 08:35 UTC.
+**It reproduces the in-world failure verbatim** — `line 8:8 Function 'osTeleportAgent' expects 4
+arguments, got 3`, the same message the region logged for `9898c41e-…`.
 
 **Owner-visible compile errors (part 3).** `PhloxCompileErrorReport.Build` composes the SL-shaped
 message — `<object> [<script>]: script failed to compile` followed by the compiler's own lines,
@@ -319,11 +317,11 @@ key is precisely the class of mistake this work exists to avoid.
 
 - **The manhole (`9898c41e-…`) is NOT fixed** and will still fail at every region start.
 - **The airship stays rejected** by ruling; `UserFunctionOverloadTests` passes.
-- Nothing is deployed. Solution 0 errors; `InWorldz.Phlox.Tests` 12 passed, 3 skipped.
+- Solution 0 errors; `InWorldz.Phlox.Tests` 12 passed, 3 skipped.
 
 ---
 
-## PHLOX-2c — overload resolution finished; the manhole is **fixed, pending deploy**
+## PHLOX-2c — overload resolution finished; the manhole is **fixed**
 
 **Logged:** 2026-09-07. Closes PHLOX-2b. Built-in `ll*`/`os*` calls now resolve by name **and**
 signature, all the way through to the shim.
@@ -361,27 +359,25 @@ Argument types remain the tree's own implicit-conversion rule: `promoteFromTo` p
 - **`InWorldz.Phlox.Tests`: 38 passed, 0 skipped.** Solution 0 errors.
 - **`DispatchIndexGuardTests` green throughout** — no existing built-in moved its index, none
   vanished, indices stay unique and contiguous, every one has a non-null shim.
-- **Every script live on this grid compiles.** All 17 distinct script assets in prims across every
-  region are committed under `Tests/InWorldz.Phlox.Tests/LiveScripts` and compiled by
-  `LiveScriptCompileTests` — content, not fixtures, because they are what actually runs. The only
-  failure is the airship, which must fail.
+- **Every surveyed in-world script compiles.** All 17 distinct script assets found in prims on the
+  development grid compiled; the only failure is the airship, which must fail. (The survey and its
+  test are grid-specific tooling and are not kept in this tree.)
 - **The 20-plus built-ins those scripts actually call each keep their original dispatch index**,
   checked from the direction that matters rather than only across the table.
 
 ### Standing
 
-- **The manhole (`9898c41e-…`, asset `01d4448d-…`) compiles — fixed, pending deploy.** It has
-  failed at every region start since it was rezzed; it will start on the next one that carries this.
+- **The manhole (`9898c41e-…`, asset `01d4448d-…`) compiles — fixed.** It had
+  failed at every region start since it was rezzed.
 - **The airship (`3eb0c62b-…`) still fails, by ruling**, on user-function overloading, with a
   message about the duplicate symbol. It is content to fix, not a compiler defect.
 - **`botRemoveBot`'s key** is fixed and pinned (see the PHLOX-2c key commit).
-- Nothing is deployed.
 
 ---
 
 ## PHLOX-2d — freshly started scripts never ran, and it was never a 2b/2c regression
 
-**Logged:** 2026-09-07, against live 1.1.275. **Fixed; not deployed.**
+**Logged:** 2026-09-07. **Fixed.**
 
 ### The defect
 
@@ -432,17 +428,17 @@ and then `EventManager.TriggerUpdateScript` and `ResumeScripts()`. It does **not
 `OnRezScript`, so the absence of an `OnRezScript` line after a save is expected rather than a fault;
 the absence of a `Compiled` line is consistent with the asset already being in the disk cache.
 
-**A19's `IAgentAssetTransactions` void→bool does not sit on this path and is not in this deploy.**
+**The `IAgentAssetTransactions` void→bool change does not sit on this path.**
 `git log bb4bcd03dc..c94c561cf1` over `OpenSim.Region.Framework/` and
-`CoreModules/Agent/AssetTransaction/` is **empty** — A19 shipped at 1.1.262 and the script-save path
-was untouched between 1.1.264 and 1.1.275. Whether the saved script then *ran* is the same
+`CoreModules/Agent/AssetTransaction/` is **empty** — the script-save path was untouched in that
+range. Whether the saved script then *ran* is the same
 fresh-start question this row fixes; whether the save itself stored is unverified. **Not fixed here.**
 
 ### Correction to the record
 
-**PHLOX-2c's deploy row claimed the manhole was "fixed, pending deploy" and the deploy row listed
-its verification as pending — but the verification that mattered was never possible from what was
-checked.** The 1.1.275 deploy verified that the *binaries* landed: hashes, metadata names, the
+**PHLOX-2c recorded the manhole as fixed, with its in-world verification pending — but the
+verification that mattered was never possible from what was checked.** The rollout check verified
+that the *binaries* landed: hashes, metadata names, the
 overload keys. It did not, and could not, show a script running, because nothing in the suite ran
 one. The manhole compiled and still did nothing. **A "did it land" check that stops at the artefact
 is not a verification of the behaviour**; the behaviour needed a script to execute, and that test
@@ -474,7 +470,7 @@ This is the gap PHLOX-2d named and could not build in the time it had.
 | shared-script start (second instance of a loaded asset) → `state_entry` runs | **PASSES** |
 | fresh instance handles a posted `touch_start` | **PASSES** |
 
-**The scheduler runs a fresh instance correctly.** The second variant is the live symptom exactly —
+**The scheduler runs a fresh instance correctly.** The second variant is the in-world symptom exactly —
 `Starting shared script 2074003b` at 16:55:18 for a new item on a fresh prim — and it works here.
 So on the brief's own rule the fault is **outside the scheduler**, and this stops here rather than
 producing a fix that passes.
@@ -491,11 +487,11 @@ Each of them produced a convincing red that meant nothing:
 3. **The engine name.** `PhloxEngine.Name` is **`"InWorldz.Phlox"`**, not `"PhloxEngine"`, and
    `OnRezScript` returns immediately when the name does not match (`PhloxEngine.cs:312`). Passing
    the wrong one dropped every rez **silently — no log line at all**, and left every queue empty.
-   That is the one to remember: it is indistinguishable, from outside, from the live symptom.
+   That is the one to remember: it is indistinguishable, from outside, from the in-world symptom.
 
 ### Where to look next
 
-The scheduler is exonerated for a fresh instance, so the live difference is in what the region does
+The scheduler is exonerated for a fresh instance, so the in-world difference is in what the region does
 that the test scene does not. Candidates, none investigated:
 
 - **`TaskInventoryItem.ScriptRunning`** — the region persists a per-item running flag; the harness
@@ -503,7 +499,7 @@ that the test scene does not. Candidates, none investigated:
   `STATE_ENTRY` (`PhloxExecutionScheduler.cs:655-656`).
 - **`OnStartScript` / `ChangeEnabledStatus`** — the region calls these around rez; the harness does
   not.
-- **The master scheduler's thread**, which the harness deliberately replaces. If the live failure is
+- **The master scheduler's thread**, which the harness deliberately replaces. If the in-world failure is
   a lost wake-up, this harness cannot see it by construction — the `m_ActionEvent` comment at
   `PhloxMasterScheduler.cs:70-79` describes exactly that class of bug having been fixed once before.
 - **`StateManager.LoadState`** returning something non-null for a brand-new item, which would take
@@ -516,7 +512,7 @@ is recorded as one.
 
 ## PHLOX-2f — a fresh instance was born disabled, so the region never learned the prim was touchable
 
-**Logged:** 2026-09-07. **Fixed; not deployed.** The timer half was **not reproduced** — see below.
+**Logged:** 2026-09-07. **Fixed.** The timer half was **not reproduced** — see below.
 
 ### The defect, and it is one line
 
@@ -540,7 +536,7 @@ derives `PrimFlags.Touch` from `anytouch` in that mask (`:5254-5256`, into `m_lo
 `:5269`), and the region's own touch dispatch tests the same mask
 (`Scene.PacketHandlers.cs:334`). With it empty: **no touch cursor, and `touch_start` can never
 fire** — while `state_entry` still ran, because `ProcessEventQueue` lets `STATE_ENTRY` past a
-disabled script (`:664`). That is exactly what was seen on 1.1.277 at 15:48-15:53: llSetColor,
+disabled script (`:664`). That is exactly what was seen in world: llSetColor,
 llSetText, llSay and llOwnerSay all worked, Running was ticked, and the prim could not be clicked.
 It is also why the manhole's `llSetTouchText` ran and the menu still read "Touch".
 
@@ -555,7 +551,7 @@ enabled; that is not a property of having been Reset.
 `EventMaskRegistrationTests` — three, all red before the fix:
 
 - a fresh compile registers `touch_start` on the part, and the aggregate carries `anytouch`;
-- a **shared-script start** (second instance of a loaded asset) does too — the live path;
+- a **shared-script start** (second instance of a loaded asset) does too — the in-world path;
 - a touch through the **scene's own route** (`EventManager.TriggerObjectGrab` → the engine's
   `OnObjectGrab`) reaches `touch_start`. Not a directly posted event.
 
@@ -571,7 +567,7 @@ passes on the unmodified tree.** The units are consistent end to end: `SetTimer`
 ms (`:434`), and `CheckSleepingScripts` compares the two directly (`:601-605`). **No unit or scale
 error found, and none invented.**
 
-So the live ~5 ticks/second has another cause, and the most likely place is the one this harness
+So the in-world ~5 ticks/second has another cause, and the most likely place is the one this harness
 cannot see by construction — `PhloxMasterScheduler`'s thread and its wake-up arithmetic, which the
 harness replaces with a hand-driven pump. `PhloxMasterScheduler.cs:70-79` already documents one
 lost-wakeup bug of that family having been fixed. **Next step: measure it in world with the new
@@ -596,7 +592,7 @@ a debugger. The mask line is the one that would have made PHLOX-2f a five-minute
 ### Amendments to PHLOX-2d and PHLOX-2e
 
 - **PHLOX-2d's `Waiting` fix stands** and was correct — `ProcessEventQueue` does only start an
-  event for a `Waiting` script — but it was **not the live symptom**. The live symptom was this:
+  event for a `Waiting` script — but it was **not the in-world symptom**. The in-world symptom was this:
   the event mask never reaching the region, plus the timer cadence, which is still open.
 - **PHLOX-2e's conclusion stands too**: the scheduler does run a fresh instance, and it does. What
   2e could not see is that running is not enough — the region also has to be *told* what the script
@@ -606,7 +602,7 @@ a debugger. The mask line is the one that would have made PHLOX-2f a five-minute
 
 ## PHLOX-2g — 24 async syscalls never signalled completion; and llSetTouchText never told the viewer
 
-**Logged:** 2026-09-07. **Fixed; not deployed.**
+**Logged:** 2026-09-07. **Fixed.**
 
 ### Two defects, and the brief's framing needs one correction
 
@@ -673,7 +669,7 @@ not to measure jitter. **The timer cadence itself is still unreproduced** (PHLOX
 
 ## PROPS-1 — the touch label never reached the viewer
 
-**Logged:** 2026-09-08. **Fixed; not deployed.**
+**Logged:** 2026-09-08. **Fixed.**
 
 ### Where it was lost: not set, not copied, not sent, or sent too early?
 
@@ -750,9 +746,9 @@ remain, and PHLOX-1's standing instruction holds: check those against the **SL w
 
 ---
 
-## PHLOX-3 candidates seen on 1.1.287
+## PHLOX-3 candidates seen in world
 
-**Logged:** 2026-09-09 - (i) and (ii) from the MERGE-1 deploy's live verification, (iii) from the startup review of the first two starts on 1.1.287, (iv) from PHLOX-3b. **The timer-floor candidate is resolved - see PHLOX-3b below; (v) was resolved as PHLOX-3a.**
+**Logged:** 2026-09-09 - (i) and (ii) from an in-world verification, (iii) from a review of two region startup logs, (iv) from PHLOX-3b. **The timer-floor candidate is resolved - see PHLOX-3b below; (v) was resolved as PHLOX-3a.**
 
 ### (i) `phlox status <name>` reports a miss once per scene that does not hold the object
 
@@ -763,8 +759,8 @@ aggregate. Worth fixing when the command is next touched, not on its own.
 
 ### (ii) `3eb0c62b` still fails to compile: "Symbol 'SetVehicleSettings()' already defined"
 
-Unchanged on 1.1.287 - `[PhloxCompile]: "3eb0c62b-f307-41d4-a82c-da59aef5ca05": "line 96:0 Symbol
-'SetVehicleSettings()' already defined"` at load. This is the last of PHLOX-1's live compile failures whose
+Unchanged - `[PhloxCompile]: "3eb0c62b-f307-41d4-a82c-da59aef5ca05": "line 96:0 Symbol
+'SetVehicleSettings()' already defined"` at load. This is the last of PHLOX-1's in-world compile failures whose
 **verdict is still unsettled**, and it stays unsettled for the same reason as before: PHLOX-1's rule is that
 if YEngine accepts what Phlox rejects it is a Phlox compiler rule to fix, and if both reject it is the
 script's bug and gets recorded rather than fixed. **Nobody has compiled this script under YEngine yet.**
@@ -806,18 +802,18 @@ harness or a real lock in the engine.
 
 ## PHLOX-3a - RESOLVED: `state default;` crashed the compiler
 
-**Logged:** 2026-09-09 as candidate (v). **Fixed the same day; not deployed.**
+**Logged:** 2026-09-09 as candidate (v). **Fixed the same day.**
 
 ### What it looked like
 
-Every region start under 1.1.287 logged, twice, at 04:37:36 and again at 04:56:15:
+Every region start logged, twice:
 
 ```
 ERROR [PhloxCompile]: 4e51f068-...: Object reference not set to an instance of an object.
 ERROR [PhloxLoader]: Compilation failed for 1ee3b9b1-... item 4e51f068-...
 ```
 
-The script is `lmap4` on Ebony, a four-state lamp belonging to a Legion Grid resident. Nothing in it is
+The script is `lmap4`, a four-state lamp belonging to a resident. Nothing in it is
 exotic, which was the first useful signal: whatever the compiler tripped over had to be something
 ordinary.
 
@@ -871,7 +867,7 @@ strings, and the front end has neither a logger nor a dialog module), so:
 | `7ae8910a41` | the fix: null `ID()` handled in `TypesVisitor` |
 | `39f1a0c113` | owner alert distinguishes a compiler crash from a script error |
 
-Phlox suite **55 -> 60**, all green; solution 0 errors. **Not deployed** - deploy is a separate session.
+Phlox suite **55 -> 60**, all green; solution 0 errors.
 
 ### Filed while here, not chased
 
@@ -884,11 +880,11 @@ was changed on the resident's script.
 
 ## PHLOX-3b - RESOLVED: `llSetTimerEvent` had no floor
 
-**Logged:** 2026-09-09 as candidate (iii). **Fixed the same day; not deployed.**
+**Logged:** 2026-09-09 as candidate (iii). **Fixed the same day.**
 
 ### What it cost
 
-A resident script on Ebony called `llSetTimerEvent(0.01)`. Phlox honoured it exactly - `phlox status`
+A resident script called `llSetTimerEvent(0.01)`. Phlox honoured it exactly - `phlox status`
 read back `timer: 10 ms` - and the region logged `Slow timeslice` warnings of **1-1.8 s** for two days,
 across three regions, until the prim was deleted. **One script, one prim, three regions degraded**, and
 nothing in the engine said no.
@@ -902,7 +898,7 @@ clamp"*. Both halves are false, and both were checked against sources this time 
 |---|---|
 | **SL wiki**, `llSetTimerEvent` | Documents **no minimum**. Only *"Cause the timer event to be triggered a maximum of once every sec seconds"* and *"Passing in 0.0 stops further timer events"*. The `timer` event page says nothing about a minimum or a frame-rate limit either. |
 | **Halcyon / InWorldz** (`D:\halcyon-reference`) | **No clamp anywhere.** `LSLSystemAPI.cs:1116` -> `EngineInterface.cs:831-834` -> `ExecutionScheduler.cs:1846-1853`, `TimerInterval = (int)(sec * 1000)`, tested only `> 0`. |
-| **Upstream, in this repo** | **Clamps.** `LSL_Api.cs:4005-4011`, `if (sec != 0.0 && sec < m_MinTimerInterval) sec = m_MinTimerInterval;` - code default 0.5 (`:113`), config key `MinTimerInterval` (`:518`), and `OpenSimDefaults.ini` ships `[YEngine] MinTimerInterval = 0.1`, **which is live on this grid**. |
+| **Upstream, in this repo** | **Clamps.** `LSL_Api.cs:4005-4011`, `if (sec != 0.0 && sec < m_MinTimerInterval) sec = m_MinTimerInterval;` - code default 0.5 (`:113`), config key `MinTimerInterval` (`:518`), and `OpenSimDefaults.ini` ships `[YEngine] MinTimerInterval = 0.1`, **which is what a region on the shipped defaults runs**. |
 
 So until this fix, **the same call behaved differently depending on which engine ran the script** - YEngine
 floored at 0.1 s, Phlox at nothing.
@@ -911,7 +907,7 @@ floored at 0.1 s, Phlox at nothing.
 
 **0.1 s, config-driven** - `MinTimerInterval` in `[InWorldz.Phlox]`, same key name and same default as the
 other engine, so an operator sets one number and both agree; `0` disables the floor; the value is logged
-at startup next to `Enabled`. **John chose the config-driven form over a hard constant**, having been
+at startup next to `Enabled`. **The config-driven form was chosen over a hard constant**, having been
 shown that neither named source supported any constant.
 
 One clamp, **at the API entry and not in the scheduler**, so `phlox status` reads back the value actually
@@ -931,9 +927,9 @@ not merely how fast it runs. Rare, but it is a behaviour change and not only a l
 | `ef064538a0` | red test - 6 cases through the whole engine; 2 red (10 ms, and 0 ms for the sub-millisecond case) |
 | `516c6a9be8` | the fix: config-driven floor, clamp at the API entry |
 
-Phlox suite **60 -> 66**, all green; solution 0 errors. **Not deployed.**
+Phlox suite **60 -> 66**, all green; solution 0 errors.
 
-**Did-it-land, named for the deploy:** a fresh prim calling `llSetTimerEvent(0.01)` shows **`timer: 100 ms`**
+**Did it land:** a fresh prim calling `llSetTimerEvent(0.01)` shows **`timer: 100 ms`**
 in `phlox status`; **one** DEBUG clamp line appears in the log for it; and **no `Slow timeslice`** is logged
 for that script.
 
@@ -942,7 +938,7 @@ for that script.
 
 ## PHLOX-4 - restored scripts, and one clock for the engine
 
-**Logged and part-fixed 2026-09-09. Not deployed. Two arms deliberately left open - see below.**
+**Logged and part-fixed 2026-09-09. Two arms deliberately left open - see below.**
 
 ### The four saved states, and what each did
 
@@ -1029,7 +1025,7 @@ it belongs with **candidate (iv)**, the intermittent harness failures.
 
 ## PHLOX-4b / 4c - the Running measurement corrected, Syscall done, and a regression I caused
 
-**2026-09-09. Not deployed.** Two sessions; the first ended uncommitted on purpose.
+**2026-09-09.** Two sessions; the first ended uncommitted on purpose.
 
 ### What 4b established
 
@@ -1089,8 +1085,8 @@ until the suite has run parallel-by-default for a while with those two removed; 
 
 ## PHLOX-5 - SL names and arities for six built-ins
 
-**2026-09-09. Landed; not deployed.** SL is the authority for names and signatures; every older Phlox
-spelling and arity stays as an alias or overload, so current Legion content compiles unchanged.
+**2026-09-09. Landed.** SL is the authority for names and signatures; every older Phlox
+spelling and arity stays as an alias or overload, so existing content compiles unchanged.
 
 ### The six, each against its wiki page
 
@@ -1124,10 +1120,9 @@ event before, which is why the SL `llUpdateKeyValue` contract needed it.
 
 ### Verified
 
-Phlox suite **76 -> 89**, 0 skipped, green; solution 0 errors. The 17-script live set compiles unchanged
-(`LiveScriptCompileTests` in the same run), and **none of the six older spellings appears in any of the
-17** - `grep` over `LiveScripts/scripts/*.lsl` for all six names returns nothing - so no live script's
-resolution changes.
+Phlox suite **76 -> 89**, 0 skipped, green; solution 0 errors. The 17 surveyed in-world scripts compile unchanged,
+and **none of the six older spellings appears in any of the 17** - a `grep` for all six names returns
+nothing - so no surveyed script's resolution changes.
 
 ### Found in the harness on the way, fixed
 
@@ -1153,7 +1148,7 @@ harness, not about dispatch.
 
 ## PHLOX-6 - the five SL events Phlox did not recognise
 
-**2026-09-09. Landed; not deployed.** A script declaring any of these handlers failed to compile - the
+**2026-09-09. Landed.** A script declaring any of these handlers failed to compile - the
 compiler rejected the handler name outright. Signatures are the SL wiki's, checked page by page.
 
 | event | wiki signature | compiles | mask bit | delivers | trigger |
@@ -1205,7 +1200,7 @@ executed, since the same file carries both halves.
 Phlox suite **89 -> 99**, 0 skipped, green; solution 0 errors. Four new `scriptEvents` bits (44-47) in
 `OpenSim.Region.Framework` - unused by YEngine, harmless to it.
 
-**Did-it-land for the deploy:** a prim with all five handlers compiles with no `[PhloxCompile]` error,
+**Did it land:** a prim with all five handlers compiles with no `[PhloxCompile]` error,
 and `phlox status` lists them in the mask.
 
 
@@ -1213,7 +1208,7 @@ and `phlox status` lists them in the mask.
 
 ## PHLOX-7a - four stubs that upstream LSL_Api already implements
 
-**2026-09-09. Landed; not deployed.** Each was a no-op or a default return in `LSLSystemAPI.cs`; each is
+**2026-09-09. Landed.** Each was a no-op or a default return in `LSLSystemAPI.cs`; each is
 ported from the upstream body, the SL wiki page checked first, Phlox's own conventions kept.
 
 | function | was | upstream ported from | wiki agrees | now |
@@ -1244,7 +1239,7 @@ test scene and reads the string off the rezzed group.
   `REZ_POS=1, REZ_ROT=2, REZ_VEL=3, REZ_DAMAGE=4, REZ_PARAM=7, REZ_FLAGS=8`; SL's are
   `REZ_PARAM=0, REZ_FLAGS=1, REZ_POS=2, REZ_ROT=3, REZ_VEL=4, REZ_DAMAGE=8`. A script written to the SL
   constants had every rule misread. Aligned to upstream. **This is a behaviour change** for any script
-  that used Phlox's private numbers as literals; none of the 17 live scripts calls
+  that used Phlox's private numbers as literals; none of the 17 surveyed in-world scripts calls
   `llRezObjectWithParams` at all (grep), so nothing on the grid moves.
 
 ### The collision filter - why the engine consults it too
@@ -1276,7 +1271,7 @@ Phlox suite **99 -> 105**, 0 skipped, green; solution 0 errors. `grep` for a `St
 
 ## PHLOX-7b - the remaining stubs
 
-**2026-09-09. Landed; not deployed.** Same method as 7a: wiki page first, upstream body where one exists,
+**2026-09-09. Landed.** Same method as 7a: wiki page first, upstream body where one exists,
 Phlox conventions kept, every test red on the unchanged engine (5/5 failed) and green after.
 
 | function | was | wiki | upstream | now |
@@ -1319,7 +1314,7 @@ function with it (a list, per the wiki).
 
 ## PHLOX-8 - constants audit: Phlox vs SL, by name and by value
 
-**2026-09-09. Landed; not deployed.** `Docs/audit/phlox-constants-audit.py` parses both tables
+**2026-09-09. Landed.** `Docs/audit/phlox-constants-audit.py` parses both tables
 (`InWorldz.Phlox/Compiler/DefaultConstants.cs`, 832 names before / 1140 after; upstream
 `ScriptBase/LSL_Constants.cs`, 964 names, every expression resolved), normalises each side to what a
 **script** sees - upstream's `A | B`, `1 << n`, `unchecked((int)0x...)` and `ZERO_VECTOR` aliases evaluated in
@@ -1341,8 +1336,8 @@ declaration order; Phlox's STRING/KEY text put through the same unescape the ass
 | `TOUCH_INVALID_VECTOR` | `<0,0,0>` | `= ZERO_VECTOR` (`:810`) | [TOUCH_INVALID_VECTOR](https://wiki.secondlife.com/wiki/TOUCH_INVALID_VECTOR): `<0.0, 0.0, 0.0>` | **both right** - the audit's vector regex missed the alias. Audit corrected | unchanged |
 | `JSON_APPEND` | integer `-1` | **string** `"-1"` (`:945`) | [JSON_APPEND](https://wiki.secondlife.com/wiki/JSON_APPEND): `integer JSON_APPEND = -1`; Halcyon `:736` integer | **Phlox right, upstream's type is its own** (its JSON functions take `list` and compare the string form). Listed in the audit's `SL_SIDES_WITH_PHLOX` with the page, reported outside B | unchanged |
 
-**Live scripts:** `grep` of `Tests/InWorldz.Phlox.Tests/LiveScripts/scripts/*.lsl` for the four B names - **0 hits**;
-no live script depended on the old `TOUCH_INVALID_FACE`. It is still a behaviour change for any script
+**In-world scripts:** a `grep` of the 17 surveyed scripts for the four B names - **0 hits**;
+no surveyed script depended on the old `TOUCH_INVALID_FACE`. It is still a behaviour change for any script
 in the grid that compared against `2147483647` literally or against the constant and expected the old
 value; the wiki idiom now works.
 
@@ -1364,14 +1359,14 @@ fix, not the additions (a script naming an added constant never compiled, so has
 
 ## PHLOX-9 - four small SL-parity leftovers
 
-**2026-09-09. Landed; not deployed.** Each against its wiki page, each red on the unchanged engine first
+**2026-09-09. Landed.** Each against its wiki page, each red on the unchanged engine first
 (`SlParityLeftoverTests`: 7 of 10 red, then 10 of 10 green; suite **116 -> 126**, 0 skipped).
 
 | # | was | SL (wiki) | now |
 |---|---|---|---|
 | 1 | `LSLSystemAPI.ShoutError` sent `"Script error: ..."` as a **Shout on channel 0** - local chat, every avatar in 100 m read it | [DEBUG_CHANNEL](https://wiki.secondlife.com/wiki/DEBUG_CHANNEL) `0x7FFFFFFF`: "chat channel reserved for script debugging and error messages"; the viewer shows it in the script-error window, and "most viewers filter out messages received on DEBUG_CHANNEL from objects owned by others" | channel **DEBUG_CHANNEL**, text unchanged. `ChatModule.cs:211` turns that channel into `ChatTypeEnum.DebugChannel` before delivery. **Wider than the brief's "run-time errors"**: `ShoutError` is the API's one error door - `TerminateWithError` (`PhloxExecutionScheduler.cs:1286`), the VM's own raise (`Interpreter.cs:122`), `SyscallShim.cs:801`, and ~100 sites in `LSLSystemAPI` ("No permissions to track the camera", "No item named ...", "PERMISSION_DEBIT not granted", ...). All of those are DEBUG_CHANNEL messages in SL as well, so every caller moves together; there is no second door left on channel 0 |
 | 2 | `quaternion` was not a type: `quaternion q;` failed with *Unknown type 'quaternion'* | [Quaternion](https://wiki.secondlife.com/wiki/Quaternion): "a keyword supported by the LSL compiler that means the same thing as, and is interchangeable with, rotation" | `'quaternion'` is a `TYPE` token in `LSL.g4`; `SymbolTable.CanonicalTypeName` maps it to `rotation` at the three places TYPE text becomes a type (`DefVisitor.ResolveType`, `TypesVisitor.ResolveType`, `AnalyzeVisitor.VisitFuncDef`), so it resolves to the one `ROTATION` instance the type tables compare by reference. Declarations, parameters, return types and `(quaternion)` casts all work |
-| 3 | `<<=` and `>>=` accepted (`assignmentStmt` `:75`, `assignmentExpression` `:131`) | [LSL_Operators](https://wiki.secondlife.com/wiki/LSL_Operators): no shift-assign exists; YEngine's acceptance is its own extension | both removed from both rules; `x <<= 1;` is a syntax error **on its line** (`line 6:`), `x = x << 1;` unchanged. **LiveScripts: 0 uses of either** |
+| 3 | `<<=` and `>>=` accepted (`assignmentStmt` `:75`, `assignmentExpression` `:131`) | [LSL_Operators](https://wiki.secondlife.com/wiki/LSL_Operators): no shift-assign exists; YEngine's acceptance is its own extension | both removed from both rules; `x <<= 1;` is a syntax error **on its line** (`line 6:`), `x = x << 1;` unchanged. **Surveyed in-world scripts: 0 uses of either** |
 | 4 | `Op_Lneq` (`Interpreter.Actions.cs:2564`) pushed `0`/`1` | [LSL_Operators](https://wiki.secondlife.com/wiki/LSL_Operators): "Equality test on lists does not compare contents, only the length"; `a != b` is `llGetListLength(a) - llGetListLength(b)` | `Op_Lneq` pushes the length difference: `[1,2,3] != [1]` is **2**, `[1] != [1,2,3]` is **-2**, `[1] != [2]` is **0**. `Op_Leq` stays `0`/`1` (`[1,2] == [3,4]` is 1) |
 
 **The other two error paths, checked and left alone:** the PHLOX-2 compile-error surfacing goes
@@ -1392,7 +1387,7 @@ always carried and that nothing documented: the listener interface renamed `ILSL
 ILSLParseTreeListener` (the compiler already has an `ILSLListener`, the status listener), and two
 `using`s in `LSLParser.cs`. **Gate before the grammar change:** the script on the *unchanged* `LSL.g4`
 reproduced the committed `Compiler/` files byte for byte, bar the `Generated from <path>` header line
-(the old one names `D:/legion-grid-source/...`). Token numbering shifted (`T__41`, `T__42` gone; `TYPE`
+(the old one names a path in another checkout). Token numbering shifted (`T__41`, `T__42` gone; `TYPE`
 44 -> 42) - a tree-wide regeneration, 16 generated files, and the reason the diff is large.
 
 ### What pins it
@@ -1414,9 +1409,9 @@ A harness candidate, not an engine defect, recorded here.
 
 ### PHLOX-9b - DEBUG_CHANNEL object chat reaches the owner only
 
-**2026-09-10. Landed; not deployed.** The did-it-land for 1.1.315 came back **half wrong**: Legion's
+**2026-09-10. Landed.** The in-world check came back **half wrong**: an owner's
 divide-by-zero prim raised the script-warning box on a second avatar's viewer standing nearby, with the
-Owner field correctly showing Legion. The channel change landed (it was DEBUG_CHANNEL, not local chat);
+Owner field correctly showing the owner. The channel change landed (it was DEBUG_CHANNEL, not local chat);
 the *outcome* depended on the viewer. The [DEBUG_CHANNEL](https://wiki.secondlife.com/wiki/DEBUG_CHANNEL)
 page says the sim broadcasts and "most viewers filter out messages received on DEBUG_CHANNEL from objects
 owned by others" - this viewer did not. The sim filters now.
@@ -1443,7 +1438,7 @@ failures are recorded as found, not proven pre-existing (no second checkout in b
 
 ## PHLOX-10 - the damage-applied hook: on_damage, final_damage, llDetectedDamage, llDamage
 
-**2026-09-10. Landed in two commits; not deployed.** Wiki pages read first: on_damage, final_damage,
+**2026-09-10. Landed in two commits.** Wiki pages read first: on_damage, final_damage,
 llDetectedDamage, llAdjustDamage, llDamage, llSetDamage (DAMAGE_TYPE_* from the llDamage page - the
 constant pages themselves 404).
 
@@ -1487,7 +1482,7 @@ bounded region-side wait on script completion, and nothing else in the engine do
 
 **Functions.** `llDetectedDamage(integer)` returns a **list** now (was a `float` stub at index 655; same
 index, new return type). `llAdjustDamage` is SL's **`(integer number, float new_damage)`** at index 604 -
-the OpenSim-form `(key, float)` with the same arity is gone (the resolver keys overloads by arity; 0 live
+the OpenSim-form `(key, float)` with the same arity is gone (the resolver keys overloads by arity; 0 surveyed
 scripts used it; `llDamage` is the SL way to deal damage). `llDamage(key, float, integer)` goes through
 the door with the calling prim as source: avatars only, region damage must be on, **no 10-per-30-s
 throttle and no seat redirect** (both wiki rules, not done). Sixteen **`DAMAGE_TYPE_*`** constants added
@@ -1515,9 +1510,9 @@ right: it lives in the door that path now calls.
 
 ## PHLOX-11 - script_state.db: no more "database is locked"
 
-**2026-09-10. Landed; not deployed.** Live on 1.1.319, start 05:47:01: `05:47:08 WARN [PhloxState] Failed to
+**2026-09-10. Landed.** In world, at a region start: `WARN [PhloxState] Failed to
 load state for 77147179-... "database is locked"` (348 ms after that script started from disk cache),
-then `05:47:09 ERROR [PhloxState] Batch flush failed: "database is locked"`. A failed load was a fresh
+then `ERROR [PhloxState] Batch flush failed: "database is locked"`. A failed load was a fresh
 start: `LoadState` swallowed the exception and returned null, `FinishedLoading` read null as "no saved
 state", posted `state_entry`, and the next flush **saved the fresh state over the row** - the globals
 were gone for good, not just for that run. Three regions load in parallel and each engine's
@@ -1527,19 +1522,19 @@ were gone for good, not just for that run. Three regions load in parallel and ea
 
 Three shapes against a real temp DB with the pre-fix connection setup, 10 rounds each, **0 BUSY**:
 one manager with three loader threads restoring 50 rows each against a writer feeding the flush loop;
-**three managers on one file** (three engines, three flush loops - the live shape); and pure open/close
+**three managers on one file** (three engines, three flush loops - the in-world shape); and pure open/close
 churn, nine threads x 800 loads with no long-lived connection. Two probes explain why:
 
 - a load against a held `BEGIN EXCLUSIVE` returned its row in **12 ms** (WAL readers do not block on
   the writer), and a write against the same held lock **waited 2098 ms and succeeded** - System.Data.SQLite
   retries a plain `SQLITE_BUSY` inside `Step` until its 30 s command timeout. In-process contention
-  therefore never surfaces as an exception, which is why the live failure - **348 ms** after the load
+  therefore never surfaces as an exception, which is why the in-world failure - **348 ms** after the load
   began, not 30 s - cannot have been a plain busy. What the provider does *not* retry is the busy a
   connection gets while another is rebuilding the WAL index, and the old code opened and closed a
   connection **per call**, so between calls the connection count dropped to zero and the WAL was torn
   down and rebuilt, over and over, across three engines. That is the mechanism this fix removes;
   it could not be provoked on this machine in the budget, and that is recorded as such rather than
-  as a red test. **The cited exception is the live one**, not a test's.
+  as a red test. **The cited exception is the in-world one**, not a test's.
 - the churn probe ran **2015 ms** on per-call connections and **53 ms** on the persistent ones.
 
 `StateDbContentionTests` (the three-manager shape, 10 rounds) stays as the regression: it must read 0
@@ -1577,18 +1572,9 @@ the persistent connections and the busy timeout now serve as well.
 
 ## PHLOX-12 - the OSSL lane opens; three PHLOX-11 leftovers ride along
 
-**2026-09-10. Landed in two commits; not deployed.**
+**2026-09-10. Landed in two commits.**
 
 ### PART 0 - the leftovers
-
-**0a - the verify scripts counted lines from earlier starts.** Every count *was* scoped to
-`/tmp/thisstart.log`, but that file was built with `awk '$0 >= "<timestamp>"'` - a string compare - and an
-exception's continuation lines carry no timestamp: `database is locked"` alone on a line sorts after any
-`2026-...` string and came through from the 05:47 start on every run. The 15:30 start showed the count as
-2 with 0 `[PhloxState]` errors. All three scripts (`verify-phlox8-9`, `9b-10`, `11`) now scope by the
-**line number** of the last `[STARTUP]`. Re-run against the 15:30 start of 1.1.321: `database is locked`
-**0**, `[PhloxState]` WARN/ERROR **0**, `Restored state for` **17** - the row that failed on 1.1.319 loads.
-That is the first of PHLOX-11's two required clean starts.
 
 **0b - the flush race (`92552f74d1`).** `SerializedRuntimeState.FromRuntimeState` already snapshotted
 `Calls`, `EventQueue` (under `EventQueueLock`), `ActiveListens`, `MiscAttributes` and `Globals` - and
@@ -1600,7 +1586,7 @@ while another serialises it 100 times, protobuf included - **red: 17 of 100 thre
 **0 of 100**. Two `EventQueue.Clear()`s (`Reset`, `StateChangePrep`) and the timer `Remove` also ran
 without the lock the saver snapshots under; they take it now.
 
-**0c - WAL growth, measured, no fix.** Read-only against the live DB during the 15:30 run: **396 rows**,
+**0c - WAL growth, measured, no fix.** Read-only against a running region's DB: **396 rows**,
 blob average **624 B** (max 901), `page_size` 4096. `FlushAllDirty` saves **dirty scripts only** - rows
 saved in the last 10/30/60/300 s were **2/2/2/7**, not 396 - so it is not "saves everything"; a script is
 dirty after every timeslice it ran (`ScriptChanged` at `PhloxExecutionScheduler.cs:773`), so a timer
@@ -1684,7 +1670,7 @@ still schedules the script (the queued-event drain, or the harness's pump). Not 
 
 ## PHLOX-13 - a thrown syscall stays dead; OSSL pure helpers
 
-**2026-09-10. Landed in two commits; not deployed.**
+**2026-09-10. Landed in two commits.**
 
 ### PART 0 - the re-dispatch (`f6f1b0911c`)
 
@@ -1704,7 +1690,7 @@ un-parks a `Syscall` state before rethrowing. `ThrownSyscallStaysDeadTests`: an 
 (`Allow_osGetSimulatorVersion = false`) and a forced `ArgumentException` from a shim (`ThrowForTest`, a
 test seam on the shim's one choke point) each give **exactly one** DEBUG_CHANNEL line, `RunState=Killed`,
 `LastSyscallIndex=-1`, not on the run queue, and the statement after never runs. **Red, with the two
-removal lines disabled: 3 stops with the live texts. Green: 1.**
+removal lines disabled: 3 stops with the in-world texts. Green: 1.**
 
 ### PART 1 - the pure helpers (`this commit`)
 
@@ -1743,7 +1729,7 @@ throw produced exactly one stop - PART 0 at work. Dispatch baseline **regenerate
 
 ## PHLOX-14 - OSSL osNpc* on top of BotManager
 
-**2026-09-10. Landed; not deployed.** A second door onto the same bots, not a second NPC system.
+**2026-09-10. Landed.** A second door onto the same bots, not a second NPC system.
 
 ### PART 0 - what is there
 
@@ -1758,11 +1744,11 @@ throw produced exactly one stop - PART 0 at work. Dispatch baseline **regenerate
   and `llCreateCharacter` sit on. **BotManager is built ON NPCModule**: `CreateBot` calls
   `m_npcModule.CreateNPC`, `RemoveBot` calls `DeleteNPC`, and `GetBotWithPermission` delegates to
   `NPCModule.CheckPermissions`. One `BotData` per NPC, keyed by the NPC's own key.
-- **Neither is live.** `NPCModule.Initialise` reads `[NPC]` and is enabled only if the section exists;
-  `BotManager.Initialise` reads the same section. The live `config/OpenSim.ini` has **no `[NPC]` section**,
-  so `NPCModule.Enabled` is false, `INPCModule` is never registered, and BotManager never registers
-  `IBotManager` (the 15:30 log of 1.1.321 has not one `[BotManager]` line). **Every `bot*` call on the
-  grid today silently does nothing**, and so will `osNpc*` until `[NPC] Enabled = true` is added - the
+- **Neither is on by default.** `NPCModule.Initialise` reads `[NPC]` and is enabled only if the section exists;
+  `BotManager.Initialise` reads the same section. A `config/OpenSim.ini` with **no `[NPC]` section**
+  leaves `NPCModule.Enabled` false, `INPCModule` never registered, and BotManager never registers
+  `IBotManager` (no `[BotManager]` line in the log). **Every `bot*` call on such a region silently
+  does nothing**, and so will `osNpc*` until `[NPC] Enabled = true` is added - the
   operator's file, the operator's edit. That is a precondition of the did-it-land.
 
 ### PART 1 - the family, 25 dispatch entries (736-760), 22 names
@@ -1782,7 +1768,7 @@ a tag, so that query was always empty; it is how `botGetBotsWithTag("")` lists a
 | `OS_NPC_SENSE_AS_AGENT` (0x4) | `CreateNPC(..., senseAsAgent, ...)` - **mapped**; the bot door still always senses as agent |
 | `OS_NPC_OBJECT_GROUP` (0x8) | BotManager's `CreateNPC` overload carries no group; `BotData` has no group field - **accepted, not applied** |
 | `OS_NPC_CREATOR_OWNED` (0x1) | the default; same as no flag |
-| `notecard` (create / load / save) | **the bot outfit store, by name, scoped to the calling prim's owner**: `""` on create = the owner's current appearance (BotManager's rule); `osNpcLoadAppearance(npc, name)` = `ChangeBotOutfit`; `osNpcSaveAppearance(npc, name)` = `SaveBotOutfit`, returning the outfit key where upstream returns a notecard asset id; `includeHuds` accepted, the store keeps the whole appearance. No notecard is written or read - the bot store IS the appearance store on Legion |
+| `notecard` (create / load / save) | **the bot outfit store, by name, scoped to the calling prim's owner**: `""` on create = the owner's current appearance (BotManager's rule); `osNpcLoadAppearance(npc, name)` = `ChangeBotOutfit`; `osNpcSaveAppearance(npc, name)` = `SaveBotOutfit`, returning the outfit key where upstream returns a notecard asset id; `includeHuds` accepted, the store keeps the whole appearance. No notecard is written or read - the bot store IS the appearance store here |
 | `osNpcMoveTo` / `MoveToTarget` | one navigation point through `SetBotNavigationPoints`: `OS_NPC_RUNNING` -> `Run`, `OS_NPC_NO_FLY` -> `Walk`, otherwise `Fly` (upstream's `noFly = false`); `OS_NPC_LAND_AT_TARGET` accepted, not applied (BotManager lands on arrival anyway) |
 | `osNpcSit(npc, target, options)` | `SitBotOnObject`; `OS_NPC_SIT_NOW` is the only option and the only behaviour |
 | `osNpcSay/Shout/Whisper` | `BotChat` with the chat type; upstream's 2 s say-throttle not applied |
@@ -1792,8 +1778,8 @@ a tag, so that query was always empty; it is how `botGetBotsWithTag("")` lists a
 | not landed | `osNpcSayTo` (targeted delivery has no door in Phlox's listen manager yet), `osNpcLookAt` (BotManager has no look-at) |
 
 **Gate:** every function under its upstream key at its upstream level through `OsslGate`
-(`Allow_osNpcCreate`, `Allow_osNpcRemove`, ... - the live `osslDefaultEnable.ini` maps them all to
-`${OSSL|osslNPC}` = `ESTATE_MANAGER,ESTATE_OWNER`, so on Legion only estate managers' and the owner's
+(`Allow_osNpcCreate`, `Allow_osNpcRemove`, ... - the shipped `osslDefaultEnable.ini` maps them all to
+`${OSSL|osslNPC}` = `ESTATE_MANAGER,ESTATE_OWNER`, so by default only estate managers' and the owner's
 prims may drive NPCs, the same as YEngine).
 
 ### What pins it
@@ -1812,7 +1798,7 @@ region server builds.
 
 ## PHLOX-15 - OSSL side-effect functions (osSet*, osForce*, sound, links, misc)
 
-**2026-09-10. Landed; not deployed.** 49 names, 50 dispatch entries (761-810), from the 39 in PHLOX-12's
+**2026-09-10. Landed.** 49 names, 50 dispatch entries (761-810), from the 39 in PHLOX-12's
 "osSet* prim/object/sound/misc side-effects" row plus the eleven the brief named from the osForce*/teleport
 row (links, attachments, `osTeleportObject`, `osSetSpeed`, `osSetOwnerSpeed`, `osGetLinkPrimitiveParams`).
 Same method as PHLOX-13/14: every body ported from `OSSL_Api.cs` with its line range cited in the
@@ -1876,7 +1862,7 @@ second prim - the prim rotates 90 degrees and `llGetNumberOfPrims` says 2.
 
 ## PHLOX-16 - OSSL agent, teleport, kick, animation and group functions
 
-**2026-09-10. Landed; not deployed.** 19 names, 25 dispatch entries (811-835): what was left of PHLOX-12's
+**2026-09-10. Landed.** 19 names, 25 dispatch entries (811-835): what was left of PHLOX-12's
 "osAgent*/osAvatar*/osForce*/osKick*/osCause*/osTeleport*" row after PHLOX-15 took the link, attachment,
 teleport-object and speed functions, plus `osKey2Name` and `osGetAgentIP` from the brief. Same method: every
 body ported from `OSSL_Api.cs` with its line range in the `<summary>`, every gated function under its upstream
@@ -1915,9 +1901,6 @@ and is not repeated from upstream's body.
 (None, 5 s delay in the wiki - Phlox's teleport door carries no sleep), `osKickAvatar` (Severe, key form
 added 2019), `osForceOtherSit` (VeryHigh, "always disabled by default") read over plain HTTP.
 
-**Verify scripts:** the "expect 1: a0d421cb" note in `verify-phlox12-13`, `-14` and `-15-restart.sh` now
-reads **expect 0** - the divide-by-zero test prim is gone.
-
 ### What pins it
 
 `OsslAgentTests`, harness scene, `OSFunctionThreatLevel = Severe`: **`osCauseDamage(avatar, 10.0)` from the
@@ -1932,12 +1915,12 @@ the other; at VeryLow `osKickAvatar` is denied with one stop and the presence st
 the harness scene has no entity-transfer module, so the did-it-land carries it. Dispatch baseline
 **regenerated** (796 -> 815 names). Suite **161 -> 169**; region server builds.
 
-**Did it land:** from a manager's prim, `osTeleportAgent(self, "Transylvania", <128,128,30>, <1,0,0>)` moves
+**Did it land:** from a manager's prim, `osTeleportAgent(self, "Other Region", <128,128,30>, <1,0,0>)` moves
 you, and `osCauseDamage(self, 10.0)` shows `on_damage` in a worn attachment (region or parcel damage on).
 
 ## PHLOX-17 - OSSL parcel, estate, terrain, wind and sun functions
 
-**2026-09-11. Landed; not deployed.** 29 names, 31 dispatch entries (836-866), from PHLOX-12's
+**2026-09-11. Landed.** 29 names, 31 dispatch entries (836-866), from PHLOX-12's
 "osParcel*/osEstate*/osSetParcel*/osSetEstate*/terrain/wind/sun" row (25) plus the four the brief named that
 the row lacked (`osGetParcelDetails`, the two `osGet/SetTerrainHeight` aliases are in the row; `osSetParcelMediaURL`,
 `osSetParcelSIPAddress`, `osTerrainFlush` too). Same method: every body ported from `OSSL_Api.cs` with its line
@@ -1991,20 +1974,20 @@ Terrain textures are not pinned (they need `IEstateModule`, which the harness do
 did-it-land list. Dispatch baseline **regenerated** (815 -> 844 names). Suite **169 -> 173**; region server
 builds.
 
-**Did it land (combined deploy):** from a manager's prim, `osTerrainSetHeight(10,10,
+**Did it land:** from a manager's prim, `osTerrainSetHeight(10,10,
 osTerrainGetHeight(10,10)+1.0); osTerrainFlush();` then `osTerrainGetHeight(10,10)` reads 1.0 higher and the
 ground visibly moves; `osSetParcelDetails` on the prim's parcel changes its name in About Land.
 
 ## PHLOX-18 - killed scripts stay killed; OSSL draw and dynamic textures
 
-**2026-09-11. Landed in two commits; not deployed.**
+**2026-09-11. Landed in two commits.**
 
 ### PART 0 - a killed script stays stopped until reset (`<p0 commit>`)
 
 **What was wrong.** `TerminateWithError` set `RunState = Killed` and nothing else (`PhloxExecutionScheduler.cs:1327-1339`).
 The Running flag stayed on, so the killed state was saved at unload and restored as **Waiting** (`FinishedLoading`'s
 `default` arm) - a half-dead script that answered touches off a dead frame - and a restart that found no usable
-state ran `state_entry` again and re-threw. **The live case:** the osSetRot-denied prim `013b8258` (item
+state ran `state_entry` again and re-threw. **The in-world case:** the osSetRot-denied prim `013b8258` (item
 `a37d3c87`) at the 05:36 start on 09-11 - `Discarding stale state ... saved asset 2074003b, current 013b8258`
 then the same `OSSL Permission Error: osSetRot` - and the trace shows the older cause underneath: the script had
 been **edited** at 21:35 on 09-10 (new asset id), so its state was stale, and a killed script had nothing that
@@ -2021,28 +2004,28 @@ resets it** (`ProcessEnableDisable`) rather than resuming the dead frame. The lo
 **item's** Running flag at a fresh start - an item rezzed with it off (unticked in the viewer, or crashed before
 a restart whose state was lost) loads held, and enabling it later owes it its `state_entry` (`m_HeldFresh`).
 
-**Risk, named:** any script whose item flag is already `false` in the live inventory - unticked by an owner
+**Risk, named:** any script whose item flag is already `false` in an existing inventory - unticked by an owner
 long ago and still running under Phlox because the flag was ignored - stops at the first restart after this
-deploys. That is the checkbox meaning what it says; the did-it-land looks for the `loaded STOPPED` line.
+lands. That is the checkbox meaning what it says; the did-it-land looks for the `loaded STOPPED` line.
 
 ### What pins PART 0
 
 `TerminatedScriptStaysStoppedTests` (collection `phlox-state`, `OSFunctionThreatLevel = VeryLow`, the script
-calls `osSetRot` - the live denial): engine 1 says "up" once, is `Killed`, `GetScriptState` false, the item's
+calls `osSetRot` - the in-world denial): engine 1 says "up" once, is `Killed`, `GetScriptState` false, the item's
 `ScriptRunning` false, status carries `terminated=... osSetRot ...`, not on the run queue; saved through
 `ScriptUnloaded`. Engine 2 restores the same item and asset: **no "up", no error line, still stopped, reason
 intact**; `ResetScript` then says "up" once more and is killed again. `TriggerStartScript` on a crashed script
 runs `state_entry` a second time from a fresh state. An item rezzed with `ScriptRunning = false` loads held,
 says nothing, and runs when ticked. Suite **173 -> 176**.
 
-### PART 0b - the live restart re-ran a killed script (PHLOX-18b)
+### PART 0b - a real restart re-ran a killed script (PHLOX-18b)
 
-**2026-09-11. Landed; not deployed.** Item `9262c036` (divide by zero, asset `b1c1b9d1`) crashed at 15:35 on
-1.1.341 and `phlox status` showed Killed / Running False. At the 16:31 start of 1.1.344 it ran `state_entry`
+**2026-09-11. Landed.** Item `9262c036` (divide by zero, asset `b1c1b9d1`) crashed in world
+and `phlox status` showed Killed / Running False. At the next region start it ran `state_entry`
 again and crashed again (log line 11842), and the verify script's held count was 0. PART 0's round trip passed
 because it saved through `SaveState` = `StateManager.ScriptUnloaded`, **which a region stop never calls.**
 
-**The path the live restart takes.** `PhloxEngine.OnShutdown` calls `StateManager.Stop()` and nothing else
+**The path a real restart takes.** `PhloxEngine.OnShutdown` calls `StateManager.Stop()` and nothing else
 (`PhloxEngine.cs:489-493`); `Stop()` runs `FlushAllDirty()` (`StateManager.cs:114-123`), which writes the
 **dirty set only** (`:285-289`). A script becomes dirty through `ScriptChanged`, called once per finished
 slice at `PhloxExecutionScheduler.cs:813` - and the crash branch just above it (`:803-808`) returns
@@ -2072,7 +2055,7 @@ so the checkbox, `phlox status` and the verify script agree with the state. The 
 `TerminatedScriptStaysStoppedTests` - engine 1 crashes the script and then calls **`StateManager.Stop()` only**
 (new harness `ShutdownStateManager`, exactly `OnShutdown`); engine 2 rezzes the same item and asset with the
 item's flag at its default `true`, as the DB presents it: **no "up", no error line, `GetScriptState` false, the
-item's flag false, not on the run queue, reason intact.** Red before the fix with the live symptom verbatim
+item's flag false, not on the run queue, reason intact.** Red before the fix with the in-world symptom verbatim
 (`said=[up | Script error: ... osSetRot permission denied ...] RunState=Killed`). Suite **186 -> 187**.
 
 **Did it land:** a crashed prim stays Running=False across a restart, with `terminated:` = 0 at load and one
@@ -2110,7 +2093,7 @@ a two-point polygon is `""`, and without a texture manager the string size is ze
 `AddDynamicTextureData` returns `updater.newTextureID`, not upstream's updater id), **the prim's default face
 texture changes to that id, and the asset is a LOCAL one in the asset cache** - `DataReceived` refuses to work
 without an `IAssetCache` ("this are local assets and will not work without cache", `DynamicTextureModule.cs:471-473`),
-so the test registers a memory cache and reads the rendered asset back from it (Legion runs `FlotsamAssetCache`, `GridCommon.ini:28`, so the rule is met live); the string size is non-zero;
+so the test registers a memory cache and reads the rendered asset back from it (a region running `FlotsamAssetCache` meets that rule); the string size is non-zero;
 at VeryLow `osSetDynamicTextureURL` is denied with one stop and the face untouched. Dispatch baseline
 **regenerated** (844 -> 871 names). Suite **176 -> 179**; region server builds.
 
@@ -2120,12 +2103,12 @@ at VeryLow `osSetDynamicTextureURL` is denied with one stop and the face untouch
 
 ## DRAW-1 - osSetDynamicTextureData renders a flat grey prim (a renderer defect surfaced by PHLOX-18)
 
-**2026-09-11. Landed; not deployed.** Cross-reference: PHLOX-18 PART 1 landed the `osSetDynamicTexture*` doors
-and pinned a new texture id on the face; live on 1.1.341 the brief's draw list turned the prim flat grey.
+**2026-09-11. Landed.** Cross-reference: PHLOX-18 PART 1 landed the `osSetDynamicTexture*` doors
+and pinned a new texture id on the face; in world the brief's draw list turned the prim flat grey.
 The defect is in `VectorRenderModule`, not in the Phlox port - a texture the sim considered valid that the
 viewer could not decode.
 
-**Diagnosis, in the order the brief asked.** A pixel test (`OsslDrawPixelTests`) renders the live draw list
+**Diagnosis, in the order the brief asked.** A pixel test (`OsslDrawPixelTests`) renders the in-world draw list
 through the real modules and decodes the bytes the face points at with CoreJ2K, the sim's own decoder.
 **Font:** resolved - "Arial" exists on both hosts (`SKTypeface.FromFamilyName`, `VectorRenderModule.cs:551`)
 and 220 red pixels were drawn. **Clear colour:** right - the background default is `SKColors.White`
@@ -2133,7 +2116,7 @@ and 220 red pixels were drawn. **Clear colour:** right - the background default 
 254 after the lossy 9/7 wavelet; not what a viewer shows as grey. **Container - the defect:** the bytes
 began `00 00 00 0C 6A 50 20 20`, the **JP2 signature box**. CoreJ2K's `J2kImage.ToBytes` wraps the codestream
 in a JP2 file by default (`jP` at 0, `ftyp` at 12, `jp2h` at 32, `jp2c` at 77 - the codestream itself,
-`FF 4F FF 51`, starts at byte 85), and **the live asset pulled from Legion's Flotsam cache
+`FF 4F FF 51`, starts at byte 85), and **the in-world asset pulled from the region's Flotsam cache
 (`DynamicImage9372`, `5b45234d-...`, 3047 bytes, cached 15:31:33) walks exactly so and is byte-for-byte the
 harness's render.** The viewer's decoder is created for bare codestreams only:
 `opj_create_decompress(OPJ_CODEC_J2K)` (`indra/llimagej2coj/llimagej2coj.cpp:311`, `:385`), so
@@ -2155,7 +2138,7 @@ defect:** `MapImageModule.BuildEncoderConfig` (`World/LegacyMap/MapImageModule.c
 
 ### What pins it
 
-`OsslDrawPixelTests`: (1) the renderer alone, `ConvertData(<live draw list>, "256")`, decodes to 256x256 with
+`OsslDrawPixelTests`: (1) the renderer alone, `ConvertData(<in-world draw list>, "256")`, decodes to 256x256 with
 a **raw-codestream magic `FF-4F-FF-51`**, white at (200,200), more than 50 red pixels, the red box starting
 at or below the pen y, red within 3 px of (30,30); (2) the same through `osSetDynamicTextureData` in a scene
 with `DynamicTextureModule`, `VectorRenderModule` and a memory `IAssetCache`, on the bytes the face now points
@@ -2167,7 +2150,7 @@ FontSize 24; Text Hello;", "", 0)`, shows red "Hello" on white - and the word si
 
 ## PHLOX-19 - OSSL read-only remainder
 
-**2026-09-11. Landed; not deployed.** 42 names, 44 dispatch entries (896-939): what was left of PHLOX-12's
+**2026-09-11. Landed.** 42 names, 44 dispatch entries (896-939): what was left of PHLOX-12's
 information row after PHLOX-12 took seventeen and later sessions took `osGetAgentIP`, `osGetCurrentSunHour`,
 `osGetLinkPrimitiveParams`, `osGetPrimitiveParams`, `osGetParcelDetails`, `osGetSunParam`, `osGetTerrainHeight`
 and `osGetWindParam` - the row's `{...}` groups expanded (six `osGetInventory*`, seven `osGetLinkInventory*`, two
@@ -2226,13 +2209,13 @@ rezzer id, the EEP time strings without an environment module, the home URI); on
 invalid name regex is a shout and -1; at VeryLow `osGetNotecardLine` is denied with one stop. Dispatch baseline
 **regenerated** (871 -> 913 names). Suite **181 -> 186**; region server builds.
 
-**Did it land (combined deploy with DRAW-1):** a prim holding a notecard "cfg" with two lines says
+**Did it land (with DRAW-1):** a prim holding a notecard "cfg" with two lines says
 `osGetNumberOfNotecardLines("cfg") = 2` and `osGetNotecardLine("cfg", 0)` = its first line **with no trailing
 brace on the last line**; and the draw prim shows red "Hello" on white.
 
 ## PHLOX-20 - the OSSL close-out: overloads by type, the misc row, and what is left
 
-**2026-09-11. Landed; not deployed.** Three parts, three commits.
+**2026-09-11. Landed.** Three parts, three commits.
 
 ### PART 0 - overload resolution by type, not arity
 
@@ -2333,7 +2316,7 @@ script and gets two different draw-list strings; and a script that sorts its own
 
 ## PHLOX-21 - audit 2026-09-23 fixes
 
-Branch `phlox/audit-fixes-2026-09-23` off `b2/o121-deferral` (B2 is required: parts E5 and F return values
+Branch `phlox/audit-fixes-2026-09-23`, on top of B2 (B2 is required: parts E5 and F return values
 through its sequenced return). One commit per part; F was done before E because E3's test needs a
 `llRequestAgentData` that returns at all.
 
@@ -2412,16 +2395,6 @@ through its sequenced return). One commit per part; F was done before E because 
   anything else `m_host.ParentGroup.GetMass()` - the whole object from the root or any child. Phlox returned
   the script's own prim. llGetMassMKS stays 100 x llGetMass. `MassScopeTests`.
 
-### Deployed
-
-- **2026-09-23 17:24, region root only.** Build `1.1.499-alpha+e751d7c8ba` (branch
-  `build/deploy-20260923-phlox21`, PHLOX-21 + 21b merged onto the live `5d02d1b001`). Four files replaced in
-  `D:/legiongrid/regionserver`: `Phlox.ScriptEngine.dll` (`B81B6C8C...`, stamped 1.1.499-alpha+e751d7c8ba) and
-  `.pdb`, `InWorldz.Phlox.dll` (unstamped 1.0.0.0; SHA-256 `DFC48CA11519F0211DC14F47E8A7FE5E5EB0F8301AB7F69315F96E585004CF34`
-  from build HEAD `e751d7c8ba`) and `.pdb`. Everything else in the publish was restamp-only by IL/metadata
-  compare; protobuf-net stays at the live 3.4.21. Backup: `D:/legiongrid/_backup/regionserver-phlox21-20260923-1724`.
-  Restart 17:26: `verify-phlox21-restart.sh` PASS (0 Stack empty, 0 Phlox NREs, no new compile errors).
-
 ### Still open
 
 - S-4: PERMISSION_TELEPORT handling.
@@ -2458,18 +2431,11 @@ AGENT_WALKING))` while walking says 128. (E) `llOwnerSay((string)llGetMassMKS())
 Branch `phlox/audit-fixes-2026-09-23`, one commit per part: A `9fd21cf8a8`, B `fc487c0cc7`, C `13c7154edd`,
 D `0c6293063b`. E (linear code generation) was not done - see below.
 
-**Deployed 2026-09-23 20:05** (DEPLOY-PHLOX-22): build `build/deploy-20260923-phlox22` `d89a25367e` (this branch at
-`c0a4a4dde0`, merged onto the live PHLOX-21 build `e751d7c8ba`), `Phlox.ScriptEngine.dll` 1.1.507-alpha+d89a25367e.
-Only InWorldz.Phlox.dll / Phlox.ScriptEngine.dll and their .pdb copied (IL compare: no other assembly changed in
-code; protobuf-net stays 3.4.21). Backup `D:/legiongrid/_backup/regionserver-phlox22-20260923-2003`.
-`verify-phlox22-restart.sh`: PASS - 18 loaded / 18 restored against 17 / 17 at the previous start, none missing;
-the only compile failure is the known `3eb0c62b`; 0 nesting-limit errors; 0 Phlox NREs.
-
 ### What changed
 
 - **A - counted nesting limits.** PHLOX-21's guard tripped when the stack ran low, so its limit moved with JIT warm-up
   (on the 16 MB compile thread: ~3,017 parser levels in a fresh process, ~9,739 warm; ~2,410 / ~7,668 in the later
-  passes): the deep-nest script compiled on the warm live region and failed in the cold harness. Nesting is now
+  passes): the deep-nest script compiled on a warm running region and failed in the cold harness. Nesting is now
   COUNTED - at the LSL parser's rule entry, in DefVisitor/TypesVisitor/AnalyzeVisitor/GenVisitor and in the SLua
   parser - and `EnsureSufficientExecutionStack` is only the backstop (`InWorldz.Phlox.Compiler.NestingLimits`):
 
@@ -2486,7 +2452,7 @@ the only compile failure is the known `3eb0c62b`; 0 nesting-limit errors; 0 Phlo
   which grows much faster than the nesting - else-if chains 1,000 / 2,500 / 5,000 branches: 0.9 / 3.7 / 19.7 s cold;
   assignment chains 50 / 100: 0.4 / 1.0 s (1,000: over 15 minutes). At the limits, cold: 1,000 nested calls 0.4 s,
   500 blocks 0.7 s, 2,500 branches 1.3 s (3.7 s with a syntax error), 64 assignments 0.5 s with a syntax error.
-  **Also found and fixed.** In today's (and the live, 1.1.499-alpha+e751d7c8ba) build, ANTLR's full-context
+  **Also found and fixed.** In the PHLOX-21 build, ANTLR's full-context
   prediction for the dangling `else` overflowed the stack at a 10,000-branch else-if chain - in
   `ParserATNSimulator.Closure_`, below every guard, killing the process - and 500 nested ifs took 8.7 s, 2,000 took
   229 s, 1,000 chained assignments over 15 minutes, all ON THE SCHEDULER THREAD until B. The LSL parse is now
@@ -2494,7 +2460,7 @@ the only compile failure is the known `3eb0c62b`; 0 nesting-limit errors; 0 Phlo
   would build), and a linear pre-pass bounds brace depth: `statement : funcBlock | funcBlockContent` is ambiguous for
   every `{`, so prediction read ahead to the matching `}` once per level. `NestingLimitTests` runs every case in a
   child process (`Tests/PhloxCompileProbe`), cold and warm, at N, N+1 and 200,000. `phlox21-deepnest.lsl` is now
-  1,001 levels and fails by the counted limit in any state (proved warm in `Phlox21DeployScriptTests`).
+  1,001 levels and fails by the counted limit in any state (proved warm in the harness).
 - **B - the master scheduler never waits on a compile.** The loader compiled on a 16 MB thread but `Join()`ed it from
   DoWork on the master scheduler thread, so every script on the scheduler stopped for the whole compile.
   **Design:** ONE long-lived `Phlox compile` thread (16 MB stack) consumes a queue; DoWork hands a job over and
@@ -2529,10 +2495,10 @@ the only compile failure is the known `3eb0c62b`; 0 nesting-limit errors; 0 Phlo
   delivers anywhere (SL allows it for avatars); iwDeliverInventory / iwDeliverInventoryList keep Halcyon's
   deliver-anywhere and IW_DELIVER_* codes; gives to prims are unchanged. iwGiveLinkInventoryList was not in scope and
   still delivers anywhere. `GiveToAbsentAvatarTests` (absent: nothing and the error; present: the folder).
-- **C, follow-up (DEPLOY-PHLOX-22 in-world, 2026-09-23 20:10).** On Ebony the editor showed no error for
+- **C, follow-up (found in world).** On a region running YEngine and Phlox the editor showed no error for
   `phlox22-syntaxerror.lsl` or `phlox21-deepnest.lsl`, and the deep-nest error came as the owner pop-up
-  (`line 8:1021 expression nested too deeply (limit 1000)`, item `793ce35b`: OnRezScript 20:10:48,869, failed
-  20:10:48,886 - 17 ms; no `timedout waiting for script errors` in the log). **Cause:** the live region runs YEngine and
+  (`line 8:1021 expression nested too deeply (limit 1000)`, failed 17 ms after OnRezScript; no
+  `timedout waiting for script errors` in the log). **Cause:** the region runs YEngine and
   Phlox, and YEngine joins the scene first, so `SceneObjectPartInventory.GetScriptErrors` (`:389-403`) asks YEngine
   first. YEngine's `GetScriptErrors` (`XMREngine.cs:1967`) `Monitor.Wait`ed with no timeout until an entry for the
   item appeared - for a script it declined in OnRezScript (`XMREngine.cs:1316-1324`) none ever does, and nothing
@@ -2545,8 +2511,8 @@ the only compile failure is the known `3eb0c62b`; 0 nesting-limit errors; 0 Phlo
   no waiter, so the owner got the pop-up AND the editor got the errors. Now a failure that nothing is waiting for is
   held for `OwnerAlertGrace` (2 s), and an editor that collects it in that time claims it. A rez or restart
   still alerts once. `EditorErrorsWithYEngineTests` (a real YEngine on the harness scene, added first).
-  Deploying this also ships `OpenSim.Region.ScriptEngine.YEngine.dll`. The syntax-error save left no trace in the
-  region log (no OnRezScript for any item after 20:09:48 except `793ce35b`), so it never reached the region.
+  The fix is in `OpenSim.Region.ScriptEngine.YEngine` as well as Phlox. The syntax-error save left no trace in the
+  region log (no OnRezScript for any other item), so it never reached the region.
 - **E - not done.** At the counted limit the quadratic code generation costs little (1,000 nested calls: 0.40 s cold,
   0.36 s warm, off the scheduler), and making GenVisitor emit into one StringBuilder touches ~120 methods under a
   byte-identical requirement. Left open with those timings as its baseline.
@@ -2555,7 +2521,7 @@ the only compile failure is the known `3eb0c62b`; 0 nesting-limit errors; 0 Phlo
 
 - E: linear code generation, and TypesVisitor's quadratic step for nested calls (not located).
 - iwGiveLinkInventoryList (Halcyon's link-number llGiveInventoryList) still delivers to an absent avatar; whether it
-  follows llGiveInventoryList or iwDeliverInventoryList was not decided (DEPLOY-PHLOX-22 PART 0 left it as it was).
+  follows llGiveInventoryList or iwDeliverInventoryList was not decided (left as it was).
 - Item `3eb0c62b` (asset b8079466) overloads a user function (`SetVehicleSettings()` and
   `SetVehicleSettings(string)`): YEngine accepts overloads by signature, SL and Phlox do not. Unchanged here.
 

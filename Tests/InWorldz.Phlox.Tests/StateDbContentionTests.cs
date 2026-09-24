@@ -11,14 +11,14 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-11. Live on 1.1.319 (start 05:47:01): <c>[PhloxState] Failed to load state ... "database is
+/// PHLOX-11. In world, at a region start: <c>[PhloxState] Failed to load state ... "database is
 /// locked"</c> and <c>Batch flush failed: "database is locked"</c> - three regions restoring in parallel
 /// while StateManager.FlushLoop writes every 2.5 s, one SQLite file. A failed load is a script that
 /// restarted from state_entry with its globals gone. This is that shape against a real temp DB with
 /// the current connection setup: three regions = three PhloxEngines = THREE StateManagers on the one
 /// file, each with its own flush loop; three loader threads (one per manager) each restoring 50 rows
 /// while a writer per manager keeps its flush loop busy with 50 dirty scripts. One manager alone never
-/// fails (0 in 10 rounds, tried first) because its writers already serialise on its own lock; the live
+/// fails (0 in 10 rounds, tried first) because its writers already serialise on its own lock; the in-world
 /// contention is between engines.
 /// </summary>
 [Collection("phlox-state")]
@@ -46,7 +46,7 @@ public class StateDbContentionTests
         Assert.False(listener.HasErrors(), listener.Report);
         compiled.AssetId = UUID.Random();
 
-        // three engines' worth of state managers on the one file, as the live process has
+        // three engines' worth of state managers on the one file, as a multi-region process has
         var managers = Enumerable.Range(0, Engines).Select(_ => new StateManager(null, dbFile)).ToList();
         // the rows the loaders will restore, written the way shutdown writes them
         var rows = new List<InWorldz.Phlox.VM.Interpreter>();

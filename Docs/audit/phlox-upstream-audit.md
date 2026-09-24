@@ -130,7 +130,7 @@ The branch calls into the script-engine surface at exactly **two** places.
 
 ### 2.2 `IEntityInventory.CreateScriptInstance`
 
-**Call site:** `Source/OpenSim.Region.PhysicsModules.LegionJolt/LegionJoltScene.cs:1709`
+**Call site:** a physics module's self-test harness on the audited branch (not part of this tree)
 — a self-test harness that rezzes a real script onto a prim to observe what
 `llDetectedLinkNumber` returns through the Phlox VM. Calls
 `ls.RootPart.Inventory.CreateScriptInstance(taskItem, 0, false, _scene.DefaultScriptEngine, 1)`.
@@ -317,7 +317,7 @@ no state save/restore was exercised:
 2. Whether the dropped `Mode=ReadWriteCreate` in fact still creates a missing
    `script_state.db` under the new provider.
 3. Whether `DllmapConfigHelper.RegisterAssembly` resolves the native SQLite interop in the
-   actual deploy target (`D:\legiongrid\regionserver`). This is a runtime-only failure mode:
+   deployed region server's directory. This is a runtime-only failure mode:
    if the native cannot be resolved, the first state save/restore throws, and nothing at
    compile time catches it. The previous `SQLitePCL.Batteries_V2.Init()` used a completely
    different resolution strategy, so success under the old provider is not evidence for the new one.

@@ -19,7 +19,7 @@ namespace InWorldz.Phlox.Tests;
 /// This is the harness PHLOX-2d named as the gap and could not build in the time it had. Everything
 /// before it either compiled a script (<see cref="PhloxCompiler"/>) or asserted the scheduler's
 /// source text; neither could see whether a script instance actually runs, which is precisely what
-/// 1.1.275 and 1.1.277 both failed to do in world.
+/// two earlier builds both failed to do in world.
 /// </para>
 /// </summary>
 public sealed class SchedulerHarness : IDisposable
@@ -32,15 +32,15 @@ public sealed class SchedulerHarness : IDisposable
     private readonly object m_exe;
 
     /// <summary>
-    /// DEPLOY-PHLOX-22 follow-up: a real YEngine on the same scene, added BEFORE Phlox as on the live region
-    /// ([REGIONMODULE] Adding scene "Ebony" to non-shared module "YEngine" precedes "InWorldz.Phlox"), so
+    /// PHLOX-22 C follow-up: a real YEngine on the same scene, added BEFORE Phlox as on a region running both
+    /// ([REGIONMODULE] Adding scene "<region>" to non-shared module "YEngine" precedes "InWorldz.Phlox"), so
     /// SceneObjectPartInventory.GetScriptErrors asks YEngine first. Null unless requested.
     /// </summary>
     public OpenSim.Region.ScriptEngine.Yengine.Yengine YEngine { get; }
     private readonly string m_yengineDir;
 
     /// <param name="configure">PHLOX-12: a hook to add config sections (e.g. [OSSL]) before the engine reads them.</param>
-    /// <param name="withYEngine">Register YEngine alongside Phlox, first, as the live region does.</param>
+    /// <param name="withYEngine">Register YEngine alongside Phlox, first, as a region running both does.</param>
     public SchedulerHarness(Action<IConfigSource> configure = null, bool withYEngine = false)
     {
         var config = new IniConfigSource();
@@ -154,7 +154,7 @@ public sealed class SchedulerHarness : IDisposable
     }
 
     /// <summary>
-    /// PHLOX-18b: the LIVE shutdown save. PhloxEngine.OnShutdown calls StateManager.Stop() and nothing else - no
+    /// PHLOX-18b: the real shutdown save. PhloxEngine.OnShutdown calls StateManager.Stop() and nothing else - no
     /// ScriptUnloaded for any script - so only the dirty set reaches the row. SaveState above is the unload path,
     /// which a region stop never takes.
     /// </summary>

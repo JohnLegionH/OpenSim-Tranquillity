@@ -103,7 +103,7 @@ namespace Phlox.ScriptEngine
         /// Fault is an exception from a deferred service call, re-raised inside the script's next tick.</summary>
         private struct SyscallReturn { public UUID ItemId; public object RetValue; public int Delay; public int Seq; public Exception Fault; }
 
-        // ── B2 (O-121): the service lane ─────────────────────────────────────────
+        // ── B2: the service lane ─────────────────────────────────────────
         // Syscalls that can leave the process (user accounts, grid, assets, experience, groups,
         // teleport, ...) run here instead of inline on this region's scheduler thread, so a slow
         // service stalls only the script that asked. Dedicated threads, not pool threads: at most
@@ -249,7 +249,7 @@ namespace Phlox.ScriptEngine
                 // therefore never started by anything: its state_entry sat in the queue for ever,
                 // with no error and no log line. The restored-state branch below has always set
                 // Waiting, which is why scripts restored from state ran and freshly compiled ones
-                // did not - the manhole on 1.1.275, and every new script.
+                // did not - the manhole script, and every new script.
                 interp.ScriptState.RunState = RuntimeState.Status.Waiting;
                 var invItem = req.Prim.Inventory?.GetInventoryItem(req.ItemID);
                 if (invItem != null && !invItem.ScriptRunning)
@@ -650,7 +650,7 @@ namespace Phlox.ScriptEngine
             m_WorkArrived();
         }
 
-        // ── B2 (O-121): service lane ───────────────────────────────────────────
+        // ── B2: service lane ───────────────────────────────────────────
 
         /// <summary>Called by a shim on this scheduler's thread, inside the script's tick.</summary>
         private void DeferServiceCall(DeferredServiceCall call)
@@ -1552,7 +1552,7 @@ namespace Phlox.ScriptEngine
             // PHLOX-18b: the crash branch of RunNextScript returns before its ScriptChanged, so a script that died in
             // its first slice was never dirty - and a region stop calls StateManager.Stop(), which flushes the DIRTY
             // set only (no ScriptUnloaded at shutdown). The killed state never reached the row; the next start found
-            // the previous asset's row, discarded it as stale, and ran state_entry again (item 9262c036, 1.1.344).
+            // the previous asset's row, discarded it as stale, and ran state_entry again (item 9262c036).
             // The item's Running flag cannot carry it either: the region DB does not store it. Mark it dirty here.
             m_Engine.StateManager?.ScriptChanged(script);
             m_log.LogError("[PhloxExe]: Script {0} asset {1} terminated: {2}",

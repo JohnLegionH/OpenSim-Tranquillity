@@ -9,9 +9,9 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// DEPLOY-PHLOX-22 in-world failure (2026-09-23 20:10, Ebony). Saving phlox22-syntaxerror.lsl and phlox21-deepnest.lsl
-/// showed NO error in the editor, and the deep-nest error came as the owner pop-up. The live region runs YEngine AND
-/// Phlox; YEngine is added to the scene first, so SceneObjectPartInventory.GetScriptErrors asks it first, and
+/// PHLOX-22 C follow-up, found in world. Saving phlox22-syntaxerror.lsl and phlox21-deepnest.lsl
+/// showed NO error in the editor, and the deep-nest error came as the owner pop-up. A region that runs YEngine AND
+/// Phlox adds YEngine to the scene first, so SceneObjectPartInventory.GetScriptErrors asks it first, and
 /// YEngine's GetScriptErrors waited - with no timeout and nothing to wake it - for an item it had declined in
 /// OnRezScript: the Save never returned and Phlox was never asked (so no editor claimed the errors, and Phlox sent
 /// the pop-up). PHLOX-22 C's tests registered Phlox alone. Also here: a compile that fails before the editor's
@@ -47,7 +47,7 @@ public class EditorErrorsWithYEngineTests
     public void WithYEngineOnTheSceneASyntaxErrorReachesTheEditorAndNoPopUp()
     {
         using var h = new SchedulerHarness(withYEngine: true);
-        Assert.Equal(2, h.Scene.RequestModuleInterfaces<IScriptModule>().Length);   // YEngine first, as on the live region
+        Assert.Equal(2, h.Scene.RequestModuleInterfaces<IScriptModule>().Length);   // YEngine first, as on a region running both
         Assert.Same(h.YEngine, h.Scene.RequestModuleInterfaces<IScriptModule>()[0]);
         h.Scene.RegisterModuleInterface<IDialogModule>(RecordingDialogs.Create(out var rec));
 
@@ -101,7 +101,7 @@ public class EditorErrorsWithYEngineTests
         using var h = new SchedulerHarness();
         h.Scene.RegisterModuleInterface<IDialogModule>(RecordingDialogs.Create(out var rec));
         // The race: OnRezScript posts the load, the compile fails and is published, and only THEN does the
-        // editor's GetScriptErrors reach Phlox (on live: 17 ms from rez to failure).
+        // editor's GetScriptErrors reach Phlox (in world: 17 ms from rez to failure).
         var item = h.RezScript(Fixture("phlox22-syntaxerror.lsl"));
         PumpFor(h, TimeSpan.FromMilliseconds(500));
         var ask = Task.Run(() => h.Engine.GetScriptErrors(item));   // the caps thread, not the scheduler's

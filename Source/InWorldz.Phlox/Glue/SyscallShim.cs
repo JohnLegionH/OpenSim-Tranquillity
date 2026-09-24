@@ -1061,7 +1061,7 @@ private static string ConvToString(object o)
         /// </summary>
         private static void RunAsync(SyscallShim self, Action body)
         {
-            // B2 (O-121): the call takes the script's next syscall sequence number and runs inside a
+            // B2: the call takes the script's next syscall sequence number and runs inside a
             // SyscallContext, so a ScriptSleep in the body becomes the return's delay instead of a
             // RunState write from this thread, and CompleteSyscall posts exactly one return carrying
             // the number. LastSyscallIndex is now cleared by the scheduler when it applies that return
@@ -1082,14 +1082,14 @@ private static string ConvToString(object o)
         }
 
         /// <summary>
-        /// B2 (O-121). Set by the scheduler: hands a syscall that may reach a service to the region's
+        /// B2. Set by the scheduler: hands a syscall that may reach a service to the region's
         /// service lane. Null (a host without one) keeps every call inline, as before.
         /// </summary>
         public DeferServiceCallDelegate DeferServiceCall { get; set; }
         public delegate void DeferServiceCallDelegate(DeferredServiceCall call);
 
         /// <summary>
-        /// B2 (O-121). The inline-or-deferred decision for a syscall that can leave the process.
+        /// B2. The inline-or-deferred decision for a syscall that can leave the process.
         /// <paramref name="call"/> is the shim's original body - the API call and its LSL conversion,
         /// returning the value to push, or null for a void function - so the script receives a value
         /// computed by exactly the same code either way. Inline when the API says no service is

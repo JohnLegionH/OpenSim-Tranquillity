@@ -53,7 +53,7 @@ namespace Phlox.ScriptEngine
         internal int FlushFailures;
         internal string LastFlushError;
 
-        // PHLOX-11. Live on 1.1.319 three regions restored in parallel against one script_state.db and
+        // PHLOX-11. In world, three regions restored in parallel against one script_state.db and
         // got "database is locked" on a load AND on the flush 300 ms later - and a failed load is a
         // script restarted from state_entry with its globals gone. Three things, all here:
         //   (a) journal_mode=WAL + synchronous=NORMAL, set ONCE per manager under the writer lock (the

@@ -15,8 +15,8 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// DRAW-1: what a dynamic texture actually contains. PHLOX-18 pinned a new texture id on the face; live, the
-/// same draw list gave a flat grey prim. This renders the live draw list through the real modules, takes the
+/// DRAW-1: what a dynamic texture actually contains. PHLOX-18 pinned a new texture id on the face; in world, the
+/// same draw list gave a flat grey prim. This renders that draw list through the real modules, takes the
 /// J2K bytes the face now points at, decodes them the way the sim itself decodes textures (CoreJ2K), and
 /// asserts pixels: red where the text is, the upstream default white background elsewhere.
 /// </summary>

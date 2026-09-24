@@ -28,7 +28,7 @@ namespace Phlox.ScriptEngine
     // No Mono.Addins [assembly: Addin]/[Extension] registration: develop discovers
     // region modules by interface reflection (IPluginDiscovery scans for
     // INonSharedRegionModule implementers), same as the other engine modules.
-    /// <summary>B2 (O-121): where syscalls that can reach a service run.</summary>
+    /// <summary>B2: where syscalls that can reach a service run.</summary>
     public enum ServiceCallDeferralMode { Auto, Always, Never }
 
     public class PhloxEngine : INonSharedRegionModule, IScriptEngine, IScriptModule
@@ -101,7 +101,7 @@ namespace Phlox.ScriptEngine
             if (MinTimerInterval < 0f) MinTimerInterval = 0f;
             m_log.LogInformation("[PhloxEngine]: MinTimerInterval = {0}s", MinTimerInterval);
 
-            // B2 (O-121): syscalls that can reach a service run off the scheduler thread.
+            // B2: syscalls that can reach a service run off the scheduler thread.
             // auto (default) = inline when the answer is local or cached, deferred otherwise;
             // always = defer every such call; never = the pre-B2 behaviour, everything inline.
             string deferral = m_Config.GetString("ServiceCallDeferral", "auto").Trim().ToLowerInvariant();
@@ -1338,7 +1338,7 @@ namespace Phlox.ScriptEngine
         /// </summary>
         public void SysReturn(UUID itemId, object retValue, int delay)
         {
-            // B2 (O-121): inside an off-thread call for this script, record the result; the call's
+            // B2: inside an off-thread call for this script, record the result; the call's
             // single, sequenced return is posted when its body ends (LSLSystemAPI.CompleteSyscall).
             var ctx = InWorldz.Phlox.Glue.SyscallContext.Current;
             if (ctx != null && ctx.ItemId == itemId) { ctx.SetResult(retValue, delay); return; }
@@ -1349,7 +1349,7 @@ namespace Phlox.ScriptEngine
         internal void SysReturnSequenced(UUID itemId, object retValue, int delay, int seq)
             => m_ExeScheduler?.PostSyscallReturn(itemId, retValue, delay, seq, null);
 
-        /// <summary>B2 (O-121): [InWorldz.Phlox] ServiceCallDeferral.</summary>
+        /// <summary>B2: [InWorldz.Phlox] ServiceCallDeferral.</summary>
         public ServiceCallDeferralMode ServiceCallDeferral { get; private set; } = ServiceCallDeferralMode.Auto;
 
         /// <summary>

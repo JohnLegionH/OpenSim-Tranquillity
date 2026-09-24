@@ -80,7 +80,7 @@ So, point by point:
 | state persistence | **shared** — see §5 |
 | `ll` function table | **shared** — `ll.Name(args)` maps to Phlox `"ll"+Name` against the existing 674-function `TableIndex` |
 
-It is wired into the live grid path, not proof-only: `PhloxScriptLoader.cs` routes on
+It is wired into the runtime path, not proof-only: `PhloxScriptLoader.cs` routes on
 `SLuaCompiler.IsLuaScript(...)` at **line 400** (`CompileAndStart`) and **line 441** (the
 asset-server path), selecting `frontend.CompileLua(...)` over `frontend.Compile(...)`. Detection is
 a source heuristic — a leading `--!slua`, `--!lua`, or any leading `--`.
@@ -95,7 +95,7 @@ SLua's external references directly.
 | Phlox-audit finding | holds for SLua? | evidence |
 |---|---|---|
 | No upstream/branch overlap in Phlox source | **Yes, identically** | branch changed only `Docs/PhloxKnownDefects.md`; no SLua source on either side (§3) |
-| Branch touches the script engine at only two call sites (`GetTopObjectStats`, `CreateScriptInstance`) | **Yes — and neither is SLua's** | those two are the *branch's* calls, from `EstateManagementModule` and `LegionJoltScene`. SLua has no core call sites of its own at all (§4) |
+| Branch touches the script engine at only two call sites (`GetTopObjectStats`, `CreateScriptInstance`) | **Yes — and neither is SLua's** | those two are the *branch's* calls, from `EstateManagementModule` and a physics module's self-test harness. SLua has no core call sites of its own at all (§4) |
 | The one real runtime risk is `StateManager`'s SQLite provider swap | **Yes — same risk, same code, one exposure** | SLua persists through the identical `StateManager` (§5) |
 
 ### What SLua binds to that Phlox does not

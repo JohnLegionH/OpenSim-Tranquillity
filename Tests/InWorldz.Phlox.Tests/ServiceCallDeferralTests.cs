@@ -38,7 +38,7 @@ public class DelayProxy<T> : DispatchProxy where T : class
 }
 
 /// <summary>
-/// B2 (O-121). Syscalls that can reach a service run on the region's service lane, not inline on its
+/// B2. Syscalls that can reach a service run on the region's service lane, not inline on its
 /// scheduler thread; the value a script receives is unchanged, only when it receives it.
 /// </summary>
 public class ServiceCallDeferralTests

@@ -727,7 +727,7 @@ namespace Phlox.ScriptEngine
         /// <summary>
         /// How long a compile failure no editor is waiting for is held before it goes to the owner as a pop-up. The
         /// editor's GetScriptErrors runs on the caps thread right after OnRezScript posts the load, but a compile can
-        /// fail first (17 ms on live, 2026-09-23 20:10:48); the editor then collects the stored outcome, and without
+        /// fail first (17 ms, seen in world); the editor then collects the stored outcome, and without
         /// this the owner got the same errors twice - in the editor and as a pop-up.
         /// </summary>
         internal static TimeSpan OwnerAlertGrace = TimeSpan.FromSeconds(2);

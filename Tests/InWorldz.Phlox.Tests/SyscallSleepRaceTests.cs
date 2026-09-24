@@ -4,7 +4,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// B2 (O-121). A deferred syscall body that calls ScriptSleep ran on the async worker and wrote
+/// B2. A deferred syscall body that calls ScriptSleep ran on the async worker and wrote
 /// RunState = Sleeping directly (LSLSystemAPI.ScriptSleep). If that write landed after the scheduler
 /// had already taken the script off the run queue as Syscall, the script was left Sleeping but tracked
 /// by nothing, and its return was dropped because it was no longer in Syscall - stranded for good.

@@ -9,7 +9,7 @@ namespace InWorldz.Phlox.Tests;
 /// and get it.
 ///
 /// <para>
-/// One resident script on Ebony asked for <c>llSetTimerEvent(0.01)</c> — a 10 ms timer. Phlox honoured
+/// One resident script asked for <c>llSetTimerEvent(0.01)</c> — a 10 ms timer. Phlox honoured
 /// it, <c>phlox status</c> read back <c>timer: 10 ms</c>, and the region logged <c>Slow timeslice</c>
 /// warnings of 1–1.8 s for two days across three regions until the prim was deleted. One script, one
 /// prim, three regions degraded.
@@ -22,7 +22,7 @@ namespace InWorldz.Phlox.Tests;
 /// (<c>InWorldz.Phlox.Engine/ExecutionScheduler.cs:1846-1853</c>). The floor comes from the other engine
 /// in this very repo: upstream's <c>LSL_Api.llSetTimerEvent</c> clamps at <c>m_MinTimerInterval</c>
 /// (<c>LSL_Api.cs:4005-4011</c>), whose shipped value in <c>OpenSimDefaults.ini</c> <c>[YEngine]</c> is
-/// <b>0.1</b> — and that is what is live on this grid. Before this, the same call behaved differently
+/// <b>0.1</b> — and that is what a region on the shipped defaults runs. Before this, the same call behaved differently
 /// depending on which engine happened to run the script.
 /// </para>
 ///
@@ -61,7 +61,7 @@ public class TimerFloorTests
         return ms;
     }
 
-    /// <summary>100 ms is the floor: 0.1 s, the value live on this grid for the other engine.</summary>
+    /// <summary>100 ms is the floor: 0.1 s, the other engine's shipped value.</summary>
     private const int FloorMs = 100;
 
     [Fact]

@@ -5,7 +5,7 @@ using OpenMetaverse;
 namespace InWorldz.Phlox.Glue
 {
     /// <summary>
-    /// B2 (O-121). One syscall running OFF the scheduler thread. The worker enters it for the
+    /// B2. One syscall running OFF the scheduler thread. The worker enters it for the
     /// duration of the body, so everything the API does on that thread lands here instead of on the
     /// script:
     /// <list type="bullet">
@@ -68,7 +68,7 @@ namespace InWorldz.Phlox.Glue
     }
 
     /// <summary>
-    /// B2 (O-121). A syscall that may reach a service (user accounts, grid, assets, experience,
+    /// B2. A syscall that may reach a service (user accounts, grid, assets, experience,
     /// groups, teleport, ...) handed to the scheduler's service lane instead of running inline on the
     /// scheduler thread. <see cref="Body"/> is the unchanged shim call (API call plus LSL conversion),
     /// so the value the script receives is computed by exactly the code that computed it inline.
@@ -98,7 +98,7 @@ namespace InWorldz.Phlox.Glue
     }
 
     /// <summary>
-    /// B2 (O-121). Implemented by the system API: can this call be answered without leaving the
+    /// B2. Implemented by the system API: can this call be answered without leaving the
     /// process (the subject is in the region, or the answer is already in a local cache the service
     /// call would consult first)? False means answer inline, exactly as before; true means defer.
     /// </summary>

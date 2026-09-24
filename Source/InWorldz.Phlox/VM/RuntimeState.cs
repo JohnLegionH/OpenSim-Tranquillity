@@ -113,7 +113,7 @@ namespace InWorldz.Phlox.VM
         public int LastSyscallIndex = -1;
 
         /// <summary>
-        /// B2 (O-121): the sequence number of the syscall this script most recently parked in
+        /// B2: the sequence number of the syscall this script most recently parked in
         /// Status.Syscall. Every off-thread call takes a process-wide unique number
         /// (SyscallContext.NextSeq, so a reset's fresh state cannot reuse one); a return is applied only if
         /// it carries the current one, so a result that arrives after a reset, a state change or a
@@ -322,7 +322,7 @@ namespace InWorldz.Phlox.VM
             // (LSLSystemAPI.cs:96), so the mask went to the part as ZERO: the region never learned
             // the prim was touchable, the viewer showed no touch cursor, and touch_start could never
             // fire. state_entry still ran, because ProcessEventQueue lets STATE_ENTRY past a
-            // disabled script (:664) - which is exactly what was seen in world on 1.1.277.
+            // disabled script (:664) - which is exactly what was seen in world.
             GeneralEnable = true;
             MemInfo = new MemoryInfo();
             Globals = new object[numGlobals];

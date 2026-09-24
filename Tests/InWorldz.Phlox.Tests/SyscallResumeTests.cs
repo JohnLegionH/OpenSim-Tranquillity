@@ -25,7 +25,7 @@ public class SyscallResumeTests
 
     /// <summary>
     /// A state row exactly as the code before tag 22 wrote one: the three required members and nothing
-    /// else. Deserialising it as the current type is what every existing row on the live grid will do
+    /// else. Deserialising it as the current type is what every existing row on a running grid will do
     /// on the next start, so it had better not come back claiming syscall index 0 — which is a real
     /// function.
     /// </summary>

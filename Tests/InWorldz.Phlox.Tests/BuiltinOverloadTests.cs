@@ -7,8 +7,8 @@ namespace InWorldz.Phlox.Tests;
 /// name **and** signature, as they do on every other engine that offers them.
 ///
 /// <para>
-/// The live case is `9898c41e-8e85-45ed-9235-be1cc6176936` on Ebony, which failed at load on
-/// 2026-09-07 with <i>"Function 'osTeleportAgent' expects 4 arguments, got 3"</i> at lines
+/// The in-world case is `9898c41e-8e85-45ed-9235-be1cc6176936`, which failed at load
+/// with <i>"Function 'osTeleportAgent' expects 4 arguments, got 3"</i> at lines
 /// 16:12 and 20:12. Its call is the 3-argument local-teleport overload, which
 /// <c>OSSL_Api.cs:1051</c> implements and Phlox's table does not carry
 /// (<c>InWorldz.Phlox/Types/Defaults.cs:4733</c> holds only the 4-argument form).
@@ -53,7 +53,7 @@ public class BuiltinOverloadTests
         // The one Phlox already had. It must survive the change that adds the other two.
         var c = PhloxCompiler.CompileInDefault(@"
         key id = llDetectedKey(0);
-        osTeleportAgent(id, ""Ebony"", <128,128,25>, <0,1,0>);");
+        osTeleportAgent(id, ""Test Region"", <128,128,25>, <0,1,0>);");
 
         Assert.False(c.HasErrors(), $"the 4-argument form is the one Phlox has always had: {c.Report}");
     }
@@ -179,7 +179,7 @@ public class BuiltinOverloadTests
         Assert.All(hits, hit => Assert.Equal(2, Arity(hit)));
     }
 
-    /// <summary>Every older Phlox spelling and arity must still compile - current Legion content
+    /// <summary>Every older Phlox spelling and arity must still compile - existing content
     /// depends on them. These are the aliases, and they are not going anywhere.</summary>
     [Theory]
     [InlineData("vector v = llSRGB2Linear(<0.5, 0.5, 0.5>);")]

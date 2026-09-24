@@ -38,7 +38,7 @@ namespace Phlox.ScriptEngine
 {
     public class LSLSystemAPI : ISystemAPI, InWorldz.Phlox.Glue.ISyscallDeferralAdvisor
     {
-        // ── B2 (O-121): inline or deferred ──────────────────────────────────────────
+        // ── B2: inline or deferred ──────────────────────────────────────────
         //
         // Answer inline (exactly as before B2) when the call cannot leave the process: the subject
         // is in this region, or the answer is already in the local cache the service call consults
@@ -174,7 +174,7 @@ namespace Phlox.ScriptEngine
         protected void ScriptSleep(int ms)
         {
             if (m_thisScript == null || ms <= 0) return;
-            // B2 (O-121): on an off-thread call for this script the delay travels with the call's
+            // B2: on an off-thread call for this script the delay travels with the call's
             // return. Writing RunState from this thread stranded the script (SyscallSleepRaceTests).
             var ctx = InWorldz.Phlox.Glue.SyscallContext.Current;
             if (ctx != null && ctx.ItemId == m_itemID) { ctx.AddDelay(ms); return; }
@@ -217,7 +217,7 @@ namespace Phlox.ScriptEngine
         /// </summary>
         public void CompleteSyscall()
         {
-            // B2 (O-121): post the call's one return - the body's own SysReturn result if it gave one,
+            // B2: post the call's one return - the body's own SysReturn result if it gave one,
             // else nothing - with every ScriptSleep of the body as its delay and the call's sequence
             // number, so a late or repeated completion cannot land in a later syscall.
             var ctx = InWorldz.Phlox.Glue.SyscallContext.Current;

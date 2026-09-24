@@ -7,7 +7,7 @@ using OpenSim.Tests.Common;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// B2 (O-121) golden test. Every converted syscall, called by one script with fixed arguments against
+/// B2 golden test. Every converted syscall, called by one script with fixed arguments against
 /// the same scene, with deferral OFF (the pre-B2 inline path) and deferral ALWAYS (every call through
 /// the service lane), at zero added delay. The two transcripts - everything said on every channel,
 /// including error shouts, plus the dataserver events - must be byte-identical. Values that are random

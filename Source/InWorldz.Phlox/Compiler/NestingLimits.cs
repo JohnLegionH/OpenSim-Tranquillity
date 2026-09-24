@@ -8,7 +8,7 @@ namespace InWorldz.Phlox.Compiler
     /// <summary>
     /// PHLOX-22 A. The nesting limits, COUNTED - the same in a cold or warm process, Debug or Release. PHLOX-21's
     /// stack-based guard (<see cref="DepthGuard"/>) tripped at ~3,017 expression levels in a fresh process and
-    /// ~9,739 in a warm one, so one script compiled on the live region and failed in the harness; it stays as a
+    /// ~9,739 in a warm one, so one script compiled on a running region and failed in the harness; it stays as a
     /// backstop only.
     ///
     /// <para>What a level is. Expression: one construct wrapped around a value - a parenthesis, a unary

@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-12 0b. Live 05:58:12 on 1.1.319: <c>[PhloxState] Failed to save ...: "Collection was modified
+/// PHLOX-12 0b. In world: <c>[PhloxState] Failed to save ...: "Collection was modified
 /// after the enumerator was instantiated."</c> - the state saver walked a script's live collections while
 /// the script thread mutated them. A flush must never throw: the saver snapshots every collection it
 /// walks, and every EventQueue mutation takes the lock the saver snapshots under. Here one thread hammers

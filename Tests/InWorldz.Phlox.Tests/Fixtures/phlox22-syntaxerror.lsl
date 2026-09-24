@@ -1,4 +1,4 @@
-// phlox22-syntaxerror.lsl - DEPLOY-PHLOX-22 / PHLOX-22 C: the ';' after llOwnerSay(...) is missing. Saving it
+// phlox22-syntaxerror.lsl - PHLOX-22 C: the ';' after llOwnerSay(...) is missing. Saving it
 // must show the compile error in the editor's error pane, not "compiled".
 default
 {

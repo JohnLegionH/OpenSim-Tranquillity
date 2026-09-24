@@ -6,9 +6,9 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-10 deploy gate. DetectVariables gained ProtoMembers 27-29 (Damage, DamageType, OriginalDamage)
+/// PHLOX-10 upgrade gate. DetectVariables gained ProtoMembers 27-29 (Damage, DamageType, OriginalDamage)
 /// and it IS on the persisted state row: every queued or running event is saved as a SerializedPostedEvent
-/// whose DetectVars (tag 3) are DetectVariables. Every row on the live grid was written before tag 27;
+/// whose DetectVars (tag 3) are DetectVariables. Every row an existing region holds was written before tag 27;
 /// this is the same proof tag 22 got - a record shaped exactly as the old code wrote it, deserialised as
 /// the current type, with the old fields intact and the new ones at their defaults.
 /// </summary>

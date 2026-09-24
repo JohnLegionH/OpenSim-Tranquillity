@@ -8,9 +8,9 @@ namespace InWorldz.Phlox.Tests;
 /// PHLOX-2e. Does a script instance actually run?
 ///
 /// <para>
-/// 1.1.277 carries PHLOX-2d's fix — a fresh script is left <c>Waiting</c> so
-/// <c>ProcessEventQueue</c> starts its <c>state_entry</c> — and in world it changed nothing: a fresh
-/// prim with the default New Script logged <c>Starting shared script 2074003b</c> at 16:55:18 and
+/// A build carrying PHLOX-2d's fix — a fresh script is left <c>Waiting</c> so
+/// <c>ProcessEventQueue</c> starts its <c>state_entry</c> — changed nothing in world: a fresh
+/// prim with the default New Script logged <c>Starting shared script 2074003b</c> and
 /// then said nothing. So the question this file exists to answer is whether the scheduler runs a
 /// fresh instance at all, and it is asked through the whole engine on a test scene rather than
 /// against source text.
@@ -58,7 +58,7 @@ default
     [Fact]
     public void ASecondInstanceOfTheSameAssetAlsoRuns()
     {
-        // The live symptom was a SHARED script start: "Starting shared script 2074003b" for a second
+        // The in-world symptom was a SHARED script start: "Starting shared script 2074003b" for a second
         // instance of an asset already loaded. That path skips compilation entirely.
         using var h = new SchedulerHarness();
 

@@ -5,17 +5,17 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-3a. A script in a prim on Ebony crashes the compiler.
+/// PHLOX-3a. A script in an in-world prim crashes the compiler.
 ///
 /// <para>
-/// Every region start under 1.1.287 logged
+/// Every region start logged
 /// <c>ERROR [PhloxCompile]: 4e51f068-...: Object reference not set to an instance of an object.</c>
-/// followed by <c>ERROR [PhloxLoader]: Compilation failed for 1ee3b9b1-...</c> — at 04:37:36 and again
-/// at 04:56:15, so it reproduces from the stored asset rather than from anything about that start.
+/// followed by <c>ERROR [PhloxLoader]: Compilation failed for 1ee3b9b1-...</c> — twice, at two
+/// separate starts, so it reproduces from the stored asset rather than from anything about that start.
 /// </para>
 ///
 /// <para>
-/// The script is <c>Fixtures/lmap4.lsl</c>, a four-state lamp from a Legion Grid resident's prim. There is
+/// The script is <c>Fixtures/lmap4.lsl</c>, a four-state lamp from a resident's prim. There is
 /// nothing exotic in it, which is the point: whatever the compiler trips over is something ordinary.
 /// </para>
 ///

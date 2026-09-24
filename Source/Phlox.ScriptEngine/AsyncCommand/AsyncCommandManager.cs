@@ -129,7 +129,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
         private static readonly object m_cmdHandlerThreadLock = new object();
 
         /// <summary>
-        /// PROPS-1 (found while deploying): this was a race. The IsAlive check and the assignment
+        /// PROPS-1 (found in world): this was a race. The IsAlive check and the assignment
         /// were unguarded, so two engines constructing at once could both pass the check, the second
         /// overwrite the static before the first reached Start(), and one of them then call Start()
         /// on a thread the other had already started - "Thread is running or terminated; it cannot

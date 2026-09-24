@@ -21,7 +21,7 @@ public class TerminatedScriptStaysStoppedTests
     public TerminatedScriptStaysStoppedTests(ITestOutputHelper o) => _out = o;
     private const int DebugChannel = 0x7FFFFFFF;
 
-    // osSetRot is VeryHigh; at the default VeryLow it is denied, and the denial is a thrown syscall - the live case
+    // osSetRot is VeryHigh; at the default VeryLow it is denied, and the denial is a thrown syscall - the in-world case
     private const string Crasher = @"default {
         state_entry() { llSay(0, ""up""); osSetRot(llGetKey(), <0,0,0,1>); llSay(0, ""after""); }
         touch_start(integer n) { llSay(0, ""touched""); }
@@ -68,7 +68,7 @@ public class TerminatedScriptStaysStoppedTests
         Assert.False(h2.IsOnRunQueue(itemId));
         Assert.Contains("osSetRot", h2.StatusOf(itemId));
 
-        // a reset starts it fresh: state_entry runs (and crashes again, as the live prim would)
+        // a reset starts it fresh: state_entry runs (and crashes again, as an in-world prim would)
         h2.Engine.ResetScript(itemId);
         h2.PumpFor(TimeSpan.FromSeconds(1));
         _out.WriteLine("engine 2 after reset: said=[" + string.Join(" | ", h2.Said) + "] errors=[" + Errors(h2) + "]");
@@ -113,12 +113,12 @@ public class TerminatedScriptStaysStoppedTests
     }
 
     /// <summary>
-    /// PHLOX-18b. The path the LIVE restart takes and the round trip above does not. A region stop never calls
+    /// PHLOX-18b. The path a real restart takes and the round trip above does not. A region stop never calls
     /// ScriptUnloaded: PhloxEngine.OnShutdown calls StateManager.Stop(), which flushes the DIRTY set only, and a script
     /// that crashed in its first slice was never marked dirty - the crash branch of RunNextScript returns before
     /// ScriptChanged. Its row still carried the previous asset, was discarded as stale at the next load, and the script
     /// started fresh with the item's Running flag at its default - the region DB does not store that flag. Item
-    /// 9262c036 on 1.1.344: crashed at 15:35, ran state_entry again and crashed again at the 16:31 start.
+    /// 9262c036 in world: crashed, ran state_entry again and crashed again at the next start.
     /// </summary>
     [Fact]
     public void Crashed_script_stays_stopped_across_the_live_shutdown_path()
@@ -137,7 +137,7 @@ public class TerminatedScriptStaysStoppedTests
         using var h2 = Scene();
         h2.RezScript(Crasher, assetId, itemId);   // the item as the region DB presents it: Running flag at its default, true
         h2.PumpFor(TimeSpan.FromSeconds(1));
-        _out.WriteLine("engine 2 after the live path: said=[" + string.Join(" | ", h2.Said) + "] errors=[" + Errors(h2) + "] RunState=" + h2.RunStateOf(itemId));
+        _out.WriteLine("engine 2 after the restart path: said=[" + string.Join(" | ", h2.Said) + "] errors=[" + Errors(h2) + "] RunState=" + h2.RunStateOf(itemId));
 
         Assert.DoesNotContain("up", h2.Said);                                        // no state_entry
         Assert.Empty(Errors(h2));                                                    // 0 terminated at load
