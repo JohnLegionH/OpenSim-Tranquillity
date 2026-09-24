@@ -754,17 +754,18 @@ namespace Legion.Physics.Jolt
             float minHalf = MathF.Min(halfExtents.X, MathF.Min(halfExtents.Y, halfExtents.Z));
             float convexRadius = MathF.Max(0f, MathF.Min(DefaultConvexRadius, minHalf * 0.1f));
             var shape = new BoxShape(halfExtents, convexRadius);
-            return RegisterShape(shape);
+            return RegisterShape(RequireCooked(shape, "CreateBoxShape"));
         }
 
         public ShapeId CreateSphereShape(float radius)
         {
-            return RegisterShape(new SphereShape(MathF.Max(0.001f, radius)));
+            return RegisterShape(RequireCooked(new SphereShape(MathF.Max(0.001f, radius)), "CreateSphereShape"));
         }
 
         public ShapeId CreateCapsuleShape(float halfHeight, float radius)
         {
-            return RegisterShape(new CapsuleShape(MathF.Max(0.001f, halfHeight), MathF.Max(0.001f, radius)));
+            return RegisterShape(RequireCooked(
+                new CapsuleShape(MathF.Max(0.001f, halfHeight), MathF.Max(0.001f, radius)), "CreateCapsuleShape"));
         }
 
         public ShapeId CreateCylinderShape(float halfHeight, float radius)
@@ -775,15 +776,21 @@ namespace Legion.Physics.Jolt
             // Convex radius must be <= min(radius, halfHeight) or Jolt asserts - clamp like the box path.
             float cr = MathF.Max(0f, MathF.Min(DefaultConvexRadius, MathF.Min(r, hh) * 0.1f));
             using var settings = new CylinderShapeSettings(hh, r, cr);
-            return RegisterShape(settings.Create());
+            return RegisterShape(RequireCooked(settings.Create(), "CreateCylinderShape"));
         }
 
         public ShapeId CreateConvexHullShape(ReadOnlySpan<Vector3> points)
         {
             if (points.Length < 4)
                 throw new ArgumentException($"convex hull needs >= 4 points; got {points.Length}.");
+            // JOLT-1 (S-7): a non-finite point never reaches the native hull builder.
+            for (int i = 0; i < points.Length; i++)
+                if (!IsFinite(points[i]))
+                    throw new ArgumentException($"CreateConvexHullShape: point {i} is not finite ({points[i]}).");
             using var settings = new ConvexHullShapeSettings(points, DefaultConvexRadius);
-            return RegisterShape(settings.Create());
+            // Jolt's hull builder fails (joltc returns nullptr) on too few, coplanar, collinear or coincident
+            // points, or a point error above 4x tolerance.
+            return RegisterShape(RequireCooked(settings.Create(), "CreateConvexHullShape"));
         }
 
         public ShapeId CreateMeshShape(ReadOnlySpan<Vector3> vertices, ReadOnlySpan<int> indices)
@@ -795,13 +802,22 @@ namespace Legion.Physics.Jolt
             // DYNAMIC body on a mesh gets the clamped fallback mass - meshes are meant to be static.
             if (indices.Length % 3 != 0)
                 throw new ArgumentException($"mesh index count {indices.Length} is not a multiple of 3.");
+            // JOLT-1 (S-7): Sanitize's IndexedTriangle::IsDegenerate indexes the vertex list with no bounds
+            // check, so an out-of-range index is a native out-of-bounds read. Validate before building settings.
+            for (int i = 0; i < vertices.Length; i++)
+                if (!IsFinite(vertices[i]))
+                    throw new ArgumentException($"CreateMeshShape: vertex {i} is not finite ({vertices[i]}).");
+            for (int i = 0; i < indices.Length; i++)
+                if ((uint)indices[i] >= (uint)vertices.Length)
+                    throw new ArgumentException($"CreateMeshShape: index {i} = {indices[i]} is outside [0, {vertices.Length}).");
             int triCount = indices.Length / 3;
             var tris = new IndexedTriangle[triCount];
             for (int t = 0; t < triCount; t++)
                 tris[t] = new IndexedTriangle(indices[t * 3], indices[t * 3 + 1], indices[t * 3 + 2], 0u, 0u);
             var verts = vertices.ToArray();
             using var settings = new MeshShapeSettings(verts.AsSpan(), tris.AsSpan());
-            return RegisterShape(settings.Create());
+            // No triangles left after Sanitize -> joltc returns nullptr.
+            return RegisterShape(RequireCooked(settings.Create(), "CreateMeshShape"));
         }
 
         public ShapeId CreateCompoundShape(ReadOnlySpan<CompoundChild> children)
@@ -824,7 +840,7 @@ namespace Legion.Physics.Jolt
             for (int i = 0; i < children.Length; i++)
             {
                 CompoundChild c = children[i];
-                if (!_shapes.TryGet(c.Shape.Value, out JoltShapeRecord childRec) || childRec.NativeShape == null)
+                if (!_shapes.TryGet(c.Shape.Value, out JoltShapeRecord childRec) || !IsLive(childRec))
                     throw new ArgumentException($"CreateCompoundShape: child {i} ({c.Shape}) is not a live shape.");
                 // Create() AddRefs each child, so the child native survives via the compound even after
                 // the caller releases the child's Legion handle.
@@ -838,7 +854,7 @@ namespace Legion.Physics.Jolt
 
             var rec = new JoltShapeRecord
             {
-                NativeShape = settings.Create(),
+                NativeShape = RequireCooked(settings.Create(), "CreateCompoundShape"),
                 RefCount = 1,
                 IsWrapper = true,
                 CompoundChildUserData = childUserData,
@@ -901,7 +917,7 @@ namespace Legion.Physics.Jolt
                 fixed (float* pSamples = samples)
                 {
                     var hfSettings = new HeightFieldShapeSettings(pSamples, offset, joltScale, (uint)n);
-                    try { inner = hfSettings.Create(); }
+                    try { inner = RequireCooked(hfSettings.Create(), "CreateHeightFieldShape (inner)"); }
                     finally { hfSettings.Dispose(); }
                 }
             }
@@ -919,7 +935,7 @@ namespace Legion.Physics.Jolt
 
                 Shape wrapper;
                 using (var wrapSettings = new RotatedTranslatedShapeSettings(posW, rot, inner))
-                    wrapper = wrapSettings.Create();
+                    wrapper = RequireCooked(wrapSettings.Create(), "CreateHeightFieldShape (Z-up wrapper)");
 
                 // The wrapper OWNS the inner shape (private, not caller-visible): both are disposed
                 // together when this handle's RefCount hits 0.
@@ -948,14 +964,14 @@ namespace Legion.Physics.Jolt
             // scale with UNIFORM radial only. We MakeScaleValid so we never cook a distorted/invalid
             // shape; the layer above can pre-check IsValidScale if it wants to degrade differently
             // (e.g. swap a non-uniformly-scaled sphere for an ellipsoid hull) rather than accept the clamp.
-            if (!_shapes.TryGet(baseShape.Value, out JoltShapeRecord baseRec) || baseRec.NativeShape == null)
+            if (!_shapes.TryGet(baseShape.Value, out JoltShapeRecord baseRec) || !IsLive(baseRec))
                 throw new ArgumentException($"CreateScaledShape: {baseShape} is not a live shape.");
 
             Vector3 valid = baseRec.NativeShape.MakeScaleValid(scale);
             using var settings = new ScaledShapeSettings(baseRec.NativeShape, valid);
             var rec = new JoltShapeRecord
             {
-                NativeShape = settings.Create(),  // AddRefs the base; base survives via its own Legion handle
+                NativeShape = RequireCooked(settings.Create(), "CreateScaledShape"),  // AddRefs the base; base survives via its own Legion handle
                 RefCount = 1,
                 IsWrapper = true,
                 BaseShape = baseShape,
@@ -988,6 +1004,25 @@ namespace Legion.Physics.Jolt
             }
         }
 
+        // JOLT-1 (S-1): joltc returns nullptr when a cook fails, and JoltPhysicsSharp wraps that in a live
+        // Shape whose Handle is 0. Registered, it would reach CreateBody / SetShape / a compound as a null
+        // native shape. Every native shape creation goes through this: a failed cook is disposed (safe -
+        // NativeObject.Dispose skips the native destroy at Handle 0) and becomes a managed ArgumentException
+        // the caller can fall back from.
+        private static Shape RequireCooked(Shape? shape, string what)
+        {
+            if (shape != null && shape.Handle != IntPtr.Zero)
+                return shape;
+            shape?.Dispose();
+            throw new ArgumentException($"{what}: native cook failed (Jolt returned no shape)");
+        }
+
+        // A shape record is usable for native work only while its managed wrapper exists AND wraps a real
+        // native shape (Handle 0 = a failed cook; see RequireCooked).
+        private static bool IsLive(JoltShapeRecord rec) => rec.NativeShape != null && rec.NativeShape.Handle != IntPtr.Zero;
+
+        private static bool IsFinite(Vector3 v) => float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z);
+
         // Registers a freshly-created Jolt shape, RefCount = 1 (the creator's reference).
         private ShapeId RegisterShape(Shape shape)
         {
@@ -1006,7 +1041,7 @@ namespace Legion.Physics.Jolt
             if (_disposed) return BodyId.Invalid;
             if (_system == null)
                 throw new InvalidOperationException("CreateBody before Initialize.");
-            if (!_shapes.TryGet(desc.Shape.Value, out JoltShapeRecord shapeRec) || shapeRec.NativeShape == null)
+            if (!_shapes.TryGet(desc.Shape.Value, out JoltShapeRecord shapeRec) || !IsLive(shapeRec))
                 throw new ArgumentException($"CreateBody: {desc.Shape} is not a live shape handle.");
 
             MotionType joltMotion = ToJoltMotion(desc.MotionType);
@@ -1159,7 +1194,7 @@ namespace Legion.Physics.Jolt
             if (_disposed) return;
             if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid))
                 return;
-            if (!_shapes.TryGet(shape.Value, out JoltShapeRecord shapeRec) || shapeRec.NativeShape == null)
+            if (!_shapes.TryGet(shape.Value, out JoltShapeRecord shapeRec) || !IsLive(shapeRec))
                 throw new ArgumentException($"SetBodyShape: {shape} is not a live shape handle.");
             // Do not wake the body just because its shape changed (activation stays the caller's call).
             _bodyInterface.SetShape(jid, shapeRec.NativeShape, recomputeMass, Activation.DontActivate);

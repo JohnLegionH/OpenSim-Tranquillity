@@ -2731,6 +2731,14 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
             _lastMeshStats = CharacterizeMesh(points, indices);   // honest read-out of REAL mesher output
 
+            // JOLT-1 (S-7): an out-of-range index would be a native out-of-bounds read in Jolt's Sanitize (the
+            // backend now rejects it too). Name the counts once and take the bbox fallback.
+            if (_lastMeshStats.OutOfRangeIndices > 0)
+            {
+                m_log.LogWarning($"{LogHeader} mesher output has {_lastMeshStats.OutOfRangeIndices} out-of-range indices (verts={_lastMeshStats.Verts}, tris={_lastMeshStats.Tris}); bounding-box fallback.");
+                return ShapeId.Invalid;
+            }
+
             // Cook the Jolt shape. No shape/body exists until one of these RETURNS a handle, so a throw
             // here creates nothing to leak - caller falls back to a full bbox.
             try
