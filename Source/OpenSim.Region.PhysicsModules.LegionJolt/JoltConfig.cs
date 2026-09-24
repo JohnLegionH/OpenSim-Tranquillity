@@ -39,6 +39,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         public int ContactBufferMax = 0;           // 0 = the backend's contact ring capacity
         public float AvatarJumpSpeed = 4.0f;       // CharacterDesc.JumpSpeed, m/s
         public float CapacityLogIntervalSeconds = 10f;
+        public int JobPools = 1;                   // JOLT-7: job pools, one physics update at a time each; splits ThreadCount
 
         /// <summary>Parse [Jolt]. Missing keys keep their defaults; each invalid one adds a line to <paramref name="warnings"/>.</summary>
         internal static JoltConfig FromConfig(IConfigSource source, List<string> warnings)
@@ -63,6 +64,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             c.ContactBufferMax = I(cfg, "ContactBufferMax", c.ContactBufferMax, 0, 16_777_216, warnings);
             c.AvatarJumpSpeed = F(cfg, "AvatarJumpSpeed", c.AvatarJumpSpeed, 0f, 100f, warnings);
             c.CapacityLogIntervalSeconds = F(cfg, "CapacityLogIntervalSeconds", c.CapacityLogIntervalSeconds, 0.1f, 86400f, warnings);
+            c.JobPools = I(cfg, "JobPools", c.JobPools, 1, JoltPhysicsBackend.MaxJobPools, warnings);
             return c;
         }
 
@@ -85,11 +87,15 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             s.VelocityIterations = VelocityIterations;
             s.CollisionSteps = CollisionSteps;
             s.DeterministicMode = DeterministicMode;
+            s.JobPools = JobPools;
             return s;
         }
 
         /// <summary>How many worker threads these settings ask the shared pool for (the backend's own rule).</summary>
         internal int RequestedThreadCount => JoltPhysicsBackend.ResolveThreadCount(ThreadCount, DeterministicMode);
+
+        /// <summary>JOLT-7: the workers each job pool gets when RequestedThreadCount is split across JobPools.</summary>
+        internal int RequestedThreadsPerPool => JoltPhysicsBackend.ResolveThreadsPerPool(RequestedThreadCount, JobPools);
 
         // ---------------------------------------------------------------- parsing (invariant culture, never throws)
 

@@ -60,8 +60,54 @@ namespace Legion.Physics.Jolt
         // pool is the target shape. Sized once by the first region's settings (ThreadCount /
         // DeterministicMode) under s_foundationGate, then shared. This is the ONE deliberate divergence
         // from the byte-faithful donor port — the measured scaling fix (design item #1).
-        private static JobSystemThreadPool? s_jobSystem;
-        private static int s_jobThreads;   // the shared pool's worker count (JOLT-3: reported by GetCapacityStats)
+        //
+        // JOLT-7 (S-8): ONE PHYSICS UPDATE PER POOL. A JobSystemThreadPool's queue is a fixed ring of 1024 slots
+        // (JobSystemThreadPool.h:86) shared by every Update on the pool; its head is the minimum of the workers'
+        // heads, a worker advances its own head only after its running job returns, and QueueJobInternal sleeps
+        // 100 us and retries forever while the ring is full (JobSystemThreadPool.cpp 152-190). So a worker whose
+        // job queues a follow-on job into a full ring waits on its own head. Concurrent Updates add their queue
+        // traffic together - four regions x 300 boxes wedged every time, whatever maxJobs was. One Update at a
+        // time is the configuration Jolt is built and tested for, so each pool admits ONE Update through its gate
+        // and the process scales by running [Jolt] JobPools pools. The gate is taken INSIDE _simLock around
+        // _system.Update only and released in a finally; nothing takes _simLock while holding a gate (Update
+        // never calls back into a Legion lock). Pools, their count and their size are the first region's, like
+        // ThreadCount; each region is assigned the pool with the fewest regions at Initialize.
+        private sealed class JobPool
+        {
+            public readonly int Index;
+            public readonly JobSystemThreadPool System;
+            public readonly object Gate = new object();   // admits ONE Update; Monitor, so owner-checked
+            public int Regions;       // assigned regions; under s_foundationGate
+            public int Inside;        // Updates inside the gate now; Interlocked
+            public int PeakInside;    // the most ever inside at once; must stay 1
+            public JobPool(int index, JobSystemThreadPool system) { Index = index; System = system; }
+        }
+
+        public const int MaxJobPools = 64;
+        private const int JoltMaxJobs = 2048;       // PhysicsSettings.h cMaxPhysicsJobs (one Update per pool)
+        private const int JoltMaxBarriers = 8;      // PhysicsSettings.h cMaxPhysicsBarriers
+        private static JobPool[]? s_pools;
+        private static int s_jobThreads;            // the resolved total the pools were sized from (JOLT-3 stat)
+        private static int s_jobThreadsPerPool;
+
+        // This region's pool (assigned at Initialize, under s_foundationGate) and its waits at the pool's gate:
+        // written by Step under _simLock, read through Interlocked.
+        private JobPool? _pool;
+        private long _gateWaits;
+        private long _gateWaitTicksTotal;
+        private long _gateWaitTicksMax;
+
+        /// <summary>JobPools for a settings struct: 0 (unset) = 1; otherwise clamped to [1, 64].</summary>
+        public static int ResolveJobPools(int requested)
+            => requested <= 0 ? 1 : Math.Clamp(requested, 1, MaxJobPools);
+
+        /// <summary>
+        /// Workers per pool when <paramref name="totalThreads"/> (the resolved ThreadCount) is split across
+        /// <paramref name="jobPools"/> pools: max(1, total / pools). The remainder is not started, so the process
+        /// never runs more workers than ThreadCount unless ThreadCount is smaller than JobPools.
+        /// </summary>
+        public static int ResolveThreadsPerPool(int totalThreads, int jobPools)
+            => Math.Max(1, totalThreads / ResolveJobPools(jobPools));
         private ObjectLayerPairFilterTable? _objectLayerPairFilter;
         private BroadPhaseLayerInterfaceTable? _broadPhaseInterface;
         private ObjectVsBroadPhaseLayerFilterTable? _objectVsBroadPhaseFilter;
@@ -472,17 +518,33 @@ namespace Legion.Physics.Jolt
                     if (!Foundation.Init(false))
                         throw new InvalidOperationException("Jolt Foundation.Init(false) failed (native joltc.dll not loaded).");
 
-                    // Design item #1: create the ONE shared, process-capped job pool here (first region
-                    // in), sized by THIS region's settings. Jolt's canonical limits: 2048 jobs, 8 barriers.
-                    s_jobSystem = new JobSystemThreadPool(new JobSystemThreadPoolConfig
-                    {
-                        maxJobs = 2048,
-                        maxBarriers = 8,
-                        numThreads = threads,
-                    });
+                    // Design item #1: create the shared, process-capped job pools here (first region in),
+                    // sized by THIS region's settings. JOLT-7: [Jolt] JobPools pools splitting `threads`, each
+                    // with Jolt's single-system limits (2048 jobs, 8 barriers) - right because each pool runs
+                    // one Update at a time.
+                    int pools = ResolveJobPools(settings.JobPools);
+                    int perPool = ResolveThreadsPerPool(threads, pools);
+                    var created = new JobPool[pools];
+                    for (int i = 0; i < pools; i++)
+                        created[i] = new JobPool(i, new JobSystemThreadPool(new JobSystemThreadPoolConfig
+                        {
+                            maxJobs = JoltMaxJobs,
+                            maxBarriers = JoltMaxBarriers,
+                            numThreads = perPool,
+                        }));
+                    s_pools = created;
                     s_jobThreads = threads;
+                    s_jobThreadsPerPool = perPool;
                 }
                 s_foundationRefCount++;
+
+                // JOLT-7: this region's pool - the one with the fewest regions, ties to the lowest index.
+                JobPool pick = s_pools![0];
+                foreach (JobPool p in s_pools)
+                    if (p.Regions < pick.Regions)
+                        pick = p;
+                pick.Regions++;
+                _pool = pick;
             }
 
             // --- Object-layer collision matrix (delta #3) ---
@@ -550,9 +612,9 @@ namespace Legion.Physics.Jolt
             _system.OnContactPersisted += HandleContactPersisted;
             _system.OnContactRemoved += HandleContactRemoved;
 
-            // Worker pool (delta #4: Update takes this JobSystem; no TempAllocator). Now ONE shared,
-            // process-capped pool created once under s_foundationGate above (design item #1), NOT one per
-            // region; Update() takes it via s_jobSystem in Step. `threads` (above) sizes it on first region.
+            // Worker pool (delta #4: Update takes this JobSystem; no TempAllocator). Now shared, process-capped
+            // pools created once under s_foundationGate above (design item #1), NOT one per region; Update()
+            // takes this region's _pool in Step. `threads` (above) sizes them on first region.
 
             // Avatar-vs-avatar collision registry (characters add themselves on create).
             _charVsChar = new CharacterVsCharacterCollisionSimple();
@@ -587,11 +649,18 @@ namespace Legion.Physics.Jolt
             // instance's Step can't re-enter Jolt in the meantime. Other regions still up keep the count > 0.
             lock (s_foundationGate)
             {
+                if (_pool != null)
+                {
+                    _pool.Regions--;
+                    _pool = null;
+                }
                 if (s_foundationRefCount > 0 && --s_foundationRefCount == 0)
                 {
-                    // Last region out: dispose the shared job pool (design item #1) BEFORE Foundation.
-                    s_jobSystem?.Dispose();
-                    s_jobSystem = null;
+                    // Last region out: dispose the shared job pools (design item #1) BEFORE Foundation.
+                    if (s_pools != null)
+                        foreach (JobPool p in s_pools)
+                            p.System.Dispose();
+                    s_pools = null;
                     Foundation.Shutdown();
                 }
             }
@@ -2515,7 +2584,18 @@ namespace Legion.Physics.Jolt
                 ContactRingCapacity = _contactListener?.Capacity ?? 0,
                 DroppedContacts = _contactListener?.DroppedTotal ?? 0,
                 JobThreadCount = Volatile.Read(ref s_jobThreads),
+                JobPools = Volatile.Read(ref s_pools)?.Length ?? 0,
+                JobThreadsPerPool = Volatile.Read(ref s_jobThreadsPerPool),
+                UpdateGateWaits = Interlocked.Read(ref _gateWaits),
+                UpdateGateWaitMsTotal = TicksToMs(Interlocked.Read(ref _gateWaitTicksTotal)),
+                UpdateGateWaitMsMax = TicksToMs(Interlocked.Read(ref _gateWaitTicksMax)),
             };
+            JobPool? pool = Volatile.Read(ref _pool);
+            if (pool != null)
+            {
+                s.PoolIndex = pool.Index;
+                s.PoolPeakInside = Volatile.Read(ref pool.PeakInside);
+            }
 
             // The live counts are native reads; take the locks every other native read takes, in order.
             lock (_simLock)
@@ -2529,6 +2609,26 @@ namespace Legion.Physics.Jolt
             }
             return s;
         }
+
+        // JOLT-7: this region waited `ticks` (Stopwatch ticks) at the update gate.
+        private void RecordGateWait(long ticks)
+        {
+            Interlocked.Increment(ref _gateWaits);
+            Interlocked.Add(ref _gateWaitTicksTotal, ticks);
+            long max;
+            while (ticks > (max = Interlocked.Read(ref _gateWaitTicksMax))
+                   && Interlocked.CompareExchange(ref _gateWaitTicksMax, ticks, max) != max) { }
+        }
+
+        // JOLT-7: `inside` callers are in this pool's Update right now; keep the pool's high-water mark.
+        private static void RecordInside(JobPool pool, int inside)
+        {
+            int peak;
+            while (inside > (peak = Volatile.Read(ref pool.PeakInside))
+                   && Interlocked.CompareExchange(ref pool.PeakInside, inside, peak) != peak) { }
+        }
+
+        private static double TicksToMs(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;
 
         // Fold one update's error flags into the counters. Step thread, under _simLock.
         private void RecordUpdateError(PhysicsUpdateError err)
@@ -2588,13 +2688,30 @@ namespace Legion.Physics.Jolt
 
             // 2. Advance the simulation (delta #4: 3-arg Update, temp allocation internal).
             //    Uses the ONE shared, process-capped job pool (design item #1), not a per-region one.
-            if (_system != null && s_jobSystem != null)
+            JobPool? pool = _pool;
+            if (_system != null && pool != null)
             {
                 int collisionSteps = Math.Max(1, _settings.CollisionSteps);
                 // JOLT-3 (S-4a): the update's capacity error used to be discarded.
                 PhysicsUpdateError updateError;
-                using (Enter("PhysicsSystem::Update (joltc.cpp:1050)"))
-                    updateError = _system.Update(deltaTime, collisionSteps, s_jobSystem);
+                // JOLT-7 (S-8): ONE Update at a time on this region's pool. Inside _simLock, Update only.
+                if (!Monitor.TryEnter(pool.Gate))
+                {
+                    long waitStart = Stopwatch.GetTimestamp();
+                    Monitor.Enter(pool.Gate);
+                    RecordGateWait(Stopwatch.GetTimestamp() - waitStart);
+                }
+                try
+                {
+                    RecordInside(pool, Interlocked.Increment(ref pool.Inside));
+                    using (Enter("PhysicsSystem::Update (joltc.cpp:1050)"))
+                        updateError = _system.Update(deltaTime, collisionSteps, pool.System);
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref pool.Inside);
+                    Monitor.Exit(pool.Gate);
+                }
                 RecordUpdateError(updateError);
             }
 

@@ -93,6 +93,16 @@ public class CapacityTests
     }
 
     [Fact]
+    public void Gate_warning_fires_above_20_percent_of_frame_time()
+    {
+        Assert.Null(CapacityReport.GateWarning("Ebony", 1000, 10000, 0, 1));   // 10%
+        Assert.Null(CapacityReport.GateWarning("Ebony", 2000, 10000, 0, 1));   // exactly 20%
+        var w = CapacityReport.GateWarning("Ebony", 2500, 10000, 1, 2)!;
+        Assert.Contains("raise [Jolt] JobPools", w);
+        Assert.Contains("pool 1 of 2", w);
+    }
+
+    [Fact]
     public void Stats_report_the_configured_world()
     {
         using var t = new JoltTestBackend();
@@ -105,5 +115,18 @@ public class CapacityTests
         Assert.Equal(16384 * 2, s.ContactRingCapacity);
         Assert.True(s.JobThreadCount >= 1);
         Assert.Equal(0, s.DroppedContacts);
+
+        // JOLT-7: the default is one pool, holding every thread - exactly the old single pool.
+        Assert.Equal(1, s.JobPools);
+        Assert.Equal(0, s.PoolIndex);
+        Assert.Equal(s.JobThreadCount, s.JobThreadsPerPool);
+        t.Step();
+        s = t.B.GetCapacityStats();
+        Assert.Equal(1, s.PoolPeakInside);
+        Assert.Equal(0, s.UpdateGateWaits);
+        var text = CapacityReport.Render("Ebony", s, 1, 0, 1, 0, 1, 0);
+        Assert.Contains($"JobPools=1 threadsPerPool={s.JobThreadsPerPool}", text);
+        Assert.Contains("pool=0 waits=0 waitMs", text);
+        Assert.Contains("pool peakInside=1", text);
     }
 }

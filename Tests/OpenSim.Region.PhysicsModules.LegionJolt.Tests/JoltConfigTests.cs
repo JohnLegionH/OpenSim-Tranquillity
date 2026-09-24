@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using Legion.Physics;
+using Legion.Physics.Jolt;
 using Nini.Config;
 using Xunit;
 
@@ -127,6 +128,76 @@ public class JoltConfigTests
         Assert.Equal(d.CharacterUpdateBufferMax, c.CharacterUpdateBufferMax);
         Assert.Equal(d.ContactBufferMax, c.ContactBufferMax);
         Assert.Equal(d.CapacityLogIntervalSeconds, c.CapacityLogIntervalSeconds);
+    }
+
+    [Fact]
+    public void JobPools_defaults_parses_and_falls_back()
+    {
+        var d = JoltConfig.FromConfig(new IniConfigSource(), null);
+        Assert.Equal(1, d.JobPools);
+        Assert.Equal(1, d.ToBackendSettings(256, 256).JobPools);
+        Assert.Equal(1, PhysicsBackendSettings.Default.JobPools);
+        Assert.Equal(1, JoltPhysicsBackend.ResolveJobPools(0));   // an unset struct means one pool
+
+        var w = new List<string>();
+        var c = JoltConfig.FromConfig(Source(("JobPools", "7")), w);
+        Assert.Empty(w);
+        Assert.Equal(7, c.JobPools);
+        Assert.Equal(7, c.ToBackendSettings(1024, 1024).JobPools);
+        Assert.Equal(64, JoltConfig.FromConfig(Source(("JobPools", "64")), w).JobPools);
+        Assert.Empty(w);
+
+        foreach (var bad in new[] { "0", "65", "-1", "four", "" })
+        {
+            w.Clear();
+            var b = JoltConfig.FromConfig(Source(("JobPools", bad)), w);
+            Assert.Single(w);
+            Assert.Contains("JobPools", w[0]);
+            Assert.Equal(1, b.JobPools);
+        }
+
+        // The key it replaced never shipped and is not read.
+        w.Clear();
+        Assert.Equal(1, JoltConfig.FromConfig(Source(("MaxConcurrentUpdates", "4")), w).JobPools);
+        Assert.Empty(w);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void ThreadCount_is_split_across_the_pools(int pools)
+    {
+        // ThreadCount 0 = ProcessorCount - 1 in total, split evenly; the remainder is not started.
+        int total = Math.Max(1, Environment.ProcessorCount - 1);
+        var zero = JoltConfig.FromConfig(Source(("ThreadCount", "0"), ("JobPools", pools.ToString())), null);
+        Assert.Equal(total, zero.RequestedThreadCount);
+        Assert.Equal(Math.Max(1, total / pools), zero.RequestedThreadsPerPool);
+
+        // An explicit ThreadCount = ProcessorCount.
+        int cpus = Math.Min(Environment.ProcessorCount, 256);
+        var all = JoltConfig.FromConfig(Source(("ThreadCount", cpus.ToString()), ("JobPools", pools.ToString())), null);
+        Assert.Equal(cpus, all.RequestedThreadCount);
+        Assert.Equal(Math.Max(1, cpus / pools), all.RequestedThreadsPerPool);
+        Assert.True(all.RequestedThreadsPerPool * pools <= cpus || cpus < pools);
+
+        // One pool is exactly the old single pool.
+        if (pools == 1)
+            Assert.Equal(all.RequestedThreadCount, all.RequestedThreadsPerPool);
+
+        Assert.Equal(12 / pools, JoltPhysicsBackend.ResolveThreadsPerPool(12, pools));
+        Assert.Equal(pools == 2 ? 3 : pools == 3 ? 2 : 7, JoltPhysicsBackend.ResolveThreadsPerPool(7, pools));
+    }
+
+    [Fact]
+    public void ThreadCount_below_JobPools_still_gives_every_pool_a_thread()
+    {
+        Assert.Equal(1, JoltPhysicsBackend.ResolveThreadsPerPool(2, 3));
+        Assert.Equal(1, JoltPhysicsBackend.ResolveThreadsPerPool(1, 64));
+        var c = JoltConfig.FromConfig(Source(("ThreadCount", "2"), ("JobPools", "5")), null);
+        Assert.Equal(1, c.RequestedThreadsPerPool);
+        var det = JoltConfig.FromConfig(Source(("DeterministicMode", "true"), ("JobPools", "4")), null);
+        Assert.Equal(1, det.RequestedThreadsPerPool);
     }
 
     [Fact]

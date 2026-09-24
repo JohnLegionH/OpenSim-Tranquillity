@@ -48,6 +48,21 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             return sb.ToString();
         }
 
+        /// <summary>The share of frame time above which waiting at the job pool's update gate is worth a warning.</summary>
+        internal const double GateWaitWarnFraction = 0.20;
+
+        /// <summary>
+        /// JOLT-7: the warning when this region spent more than 20% of its frame time over the last interval waiting
+        /// for its job pool (which runs one region's physics update at a time), or null when it did not.
+        /// </summary>
+        internal static string GateWarning(string region, double waitMs, double frameMs, int poolIndex, int jobPools)
+        {
+            if (frameMs <= 0 || waitMs <= GateWaitWarnFraction * frameMs)
+                return null;
+            return $"{LegionJoltScene.LogHeader} {region}: waited {waitMs:0} ms of {frameMs:0} ms frame time ({waitMs / frameMs:0%}) " +
+                   $"for Jolt job pool {poolIndex} of {jobPools} (one physics update at a time per pool) - raise [Jolt] JobPools";
+        }
+
         /// <summary>The `jolt capacity` read-out: backend stats plus the scene's own buffers.</summary>
         internal static string Render(string region, in PhysicsCapacityStats s,
             int bodyBuf, long bodyOverflowFrames, int charBuf, long charFullFrames, int contactBuf, long contactOverflowFrames)
@@ -59,7 +74,8 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             sb.AppendLine($"  update errors     last={s.LastUpdateError} steps: BodyPairCacheFull={s.BodyPairCacheFullSteps} ManifoldCacheFull={s.ManifoldCacheFullSteps} ContactConstraintsFull={s.ContactConstraintsFullSteps}");
             sb.AppendLine($"  characters        {s.CharacterCount}");
             sb.AppendLine($"  contact ring      capacity={s.ContactRingCapacity} dropped={s.DroppedContacts} (cumulative)");
-            sb.AppendLine($"  job pool          threads={s.JobThreadCount} (process-wide)");
+            sb.AppendLine($"  job pools         JobPools={s.JobPools} threadsPerPool={s.JobThreadsPerPool} (ThreadCount {s.JobThreadCount}; process-wide)");
+            sb.AppendLine($"  this region       pool={s.PoolIndex} waits={s.UpdateGateWaits} waitMs total={s.UpdateGateWaitMsTotal:0.0} max={s.UpdateGateWaitMsMax:0.0}; pool peakInside={s.PoolPeakInside}");
             sb.AppendLine($"  rejected non-finite  {s.RejectedNonFinite}");
             sb.Append($"  scene buffers     bodies={bodyBuf} (overflowed {bodyOverflowFrames} steps) characters={charBuf} (full {charFullFrames} steps) contacts={contactBuf} (overflowed {contactOverflowFrames} steps)");
             return sb.ToString();

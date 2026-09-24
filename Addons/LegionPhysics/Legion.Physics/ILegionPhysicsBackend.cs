@@ -485,8 +485,23 @@ namespace Legion.Physics
         public int ContactRingCapacity;
         /// <summary>Contacts dropped because the ring was full, cumulative.</summary>
         public long DroppedContacts;
-        /// <summary>Worker threads in the shared job pool.</summary>
+        /// <summary>The resolved ThreadCount the job pools were sized from: TOTAL workers asked for, all pools (process-wide).</summary>
         public int JobThreadCount;
+
+        // -- job pools (JOLT-7, S-8): one physics update at a time per pool --
+        /// <summary>How many job pools the process has (process-wide; the first region wins).</summary>
+        public int JobPools;
+        /// <summary>Worker threads in each pool: max(1, JobThreadCount / JobPools).</summary>
+        public int JobThreadsPerPool;
+        /// <summary>The pool this region was assigned at Initialize (0-based).</summary>
+        public int PoolIndex;
+        /// <summary>This region's updates that had to wait for its pool's gate, cumulative.</summary>
+        public long UpdateGateWaits;
+        /// <summary>This region's total and longest gate wait, milliseconds, cumulative.</summary>
+        public double UpdateGateWaitMsTotal;
+        public double UpdateGateWaitMsMax;
+        /// <summary>The most updates ever inside this region's pool at once since the pool was created. Must be 1.</summary>
+        public int PoolPeakInside;
     }
 
     public struct RayHit
@@ -717,6 +732,13 @@ namespace Legion.Physics
         /// </summary>
         public bool DeterministicMode;
 
+        /// <summary>
+        /// How many Jolt job pools the process runs. Each pool runs ONE region's physics update at a time; regions
+        /// are spread across the pools and ThreadCount is split between them. Process-wide; the first region's
+        /// value wins. 0 (an unset struct) means 1; otherwise clamped to [1, 64].
+        /// </summary>
+        public int JobPools;
+
         public static PhysicsBackendSettings Default => new PhysicsBackendSettings
         {
             Gravity = new Vector3(0f, 0f, -9.80665f),
@@ -728,6 +750,7 @@ namespace Legion.Physics
             VelocityIterations = 10,
             CollisionSteps = 1,
             DeterministicMode = false,
+            JobPools = 1,
         };
     }
 }

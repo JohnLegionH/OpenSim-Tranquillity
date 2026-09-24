@@ -283,7 +283,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             _backend.Initialize(settings);
             PhysicsCapacityStats initStats = _backend.GetCapacityStats();
             _contactBufMax = _joltConfig.ContactBufferMax > 0 ? _joltConfig.ContactBufferMax : initStats.ContactRingCapacity;
-            LogJobPool(initStats.JobThreadCount);
+            LogJobPool(initStats);
             DefaultGravity = settings.Gravity;   // the vehicle controller applies this manually
             JoltMetrics.RecordRegionInit(RegionName,
                 System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 - rssBefore);
@@ -301,21 +301,28 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             m_log.LogInformation($"{LogHeader} region '{RegionName}' {sizeX}x{sizeY}m: backend initialised, MaxBodies={settings.MaxBodies}. {EngineName}");
         }
 
-        // J-9: the shared job pool is sized once, by the first region's request; every region reads the same
-        // [Jolt] ThreadCount, so they agree unless the pool predates this config (or a harness sized it).
-        private void LogJobPool(int poolThreads)
+        // J-9: the shared job pools are sized once, by the first region's request; every region reads the same
+        // [Jolt] ThreadCount and JobPools, so they agree unless the pools predate this config (or a harness sized them).
+        private void LogJobPool(in PhysicsCapacityStats pool)
         {
+            int poolThreads = pool.JobThreadCount;
             lock (s_poolLogGate)
             {
                 if (!s_poolLogged)
                 {
                     s_poolLogged = true;
-                    m_log.LogInformation($"{LogHeader} shared Jolt job pool: {poolThreads} worker threads (process-wide; [Jolt] ThreadCount={_joltConfig.ThreadCount}).");
+                    m_log.LogInformation($"{LogHeader} shared Jolt job pools: {pool.JobPools} x {pool.JobThreadsPerPool} worker threads, one physics update at a time each " +
+                                         $"(process-wide; [Jolt] ThreadCount={_joltConfig.ThreadCount} -> {poolThreads}, JobPools={_joltConfig.JobPools}).");
                 }
             }
+            // JOLT-7: which pool this region steps on, once per region.
+            m_log.LogInformation($"{LogHeader} region '{RegionName}' steps on Jolt job pool {pool.PoolIndex} of {pool.JobPools}.");
             int requested = _joltConfig.RequestedThreadCount;
             if (requested != poolThreads)
-                m_log.LogWarning($"{LogHeader} region '{RegionName}' asked for {requested} job threads but the shared pool already has {poolThreads}; the first region's size wins.");
+                m_log.LogWarning($"{LogHeader} region '{RegionName}' asked for {requested} job threads but the shared pools were sized for {poolThreads}; the first region's size wins.");
+            // JOLT-7: the pool count is process-wide too.
+            if (_joltConfig.JobPools != pool.JobPools)
+                m_log.LogWarning($"{LogHeader} region '{RegionName}' asked for JobPools={_joltConfig.JobPools} but {pool.JobPools} pools already exist; the first region's value wins.");
         }
 
         public void RemoveRegion(Scene scene)
@@ -3590,7 +3597,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             if (r.BodyBufferOverflowed) _bodyOverflowFrames++;
             if (r.CharacterUpdateCount >= _charBuf.Length) _charFullFrames++;
             if (r.ContactBufferOverflowed) _contactOverflowFrames++;
-            CheckCapacity();
+            CheckCapacity(timeStep);
 
             int n = r.BodyUpdateCount;
             for (int i = 0; i < n; i++)
@@ -3650,10 +3657,11 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
         // JOLT-3: after each Step, warn (at most once per [Jolt] CapacityLogIntervalSeconds per region) when the update
         // reported a capacity error or CreateBody was refused since the last warning, naming the [Jolt] key to raise.
-        private void CheckCapacity()
+        private void CheckCapacity(float timeStep)
         {
             PhysicsCapacityStats s = _backend.GetCapacityStats();
             long now = System.DateTime.UtcNow.Ticks;
+            CheckGateWait(in s, now, timeStep);
             if (!_capBaseSet)
             {
                 _capBase = s;
@@ -3682,6 +3690,31 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             _capBaseTicks = now;
         }
         private long _capLastWarnTicks;
+
+        // JOLT-7: once per capacity-log interval, compare this region's time waiting at its job pool's gate with
+        // its frame time over that interval; more than 20% means too few pools for this many busy regions.
+        private long _gateWindowStartTicks;
+        private double _gateWindowStartWaitMs;
+        private double _gateWindowFrameMs;
+        private void CheckGateWait(in PhysicsCapacityStats s, long now, float timeStep)
+        {
+            _gateWindowFrameMs += timeStep * 1000.0;
+            if (_gateWindowStartTicks == 0)
+            {
+                _gateWindowStartTicks = now;
+                _gateWindowStartWaitMs = s.UpdateGateWaitMsTotal;
+                _gateWindowFrameMs = 0;
+                return;
+            }
+            if (now - _gateWindowStartTicks < _capacityLogIntervalTicks)
+                return;
+            string msg = CapacityReport.GateWarning(RegionName, s.UpdateGateWaitMsTotal - _gateWindowStartWaitMs, _gateWindowFrameMs, s.PoolIndex, s.JobPools);
+            if (msg != null)
+                m_log.LogWarning(msg);
+            _gateWindowStartTicks = now;
+            _gateWindowStartWaitMs = s.UpdateGateWaitMsTotal;
+            _gateWindowFrameMs = 0;
+        }
 
         private void JoltCapacity()
         {
