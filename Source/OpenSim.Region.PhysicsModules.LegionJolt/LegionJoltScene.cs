@@ -184,6 +184,14 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         private readonly Dictionary<uint, CollisionEventUpdate> _collisionAccum = new Dictionary<uint, CollisionEventUpdate>();
         private readonly HashSet<uint> _collidedLastFrame = new HashSet<uint>();
 
+        // JOLT-3 (S-4a/S-4b): capacity surfacing. Step-thread only. The warning window starts at the last logged
+        // snapshot; a failure inside the quiet period accumulates into the next line instead of being lost.
+        internal static long CapacityLogIntervalTicks = System.TimeSpan.FromSeconds(10).Ticks;
+        private PhysicsCapacityStats _capBase;
+        private long _capBaseTicks;
+        private bool _capBaseSet;
+        private long _bodyOverflowFrames, _charFullFrames, _contactOverflowFrames;
+
         // ---------------------------------------------------------------------
         // INonSharedRegionModule
         // ---------------------------------------------------------------------
@@ -321,7 +329,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             if (MainConsole.Instance != null)
             {
                 MainConsole.Instance.Commands.AddCommand("Physics", false, "jolt",
-                    "jolt linktest | unlinktest | collidetest | boattest [linear|hover|attract|steer] | cartest [linear|steer|attract] | sledtest [slide|nosteer|grip] | planetest [thrust|bank|climb] | balloontest [hover|lift|drift] | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | reloadcheck | vehiclestatus | clearprims",
+                    "jolt capacity | linktest | unlinktest | collidetest | boattest [linear|hover|attract|steer] | cartest [linear|steer|attract] | sledtest [slide|nosteer|grip] | planetest [thrust|bank|climb] | balloontest [hover|lift|drift] | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | reloadcheck | vehiclestatus | clearprims",
                     "Legion Jolt proofs (M6.2 terrain / M6.3 prims): raycast the cooked collision surfaces and report hits.",
                     HandleJoltConsole);
             }
@@ -362,6 +370,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             if (MainConsole.Instance.ConsoleScene is null)
                 MainConsole.Instance.Output($"{LogHeader} --- region '{RegionName}' ---");
 
+            if (cmd.Length >= 2 && cmd[1] == "capacity") { JoltCapacity(); return; }   // JOLT-3: read-only
             if (cmd.Length >= 2 && cmd[1] == "metrics") { MainConsole.Instance.Output(JoltMetrics.Report()); return; }   // slice-4 gate instrumentation
             if (cmd.Length >= 2 && cmd[1] == "linktest") { JoltLinkTest(); return; }
             if (cmd.Length >= 2 && cmd[1] == "unlinktest") { JoltUnlinkTest(); return; }
@@ -675,7 +684,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
                 return;
             }
 
-            MainConsole.Instance.Output("Usage: jolt linktest | unlinktest | collidetest | boattest [linear|hover|attract|steer] | cartest [linear|steer|attract] | sledtest [slide|nosteer|grip] | planetest [thrust|bank|climb] | balloontest [hover|lift|drift] | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | reloadcheck | vehiclestatus | clearprims");
+            MainConsole.Instance.Output("Usage: jolt capacity | linktest | unlinktest | collidetest | boattest [linear|hover|attract|steer] | cartest [linear|steer|attract] | sledtest [slide|nosteer|grip] | planetest [thrust|bank|climb] | balloontest [hover|lift|drift] | terraintest | terrainslope | terrainhill | hilltest | probe <x> <y> | rezprims | rayprims | rezmesh | rezmeshn <count> | raymesh | droptest | dropmesh | dropstatus | avatarstatus | charframe [secs] | sitstatus | sittest | unsit | sittarget | sensortest | raytest | heights <x> <y> | reloadcheck | vehiclestatus | clearprims");
         }
 
         // M7 Task 1 proof: rez a root + 2 children at offsets, make the root physical, then run the OpenSim
@@ -3549,7 +3558,13 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             }
 
             if (r.BodyBufferOverflowed)
+            {
+                _bodyOverflowFrames++;
                 m_log.LogWarning($"{LogHeader} body update buffer overflowed ({_bodyBuf.Length}); some terse updates dropped this step.");
+            }
+            if (r.CharacterUpdateCount >= _charBuf.Length) _charFullFrames++;
+            if (r.ContactBufferOverflowed) _contactOverflowFrames++;
+            CheckCapacity();
 
             int n = r.BodyUpdateCount;
             for (int i = 0; i < n; i++)
@@ -3578,6 +3593,48 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             }
 
             DispatchContacts(r.ContactCount);
+        }
+
+        // JOLT-3: after each Step, warn (at most once per CapacityLogIntervalTicks per region) when the update
+        // reported a capacity error or CreateBody was refused since the last warning, naming the [Jolt] key to raise.
+        private void CheckCapacity()
+        {
+            PhysicsCapacityStats s = _backend.GetCapacityStats();
+            long now = System.DateTime.UtcNow.Ticks;
+            if (!_capBaseSet)
+            {
+                _capBase = s;
+                _capBaseTicks = now;
+                _capBaseSet = true;
+                return;
+            }
+            bool worse = s.BodyCreateFailures > _capBase.BodyCreateFailures
+                || s.BodyPairCacheFullSteps > _capBase.BodyPairCacheFullSteps
+                || s.ManifoldCacheFullSteps > _capBase.ManifoldCacheFullSteps
+                || s.ContactConstraintsFullSteps > _capBase.ContactConstraintsFullSteps;
+            if (!worse)
+            {
+                _capBase = s;          // nothing to report: keep the window anchored at "now"
+                _capBaseTicks = now;
+                return;
+            }
+            if (_capLastWarnTicks != 0 && now - _capLastWarnTicks < CapacityLogIntervalTicks)
+                return;                // quiet period: let the counts accumulate into the next line
+            string msg = CapacityReport.Warning(RegionName,
+                _capBase, s, System.Math.Max(1.0, (now - _capBaseTicks) / (double)System.TimeSpan.TicksPerSecond));
+            if (msg != null)
+                m_log.LogWarning(msg);
+            _capLastWarnTicks = now;
+            _capBase = s;
+            _capBaseTicks = now;
+        }
+        private long _capLastWarnTicks;
+
+        private void JoltCapacity()
+        {
+            PhysicsCapacityStats s = _backend.GetCapacityStats();
+            MainConsole.Instance.Output(CapacityReport.Render(RegionName, s,
+                _bodyBuf.Length, _bodyOverflowFrames, _charBuf.Length, _charFullFrames, _contactBuf.Length, _contactOverflowFrames));
         }
 
         // M7 Task 3 (base dispatch): turn this frame's ContactReports into OpenSim collision events. Each

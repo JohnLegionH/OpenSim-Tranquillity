@@ -61,6 +61,7 @@ namespace Legion.Physics.Jolt
         // DeterministicMode) under s_foundationGate, then shared. This is the ONE deliberate divergence
         // from the byte-faithful donor port — the measured scaling fix (design item #1).
         private static JobSystemThreadPool? s_jobSystem;
+        private static int s_jobThreads;   // the shared pool's worker count (JOLT-3: reported by GetCapacityStats)
         private ObjectLayerPairFilterTable? _objectLayerPairFilter;
         private BroadPhaseLayerInterfaceTable? _broadPhaseInterface;
         private ObjectVsBroadPhaseLayerFilterTable? _objectVsBroadPhaseFilter;
@@ -115,6 +116,15 @@ namespace Legion.Physics.Jolt
 
         // JOLT-2 (S-2): mutator calls dropped for a non-finite argument. Interlocked; read by GetCapacityStats.
         private long _rejectedNonFinite;
+
+        // JOLT-3 (S-4a/S-4b): capacity failures, counted instead of discarded. The update-error counters are
+        // written only by Step (under _simLock); BodyCreateFailures only by CreateBody (under _simLock). All are
+        // read through Interlocked so GetCapacityStats is safe from any thread.
+        private long _manifoldCacheFullSteps;
+        private long _bodyPairCacheFullSteps;
+        private long _contactConstraintsFullSteps;
+        private int _lastUpdateError;   // PhysicsUpdateErrors
+        private long _bodyCreateFailures;
 
         // Region water plane height (metres, region-local Z). Stored for buoyancy (M8) and queries;
         // no water collision body in the solve yet - water is a force field, not a surface.
@@ -454,6 +464,7 @@ namespace Legion.Physics.Jolt
                         maxBarriers = 8,
                         numThreads = threads,
                     });
+                    s_jobThreads = threads;
                 }
                 s_foundationRefCount++;
             }
@@ -1115,6 +1126,15 @@ namespace Legion.Physics.Jolt
                 // rezzing tens of thousands of prims with Activate is a pathological startup stall.
                 Activation activation = desc.StartActive ? Activation.Activate : Activation.DontActivate;
                 BodyID joltId = _bodyInterface.CreateAndAddBody(bcs, activation);
+
+                // JOLT-3 (S-4b): at MaxBodies Jolt hands back the invalid id (0xFFFFFFFF). Recording it would give
+                // the caller a "live" handle to nothing. Record nothing, count it, and return Invalid - JoltPrim
+                // already treats an invalid body as body-less, and the module logs the count (rate-limited).
+                if (joltId.IsInvalid)
+                {
+                    Interlocked.Increment(ref _bodyCreateFailures);
+                    return BodyId.Invalid;
+                }
 
                 var rec = new JoltBodyRecord
                 {
@@ -2456,10 +2476,47 @@ namespace Legion.Physics.Jolt
         // Health
         // =====================================================================
 
-        public PhysicsCapacityStats GetCapacityStats() => new PhysicsCapacityStats
+        public PhysicsCapacityStats GetCapacityStats()
         {
-            RejectedNonFinite = Interlocked.Read(ref _rejectedNonFinite),
-        };
+            var s = new PhysicsCapacityStats
+            {
+                RejectedNonFinite = Interlocked.Read(ref _rejectedNonFinite),
+                ManifoldCacheFullSteps = Interlocked.Read(ref _manifoldCacheFullSteps),
+                BodyPairCacheFullSteps = Interlocked.Read(ref _bodyPairCacheFullSteps),
+                ContactConstraintsFullSteps = Interlocked.Read(ref _contactConstraintsFullSteps),
+                LastUpdateError = (PhysicsUpdateErrors)Volatile.Read(ref _lastUpdateError),
+                BodyCreateFailures = Interlocked.Read(ref _bodyCreateFailures),
+                MaxBodies = _settings.MaxBodies,
+                MaxBodyPairs = _settings.MaxBodyPairs,
+                MaxContactConstraints = _settings.MaxContactConstraints,
+                ContactRingCapacity = _contactListener?.Capacity ?? 0,
+                DroppedContacts = _contactListener?.DroppedTotal ?? 0,
+                JobThreadCount = Volatile.Read(ref s_jobThreads),
+            };
+
+            // The live counts are native reads; take the locks every other native read takes, in order.
+            lock (_simLock)
+            {
+                if (_disposed || _system == null)
+                    return s;
+                s.LiveBodyCount = (int)_system.BodiesCount;
+                s.ActiveBodyCount = (int)_system.GetNumActiveBodies(BodyType.Rigid);
+                lock (_characterGate)
+                    s.CharacterCount = _characterList.Count;
+            }
+            return s;
+        }
+
+        // Fold one update's error flags into the counters. Step thread, under _simLock.
+        private void RecordUpdateError(PhysicsUpdateError err)
+        {
+            if (err == PhysicsUpdateError.None)
+                return;
+            if ((err & PhysicsUpdateError.ManifoldCacheFull) != 0) Interlocked.Increment(ref _manifoldCacheFullSteps);
+            if ((err & PhysicsUpdateError.BodyPairCacheFull) != 0) Interlocked.Increment(ref _bodyPairCacheFullSteps);
+            if ((err & PhysicsUpdateError.ContactConstraintsFull) != 0) Interlocked.Increment(ref _contactConstraintsFullSteps);
+            Volatile.Write(ref _lastUpdateError, (int)(PhysicsUpdateErrors)(byte)err);
+        }
 
         // =====================================================================
         // Step
@@ -2511,8 +2568,11 @@ namespace Legion.Physics.Jolt
             if (_system != null && s_jobSystem != null)
             {
                 int collisionSteps = Math.Max(1, _settings.CollisionSteps);
+                // JOLT-3 (S-4a): the update's capacity error used to be discarded.
+                PhysicsUpdateError updateError;
                 using (Enter("PhysicsSystem::Update (joltc.cpp:1050)"))
-                    _system.Update(deltaTime, collisionSteps, s_jobSystem);
+                    updateError = _system.Update(deltaTime, collisionSteps, s_jobSystem);
+                RecordUpdateError(updateError);
             }
 
             // 3. Fold this frame's queued activation deltas into the step-thread-owned active
@@ -2634,8 +2694,12 @@ namespace Legion.Physics.Jolt
         private readonly ContactReport[] _ring;
         private int _writeIndex;
         private int _dropped;
+        private long _droppedTotal;   // JOLT-3: cumulative ring drops, for GetCapacityStats
 
         public LegionContactListener(int capacity) => _ring = new ContactReport[Math.Max(1, capacity)];
+
+        internal int Capacity => _ring.Length;
+        internal long DroppedTotal => Interlocked.Read(ref _droppedTotal);
 
         // OnContactAdded  -> ContactPhase.Begin    -> LSL collision_start
         // OnContactPersisted -> ContactPhase.Persist -> LSL collision
@@ -2663,7 +2727,10 @@ namespace Legion.Physics.Jolt
 
             _ring.AsSpan(0, count).CopyTo(destination);
 
-            overflowed = Volatile.Read(ref _dropped) > 0 || written > destination.Length;
+            int dropped = Volatile.Read(ref _dropped);
+            if (dropped > 0)
+                Interlocked.Add(ref _droppedTotal, dropped);
+            overflowed = dropped > 0 || written > destination.Length;
             Volatile.Write(ref _writeIndex, 0);
             Volatile.Write(ref _dropped, 0);
             return count;

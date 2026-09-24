@@ -444,6 +444,19 @@ namespace Legion.Physics
         }
     }
 
+    /// <summary>The capacity errors a physics update can report (Jolt's PhysicsUpdateError, engine-neutral).</summary>
+    [Flags]
+    public enum PhysicsUpdateErrors : byte
+    {
+        None = 0,
+        /// <summary>The contact-manifold cache filled; some contacts were not generated.</summary>
+        ManifoldCacheFull = 1 << 0,
+        /// <summary>The body-pair cache filled; some colliding pairs were not tested.</summary>
+        BodyPairCacheFull = 1 << 1,
+        /// <summary>The contact-constraint buffer filled; some contacts were not solved.</summary>
+        ContactConstraintsFull = 1 << 2,
+    }
+
     /// <summary>
     /// Cumulative health counters for one backend, read off the step thread by the module's rate-limited logger
     /// and the `jolt capacity` console command. Everything here is a snapshot; nothing resets on read.
@@ -452,6 +465,28 @@ namespace Legion.Physics
     {
         /// <summary>Mutator calls dropped because an argument was NaN/Inf (or a zero-length quaternion).</summary>
         public long RejectedNonFinite;
+
+        // -- capacity (JOLT-3) --
+        /// <summary>Steps whose update reported each flag, cumulative.</summary>
+        public long ManifoldCacheFullSteps;
+        public long BodyPairCacheFullSteps;
+        public long ContactConstraintsFullSteps;
+        /// <summary>The most recent non-None update error (None if there has never been one).</summary>
+        public PhysicsUpdateErrors LastUpdateError;
+        /// <summary>CreateBody calls refused by the engine (MaxBodies reached); each returned BodyId.Invalid.</summary>
+        public long BodyCreateFailures;
+
+        public int LiveBodyCount;
+        public int ActiveBodyCount;
+        public int MaxBodies;
+        public int MaxBodyPairs;
+        public int MaxContactConstraints;
+        public int CharacterCount;
+        public int ContactRingCapacity;
+        /// <summary>Contacts dropped because the ring was full, cumulative.</summary>
+        public long DroppedContacts;
+        /// <summary>Worker threads in the shared job pool.</summary>
+        public int JobThreadCount;
     }
 
     public struct RayHit
