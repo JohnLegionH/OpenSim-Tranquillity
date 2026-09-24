@@ -444,6 +444,16 @@ namespace Legion.Physics
         }
     }
 
+    /// <summary>
+    /// Cumulative health counters for one backend, read off the step thread by the module's rate-limited logger
+    /// and the `jolt capacity` console command. Everything here is a snapshot; nothing resets on read.
+    /// </summary>
+    public struct PhysicsCapacityStats
+    {
+        /// <summary>Mutator calls dropped because an argument was NaN/Inf (or a zero-length quaternion).</summary>
+        public long RejectedNonFinite;
+    }
+
     public struct RayHit
     {
         public BodyId Body;
@@ -626,6 +636,11 @@ namespace Legion.Physics
         bool ShapeCast(
             ShapeId shape, Vector3 origin, Quaternion orientation, Vector3 direction,
             float maxDistance, QueryFilter filter, out RayHit hit);
+
+        // -- health -------------------------------------------------------
+
+        /// <summary>Cumulative capacity / input-rejection counters. Cheap; safe from any thread.</summary>
+        PhysicsCapacityStats GetCapacityStats();
 
         // -- step ---------------------------------------------------------
 

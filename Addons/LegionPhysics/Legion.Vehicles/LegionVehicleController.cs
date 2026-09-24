@@ -157,6 +157,10 @@ namespace Legion.Vehicles
         // =================================================================
         public void ProcessFloatVehicleParam(Vehicle pParam, float pValue)
         {
+            // JOLT-2 (S-2): ClampF passes NaN through (Math.Max/Min propagate it), so a non-finite script value
+            // would be stored and drive the motors. Ignore it; the stored param is unchanged.
+            if (!float.IsFinite(pValue))
+                return;
             switch (pParam)
             {
                 case Vehicle.ANGULAR_DEFLECTION_EFFICIENCY:
@@ -247,6 +251,8 @@ namespace Legion.Vehicles
         // =================================================================
         public void ProcessVectorVehicleParam(Vehicle pParam, Vector3 pValue)
         {
+            if (!float.IsFinite(pValue.X) || !float.IsFinite(pValue.Y) || !float.IsFinite(pValue.Z))
+                return;   // JOLT-2 (S-2): see ProcessFloatVehicleParam
             switch (pParam)
             {
                 case Vehicle.ANGULAR_FRICTION_TIMESCALE:

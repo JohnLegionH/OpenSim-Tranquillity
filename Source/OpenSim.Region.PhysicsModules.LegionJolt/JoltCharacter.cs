@@ -56,6 +56,9 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
         private int _subscribedMs;
 
+        // JOLT-2: this avatar's last non-finite-rejection log line (NonFiniteGuard rate limit, one per 10 s).
+        private long _nonFiniteLogTicks;
+
         // Cached ground state from the last drain, surfaced by `jolt avatarstatus`.
         private bool _isSupported;
         private bool _isSliding;
@@ -196,6 +199,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             get => _position;
             set
             {
+                if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "Position", value.ToString()); return; }
                 // Only ScenePresence writes this (teleport / direct set); the drain writes _position
                 // directly, so this force-transform never fights passive physics motion.
                 _position = value;
@@ -224,21 +228,35 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         public override Quaternion Orientation
         {
             get => _orientation;
-            set => _orientation = value;
+            set
+            {
+                if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "Orientation", value.ToString()); return; }
+                _orientation = value;
+            }
         }
 
         // ScenePresence's Velocity setter routes here as well as TargetVelocity; both are walk/run intent.
         public override Vector3 Velocity
         {
             get => _velocity;
-            set { _targetVelocity = value; PushMovement(); }
+            set
+            {
+                if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "Velocity", value.ToString()); return; }
+                _targetVelocity = value;
+                PushMovement();
+            }
         }
 
         // The PRIMARY movement command ScenePresence writes each frame.
         public override Vector3 TargetVelocity
         {
             get => _targetVelocity;
-            set { _targetVelocity = value; PushMovement(); }
+            set
+            {
+                if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "TargetVelocity", value.ToString()); return; }
+                _targetVelocity = value;
+                PushMovement();
+            }
         }
 
         public override bool Flying
@@ -257,6 +275,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
         public override void SetMomentum(Vector3 momentum)
         {
+            if (!NonFiniteGuard.Ok(momentum)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "Momentum", momentum.ToString()); return; }
             _velocity = momentum;
             _targetVelocity = momentum;
             PushMovement();
@@ -267,6 +286,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             get => _size;
             set
             {
+                if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "Size", value.ToString()); return; }
                 if (_size == value) return;
                 _size = value;
                 CapsuleFromSize(value, out _capsuleHalfHeight, out _capsuleRadius);

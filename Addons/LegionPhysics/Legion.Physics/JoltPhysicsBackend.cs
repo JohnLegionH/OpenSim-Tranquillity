@@ -113,6 +113,9 @@ namespace Legion.Physics.Jolt
         // Current terrain body (SetTerrain replaces it). BodyId.Invalid = none.
         private BodyId _terrainBody = BodyId.Invalid;
 
+        // JOLT-2 (S-2): mutator calls dropped for a non-finite argument. Interlocked; read by GetCapacityStats.
+        private long _rejectedNonFinite;
+
         // Region water plane height (metres, region-local Z). Stored for buoyancy (M8) and queries;
         // no water collision body in the solve yet - water is a force field, not a surface.
         private float _waterHeight;
@@ -1023,6 +1026,18 @@ namespace Legion.Physics.Jolt
 
         private static bool IsFinite(Vector3 v) => float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z);
 
+        // JOLT-2 (S-2): a quaternion is unusable if any component is non-finite or it has (near) zero length -
+        // Jolt normalises nothing and a zero rotation divides by zero in every transform built from it.
+        private const float MinQuaternionLengthSq = 1e-8f;
+        private static bool IsUsable(Quaternion q)
+            => float.IsFinite(q.X) && float.IsFinite(q.Y) && float.IsFinite(q.Z) && float.IsFinite(q.W)
+               && q.LengthSquared() >= MinQuaternionLengthSq;
+
+        // JOLT-2 (S-2) mutator policy: a call carrying a non-finite value is DROPPED and counted, never passed to
+        // Jolt (Release Jolt keeps a NaN velocity and it spreads through every contact). Surfaced through
+        // GetCapacityStats().RejectedNonFinite. Checked before any lock, so no lock scope changes.
+        private void CountRejectedNonFinite() => Interlocked.Increment(ref _rejectedNonFinite);
+
         // Registers a freshly-created Jolt shape, RefCount = 1 (the creator's reference).
         private ShapeId RegisterShape(Shape shape)
         {
@@ -1041,6 +1056,12 @@ namespace Legion.Physics.Jolt
             if (_disposed) return BodyId.Invalid;
             if (_system == null)
                 throw new InvalidOperationException("CreateBody before Initialize.");
+            // JOLT-2 (S-2) creator policy: throw, so the caller's existing accept-and-ignore path handles it.
+            if (!IsFinite(desc.Position) || !IsUsable(desc.Orientation)
+                || !IsFinite(desc.LinearVelocity) || !IsFinite(desc.AngularVelocity))
+                throw new ArgumentException(
+                    $"CreateBody: non-finite descriptor (position {desc.Position}, orientation {desc.Orientation}, " +
+                    $"velocity {desc.LinearVelocity}, angular {desc.AngularVelocity}).");
             if (!_shapes.TryGet(desc.Shape.Value, out JoltShapeRecord shapeRec) || !IsLive(shapeRec))
                 throw new ArgumentException($"CreateBody: {desc.Shape} is not a live shape handle.");
 
@@ -1245,6 +1266,7 @@ namespace Legion.Physics.Jolt
         // repositioned so it keeps stepping). Resolve failure (destroyed body) is a safe no-op.
         public void SetBodyTransform(BodyId body, Vector3 position, Quaternion orientation, bool activate)
         {
+            if (!IsFinite(position) || !IsUsable(orientation)) { CountRejectedNonFinite(); return; }
             lock (_simLock)
             {
                 if (_disposed) return;
@@ -1256,6 +1278,7 @@ namespace Legion.Physics.Jolt
 
         public void SetBodyLinearVelocity(BodyId body, Vector3 velocity)
         {
+            if (!IsFinite(velocity)) { CountRejectedNonFinite(); return; }
             // Thin seam: this does NOT wake a sleeping body (Jolt-native behaviour - only Apply*
             // impulses activate). A velocity set on a sleeping body takes effect only once something
             // else activates it; that activation policy belongs to the layer above, not here.
@@ -1269,6 +1292,7 @@ namespace Legion.Physics.Jolt
 
         public void SetBodyAngularVelocity(BodyId body, Vector3 velocity)
         {
+            if (!IsFinite(velocity)) { CountRejectedNonFinite(); return; }
             lock (_simLock)
             {
                 if (_disposed) return;
@@ -1279,6 +1303,7 @@ namespace Legion.Physics.Jolt
 
         public void SetBodyMass(BodyId body, float mass)
         {
+            if (!float.IsFinite(mass)) { CountRejectedNonFinite(); return; }
             lock (_simLock)
             {
             if (_disposed) return;
@@ -1347,6 +1372,7 @@ namespace Legion.Physics.Jolt
         // honour SceneObjectPart.Density (x DensityScaleFactor) for BulletSim mass parity.
         public void SetBodyDensity(BodyId body, float physicalDensity)
         {
+            if (!float.IsFinite(physicalDensity)) { CountRejectedNonFinite(); return; }
             lock (_simLock)
             {
             if (_disposed) return;
@@ -1376,6 +1402,7 @@ namespace Legion.Physics.Jolt
 
         public void SetBodyFriction(BodyId body, float friction)
         {
+            if (!float.IsFinite(friction)) { CountRejectedNonFinite(); return; }
             lock (_simLock)
             {
                 if (_disposed) return;
@@ -1386,6 +1413,7 @@ namespace Legion.Physics.Jolt
 
         public void SetBodyRestitution(BodyId body, float restitution)
         {
+            if (!float.IsFinite(restitution)) { CountRejectedNonFinite(); return; }
             lock (_simLock)
             {
                 if (_disposed) return;
@@ -1396,6 +1424,7 @@ namespace Legion.Physics.Jolt
 
         public void SetBodyDamping(BodyId body, float linear, float angular)
         {
+            if (!float.IsFinite(linear) || !float.IsFinite(angular)) { CountRejectedNonFinite(); return; }
             lock (_simLock)
             {
             if (_disposed) return;
@@ -1420,6 +1449,7 @@ namespace Legion.Physics.Jolt
 
         public void SetBodyGravityFactor(BodyId body, float factor)
         {
+            if (!float.IsFinite(factor)) { CountRejectedNonFinite(); return; }
             lock (_simLock)
             {
                 if (_disposed) return;
@@ -1444,6 +1474,7 @@ namespace Legion.Physics.Jolt
         // AddImpulse/AddAngularImpulse change velocity instantly (delta v = impulse / mass).
         public void ApplyForce(BodyId body, Vector3 force)
         {
+            if (!IsFinite(force)) { CountRejectedNonFinite(); return; }
             lock (_simLock)
             {
                 if (_disposed) return;
@@ -1454,6 +1485,7 @@ namespace Legion.Physics.Jolt
 
         public void ApplyTorque(BodyId body, Vector3 torque)
         {
+            if (!IsFinite(torque)) { CountRejectedNonFinite(); return; }
             lock (_simLock)
             {
                 if (_disposed) return;
@@ -1464,6 +1496,7 @@ namespace Legion.Physics.Jolt
 
         public void ApplyImpulse(BodyId body, Vector3 impulse)
         {
+            if (!IsFinite(impulse)) { CountRejectedNonFinite(); return; }
             lock (_simLock)
             {
                 if (_disposed) return;
@@ -1474,6 +1507,7 @@ namespace Legion.Physics.Jolt
 
         public void ApplyImpulseAtPoint(BodyId body, Vector3 impulse, Vector3 worldPoint)
         {
+            if (!IsFinite(impulse) || !IsFinite(worldPoint)) { CountRejectedNonFinite(); return; }
             lock (_simLock)
             {
                 if (_disposed) return;
@@ -1484,6 +1518,7 @@ namespace Legion.Physics.Jolt
 
         public void ApplyAngularImpulse(BodyId body, Vector3 angularImpulse)
         {
+            if (!IsFinite(angularImpulse)) { CountRejectedNonFinite(); return; }
             lock (_simLock)
             {
                 if (_disposed) return;
@@ -1495,6 +1530,8 @@ namespace Legion.Physics.Jolt
         public void ApplyBuoyancy(
             BodyId body, float waterHeight, float buoyancy, float linearDrag, float angularDrag)
         {
+            if (!float.IsFinite(waterHeight) || !float.IsFinite(buoyancy) || !float.IsFinite(linearDrag) || !float.IsFinite(angularDrag))
+                { CountRejectedNonFinite(); return; }
             // Jolt: Body.ApplyBuoyancyImpulse(surfacePosition, surfaceNormal,
             //         buoyancy, linearDrag, angularDrag, fluidVelocity,
             //         gravity, deltaTime)
@@ -1595,6 +1632,9 @@ namespace Legion.Physics.Jolt
             // the bottom hemisphere counts as ground. The Y-up ExtendedUpdateSettings are remapped in Step.
             if (_system == null)
                 throw new InvalidOperationException("CreateCharacter before Initialize.");
+            if (!IsFinite(desc.Position) || !IsUsable(desc.Orientation))
+                throw new ArgumentException(
+                    $"CreateCharacter: non-finite descriptor (position {desc.Position}, orientation {desc.Orientation}).");
             PhysicsSystem system = _system;
 
             (Shape wrapper, Shape inner) = BuildStandingCapsule(desc.CapsuleHalfHeight, desc.CapsuleRadius);
@@ -1806,6 +1846,7 @@ namespace Legion.Physics.Jolt
 
         public void SetCharacterTransform(CharacterId character, Vector3 position, Quaternion orientation)
         {
+            if (!IsFinite(position) || !IsUsable(orientation)) { CountRejectedNonFinite(); return; }
             lock (_characterGate)
             {
                 if (_characters.TryGet(character.Value, out JoltCharacterRecord rec) && rec.Character != null)
@@ -1818,6 +1859,7 @@ namespace Legion.Physics.Jolt
 
         public void ReGroundCharacter(CharacterId character, Vector3 position)
         {
+            if (!IsFinite(position)) { CountRejectedNonFinite(); return; }
             // Same gate StepCharacter runs under, so the position + velocity write is atomic against the
             // per-step CharacterVirtual update (no half-applied state, no race). Zeroing LinearVelocity is
             // what stops a just-lifted avatar from carrying its accumulated downward fall speed into the
@@ -1850,6 +1892,7 @@ namespace Legion.Physics.Jolt
         // one did not. Taking both, in that order, is the whole fix - no allocator change, no native change.
         public void SetCharacterShape(CharacterId character, float capsuleHalfHeight, float capsuleRadius)
         {
+            if (!float.IsFinite(capsuleHalfHeight) || !float.IsFinite(capsuleRadius)) { CountRejectedNonFinite(); return; }
             lock (_simLock)
             lock (_characterGate)
             {
@@ -1904,6 +1947,7 @@ namespace Legion.Physics.Jolt
 
         public void SetCharacterMovement(CharacterId character, Vector3 desiredVelocity, bool jump, bool flying)
         {
+            if (!IsFinite(desiredVelocity)) { CountRejectedNonFinite(); return; }
             lock (_characterGate)
             {
                 if (_characters.TryGet(character.Value, out JoltCharacterRecord rec))
@@ -2045,6 +2089,7 @@ namespace Legion.Physics.Jolt
 
         public void SetGravity(Vector3 gravity)
         {
+            if (!IsFinite(gravity)) { CountRejectedNonFinite(); return; }
             if (_system != null)
                 _system.Gravity = gravity;
             _settings.Gravity = gravity;
@@ -2098,7 +2143,11 @@ namespace Legion.Physics.Jolt
             }   // _simLock
         }
 
-        public void SetWaterHeight(float height) => _waterHeight = height;
+        public void SetWaterHeight(float height)
+        {
+            if (!float.IsFinite(height)) { CountRejectedNonFinite(); return; }
+            _waterHeight = height;
+        }
 
         // =====================================================================
         // Queries
@@ -2122,6 +2171,10 @@ namespace Legion.Physics.Jolt
         {
             hit = default;
             if (_system == null)
+                return false;
+            // JOLT-2 (S-2) query policy: non-finite input returns no hits (measured: before this, a NaN ray
+            // origin reported a hit).
+            if (!IsFinite(origin) || !IsFinite(direction) || !float.IsFinite(maxDistance))
                 return false;
 
             float len = direction.Length();
@@ -2159,6 +2212,8 @@ namespace Legion.Physics.Jolt
         public int RayCastAll(Vector3 origin, Vector3 direction, float maxDistance, QueryFilter filter, Span<RayHit> hits)
         {
             if (_system == null)
+                return 0;
+            if (!IsFinite(origin) || !IsFinite(direction) || !float.IsFinite(maxDistance))
                 return 0;
             float len = direction.Length();
             if (len < 1e-12f || maxDistance <= 0f)
@@ -2245,6 +2300,8 @@ namespace Legion.Physics.Jolt
         {
             if (_system == null)
                 return 0;
+            if (!IsFinite(center) || !float.IsFinite(radius))
+                return 0;
             using var sphere = new SphereShape(MathF.Max(0.001f, radius));
             var found = new List<CollideShapeResult>();
             var cs = DefaultCollideSettings();
@@ -2261,6 +2318,8 @@ namespace Legion.Physics.Jolt
         public int OverlapBox(Vector3 center, Vector3 halfExtents, Quaternion orientation, QueryFilter filter, Span<BodyId> results)
         {
             if (_system == null)
+                return 0;
+            if (!IsFinite(center) || !IsFinite(halfExtents) || !IsUsable(orientation))
                 return 0;
             float minHalf = MathF.Min(halfExtents.X, MathF.Min(halfExtents.Y, halfExtents.Z));
             float cr = MathF.Max(0f, MathF.Min(DefaultConvexRadius, minHalf * 0.1f));
@@ -2286,6 +2345,8 @@ namespace Legion.Physics.Jolt
             if (_system == null)
                 return false;
             if (!_shapes.TryGet(shape.Value, out JoltShapeRecord shapeRec) || shapeRec.NativeShape == null)
+                return false;
+            if (!IsFinite(origin) || !IsUsable(orientation) || !IsFinite(direction) || !float.IsFinite(maxDistance))
                 return false;
             float len = direction.Length();
             if (len < 1e-12f || maxDistance <= 0f)
@@ -2390,6 +2451,15 @@ namespace Legion.Physics.Jolt
         // null) so Debris is consistently excluded even for QueryFilter.All.
         private ObjectLayerFilter FilterFor(QueryFilter filter)
             => _queryFilters.GetOrAdd(filter, f => new LayerQueryFilter(f));
+
+        // =====================================================================
+        // Health
+        // =====================================================================
+
+        public PhysicsCapacityStats GetCapacityStats() => new PhysicsCapacityStats
+        {
+            RejectedNonFinite = Interlocked.Read(ref _rejectedNonFinite),
+        };
 
         // =====================================================================
         // Step

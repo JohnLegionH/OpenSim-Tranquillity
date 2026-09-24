@@ -65,6 +65,9 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
 
         private int _subscribedMs;   // collision-event subscription window; stored for M6.6, inert now
 
+        // JOLT-2: this prim's last non-finite-rejection log line (NonFiniteGuard rate limit, one per 10 s).
+        private long _nonFiniteLogTicks;
+
         // Linksets (M7). OpenSim adds each prim as its own PhysicsActor then calls child.link(root) per
         // child (SceneObjectGroup). We weld the children into the ROOT's body as a StaticCompoundShape:
         // one rigid body whose sub-shapes are the root + each child at its root-relative offset. The root
@@ -293,6 +296,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             get => _position;
             set
             {
+                if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Position", value.ToString()); return; }
                 if (_position == value) return;   // the drain writes _position directly; only a real move recreates
                 _position = value;
                 if (_body.IsValid) RepositionBody();
@@ -304,6 +308,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             get => _orientation;
             set
             {
+                if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Orientation", value.ToString()); return; }
                 if (_orientation == value) return;
                 _orientation = value;
                 if (_body.IsValid) RepositionBody();
@@ -354,6 +359,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             get => _size;
             set
             {
+                if (!NonFiniteGuard.OkSize(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Size", value.ToString()); return; }
                 if (_size == value) return;
                 _size = value;
                 Rebuild();
@@ -429,6 +435,7 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
             get => _velocity;
             set
             {
+                if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Velocity", value.ToString()); return; }
                 Vector3 v = value;
                 // Fix-3 (slide): drop restored HORIZONTAL velocity on region LOAD. OpenSim's AddToPhysics
                 // replays the DB-saved velocity onto the actor; a vehicle body runs frictionless + never-
@@ -448,7 +455,12 @@ namespace OpenSim.Region.PhysicsModules.LegionJolt
         public override Vector3 RotationalVelocity
         {
             get => _rotationalVelocity;
-            set { _rotationalVelocity = value; if (_body.IsValid && _isPhysical) _backend.SetBodyAngularVelocity(_body, ToS(value)); }
+            set
+            {
+                if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "RotationalVelocity", value.ToString()); return; }
+                _rotationalVelocity = value;
+                if (_body.IsValid && _isPhysical) _backend.SetBodyAngularVelocity(_body, ToS(value));
+            }
         }
         public override Vector3 Torque { get => Vector3.Zero; set { } }
         public override Vector3 Force { get => Vector3.Zero; set { } }
