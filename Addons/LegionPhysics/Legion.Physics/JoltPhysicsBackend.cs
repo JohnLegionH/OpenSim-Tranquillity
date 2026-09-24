@@ -30,6 +30,9 @@ using System.Numerics;
 using System.Threading;
 using JoltPhysicsSharp;
 
+// JOLT-7d: the test-only hooks (HoldPoolGateForTest) are internal.
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("OpenSim.Region.PhysicsModules.LegionJolt.Tests")]
+
 namespace Legion.Physics.Jolt
 {
     public sealed class JoltPhysicsBackend : ILegionPhysicsBackend
@@ -96,6 +99,29 @@ namespace Legion.Physics.Jolt
         private long _gateWaits;
         private long _gateWaitTicksTotal;
         private long _gateWaitTicksMax;
+
+        /// <summary>
+        /// TEST-ONLY (JOLT-7d): hold this region's pool gate, as another region's Step would, until the returned
+        /// object is disposed. Monitor-based: dispose it on the thread that called this.
+        /// </summary>
+        internal IDisposable HoldPoolGateForTest()
+        {
+            JobPool pool = _pool ?? throw new InvalidOperationException("HoldPoolGateForTest: no pool assigned.");
+            Monitor.Enter(pool.Gate);
+            return new GateHold(pool.Gate);
+        }
+
+        private sealed class GateHold : IDisposable
+        {
+            private object? _gate;
+            public GateHold(object gate) { _gate = gate; }
+            public void Dispose()
+            {
+                object? g = Interlocked.Exchange(ref _gate, null);
+                if (g != null)
+                    Monitor.Exit(g);
+            }
+        }
 
         /// <summary>JobPools for a settings struct: 0 (unset) = 1; otherwise clamped to [1, 64].</summary>
         public static int ResolveJobPools(int requested)
@@ -2674,6 +2700,38 @@ namespace Legion.Physics.Jolt
             Span<CharacterState> characterUpdates,
             Span<ContactReport> contacts)
         {
+            // JOLT-7d: LOCK ORDER pool gate -> _simLock. The pool's gate (ONE Update at a time per pool, JOLT-7)
+            // is taken BEFORE this region's _simLock and held for the whole step, so a region waiting for its
+            // pool does not hold _simLock - its scene-thread body ops and queries run meanwhile (JOLT-7 held the
+            // gate inside _simLock: the crossing harness went from under 5 s to ~2 min). Only Step takes a gate,
+            // and nothing takes a gate while holding any _simLock, so the order cannot invert. If Dispose runs
+            // while we wait, StepLocked's _disposed check returns once we have the gate and _simLock.
+            JobPool? pool = _pool;
+            if (pool != null && !Monitor.TryEnter(pool.Gate))
+            {
+                long waitStart = Stopwatch.GetTimestamp();
+                Monitor.Enter(pool.Gate);
+                RecordGateWait(Stopwatch.GetTimestamp() - waitStart);
+            }
+            try
+            {
+                return StepLocked(pool, deltaTime, bodyUpdates, characterUpdates, contacts);
+            }
+            finally
+            {
+                if (pool != null)
+                    Monitor.Exit(pool.Gate);
+            }
+        }
+
+        // Step's body, under _simLock. `pool` is the pool whose gate the caller holds (null: none assigned).
+        private StepResult StepLocked(
+            JobPool? pool,
+            float deltaTime,
+            Span<BodyState> bodyUpdates,
+            Span<CharacterState> characterUpdates,
+            Span<ContactReport> contacts)
+        {
             _stepTimer.Restart();
 
             // _simLock spans the WHOLE step, not just _system.Update: CharacterVirtual.ExtendedUpdate
@@ -2711,19 +2769,12 @@ namespace Legion.Physics.Jolt
 
             // 2. Advance the simulation (delta #4: 3-arg Update, temp allocation internal).
             //    Uses the ONE shared, process-capped job pool (design item #1), not a per-region one.
-            JobPool? pool = _pool;
             if (_system != null && pool != null)
             {
                 int collisionSteps = Math.Max(1, _settings.CollisionSteps);
                 // JOLT-3 (S-4a): the update's capacity error used to be discarded.
                 PhysicsUpdateError updateError;
-                // JOLT-7 (S-8): ONE Update at a time on this region's pool. Inside _simLock, Update only.
-                if (!Monitor.TryEnter(pool.Gate))
-                {
-                    long waitStart = Stopwatch.GetTimestamp();
-                    Monitor.Enter(pool.Gate);
-                    RecordGateWait(Stopwatch.GetTimestamp() - waitStart);
-                }
+                // JOLT-7 (S-8): ONE Update at a time on this region's pool - Step holds the pool's gate (JOLT-7d).
                 try
                 {
                     RecordInside(pool, Interlocked.Increment(ref pool.Inside));
@@ -2733,7 +2784,6 @@ namespace Legion.Physics.Jolt
                 finally
                 {
                     Interlocked.Decrement(ref pool.Inside);
-                    Monitor.Exit(pool.Gate);
                 }
                 RecordUpdateError(updateError);
             }

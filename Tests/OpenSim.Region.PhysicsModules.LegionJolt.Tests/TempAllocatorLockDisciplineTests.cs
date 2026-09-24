@@ -105,10 +105,30 @@ public class TempAllocatorLockDisciplineTests
         Assert.Equal(1, Regex.Matches(source, @"\.ExtendedUpdate\(").Count);
         Assert.Equal(1, Regex.Matches(source, @"\bStepCharacter\(\s*\w+\s*,").Count);   // the one call, in Step
 
-        var step = MethodBody(source, "StepResult Step(");
+        // JOLT-7d: Step takes the pool gate and calls StepLocked, which holds the locks.
+        var step = MethodBody(source, "StepResult StepLocked(");
         Assert.Contains("StepCharacter(", step);
         Assert.Contains("lock (_simLock)", step);
         Assert.Contains("lock (_characterGate)", step);
+    }
+
+    /// <summary>
+    /// JOLT-7d lock order: pool gate, then _simLock. Step takes the gate and holds no _simLock of its own; the
+    /// locked body (StepLocked) has exactly one caller, Step, and takes no gate.
+    /// </summary>
+    [Fact]
+    public void Step_takes_the_pool_gate_before_simLock()
+    {
+        var source = BackendSource();
+        var step = MethodBody(source, "public StepResult Step(");
+        var locked = MethodBody(source, "StepResult StepLocked(");
+
+        var gateAt = step.IndexOf("Monitor.Enter(pool.Gate)", StringComparison.Ordinal);
+        var callAt = step.IndexOf("StepLocked(", StringComparison.Ordinal);
+        Assert.True(gateAt >= 0 && gateAt < callAt, "Step must take the pool gate before calling StepLocked");
+        Assert.DoesNotContain("lock (_simLock)", step);
+        Assert.DoesNotContain(".Gate", locked);
+        Assert.Equal(1, Regex.Matches(source, @"\bStepLocked\(pool,").Count);
     }
 
     /// <summary>
@@ -120,7 +140,7 @@ public class TempAllocatorLockDisciplineTests
         var source = BackendSource();
         Assert.Equal(1, Regex.Matches(source, @"_system\.Update\(").Count);
 
-        var step = MethodBody(source, "StepResult Step(");
+        var step = MethodBody(source, "StepResult StepLocked(");   // JOLT-7d: Step's locked body
         Assert.Contains("_system.Update(", step);
 
         var lockAt = step.IndexOf("lock (_simLock)", StringComparison.Ordinal);
