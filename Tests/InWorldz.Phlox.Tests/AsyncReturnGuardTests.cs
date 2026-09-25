@@ -31,7 +31,8 @@ public class AsyncReturnGuardTests
         ("llRequestAgentData",     VarType.Key,     AKey + ", DATA_NAME",                          null),
         ("llRequestUsername",      VarType.Key,     AKey,                                          null),
         ("llRequestDisplayName",   VarType.Key,     AKey,                                          null),
-        ("iwAvatarName2Key",       VarType.Key,     "\"Nobody\", \"Here\"",                        null),
+        // Halcyon: the avatar's key is the call's value, NULL_KEY for an unknown name (AvatarName2KeyTests).
+        ("iwAvatarName2Key",       VarType.Key,     "\"Nobody\", \"Here\"",                        NullKey),
         ("iwRezObject",            VarType.Key,     "\"nothing\", ZERO_VECTOR, ZERO_VECTOR, ZERO_ROTATION, 0", NullKey),
         ("iwRezAtRoot",            VarType.Key,     "\"nothing\", ZERO_VECTOR, ZERO_VECTOR, ZERO_ROTATION, 0", NullKey),
         ("iwRezAt",                VarType.Key,     "\"nothing\", 0, ZERO_VECTOR, ZERO_VECTOR, ZERO_ROTATION, 0", NullKey),

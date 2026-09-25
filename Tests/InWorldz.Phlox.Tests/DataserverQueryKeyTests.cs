@@ -52,7 +52,6 @@ public class DataserverQueryKeyTests
     [Fact]
     public void RequestUsernameReturnsTheEventsKey() => Run(c => $"llRequestUsername(\"{c.AgentId}\")");
 
-    [Fact]
-    public void AvatarName2KeyReturnsTheEventsKey()
-        => Run(c => $"iwAvatarName2Key(\"{c.FirstName}\", \"{c.LastName}\")");
+    // iwAvatarName2Key is not a dataserver request: as in Halcyon it returns the avatar's key
+    // directly (AvatarName2KeyTests).
 }

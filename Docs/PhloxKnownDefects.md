@@ -2535,3 +2535,36 @@ D `0c6293063b`. E (linear code generation) was not done - see below.
 - Gifts to someone who is elsewhere on the grid or offline arrive in their inventory, with the usual notice -
   except llGiveInventoryList, which, as in SL and on YEngine regions, gives a folder only to someone in (or seeing
   into) the region and otherwise says `Unable to give list, destination not found` in the script-error window.
+
+## PHLOX-24 - iwAvatarName2Key returns the avatar key directly, as in Halcyon
+
+iw* functions are InWorldz extensions with no SL counterpart, so Halcyon is their specification. Halcyon's
+`iwAvatarName2Key(string firstname, string lastname)` (InWorldz.Phlox.Engine/LSLSystemAPI.cs) is a long syscall
+that hands the avatar's key back through `SysReturn` as the call's value.
+
+### The defect
+
+The Phlox port turned it into a dataserver request: it returned a fresh query key and posted the avatar key in a
+`dataserver` event from a thread-pool work item (PHLOX-21 F then made the query key come back). A script written
+for InWorldz - `key k = iwAvatarName2Key("First", "Last");` - got a random key that is nobody, and a
+`dataserver` event it was not expecting.
+
+### What changed
+
+- The body follows Halcyon: a blank or whitespace first name is NULL_KEY; a blank last name is "Resident"; both
+  names are trimmed; the region's root agents are matched first, without regard to case (100 ms delay), then the
+  account service by name (1 s delay); nothing found is NULL_KEY. The two names are never split, so
+  `"First.Last"` or `"First Last"` in the first argument is a first name. No `dataserver` event is posted.
+- The value goes back on the existing value-returning async path: the shim's `RunAsync` runs the body off the
+  scheduler thread and `SysReturn` records the key and delay for the call's single sequenced return, so the
+  account lookup never holds the region's other scripts up. Declared return type (key) and table index (360) are
+  unchanged; compiled bytecode and saved state are not affected.
+- `AvatarName2KeyTests`: every name form, NULL_KEY cases, no dataserver event, the lookup runs off the scheduler
+  thread, and a second script keeps ticking while one lookup is held open in the account service.
+  `AsyncReturnGuardTests` now expects NULL_KEY for the unknown name. `DataserverQueryKeyTests` no longer lists it.
+
+### What residents will notice
+
+- InWorldz scripts that call `iwAvatarName2Key` get the avatar's key (or NULL_KEY) as the return value again, as
+  they did on InWorldz. Scripts written against the query-key behaviour and waiting for a `dataserver` event will
+  no longer get one.

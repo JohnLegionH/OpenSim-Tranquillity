@@ -2658,44 +2658,47 @@ namespace Phlox.ScriptEngine
             return ret;
         }
         public string iwGetLastOwner() { return m_host.LastOwnerID.ToString(); }
+        /// <summary>
+        /// Halcyon (InWorldz.Phlox.Engine/LSLSystemAPI.cs iwAvatarName2Key) returns the avatar's key as
+        /// the call's value through SysReturn; this used to return a query key and answer with a
+        /// dataserver event instead, which no InWorldz script expects. The async shim runs this off the
+        /// scheduler thread, so the account lookup never holds the region's other scripts up. A blank
+        /// last name is "Resident"; the region's root agents are matched first without regard to case
+        /// (100 ms), then the account service (1 s); an unknown or blank name is NULL_KEY.
+        /// </summary>
         public void iwAvatarName2Key(string firstName, string lastName)
         {
-            // Faithful port from Halcyon — fires dataserver event with agent UUID
-            if (m_host == null) { ReturnQueryKey(UUID.Zero); return; }   // PHLOX-21b A: every path returns
-            if (string.IsNullOrWhiteSpace(firstName)) { ReturnQueryKey(UUID.Zero); return; }
-            if (string.IsNullOrWhiteSpace(lastName)) lastName = "Resident";
-            firstName = firstName.Trim();
-            lastName = lastName.Trim();
+            const int LONG_DELAY = 1000;
+            const int SHORT_DELAY = 100;
+            int delay = LONG_DELAY;
+            UUID agentID = UUID.Zero;
 
-            UUID queryID = UUID.Random();
-            ReturnQueryKey(queryID);
-            string fn = firstName, ln = lastName;
-
-            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            try
             {
-                try
+                if (!string.IsNullOrWhiteSpace(firstName))
                 {
-                    UUID agentID = UUID.Zero;
-                    // Check if avatar is in region first (fast path)
+                    lastName = string.IsNullOrWhiteSpace(lastName) ? "Resident" : lastName.Trim();
+                    firstName = firstName.Trim();
+
                     World?.ForEachScenePresence(sp =>
                     {
                         if (agentID == UUID.Zero && !sp.IsChildAgent &&
-                            sp.Firstname.Equals(fn, StringComparison.InvariantCultureIgnoreCase) &&
-                            sp.Lastname.Equals(ln, StringComparison.InvariantCultureIgnoreCase))
+                            sp.Firstname.Equals(firstName, StringComparison.InvariantCultureIgnoreCase) &&
+                            sp.Lastname.Equals(lastName, StringComparison.InvariantCultureIgnoreCase))
                             agentID = sp.UUID;
                     });
 
-                    if (agentID == UUID.Zero)
+                    if (agentID != UUID.Zero)
+                        delay = SHORT_DELAY;
+                    else
                     {
                         UserAccount acct = World?.UserAccountService?.GetUserAccount(
-                            World.RegionInfo.ScopeID, fn, ln);
+                            World.RegionInfo.ScopeID, firstName, lastName);
                         if (acct != null) agentID = acct.PrincipalID;
                     }
-                    PostDataserverEvent(queryID, agentID.ToString());
                 }
-                catch { PostDataserverEvent(queryID, UUID.Zero.ToString()); }
-            });
-            ScriptSleep(100);
+            }
+            finally { m_ScriptEngine.SysReturn(m_itemID, agentID.ToString(), delay); }
         }
 
         public string llName2Key(string name)
