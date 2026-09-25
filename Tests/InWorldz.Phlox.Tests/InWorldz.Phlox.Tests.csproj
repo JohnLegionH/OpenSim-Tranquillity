@@ -35,6 +35,12 @@
     <ProjectReference Include="..\OpenSim.Tests.Common\OpenSim.Tests.Common.csproj" />
     <!-- PHLOX-22 A: the compile-limit child process (NestingLimitTests). -->
     <ProjectReference Include="..\PhloxCompileProbe\PhloxCompileProbe.csproj" />
+    <!-- PHLOX-23: the saved-state tests read RuntimeState.EventQueue, a C5 collection; the same
+         Library/C5.dll identity InWorldz.Phlox is compiled against. -->
+    <Reference Include="C5">
+      <HintPath>..\..\Library\C5.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
   </ItemGroup>
 
 </Project>

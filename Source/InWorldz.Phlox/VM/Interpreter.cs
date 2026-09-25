@@ -101,6 +101,7 @@ namespace InWorldz.Phlox.VM
             _script = script;
             _state = new RuntimeState(script.NumGlobals);
             _state.MemInfo.UseMemory(script.CalcBaseMemorySize());
+            _state.BytecodeIdentity = script.BytecodeIdentity;
             _syscallShim = syscallShim;
         }
 
@@ -108,6 +109,7 @@ namespace InWorldz.Phlox.VM
         {
             _script = script;
             _state = state;
+            _state.BytecodeIdentity = script.BytecodeIdentity;   // what it runs on from now on, and saves
             _syscallShim = syscallShim;
         }
 
