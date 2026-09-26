@@ -2828,3 +2828,70 @@ state is affected.
 What residents will notice: HUDs and objects that talk through llRegionSay or llRegionSayTo now work when one
 runs on Phlox and the other on YEngine, and YEngine scripts now hear Phlox objects whisper, say and shout within
 the usual ranges. Phlox scripts also hear chat that region modules broadcast.
+
+## PHLOX-30 - link numbers select the prims SL defines
+
+Before, Phlox read -1 as "every prim but this one", -2 as "the children" and -3 as "every prim", in both its
+link resolver and a separate copy in llMessageLinked. So llMessageLinked(LINK_SET, ...) never reached the sender's
+own prim, llSetLinkPrimitiveParams(LINK_SET, ...) skipped its own prim, LINK_ALL_CHILDREN took in the root, and
+link 0 and unknown negative numbers went to the script's own prim.
+
+One resolver (`GetLinkParts`, keyed by the `LINK_*` constants) now serves every function that takes a link
+number, and llMessageLinked. It follows Halcyon's `GetLinkParts` (LSLSystemAPI.cs:555-618):
+
+| Link number | Selects | Rule followed |
+|---|---|---|
+| `LINK_SET` (-1) | every prim, the script's own included | SL and Halcyon |
+| `LINK_ALL_OTHERS` (-2) | every prim but the script's own | SL and Halcyon |
+| `LINK_ALL_CHILDREN` (-3) | every prim but the root | SL and Halcyon |
+| `LINK_THIS` (-4) | the script's prim | SL and Halcyon |
+| `LINK_ROOT` (1) | the root | SL and Halcyon |
+| 2 .. prim count | that link | SL and Halcyon |
+| 0 | the root | Halcyon ("the other LINK_ROOT linknum"); SL documents 0 only as an unlinked prim's own number, which is the root |
+| any other negative number | nothing | SL (an invalid link number does nothing); Halcyon's default branch selects nothing too |
+| past the last prim | nothing | SL and Halcyon (seated avatars as link numbers are not handled here) |
+
+In a single unlinked prim, `LINK_SET`, `LINK_THIS`, `LINK_ROOT` and 0 select the prim, and `LINK_ALL_OTHERS`
+and `LINK_ALL_CHILDREN` select nothing.
+
+Functions served: llMessageLinked, llSetLinkPrimitiveParams(Fast), llGetLinkPrimitiveParams and
+`PRIM_LINK_TARGET`, llSetLinkAlpha, llSetLinkColor, llSetLinkTexture, llSetLinkTextureAnim, llLinkParticleSystem,
+llSetLinkCamera, llLinkSitTarget, llAvatarOnLinkSitTarget, llGetLinkSitFlags, llSetLinkSitFlags, llLinkPlaySound,
+llLinkAdjustSoundVolume, llLinkSetSoundQueueing, llLinkSetSoundRadius, llLinkStopSound, llSitOnLink,
+llSetLinkRenderMaterial, llIsLinkGLTFMaterial, llSetLinkGLTFOverrides, llGetLinkGLTFOverrides,
+llGetLinkNumberOfSides (the sides of every prim selected, as in Halcyon), and the iw link functions
+(iwLinkStandTarget, iwStartLinkAnimation, iwStopLinkAnimation, iwAvatarOnLink, iwSearchLinkInventory,
+iwGetLinkInventory*, iwRemoveLinkInventory, iwGiveLinkInventory, iwGiveLinkInventoryList, iwDeliverInventory,
+iwDeliverInventoryList, iwGetLinkNumberOfNotecardLines, iwGetLinkNotecardLine, iwGetLinkNotecardSegment,
+iwLinkTargetOmega), osLinkParticleSystem, osPreloadSound, osSetLinkSitActiveRange and osStopSound.
+
+Functions that act on one prim take the resolver's prim when it selects exactly one, and otherwise nothing, as
+Halcyon's llGetLinkKey does: llGetLinkKey, llGetLinkName, llSetLinkMedia, llGetLinkMedia and llClearLinkMedia.
+So llGetLinkKey(LINK_THIS) and llGetLinkName(LINK_THIS) now return the script's prim; before they returned
+NULL_KEY and "". The seated-avatar fallback past the last prim in llGetLinkKey and llGetLinkName is unchanged.
+The OSSL single-link functions keep upstream's `GetSingleLinkPart` rule (the three multi-prim selectors select
+nothing) and take the rest from the resolver: osRemoveLinkInventory, osGetLinkInventory*, osAdjustSoundVolume,
+osSetSoundRadius, osPlaySound and the other link-addressed sound forms, osSetProjectionParams (6-argument),
+osSetLinkStandTarget, osGetLinkStandTarget, osGetLinkSitActiveRange and osGetLinkColor. Their results are as
+before.
+
+Not routed through it, by design: llBreakLink (PHLOX-21's rule: the multi-prim selectors name no single prim to
+unlink), llGetObjectLinkKey and osNpcTouch (they number another object's links, where `LINK_THIS` has no script
+prim to mean).
+
+Known limits, not changed: llGetLinkName does not reproduce SL's quirks for negative link numbers (Halcyon's
+llGetLinkName names link 2 or the root for them); it returns "" as before. Seated avatars as link numbers, and
+llMessageLinked back-pressure, are later work.
+
+Tests: `LinkSelectorTests`, on a 3-prim linkset with a sender script in the root or in a child: for `LINK_SET`,
+`LINK_ALL_OTHERS`, `LINK_ALL_CHILDREN`, `LINK_THIS`, `LINK_ROOT`, positive links, 0, -7 and 4, which prims'
+scripts get llMessageLinked, which prims llSetLinkPrimitiveParamsFast(`PRIM_DESC`) changes, and which prims
+llGetLinkPrimitiveParams(`PRIM_NAME`) reads; llGetLinkKey for single selections; and a single unlinked prim.
+
+The `LINK_*` values were already SL's (-1, -2, -3, -4, 1) in both the compiler's constants and `SlConst`. No
+constant, function index or declared return type changed, and neither the compiled script format nor saved
+state is affected.
+
+What residents will notice: llMessageLinked(LINK_SET, ...) now reaches scripts in the sender's own prim, link
+setters with `LINK_SET` now change the script's own prim, `LINK_ALL_CHILDREN` leaves the root alone, and a
+mistyped negative link number does nothing instead of changing the script's prim.

@@ -1498,13 +1498,8 @@ namespace Phlox.ScriptEngine
             var parms = new EventParams("link_message",
                 new object[] { m_host.LinkNum, num, str ?? string.Empty, id ?? UUID.Zero.ToString() },
                 new DetectParams[0]);
-            SceneObjectPart[] parts = group.Parts;
-            if (linknum == -4) m_ScriptEngine.PostObjectEvent(m_host.LocalId, parms);
-            else if (linknum == -3) foreach (var p in parts) m_ScriptEngine.PostObjectEvent(p.LocalId, parms);
-            else if (linknum == -1) foreach (var p in parts) { if (p.LocalId != m_host.LocalId) m_ScriptEngine.PostObjectEvent(p.LocalId, parms); }
-            else if (linknum == -2) foreach (var p in parts) { if (p.LinkNum > 1) m_ScriptEngine.PostObjectEvent(p.LocalId, parms); }
-            else if (linknum == 1) m_ScriptEngine.PostObjectEvent(group.RootPart.LocalId, parms);
-            else if (linknum > 1) { var t = group.GetLinkNumPart(linknum); if (t != null) m_ScriptEngine.PostObjectEvent(t.LocalId, parms); }
+            foreach (var p in GetLinkParts(linknum))
+                m_ScriptEngine.PostObjectEvent(p.LocalId, parms);
         }
         public int llGetStartParameter()
         {
@@ -4292,17 +4287,56 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return result;
         }
 
+        /// <summary>
+        /// The one link-number resolver, used by llMessageLinked and every function that takes a link number
+        /// (Halcyon LSLSystemAPI.GetLinkParts). LINK_SET: every prim, the script's own included. LINK_ALL_OTHERS:
+        /// every prim but the script's own. LINK_ALL_CHILDREN: every prim but the root. LINK_THIS: the script's
+        /// prim. LINK_ROOT and 0: the root (0 is Halcyon's "other LINK_ROOT linknum", and an unlinked prim's own
+        /// number). A positive number: that link. An unknown negative number or one past the last prim selects
+        /// nothing (SL: an invalid link number does nothing).
+        /// </summary>
         private IEnumerable<SceneObjectPart> GetLinkParts(int linknumber)
         {
-            SceneObjectGroup group = m_host.ParentGroup;
+            SceneObjectGroup group = m_host?.ParentGroup;
             if (group == null) yield break;
-            if (linknumber == -4) { yield return m_host; yield break; }
-            if (linknumber == -3) { foreach (var p in group.Parts) yield return p; yield break; }
-            if (linknumber == -1) { foreach (var p in group.Parts) if (p.LocalId != m_host.LocalId) yield return p; yield break; }
-            if (linknumber == -2) { foreach (var p in group.Parts) if (p.LinkNum > 1) yield return p; yield break; }
-            if (linknumber == 1) { yield return group.RootPart; yield break; }
-            if (linknumber > 1) { var t = group.GetLinkNumPart(linknumber); if (t != null) yield return t; yield break; }
-            yield return m_host;
+            switch (linknumber)
+            {
+                case LINK_SET:
+                    foreach (var p in group.Parts.OrderBy(p => p.LinkNum)) yield return p;
+                    break;
+                case LINK_ALL_OTHERS:
+                    foreach (var p in group.Parts.OrderBy(p => p.LinkNum)) if (p != m_host) yield return p;
+                    break;
+                case LINK_ALL_CHILDREN:
+                    foreach (var p in group.Parts.OrderBy(p => p.LinkNum)) if (p != group.RootPart) yield return p;
+                    break;
+                case LINK_THIS:
+                    yield return m_host;
+                    break;
+                case 0:
+                case LINK_ROOT:
+                    yield return group.RootPart;
+                    break;
+                default:
+                    if (linknumber > 1 && linknumber <= group.PrimCount)
+                    {
+                        var t = group.GetLinkNumPart(linknumber);
+                        if (t != null) yield return t;
+                    }
+                    break;
+            }
+        }
+
+        /// <summary>The resolver's prim when it selects exactly one, else null (Halcyon llGetLinkKey's rule).</summary>
+        private SceneObjectPart GetSingleLinkPart(int linknumber)
+        {
+            SceneObjectPart found = null;
+            foreach (var p in GetLinkParts(linknumber))
+            {
+                if (found != null) return null;
+                found = p;
+            }
+            return found;
         }
 
         // ── Helpers: texture/inventory lookup (ported from Halcyon) ───────────
@@ -5477,9 +5511,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (m_host == null) return UUID.Zero.ToString();
             SceneObjectGroup group = m_host.ParentGroup;
             if (group == null) return UUID.Zero.ToString();
-            // Link 0 = root part
-            if (linknumber == 0) return group.RootPart.UUID.ToString();
-            SceneObjectPart part = group.GetLinkNumPart(linknumber);
+            SceneObjectPart part = GetSingleLinkPart(linknumber);
             if (part != null) return part.UUID.ToString();
             // Beyond prim count — check sitting avatars (seated avatar link numbers)
             int seatIndex = linknumber - group.PrimCount;
@@ -5508,8 +5540,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (m_host == null) return string.Empty;
             SceneObjectGroup group = m_host.ParentGroup;
             if (group == null) return string.Empty;
-            if (linknumber == 0) return group.RootPart.Name;
-            SceneObjectPart part = group.GetLinkNumPart(linknumber);
+            SceneObjectPart part = GetSingleLinkPart(linknumber);
             if (part != null) return part.Name;
             // Sitting avatar name
             int seatIndex = linknumber - group.PrimCount;
@@ -5538,12 +5569,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public int llGetLinkNumberOfSides(int link)
         {
             if (m_host == null) return 0;
-            SceneObjectGroup group = m_host.ParentGroup;
-            if (group == null) return 0;
-            SceneObjectPart part = link == 0
-                ? group.RootPart
-                : group.GetLinkNumPart(link);
-            return part?.GetNumberOfSides() ?? 0;
+            // Halcyon: the sides of every prim the link number selects.
+            int sides = 0;
+            foreach (SceneObjectPart part in GetLinkParts(link))
+                sides += part.GetNumberOfSides();
+            return sides;
         }
 
         // ── Texture / color / alpha ────────────────────────────────────────────
@@ -7821,7 +7851,6 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         // ── PHLOX-15: OSSL side-effect functions, ported from OSSL_Api.cs (line cited per function), each under its
         //    upstream key and threat level through OsslGate; "master" = upstream's bare CheckThreatLevel() ──
-        private const int OsslLinkThis = -4, OsslLinkRoot = 1;
         private static readonly OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel
             TlVeryLow  = OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.VeryLow,
             TlLow      = OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.Low,
@@ -7830,19 +7859,15 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             TlVeryHigh = OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.VeryHigh,
             TlSevere   = OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.Severe;
 
-        /// <summary>OSSL_Api.cs:5180-5199 GetSingleLinkPart: LINK_SET/ALL_OTHERS/ALL_CHILDREN -> none; 0/LINK_ROOT -> root; LINK_THIS -> host; n -> link n.</summary>
+        /// <summary>
+        /// OSSL_Api.cs:5180-5199 GetSingleLinkPart: LINK_SET/ALL_OTHERS/ALL_CHILDREN -> none; 0/LINK_ROOT -> root;
+        /// LINK_THIS -> host; n -> link n. The link resolver's prim, with the multi-prim selectors refused.
+        /// </summary>
         private SceneObjectPart OsslSingleLinkPart(int linkType)
         {
             if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return null;
-            switch (linkType)
-            {
-                case -3: case -2: case -1: return null;
-                case 0: case OsslLinkRoot: return m_host.ParentGroup.RootPart;
-                case OsslLinkThis: return m_host;
-                default:
-                    if (linkType < 0) return null;
-                    return m_host.ParentGroup.GetLinkNumPart(linkType);
-            }
+            if (linkType == LINK_SET || linkType == LINK_ALL_OTHERS || linkType == LINK_ALL_CHILDREN) return null;
+            return GetLinkParts(linkType).FirstOrDefault();
         }
 
         /// <summary>OSSL_Api.cs:895-933 checkAllowAgentTPbyLandOwner minus the agent branches: land owner, estate manager/owner, or the land's group.</summary>
@@ -8001,10 +8026,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public void osSetProjectionParams(int linknum, int projection, string texture, float fov, float focus, float amb)
         {
             if (m_host?.ParentGroup == null) return;
-            if (linknum == OsslLinkThis || linknum == m_host.LinkNum) { OsslSetProjectionParams(m_host, projection, texture, fov, focus, amb); return; }
-            if (linknum < 0 || linknum > m_host.ParentGroup.PrimCount) return;
-            if (linknum < 2 && m_host.LinkNum < 2) { OsslSetProjectionParams(m_host, projection, texture, fov, focus, amb); return; }
-            OsslSetProjectionParams(m_host.ParentGroup.GetLinkNumPart(linknum), projection, texture, fov, focus, amb);
+            SceneObjectPart part = OsslSingleLinkPart(linknum);
+            if (part != null) OsslSetProjectionParams(part, projection, texture, fov, focus, amb);
         }
 
         /// <summary>
@@ -8115,11 +8138,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public void osSetLinkStandTarget(int linkNumber, Vector3 v)
         {
             if (m_host?.ParentGroup == null) return;
-            SceneObjectPart target;
-            if (linkNumber == OsslLinkThis) target = m_host;
-            else if (linkNumber < 0) return;
-            else if (linkNumber < 2) target = m_host.ParentGroup.RootPart;
-            else target = m_host.ParentGroup.GetLinkNumPart(linkNumber);
+            SceneObjectPart target = OsslSingleLinkPart(linkNumber);
             if (target == null) return;
             Vector3 old = target.StandOffset;
             target.StandOffset = v;
@@ -9378,7 +9397,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public Vector3 osGetLinkColor(int link, int face)
         {
             if (m_host?.ParentGroup == null) return Vector3.Zero;
-            SceneObjectPart part = link == OsslLinkRoot ? m_host.ParentGroup.RootPart : link == OsslLinkThis ? m_host : m_host.ParentGroup.GetLinkNumPart(link);
+            SceneObjectPart part = OsslSingleLinkPart(link);
             return part == null ? Vector3.Zero : ColorOf(part, face);
         }
 
@@ -9389,10 +9408,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public float osGetLinkSitActiveRange(int linkNumber)
         {
             if (m_host?.ParentGroup == null) return 0f;
-            if (linkNumber == OsslLinkThis) return m_host.SitActiveRange;
-            if (linkNumber < 0) return int.MinValue;
-            if (linkNumber < 2) return m_host.ParentGroup.RootPart.SitActiveRange;
-            SceneObjectPart t = m_host.ParentGroup.GetLinkNumPart(linkNumber);
+            SceneObjectPart t = OsslSingleLinkPart(linkNumber);
             return t == null ? int.MinValue : t.SitActiveRange;
         }
 
@@ -9403,10 +9419,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public Vector3 osGetLinkStandTarget(int linkNumber)
         {
             if (m_host?.ParentGroup == null) return Vector3.Zero;
-            if (linkNumber == OsslLinkThis) return m_host.StandOffset;
-            if (linkNumber < 0) return Vector3.Zero;
-            if (linkNumber < 2) return m_host.ParentGroup.RootPart.StandOffset;
-            return m_host.ParentGroup.GetLinkNumPart(linkNumber)?.StandOffset ?? Vector3.Zero;
+            return OsslSingleLinkPart(linkNumber)?.StandOffset ?? Vector3.Zero;
         }
 
         /// <summary>OSSL_Api.cs:6560-6563 - ungated upstream.</summary>
@@ -9971,15 +9984,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public int llSetLinkMedia(int link, int face, LSLList parms)
         {
             ScriptSleep(1000);
-            if (link == LINK_ROOT)
-                return SetPrimMediaParams(m_host.ParentGroup.RootPart, face, parms);
-            else if (link == LINK_THIS)
-                return SetPrimMediaParams(m_host, face, parms);
-            else
-            {
-                SceneObjectPart part = m_host.ParentGroup.GetLinkNumPart(link);
-                if (part != null) return SetPrimMediaParams(part, face, parms);
-            }
+            SceneObjectPart part = GetSingleLinkPart(link);
+            if (part != null) return SetPrimMediaParams(part, face, parms);
             return 1003; // LSL_STATUS_NOT_FOUND
         }
         public LSLList llGetPrimMediaParams(int face, LSLList parms)
@@ -9990,15 +9996,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public LSLList llGetLinkMedia(int link, int face, LSLList parms)
         {
             ScriptSleep(1000);
-            if (link == LINK_ROOT)
-                return GetPrimMediaParams(m_host.ParentGroup.RootPart, face, parms);
-            else if (link == LINK_THIS)
-                return GetPrimMediaParams(m_host, face, parms);
-            else
-            {
-                SceneObjectPart part = m_host.ParentGroup.GetLinkNumPart(link);
-                if (part != null) return GetPrimMediaParams(part, face, parms);
-            }
+            SceneObjectPart part = GetSingleLinkPart(link);
+            if (part != null) return GetPrimMediaParams(part, face, parms);
             return new LSLList();
         }
         public int llClearPrimMedia(int face)
@@ -10009,15 +10008,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public int llClearLinkMedia(int link, int face)
         {
             ScriptSleep(1000);
-            if (link == LINK_ROOT)
-                return ClearPrimMedia(m_host.ParentGroup.RootPart, face);
-            else if (link == LINK_THIS)
-                return ClearPrimMedia(m_host, face);
-            else
-            {
-                SceneObjectPart part = m_host.ParentGroup.GetLinkNumPart(link);
-                if (part != null) return ClearPrimMedia(part, face);
-            }
+            SceneObjectPart part = GetSingleLinkPart(link);
+            if (part != null) return ClearPrimMedia(part, face);
             return 1003; // LSL_STATUS_NOT_FOUND
         }
 
