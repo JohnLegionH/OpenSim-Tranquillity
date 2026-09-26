@@ -2697,7 +2697,6 @@ llRegionSayTo follows Halcyon (LSLSystemAPI.llRegionSayTo, WorldCommModule.DestI
 - The sending prim never hears its own llRegionSayTo, even when it addresses itself.
 
 Halcyon also refuses llRegionSayTo on DEBUG_CHANNEL with a script error; PHLOX-28 ports that.
-llRegionSayTo from a Phlox script still reaches only Phlox listens, not YEngine scripts, as before.
 
 Tests: `ChatRangeTests` - to an object (only the target, only on its channel, not the sender), to an avatar
 (its attachments on channel 7 and 0, the viewer only on 0, not another avatar's attachments or a loose prim),

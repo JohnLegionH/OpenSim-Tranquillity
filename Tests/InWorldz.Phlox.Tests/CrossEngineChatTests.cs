@@ -177,10 +177,65 @@ public class CrossEngineChatTests
     // ── llRegionSayTo ───────────────────────────────────────────────────────
 
     /// <summary>
+    /// To an object of the other engine: only the addressed prim's listen on that channel hears it, once; a
+    /// listen on another channel in the same prim, a listen in another prim, and the sender do not.
+    /// </summary>
+    [Theory]
+    [InlineData(Phlox)]
+    public void RegionSayToAnObjectOfTheOtherEngineReachesOnlyThatObjectOnThatChannel(string sender)
+    {
+        using var h = NewHarness();
+        var other = Other(sender);
+        var target = Place(h, "target", new Vector3(200, 200, 30));
+        var bystander = Place(h, "bystander", Origin + new Vector3(1, 0, 0));
+        Listen(h, other, target.RootPart, "T5", 5);
+        Listen(h, other, target.RootPart, "T6", 6);
+        Listen(h, other, bystander.RootPart, "B5", 5);
+        WaitReady(h, "T5", "T6", "B5");
+
+        var speaker = Place(h, "speaker", Origin);
+        Rez(h, sender, speaker.RootPart, Speaker(5, $"llRegionSayTo(\"{target.RootPart.UUID}\", 5, \"psst\")"));
+        WaitFor(h, _ => Times(h, "T5", "5:psst") > 0);
+        Settle(h);
+        Dump(h);
+
+        Assert.True(Times(h, "T5", "5:psst") == 1, $"{sender} llRegionSayTo: the addressed {other} prim heard it {Times(h, "T5", "5:psst")} times");
+        Assert.False(HeardAnything(h, "T6"), $"{sender} llRegionSayTo: the addressed prim's listen on another channel heard it");
+        Assert.False(HeardAnything(h, "B5"), $"{sender} llRegionSayTo: a {other} prim that was not addressed heard it");
+        Assert.False(HeardAnything(h, "SELF"), $"{sender} llRegionSayTo: the sender heard itself");
+    }
+
+    /// <summary>To an avatar: its attachment running the other engine hears it, once; an object it is not wearing does not.</summary>
+    [Theory]
+    [InlineData(Phlox)]
+    public void RegionSayToAnAvatarReachesItsAttachmentOfTheOtherEngine(string sender)
+    {
+        using var h = NewHarness();
+        var other = Other(sender);
+        var sp = Avatar(h, new Vector3(180, 180, 25));
+        var worn = Wear(h, sp, "worn");
+        var loose = Place(h, "loose", new Vector3(181, 180, 25), sp.UUID);
+        Listen(h, other, worn.RootPart, "WORN", 5);
+        Listen(h, other, loose.RootPart, "LOOSE", 5);
+        WaitReady(h, "WORN", "LOOSE");
+
+        var speaker = Place(h, "speaker", Origin);
+        Rez(h, sender, speaker.RootPart, Speaker(5, $"llRegionSayTo(\"{sp.UUID}\", 5, \"hud\")"));
+        WaitFor(h, _ => Times(h, "WORN", "5:hud") > 0);
+        Settle(h);
+        Dump(h);
+
+        Assert.True(Times(h, "WORN", "5:hud") == 1, $"{sender} llRegionSayTo(avatar): its {other} attachment heard it {Times(h, "WORN", "5:hud")} times");
+        Assert.False(HeardAnything(h, "LOOSE"), $"{sender} llRegionSayTo(avatar): an object the avatar owns but is not wearing heard it");
+        Assert.False(HeardAnything(h, "SELF"), $"{sender} llRegionSayTo(avatar): the sender heard itself");
+    }
+
+    /// <summary>
     /// A prim holding one listen of each engine, addressed by either engine: each listen hears the message
     /// exactly once - neither engine's route delivers to the other's listens a second time.
     /// </summary>
     [Theory]
+    [InlineData(Phlox, "llRegionSayTo")]
     [InlineData(Phlox, "llSay")]
     [InlineData(YEngine, "llSay")]
     [InlineData(Phlox, "llRegionSay")]

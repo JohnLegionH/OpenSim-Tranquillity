@@ -500,6 +500,15 @@ namespace Phlox.ScriptEngine
 
 			m_ScriptEngine.ListenManager?.DeliverChat(ChatTypeEnum.Direct, channel, m_host.Name, m_host.UUID, msg,
 				m_host.AbsolutePosition, targetId);
+
+			// The listens the core WorldComm holds (YEngine's) hear it through DeliverMessageTo, as YEngine's own
+			// llRegionSayTo reaches them. On channel 0 to an avatar DeliverMessageTo only sends it to the viewer,
+			// which has had it above, so it is not called.
+			if (channel == 0 && sp != null) return;
+			string name = m_host.Name;
+			UUID id = m_host.UUID;
+			Vector3 pos = m_host.AbsolutePosition;
+			m_ScriptEngine.SendToWorldComm(w => w.DeliverMessageTo(targetId, channel, pos, name, id, msg));
 		}
 
 		public void llInstantMessage(string user, string message)
