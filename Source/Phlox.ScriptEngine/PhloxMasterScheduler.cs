@@ -2,7 +2,7 @@
  * Phlox Script Engine Integration
  * Adapted from InWorldz Halcyon MasterScheduler.cs
  * Copyright (c) InWorldz Halcyon Developers (original)
- * Adapted 2026 for OpenSim 0.9.3 .NET 8
+ * Adapted 2026 by Legion Builds for OpenSim 0.9.3 .NET 8
  */
 
 using System;
