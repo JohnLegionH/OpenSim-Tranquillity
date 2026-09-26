@@ -452,25 +452,29 @@ namespace Phlox.ScriptEngine
 				m_host.AbsolutePosition, m_host.Name, m_host.UUID, false);
 		}
 
+		/// <summary>
+		/// Halcyon's llRegionSayTo (LSLSystemAPI.cs:1087-1100): NULL_KEY reaches no one. The listens that hear
+		/// it are chosen by WorldCommModule.DestIdMatches - the target prim's, or, for an avatar, its
+		/// attachments' - on the channel it was sent on, anywhere in the region, and never the sender's.
+		/// An avatar itself only sees it on channel 0.
+		/// </summary>
 		public void llRegionSayTo(string destId, int channel, string msg)
 		{
 			if (m_host == null) return;
-			if (!UUID.TryParse(destId, out UUID targetId)) return;
+			if (!UUID.TryParse(destId, out UUID targetId) || targetId == UUID.Zero) return;
 
 			ScenePresence sp = World?.GetScenePresence(targetId);
-			if (sp != null && !sp.IsChildAgent)
+			if (channel == 0 && sp != null && !sp.IsChildAgent)
 			{
-				// Target is an avatar — use Direct chat type which delivers only to them
 				sp.ControllingClient?.SendChatMessage(
 					msg, (byte)ChatTypeEnum.Direct,
 					m_host.AbsolutePosition, m_host.Name,
 					m_host.UUID, m_host.UUID,
 					(byte)ChatSourceType.Object, (byte)ChatAudibleLevel.Fully);
-				return;
 			}
 
-			// Target is an object — deliver via listen pipeline
-			m_ScriptEngine.ListenManager?.DeliverChat(channel, m_host.Name, m_host.UUID, msg);
+			m_ScriptEngine.ListenManager?.DeliverChat(ChatTypeEnum.Direct, channel, m_host.Name, m_host.UUID, msg,
+				m_host.AbsolutePosition, targetId);
 		}
 
 		public void llInstantMessage(string user, string message)

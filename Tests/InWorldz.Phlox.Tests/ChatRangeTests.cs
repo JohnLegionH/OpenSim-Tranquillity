@@ -13,7 +13,8 @@ namespace InWorldz.Phlox.Tests;
 /// does: whisper, say and shout use the region's [Chat] whisper_distance / say_distance / shout_distance (the
 /// same keys and defaults the chat module and YEngine read), llRegionSay and dialog replies are region-wide,
 /// the distance runs from the speaker to the listening prim, and an attachment speaks and listens at its
-/// avatar. A prim never hears its own chat; other prims of the same object do.
+/// avatar. A prim never hears its own chat; other prims of the same object do. llRegionSayTo reaches only
+/// its target (Halcyon's DestIdMatches), on the channel it was sent on, and never its sender.
 /// </summary>
 [Collection("phlox-state")]
 public class ChatRangeTests
@@ -237,6 +238,96 @@ public class ChatRangeTests
 
         Assert.True(Heard(h, "SIBLING", "5:me"), "a sibling prim of the same object did not hear");
         Assert.False(HeardAnything(h, "SELF"), "a prim heard its own chat");
+    }
+
+    // ── llRegionSayTo ───────────────────────────────────────────────────────
+
+    [Fact]
+    public void RegionSayToAnObjectReachesOnlyThatObjectOnThatChannel()
+    {
+        using var h = NewHarness();
+        var target = Place(h, "target", new Vector3(250, 250, 30));
+        var other = Place(h, "other", Origin + new Vector3(1, 0, 0));
+        Listen(h, target.RootPart, "TARGET", 7, 8);
+        Listen(h, other.RootPart, "OTHER", 7);
+        var sender = Place(h, "sender", Origin);
+        Listen(h, sender.RootPart, "SENDER", 7);
+        WaitReady(h, "TARGET", "OTHER", "SENDER");
+
+        h.RezScriptInto(sender.RootPart, $"default {{ state_entry() {{ llRegionSayTo(\"{target.RootPart.UUID}\", 7, \"for you\"); llRegionSayTo(llGetKey(), 7, \"to myself\"); }} }}");
+        WaitFor(h, _ => Heard(h, "TARGET", "7:for you"));
+        Settle(h);
+        Dump(h);
+
+        Assert.True(Heard(h, "TARGET", "7:for you"), "the target did not hear");
+        Assert.False(Heard(h, "TARGET", "8:for you"), "the target heard it on a channel it was not sent on");
+        Assert.False(HeardAnything(h, "OTHER"), "a listener that was not the target heard it");
+        Assert.False(HeardAnything(h, "SENDER"), "the sender heard its own llRegionSayTo");
+    }
+
+    [Fact]
+    public void RegionSayToAnAvatarReachesItsAttachmentsOnTheChannelAndTheAvatarOnlyOnChannelZero()
+    {
+        using var h = NewHarness();
+        var sp = Avatar(h, new Vector3(200, 200, 30));
+        var bystander = Avatar(h, new Vector3(201, 200, 30));
+        var worn = Wear(h, sp, "target's attachment");
+        var theirs = Wear(h, bystander, "bystander's attachment");
+        var loose = Place(h, "loose prim", new Vector3(200, 201, 30));
+        Listen(h, worn.RootPart, "WORN", 0, 7);
+        Listen(h, theirs.RootPart, "THEIRS", 0, 7);
+        Listen(h, loose.RootPart, "LOOSE", 0, 7);
+        WaitReady(h, "WORN", "THEIRS", "LOOSE");
+
+        var toAvatar = new List<(string Message, byte Type)>();
+        var toBystander = new List<string>();
+        ((TestClient)sp.ControllingClient).OnReceivedChatMessage += (m, t, p, n, f, o, s, a) => { lock (toAvatar) toAvatar.Add((m, t)); };
+        ((TestClient)bystander.ControllingClient).OnReceivedChatMessage += (m, t, p, n, f, o, s, a) => { lock (toBystander) toBystander.Add(m); };
+
+        var sender = Place(h, "sender", Origin);
+        h.RezScriptInto(sender.RootPart, $"default {{ state_entry() {{ llRegionSayTo(\"{sp.UUID}\", 7, \"seven\"); llRegionSayTo(\"{sp.UUID}\", 0, \"zero\"); }} }}");
+        WaitFor(h, _ => Heard(h, "WORN", "7:seven") && Heard(h, "WORN", "0:zero"));
+        Settle(h);
+        Dump(h);
+        lock (toAvatar) _out.WriteLine("avatar got: " + string.Join(" | ", toAvatar.Select(x => x.Type + ":" + x.Message)));
+
+        Assert.True(Heard(h, "WORN", "7:seven"), "the avatar's attachment did not hear channel 7");
+        Assert.True(Heard(h, "WORN", "0:zero"), "the avatar's attachment did not hear channel 0");
+        Assert.False(Heard(h, "WORN", "0:seven") || Heard(h, "WORN", "7:zero"), "the attachment heard a message on the wrong channel");
+        Assert.False(HeardAnything(h, "THEIRS"), "another avatar's attachment heard it");
+        Assert.False(HeardAnything(h, "LOOSE"), "a prim that is not worn by the target heard it");
+        lock (toAvatar)
+        {
+            Assert.Contains(toAvatar, x => x.Message == "zero" && x.Type == (byte)ChatTypeEnum.Direct);
+            Assert.DoesNotContain(toAvatar, x => x.Message == "seven");
+        }
+        lock (toBystander) Assert.DoesNotContain(toBystander, m => m == "zero" || m == "seven");
+    }
+
+    [Fact]
+    public void RegionSayToNullKeyReachesNoOne()
+    {
+        using var h = NewHarness();
+        var a = Place(h, "a", Origin + new Vector3(1, 0, 0));
+        var b = Place(h, "b", new Vector3(250, 250, 30));
+        Listen(h, a.RootPart, "A", 7);
+        Listen(h, b.RootPart, "B", 7);
+        var sp = Avatar(h, Origin + new Vector3(0, 1, 0));
+        var worn = Wear(h, sp, "worn");
+        Listen(h, worn.RootPart, "WORN", 7);
+        WaitReady(h, "A", "B", "WORN");
+        var toAvatar = new List<string>();
+        ((TestClient)sp.ControllingClient).OnReceivedChatMessage += (m, t, p, n, f, o, s, x) => { lock (toAvatar) toAvatar.Add(m); };
+
+        var sender = Place(h, "sender", Origin);
+        h.RezScriptInto(sender.RootPart, "default { state_entry() { llRegionSayTo(NULL_KEY, 7, \"nobody\"); llRegionSayTo(NULL_KEY, 0, \"nobody0\"); llSay(" + ReportChannel + ", \"sent\"); } }");
+        WaitFor(h, said => said.Contains("sent"));
+        Settle(h);
+        Dump(h);
+
+        Assert.Contains("sent", h.Said);
+        Assert.False(HeardAnything(h, "A") || HeardAnything(h, "B") || HeardAnything(h, "WORN"), "llRegionSayTo(NULL_KEY, ...) reached a listener");
+        lock (toAvatar) Assert.DoesNotContain(toAvatar, m => m.StartsWith("nobody"));
     }
 
     // ── Configured distances ────────────────────────────────────────────────

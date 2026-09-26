@@ -2684,3 +2684,24 @@ state is affected.
 - Scripts no longer hear chat from across the region. An object listening on channel 0 hears nearby avatars
   only within say range (whisper and shout ranges for whispers and shouts), as in SL.
 - A script no longer receives its own prim's chat as a listen event.
+
+### llRegionSayTo reaches only its target
+
+llRegionSayTo follows Halcyon (LSLSystemAPI.llRegionSayTo, WorldCommModule.DestIdMatches):
+
+- NULL_KEY, or a string that is not a key, reaches no one.
+- To an object: only the listens in the addressed prim hear it, on the channel it was sent on, wherever it is in
+  the region. Other prims of the same object are not the target and do not hear it.
+- To an avatar: the listens in that avatar's attachments hear it on the channel it was sent on; the avatar's
+  viewer shows it only when it was sent on channel 0.
+- The sending prim never hears its own llRegionSayTo, even when it addresses itself.
+
+Halcyon also refuses llRegionSayTo on DEBUG_CHANNEL with a script error; that is not ported here.
+llRegionSayTo from a Phlox script still reaches only Phlox listens, not YEngine scripts, as before.
+
+Tests: `ChatRangeTests` - to an object (only the target, only on its channel, not the sender), to an avatar
+(its attachments on channel 7 and 0, the viewer only on 0, not another avatar's attachments or a loose prim),
+and to NULL_KEY (no listen and no viewer).
+
+What residents will notice: HUDs and attachments that talk to each other through llRegionSayTo(llGetOwner(), ...)
+now work, and llRegionSayTo to one object is no longer overheard by every other listener on the channel.
