@@ -2705,3 +2705,52 @@ and to NULL_KEY (no listen and no viewer).
 
 What residents will notice: HUDs and attachments that talk to each other through llRegionSayTo(llGetOwner(), ...)
 now work, and llRegionSayTo to one object is no longer overheard by every other listener on the channel.
+
+## PHLOX-28 - at most 65 listens per script; an identical llListen returns its handle
+
+`PhloxListenManager.Add` had no per-script limit, so llListen never failed and a script could hold any number of
+listens, and every llListen made a new one even when the script already held one with the same filters. A reset
+or a state change freed nothing: the scheduler's `UnregisterFromNotifications` told the region's WorldComm module,
+which holds no Phlox listens, and only unloading the script cleared the engine's own. A listen opened in one state
+kept hearing in the next.
+
+### Halcyon's rules (WorldCommModule.ListenerManager, Phlox ExecutionScheduler)
+
+- `int maxhandles = 64;` and `GetNewHandle` hands out handles 1 to `m_maxhandles` per script, counting every listen
+  the script holds, switched on or off; with none left it returns -1 and `AddListener` returns -1. There is no
+  script error: `llListen` returns the -1.
+- `AddListener` first asks `GetListeners(itemID, channel, name, id, msg)` and, if that finds any, returns the first
+  one's handle: "called with same filter settings, return same handle". `GetListeners` skips a listen that is
+  switched off (`if (!li.IsActive()) continue;`), so a listen turned off with llListenControl is not reused and an
+  identical llListen gets a new handle. The reuse check runs before the limit, so it works at the limit too.
+- `UnregisterScriptFromNotifications` ends with `_worldComm.DeleteListener(script.ItemId)`. It runs on a state
+  change (`interp_OnStateChg`), a reset (`ResetNow`), a stop (`AfterDisable`) and an unload (`DoUnload`).
+
+### Fix
+
+- A script holds at most 65 listens (SL's limit, not Halcyon's 64), counting those switched off. One more returns
+  -1, with no script error, as in Halcyon. osListenRegex and the bot listen count toward the same 65.
+- An llListen whose channel, name, key and message are exactly those of a switched-on listen the script already
+  holds returns that listen's handle and takes no slot. Only exact matches are reused. Halcyon's `GetListeners`
+  is the delivery matcher, so a listen with an empty name, NULL_KEY or empty message there also "matched" a
+  narrower filter: after `llListen(5, "", NULL_KEY, "")`, `llListen(5, "Bob", NULL_KEY, "")` returned the first
+  handle. Here that is a new listen. For osListenRegex the regex flags and, for a bot listen, the bot must match too.
+- A reset and a state change now remove all the script's listens (`LSLSystemAPI.OnScriptReset` and
+  `OnStateChange`, which ran nothing before); unloading already did (`OnScriptUnloaded`). Each frees every slot.
+- A stop is not ported: Halcyon's `AfterDisable` also drops the listens when a script is stopped (the Running flag
+  off, or llSetScriptState FALSE), and a script started again gets no state_entry to open them again. Here a
+  stopped script keeps its listens, as it did before.
+
+Handle values are unchanged: still one counter for the whole engine, not Halcyon's per-script 1 to 64.
+
+No function's declared return type or table index changed, and neither the compiled script format nor saved
+state is affected.
+
+Tests: `ListenLimitTests` - 65 listens and a -1 for the 66th with no error; an identical listen's handle and no
+slot used, also at the limit; a new handle when the channel, name (also by case), key, message or a wildcard
+differs; a new handle for an identical listen to one switched off, which still takes its slot; llListenRemove
+freeing one slot; a reset, a state change and an unload freeing all; and each script its own 65.
+
+What residents will notice: a script that opens listens without ever removing them now gets -1 after 65 and
+stops hearing new channels, as in SL. A reset or a state change closes every listen, so a script opens the ones
+it needs again in state_entry.

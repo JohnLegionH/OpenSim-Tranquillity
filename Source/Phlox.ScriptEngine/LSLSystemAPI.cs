@@ -244,8 +244,9 @@ namespace Phlox.ScriptEngine
         }
 
 
-        public void OnScriptReset() { }
-        public void OnStateChange() { }
+        // A reset and a state change drop every listen, as Halcyon's UnregisterScriptFromNotifications does.
+        public void OnScriptReset() => m_ScriptEngine?.ListenManager?.Remove(m_itemID);
+        public void OnStateChange() => m_ScriptEngine?.ListenManager?.Remove(m_itemID);
         public void OnScriptUnloaded(ScriptUnloadReason reason, RuntimeState.LocalDisableFlag localFlag)
         {
             m_host?.RemoveScriptEvents(m_itemID);

@@ -41,6 +41,7 @@ namespace Phlox.ScriptEngine
         /// <summary>PHLOX-19 (osListenRegex): when set, the name / message filter is a regular expression instead of an exact match.</summary>
         public System.Text.RegularExpressions.Regex NameRegex;
         public System.Text.RegularExpressions.Regex MsgRegex;
+        public int RegexBitfield;   // as osListenRegex was given it; 0 for llListen
         public bool Active;
     }
 
@@ -58,6 +59,12 @@ namespace Phlox.ScriptEngine
 
         // All active listens, keyed by (itemID, handle) for fast removal
         private readonly Dictionary<UUID, Dictionary<int, ListenEntry>> m_ByItem = new();
+
+        /// <summary>
+        /// The most listens one script may hold, active or switched off: SL's 65. Halcyon's ListenerManager
+        /// allowed 64 handles per script (WorldCommModule: maxhandles = 64; GetNewHandle returns -1 past it).
+        /// </summary>
+        public const int MaxListensPerScript = 65;
 
         // Next handle value (per-script counter would be cleaner but a global
         // int is fine for thousands of scripts — wraps around after 2^31)
@@ -100,8 +107,32 @@ namespace Phlox.ScriptEngine
         public int Add(uint localID, UUID itemID, UUID hostID,
                        int channel, string name, UUID key, string msg, int regexBitfield)
         {
+            name ??= string.Empty;
+            msg ??= string.Empty;
             lock (m_Lock)
             {
+                m_ByItem.TryGetValue(itemID, out var existing);
+                if (existing != null)
+                {
+                    // Halcyon's AddListener: "called with same filter settings, return same handle" - an active
+                    // listen of this script with the same channel, name, key and message; one switched off with
+                    // llListenControl is not reused. The filters must be the same, not merely overlapping.
+                    foreach (var held in existing.Values)
+                        if (held.Active && held.Channel == channel && held.HostID == hostID && held.FilterKey == key
+                            && held.RegexBitfield == regexBitfield
+                            && string.Equals(held.FilterName, name, StringComparison.Ordinal)
+                            && string.Equals(held.FilterMsg, msg, StringComparison.Ordinal))
+                            return held.Handle;
+
+                    // Halcyon returns -1 with no script error when a script has no handle left.
+                    if (existing.Count >= MaxListensPerScript)
+                    {
+                        m_log.LogDebug("[PhloxListen]: item {0} already holds {1} listens; llListen returns -1",
+                            itemID, existing.Count);
+                        return -1;
+                    }
+                }
+
                 int handle = m_NextHandle++;
                 if (m_NextHandle <= 0) m_NextHandle = 1; // wrap
 
@@ -112,20 +143,21 @@ namespace Phlox.ScriptEngine
                     ItemID      = itemID,
                     HostID      = hostID,
                     Channel     = channel,
-                    FilterName  = name  ?? string.Empty,
+                    FilterName  = name,
                     FilterKey   = key,
-                    FilterMsg   = msg   ?? string.Empty,
+                    FilterMsg   = msg,
                     NameRegex   = (regexBitfield & 1) != 0 && !string.IsNullOrEmpty(name) ? ScriptRegex.Create(name) : null,
                     MsgRegex    = (regexBitfield & 2) != 0 && !string.IsNullOrEmpty(msg) ? ScriptRegex.Create(msg) : null,
+                    RegexBitfield = regexBitfield,
                     Active      = true
                 };
 
-                if (!m_ByItem.TryGetValue(itemID, out var byHandle))
+                if (existing == null)
                 {
-                    byHandle = new Dictionary<int, ListenEntry>();
-                    m_ByItem[itemID] = byHandle;
+                    existing = new Dictionary<int, ListenEntry>();
+                    m_ByItem[itemID] = existing;
                 }
-                byHandle[handle] = entry;
+                existing[handle] = entry;
 
                 m_log.LogDebug("[PhloxListen]: Registered listen handle {0} ch={1} item={2}",
                     handle, channel, itemID);
@@ -171,7 +203,7 @@ namespace Phlox.ScriptEngine
             }
         }
 
-        /// <summary>Remove ALL listens for a script (called on unload / reset).</summary>
+        /// <summary>Remove ALL listens for a script: on a reset, a state change, when it stops and when it unloads.</summary>
         public void Remove(UUID itemID)
         {
             lock (m_Lock)
