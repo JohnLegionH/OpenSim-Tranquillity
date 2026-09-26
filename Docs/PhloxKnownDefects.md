@@ -2696,7 +2696,7 @@ llRegionSayTo follows Halcyon (LSLSystemAPI.llRegionSayTo, WorldCommModule.DestI
   viewer shows it only when it was sent on channel 0.
 - The sending prim never hears its own llRegionSayTo, even when it addresses itself.
 
-Halcyon also refuses llRegionSayTo on DEBUG_CHANNEL with a script error; that is not ported here.
+Halcyon also refuses llRegionSayTo on DEBUG_CHANNEL with a script error; PHLOX-28 ports that.
 llRegionSayTo from a Phlox script still reaches only Phlox listens, not YEngine scripts, as before.
 
 Tests: `ChatRangeTests` - to an object (only the target, only on its channel, not the sender), to an avatar
@@ -2706,7 +2706,7 @@ and to NULL_KEY (no listen and no viewer).
 What residents will notice: HUDs and attachments that talk to each other through llRegionSayTo(llGetOwner(), ...)
 now work, and llRegionSayTo to one object is no longer overheard by every other listener on the channel.
 
-## PHLOX-28 - at most 65 listens per script; an identical llListen returns its handle
+## PHLOX-28 - at most 65 listens per script; an identical llListen returns its handle; llRegionSayTo refuses DEBUG_CHANNEL
 
 `PhloxListenManager.Add` had no per-script limit, so llListen never failed and a script could hold any number of
 listens, and every llListen made a new one even when the script already held one with the same filters. A reset
@@ -2725,6 +2725,8 @@ kept hearing in the next.
   identical llListen gets a new handle. The reuse check runs before the limit, so it works at the limit too.
 - `UnregisterScriptFromNotifications` ends with `_worldComm.DeleteListener(script.ItemId)`. It runs on a state
   change (`interp_OnStateChg`), a reset (`ResetNow`), a stop (`AfterDisable`) and an unload (`DoUnload`).
+- `llRegionSayTo`: `if (channelID == ScriptBaseClass.DEBUG_CHANNEL) { LSLError("Cannot use llRegionSayTo() on
+  DEBUG_CHANNEL."); return; }`, before anything is sent.
 
 ### Fix
 
@@ -2740,6 +2742,8 @@ kept hearing in the next.
 - A stop is not ported: Halcyon's `AfterDisable` also drops the listens when a script is stopped (the Running flag
   off, or llSetScriptState FALSE), and a script started again gets no state_entry to open them again. Here a
   stopped script keeps its listens, as it did before.
+- llRegionSayTo on DEBUG_CHANNEL sends nothing and gives the script error "Cannot use llRegionSayTo() on
+  DEBUG_CHANNEL." (the port's usual "Script error: " prefix on DEBUG_CHANNEL, as with every other error it reports).
 
 Handle values are unchanged: still one counter for the whole engine, not Halcyon's per-script 1 to 64.
 
@@ -2749,7 +2753,8 @@ state is affected.
 Tests: `ListenLimitTests` - 65 listens and a -1 for the 66th with no error; an identical listen's handle and no
 slot used, also at the limit; a new handle when the channel, name (also by case), key, message or a wildcard
 differs; a new handle for an identical listen to one switched off, which still takes its slot; llListenRemove
-freeing one slot; a reset, a state change and an unload freeing all; and each script its own 65.
+freeing one slot; a reset, a state change and an unload freeing all; each script its own 65; and llRegionSayTo on
+DEBUG_CHANNEL refused with its error and not heard by a listen on DEBUG_CHANNEL in the target.
 
 What residents will notice: a script that opens listens without ever removing them now gets -1 after 65 and
 stops hearing new channels, as in SL. A reset or a state change closes every listen, so a script opens the ones

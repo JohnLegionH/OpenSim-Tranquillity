@@ -13,7 +13,8 @@ namespace InWorldz.Phlox.Tests;
 /// llListen whose channel, name, key and message are those of an active listen the script already holds
 /// returns that listen's handle and takes no slot; a listen switched off with llListenControl is not reused.
 /// llListenRemove frees its slot, and a reset, a state change and unloading free them all, as Halcyon's
-/// UnregisterScriptFromNotifications does.
+/// UnregisterScriptFromNotifications does. llRegionSayTo on DEBUG_CHANNEL is refused, with Halcyon's error
+/// text, and reaches no listener.
 /// </summary>
 [Collection("phlox-state")]
 public class ListenLimitTests
@@ -217,5 +218,29 @@ public class ListenLimitTests
             Assert.Equal(0, f["bad"]);
             Assert.Equal(-1, f["over"]);
         }
+    }
+
+    // ── llRegionSayTo on DEBUG_CHANNEL ─────────────────────────────────────
+
+    [Fact]
+    public void RegionSayToOnDebugChannelIsRefusedAndReachesNoListener()
+    {
+        using var h = new SchedulerHarness();
+        var target = SceneHelpers.AddSceneObject(h.Scene, "target", UUID.Random());
+        target.AbsolutePosition = new Vector3(240, 240, 30);
+        h.RezScriptInto(target.RootPart, "default { state_entry() { llListen(DEBUG_CHANNEL, \"\", NULL_KEY, \"\"); llListen(7, \"\", NULL_KEY, \"\"); " +
+                                         $"llSay({Report}, \"target ready\"); }} listen(integer c, string n, key k, string m) {{ llSay({Report}, \"target heard \" + (string)c + \":\" + m); }} }}");
+        WaitLine(h, "target ready");
+
+        var sender = SceneHelpers.AddSceneObject(h.Scene, "sender", UUID.Random());
+        sender.AbsolutePosition = new Vector3(10, 10, 30);
+        h.RezScriptInto(sender.RootPart, $"default {{ state_entry() {{ llRegionSayTo(\"{target.RootPart.UUID}\", DEBUG_CHANNEL, \"secret\"); " +
+                                         $"llRegionSayTo(\"{target.RootPart.UUID}\", 7, \"control\"); }} }}");
+        WaitLine(h, "target heard 7:control");
+        h.PumpFor(TimeSpan.FromMilliseconds(400));
+        _out.WriteLine(string.Join("\n", h.SaidOn.Select(s => s.Channel + ": " + s.Message)));
+
+        Assert.DoesNotContain(h.Said, s => s.StartsWith("target heard " + DebugChannel));
+        Assert.Contains("Script error: Cannot use llRegionSayTo() on DEBUG_CHANNEL.", DebugLines(h));
     }
 }

@@ -462,6 +462,12 @@ namespace Phlox.ScriptEngine
 		public void llRegionSayTo(string destId, int channel, string msg)
 		{
 			if (m_host == null) return;
+			// Halcyon (LSLSystemAPI.cs:1089-1093) refuses DEBUG_CHANNEL with this error, and nothing is sent.
+			if (channel == DEBUG_CHANNEL)
+			{
+				ShoutError("Cannot use llRegionSayTo() on DEBUG_CHANNEL.");
+				return;
+			}
 			if (!UUID.TryParse(destId, out UUID targetId) || targetId == UUID.Zero) return;
 
 			ScenePresence sp = World?.GetScenePresence(targetId);
