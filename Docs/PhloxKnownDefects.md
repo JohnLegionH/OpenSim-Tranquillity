@@ -2758,3 +2758,73 @@ DEBUG_CHANNEL refused with its error and not heard by a listen on DEBUG_CHANNEL 
 What residents will notice: a script that opens listens without ever removing them now gets -1 after 65 and
 stops hearing new channels, as in SL. A reset or a state change closes every listen, so a script opens the ones
 it needs again in state_entry.
+
+## PHLOX-29 - chat crosses between Phlox and YEngine
+
+A region can run Phlox and YEngine side by side. Phlox keeps its own listens (`PhloxListenManager`); YEngine's are
+held by the core `WorldCommModule`. Chat reached the other engine's listens only in one case.
+
+### How chat travelled before
+
+| From | To | Route | Reached the other engine |
+|---|---|---|---|
+| Phlox llWhisper / llSay / llShout / llRegionSay | YEngine listen | `Scene.SimChat` -> `OnChatFromWorld`, which Phlox and the chat module hear; `WorldCommModule` does not subscribe to it | **no** |
+| YEngine llWhisper / llSay / llShout | Phlox listen | `LSL_Api` calls `Scene.SimChat` (-> `OnChatFromWorld` -> Phlox) and `IWorldComm.DeliverMessage` (-> YEngine) | yes |
+| YEngine llRegionSay | Phlox listen | `IWorldComm.DeliverMessage(Region)` only; `SimChat` only on DEBUG_CHANNEL | **no** |
+| Phlox llRegionSayTo, to a prim or an avatar | YEngine listen | Phlox's own `ListenManager.DeliverChat` (and the viewer on channel 0) | **no** |
+| YEngine llRegionSayTo, to a prim, or to an avatar on a channel other than 0 | Phlox listen | `IWorldComm.DeliverMessageTo` only | **no** |
+| YEngine llRegionSayTo to an avatar on channel 0 | Phlox attachment | `DeliverMessageTo` -> `SimChat(Direct, target)` -> `OnChatFromWorld` | yes |
+| Broadcast chat (`Scene.SimChatBroadcast`, `TriggerOnChatBroadcast`: bots, region-ready, concierge, IRC bridge) | Phlox listen | `OnChatBroadcast`; `WorldCommModule` subscribes (`DeliverClientMessage`), Phlox did not | **no** |
+
+YEngine's llShout passes `true` as `SimChat`'s `fromAgent` argument, not `broadcast`, so it goes out on
+`OnChatFromWorld` like llSay.
+
+`WorldCommModule` hears broadcast chat in `DeliverClientMessage`: whisper, say and shout within the region's
+`[Chat]` distances of the message's position, region chat region-wide, other types dropped, on the message's
+channel. The speaker is the sending client, or, with none, the message's `From` name and a null key.
+
+### Fix
+
+- **Phlox to YEngine.** Phlox's llWhisper, llSay, llShout and llRegionSay also call `IWorldComm.DeliverMessage`,
+  and llRegionSayTo also calls `IWorldComm.DeliverMessageTo`, as YEngine's own functions do. WorldComm applies its
+  rules to its listens: ranges from the sending prim, only the addressed prim or the addressed avatar's
+  attachments, the channel, and never the sender. llRegionSayTo to an avatar on channel 0 does not call it:
+  WorldComm would only send the message to the viewer again. As on YEngine, attachments running YEngine do not
+  hear llRegionSayTo to their avatar on channel 0; those running Phlox do.
+- **Broadcast chat to Phlox.** Phlox subscribes to `OnChatBroadcast` and delivers it like client chat, with the
+  message's sender key (a prim's key when a prim sent it) so a prim still does not hear itself.
+- **YEngine to Phlox (core change).** `IWorldComm` gains an event, `OnMessageDelivered`, which `WorldCommModule`
+  raises after `DeliverMessage` or `DeliverMessageTo` has offered a message to its listens (not for
+  `DeliverMessageTo` on channel 0 to an avatar, which goes out as scene chat). Phlox delivers region chat and
+  addressed messages from it. It skips whisper, say and shout, which also reach it as scene chat, and skips its
+  own messages coming back from WorldComm (a thread-local flag set while Phlox calls WorldComm). With nothing
+  subscribed the event does nothing, so a region without Phlox behaves as before. osNpcSayTo, which calls
+  `DeliverMessageTo`, now reaches Phlox listens too.
+
+Each listen hears a message once: Phlox's own listens hear Phlox's chat through the scene as before, YEngine's
+listens hear YEngine's chat through WorldComm as before, and each engine's chat reaches the other's listens by
+exactly one route.
+
+Known limits, not changed:
+
+- YEngine's llRegionSay on DEBUG_CHANNEL goes out both as a shout through `SimChat` and as region chat through
+  WorldComm, so a listen on DEBUG_CHANNEL within shout range hears it twice. YEngine's own listens already did.
+- Each engine measures ranges its own way. WorldComm measures from the sending prim's `AbsolutePosition` to the
+  listening prim's, so an attachment is measured at its attach-point offset. Phlox measures an attachment at its
+  avatar (PHLOX-27).
+
+Tests: `CrossEngineChatTests`, on the harness with a real YEngine and WorldComm (`SchedulerHarness(withYEngine:
+true)` now adds `WorldCommModule` and starts YEngine's script threads). In both directions: whisper, say and shout
+heard just inside and not just outside their ranges; llRegionSay heard across the region and not on another
+channel; llRegionSayTo to an object of the other engine heard only by that prim on that channel; llRegionSayTo to
+an avatar heard by its attachment and not by an object it owns but does not wear; and a prim holding one listen
+in each engine hearing llSay, llRegionSay and llRegionSayTo once in each. The sender never hears itself.
+Broadcast chat reaches a Phlox listen in say range, on its channel only, once, and region broadcast chat reaches
+a far one.
+
+No function's declared return type or table index changed, and neither the compiled script format nor saved
+state is affected.
+
+What residents will notice: HUDs and objects that talk through llRegionSay or llRegionSayTo now work when one
+runs on Phlox and the other on YEngine, and YEngine scripts now hear Phlox objects whisper, say and shout within
+the usual ranges. Phlox scripts also hear chat that region modules broadcast.

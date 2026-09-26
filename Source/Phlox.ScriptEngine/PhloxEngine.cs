@@ -194,6 +194,7 @@ namespace Phlox.ScriptEngine
             m_Scene.EventManager.OnChatFromWorld += OnChatFromWorld;
             m_Scene.EventManager.OnChatFromClient += OnChatFromClient;
             m_Scene.EventManager.OnChatBroadcast += OnChatBroadcast;
+            m_WorldComm.OnMessageDelivered += OnWorldCommMessage;
             m_Scene.EventManager.OnObjectGrab += OnObjectGrab;
             m_Scene.EventManager.OnObjectGrabbing += OnObjectGrabbing;
             m_Scene.EventManager.OnObjectDeGrab += OnObjectDeGrab;
@@ -436,6 +437,7 @@ namespace Phlox.ScriptEngine
             m_Scene.EventManager.OnChatFromWorld -= OnChatFromWorld;
             m_Scene.EventManager.OnChatFromClient -= OnChatFromClient;
             m_Scene.EventManager.OnChatBroadcast -= OnChatBroadcast;
+            if (m_WorldComm != null) m_WorldComm.OnMessageDelivered -= OnWorldCommMessage;
             m_Scene.EventManager.OnAvatarKilled -= OnAvatarKilled;
             m_Scene.EventManager.OnAvatarDamage -= OnAvatarDamage;
             m_Scene.EventManager.OnAvatarDamageApplied -= OnAvatarDamageApplied;
@@ -620,15 +622,34 @@ namespace Phlox.ScriptEngine
 
         private IWorldComm m_WorldComm;
 
+        [ThreadStatic] private static bool t_SendingToWorldComm;
+
         /// <summary>
         /// Offer a Phlox script's chat to the listens the core WorldComm holds (YEngine's, on a region running
-        /// both engines), as YEngine's own llSay/llRegionSay/llRegionSayTo do.
+        /// both engines), as YEngine's own llSay/llRegionSay/llRegionSayTo do. Phlox's listens have already
+        /// had it, so WorldComm's OnMessageDelivered for it - raised on this thread - is not delivered again.
         /// </summary>
         internal void SendToWorldComm(Action<IWorldComm> send)
         {
             IWorldComm worldComm = m_WorldComm;
             if (worldComm == null) return;
-            send(worldComm);
+            t_SendingToWorldComm = true;
+            try { send(worldComm); }
+            finally { t_SendingToWorldComm = false; }
+        }
+
+        /// <summary>
+        /// A message another script engine sent through WorldComm (YEngine's llRegionSay and llRegionSayTo, and
+        /// anything else that calls IWorldComm.DeliverMessage or DeliverMessageTo). Region chat and addressed
+        /// messages reach Phlox only this way. Whisper, say and shout also go out as scene chat (Scene.SimChat,
+        /// which OnChatFromWorld and OnChatBroadcast bring here), so taking them here too would deliver them twice.
+        /// </summary>
+        private void OnWorldCommMessage(OSChatMessage chat)
+        {
+            if (t_SendingToWorldComm) return;
+            if (chat.Type != ChatTypeEnum.Region && chat.Type != ChatTypeEnum.Direct) return;
+            ListenManager?.DeliverChat(chat.Type, chat.Channel, chat.From, chat.SenderUUID, chat.Message,
+                chat.Position, chat.Destination);
         }
 
         // ── Touch events ───────────────────────────────────────────────────────

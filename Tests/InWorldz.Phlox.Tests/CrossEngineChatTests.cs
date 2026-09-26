@@ -152,6 +152,7 @@ public class CrossEngineChatTests
 
     [Theory]
     [InlineData(Phlox)]
+    [InlineData(YEngine)]
     public void RegionSayReachesTheOtherEngineAcrossTheRegionOnce(string sender)
     {
         using var h = NewHarness();
@@ -182,6 +183,7 @@ public class CrossEngineChatTests
     /// </summary>
     [Theory]
     [InlineData(Phlox)]
+    [InlineData(YEngine)]
     public void RegionSayToAnObjectOfTheOtherEngineReachesOnlyThatObjectOnThatChannel(string sender)
     {
         using var h = NewHarness();
@@ -208,6 +210,7 @@ public class CrossEngineChatTests
     /// <summary>To an avatar: its attachment running the other engine hears it, once; an object it is not wearing does not.</summary>
     [Theory]
     [InlineData(Phlox)]
+    [InlineData(YEngine)]
     public void RegionSayToAnAvatarReachesItsAttachmentOfTheOtherEngine(string sender)
     {
         using var h = NewHarness();
@@ -236,9 +239,11 @@ public class CrossEngineChatTests
     /// </summary>
     [Theory]
     [InlineData(Phlox, "llRegionSayTo")]
+    [InlineData(YEngine, "llRegionSayTo")]
     [InlineData(Phlox, "llSay")]
     [InlineData(YEngine, "llSay")]
     [InlineData(Phlox, "llRegionSay")]
+    [InlineData(YEngine, "llRegionSay")]
     public void APrimWithAListenInEachEngineHearsTheMessageOnceInEach(string sender, string fn)
     {
         using var h = NewHarness();
