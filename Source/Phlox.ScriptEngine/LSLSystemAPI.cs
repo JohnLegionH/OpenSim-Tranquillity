@@ -2660,7 +2660,7 @@ namespace Phlox.ScriptEngine
         }
         public LSLList llGetAttachedList(string avatar)
         {
-            // Halcyon used sp.CollectVisibleAttachmentIds(); Legion uses sp.GetAttachments()
+            // As Halcyon (ScenePresence.CollectVisibleAttachmentIds) and the SL wiki: HUDs are left out.
             if (!UUID.TryParse(avatar, out UUID agentID)) return new LSLList(new object[] { "NOT FOUND" });
             ScenePresence sp = World?.GetScenePresence(agentID);
             if (sp == null || sp.IsChildAgent) return new LSLList(new object[] { "NOT FOUND" });
@@ -2670,7 +2670,8 @@ namespace Phlox.ScriptEngine
             if (attachments != null)
             {
                 foreach (var grp in attachments)
-                    ret = ret.Append(grp.UUID.ToString());
+                    if (!grp.HasPrivateAttachmentPoint)
+                        ret = ret.Append(grp.UUID.ToString());
             }
             return ret;
         }
