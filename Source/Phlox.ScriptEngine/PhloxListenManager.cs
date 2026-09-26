@@ -63,9 +63,31 @@ namespace Phlox.ScriptEngine
         // int is fine for thousands of scripts — wraps around after 2^31)
         private int m_NextHandle = 1;
 
+        // Where listeners are, to measure chat range from. Null only in a manager built without a scene.
+        private readonly Scene m_Scene;
+
+        // [Chat] whisper_distance / say_distance / shout_distance: the keys and defaults the chat module,
+        // WorldComm and YEngine's LSL_Api read, so every listener in a region hears the same range.
+        public const int DefaultWhisperDistance = 10;
+        public const int DefaultSayDistance = 20;
+        public const int DefaultShoutDistance = 100;
+        private readonly float m_WhisperDistance;
+        private readonly float m_SayDistance;
+        private readonly float m_ShoutDistance;
+
         public PhloxListenManager(PhloxExecutionScheduler scheduler)
+            : this(scheduler, null, DefaultWhisperDistance, DefaultSayDistance, DefaultShoutDistance)
+        {
+        }
+
+        public PhloxListenManager(PhloxExecutionScheduler scheduler, Scene scene,
+                                  int whisperDistance, int sayDistance, int shoutDistance)
         {
             m_Scheduler = scheduler;
+            m_Scene = scene;
+            m_WhisperDistance = whisperDistance;
+            m_SayDistance = sayDistance;
+            m_ShoutDistance = shoutDistance;
         }
 
         // ── Called from llListen ───────────────────────────────────────────────
@@ -161,12 +183,55 @@ namespace Phlox.ScriptEngine
         // ── Called by PhloxEngine's chat hook ─────────────────────────────────
 
         /// <summary>
-        /// Evaluate all registered listens against an incoming chat message.
-        /// Dispatches a listen event into any matching script's queue.
+        /// Region-wide chat with no target: every matching listen hears it, as llRegionSay does.
         /// </summary>
         public void DeliverChat(int channel, string speakerName, UUID speakerKey, string message)
+            => DeliverChat(ChatTypeEnum.Region, channel, speakerName, speakerKey, message, Vector3.Zero, UUID.Zero);
+
+        /// <summary>
+        /// Evaluate all registered listens against an incoming chat message, as Halcyon's
+        /// WorldCommModule.DeliverMessage does, and dispatch a listen event into each matching script's queue.
+        /// <list type="bullet">
+        /// <item>A prim never hears its own chat (the listen's prim is the speaker); other prims of the same
+        /// object do.</item>
+        /// <item>With a <paramref name="destId"/> (llRegionSayTo), only that prim's listens hear it, or, when
+        /// it is an avatar, the listens in that avatar's attachments (<see cref="DestIdMatches"/>).</item>
+        /// <item>Whisper, say and shout reach listeners closer than the configured [Chat] distance; region
+        /// chat and llRegionSayTo reach the whole region. Other chat types reach no listen.</item>
+        /// </list>
+        /// Distance runs from the speaker to the listening prim; an attachment speaks and listens at its avatar.
+        /// </summary>
+        public void DeliverChat(ChatTypeEnum type, int channel, string speakerName, UUID speakerKey,
+                                string message, Vector3 speakerPosition, UUID destId)
         {
             if (string.IsNullOrEmpty(message)) return;
+
+            float range;
+            switch (type)
+            {
+                case ChatTypeEnum.Whisper: range = m_WhisperDistance; break;
+                case ChatTypeEnum.Say: range = m_SayDistance; break;
+                // The chat module rewrites chat on DEBUG_CHANNEL to DebugChannel before this sees it
+                // (ChatModule.DeliverChatToAvatars); script errors are shouted there.
+                case ChatTypeEnum.Shout:
+                case ChatTypeEnum.DebugChannel: range = m_ShoutDistance; break;
+                case ChatTypeEnum.Region:
+                case ChatTypeEnum.Direct: range = float.PositiveInfinity; break;
+                default: return;
+            }
+            bool ranged = !float.IsPositiveInfinity(range);
+            if (ranged)
+            {
+                // Where the speaker is now: an attachment's own position is its attach-point offset, so it
+                // speaks from its avatar, and an avatar speaks from where it stands.
+                SceneObjectPart speakerPart = m_Scene?.GetSceneObjectPart(speakerKey);
+                ScenePresence speakerAvatar;
+                if (speakerPart != null)
+                    speakerPosition = ChatPosition(speakerPart);
+                else if ((speakerAvatar = m_Scene?.GetScenePresence(speakerKey)) != null)
+                    speakerPosition = speakerAvatar.AbsolutePosition;
+            }
+            float rangeSq = range * range;
 
             // Snapshot under lock so delivery doesn't hold the lock
             List<ListenEntry> candidates;
@@ -182,6 +247,29 @@ namespace Phlox.ScriptEngine
             {
                 if (!entry.Active) continue;
                 if (entry.Channel != channel) continue;
+
+                // A prim does not hear its own chat.
+                if (entry.HostID == speakerKey) continue;
+
+                if (ranged || destId != UUID.Zero)
+                {
+                    // A listen's host is its prim, or for botListen the bot's avatar.
+                    Vector3 hostPosition;
+                    SceneObjectPart host = m_Scene?.GetSceneObjectPart(entry.HostID);
+                    if (host != null)
+                    {
+                        if (destId != UUID.Zero && !DestIdMatches(destId, host)) continue;
+                        hostPosition = ChatPosition(host);
+                    }
+                    else
+                    {
+                        ScenePresence bot = m_Scene?.GetScenePresence(entry.HostID);
+                        if (bot == null) continue;
+                        if (destId != UUID.Zero && destId != bot.UUID) continue;
+                        hostPosition = bot.AbsolutePosition;
+                    }
+                    if (ranged && Vector3.DistanceSquared(hostPosition, speakerPosition) >= rangeSq) continue;
+                }
 
                 // Name filter (empty = wildcard)
                 if (entry.NameRegex != null ? !RegexMatches(entry, entry.NameRegex, speakerName)
@@ -203,6 +291,32 @@ namespace Phlox.ScriptEngine
                 // Match — build and queue the event
                 PostListenEvent(entry, channel, speakerName, speakerKey, message);
             }
+        }
+
+        /// <summary>
+        /// Halcyon's WorldCommModule.DestIdMatches: a listen hears an addressed message when its prim is the
+        /// destination, or when its prim is an attachment and the destination is the attachment's owner.
+        /// </summary>
+        private static bool DestIdMatches(UUID destId, SceneObjectPart part)
+        {
+            if (destId == part.UUID)
+                return true;
+            if (part.ParentGroup == null || !part.ParentGroup.IsAttachment)
+                return false;
+            return destId == part.OwnerID;
+        }
+
+        /// <summary>Where a prim speaks and listens from: its avatar's position when it is worn.</summary>
+        private Vector3 ChatPosition(SceneObjectPart part)
+        {
+            SceneObjectGroup group = part.ParentGroup;
+            if (group != null && group.IsAttachment)
+            {
+                ScenePresence sp = m_Scene?.GetScenePresence(group.AttachedAvatar);
+                if (sp != null)
+                    return sp.AbsolutePosition;
+            }
+            return part.AbsolutePosition;
         }
 
         /// <summary>

@@ -2628,3 +2628,59 @@ No function's declared return type or table index changed; compiled bytecode and
 - Visitors from other grids show as offline to strangers' scripts when they are not in the script's region.
 - HUDs no longer appear in llGetAttachedList.
 - llGetSimulatorHostname gives the region's public host name.
+
+## PHLOX-27 - chat reaches only listeners in range; a prim does not hear itself; llRegionSayTo reaches only its target
+
+Found in the Phlox/Halcyon audit.
+
+### What was wrong
+
+`PhloxListenManager.DeliverChat` was given the channel, name, key and message, and nothing else: not the chat
+type, not where the speaker was, not who llRegionSayTo addressed. `PhloxEngine.OnChatFromWorld` and
+`OnChatFromClient` had all three on the `OSChatMessage` (`Type`, `Position`, `Destination`) and dropped them. So:
+
+- every whisper, say and shout, including avatars' typed local chat on channel 0, reached every Phlox listen in
+  the region;
+- a prim heard its own chat;
+- llRegionSayTo to an object, or to NULL_KEY, reached every listen on the channel; to an avatar it went to the
+  avatar's viewer on any channel and never to the avatar's attachments.
+
+### Halcyon's rules (WorldCommModule.DeliverMessage)
+
+- `if (li.GetHostID().Equals(id)) continue;` - the listening prim is the speaker: skipped.
+- `if (destId != UUID.Zero) { if (!DestIdMatches(destId, entity)) continue; }`, where `DestIdMatches` is true
+  when `destId` is the listening prim, or the listening prim is an attachment and `destId` is its owner.
+- Whisper, say and shout are heard when the distance is **less than** `[Chat] whisper_distance`,
+  `say_distance`, `shout_distance`. Region and Direct (llRegionSayTo) chat are heard region-wide.
+- llRegionSayTo with NULL_KEY returns before sending anything (`if (destKey == UUID.Zero) return;`).
+
+### Fix
+
+The type, the speaker's position and the target now reach the listen path, and it applies those rules.
+
+- **Ranges.** The distances are the region's `[Chat] whisper_distance`, `say_distance` and `shout_distance`,
+  read with the defaults (10, 20, 100) that the chat module, WorldComm and YEngine use, so a region's scripts
+  hear the same range in either engine. Chat on DEBUG_CHANNEL (script errors) uses the shout distance: the chat
+  module rewrites its type to DebugChannel before the engine sees it. llRegionSay, llRegionSayTo and dialog
+  replies (which the viewer sends as region chat) are heard region-wide. Other chat types (typing indicators,
+  owner-say, broadcasts) reach no listen, as in Halcyon.
+- **Measured from.** The speaker's current position (an avatar's, or a prim's) to the listening prim. An
+  attachment speaks and listens at its avatar's position; a botListen listens at the bot. Halcyon measures to
+  the listening object's root prim; this uses the listening prim itself, as this tree's WorldComm does.
+- **Self.** A prim never hears its own chat, including from another script in the same prim. Other prims of the
+  same object do hear it, as in SL.
+
+Tests: `ChatRangeTests` - each of whisper, say and shout just inside and just outside its range, for object
+chat and for avatar typed chat; llRegionSay across the region; an attachment speaking and listening at its
+avatar; a prim not hearing itself while a sibling prim does; configured distances changing the ranges.
+
+### Bytecode and saved state
+
+No function's declared return type or table index changed, and neither the compiled script format nor saved
+state is affected.
+
+### What residents will notice
+
+- Scripts no longer hear chat from across the region. An object listening on channel 0 hears nearby avatars
+  only within say range (whisper and shout ranges for whispers and shouts), as in SL.
+- A script no longer receives its own prim's chat as a listen event.

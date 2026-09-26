@@ -96,6 +96,15 @@ namespace Phlox.ScriptEngine
             // TimerInterval = (int)(sec * 1000) with none - so 0.1 is this grid's number, not
             // an upstream-of-Phlox one, and it is written down here rather than inferred.
             MinTimerInterval = m_Config.GetFloat("MinTimerInterval", DefaultMinTimerInterval);
+            // Chat ranges for Phlox listens: the region's [Chat] distances, read with the same keys and
+            // defaults as the chat module, WorldComm and YEngine, so every listener hears the same range.
+            IConfig chatConfig = config.Configs["Chat"];
+            if (chatConfig != null)
+            {
+                m_WhisperDistance = chatConfig.GetInt("whisper_distance", m_WhisperDistance);
+                m_SayDistance = chatConfig.GetInt("say_distance", m_SayDistance);
+                m_ShoutDistance = chatConfig.GetInt("shout_distance", m_ShoutDistance);
+            }
             // PHLOX-21: YEngine's switch for god functions (llSetInventoryPermMask), off by default.
             AllowGodFunctions = m_Config.GetBoolean("AllowGodFunctions", false);
             if (MinTimerInterval < 0f) MinTimerInterval = 0f;
@@ -168,7 +177,8 @@ namespace Phlox.ScriptEngine
             m_ExeScheduler = new PhloxExecutionScheduler(WorkArrived, this, worldComm);
             m_ScriptLoader = new PhloxScriptLoader(scene.AssetService, m_ExeScheduler, WorkArrived, this);
             m_MasterScheduler = new PhloxMasterScheduler(m_ExeScheduler, m_ScriptLoader);
-            ListenManager = new PhloxListenManager(m_ExeScheduler);
+            ListenManager = new PhloxListenManager(m_ExeScheduler, scene,
+                m_WhisperDistance, m_SayDistance, m_ShoutDistance);
             AsyncCommands = new AsyncCommandManager(this);
             StateManager = new StateManager(this);
             StateManager.Start();
@@ -567,9 +577,14 @@ namespace Phlox.ScriptEngine
             controllingClient.SendScriptRunningReply(objectID, itemID, running);
         }
 
+        private int m_WhisperDistance = PhloxListenManager.DefaultWhisperDistance;
+        private int m_SayDistance = PhloxListenManager.DefaultSayDistance;
+        private int m_ShoutDistance = PhloxListenManager.DefaultShoutDistance;
+
         private void OnChatFromWorld(object sender, OSChatMessage chat)
         {
-            ListenManager?.DeliverChat(chat.Channel, chat.From, chat.SenderUUID, chat.Message);
+            ListenManager?.DeliverChat(chat.Type, chat.Channel, chat.From, chat.SenderUUID, chat.Message,
+                chat.Position, chat.Destination);
         }
 
         private void OnChatFromClient(object sender, OSChatMessage chat)
@@ -585,7 +600,8 @@ namespace Phlox.ScriptEngine
             string speakerName = chat.From;
             if (string.IsNullOrEmpty(speakerName) && chat.Sender != null)
                 speakerName = chat.Sender.Name;
-            ListenManager?.DeliverChat(chat.Channel, speakerName, speakerKey, chat.Message);
+            ListenManager?.DeliverChat(chat.Type, chat.Channel, speakerName, speakerKey, chat.Message,
+                chat.Position, UUID.Zero);
         }
 
         // ── Touch events ───────────────────────────────────────────────────────
