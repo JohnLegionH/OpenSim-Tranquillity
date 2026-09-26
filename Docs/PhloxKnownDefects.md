@@ -2568,3 +2568,63 @@ for InWorldz - `key k = iwAvatarName2Key("First", "Last");` - got a random key t
 - InWorldz scripts that call `iwAvatarName2Key` get the avatar's key (or NULL_KEY) as the return value again, as
   they did on InWorldz. Scripts written against the query-key behaviour and waiting for a `dataserver` event will
   no longer get one.
+
+## PHLOX-25 - DATA_ONLINE privacy, HUDs in llGetAttachedList, llGetSimulatorHostname
+
+Three differences from Halcyon found in the Phlox/Halcyon audit.
+
+### DATA_ONLINE told any script anyone's online status
+
+Viewers offer "Only friends and groups know I'm online". The viewer sends it as the UpdateUserInfo packet's
+DirectoryVisibility ("hidden" when ticked); the region's UserProfileModule forwards it to the profiles service
+(`user_preferences_update`), which stores it in `usersettings.visible`. `llRequestAgentData(id, DATA_ONLINE)`
+ignored it and answered "1" for anyone the presence service had in a region.
+
+Halcyon (InWorldz.Phlox.Engine/LSLSystemAPI.cs GetAgentData) answers "1" when the avatar is in the script's
+region; otherwise "0" if the avatar is offline; otherwise "1" if the avatar is the script's owner, has the owner
+on its friends list, or has not ticked the box; otherwise "0". If the preference cannot be read the answer is
+"0". Groups are not consulted.
+
+**Fix.** DATA_ONLINE follows that rule exactly. The friends and preference lookups run on the thread that
+already answers llRequestAgentData, off the scheduler. Two region hooks were added, each a default interface
+member so other implementations keep compiling:
+
+- `IFriendsModule.IsFriendInService(user, friend)`: the friends service, not the local cache (the avatar asked
+  about is by definition not here). An offer the other side has not accepted does not count, as in
+  `FriendsModule.IsFriend`. A failing friends service is "not a friend", as in Halcyon.
+- `IProfileModule.GetUserPreferences(user)`: this grid's profiles service (`user_preferences_request`). A
+  foreign (Hypergrid) user's home grid is not asked, so their preference reads as unreadable and a stranger's
+  script sees "0". Without the full profiles module (BasicProfileModule) the same is true.
+
+Tests: `DataOnlinePrivacyTests` (12): each branch of the rule, the unanswered offer, preference missing /
+unreadable / throwing, a failing friends lookup, and the lookups' threads.
+
+Left as it was: `iwGetAgentData(id, DATA_ONLINE)` is synchronous and answers only for avatars in the region,
+which is stricter than the rule and makes no service call on the scheduler thread.
+
+### llGetAttachedList listed HUDs
+
+Halcyon (ScenePresence.CollectVisibleAttachmentIds) and the SL wiki leave out objects worn at HUD points
+(31-38); they are private to the wearer. **Fix:** they are left out (`SceneObjectGroup.HasPrivateAttachmentPoint`).
+Tests: `AttachedListTests` (2). `llGetAttachedListFiltered` is unchanged.
+
+### llGetSimulatorHostname gave the machine's name
+
+It, and `llGetEnv("simulator_hostname")`, returned `Dns.GetHostName()`: the machine's internal name, which is
+of no use to anyone outside and discloses it. Halcyon answers llGetSimulatorHostname through
+`llGetEnv("simulator_hostname")`, which Scene.GetEnv answers with `RegionInfo.ExternalHostName`. **Fix:** both
+return the region's configured external host name. Tests: `SimulatorHostnameTests` (1).
+
+### Bytecode and saved state
+
+No function's declared return type or table index changed; compiled bytecode and saved state are not affected.
+
+### What residents will notice
+
+- A script can no longer see that someone is online elsewhere on the grid if that person has ticked "Only
+  friends and groups know I'm online", unless the script's owner is on their friends list. Everyone in the
+  script's region still shows as online. A user who has never saved the preference is stored as hidden, so
+  they, too, show as offline to strangers' scripts until they untick the box.
+- Visitors from other grids show as offline to strangers' scripts when they are not in the script's region.
+- HUDs no longer appear in llGetAttachedList.
+- llGetSimulatorHostname gives the region's public host name.
