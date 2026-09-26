@@ -2564,6 +2564,41 @@ namespace Phlox.ScriptEngine
             return infos != null && infos.Any(p => p != null && p.RegionID != UUID.Zero);
         }
 
+        /// <summary>
+        /// DATA_ONLINE, as Halcyon (LSLSystemAPI.GetAgentData): an avatar in this region is online. One
+        /// elsewhere is online to its owner's scripts, to its friends' scripts, and to everyone's unless
+        /// it has ticked "Only friends and groups know I'm online"; if that setting cannot be read, it is
+        /// not. Groups are not consulted. Makes service calls: run it off the scheduler thread.
+        /// </summary>
+        private bool IsOnlineToThisScript(UUID agent)
+        {
+            ScenePresence sp = World?.GetScenePresence(agent);
+            if (sp != null && !sp.IsChildAgent) return true;
+            if (!IsOnline(agent)) return false;
+            if (agent == m_host.OwnerID) return true;
+
+            try
+            {
+                if (World?.RequestModuleInterface<IFriendsModule>()?.IsFriendInService(agent, m_host.OwnerID) == true)
+                    return true;
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning("[PhloxAPI]: DATA_ONLINE friends lookup for {0} failed: {1}", agent, e.Message);
+            }
+
+            try
+            {
+                UserPreferences prefs = World?.RequestModuleInterface<IProfileModule>()?.GetUserPreferences(agent);
+                return prefs != null && prefs.Visible;
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning("[PhloxAPI]: DATA_ONLINE preferences lookup for {0} failed: {1}", agent, e.Message);
+                return false;
+            }
+        }
+
         private string PayInfo(UUID agent)
         {
             UserAccount acct = World?.UserAccountService?.GetUserAccount(World.RegionInfo.ScopeID, agent);
@@ -11452,7 +11487,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     switch (capturedData)
                     {
                         case DATA_ONLINE:
-                            result = IsOnline(capturedAgent) ? "1" : "0";
+                            result = IsOnlineToThisScript(capturedAgent) ? "1" : "0";
                             break;
                         case DATA_NAME:
                         {
