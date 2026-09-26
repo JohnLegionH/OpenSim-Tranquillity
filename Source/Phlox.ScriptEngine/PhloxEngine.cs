@@ -193,6 +193,7 @@ namespace Phlox.ScriptEngine
             m_Scene.EventManager.OnGetScriptRunning += OnGetScriptRunning;
             m_Scene.EventManager.OnChatFromWorld += OnChatFromWorld;
             m_Scene.EventManager.OnChatFromClient += OnChatFromClient;
+            m_Scene.EventManager.OnChatBroadcast += OnChatBroadcast;
             m_Scene.EventManager.OnObjectGrab += OnObjectGrab;
             m_Scene.EventManager.OnObjectGrabbing += OnObjectGrabbing;
             m_Scene.EventManager.OnObjectDeGrab += OnObjectDeGrab;
@@ -434,6 +435,7 @@ namespace Phlox.ScriptEngine
             m_Scene.EventManager.OnGetScriptRunning -= OnGetScriptRunning;
             m_Scene.EventManager.OnChatFromWorld -= OnChatFromWorld;
             m_Scene.EventManager.OnChatFromClient -= OnChatFromClient;
+            m_Scene.EventManager.OnChatBroadcast -= OnChatBroadcast;
             m_Scene.EventManager.OnAvatarKilled -= OnAvatarKilled;
             m_Scene.EventManager.OnAvatarDamage -= OnAvatarDamage;
             m_Scene.EventManager.OnAvatarDamageApplied -= OnAvatarDamageApplied;
@@ -588,7 +590,16 @@ namespace Phlox.ScriptEngine
                 chat.Position, chat.Destination);
         }
 
-        private void OnChatFromClient(object sender, OSChatMessage chat)
+        private void OnChatFromClient(object sender, OSChatMessage chat) => DeliverSceneChat(chat, UUID.Zero);
+
+        /// <summary>
+        /// Broadcast chat (Scene.SimChatBroadcast and EventManager.TriggerOnChatBroadcast): region modules send it -
+        /// bots, the region-ready and concierge modules, the IRC bridge. Nothing else carries it; the core WorldComm
+        /// hears it the same way (OnChatBroadcast, beside OnChatFromClient).
+        /// </summary>
+        private void OnChatBroadcast(object sender, OSChatMessage chat) => DeliverSceneChat(chat, chat.Destination);
+
+        private void DeliverSceneChat(OSChatMessage chat, UUID destination)
         {
             // HandlerScriptDialogReply (LLClientView) sets chat.Sender but leaves
             // chat.SenderUUID at its UUID.Zero default.  A key-filtered llListen
@@ -602,7 +613,7 @@ namespace Phlox.ScriptEngine
             if (string.IsNullOrEmpty(speakerName) && chat.Sender != null)
                 speakerName = chat.Sender.Name;
             ListenManager?.DeliverChat(chat.Type, chat.Channel, speakerName, speakerKey, chat.Message,
-                chat.Position, UUID.Zero);
+                chat.Position, destination);
         }
 
         // ── Chat with the other script engine's listens ────────────────────────

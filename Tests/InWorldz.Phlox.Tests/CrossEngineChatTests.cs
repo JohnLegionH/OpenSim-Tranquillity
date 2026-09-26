@@ -258,4 +258,49 @@ public class CrossEngineChatTests
         Assert.True(Times(h, "Y", "5:once") == 1, $"{sender} {fn}: the YEngine listen heard it {Times(h, "Y", "5:once")} times");
         Assert.False(HeardAnything(h, "SELF"), $"{sender} {fn}: the sender heard itself");
     }
+
+    // ── Broadcast chat ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Chat raised as OnChatBroadcast (Scene.SimChatBroadcast, which region modules use) reaches Phlox listens as
+    /// WorldComm delivers it to YEngine's: in range for say, on its channel, once.
+    /// </summary>
+    [Fact]
+    public void BroadcastChatReachesAPhloxListenInRangeOnItsChannelOnce()
+    {
+        using var h = NewHarness();
+        var inside = Place(h, "inside", Origin + new Vector3(DefaultSay - 0.5f, 0, 0));
+        var outside = Place(h, "outside", Origin + new Vector3(DefaultSay + 0.5f, 0, 0));
+        Listen(h, Phlox, inside.RootPart, "IN", 5);
+        Listen(h, Phlox, inside.RootPart, "WRONG", 6);
+        Listen(h, Phlox, outside.RootPart, "OUT", 5);
+        Listen(h, YEngine, inside.RootPart, "Y", 5);
+        WaitReady(h, "IN", "WRONG", "OUT", "Y");
+
+        h.Scene.SimChatBroadcast("news", ChatTypeEnum.Say, 5, Origin, "Broadcaster", UUID.Zero, false);
+        WaitFor(h, _ => Times(h, "IN", "5:news") > 0 && Times(h, "Y", "5:news") > 0);
+        Settle(h);
+        Dump(h);
+
+        Assert.Equal(1, Times(h, "IN", "5:news"));
+        Assert.Equal(1, Times(h, "Y", "5:news"));   // WorldComm's own route, unchanged
+        Assert.False(HeardAnything(h, "WRONG"), "a Phlox listen on another channel heard broadcast chat");
+        Assert.False(HeardAnything(h, "OUT"), "a Phlox listen beyond say range heard broadcast chat");
+    }
+
+    [Fact]
+    public void RegionBroadcastChatReachesAFarPhloxListen()
+    {
+        using var h = NewHarness();
+        var far = Place(h, "far", new Vector3(250, 250, 30));
+        Listen(h, Phlox, far.RootPart, "FAR", 5);
+        WaitReady(h, "FAR");
+
+        h.Scene.SimChatBroadcast("all hands", ChatTypeEnum.Region, 5, new Vector3(5, 5, 30), "Broadcaster", UUID.Zero, false);
+        WaitFor(h, _ => Times(h, "FAR", "5:all hands") > 0);
+        Settle(h);
+        Dump(h);
+
+        Assert.Equal(1, Times(h, "FAR", "5:all hands"));
+    }
 }
