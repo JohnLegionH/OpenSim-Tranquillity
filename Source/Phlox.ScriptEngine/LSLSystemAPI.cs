@@ -1,11 +1,11 @@
 /*
- * Legion Grid — Phlox Script Engine Integration
+ * Phlox Script Engine Integration
  *
  * LSLSystemAPI — implementation of ISystemAPI.
  *
  * Core functions (llSay, math, basic queries) are implemented.
  * Everything else stubs with a log warning and safe default.
- * Port methods from /d/halcyon-reference/InWorldz/InWorldz.Phlox.Engine/LSLSystemAPI.cs
+ * Port methods from Halcyon's InWorldz/InWorldz.Phlox.Engine/LSLSystemAPI.cs
  * as needed, adapting Halcyon-specific APIs to standard OpenSim equivalents.
  */
 
@@ -826,7 +826,7 @@ namespace Phlox.ScriptEngine
         }
         public int llSetRegionPos(Vector3 position)
         {
-            // Halcyon used ValidLocation() + SetPos() helpers; Legion uses direct group position update.
+            // Halcyon used ValidLocation() + SetPos() helpers; this port uses direct group position update.
             // Clamp to region bounds (allow up to 10m outside for cross-region placement per SL spec)
             float regionSize = World?.RegionInfo?.RegionSizeX ?? 256f;
             position.X = Math.Max(-10f, Math.Min(regionSize + 10f, position.X));
@@ -962,7 +962,7 @@ namespace Phlox.ScriptEngine
         }
         public void llGroundRepel(float height, int water, float tau)
         {
-            // Halcyon used PIDHoverFlag.Ground|Repel; Legion uses PIDHoverType which
+            // Halcyon used PIDHoverFlag.Ground|Repel; this port uses PIDHoverType which
             // may not have a separate Repel flag. Use Ground (or Water) — SetHoverHeight
             // with a positive height inherently repels from the ground.
             if (m_host?.PhysActor == null) return;
@@ -1431,7 +1431,7 @@ namespace Phlox.ScriptEngine
             int ret = 1;
             try
             {
-                // Legion signature: RezScriptFromPrim(UUID srcId, SceneObjectPart srcPart, UUID destId, int pin, int running, int start_param)
+                // This tree's signature: RezScriptFromPrim(UUID srcId, SceneObjectPart srcPart, UUID destId, int pin, int running, int start_param)
                 World.RezScriptFromPrim(srcId, m_host, destId, pin, running, start_param);
             }
             catch (Exception e)
@@ -1933,8 +1933,8 @@ namespace Phlox.ScriptEngine
         }
         public void iwLinkStandTarget(int link, Vector3 offset, Quaternion rot)
         {
-            // Faithful port from Halcyon, adapted for Legion.
-            // Legion SOP only has StandOffset (Vector3), no StandTargetRot.
+            // Faithful port from Halcyon, adapted for this tree.
+            // This tree's SOP only has StandOffset (Vector3), no StandTargetRot.
             foreach (SceneObjectPart part in GetLinkParts(link))
             {
                 part.StandOffset = offset;
@@ -2037,7 +2037,7 @@ namespace Phlox.ScriptEngine
         }
         public string llGetAgentLanguage(string avatar)
         {
-            // Legion doesn't expose AgentPreferences — return empty (caller must handle)
+            // This tree doesn't expose AgentPreferences — return empty (caller must handle)
             if (!UUID.TryParse(avatar, out UUID key)) return string.Empty;
             ScenePresence sp = World?.GetScenePresence(key);
             if (sp == null || sp.IsChildAgent) return string.Empty;
@@ -2109,7 +2109,7 @@ namespace Phlox.ScriptEngine
             // Estate manager
             if (World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID))
                 return true;
-            // Group-deeded land: Legion doesn't have CanEditParcel with GroupPowers,
+            // Group-deeded land: this tree doesn't have CanEditParcel with GroupPowers,
             // so check if script owner's group matches the parcel group
             if (parcel.LandData.IsGroupOwned && parcel.LandData.GroupID == m_host.GroupID
                 && m_host.GroupID != UUID.Zero)
@@ -4318,7 +4318,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return (permsMask & full) == full;
         }
 
-        // ── Texture workhorses (ported from Halcyon, adapted to Legion SOP API) ──
+        // ── Texture workhorses (ported from Halcyon, adapted to this tree's SOP API) ──
 
         /// <summary>Apply a texture UUID to a face or all faces of a part.</summary>
         private void SetTexture(SceneObjectPart part, string texture, int face)
@@ -4368,7 +4368,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             float r = Math.Max(0f, Math.Min(1f, color.X));
             float g = Math.Max(0f, Math.Min(1f, color.Y));
             float b = Math.Max(0f, Math.Min(1f, color.Z));
-            // Legion's SOP already has SetFaceColorAlpha. Passing null alpha preserves per-face alpha.
+            // This tree's SOP already has SetFaceColorAlpha. Passing null alpha preserves per-face alpha.
             part.SetFaceColorAlpha(face, new Vector3(r, g, b), null);
             part.SendFullUpdateToAllClients();
         }
@@ -6131,8 +6131,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
         public void iwSetWind(int type, Vector3 offset, Vector3 speed)
         {
-            // Halcyon's IWindModule.WindSet(type, pos, speed) does not exist in Legion.
-            // Legion only has WindParamSet(plugin, param, value) which is a different API.
+            // Halcyon's IWindModule.WindSet(type, pos, speed) does not exist in this tree.
+            // This tree only has WindParamSet(plugin, param, value) which is a different API.
             // Keeping as no-op.
         }
         public Vector3 iwWind(Vector3 offset)
@@ -6868,7 +6868,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public LSLList llGetBoundingBox(string obj)
         {
             // Return [min_corner, max_corner] relative to the root prim.
-            // Legion's GetBoundingBox already returns root-relative coords — no position subtraction needed.
+            // This tree's GetBoundingBox already returns root-relative coords — no position subtraction needed.
             var empty = new LSLList(new object[] { Vector3.Zero, Vector3.Zero });
 
             if (!UUID.TryParse(obj, out UUID objID) || objID == UUID.Zero)
@@ -9789,7 +9789,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         public int llReturnObjectsByOwner(string owner, int scope)
         {
-            // Faithful port from Halcyon, adapted for Legion
+            // Faithful port from Halcyon, adapted for this tree
 
             if (!UUID.TryParse(owner, out UUID targetAgentID))
                 return ERR_MALFORMED_PARAMS;
@@ -9868,7 +9868,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
         public int llReturnObjectsByID(LSLList objects)
         {
-            // Faithful port from Halcyon, adapted for Legion
+            // Faithful port from Halcyon, adapted for this tree
 
             try
             {
@@ -11764,7 +11764,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
 
 
-        // Bind to Tranquillity's native per-linkset limit (SL = 128KB) rather than Legion's
+        // Bind to Tranquillity's native per-linkset limit (SL = 128KB) rather than the port source's
         // Scene.m_LinkSetDataLimit (which Tranquillity does not have).
         private int LinksetDataLimit => LinksetData.LINKSETDATA_MAX;
 
@@ -11978,7 +11978,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         public int llGiveMoney(string destination, int amount)
         {
-            // No economy module available in Legion
+            // No economy module available in this tree
             if (!UUID.TryParse(destination, out UUID destId) || destId == UUID.Zero)
             { ScriptSleep(3000); return 0; }
             if (amount <= 0) { ScriptSleep(3000); return 0; }
@@ -12000,7 +12000,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
         public string llTransferLindenDollars(string destination, int amount)
         {
-            // No economy module available in Legion
+            // No economy module available in this tree
             UUID txnId = UUID.Random();
             PostDataserverEvent(txnId, "LINDENDOLLAR_INSUFFICIENTFUNDS");
             return txnId.ToString();
@@ -12049,12 +12049,12 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     try
                     {
                         // Tranquillity's SendScriptTeleportRequest signature is (objName, simName, pos, int options)
-                        // — it dropped Legion's lookAt vector ("lookat does nothing"). Pass options = 0.
+                        // — it dropped the port source's lookAt vector ("lookat does nothing"). Pass options = 0.
                         avatar.ControllingClient.SendScriptTeleportRequest(m_host.Name, simname, pos, 0);
                     }
                     catch (NullReferenceException)
                     {
-                        // Legion LLClientView.SendScriptTeleportRequest has a packet construction bug
+                        // The port source's LLClientView.SendScriptTeleportRequest has a packet construction bug
                         // where ScriptTeleportRequestPacket fields can be null. Guard against it here.
                         // This needs a separate fix in LLClientView.cs.
                     }
@@ -13919,7 +13919,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 				//   Wiring requires adding the enum member AND confirming the pathfinding
 				//   subsystem posts it. Deferred pending evaluation.
 				// - EXPERIENCE_PERMISSIONS / EXPERIENCE_PERMISSIONS_DENIED: SL Experience
-				//   system is out of scope for Legion Grid; no OpenSim infrastructure exists.
+				//   system is out of scope for this port; no OpenSim infrastructure exists.
 				default: return 0UL;
                         }
                 }
@@ -14575,13 +14575,13 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
         public LSLList llGetClosestNavPoint(Vector3 point, LSLList options)
         {
-            // No navmesh in Legion — return the requested point as the closest navigable point
+            // No navmesh in this tree — return the requested point as the closest navigable point
             return new LSLList(new object[] { point });
         }
 
         public LSLList llGetStaticPath(Vector3 start, Vector3 end, float radius, LSLList parameters)
         {
-            // No navmesh in Legion — return a straight-line path [start, end, status]
+            // No navmesh in this tree — return a straight-line path [start, end, status]
             // Status 0 = success per SL spec
             return new LSLList(new object[] { start, end, 0 });
         }
@@ -14748,7 +14748,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
         // ── 610–620: Experience KV Store (upgraded to use ExperienceService) ──
 
-        // ── SL Experience error codes (XP_ERROR_*) + limits, ported from Legion
+        // ── SL Experience error codes (XP_ERROR_*) + limits, ported from the port source
         //    (port-source-2026-07-22) to match the SL wiki XP_ERROR table 0-18.
         //    Script-surface conformance — Experience port T1 (SS-1..9). ──
         // SL key-value key length cap (SL wiki llCreateKeyValue): 1011 bytes (was 255).
@@ -14756,15 +14756,15 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         // Viewer experience-property bit PROPERTY_DISABLED (indra VP_DISABLED = 1<<6);
         // used to report the llGetExperienceDetails state field.
         private const int VP_DISABLED = 1 << 6;
-        // SL per-experience KV quota: 128 MiB (was NGC's 16 MiB). T2 ports Legion DEC-2/UNV-5.
+        // SL per-experience KV quota: 128 MiB (was NGC's 16 MiB). T2 ports the port source's DEC-2/UNV-5.
         private const long MAX_DATA_QUOTA = 128L * 1024 * 1024;
 
-        // UTF-8 byte count for a KV key/value — the quota basis (matches Legion's KvBytes and the
+        // UTF-8 byte count for a KV key/value — the quota basis (matches the port source's KvBytes and the
         // MySQL SUM(LENGTH(`key`)+LENGTH(`value`)) used-size on the grid backend).
         private static long KvBytes(string s) => s == null ? 0 : System.Text.Encoding.UTF8.GetByteCount(s);
 
         // True if updating `key` to `value` would push this experience's KV store over MAX_DATA_QUOTA.
-        // Delta-aware (Legion ExceedsQuota): an existing key swaps its value (key stays); a new key
+        // Delta-aware (port source ExceedsQuota): an existing key swaps its value (key stays); a new key
         // adds the whole pair. Basis: key+value UTF-8 bytes.
         private bool ExceedsQuota(PhloxExperienceAdapter expService, UUID expId, string key, string value)
         {
@@ -14790,7 +14790,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             }
             try
             {
-                // T2/DEC-2: quota check BEFORE the write (Legion — never write-then-detect). A create
+                // T2/DEC-2: quota check BEFORE the write (as the port source — never write-then-detect). A create
                 // only ADDS a pair; reject if that would exceed 128 MiB -> -5 (llCreateKeyValueSL emits
                 // 0,11 = XP_ERROR_QUOTA_EXCEEDED). No write.
                 if (expService != null && expService.DataSizeKeyValue(expId) + KvBytes(key) + KvBytes(value) > MAX_DATA_QUOTA)
@@ -14835,7 +14835,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                 expId = m_host.OwnerID;
             try
             {
-                // T2/DEC-2: delta-aware quota check BEFORE the write (Legion ExceedsQuota). If the
+                // T2/DEC-2: delta-aware quota check BEFORE the write (port source ExceedsQuota). If the
                 // projected total after this update exceeds 128 MiB -> -5 (llUpdateKeyValueSL emits
                 // 0,11). No write. (If a CAS would also fail, quota wins at the boundary — benign.)
                 if (expService != null && ExceedsQuota(expService, expId, key, value))
@@ -14955,7 +14955,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
         // The ...SL wrappers present SL's async-dataserver CSV shape "1,<value>" (success) /
         // "0,<XP_ERROR>" (failure). T1 makes the failure payload a NUMERIC XP_ERROR code (was a
-        // free-text message), matching SL/Legion. (The underlying KV model stays synchronous —
+        // free-text message), matching SL and the port source. (The underlying KV model stays synchronous —
         // the async request-key + dataserver-event contract is a later architecture slice, not T1.)
         public string llCreateKeyValueSL(string key, string value)
         {
@@ -16114,7 +16114,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             return expService.IsAgentGranted(experienceId, agentId);
         }
 
-        // ── D1 consent state (ported from Legion port-source-2026-07-22). One pending request per
+        // ── D1 consent state (ported from port-source-2026-07-22). One pending request per
         //    script instance (LSLSystemAPI is per-script), keyed by ItemID; the ScriptAnswerYes packet
         //    carries no ExperienceID, so the answer is correlated by TaskID + ItemID via OnScriptAnswer. ──
         private const int PERMISSION_EXPERIENCE = 0x2000;       // JoinAnExperience bit
@@ -16152,7 +16152,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
             // T5b block-wins: a region-BLOCKED experience is denied regardless of allow/trusted/prior-
             // grant, land-scope XP_ERROR_NOT_PERMITTED_LAND (17). Checked FIRST (before admission,
-            // trusted, and already-granted) so block wins over everything. (Legion also has a parcel-
+            // trusted, and already-granted) so block wins over everything. (The port source also has a parcel-
             // block tier at this precedence — deferred; Tranquillity has no parcel-experience source.)
             if (IsExperienceBlockedInRegion(expService, experienceId))
             {
@@ -16166,7 +16166,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             // Admission (T5): the experience must be enabled on this land — estate-ALLOWED or region-
             // TRUSTED (estate KeyExperiences). A trusted experience is a stronger allow, so it admits
             // here and is silently granted below (previously a trusted-but-not-allowed experience was
-            // wrongly denied 17 before the trusted check). Legion's admission also has grid-wide + parcel-
+            // wrongly denied 17 before the trusted check). The port source's admission also has grid-wide + parcel-
             // ALLOW tiers, and a region/parcel BLOCK-wins tier; those have NO source in NGC (no grid-wide
             // bit, no region-block store, no ILandObject experience methods) — the flagged T5 STOP (see
             // experience-port-ledger.md). Not admitted -> land-scope XP_ERROR_NOT_PERMITTED_LAND (17).
@@ -16190,7 +16190,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                 return;
             }
 
-            // T3/D1 gate order (Legion): the agent's PERSONAL block wins over everything below and is
+            // T3/D1 gate order (port source): the agent's PERSONAL block wins over everything below and is
             // checked BEFORE the already-granted short-circuit, so a resident who blocked this experience
             // is never re-granted (SL code 4). (The Block-button persistence loop is T4.)
             if (expService.IsAgentBlocked(experienceId, agentId))
@@ -16212,7 +16212,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
             // T5 trusted enforcement. A region-TRUSTED experience (Tranquillity estate KeyExperiences)
             // grants silently — no dialog. Checked AFTER agent-block (T4), so a personally-blocked
-            // experience is denied 4 even if trusted (block wins over trusted — Legion's order).
+            // experience is denied 4 even if trusted (block wins over trusted — the port source's order).
             if (expService.GetTrustedExperiences(World.RegionInfo.RegionID).Contains(experienceId))
             {
                 GrantExperienceAndNotify(expService, experienceId, agentId, agent);
@@ -16333,9 +16333,9 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                     new DetectParams[0]));
         }
 
-        // T5 admission — the portable subset of Legion's ladder (IsExperienceAdmittedAt): an experience
+        // T5 admission — the portable subset of the port source's ladder (IsExperienceAdmittedAt): an experience
         // is admitted on this land if the estate ALLOWS it OR it is region-TRUSTED (estate KeyExperiences).
-        // Legion's grid-wide + parcel-ALLOW admission tiers and the region/parcel BLOCK-wins tier have no
+        // The port source's grid-wide + parcel-ALLOW admission tiers and the region/parcel BLOCK-wins tier have no
         // NGC source (see the T5 STOP in experience-port-ledger.md) and are not represented here.
         private bool IsExperienceAdmitted(PhloxExperienceAdapter expService, UUID experienceId)
         {
@@ -16344,9 +16344,9 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                 || expService.GetTrustedExperiences(regionId).Contains(experienceId);
         }
 
-        // T5b block-wins tier (Legion IsExperienceBlockedInRegion): an experience on the estate
+        // T5b block-wins tier (port source IsExperienceBlockedInRegion): an experience on the estate
         // BlockedExperiences list is denied regardless of allow/trusted/prior-grant. Region granularity
-        // only — Legion also has a parcel-block tier with no NGC parcel-experience source (deferred).
+        // only — the port source also has a parcel-block tier with no NGC parcel-experience source (deferred).
         private bool IsExperienceBlockedInRegion(PhloxExperienceAdapter expService, UUID experienceId)
         {
             UUID regionId = World.RegionInfo.RegionID;
@@ -16367,7 +16367,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             // SS-6 (presence + agent-block in T1, admission in T5, region-block in T5b): the target agent
             // must be PARTICIPATING here — a ROOT presence in this region — with block-wins over grant, AND
             // the experience must not be region-BLOCKED and must be ADMITTED on this land (estate allow OR
-            // trusted). Legion's HasExperiencePermission also applies a parcel BLOCK-wins tier, which has no
+            // trusted). The port source's HasExperiencePermission also applies a parcel BLOCK-wins tier, which has no
             // NGC source (the T5 STOP) — deferred to a separate project (region granularity only here).
             ScenePresence sp = World?.GetScenePresence(agentId);
             if (sp == null || sp.IsChildAgent) return 0;

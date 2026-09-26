@@ -1,5 +1,5 @@
 /*
- * Legion Grid — Phlox Script Engine Integration
+ * Phlox Script Engine Integration
  * PhloxListenManager — implements llListen / llListenControl / llListenRemove
  * and delivers chat events to registered scripts.
  *

@@ -1,5 +1,5 @@
 /*
- * Legion Grid — Phlox Script Engine Integration
+ * Phlox Script Engine Integration
  */
 
 using OpenMetaverse;

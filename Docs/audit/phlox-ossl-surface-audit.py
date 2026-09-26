@@ -1,6 +1,6 @@
 import io, os, re, collections, json
 
-ROOT = r"D:\tranq-ais\Source"
+ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "Source")
 
 # ---------------- Phlox side: Defaults.cs
 sig_re = re.compile(

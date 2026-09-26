@@ -1,8 +1,8 @@
 /*
- * Legion Grid — Phlox Script Engine Integration
+ * Phlox Script Engine Integration
  * Adapted from InWorldz Halcyon ScriptLoader.cs
  * Copyright (c) InWorldz Halcyon Developers (original)
- * Adapted 2026 for Legion Grid / OpenSim 0.9.3 .NET 8
+ * Adapted 2026 for OpenSim 0.9.3 .NET 8
  */
 
 using System;

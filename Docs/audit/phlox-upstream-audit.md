@@ -17,7 +17,7 @@ item here as current without checking.
 
 # Phlox / upstream-span audit
 
-**Repo:** `D:\tranquillity-develop`
+**Repo:** Tranquillity
 **Branch:** `feature/voice-visibility-matrix` @ `22b9a489c4`
 **Span audited:** `81e5c2449d` (old merge base) → `cbdfba2811` (upstream/develop, 11 commits)
 **Branch side compared:** `81e5c2449d` → `de94534257` (pre-rebase tip)
@@ -336,7 +336,7 @@ and items 1–4 above are the ones worth a runtime smoke check before deploy.
 
 ## 5. Async-syscall interaction
 
-**Verified by:** inspecting `D:\tranq-port-async` (branch `fix/phlox-async-syscall-resume`,
+**Verified by:** inspecting a worktree of the fix (branch `fix/phlox-async-syscall-resume`,
 HEAD `65ca25fbcf`), confirming its merge base, and diffing its three commits against
 `cbdfba2811`.
 

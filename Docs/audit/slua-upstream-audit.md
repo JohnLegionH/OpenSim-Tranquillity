@@ -16,7 +16,7 @@ item here as current without checking.
 
 # SLua — upstream-span audit
 
-**Repo:** `D:\tranquillity-develop`
+**Repo:** Tranquillity
 **Branch:** `feature/voice-visibility-matrix` @ `5a25c65583`
 **Span audited:** `81e5c2449d` → `cbdfba2811` (11 commits)
 **Branch side compared:** `81e5c2449d` → `de94534257` (pre-rebase tip = branch intent)

@@ -20,9 +20,9 @@ so the table's EOF = "\\n\\n\\n" is three newlines at runtime. The C# literal is
 Where SL sides with Phlox against upstream, the name is listed in SL_SIDES_WITH_PHLOX with its wiki page
 and reported separately from B - it is not a Phlox defect.
 """
-import io, re, sys, json, collections
+import io, os, re, sys, json, collections
 
-ROOT = r"D:\tranq-ais\Source"
+ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "Source")
 PHLOX = ROOT + r"\InWorldz.Phlox\Compiler\DefaultConstants.cs"
 UP = ROOT + r"\OpenSim.Region.ScriptEngine.Shared\Api\ScriptBase\LSL_Constants.cs"
 
@@ -30,7 +30,7 @@ UP = ROOT + r"\OpenSim.Region.ScriptEngine.Shared\Api\ScriptBase\LSL_Constants.c
 # LSL_Constants.cs either; it came in with the Phlox import, 02cf1370df).
 HERITAGE_PREFIXES = ("IW_", "BOT_", "PHLOX_", "IWTIMER", "TRAVELMODE", "IWERR_")
 
-# Phlox-only names that the Halcyon reference LSL_Constants.cs declares (D:\halcyon-reference\OpenSim\Region\
+# Phlox-only names that the Halcyon reference LSL_Constants.cs declares (Halcyon reference, OpenSim\Region\
 # ScriptEngine\Shared\Api\Runtime\LSL_Constants.cs, word-boundary grep 2026-09-09): heritage without the prefix.
 HALCYON_NATIVE = {
     "DATA_ACCOUNT_TYPE",

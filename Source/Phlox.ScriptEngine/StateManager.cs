@@ -1,5 +1,5 @@
 /*
- * Legion Grid — Phlox Script Engine
+ * Phlox Script Engine
  * StateManager.cs — Script runtime state persistence
  *
  * Ported from halcyon-reference/InWorldz/InWorldz.Phlox.Engine/StateManager.cs

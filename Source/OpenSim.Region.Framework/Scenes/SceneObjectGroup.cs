@@ -447,7 +447,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
 
     // Phlox: tracks whether this group was moving on the previous heartbeat so
     // Scene.CheckMovingTransitions() can fire moving_start/moving_end on general
-    // (non-keyframed) movement. Ported from Legion Grid SceneObjectGroup.cs.
+    // (non-keyframed) movement. Added with the Phlox port.
     public bool WasMoving { get; set; }
 
     // Phlox seam: linkset data is per-linkset (per-group) in SL, but Tranquillity
