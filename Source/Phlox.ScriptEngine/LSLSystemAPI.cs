@@ -615,7 +615,7 @@ namespace Phlox.ScriptEngine
             if (s.Sandbox)          flags |= REGION_FLAG_SANDBOX;
             return flags;
         }
-        public string llGetSimulatorHostname() => System.Net.Dns.GetHostName();
+        public string llGetSimulatorHostname() => World?.RegionInfo?.ExternalHostName ?? string.Empty;   // as Halcyon (Scene.GetEnv "simulator_hostname")
         public string llGetDate() => DateTime.UtcNow.ToString("yyyy-MM-dd");
         public string llGetTimestamp() => DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ");
         public float llGetWallclock() => (float)DateTime.UtcNow.TimeOfDay.TotalSeconds;
@@ -11627,7 +11627,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 "region_start_time"    => "0",
                 "sim_channel"          => "Legion Grid",
                 "sim_version"          => "0.9.3.0",
-                "simulator_hostname"   => System.Net.Dns.GetHostName(),
+                "simulator_hostname"   => World.RegionInfo.ExternalHostName ?? string.Empty,
                 "region_max_prims"     => World.RegionInfo.ObjectCapacity.ToString(),
                 "region_object_bonus"  => ((float)World.RegionInfo.RegionSettings.ObjectBonus).ToString(),
                 _                      => string.Empty
