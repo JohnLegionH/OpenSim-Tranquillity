@@ -174,6 +174,7 @@ namespace Phlox.ScriptEngine
                 m_Enabled = false;
                 return;
             }
+            m_WorldComm = worldComm;
             m_ExeScheduler = new PhloxExecutionScheduler(WorkArrived, this, worldComm);
             m_ScriptLoader = new PhloxScriptLoader(scene.AssetService, m_ExeScheduler, WorkArrived, this);
             m_MasterScheduler = new PhloxMasterScheduler(m_ExeScheduler, m_ScriptLoader);
@@ -602,6 +603,21 @@ namespace Phlox.ScriptEngine
                 speakerName = chat.Sender.Name;
             ListenManager?.DeliverChat(chat.Type, chat.Channel, speakerName, speakerKey, chat.Message,
                 chat.Position, UUID.Zero);
+        }
+
+        // ── Chat with the other script engine's listens ────────────────────────
+
+        private IWorldComm m_WorldComm;
+
+        /// <summary>
+        /// Offer a Phlox script's chat to the listens the core WorldComm holds (YEngine's, on a region running
+        /// both engines), as YEngine's own llSay/llRegionSay/llRegionSayTo do.
+        /// </summary>
+        internal void SendToWorldComm(Action<IWorldComm> send)
+        {
+            IWorldComm worldComm = m_WorldComm;
+            if (worldComm == null) return;
+            send(worldComm);
         }
 
         // ── Touch events ───────────────────────────────────────────────────────

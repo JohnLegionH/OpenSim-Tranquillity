@@ -37,6 +37,8 @@ public sealed class SchedulerHarness : IDisposable
     /// SceneObjectPartInventory.GetScriptErrors asks YEngine first. Null unless requested.
     /// </summary>
     public OpenSim.Region.ScriptEngine.Yengine.Yengine YEngine { get; }
+    /// <summary>The core WorldComm module that carries YEngine's listens, when YEngine is on the scene.</summary>
+    public OpenSim.Region.CoreModules.Scripting.WorldComm.WorldCommModule WorldComm { get; }
     private readonly string m_yengineDir;
 
     /// <param name="configure">PHLOX-12: a hook to add config sections (e.g. [OSSL]) before the engine reads them.</param>
@@ -55,6 +57,12 @@ public sealed class SchedulerHarness : IDisposable
 
         if (withYEngine)
         {
+            // A region running YEngine has the core WorldComm module, which carries YEngine's listens; without
+            // it YEngine's llListen and chat reach nothing, and chat between the engines cannot be tested.
+            WorldComm = new OpenSim.Region.CoreModules.Scripting.WorldComm.WorldCommModule();
+            WorldComm.Initialise(config);
+            WorldComm.AddRegion(Scene);
+
             m_yengineDir = Path.Combine(Path.GetTempPath(), "phlox-harness-yengine-" + Guid.NewGuid().ToString("N"));
             var y = config.AddConfig("YEngine");
             y.Set("Enabled", "true");
@@ -71,6 +79,13 @@ public sealed class SchedulerHarness : IDisposable
         if (Scene.RequestModuleInterface<IWorldComm>() is null)
             Scene.RegisterModuleInterface<IWorldComm>(NullWorldComm.Create());
         Engine.RegionLoaded(Scene);
+        if (YEngine != null)
+        {
+            // As the region does after every module's AddRegion: YEngine hooks its script events (listen among
+            // them) in RegionLoaded, and its worker threads run scripts only after StartProcessing.
+            YEngine.RegionLoaded(Scene);
+            YEngine.StartProcessing();
+        }
 
         var sog = SceneHelpers.AddSceneObject(Scene, "Phlox test prim", UUID.Random());
         Prim = sog.RootPart;
@@ -434,6 +449,7 @@ public sealed class SchedulerHarness : IDisposable
         if (YEngine != null)
         {
             try { YEngine.RemoveRegion(Scene); } catch { }
+            try { WorldComm.RemoveRegion(Scene); } catch { }
             try { Directory.Delete(m_yengineDir, true); } catch { }   // the harness's own temp dir
         }
     }

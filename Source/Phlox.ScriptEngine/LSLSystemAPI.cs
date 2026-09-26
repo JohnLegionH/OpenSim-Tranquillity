@@ -418,18 +418,21 @@ namespace Phlox.ScriptEngine
         {
             m_host?.ParentGroup?.Scene?.SimChat(msg, ChatTypeEnum.Say, channel,
                 m_host.AbsolutePosition, m_host.Name, m_host.UUID, false);
+            ChatToWorldComm(ChatTypeEnum.Say, channel, msg);
         }
 
         public void llShout(int channel, string msg)
         {
             m_host?.ParentGroup?.Scene?.SimChat(msg, ChatTypeEnum.Shout, channel,
                 m_host.AbsolutePosition, m_host.Name, m_host.UUID, false);
+            ChatToWorldComm(ChatTypeEnum.Shout, channel, msg);
         }
 
         public void llWhisper(int channel, string msg)
         {
             m_host?.ParentGroup?.Scene?.SimChat(msg, ChatTypeEnum.Whisper, channel,
                 m_host.AbsolutePosition, m_host.Name, m_host.UUID, false);
+            ChatToWorldComm(ChatTypeEnum.Whisper, channel, msg);
         }
 
         public void llOwnerSay(string msg)
@@ -451,6 +454,21 @@ namespace Phlox.ScriptEngine
 			}
 			m_host?.ParentGroup?.Scene?.SimChat(msg, ChatTypeEnum.Region, channel,
 				m_host.AbsolutePosition, m_host.Name, m_host.UUID, false);
+			ChatToWorldComm(ChatTypeEnum.Region, channel, msg);
+		}
+
+		/// <summary>
+		/// Scene.SimChat brings a Phlox script's chat to Phlox's listens (OnChatFromWorld) and to avatars; the
+		/// listens the core WorldComm holds - YEngine's, on a region running both engines - hear it only through
+		/// IWorldComm.DeliverMessage, which is how YEngine's own llSay/llShout/llWhisper/llRegionSay reach them.
+		/// </summary>
+		private void ChatToWorldComm(ChatTypeEnum type, int channel, string msg)
+		{
+			if (m_host == null) return;
+			string name = m_host.Name;
+			UUID id = m_host.UUID;
+			Vector3 pos = m_host.AbsolutePosition;
+			m_ScriptEngine?.SendToWorldComm(w => w.DeliverMessage(type, channel, name, id, msg, pos));
 		}
 
 		/// <summary>
