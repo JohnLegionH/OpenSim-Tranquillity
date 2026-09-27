@@ -40,6 +40,19 @@ public class PermissionsTests
         return rec;
     }
 
+    /// <summary>Pump until <paramref name="done"/> holds or <paramref name="limit"/> passes; false on a timeout.</summary>
+    private static bool PumpUntil(SchedulerHarness h, Func<bool> done, TimeSpan limit)
+    {
+        var until = DateTime.UtcNow + limit;
+        while (!done())
+        {
+            if (DateTime.UtcNow >= until) return false;
+            h.PumpOnce();
+            System.Threading.Thread.Sleep(1);
+        }
+        return true;
+    }
+
     private static void Wear(SchedulerHarness h, ScenePresence sp)
     {
         var sog = h.Prim.ParentGroup;
@@ -139,8 +152,10 @@ public class PermissionsTests
         var wearer = Present(h, h.Prim.OwnerID);
         Wear(h, h.Scene.GetScenePresence(h.Prim.OwnerID));
         h.RezScript(Asker(h.Prim.OwnerID, OVERRIDE_ANIMATIONS | TRIGGER_ANIMATION));
-        h.Pump();
-        Assert.Contains("rtp=" + (OVERRIDE_ANIMATIONS | TRIGGER_ANIMATION), h.Said);
+        // The silent grant arrives as run_time_permissions some rounds later; a fixed pump count can end first.
+        var granted = "rtp=" + (OVERRIDE_ANIMATIONS | TRIGGER_ANIMATION);
+        Assert.True(PumpUntil(h, () => h.Said.Contains(granted), TimeSpan.FromSeconds(20)),
+            "no grant within 20 s: [" + string.Join(" | ", h.Said) + "]");
         Assert.Empty(wearer.ScriptQuestions);
     }
 
