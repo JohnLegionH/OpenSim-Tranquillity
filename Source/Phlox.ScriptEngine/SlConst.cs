@@ -76,6 +76,12 @@ namespace Phlox.ScriptEngine
 
         // ── IW_PRIM_* (InWorldz; Halcyon LSL_Constants.cs) ───────────────
         public const int IW_PRIM_ALPHA = 11001;
+        public const int IW_PRIM_PROJECTOR = 11100;
+        public const int IW_PRIM_PROJECTOR_AMBIENCE = 11105;
+        public const int IW_PRIM_PROJECTOR_ENABLED = 11101;
+        public const int IW_PRIM_PROJECTOR_FOCUS = 11104;
+        public const int IW_PRIM_PROJECTOR_FOV = 11103;
+        public const int IW_PRIM_PROJECTOR_TEXTURE = 11102;
 
         // ── JSON_* ────────────────────────────────────────────────────────
         public const int JSON_APPEND = -1;
@@ -175,9 +181,14 @@ namespace Phlox.ScriptEngine
         public const int PERMISSION_TRIGGER_ANIMATION = 16;
 
         // ── PRIM_* ────────────────────────────────────────────────────────
+        public const int PRIM_ALLOW_UNSIT = 39;
         public const int PRIM_ALPHA_MODE = 38;
         public const int PRIM_BUMP_SHINY = 19;
+        public const int PRIM_CAST_SHADOWS = 24;
+        public const int PRIM_CLICK_ACTION = 43;
+        public const int PRIM_COLLISION_SOUND = 53;
         public const int PRIM_COLOR = 18;
+        public const int PRIM_DAMAGE = 51;
         public const int PRIM_DESC = 28;
         public const int PRIM_FLEXIBLE = 21;
         public const int PRIM_FULLBRIGHT = 20;
@@ -186,6 +197,7 @@ namespace Phlox.ScriptEngine
         public const int PRIM_GLTF_EMISSIVE = 46;
         public const int PRIM_GLTF_METALLIC_ROUGHNESS = 47;
         public const int PRIM_GLTF_NORMAL = 45;
+        public const int PRIM_HEALTH = 52;
         public const int PRIM_HOLE_DEFAULT = 0;
         public const int PRIM_LINK_TARGET = 34;
         public const int PRIM_MATERIAL = 2;
@@ -207,13 +219,20 @@ namespace Phlox.ScriptEngine
         public const int PRIM_MEDIA_WIDTH_PIXELS = 9;
         public const int PRIM_NAME = 27;
         public const int PRIM_NORMAL = 37;
+        public const int PRIM_OMEGA = 32;
         public const int PRIM_PHANTOM = 5;
+        public const int PRIM_PHYSICS = 3;
+        public const int PRIM_PHYSICS_SHAPE_TYPE = 30;
         public const int PRIM_POINT_LIGHT = 23;
         public const int PRIM_POSITION = 6;
         public const int PRIM_POS_LOCAL = 33;
+        public const int PRIM_PROJECTOR = 42;
+        public const int PRIM_REFLECTION_PROBE = 44;
         public const int PRIM_RENDER_MATERIAL = 49;
         public const int PRIM_ROTATION = 8;
         public const int PRIM_ROT_LOCAL = 29;
+        public const int PRIM_SCRIPTED_SIT_ONLY = 40;
+        public const int PRIM_SIT_FLAGS = 50;
         public const int PRIM_SIT_TARGET = 41;
         public const int PRIM_SIZE = 7;
         public const int PRIM_SLICE = 35;
@@ -224,6 +243,13 @@ namespace Phlox.ScriptEngine
         public const int PRIM_TEXTURE = 17;
         public const int PRIM_TYPE = 9;
         public const int PRIM_TYPE_BOX = 0;
+        public const int PRIM_TYPE_CYLINDER = 1;
+        public const int PRIM_TYPE_PRISM = 2;
+        public const int PRIM_TYPE_RING = 6;
+        public const int PRIM_TYPE_SCULPT = 7;
+        public const int PRIM_TYPE_SPHERE = 3;
+        public const int PRIM_TYPE_TORUS = 4;
+        public const int PRIM_TYPE_TUBE = 5;
 
         // ── PROFILE_* ─────────────────────────────────────────────────────
         public const int PROFILE_SCRIPT_MEMORY = 1;

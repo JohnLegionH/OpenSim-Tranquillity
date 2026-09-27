@@ -4264,38 +4264,27 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public LSLList llGetPrimitiveParams(LSLList parms)
         {
             if (m_host == null) return new LSLList();
-            return GetPrimParams(m_host, parms);
+            return GetPrimParams(new[] { m_host }, new List<ScenePresence>(), parms);
         }
 
         public void llSetLinkPrimitiveParams(int linknumber, LSLList rules)
         {
             if (m_host == null) return;
-            foreach (var part in GetLinkParts(linknumber))
-                SetPrimParams(part, rules);
-            foreach (var sp in GetLinkSitters(linknumber))
-                SetSitterPrimParams(sp, rules);
+            SetPrimParams(GetLinkParts(linknumber), GetLinkSitters(linknumber), rules);
             ScriptSleep(200);
         }
 
         public void llSetLinkPrimitiveParamsFast(int linknumber, LSLList rules)
         {
             if (m_host == null) return;
-            foreach (var part in GetLinkParts(linknumber))
-                SetPrimParams(part, rules);
-            foreach (var sp in GetLinkSitters(linknumber))
-                SetSitterPrimParams(sp, rules);
+            SetPrimParams(GetLinkParts(linknumber), GetLinkSitters(linknumber), rules);
             // no sleep for Fast variant
         }
 
         public LSLList llGetLinkPrimitiveParams(int linknumber, LSLList rules)
         {
             if (m_host == null) return new LSLList();
-            var result = new LSLList();
-            foreach (var part in GetLinkParts(linknumber))
-                result += GetPrimParams(part, rules);
-            foreach (var sp in GetLinkSitters(linknumber))
-                result += GetSitterPrimParams(sp, rules);
-            return result;
+            return GetPrimParams(GetLinkParts(linknumber), GetLinkSitters(linknumber), rules);
         }
 
         /// <summary>
@@ -4633,578 +4622,612 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
         }
 
+        /// <summary>One prim's prim-params rules (llSetPrimitiveParams, osSetPrimitiveParams).</summary>
         private void SetPrimParams(SceneObjectPart part, LSLList rules)
         {
-            if (part == null || rules == null) return;
+            if (part == null) return;
+            SetPrimParams(new[] { part }, new List<ScenePresence>(), rules);
+        }
+
+        /// <summary>
+        /// The prim-params setter walk (Halcyon SetPrimParams): each rule in turn, on every prim and seated avatar it
+        /// targets. Every rule is read by SL's value count (PrimParamRules), so a rule Phlox does not act on yet is
+        /// skipped whole, logged once per script, and the rules after it still apply. PRIM_LINK_TARGET points the
+        /// rules after it at the prims and avatars its link selects. A rule that is not an integer, or a rule number
+        /// SL does not define, ends the walk with SL's script error ("llSetPrimitiveParams error running rule #2:
+        /// unknown rule."); the rules before it have applied. A rule whose values run past the end of the list ends
+        /// the walk.
+        /// </summary>
+        private void SetPrimParams(IEnumerable<SceneObjectPart> parts, IEnumerable<ScenePresence> sitters, LSLList rules)
+        {
+            if (rules == null) return;
             var data = rules.Data;
-            int idx = 0;
+            var prims = parts.ToList();
+            var seated = sitters.ToList();
+            var moved = new List<ScenePresence>();
+            int idx = 0, rule = 0;
 
             while (idx < data.Length)
             {
-                int code;
-                try { code = Convert.ToInt32(data[idx++]); } catch { break; }
-
-                switch (code)
+                rule++;
+                if (data[idx] is not int code)
                 {
-                    case PRIM_LINK_TARGET:
-                        if (idx >= data.Length) break;
-                        int linkTarget;
-                        try { linkTarget = Convert.ToInt32(data[idx++]); } catch { break; }
-                        SetLinkTargetParams(linkTarget, data, idx);
-                        return;
-
-                    case PRIM_COLOR:
-                    {
-                        if (idx + 2 >= data.Length) break;
-                        int face; Vector3 color; float alpha;
-                        try { face  = Convert.ToInt32(data[idx++]); } catch { idx += 2; break; }
-                        try { color = (Vector3)data[idx++]; } catch { idx++; break; }
-                        try { alpha = (float)Convert.ToDouble(data[idx++]); } catch { break; }
-                        alpha = Math.Max(0f, Math.Min(1f, alpha));
-                        part.SetFaceColorAlpha(face, color, alpha);
-                        part.SendFullUpdateToAllClients();
-                        break;
-                    }
-
-                    case PRIM_TEXTURE:
-                    {
-                        if (idx + 4 >= data.Length) break;
-                        int face; string tex; Vector3 repeats, offsets; float rot;
-                        try { face    = Convert.ToInt32(data[idx++]); } catch { idx += 4; break; }
-                        try { tex     = data[idx++]?.ToString() ?? string.Empty; } catch { idx += 3; break; }
-                        try { repeats = (Vector3)data[idx++]; } catch { idx += 2; break; }
-                        try { offsets = (Vector3)data[idx++]; } catch { idx++; break; }
-                        try { rot     = (float)Convert.ToDouble(data[idx++]); } catch { break; }
-                        Primitive.TextureEntry texEntry = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
-                        void ApplyTex(Primitive.TextureEntryFace f) {
-                            UUID texUUID;
-                            if (!UUID.TryParse(tex, out texUUID)) texUUID = UUID.Zero;
-                            f.TextureID = texUUID;
-                            f.RepeatU = repeats.X; f.RepeatV = repeats.Y;
-                            f.OffsetU = offsets.X; f.OffsetV = offsets.Y;
-                            f.Rotation = rot;
-                        }
-                        if (face == ALL_SIDES) { for (int i = 0; i < 8; i++) ApplyTex(texEntry.CreateFace((uint)i)); }
-                        else { try { ApplyTex(texEntry.CreateFace((uint)face)); } catch { } }
-                        part.UpdateTextureEntry(texEntry.GetBytes());
-                        break;
-                    }
-
-                    case PRIM_GLOW:
-                    {
-                        if (idx + 1 >= data.Length) break;
-                        int face; float glow;
-                        try { face = Convert.ToInt32(data[idx++]); } catch { idx++; break; }
-                        try { glow = (float)Convert.ToDouble(data[idx++]); } catch { break; }
-                        glow = Math.Max(0f, Math.Min(1f, glow));
-                        Primitive.TextureEntry te = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
-                        if (face == ALL_SIDES) { for (int i = 0; i < 8; i++) te.CreateFace((uint)i).Glow = glow; }
-                        else { try { te.CreateFace((uint)face).Glow = glow; } catch { } }
-                        part.UpdateTextureEntry(te.GetBytes());
-                        break;
-                    }
-
-                    case PRIM_FULLBRIGHT:
-                    {
-                        if (idx + 1 >= data.Length) break;
-                        int face; bool bright;
-                        try { face  = Convert.ToInt32(data[idx++]); } catch { idx++; break; }
-                        try { bright = Convert.ToInt32(data[idx++]) != 0; } catch { break; }
-                        Primitive.TextureEntry te = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
-                        if (face == ALL_SIDES) { for (int i = 0; i < 8; i++) te.CreateFace((uint)i).Fullbright = bright; }
-                        else { try { te.CreateFace((uint)face).Fullbright = bright; } catch { } }
-                        part.UpdateTextureEntry(te.GetBytes());
-                        break;
-                    }
-
-                    case PRIM_BUMP_SHINY:
-                    {
-                        if (idx + 2 >= data.Length) break;
-                        int face, shiny, bump;
-                        try { face  = Convert.ToInt32(data[idx++]); } catch { idx += 2; break; }
-                        try { shiny = Convert.ToInt32(data[idx++]); } catch { idx++; break; }
-                        try { bump  = Convert.ToInt32(data[idx++]); } catch { break; }
-                        Primitive.TextureEntry te = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
-                        void ApplyBS(Primitive.TextureEntryFace f) {
-                            f.Shiny = (Shininess)shiny;
-                            f.Bump  = (Bumpiness)bump;
-                        }
-                        if (face == ALL_SIDES) { for (int i = 0; i < 8; i++) ApplyBS(te.CreateFace((uint)i)); }
-                        else { try { ApplyBS(te.CreateFace((uint)face)); } catch { } }
-                        part.UpdateTextureEntry(te.GetBytes());
-                        break;
-                    }
-
-                    case PRIM_MATERIAL:
-                    {
-                        if (idx >= data.Length) break;
-                        int mat;
-                        try { mat = Convert.ToInt32(data[idx++]); } catch { break; }
-                        part.Material = (byte)mat;
-                        if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
-                        part.ScheduleFullUpdate();
-                        break;
-                    }
-
-                    case PRIM_POSITION:
-                    {
-                        if (idx >= data.Length) break;
-                        Vector3 pos;
-                        try { pos = (Vector3)data[idx++]; } catch { break; }
-                        if (part.LinkNum < 2) part.ParentGroup?.UpdateGroupPosition(pos);
-                        else part.UpdateOffSet(pos - (part.ParentGroup?.AbsolutePosition ?? Vector3.Zero));
-                        break;
-                    }
-
-                    case PRIM_SIZE:
-                    {
-                        if (idx >= data.Length) break;
-                        Vector3 scale;
-                        try { scale = (Vector3)data[idx++]; } catch { break; }
-                        scale.X = Math.Max(0.01f, Math.Min(64f, scale.X));
-                        scale.Y = Math.Max(0.01f, Math.Min(64f, scale.Y));
-                        scale.Z = Math.Max(0.01f, Math.Min(64f, scale.Z));
-                        part.Resize(scale);
-                        break;
-                    }
-
-                    case PRIM_ROT_LOCAL:
-                    {
-                        if (idx >= data.Length) break;
-                        Quaternion rot;
-                        try { rot = (Quaternion)data[idx++]; } catch { break; }
-                        part.UpdateRotation(rot);
-                        break;
-                    }
-
-                    case PRIM_FLEXIBLE:
-                    {
-                        if (idx + 6 >= data.Length) break;
-                        bool flex; int softness; float gravity, friction, wind, tension; Vector3 force;
-                        try { flex      = Convert.ToInt32(data[idx++]) != 0; } catch { idx += 6; break; }
-                        try { softness  = Convert.ToInt32(data[idx++]); } catch { idx += 5; break; }
-                        try { gravity   = (float)Convert.ToDouble(data[idx++]); } catch { idx += 4; break; }
-                        try { friction  = (float)Convert.ToDouble(data[idx++]); } catch { idx += 3; break; }
-                        try { wind      = (float)Convert.ToDouble(data[idx++]); } catch { idx += 2; break; }
-                        try { tension   = (float)Convert.ToDouble(data[idx++]); } catch { idx++; break; }
-                        try { force     = (Vector3)data[idx++]; } catch { break; }
-                        var shape = part.Shape;
-                        shape.FlexiEntry    = flex;
-                        shape.FlexiSoftness = softness;
-                        shape.FlexiGravity  = gravity;
-                        shape.FlexiDrag     = friction;
-                        shape.FlexiWind     = wind;
-                        shape.FlexiTension  = tension;
-                        shape.FlexiForceX   = force.X;
-                        shape.FlexiForceY   = force.Y;
-                        shape.FlexiForceZ   = force.Z;
-                        part.Shape = shape;
-                        if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
-                        part.ScheduleFullUpdate();
-                        break;
-                    }
-
-                    case PRIM_POINT_LIGHT:
-                    {
-                        if (idx + 4 >= data.Length) break;
-                        bool enabled; Vector3 color; float intensity, radius, falloff;
-                        try { enabled   = Convert.ToInt32(data[idx++]) != 0; } catch { idx += 4; break; }
-                        try { color     = (Vector3)data[idx++]; } catch { idx += 3; break; }
-                        try { intensity = (float)Convert.ToDouble(data[idx++]); } catch { idx += 2; break; }
-                        try { radius    = (float)Convert.ToDouble(data[idx++]); } catch { idx++; break; }
-                        try { falloff   = (float)Convert.ToDouble(data[idx++]); } catch { break; }
-                        var shape = part.Shape;
-                        shape.LightEntry     = enabled;
-                        shape.LightColorR    = color.X;
-                        shape.LightColorG    = color.Y;
-                        shape.LightColorB    = color.Z;
-                        shape.LightIntensity = intensity;
-                        shape.LightRadius    = radius;
-                        shape.LightFalloff   = falloff;
-                        part.Shape = shape;
-                        if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
-                        part.ScheduleFullUpdate();
-                        break;
-                    }
-
-                    case PRIM_ALPHA_MODE:
-                    {
-                        if (idx + 1 >= data.Length) break;
-                        int face, mode;
-                        try { face = Convert.ToInt32(data[idx++]); } catch { idx++; break; }
-                        try { mode = Convert.ToInt32(data[idx++]); } catch { break; }
-                        // PRIM_ALPHA_MODE uses texture entry material alpha mode
-                        Primitive.TextureEntry te = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
-                        if (face == ALL_SIDES) { for (int i = 0; i < 8; i++) te.CreateFace((uint)i).MediaFlags = (mode != 0); }
-                        else { try { te.CreateFace((uint)face).MediaFlags = (mode != 0); } catch { } }
-                        part.UpdateTextureEntry(te.GetBytes());
-                        break;
-                    }
-
-                    case PRIM_TYPE:
-                    {
-                        if (idx >= data.Length) break;
-                        int primTypeCode = Convert.ToInt32(data[idx++]);
-                        int remain2 = data.Length - idx;
-                        int holeshape2;
-                        Vector3 cut2, twist2, taper_b2, topshear2, holesize2, profilecut2, taper_a2;
-                        float hollow2, revolutions2, radiusoffset2, skew2;
-
-                        switch (primTypeCode)
-                        {
-                            case 0:
-                                if (remain2 < 6) break;
-                                holeshape2 = Convert.ToInt32(data[idx++]);
-                                cut2       = (Vector3)data[idx++];
-                                hollow2    = (float)Convert.ToDouble(data[idx++]);
-                                twist2     = (Vector3)data[idx++];
-                                taper_b2   = (Vector3)data[idx++];
-                                topshear2  = (Vector3)data[idx++];
-                                part.Shape.PathCurve = (byte)Extrusion.Straight;
-                                SetPrimitiveShapeParamsCommon(part, holeshape2, cut2, hollow2, twist2, taper_b2, topshear2, DEFAULT_SLICE_VEC, 1);
-                                break;
-
-                            case 1:
-                                if (remain2 < 6) break;
-                                holeshape2 = Convert.ToInt32(data[idx++]);
-                                cut2       = (Vector3)data[idx++];
-                                hollow2    = (float)Convert.ToDouble(data[idx++]);
-                                twist2     = (Vector3)data[idx++];
-                                taper_b2   = (Vector3)data[idx++];
-                                topshear2  = (Vector3)data[idx++];
-                                part.Shape.ProfileShape = ProfileShape.Circle;
-                                part.Shape.PathCurve    = (byte)Extrusion.Straight;
-                                SetPrimitiveShapeParamsCommon(part, holeshape2, cut2, hollow2, twist2, taper_b2, topshear2, DEFAULT_SLICE_VEC, 0);
-                                break;
-
-                            case 2:
-                                if (remain2 < 6) break;
-                                holeshape2 = Convert.ToInt32(data[idx++]);
-                                cut2       = (Vector3)data[idx++];
-                                hollow2    = (float)Convert.ToDouble(data[idx++]);
-                                twist2     = (Vector3)data[idx++];
-                                taper_b2   = (Vector3)data[idx++];
-                                topshear2  = (Vector3)data[idx++];
-                                part.Shape.PathCurve = (byte)Extrusion.Straight;
-                                SetPrimitiveShapeParamsCommon(part, holeshape2, cut2, hollow2, twist2, taper_b2, topshear2, DEFAULT_SLICE_VEC, 3);
-                                break;
-
-                            case 3:
-                                if (remain2 < 5) break;
-                                holeshape2 = Convert.ToInt32(data[idx++]);
-                                cut2       = (Vector3)data[idx++];
-                                hollow2    = (float)Convert.ToDouble(data[idx++]);
-                                twist2     = (Vector3)data[idx++];
-                                taper_b2   = (Vector3)data[idx++];
-                                part.Shape.PathCurve = (byte)Extrusion.Curve1;
-                                SetPrimitiveShapeParamsSphere(part, holeshape2, cut2, hollow2, twist2, taper_b2, 5);
-                                break;
-
-                            case 4:
-                            case 5:
-                            case 6:
-                                if (remain2 < 11) break;
-                                holeshape2    = Convert.ToInt32(data[idx++]);
-                                cut2          = (Vector3)data[idx++];
-                                hollow2       = (float)Convert.ToDouble(data[idx++]);
-                                twist2        = (Vector3)data[idx++];
-                                holesize2     = (Vector3)data[idx++];
-                                topshear2     = (Vector3)data[idx++];
-                                profilecut2   = (Vector3)data[idx++];
-                                taper_a2      = (Vector3)data[idx++];
-                                revolutions2  = (float)Convert.ToDouble(data[idx++]);
-                                radiusoffset2 = (float)Convert.ToDouble(data[idx++]);
-                                skew2         = (float)Convert.ToDouble(data[idx++]);
-                                byte torusFudge = primTypeCode == 4 ? (byte)0
-                                                : primTypeCode == 5  ? (byte)1
-                                                : (byte)3;
-                                part.Shape.PathCurve = (byte)Extrusion.Curve1;
-                                SetPrimitiveShapeParamsTorus(part, holeshape2, cut2, hollow2, twist2, holesize2,
-                                    topshear2, profilecut2, taper_a2, revolutions2, radiusoffset2, skew2, torusFudge);
-                                break;
-
-                            case 7:
-                                if (remain2 < 2) break;
-                                string sculptMap2  = data[idx++].ToString();
-                                int    sculptType2 = Convert.ToInt32(data[idx++]);
-                                part.Shape.PathCurve = (byte)Extrusion.Curve1;
-                                SetPrimitiveShapeParamsSculpt(part, sculptMap2, sculptType2);
-                                break;
-                        }
-                        break;
-                    }
-
-                    case PRIM_NAME:
-                    {
-                        if (idx >= data.Length) break;
-                        string name = data[idx++].ToString();
-                        part.Name = name;
-                        break;
-                    }
-
-                    case PRIM_DESC:
-                    {
-                        if (idx >= data.Length) break;
-                        string desc = data[idx++].ToString();
-                        part.Description = desc;
-                        break;
-                    }
-
-                    // ── PBR / glTF Material params ──────────────────────────────
-
-                    case PRIM_RENDER_MATERIAL:
-                    {
-                        // [ PRIM_RENDER_MATERIAL, integer face, string render_material ]
-                        if (idx + 1 >= data.Length) { idx = data.Length; break; }
-                        int face; try { face = Convert.ToInt32(data[idx++]); } catch { idx++; break; }
-                        string matStr = data[idx++].ToString();
-                        UUID matUUID = UUID.Zero;
-                        UUID.TryParse(matStr, out matUUID);
-
-                        var shape_rm = part.Shape;
-                        shape_rm.RenderMaterials ??= new OpenMetaverse.Primitive.RenderMaterials();
-                        int numFaces_rm = part.GetNumberOfSides();
-
-                        if (face == ALL_SIDES)
-                        {
-                            var entries = new OpenMetaverse.Primitive.RenderMaterials.RenderMaterialEntry[numFaces_rm];
-                            for (int i = 0; i < numFaces_rm; i++)
-                            {
-                                entries[i].te_index = (byte)i;
-                                entries[i].id = matUUID;
-                            }
-                            shape_rm.RenderMaterials.entries = entries;
-                            // Clear non-transform overrides per SL spec
-                        }
-                        else if (face >= 0 && face < numFaces_rm)
-                        {
-                            SetRenderMaterialEntry(ref shape_rm.RenderMaterials.entries, matUUID, face);
-                        }
-
-                        if (part.ParentGroup != null)
-                            part.ParentGroup.HasGroupChanged = true;
-                        part.ScheduleFullUpdate();
-                        break;
-                    }
-
-                    case PRIM_GLTF_BASE_COLOR:
-                    {
-                        // [ PRIM_GLTF_BASE_COLOR, face, texture, repeats, offsets, rotation,
-                        //   color, alpha, alpha_mode, alpha_cutoff, double_sided ]
-                        if (idx + 9 >= data.Length) { idx = data.Length; break; }
-                        int face; try { face = Convert.ToInt32(data[idx++]); } catch { idx += 9; break; }
-                        string texture = data[idx++].ToString();
-                        Vector3 repeats = (Vector3)data[idx++];
-                        Vector3 offsets = (Vector3)data[idx++];
-                        float rotation = (float)Convert.ToDouble(data[idx++]);
-                        Vector3 color = (Vector3)data[idx++];
-                        float alpha = (float)Convert.ToDouble(data[idx++]);
-                        int alphaMode = Convert.ToInt32(data[idx++]);
-                        float alphaCutoff = (float)Convert.ToDouble(data[idx++]);
-                        int doubleSided = Convert.ToInt32(data[idx++]);
-
-                        var osd = new OpenMetaverse.StructuredData.OSDMap();
-                        if (!string.IsNullOrEmpty(texture) && texture != UUID.Zero.ToString())
-                            osd["tex"] = texture;
-                        osd["rep"] = new OpenMetaverse.StructuredData.OSDArray { (double)repeats.X, (double)repeats.Y };
-                        osd["off"] = new OpenMetaverse.StructuredData.OSDArray { (double)offsets.X, (double)offsets.Y };
-                        osd["rot"] = (double)rotation;
-                        osd["bc"] = new OpenMetaverse.StructuredData.OSDArray { (double)color.X, (double)color.Y, (double)color.Z, (double)alpha };
-                        osd["am"] = alphaMode;
-                        osd["ac"] = (double)alphaCutoff;
-                        osd["ds"] = (doubleSided != 0);
-
-                        ApplyGLTFOverrideToPart(part, face, osd);
-                        break;
-                    }
-
-                    case PRIM_GLTF_NORMAL:
-                    {
-                        // [ PRIM_GLTF_NORMAL, face, texture, repeats, offsets, rotation ]
-                        if (idx + 4 >= data.Length) { idx = data.Length; break; }
-                        int face; try { face = Convert.ToInt32(data[idx++]); } catch { idx += 4; break; }
-                        string texture = data[idx++].ToString();
-                        Vector3 repeats = (Vector3)data[idx++];
-                        Vector3 offsets = (Vector3)data[idx++];
-                        float rotation = (float)Convert.ToDouble(data[idx++]);
-
-                        var osd = new OpenMetaverse.StructuredData.OSDMap();
-                        if (!string.IsNullOrEmpty(texture) && texture != UUID.Zero.ToString())
-                            osd["ntex"] = texture;
-                        osd["nrep"] = new OpenMetaverse.StructuredData.OSDArray { (double)repeats.X, (double)repeats.Y };
-                        osd["noff"] = new OpenMetaverse.StructuredData.OSDArray { (double)offsets.X, (double)offsets.Y };
-                        osd["nrot"] = (double)rotation;
-
-                        ApplyGLTFOverrideToPart(part, face, osd);
-                        break;
-                    }
-
-                    case PRIM_GLTF_METALLIC_ROUGHNESS:
-                    {
-                        // [ PRIM_GLTF_METALLIC_ROUGHNESS, face, texture, repeats, offsets, rotation,
-                        //   metallic_factor, roughness_factor ]
-                        if (idx + 6 >= data.Length) { idx = data.Length; break; }
-                        int face; try { face = Convert.ToInt32(data[idx++]); } catch { idx += 6; break; }
-                        string texture = data[idx++].ToString();
-                        Vector3 repeats = (Vector3)data[idx++];
-                        Vector3 offsets = (Vector3)data[idx++];
-                        float rotation = (float)Convert.ToDouble(data[idx++]);
-                        float metallic = (float)Convert.ToDouble(data[idx++]);
-                        float roughness = (float)Convert.ToDouble(data[idx++]);
-
-                        var osd = new OpenMetaverse.StructuredData.OSDMap();
-                        if (!string.IsNullOrEmpty(texture) && texture != UUID.Zero.ToString())
-                            osd["mrtex"] = texture;
-                        osd["mrrep"] = new OpenMetaverse.StructuredData.OSDArray { (double)repeats.X, (double)repeats.Y };
-                        osd["mroff"] = new OpenMetaverse.StructuredData.OSDArray { (double)offsets.X, (double)offsets.Y };
-                        osd["mrrot"] = (double)rotation;
-                        osd["mf"] = (double)Math.Clamp(metallic, 0f, 1f);
-                        osd["rf"] = (double)Math.Clamp(roughness, 0f, 1f);
-
-                        ApplyGLTFOverrideToPart(part, face, osd);
-                        break;
-                    }
-
-                    case PRIM_GLTF_EMISSIVE:
-                    {
-                        // [ PRIM_GLTF_EMISSIVE, face, texture, repeats, offsets, rotation, emissive_tint ]
-                        if (idx + 5 >= data.Length) { idx = data.Length; break; }
-                        int face; try { face = Convert.ToInt32(data[idx++]); } catch { idx += 5; break; }
-                        string texture = data[idx++].ToString();
-                        Vector3 repeats = (Vector3)data[idx++];
-                        Vector3 offsets = (Vector3)data[idx++];
-                        float rotation = (float)Convert.ToDouble(data[idx++]);
-                        Vector3 emissive = (Vector3)data[idx++];
-
-                        var osd = new OpenMetaverse.StructuredData.OSDMap();
-                        if (!string.IsNullOrEmpty(texture) && texture != UUID.Zero.ToString())
-                            osd["etex"] = texture;
-                        osd["erep"] = new OpenMetaverse.StructuredData.OSDArray { (double)repeats.X, (double)repeats.Y };
-                        osd["eoff"] = new OpenMetaverse.StructuredData.OSDArray { (double)offsets.X, (double)offsets.Y };
-                        osd["erot"] = (double)rotation;
-                        osd["ec"] = new OpenMetaverse.StructuredData.OSDArray { (double)emissive.X, (double)emissive.Y, (double)emissive.Z };
-
-                        ApplyGLTFOverrideToPart(part, face, osd);
-                        break;
-                    }
-
-                    default:
-                        m_log.LogWarning("[PhloxAPI]: llSetPrimitiveParams unknown code {0}, stopping", code);
-                        idx = data.Length;
-                        break;
+                    ShoutError($"llSetPrimitiveParams error running rule #{rule}: non-integer rule.");
+                    break;
                 }
-            }
-        }
-
-        /// <summary>PRIM_LINK_TARGET: the rest of the rules go to every prim and seated avatar the link selects.</summary>
-        private void SetLinkTargetParams(int linkTarget, object[] data, int idx)
-        {
-            var remaining = new object[data.Length - idx];
-            Array.Copy(data, idx, remaining, 0, remaining.Length);
-            var rest = new LSLList(remaining);
-            foreach (var p in GetLinkParts(linkTarget))
-                SetPrimParams(p, rest);
-            foreach (var sp in GetLinkSitters(linkTarget))
-                SetSitterPrimParams(sp, rest);
-        }
-
-        /// <summary>
-        /// The values each prim-params setter rule takes, as SetPrimParams consumes them, so a rule list walks the
-        /// same way over a seated avatar as over a prim. PRIM_TYPE is counted separately.
-        /// </summary>
-        private static int SetterArgCount(int code) => code switch
-        {
-            PRIM_LINK_TARGET or PRIM_MATERIAL or PRIM_POSITION or PRIM_POS_LOCAL or PRIM_SIZE or PRIM_ROTATION
-                or PRIM_ROT_LOCAL or PRIM_NAME or PRIM_DESC => 1,
-            PRIM_GLOW or PRIM_FULLBRIGHT or PRIM_ALPHA_MODE or PRIM_RENDER_MATERIAL => 2,
-            PRIM_COLOR or PRIM_BUMP_SHINY => 3,
-            PRIM_TEXTURE or PRIM_POINT_LIGHT or PRIM_GLTF_NORMAL => 5,
-            PRIM_GLTF_EMISSIVE => 6,
-            PRIM_FLEXIBLE or PRIM_GLTF_METALLIC_ROUGHNESS => 7,
-            PRIM_GLTF_BASE_COLOR => 10,
-            _ => -1,
-        };
-
-        /// <summary>
-        /// llSetLinkPrimitiveParams(Fast) on a seated avatar (Halcyon SetPrimParams' ScenePresence branches):
-        /// PRIM_POSITION and PRIM_POS_LOCAL set the sitter's offset from the root, PRIM_ROT_LOCAL its rotation,
-        /// and PRIM_ROTATION the root's rotation times the one given. Every other rule leaves an avatar alone.
-        /// SL: an offset more than 54 m away is silently ignored. The change goes out the way the scene moves a
-        /// sitter (ScenePresence.OffsetPosition / Rotation, then a terse update to every viewer).
-        /// </summary>
-        private void SetSitterPrimParams(ScenePresence sp, LSLList rules)
-        {
-            if (sp == null || rules == null || sp.ParentID == 0) return;
-            var data = rules.Data;
-            int idx = 0;
-            bool moved = false;
-
-            while (idx < data.Length)
-            {
-                int code;
-                try { code = Convert.ToInt32(data[idx++]); } catch { break; }
-
-                if (code == PRIM_TYPE)
+                int length = PrimParamRules.SetRuleLength(data, idx, code);
+                if (length < 0)
                 {
-                    if (idx >= data.Length) break;
-                    int type;
-                    try { type = Convert.ToInt32(data[idx++]); } catch { break; }
-                    idx += type switch { 0 or 1 or 2 => 6, 3 => 5, 4 or 5 or 6 => 11, 7 => 2, _ => 0 };
+                    ShoutError($"llSetPrimitiveParams error running rule #{rule}: unknown rule.");
+                    break;
+                }
+                if (idx + length > data.Length) break;
+                int values = idx + 1;
+                idx += length;
+
+                if (code == PRIM_LINK_TARGET)
+                {
+                    if (data[values] is not int link) break;
+                    prims = GetLinkParts(link).ToList();
+                    seated = GetLinkSitters(link);
                     continue;
                 }
 
-                int count = SetterArgCount(code);
-                if (count < 0 || idx + count > data.Length) break;
-
-                switch (code)
-                {
-                    case PRIM_LINK_TARGET:
-                    {
-                        int linkTarget;
-                        try { linkTarget = Convert.ToInt32(data[idx++]); } catch { idx = data.Length; break; }
-                        if (moved) sp.SendTerseUpdateToAllClients();
-                        SetLinkTargetParams(linkTarget, data, idx);
-                        return;
-                    }
-
-                    case PRIM_POSITION:
-                    case PRIM_POS_LOCAL:
-                    {
-                        Vector3 v;
-                        try { v = (Vector3)data[idx++]; } catch { break; }
-                        if (v.Length() > 54f) break;
-                        if (!sp.LegacySitOffsets)
-                            v += (Vector3.UnitZ * sp.Rotation) * (2f * sp.Appearance.AvatarHeight * 0.02638f);
-                        sp.OffsetPosition = v;
-                        moved = true;
-                        break;
-                    }
-
-                    case PRIM_ROT_LOCAL:
-                    {
-                        Quaternion q;
-                        try { q = (Quaternion)data[idx++]; } catch { break; }
-                        sp.Rotation = q;
-                        moved = true;
-                        break;
-                    }
-
-                    case PRIM_ROTATION:
-                    {
-                        Quaternion q;
-                        try { q = (Quaternion)data[idx++]; } catch { break; }
-                        sp.Rotation = (m_host.ParentGroup?.RootPart?.RotationOffset ?? Quaternion.Identity) * q;
-                        moved = true;
-                        break;
-                    }
-
-                    default:
-                        idx += count;
-                        break;
-                }
+                bool applied = false;
+                foreach (var part in prims)
+                    applied = SetPrimRule(part, code, data, values);
+                if (prims.Count > 0 && !applied)
+                    LogUnimplementedPrimRule(code, length - 1);
+                foreach (var sp in seated)
+                    if (SetSitterPrimRule(sp, code, data, values) && !moved.Contains(sp))
+                        moved.Add(sp);
             }
 
-            if (moved) sp.SendTerseUpdateToAllClients();
+            foreach (var sp in moved)
+                sp.SendTerseUpdateToAllClients();
+        }
+
+        /// <summary>The prim-params rules Phlox reads but does not act on yet, each logged once per script.</summary>
+        private HashSet<int> m_unimplementedPrimRulesLogged;
+
+        private void LogUnimplementedPrimRule(int code, int values)
+        {
+            m_unimplementedPrimRulesLogged ??= new HashSet<int>();
+            if (!m_unimplementedPrimRulesLogged.Add(code)) return;
+            m_log.LogWarning("[PhloxAPI]: prim-params rule {Rule} is not implemented yet; skipped its {Values} values for {Item}",
+                code, values, m_itemID);
+        }
+
+        /// <summary>
+        /// One setter rule on one prim, its values starting at <paramref name="idx"/> (the walk has checked they are
+        /// all there). False for a rule Phlox does not implement yet.
+        /// </summary>
+        private bool SetPrimRule(SceneObjectPart part, int code, object[] data, int idx)
+        {
+            switch (code)
+            {
+                case PRIM_COLOR:
+                {
+                    if (idx + 2 >= data.Length) break;
+                    int face; Vector3 color; float alpha;
+                    try { face  = Convert.ToInt32(data[idx++]); } catch { idx += 2; break; }
+                    try { color = (Vector3)data[idx++]; } catch { idx++; break; }
+                    try { alpha = (float)Convert.ToDouble(data[idx++]); } catch { break; }
+                    alpha = Math.Max(0f, Math.Min(1f, alpha));
+                    part.SetFaceColorAlpha(face, color, alpha);
+                    part.SendFullUpdateToAllClients();
+                    break;
+                }
+
+                case PRIM_TEXTURE:
+                {
+                    if (idx + 4 >= data.Length) break;
+                    int face; string tex; Vector3 repeats, offsets; float rot;
+                    try { face    = Convert.ToInt32(data[idx++]); } catch { idx += 4; break; }
+                    try { tex     = data[idx++]?.ToString() ?? string.Empty; } catch { idx += 3; break; }
+                    try { repeats = (Vector3)data[idx++]; } catch { idx += 2; break; }
+                    try { offsets = (Vector3)data[idx++]; } catch { idx++; break; }
+                    try { rot     = (float)Convert.ToDouble(data[idx++]); } catch { break; }
+                    Primitive.TextureEntry texEntry = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
+                    void ApplyTex(Primitive.TextureEntryFace f) {
+                        UUID texUUID;
+                        if (!UUID.TryParse(tex, out texUUID)) texUUID = UUID.Zero;
+                        f.TextureID = texUUID;
+                        f.RepeatU = repeats.X; f.RepeatV = repeats.Y;
+                        f.OffsetU = offsets.X; f.OffsetV = offsets.Y;
+                        f.Rotation = rot;
+                    }
+                    if (face == ALL_SIDES) { for (int i = 0; i < 8; i++) ApplyTex(texEntry.CreateFace((uint)i)); }
+                    else { try { ApplyTex(texEntry.CreateFace((uint)face)); } catch { } }
+                    part.UpdateTextureEntry(texEntry.GetBytes());
+                    break;
+                }
+
+                case PRIM_GLOW:
+                {
+                    if (idx + 1 >= data.Length) break;
+                    int face; float glow;
+                    try { face = Convert.ToInt32(data[idx++]); } catch { idx++; break; }
+                    try { glow = (float)Convert.ToDouble(data[idx++]); } catch { break; }
+                    glow = Math.Max(0f, Math.Min(1f, glow));
+                    Primitive.TextureEntry te = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
+                    if (face == ALL_SIDES) { for (int i = 0; i < 8; i++) te.CreateFace((uint)i).Glow = glow; }
+                    else { try { te.CreateFace((uint)face).Glow = glow; } catch { } }
+                    part.UpdateTextureEntry(te.GetBytes());
+                    break;
+                }
+
+                case PRIM_FULLBRIGHT:
+                {
+                    if (idx + 1 >= data.Length) break;
+                    int face; bool bright;
+                    try { face  = Convert.ToInt32(data[idx++]); } catch { idx++; break; }
+                    try { bright = Convert.ToInt32(data[idx++]) != 0; } catch { break; }
+                    Primitive.TextureEntry te = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
+                    if (face == ALL_SIDES) { for (int i = 0; i < 8; i++) te.CreateFace((uint)i).Fullbright = bright; }
+                    else { try { te.CreateFace((uint)face).Fullbright = bright; } catch { } }
+                    part.UpdateTextureEntry(te.GetBytes());
+                    break;
+                }
+
+                case PRIM_BUMP_SHINY:
+                {
+                    if (idx + 2 >= data.Length) break;
+                    int face, shiny, bump;
+                    try { face  = Convert.ToInt32(data[idx++]); } catch { idx += 2; break; }
+                    try { shiny = Convert.ToInt32(data[idx++]); } catch { idx++; break; }
+                    try { bump  = Convert.ToInt32(data[idx++]); } catch { break; }
+                    Primitive.TextureEntry te = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
+                    void ApplyBS(Primitive.TextureEntryFace f) {
+                        f.Shiny = (Shininess)shiny;
+                        f.Bump  = (Bumpiness)bump;
+                    }
+                    if (face == ALL_SIDES) { for (int i = 0; i < 8; i++) ApplyBS(te.CreateFace((uint)i)); }
+                    else { try { ApplyBS(te.CreateFace((uint)face)); } catch { } }
+                    part.UpdateTextureEntry(te.GetBytes());
+                    break;
+                }
+
+                case PRIM_MATERIAL:
+                {
+                    if (idx >= data.Length) break;
+                    int mat;
+                    try { mat = Convert.ToInt32(data[idx++]); } catch { break; }
+                    part.Material = (byte)mat;
+                    if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
+                    part.ScheduleFullUpdate();
+                    break;
+                }
+
+                case PRIM_POSITION:
+                {
+                    if (idx >= data.Length) break;
+                    Vector3 pos;
+                    try { pos = (Vector3)data[idx++]; } catch { break; }
+                    if (part.LinkNum < 2) part.ParentGroup?.UpdateGroupPosition(pos);
+                    else part.UpdateOffSet(pos - (part.ParentGroup?.AbsolutePosition ?? Vector3.Zero));
+                    break;
+                }
+
+                case PRIM_SIZE:
+                {
+                    if (idx >= data.Length) break;
+                    Vector3 scale;
+                    try { scale = (Vector3)data[idx++]; } catch { break; }
+                    scale.X = Math.Max(0.01f, Math.Min(64f, scale.X));
+                    scale.Y = Math.Max(0.01f, Math.Min(64f, scale.Y));
+                    scale.Z = Math.Max(0.01f, Math.Min(64f, scale.Z));
+                    part.Resize(scale);
+                    break;
+                }
+
+                case PRIM_ROT_LOCAL:
+                {
+                    if (idx >= data.Length) break;
+                    Quaternion rot;
+                    try { rot = (Quaternion)data[idx++]; } catch { break; }
+                    part.UpdateRotation(rot);
+                    break;
+                }
+
+                case PRIM_FLEXIBLE:
+                {
+                    if (idx + 6 >= data.Length) break;
+                    bool flex; int softness; float gravity, friction, wind, tension; Vector3 force;
+                    try { flex      = Convert.ToInt32(data[idx++]) != 0; } catch { idx += 6; break; }
+                    try { softness  = Convert.ToInt32(data[idx++]); } catch { idx += 5; break; }
+                    try { gravity   = (float)Convert.ToDouble(data[idx++]); } catch { idx += 4; break; }
+                    try { friction  = (float)Convert.ToDouble(data[idx++]); } catch { idx += 3; break; }
+                    try { wind      = (float)Convert.ToDouble(data[idx++]); } catch { idx += 2; break; }
+                    try { tension   = (float)Convert.ToDouble(data[idx++]); } catch { idx++; break; }
+                    try { force     = (Vector3)data[idx++]; } catch { break; }
+                    var shape = part.Shape;
+                    shape.FlexiEntry    = flex;
+                    shape.FlexiSoftness = softness;
+                    shape.FlexiGravity  = gravity;
+                    shape.FlexiDrag     = friction;
+                    shape.FlexiWind     = wind;
+                    shape.FlexiTension  = tension;
+                    shape.FlexiForceX   = force.X;
+                    shape.FlexiForceY   = force.Y;
+                    shape.FlexiForceZ   = force.Z;
+                    part.Shape = shape;
+                    if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
+                    part.ScheduleFullUpdate();
+                    break;
+                }
+
+                case PRIM_POINT_LIGHT:
+                {
+                    if (idx + 4 >= data.Length) break;
+                    bool enabled; Vector3 color; float intensity, radius, falloff;
+                    try { enabled   = Convert.ToInt32(data[idx++]) != 0; } catch { idx += 4; break; }
+                    try { color     = (Vector3)data[idx++]; } catch { idx += 3; break; }
+                    try { intensity = (float)Convert.ToDouble(data[idx++]); } catch { idx += 2; break; }
+                    try { radius    = (float)Convert.ToDouble(data[idx++]); } catch { idx++; break; }
+                    try { falloff   = (float)Convert.ToDouble(data[idx++]); } catch { break; }
+                    var shape = part.Shape;
+                    shape.LightEntry     = enabled;
+                    shape.LightColorR    = color.X;
+                    shape.LightColorG    = color.Y;
+                    shape.LightColorB    = color.Z;
+                    shape.LightIntensity = intensity;
+                    shape.LightRadius    = radius;
+                    shape.LightFalloff   = falloff;
+                    part.Shape = shape;
+                    if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
+                    part.ScheduleFullUpdate();
+                    break;
+                }
+
+                case PRIM_ALPHA_MODE:
+                {
+                    if (idx + 1 >= data.Length) break;
+                    int face, mode;
+                    try { face = Convert.ToInt32(data[idx++]); } catch { idx++; break; }
+                    try { mode = Convert.ToInt32(data[idx++]); } catch { break; }
+                    // [ PRIM_ALPHA_MODE, face, alpha_mode, mask_cutoff ]: the walk reads all three; the cutoff is
+                    // not used yet. Known defect: this sets the faces' MediaFlags, not the material's alpha mode
+                    // (Docs/PhloxKnownDefects.md).
+                    Primitive.TextureEntry te = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
+                    if (face == ALL_SIDES) { for (int i = 0; i < 8; i++) te.CreateFace((uint)i).MediaFlags = (mode != 0); }
+                    else { try { te.CreateFace((uint)face).MediaFlags = (mode != 0); } catch { } }
+                    part.UpdateTextureEntry(te.GetBytes());
+                    break;
+                }
+
+                case PRIM_TYPE:
+                {
+                    if (idx >= data.Length) break;
+                    int primTypeCode = Convert.ToInt32(data[idx++]);
+                    int remain2 = data.Length - idx;
+                    int holeshape2;
+                    Vector3 cut2, twist2, taper_b2, topshear2, holesize2, profilecut2, taper_a2;
+                    float hollow2, revolutions2, radiusoffset2, skew2;
+
+                    switch (primTypeCode)
+                    {
+                        case 0:
+                            if (remain2 < 6) break;
+                            holeshape2 = Convert.ToInt32(data[idx++]);
+                            cut2       = (Vector3)data[idx++];
+                            hollow2    = (float)Convert.ToDouble(data[idx++]);
+                            twist2     = (Vector3)data[idx++];
+                            taper_b2   = (Vector3)data[idx++];
+                            topshear2  = (Vector3)data[idx++];
+                            part.Shape.PathCurve = (byte)Extrusion.Straight;
+                            SetPrimitiveShapeParamsCommon(part, holeshape2, cut2, hollow2, twist2, taper_b2, topshear2, DEFAULT_SLICE_VEC, 1);
+                            break;
+
+                        case 1:
+                            if (remain2 < 6) break;
+                            holeshape2 = Convert.ToInt32(data[idx++]);
+                            cut2       = (Vector3)data[idx++];
+                            hollow2    = (float)Convert.ToDouble(data[idx++]);
+                            twist2     = (Vector3)data[idx++];
+                            taper_b2   = (Vector3)data[idx++];
+                            topshear2  = (Vector3)data[idx++];
+                            part.Shape.ProfileShape = ProfileShape.Circle;
+                            part.Shape.PathCurve    = (byte)Extrusion.Straight;
+                            SetPrimitiveShapeParamsCommon(part, holeshape2, cut2, hollow2, twist2, taper_b2, topshear2, DEFAULT_SLICE_VEC, 0);
+                            break;
+
+                        case 2:
+                            if (remain2 < 6) break;
+                            holeshape2 = Convert.ToInt32(data[idx++]);
+                            cut2       = (Vector3)data[idx++];
+                            hollow2    = (float)Convert.ToDouble(data[idx++]);
+                            twist2     = (Vector3)data[idx++];
+                            taper_b2   = (Vector3)data[idx++];
+                            topshear2  = (Vector3)data[idx++];
+                            part.Shape.PathCurve = (byte)Extrusion.Straight;
+                            SetPrimitiveShapeParamsCommon(part, holeshape2, cut2, hollow2, twist2, taper_b2, topshear2, DEFAULT_SLICE_VEC, 3);
+                            break;
+
+                        case 3:
+                            if (remain2 < 5) break;
+                            holeshape2 = Convert.ToInt32(data[idx++]);
+                            cut2       = (Vector3)data[idx++];
+                            hollow2    = (float)Convert.ToDouble(data[idx++]);
+                            twist2     = (Vector3)data[idx++];
+                            taper_b2   = (Vector3)data[idx++];
+                            part.Shape.PathCurve = (byte)Extrusion.Curve1;
+                            SetPrimitiveShapeParamsSphere(part, holeshape2, cut2, hollow2, twist2, taper_b2, 5);
+                            break;
+
+                        case 4:
+                        case 5:
+                        case 6:
+                            if (remain2 < 11) break;
+                            holeshape2    = Convert.ToInt32(data[idx++]);
+                            cut2          = (Vector3)data[idx++];
+                            hollow2       = (float)Convert.ToDouble(data[idx++]);
+                            twist2        = (Vector3)data[idx++];
+                            holesize2     = (Vector3)data[idx++];
+                            topshear2     = (Vector3)data[idx++];
+                            profilecut2   = (Vector3)data[idx++];
+                            taper_a2      = (Vector3)data[idx++];
+                            revolutions2  = (float)Convert.ToDouble(data[idx++]);
+                            radiusoffset2 = (float)Convert.ToDouble(data[idx++]);
+                            skew2         = (float)Convert.ToDouble(data[idx++]);
+                            byte torusFudge = primTypeCode == 4 ? (byte)0
+                                            : primTypeCode == 5  ? (byte)1
+                                            : (byte)3;
+                            part.Shape.PathCurve = (byte)Extrusion.Curve1;
+                            SetPrimitiveShapeParamsTorus(part, holeshape2, cut2, hollow2, twist2, holesize2,
+                                topshear2, profilecut2, taper_a2, revolutions2, radiusoffset2, skew2, torusFudge);
+                            break;
+
+                        case 7:
+                            if (remain2 < 2) break;
+                            string sculptMap2  = data[idx++].ToString();
+                            int    sculptType2 = Convert.ToInt32(data[idx++]);
+                            part.Shape.PathCurve = (byte)Extrusion.Curve1;
+                            SetPrimitiveShapeParamsSculpt(part, sculptMap2, sculptType2);
+                            break;
+                    }
+                    break;
+                }
+
+                case PRIM_NAME:
+                {
+                    if (idx >= data.Length) break;
+                    string name = data[idx++].ToString();
+                    part.Name = name;
+                    break;
+                }
+
+                case PRIM_DESC:
+                {
+                    if (idx >= data.Length) break;
+                    string desc = data[idx++].ToString();
+                    part.Description = desc;
+                    break;
+                }
+
+                // ── PBR / glTF Material params ──────────────────────────────
+
+                case PRIM_RENDER_MATERIAL:
+                {
+                    // [ PRIM_RENDER_MATERIAL, integer face, string render_material ]
+                    if (idx + 1 >= data.Length) { idx = data.Length; break; }
+                    int face; try { face = Convert.ToInt32(data[idx++]); } catch { idx++; break; }
+                    string matStr = data[idx++].ToString();
+                    UUID matUUID = UUID.Zero;
+                    UUID.TryParse(matStr, out matUUID);
+
+                    var shape_rm = part.Shape;
+                    shape_rm.RenderMaterials ??= new OpenMetaverse.Primitive.RenderMaterials();
+                    int numFaces_rm = part.GetNumberOfSides();
+
+                    if (face == ALL_SIDES)
+                    {
+                        var entries = new OpenMetaverse.Primitive.RenderMaterials.RenderMaterialEntry[numFaces_rm];
+                        for (int i = 0; i < numFaces_rm; i++)
+                        {
+                            entries[i].te_index = (byte)i;
+                            entries[i].id = matUUID;
+                        }
+                        shape_rm.RenderMaterials.entries = entries;
+                        // Clear non-transform overrides per SL spec
+                    }
+                    else if (face >= 0 && face < numFaces_rm)
+                    {
+                        SetRenderMaterialEntry(ref shape_rm.RenderMaterials.entries, matUUID, face);
+                    }
+
+                    if (part.ParentGroup != null)
+                        part.ParentGroup.HasGroupChanged = true;
+                    part.ScheduleFullUpdate();
+                    break;
+                }
+
+                case PRIM_GLTF_BASE_COLOR:
+                {
+                    // [ PRIM_GLTF_BASE_COLOR, face, texture, repeats, offsets, rotation,
+                    //   color, alpha, alpha_mode, alpha_cutoff, double_sided ]
+                    if (idx + 9 >= data.Length) { idx = data.Length; break; }
+                    int face; try { face = Convert.ToInt32(data[idx++]); } catch { idx += 9; break; }
+                    string texture = data[idx++].ToString();
+                    Vector3 repeats = (Vector3)data[idx++];
+                    Vector3 offsets = (Vector3)data[idx++];
+                    float rotation = (float)Convert.ToDouble(data[idx++]);
+                    Vector3 color = (Vector3)data[idx++];
+                    float alpha = (float)Convert.ToDouble(data[idx++]);
+                    int alphaMode = Convert.ToInt32(data[idx++]);
+                    float alphaCutoff = (float)Convert.ToDouble(data[idx++]);
+                    int doubleSided = Convert.ToInt32(data[idx++]);
+
+                    var osd = new OpenMetaverse.StructuredData.OSDMap();
+                    if (!string.IsNullOrEmpty(texture) && texture != UUID.Zero.ToString())
+                        osd["tex"] = texture;
+                    osd["rep"] = new OpenMetaverse.StructuredData.OSDArray { (double)repeats.X, (double)repeats.Y };
+                    osd["off"] = new OpenMetaverse.StructuredData.OSDArray { (double)offsets.X, (double)offsets.Y };
+                    osd["rot"] = (double)rotation;
+                    osd["bc"] = new OpenMetaverse.StructuredData.OSDArray { (double)color.X, (double)color.Y, (double)color.Z, (double)alpha };
+                    osd["am"] = alphaMode;
+                    osd["ac"] = (double)alphaCutoff;
+                    osd["ds"] = (doubleSided != 0);
+
+                    ApplyGLTFOverrideToPart(part, face, osd);
+                    break;
+                }
+
+                case PRIM_GLTF_NORMAL:
+                {
+                    // [ PRIM_GLTF_NORMAL, face, texture, repeats, offsets, rotation ]
+                    if (idx + 4 >= data.Length) { idx = data.Length; break; }
+                    int face; try { face = Convert.ToInt32(data[idx++]); } catch { idx += 4; break; }
+                    string texture = data[idx++].ToString();
+                    Vector3 repeats = (Vector3)data[idx++];
+                    Vector3 offsets = (Vector3)data[idx++];
+                    float rotation = (float)Convert.ToDouble(data[idx++]);
+
+                    var osd = new OpenMetaverse.StructuredData.OSDMap();
+                    if (!string.IsNullOrEmpty(texture) && texture != UUID.Zero.ToString())
+                        osd["ntex"] = texture;
+                    osd["nrep"] = new OpenMetaverse.StructuredData.OSDArray { (double)repeats.X, (double)repeats.Y };
+                    osd["noff"] = new OpenMetaverse.StructuredData.OSDArray { (double)offsets.X, (double)offsets.Y };
+                    osd["nrot"] = (double)rotation;
+
+                    ApplyGLTFOverrideToPart(part, face, osd);
+                    break;
+                }
+
+                case PRIM_GLTF_METALLIC_ROUGHNESS:
+                {
+                    // [ PRIM_GLTF_METALLIC_ROUGHNESS, face, texture, repeats, offsets, rotation,
+                    //   metallic_factor, roughness_factor ]
+                    if (idx + 6 >= data.Length) { idx = data.Length; break; }
+                    int face; try { face = Convert.ToInt32(data[idx++]); } catch { idx += 6; break; }
+                    string texture = data[idx++].ToString();
+                    Vector3 repeats = (Vector3)data[idx++];
+                    Vector3 offsets = (Vector3)data[idx++];
+                    float rotation = (float)Convert.ToDouble(data[idx++]);
+                    float metallic = (float)Convert.ToDouble(data[idx++]);
+                    float roughness = (float)Convert.ToDouble(data[idx++]);
+
+                    var osd = new OpenMetaverse.StructuredData.OSDMap();
+                    if (!string.IsNullOrEmpty(texture) && texture != UUID.Zero.ToString())
+                        osd["mrtex"] = texture;
+                    osd["mrrep"] = new OpenMetaverse.StructuredData.OSDArray { (double)repeats.X, (double)repeats.Y };
+                    osd["mroff"] = new OpenMetaverse.StructuredData.OSDArray { (double)offsets.X, (double)offsets.Y };
+                    osd["mrrot"] = (double)rotation;
+                    osd["mf"] = (double)Math.Clamp(metallic, 0f, 1f);
+                    osd["rf"] = (double)Math.Clamp(roughness, 0f, 1f);
+
+                    ApplyGLTFOverrideToPart(part, face, osd);
+                    break;
+                }
+
+                case PRIM_GLTF_EMISSIVE:
+                {
+                    // [ PRIM_GLTF_EMISSIVE, face, texture, repeats, offsets, rotation, emissive_tint ]
+                    if (idx + 5 >= data.Length) { idx = data.Length; break; }
+                    int face; try { face = Convert.ToInt32(data[idx++]); } catch { idx += 5; break; }
+                    string texture = data[idx++].ToString();
+                    Vector3 repeats = (Vector3)data[idx++];
+                    Vector3 offsets = (Vector3)data[idx++];
+                    float rotation = (float)Convert.ToDouble(data[idx++]);
+                    Vector3 emissive = (Vector3)data[idx++];
+
+                    var osd = new OpenMetaverse.StructuredData.OSDMap();
+                    if (!string.IsNullOrEmpty(texture) && texture != UUID.Zero.ToString())
+                        osd["etex"] = texture;
+                    osd["erep"] = new OpenMetaverse.StructuredData.OSDArray { (double)repeats.X, (double)repeats.Y };
+                    osd["eoff"] = new OpenMetaverse.StructuredData.OSDArray { (double)offsets.X, (double)offsets.Y };
+                    osd["erot"] = (double)rotation;
+                    osd["ec"] = new OpenMetaverse.StructuredData.OSDArray { (double)emissive.X, (double)emissive.Y, (double)emissive.Z };
+
+                    ApplyGLTFOverrideToPart(part, face, osd);
+                    break;
+                }
+
+                default:
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// One setter rule on a seated avatar (Halcyon SetPrimParams' ScenePresence branches): PRIM_POSITION and
+        /// PRIM_POS_LOCAL set the sitter's offset from the root, PRIM_ROT_LOCAL its rotation, and PRIM_ROTATION the
+        /// root's rotation times the one given. Every other rule leaves an avatar alone. SL: an offset more than 54 m
+        /// away is silently ignored. True when the avatar moved; the walk then sends one terse update to every
+        /// viewer, the way the scene moves a sitter (ScenePresence.OffsetPosition / Rotation).
+        /// </summary>
+        private bool SetSitterPrimRule(ScenePresence sp, int code, object[] data, int idx)
+        {
+            if (sp == null || sp.ParentID == 0) return false;
+            switch (code)
+            {
+                case PRIM_POSITION:
+                case PRIM_POS_LOCAL:
+                {
+                    if (data[idx] is not Vector3 v || v.Length() > 54f) return false;
+                    if (!sp.LegacySitOffsets)
+                        v += (Vector3.UnitZ * sp.Rotation) * (2f * sp.Appearance.AvatarHeight * 0.02638f);
+                    sp.OffsetPosition = v;
+                    return true;
+                }
+
+                case PRIM_ROT_LOCAL:
+                {
+                    if (data[idx] is not Quaternion q) return false;
+                    sp.Rotation = q;
+                    return true;
+                }
+
+                case PRIM_ROTATION:
+                {
+                    if (data[idx] is not Quaternion q) return false;
+                    sp.Rotation = (m_host.ParentGroup?.RootPart?.RotationOffset ?? Quaternion.Identity) * q;
+                    return true;
+                }
+
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// The prim-params getter walk: the rules up to the first PRIM_LINK_TARGET read from the prims and seated
+        /// avatars given, prims first in link order and then the avatars; the rules after a PRIM_LINK_TARGET read
+        /// from the prims and avatars its link selects, as in SL and Halcyon GetPrimParams. The walk finds each
+        /// PRIM_LINK_TARGET by SL's getter value counts (PrimParamRules.GetValueCount), so a per-face rule's face is
+        /// never mistaken for a rule.
+        /// </summary>
+        private LSLList GetPrimParams(IEnumerable<SceneObjectPart> parts, IEnumerable<ScenePresence> sitters, LSLList rules)
+        {
+            var result = new LSLList();
+            if (rules == null) return result;
+            var data = rules.Data;
+            int start = 0;
+
+            while (true)
+            {
+                int idx = start, target = -1;
+                while (idx < data.Length && data[idx] is int code)
+                {
+                    if (code == PRIM_LINK_TARGET) { target = idx; break; }
+                    idx += 1 + PrimParamRules.GetValueCount(code);
+                }
+
+                int end = target < 0 ? data.Length : target;
+                var segment = new object[end - start];
+                Array.Copy(data, start, segment, 0, segment.Length);
+                var segmentRules = new LSLList(segment);
+                foreach (var part in parts)
+                    result += GetPrimParams(part, segmentRules);
+                foreach (var sp in sitters)
+                    result += GetSitterPrimParams(sp, segmentRules);
+
+                if (target < 0 || target + 1 >= data.Length || data[target + 1] is not int link) break;
+                parts = GetLinkParts(link).ToList();
+                sitters = GetLinkSitters(link);
+                start = target + 2;
+            }
+            return result;
         }
 
         /// <summary>
@@ -5316,6 +5339,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         if (idx < data.Length) idx++; // the face, as GetPrimParams takes it
                         break;
                     default:
+                        idx += PrimParamRules.GetValueCount(code); // nothing for an avatar; its face is not a rule
                         break;
                 }
             }
@@ -5532,6 +5556,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             part.UpdateShape(shapeBlock);
         }
 
+        /// <summary>
+        /// One prim's getter rules. A rule Phlox does not implement yet returns nothing and takes its face, if it
+        /// has one, so the walk goes on with the next rule. PRIM_LINK_TARGET takes its link and changes nothing
+        /// here: the walk above (and osGetPrimitiveParams' one prim) decides which prims a rule reads.
+        /// </summary>
         private LSLList GetPrimParams(SceneObjectPart part, LSLList parms)
         {
             if (part == null || parms == null) return new LSLList();
@@ -5548,7 +5577,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 {
                     case PRIM_LINK_TARGET:
                         if (idx >= data.Length) break;
-                        idx++; // consume link number — llGetLinkPrimitiveParams handles routing
+                        idx++; // the link: the caller's walk does the routing
                         break;
 
                     case PRIM_COLOR:
@@ -5764,6 +5793,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     }
 
                     default:
+                        idx += PrimParamRules.GetValueCount(code);
                         break;
                 }
             }
@@ -16868,6 +16898,82 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             if (pm == null) return BotPersistError.DISABLED;
 
             return pm.SetPersistentData(id, m_host.OwnerID, key, value);
+        }
+    }
+
+    /// <summary>
+    /// SL's value counts for every prim-params rule: the one table the prim-params setter, the seated-avatar setter
+    /// and the getter walk a rule list by. The counts are SL's (secondlife/lsl-definitions, the PrimParam and
+    /// PrimParamGet rules, and the llSetPrimitiveParams / llGetPrimitiveParams wiki pages); the IW_PRIM_* rules are
+    /// Halcyon's (LSLSystemAPI.SetPrimParams / GetPrimParams). A rule is read by its count whether or not Phlox
+    /// implements it yet, so one rule Phlox does not act on never shifts or cuts off the rules after it.
+    /// </summary>
+    internal static class PrimParamRules
+    {
+        /// <summary>
+        /// The values a rule takes after its code when setting, or -1 for a rule number SL does not define.
+        /// PRIM_TYPE takes its shape code and then <see cref="TypeValueCount"/> more.
+        /// </summary>
+        public static int SetValueCount(int code) => code switch
+        {
+            PRIM_MATERIAL or PRIM_PHYSICS or PRIM_TEMP_ON_REZ or PRIM_PHANTOM or PRIM_POSITION or PRIM_SIZE
+                or PRIM_ROTATION or PRIM_CAST_SHADOWS or PRIM_NAME or PRIM_DESC or PRIM_ROT_LOCAL
+                or PRIM_PHYSICS_SHAPE_TYPE or PRIM_POS_LOCAL or PRIM_LINK_TARGET or PRIM_SLICE or PRIM_ALLOW_UNSIT
+                or PRIM_SCRIPTED_SIT_ONLY or PRIM_CLICK_ACTION or PRIM_SIT_FLAGS or PRIM_HEALTH => 1,
+            PRIM_TYPE => 1,
+            PRIM_FULLBRIGHT or PRIM_TEXGEN or PRIM_GLOW or PRIM_RENDER_MATERIAL or PRIM_DAMAGE
+                or PRIM_COLLISION_SOUND => 2,
+            PRIM_COLOR or PRIM_BUMP_SHINY or PRIM_TEXT or PRIM_OMEGA or PRIM_ALPHA_MODE or PRIM_SIT_TARGET => 3,
+            PRIM_PROJECTOR or PRIM_REFLECTION_PROBE => 4,
+            PRIM_TEXTURE or PRIM_POINT_LIGHT or PRIM_NORMAL or PRIM_GLTF_NORMAL => 5,
+            PRIM_GLTF_EMISSIVE => 6,
+            PRIM_FLEXIBLE or PRIM_GLTF_METALLIC_ROUGHNESS => 7,
+            PRIM_SPECULAR => 8,
+            PRIM_GLTF_BASE_COLOR => 10,
+            IW_PRIM_ALPHA => 2,
+            IW_PRIM_PROJECTOR => 5,
+            IW_PRIM_PROJECTOR_ENABLED or IW_PRIM_PROJECTOR_TEXTURE or IW_PRIM_PROJECTOR_FOV
+                or IW_PRIM_PROJECTOR_FOCUS or IW_PRIM_PROJECTOR_AMBIENCE => 1,
+            _ => -1,
+        };
+
+        /// <summary>
+        /// The values PRIM_TYPE takes after its shape code: box, cylinder and prism 6, sphere 5, torus, tube and ring
+        /// 11, sculpt 2. An unknown shape code takes none, as Halcyon reads it.
+        /// </summary>
+        public static int TypeValueCount(int primType) => primType switch
+        {
+            PRIM_TYPE_BOX or PRIM_TYPE_CYLINDER or PRIM_TYPE_PRISM => 6,
+            PRIM_TYPE_SPHERE => 5,
+            PRIM_TYPE_TORUS or PRIM_TYPE_TUBE or PRIM_TYPE_RING => 11,
+            PRIM_TYPE_SCULPT => 2,
+            _ => 0,
+        };
+
+        /// <summary>
+        /// The values a rule takes after its code when getting: the face for the per-face rules, the link for
+        /// PRIM_LINK_TARGET, none for the rest. A rule number SL does not define takes none.
+        /// </summary>
+        public static int GetValueCount(int code) => code switch
+        {
+            PRIM_TEXTURE or PRIM_COLOR or PRIM_BUMP_SHINY or PRIM_FULLBRIGHT or PRIM_TEXGEN or PRIM_GLOW
+                or PRIM_SPECULAR or PRIM_NORMAL or PRIM_ALPHA_MODE or PRIM_RENDER_MATERIAL or PRIM_GLTF_NORMAL
+                or PRIM_GLTF_EMISSIVE or PRIM_GLTF_METALLIC_ROUGHNESS or PRIM_GLTF_BASE_COLOR or IW_PRIM_ALPHA
+                or PRIM_LINK_TARGET => 1,
+            _ => 0,
+        };
+
+        /// <summary>
+        /// The whole length of the setter rule starting at <paramref name="idx"/> (its code included), or -1 when SL
+        /// does not define it. PRIM_TYPE's length needs its shape code, so a PRIM_TYPE with none left is 2 long.
+        /// </summary>
+        public static int SetRuleLength(object[] data, int idx, int code)
+        {
+            int count = SetValueCount(code);
+            if (count < 0) return -1;
+            if (code == PRIM_TYPE && idx + 1 < data.Length && data[idx + 1] is int primType)
+                count += TypeValueCount(primType);
+            return 1 + count;
         }
     }
 }

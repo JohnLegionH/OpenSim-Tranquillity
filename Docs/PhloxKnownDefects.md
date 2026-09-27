@@ -2967,3 +2967,63 @@ affected. `SlConst` gains the SL `PRIM_*` constants these rules need, with the c
 
 What residents will notice: furniture, pose-ball and vehicle scripts can count, name and place their sitters with
 link numbers, `llGetNumberOfPrims` includes sitters, and `LINK_SET` prim-param calls also reach sitters.
+
+## PHLOX-32 - prim-params rule lists read every rule with SL's value counts
+
+Before, the prim-params setter stopped at the first rule it did not implement, so every rule after it in the list
+was lost; it had no `PRIM_TEXT`, `PRIM_POS_LOCAL` or `PRIM_ROTATION` case, among others. It read 2 values for
+`PRIM_ALPHA_MODE`, where SL takes 3 (face, alpha mode, mask cutoff), so the cutoff was read as the next rule and every
+rule after it shifted. The getter took `PRIM_LINK_TARGET`'s link and ignored it, and for the per-face rules it lacks
+(`PRIM_TEXGEN`, `PRIM_SPECULAR`, `PRIM_NORMAL`, `PRIM_ALPHA_MODE`, `IW_PRIM_ALPHA`) it did not take the face, so the
+face was read as a rule. Scripts pass long rule lists to llSetLinkPrimitiveParamsFast, so one gap silently broke the
+whole call.
+
+Now one table, `PrimParamRules`, holds SL's value count for every rule SL defines (secondlife/lsl-definitions, the
+`PrimParam` and `PrimParamGet` rules), `PRIM_TYPE`'s shape forms included (box, cylinder and prism 6, sphere 5, torus,
+tube and ring 11, sculpt 2), and Halcyon's for the `IW_PRIM_*` rules. The setter, the seated-avatar setter and the
+getter all walk a list by it.
+
+Setter (llSetPrimitiveParams, llSetLinkPrimitiveParams(Fast), osSetPrimitiveParams):
+- Each rule applies in turn to every prim and seated avatar it targets, as in Halcyon.
+- A rule SL defines that Phlox does not act on yet is skipped by its count, with one log warning per rule per
+  script and no script error. The rules after it still apply.
+- `PRIM_ALPHA_MODE` reads its 3 values.
+- `PRIM_LINK_TARGET` points the rules after it at the prims and avatars its link selects.
+- A rule that is not an integer, or a rule number SL does not define, ends the walk with SL's script error on
+  `DEBUG_CHANNEL`: "llSetPrimitiveParams error running rule #N: non-integer rule." or "... #N: unknown rule." The
+  rules before it have applied. SL names llSetPrimitiveParams whichever function was called, and counts
+  `PRIM_LINK_TARGET` as a rule. Halcyon has no default case, so it reads the next value as a rule and goes on.
+- A rule whose values run past the end of the list ends the walk silently, as before.
+
+Getter (llGetPrimitiveParams, llGetLinkPrimitiveParams):
+- The rules after a `PRIM_LINK_TARGET` read from the prims and avatars its link selects, as in SL and Halcyon.
+- A rule Phlox does not implement yet returns nothing and takes its face, if SL gives it one, and the walk goes on.
+  Halcyon also returns nothing, but where it lacks a per-face rule (the glTF rules, `PRIM_RENDER_MATERIAL`) it does
+  not take the face; SL is followed.
+- An undefined rule number returns nothing and takes only itself, as in Halcyon. SL's getter behaviour for it is
+  not documented.
+
+This resolves two PHLOX-31 limits: `LINK_SET` rule lists with `PRIM_POS_LOCAL` or `PRIM_ROTATION` no longer stop
+the walk for the prims, and llGetLinkPrimitiveParams now retargets on `PRIM_LINK_TARGET`.
+
+Known limits, not changed here:
+- The missing rules are still missing; they are only skipped correctly now. The next piece of work adds them.
+- `PRIM_ALPHA_MODE` still sets the faces' `MediaFlags` rather than the material's alpha mode.
+- Rule number 1 is not in SL's definitions, so Phlox treats it as unknown; SL's server still reads it as the
+  legacy `PRIM_TYPE`. `PRIM_PHYSICS_MATERIAL` (31, an OpenSim constant) is also unknown here.
+- A missing value at the end of a list, or a value of the wrong type, gives no script error; SL names the argument.
+- With several targets in one segment, llGetLinkPrimitiveParams still returns each link's results in turn;
+  Halcyon returns rule by rule.
+
+Tests: `PrimParamsRuleWalkTests`. A long list with rules Phlox does not implement in the middle still applies the
+rules after them; `PRIM_ALPHA_MODE` followed by another rule applies both; an undefined rule number and a
+non-integer rule shout SL's error and stop, with the earlier rules applied; `PRIM_LINK_TARGET` in
+llGetLinkPrimitiveParams reads from the new link, and a per-face rule Phlox does not read still takes its face; the
+same lists through llSetLinkPrimitiveParamsFast on a seated avatar move it.
+
+No function index or declared return type changed, and the compiled script format and saved state are not affected.
+`SlConst` gains the SL `PRIM_*` and Halcyon `IW_PRIM_PROJECTOR*` constants the table needs, with the compiler
+table's values.
+
+What residents will notice: long llSetLinkPrimitiveParamsFast lists apply in full even when they contain a rule
+this engine does not support yet, and `PRIM_LINK_TARGET` works in llGetLinkPrimitiveParams.
