@@ -217,7 +217,9 @@ public class SeatedAvatarLinkTests
         Assert.StartsWith("0|", Line(h, "sit="));
         // Texture rules consume their face and return nothing for an avatar; the next rule still reads.
         Assert.Equal("Ann Sitter", Line(h, "color="));
-        Assert.Equal("0", Line(h, "rotl#="));
+        // PRIM_ROT_LOCAL: the sitter's rotation relative to the root (the root is not turned here).
+        Assert.Equal("1", Line(h, "rotl#="));
+        Near(ann.Rotation, Line(h, "rotl="));
         Assert.Equal("0", Line(h, "phys#="));
         Assert.Contains(h.Said, s => s.Contains("texture info cannot be accessed for avatars"));
     }

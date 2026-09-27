@@ -4622,6 +4622,58 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
         }
 
+        /// <summary>SL's floating-text limit: 254 bytes of UTF-8 (wiki llSetText).</summary>
+        private const int MaxFloatingTextBytes = 254;
+
+        /// <summary>
+        /// Floating text on one prim, for llSetText and PRIM_TEXT (Halcyon PrimSetText): the color and alpha are
+        /// clamped to 0..1, and the text is cut to SL's 254 bytes of UTF-8, a multibyte character that would be
+        /// split dropped whole ("If the string is longer it will be truncated to 254 bytes, and any multibyte
+        /// characters getting split will be removed entirely.").
+        /// </summary>
+        private static void PrimSetText(SceneObjectPart part, string text, Vector3 color, float alpha)
+        {
+            if (part == null) return;
+            text ??= string.Empty;
+            byte[] utf8 = Encoding.UTF8.GetBytes(text);
+            if (utf8.Length > MaxFloatingTextBytes)
+            {
+                int cut = MaxFloatingTextBytes;
+                while (cut > 0 && (utf8[cut] & 0xC0) == 0x80) cut--; // back to the start of the split character
+                text = Encoding.UTF8.GetString(utf8, 0, cut);
+            }
+            color = new Vector3(Math.Clamp(color.X, 0f, 1f), Math.Clamp(color.Y, 0f, 1f), Math.Clamp(color.Z, 0f, 1f));
+            part.SetText(text, color, Math.Clamp(alpha, 0f, 1f));
+            if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
+        }
+
+        /// <summary>
+        /// PRIM_POS_LOCAL on one prim (Halcyon SetPos(part, v, true) and SetPosAdjust): a root moves the object
+        /// (an attachment's root, its offset from the attach point); a child takes the vector as its offset from
+        /// the root. Halcyon's caps: an unattached root moves at most 10 m from where it is (SL: "The distance is
+        /// capped to 10m per PRIM_POSITION call"), an attached root at most 3.5 m from the attach point, a child of
+        /// an attachment at most 54 m from the root and any other child at most 256 m; a longer move stops at the
+        /// cap along the same line.
+        /// </summary>
+        private static void SetPrimLocalPos(SceneObjectPart part, Vector3 target)
+        {
+            SceneObjectGroup group = part.ParentGroup;
+            if (group == null || group.IsDeleted || group.inTransit) return;
+
+            bool root = part == group.RootPart;
+            Vector3 anchor = root && !group.IsAttachment ? part.AbsolutePosition : Vector3.Zero;
+            float limit = root ? (group.IsAttachment ? 3.5f : 10f) : (group.IsAttachment ? 54f : 256f);
+            float dist = Vector3.Distance(target, anchor);
+            if (dist > limit) target = (target - anchor) * (limit / dist) + anchor;
+
+            if (root) group.UpdateGroupPosition(target);
+            else
+            {
+                part.UpdateOffSet(target);
+                group.HasGroupChanged = true;
+            }
+        }
+
         /// <summary>One prim's prim-params rules (llSetPrimitiveParams, osSetPrimitiveParams).</summary>
         private void SetPrimParams(SceneObjectPart part, LSLList rules)
         {
@@ -4634,9 +4686,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         /// targets. Every rule is read by SL's value count (PrimParamRules), so a rule Phlox does not act on yet is
         /// skipped whole, logged once per script, and the rules after it still apply. PRIM_LINK_TARGET points the
         /// rules after it at the prims and avatars its link selects. A rule that is not an integer, or a rule number
-        /// SL does not define, ends the walk with SL's script error ("llSetPrimitiveParams error running rule #2:
-        /// unknown rule."); the rules before it have applied. A rule whose values run past the end of the list ends
-        /// the walk.
+        /// none of SL, Halcyon and OpenSim defines, ends the walk with SL's script error ("llSetPrimitiveParams
+        /// error running rule #2: unknown rule."); the rules before it have applied. A rule whose values run past
+        /// the end of the list ends the walk.
         /// </summary>
         private void SetPrimParams(IEnumerable<SceneObjectPart> parts, IEnumerable<ScenePresence> sitters, LSLList rules)
         {
@@ -4694,8 +4746,13 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             m_unimplementedPrimRulesLogged ??= new HashSet<int>();
             if (!m_unimplementedPrimRulesLogged.Add(code)) return;
-            m_log.LogWarning("[PhloxAPI]: prim-params rule {Rule} is not implemented yet; skipped its {Values} values for {Item}",
-                code, values, m_itemID);
+            if (PrimParamRules.IsOpenSimRule(code))
+                m_log.LogWarning("[PhloxAPI]: prim-params rule {Rule} is OpenSim's own and not implemented yet; " +
+                                 "skipped its {Values} values for {Item}",
+                    code, values, m_itemID);
+            else
+                m_log.LogWarning("[PhloxAPI]: prim-params rule {Rule} is not implemented yet; skipped its {Values} values for {Item}",
+                    code, values, m_itemID);
         }
 
         /// <summary>
@@ -4827,6 +4884,38 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     Quaternion rot;
                     try { rot = (Quaternion)data[idx++]; } catch { break; }
                     part.UpdateRotation(rot);
+                    break;
+                }
+
+                case PRIM_POS_LOCAL:
+                {
+                    // Halcyon: "same as PRIM_POSITION on a SET operation", its SetPos(part, v, true). A root takes
+                    // the object's position (an attachment's: its offset from the attach point); a child, its
+                    // offset from the root. Halcyon's movement caps apply.
+                    if (data[idx] is not Vector3 pos) break;
+                    SetPrimLocalPos(part, pos);
+                    break;
+                }
+
+                case PRIM_ROTATION:
+                {
+                    // Halcyon and SL: a root turns the whole object to the rotation given. A child gets the root's
+                    // rotation times the one given, SL's child-prim quirk (SVC-93: "If the prim is not the root
+                    // prim it is offset by the root's rotation").
+                    if (data[idx] is not Quaternion rot) break;
+                    SceneObjectGroup group = part.ParentGroup;
+                    if (group == null || part == group.RootPart) part.UpdateRotation(rot);
+                    else part.UpdateRotation(group.RootPart.RotationOffset * rot);
+                    break;
+                }
+
+                case PRIM_TEXT:
+                {
+                    // [ PRIM_TEXT, string text, vector color, float alpha ], as llSetText on this prim.
+                    if (data[idx + 1] is not Vector3 color) break;
+                    float alpha;
+                    try { alpha = (float)Convert.ToDouble(data[idx + 2]); } catch { break; }
+                    PrimSetText(part, data[idx]?.ToString() ?? string.Empty, color, alpha);
                     break;
                 }
 
@@ -5231,12 +5320,30 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
+        /// A seated avatar's PRIM_POS_LOCAL: its offset from the root in the root's frame, the region offset turned
+        /// by the inverse of the root's rotation (Halcyon returns the region offset unturned). Without legacy sit
+        /// offsets the setter adds the avatar's sit height (SetSitterPrimRule); it is taken off again here, so the
+        /// offset a script sets is the one it reads back.
+        /// </summary>
+        private Vector3 SitterLocalPos(ScenePresence sp)
+        {
+            SceneObjectPart root = m_host.ParentGroup?.RootPart;
+            if (root == null) return sp.OffsetPosition;
+            Vector3 local = (sp.AbsolutePosition - root.AbsolutePosition) * Quaternion.Inverse(root.GetWorldRotation());
+            if (!sp.LegacySitOffsets)
+                local -= (Vector3.UnitZ * sp.Rotation) * (2f * sp.Appearance.AvatarHeight * 0.02638f);
+            return local;
+        }
+
+        /// <summary>
         /// llGetLinkPrimitiveParams on a seated avatar (Halcyon GetAvatarAsPrimParam): the avatar's name, an empty
-        /// description, flesh, not temporary or phantom, its agent size, its region position, its offset from the
-        /// root, a default box shape and empty text, light and flexi. The texture rules consume their face, return
-        /// nothing and tell the owner "texture info cannot be accessed for avatars." PRIM_ROTATION returns the
-        /// avatar's region rotation, as SL documents; Halcyon returns nothing there. Rules Halcyon has no avatar
-        /// value for (PRIM_ROT_LOCAL, PRIM_PHYSICS and the rest) return nothing.
+        /// description, flesh, not temporary or phantom, its agent size, its region position, a default box shape
+        /// and empty text, light and flexi. The texture rules consume their face, return nothing and tell the
+        /// owner "texture info cannot be accessed for avatars." PRIM_ROTATION returns the avatar's region rotation,
+        /// as SL documents; Halcyon returns nothing there. PRIM_POS_LOCAL and PRIM_ROT_LOCAL return the avatar's
+        /// offset and rotation relative to the root, in the root's frame (SitterLocalPos); Halcyon returns the
+        /// region offset and nothing. Rules Halcyon has no avatar value for (PRIM_PHYSICS and the rest) return
+        /// nothing.
         /// </summary>
         private LSLList GetSitterPrimParams(ScenePresence sp, LSLList parms)
         {
@@ -5259,7 +5366,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         result.Add(sp.AbsolutePosition);
                         break;
                     case PRIM_POS_LOCAL:
-                        result.Add(sp.AbsolutePosition - (m_host.ParentGroup?.RootPart?.AbsolutePosition ?? Vector3.Zero));
+                        result.Add(SitterLocalPos(sp));
+                        break;
+                    case PRIM_ROT_LOCAL:
+                        result.Add(sp.Rotation); // the scene keeps a sitter's rotation relative to the root
                         break;
                     case PRIM_ROTATION:
                         result.Add(sp.GetWorldRotation());
@@ -5734,6 +5844,16 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         result.Add(part.Description);
                         break;
 
+                    case PRIM_TEXT:
+                    {
+                        // [ string text, vector color, float alpha ] (Halcyon GetPrimParams, SL PRIM_TEXT)
+                        Color4 c = part.GetTextColor();
+                        result.Add(part.Text);
+                        result.Add(new Vector3(c.R, c.G, c.B));
+                        result.Add(c.A);
+                        break;
+                    }
+
                     // ── PBR / glTF Material get params ──────────────────────────
 
                     case PRIM_RENDER_MATERIAL:
@@ -6032,9 +6152,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
 		public void llSetText(string text, Vector3 color, float alpha)
 		{
-			if (m_host == null) return;
-			alpha = Math.Max(0f, Math.Min(1f, alpha));
-			m_host.SetText(text, color, (double)alpha);
+			PrimSetText(m_host, text, color, alpha);
 		}
         // ── Sound ──────────────────────────────────────────────────────────────
 
@@ -16905,14 +17023,15 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
     /// SL's value counts for every prim-params rule: the one table the prim-params setter, the seated-avatar setter
     /// and the getter walk a rule list by. The counts are SL's (secondlife/lsl-definitions, the PrimParam and
     /// PrimParamGet rules, and the llSetPrimitiveParams / llGetPrimitiveParams wiki pages); the IW_PRIM_* rules are
-    /// Halcyon's (LSLSystemAPI.SetPrimParams / GetPrimParams). A rule is read by its count whether or not Phlox
+    /// Halcyon's (LSLSystemAPI.SetPrimParams / GetPrimParams), and PRIM_PHYSICS_MATERIAL is OpenSim's own
+    /// (LSL_Constants.cs, read by LSL_Api.SetPrimParams). A rule is read by its count whether or not Phlox
     /// implements it yet, so one rule Phlox does not act on never shifts or cuts off the rules after it.
     /// </summary>
     internal static class PrimParamRules
     {
         /// <summary>
-        /// The values a rule takes after its code when setting, or -1 for a rule number SL does not define.
-        /// PRIM_TYPE takes its shape code and then <see cref="TypeValueCount"/> more.
+        /// The values a rule takes after its code when setting, or -1 for a rule number none of SL, Halcyon and
+        /// OpenSim defines. PRIM_TYPE takes its shape code and then <see cref="TypeValueCount"/> more.
         /// </summary>
         public static int SetValueCount(int code) => code switch
         {
@@ -16934,8 +17053,16 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             IW_PRIM_PROJECTOR => 5,
             IW_PRIM_PROJECTOR_ENABLED or IW_PRIM_PROJECTOR_TEXTURE or IW_PRIM_PROJECTOR_FOV
                 or IW_PRIM_PROJECTOR_FOCUS or IW_PRIM_PROJECTOR_AMBIENCE => 1,
+            // OpenSim's own rules (LSL_Constants.cs), with the value count OpenSim's LSL_Api reads.
+            PRIM_PHYSICS_MATERIAL => 5,
             _ => -1,
         };
+
+        /// <summary>
+        /// A rule number OpenSim defines and SL does not (OpenSim's LSL_Constants.cs). Phlox reads it by OpenSim's
+        /// count and skips it, so a script written for OpenSim runs on.
+        /// </summary>
+        public static bool IsOpenSimRule(int code) => code == PRIM_PHYSICS_MATERIAL;
 
         /// <summary>
         /// The values PRIM_TYPE takes after its shape code: box, cylinder and prism 6, sphere 5, torus, tube and ring
@@ -16964,8 +17091,9 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         };
 
         /// <summary>
-        /// The whole length of the setter rule starting at <paramref name="idx"/> (its code included), or -1 when SL
-        /// does not define it. PRIM_TYPE's length needs its shape code, so a PRIM_TYPE with none left is 2 long.
+        /// The whole length of the setter rule starting at <paramref name="idx"/> (its code included), or -1 for a
+        /// rule number SetValueCount does not know. PRIM_TYPE's length needs its shape code, so a PRIM_TYPE with
+        /// none left is 2 long.
         /// </summary>
         public static int SetRuleLength(object[] data, int idx, int code)
         {

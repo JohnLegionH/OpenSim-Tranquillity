@@ -72,9 +72,9 @@ public class PrimParamsRuleWalkTests
     private static void Near(Vector3 expected, Vector3 actual)
         => Assert.True(Vector3.Distance(expected, actual) < 0.001f, $"expected {expected}, got {actual}");
 
-    // Rules Phlox does not act on yet, each followed by rules it does. Kept harmless for when they are added:
-    // hover text, planar texgen, a blank specular map, zero spin, a prim physics shape, the rotation the prim
-    // already has, a sit target, no click action and no collision sound.
+    // Rules Phlox does not act on yet, each followed by rules it does, kept harmless for when they are added: planar
+    // texgen, a blank specular map, zero spin, a prim physics shape, a sit target, no click action and no collision
+    // sound. Hover text and the rotation the prim already has were among them; Phlox now applies both.
     private const string LongList =
         "PRIM_NAME, \"renamed\", " +
         "PRIM_TEXT, \"hover\", <1, 0, 0>, 1.0, " +
@@ -222,8 +222,8 @@ public class PrimParamsRuleWalkTests
         var ann = SeatedOnChild(h, parts);
         var target = new Vector3(0.25f, 0.5f, 0.75f);
 
-        // PRIM_POS_LOCAL moves the sitter; the prims do not act on it yet, and before this the walk stopped there
-        // for them, losing PRIM_DESC. The undefined rule at the end stops the walk after everything has applied.
+        // PRIM_POS_LOCAL moves the sitter and the prims (a rule the prims once did not act on, where the walk used to
+        // stop and lose PRIM_DESC). The undefined rule at the end stops the walk after everything has applied.
         Run(h, parts[0], "llSetLinkPrimitiveParamsFast(LINK_SET, [PRIM_TEXT, \"hover\", <1, 1, 1>, 1.0, " +
                          "PRIM_POS_LOCAL, <0.25, 0.5, 0.75>, PRIM_DESC, \"after\", 99]);");
 

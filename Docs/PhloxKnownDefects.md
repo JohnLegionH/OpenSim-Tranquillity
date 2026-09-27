@@ -3027,3 +3027,64 @@ table's values.
 
 What residents will notice: long llSetLinkPrimitiveParamsFast lists apply in full even when they contain a rule
 this engine does not support yet, and `PRIM_LINK_TARGET` works in llGetLinkPrimitiveParams.
+
+## PHLOX-33 - PRIM_TEXT, PRIM_POS_LOCAL and PRIM_ROTATION in prim-params lists; OpenSim's own rules count as known
+
+Before, `PRIM_TEXT` was skipped on both sides, `PRIM_POS_LOCAL` and `PRIM_ROTATION` were skipped when setting a prim,
+a seated avatar's `PRIM_ROT_LOCAL` read returned nothing and its `PRIM_POS_LOCAL` read was the region-frame
+difference, and `PRIM_PHYSICS_MATERIAL` (31), a rule OpenSim defines, stopped the walk with "unknown rule."
+
+Now:
+- **`PRIM_TEXT`** set: `[text, color, alpha]`, applied as llSetText applies it (Halcyon `PrimSetText`): the color and
+  alpha are clamped to 0..1, and the text is cut to SL's 254 bytes of UTF-8, a multibyte character that would be
+  split dropped whole (SL wiki llSetText). llSetText now goes through the same helper, so it gains the color clamp;
+  before, a color channel above 1 overflowed into the next byte of the stored color. Get: `[text, color, alpha]`,
+  as Halcyon and SL. The color and alpha are stored as bytes, so 0.5 reads back as 127/255.
+- **`PRIM_POS_LOCAL`** set follows Halcyon (`SetPos(part, v, true)`: "same as PRIM_POSITION on a SET operation"). A
+  root moves the object (an attachment's root, its offset from the attach point); a child takes the vector as its
+  offset from the root, in the root's frame. Halcyon's caps apply: an unattached root moves at most 10 m from where
+  it is (SL documents the same 10 m cap for `PRIM_POSITION`), an attached root at most 3.5 m from the attach point, a
+  child of an attachment at most 54 m from the root, any other child at most 256 m; a longer move stops at the cap
+  on the same line. The move goes out through the scene's update path (`SceneObjectGroup.UpdateGroupPosition`,
+  `SceneObjectPart.UpdateOffSet`).
+- **`PRIM_ROTATION`** set follows Halcyon, which follows SL. A root turns the whole object to the rotation given. A
+  child gets the root's rotation times the one given: SL's documented child-prim quirk (SVC-93; llSetRot: "If the
+  prim is not the root prim it is offset by the root's rotation"; llSetLinkPrimitiveParamsFast: "PRIM_ROTATION is
+  bugged in child prims"). OpenSim's LSL_Api does the same. Update path: `SceneObjectPart.UpdateRotation`.
+- **A seated avatar's `PRIM_ROT_LOCAL`** read returns its rotation relative to the root (the scene keeps a sitter's
+  rotation that way, so a value set with `PRIM_ROT_LOCAL` reads back unchanged). Halcyon returns nothing.
+- **A seated avatar's `PRIM_POS_LOCAL`** read returns its offset in the root's frame: the region offset turned by the
+  inverse of the root's rotation. Halcyon returns the region offset unturned. When the region runs with
+  `LegacySitOffsets = false`, the sit-height correction the setter adds is taken off again, so a script reads back
+  the offset it set (upstream's getter does the same).
+- **OpenSim's own rules**: every `PRIM_*` rule number OpenSim's LSL_Constants.cs defines and SL does not is in the
+  count table with the value count OpenSim's LSL_Api reads for it. There is one: `PRIM_PHYSICS_MATERIAL` (31,
+  LSL_Constants.cs:452), 5 values (LSL_Api.cs:10545-10557 for a prim, 17907-17911 for an avatar). The setter skips
+  it by that count, with one log warning per rule per script and no script error; the getter reads it as a rule with
+  no values, as OpenSim's getter (LSL_Api.cs:11793) has no case for it. What it does is not implemented.
+
+Known limits, not changed here:
+- `PRIM_POS_LOCAL` and `PRIM_ROTATION` are still not read from a prim (the getter returns nothing for them).
+- `PRIM_POSITION` on a prim still has no movement cap and takes a child's position as region position minus the
+  root's, unturned; `PRIM_POS_LOCAL` now caps as Halcyon does, so the two rules differ there.
+- `PRIM_ROTATION` on an attachment's root turns the attachment to the rotation given, as Halcyon does. SL offsets it
+  by the avatar's rotation.
+- Rule number 1 (SL's legacy `PRIM_TYPE`) is still unknown: it is not in SL's definitions or in OpenSim's
+  LSL_Constants.cs, and OpenSim's LSL_Api has no case for it either.
+- A text or color value of the wrong type skips the rule without a script error.
+
+Tests: `PrimParamsTextPositionRotationTests`. `PRIM_TEXT` set and read back on the root and on a child through
+llSetLinkPrimitiveParamsFast among other rules, and through `PRIM_LINK_TARGET`; the 254-byte cut (ASCII, and a
+two-byte character that would be split) and the color and alpha clamp, for `PRIM_TEXT` and llSetText; `PRIM_POS_LOCAL`
+on the root and on a child of a turned root, each checked in the scene with the update queued; the 10 m cap on an
+unattached root; `PRIM_ROTATION` on the root and on a child; a seated avatar's `PRIM_POS_LOCAL` and `PRIM_ROT_LOCAL`
+read back with the root turned a quarter turn; each OpenSim-only rule in a list skipped with no error and the rules
+after it applied, on both sides, with the per-script warning record holding it; and every rule number OpenSim's
+LSL_Constants.cs defines known to the count table. `SeatedAvatarLinkTests` now expects a sitter's `PRIM_ROT_LOCAL`.
+
+No function index or declared return type changed, and the compiled script format and saved state are not affected.
+`SlConst` gains `PRIM_PHYSICS_MATERIAL`, with the compiler table's value.
+
+What residents will notice: hover text set through prim-params lists shows, doors and animated builds that move or
+turn child prims with `PRIM_POS_LOCAL` or `PRIM_ROTATION` work, and furniture scripts read a sitter's local offset
+and rotation correctly when the object is turned.

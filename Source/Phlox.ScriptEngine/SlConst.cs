@@ -222,6 +222,7 @@ namespace Phlox.ScriptEngine
         public const int PRIM_OMEGA = 32;
         public const int PRIM_PHANTOM = 5;
         public const int PRIM_PHYSICS = 3;
+        public const int PRIM_PHYSICS_MATERIAL = 31; // OpenSim's own rule, not SL's (LSL_Constants.cs)
         public const int PRIM_PHYSICS_SHAPE_TYPE = 30;
         public const int PRIM_POINT_LIGHT = 23;
         public const int PRIM_POSITION = 6;
