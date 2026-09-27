@@ -1043,20 +1043,7 @@ namespace Phlox.ScriptEngine
             bool on = value != 0;
 
             if ((status & STATUS_PHYSICS) != 0)
-            {
-                if (on)
-                {
-                    bool allow = true;
-                    foreach (SceneObjectPart p in group.Parts)
-                    {
-                        if (p.Scale.X > World.m_maxPhys || p.Scale.Y > World.m_maxPhys || p.Scale.Z > World.m_maxPhys)
-                        { allow = false; break; }
-                    }
-                    if (allow) m_host.ScriptSetPhysicsStatus(true);
-                }
-                else
-                    m_host.ScriptSetPhysicsStatus(false);
-            }
+                SetObjectPhysics(group, on);
 
             if ((status & STATUS_PHANTOM) != 0)
                 group.ScriptSetPhantomStatus(on);
@@ -1089,6 +1076,23 @@ namespace Phlox.ScriptEngine
                 m_host.RotationAxisLocks = locks;
                 m_host.PhysActor?.LockAngularMotion(locks);
             }
+        }
+
+        /// <summary>
+        /// STATUS_PHYSICS and PRIM_PHYSICS on the whole object (Halcyon llSetStatus): turning physics on is refused
+        /// when any prim is larger than the region's physical-prim size.
+        /// </summary>
+        private void SetObjectPhysics(SceneObjectGroup group, bool on)
+        {
+            if (on)
+            {
+                foreach (SceneObjectPart p in group.Parts)
+                {
+                    if (p.Scale.X > World.m_maxPhys || p.Scale.Y > World.m_maxPhys || p.Scale.Z > World.m_maxPhys)
+                        return;
+                }
+            }
+            group.ScriptSetPhysicsStatus(on);
         }
 
         public int llGetStatus(int status)
@@ -4648,8 +4652,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PRIM_POS_LOCAL on one prim (Halcyon SetPos(part, v, true) and SetPosAdjust): a root moves the object
-        /// (an attachment's root, its offset from the attach point); a child takes the vector as its offset from
+        /// PRIM_POSITION and PRIM_POS_LOCAL on one prim (Halcyon SetPos(part, v, true) and SetPosAdjust): a root moves
+        /// the object (an attachment's root, its offset from the attach point); a child takes the vector as its offset from
         /// the root. Halcyon's caps: an unattached root moves at most 10 m from where it is (SL: "The distance is
         /// capped to 10m per PRIM_POSITION call"), an attached root at most 3.5 m from the attach point, a child of
         /// an attachment at most 54 m from the root and any other child at most 256 m; a longer move stops at the
@@ -4672,6 +4676,37 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 part.UpdateOffSet(target);
                 group.HasGroupChanged = true;
             }
+        }
+
+        /// <summary>
+        /// PRIM_POS_LOCAL read (Halcyon GetPartLocalPos; SL llGetLocalPos): an unattached root returns its region
+        /// position, an attachment's root its offset from the attach point, a child its offset from the root.
+        /// </summary>
+        private static Vector3 PartLocalPos(SceneObjectPart part)
+        {
+            SceneObjectGroup group = part.ParentGroup;
+            if (group == null || part != group.RootPart) return part.OffsetPosition;
+            return group.IsAttachment ? part.AttachedPos : part.AbsolutePosition;
+        }
+
+        /// <summary>
+        /// PRIM_ROTATION read (Halcyon GetPartRot): the prim's region rotation. On an attachment's root it is the
+        /// wearer's rotation, or the camera's in mouselook (SL: "PRIM_ROTATION incorrectly reports the avatars
+        /// rotation when called on the root of an attached object").
+        /// </summary>
+        private Quaternion PartRegionRot(SceneObjectPart part)
+        {
+            SceneObjectGroup group = part.ParentGroup;
+            if (group != null && part == group.RootPart && group.IsAttachment)
+            {
+                ScenePresence avatar = World?.GetScenePresence(group.AttachedAvatar);
+                if (avatar != null)
+                    return (avatar.AgentControlFlags & 0x00020000u) != 0  // AGENT_CONTROL_MOUSELOOK
+                        ? avatar.CameraRotation
+                        : avatar.Rotation;
+                return group.GroupRotation;
+            }
+            return part.GetWorldRotation();
         }
 
         /// <summary>One prim's prim-params rules (llSetPrimitiveParams, osSetPrimitiveParams).</summary>
@@ -4856,15 +4891,6 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     break;
                 }
 
-                case PRIM_POSITION:
-                {
-                    if (idx >= data.Length) break;
-                    Vector3 pos;
-                    try { pos = (Vector3)data[idx++]; } catch { break; }
-                    if (part.LinkNum < 2) part.ParentGroup?.UpdateGroupPosition(pos);
-                    else part.UpdateOffSet(pos - (part.ParentGroup?.AbsolutePosition ?? Vector3.Zero));
-                    break;
-                }
 
                 case PRIM_SIZE:
                 {
@@ -4887,13 +4913,32 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     break;
                 }
 
+                case PRIM_POSITION:
                 case PRIM_POS_LOCAL:
                 {
-                    // Halcyon: "same as PRIM_POSITION on a SET operation", its SetPos(part, v, true). A root takes
-                    // the object's position (an attachment's: its offset from the attach point); a child, its
-                    // offset from the root. Halcyon's movement caps apply.
+                    // Halcyon: PRIM_POS_LOCAL is "same as PRIM_POSITION on a SET operation", both its
+                    // SetPos(part, v, true). A root takes the object's position (an attachment's: its offset from the
+                    // attach point); a child, its offset from the root (SL: child prims take local coordinates).
+                    // Halcyon's movement caps apply per rule, so a list that repeats the rule moves once per rule.
                     if (data[idx] is not Vector3 pos) break;
                     SetPrimLocalPos(part, pos);
+                    break;
+                }
+
+                case PRIM_PHYSICS:
+                case PRIM_PHANTOM:
+                case PRIM_TEMP_ON_REZ:
+                {
+                    // Object-wide in SL ("PRIM_PHANTOM, PRIM_PHYSICS and PRIM_TEMP_ON_REZ applies to the entire
+                    // object") and in Halcyon (part.ParentGroup), even through a child link. Any non-zero integer is
+                    // TRUE, as llSetStatus.
+                    if (data[idx] is not int flag) break;
+                    SceneObjectGroup group = part.ParentGroup;
+                    if (group == null || group.IsDeleted) break;
+                    bool on = flag != 0;
+                    if (code == PRIM_PHYSICS) SetObjectPhysics(group, on);
+                    else if (code == PRIM_PHANTOM) group.ScriptSetPhantomStatus(on);
+                    else group.ScriptSetTemporaryStatus(on);
                     break;
                 }
 
@@ -5757,12 +5802,34 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         result.Add(part.AbsolutePosition);
                         break;
 
+                    case PRIM_POS_LOCAL:
+                        result.Add(PartLocalPos(part));
+                        break;
+
                     case PRIM_SIZE:
                         result.Add(part.Scale);
                         break;
 
+                    case PRIM_ROTATION:
+                        result.Add(PartRegionRot(part));
+                        break;
+
                     case PRIM_ROT_LOCAL:
+                        // Halcyon GetPartLocalRot: the root's is the object's rotation (an attachment's, relative
+                        // to the attach point); a child's is relative to the root.
                         result.Add(part.RotationOffset);
+                        break;
+
+                    case PRIM_PHYSICS:
+                        result.Add((part.GetEffectiveObjectFlags() & (uint)PrimFlags.Physics) != 0 ? 1 : 0);
+                        break;
+
+                    case PRIM_TEMP_ON_REZ:
+                        result.Add((part.GetEffectiveObjectFlags() & (uint)PrimFlags.TemporaryOnRez) != 0 ? 1 : 0);
+                        break;
+
+                    case PRIM_PHANTOM:
+                        result.Add((part.GetEffectiveObjectFlags() & (uint)PrimFlags.Phantom) != 0 ? 1 : 0);
                         break;
 
                     case PRIM_FLEXIBLE:

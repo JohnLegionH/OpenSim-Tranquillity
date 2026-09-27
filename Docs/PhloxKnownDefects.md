@@ -3065,8 +3065,9 @@ Now:
 
 Known limits, not changed here:
 - `PRIM_POS_LOCAL` and `PRIM_ROTATION` are still not read from a prim (the getter returns nothing for them).
+  Resolved in PHLOX-34.
 - `PRIM_POSITION` on a prim still has no movement cap and takes a child's position as region position minus the
-  root's, unturned; `PRIM_POS_LOCAL` now caps as Halcyon does, so the two rules differ there.
+  root's, unturned; `PRIM_POS_LOCAL` now caps as Halcyon does, so the two rules differ there. Resolved in PHLOX-34.
 - `PRIM_ROTATION` on an attachment's root turns the attachment to the rotation given, as Halcyon does. SL offsets it
   by the avatar's rotation.
 - Rule number 1 (SL's legacy `PRIM_TYPE`) is still unknown: it is not in SL's definitions or in OpenSim's
@@ -3088,3 +3089,59 @@ No function index or declared return type changed, and the compiled script forma
 What residents will notice: hover text set through prim-params lists shows, doors and animated builds that move or
 turn child prims with `PRIM_POS_LOCAL` or `PRIM_ROTATION` work, and furniture scripts read a sitter's local offset
 and rotation correctly when the object is turned.
+
+## PHLOX-34 - PRIM_POS_LOCAL and PRIM_ROTATION read from prims; PRIM_POSITION, PRIM_PHYSICS, PRIM_PHANTOM and PRIM_TEMP_ON_REZ in prim-params lists
+
+Before, a prim returned nothing for `PRIM_POS_LOCAL` and `PRIM_ROTATION`; `PRIM_POSITION` had no movement cap and took
+a child's vector as a region position minus the root's, unturned, so it disagreed with `PRIM_POS_LOCAL`; and
+`PRIM_PHYSICS`, `PRIM_PHANTOM` and `PRIM_TEMP_ON_REZ` were skipped on both sides.
+
+Now:
+- **`PRIM_POS_LOCAL`** read follows Halcyon (`GetPartLocalPos`) and SL (llGetLocalPos: "If called from the root prim
+  it returns the position in the region unless it is attached to which it returns the position relative to the attach
+  point"): an unattached root returns its region position, an attachment's root its offset from the attach point
+  (`AttachedPos`), a child its offset from the root in the root's frame.
+- **`PRIM_ROTATION`** read follows Halcyon (`GetPartRot`) and SL ("rot is always the global rotation, even if the prim
+  is a child"): the prim's region rotation, a child's being the root's rotation times its own. On an attachment's root
+  it is the wearer's rotation, or the camera's in mouselook, as Halcyon does and as SL documents ("PRIM_ROTATION
+  incorrectly reports the avatars rotation when called on the root of an attached object").
+- **`PRIM_ROT_LOCAL`** read was checked, not changed: the prim's stored rotation, which is the object's rotation on a
+  root (an attachment's, relative to the attach point) and the rotation relative to the root on a child, as Halcyon's
+  `GetPartLocalRot` and SL.
+- **`PRIM_POSITION`** set now takes the same path as `PRIM_POS_LOCAL` (Halcyon runs both through
+  `SetPos(part, v, true)`): a root moves the object within Halcyon's caps (10 m for an unattached root; SL: "The
+  distance is capped to 10m per PRIM_POSITION call"), a child takes the vector as its offset from the root (SL: child
+  prims take local coordinates). The cap is measured from where the prim is when the rule runs, so a list that repeats
+  the rule moves up to 10 m per rule, as SL does.
+- **`PRIM_PHYSICS`, `PRIM_PHANTOM`, `PRIM_TEMP_ON_REZ`** set: applied to the whole object even through a child link
+  (SL: "PRIM_PHANTOM, PRIM_PHYSICS and PRIM_TEMP_ON_REZ applies to the entire object"; Halcyon calls the group). Physics
+  goes through the helper llSetStatus now shares (refused when a prim is larger than the region's physical-prim size,
+  then `SceneObjectGroup.ScriptSetPhysicsStatus`); phantom through `SceneObjectGroup.ScriptSetPhantomStatus`, as
+  llSetStatus; temp-on-rez through `SceneObjectGroup.ScriptSetTemporaryStatus`. All three end in
+  `SceneObjectGroup.UpdateFlags`, which schedules each prim's full update. Any non-zero integer is TRUE, as llSetStatus
+  and SL's integer booleans; Halcyon takes only a value that prints as "1". A value that is not an integer skips the
+  rule. Read: the prim's flag, 1 or 0, as Halcyon (`GetEffectiveObjectFlags`).
+
+Known limits, not changed here:
+- llGetLocalPos on a root returns the root's offset (zero), not the region position (or, attached, the offset from the
+  attach point) that SL documents and that `PRIM_POS_LOCAL` now returns.
+- llGetRot on an attachment's root returns the attachment's rotation, not the wearer's as SL and Halcyon do, so it
+  differs there from `PRIM_ROTATION`.
+- llSetPos keeps its own path: region clamps, no 10 m cap, and a child's vector taken as a region position minus the
+  root's.
+- The attachment cases of `PRIM_POS_LOCAL` and `PRIM_ROTATION` read are not covered by a test.
+
+Tests: `PrimParamsPositionRotationFlagsTests`. `PRIM_POS_LOCAL` and `PRIM_ROTATION` read from a root and from a child of
+a turned root, each checked against the scene, and read in a child against its own llGetLocalPos and llGetRot;
+`PRIM_ROT_LOCAL` read from a root and a child; `PRIM_POSITION` on a root beyond 10 m stopping at 10 m, repeated three
+times toward 45 m stopping at 30 m, and on a child of a turned root with the update queued; `PRIM_PHYSICS`,
+`PRIM_PHANTOM` and `PRIM_TEMP_ON_REZ` set through a child link and turned off through the root, with every prim's flags
+checked in the scene, the updates queued, and the values read back from both links and through llGetStatus; and a
+long list mixing them with `PRIM_TEXT`, `PRIM_ROTATION`, `PRIM_POS_LOCAL`, `PRIM_ROT_LOCAL`, `PRIM_NAME` and
+`PRIM_LINK_TARGET`, every rule applied and read back.
+
+No function index or declared return type changed, and the compiled script format and saved state are not affected.
+
+What residents will notice: animated builds that read a child's position or rotation before moving it work,
+`PRIM_POSITION` and `PRIM_POS_LOCAL` move a prim the same way, and scripts can switch objects physical or phantom and
+make temporary rezzes through prim-params lists.
