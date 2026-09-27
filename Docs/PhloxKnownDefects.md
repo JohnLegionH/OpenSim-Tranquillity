@@ -3124,12 +3124,12 @@ Now:
 
 Known limits, not changed here:
 - llGetLocalPos on a root returns the root's offset (zero), not the region position (or, attached, the offset from the
-  attach point) that SL documents and that `PRIM_POS_LOCAL` now returns.
+  attach point) that SL documents and that `PRIM_POS_LOCAL` now returns. Resolved in PHLOX-35.
 - llGetRot on an attachment's root returns the attachment's rotation, not the wearer's as SL and Halcyon do, so it
-  differs there from `PRIM_ROTATION`.
+  differs there from `PRIM_ROTATION`. Resolved in PHLOX-35.
 - llSetPos keeps its own path: region clamps, no 10 m cap, and a child's vector taken as a region position minus the
   root's.
-- The attachment cases of `PRIM_POS_LOCAL` and `PRIM_ROTATION` read are not covered by a test.
+- The attachment cases of `PRIM_POS_LOCAL` and `PRIM_ROTATION` read are not covered by a test. Resolved in PHLOX-35.
 
 Tests: `PrimParamsPositionRotationFlagsTests`. `PRIM_POS_LOCAL` and `PRIM_ROTATION` read from a root and from a child of
 a turned root, each checked against the scene, and read in a child against its own llGetLocalPos and llGetRot;
@@ -3145,3 +3145,67 @@ No function index or declared return type changed, and the compiled script forma
 What residents will notice: animated builds that read a child's position or rotation before moving it work,
 `PRIM_POSITION` and `PRIM_POS_LOCAL` move a prim the same way, and scripts can switch objects physical or phantom and
 make temporary rezzes through prim-params lists.
+
+## PHLOX-35 - PRIM_OMEGA, PRIM_CLICK_ACTION, PRIM_SIT_TARGET and PRIM_PHYSICS_SHAPE_TYPE in prim-params lists; llGetLocalPos and llGetRot on roots and attachments
+
+Before, the four rules were skipped on both sides; llGetLocalPos in a root returned zero; llGetRot on an attachment's
+root returned the attachment's rotation; llTargetOmega spun the root, whichever prim the script was in, normalised
+the axis and ignored the gain; and llSitTarget or llLinkSitTarget with a zero offset and a turned rotation left a sit
+target set.
+
+Now each rule and the ll function that does the same job share one helper:
+- **`PRIM_OMEGA`** and llTargetOmega (and iwLinkTargetOmega) follow Halcyon's `PrimTargetOmega`: the prim named spins
+  (SL: a child "rotates around the local axis"); a physical prim takes axis * spinrate * gain, any other axis *
+  spinrate, and a gain of 0 stops it (SL: gain 0 "disables and removes the rotation behavior"). The axis is not
+  normalised (SL: "Use llVecNorm on axis so that spinrate actually represents the rate of rotation"). The spin reaches
+  viewers as the prim's angular velocity in the terse update. Read follows Halcyon: the angular velocity over
+  `TWO_PI`, then `TWO_PI` and a gain of 1.0, exact when the spinrate was `TWO_PI` and the axis a unit vector.
+- **`PRIM_CLICK_ACTION`** and llSetClickAction: Halcyon has no rule, so SL ("as llSetClickAction"); the prim's click
+  action, sent in the object update. Read: the prim's click action.
+- **`PRIM_SIT_TARGET`** and llSitTarget / llLinkSitTarget follow Halcyon's `SetSitTarget` / `RemoveSitTarget`: active
+  0 removes the target, anything else sets it, a zero offset included (SL: "Unlike llLinkSitTarget() an offset of
+  <0.0, 0.0, 0.0> may be explicitly set"). The ll functions remove it for a zero offset whatever the rotation, as SL
+  documents ("If offset == <0.0, 0.0, 0.0> then the sit target is removed"); Halcyon keeps a zero offset with a turned
+  rotation. The offset is held to SL's 300 m on each axis. Read follows Halcyon: active, offset, rotation, or 0,
+  `ZERO_VECTOR`, `ZERO_ROTATION` when none is set.
+- **`PRIM_PHYSICS_SHAPE_TYPE`** follows Halcyon: only `PRIM_PHYSICS_SHAPE_PRIM`, `_NONE` and `_CONVEX` change the prim;
+  any other number changes nothing. `PRIM_PHYSICS_SHAPE_NONE` is refused on a root, which keeps its type (SL: "This
+  cannot be applied to the root prim or avatars"). The scene's setter rebuilds or drops the prim's physics actor, and
+  the object-properties reply carries the type to viewers. Read: the prim's type.
+- **llGetLocalPos** shares `PRIM_POS_LOCAL`'s read: an unattached root's region position, an attachment's root's
+  offset from the attach point, a child's offset from the root (Halcyon `GetPartLocalPos`, SL).
+- **llGetRot** shares `PRIM_ROTATION`'s read: on an attachment's root, the wearer's rotation, or the camera's in
+  mouselook (Halcyon `GetPartRot` and llGetRot; SL: "llGetRot incorrectly reports the avatars rotation when called from
+  the root of an attached object").
+
+Known limits, not changed here:
+- An active sit target at `ZERO_VECTOR` and `ZERO_ROTATION` set through `PRIM_SIT_TARGET` reads back as inactive and
+  is not used as a sit target. The scene has no active flag apart from the offset and rotation (`IsSitTargetSet`),
+  and that is what it saves; Halcyon keeps a separate flag.
+- `PRIM_OMEGA` read returns Halcyon's approximation, not SL's normalised axis, spinrate and gain.
+- `PRIM_OMEGA` on a seated avatar does nothing and says nothing; SL shouts "PRIM_OMEGA disallowed on agent".
+- Turning an object phantom (`PRIM_PHANTOM`, llSetStatus) stops every prim's spin: the scene's
+  `SceneObjectPart.UpdatePrimFlags` calls `Stop()`, which clears the angular velocity. A spin set before phantom in
+  the same list is lost; one set after it stays.
+- `CLICK_ACTION_PAY` without a money event is kept; SL reverts it to `CLICK_ACTION_NONE`.
+- llGetRootRotation on an attachment still returns the attachment's rotation; Halcyon returns the wearer's.
+- The mouselook case of llGetRot and `PRIM_ROTATION` is not covered by a test: the test scene cannot set an avatar's
+  camera rotation.
+
+Tests: `PrimParamsOmegaClickSitShapeTests`. Each of the four rules set on the root and on a child and read back,
+against the scene with the update queued where the rule sends one; llTargetOmega in a child against `PRIM_OMEGA`, an
+axis longer than 1, and a gain of 0 stopping both; llSetClickAction against `PRIM_CLICK_ACTION`; llSitTarget and
+llLinkSitTarget read back through `PRIM_SIT_TARGET`, a zero offset removing the target, an inactive rule removing it,
+and the 300 m hold; `PRIM_PHYSICS_SHAPE_NONE` refused on a root, and an undefined type ignored; llGetLocalPos in an
+unattached root and in a child; llGetLocalPos, llGetRot, `PRIM_POS_LOCAL`, `PRIM_ROTATION` and `PRIM_ROT_LOCAL` on an
+attachment's root and on a child of an attachment; and a long list mixing the four rules with `PRIM_TEXT`,
+`PRIM_POSITION`, `PRIM_PHANTOM`, `PRIM_POS_LOCAL`, `PRIM_NAME` and `PRIM_LINK_TARGET`. `PrimParamsPositionRotationFlagsTests`
+now also compares llGetLocalPos in a root.
+
+No function index or declared return type changed, and the compiled script format and saved state are not affected.
+`SlConst` gains `PRIM_PHYSICS_SHAPE_PRIM`, `_NONE` and `_CONVEX`, with the compiler table's values.
+
+What residents will notice: spinning prims set through prim-params lists spin, and a spinning child spins by itself
+instead of turning the whole object; furniture that sets per-prim sit targets and click actions in one list works;
+builders can make child prims non-colliding with `PRIM_PHYSICS_SHAPE_NONE`; and attachments read their offset and the
+wearer's facing through llGetLocalPos and llGetRot.

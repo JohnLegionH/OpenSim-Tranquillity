@@ -120,8 +120,10 @@ public class PrimParamsPositionRotationFlagsTests
         Near(parts[0].ParentGroup.GroupRotation, r[1]);
         Near(rootRot, r[1]);
         Assert.Equal(Line(h, "r="), Line(h, "own="));
-        // llGetRot on the root agrees. (llGetLocalPos on a root is not compared: it returns the root's offset, zero.)
-        Near(rootRot, Fields(h, "ll=", 2)[1]);
+        // llGetLocalPos and llGetRot on the root agree.
+        var ll = Fields(h, "ll=", 2);
+        Near(new Vector3(100, 110, 30), ll[0]);
+        Near(rootRot, ll[1]);
 
         // The child: its offset from the root, in the root's frame, and its region rotation (root's times its own).
         var c = Fields(h, "c=", 2);

@@ -706,7 +706,9 @@ namespace Phlox.ScriptEngine
         // ── Position / rotation ────────────────────────────────────────────────
 
         public Vector3 llGetPos() => m_host?.AbsolutePosition ?? Vector3.Zero;
-        public Vector3 llGetLocalPos() => m_host?.OffsetPosition ?? Vector3.Zero;
+        // Halcyon GetPartLocalPos and SL: a root's region position (an attachment's, its offset from the attach
+        // point), a child's offset from the root. The same read as PRIM_POS_LOCAL.
+        public Vector3 llGetLocalPos() => m_host == null ? Vector3.Zero : PartLocalPos(m_host);
         public Vector3 llGetRootPosition() => m_host?.ParentGroup?.AbsolutePosition ?? Vector3.Zero;
         public void llSetPos(Vector3 pos)
         {
@@ -720,7 +722,8 @@ namespace Phlox.ScriptEngine
             else m_host.UpdateOffSet(pos - group.AbsolutePosition);
             ScriptSleep(200);
         }
-        public Quaternion llGetRot() => m_host?.GetWorldRotation() ?? Quaternion.Identity;
+        // Halcyon llGetRot and SL: on an attachment's root, the wearer's rotation. The same read as PRIM_ROTATION.
+        public Quaternion llGetRot() => m_host == null ? Quaternion.Identity : PartRegionRot(m_host);
         public Quaternion llGetLocalRot() => m_host?.RotationOffset ?? Quaternion.Identity;
         public Quaternion llGetRootRotation() => m_host?.ParentGroup?.GroupRotation ?? Quaternion.Identity;
         public void llSetRot(Quaternion rot)
@@ -1913,20 +1916,34 @@ namespace Phlox.ScriptEngine
 		public void llSitTarget(Vector3 offset, Quaternion rot)
 		{
 			if (m_host == null) return;
-			if (offset == Vector3.Zero && rot == Quaternion.Identity)
-			{
-				m_host.SitTargetPosition = Vector3.Zero;
-				m_host.SitTargetOrientation = Quaternion.Identity;
-			}
-			else
-			{
-				m_host.SitTargetPosition = offset;
-				m_host.SitTargetOrientation = rot;
-			}
-			if (m_host.ParentGroup != null)
-				m_host.ParentGroup.HasGroupChanged = true;
-			m_host.ScheduleFullUpdate();
+			PrimSetSitTarget(m_host, offset != Vector3.Zero, offset, rot);
 		}
+
+        /// <summary>
+        /// PRIM_SIT_TARGET, llSitTarget and llLinkSitTarget on one prim (Halcyon SetSitTarget / RemoveSitTarget). An
+        /// active target takes the offset and rotation, the offset held to SL's [-300, 300] m on each axis ("Values
+        /// outside this range are automatically rounded to the nearest limit"; Halcyon does not cap). An inactive one
+        /// is removed: zero offset, identity rotation. The ll functions pass active only for a non-zero offset, as SL
+        /// ("If offset == &lt;0.0, 0.0, 0.0&gt; then the sit target is removed"); Halcyon also keeps a zero offset with a
+        /// turned rotation. The scene holds no active flag apart from the offset and rotation (IsSitTargetSet), so an
+        /// active target at ZERO_VECTOR and ZERO_ROTATION reads back, and sits, as none (Docs/PhloxKnownDefects.md).
+        /// </summary>
+        private static void PrimSetSitTarget(SceneObjectPart part, bool active, Vector3 offset, Quaternion rot)
+        {
+            if (active)
+            {
+                part.SitTargetPosition = new Vector3(Math.Clamp(offset.X, -300f, 300f),
+                    Math.Clamp(offset.Y, -300f, 300f), Math.Clamp(offset.Z, -300f, 300f));
+                part.SitTargetOrientation = rot;
+            }
+            else
+            {
+                part.SitTargetPosition = Vector3.Zero;
+                part.SitTargetOrientation = Quaternion.Identity;
+            }
+            if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
+            part.ScheduleFullUpdate();
+        }
 		public string llAvatarOnSitTarget()
 		{
 			if (m_host == null) return UUID.Zero.ToString();
@@ -1951,12 +1968,7 @@ namespace Phlox.ScriptEngine
         {
             if (m_host == null) return;
             foreach (SceneObjectPart part in GetLinkParts(link))
-            {
-                part.SitTargetPosition    = offset;
-                part.SitTargetOrientation = rot;
-                if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
-                part.ScheduleFullUpdate();
-            }
+                PrimSetSitTarget(part, offset != Vector3.Zero, offset, rot);
         }
 
         public string llAvatarOnLinkSitTarget(int linknumber)
@@ -2018,9 +2030,18 @@ namespace Phlox.ScriptEngine
         public void llSetClickAction(int action)
         {
             if (m_host == null) return;
-            m_host.ClickAction = (byte)action;
-            if (m_host.ParentGroup != null) m_host.ParentGroup.HasGroupChanged = true;
-            m_host.ScheduleFullUpdate();
+            PrimSetClickAction(m_host, action);
+        }
+
+        /// <summary>
+        /// PRIM_CLICK_ACTION and llSetClickAction on one prim (Halcyon llSetClickAction; Halcyon has no rule, SL's
+        /// PRIM_CLICK_ACTION is "as llSetClickAction"). The click action rides the object update.
+        /// </summary>
+        private static void PrimSetClickAction(SceneObjectPart part, int action)
+        {
+            part.ClickAction = (byte)action;
+            if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
+            part.ScheduleFullUpdate();
         }
         public int llGetAgentInfo(string id)
         {
@@ -4709,6 +4730,26 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return part.GetWorldRotation();
         }
 
+        /// <summary>
+        /// PRIM_PHYSICS_SHAPE_TYPE on one prim (Halcyon: PreferredPhysicsShape, only for a type it defines). A type
+        /// other than PRIM_PHYSICS_SHAPE_PRIM, _NONE or _CONVEX changes nothing. PRIM_PHYSICS_SHAPE_NONE is refused on
+        /// a root (SL: "This cannot be applied to the root prim or avatars") and the root keeps its type; the scene
+        /// would otherwise put its default in. The scene's setter rebuilds or drops the prim's physics actor, and
+        /// the properties reply carries the new type to viewers.
+        /// </summary>
+        private static void PrimSetPhysicsShapeType(SceneObjectPart part, int type)
+        {
+            if (type != PRIM_PHYSICS_SHAPE_PRIM && type != PRIM_PHYSICS_SHAPE_NONE && type != PRIM_PHYSICS_SHAPE_CONVEX)
+                return;
+            SceneObjectGroup group = part.ParentGroup;
+            if (group == null || group.IsDeleted) return;
+            if (type == PRIM_PHYSICS_SHAPE_NONE && part == group.RootPart) return;
+            if (part.PhysicsShapeType == (byte)type) return;
+            part.PhysicsShapeType = (byte)type;
+            group.HasGroupChanged = true;
+            part.SendPropertiesToAllClients();
+        }
+
         /// <summary>One prim's prim-params rules (llSetPrimitiveParams, osSetPrimitiveParams).</summary>
         private void SetPrimParams(SceneObjectPart part, LSLList rules)
         {
@@ -4961,6 +5002,47 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     float alpha;
                     try { alpha = (float)Convert.ToDouble(data[idx + 2]); } catch { break; }
                     PrimSetText(part, data[idx]?.ToString() ?? string.Empty, color, alpha);
+                    break;
+                }
+
+                case PRIM_OMEGA:
+                {
+                    // [ PRIM_OMEGA, vector axis, float spinrate, float gain ], as llTargetOmega on this prim.
+                    if (data[idx] is not Vector3 axis) break;
+                    float spinrate, gain;
+                    try
+                    {
+                        spinrate = (float)Convert.ToDouble(data[idx + 1]);
+                        gain = (float)Convert.ToDouble(data[idx + 2]);
+                    }
+                    catch { break; }
+                    PrimTargetOmega(part, axis, spinrate, gain);
+                    break;
+                }
+
+                case PRIM_CLICK_ACTION:
+                {
+                    // [ PRIM_CLICK_ACTION, integer action ], as llSetClickAction on this prim.
+                    if (data[idx] is not int action) break;
+                    PrimSetClickAction(part, action);
+                    break;
+                }
+
+                case PRIM_SIT_TARGET:
+                {
+                    // [ PRIM_SIT_TARGET, integer active, vector offset, rotation rot ] (Halcyon, SL): active 0
+                    // removes the target; otherwise it is set, a zero offset included.
+                    if (data[idx] is not int active || data[idx + 1] is not Vector3 offset
+                        || data[idx + 2] is not Quaternion rot) break;
+                    PrimSetSitTarget(part, active != 0, offset, rot);
+                    break;
+                }
+
+                case PRIM_PHYSICS_SHAPE_TYPE:
+                {
+                    // [ PRIM_PHYSICS_SHAPE_TYPE, integer type ]
+                    if (data[idx] is not int shapeType) break;
+                    PrimSetPhysicsShapeType(part, shapeType);
                     break;
                 }
 
@@ -5830,6 +5912,37 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
                     case PRIM_PHANTOM:
                         result.Add((part.GetEffectiveObjectFlags() & (uint)PrimFlags.Phantom) != 0 ? 1 : 0);
+                        break;
+
+                    case PRIM_OMEGA:
+                    {
+                        // Halcyon: the prim keeps only its angular velocity (axis * spinrate), so it returns that
+                        // over TWO_PI, then TWO_PI and a gain of 1.0 - exact for the common spinrate of TWO_PI. SL
+                        // returns the normalised axis, spinrate times the axis's length, and the gain.
+                        const float TwoPi = 6.28318548f; // SL's TWO_PI
+                        result.Add(part.AngularVelocity / TwoPi);
+                        result.Add(TwoPi);
+                        result.Add(1f);
+                        break;
+                    }
+
+                    case PRIM_CLICK_ACTION:
+                        result.Add((int)part.ClickAction);
+                        break;
+
+                    case PRIM_SIT_TARGET:
+                    {
+                        // [ integer active, vector offset, rotation rot ] (Halcyon); none set: 0, ZERO_VECTOR,
+                        // ZERO_ROTATION.
+                        bool active = part.IsSitTargetSet;
+                        result.Add(active ? 1 : 0);
+                        result.Add(active ? part.SitTargetPosition : Vector3.Zero);
+                        result.Add(active ? part.SitTargetOrientation : Quaternion.Identity);
+                        break;
+                    }
+
+                    case PRIM_PHYSICS_SHAPE_TYPE:
+                        result.Add((int)part.PhysicsShapeType);
                         break;
 
                     case PRIM_FLEXIBLE:
@@ -7173,33 +7286,31 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         public void llTargetOmega(Vector3 axis, float spinrate, float gain)
         {
-            // TargetOmega is a client-side visual spin effect delivered via angular velocity
-            // in the terse object update packet. We set the angular velocity on the root part
-            // which causes viewers to render the continuous rotation.
             if (m_host?.ParentGroup == null) return;
-            SceneObjectPart root = m_host.ParentGroup.RootPart;
-            if (root == null) return;
-
-            if (Math.Abs(spinrate) < 0.0001f)
-            {
-                // Stop the spin
-                root.UpdateAngularVelocity(Vector3.Zero);
-            }
-            else
-            {
-                Vector3 normalized = axis;
-                float len = normalized.Length();
-                if (len > 0.0001f) normalized /= len;
-                root.UpdateAngularVelocity(normalized * spinrate);
-            }
+            PrimTargetOmega(m_host, axis, spinrate, gain);
         }
+
+        /// <summary>
+        /// PRIM_OMEGA, llTargetOmega and iwLinkTargetOmega on one prim (Halcyon PrimTargetOmega): the prim's angular
+        /// velocity, which viewers render as a spin from the terse update. The prim the script names spins, so a
+        /// child spins about its own centre (SL: "the prim rotates around the local axis"). Physical: axis *
+        /// spinrate * gain. Otherwise axis * spinrate, and a gain of 0 stops it (SL: gain 0 "disables and removes
+        /// the rotation behavior"). The axis is not normalised (SL: "Use llVecNorm on axis so that spinrate
+        /// actually represents the rate of rotation").
+        /// </summary>
+        private static void PrimTargetOmega(SceneObjectPart part, Vector3 axis, float spinrate, float gain)
+        {
+            PhysicsActor actor = part.PhysActor;
+            Vector3 omega;
+            if (actor != null && actor.IsPhysical) omega = axis * (spinrate * gain);
+            else omega = gain == 0f ? Vector3.Zero : axis * spinrate;
+            part.UpdateAngularVelocity(omega);
+        }
+
         public void iwLinkTargetOmega(int linknumber, Vector3 axis, float spinrate, float gain)
         {
             foreach (SceneObjectPart part in GetLinkParts(linknumber))
-            {
-                part.AngularVelocity = axis * spinrate;
-                part.ScheduleFullUpdate();
-            }
+                PrimTargetOmega(part, axis, spinrate, gain);
         }
         public void llLookAt(Vector3 target, float strength, float damping)
         {
