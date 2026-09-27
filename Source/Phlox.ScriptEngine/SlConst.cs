@@ -74,6 +74,9 @@ namespace Phlox.ScriptEngine
         public const int IW_DELIVER_PRIM = 4;
         public const int IW_DELIVER_USER = 5;
 
+        // ── IW_PRIM_* (InWorldz; Halcyon LSL_Constants.cs) ───────────────
+        public const int IW_PRIM_ALPHA = 11001;
+
         // ── JSON_* ────────────────────────────────────────────────────────
         public const int JSON_APPEND = -1;
 
@@ -183,8 +186,10 @@ namespace Phlox.ScriptEngine
         public const int PRIM_GLTF_EMISSIVE = 46;
         public const int PRIM_GLTF_METALLIC_ROUGHNESS = 47;
         public const int PRIM_GLTF_NORMAL = 45;
+        public const int PRIM_HOLE_DEFAULT = 0;
         public const int PRIM_LINK_TARGET = 34;
         public const int PRIM_MATERIAL = 2;
+        public const int PRIM_MATERIAL_FLESH = 4;
         public const int PRIM_MEDIA_ALT_IMAGE_ENABLE = 0;
         public const int PRIM_MEDIA_AUTO_LOOP = 4;
         public const int PRIM_MEDIA_AUTO_PLAY = 5;
@@ -201,13 +206,24 @@ namespace Phlox.ScriptEngine
         public const int PRIM_MEDIA_WHITELIST_ENABLE = 11;
         public const int PRIM_MEDIA_WIDTH_PIXELS = 9;
         public const int PRIM_NAME = 27;
+        public const int PRIM_NORMAL = 37;
+        public const int PRIM_PHANTOM = 5;
         public const int PRIM_POINT_LIGHT = 23;
         public const int PRIM_POSITION = 6;
+        public const int PRIM_POS_LOCAL = 33;
         public const int PRIM_RENDER_MATERIAL = 49;
+        public const int PRIM_ROTATION = 8;
         public const int PRIM_ROT_LOCAL = 29;
+        public const int PRIM_SIT_TARGET = 41;
         public const int PRIM_SIZE = 7;
+        public const int PRIM_SLICE = 35;
+        public const int PRIM_SPECULAR = 36;
+        public const int PRIM_TEMP_ON_REZ = 4;
+        public const int PRIM_TEXGEN = 22;
+        public const int PRIM_TEXT = 26;
         public const int PRIM_TEXTURE = 17;
         public const int PRIM_TYPE = 9;
+        public const int PRIM_TYPE_BOX = 0;
 
         // ── PROFILE_* ─────────────────────────────────────────────────────
         public const int PROFILE_SCRIPT_MEMORY = 1;

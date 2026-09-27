@@ -623,7 +623,12 @@ namespace Phlox.ScriptEngine
             if (m_host.ParentGroup != null) m_host.ParentGroup.HasGroupChanged = true;
             m_host.SendPropertiesToAllClients();
         }
-        public int llGetNumberOfPrims() => m_host?.ParentGroup?.PrimCount ?? 1;
+        /// <summary>Halcyon llGetNumberOfPrims: LinkCount, the prims plus the avatars seated on them.</summary>
+        public int llGetNumberOfPrims()
+        {
+            SceneObjectGroup group = m_host?.ParentGroup;
+            return group == null ? 1 : group.PrimCount + group.GetSittingAvatarsCount();
+        }
         public int llGetLinkNumber() => m_host?.LinkNum ?? 0;
         public int llGetNumberOfSides() => m_host?.GetNumberOfSides() ?? 0;
         public string llGetScriptName() => GetInventorySelf()?.Name ?? string.Empty;
@@ -4267,6 +4272,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (m_host == null) return;
             foreach (var part in GetLinkParts(linknumber))
                 SetPrimParams(part, rules);
+            foreach (var sp in GetLinkSitters(linknumber))
+                SetSitterPrimParams(sp, rules);
             ScriptSleep(200);
         }
 
@@ -4275,6 +4282,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (m_host == null) return;
             foreach (var part in GetLinkParts(linknumber))
                 SetPrimParams(part, rules);
+            foreach (var sp in GetLinkSitters(linknumber))
+                SetSitterPrimParams(sp, rules);
             // no sleep for Fast variant
         }
 
@@ -4284,6 +4293,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             var result = new LSLList();
             foreach (var part in GetLinkParts(linknumber))
                 result += GetPrimParams(part, rules);
+            foreach (var sp in GetLinkSitters(linknumber))
+                result += GetSitterPrimParams(sp, rules);
             return result;
         }
 
@@ -4325,6 +4336,38 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     }
                     break;
             }
+        }
+
+        /// <summary>
+        /// The avatars a link number selects (Halcyon GetLinkParts with includeAvatars). Seated avatars take the
+        /// link numbers after the last prim in the order they sat, and close up when one stands
+        /// (Halcyon SceneObjectGroup.AddSeatedAvatar, RecalcSeatedAvatarLinks); the group's sitting list keeps
+        /// that order. LINK_SET, LINK_ALL_OTHERS and LINK_ALL_CHILDREN take in every sitter; a number past the
+        /// last prim is that sitter; every other selector is prims only. Only the prim-params functions and
+        /// llGetLinkKey/llGetLinkName reach avatars; llMessageLinked and the rest stay on GetLinkParts.
+        /// </summary>
+        private List<ScenePresence> GetLinkSitters(int linknumber)
+        {
+            var result = new List<ScenePresence>();
+            SceneObjectGroup group = m_host?.ParentGroup;
+            if (group == null) return result;
+            switch (linknumber)
+            {
+                case LINK_SET:
+                case LINK_ALL_OTHERS:
+                case LINK_ALL_CHILDREN:
+                    result.AddRange(group.GetSittingAvatars());
+                    break;
+                default:
+                    if (linknumber > group.PrimCount)
+                    {
+                        var sitters = group.GetSittingAvatars();
+                        int i = linknumber - group.PrimCount - 1;
+                        if (i < sitters.Count) result.Add(sitters[i]);
+                    }
+                    break;
+            }
+            return result;
         }
 
         /// <summary>The resolver's prim when it selects exactly one, else null (Halcyon llGetLinkKey's rule).</summary>
@@ -4607,13 +4650,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         if (idx >= data.Length) break;
                         int linkTarget;
                         try { linkTarget = Convert.ToInt32(data[idx++]); } catch { break; }
-                        foreach (var p in GetLinkParts(linkTarget))
-                        {
-                            // Build remaining list and recurse
-                            var remaining = new object[data.Length - idx];
-                            Array.Copy(data, idx, remaining, 0, remaining.Length);
-                            SetPrimParams(p, new LSLList(remaining));
-                        }
+                        SetLinkTargetParams(linkTarget, data, idx);
                         return;
 
                     case PRIM_COLOR:
@@ -5057,6 +5094,232 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         break;
                 }
             }
+        }
+
+        /// <summary>PRIM_LINK_TARGET: the rest of the rules go to every prim and seated avatar the link selects.</summary>
+        private void SetLinkTargetParams(int linkTarget, object[] data, int idx)
+        {
+            var remaining = new object[data.Length - idx];
+            Array.Copy(data, idx, remaining, 0, remaining.Length);
+            var rest = new LSLList(remaining);
+            foreach (var p in GetLinkParts(linkTarget))
+                SetPrimParams(p, rest);
+            foreach (var sp in GetLinkSitters(linkTarget))
+                SetSitterPrimParams(sp, rest);
+        }
+
+        /// <summary>
+        /// The values each prim-params setter rule takes, as SetPrimParams consumes them, so a rule list walks the
+        /// same way over a seated avatar as over a prim. PRIM_TYPE is counted separately.
+        /// </summary>
+        private static int SetterArgCount(int code) => code switch
+        {
+            PRIM_LINK_TARGET or PRIM_MATERIAL or PRIM_POSITION or PRIM_POS_LOCAL or PRIM_SIZE or PRIM_ROTATION
+                or PRIM_ROT_LOCAL or PRIM_NAME or PRIM_DESC => 1,
+            PRIM_GLOW or PRIM_FULLBRIGHT or PRIM_ALPHA_MODE or PRIM_RENDER_MATERIAL => 2,
+            PRIM_COLOR or PRIM_BUMP_SHINY => 3,
+            PRIM_TEXTURE or PRIM_POINT_LIGHT or PRIM_GLTF_NORMAL => 5,
+            PRIM_GLTF_EMISSIVE => 6,
+            PRIM_FLEXIBLE or PRIM_GLTF_METALLIC_ROUGHNESS => 7,
+            PRIM_GLTF_BASE_COLOR => 10,
+            _ => -1,
+        };
+
+        /// <summary>
+        /// llSetLinkPrimitiveParams(Fast) on a seated avatar (Halcyon SetPrimParams' ScenePresence branches):
+        /// PRIM_POSITION and PRIM_POS_LOCAL set the sitter's offset from the root, PRIM_ROT_LOCAL its rotation,
+        /// and PRIM_ROTATION the root's rotation times the one given. Every other rule leaves an avatar alone.
+        /// SL: an offset more than 54 m away is silently ignored. The change goes out the way the scene moves a
+        /// sitter (ScenePresence.OffsetPosition / Rotation, then a terse update to every viewer).
+        /// </summary>
+        private void SetSitterPrimParams(ScenePresence sp, LSLList rules)
+        {
+            if (sp == null || rules == null || sp.ParentID == 0) return;
+            var data = rules.Data;
+            int idx = 0;
+            bool moved = false;
+
+            while (idx < data.Length)
+            {
+                int code;
+                try { code = Convert.ToInt32(data[idx++]); } catch { break; }
+
+                if (code == PRIM_TYPE)
+                {
+                    if (idx >= data.Length) break;
+                    int type;
+                    try { type = Convert.ToInt32(data[idx++]); } catch { break; }
+                    idx += type switch { 0 or 1 or 2 => 6, 3 => 5, 4 or 5 or 6 => 11, 7 => 2, _ => 0 };
+                    continue;
+                }
+
+                int count = SetterArgCount(code);
+                if (count < 0 || idx + count > data.Length) break;
+
+                switch (code)
+                {
+                    case PRIM_LINK_TARGET:
+                    {
+                        int linkTarget;
+                        try { linkTarget = Convert.ToInt32(data[idx++]); } catch { idx = data.Length; break; }
+                        if (moved) sp.SendTerseUpdateToAllClients();
+                        SetLinkTargetParams(linkTarget, data, idx);
+                        return;
+                    }
+
+                    case PRIM_POSITION:
+                    case PRIM_POS_LOCAL:
+                    {
+                        Vector3 v;
+                        try { v = (Vector3)data[idx++]; } catch { break; }
+                        if (v.Length() > 54f) break;
+                        if (!sp.LegacySitOffsets)
+                            v += (Vector3.UnitZ * sp.Rotation) * (2f * sp.Appearance.AvatarHeight * 0.02638f);
+                        sp.OffsetPosition = v;
+                        moved = true;
+                        break;
+                    }
+
+                    case PRIM_ROT_LOCAL:
+                    {
+                        Quaternion q;
+                        try { q = (Quaternion)data[idx++]; } catch { break; }
+                        sp.Rotation = q;
+                        moved = true;
+                        break;
+                    }
+
+                    case PRIM_ROTATION:
+                    {
+                        Quaternion q;
+                        try { q = (Quaternion)data[idx++]; } catch { break; }
+                        sp.Rotation = (m_host.ParentGroup?.RootPart?.RotationOffset ?? Quaternion.Identity) * q;
+                        moved = true;
+                        break;
+                    }
+
+                    default:
+                        idx += count;
+                        break;
+                }
+            }
+
+            if (moved) sp.SendTerseUpdateToAllClients();
+        }
+
+        /// <summary>
+        /// llGetLinkPrimitiveParams on a seated avatar (Halcyon GetAvatarAsPrimParam): the avatar's name, an empty
+        /// description, flesh, not temporary or phantom, its agent size, its region position, its offset from the
+        /// root, a default box shape and empty text, light and flexi. The texture rules consume their face, return
+        /// nothing and tell the owner "texture info cannot be accessed for avatars." PRIM_ROTATION returns the
+        /// avatar's region rotation, as SL documents; Halcyon returns nothing there. Rules Halcyon has no avatar
+        /// value for (PRIM_ROT_LOCAL, PRIM_PHYSICS and the rest) return nothing.
+        /// </summary>
+        private LSLList GetSitterPrimParams(ScenePresence sp, LSLList parms)
+        {
+            if (sp == null || parms == null) return new LSLList();
+            var result = new List<object>();
+            var data = parms.Data;
+            int idx = 0;
+
+            while (idx < data.Length)
+            {
+                int code;
+                try { code = Convert.ToInt32(data[idx++]); } catch { break; }
+
+                switch (code)
+                {
+                    case PRIM_LINK_TARGET:
+                        if (idx < data.Length) idx++; // as GetPrimParams: routing is the caller's
+                        break;
+                    case PRIM_POSITION:
+                        result.Add(sp.AbsolutePosition);
+                        break;
+                    case PRIM_POS_LOCAL:
+                        result.Add(sp.AbsolutePosition - (m_host.ParentGroup?.RootPart?.AbsolutePosition ?? Vector3.Zero));
+                        break;
+                    case PRIM_ROTATION:
+                        result.Add(sp.GetWorldRotation());
+                        break;
+                    case PRIM_NAME:
+                        result.Add(sp.Name);
+                        break;
+                    case PRIM_DESC:
+                        result.Add(string.Empty);
+                        break;
+                    case PRIM_TYPE:
+                        result.Add(PRIM_TYPE_BOX);
+                        result.Add(PRIM_HOLE_DEFAULT);
+                        result.Add(new Vector3(0f, 1f, 0f));
+                        result.Add(0f);
+                        result.Add(Vector3.Zero);
+                        result.Add(new Vector3(1f, 1f, 0f));
+                        result.Add(Vector3.Zero);
+                        break;
+                    case PRIM_SLICE:
+                        result.Add(new Vector3(0f, 1f, 0f));
+                        break;
+                    case PRIM_MATERIAL:
+                        result.Add(PRIM_MATERIAL_FLESH);
+                        break;
+                    case PRIM_TEMP_ON_REZ:
+                    case PRIM_PHANTOM:
+                        result.Add(0);
+                        break;
+                    case PRIM_SIZE:
+                        result.Add(llGetAgentSize(sp.UUID.ToString()));
+                        break;
+                    case PRIM_TEXT:
+                        result.Add(string.Empty);
+                        result.Add(Vector3.Zero);
+                        result.Add(1f);
+                        break;
+                    case PRIM_POINT_LIGHT:
+                        result.Add(0);
+                        result.Add(Vector3.Zero);
+                        result.Add(0f);
+                        result.Add(0f);
+                        result.Add(0f);
+                        break;
+                    case PRIM_FLEXIBLE:
+                        result.Add(0);
+                        result.Add(0);
+                        result.Add(0f);
+                        result.Add(0f);
+                        result.Add(0f);
+                        result.Add(0f);
+                        result.Add(Vector3.Zero);
+                        break;
+                    case PRIM_SIT_TARGET:
+                        result.Add(0);
+                        result.Add(Vector3.Zero);
+                        result.Add(Quaternion.Identity);
+                        break;
+                    case PRIM_TEXTURE:
+                    case PRIM_COLOR:
+                    case PRIM_BUMP_SHINY:
+                    case PRIM_FULLBRIGHT:
+                    case PRIM_TEXGEN:
+                    case PRIM_GLOW:
+                    case PRIM_SPECULAR:
+                    case PRIM_NORMAL:
+                    case PRIM_ALPHA_MODE:
+                    case IW_PRIM_ALPHA:
+                        if (idx < data.Length) idx++;
+                        ShoutError("texture info cannot be accessed for avatars.");
+                        break;
+                    case PRIM_RENDER_MATERIAL:
+                    case PRIM_GLTF_BASE_COLOR:
+                    case PRIM_GLTF_NORMAL:
+                    case PRIM_GLTF_METALLIC_ROUGHNESS:
+                    case PRIM_GLTF_EMISSIVE:
+                        if (idx < data.Length) idx++; // the face, as GetPrimParams takes it
+                        break;
+                    default:
+                        break;
+                }
+            }
+            return new LSLList(result.ToArray());
         }
 
         // ── PRIM_TYPE shape helpers ───────────────────────────────────────────────
@@ -5511,14 +5774,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (m_host == null) return UUID.Zero.ToString();
             SceneObjectGroup group = m_host.ParentGroup;
             if (group == null) return UUID.Zero.ToString();
-            SceneObjectPart part = GetSingleLinkPart(linknumber);
-            if (part != null) return part.UUID.ToString();
-            // Beyond prim count — check sitting avatars (seated avatar link numbers)
-            int seatIndex = linknumber - group.PrimCount;
-            var sitters = GetSittingAvatarList(group);
-            if (seatIndex >= 1 && seatIndex <= sitters.Count)
-                return sitters[seatIndex - 1].ToString();
-            return UUID.Zero.ToString();
+            // Halcyon: the key when the link number selects exactly one prim or seated avatar.
+            var prims = GetLinkParts(linknumber).Take(2).ToList();
+            var sitters = GetLinkSitters(linknumber);
+            if (prims.Count + sitters.Count != 1) return UUID.Zero.ToString();
+            return prims.Count == 1 ? prims[0].UUID.ToString() : sitters[0].UUID.ToString();
         }
 
         public string llGetObjectLinkKey(string objectId, int linknumber)
@@ -5542,28 +5802,13 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (group == null) return string.Empty;
             SceneObjectPart part = GetSingleLinkPart(linknumber);
             if (part != null) return part.Name;
-            // Sitting avatar name
-            int seatIndex = linknumber - group.PrimCount;
-            var sitters = GetSittingAvatarList(group);
-            if (seatIndex >= 1 && seatIndex <= sitters.Count)
+            // Halcyon: a number past the prims is a seated avatar, named by its legacy name.
+            if (linknumber > group.PrimCount)
             {
-                ScenePresence sp = World?.GetScenePresence(sitters[seatIndex - 1]);
-                return sp?.Name ?? string.Empty;
+                var sitters = GetLinkSitters(linknumber);
+                if (sitters.Count == 1) return sitters[0].Name;
             }
             return string.Empty;
-        }
-
-        private List<UUID> GetSittingAvatarList(SceneObjectGroup group)
-        {
-            var result = new List<UUID>();
-            if (World == null) return result;
-            World.ForEachScenePresence(sp =>
-            {
-                if (!sp.IsChildAgent && sp.ParentID != 0 &&
-                    group.ContainsPart(sp.ParentID))
-                    result.Add(sp.UUID);
-            });
-            return result;
         }
 
         public int llGetLinkNumberOfSides(int link)

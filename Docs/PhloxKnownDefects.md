@@ -2895,3 +2895,75 @@ state is affected.
 What residents will notice: llMessageLinked(LINK_SET, ...) now reaches scripts in the sender's own prim, link
 setters with `LINK_SET` now change the script's own prim, `LINK_ALL_CHILDREN` leaves the root alone, and a
 mistyped negative link number does nothing instead of changing the script's prim.
+
+## PHLOX-31 - seated avatars take link numbers after the prims
+
+Before, a seated avatar could not be addressed as a link. llGetNumberOfPrims counted prims only, and
+llGetLinkKey and llGetLinkName found sitters by walking every presence in the region, so the numbers followed
+presence order rather than sit order. The prim-params functions never reached an avatar.
+
+Now, as in SL and Halcyon, the avatars sitting on an object are the links after its last prim, in the order they
+sat. When one stands, the ones after it move up one and the prims keep their numbers (Halcyon
+`SceneObjectGroup.AddSeatedAvatar` sets `LinkNum = LinkCount`, and `RemoveSeatedAvatar` calls
+`RecalcSeatedAvatarLinks`, which renumbers from `PartCount + 1`). Phlox reads them from the group's sitting list
+(`SceneObjectGroup.GetSittingAvatars`), which keeps that order. A new resolver, `GetLinkSitters`, follows the avatar
+branch of Halcyon's `GetLinkParts` (LSLSystemAPI.cs:555-618):
+
+| Link number | Sitters selected |
+|---|---|
+| `LINK_SET`, `LINK_ALL_OTHERS`, `LINK_ALL_CHILDREN` | all of them, after the prims |
+| prim count + 1 and up | that sitter |
+| `LINK_THIS`, `LINK_ROOT`, 0, 2 .. prim count, other negatives | none |
+
+Halcyon uses the avatar branch only for llGetLinkKey, llSetLinkPrimitiveParams(Fast), llSetPrimitiveParams'
+`PRIM_LINK_TARGET` and llGetLinkPrimitiveParams. Every other link function, llMessageLinked included, is prims only
+(`GetLinkPrimsOnly`). Phlox now does the same:
+
+- **llGetNumberOfPrims**: prims plus sitters (Halcyon `LinkCount`; SL documents the same).
+- **llGetLinkKey**: the key when the link number selects exactly one prim or sitter, else `NULL_KEY`. So on an
+  object with sitters, `LINK_SET` now returns `NULL_KEY` even for a single prim, as in Halcyon.
+- **llGetLinkName**: a sitter's legacy name. Otherwise unchanged from PHLOX-30.
+- **llMessageLinked**: never reaches avatars. An avatar's link number sends nothing.
+- **llSetLinkPrimitiveParams(Fast)**, including `PRIM_LINK_TARGET`: on a sitter, `PRIM_POSITION` and
+  `PRIM_POS_LOCAL` set its offset from the root, `PRIM_ROT_LOCAL` sets its rotation, and `PRIM_ROTATION` sets it to
+  the root's rotation times the one given (Halcyon's formula). No other rule touches an avatar. The rule list is
+  walked with the same argument counts as for a prim, so a later `PRIM_LINK_TARGET` still lands. The move goes
+  through the scene's own path (`ScenePresence.OffsetPosition` / `Rotation`, then `SendTerseUpdateToAllClients`),
+  so viewers see it. When the region runs with `LegacySitOffsets = false`, the scene's sit-height correction is
+  added, as upstream does.
+- **llGetLinkPrimitiveParams** on a sitter returns Halcyon's avatar values (`GetAvatarAsPrimParam`):
+  `PRIM_NAME` the legacy name, `PRIM_DESC` "", `PRIM_MATERIAL` `PRIM_MATERIAL_FLESH`, `PRIM_TEMP_ON_REZ` and
+  `PRIM_PHANTOM` `FALSE`, `PRIM_SIZE` llGetAgentSize, `PRIM_POSITION` the region position, `PRIM_POS_LOCAL` the
+  region position minus the root's, a default box for `PRIM_TYPE`, `<0,1,0>` for `PRIM_SLICE`, and empty
+  `PRIM_TEXT`, `PRIM_POINT_LIGHT` and `PRIM_FLEXIBLE`. `PRIM_SIT_TARGET` returns `[0, ZERO_VECTOR,
+  ZERO_ROTATION]`. The texture rules consume their face, return nothing and tell the owner "texture info cannot be
+  accessed for avatars."
+
+Where SL's documentation differs from Halcyon, SL is followed:
+- `PRIM_ROTATION` read from a sitter returns its region rotation, as the SL wiki documents. Halcyon returns
+  nothing, which shifts the rest of the list.
+- `PRIM_POSITION` / `PRIM_POS_LOCAL` further than 54 m is silently ignored, per the SL wiki. Halcyon applies it.
+
+Known limits, not changed:
+- `PRIM_ROT_LOCAL`, `PRIM_PHYSICS`, `PRIM_PHYSICS_SHAPE_TYPE` and `PRIM_OMEGA` read from a sitter return nothing,
+  as in Halcyon. SL's wiki does not document them for avatars.
+- `PRIM_POS_LOCAL` read from a sitter is Halcyon's region-frame difference, so it is not rotated into the root's
+  frame.
+- The prim setter still has no `PRIM_POS_LOCAL` or `PRIM_ROTATION` case. With `LINK_SET` those rules move the
+  sitters but stop the walk for the prims, as before.
+- llGetLinkPrimitiveParams still concatenates each link's full result in link order, and its `PRIM_LINK_TARGET`
+  is still consumed without re-targeting.
+
+Tests: `SeatedAvatarLinkTests`, on a 2-prim object with two avatars seated, the first on the child and the second
+on the root, added to the region in the opposite order. They cover links 3 and 4 in sit order and
+llGetNumberOfPrims = 4; llGetLinkKey and llGetLinkName; `PRIM_POS_LOCAL` + `PRIM_ROT_LOCAL` moving only that sitter,
+with another viewer receiving the terse update; `PRIM_ROTATION`'s formula; the 54 m limit; every avatar getter
+value above; `LINK_SET`, `LINK_ALL_OTHERS` (from the root and from a child), `LINK_ALL_CHILDREN`, `LINK_THIS`,
+`LINK_ROOT`, 0, 2, 3, 4 and 5 for a setter, a getter and llMessageLinked; a sitter standing up and a new one sitting;
+and an object with no sitters.
+
+No function index or declared return type changed, and the compiled script format and saved state are not
+affected. `SlConst` gains the SL `PRIM_*` constants these rules need, with the compiler table's values.
+
+What residents will notice: furniture, pose-ball and vehicle scripts can count, name and place their sitters with
+link numbers, `llGetNumberOfPrims` includes sitters, and `LINK_SET` prim-param calls also reach sitters.
