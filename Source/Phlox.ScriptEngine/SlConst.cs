@@ -71,8 +71,10 @@ namespace Phlox.ScriptEngine
 
         // ── ERR_* ─────────────────────────────────────────────────────────
         public const int ERR_GENERIC = -1;
+        public const int ERR_PARCEL_PERMISSIONS = -2;
         public const int ERR_MALFORMED_PARAMS = -3;
         public const int ERR_RUNTIME_PERMISSIONS = -4;
+        public const int ERR_THROTTLED = -5;
 
         // ── INVENTORY_* ───────────────────────────────────────────────────
         public const int INVENTORY_SCRIPT = 10;

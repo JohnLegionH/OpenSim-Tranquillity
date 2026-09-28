@@ -11121,27 +11121,143 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return new LSLList(result);
         }
 
-        public int llReturnObjectsByOwner(string owner, int scope)
+        // ── Object return (PHLOX-40, audit S2) ─────────────────────────────────
+        //
+        // SL: "Returns an integer that is the number of objects successfully returned to their owners or an ERR_* flag."
+        // Objects are RETURNED to their owners' Lost and Found, never deleted, through the core's own parcel-return call
+        // (SceneObjectGroup parcel autoreturn: AddReturn + DeRezObjects(null, ..., DeRezAction.Return)) - the pair Halcyon's
+        // Scene.returnObjects makes. YEngine's LSL_Api has neither function, so there is no LSL_Api call to match.
+
+        /// <summary>
+        /// Who granted PERMISSION_RETURN_OBJECTS. SL: "If the script is owned by an agent, PERMISSION_RETURN_OBJECTS may be
+        /// granted by the owner. If the script is owned by a group, this permission may be granted by an agent belonging
+        /// to the group's 'Owners' role." Any other granter, or none, is ERR_RUNTIME_PERMISSIONS. (Halcyon's
+        /// canUseReturnPermission answers ERR_PARCEL_PERMISSIONS for a group granter outside the Owners role; the rule is
+        /// about who may grant, so SL's runtime-permission code is used.)
+        /// </summary>
+        private int CheckReturnPermission(TaskInventoryItem item)
         {
-            // Faithful port from Halcyon, adapted for this tree
+            if ((item.PermsMask & PERMISSION_RETURN_OBJECTS) == 0 || item.PermsGranter.IsZero())
+                return ERR_RUNTIME_PERMISSIONS;
+            // The script's owner is its object's owner (a group for a deeded object), as the other permission checks
+            // here read it.
+            UUID scriptOwner = m_host.OwnerID;
+            bool groupOwned = !m_host.GroupID.IsZero() && scriptOwner == m_host.GroupID;
+            if (!groupOwned)
+                return item.PermsGranter == scriptOwner ? 0 : ERR_RUNTIME_PERMISSIONS;
+            return IsInGroupOwnersRole(item.PermsGranter, m_host.GroupID) ? 0 : ERR_RUNTIME_PERMISSIONS;
+        }
 
-            if (!UUID.TryParse(owner, out UUID targetAgentID))
-                return ERR_MALFORMED_PARAMS;
-            if (targetAgentID == UUID.Zero) return 0;
+        /// <summary>The agent holds the group's Owners role (GroupRecord.OwnerRoleID). No groups module: false.</summary>
+        private bool IsInGroupOwnersRole(UUID agent, UUID group)
+        {
+            IGroupsModule groups = World.RequestModuleInterface<IGroupsModule>();
+            GroupRecord rec = groups?.GetGroupRecord(group);
+            if (rec == null || rec.OwnerRoleID.IsZero()) return false;
+            // GroupRoleDataRequest(agent, group) lists the group's roles, not the agent's; the role-member pairs say who
+            // holds which. The granter's own client is the requester when it is here.
+            IClientAPI client = World.GetScenePresence(agent)?.ControllingClient;
+            List<GroupRoleMembersData> members = groups.GroupRoleMembersRequest(client, group);
+            return members != null && members.Any(m => m.MemberID == agent && m.RoleID == rec.OwnerRoleID);
+        }
 
-            UUID invItemID = InventorySelf();
-            if (invItemID == UUID.Zero) return ERR_GENERIC;
+        /// <summary>
+        /// The script owner may return objects over this parcel: it owns the parcel, or it is the estate owner or an
+        /// estate manager (SL lsl_definitions: "the script owner must own the parcel or be an estate manager/region
+        /// owner"; llReturnObjectsByID: "If the script is owned by an estate owner or manager, this function works for
+        /// objects located on any parcel in the region. Otherwise, the script can return objects located over land owned
+        /// by the owner of the script."). Halcyon never lets an EO/EM act on a parcel it does not own; SL is followed.
+        /// </summary>
+        private bool MayReturnOnParcel(ILandObject parcel)
+            => parcel != null && (parcel.LandData.OwnerID == m_host.OwnerID || IsEstateOwnerOrManager(m_host.OwnerID));
 
-            TaskInventoryItem item;
-            lock (m_host.TaskInventory)
+        private bool IsEstateOwnerOrManager(UUID id)
+            => !id.IsZero() && World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(id);
+
+        /// <summary>
+        /// SL: "Parcel owner, estate owner and estate managers can not have their objects returned by this method."
+        /// </summary>
+        private bool IsExemptFromReturn(SceneObjectGroup grp, ILandObject parcel)
+            => grp.OwnerID == parcel.LandData.OwnerID || IsEstateOwnerOrManager(grp.OwnerID);
+
+        /// <summary>
+        /// SL: "Throttled at max parcel land impact capacity region-wide per hour." Per region, over a rolling hour, the
+        /// prims returned may not go over the region's object capacity (MaxPrims, the most any parcel can hold).
+        /// </summary>
+        private sealed class ReturnThrottle
+        {
+            public readonly Queue<(DateTime At, int Prims)> Returned = new();
+            public int Total;
+        }
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Scene, ReturnThrottle> s_returnThrottles = new();
+        private static readonly TimeSpan ReturnThrottleWindow = TimeSpan.FromHours(1);
+
+        /// <summary>
+        /// Return <paramref name="groups"/> to their owners, as the core's parcel autoreturn does. Stops at the first
+        /// object the hourly throttle has no room for. The count of objects handed to the return, or ERR_THROTTLED when
+        /// the throttle stopped it before any, or ERR_GENERIC when the region has no inventory access module (the core's
+        /// deleter would remove the objects and never copy them, so nothing is touched).
+        /// </summary>
+        private int ReturnGroupsToOwners(List<SceneObjectGroup> groups, string reason)
+        {
+            if (groups.Count == 0) return 0;
+            if (World.RequestModuleInterface<IInventoryAccessModule>() == null)
             {
-                if (!m_host.TaskInventory.ContainsKey(invItemID)) return ERR_GENERIC;
-                item = m_host.TaskInventory[invItemID];
+                m_log.LogWarning("[PhloxAPI]: object return refused: the region has no inventory access module");
+                return ERR_GENERIC;
             }
 
-            // Check PERMISSION_RETURN_OBJECTS
-            if ((item.PermsMask & PERMISSION_RETURN_OBJECTS) == 0)
-                return ERR_RUNTIME_PERMISSIONS;
+            var ids = new List<uint>();
+            bool throttled = false;
+            ReturnThrottle throttle = s_returnThrottles.GetValue(World, _ => new ReturnThrottle());
+            lock (throttle)
+            {
+                DateTime now = DateTime.UtcNow;
+                while (throttle.Returned.Count > 0 && now - throttle.Returned.Peek().At >= ReturnThrottleWindow)
+                    throttle.Total -= throttle.Returned.Dequeue().Prims;
+                int capacity = World.RegionInfo.ObjectCapacity;
+                foreach (SceneObjectGroup grp in groups)
+                {
+                    if (throttle.Total + grp.PrimCount > capacity) { throttled = true; break; }
+                    throttle.Total += grp.PrimCount;
+                    throttle.Returned.Enqueue((now, grp.PrimCount));
+                    // Group-owned objects go back to the last owner (InventoryAccessModule.CreateItemForObject).
+                    World.AddReturn(grp.OwnerID == grp.GroupID ? grp.LastOwnerID : grp.OwnerID, grp.Name, grp.AbsolutePosition, reason);
+                    ids.Add(grp.RootPart.LocalId);
+                }
+            }
+            // One object per call, as Halcyon's by-ID return does (LandObject.cs:1425-1431): with the region's
+            // CoalesceMultipleObjectsToInventory on, one call would fold all of an owner's objects into one item.
+            foreach (uint id in ids)
+                World.DeRezObjects(null, new List<uint> { id }, UUID.Zero, DeRezAction.Return, UUID.Zero, false);
+            if (ids.Count == 0 && throttled) return ERR_THROTTLED;
+            return ids.Count;
+        }
+
+        /// <summary>The script's own item, or null.</summary>
+        private TaskInventoryItem ReturnScriptItem()
+        {
+            UUID invItemID = InventorySelf();
+            if (invItemID.IsZero()) return null;
+            lock (m_host.TaskInventory)
+                return m_host.TaskInventory.TryGetValue(invItemID, out TaskInventoryItem item) ? item : null;
+        }
+
+        public int llReturnObjectsByOwner(string owner, int scope)
+        {
+            // Order of the checks as Halcyon (LSLSystemAPI.cs:18348-18436).
+            if (!UUID.TryParse(owner, out UUID targetAgentID))
+                return ERR_MALFORMED_PARAMS;
+            if (targetAgentID.IsZero()) return 0;
+
+            TaskInventoryItem item = ReturnScriptItem();
+            if (item == null) return ERR_GENERIC;
+
+            int rc = CheckReturnPermission(item);
+            if (rc != 0) return rc;
+
+            if (scope != OBJECT_RETURN_PARCEL && scope != OBJECT_RETURN_PARCEL_OWNER && scope != OBJECT_RETURN_REGION)
+                return ERR_MALFORMED_PARAMS;
 
             try
             {
@@ -11149,50 +11265,55 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 ILandObject currentParcel = World.LandChannel.GetLandObject(currentPos.X, currentPos.Y);
                 if (currentParcel == null) return ERR_GENERIC;
 
-                // Collect objects to return
-                List<SceneObjectGroup> toReturn = new List<SceneObjectGroup>();
-                EntityBase[] entities = World.GetEntities();
-
-                foreach (EntityBase ent in entities)
+                // The parcels in scope, by local id.
+                var inScope = new HashSet<int>();
+                switch (scope)
                 {
-                    if (ent is SceneObjectGroup sog && !sog.IsDeleted && !sog.IsAttachment)
-                    {
-                        if (sog.OwnerID != targetAgentID) continue;
-                        if (sog == m_host.ParentGroup) continue; // don't return ourselves
-
-                        Vector3 objPos = sog.AbsolutePosition;
-                        ILandObject objParcel = World.LandChannel.GetLandObject(objPos.X, objPos.Y);
-                        if (objParcel == null) continue;
-
-                        switch (scope)
-                        {
-                            case OBJECT_RETURN_PARCEL:
-                                if (objParcel.LandData.LocalID != currentParcel.LandData.LocalID) continue;
-                                break;
-                            case OBJECT_RETURN_PARCEL_OWNER:
-                                if (objParcel.LandData.LocalID != currentParcel.LandData.LocalID) continue;
-                                if (objParcel.LandData.OwnerID != currentParcel.LandData.OwnerID) continue;
-                                break;
-                            case OBJECT_RETURN_REGION:
-                                // all parcels
-                                break;
-                            default:
-                                return ERR_MALFORMED_PARAMS;
-                        }
-                        toReturn.Add(sog);
-                    }
+                    case OBJECT_RETURN_PARCEL:
+                        // SL: "all objects on the same parcel as the script"; lsl_definitions: "Requires the script owner
+                        // to be an estate manager or the parcel owner."
+                        if (!MayReturnOnParcel(currentParcel)) return ERR_PARCEL_PERMISSIONS;
+                        inScope.Add(currentParcel.LandData.LocalID);
+                        break;
+                    case OBJECT_RETURN_PARCEL_OWNER:
+                        // SL: "over parcels owned by the owner of the script".
+                        foreach (ILandObject p in World.LandChannel.AllParcels())
+                            if (p.LandData.OwnerID == m_host.OwnerID) inScope.Add(p.LandData.LocalID);
+                        if (inScope.Count == 0) return ERR_PARCEL_PERMISSIONS;
+                        break;
+                    case OBJECT_RETURN_REGION:
+                        // lsl_definitions: "Only works if the script is owned by the estate owner or an estate manager."
+                        // (Halcyon walks every parcel and stops at the first the owner may not touch.)
+                        if (!IsEstateOwnerOrManager(m_host.OwnerID)) return ERR_PARCEL_PERMISSIONS;
+                        break;
                 }
 
-                if (toReturn.Count > 0)
+                // SL: "Parcel owner, estate owner and estate managers can not have their objects returned by this method."
+                if (IsEstateOwnerOrManager(targetAgentID)) return 0;
+
+                var toReturn = new List<SceneObjectGroup>();
+                foreach (EntityBase ent in World.GetEntities())
                 {
-                    foreach (SceneObjectGroup sog in toReturn)
-                    {
-                        try { World.DeleteSceneObject(sog, false); }
-                        catch { }
-                    }
-                    m_log.LogInformation("[PhloxAPI]: llReturnObjectsByOwner returned {0} objects owned by {1}", toReturn.Count, targetAgentID);
+                    if (ent is not SceneObjectGroup sog || sog.IsDeleted || sog.IsAttachment) continue;
+                    if (sog.OwnerID != targetAgentID) continue;
+
+                    Vector3 objPos = sog.AbsolutePosition;
+                    ILandObject objParcel = World.LandChannel.GetLandObject(objPos.X, objPos.Y);
+                    if (objParcel == null) continue;
+                    if (scope != OBJECT_RETURN_REGION && !inScope.Contains(objParcel.LandData.LocalID)) continue;
+
+                    if (IsExemptFromReturn(sog, objParcel)) continue;
+                    // SL: "Objects which are owned by the group the land is set to will not be returned by this method."
+                    if (!objParcel.LandData.GroupID.IsZero() && sog.OwnerID == objParcel.LandData.GroupID) continue;
+
+                    toReturn.Add(sog);
                 }
-                return toReturn.Count;
+
+                rc = ReturnGroupsToOwners(toReturn, "scripted parcel owner return");
+                if (rc > 0)
+                    m_log.LogInformation("[PhloxAPI]: llReturnObjectsByOwner returned {0} objects owned by {1}, granted by {2} for {3}",
+                        rc, targetAgentID, item.PermsGranter, m_host.OwnerID);
+                return rc;
             }
             catch (Exception e)
             {
@@ -11200,55 +11321,57 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 return ERR_GENERIC;
             }
         }
+
         public int llReturnObjectsByID(LSLList objects)
         {
-            // Faithful port from Halcyon, adapted for this tree
-
+            // Order of the checks as Halcyon (LSLSystemAPI.cs:18438-18497).
             try
             {
-                UUID invItemID = InventorySelf();
-                if (invItemID == UUID.Zero) return ERR_GENERIC;
+                TaskInventoryItem item = ReturnScriptItem();
+                if (item == null) return ERR_GENERIC;
 
-                TaskInventoryItem item;
-                lock (m_host.TaskInventory)
-                {
-                    if (!m_host.TaskInventory.ContainsKey(invItemID)) return ERR_GENERIC;
-                    item = m_host.TaskInventory[invItemID];
-                }
+                int rc = CheckReturnPermission(item);
+                if (rc != 0) return rc;
 
-                if ((item.PermsMask & PERMISSION_RETURN_OBJECTS) == 0)
-                    return ERR_RUNTIME_PERMISSIONS;
-
-                int count = 0;
+                // Every element must be a key before anything moves (Halcyon :18463-18465).
+                var ids = new List<UUID>();
                 for (int i = 0; i < objects.Length; i++)
                 {
                     if (!UUID.TryParse(objects.GetLSLStringItem(i), out UUID targetId))
                         return ERR_MALFORMED_PARAMS;
-                    if (targetId == UUID.Zero) continue;
+                    ids.Add(targetId);
+                }
 
+                var toReturn = new List<SceneObjectGroup>();
+                bool parcelRefused = false;
+                foreach (UUID targetId in ids)
+                {
+                    if (targetId.IsZero()) continue;
                     SceneObjectPart part = World.GetSceneObjectPart(targetId);
-                    if (part == null) continue;
-
-                    SceneObjectGroup sog = part.ParentGroup;
+                    SceneObjectGroup sog = part?.ParentGroup;
                     if (sog == null || sog.IsDeleted || sog.IsAttachment) continue;
+                    if (toReturn.Contains(sog)) continue;   // a linkset once, whichever of its keys is given
 
-                    // Check parcel permissions: can't return parcel owner's or estate manager's objects
                     Vector3 pos = sog.AbsolutePosition;
                     ILandObject parcel = World.LandChannel.GetLandObject(pos.X, pos.Y);
                     if (parcel == null) continue;
-                    if (sog.OwnerID == parcel.LandData.OwnerID) continue;
-                    if (World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(sog.OwnerID)) continue;
 
-                    try
-                    {
-                        World.DeleteSceneObject(sog, false);
-                        count++;
-                    }
-                    catch { }
+                    // SL: "... can not have their objects returned by this method, except when the object returns itself."
+                    if (sog != m_host.ParentGroup && IsExemptFromReturn(sog, parcel)) continue;
+                    if (!MayReturnOnParcel(parcel)) { parcelRefused = true; continue; }
+
+                    toReturn.Add(sog);
                 }
-                if (count > 0)
-                    m_log.LogInformation("[PhloxAPI]: llReturnObjectsByID returned {0} objects", count);
-                return count;
+
+                // Nothing returnable because of whose land the objects are on: SL's ERR_PARCEL_PERMISSIONS ("Permission
+                // lacked to perform task on specified parcel."). Halcyon adds that code into its count instead.
+                if (toReturn.Count == 0 && parcelRefused) return ERR_PARCEL_PERMISSIONS;
+
+                rc = ReturnGroupsToOwners(toReturn, "scripted parcel owner return by ID");
+                if (rc > 0)
+                    m_log.LogInformation("[PhloxAPI]: llReturnObjectsByID returned {0} objects, granted by {1} for {2}",
+                        rc, item.PermsGranter, m_host.OwnerID);
+                return rc;
             }
             catch (Exception e)
             {

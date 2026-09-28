@@ -3479,3 +3479,69 @@ No function index or declared return type changed, and the compiled script forma
 What residents will notice: llSetPos in a child prim moves it relative to the root, turning with the object, as in SL
 and as `PRIM_POSITION` already did; llSetPos on an object moves it at most 10 m per call; and on Legion a script gets 64
 listens, the same as under YEngine.
+
+## PHLOX-40 - llReturnObjectsByOwner and llReturnObjectsByID check the granter and return objects to their owners (audit S2)
+
+Before, both functions checked only that `PERMISSION_RETURN_OBJECTS` was set, never who granted it, and removed the
+objects with `DeleteSceneObject`: a script whose permission anyone had granted could wipe other residents' builds for
+good. llReturnObjectsByOwner also had no check that the script owner may act on the land at all.
+
+Now both share one permission check and one return path:
+- **Who granted it.** SL: "If the script is owned by an agent, PERMISSION_RETURN_OBJECTS may be granted by the owner. If
+  the script is owned by a group, this permission may be granted by an agent belonging to the group's 'Owners' role."
+  Any other granter, or none, is `ERR_RUNTIME_PERMISSIONS` and nothing moves. The script's owner is its object's owner.
+  For a group-owned object the granter must hold the group's `OwnerRoleID` (read through `IGroupsModule`'s role-member
+  list); with no groups module the grant is refused. Halcyon answers `ERR_PARCEL_PERMISSIONS` for a group granter
+  outside the Owners role; SL's runtime-permission code is used.
+- **Returned, never deleted.** Each object goes back to its owner (the last owner for a group-owned object) in Lost and
+  Found through the core's own parcel-return call: `Scene.AddReturn` + `Scene.DeRezObjects(null, ...,
+  DeRezAction.Return, ...)`, as the parcel auto-return does (`SceneObjectGroup.cs:2451-2453`) and as Halcyon's
+  `Scene.returnObjects` does. YEngine's LSL_Api has neither function, so there is no YEngine call to match. One object per
+  call, as Halcyon's by-ID return does, so `CoalesceMultipleObjectsToInventory` never folds several of a resident's
+  objects into one item. If the region has no inventory access module the call is `ERR_GENERIC` and nothing is touched
+  (the core's deleter would remove the objects and copy nothing).
+- **Where.** The script owner may act on a parcel it owns, or on any parcel when it is the estate owner or an estate
+  manager (lsl_definitions: "the script owner must own the parcel or be an estate manager/region owner"; SL
+  llReturnObjectsByID: "If the script is owned by an estate owner or manager, this function works for objects located on
+  any parcel in the region."). Halcyon never lets an EO/EM act on a parcel it does not own; SL is followed.
+  - `OBJECT_RETURN_PARCEL`: the script's parcel; not allowed there -> `ERR_PARCEL_PERMISSIONS`.
+  - `OBJECT_RETURN_PARCEL_OWNER`: every parcel the script owner owns ("over parcels owned by the owner of the script");
+    none -> `ERR_PARCEL_PERMISSIONS`.
+  - `OBJECT_RETURN_REGION`: every parcel, only for an estate owner or manager (lsl_definitions: "Only works if the script
+    is owned by the estate owner or an estate manager."), otherwise `ERR_PARCEL_PERMISSIONS`.
+  - llReturnObjectsByID skips objects on parcels the owner may not act on; if that leaves nothing, `ERR_PARCEL_PERMISSIONS`
+    (Halcyon adds the error code into its count).
+- **Never returned.** SL: "Parcel owner, estate owner and estate managers can not have their objects returned by this
+  method" (by ID: "except when the object returns itself"), and by owner: "Objects which are owned by the group the land
+  is set to will not be returned by this method." Attachments are never returned.
+- **Parameters, in Halcyon's order.** llReturnObjectsByOwner: a bad owner key is `ERR_MALFORMED_PARAMS` and `NULL_KEY`
+  returns 0, both before the permission; then the permission; then a scope other than 1, 2 or 4 is
+  `ERR_MALFORMED_PARAMS`. llReturnObjectsByID: the permission first, then any element that is not a key is
+  `ERR_MALFORMED_PARAMS` before anything moves; `NULL_KEY` and unknown keys are skipped; a child's key returns its
+  linkset, once.
+- **Throttle.** SL: "Throttled at max parcel land impact capacity region-wide per hour." Per region over a rolling hour
+  the prims returned may not go over the region's object capacity (`MaxPrims`); an object that would go over it stays,
+  and a call that returns nothing for that reason is `ERR_THROTTLED`. Halcyon has no throttle. Prim count stands in for
+  land impact, as OpenSim's parcel counts do.
+- **Return value.** The number of objects (linksets) handed to the return, or the ERR_* code.
+
+Known limits:
+- Not covered in-world: Legion Agent cannot answer a script's permission question, so the granted paths are covered by
+  the unit tests only. The probe (`phlox40-probe-auto-testisle.yaml`) covers the no-grant paths.
+- The return itself is the core's: the objects leave the scene at once and are copied to Lost and Found on the core's
+  deleter thread, as every parcel return is.
+
+Tests: `ReturnObjectsTests` (22): owner-granted by owner and by ID reach the owners' Lost and Found and leave the scene
+(a linkset as its own item); a grant from someone else, and from the target itself, is `ERR_RUNTIME_PERMISSIONS` with
+nothing moved; no permission for both; a group-owned script refuses a plain member's grant and takes an Owners-role
+member's; the three scopes over three parcels; region scope refused for a plain owner and working for an estate manager;
+the script on someone else's parcel refused, and working there for an estate manager; the parcel owner's, estate
+owner's, manager's and the land group's objects kept; attachments kept; a bad key, `NULL_KEY`, a bad scope, a non-key in
+the list; a mixed list (child key, duplicate, exempt, foreign parcel, `NULL_KEY`, unknown key); the object returning
+itself; the throttle; and no inventory access module.
+
+No function index or declared return type changed, and the compiled script format and saved state are not affected.
+
+What residents will notice: a return script works only when its owner (or, for a group-owned object, a group Owner)
+grants the permission, and only on the owner's land (anywhere for estate managers); returned objects arrive in their
+owners' Lost and Found instead of vanishing.
