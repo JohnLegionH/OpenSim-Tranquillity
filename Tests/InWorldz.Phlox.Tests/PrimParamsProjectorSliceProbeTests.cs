@@ -655,8 +655,7 @@ public class PrimParamsProjectorSliceProbeTests
         Near(0.3f, copy.Friction);
     }
 
-    [Fact(Skip = "Core defect: PrimitiveBaseShape.ReadReflectionProbe (PrimitiveBaseShape.cs:1354) clamps a saved ambiance " +
-                 "to 0..1 on load, while SL, the ExtraParams writer and both engines' PRIM_REFLECTION_PROBE use 0..100.")]
+    [Fact]
     public void AReflectionProbeAmbianceAboveOneSurvivesTheSavedForm()
     {
         using var h = new SchedulerHarness();

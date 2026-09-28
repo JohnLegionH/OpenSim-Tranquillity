@@ -3397,13 +3397,14 @@ Known limits:
   after PAY was set does not revert it.
 - The in-world probe cannot test a real payment (the money module is off on Legion) or an attachment; the unit tests
   cover both.
-- Core defect, for a separate core session: `PrimitiveBaseShape.ReadReflectionProbe` (PrimitiveBaseShape.cs:1354)
-  clamps a saved or received probe ambiance to 0-1, while SL ("Ranges from 0.0 to 100.0"), the ExtraParams writer and
-  both engines' `PRIM_REFLECTION_PROBE` use 0-100. A script's ambiance above 1.0 is live until the object is saved and
-  reloaded (a restart, take and rez, a region crossing), then reads 1.0. Found by this session's saved-form test;
-  `AReflectionProbeAmbianceAboveOneSurvivesTheSavedForm` is skipped, pointing here.
+- Core defect, **fixed in CORE-2**: `PrimitiveBaseShape.ReadReflectionProbe` clamped a saved or received probe
+  ambiance to 0-1, while SL ("Ranges from 0.0 to 100.0"), the ExtraParams writer and both engines'
+  `PRIM_REFLECTION_PROBE` use 0-100. A script's ambiance above 1.0 was live until the object was saved and reloaded
+  (a restart, take and rez, a region crossing), then read 1.0. The reader now clamps to 0-100: core commit
+  `89ad366d86` on `fix/reflection-probe-ambiance` (for NGC develop), cherry-picked to lane/phlox as `c0369ff1e2`.
+  `AReflectionProbeAmbianceAboveOneSurvivesTheSavedForm` is no longer skipped.
 
-Tests: `PrimParamsProjectorSliceProbeTests` (29, one skipped for the core defect above). Each rule set and read back on the root and a child against the
+Tests: `PrimParamsProjectorSliceProbeTests` (29; the one skipped for the core defect above runs since CORE-2). Each rule set and read back on the root and a child against the
 scene state; ranges and the error cases; slice against `PRIM_TYPE` on a box, sphere and torus, and a sculpt left
 alone; the projector and IW rules reading each other; the physics material on the part and on a physical prim's
 actor, llSetPhysicsMaterial's mask and its attachment rule; every rule's count in one long list; what YEngine's
