@@ -140,14 +140,14 @@ public class PrimParamsOmegaClickSitShapeTests
         Assert.NotEqual(PrimUpdateFlags.None, parts[0].UpdateFlag);
         Assert.NotEqual(PrimUpdateFlags.None, parts[1].UpdateFlag);
 
-        // Read back as Halcyon: the angular velocity over TWO_PI, then TWO_PI and 1.0.
+        // Read back in SL's form (PHLOX-36): the normalised axis, the spinrate times the axis's length, the gain.
         var r = Fields(h, "r=", 3);
         Near(new Vector3(0, 0, 1), r[0]);
         Near(TwoPi, r[1]);
         Near(1f, r[2]);
         var c = Fields(h, "c=", 3);
-        Near(new Vector3(0.5f, 0, 0), c[0]);
-        Near(TwoPi, c[1]);
+        Near(new Vector3(1, 0, 0), c[0]);
+        Near((float)Math.PI, c[1]);
         Near(1f, c[2]);
         Assert.DoesNotContain(Errors(h), m => m.Contains("error running rule"));
     }
@@ -169,7 +169,10 @@ public class PrimParamsOmegaClickSitShapeTests
         Near(new Vector3(0, 3, 0), parts[1].AngularVelocity);
         Near(parts[1].AngularVelocity, parts[0].AngularVelocity);
         Assert.Equal(Line(h, "own="), Line(h, "root="));
-        Near(new Vector3(0, 3f / TwoPi, 0), Fields(h, "own=", 3)[0]);
+        var own = Fields(h, "own=", 3);
+        Near(new Vector3(0, 1, 0), own[0]);
+        Near(3f, own[1]);
+        Near(0.5f, own[2]);
     }
 
     [Fact]
@@ -187,9 +190,14 @@ public class PrimParamsOmegaClickSitShapeTests
 
         Near(Vector3.Zero, parts[0].AngularVelocity);
         Near(Vector3.Zero, parts[1].AngularVelocity);
+        // The values read are the ones set (PHLOX-36), gain 0 included.
         var got = Fields(h, "got=", 6);
-        Near(Vector3.Zero, got[0]);
-        Near(Vector3.Zero, got[3]);
+        Near(new Vector3(0, 0, 1), got[0]);
+        Near(2f, got[1]);
+        Near(0f, got[2]);
+        Near(new Vector3(1, 0, 0), got[3]);
+        Near(1f, got[4]);
+        Near(0f, got[5]);
     }
 
     // ── PRIM_CLICK_ACTION ─────────────────────────────────────────────────────

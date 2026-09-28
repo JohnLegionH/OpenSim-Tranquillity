@@ -4538,6 +4538,146 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             }
         }
 
+        /// <summary>
+        /// llGetAlpha and IW_PRIM_ALPHA's read (Halcyon GetAlpha): a face's alpha; for ALL_SIDES the sum over the
+        /// faces (SL: llGetAlpha(ALL_SIDES) is the sum, so scripts compare it with llGetNumberOfSides()); 0 for a
+        /// face that does not exist.
+        /// </summary>
+        private static float GetAlpha(SceneObjectPart part, int face)
+        {
+            Primitive.TextureEntry tex = part?.Shape.Textures;
+            if (tex == null) return 0f;
+            int sides = part.GetNumberOfSides();
+            if (face == ALL_SIDES)
+            {
+                double sum = 0;
+                for (int i = 0; i < sides; i++)
+                    sum += tex.GetFace((uint)i).RGBA.A;
+                return (float)sum;
+            }
+            if (face >= 0 && face < sides)
+                return tex.GetFace((uint)face).RGBA.A;
+            return 0f;
+        }
+
+        /// <summary>A float list value: a float, or an integer taken as one (SL converts it).</summary>
+        private static bool PrimFloat(object value, out float f)
+        {
+            switch (value)
+            {
+                case float v: f = v; return true;
+                case double d: f = (float)d; return true;
+                case int i: f = i; return true;
+                default: f = 0f; return false;
+            }
+        }
+
+        /// <summary>A 0..1 colour component as the material's byte, rounded as OpenSim's LSL_Api does.</summary>
+        private static byte ColorByte(float c) => (byte)(255f * Math.Clamp(c, 0f, 1f) + 0.5f);
+
+        /// <summary>
+        /// A PRIM_NORMAL / PRIM_SPECULAR map: the texture of that name in this prim's inventory, else a key; an empty
+        /// string or NULL_KEY is no map. False for anything else (Halcyon InventoryKey then UUID.TryParse; OpenSim's
+        /// LSL_Api the same), and the rule then changes nothing.
+        /// </summary>
+        private bool PrimMaterialMap(object value, out UUID map)
+        {
+            map = UUID.Zero;
+            string name = value?.ToString();
+            if (value is Vector3 || value is Quaternion || value is int || value is float) return false;
+            if (string.IsNullOrEmpty(name)) return true;
+            map = OpenSim.Region.Framework.Scenes.Scripting.ScriptUtils.GetAssetIdFromItemName(m_host, name, (int)AssetType.Texture);
+            return map != UUID.Zero || UUID.TryParse(name, out map);
+        }
+
+        /// <summary>
+        /// PRIM_NORMAL, PRIM_SPECULAR and PRIM_ALPHA_MODE storage, the scene's own: each face's MaterialID names a
+        /// FaceMaterial kept by the region's IMaterialsModule, exactly as OpenSim's LSL_Api keeps them
+        /// (SetFaceMaterialNormalMap / SetFaceMaterialSpecMap / SetFaceMaterialAlphaMode), so a YEngine script and a
+        /// Phlox script see the same material. <paramref name="edit"/> changes a copy of the face's material, or a
+        /// new one when the face has none unless <paramref name="noneStaysNone"/> (a cleared map, or the default
+        /// blend mode, on a face with no material). The module gives an edited material its id by content, and none
+        /// for one that is all defaults. A face that does not exist changes nothing. With no materials module in the
+        /// region nothing changes, as in OpenSim.
+        /// </summary>
+        private void PrimEditFaceMaterials(SceneObjectPart part, int face, bool noneStaysNone, Action<FaceMaterial> edit)
+        {
+            IMaterialsModule materials = World?.RequestModuleInterface<IMaterialsModule>();
+            if (materials == null || part?.ParentGroup == null || part.ParentGroup.IsDeleted) return;
+
+            Primitive.TextureEntry tex = part.Shape.Textures;
+            int sides = part.GetNumberOfSides();
+            bool changed = false;
+
+            bool EditFace(int f)
+            {
+                Primitive.TextureEntryFace texface = tex.CreateFace((uint)f);
+                UUID oldID = texface.MaterialID;
+                if (oldID == UUID.Zero && noneStaysNone) return false;
+                FaceMaterial mat = (oldID == UUID.Zero ? null : materials.GetMaterialCopy(oldID)) ?? new FaceMaterial();
+                edit(mat);
+                UUID newID = materials.AddNewMaterial(mat);
+                if (newID == oldID)
+                {
+                    materials.RemoveMaterial(newID); // AddNewMaterial counted this face a second time
+                    return false;
+                }
+                texface.MaterialID = newID;
+                materials.RemoveMaterial(oldID);
+                return true;
+            }
+
+            if (face == ALL_SIDES)
+                for (int f = 0; f < sides; f++) changed |= EditFace(f);
+            else if (face >= 0 && face < sides)
+                changed = EditFace(face);
+            if (!changed) return;
+
+            part.Shape.TextureEntry = tex.GetBytes(9);
+            part.TriggerScriptChangedEvent(Changed.TEXTURE);
+            part.ScheduleFullUpdate();
+            part.ParentGroup.HasGroupChanged = true;
+        }
+
+        /// <summary>
+        /// One face's PRIM_NORMAL, PRIM_SPECULAR or PRIM_ALPHA_MODE read from the scene's material store, as OpenSim's
+        /// LSL_Api reads it (getLSLFaceMaterial). A face with no material reads SL's defaults: PRIM_NORMAL
+        /// [ NULL_KEY, &lt;1,1,0&gt;, ZERO_VECTOR, 0.0 ], PRIM_SPECULAR the same then &lt;1,1,1&gt;, 51, 0, and
+        /// PRIM_ALPHA_MODE [ PRIM_ALPHA_MODE_BLEND, 0 ].
+        /// </summary>
+        private void GetFaceMaterial(List<object> result, int code, SceneObjectPart part, Primitive.TextureEntryFace texface)
+        {
+            IMaterialsModule materials = World?.RequestModuleInterface<IMaterialsModule>();
+            UUID id = materials == null ? UUID.Zero : texface.MaterialID;
+            FaceMaterial mat = id == UUID.Zero ? null : materials.GetMaterial(id);
+            mat ??= new FaceMaterial();
+
+            switch (code)
+            {
+                case PRIM_NORMAL:
+                    result.Add(ConditionalTextureNameOrUUID(part, mat.NormalMapID));
+                    result.Add(new Vector3(mat.NormalRepeatX, mat.NormalRepeatY, 0f));
+                    result.Add(new Vector3(mat.NormalOffsetX, mat.NormalOffsetY, 0f));
+                    result.Add(mat.NormalRotation);
+                    break;
+                case PRIM_SPECULAR:
+                    const float scale = 1f / 255f;
+                    result.Add(ConditionalTextureNameOrUUID(part, mat.SpecularMapID));
+                    result.Add(new Vector3(mat.SpecularRepeatX, mat.SpecularRepeatY, 0f));
+                    result.Add(new Vector3(mat.SpecularOffsetX, mat.SpecularOffsetY, 0f));
+                    result.Add(mat.SpecularRotation);
+                    result.Add(new Vector3(mat.SpecularLightColorR * scale, mat.SpecularLightColorG * scale,
+                        mat.SpecularLightColorB * scale));
+                    result.Add((int)mat.SpecularLightExponent);
+                    result.Add((int)mat.EnvironmentIntensity);
+                    break;
+                case PRIM_ALPHA_MODE:
+                    result.Add((int)mat.DiffuseAlphaMode);
+                    result.Add((int)mat.AlphaMaskCutoff);
+                    break;
+            }
+        }
+
         /// <summary>Set texture repeat scale (U,V) on a face or all faces.</summary>
         private void ScaleTexture(SceneObjectPart part, float u, float v, int face)
         {
@@ -5098,19 +5238,90 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
                 case PRIM_ALPHA_MODE:
                 {
-                    if (idx + 1 >= data.Length) break;
-                    int face, mode;
-                    try { face = Convert.ToInt32(data[idx++]); } catch { idx++; break; }
-                    try { mode = Convert.ToInt32(data[idx++]); } catch { break; }
-                    // [ PRIM_ALPHA_MODE, face, alpha_mode, mask_cutoff ]: the walk reads all three; the cutoff is
-                    // not used yet. Known defect: this sets the faces' MediaFlags, not the material's alpha mode
-                    // (Docs/PhloxKnownDefects.md).
-                    Primitive.TextureEntry te = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
-                    if (face == ALL_SIDES) { for (int i = 0; i < 8; i++) te.CreateFace((uint)i).MediaFlags = (mode != 0); }
-                    else { try { te.CreateFace((uint)face).MediaFlags = (mode != 0); } catch { } }
-                    part.UpdateTextureEntry(te.GetBytes());
+                    // [ PRIM_ALPHA_MODE, integer face, integer alpha_mode, integer mask_cutoff ] (Halcyon
+                    // SetRenderMaterialAlphaModeData): the faces' material alpha mode and cutoff, both stored whatever
+                    // the mode. A mode outside PRIM_ALPHA_MODE_NONE..EMISSIVE or a cutoff outside 0-255 changes
+                    // nothing, as OpenSim's LSL_Api refuses them (neither Halcyon nor SL documents a range check).
+                    if (data[idx] is not int face || data[idx + 1] is not int mode || data[idx + 2] is not int cutoff) break;
+                    if (mode < PRIM_ALPHA_MODE_NONE || mode > PRIM_ALPHA_MODE_EMISSIVE || cutoff < 0 || cutoff > 255) break;
+                    PrimEditFaceMaterials(part, face, noneStaysNone: mode == PRIM_ALPHA_MODE_BLEND, mat =>
+                    {
+                        mat.DiffuseAlphaMode = (byte)mode;
+                        mat.AlphaMaskCutoff = (byte)cutoff;
+                    });
                     break;
                 }
+
+                case PRIM_NORMAL:
+                {
+                    // [ PRIM_NORMAL, integer face, string texture, vector repeats, vector offsets, float rot ]
+                    // (Halcyon SetRenderMaterialNormalData; SL's ranges: repeats -100..100, offsets 0..1). NULL_KEY
+                    // clears the map; on a face with no material it changes nothing.
+                    if (data[idx] is not int face || !PrimMaterialMap(data[idx + 1], out UUID map)
+                        || data[idx + 2] is not Vector3 repeats || data[idx + 3] is not Vector3 offsets
+                        || !PrimFloat(data[idx + 4], out float rot)) break;
+                    PrimEditFaceMaterials(part, face, noneStaysNone: map == UUID.Zero, mat =>
+                    {
+                        mat.NormalMapID = map;
+                        mat.NormalRepeatX = Math.Clamp(repeats.X, -100f, 100f);
+                        mat.NormalRepeatY = Math.Clamp(repeats.Y, -100f, 100f);
+                        mat.NormalOffsetX = Math.Clamp(offsets.X, 0f, 1f);
+                        mat.NormalOffsetY = Math.Clamp(offsets.Y, 0f, 1f);
+                        mat.NormalRotation = rot;
+                    });
+                    break;
+                }
+
+                case PRIM_SPECULAR:
+                {
+                    // [ PRIM_SPECULAR, integer face, string texture, vector repeats, vector offsets, float rot,
+                    //   vector color, integer glossiness, integer environment ] (Halcyon
+                    // SetRenderMaterialSpecularData; SL's ranges: repeats -100..100, offsets 0..1, color 0..1,
+                    // glossiness and environment 0-255). NULL_KEY clears the map; on a face with no material it
+                    // changes nothing.
+                    if (data[idx] is not int face || !PrimMaterialMap(data[idx + 1], out UUID map)
+                        || data[idx + 2] is not Vector3 repeats || data[idx + 3] is not Vector3 offsets
+                        || !PrimFloat(data[idx + 4], out float rot) || data[idx + 5] is not Vector3 color
+                        || data[idx + 6] is not int gloss || data[idx + 7] is not int env) break;
+                    PrimEditFaceMaterials(part, face, noneStaysNone: map == UUID.Zero, mat =>
+                    {
+                        mat.SpecularMapID = map;
+                        mat.SpecularRepeatX = Math.Clamp(repeats.X, -100f, 100f);
+                        mat.SpecularRepeatY = Math.Clamp(repeats.Y, -100f, 100f);
+                        mat.SpecularOffsetX = Math.Clamp(offsets.X, 0f, 1f);
+                        mat.SpecularOffsetY = Math.Clamp(offsets.Y, 0f, 1f);
+                        mat.SpecularRotation = rot;
+                        mat.SpecularLightColorR = ColorByte(color.X);
+                        mat.SpecularLightColorG = ColorByte(color.Y);
+                        mat.SpecularLightColorB = ColorByte(color.Z);
+                        mat.SpecularLightExponent = (byte)Math.Clamp(gloss, 0, 255);
+                        mat.EnvironmentIntensity = (byte)Math.Clamp(env, 0, 255);
+                    });
+                    break;
+                }
+
+                case PRIM_TEXGEN:
+                {
+                    // [ PRIM_TEXGEN, integer face, integer mode ] (Halcyon SetTexGen): PRIM_TEXGEN_PLANAR maps the
+                    // faces planar, any other mode default. SL: it "silently fails if its face value indicates a
+                    // face that does not exist." The scene's own helper, which OpenSim's LSL_Api uses too.
+                    if (data[idx] is not int face || data[idx + 1] is not int mode) break;
+                    OpenSim.Region.ScriptEngine.Shared.Api.LSL_Api.SetTexGen(part, face, mode);
+                    break;
+                }
+
+                case IW_PRIM_ALPHA:
+                {
+                    // [ IW_PRIM_ALPHA, integer face, float alpha ] (Halcyon: SetAlpha, as llSetAlpha).
+                    if (data[idx] is not int face || !PrimFloat(data[idx + 1], out float alpha)) break;
+                    SetAlpha(part, alpha, face);
+                    break;
+                }
+
+                case PRIM_CAST_SHADOWS:
+                    // [ PRIM_CAST_SHADOWS, integer boolean ]: a no-op in SL ("setting it will have no effect");
+                    // Halcyon has no rule.
+                    break;
 
                 case PRIM_TYPE:
                 {
@@ -5876,6 +6087,44 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         break;
                     }
 
+                    case PRIM_TEXGEN:
+                    case PRIM_NORMAL:
+                    case PRIM_SPECULAR:
+                    case PRIM_ALPHA_MODE:
+                    {
+                        // Per face, ALL_SIDES giving each face in turn; a face that does not exist gives nothing
+                        // (Halcyon GetPrimParams).
+                        if (idx >= data.Length) break;
+                        if (data[idx++] is not int face) break;
+                        int sides = part.GetNumberOfSides();
+                        Primitive.TextureEntry te = part.Shape.Textures;
+                        int first = face == ALL_SIDES ? 0 : face;
+                        int last = face == ALL_SIDES ? sides - 1 : face;
+                        if (te == null || first < 0 || last >= sides) break;
+                        for (int f = first; f <= last; f++)
+                        {
+                            Primitive.TextureEntryFace texface = te.GetFace((uint)f);
+                            if (code == PRIM_TEXGEN)
+                                result.Add((int)texface.TexMapType >> 1); // Halcyon: MappingType Default 0, Planar 2
+                            else
+                                GetFaceMaterial(result, code, part, texface);
+                        }
+                        break;
+                    }
+
+                    case IW_PRIM_ALPHA:
+                    {
+                        // [ float alpha ] (Halcyon: GetAlpha, as llGetAlpha, so ALL_SIDES is the faces' sum).
+                        if (idx >= data.Length) break;
+                        if (data[idx++] is not int face) break;
+                        result.Add(GetAlpha(part, face));
+                        break;
+                    }
+
+                    case PRIM_CAST_SHADOWS:
+                        result.Add(0); // SL: it "will always return 0"; Halcyon has no rule
+                        break;
+
                     case PRIM_MATERIAL:
                         result.Add((int)part.Material);
                         break;
@@ -5916,13 +6165,12 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
                     case PRIM_OMEGA:
                     {
-                        // Halcyon: the prim keeps only its angular velocity (axis * spinrate), so it returns that
-                        // over TWO_PI, then TWO_PI and a gain of 1.0 - exact for the common spinrate of TWO_PI. SL
-                        // returns the normalised axis, spinrate times the axis's length, and the gain.
-                        const float TwoPi = 6.28318548f; // SL's TWO_PI
-                        result.Add(part.AngularVelocity / TwoPi);
-                        result.Add(TwoPi);
-                        result.Add(1f);
+                        // SL's form (John's ruling, 2026-09-27): "the vector is normalized, and the spinrate is
+                        // multiplied by the magnitude of the original vector", then the gain (PrimOmega).
+                        PrimOmega(part, out Vector3 axis, out float spinrate, out float gain);
+                        result.Add(axis);
+                        result.Add(spinrate);
+                        result.Add(gain);
                         break;
                     }
 
@@ -6193,28 +6441,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             SetAlpha(m_host, alpha, face);
         }
 
-        public float llGetAlpha(int face)
-        {
-            if (m_host == null) return 0f;
-            Primitive.TextureEntry tex = m_host.Shape.Textures;
-            if (tex == null) return 0f;
-            int sides = m_host.GetNumberOfSides();
-
-            if (face == ALL_SIDES)
-            {
-                // LSL spec: llGetAlpha(ALL_SIDES) returns the SUM of per-face alphas
-                // (not the mean). Scripts rely on this to detect "all faces opaque"
-                // via  llGetAlpha(ALL_SIDES) == (float)llGetNumberOfSides().
-                if (sides <= 0) return 0f;
-                double sum = 0;
-                for (int i = 0; i < sides; i++)
-                    sum += tex.GetFace((uint)i).RGBA.A;
-                return (float)sum;
-            }
-            if (face >= 0 && face < sides)
-                return tex.GetFace((uint)face).RGBA.A;
-            return 0f;
-        }
+        public float llGetAlpha(int face) => GetAlpha(m_host, face);
 
         public void llSetTexture(string texture, int face)
         {
@@ -6234,6 +6461,16 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (effectiveFace >= 0 && effectiveFace < sides)
                 assetID = tex.GetFace((uint)effectiveFace).TextureID;
 
+            return ConditionalTextureNameOrUUID(m_host, assetID);
+        }
+
+        /// <summary>
+        /// A texture as a script may see it (Halcyon ConditionalTextureNameOrUUID, used by llGetTexture and the
+        /// PRIM_NORMAL / PRIM_SPECULAR reads): its name when it is in this prim's inventory; its key on a full-perm
+        /// object; otherwise NULL_KEY.
+        /// </summary>
+        private string ConditionalTextureNameOrUUID(SceneObjectPart part, UUID assetID)
+        {
             if (assetID == UUID.Zero) return UUID.Zero.ToString();
 
             // If the texture is in the prim's inventory, return the inventory name.
@@ -6241,7 +6478,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (!string.IsNullOrEmpty(name)) return name;
 
             // Not in prim inventory — only reveal the UUID on full-perm objects.
-            if (IsFullPerm(m_host.OwnerMask))
+            if (IsFullPerm(part.OwnerMask))
                 return assetID.ToString();
 
             return UUID.Zero.ToString();
@@ -7305,6 +7542,40 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (actor != null && actor.IsPhysical) omega = axis * (spinrate * gain);
             else omega = gain == 0f ? Vector3.Zero : axis * spinrate;
             part.UpdateAngularVelocity(omega);
+            s_primOmegas.AddOrUpdate(part, new PrimOmegaSet(axis, spinrate, gain, part.AngularVelocity));
+        }
+
+        /// <summary>The axis, spinrate and gain PrimTargetOmega last set on a prim, and the spin that gave it.</summary>
+        private sealed record PrimOmegaSet(Vector3 Axis, float Spinrate, float Gain, Vector3 Omega);
+
+        /// <summary>
+        /// What PrimTargetOmega last set on each prim, for PRIM_OMEGA's read. Not saved: the scene keeps only the
+        /// angular velocity. Held weakly, so a deleted prim's entry goes with it.
+        /// </summary>
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SceneObjectPart, PrimOmegaSet> s_primOmegas = new();
+
+        /// <summary>
+        /// PRIM_OMEGA's read in SL's form: "the vector is normalized, and the spinrate is multiplied by the magnitude
+        /// of the original vector", then the gain. While the prim still spins as a PRIM_OMEGA, llTargetOmega or
+        /// iwLinkTargetOmega in Phlox left it, that is what was set. Otherwise (a YEngine script or the physics
+        /// engine changed the spin since, phantom stopped it, or the region restarted) the scene has only the angular
+        /// velocity: its direction, its rate, and a gain of 1.0, or ZERO_VECTOR, 0.0, 0.0 for no spin.
+        /// </summary>
+        private static void PrimOmega(SceneObjectPart part, out Vector3 axis, out float spinrate, out float gain)
+        {
+            Vector3 omega = part.AngularVelocity;
+            if (s_primOmegas.TryGetValue(part, out PrimOmegaSet set) && set.Omega == omega)
+            {
+                float length = set.Axis.Length();
+                axis = length > 0f ? set.Axis / length : Vector3.Zero;
+                spinrate = set.Spinrate * length;
+                gain = set.Gain;
+                return;
+            }
+            float rate = omega.Length();
+            axis = rate > 0f ? omega / rate : Vector3.Zero;
+            spinrate = rate;
+            gain = rate > 0f ? 1f : 0f;
         }
 
         public void iwLinkTargetOmega(int linknumber, Vector3 axis, float spinrate, float gain)
@@ -12231,7 +12502,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 "simulator_hostname"   => World.RegionInfo.ExternalHostName ?? string.Empty,
                 "region_max_prims"     => World.RegionInfo.ObjectCapacity.ToString(),
                 "region_object_bonus"  => ((float)World.RegionInfo.RegionSettings.ObjectBonus).ToString(),
-                _                      => string.Empty
+                "grid"                 => OpenSim.Region.ScriptEngine.Shared.Api.LSL_Api.EnvGridName(World), // YEngine's own answer
+                _                     => string.Empty
             };
         }
         public float llGetSimStats(int statType)

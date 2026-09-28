@@ -3209,3 +3209,73 @@ What residents will notice: spinning prims set through prim-params lists spin, a
 instead of turning the whole object; furniture that sets per-prim sit targets and click actions in one list works;
 builders can make child prims non-colliding with `PRIM_PHYSICS_SHAPE_NONE`; and attachments read their offset and the
 wearer's facing through llGetLocalPos and llGetRot.
+
+## PHLOX-36 - PRIM_TEXGEN, PRIM_SPECULAR, PRIM_NORMAL, IW_PRIM_ALPHA and PRIM_CAST_SHADOWS in prim-params lists; PRIM_ALPHA_MODE sets the material; PRIM_OMEGA reads back SL's form; llGetEnv("grid")
+
+Before, `PRIM_TEXGEN`, `PRIM_SPECULAR`, `PRIM_NORMAL`, `IW_PRIM_ALPHA` and `PRIM_CAST_SHADOWS` were skipped on both
+sides; `PRIM_ALPHA_MODE` set the faces' `MediaFlags` (the media flag, nothing to do with alpha) and read nothing;
+`PRIM_OMEGA` read back Halcyon's approximation; and `llGetEnv("grid")` returned "" in both engines.
+
+Now:
+- **`PRIM_TEXGEN`** follows Halcyon's `SetTexGen`, through the scene helper OpenSim's LSL_Api uses
+  (`LSL_Api.SetTexGen`): one face or `ALL_SIDES`, `PRIM_TEXGEN_PLANAR` planar and any other mode default; a face that
+  does not exist changes nothing (SL: it "silently fails"). Read: per face, `ALL_SIDES` giving each face.
+- **`PRIM_NORMAL`, `PRIM_SPECULAR` and `PRIM_ALPHA_MODE`** follow Halcyon's `SetRenderMaterial*Data` for what they
+  set, stored the scene's way: each face's `MaterialID` names a `FaceMaterial` held by the region's `IMaterialsModule`,
+  exactly as OpenSim's LSL_Api stores them (`SetFaceMaterialNormalMap`, `SetFaceMaterialSpecMap`,
+  `SetFaceMaterialAlphaMode`) and reads them (`getLSLFaceMaterial`). A YEngine script and a Phlox script therefore see
+  and change the same material, and equal edits give the same material id. A map is a texture in the prim's inventory
+  by name or a key; `NULL_KEY` clears it (SL). Repeats are held to -100..100, offsets to 0..1, glossiness and
+  environment to 0-255 (SL's ranges; Halcyon has none). A face with no material reads SL's defaults. The map reads back
+  as Halcyon's (and llGetTexture's) conditional name-or-key: its name when it is in the prim's inventory, its key on a
+  full-perm object, `NULL_KEY` otherwise.
+- **`PRIM_ALPHA_MODE`** no longer touches `MediaFlags` (no other Phlox path wrote them for alpha). Mode and cutoff are
+  stored whatever the mode (Halcyon; SL says the cutoff is "not used or stored unless the mode is set to
+  `PRIM_ALPHA_MODE_MASK`"). A mode outside 0-3 or a cutoff outside 0-255 changes nothing, as OpenSim's LSL_Api refuses
+  them.
+- **`IW_PRIM_ALPHA`** follows Halcyon: `SetAlpha` and `GetAlpha`, shared with llSetAlpha / llSetLinkAlpha and
+  llGetAlpha, so `ALL_SIDES` reads the faces' sum and a face that does not exist reads 0.0.
+- **`PRIM_CAST_SHADOWS`**: Halcyon has no rule, so SL: "It will always return 0 and setting it will have no effect."
+- **`PRIM_OMEGA` read** is SL's form (John's ruling, 2026-09-27): "the vector is normalized, and the spinrate is
+  multiplied by the magnitude of the original vector", then the gain. `PrimTargetOmega`, shared with llTargetOmega and
+  iwLinkTargetOmega, remembers what it set, so the values read back are the ones set, gain 0 included.
+- **`llGetEnv("grid")`** returns the grid name osGetGridName reads (`Scene.SceneGridInfo.GridName`, from `GridName`
+  or `gridname` in `[Const]`, `[GridInfo]` or `[SimulatorFeatures]`), with no OSSL permission check. Both engines
+  answer through one helper, `LSL_Api.EnvGridName`; the change to NGC's shared LSL_Api is that helper and the `grid`
+  case in its llGetEnv, so YEngine scripts get the same answer. A grid with no name configured returns "", not
+  GridInfo's stand-in "Another bad configured grid".
+
+Known limits, not changed here:
+- An active sit target at `ZERO_VECTOR` and `ZERO_ROTATION` set through `PRIM_SIT_TARGET` still reads back as
+  inactive (PHLOX-35). Left as is by John's ruling (2026-09-27): the fix needs a non-persisted core flag that YEngine
+  would not clear.
+- What `PRIM_OMEGA` set is not saved: after a region restart, or once a YEngine script, the physics engine or turning
+  phantom changes the spin, the read is taken from the prim's angular velocity (its direction, its rate and a gain of
+  1.0, or `ZERO_VECTOR`, 0.0, 0.0 for no spin). A physical root's angular velocity is the physics engine's, so its read
+  is that once physics has moved it.
+- A normal or specular map in the prim's inventory reads back by name in Phlox (Halcyon) and by key in YEngine; the
+  material itself is the same.
+- An unknown texture name, a value of the wrong type or a face that does not exist gives no script error; SL shouts
+  on `DEBUG_CHANNEL` for the texture. The rule changes nothing and the rules after it apply.
+- A texgen, material or alpha read for a face that does not exist returns nothing (Halcyon); SL documents
+  `[ PRIM_TEXGEN_DEFAULT ]` for `PRIM_TEXGEN`.
+- With no materials module in the region (`[Materials] enable_materials = false`), `PRIM_NORMAL`, `PRIM_SPECULAR` and
+  `PRIM_ALPHA_MODE` change nothing and read SL's defaults, as in OpenSim.
+
+Tests: `PrimParamsSurfaceMaterialTests`. Each rule set on one face and on `ALL_SIDES` and read back against the scene
+(`TexMapType`, the face colour, the `FaceMaterial` in the materials module); faces that do not exist, values of the wrong
+type and out-of-range values changing nothing while the rules after them apply; SL's no-material defaults; `NULL_KEY`
+clearing a map and the material with it; an inventory texture by name; SL's ranges held; normal, specular and alpha mode
+sharing one face material; a YEngine LSL_Api and a Phlox script writing and reading the same materials, equal edits
+giving the same material id; `IW_PRIM_ALPHA` against llSetAlpha and llGetAlpha; `PRIM_CAST_SHADOWS` changing nothing
+and reading 0; `PRIM_OMEGA` read in SL's form after the rule and after llTargetOmega, gain 0 included, and from a spin
+something else set; and one list setting and reading every rule of the group. `GetEnvProductKeysTests` gains "grid",
+configured, unconfigured and with no grid info, both engines compared. The PHLOX-35 omega tests now expect SL's form.
+
+No function index or declared return type changed, and the compiled script format and saved state are not affected.
+`SlConst` gains `PRIM_ALPHA_MODE_NONE`, `_BLEND`, `_MASK`, `_EMISSIVE`, `PRIM_TEXGEN_DEFAULT` and `_PLANAR`, with the
+compiler table's values.
+
+What residents will notice: normal and specular maps and alpha masking set by scripts show in viewers and match what
+YEngine scripts set; planar texture mapping works from prim-params lists; spinning prims report the spin they were
+given; and scripts can read the grid's name without OSSL permissions.

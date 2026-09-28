@@ -48,4 +48,34 @@ public class GetEnvProductKeysTests
             Assert.Contains(expected, h.Said);
         }
     }
+
+    /// <summary>
+    /// PHLOX-36. llGetEnv("grid"): the grid name osGetGridName reads (Scene.SceneGridInfo.GridName), the same in both
+    /// engines through LSL_Api.EnvGridName. A grid with no name configured, and a scene with no grid info, answer "",
+    /// as an unknown key does.
+    /// </summary>
+    [Theory]
+    [InlineData("configured", "Legion Test Grid")]
+    [InlineData("unconfigured", "")]
+    [InlineData("no grid info", "")]
+    public void GridAnswersWhatYEngineAnswers(string grid, string expected)
+    {
+        using var h = new SchedulerHarness(withYEngine: true);
+        // The test scene's grid info is built from a config with no grid name, so it holds GridInfo's stand-in; a
+        // configured name reaches it through the GridName setter, as SimulatorFeaturesModule sets it from config.
+        Assert.Equal("Another bad configured grid", h.Scene.SceneGridInfo.GridName);
+        if (grid == "configured") h.Scene.SceneGridInfo.GridName = "Legion Test Grid";
+        if (grid == "no grid info") h.Scene.SceneGridInfo = null;
+
+        var item = TaskInventoryHelpers.AddScript(h.Scene.AssetService, h.Prim, UUID.Random(), UUID.Random(), "yengine-api", "default { }");
+        var yengine = new LSL_Api();
+        yengine.Initialize(h.YEngine, h.Prim, item);
+
+        h.RezScript("default { state_entry() { llSay(0, \"grid=\" + llGetEnv(\"grid\") + \"|unknown=\" + llGetEnv(\"no such key\")); } }");
+        h.Pump();
+        _out.WriteLine(string.Join(" | ", h.Said));
+
+        Assert.Equal(expected, (string)yengine.llGetEnv("grid"));
+        Assert.Contains("grid=" + expected + "|unknown=", h.Said);
+    }
 }

@@ -183,6 +183,10 @@ namespace Phlox.ScriptEngine
         // ── PRIM_* ────────────────────────────────────────────────────────
         public const int PRIM_ALLOW_UNSIT = 39;
         public const int PRIM_ALPHA_MODE = 38;
+        public const int PRIM_ALPHA_MODE_BLEND = 1;
+        public const int PRIM_ALPHA_MODE_EMISSIVE = 3;
+        public const int PRIM_ALPHA_MODE_MASK = 2;
+        public const int PRIM_ALPHA_MODE_NONE = 0;
         public const int PRIM_BUMP_SHINY = 19;
         public const int PRIM_CAST_SHADOWS = 24;
         public const int PRIM_CLICK_ACTION = 43;
@@ -243,6 +247,8 @@ namespace Phlox.ScriptEngine
         public const int PRIM_SPECULAR = 36;
         public const int PRIM_TEMP_ON_REZ = 4;
         public const int PRIM_TEXGEN = 22;
+        public const int PRIM_TEXGEN_DEFAULT = 0;
+        public const int PRIM_TEXGEN_PLANAR = 1;
         public const int PRIM_TEXT = 26;
         public const int PRIM_TEXTURE = 17;
         public const int PRIM_TYPE = 9;
