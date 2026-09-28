@@ -30,7 +30,11 @@ namespace Phlox.ScriptEngine
         // ── CHARACTER_* ───────────────────────────────────────────────────
         public const int CHARACTER_DESIRED_SPEED = 1;
 
-        // ── CONTENT_* ─────────────────────────────────────────────────────
+        // ── CLICK_ACTION_* ────────────────────────────────────────────────
+        public const int CLICK_ACTION_NONE = 0;
+        public const int CLICK_ACTION_PAY = 3;
+
+        // ── CONTENT_*─────────────────────────────────────────────────────
         public const int CONTENT_TYPE_ATOM = 4;
         public const int CONTENT_TYPE_FORM = 7;
         public const int CONTENT_TYPE_HTML = 1;
@@ -42,6 +46,12 @@ namespace Phlox.ScriptEngine
 
         // ── DAMAGE_TYPE_* ─────────────────────────────────────────────────
         public const int DAMAGE_TYPE_GENERIC = 0;
+
+        // ── llSetPhysicsMaterial mask: DENSITY, FRICTION, RESTITUTION, GRAVITY_MULTIPLIER ──
+        public const int DENSITY = 1;
+        public const int FRICTION = 2;
+        public const int GRAVITY_MULTIPLIER = 8;
+        public const int RESTITUTION = 4;
 
         // ── DATA_* ────────────────────────────────────────────────────────
         public const int DATA_BORN = 3;

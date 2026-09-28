@@ -3341,3 +3341,80 @@ No function index or declared return type changed, and the compiled script forma
 What residents will notice: furniture and vehicles that set sit flags, scripted-only seats and collision sounds in
 prim-params lists work and read back what they set, in both engines; empty-string collision sounds are silent; and
 scripts that spin a link that turns out to be a seated avatar get SL's error.
+
+## PHLOX-38 - PRIM_PROJECTOR, the IW_PRIM_PROJECTOR rules, PRIM_REFLECTION_PROBE and PRIM_SLICE in prim-params lists; PRIM_PHYSICS_MATERIAL applied; CLICK_ACTION_PAY without a money event; llGetRootRotation on an attachment
+
+Before, `PRIM_SLICE`, `PRIM_REFLECTION_PROBE`, `IW_PRIM_PROJECTOR` and its five single-value rules were skipped on both
+sides and `PRIM_PROJECTOR` could not be set; OpenSim's `PRIM_PHYSICS_MATERIAL` was read by its count and skipped with
+a warning (PHLOX-33); llSetPhysicsMaterial read its mask with the bits in the wrong order (1 set the gravity
+multiplier, 8 the density); `CLICK_ACTION_PAY` stayed on a prim with no money event; and llGetRootRotation in an
+attachment returned the object's rotation. With this change no prim-params rule is skipped any more.
+
+Each rule uses state the scene already keeps, so YEngine and Phlox scripts see one value and it saves as the scene
+saves it:
+- **`PRIM_SLICE`** (SL: "a shape attribute, equivalent to advanced_cut") goes through the scene's own
+  `SceneObjectPart.UpdateSlice`, as OpenSim's LSL_Api does: the slice on a box, cylinder or prism (the path cut
+  `PRIM_TYPE` resets - SL: "A sliced prim will become unsliced"), the dimple on a sphere and the profile cut on a torus,
+  tube or ring, which `PRIM_TYPE` reads back. Begin is kept at least 0.02 below end. A sculpt or mesh is left alone
+  and reads `<0, 1, 0>`. Halcyon acts on box, cylinder and prism only; John's ruling (2026-09-28): SL/OpenSim on every
+  shape.
+- **`PRIM_PROJECTOR`** (SL's `[texture, fov, focus, ambiance]`; Halcyon has no rule) with OpenSim's meaning for what
+  SL leaves open: a texture key or the name of a texture in the script's prim; "" or `NULL_KEY` turns projection off;
+  fov held to 0-3, focus to -20-20, ambiance to 0-1. A name that is not a texture in the prim shouts
+  "Could not find texture '<name>'" (SL's wording is not documented) and changes nothing. It is read back as the same
+  four values, `NULL_KEY, 0, 0, 0` when the prim is not a projector. SL documents the rule as write only; the read is
+  John's ruling (2026-09-28) and matches OpenSim.
+- **`IW_PRIM_PROJECTOR`** and **`IW_PRIM_PROJECTOR_ENABLED` / `_TEXTURE` / `_FOV` / `_FOCUS` / `_AMBIENCE`** follow
+  Halcyon: only 1 enables; the values are kept as given; `NULL_KEY` or a name not in the prim shouts Halcyon's
+  "The second argument of IW_PRIM_PROJECTOR must not be NULL_KEY." / "The argument of IW_PRIM_PROJECTOR_TEXTURE must
+  not be NULL_KEY." and changes nothing. They share the shape's `Projection*` fields with `PRIM_PROJECTOR`, so any one
+  of them reads what another set.
+- **`PRIM_REFLECTION_PROBE`** (SL): the shape's `ReflectionProbe`, as OpenSim's LSL_Api keeps it; ambiance held to
+  0-100 and clip distance to 0-1024 (SL's ranges); FALSE removes the probe. Read: SL's `[integer, float, float,
+  integer]`, `0, 0.0, 0.0, 0` for none (OpenSim returns the flags as a float).
+- **`PRIM_PHYSICS_MATERIAL`** (OpenSim: `[mask, density, friction, restitution, gravity_multiplier]`) and
+  llSetPhysicsMaterial share one helper through the scene's `UpdateExtraPhysics`: the part's `Density`, `Friction`,
+  `Restitution` and `GravityModifier`, saved and passed to the physics actor. The mask uses SL's bits (`DENSITY` 1,
+  `FRICTION` 2, `RESTITUTION` 4, `GRAVITY_MULTIPLIER` 8). A value outside SL's range changes nothing (the scene's
+  setters). There is no read, as in OpenSim. llSetPhysicsMaterial in an attachment does nothing (SL: "silently fails if
+  called from an attachment").
+- **`CLICK_ACTION_PAY`**, by llSetClickAction or `PRIM_CLICK_ACTION`: SL "If llSetClickAction is CLICK_ACTION_PAY then
+  you must have a money event, or it will revert to CLICK_ACTION_NONE". Halcyon keeps PAY. A child with no money event
+  counts the root's, since a payment on such a child reaches the root's money event (John's ruling, 2026-09-28). The
+  check is the prim's scripts' events in their current state, when the action is set.
+- **llGetRootRotation** is the root's `PRIM_ROTATION` read (SL: "In an attached object, returns region rotation of
+  avatar NOT of the object's root prim"; Halcyon): the wearer's rotation, the camera's in mouselook. A seated wearer's
+  is its region rotation (SL: "Returns an accurate facing for Avatars seated"), which also changes llGetRot and
+  `PRIM_ROTATION` on an attachment's root for a seated wearer (John's ruling, 2026-09-28).
+
+Known limits:
+- The scene saves the projection fields only while projection is on, so an IW single-value rule set on a projector
+  that is off is lost on a restart.
+- The IW_PRIM_PROJECTOR and missing-texture errors are shouted once for each prim the rule reaches (Halcyon: once per
+  call).
+- YEngine's llSetClickAction does not revert `CLICK_ACTION_PAY` (shared LSL_Api, not changed). A money event removed
+  after PAY was set does not revert it.
+- The in-world probe cannot test a real payment (the money module is off on Legion) or an attachment; the unit tests
+  cover both.
+- Core defect, for a separate core session: `PrimitiveBaseShape.ReadReflectionProbe` (PrimitiveBaseShape.cs:1354)
+  clamps a saved or received probe ambiance to 0-1, while SL ("Ranges from 0.0 to 100.0"), the ExtraParams writer and
+  both engines' `PRIM_REFLECTION_PROBE` use 0-100. A script's ambiance above 1.0 is live until the object is saved and
+  reloaded (a restart, take and rez, a region crossing), then reads 1.0. Found by this session's saved-form test;
+  `AReflectionProbeAmbianceAboveOneSurvivesTheSavedForm` is skipped, pointing here.
+
+Tests: `PrimParamsProjectorSliceProbeTests` (29, one skipped for the core defect above). Each rule set and read back on the root and a child against the
+scene state; ranges and the error cases; slice against `PRIM_TYPE` on a box, sphere and torus, and a sculpt left
+alone; the projector and IW rules reading each other; the physics material on the part and on a physical prim's
+actor, llSetPhysicsMaterial's mask and its attachment rule; every rule's count in one long list; what YEngine's
+LSL_Api sets read by Phlox and the other way round; the saved form; PAY with and without a money event and on a child;
+llGetRootRotation on a rezzed object, an attachment and a seated wearer. PHLOX-33's OpenSim-rule test now checks that
+`PRIM_PHYSICS_MATERIAL` is applied and not logged.
+
+No function index or declared return type changed, and the compiled script format and saved state are not affected.
+`SlConst` gains `CLICK_ACTION_NONE`, `CLICK_ACTION_PAY`, `DENSITY`, `FRICTION`, `RESTITUTION` and
+`GRAVITY_MULTIPLIER`, with the compiler table's values.
+
+What residents will notice: projectors and reflection probes set from scripts work and read back, in both engines;
+IW_PRIM_PROJECTOR scripts from InWorldz work; slices set from scripts show; physics materials in prim-params lists and
+llSetPhysicsMaterial's mask do what the script asks; a pay click action without a money event falls back to none, as
+in SL; and attachments reading llGetRootRotation get the wearer's facing.

@@ -286,7 +286,7 @@ public class PrimParamsTextPositionRotationTests
 
     [Theory]
     [MemberData(nameof(OpenSimRules))]
-    public void AnOpenSimRuleIsSkippedByOpenSimsCountWithoutAnErrorAndTheRulesAfterItApply(string name, int count)
+    public void AnOpenSimRuleIsReadByOpenSimsCountWithoutAnErrorAndTheRulesAfterItApply(string name, int count)
     {
         using var h = new SchedulerHarness();
         var prim = h.Prim;
@@ -306,8 +306,8 @@ public class PrimParamsTextPositionRotationTests
         Assert.Equal("after too", prim.Text);
         Assert.Equal("after|before", Line(h, "got="));
         Assert.DoesNotContain(Errors(h), m => m.Contains("error running rule"));
-        // Logged once for the script: the record that gates the warning holds the rule.
-        Assert.Contains(code, UnimplementedRulesLogged(h, item));
+        // PHLOX-38: applied (PRIM_PHYSICS_MATERIAL as OpenSim's LSL_Api applies it), so never logged as not implemented.
+        Assert.DoesNotContain(code, UnimplementedRulesLogged(h, item));
     }
 
     [Fact]
@@ -340,9 +340,8 @@ public class PrimParamsTextPositionRotationTests
         Assert.NotNull(interp);
         var shim = interp.GetType().GetField("_syscallShim", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(interp)!;
         var api = shim.GetType().GetProperty("SystemAPI")!.GetValue(shim)!;
-        var logged = api.GetType().GetField("m_unimplementedPrimRulesLogged", BindingFlags.NonPublic | BindingFlags.Instance)!
-            .GetValue(api) as HashSet<int>;
-        Assert.NotNull(logged);
-        return logged!;
+        // Null until the script logs its first rule.
+        return api.GetType().GetField("m_unimplementedPrimRulesLogged", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(api) as HashSet<int> ?? new HashSet<int>();
     }
 }

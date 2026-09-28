@@ -33,6 +33,7 @@ using OpenSim.Region.OptionalModules.World.NPC;
 
 using Microsoft.Extensions.Logging;
 using static Phlox.ScriptEngine.SlConst;
+using ScenePrimType = OpenSim.Region.Framework.Scenes.PrimType;
 
 namespace Phlox.ScriptEngine
 {
@@ -725,7 +726,10 @@ namespace Phlox.ScriptEngine
         // Halcyon llGetRot and SL: on an attachment's root, the wearer's rotation. The same read as PRIM_ROTATION.
         public Quaternion llGetRot() => m_host == null ? Quaternion.Identity : PartRegionRot(m_host);
         public Quaternion llGetLocalRot() => m_host?.RotationOffset ?? Quaternion.Identity;
-        public Quaternion llGetRootRotation() => m_host?.ParentGroup?.GroupRotation ?? Quaternion.Identity;
+        // Halcyon llGetRootRotation and SL: "In an attached object, returns region rotation of avatar NOT of the object's
+        // root prim". The root's PRIM_ROTATION read, so it matches llGetRot on the root.
+        public Quaternion llGetRootRotation()
+            => m_host?.ParentGroup?.RootPart is SceneObjectPart root ? PartRegionRot(root) : Quaternion.Identity;
         public void llSetRot(Quaternion rot)
         {
             if (m_host == null) return;
@@ -1190,12 +1194,29 @@ namespace Phlox.ScriptEngine
         public void llSetPhysicsMaterial(int mask, float gravityMultiplier, float restitution, float friction, float density)
         {
             if (m_host == null) return;
-            // mask bits: 1=gravity, 2=restitution, 4=friction, 8=density
-            // SOP property setters handle bounds-clamping, HasGroupChanged, and PhysicsActor update.
-            if ((mask & 1) != 0) m_host.GravityModifier = gravityMultiplier;
-            if ((mask & 2) != 0) m_host.Restitution     = restitution;
-            if ((mask & 4) != 0) m_host.Friction         = friction;
-            if ((mask & 8) != 0) m_host.Density          = density;
+            // SL: "llSetPhysicsMaterial silently fails if called from an attachment."
+            if (m_host.ParentGroup?.IsAttachment == true) return;
+            PrimSetPhysicsMaterial(m_host, mask, density, friction, restitution, gravityMultiplier);
+        }
+
+        /// <summary>
+        /// llSetPhysicsMaterial and OpenSim's PRIM_PHYSICS_MATERIAL on one prim (OpenSim LSL_Api.SetPhysicsMaterial): the
+        /// mask's DENSITY, FRICTION, RESTITUTION and GRAVITY_MULTIPLIER bits (SL's values) pick the values that change.
+        /// The scene's UpdateExtraPhysics writes them through the part's setters, which ignore a value outside SL's
+        /// range, save it, and pass it to the prim's physics actor.
+        /// </summary>
+        private static void PrimSetPhysicsMaterial(SceneObjectPart part, int mask, float density, float friction,
+            float restitution, float gravityMultiplier)
+        {
+            var physdata = new ExtraPhysicsData
+            {
+                PhysShapeType = (PhysShapeType)part.PhysicsShapeType,
+                Density = (mask & DENSITY) != 0 ? density : part.Density,
+                Friction = (mask & FRICTION) != 0 ? friction : part.Friction,
+                Bounce = (mask & RESTITUTION) != 0 ? restitution : part.Restitution,
+                GravitationModifier = (mask & GRAVITY_MULTIPLIER) != 0 ? gravityMultiplier : part.GravityModifier,
+            };
+            part.UpdateExtraPhysics(physdata);
         }
         public void llSetAngularVelocity(Vector3 force, int local)
         {
@@ -2035,14 +2056,24 @@ namespace Phlox.ScriptEngine
 
         /// <summary>
         /// PRIM_CLICK_ACTION and llSetClickAction on one prim (Halcyon llSetClickAction; Halcyon has no rule, SL's
-        /// PRIM_CLICK_ACTION is "as llSetClickAction"). The click action rides the object update.
+        /// PRIM_CLICK_ACTION is "as llSetClickAction"). The click action rides the object update. SL (llSetClickAction):
+        /// "If llSetClickAction is CLICK_ACTION_PAY then you must have a money event, or it will revert to
+        /// CLICK_ACTION_NONE"; Halcyon keeps PAY regardless. A child with no money event of its own counts the root's,
+        /// since a payment on such a child reaches the root's money event (PhloxEngine.HandleObjectPaid).
         /// </summary>
         private static void PrimSetClickAction(SceneObjectPart part, int action)
         {
+            if (action == CLICK_ACTION_PAY && !HasMoneyEvent(part) && !HasMoneyEvent(part.ParentGroup?.RootPart))
+                action = CLICK_ACTION_NONE;
             part.ClickAction = (byte)action;
             if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
             part.ScheduleFullUpdate();
         }
+
+        /// <summary>Whether a script in the prim, in its current state, has a money event.</summary>
+        private static bool HasMoneyEvent(SceneObjectPart part)
+            => part != null && (part.ScriptEvents & scriptEvents.money) != 0;
+
         public int llGetAgentInfo(string id)
         {
             if (!UUID.TryParse(id, out UUID key)) return 0;
@@ -4867,7 +4898,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         /// <summary>
         /// PRIM_ROTATION read (Halcyon GetPartRot): the prim's region rotation. On an attachment's root it is the
         /// wearer's rotation, or the camera's in mouselook (SL: "PRIM_ROTATION incorrectly reports the avatars
-        /// rotation when called on the root of an attached object").
+        /// rotation when called on the root of an attached object"). A seated wearer's is its region rotation, not
+        /// the one relative to its seat that the scene keeps (SL llGetRootRotation: "Returns an accurate facing for
+        /// Avatars seated"; OpenSim's LSL_Api llGetRootRotation reads GetWorldRotation too).
         /// </summary>
         private Quaternion PartRegionRot(SceneObjectPart part)
         {
@@ -4878,7 +4911,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 if (avatar != null)
                     return (avatar.AgentControlFlags & 0x00020000u) != 0  // AGENT_CONTROL_MOUSELOOK
                         ? avatar.CameraRotation
-                        : avatar.Rotation;
+                        : avatar.GetWorldRotation();
                 return group.GroupRotation;
             }
             return part.GetWorldRotation();
@@ -4902,6 +4935,135 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             part.PhysicsShapeType = (byte)type;
             group.HasGroupChanged = true;
             part.SendPropertiesToAllClients();
+        }
+
+        /// <summary>
+        /// PRIM_SLICE on one prim: the shape's advanced cut (SL: "a shape attribute, equivalent to advanced_cut"), through
+        /// the scene's own UpdateSlice, which OpenSim's LSL_Api uses too. That is the slice PRIM_TYPE writes on a box,
+        /// cylinder or prism (PathBegin / PathEnd), and the dimple of a sphere or the profile cut of a torus, tube or
+        /// ring (ProfileBegin / ProfileEnd), so PRIM_TYPE reads those back. The scene keeps begin at least 0.02 below
+        /// end (SL: "x must be at least 0.05 smaller than y", with the wiki's note that "the difference can be as small
+        /// as 0.02"). A sculpt or mesh has no cut and is left alone, as Halcyon leaves every shape but box, cylinder and
+        /// prism.
+        /// </summary>
+        private void PrimSetSlice(SceneObjectPart part, Vector3 slice)
+        {
+            if (part.GetPrimType() == ScenePrimType.SCULPT) return;
+            part.UpdateSlice(slice.X, slice.Y);
+        }
+
+        /// <summary>
+        /// PRIM_SLICE read: where UpdateSlice writes for the prim's shape (the scene's own shape test); a sculpt or
+        /// mesh reads the full &lt;0, 1, 0&gt;.
+        /// </summary>
+        private static Vector3 PrimSlice(SceneObjectPart part)
+        {
+            PrimitiveBaseShape shape = part.Shape;
+            ScenePrimType type = part.GetPrimType();
+            if (type == ScenePrimType.SCULPT) return DEFAULT_SLICE_VEC;
+            bool profile = type == ScenePrimType.SPHERE || type == ScenePrimType.TORUS || type == ScenePrimType.TUBE
+                           || type == ScenePrimType.RING;
+            return profile
+                ? new Vector3(shape.ProfileBegin / 50000.0f, 1 - shape.ProfileEnd / 50000.0f, 0)
+                : new Vector3(shape.PathBegin / 50000.0f, 1 - shape.PathEnd / 50000.0f, 0);
+        }
+
+        /// <summary>
+        /// PRIM_PROJECTOR on one prim (SL's [texture, fov, focus, ambiance]; Halcyon has no rule), with OpenSim's
+        /// meaning for what SL leaves open (LSL_Api.SetPrimParams): the texture is a key or the name of a texture in
+        /// this prim; "" or NULL_KEY turns projection off; fov is held to 0..3, focus to -20..20 and ambiance to 0..1,
+        /// as osSetProjectionParams holds them. A name that is not a texture here is an error and changes nothing.
+        /// </summary>
+        private void PrimSetProjector(SceneObjectPart part, string texture, float fov, float focus, float ambiance)
+        {
+            UUID texID = UUID.Zero;
+            if (!string.IsNullOrEmpty(texture) && !UUID.TryParse(texture, out texID))
+            {
+                TaskInventoryItem item = FindInventoryItem(texture, (int)AssetType.Texture);
+                if (item == null)
+                {
+                    ShoutError($"Could not find texture '{texture}'");
+                    return;
+                }
+                texID = item.AssetID;
+            }
+
+            PrimitiveBaseShape shape = part.Shape;
+            if (texID != UUID.Zero)
+            {
+                shape.ProjectionEntry = true;
+                shape.ProjectionTextureUUID = texID;
+                shape.ProjectionFOV = Math.Clamp(fov, 0f, 3.0f);
+                shape.ProjectionFocus = Math.Clamp(focus, -20.0f, 20.0f);
+                shape.ProjectionAmbiance = Math.Clamp(ambiance, 0f, 1.0f);
+            }
+            else if (shape.ProjectionEntry)
+                shape.ProjectionEntry = false;
+            else
+                return;
+            ProjectionChanged(part);
+        }
+
+        /// <summary>
+        /// A prim's projection changed: saved with the object and sent to viewers in the shape's extra parameters (the
+        /// scene saves the projection fields only while projection is on).
+        /// </summary>
+        private static void ProjectionChanged(SceneObjectPart part)
+        {
+            if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
+            part.ScheduleFullUpdate();
+        }
+
+        /// <summary>
+        /// PRIM_PROJECTOR read (SL's [texture, fov, focus, ambiance]: "If the prim is not a projector the texture key
+        /// will be NULL_KEY"), with the texture as Phlox's other texture reads show it.
+        /// </summary>
+        private void PrimProjector(SceneObjectPart part, List<object> result)
+        {
+            PrimitiveBaseShape shape = part.Shape;
+            if (!shape.ProjectionEntry)
+            {
+                result.Add(UUID.Zero.ToString());
+                result.Add(0f);
+                result.Add(0f);
+                result.Add(0f);
+                return;
+            }
+            result.Add(ConditionalTextureNameOrUUID(part, shape.ProjectionTextureUUID));
+            result.Add(shape.ProjectionFOV);
+            result.Add(shape.ProjectionFocus);
+            result.Add(shape.ProjectionAmbiance);
+        }
+
+        /// <summary>
+        /// PRIM_REFLECTION_PROBE on one prim (SL): ambiance "Ranges from 0.0 to 100.0", clip_distance "Ranges from 0.0 to
+        /// 1024.0", and the PRIM_REFLECTION_PROBE_* flags, kept in the shape's ReflectionProbe as OpenSim's LSL_Api
+        /// keeps them (saved and sent in its extra parameters). FALSE removes the probe.
+        /// </summary>
+        private static void PrimSetReflectionProbe(SceneObjectPart part, bool active, float ambiance, float clip, int flags)
+        {
+            PrimitiveBaseShape shape = part.Shape;
+            bool changed;
+            if (active)
+            {
+                ambiance = Math.Clamp(ambiance, 0f, 100f);
+                clip = Math.Clamp(clip, 0f, 1024f);
+                changed = shape.ReflectionProbe is null;
+                shape.ReflectionProbe ??= new Primitive.ReflectionProbe();
+                changed |= shape.ReflectionProbe.Ambiance != ambiance || shape.ReflectionProbe.ClipDistance != clip
+                           || shape.ReflectionProbe.Flags != (byte)flags;
+                shape.ReflectionProbe.Ambiance = ambiance;
+                shape.ReflectionProbe.ClipDistance = clip;
+                shape.ReflectionProbe.Flags = (byte)flags;
+            }
+            else
+            {
+                changed = shape.ReflectionProbe is not null;
+                shape.ReflectionProbe = null;
+            }
+            if (!changed) return;
+            if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
+            part.ScheduleFullUpdate();
         }
 
         /// <summary>One prim's prim-params rules (llSetPrimitiveParams, osSetPrimitiveParams).</summary>
@@ -4982,13 +5144,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             m_unimplementedPrimRulesLogged ??= new HashSet<int>();
             if (!m_unimplementedPrimRulesLogged.Add(code)) return;
-            if (PrimParamRules.IsOpenSimRule(code))
-                m_log.LogWarning("[PhloxAPI]: prim-params rule {Rule} is OpenSim's own and not implemented yet; " +
-                                 "skipped its {Values} values for {Item}",
-                    code, values, m_itemID);
-            else
-                m_log.LogWarning("[PhloxAPI]: prim-params rule {Rule} is not implemented yet; skipped its {Values} values for {Item}",
-                    code, values, m_itemID);
+            m_log.LogWarning("[PhloxAPI]: prim-params rule {Rule} is not implemented yet; skipped its {Values} values for {Item}",
+                code, values, m_itemID);
         }
 
         /// <summary>
@@ -5381,6 +5538,105 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     // llCollisionSound on this prim.
                     if (data[idx] is not string sound || !PrimFloat(data[idx + 1], out float volume)) break;
                     PrimSetCollisionSound(part, sound, volume);
+                    break;
+                }
+
+                case PRIM_SLICE:
+                {
+                    // [ PRIM_SLICE, vector slice ] (SL: "a shape attribute, equivalent to advanced_cut"; Halcyon).
+                    if (data[idx] is not Vector3 slice) break;
+                    PrimSetSlice(part, slice);
+                    break;
+                }
+
+                case PRIM_PROJECTOR:
+                {
+                    // [ PRIM_PROJECTOR, string texture, float fov, float focus, float ambiance ] (SL; Halcyon has no
+                    // rule): OpenSim's meaning, on the projection fields the IW_PRIM_PROJECTOR rules share.
+                    if (data[idx] is not string texture || !PrimFloat(data[idx + 1], out float fov)
+                        || !PrimFloat(data[idx + 2], out float focus) || !PrimFloat(data[idx + 3], out float ambiance)) break;
+                    PrimSetProjector(part, texture, fov, focus, ambiance);
+                    break;
+                }
+
+                case IW_PRIM_PROJECTOR:
+                {
+                    // [ IW_PRIM_PROJECTOR, integer enabled, string texture, float fov, float focus, float ambience ]
+                    // (Halcyon SetPrimParams): only 1 enables; a texture that is NULL_KEY, or a name not in the prim,
+                    // is refused and nothing changes; the values are kept as given.
+                    if (data[idx] is not int enabled || !PrimFloat(data[idx + 2], out float fov)
+                        || !PrimFloat(data[idx + 3], out float focus) || !PrimFloat(data[idx + 4], out float ambience)) break;
+                    UUID texID = KeyOrName(data[idx + 1]?.ToString());
+                    if (texID == UUID.Zero)
+                    {
+                        ShoutError("The second argument of IW_PRIM_PROJECTOR must not be NULL_KEY.");
+                        break;
+                    }
+                    PrimitiveBaseShape shape = part.Shape;
+                    shape.ProjectionEntry = enabled == 1;
+                    shape.ProjectionTextureUUID = texID;
+                    shape.ProjectionFOV = fov;
+                    shape.ProjectionFocus = focus;
+                    shape.ProjectionAmbiance = ambience;
+                    ProjectionChanged(part);
+                    break;
+                }
+
+                case IW_PRIM_PROJECTOR_ENABLED:
+                {
+                    // [ IW_PRIM_PROJECTOR_ENABLED, integer enabled ] (Halcyon): only 1 enables.
+                    if (data[idx] is not int on) break;
+                    part.Shape.ProjectionEntry = on == 1;
+                    ProjectionChanged(part);
+                    break;
+                }
+
+                case IW_PRIM_PROJECTOR_TEXTURE:
+                {
+                    // [ IW_PRIM_PROJECTOR_TEXTURE, string texture ] (Halcyon): NULL_KEY or a missing name is refused.
+                    UUID texID = KeyOrName(data[idx]?.ToString());
+                    if (texID == UUID.Zero)
+                    {
+                        ShoutError("The argument of IW_PRIM_PROJECTOR_TEXTURE must not be NULL_KEY.");
+                        break;
+                    }
+                    part.Shape.ProjectionTextureUUID = texID;
+                    ProjectionChanged(part);
+                    break;
+                }
+
+                case IW_PRIM_PROJECTOR_FOV:
+                case IW_PRIM_PROJECTOR_FOCUS:
+                case IW_PRIM_PROJECTOR_AMBIENCE:
+                {
+                    // [ IW_PRIM_PROJECTOR_FOV | _FOCUS | _AMBIENCE, float value ] (Halcyon), kept as given.
+                    if (!PrimFloat(data[idx], out float value)) break;
+                    if (code == IW_PRIM_PROJECTOR_FOV) part.Shape.ProjectionFOV = value;
+                    else if (code == IW_PRIM_PROJECTOR_FOCUS) part.Shape.ProjectionFocus = value;
+                    else part.Shape.ProjectionAmbiance = value;
+                    ProjectionChanged(part);
+                    break;
+                }
+
+                case PRIM_REFLECTION_PROBE:
+                {
+                    // [ PRIM_REFLECTION_PROBE, integer boolean, float ambiance, float clip_distance, integer flags ] (SL;
+                    // Halcyon has no rule): "Ranges from 0.0 to 100.0", "Ranges from 0.0 to 1024.0". FALSE removes the
+                    // probe. The shape's ReflectionProbe, as OpenSim's LSL_Api keeps it.
+                    if (data[idx] is not int active || !PrimFloat(data[idx + 1], out float ambiance)
+                        || !PrimFloat(data[idx + 2], out float clip) || data[idx + 3] is not int flags) break;
+                    PrimSetReflectionProbe(part, active != 0, ambiance, clip, flags);
+                    break;
+                }
+
+                case PRIM_PHYSICS_MATERIAL:
+                {
+                    // [ PRIM_PHYSICS_MATERIAL, integer mask, float density, float friction, float restitution,
+                    //   float gravity_multiplier ]: OpenSim's own rule (LSL_Api.SetPrimParams), as llSetPhysicsMaterial.
+                    if (data[idx] is not int mask || !PrimFloat(data[idx + 1], out float density)
+                        || !PrimFloat(data[idx + 2], out float friction) || !PrimFloat(data[idx + 3], out float restitution)
+                        || !PrimFloat(data[idx + 4], out float gravity)) break;
+                    PrimSetPhysicsMaterial(part, mask, density, friction, restitution, gravity);
                     break;
                 }
 
@@ -6211,6 +6467,58 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     case PRIM_COLLISION_SOUND:
                         PrimCollisionSound(part, result);
                         break;
+
+                    case PRIM_SLICE:
+                        result.Add(PrimSlice(part));
+                        break;
+
+                    case PRIM_PROJECTOR:
+                        PrimProjector(part, result);
+                        break;
+
+                    case IW_PRIM_PROJECTOR:
+                    {
+                        // [ integer enabled, string texture, float fov, float focus, float ambience ] (Halcyon)
+                        PrimitiveBaseShape shape = part.Shape;
+                        result.Add(shape.ProjectionEntry ? 1 : 0);
+                        result.Add(ConditionalTextureNameOrUUID(part, shape.ProjectionTextureUUID));
+                        result.Add(shape.ProjectionFOV);
+                        result.Add(shape.ProjectionFocus);
+                        result.Add(shape.ProjectionAmbiance);
+                        break;
+                    }
+
+                    case IW_PRIM_PROJECTOR_ENABLED:
+                        result.Add(part.Shape.ProjectionEntry ? 1 : 0);
+                        break;
+
+                    case IW_PRIM_PROJECTOR_TEXTURE:
+                        result.Add(ConditionalTextureNameOrUUID(part, part.Shape.ProjectionTextureUUID));
+                        break;
+
+                    case IW_PRIM_PROJECTOR_FOV:
+                        result.Add(part.Shape.ProjectionFOV);
+                        break;
+
+                    case IW_PRIM_PROJECTOR_FOCUS:
+                        result.Add(part.Shape.ProjectionFocus);
+                        break;
+
+                    case IW_PRIM_PROJECTOR_AMBIENCE:
+                        result.Add(part.Shape.ProjectionAmbiance);
+                        break;
+
+                    case PRIM_REFLECTION_PROBE:
+                    {
+                        // [ integer boolean, float ambiance, float clip_distance, integer flags ] (SL); none: 0, 0.0,
+                        // 0.0, 0.
+                        Primitive.ReflectionProbe probe = part.Shape.ReflectionProbe;
+                        result.Add(probe != null ? 1 : 0);
+                        result.Add(probe?.Ambiance ?? 0f);
+                        result.Add(probe?.ClipDistance ?? 0f);
+                        result.Add((int)(probe?.Flags ?? 0));
+                        break;
+                    }
 
                     case PRIM_MATERIAL:
                         result.Add((int)part.Material);
@@ -17661,11 +17969,6 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             _ => -1,
         };
 
-        /// <summary>
-        /// A rule number OpenSim defines and SL does not (OpenSim's LSL_Constants.cs). Phlox reads it by OpenSim's
-        /// count and skips it, so a script written for OpenSim runs on.
-        /// </summary>
-        public static bool IsOpenSimRule(int code) => code == PRIM_PHYSICS_MATERIAL;
 
         /// <summary>
         /// The values PRIM_TYPE takes after its shape code: box, cylinder and prism 6, sphere 5, torus, tube and ring
