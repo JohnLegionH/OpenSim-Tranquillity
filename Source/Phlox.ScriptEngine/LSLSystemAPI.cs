@@ -2037,6 +2037,14 @@ namespace Phlox.ScriptEngine
 				sp.StandUp();
 			else if (m_host.OwnerID == sp.UUID)
 				sp.StandUp(); // owner can always stand themselves up
+			else
+			{
+				// Halcyon LSLSystemAPI.cs:7981-7990: the object's owner owns the avatar's parcel, the object is deeded
+				// to the group that owns it, or the owner is an estate manager or a god. No group role qualifies.
+				Vector3 pos = sp.AbsolutePosition;
+				if (HasParcelPowers(m_host.OwnerID, World.LandChannel?.GetLandObject(pos.X, pos.Y), null))
+					sp.StandUp();
+			}
 		} 
         public void llLinkSitTarget(int link, Vector3 offset, Quaternion rot)
         {
@@ -7679,9 +7687,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             Vector3 landpos = m_host.AbsolutePosition;
             ILandObject landObject = World.LandChannel.GetLandObject(landpos.X, landpos.Y);
-            if (landObject == null) return;
-            if (landObject.LandData.OwnerID != m_host.OwnerID &&
-                !World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID)) return;
+            if (!HasParcelPowers(m_host.OwnerID, landObject, (ulong)GroupPowers.LandManageAllowed)) { ScriptSleep(100); return; }
             if (UUID.TryParse(avatar, out UUID key))
             {
                 LandAccessEntry entry = new LandAccessEntry();
@@ -7697,9 +7703,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             Vector3 landpos = m_host.AbsolutePosition;
             ILandObject landObject = World.LandChannel.GetLandObject(landpos.X, landpos.Y);
-            if (landObject == null) return;
-            if (landObject.LandData.OwnerID != m_host.OwnerID &&
-                !World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID)) return;
+            if (!HasParcelPowers(m_host.OwnerID, landObject, (ulong)GroupPowers.LandManageAllowed)) { ScriptSleep(100); return; }
             if (UUID.TryParse(avatar, out UUID key))
             {
                 LandAccessEntry entry = new LandAccessEntry();
@@ -7715,9 +7719,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             Vector3 landpos = m_host.AbsolutePosition;
             ILandObject landObject = World.LandChannel.GetLandObject(landpos.X, landpos.Y);
-            if (landObject == null) return;
-            if (landObject.LandData.OwnerID != m_host.OwnerID &&
-                !World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID)) return;
+            if (!HasParcelPowers(m_host.OwnerID, landObject, (ulong)GroupPowers.LandManageAllowed)) { ScriptSleep(100); return; }
             if (UUID.TryParse(avatar, out UUID key))
             {
                 landObject.LandData.ParcelAccessList.RemoveAll(
@@ -7730,9 +7732,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             Vector3 landpos = m_host.AbsolutePosition;
             ILandObject landObject = World.LandChannel.GetLandObject(landpos.X, landpos.Y);
-            if (landObject == null) return;
-            if (landObject.LandData.OwnerID != m_host.OwnerID &&
-                !World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID)) return;
+            if (!HasParcelPowers(m_host.OwnerID, landObject, (ulong)GroupPowers.LandManageAllowed)) { ScriptSleep(100); return; }
             if (UUID.TryParse(avatar, out UUID key))
             {
                 landObject.LandData.ParcelAccessList.RemoveAll(
@@ -7745,9 +7745,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             Vector3 landpos = m_host.AbsolutePosition;
             ILandObject landObject = World.LandChannel.GetLandObject(landpos.X, landpos.Y);
-            if (landObject == null) return;
-            if (landObject.LandData.OwnerID != m_host.OwnerID &&
-                !World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID)) return;
+            if (!HasParcelPowers(m_host.OwnerID, landObject, (ulong)GroupPowers.LandManageAllowed)) { ScriptSleep(100); return; }
             landObject.LandData.ParcelAccessList.RemoveAll(e => e.Flags == AccessList.Ban);
             ScriptSleep(100);
         }
@@ -7756,9 +7754,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             Vector3 landpos = m_host.AbsolutePosition;
             ILandObject landObject = World.LandChannel.GetLandObject(landpos.X, landpos.Y);
-            if (landObject == null) return;
-            if (landObject.LandData.OwnerID != m_host.OwnerID &&
-                !World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID)) return;
+            if (!HasParcelPowers(m_host.OwnerID, landObject, (ulong)GroupPowers.LandManageAllowed)) { ScriptSleep(100); return; }
             landObject.LandData.ParcelAccessList.RemoveAll(e => e.Flags == AccessList.Access);
             ScriptSleep(100);
         }
@@ -7772,9 +7768,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             ILandObject landObject = World.LandChannel.GetLandObject(
                 m_host.AbsolutePosition.X, m_host.AbsolutePosition.Y);
-            if (landObject == null) return;
-            if (landObject.LandData.OwnerID != m_host.OwnerID &&
-                !World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID)) return;
+            if (!HasParcelPowers(m_host.OwnerID, landObject, (ulong)GroupPowers.ChangeMedia)) return;
             landObject.LandData.MusicURL = url ?? string.Empty;
             World.EventManager.TriggerLandObjectUpdated((uint)landObject.LandData.LocalID, landObject);
             ScriptSleep(2000);
@@ -7792,9 +7786,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             ILandObject landObject = World.LandChannel.GetLandObject(
                 m_host.AbsolutePosition.X, m_host.AbsolutePosition.Y);
-            if (landObject == null) return;
-            if (landObject.LandData.OwnerID != m_host.OwnerID &&
-                !World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID)) return;
+            // Halcyon asks for m_host.ObjectOwner here, which is the owner.
+            if (!HasParcelPowers(m_host.OwnerID, landObject, (ulong)GroupPowers.ChangeMedia)) return;
 
             bool update = false;
             byte loop = 0;
@@ -7946,9 +7939,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             var list = new System.Collections.Generic.List<object>();
             Vector3 pos = m_host.AbsolutePosition;
             ILandObject landObject = World.LandChannel.GetLandObject(pos.X, pos.Y);
-            if (landObject == null) return new LSLList(list.ToArray());
-            if (landObject.LandData.OwnerID != m_host.OwnerID &&
-                !World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID))
+            if (!HasParcelPowers(m_host.OwnerID, landObject, (ulong)GroupPowers.ChangeMedia))
                 return new LSLList(list.ToArray());
             for (int i = 0; i < aList.Data.Length; i++)
             {
@@ -7994,22 +7985,62 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (parcel.LandData.OwnerID == m_host.OwnerID) return 0;
             return 1;
         }
+        /// <summary>
+        /// Halcyon LSLSystemAPI.cs:10633-10638: the script owner's rights, with the power asked about, on the parcel
+        /// under the object: `CanEditParcel(m_host.OwnerID, landObject, (GroupPowers)operation) ? 1 : 0`.
+        /// </summary>
         public int iwHasParcelPowers(int groupPower)
         {
-            // Faithful port: check if script owner has parcel editing powers
-            try
+            ILandObject landObject = World?.LandChannel?.GetLandObject(m_host.AbsolutePosition.X, m_host.AbsolutePosition.Y);
+            return HasParcelPowers(m_host.OwnerID, landObject, IwGroupPowers(groupPower)) ? 1 : 0;
+        }
+
+        /// <summary>
+        /// The group powers an iwHasParcelPowers argument asks for. An LSL integer is 32 bits and group powers are 64,
+        /// so the IW_POWER_* constants for bits 31-48 load as minus their bit number (IW_POWER_FREEZE_EJECT is -32);
+        /// Halcyon's assembler loaded them all as -1 (Int32 overflow). Any other value is Halcyon's cast
+        /// `(GroupPowers)operation`, which sign-extends: -1, what scripts compiled before carry, is every power.
+        /// </summary>
+        internal static ulong IwGroupPowers(int value)
+            => value >= -IW_POWER_HIGHEST_BIT && value <= -IW_POWER_FIRST_HIGH_BIT
+                ? 1UL << -value
+                : unchecked((ulong)(long)value);
+
+        private const int IW_POWER_FIRST_HIGH_BIT = 31, IW_POWER_HIGHEST_BIT = 48;
+
+        /// <summary>
+        /// PHLOX-42 (D14): the land-rights rule every land function asks, Halcyon's CanEditParcel ->
+        /// GenericParcelOwnerPermission (PermissionsModule.cs:1002-1042). <paramref name="user"/> may act on
+        /// <paramref name="parcel"/> when it owns the parcel ("This also includes group-deeded objects on group-deeded
+        /// land"); on group-owned land when it is the group, or a member holding ANY of <paramref name="powers"/> (0 =
+        /// membership, Halcyon HasGroupPower); on land only tagged to a group when AllowSetHome is asked and held; when
+        /// it is the estate owner or an estate manager; or when it is a god. <paramref name="powers"/> null: no group
+        /// role qualifies (llUnSit, Halcyon LSLSystemAPI.cs:7986-7988).
+        /// NGC's CanEditParcelProperties is not used: it needs every requested bit and never admits estate managers.
+        /// </summary>
+        private bool HasParcelPowers(UUID user, ILandObject parcel, ulong? powers)
+        {
+            LandData land = parcel?.LandData;
+            if (land == null || user.IsZero()) return false;
+            if (land.OwnerID == user) return true;
+            if (land.IsGroupOwned)
             {
-                ILandObject landObject = World?.LandChannel?.GetLandObject(m_host.AbsolutePosition.X, m_host.AbsolutePosition.Y);
-                if (landObject == null) return 0;
-                // Check if owner owns the parcel or is estate manager
-                if (landObject.LandData.OwnerID == m_host.OwnerID) return 1;
-                if (World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID)) return 1;
-                // Check group ownership
-                if (landObject.LandData.GroupID != UUID.Zero && landObject.LandData.GroupID == m_host.GroupID)
-                    return 1;
-                return 0;
+                if (land.GroupID == user) return true;
+                if (powers.HasValue && !land.GroupID.IsZero() && HasGroupPower(land.GroupID, user, powers.Value)) return true;
             }
-            catch { return 0; }
+            else if (!land.GroupID.IsZero() && powers == (ulong)GroupPowers.AllowSetHome
+                && HasGroupPower(land.GroupID, user, (ulong)GroupPowers.AllowSetHome))
+                return true;
+            if (World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(user)) return true;
+            return World.Permissions.IsGod(user);
+        }
+
+        /// <summary>Halcyon HasGroupPower: a member, and (power 0) that is enough, else any requested bit held.</summary>
+        private bool HasGroupPower(UUID group, UUID user, ulong powers)
+        {
+            GroupMembershipData m = World.RequestModuleInterface<IGroupsModule>()?.GetMembershipData(group, user);
+            if (m == null) return false;
+            return powers == 0 || (m.GroupPowers & powers) != 0;
         }
 
         // ── Targeting ──────────────────────────────────────────────────────────

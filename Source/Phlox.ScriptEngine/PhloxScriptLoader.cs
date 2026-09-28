@@ -43,7 +43,10 @@ namespace Phlox.ScriptEngine
         //   3 — compiler correctness fixes (assignments in expressions, +/- and && / || / | & ^
         //       chains, typed constants, statement promotions): bytecode from an earlier compiler
         //       computes the wrong values, so every cached script is recompiled once.
-        private const int CACHE_SCHEMA_VERSION = 3;
+        //   4 — PHLOX-42: the 17 IW_POWER_* constants for group-power bits 31-48 load as minus their bit
+        //       number (they overflowed to -1); cached bytecode still carries -1. A recompile keeps each
+        //       script's saved state (SerializedRuntimeState.ToRuntimeStateFor).
+        private const int CACHE_SCHEMA_VERSION = 4;
         private const string VERSION_FILE = "ScriptEngines/Phlox/bytecode/.schema_version";
 
         private readonly IAssetService m_AssetService;

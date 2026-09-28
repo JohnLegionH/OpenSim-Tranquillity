@@ -3611,3 +3611,70 @@ No function index or declared return type changed, and the compiled script forma
 What residents will notice: group invite and eject scripts work only for the person who created the script; a temp attach on
 someone else gives them the object; scripts cannot link no-mod objects or use a link permission someone else granted;
 llSetObjectPermMask needs the grid's god-functions switch.
+
+## PHLOX-42 - group-land powers restored (D14); iwHasParcelPowers checks the power asked about; IW_POWER_* carry their real values
+
+HALCYON-DIFF decision D14, ruled (a): restore Halcyon's group-land power rules. iw functions follow Halcyon; ll functions
+follow Halcyon where it implements the rule (it implements every one in scope) and SL otherwise.
+
+- **One land-rights helper**, `HasParcelPowers(user, parcel, powers)`, is Halcyon's `CanEditParcel` ->
+  `GenericParcelOwnerPermission` (Halcyon PermissionsModule.cs:1002-1042). The script owner may act on the parcel when it
+  owns it ("This also includes group-deeded objects on group-deeded land"); on group-owned land when it is the group
+  itself, or a member holding ANY of the requested powers (0 = membership only, Halcyon `HasGroupPower`); on land only
+  tagged to a group, when AllowSetHome is asked and held ("AllowSetHome has a special exception"); when it is the estate
+  owner or an estate manager; or when it is a god (`Permissions.IsGod`). Powers come from the groups module's
+  `GetMembershipData(group, user)`. The core's `CanEditParcelProperties` is not used: it needs every requested bit and
+  never admits estate managers.
+- Routed through it, with the power Halcyon asks: llAddToLandPassList, llAddToLandBanList, llRemoveFromLandPassList,
+  llRemoveFromLandBanList, llResetLandPassList, llResetLandBanList (LandManageAllowed, for the ban list too, as Halcyon);
+  llSetParcelMusicURL, llParcelMediaCommandList, llParcelMediaQuery (ChangeMedia); iwHasParcelPowers (the power given);
+  llUnSit for an avatar not on this object (no group role qualifies: parcel owner, object deeded to the group that owns
+  the land, estate manager or owner, god - Halcyon LSLSystemAPI.cs:7981-7990). The list functions now sleep 100 ms on
+  the refused path too, as Halcyon.
+- SL differs, Halcyon followed: SL's parcel media wiki wants the object DEEDED on group land ("the object must be deeded to
+  **that** group"); Halcyon also admits a member holding ChangeMedia, estate managers and gods. SL's llUnSit wording ("a
+  group the owner has land rights for") is broader than Halcyon's deeded-object rule.
+- **iwHasParcelPowers** (Halcyon LSLSystemAPI.cs:10633-10638): the script owner, the parcel under the object, the power
+  asked about, 1 or 0. It no longer answers 1 for any object whose group tag matches the parcel's group (F216).
+- **IW_POWER_*.** They are OpenMetaverse GroupPowers bits 1-48, and an LSL integer is 32 bits. The table wrote the 17
+  above bit 30 as their 64-bit decimal values, which the assembler turns into -1 on overflow. That is also what Halcyon
+  did: its own assembler (`BytecodeGenerator.ConvertToInt`, invoked by reflection on Halcyon's `InWorldz.Phlox.dll`) gives
+  -1 for 2147483648 and above, so every one of them asked for every power. Now bits 31-48 load as minus their bit number
+  (IW_POWER_MANAGE_PASSES -31, IW_POWER_FREEZE_EJECT -32 ... IW_POWER_OBJECT_RETURN -48), and iwHasParcelPowers decodes
+  -31..-48 as that one bit. Every other value is Halcyon's cast `(GroupPowers)value` (sign-extended), so -1 still means
+  every power, and IW_POWER_* below bit 31 still combine with `|`. No other function takes group powers.
+
+Known limits:
+- The 17 high constants cannot be combined with `|` (with each other or with a low one): each is asked on its own.
+  A raw integer mask of -31..-48 (bits 5-31 all set) is read as one high power, not as that 32-bit mask.
+  Scripters see this in the iwHasParcelPowers tooltip (grammar/funcs.xml).
+- A global a script already set from one of the 17 constants keeps the -1 it holds until the script is reset; code
+  that names the constant reads the new value after the recompile.
+- Group-land TELEPORT rights are not changed here: HasLandPrivileges / IsTeleportAuthorized (llTeleportAgentHome,
+  llEjectFromLand, iwTeleportAgent, osTeleportAgent) still admit any object tagged with the land's group (F132/F272).
+  They wait for the llTeleportAgent ruling.
+- llUnSit still lets the owner stand themselves up from any seat (a Phlox addition; Halcyon does not).
+- The access-list `hours` handling is unchanged (0 = permanent, SL; Halcyon's entry expired at once).
+- llPushObject needs no change: Halcyon's rule there is parcel owner or estate manager, as Phlox has.
+
+Tests: `GroupLandPowersTests` (21): pass and ban lists allowed for a deeded object, a member with LandManageAllowed,
+the parcel owner, an estate manager and a god, refused for a member without it (even with every other power), a
+non-member whose object carries the group tag, and on land only tagged to the group; remove and reset follow the
+same rule; music, media command and media query with and without ChangeMedia; every IW_POWER_* value as a script sees
+it; iwHasParcelPowers for every constant held and not held, 1 for owner / deeded / manager / god, 0 for a group-tagged
+non-member, AllowSetHome alone on tagged land, 0 / -1 / OR-combinations as Halcyon; llUnSit on group land needs a
+deeded object, and works for the parcel owner, a manager and a god but not a stranger.
+
+No function index or declared return type changed. The constant table keeps every name, order and type; 17 values
+changed.
+
+**Bytecode cache schema bumped to 4** (PhloxScriptLoader.CACHE_SCHEMA_VERSION), so cached bytecode carrying -1 is
+purged and every script is compiled again once at the next region start. Saved state is kept: the scheduler restores it
+through SerializedRuntimeState.ToRuntimeStateFor (PhloxExecutionScheduler.cs:201), which keeps globals, LSL state,
+queued events, timers and listens. Scripts whose bytecode is unchanged (every script that does not name one of the 17
+constants) have the same BytecodeIdentity and resume exactly, mid-event included. A script that names one and was saved
+mid-event (running, in llSleep or in a syscall) resumes idle with that event dropped (SerializedRuntimeState.cs:317-331).
+Tests: `CacheSchemaBumpTests` (2).
+
+What residents will notice: group officers' land scripts (ban and pass lists, parcel music and media) work again on
+group land for members holding the right group ability; iwHasParcelPowers answers for the ability asked about.
