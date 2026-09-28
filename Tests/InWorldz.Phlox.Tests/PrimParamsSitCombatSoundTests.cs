@@ -177,9 +177,7 @@ public class PrimParamsSitCombatSoundTests
         Assert.NotEqual(0u, bob.ParentID);
     }
 
-    [Fact(Skip = "Core defect, NEEDS JOHN: ScenePresence.cs:2659 calls Scene.ExperienceModule.GetExperiencePermission " +
-                 "with no null check; the experience module is off by default, so a manual stand from a prim with " +
-                 "AllowUnsit false throws. Core sit handling is out of scope for PHLOX-37.")]
+    [Fact]
     public void AManuallySeatedAvatarStandsFromAPrimThatDisallowsUnsit()
     {
         using var h = new SchedulerHarness();
