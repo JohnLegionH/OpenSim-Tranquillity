@@ -4114,10 +4114,24 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public void llSetDamage(float damage)
         {
             if (m_host == null) return;
-            SceneObjectGroup group = m_host.ParentGroup;
-            if (group == null) return;
-            group.Damage = Math.Max(damage, 0f);
+            PrimSetDamage(m_host, damage);
         }
+
+        /// <summary>
+        /// llSetDamage and PRIM_DAMAGE's amount: the object's damage (SceneObjectGroup.Damage, the root part's, which
+        /// the scene's collision damage reads), whichever prim names it. SL: "Collideable damage as set via
+        /// llSetDamage, PRIM_DAMAGE, and REZ_DAMAGE is limited to 100 maximum". Held at 0 below: the scene keeps -1
+        /// for "none" and deals only damage above 0, so it cannot heal. Not saved, as the scene keeps it.
+        /// </summary>
+        private static void PrimSetDamage(SceneObjectPart part, float damage)
+        {
+            SceneObjectGroup group = part.ParentGroup;
+            if (group == null) return;
+            group.Damage = Math.Clamp(damage, 0f, 100f);
+        }
+
+        /// <summary>PRIM_DAMAGE's amount: the object's damage, SL's 0.0 while none is set (the scene's -1).</summary>
+        private static float PrimDamage(SceneObjectPart part) => Math.Max(0f, part.ParentGroup?.Damage ?? 0f);
         public void llModifyLand(int action, int brush)
         {
             // Faithful port from Halcyon.
@@ -4947,8 +4961,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 if (prims.Count > 0 && !applied)
                     LogUnimplementedPrimRule(code, length - 1);
                 foreach (var sp in seated)
+                {
+                    // SL: "PRIM_OMEGA cannot be used on avatars sitting on the object. It will emit the error message
+                    // 'PRIM_OMEGA disallowed on agent'." The rules after it still apply. SL documents no other rule
+                    // as disallowed on an agent.
+                    if (code == PRIM_OMEGA && sp.ParentID != 0) { ShoutError("PRIM_OMEGA disallowed on agent"); continue; }
                     if (SetSitterPrimRule(sp, code, data, values) && !moved.Contains(sp))
                         moved.Add(sp);
+                }
             }
 
             foreach (var sp in moved)
@@ -5322,6 +5342,47 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     // [ PRIM_CAST_SHADOWS, integer boolean ]: a no-op in SL ("setting it will have no effect");
                     // Halcyon has no rule.
                     break;
+
+                case PRIM_ALLOW_UNSIT:
+                case PRIM_SCRIPTED_SIT_ONLY:
+                {
+                    // [ PRIM_ALLOW_UNSIT, integer boolean ], [ PRIM_SCRIPTED_SIT_ONLY, integer boolean ] (SL; Halcyon has
+                    // neither): the part properties OpenSim's LSL_Api sets and the region's sit path checks. Any
+                    // non-zero integer is TRUE.
+                    if (data[idx] is not int flag) break;
+                    if (code == PRIM_ALLOW_UNSIT) part.AllowUnsit = flag != 0;
+                    else part.ScriptedSitOnly = flag != 0;
+                    break;
+                }
+
+                case PRIM_SIT_FLAGS:
+                    // [ PRIM_SIT_FLAGS, integer flags ] (SL; Halcyon has no rule), as llSetLinkSitFlags.
+                    if (data[idx] is not int sitFlags) break;
+                    PartSetSitFlags(part, sitFlags);
+                    break;
+
+                case PRIM_DAMAGE:
+                {
+                    // [ PRIM_DAMAGE, float damage, integer damage_type ] (SL; Halcyon has no rule). The amount is the
+                    // object's, as llSetDamage. The scene keeps no damage type, so the type is accepted and dropped.
+                    if (!PrimFloat(data[idx], out float damage) || data[idx + 1] is not int) break;
+                    PrimSetDamage(part, damage);
+                    break;
+                }
+
+                case PRIM_HEALTH:
+                    // [ PRIM_HEALTH, float health ] (SL; Halcyon has no rule). The scene keeps no health for a prim,
+                    // so the value is accepted and dropped; it reads SL's default.
+                    break;
+
+                case PRIM_COLLISION_SOUND:
+                {
+                    // [ PRIM_COLLISION_SOUND, string sound, float volume ] (SL; Halcyon has no rule), as
+                    // llCollisionSound on this prim.
+                    if (data[idx] is not string sound || !PrimFloat(data[idx + 1], out float volume)) break;
+                    PrimSetCollisionSound(part, sound, volume);
+                    break;
+                }
 
                 case PRIM_TYPE:
                 {
@@ -6125,6 +6186,32 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         result.Add(0); // SL: it "will always return 0"; Halcyon has no rule
                         break;
 
+                    case PRIM_ALLOW_UNSIT:
+                        result.Add(part.AllowUnsit ? 1 : 0);
+                        break;
+
+                    case PRIM_SCRIPTED_SIT_ONLY:
+                        result.Add(part.ScriptedSitOnly ? 1 : 0);
+                        break;
+
+                    case PRIM_SIT_FLAGS:
+                        result.Add(PartSitFlags(part));
+                        break;
+
+                    case PRIM_DAMAGE:
+                        // [ float damage, integer damage_type ]: the scene keeps no type, so DAMAGE_TYPE_GENERIC.
+                        result.Add(PrimDamage(part));
+                        result.Add(DAMAGE_TYPE_GENERIC);
+                        break;
+
+                    case PRIM_HEALTH:
+                        result.Add(0f); // SL: "Objects start with 0 health by default"; the scene keeps none
+                        break;
+
+                    case PRIM_COLLISION_SOUND:
+                        PrimCollisionSound(part, result);
+                        break;
+
                     case PRIM_MATERIAL:
                         result.Add((int)part.Material);
                         break;
@@ -6721,8 +6808,57 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public void llCollisionSound(string impact_sound, float impact_volume)
         {
             if (m_host == null) return;
-            m_host.CollisionSound = KeyOrName(impact_sound);
-            m_host.CollisionSoundVolume = Math.Max(0f, Math.Min(1f, impact_volume));
+            PrimSetCollisionSound(m_host, impact_sound, impact_volume);
+        }
+
+        /// <summary>
+        /// llCollisionSound and PRIM_COLLISION_SOUND on one prim, stored in the scene's CollisionSound and
+        /// CollisionSoundVolume (the CollisionSound setter derives CollisionSoundType), as OpenSim's LSL_Api does.
+        /// SL: "If impact_sound is an empty string then the collision sound is suppressed" (the scene's
+        /// invalidCollisionSoundUUID); otherwise impact_sound is a sound's key or the name of a sound in the prim's
+        /// inventory (Halcyon and SL: a sound, not any item), and when it is neither "an error is shouted on
+        /// DEBUG_CHANNEL" and the prim keeps its sound. The volume is held to SL's 0.0-1.0. The part's collision
+        /// subscription is refreshed, since the scene listens for collisions only while a sound is not suppressed.
+        /// </summary>
+        private void PrimSetCollisionSound(SceneObjectPart part, string impact_sound, float impact_volume)
+        {
+            float volume = Math.Clamp(impact_volume, 0f, 1f);
+            UUID sound;
+            if (string.IsNullOrEmpty(impact_sound))
+                sound = part.invalidCollisionSoundUUID;
+            else if (!UUID.TryParse(impact_sound, out sound))
+            {
+                sound = UUID.Zero;
+                lock (part.TaskInventory)
+                {
+                    foreach (TaskInventoryItem item in part.TaskInventory.Values)
+                    {
+                        if (item.Type == (int)AssetType.Sound && item.Name == impact_sound)
+                        {
+                            sound = item.AssetID;
+                            break;
+                        }
+                    }
+                }
+                if (sound == UUID.Zero)
+                {
+                    ShoutError($"Could not find sound '{impact_sound}'");
+                    return;
+                }
+            }
+            part.CollisionSound = sound;
+            part.CollisionSoundVolume = volume;
+            part.aggregateScriptEvents();
+        }
+
+        /// <summary>
+        /// PRIM_COLLISION_SOUND's read: [ key sound, float volume ]. A suppressed or default sound reads NULL_KEY.
+        /// </summary>
+        private static void PrimCollisionSound(SceneObjectPart part, List<object> result)
+        {
+            UUID sound = part.CollisionSound;
+            result.Add(sound == part.invalidCollisionSoundUUID ? UUID.Zero.ToString() : sound.ToString());
+            result.Add(part.CollisionSoundVolume);
         }
         public void llCollisionSprite(string impact_sprite) { /* NotImplemented in Halcyon */ }
 
@@ -12573,12 +12709,33 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public int llGetLinkSitFlags(int link)
         {
             SceneObjectPart part = GetLinkParts(link).FirstOrDefault();
-            if (part == null) return 0;
+            return part == null ? 0 : PartSitFlags(part);
+        }
+
+        /// <summary>
+        /// One prim's SIT_FLAG_* word, for llGetLinkSitFlags and PRIM_SIT_FLAGS. Every bit is read from the scene:
+        /// SIT_TARGET from IsSitTargetSet, ALLOW_UNSIT and SCRIPTED_ONLY from the part properties OpenSim's LSL_Api
+        /// sets for PRIM_ALLOW_UNSIT and PRIM_SCRIPTED_SIT_ONLY, NO_COLLIDE and NO_DAMAGE from SitFlagsStored.
+        /// </summary>
+        private static int PartSitFlags(SceneObjectPart part)
+        {
             int flags = part.SitFlagsStored & (SIT_FLAG_NO_COLLIDE | SIT_FLAG_NO_DAMAGE);
             if (part.IsSitTargetSet) flags |= SIT_FLAG_SIT_TARGET;
             if (part.AllowUnsit) flags |= SIT_FLAG_ALLOW_UNSIT;
             if (part.ScriptedSitOnly) flags |= SIT_FLAG_SCRIPTED_ONLY;
             return flags;
+        }
+
+        /// <summary>
+        /// Sets one prim's sit flags, for llSetLinkSitFlags and PRIM_SIT_FLAGS: every settable bit takes the word's
+        /// value, SIT_FLAG_SIT_TARGET is read-only and ignored (SL: "Read-only flag to indicate whether the link has
+        /// a sit target").
+        /// </summary>
+        private static void PartSetSitFlags(SceneObjectPart part, int flags)
+        {
+            part.AllowUnsit = (flags & SIT_FLAG_ALLOW_UNSIT) != 0;
+            part.ScriptedSitOnly = (flags & SIT_FLAG_SCRIPTED_ONLY) != 0;
+            part.SitFlagsStored = flags & (SIT_FLAG_NO_COLLIDE | SIT_FLAG_NO_DAMAGE);
         }
 
         /// <summary>
@@ -12591,11 +12748,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public void llSetLinkSitFlags(int link, int flags)
         {
             foreach (SceneObjectPart part in GetLinkParts(link))
-            {
-                part.AllowUnsit = (flags & SIT_FLAG_ALLOW_UNSIT) != 0;
-                part.ScriptedSitOnly = (flags & SIT_FLAG_SCRIPTED_ONLY) != 0;
-                part.SitFlagsStored = flags & (SIT_FLAG_NO_COLLIDE | SIT_FLAG_NO_DAMAGE);
-            }
+                PartSetSitFlags(part, flags);
         }
         public Vector3 llLinear2sRGB(Vector3 color)
         {

@@ -3279,3 +3279,65 @@ compiler table's values.
 What residents will notice: normal and specular maps and alpha masking set by scripts show in viewers and match what
 YEngine scripts set; planar texture mapping works from prim-params lists; spinning prims report the spin they were
 given; and scripts can read the grid's name without OSSL permissions.
+
+## PHLOX-37 - PRIM_ALLOW_UNSIT, PRIM_SCRIPTED_SIT_ONLY, PRIM_SIT_FLAGS, PRIM_DAMAGE, PRIM_HEALTH and PRIM_COLLISION_SOUND in prim-params lists; PRIM_OMEGA on a seated avatar raises SL's error
+
+Before, the six rules were skipped on both sides; llCollisionSound with "" switched the prim back to the default
+collision sounds instead of suppressing them, took any inventory item by name, reset to the default sounds when the
+name was not found, and did not refresh the prim's collision subscription; and `PRIM_OMEGA` on a seated avatar did
+nothing and said nothing.
+
+Halcyon has none of the six rules, so each follows SL. Each uses state the scene already keeps, so YEngine and Phlox
+scripts see one value:
+- **`PRIM_ALLOW_UNSIT`** and **`PRIM_SCRIPTED_SIT_ONLY`**: `SceneObjectPart.AllowUnsit` and `ScriptedSitOnly`, the
+  properties OpenSim's LSL_Api sets for the same rules and the region's sit path checks; both are saved. Any non-zero
+  integer is TRUE. A manual sit on a scripted-only prim is refused ("Attempts to do a manual sit will fail").
+- **`PRIM_SIT_FLAGS`** and llSetLinkSitFlags / llGetLinkSitFlags share one helper: `SIT_FLAG_ALLOW_UNSIT` and
+  `SIT_FLAG_SCRIPTED_ONLY` are the two properties above, `SIT_FLAG_SIT_TARGET` is read-only (from the sit target),
+  `SIT_FLAG_NO_COLLIDE` and `SIT_FLAG_NO_DAMAGE` are kept in `SitFlagsStored`. A new prim reads `SIT_FLAG_ALLOW_UNSIT`.
+- **`PRIM_DAMAGE`** and llSetDamage share one helper: the object's damage (`SceneObjectGroup.Damage`, which the
+  scene's collision damage reads), whichever link sets it, held to 0-100 (SL: "limited to 100 maximum"). Read: the
+  amount, 0.0 when none is set, and `DAMAGE_TYPE_GENERIC`.
+- **`PRIM_HEALTH`** is accepted and reads SL's default 0.0 ("Objects start with 0 health by default").
+- **`PRIM_COLLISION_SOUND`** and llCollisionSound share one helper, stored in the scene's `CollisionSound` and
+  `CollisionSoundVolume` as OpenSim's LSL_Api stores them: a sound's key or the name of a sound in the prim (Halcyon
+  and SL: a sound, not any item); "" suppresses the prim's collision sounds (SL); a name that is not a sound in the
+  prim shouts "Could not find sound '<name>'" on `DEBUG_CHANNEL` and changes nothing (SL shouts; its exact wording is
+  not documented); the volume is held to 0.0-1.0; the prim's collision subscription is refreshed. Read: the key and
+  the volume, `NULL_KEY` for suppressed or default sounds.
+- **`PRIM_OMEGA` on a seated avatar** shouts SL's "PRIM_OMEGA disallowed on agent" on `DEBUG_CHANNEL`, once for each
+  seated avatar the rule reaches, and the rules after it still apply. SL documents no other rule as disallowed on an
+  agent.
+
+Known limits, not changed here (John's rulings, 2026-09-27):
+- Needs core storage, a combat-system decision for NGC: `PRIM_HEALTH` keeps nothing; `PRIM_DAMAGE`'s damage type is
+  dropped and reads `DAMAGE_TYPE_GENERIC`; the damage amount is not saved across a restart (as llSetDamage in both
+  engines); `SIT_FLAG_NO_COLLIDE` and `SIT_FLAG_NO_DAMAGE` are not saved and nothing acts on them.
+- Negative damage (SL: -100 heals) is held at 0: the scene keeps -1 for "none" and deals only damage above 0.
+- Core defect, for a separate core session: a manually seated avatar on a prim with `PRIM_ALLOW_UNSIT` FALSE cannot
+  stand or change seat when the experience module is off (the default). `ScenePresence.HandleAgentUpdate`
+  (ScenePresence.cs:2659) and `HandleAgentRequestSit` (:3413) call `Scene.ExperienceModule.GetExperiencePermission`
+  with no null check and throw `NullReferenceException`; the avatar stays seated. SL: the flag "has no effect on agents
+  who had seated manually". This was already reachable through YEngine's `PRIM_ALLOW_UNSIT` and Phlox's
+  llSetLinkSitFlags. Nothing sets `ExperienceUsedForSit`, so no avatar is ever held by an experience.
+- Core gaps in `PRIM_SCRIPTED_SIT_ONLY`: `FindNextAvailableSitTarget` (ScenePresence.cs:3263) can move a sit click on
+  another prim onto a scripted-only prim's sit target, and SL's rule that a scripted-only prim with no other sit
+  target in the linkset blocks manual sits on the whole object is not enforced.
+- YEngine accepts only 1 as TRUE for `PRIM_ALLOW_UNSIT` and `PRIM_SCRIPTED_SIT_ONLY` and has no getter for either;
+  YEngine's llGetLinkSitFlags reports fixed flags. Not changed (shared LSL_Api).
+
+Tests: `PrimParamsSitCombatSoundTests`. Each rule set and read back on the root and a child against the scene state;
+values of the wrong type changing nothing while the rules after them apply; SL's defaults; the sit-flag word against
+llSetLinkSitFlags / llGetLinkSitFlags and `SIT_FLAG_SIT_TARGET` read-only; damage held to 0-100, object-wide, against
+llSetDamage; collision sound by name, by key and "", the volume held, a missing name and a non-sound shouting,
+llCollisionSound against the rule; one long list setting and reading all six across `PRIM_LINK_TARGET`; what a YEngine
+LSL_Api sets read by Phlox and what Phlox sets left in the scene; the saved form keeping the sit flags and the sound;
+the region refusing a manual sit on a scripted-only prim; and `PRIM_OMEGA` on one seated avatar and on `LINK_SET`
+with two. `AManuallySeatedAvatarStandsFromAPrimThatDisallowsUnsit` is skipped, pointing at the core defect above.
+
+No function index or declared return type changed, and the compiled script format and saved state are not affected.
+`SlConst` gains `DAMAGE_TYPE_GENERIC`, with the compiler table's value.
+
+What residents will notice: furniture and vehicles that set sit flags, scripted-only seats and collision sounds in
+prim-params lists work and read back what they set, in both engines; empty-string collision sounds are silent; and
+scripts that spin a link that turns out to be a seated avatar get SL's error.

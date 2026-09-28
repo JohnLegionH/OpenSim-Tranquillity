@@ -72,9 +72,9 @@ public class PrimParamsRuleWalkTests
     private static void Near(Vector3 expected, Vector3 actual)
         => Assert.True(Vector3.Distance(expected, actual) < 0.001f, $"expected {expected}, got {actual}");
 
-    // Rules Phlox does not act on yet, each followed by rules it does, kept harmless for when they are added: no
-    // collision sound. Hover text, the rotation the prim already has, zero spin, a prim physics shape, a sit target, no
-    // click action, planar texgen and a blank specular map were among them; Phlox now applies them.
+    // Rules Phlox did not act on, each followed by rules it does, kept harmless for when they were added. Hover text,
+    // the rotation the prim already has, zero spin, a prim physics shape, a sit target, no click action, planar texgen,
+    // a blank specular map and a suppressed collision sound were among them; Phlox now applies them all.
     private const string LongList =
         "PRIM_NAME, \"renamed\", " +
         "PRIM_TEXT, \"hover\", <1, 0, 0>, 1.0, " +

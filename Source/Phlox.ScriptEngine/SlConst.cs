@@ -40,6 +40,9 @@ namespace Phlox.ScriptEngine
         public const int CONTENT_TYPE_XHTML = 3;
         public const int CONTENT_TYPE_XML = 2;
 
+        // ── DAMAGE_TYPE_* ─────────────────────────────────────────────────
+        public const int DAMAGE_TYPE_GENERIC = 0;
+
         // ── DATA_* ────────────────────────────────────────────────────────
         public const int DATA_BORN = 3;
         public const int DATA_NAME = 2;
