@@ -22,6 +22,19 @@ public class SmallCorrectnessTests
 
     private static string Said(SchedulerHarness h) => string.Join(" | ", h.Said);
 
+    /// <summary>Pump until <paramref name="done"/> holds or <paramref name="limit"/> passes; false on a timeout.</summary>
+    private static bool PumpUntil(SchedulerHarness h, Func<bool> done, TimeSpan limit)
+    {
+        var until = DateTime.UtcNow + limit;
+        while (!done())
+        {
+            if (DateTime.UtcNow >= until) return false;
+            h.PumpOnce();
+            System.Threading.Thread.Sleep(1);
+        }
+        return true;
+    }
+
     // ---- E1: llGetMassMKS is 100 x llGetMass (wiki: mass in kilograms; YEngine LSL_Api.llGetMassMKS) ----
 
     [Fact]
@@ -151,7 +164,9 @@ public class SmallCorrectnessTests
         using var h = new SchedulerHarness();
         var client = h.AddClient();
         h.RezScript($"default {{ state_entry() {{ llSay(0, \"r=\" + (string)llManageEstateAccess(ESTATE_ACCESS_ALLOWED_AGENT_ADD, \"{client.AgentId}\")); }} }}");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        // Under full-suite load the said line can come after a fixed 2 s, so pump until it is said.
+        Assert.True(PumpUntil(h, () => h.Said.Any(s => s.StartsWith("r=")), TimeSpan.FromSeconds(20)),
+            "nothing said within 20 s: [" + Said(h) + "]");
         Assert.True(h.Said.Contains("r=0"), Said(h));
     }
 }
