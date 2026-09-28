@@ -196,6 +196,8 @@ public class PermissionsTests
 public class RecordingAttachments : DispatchProxy
 {
     public List<string> Calls { get; } = new();
+    /// <summary>PHLOX-41: each call with its arguments, under the same lock as <see cref="Calls"/>.</summary>
+    public List<(string Name, object[] Args)> Invocations { get; } = new();
 
     public static IAttachmentsModule Create(out RecordingAttachments rec)
     {
@@ -206,7 +208,7 @@ public class RecordingAttachments : DispatchProxy
 
     protected override object Invoke(MethodInfo targetMethod, object[] args)
     {
-        lock (Calls) Calls.Add(targetMethod.Name);
+        lock (Calls) { Calls.Add(targetMethod.Name); Invocations.Add((targetMethod.Name, args)); }
         var rt = targetMethod.ReturnType;
         return rt == typeof(void) || !rt.IsValueType ? null : Activator.CreateInstance(rt);
     }

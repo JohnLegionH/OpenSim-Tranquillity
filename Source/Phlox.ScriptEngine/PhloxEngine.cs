@@ -69,7 +69,7 @@ namespace Phlox.ScriptEngine
         /// </summary>
         public float MinTimerInterval { get; private set; } = DefaultMinTimerInterval;
 
-        /// <summary>PHLOX-21: [InWorldz.Phlox] AllowGodFunctions, as YEngine's (default false).</summary>
+        /// <summary>PHLOX-21/41: [InWorldz.Phlox] AllowGodFunctions if set, else YEngine's [YEngine] AllowGodFunctions (default false).</summary>
         public bool AllowGodFunctions { get; private set; }
 
         /// <summary>PHLOX-12. The [OSSL] permission gate, read from the same config YEngine reads.</summary>
@@ -112,8 +112,12 @@ namespace Phlox.ScriptEngine
             m_log.LogInformation("[PhloxEngine]: max_listens_per_script = {0}, max_listens_per_region = {1}",
                 m_MaxListensPerScript == int.MaxValue ? "no limit" : m_MaxListensPerScript.ToString(),
                 m_MaxListensPerRegion == int.MaxValue ? "no limit" : m_MaxListensPerRegion.ToString());
-            // PHLOX-21: YEngine's switch for god functions (llSetInventoryPermMask), off by default.
-            AllowGodFunctions = m_Config.GetBoolean("AllowGodFunctions", false);
+            // PHLOX-21: YEngine's switch for god functions (llSetInventoryPermMask, and PHLOX-41 llSetObjectPermMask), off by
+            // default. PHLOX-41: read as YEngine reads it - [YEngine] AllowGodFunctions, default false (LSL_Api.LoadConfig
+            // takes it from m_ScriptEngine.Config, which is config.Configs["YEngine"]) - so one value gates both engines.
+            // An [InWorldz.Phlox] AllowGodFunctions, where set, still wins, as it did before.
+            AllowGodFunctions = m_Config.GetBoolean("AllowGodFunctions",
+                config.Configs["YEngine"]?.GetBoolean("AllowGodFunctions", false) ?? false);
             if (MinTimerInterval < 0f) MinTimerInterval = 0f;
             m_log.LogInformation("[PhloxEngine]: MinTimerInterval = {0}s", MinTimerInterval);
 

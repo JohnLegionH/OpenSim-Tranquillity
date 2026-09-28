@@ -3545,3 +3545,69 @@ No function index or declared return type changed, and the compiled script forma
 What residents will notice: a return script works only when its owner (or, for a group-owned object, a group Owner)
 grants the permission, and only on the owner's land (anywhere for estate managers); returned objects arrive in their
 owners' Lost and Found instead of vanishing.
+
+## PHLOX-41 - dropped checks restored: iwGroupInvite/iwGroupEject, llAttachToAvatarTemp, llCreateLink, llSetObjectPermMask
+
+Audit item "dropped checks" (HALCYON-DIFF): four checks Halcyon or SL make that Phlox had lost. iw functions follow
+Halcyon; ll functions follow Halcyon where it implements the rule and SL where it does not or where the two differ.
+
+- **iwGroupInvite / iwGroupEject (Halcyon).** Halcyon's `ScriptOwnerIsCreator`: the calling script's owner must be its
+  creator, so a resold object cannot invite or eject on its new owner's behalf with someone else's script. After the key
+  checks, a script whose creator is not its owner shouts Halcyon's text, "LSL Runtime Error: iwGroupInvite requires the
+  owner of the calling script to be the creator of the script." (iwGroupEject likewise), and returns Halcyon's
+  `GenericReturnCodes.PERMISSION`, 5. Nothing reaches the groups module.
+- **llAttachToAvatarTemp (Halcyon and SL agree).** SL: "Can be used on non-owners (changing ownership to the wearer)."
+  Any avatar who granted `PERMISSION_ATTACH` can wear it. For someone other than the owner the object changes hands the
+  way the scene sells an object "Original" (`BuySellModule`, and YEngine's llAttachToAvatarTemp): transfer right on the
+  effective owner perms, `SetOwner`, contents to the new owner with next-owner perms, `CHANGED_OWNER`. Without the
+  transfer right nothing changes and it shouts Halcyon's "llAttachToAvatarTemp: No permission to transfer" (SL: "the
+  function will fail with a script error No permission to transfer"). An object already attached fails silently (SL,
+  Halcyon). Every grant is reset on the change of owner (SL: "When object ownership changes, any granted permissions
+  are reset"; YEngine restores them, SL is followed). It attaches with no inventory item, so the attachments module
+  deletes it on detach (`AttachmentsModule`: "If this didn't come from inventory, it also shouldn't go there on detach").
+- **llCreateLink (SL, Halcyon's text).** SL: "target must be modifiable and have the same owner. This object must also
+  be modifiable." Modify is read from each root's owner mask, as Halcyon and YEngine read it. SL shouts an error on
+  DEBUG_CHANNEL for each failure but gives no text:
+  - no permission: Halcyon's "Script trying to link but PERMISSION_CHANGE_LINKS permission not set!" (1 s sleep, as before);
+  - granted by anyone other than the owner (SL; Halcyon has no such check): YEngine's "llCreateLink: PERMISSION_CHANGE_LINKS
+    not set by script owner";
+  - either object not modifiable, or different owners (SL; Halcyon is silent): "llCreateLink: this object and the target
+    must both be modifiable and have the same owner";
+  - target not a prim here, or attached (SL; Halcyon is silent): "llCreateLink: the target is not a prim in this region,
+    or is attached to an avatar".
+  osForceCreateLink takes the same checks silently, as YEngine's `CreateLink` does.
+- **llSetObjectPermMask (YEngine's gate).** SL: "This function can only be executed in God Mode." Gated as YEngine gates
+  it: `AllowGodFunctions` and an administrator owner (`IsAdministrator`, not `CanRunConsoleCommand`). The switch is read
+  as YEngine reads it: `[YEngine] AllowGodFunctions`, default false. PHLOX-21's `[InWorldz.Phlox] AllowGodFunctions`,
+  where set, still wins, so a config that set it behaves as before; with neither set, god functions are off in both
+  engines. The same switch gates llSetInventoryPermMask.
+
+Known limits:
+- Not covered in-world: Legion Agent cannot answer a script's permission question, and one avatar cannot make a script
+  whose creator is someone else. The probe (`phlox41-probe-auto-testisle.yaml`) covers the no-grant paths; the refusal
+  for owner-not-creator, the granted temp attach, the granted link and its refusals, and the gate turned on are covered
+  by the unit tests only.
+- iwGroupInvite / iwGroupEject's other return codes are still Phlox's own, not Halcyon's (bad key -3, no groups module -1,
+  success 1; Halcyon: PARAMETER 3, ERROR 2, and the groups module's own result). Deferred.
+- llCreateLink sleeps 1 s (Halcyon); SL's is 0.1 s. `AutomaticLinkPermission` (YEngine and Halcyon) is not read by Phlox.
+- llAttachToAvatarTemp changes the owner before the attachments module attaches; if the attach then fails (for example
+  someone is sitting on the object), the wearer keeps the object on the ground. YEngine and Halcyon do the same.
+- llSetObjectPermMask writes the value as given (Halcyon's body). YEngine's also limits a mask by the base and owner
+  masks; that limit ANDs the MASK_* index with PERM_* bits, so with a non-full base it can turn MASK_NEXT into
+  MASK_BASE. It is not copied here. PHLOX-21's llSetInventoryPermMask carries that same YEngine code. Deferred.
+- The core's `OpenSimDefaults.ini` documents `AllowGodFunctions` under `[LL-Functions]`, which YEngine does not read
+  (it reads `[YEngine]`). Core is not changed here.
+
+Tests: `DroppedChecksTests` (17): invite and eject work when the owner is the creator and are refused with Halcyon's
+text and 5 when not; temp attach to someone else makes them the owner, resets the grant and asks for no inventory item;
+a no-transfer object is refused with the shout; the owner's own temp attach keeps the owner; an object already worn
+fails silently; llCreateLink links two modifiable objects of the owner and refuses a no-mod target, a no-mod host,
+another owner's target, a target not here, a grant from someone else, and no grant, each with its shout;
+llSetObjectPermMask works for an administrator with `[YEngine] AllowGodFunctions`, and does nothing with the gate off,
+for an ordinary owner, or when `[InWorldz.Phlox] AllowGodFunctions = false` overrides YEngine's.
+
+No function index or declared return type changed, and the compiled script format and saved state are not affected.
+
+What residents will notice: group invite and eject scripts work only for the person who created the script; a temp attach on
+someone else gives them the object; scripts cannot link no-mod objects or use a link permission someone else granted;
+llSetObjectPermMask needs the grid's god-functions switch.

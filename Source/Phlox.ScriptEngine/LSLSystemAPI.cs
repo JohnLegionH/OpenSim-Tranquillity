@@ -1889,10 +1889,16 @@ namespace Phlox.ScriptEngine
             attachMod.AttachObject(sp, m_host.ParentGroup, (uint)attach_point, false, true, false, GetScriptExperienceId());
         }
 
+        /// <summary>
+        /// PHLOX-41. SL (wiki llAttachToAvatarTemp) and Halcyon (AttachInternal): any avatar who granted
+        /// PERMISSION_ATTACH can wear it; a non-owner becomes the owner ("Can be used on non-owners (changing ownership
+        /// to the wearer)"), which needs the transfer right or fails with "No permission to transfer"; an object
+        /// already attached fails silently; no inventory is created. After the change of owner the permissions are
+        /// reset (SL: "When object ownership changes, any granted permissions are reset").
+        /// </summary>
         public void llAttachToAvatarTemp(int attachPoint)
         {
-            // Temp attachments don't persist to inventory — attach without addToInventory
-            if (m_host == null) return;
+            if (m_host?.ParentGroup == null) return;
             TaskInventoryItem item = GetInventorySelf();
             if (item == null) return;
             if ((item.PermsMask & SlConst.PERMISSION_ATTACH) == 0)
@@ -1900,11 +1906,61 @@ namespace Phlox.ScriptEngine
                 ShoutError("llAttachToAvatarTemp: PERMISSION_ATTACH not granted.");
                 return;
             }
+            SceneObjectGroup grp = m_host.ParentGroup;
+            if (grp.IsDeleted || grp.IsAttachment) return;
             IAttachmentsModule attachMod = World.RequestModuleInterface<IAttachmentsModule>();
             if (attachMod == null) return;
             ScenePresence sp = World.GetScenePresence(item.PermsGranter);
             if (sp == null || sp.IsChildAgent) return;
-            attachMod.AttachObject(sp, m_host.ParentGroup, (uint)attachPoint, false, false, false, GetScriptExperienceId());
+
+            if (sp.UUID != grp.OwnerID && !GiveToTempWearer(grp, sp, item))
+            {
+                ShoutError("llAttachToAvatarTemp: No permission to transfer");
+                return;
+            }
+            // Not added to inventory: AttachmentsModule deletes an attachment with no FromItemID on detach.
+            attachMod.AttachObject(sp, grp, (uint)attachPoint, false, false, true, GetScriptExperienceId());
+        }
+
+        /// <summary>
+        /// PHLOX-41: hand a live object to its temp wearer the way the scene sells an object "Original"
+        /// (BuySellModule, SaleType.Original) and YEngine's llAttachToAvatarTemp do it: transfer right on the
+        /// effective owner perms, SetOwner, then the contents follow with next-owner perms and CHANGED_OWNER.
+        /// False, and nothing changed, without the transfer right.
+        /// </summary>
+        private bool GiveToTempWearer(SceneObjectGroup grp, ScenePresence wearer, TaskInventoryItem item)
+        {
+            if ((grp.EffectiveOwnerPerms & (uint)OpenSim.Framework.PermissionMask.Transfer) == 0) return false;
+
+            grp.SetOwner(wearer.UUID, wearer.ControllingClient.ActiveGroupId);
+            bool propagate = World.Permissions.PropagatePermissions();
+            foreach (SceneObjectPart part in grp.Parts)
+            {
+                if (propagate)
+                {
+                    part.Inventory.ChangeInventoryOwner(wearer.UUID);
+                    part.ApplyNextOwnerPermissions();
+                }
+                else
+                {
+                    // SL resets every grant on a change of owner; ChangeInventoryOwner does it when propagating.
+                    foreach (TaskInventoryItem inv in part.Inventory.GetInventoryItems())
+                    {
+                        inv.PermsGranter = UUID.Zero;
+                        inv.PermsMask = 0;
+                    }
+                }
+                part.TriggerScriptChangedEvent(Changed.OWNER);
+            }
+            if (propagate) grp.InvalidateDeepEffectivePerms();
+            PermsChange(item, UUID.Zero, 0);
+
+            grp.RootPart.ObjectSaleType = 0;
+            grp.RootPart.SalePrice = 10;
+            grp.HasGroupChanged = true;
+            grp.RootPart.SendPropertiesToClient(wearer.ControllingClient);
+            grp.RootPart.ScheduleFullUpdate();
+            return true;
         }
 
         public void llDetachFromAvatar()
@@ -4200,30 +4256,49 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (item == null) return;
             if ((item.PermsMask & PERMISSION_CHANGE_LINKS) == 0)
             {
-                ShoutError("llCreateLink: PERMISSION_CHANGE_LINKS not set");
+                // Halcyon's text (the SL wiki says only that an error is shouted).
+                ShoutError("Script trying to link but PERMISSION_CHANGE_LINKS permission not set!");
                 ScriptSleep(1000);
                 return;
             }
+            // PHLOX-41, SL (wiki llCreateLink): "If the permission PERMISSION_CHANGE_LINKS is granted by anyone other
+            // than the owner, then when the function is called an error will be shouted". YEngine's text.
+            if (item.PermsGranter != m_host.ParentGroup.OwnerID)
+            {
+                ShoutError("llCreateLink: PERMISSION_CHANGE_LINKS not set by script owner");
+                return;
+            }
 
-            CreateLinkCore(target, parent);
+            string failure = CreateLinkCore(target, parent);
+            if (failure != null) ShoutError("llCreateLink: " + failure);
         }
 
-        /// <summary>PHLOX-15: llCreateLink after its PERMISSION_CHANGE_LINKS check - the door osForceCreateLink takes (OSSL_Api.cs:2784-2789 calls the same split, m_LSL_Api.CreateLink).</summary>
-        private void CreateLinkCore(string target, int parent)
+        /// <summary>
+        /// PHLOX-15: llCreateLink after its PERMISSION_CHANGE_LINKS check - the door osForceCreateLink takes (OSSL_Api.cs:2784-2789 calls the same split, m_LSL_Api.CreateLink).
+        /// PHLOX-41: SL's conditions - "target must be modifiable and have the same owner. This object must also be
+        /// modifiable." - with modify read from each root's OwnerMask as Halcyon and YEngine read it. Returns why it
+        /// did not link (llCreateLink shouts it, as SL does; osForceCreateLink stays silent, as YEngine's CreateLink),
+        /// or null.
+        /// </summary>
+        private string CreateLinkCore(string target, int parent)
         {
-            if (m_host?.ParentGroup == null || m_host.ParentGroup.IsAttachment) return;
-            if (!UUID.TryParse(target, out UUID targetUUID) || targetUUID == UUID.Zero) return;
+            if (m_host?.ParentGroup == null || m_host.ParentGroup.IsAttachment) return null;
+            const string noTarget = "the target is not a prim in this region, or is attached to an avatar";
+            if (!UUID.TryParse(target, out UUID targetUUID) || targetUUID == UUID.Zero) return noTarget;
             SceneObjectPart targetPart = World?.GetSceneObjectPart(targetUUID);
-            if (targetPart?.ParentGroup == null) return;
-            if (targetPart.ParentGroup.IsAttachment) return;
+            if (targetPart?.ParentGroup == null) return noTarget;
+            if (targetPart.ParentGroup.IsAttachment) return noTarget;
 
-            // Both objects must have the same owner
-            if (m_host.OwnerID != targetPart.OwnerID) return;
+            const uint modify = (uint)OpenSim.Framework.PermissionMask.Modify;
+            if (m_host.ParentGroup.OwnerID != targetPart.ParentGroup.OwnerID
+                || (m_host.ParentGroup.RootPart.OwnerMask & modify) == 0
+                || (targetPart.ParentGroup.RootPart.OwnerMask & modify) == 0)
+                return "this object and the target must both be modifiable and have the same owner";
 
             SceneObjectGroup group1 = (parent != 0) ? m_host.ParentGroup : targetPart.ParentGroup;
             SceneObjectGroup group2 = (parent != 0) ? targetPart.ParentGroup : m_host.ParentGroup;
 
-            if (group1 == group2) return; // already in same linkset
+            if (group1 == group2) return null; // already in same linkset
 
             // Link group2 into group1 — group2 ceases to exist as a separate object
             group1.LinkToGroup(group2);
@@ -4233,6 +4308,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             group1.ScheduleGroupForFullUpdate();
 
             ScriptSleep(1000);
+            return null;
         }
 
         public void llBreakLink(int linknum)
@@ -8282,9 +8358,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         public void llSetObjectPermMask(int mask, int value)
         {
-            // Only available to god-level scripts per LSL spec.
+            // PHLOX-41: a god function (SL: "This function can only be executed in God Mode"), gated as YEngine gates it
+            // (LSL_Api.llSetObjectPermMask): AllowGodFunctions and an administrator owner.
             if (m_host == null) return;
-            if (!World.Permissions.CanRunConsoleCommand(m_host.OwnerID)) return;
+            if (m_ScriptEngine == null || !m_ScriptEngine.AllowGodFunctions) return;
+            if (World?.Permissions == null || !World.Permissions.IsAdministrator(m_host.OwnerID)) return;
 
             switch (mask)
             {
@@ -8293,7 +8371,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 case 2: m_host.GroupMask     = (uint)value; break;
                 case 3: m_host.EveryoneMask  = (uint)value; break;
                 case 4: m_host.NextOwnerMask = (uint)value; break;
+                default: return;
             }
+            m_host.ParentGroup?.InvalidateDeepEffectivePerms();
         }
         public LSLList llGetAgentList(int scope, LSLList options)
         {
@@ -14204,12 +14284,31 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     return -1;
             }
         }
+        /// <summary>PHLOX-41: Halcyon's Constants.GenericReturnCodes.PERMISSION, iwGroupInvite/iwGroupEject's refusal.</summary>
+        private const int HALCYON_RC_PERMISSION = 5;
+
+        /// <summary>
+        /// PHLOX-41: Halcyon's ScriptOwnerIsCreator - the calling script's owner must be its creator, so a resold
+        /// object cannot invite or eject on its new owner's behalf with someone else's script.
+        /// </summary>
+        private bool ScriptOwnerIsCreator()
+        {
+            TaskInventoryItem item = GetInventorySelf();
+            return item != null && item.CreatorID == item.OwnerID;
+        }
+
         public int iwGroupInvite(string group, string user, string role)
         {
             // Faithful port from Halcyon
             if (!UUID.TryParse(group, out UUID groupID) || groupID == UUID.Zero) return -3;
             if (!UUID.TryParse(user, out UUID userID) || userID == UUID.Zero) return -3;
             if (string.IsNullOrEmpty(role)) role = "Everyone";
+
+            if (!ScriptOwnerIsCreator())
+            {
+                ShoutError("LSL Runtime Error: iwGroupInvite requires the owner of the calling script to be the creator of the script.");
+                return HALCYON_RC_PERMISSION;
+            }
 
             try
             {
@@ -14247,6 +14346,12 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             // Faithful port from Halcyon
             if (!UUID.TryParse(group, out UUID groupID) || groupID == UUID.Zero) return -3;
             if (!UUID.TryParse(user, out UUID userID) || userID == UUID.Zero) return -3;
+
+            if (!ScriptOwnerIsCreator())
+            {
+                ShoutError("LSL Runtime Error: iwGroupEject requires the owner of the calling script to be the creator of the script.");
+                return HALCYON_RC_PERMISSION;
+            }
 
             try
             {
