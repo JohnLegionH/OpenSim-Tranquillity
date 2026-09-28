@@ -2729,7 +2729,8 @@ kept hearing in the next.
 
 ### Fix
 
-- A script holds at most 65 listens (SL's limit, not Halcyon's 64), counting those switched off. One more returns
+- A script holds at most 65 listens (SL's limit, not Halcyon's 64), counting those switched off (since PHLOX-39,
+  [LL-Functions] max_listens_per_script, 65 with no key). One more returns
   -1, with no script error, as in Halcyon. osListenRegex and the bot listen count toward the same 65.
 - An llListen whose channel, name, key and message are exactly those of a switched-on listen the script already
   holds returns that listen's handle and takes no slot. Only exact matches are reused. Halcyon's `GetListeners`
@@ -3128,7 +3129,7 @@ Known limits, not changed here:
 - llGetRot on an attachment's root returns the attachment's rotation, not the wearer's as SL and Halcyon do, so it
   differs there from `PRIM_ROTATION`. Resolved in PHLOX-35.
 - llSetPos keeps its own path: region clamps, no 10 m cap, and a child's vector taken as a region position minus the
-  root's.
+  root's. Resolved in PHLOX-39.
 - The attachment cases of `PRIM_POS_LOCAL` and `PRIM_ROTATION` read are not covered by a test. Resolved in PHLOX-35.
 
 Tests: `PrimParamsPositionRotationFlagsTests`. `PRIM_POS_LOCAL` and `PRIM_ROTATION` read from a root and from a child of
@@ -3418,3 +3419,62 @@ What residents will notice: projectors and reflection probes set from scripts wo
 IW_PRIM_PROJECTOR scripts from InWorldz work; slices set from scripts show; physics materials in prim-params lists and
 llSetPhysicsMaterial's mask do what the script asks; a pay click action without a money event falls back to none, as
 in SL; and attachments reading llGetRootRotation get the wearer's facing.
+
+## PHLOX-39 - llSetPos shares PRIM_POSITION's helper; the listen caps read [LL-Functions]
+
+### llSetPos
+
+Before, llSetPos kept its own path (a PHLOX-34 known limit): it clamped the vector to 0..255.9 and 0..4096, moved a root
+with no cap, and took a child's vector as a region position minus the root's, unturned. On an attachment's root it
+clamped each axis of the offset to 0 or more.
+
+Now llSetPos runs `SetPrimLocalPos`, the helper `PRIM_POSITION` and `PRIM_POS_LOCAL` use, as Halcyon runs all three
+through `SetPos(part, v, true)`; it still sleeps 0.2 s. So the two cannot disagree:
+- a child takes the vector as its offset from the root, in the root's frame (SL: "Child prims: pos is a local coordinate
+  relative to the root prim"), within Halcyon's 256 m of the root (54 m on an attachment);
+- an unattached root takes a region position and moves at most 10 m from where it is (SL: "Movement is capped to 10m per
+  call for unattached root prims"; Halcyon the same). This is new for llSetPos. The old region clamp is gone: Halcyon has
+  none, `PRIM_POSITION` had none, and 255.9 was wrong on a var region;
+- an attached root takes its offset from the attach point, negative axes included, within Halcyon's 3.5 m. The 3.5 m
+  cap is Halcyon's; SL documents none for attachments.
+
+### The listen caps
+
+Phlox's listens live in its own `PhloxListenManager`, not in the core `WorldCommModule` that carries YEngine's. The
+per-script cap was a fixed 65 and there was no per-region cap. Now both are read at engine start, next to [Chat], in
+exactly the way `WorldCommModule.Initialise` reads them for YEngine, so one config value means the same to both engines:
+- `[LL-Functions] max_listens_per_region`, then `max_listens_per_script`, one `GetInt` each with WorldComm's defaults
+  1000 and 65. With no key the per-script cap stays 65, as before.
+- A value below 1 means no limit (WorldComm: `if (m_maxhandles < 1) m_maxhandles = int.MaxValue;`; OpenSimDefaults.ini:
+  "Set this to 0 to have no limit imposed"). A region cap below the script cap is raised to it.
+- A value that is not an integer ends the read there, as WorldComm's single try does: that key and any key after it
+  keep their defaults. So a bad `max_listens_per_region` also leaves `max_listens_per_script` at 65. WorldComm is
+  silent; Phlox logs one warning naming the key. It also logs both caps at start.
+- The per-script cap counts listens switched on or off, as before. The per-region cap counts every Phlox listen in the
+  region, switched on or off, as WorldComm's `m_curlisteners` does. An identical llListen returns its handle before
+  either cap is checked, as in WorldComm. Past either cap llListen returns -1 with no script error.
+- Each engine counts its own listens against the region cap, so a region running both engines can hold up to
+  `max_listens_per_region` Phlox listens plus as many YEngine listens.
+
+Legion's OpenSimDefaults.ini sets `max_listens_per_script = 64`, so on Legion Phlox scripts now get 64 listens, as YEngine
+scripts do. The batch 2 probe (phlox27-35) assumes 65 in its check 2 and will read 64 on Legion.
+
+Known limits:
+- Not covered in-world: llSetPos on a child (linking needs PERMISSION_CHANGE_LINKS, which the agent cannot grant) and on
+  an attachment. The unit tests cover both.
+- WorldComm reads [Chat] in the same try, so a missing [Chat] section makes YEngine keep 65/1000 whatever
+  [LL-Functions] says. Phlox reads [LL-Functions] on its own, so the two can differ only on a config with no [Chat]
+  section. OpenSimDefaults.ini has one.
+
+Tests: `LlSetPosSharesPrimPositionTests` (9): a child of a turned root, the 256 m and 54 m child caps, llSetPos and
+`PRIM_POSITION` landing alike for the same vectors on a child and on a root, the root's 10 m cap and a short move, an
+attached root's negative offset and 3.5 m cap. `ListenCapConfigTests` (19): no key gives 65; a configured 64 refuses the
+65th; 0 means no limit; a non-integer keeps 65; reuse at a configured cap; the region cap across two scripts, a
+removed listen freeing its region slot, and a region cap below the script cap raised to it; and the read compared with
+`WorldCommModule`'s own fields on ten configs, warning included. Existing `ListenLimitTests` unchanged.
+
+No function index or declared return type changed, and the compiled script format and saved state are not affected.
+
+What residents will notice: llSetPos in a child prim moves it relative to the root, turning with the object, as in SL
+and as `PRIM_POSITION` already did; llSetPos on an object moves it at most 10 m per call; and on Legion a script gets 64
+listens, the same as under YEngine.

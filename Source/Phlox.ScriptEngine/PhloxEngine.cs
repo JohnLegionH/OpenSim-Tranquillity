@@ -105,6 +105,13 @@ namespace Phlox.ScriptEngine
                 m_SayDistance = chatConfig.GetInt("say_distance", m_SayDistance);
                 m_ShoutDistance = chatConfig.GetInt("shout_distance", m_ShoutDistance);
             }
+            // PHLOX-39: listen caps from [LL-Functions] max_listens_per_script / max_listens_per_region, read as the
+            // core WorldCommModule reads them for YEngine, so both engines take one config value the same way.
+            (m_MaxListensPerScript, m_MaxListensPerRegion) = PhloxListenManager.ReadListenCaps(config, out string listenCapWarning);
+            if (listenCapWarning != null) m_log.LogWarning("[PhloxEngine]: {0}", listenCapWarning);
+            m_log.LogInformation("[PhloxEngine]: max_listens_per_script = {0}, max_listens_per_region = {1}",
+                m_MaxListensPerScript == int.MaxValue ? "no limit" : m_MaxListensPerScript.ToString(),
+                m_MaxListensPerRegion == int.MaxValue ? "no limit" : m_MaxListensPerRegion.ToString());
             // PHLOX-21: YEngine's switch for god functions (llSetInventoryPermMask), off by default.
             AllowGodFunctions = m_Config.GetBoolean("AllowGodFunctions", false);
             if (MinTimerInterval < 0f) MinTimerInterval = 0f;
@@ -179,7 +186,7 @@ namespace Phlox.ScriptEngine
             m_ScriptLoader = new PhloxScriptLoader(scene.AssetService, m_ExeScheduler, WorkArrived, this);
             m_MasterScheduler = new PhloxMasterScheduler(m_ExeScheduler, m_ScriptLoader);
             ListenManager = new PhloxListenManager(m_ExeScheduler, scene,
-                m_WhisperDistance, m_SayDistance, m_ShoutDistance);
+                m_WhisperDistance, m_SayDistance, m_ShoutDistance, m_MaxListensPerScript, m_MaxListensPerRegion);
             AsyncCommands = new AsyncCommandManager(this);
             StateManager = new StateManager(this);
             StateManager.Start();
@@ -585,6 +592,8 @@ namespace Phlox.ScriptEngine
         private int m_WhisperDistance = PhloxListenManager.DefaultWhisperDistance;
         private int m_SayDistance = PhloxListenManager.DefaultSayDistance;
         private int m_ShoutDistance = PhloxListenManager.DefaultShoutDistance;
+        private int m_MaxListensPerScript = PhloxListenManager.DefaultMaxListensPerScript;
+        private int m_MaxListensPerRegion = PhloxListenManager.DefaultMaxListensPerRegion;
 
         private void OnChatFromWorld(object sender, OSChatMessage chat)
         {

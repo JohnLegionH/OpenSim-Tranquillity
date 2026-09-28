@@ -20,6 +20,7 @@ using InWorldz.Phlox.VM;
 using InWorldz.Phlox.Types;
 
 using Microsoft.Extensions.Logging;
+using Nini.Config;
 using OpenSim.Framework;
 
 namespace Phlox.ScriptEngine
@@ -61,10 +62,62 @@ namespace Phlox.ScriptEngine
         private readonly Dictionary<UUID, Dictionary<int, ListenEntry>> m_ByItem = new();
 
         /// <summary>
-        /// The most listens one script may hold, active or switched off: SL's 65. Halcyon's ListenerManager
-        /// allowed 64 handles per script (WorldCommModule: maxhandles = 64; GetNewHandle returns -1 past it).
+        /// The most listens one script may hold, active or switched off, with no [LL-Functions] max_listens_per_script:
+        /// SL's 65, and the core WorldCommModule's default (m_maxhandles = 65). Halcyon's ListenerManager allowed 64.
         /// </summary>
-        public const int MaxListensPerScript = 65;
+        public const int DefaultMaxListensPerScript = 65;
+
+        /// <summary>The most listens all of this engine's scripts in the region may hold with no [LL-Functions]
+        /// max_listens_per_region: WorldCommModule's default (m_maxlisteners = 1000).</summary>
+        public const int DefaultMaxListensPerRegion = 1000;
+
+        /// <summary>PHLOX-39: the per-script cap in force; int.MaxValue when the config asks for no limit.</summary>
+        public int MaxListensPerScript { get; }
+
+        /// <summary>PHLOX-39: the per-region cap in force, never below <see cref="MaxListensPerScript"/>.</summary>
+        public int MaxListensPerRegion { get; }
+
+        // Every listen this engine holds in the region, active or switched off, for the per-region cap.
+        private int m_ListenCount;
+
+        /// <summary>How many listens this engine's scripts hold in the region.</summary>
+        public int ListenCount { get { lock (m_Lock) return m_ListenCount; } }
+
+        /// <summary>
+        /// PHLOX-39: [LL-Functions] max_listens_per_region and max_listens_per_script, read as the core WorldCommModule
+        /// reads them for YEngine (WorldCommModule.Initialise), so one config value means the same to both engines:
+        /// one GetInt each, the region's first, with WorldComm's defaults 1000 and 65; a value that does not parse ends
+        /// the read there and keeps the defaults for it and the key after it, as WorldComm's single try does; a value
+        /// below 1 means no limit (int.MaxValue); a region cap below the script cap is raised to it. WorldComm swallows
+        /// a value that does not parse; here <paramref name="warning"/> says so, for the engine to log once.
+        /// </summary>
+        public static (int PerScript, int PerRegion) ReadListenCaps(IConfigSource config, out string warning)
+        {
+            warning = null;
+            int perRegion = DefaultMaxListensPerRegion;
+            int perScript = DefaultMaxListensPerScript;
+            IConfig ll = config?.Configs["LL-Functions"];
+            if (ll != null)
+            {
+                string key = "max_listens_per_region";
+                try
+                {
+                    perRegion = ll.GetInt(key, perRegion);
+                    key = "max_listens_per_script";
+                    perScript = ll.GetInt(key, perScript);
+                }
+                catch (Exception e)
+                {
+                    warning = $"[LL-Functions] {key} = '{ll.GetString(key)}' is not an integer ({e.GetType().Name}); " +
+                              $"Phlox keeps max_listens_per_script = {perScript} and max_listens_per_region = {perRegion}, " +
+                              "as the core WorldCommModule does";
+                }
+            }
+            if (perRegion < 1) perRegion = int.MaxValue;
+            if (perScript < 1) perScript = int.MaxValue;
+            if (perRegion < perScript) perRegion = perScript;
+            return (perScript, perRegion);
+        }
 
         // Next handle value (per-script counter would be cleaner but a global
         // int is fine for thousands of scripts — wraps around after 2^31)
@@ -89,7 +142,19 @@ namespace Phlox.ScriptEngine
 
         public PhloxListenManager(PhloxExecutionScheduler scheduler, Scene scene,
                                   int whisperDistance, int sayDistance, int shoutDistance)
+            : this(scheduler, scene, whisperDistance, sayDistance, shoutDistance,
+                   DefaultMaxListensPerScript, DefaultMaxListensPerRegion)
         {
+        }
+
+        /// <param name="maxListensPerScript">From <see cref="ReadListenCaps"/>.</param>
+        /// <param name="maxListensPerRegion">From <see cref="ReadListenCaps"/>.</param>
+        public PhloxListenManager(PhloxExecutionScheduler scheduler, Scene scene,
+                                  int whisperDistance, int sayDistance, int shoutDistance,
+                                  int maxListensPerScript, int maxListensPerRegion)
+        {
+            MaxListensPerScript = maxListensPerScript < 1 ? int.MaxValue : maxListensPerScript;
+            MaxListensPerRegion = Math.Max(maxListensPerRegion < 1 ? int.MaxValue : maxListensPerRegion, MaxListensPerScript);
             m_Scheduler = scheduler;
             m_Scene = scene;
             m_WhisperDistance = whisperDistance;
@@ -133,6 +198,14 @@ namespace Phlox.ScriptEngine
                     }
                 }
 
+                // WorldCommModule.Listen: `if (m_curlisteners < m_maxlisteners)`, after the reuse check; -1 otherwise.
+                if (m_ListenCount >= MaxListensPerRegion)
+                {
+                    m_log.LogDebug("[PhloxListen]: the region already holds {0} Phlox listens; llListen returns -1",
+                        m_ListenCount);
+                    return -1;
+                }
+
                 int handle = m_NextHandle++;
                 if (m_NextHandle <= 0) m_NextHandle = 1; // wrap
 
@@ -158,6 +231,7 @@ namespace Phlox.ScriptEngine
                     m_ByItem[itemID] = existing;
                 }
                 existing[handle] = entry;
+                m_ListenCount++;
 
                 m_log.LogDebug("[PhloxListen]: Registered listen handle {0} ch={1} item={2}",
                     handle, channel, itemID);
@@ -196,7 +270,7 @@ namespace Phlox.ScriptEngine
             {
                 if (m_ByItem.TryGetValue(itemID, out var byHandle))
                 {
-                    byHandle.Remove(handle);
+                    if (byHandle.Remove(handle)) m_ListenCount--;
                     if (byHandle.Count == 0)
                         m_ByItem.Remove(itemID);
                 }
@@ -208,7 +282,7 @@ namespace Phlox.ScriptEngine
         {
             lock (m_Lock)
             {
-                m_ByItem.Remove(itemID);
+                if (m_ByItem.Remove(itemID, out var byHandle)) m_ListenCount -= byHandle.Count;
             }
         }
 

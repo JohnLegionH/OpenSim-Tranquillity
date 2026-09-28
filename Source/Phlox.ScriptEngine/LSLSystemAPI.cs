@@ -711,16 +711,13 @@ namespace Phlox.ScriptEngine
         // point), a child's offset from the root. The same read as PRIM_POS_LOCAL.
         public Vector3 llGetLocalPos() => m_host == null ? Vector3.Zero : PartLocalPos(m_host);
         public Vector3 llGetRootPosition() => m_host?.ParentGroup?.AbsolutePosition ?? Vector3.Zero;
+        // Halcyon llSetPos: SetPos(m_host, pos, true), the helper PRIM_POSITION uses, so the two cannot disagree. SL: an
+        // unattached root takes a region position ("Movement is capped to 10m per call for unattached root prims"), an
+        // attached root its offset from the attach point, a child its offset from the root.
         public void llSetPos(Vector3 pos)
         {
             if (m_host == null) return;
-            SceneObjectGroup group = m_host.ParentGroup;
-            if (group == null || group.IsDeleted) return;
-            pos.X = Math.Max(0f, Math.Min(255.9f, pos.X));
-            pos.Y = Math.Max(0f, Math.Min(255.9f, pos.Y));
-            pos.Z = Math.Max(0f, Math.Min(4096f, pos.Z));
-            if (m_host.LinkNum < 2) group.UpdateGroupPosition(pos);
-            else m_host.UpdateOffSet(pos - group.AbsolutePosition);
+            SetPrimLocalPos(m_host, pos);
             ScriptSleep(200);
         }
         // Halcyon llGetRot and SL: on an attachment's root, the wearer's rotation. The same read as PRIM_ROTATION.
@@ -4858,7 +4855,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PRIM_POSITION and PRIM_POS_LOCAL on one prim (Halcyon SetPos(part, v, true) and SetPosAdjust): a root moves
+        /// PRIM_POSITION, PRIM_POS_LOCAL and llSetPos on one prim (Halcyon SetPos(part, v, true) and SetPosAdjust): a root moves
         /// the object (an attachment's root, its offset from the attach point); a child takes the vector as its offset from
         /// the root. Halcyon's caps: an unattached root moves at most 10 m from where it is (SL: "The distance is
         /// capped to 10m per PRIM_POSITION call"), an attached root at most 3.5 m from the attach point, a child of
