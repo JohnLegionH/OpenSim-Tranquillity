@@ -158,8 +158,16 @@ namespace Phlox.ScriptEngine
         private readonly ConcurrentQueue<SyscallShim.LongRunSyscallDelegate> m_AsyncQueue = new();
         private int m_AsyncWorkers;
 
-        // Deferred events for scripts not yet loaded
-        private readonly System.Collections.Generic.Dictionary<UUID, List<PostedEvent>> m_DeferredEvents = new();
+        // Deferred events for scripts not yet loaded. PHLOX-46: only for an item whose Phlox load is in flight, at most
+        // MaxDeferredEventsPerItem per item, and for at most DeferredEventLifetimeMs from the first one (Halcyon
+        // DeferredEventManager: MAX_DEFERRED_EVENTS = 32, EXPIRATION_SECONDS = 60). Every other event for an item that is
+        // not loaded is dropped at once and counted in m_DroppedForUnloaded. Scheduler thread only.
+        internal const int MaxDeferredEventsPerItem = 32;
+        internal const ulong DeferredEventLifetimeMs = 60_000;
+        private sealed class DeferredEvents { public ulong ExpiresOn; public readonly List<PostedEvent> Events = new(); }
+        private readonly System.Collections.Generic.Dictionary<UUID, DeferredEvents> m_DeferredEvents = new();
+        private long m_DroppedForUnloaded;
+        private ulong m_NextDeferredExpiry;
 
         private readonly System.Diagnostics.Stopwatch m_SliceWatch = new();
 
@@ -515,6 +523,7 @@ namespace Phlox.ScriptEngine
             if (!m_AllScripts.TryGetValue(itemId, out script)) return false;
 
             UnregisterFromNotifications(script);
+            DropPendingEvents(itemId);   // PHLOX-46: SL llResetScript "The event queue is cleared" - posted, not yet queued, too
             m_Engine.StateManager?.DeleteState(itemId);
             bool wasCrashed = script.ScriptState.TerminatedReason != null;
             lock (m_AllScriptsLock) m_HeldFresh.Remove(itemId);   // PHLOX-18: a reset of a held script owes it nothing more
@@ -535,9 +544,34 @@ namespace Phlox.ScriptEngine
             });
 
             if (!m_RunIndex.ContainsKey(itemId) && script.ScriptState.Enabled)
-                AddToRunQueue(script);
+            {
+                // PHLOX-46: the reset throttle (LSLSystemAPI.OnScriptReset) may have put the fresh script to sleep; it
+                // wakes and runs state_entry then. Inside the script's own slice CheckRunstateChange does the same.
+                if (script.ScriptState.RunState == RuntimeState.Status.Sleeping)
+                    TrackSleep(script, script.ScriptState.NextWakeup);
+                else
+                    AddToRunQueue(script);
+            }
 
             return true;
+        }
+
+        /// <summary>PHLOX-46: events posted to this item and not yet moved into its queue are dropped (reset).</summary>
+        private void DropPendingEvents(UUID itemId)
+        {
+            lock (m_PendingEvents)
+            {
+                if (m_PendingEvents.Count == 0) return;
+                var keep = new List<PendingEvent>(m_PendingEvents.Count);
+                foreach (var pe in m_PendingEvents)
+                {
+                    if (pe.ItemId == itemId) pe.Evt.SignalCompleted();   // PHLOX-10: no waiter waits for a dropped event
+                    else keep.Add(pe);
+                }
+                if (keep.Count == m_PendingEvents.Count) return;
+                m_PendingEvents.Clear();
+                foreach (var pe in keep) m_PendingEvents.Enqueue(pe);
+            }
         }
 
         /// <summary>
@@ -558,6 +592,12 @@ namespace Phlox.ScriptEngine
             lock (m_AllScriptsLock)
                 return m_AllScripts.TryGetValue(itemId, out Interpreter s)
                        && (s.ScriptState.LocalDisable & RuntimeState.LocalDisableFlag.Parcel) != 0;
+        }
+
+        /// <summary>PHLOX-46: is the script loaded here? Safe from any thread.</summary>
+        internal bool IsLoaded(UUID itemId)
+        {
+            lock (m_AllScriptsLock) return m_AllScripts.ContainsKey(itemId);
         }
 
         public Interpreter FindScript(UUID itemId)
@@ -846,7 +886,10 @@ namespace Phlox.ScriptEngine
             RemoveFromRunQueue(itemId);
             m_Suspended.Remove(itemId);
             UnregisterFromNotifications(script);
-           script.OnUnload(ScriptUnloadReason.Unloaded, RuntimeState.LocalDisableFlag.None);
+            // PHLOX-46: whatever the API's unload hook throws, the script still leaves the scheduler - a throw here used to
+            // abort the unload and keep the script (and everything it held) loaded for the life of the region.
+            try { script.OnUnload(ScriptUnloadReason.Unloaded, RuntimeState.LocalDisableFlag.None); }
+            catch (Exception e) { m_log.LogError(e, "[PhloxExe]: unload hook of {0} failed; unloading it anyway", itemId); }
             m_Engine.StateManager?.ScriptUnloaded(script);
             lock (m_AllScriptsLock)
             {
@@ -868,6 +911,7 @@ namespace Phlox.ScriptEngine
             WorkerThreadId = System.Threading.Thread.CurrentThread.ManagedThreadId;
             CheckSleepingScripts();
             ProcessEventQueue();
+            ExpireDeferredEvents();   // PHLOX-46
             ProcessPermsEnds();      // PHLOX-45, before the parcel checks it may call for
             ProcessParcelChecks();   // PHLOX-43
             ProcessEnableDisable();
@@ -920,6 +964,13 @@ namespace Phlox.ScriptEngine
                 m_SliceWatch.Restart();
                 while (ticks < SCRIPT_TIMESLICE)
                 {
+                    // PHLOX-46: a script put to sleep while it sat on the run queue (the reset throttle, on a reset from
+                    // outside its own slice) goes to the sleep heap untouched - its first opcode would overwrite the sleep.
+                    if (m_NextScript.Value.ScriptState.RunState == RuntimeState.Status.Sleeping)
+                    {
+                        CheckRunstateChange();
+                        break;
+                    }
                     try { m_NextScript.Value.Tick(); }
                     catch (Exception e)
                     {
@@ -1106,7 +1157,10 @@ namespace Phlox.ScriptEngine
                 if (!m_AllScripts.TryGetValue(pe.ItemId, out script))
                 {
                     pe.Evt.SignalCompleted();   // PHLOX-10: a waiter must not wait for a script that is not here
-                    AddDeferredEvent(pe.ItemId, pe.Evt);
+                    // PHLOX-46: held only while this item's Phlox load is in flight; anything else - a deleted or reset-away
+                    // script's late sensor, HTTP or dataserver event, another engine's script, a failed compile - is dropped.
+                    if (m_Engine != null && m_Engine.IsLoading(pe.ItemId)) AddDeferredEvent(pe.ItemId, pe.Evt);
+                    else m_DroppedForUnloaded++;
                     continue;
                 }
 
@@ -1934,10 +1988,10 @@ namespace Phlox.ScriptEngine
 
         private void InjectDeferredEvents(Interpreter script)
         {
-            List<PostedEvent> deferred;
+            DeferredEvents deferred;
             if (!m_DeferredEvents.TryGetValue(script.ItemId, out deferred)) return;
             m_DeferredEvents.Remove(script.ItemId);
-            foreach (var evt in deferred)
+            foreach (var evt in deferred.Events)
                 PostEvent(script.ItemId, evt);
         }
 
@@ -1945,10 +1999,46 @@ namespace Phlox.ScriptEngine
         {
             if (!m_DeferredEvents.TryGetValue(itemId, out var list))
             {
-                list = new List<PostedEvent>();
+                list = new DeferredEvents { ExpiresOn = InWorldz.Phlox.Util.Clock.Now + DeferredEventLifetimeMs };
                 m_DeferredEvents[itemId] = list;
             }
-            list.Add(evt);
+            if (list.Events.Count < MaxDeferredEventsPerItem) list.Events.Add(evt);   // Halcyon: the first 32 are kept
+            else m_DroppedForUnloaded++;
         }
+
+        /// <summary>PHLOX-46: Halcyon DeferredEventManager.DoExpirations - an item that has not loaded within 60 s loses its events. Checked once a second.</summary>
+        private void ExpireDeferredEvents()
+        {
+            if (m_DeferredEvents.Count == 0) return;
+            ulong now = InWorldz.Phlox.Util.Clock.Now;
+            if (now < m_NextDeferredExpiry) return;
+            m_NextDeferredExpiry = now + 1000;
+            List<UUID> expired = null;
+            foreach (var kvp in m_DeferredEvents)
+                if (now >= kvp.Value.ExpiresOn) (expired ??= new List<UUID>()).Add(kvp.Key);
+            if (expired == null) return;
+            foreach (UUID id in expired)
+            {
+                m_DroppedForUnloaded += m_DeferredEvents[id].Events.Count;
+                m_DeferredEvents.Remove(id);
+            }
+        }
+
+        /// <summary>PHLOX-46: the item's load was cancelled (removed while compiling) - its held events go with it.</summary>
+        internal void DropDeferred(UUID itemId)
+        {
+            if (m_DeferredEvents.Remove(itemId, out var list)) m_DroppedForUnloaded += list.Events.Count;
+        }
+
+        /// <summary>PHLOX-46: held events for items not loaded, and events dropped because their item was not loaded (tests, leak check).</summary>
+        internal (int Items, int Events, long Dropped) DeferredStats()
+        {
+            int events = 0;
+            foreach (var kvp in m_DeferredEvents) events += kvp.Value.Events.Count;
+            return (m_DeferredEvents.Count, events, m_DroppedForUnloaded);
+        }
+
+        /// <summary>PHLOX-46: events posted and not yet taken by ProcessEventQueue (tests, leak check).</summary>
+        internal int PendingEventCount { get { lock (m_PendingEvents) return m_PendingEvents.Count; } }
     }
 }

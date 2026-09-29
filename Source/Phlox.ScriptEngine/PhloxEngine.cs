@@ -72,6 +72,13 @@ namespace Phlox.ScriptEngine
         /// <summary>PHLOX-21/41: [InWorldz.Phlox] AllowGodFunctions if set, else YEngine's [YEngine] AllowGodFunctions (default false).</summary>
         public bool AllowGodFunctions { get; private set; }
 
+        /// <summary>
+        /// PHLOX-46: Halcyon's reset throttle (LSLSystemAPI.ThrottleScriptResets): more than 5 resets of one script in one
+        /// second puts it to sleep for 5 s, with a warning once an hour. [InWorldz.Phlox] ResetThrottle, default true: one of
+        /// Halcyon's anti-abuse slowdowns, restored on by default with an operator setting as D1 rules for the others.
+        /// </summary>
+        public bool ResetThrottle { get; private set; } = true;
+
         /// <summary>PHLOX-12. The [OSSL] permission gate, read from the same config YEngine reads.</summary>
         internal OsslGate Ossl { get; private set; } = new OsslGate(null);
 
@@ -120,6 +127,8 @@ namespace Phlox.ScriptEngine
                 config.Configs["YEngine"]?.GetBoolean("AllowGodFunctions", false) ?? false);
             if (MinTimerInterval < 0f) MinTimerInterval = 0f;
             m_log.LogInformation("[PhloxEngine]: MinTimerInterval = {0}s", MinTimerInterval);
+            ResetThrottle = m_Config.GetBoolean("ResetThrottle", true);
+            m_log.LogInformation("[PhloxEngine]: ResetThrottle = {0}", ResetThrottle);
 
             // B2: syscalls that can reach a service run off the scheduler thread.
             // auto (default) = inline when the answer is local or cached, deferred otherwise;
@@ -1369,6 +1378,16 @@ namespace Phlox.ScriptEngine
             foreach (string e in PhloxCompileErrorReport.ForEditor(errors)) list.Add(e);
             return list;
         }
+        /// <summary>
+        /// PHLOX-46: is this item a Phlox script - running, or its load posted, waiting or compiling? Events for anything
+        /// else are dropped, and a late reply for such an item is one its own script asked for before a reset. Any thread.
+        /// </summary>
+        internal bool HasOrIsLoading(UUID itemID)
+            => (m_ExeScheduler?.IsLoaded(itemID) ?? false) || IsLoading(itemID);
+
+        /// <summary>PHLOX-46: is a load of this item in flight (so its early events are worth holding)?</summary>
+        internal bool IsLoading(UUID itemID) => m_ScriptLoader?.IsLoading(itemID) ?? false;
+
         public bool HasScript(UUID itemID, out bool running)
         {
             running = false;

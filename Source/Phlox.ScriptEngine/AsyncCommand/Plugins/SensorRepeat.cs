@@ -134,6 +134,21 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
             }
         }
 
+        /// <summary>
+        /// PHLOX-46: the script is gone or reset - its repeat ends whatever prim it was set from (Halcyon
+        /// RemoveAllAsyncHandlers / AsyncCommandManager.RemoveScript). Keyed on the item alone, so a repeat set before a
+        /// link change cannot outlive it.
+        /// </summary>
+        public void RemoveScript(UUID itemID)
+        {
+            lock (SenseRepeatListLock)
+                SenseRepeaters = SenseRepeaters.FindAll(ts => ts.itemID != itemID);
+        }
+
+        /// <summary>PHLOX-46: repeats held, in all or for one item (tests and the leak check).</summary>
+        internal int RepeaterCount { get { lock (SenseRepeatListLock) return SenseRepeaters.Count; } }
+        internal int RepeatersFor(UUID itemID) { lock (SenseRepeatListLock) return SenseRepeaters.FindAll(ts => ts.itemID == itemID).Count; }
+
         public void CheckSenseRepeaterEvents()
         {
             if (SenseRepeaters.Count == 0)

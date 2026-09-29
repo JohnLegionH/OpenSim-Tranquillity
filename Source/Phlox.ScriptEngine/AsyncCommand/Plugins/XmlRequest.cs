@@ -108,9 +108,18 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
             }
         }
 
+        /// <summary>
+        /// PHLOX-46: the script is removed. Its channels close and its llSendRemoteData requests are cancelled (Halcyon
+        /// AsyncCommandManager.RemoveScript: xmlrpc.DeleteChannels(itemID); xmlrpc.CancelSRDRequests(itemID)). Not called
+        /// on a reset or a state change: Halcyon's XmlRequestPlugin.RemoveEvents did nothing there, SL says nothing, and a
+        /// reset script that opens its channel again gets the same one.
+        /// </summary>
         public void RemoveEvents(uint localID, OpenMetaverse.UUID itemID)
         {
-            // No provisions in XMLRPC module to remove pending requests by script
+            IXMLRPC xmlrpc = m_CmdManager.m_ScriptEngine.World?.RequestModuleInterface<IXMLRPC>();
+            if (xmlrpc == null) return;
+            xmlrpc.DeleteChannels(itemID);
+            xmlrpc.CancelSRDRequests(itemID);
         }
     }
 }

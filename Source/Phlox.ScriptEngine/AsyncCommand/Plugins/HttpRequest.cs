@@ -31,7 +31,10 @@
 //   - Uses PostObjectEvent by LocalID instead of iterating all engines
 
 using System;
+using System.Collections.Generic;
+using OpenMetaverse;
 using OpenSim.Framework;
+using OpenSim.Region.Framework.Scenes;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.ScriptEngine.Shared;
 using OpenSim.Region.ScriptEngine.Shared.Api;
@@ -72,6 +75,16 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
             {
                 iHttpReq.RemoveCompletedRequest(req.ReqID);
 
+                if (!Complete(req))
+                {
+                    // PHLOX-46: the script that asked is gone or was reset since - dropped here, never queued.
+                    System.Threading.Interlocked.Increment(ref m_Dropped);
+                    if (m_log.IsEnabled(LogLevel.Debug))
+                        m_log.LogDebug("[Phlox HTTP]: late http_response {0} for {1} dropped (script reset or gone)", req.ReqID, req.ItemID);
+                    req = iHttpReq.GetNextCompletedRequest();
+                    continue;
+                }
+
                 object[] resobj = new object[]
                 {
                     req.ReqID.ToString(),
@@ -91,9 +104,62 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
             }
         }
 
+        // ── PHLOX-46: requests belong to the script that made them (HALCYON-DIFF S12) ──
+        //
+        // The core stops a script's PENDING requests (HttpRequestModule.StopHttpRequest), but one that has already
+        // completed stays in its completed queue and would still be posted. So Phlox keeps the ids of its scripts'
+        // outstanding requests; a reset or removal forgets them, and a response whose id is no longer here is dropped
+        // when its script is a Phlox script (it was reset) or is no longer in the prim (it was deleted). Anything else
+        // is another engine's request that this pump happened to take, and is posted as before.
+
+        private readonly object m_TrackLock = new object();
+        private readonly Dictionary<UUID, UUID> m_Outstanding = new();   // request id -> script item id
+        private long m_Dropped;
+
+        /// <summary>
+        /// llHTTPRequest: start the request and record it in one step. The core can complete a request before
+        /// StartHttpRequest returns (a filtered URL), and the pump must not see it untracked.
+        /// </summary>
+        internal UUID Start(UUID itemID, Func<UUID> start)
+        {
+            lock (m_TrackLock)
+            {
+                UUID reqID = start();
+                if (!reqID.IsZero()) m_Outstanding[reqID] = itemID;
+                return reqID;
+            }
+        }
+
+        /// <summary>True when the response is for a live request of a Phlox script, or for another engine's script.</summary>
+        private bool Complete(IHttpServiceRequest req)
+        {
+            lock (m_TrackLock)
+                if (m_Outstanding.Remove(req.ReqID)) return true;
+
+            if (m_CmdManager.m_ScriptEngine is global::Phlox.ScriptEngine.PhloxEngine phlox && phlox.HasOrIsLoading(req.ItemID))
+                return false;   // a Phlox script that has been reset since it asked
+            SceneObjectPart part = m_CmdManager.m_ScriptEngine.World?.GetSceneObjectPart(req.LocalID);
+            return part?.Inventory?.GetInventoryItem(req.ItemID) != null;   // gone with its script or prim: dropped
+        }
+
+        /// <summary>
+        /// PHLOX-46: the script is reset or removed. Its requests are forgotten and the core stops the ones still in flight
+        /// (Halcyon AsyncCommandManager.RemoveScript: iHttpReq.StopHttpRequest(localID, itemID)).
+        /// </summary>
         public void RemoveEvents(uint localID, OpenMetaverse.UUID itemID)
         {
-            // Handled via IHttpRequestModule.StopHttpRequest in AsyncCommandManager.RemoveScript
+            lock (m_TrackLock)
+            {
+                List<UUID> mine = null;
+                foreach (var kvp in m_Outstanding)
+                    if (kvp.Value == itemID) (mine ??= new List<UUID>()).Add(kvp.Key);
+                if (mine != null)
+                    foreach (UUID id in mine) m_Outstanding.Remove(id);
+            }
+            m_CmdManager.m_ScriptEngine.World?.RequestModuleInterface<IHttpRequestModule>()?.StopHttpRequest(localID, itemID);
         }
+
+        internal int OutstandingCount { get { lock (m_TrackLock) return m_Outstanding.Count; } }
+        internal long DroppedResponses => System.Threading.Interlocked.Read(ref m_Dropped);
     }
 }

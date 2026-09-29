@@ -286,6 +286,20 @@ namespace Phlox.ScriptEngine
             }
         }
 
+        /// <summary>PHLOX-46: the script is unloaded - its listens and its listen-rate record go (the record was never freed).</summary>
+        public void Forget(UUID itemID)
+        {
+            lock (m_Lock)
+            {
+                if (m_ByItem.Remove(itemID, out var byHandle)) m_ListenCount -= byHandle.Count;
+                m_RateTracker.Remove(itemID);
+            }
+        }
+
+        /// <summary>PHLOX-46: scripts with a listen, and scripts with a rate record (tests and the leak check).</summary>
+        internal int ScriptsWithListens { get { lock (m_Lock) return m_ByItem.Count; } }
+        internal int RateRecords { get { lock (m_Lock) return m_RateTracker.Count; } }
+
         // ── Called by PhloxEngine's chat hook ─────────────────────────────────
 
         /// <summary>

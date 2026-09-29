@@ -185,10 +185,13 @@ namespace Phlox.ScriptEngine
 
         protected TaskInventoryItem GetInventorySelf()
         {
-            if (m_host == null) return null;
-            lock (m_host.TaskInventory)
+            // PHLOX-46: a derezzed part has no inventory left by the time its scripts unload; the NRE here stopped DoUnload
+            // half way and left every derezzed script loaded.
+            var inventory = m_host?.TaskInventory;
+            if (inventory == null) return null;
+            lock (inventory)
             {
-                foreach (var kvp in m_host.TaskInventory)
+                foreach (var kvp in inventory)
                     if (kvp.Value.Type == 10 && kvp.Value.ItemID == m_itemID)
                         return kvp.Value;
             }
@@ -251,8 +254,9 @@ namespace Phlox.ScriptEngine
         // this permission on reset"). Animations already playing and camera parameters stay, as in both.
         public void OnScriptReset()
         {
-            m_ScriptEngine?.ListenManager?.Remove(m_itemID);
+            ReleaseScriptResources(ScriptEnd.Reset);
             EndPermissions(ALL_PERMISSIONS, releaseControls: true, forgetControls: true);
+            ThrottleScriptResets();
         }
         /// <summary>
         /// PHLOX-45: a script loaded with no saved state. Only the listens go, as before: the permissions are the item's,
@@ -260,15 +264,117 @@ namespace Phlox.ScriptEngine
         /// is not the owner's or the script's reset.
         /// </summary>
         internal void OnFreshStart() => m_ScriptEngine?.ListenManager?.Remove(m_itemID);
-        public void OnStateChange() => m_ScriptEngine?.ListenManager?.Remove(m_itemID);
+        public void OnStateChange() => ReleaseScriptResources(ScriptEnd.StateChange);
         public void OnScriptUnloaded(ScriptUnloadReason reason, RuntimeState.LocalDisableFlag localFlag)
         {
             m_host?.RemoveScriptEvents(m_itemID);
-            m_ScriptEngine.ListenManager?.Remove(m_itemID);
+            ReleaseScriptResources(ScriptEnd.Unload);
             // PHLOX-45: Halcyon OnScriptUnloaded "silently release controls". The permissions and the Control record stay
             // with the item and its saved state (a crossing object takes them with it); only an avatar still here is let go.
             EndPermissions(0, releaseControls: true, forgetControls: false);
         }
+        // ── PHLOX-46: what ends with the script (HALCYON-DIFF S12) ─────────────
+
+        internal enum ScriptEnd { Reset, StateChange, Unload }
+
+        /// <summary>
+        /// PHLOX-46. The one place a script's resources end: OnScriptReset, OnStateChange and OnScriptUnloaded call it, and
+        /// every reset (llResetScript, llResetOtherScript, the viewer's Reset, osResetAllScripts, a crashed script's
+        /// reset), state change and unload (delete, derez, recompile, region shutdown) reaches one of those three. Timers,
+        /// sleeps and touch waits belong to the scheduler, which ends them one step earlier on the same three paths
+        /// (PhloxExecutionScheduler.UnregisterFromNotifications).
+        /// <list type="bullet">
+        /// <item>listens: every end (SL: "Listeners are removed"; state: "All listens are released"). Unload also forgets the listen-rate record.</item>
+        /// <item>llSensorRepeat: every end (SL reset: "Timers (including repeating sensors) are cleared"; state: "Repeating sensors are released";
+        /// Halcyon RemoveAllAsyncHandlers). Reset and state change also drop the MiscAttr record, so a later restore or parcel resume cannot
+        /// bring the old sensor back; unload keeps it in the state that is saved for the object's return (Halcyon GetSerializationData).</item>
+        /// <item>pending dataserver replies: every end (Halcyon Dataserver.RemoveEvents from RemoveAllAsyncHandlers).</item>
+        /// <item>llHTTPRequest: reset and unload (Halcyon RemoveScript -> StopHttpRequest; a reset clears the event queue). Kept across a state
+        /// change, as Halcyon (its HttpRequestPlugin.RemoveEvents did nothing).</item>
+        /// <item>URLs: reset and unload (SL: "Any granted URLs are released"; "deleting the prim ... release URLs"). Kept across a state
+        /// change (SL: "Unlike listeners, URLs persist across state changes").</item>
+        /// <item>XML-RPC channels and llSendRemoteData: unload only (Halcyon RemoveScript; its reset did nothing and SL says nothing).</item>
+        /// </list>
+        /// </summary>
+        internal void ReleaseScriptResources(ScriptEnd end)
+        {
+            var listens = m_ScriptEngine?.ListenManager;
+            if (end == ScriptEnd.Unload) listens?.Forget(m_itemID);
+            else listens?.Remove(m_itemID);
+
+            m_PendingDataserver.Clear();
+
+            var async = m_ScriptEngine?.AsyncCommands;
+            if (end == ScriptEnd.Unload)
+            {
+                // Halcyon ScriptLoader: AsyncCommandManager.RemoveScript(engine, localId, itemId) - sensor, HTTP, XML-RPC
+                if (m_ScriptEngine != null && async != null)
+                    OpenSim.Region.ScriptEngine.Shared.Api.AsyncCommandManager.RemoveScript(m_ScriptEngine, m_localID, m_itemID);
+            }
+            else
+            {
+                async?.SensorRepeatPlugin.RemoveScript(m_itemID);
+                m_thisScript?.ScriptState?.MiscAttributes?.Remove((int)RuntimeState.MiscAttr.SensorRepeat);
+                if (end == ScriptEnd.Reset) async?.HttpRequestPlugin.RemoveEvents(m_localID, m_itemID);
+            }
+
+            if (end != ScriptEnd.StateChange)
+                m_ScriptEngine?.World?.RequestModuleInterface<IUrlModule>()?.ScriptRemoved(m_itemID);
+        }
+
+        // Dataserver query ids this script is still owed a reply for. A reply whose id is not here was asked for before a
+        // reset, state change or unload, and is dropped (PostDataserverEvent). Written from pool threads.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<UUID, byte> m_PendingDataserver = new();
+
+        /// <summary>PHLOX-46: a new dataserver query id, recorded as owed a reply.</summary>
+        private UUID NewDataserverQuery()
+        {
+            UUID id = UUID.Random();
+            m_PendingDataserver[id] = 0;
+            return id;
+        }
+
+        internal int PendingDataserverCount => m_PendingDataserver.Count;
+
+        // Halcyon LSLSystemAPI.ThrottleScriptResets, from its OnScriptReset.
+        private const int MAX_RESETS_PER_SECOND = 5;
+        private long m_resetSecond;
+        private int m_resetCount;
+        private DateTime m_resetWarned = DateTime.MinValue;
+
+        /// <summary>
+        /// PHLOX-46: Halcyon's reset throttle - more than 5 resets of this script in one second and it sleeps 5 s before
+        /// its state_entry, with a warning in the log and on DEBUG_CHANNEL once an hour. [InWorldz.Phlox] ResetThrottle.
+        /// </summary>
+        private void ThrottleScriptResets()
+        {
+            if (m_ScriptEngine == null || !m_ScriptEngine.ResetThrottle) return;
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            if (m_resetSecond == now)
+            {
+                if (++m_resetCount > MAX_RESETS_PER_SECOND)
+                {
+                    if (DateTime.UtcNow > m_resetWarned.AddMinutes(60))   // warn once per hour
+                    {
+                        string context = m_host == null ? string.Empty : string.Format("in '{0}'{1} at {2}/{3}/{4}",
+                            m_host.ParentGroup?.Name, m_host.LinkNum < 2 ? string.Empty : " link #" + m_host.LinkNum,
+                            (int)m_host.AbsolutePosition.X, (int)m_host.AbsolutePosition.Y, (int)m_host.AbsolutePosition.Z);
+                        m_log.LogWarning("[Phlox]: Script '{0}' calling llResetScript too frequently: {1}", llGetScriptName(), context);
+                        ShoutError("Script '" + llGetScriptName() + "' calling llResetScript too frequently: " + context);
+                        m_resetWarned = DateTime.UtcNow;
+                    }
+                    ResetSleepCount++;
+                    ScriptSleep(5000);   // punish the script for 5 seconds after too many resets in the same period
+                }
+            }
+            else
+                m_resetCount = 1;
+            m_resetSecond = now;
+        }
+
+        /// <summary>PHLOX-46: times this script has been put to sleep by the reset throttle (tests).</summary>
+        internal int ResetSleepCount { get; private set; }
+
         public void AddExecutionTime(double ms) => m_host?.ParentGroup?.AddScriptLPS((int)ms);
         public void OnScriptInjected(bool fromCrossing)
         {
@@ -3504,7 +3610,7 @@ namespace Phlox.ScriptEngine
             if (m_host == null || string.IsNullOrEmpty(name)) return UUID.Zero.ToString();
             TaskInventoryItem item = FindInventoryItem(name, (int)AssetType.Notecard);
             if (item == null) return UUID.Zero.ToString();
-            UUID queryID = UUID.Random();
+            UUID queryID = NewDataserverQuery();   // PHLOX-46
             UUID assetId = item.AssetID;
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
             {
@@ -3526,7 +3632,7 @@ namespace Phlox.ScriptEngine
             if (m_host == null || string.IsNullOrEmpty(name)) return UUID.Zero.ToString();
             TaskInventoryItem item = FindInventoryItem(name, (int)AssetType.Notecard);
             if (item == null) return UUID.Zero.ToString();
-            UUID queryID = UUID.Random();
+            UUID queryID = NewDataserverQuery();   // PHLOX-46
             UUID assetId = item.AssetID;
             int lineNum = line;
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
@@ -3550,7 +3656,7 @@ namespace Phlox.ScriptEngine
             if (m_host == null || string.IsNullOrEmpty(name)) return UUID.Zero.ToString();
             TaskInventoryItem item = FindInventoryItem(name, (int)AssetType.Notecard);
             if (item == null) { ShoutError("Notecard '" + name + "' could not be found."); return UUID.Zero.ToString(); }
-            UUID queryID = UUID.Random();
+            UUID queryID = NewDataserverQuery();   // PHLOX-46
             UUID assetId = item.AssetID;
             int lineNum = line;
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
@@ -3617,7 +3723,7 @@ namespace Phlox.ScriptEngine
         {
             // Looks up a landmark by name and fires dataserver with its position
             if (m_host == null) return UUID.Zero.ToString();
-            UUID queryID = UUID.Random();
+            UUID queryID = NewDataserverQuery();   // PHLOX-46
 
             TaskInventoryItem landmark = null;
             lock (m_host.TaskInventory)
@@ -4037,7 +4143,7 @@ namespace Phlox.ScriptEngine
                         { item = kvp.Value; break; }
                 }
                 if (item == null) continue;
-                UUID queryID = UUID.Random();
+                UUID queryID = NewDataserverQuery();   // PHLOX-46
                 UUID assetId = item.AssetID;
                 System.Threading.ThreadPool.QueueUserWorkItem(_ =>
                 {
@@ -4070,7 +4176,7 @@ namespace Phlox.ScriptEngine
                         { item = kvp.Value; break; }
                 }
                 if (item == null) continue;
-                UUID queryID = UUID.Random();
+                UUID queryID = NewDataserverQuery();   // PHLOX-46
                 UUID assetId = item.AssetID;
                 int lineNum = line;
                 System.Threading.ThreadPool.QueueUserWorkItem(_ =>
@@ -4105,7 +4211,7 @@ namespace Phlox.ScriptEngine
                         { item = kvp.Value; break; }
                 }
                 if (item == null) continue;
-                UUID queryID = UUID.Random();
+                UUID queryID = NewDataserverQuery();   // PHLOX-46
                 UUID assetId = item.AssetID;
                 int lineNum = line;
                 System.Threading.ThreadPool.QueueUserWorkItem(_ =>
@@ -11867,7 +11973,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 paramList.Add(value);
             }
 
-            UUID reqID = httpMod.StartHttpRequest(m_localID, m_itemID, url, paramList, headers, body);
+            // PHLOX-46: recorded against this script, so a reset or removal can end it and a late response is dropped
+            var httpPlugin = m_ScriptEngine.AsyncCommands?.HttpRequestPlugin;
+            UUID reqID = httpPlugin != null
+                ? httpPlugin.Start(m_itemID, () => httpMod.StartHttpRequest(m_localID, m_itemID, url, paramList, headers, body))
+                : httpMod.StartHttpRequest(m_localID, m_itemID, url, paramList, headers, body);
             return reqID == UUID.Zero ? UUID.Zero.ToString() : reqID.ToString();
         }
         public void llHTTPResponse(string request_id, int status, string body)
@@ -13185,7 +13295,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (m_host == null) { ReturnQueryKey(UUID.Zero); return; }   // PHLOX-21b A: every path returns
             if (!UUID.TryParse(id, out UUID agentId)) { ReturnQueryKey(UUID.Zero); return; }
 
-            UUID queryID = UUID.Random();
+            UUID queryID = NewDataserverQuery();   // PHLOX-46
             ReturnQueryKey(queryID);
             UUID capturedQuery = queryID;
             UUID capturedAgent = agentId;
@@ -13273,7 +13383,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             static string Rating(int maturity) => maturity switch { 0 => "PG", 1 => "MATURE", 2 => "ADULT", _ => "UNKNOWN" };
             static string PosOf(uint worldX, uint worldY) => new Vector3(worldX, worldY, 0f).ToString();
 
-            UUID queryID = UUID.Random();
+            UUID queryID = NewDataserverQuery();   // PHLOX-46
             string reply;
             if (simulator.Equals(World.RegionInfo.RegionName, StringComparison.OrdinalIgnoreCase))
             {
@@ -13669,7 +13779,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             TaskInventoryItem item = FindInventoryItem(name, (int)AssetType.Animation);
             if (item == null) { ScriptSleep(1000); return UUID.Zero.ToString(); }
 
-            UUID queryID = UUID.Random();
+            UUID queryID = NewDataserverQuery();   // PHLOX-46
             UUID assetId = item.AssetID;
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
             {
@@ -13730,7 +13840,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public string llTransferLindenDollars(string destination, int amount)
         {
             // No economy module available in this tree
-            UUID txnId = UUID.Random();
+            UUID txnId = NewDataserverQuery();   // PHLOX-46
             PostDataserverEvent(txnId, "LINDENDOLLAR_INSUFFICIENTFUNDS");
             return txnId.ToString();
         }
@@ -15600,6 +15710,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         private void PostDataserverEvent(UUID queryID, string data)
         {
+            // PHLOX-46: only a reply this script is still owed - one asked for before a reset, state change or unload is
+            // dropped here, never queued (Halcyon Dataserver.RemoveEvents).
+            if (!m_PendingDataserver.TryRemove(queryID, out _)) return;
             m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
                 "dataserver",
                 new object[] { queryID.ToString(), data },
@@ -17017,7 +17130,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             // Async lookup — fires dataserver event with the user's UUID
             if (string.IsNullOrEmpty(username)) return string.Empty;
 
-            UUID reqID = UUID.Random();
+            UUID reqID = NewDataserverQuery();   // PHLOX-46
 
             // Normalize "first.last" to "first last"
             string normalized = username.Replace('.', ' ').Trim();
@@ -17033,20 +17146,17 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                     var accountService = World?.RequestModuleInterface<IUserAccountService>();
                     if (accountService == null)
                     {
-                        m_ScriptEngine.PostScriptEvent(m_itemID, "dataserver",
-                            new object[] { reqID.ToString(), UUID.Zero.ToString() });
+                        PostDataserverEvent(reqID, UUID.Zero.ToString());
                         return;
                     }
                     var account = accountService.GetUserAccount(World.RegionInfo.ScopeID, firstName, lastName);
                     string result = account != null ? account.PrincipalID.ToString() : UUID.Zero.ToString();
-                    m_ScriptEngine.PostScriptEvent(m_itemID, "dataserver",
-                        new object[] { reqID.ToString(), result });
+                    PostDataserverEvent(reqID, result);
                 }
                 catch (Exception ex)
                 {
                     m_log.LogWarning("[PhloxAPI]: llRequestUserKey failed for '{0}': {1}", username, ex.Message);
-                    m_ScriptEngine.PostScriptEvent(m_itemID, "dataserver",
-                        new object[] { reqID.ToString(), UUID.Zero.ToString() });
+                    PostDataserverEvent(reqID, UUID.Zero.ToString());
                 }
             });
 

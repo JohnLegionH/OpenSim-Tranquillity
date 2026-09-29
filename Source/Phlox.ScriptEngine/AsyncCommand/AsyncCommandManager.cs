@@ -214,23 +214,17 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
         }
 
         /// <summary>
-        /// Remove a specific script and all its pending async commands.
+        /// Remove a specific script and all its pending async commands (Halcyon AsyncCommandManager.RemoveScript). PHLOX-46:
+        /// reached through LSLSystemAPI.ReleaseScriptResources on unload; each plugin forgets the item as well as stopping it.
         /// </summary>
         public static void RemoveScript(IScriptEngine engine, uint localID, UUID itemID)
         {
             if (m_SensorRepeat.TryGetValue(engine, out SensorRepeat sr))
-                sr.UnSetSenseRepeaterEvents(localID, itemID);
-
-            IHttpRequestModule iHttpReq =
-                engine.World.RequestModuleInterface<IHttpRequestModule>();
-            iHttpReq?.StopHttpRequest(localID, itemID);
-
-            IXMLRPC xmlrpc = engine.World.RequestModuleInterface<IXMLRPC>();
-            if (xmlrpc != null)
-            {
-                xmlrpc.DeleteChannels(itemID);
-                xmlrpc.CancelSRDRequests(itemID);
-            }
+                sr.RemoveScript(itemID);
+            if (m_HttpRequest.TryGetValue(engine, out HttpRequest http))
+                http.RemoveEvents(localID, itemID);
+            if (m_XmlRequest.TryGetValue(engine, out XmlRequest xml))
+                xml.RemoveEvents(localID, itemID);
         }
 
         /// <summary>

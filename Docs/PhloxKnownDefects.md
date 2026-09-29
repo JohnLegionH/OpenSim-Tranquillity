@@ -3872,3 +3872,58 @@ Probe: `phlox45-probe.lsl` + `phlox45-probe-auto-testisle.yaml` (not run). It co
 sitter's implicit grant.
 
 No function index or declared return type changed. No bytecode, serialization or cache change.
+
+## PHLOX-46 - script cleanup: what ends with a script (audit S12)
+
+HALCYON-DIFF S12 (rows F363, F003, F416, F384, F365, F002): `AsyncCommandManager.RemoveScript` had no caller, so a
+deleted script's llSensorRepeat swept for the life of the region and its HTTP requests, XML-RPC channels and URLs
+stayed; events for items that are not loaded were kept for ever; Halcyon's reset throttle was gone.
+
+One helper, `LSLSystemAPI.ReleaseScriptResources(ScriptEnd)`, called from `OnScriptReset`, `OnStateChange` and
+`OnScriptUnloaded`. Every reset (llResetScript, llResetOtherScript, the viewer's Reset, osResetAllScripts, a crashed
+script's reset), state change and unload (delete, derez, recompile, shutdown) reaches one of the three. Timers, sleeps
+and touch waits are the scheduler's and end one step earlier on the same paths (`UnregisterFromNotifications`).
+
+| resource | delete / unload | reset | state change | source |
+|---|---|---|---|---|
+| llSensorRepeat | ends | ends, and its saved record goes | ends, record goes | SL reset: "Timers (including repeating sensors) are cleared"; State: "Repeating sensors are released"; Halcyon RemoveAllAsyncHandlers |
+| outstanding llHTTPRequest | stopped, forgotten | stopped, forgotten | kept | Halcyon RemoveScript -> StopHttpRequest; its reset and state change did nothing for HTTP |
+| URLs (llRequestURL, llRequestSecureURL) | released | released | kept | SL: "Any granted URLs are released"; "Unlike listeners, URLs persist across state changes" |
+| XML-RPC channels, llSendRemoteData | closed, cancelled | kept | kept | Halcyon RemoveScript (DeleteChannels, CancelSRDRequests); reset did nothing, SL silent |
+| listens | removed (and the listen-rate record) | removed | removed | SL: "Listeners are removed"; "All listens are released" |
+| timer, sleep, touch wait | end | end | end (timer as before) | scheduler UnregisterFromNotifications, unchanged |
+| owed dataserver replies | dropped | dropped | dropped | Halcyon Dataserver.RemoveEvents from RemoveAllAsyncHandlers |
+| events posted, not yet queued | - | dropped | - | SL reset: "The event queue is cleared" |
+
+- **Late replies.** The API records the dataserver query ids it is owed; a reply whose id is gone is dropped before it is
+  posted. The HTTP plugin records its scripts' request ids (`HttpRequest.Start`); a completed response whose id is gone
+  is dropped when its script is a Phlox script (reset since) or is no longer in the prim (deleted). The core's
+  `StopHttpRequest` stops only pending requests, not ones already in its completed queue, so this filter is needed. A
+  response to another engine's request that Phlox's pump takes is posted as before.
+- **Events for items that are not loaded** are held only while the item's Phlox load is in flight
+  (`PhloxScriptLoader.IsLoading`), at most 32 per item for 60 s (Halcyon DeferredEventManager). Everything else - a
+  deleted or reset script's late event, another engine's script in the same prim, a failed compile, an unknown id - is
+  dropped at once and counted (`m_DroppedForUnloaded`). 10,000 events to unloaded ids leave nothing held (test).
+- **Reset throttle** (Halcyon ThrottleScriptResets): more than 5 resets of one script in one second and it sleeps 5 s
+  before its state_entry, with a warning in the log and on DEBUG_CHANNEL once an hour. `[InWorldz.Phlox] ResetThrottle`,
+  default true (an anti-abuse slowdown, as D1 rules for Halcyon's others). The timeslice never ticks a sleeping script,
+  so a throttle set on a script already on the run queue holds.
+- **Derez left scripts loaded (found here, from PHLOX-45).** On a derez the part's inventory is gone by the time its
+  scripts unload; `GetInventorySelf` threw from PHLOX-45's unload release, which aborted `DoUnload` and kept every
+  derezzed script, and everything it held, loaded. `GetInventorySelf` now returns null there, and `DoUnload` finishes
+  the unload whatever the API hook throws.
+
+Deferred:
+- A stopped (not running) script keeps its sensor repeat and outstanding requests; its events are dropped. Halcyon
+  released them on disable (findings #562). Not delete, reset or unload.
+- llRequestUsername answers through PostObjectEvent (every script in the prim, posted from a pool thread) and is not
+  tracked, so a reset right after the call can still see its reply.
+- D8 (dataserver to every script in the prim) is not implemented; when it is, the owed-reply record stays with the
+  script that asked.
+- The loader keeps one small record per item id ever loaded (generation, latest serial, outcome), for the stale-compile
+  and editor-error checks. Not a queue and not per event; untouched.
+- Phlox's and YEngine's pumps both take from the core's one completed-HTTP queue; a response is posted by whichever pump
+  takes it, in its own engine (unchanged).
+
+Tests: `ScriptCleanupTests` (21; 15 red without the change - the other 6 are the controls and the llSleep delete).
+No bytecode, serialization or cache change.

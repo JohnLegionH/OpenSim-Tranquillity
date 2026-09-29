@@ -256,6 +256,7 @@ namespace Phlox.ScriptEngine
             // PHLOX-22 B: a compile of this item still running is now stale.
             BumpGeneration(req.ItemID);
             lock (m_PendingOps) m_PendingOps.Remove(req.ItemID);
+            m_ExeScheduler.DropDeferred(req.ItemID);   // PHLOX-46: events held for a load that is now cancelled
             Interpreter script = m_ExeScheduler.FindScript(req.ItemID);
             if (script == null) return;
 
