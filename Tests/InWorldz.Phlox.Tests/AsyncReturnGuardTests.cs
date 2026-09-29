@@ -36,7 +36,9 @@ public class AsyncReturnGuardTests
         ("iwRezObject",            VarType.Key,     "\"nothing\", ZERO_VECTOR, ZERO_VECTOR, ZERO_ROTATION, 0", NullKey),
         ("iwRezAtRoot",            VarType.Key,     "\"nothing\", ZERO_VECTOR, ZERO_VECTOR, ZERO_ROTATION, 0", NullKey),
         ("iwRezAt",                VarType.Key,     "\"nothing\", 0, ZERO_VECTOR, ZERO_VECTOR, ZERO_ROTATION, 0", NullKey),
-        ("llManageEstateAccess",   VarType.Integer, "0, " + AKey,                                  "0"),
+        // PHLOX-53: the harness has no permissions module, so everybody is a god and may manage the estate; a NULL_KEY
+        // target is FALSE on every path (SL: "FALSE if ... invalid or null id").
+        ("llManageEstateAccess",   VarType.Integer, "0, NULL_KEY",                                 "0"),
         ("botCreateBot",           VarType.Key,     "\"A\", \"Bot\", \"\", ZERO_VECTOR, 0",        null),
         ("botGetBotOutfits",       VarType.List,    "",                                            null),
         ("botSearchBotOutfits",    VarType.List,    "\"x\", 0, 0, -1",                             null),

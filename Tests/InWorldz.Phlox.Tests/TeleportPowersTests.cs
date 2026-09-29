@@ -16,7 +16,8 @@ namespace InWorldz.Phlox.Tests;
 // - llTeleportAgent / llTeleportAgentGlobalCoords follow SL: PERMISSION_TELEPORT from the avatar teleported, the owner
 //   only (or an experience the avatar granted), a landmark by inventory name or "" for this region, SL's throttle.
 // - iwTeleportAgent, llTeleportAgentHome, llEjectFromLand follow Halcyon's IsTeleportAuthorized with its holes closed:
-//   never a god (unless the god owns the object), land rights on group land only for an object deeded to the group.
+//   never a god (unless the god owns the object), land rights on group land for an object deeded to the group or (PHLOX-53)
+//   an owner holding the group's Eject and Freeze power.
 // - osTeleportAgent follows YEngine's OSSL (Severe on the region and grid forms, checkAllowAgentTPbyLandOwner, no god
 //   rule - parity).
 // No test reaches a network service: every teleport ends in a recording IEntityTransferModule, and every destination is
@@ -428,13 +429,27 @@ public class IwTeleportAgentTests
     }
 
     [Fact]
-    public void AnObjectMerelySetToTheGroupIsRefusedOnGroupLandEvenForAMemberWithEveryPower()
+    public void AGroupTaggedObjectIsRefusedOnGroupLandUnlessItsOwnerHoldsEjectAndFreeze()
     {
-        // audit F132/F272: the port admitted any object carrying the land's group tag. Ruling (a): deeded objects only.
-        using (var r = new TeleportRig(_out, Member, TeleportRig.West, null, (Member, ulong.MaxValue)))
+        // audit F132/F272: the port admitted any object carrying the land's group tag. PHLOX-53 correction: Halcyon's
+        // HasLandPrivileges asks CanEditParcel(owner, parcel, LandEjectAndFreeze), and SL admits "The object owner must
+        // have 'Eject and freeze Residents on parcels' ability in the group". Every other power is not enough.
+        using (var r = new TeleportRig(_out, Member, TeleportRig.West, null, (Member, ulong.MaxValue & ~(ulong)GroupPowers.LandEjectAndFreeze)))
             Assert.False(Teleports(r, r.Avatar(UUID.Random(), TeleportRig.West)));
         using (var r = new TeleportRig(_out, UUID.Random(), TeleportRig.West))
             Assert.False(Teleports(r, r.Avatar(UUID.Random(), TeleportRig.West)));
+    }
+
+    [Fact]
+    public void AMemberHoldingEjectAndFreezeTeleportsAVisitorOnTheGroupsLandOnly()
+    {
+        using (var r = new TeleportRig(_out, Member, TeleportRig.West, null, (Member, (ulong)GroupPowers.LandEjectAndFreeze)))
+            Assert.True(Teleports(r, r.Avatar(UUID.Random(), TeleportRig.West)));
+        // East is only tagged to the group, not deeded: the power does not reach it.
+        using (var r = new TeleportRig(_out, Member, TeleportRig.West, null, (Member, (ulong)GroupPowers.LandEjectAndFreeze)))
+            Assert.False(Teleports(r, r.Avatar(UUID.Random(), TeleportRig.East)));
+        using (var r = new TeleportRig(_out, Member, TeleportRig.West, null, (Member, (ulong)GroupPowers.LandEjectAndFreeze)))
+            Assert.False(Teleports(r, r.Avatar(UUID.Random(), TeleportRig.West, god: true)));
     }
 
     [Fact]
@@ -484,9 +499,17 @@ public class TeleportHomeAndEjectTests
 
     [Theory]
     [MemberData(nameof(Functions))]
-    public void AGroupTaggedObjectAndAnyoneAgainstAGodAreRefused(string fn)
+    public void AMemberHoldingEjectAndFreezeSendsAVisitorHome(string fn)
     {
-        using var r = new TeleportRig(_out, Member, TeleportRig.West, null, (Member, ulong.MaxValue));
+        using var r = new TeleportRig(_out, Member, TeleportRig.West, null, (Member, (ulong)GroupPowers.LandEjectAndFreeze));
+        Assert.True(SentHome(r, fn, r.Avatar(UUID.Random(), TeleportRig.West)));
+    }
+
+    [Theory]
+    [MemberData(nameof(Functions))]
+    public void AGroupTaggedObjectWithoutEjectAndFreezeAndAnyoneAgainstAGodAreRefused(string fn)
+    {
+        using var r = new TeleportRig(_out, Member, TeleportRig.West, null, (Member, ulong.MaxValue & ~(ulong)GroupPowers.LandEjectAndFreeze));
         var visitor = r.Avatar(UUID.Random(), TeleportRig.West);
         r.Run($"{fn}({TeleportRig.Q(visitor.UUID)});");
         Assert.False(r.Moved(visitor.UUID));

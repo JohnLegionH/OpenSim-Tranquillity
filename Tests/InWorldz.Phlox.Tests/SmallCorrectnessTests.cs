@@ -207,6 +207,8 @@ public class SmallCorrectnessTests
     public void ManageEstateAccessIsFalseForAnOwnerWhoIsNotAManager()
     {
         using var h = new SchedulerHarness();
+        // PHLOX-53: gods may manage (Halcyon CanIssueEstateCommand); without the hook everybody is a god.
+        h.Scene.Permissions.OnIsAdministrator += id => false;
         var client = h.AddClient();
         h.RezScript($"default {{ state_entry() {{ llSay(0, \"r=\" + (string)llManageEstateAccess(ESTATE_ACCESS_ALLOWED_AGENT_ADD, \"{client.AgentId}\")); }} }}");
         // Under full-suite load the said line can come after a fixed 2 s, so pump until it is said.

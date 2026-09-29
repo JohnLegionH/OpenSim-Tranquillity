@@ -4129,9 +4129,10 @@ refused a god, and on group-owned land any object merely set to the land's group
 - **iwTeleportAgent, llTeleportAgentHome, llEjectFromLand** (Halcyon's IsTeleportAuthorized): the object's owner (a god
   owner included); never another god (`IsViewerUIGod || IsGod`, Halcyon's GodLevel > 0); an estate owner or manager; or
   land rights on the object's parcel and the avatar's parcel through `HasParcelPowers(owner, parcel, null)` - on group
-  land only an object deeded to that group. Halcyon and SL also admit an owner holding the group's "Eject and freeze"
-  power; the ruling does not. llEjectFromLand stays Halcyon's (sends the avatar home, 5 s), not SL's (to the parcel
-  edge, no delay).
+  land only an object deeded to that group. **Corrected by PHLOX-53:** the land test is now
+  `HasParcelPowers(owner, parcel, GroupPowers.LandEjectAndFreeze)`, so an owner holding the group's "Eject and freeze"
+  power also qualifies, as Halcyon and SL both allow. llEjectFromLand stays Halcyon's (sends the avatar home, 5 s),
+  not SL's (to the parcel edge, no delay).
 - **osTeleportAgent** follows YEngine's OSSL: the region-name and grid-coordinate forms need the Severe threat level
   (`Allow_osTeleportAgent` / OSFunctionThreatLevel) and now stop the script with YEngine's permission error when refused
   (their shims run on the script thread; the cross-region teleport is fired on its own thread as YEngine does); the
@@ -4152,3 +4153,52 @@ Tests: `LlTeleportAgentTests` (10), `IwTeleportAgentTests` (6), `TeleportHomeAnd
 red without the change. Probe: `phlox52-probe.lsl` + `phlox52-probe-auto-testisle.yaml` (ops folder).
 
 No function index or declared return type changed. No bytecode, serialization or cache change.
+
+## PHLOX-53 - estate access: llManageEstateAccess follows Halcyon's estate rules (audit S3); the PHLOX-52 correction
+
+HALCYON-DIFF S3 (rows F317, F274; ledger also F308, F341). Before this change llManageEstateAccess wrote straight into
+EstateSettings: it could ban the estate owner, an estate manager or the object's owner, did not eject the banned avatar,
+kept their allowed-list entry, returned TRUE for no-ops and NULL_KEY, answered FALSE to every InWorldz query, sent no IM,
+and refused a god who was not on the estate.
+
+- **Who may call:** a god, the estate owner or an estate manager (Halcyon `CanIssueEstateCommand`; SL: "the object
+  owner is the Estate Owner or an Estate Manager"), through the same `EstateSettings.IsEstateManagerOrOwner` and
+  `Permissions.IsGod` helpers `HasParcelPowers` uses. Anyone else: FALSE and "object owner must manage estate." on
+  DEBUG_CHANNEL.
+- **Never banned:** the estate owner, estate managers, the object's owner, gods. FALSE, nothing written, nobody moved.
+- **A ban** takes the avatar off the allowed list, records the ban, and sends a present avatar home; if their home is
+  this region they are logged out ("You have been banned from your Home location. You must login directly to a
+  different region."), as Halcyon does. A home teleport that cannot start logs them out, as NGC's own estate ban does.
+- **Allowing** a banned avatar lifts the ban. **No-ops** (adding what is there, removing what is not), NULL_KEY, an
+  invalid key and an unknown action are FALSE (Halcyon AlreadySet / InvalidReq; SL "FALSE if ... invalid action,
+  invalid or null id").
+- **Queries** (InWorldz): ESTATE_ACCESS_QUERY_CAN_MANAGE (11000) answers anyone, silently;
+  QUERY_ALLOWED_AGENT / ALLOWED_GROUP / BANNED_AGENT (11001-11003) report list membership, for managers only.
+- **Owner IM:** each change IMs the object's owner with Halcyon's text ("NAME has been banned from REGION" and so on;
+  the key when the name is not known) and the call takes 200 ms, unless the script holds
+  PERMISSION_SILENT_ESTATE_MANAGEMENT.
+
+Not ported, open:
+- Halcyon also never bans the **estate owner's partner**. NGC has no partner lookup in the region (the partner is in the
+  profiles service, behind `IProfileModule`, which exposes only preferences); it needs a core interface addition.
+- SL's throttle (30 calls per 30 s) and "does not work on mainland": Halcyon has neither; not added.
+- The action numbers stay Phlox's and YEngine's (0..5), not SL's (0x4..0x80). Renumbering needs a bytecode-cache bump
+  and is John's open decision.
+
+YEngine differs (read-only, for the core list): only the estate owner may call; the id must be an account or a group;
+an add already present is TRUE; a god cannot be banned, but the estate owner and managers can be (NGC's
+`EstateSettings.IsBanned` then ignores the entry at the door); a ban neither clears the allowed entry nor ejects; no IM,
+no queries.
+
+**PHLOX-52 correction:** iwTeleportAgent, llTeleportAgentHome and llEjectFromLand now admit, on group land, an object
+owner holding the group's "Eject and freeze" power (`HasParcelPowers(owner, parcel, GroupPowers.LandEjectAndFreeze)`),
+as Halcyon's `HasLandPrivileges` and SL's wiki ("The object owner must have 'Eject and freeze Residents on parcels'
+ability in the group") both do. A group-tagged object whose owner lacks the power is still refused; a deeded object is
+still admitted; the god rule is unchanged. SL's "and be connected to the sim" is not in Halcyon and is not added.
+
+Tests: `EstateAccessTests` (17, parallel), `IwTeleportAgentTests` (7), `TeleportHomeAndEjectTests` (6); every estate
+store, grid-user lookup, IM and teleport is an in-memory recorder, nothing reaches a network service.
+`AsyncReturnGuardTests` now calls llManageEstateAccess with NULL_KEY (the harness has no permissions module, so everybody
+is a god there); `ManageEstateAccessIsFalseForAnOwnerWhoIsNotAManager` hooks IsAdministrator to "nobody".
+
+No function index or declared return type changed. No constant, bytecode, serialization or cache change.

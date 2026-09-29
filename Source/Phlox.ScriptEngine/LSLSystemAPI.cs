@@ -2117,38 +2117,188 @@ namespace Phlox.ScriptEngine
         /// <summary>
         /// PHLOX-21 E5: the table returns integer and the async shim returns only what the body hands to
         /// SysReturn, so TRUE/FALSE goes back through B2's sequenced return on every path.
+        /// PHLOX-53 (audit S3, F317/F274): InWorldz llManageEstateAccess. After a change the object's owner gets an IM
+        /// ("... has been banned from REGION" and so on) and the call takes 200 ms, unless the script holds
+        /// PERMISSION_SILENT_ESTATE_MANAGEMENT (SL: "the object owner receives notifications by default").
         /// </summary>
         public void llManageEstateAccess(int action, string avatar)
         {
-            int result = 0;
-            try { result = ManageEstateAccess(action, avatar) ? 1 : 0; }
-            finally { m_ScriptEngine.SysReturn(m_itemID, result, 0); }
+            int result = 0, delay = 0;
+            try
+            {
+                if (UUID.TryParse(avatar, out UUID key) && ManageEstateAccess(action, key))
+                {
+                    result = 1;
+                    if (ReportEstateChange(action, key)) delay = 200;
+                }
+            }
+            finally { m_ScriptEngine.SysReturn(m_itemID, result, delay); }
         }
 
-        private bool ManageEstateAccess(int action, string avatar)
+        // Phlox's action numbers (DefaultConstants.cs), not SL's 0x4..0x80: renumbering is John's open decision.
+        private const int EstateAllowedAgentAdd = 0, EstateAllowedAgentRemove = 1, EstateAllowedGroupAdd = 2,
+            EstateAllowedGroupRemove = 3, EstateBannedAgentAdd = 4, EstateBannedAgentRemove = 5,
+            EstateQueryCanManage = 11000, EstateQueryAllowedAgent = 11001, EstateQueryAllowedGroup = 11002,
+            EstateQueryBannedAgent = 11003;
+
+        /// <summary>
+        /// PHLOX-53: Halcyon ManageEstateAccess over EstateManagementModule's EstateAllowUser / EstateAllowGroup /
+        /// EstateBanUser / Estate*Query (EstateManagementModule.cs:258-460). Who may call: CanIssueEstateCommand, i.e. a
+        /// god, the estate owner or an estate manager (SL: "the object owner is the Estate Owner or an Estate Manager"),
+        /// through the same EstateSettings and IsGod helpers HasParcelPowers uses. QUERY_CAN_MANAGE answers anyone,
+        /// silently. A change that is already so (AlreadySet), a NULL_KEY and an unknown action are FALSE. A ban never
+        /// touches the estate owner or a manager ("never process EO"), the object's owner, or a god (YEngine, and NGC's
+        /// estate tools: "Cannot ban a Administrator"); it takes the avatar off the allowed list and sends them away.
+        /// Halcyon's estate-owner's-partner rule is not ported: NGC has no partner lookup in the region.
+        /// </summary>
+        private bool ManageEstateAccess(int action, UUID key)
         {
-            if (!World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID))
+            EstateSettings es = World.RegionInfo.EstateSettings;
+            bool canManage = es.IsEstateManagerOrOwner(m_host.OwnerID) || World.Permissions.IsGod(m_host.OwnerID);
+            if (action == EstateQueryCanManage) return canManage;
+            if (!canManage)
             {
                 ShoutError("llManageEstateAccess: object owner must manage estate.");
                 return false;
             }
-            if (!UUID.TryParse(avatar, out UUID key)) return false;
-            // action constants: ESTATE_ACCESS_ALLOWED_AGENT_ADD=0, REMOVE=1,
-            //   ALLOWED_GROUP_ADD=2, REMOVE=3, BANNED_AGENT_ADD=4, REMOVE=5
-            var es = World.RegionInfo.EstateSettings;
+            if (key.IsZero()) return false;
+
+            bool allowed = es.EstateAccess.Contains(key), banned = es.EstateBans.Any(b => b.BannedUserID == key);
+            bool groupAllowed = es.GroupAccess(key);
             switch (action)
             {
-                case 0: es.AddEstateUser(key); break;
-                case 1: es.RemoveEstateUser(key); break;
-                case 2: es.AddEstateGroup(key); break;
-                case 3: es.RemoveEstateGroup(key); break;
-                case 4: es.AddBan(new EstateBan { BannedUserID = key, EstateID = es.EstateID }); break;
-                case 5: es.RemoveBan(key); break;
-                default: return false;
+                case EstateQueryAllowedAgent: return allowed;
+                case EstateQueryAllowedGroup: return groupAllowed;
+                case EstateQueryBannedAgent: return banned;
+
+                case EstateAllowedAgentAdd:
+                    // "A user cannot be in both the banned and access lists": allowing lifts the ban.
+                    if (banned) es.RemoveBan(key);
+                    if (!allowed) es.AddEstateUser(key);
+                    if (banned || !allowed) StoreEstate(es);
+                    return !allowed && es.EstateAccess.Contains(key);
+                case EstateAllowedAgentRemove:
+                    if (!allowed) return false;
+                    es.RemoveEstateUser(key);
+                    StoreEstate(es);
+                    return true;
+                case EstateAllowedGroupAdd:
+                    if (groupAllowed) return false;
+                    es.AddEstateGroup(key);
+                    StoreEstate(es);
+                    return es.GroupAccess(key);
+                case EstateAllowedGroupRemove:
+                    if (!groupAllowed) return false;
+                    es.RemoveEstateGroup(key);
+                    StoreEstate(es);
+                    return true;
+                case EstateBannedAgentAdd:
+                    if (es.IsEstateManagerOrOwner(key) || key == m_host.OwnerID || World.Permissions.IsGod(key))
+                        return false;
+                    // Halcyon clears the allowed entry even when the avatar is already banned.
+                    if (allowed) es.RemoveEstateUser(key);
+                    if (!banned)
+                        es.AddBan(new EstateBan
+                        {
+                            BannedUserID = key,
+                            EstateID = es.EstateID,
+                            BannedHostAddress = "0.0.0.0",
+                            BannedHostIPMask = "0.0.0.0",
+                            BanningUserID = m_host.OwnerID,
+                            BanTime = Util.UnixTimeSinceEpoch()
+                        });
+                    if (allowed || !banned) StoreEstate(es);
+                    if (banned || !es.EstateBans.Any(b => b.BannedUserID == key)) return false;
+                    EjectBannedAvatar(key);
+                    return true;
+                case EstateBannedAgentRemove:
+                    if (!banned) return false;
+                    es.RemoveBan(key);
+                    StoreEstate(es);
+                    return true;
+                default:
+                    return false;
             }
-            World.EstateDataService?.StoreEstateSettings(es);
+        }
+
+        private void StoreEstate(EstateSettings es) => World.EstateDataServiceSafe?.StoreEstateSettings(es);
+
+        /// <summary>
+        /// Halcyon EstateBanUser "Banned, now shoo them away" (EstateManagementModule.cs:311-328): an avatar here whose
+        /// home is this region is logged out ("You have been banned from your Home location. You must login directly to
+        /// a different region."); anyone else is sent home. A home teleport that cannot start logs them out, as NGC's
+        /// own estate ban does (EstateManagementModule.cs:1126-1131).
+        /// </summary>
+        private void EjectBannedAvatar(UUID id)
+        {
+            ScenePresence sp = World.GetScenePresence(id);
+            if (sp == null || sp.IsChildAgent) return;
+            GridUserInfo home = World.GridUserService?.GetGridUserInfo(id.ToString());
+            if (home != null && home.HomeRegionID == World.RegionInfo.RegionID)
+            {
+                sp.ControllingClient.Kick("You have been banned from your Home location. You must login directly to a different region.");
+                World.CloseAgent(id, false);
+                return;
+            }
+            sp.ControllingClient.SendTeleportStart((uint)OpenMetaverse.TeleportFlags.DisableCancel);
+            if (!World.TeleportClientHome(id, sp.ControllingClient))
+            {
+                sp.ControllingClient.Kick("Your access to the region was revoked and TP home failed - you have been logged out.");
+                World.CloseAgent(id, false);
+            }
+        }
+
+        /// <summary>
+        /// Halcyon llManageEstateAccess's report (InWorldz LSLSystemAPI.cs:15181-15225) and SendIM (:3883-3915): an IM
+        /// from the object to its owner, stored for an offline owner. True when one was sent.
+        /// </summary>
+        private bool ReportEstateChange(int action, UUID key)
+        {
+            string region = World.RegionInfo.RegionName;
+            string msg = action switch
+            {
+                EstateAllowedAgentAdd => EstateUserName(key) + " has been added to the allowed user list for " + region,
+                EstateAllowedAgentRemove => EstateUserName(key) + " has been removed from the allowed user list for " + region,
+                EstateAllowedGroupAdd => EstateGroupName(key) + " has been added to the allowed group list for " + region,
+                EstateAllowedGroupRemove => EstateGroupName(key) + " has been removed from the allowed group list for " + region,
+                EstateBannedAgentAdd => EstateUserName(key) + " has been banned from " + region,
+                EstateBannedAgentRemove => EstateUserName(key) + " has been removed from the banned list for " + region,
+                _ => null
+            };
+            if (msg == null) return false;
+            TaskInventoryItem item = GetInventorySelf();
+            if (item != null && (item.PermsMask & PERMISSION_SILENT_ESTATE_MANAGEMENT) != 0) return false;
+            IMessageTransferModule tr = World.RequestModuleInterface<IMessageTransferModule>();
+            if (tr == null) return false;
+            tr.SendInstantMessage(new GridInstantMessage()
+            {
+                fromAgentID    = m_host.OwnerID.Guid,
+                toAgentID      = m_host.OwnerID.Guid,
+                imSessionID    = m_host.UUID.Guid,
+                timestamp      = (uint)Util.UnixTimeSinceEpoch(),
+                fromAgentName  = m_host.Name,
+                message        = msg.Length > 1024 ? msg.Substring(0, 1024) : msg,
+                dialog         = (byte)InstantMessageDialog.MessageFromObject,
+                fromGroup      = false,
+                offline        = 1,
+                ParentEstateID = 0,
+                Position       = m_host.AbsolutePosition,
+                RegionID       = World.RegionInfo.RegionID.Guid,
+                binaryBucket   = new byte[0]
+            }, success => { });
             return true;
         }
+
+        /// <summary>Halcyon UserNameToReport: the name when known, else the key.</summary>
+        private string EstateUserName(UUID id)
+        {
+            string name = World.RequestModuleInterface<IUserManagement>()?.GetUserName(id);
+            return string.IsNullOrEmpty(name) ? id.ToString() : name;
+        }
+
+        /// <summary>Halcyon GroupNameToReport: the group's name when known, else the key.</summary>
+        private string EstateGroupName(UUID id)
+            => World.RequestModuleInterface<IGroupsModule>()?.GetGroupRecord(id)?.GroupName ?? id.ToString();
 
         // ── Avatar ─────────────────────────────────────────────────────────────
 
@@ -2547,8 +2697,11 @@ namespace Phlox.ScriptEngine
         /// <summary>
         /// Halcyon IsTeleportAuthorized (LSLSystemAPI.cs:14923-14961), the rule of iwTeleportAgent, llTeleportAgentHome
         /// and llEjectFromLand. PHLOX-52: "scripts cannot force-TP gods, unless the god is the owner of the script" is
-        /// back (F273), and the land test is HasParcelPowers with no group role (F272, John's ruling (a)): on group land
-        /// only an object deeded to that group, never one merely set to the group.
+        /// back (F273). PHLOX-53 corrects PHLOX-52's land test (F272): Halcyon's HasLandPrivileges is
+        /// CanEditParcel(owner, parcel, GroupPowers.LandEjectAndFreeze), and SL (wiki llTeleportAgentHome, llEjectFromLand)
+        /// admits on group land "The object is deeded to the same group" or "The object owner must have 'Eject and freeze
+        /// Residents on parcels' ability in the group". So on group land: an object deeded to that group, or an owner who
+        /// holds Eject and Freeze in it; an object merely set to the group whose owner lacks the power is refused.
         /// </summary>
         private bool IsTeleportAuthorized(ScenePresence targetSP)
         {
@@ -2578,12 +2731,12 @@ namespace Phlox.ScriptEngine
             Vector3 agentPos = targetSP.AbsolutePosition;
             ILandObject agentLand = World.LandChannel.GetLandObject(agentPos.X, agentPos.Y);
 
-            if (HasParcelPowers(m_host.OwnerID, objectLand, null))
+            if (HasParcelPowers(m_host.OwnerID, objectLand, (ulong)GroupPowers.LandEjectAndFreeze))
             {
                 // If avatar parcel can't be determined but script has land privs, allow it
                 if (agentLand == null)
                     return true;
-                if (HasParcelPowers(m_host.OwnerID, agentLand, null))
+                if (HasParcelPowers(m_host.OwnerID, agentLand, (ulong)GroupPowers.LandEjectAndFreeze))
                     return true;
             }
 
@@ -8239,7 +8392,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         /// <summary>
         /// Halcyon LSLSystemAPI.cs:7348-7351: the avatar is sent home through llTeleportAgentHome, so the same
-        /// authorization (PHLOX-52: no god, group land only for deeded objects) and the same 5 s sleep.
+        /// authorization (PHLOX-52: no god; PHLOX-53: group land for deeded objects or an owner with Eject and Freeze) and
+        /// the same 5 s sleep.
         /// </summary>
         public void llEjectFromLand(string pest)
         {
