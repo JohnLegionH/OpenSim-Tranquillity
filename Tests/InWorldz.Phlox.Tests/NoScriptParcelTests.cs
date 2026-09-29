@@ -293,6 +293,100 @@ public class NoScriptParcelTests
         Assert.Equal(Enumerable.Range(1, ticks.Count), ticks);
     }
 
+    // ── PHLOX-44: a paused timer keeps the time it had left (Halcyon) ─────────────
+
+    /// <summary>
+    /// Milliseconds until the script's timer wake, or null when none is armed. Read from the scheduler's own heap by
+    /// reflection (m_TimerHandles, m_SleepHeap), so the test measures what the scheduler will do, not wall-clock ticks.
+    /// </summary>
+    private static long? TimerDueIn(Land l, UUID itemId)
+    {
+        var exe = l.Exe;
+        var handles = (System.Collections.IDictionary)exe.GetType().GetField("m_TimerHandles", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(exe)!;
+        if (!handles.Contains(itemId)) return null;
+        object handle = handles[itemId]!;
+        object heap = exe.GetType().GetField("m_SleepHeap", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(exe)!;
+        var indexer = heap.GetType().GetProperties().First(p => p.Name == "Item" && p.GetIndexParameters().Length == 1);
+        object entry = indexer.GetValue(heap, new[] { handle })!;
+        ulong readyOn = (ulong)entry.GetType().GetField("ReadyOn")!.GetValue(entry)!;
+        return (long)readyOn - (long)global::InWorldz.Phlox.Util.Clock.Now;
+    }
+
+    private static string TimerScript(string seconds) => @"integer n;
+        default {
+            state_entry() { llSetTimerEvent(" + seconds + @"); llSay(0, llGetObjectName() + "" entry""); }
+            timer() { n++; llSay(0, llGetObjectName() + "" tick "" + (string)n); }
+        }";
+
+    [Fact]
+    public void APausedTimerResumesWithTheTimeItHadLeft()
+    {
+        // Halcyon ExecutionScheduler.InjectScript: readyOn = now + (TimerInterval - (StateCapturedOn - TimerLastScheduledOn)),
+        // StateCapturedOn being the pause. A 10 s timer paused with about 7 s left fires about 7 s after the resume.
+        using var l = new Land();
+        var sog = l.AddObject("keep", West, Resident);
+        l.SetFlags(l.WestParcel, otherScripts: true, groupScripts: false);
+        var id = l.Rez(sog.RootPart, TimerScript("10.0"));
+        Assert.True(l.PumpUntil(() => l.Said("keep entry")), "no state_entry");
+        Assert.True(l.PumpUntil(() => TimerDueIn(l, id) is long d && d <= 7000, 20000), "the timer never counted down: " + TimerDueIn(l, id));
+
+        long d0 = TimerDueIn(l, id)!.Value;
+        l.SetFlags(l.WestParcel, otherScripts: false, groupScripts: false);
+        Assert.True(l.PumpUntil(() => l.Paused(id)), "not paused");
+        Assert.Null(TimerDueIn(l, id));                                        // no timer wake while paused
+        l.Pump(3000);                                                           // a 3 s pause, not counted
+
+        l.SetFlags(l.WestParcel, otherScripts: true, groupScripts: false);
+        Assert.True(l.PumpUntil(() => !l.Paused(id)), "not resumed");
+        long? d1 = TimerDueIn(l, id);
+        _out.WriteLine($"due before the pause {d0} ms, after the resume {d1} ms");
+        Assert.NotNull(d1);
+        Assert.True(d1 <= d0 + 50, $"after the resume the timer is due in {d1} ms; it had {d0} ms left (a full interval is 10000)");
+        Assert.True(d1 >= d0 - 1500, $"after the resume the timer is due in {d1} ms; it had {d0} ms left, and the 3 s pause must not count");
+        Assert.Equal(0, l.Ticks("keep"));
+    }
+
+    [Fact]
+    public void APauseLongerThanTheIntervalStillLeavesTheTimeThatWasLeftThenTheNormalInterval()
+    {
+        // Halcyon counts only the time waited before the pause, so a pause longer than the interval neither fires at once
+        // nor makes up the missed events: one event after the time that was left, then the timer's own interval.
+        using var l = new Land();
+        var sog = l.AddObject("long", West, Resident);
+        l.SetFlags(l.WestParcel, otherScripts: true, groupScripts: false);
+        var id = l.Rez(sog.RootPart, TimerScript("2.0"));
+        Assert.True(l.PumpUntil(() => l.Said("long entry")), "no state_entry");
+        Assert.True(l.PumpUntil(() => TimerDueIn(l, id) is long d && d <= 1300, 20000), "the timer never counted down");
+
+        long d0 = TimerDueIn(l, id)!.Value;
+        int ticksAtPause = l.Ticks("long");
+        l.SetFlags(l.WestParcel, otherScripts: false, groupScripts: false);
+        Assert.True(l.PumpUntil(() => l.Paused(id)), "not paused");
+        l.Pump(4000);                                                           // twice the interval
+        Assert.Equal(ticksAtPause, l.Ticks("long"));                            // silent while paused
+
+        l.SetFlags(l.WestParcel, otherScripts: true, groupScripts: false);
+        Assert.True(l.PumpUntil(() => !l.Paused(id)), "not resumed");
+        var sinceResume = Stopwatch.StartNew();
+        long? d1 = TimerDueIn(l, id);
+        _out.WriteLine($"due before the pause {d0} ms, after the resume {d1} ms");
+        Assert.NotNull(d1);
+        Assert.True(d1 > 0, $"the timer is due at once ({d1} ms): the pause was counted");
+        Assert.True(d1 <= d0 + 50, $"after the resume the timer is due in {d1} ms; it had {d0} ms left (a full interval is 2000)");
+
+        // one event, after the time that was left
+        Assert.True(l.PumpUntil(() => l.Ticks("long") > ticksAtPause, 20000), "no timer event after the resume");
+        long firstAfter = sinceResume.ElapsedMilliseconds;
+        Assert.Equal(ticksAtPause + 1, l.Ticks("long"));
+        Assert.True(firstAfter >= d1!.Value - 100, $"the first event came {firstAfter} ms after the resume; it was due in {d1}");
+
+        // then the normal interval
+        long? next = TimerDueIn(l, id);
+        _out.WriteLine($"first event {firstAfter} ms after the resume; next due in {next} ms");
+        Assert.NotNull(next);
+        Assert.InRange(next!.Value, 1000, 2000);
+    }
+
     [Fact]
     public void AnOwnerChangeOfTheParcelIsATrigger()
     {

@@ -33,8 +33,21 @@ default
     }
 }
 "));
-        // Every body sleeps at most 2000 ms; 4 s of pumping is ample for all of them to come back.
-        h.PumpFor(TimeSpan.FromSeconds(4));
+        // Every body sleeps at most 2000 ms, but under full-suite load a fixed 4 s window was not always
+        // enough (PHLOX-44), so pump until every script has said its line. A stranded script never says it,
+        // and still fails the assertion below, after the timeout instead of after 4 s.
+        bool AllSaid()
+        {
+            for (int i = 0; i < Scripts; i++)
+                if (!h.Said.Contains(tag + " " + i)) return false;
+            return true;
+        }
+        var until = DateTime.UtcNow + TimeSpan.FromSeconds(60);
+        while (!AllSaid() && DateTime.UtcNow < until)
+        {
+            h.PumpOnce();
+            System.Threading.Thread.Sleep(1);
+        }
 
         int resumed = 0;
         foreach (var id in items)

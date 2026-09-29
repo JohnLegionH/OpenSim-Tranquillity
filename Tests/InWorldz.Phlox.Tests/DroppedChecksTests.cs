@@ -79,7 +79,8 @@ public class DroppedChecksTests
         var rec = FakeGroups(h);
         RezAsCreator(h, InviteAndEject, h.Prim.OwnerID);
         h.Pump();
-        Assert.True(h.Said.Contains("inv=1") && h.Said.Contains("ej=1"), Said(h));
+        // PHLOX-44: Halcyon returns the groups module's result, GenericReturnCodes.SUCCESS (0) when it was done.
+        Assert.True(h.Said.Contains("inv=0") && h.Said.Contains("ej=0"), Said(h));
         Assert.Contains("InviteGroup", rec.Calls);
         Assert.Contains("EjectGroupMember", rec.Calls);
         Assert.DoesNotContain(h.Said, s => s.Contains("requires the owner"));
@@ -98,6 +99,76 @@ public class DroppedChecksTests
         Assert.Contains(h.Said, s => s.EndsWith(EjectRefusal));
         Assert.DoesNotContain("InviteGroup", rec.Calls);
         Assert.DoesNotContain("EjectGroupMember", rec.Calls);
+    }
+
+    // PHLOX-44: the other return codes are Halcyon's Constants.GenericReturnCodes (SUCCESS 0, ERROR 2, PARAMETER 3,
+    // PERMISSION 5), not Phlox's old -3 / -1 / 1.
+
+    private const string G = "5a5a5a5a-0000-4000-8000-0000000041a1", U = "5a5a5a5a-0000-4000-8000-0000000041a2";
+
+    /// <summary>Run one iwGroupInvite and one iwGroupEject with the given arguments as the script's creator; return what each said.</summary>
+    private static (string Inv, string Ej) Codes(SchedulerHarness h, string group, string user, string role = "")
+    {
+        RezAsCreator(h,
+            "default { state_entry() { llSay(0, \"inv=\" + (string)iwGroupInvite(\"" + group + "\", \"" + user + "\", \"" + role + "\")); " +
+            "llSay(0, \"ej=\" + (string)iwGroupEject(\"" + group + "\", \"" + user + "\")); } }", h.Prim.OwnerID);
+        Assert.True(PumpUntil(h, () => h.Said.Any(s => s.StartsWith("ej=")), TimeSpan.FromSeconds(20)), Said(h));
+        return (h.Said.First(s => s.StartsWith("inv=")), h.Said.First(s => s.StartsWith("ej=")));
+    }
+
+    [Fact]
+    public void GroupInviteAndEjectAnswerParameterForABadGroupKey()
+    {
+        foreach (var bad in new[] { "not a key", UUID.Zero.ToString() })
+        {
+            using var h = new SchedulerHarness();
+            var rec = FakeGroups(h);
+            Assert.Equal(("inv=3", "ej=3"), Codes(h, bad, U));
+            lock (rec.Calls) Assert.Empty(rec.Calls);
+        }
+    }
+
+    [Fact]
+    public void GroupInviteAndEjectAnswerParameterForABadUserKey()
+    {
+        using var h = new SchedulerHarness();
+        var rec = FakeGroups(h);
+        Assert.Equal(("inv=3", "ej=3"), Codes(h, G, "not a key"));
+        lock (rec.Calls) Assert.Empty(rec.Calls);
+    }
+
+    [Fact]
+    public void GroupInviteAnswersParameterForAnUnknownRoleOrNoRoles()
+    {
+        using var h = new SchedulerHarness();
+        var rec = FakeGroups(h);
+        Assert.Equal("inv=3", Codes(h, G, U, "Officers").Inv);
+        Assert.DoesNotContain("InviteGroup", rec.Calls);
+
+        using var h2 = new SchedulerHarness();
+        var rec2 = FakeGroups(h2);
+        rec2.NullRoles = true;   // Halcyon: "groupID bad, or internal/system error"
+        Assert.Equal("inv=3", Codes(h2, G, U).Inv);
+        Assert.DoesNotContain("InviteGroup", rec2.Calls);
+    }
+
+    [Fact]
+    public void GroupInviteAndEjectAnswerErrorWithNoGroupsModule()
+    {
+        // Halcyon's ERROR (2): "generic error, internal server failure (like module not available)".
+        using var h = new SchedulerHarness();
+        Assert.Equal(("inv=2", "ej=2"), Codes(h, G, U));
+    }
+
+    [Fact]
+    public void GroupInviteAndEjectAnswerErrorWhenTheGroupsModuleFails()
+    {
+        using var h = new SchedulerHarness();
+        var rec = FakeGroups(h);
+        rec.Throws = true;
+        Assert.Equal(("inv=2", "ej=2"), Codes(h, G, U));
+        Assert.Contains("InviteGroup", rec.Calls);
+        Assert.Contains("EjectGroupMember", rec.Calls);
     }
 
     // ------------------------------------------------------------------ llAttachToAvatarTemp (Halcyon + SL)
@@ -367,6 +438,10 @@ public class DroppedChecksTests
 public class RecordingGroups : DispatchProxy
 {
     public List<string> Calls { get; } = new();
+    /// <summary>PHLOX-44: InviteGroup and EjectGroupMember throw, as a failing groups service would.</summary>
+    public bool Throws;
+    /// <summary>PHLOX-44: GroupRoleDataRequest answers null (Halcyon: "groupID bad, or internal/system error").</summary>
+    public bool NullRoles;
 
     public static IGroupsModule Create(out RecordingGroups rec)
     {
@@ -379,7 +454,9 @@ public class RecordingGroups : DispatchProxy
     {
         lock (Calls) Calls.Add(targetMethod.Name);
         if (targetMethod.Name == "GroupRoleDataRequest")
-            return new List<GroupRolesData> { new GroupRolesData { Name = "Everyone", RoleID = UUID.Zero } };
+            return NullRoles ? null : new List<GroupRolesData> { new GroupRolesData { Name = "Everyone", RoleID = UUID.Zero } };
+        if (Throws && (targetMethod.Name == "InviteGroup" || targetMethod.Name == "EjectGroupMember"))
+            throw new InvalidOperationException("groups service down");
         var rt = targetMethod.ReturnType;
         return rt == typeof(void) || !rt.IsValueType ? null : Activator.CreateInstance(rt);
     }

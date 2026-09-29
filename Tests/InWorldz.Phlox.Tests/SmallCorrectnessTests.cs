@@ -119,6 +119,51 @@ public class SmallCorrectnessTests
         Assert.Equal((uint)PermissionMask.Copy, item.NextPermissions & (uint)(PermissionMask.Copy | PermissionMask.Modify | PermissionMask.Transfer));
     }
 
+    // PHLOX-44: the MASK_* number alone picks the category (SL: "Sets the given permission category to the new value
+    // on the inventory item"; Halcyon's and Phlox's llSetObjectPermMask). YEngine's limit ANDed the MASK_* number with
+    // the item's PERM_* bits, so with a base mask that is not full every category but MASK_BASE collapsed to 0, the base.
+
+    private const uint C = (uint)PermissionMask.Copy, M = (uint)PermissionMask.Modify, T = (uint)PermissionMask.Transfer, Mv = (uint)PermissionMask.Move;
+    private const uint Four = C | M | T | Mv;
+
+    [Theory]
+    [InlineData(0, "base")]
+    [InlineData(1, "owner")]
+    [InlineData(2, "group")]
+    [InlineData(3, "everyone")]
+    [InlineData(4, "next")]
+    public void SetInventoryPermMaskWritesTheCategoryItIsGiven(int mask, string field)
+    {
+        using var h = new SchedulerHarness(c => c.Configs["InWorldz.Phlox"].Set("AllowGodFunctions", "true"));
+        var owner = h.Prim.OwnerID;
+        h.Scene.Permissions.OnIsAdministrator += id => id == owner;
+        var item = AddTexture(h);
+        // a base that is not full (no move), as most resold items have
+        item.BasePermissions = C | M | T;
+        item.CurrentPermissions = C | M | T;
+        item.GroupPermissions = 0;
+        item.EveryonePermissions = 0;
+        item.NextPermissions = C | M | T;
+        var before = new Dictionary<string, uint>
+        {
+            ["base"] = item.BasePermissions, ["owner"] = item.CurrentPermissions, ["group"] = item.GroupPermissions,
+            ["everyone"] = item.EveryonePermissions, ["next"] = item.NextPermissions,
+        };
+
+        h.RezScript("default { state_entry() { llSetInventoryPermMask(\"tex\", " + mask + ", PERM_COPY); llSay(0, \"done\"); } }");
+        Assert.True(PumpUntil(h, () => h.Said.Contains("done"), TimeSpan.FromSeconds(20)), Said(h));
+
+        var after = new Dictionary<string, uint>
+        {
+            ["base"] = item.BasePermissions, ["owner"] = item.CurrentPermissions, ["group"] = item.GroupPermissions,
+            ["everyone"] = item.EveryonePermissions, ["next"] = item.NextPermissions,
+        };
+        _out.WriteLine("mask " + mask + ": " + string.Join(" ", after.Select(kv => kv.Key + "=0x" + kv.Value.ToString("x"))));
+        Assert.Equal(C, after[field] & Four);
+        foreach (var other in before.Keys.Where(k => k != field))
+            Assert.True(before[other] == after[other], $"{other} changed from 0x{before[other]:x} to 0x{after[other]:x} when {field} was set");
+    }
+
     [Fact]
     public void SetInventoryPermMaskDoesNothingForAnOrdinaryOwner()
     {

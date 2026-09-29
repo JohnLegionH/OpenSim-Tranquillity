@@ -75,6 +75,11 @@ namespace Phlox.ScriptEngine
         private readonly System.Collections.Generic.Dictionary<UUID, C5.IPriorityQueueHandle<SleepEntry>> m_TouchHandles = new();
         /// <summary>PHLOX-7b: one pending llMinEventDelay wake per script.</summary>
         private readonly System.Collections.Generic.Dictionary<UUID, C5.IPriorityQueueHandle<SleepEntry>> m_MinDelayHandles = new();
+        /// <summary>
+        /// PHLOX-44: the milliseconds a parcel-paused script's timer had left at the pause (Halcyon's InjectScript keeps
+        /// them). Scheduler-thread only, transient: never saved, dropped on resume, on a new timer and on unload.
+        /// </summary>
+        private readonly System.Collections.Generic.Dictionary<UUID, ulong> m_ParcelTimerLeft = new();
 
         // Pending events (posted from outside thread)
         private readonly Queue<PendingEvent> m_PendingEvents = new();
@@ -808,6 +813,7 @@ namespace Phlox.ScriptEngine
             if (!m_AllScripts.TryGetValue(itemId, out script)) return;
 
             script.ScriptState.TimerInterval = (int)(sec * 1000);
+            m_ParcelTimerLeft.Remove(itemId);   // PHLOX-44: a new timer replaces the time a parcel pause kept
 
             // Remove any existing timer handle
             C5.IPriorityQueueHandle<SleepEntry> existing;
@@ -1397,6 +1403,7 @@ namespace Phlox.ScriptEngine
 
             RemoveFromRunQueue(script.ItemId);
             RemoveWake(m_StdSleepHandles, script.ItemId);
+            KeepTimerLeftForParcel(script);
             RemoveWake(m_TimerHandles, script.ItemId);
             RemoveWake(m_TouchHandles, script.ItemId);
             RemoveWake(m_MinDelayHandles, script.ItemId);
@@ -1416,10 +1423,14 @@ namespace Phlox.ScriptEngine
             st.LocalDisable &= ~RuntimeState.LocalDisableFlag.Parcel;
             m_ParcelStats.Resumed++;
             script.SetScriptEventFlags();
+            bool hadLeft = m_ParcelTimerLeft.Remove(script.ItemId, out ulong left);
             if (!st.Enabled) return;
 
             if (st.TimerInterval > 0 && !m_TimerHandles.ContainsKey(script.ItemId))
-                TrackTimer(script, InWorldz.Phlox.Util.Clock.Now + (ulong)st.TimerInterval, false);
+            {
+                if (hadLeft) ResumeTimerWithTimeLeft(script, left);
+                else TrackTimer(script, InWorldz.Phlox.Util.Clock.Now + (ulong)st.TimerInterval, false);
+            }
             api.RestoreSensorAfterParcel();
 
             switch (st.RunState)
@@ -1448,6 +1459,42 @@ namespace Phlox.ScriptEngine
                 handles.Remove(itemId);
                 m_SleepHeap.Delete(h);
             }
+        }
+
+        /// <summary>
+        /// PHLOX-44: at a parcel pause, keep the time the timer has left. Halcyon (ExecutionScheduler.InjectScript):
+        /// readyOn = now + (TimerInterval - (StateCapturedOn - TimerLastScheduledOn)), StateCapturedOn being the pause,
+        /// so only the time waited before the pause counts and the pause's own length does not. A timer whose event is
+        /// already posted and not yet delivered (no wake armed) has nothing left: it fires at once on resume, as
+        /// Halcyon's remainder of zero or less does.
+        /// </summary>
+        private void KeepTimerLeftForParcel(Interpreter script)
+        {
+            if (script.ScriptState.TimerInterval <= 0) return;
+            ulong left = 0;
+            if (m_TimerHandles.TryGetValue(script.ItemId, out var h))
+            {
+                ulong readyOn = m_SleepHeap[h].ReadyOn;
+                ulong now = InWorldz.Phlox.Util.Clock.Now;
+                left = readyOn > now ? readyOn - now : 0;
+            }
+            m_ParcelTimerLeft[script.ItemId] = left;
+        }
+
+        /// <summary>
+        /// PHLOX-44: the next timer event comes after the time that was left at the pause, then CheckAndResetTimer re-arms
+        /// it at the full interval as usual. TimerLastScheduledOn is set as if the timer had been scheduled that long ago,
+        /// so a save or a second pause measures from the same schedule (Halcyon left it at the old value, which counts
+        /// the first pause again on a second one).
+        /// </summary>
+        private void ResumeTimerWithTimeLeft(Interpreter script, ulong left)
+        {
+            ulong interval = (ulong)script.ScriptState.TimerInterval;
+            if (left > interval) left = interval;
+            ulong now = InWorldz.Phlox.Util.Clock.Now;
+            TrackTimer(script, now + left, true);
+            ulong waited = interval - left;
+            script.ScriptState.TimerLastScheduledOn = now > waited ? now - waited : 0;
         }
 
         private void ProcessResets()
@@ -1657,6 +1704,7 @@ namespace Phlox.ScriptEngine
 
         private void UnregisterFromNotifications(Interpreter script)
         {
+            m_ParcelTimerLeft.Remove(script.ItemId);   // PHLOX-44
             C5.IPriorityQueueHandle<SleepEntry> h;
             if (m_StdSleepHandles.TryGetValue(script.ItemId, out h))
             {

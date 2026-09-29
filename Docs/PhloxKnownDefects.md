@@ -3587,14 +3587,15 @@ Known limits:
   whose creator is someone else. The probe (`phlox41-probe-auto-testisle.yaml`) covers the no-grant paths; the refusal
   for owner-not-creator, the granted temp attach, the granted link and its refusals, and the gate turned on are covered
   by the unit tests only.
-- iwGroupInvite / iwGroupEject's other return codes are still Phlox's own, not Halcyon's (bad key -3, no groups module -1,
-  success 1; Halcyon: PARAMETER 3, ERROR 2, and the groups module's own result). Deferred.
+- ~~iwGroupInvite / iwGroupEject's other return codes are still Phlox's own, not Halcyon's (bad key -3, no groups module -1,
+  success 1; Halcyon: PARAMETER 3, ERROR 2, and the groups module's own result). Deferred.~~ Resolved in PHLOX-44.
 - llCreateLink sleeps 1 s (Halcyon); SL's is 0.1 s. `AutomaticLinkPermission` (YEngine and Halcyon) is not read by Phlox.
 - llAttachToAvatarTemp changes the owner before the attachments module attaches; if the attach then fails (for example
   someone is sitting on the object), the wearer keeps the object on the ground. YEngine and Halcyon do the same.
 - llSetObjectPermMask writes the value as given (Halcyon's body). YEngine's also limits a mask by the base and owner
   masks; that limit ANDs the MASK_* index with PERM_* bits, so with a non-full base it can turn MASK_NEXT into
-  MASK_BASE. It is not copied here. PHLOX-21's llSetInventoryPermMask carries that same YEngine code. Deferred.
+  MASK_BASE. It is not copied here. ~~PHLOX-21's llSetInventoryPermMask carries that same YEngine code. Deferred.~~
+  Resolved in PHLOX-44.
 - The core's `OpenSimDefaults.ini` documents `AllowGodFunctions` under `[LL-Functions]`, which YEngine does not read
   (it reads `[YEngine]`). Core is not changed here.
 
@@ -3714,7 +3715,7 @@ the core still refuses its scripts at start on land that forbids them, and nothi
 - **Events while paused are dropped**, as Halcyon (ExecutionScheduler, pending events: "killed and disabled scripts
   should no longer respond to outside stimuli"). state_entry and state_exit (the script's own state change) are queued
   instead, as Halcyon queues state_entry. Events already queued before the pause are kept.
-- **Resume** re-arms the timer (a full interval from the resume), restarts the sensor repeat from its record, and
+- **Resume** re-arms the timer (a full interval from the resume; since PHLOX-44 the time it had left), restarts the sensor repeat from its record, and
   continues by RunState: mid-event back on the run queue, a sleep re-armed with the time it had, an idle script with
   queued events starts the next one, a syscall waits for its return as usual.
 - **Owner-stopped is not parcel-paused.** The owner's stop is GeneralEnable (saved) and the item's Running flag; the
@@ -3728,7 +3729,7 @@ Known limits:
   only because it held controls keeps running until its next trigger, when the check asks the avatar again and pauses
   it. Test: ControlsClearedByTheCoreWithNoEventAreSeenAtTheNextDecision.
 - Linking is not a trigger: a prim linked into an object standing on other land is checked at that object's next trigger.
-- The timer restarts a full interval after the resume (Halcyon kept the time that was left).
+- ~~The timer restarts a full interval after the resume (Halcyon kept the time that was left).~~ Resolved in PHLOX-44.
 - A reset of a paused script (llResetOtherScript, the viewer's Reset) resets it and leaves it paused; its state_entry
   runs on resume.
 
@@ -3742,3 +3743,55 @@ after; a queued event kept and a sleep carried on; owner-stopped stays stopped w
 starting on no-scripts land leaves it paused; a reset of a paused script stays paused and starts fresh on resume; 200 objects, only the changed parcel's scripts touched.
 
 No bytecode, serialization or cache change.
+
+## PHLOX-44 - loose ends: iwGroupInvite/iwGroupEject return codes, llSetInventoryPermMask masks, parcel-paused timer keeps its time
+
+Three limits left by PHLOX-41 and PHLOX-43, and one flaky test. iw functions follow Halcyon; ll functions follow Halcyon
+where it implements the rule and SL where it does not.
+
+- **iwGroupInvite / iwGroupEject (Halcyon).** The answers are Halcyon's `Constants.GenericReturnCodes`: a bad or null
+  group or user key 3 (PARAMETER); a null role list or an unknown role 3 (Halcyon: "groupID bad, or internal/system
+  error", "unknown role"); owner not creator 5 (PERMISSION, unchanged); no groups module, or the module throwing, 2
+  (ERROR, "generic error, internal server failure (like module not available)"); the call made 0 (SUCCESS, what
+  Halcyon's groups module answers when the invite or eject was done). Before: -3, -1 and 1.
+- **llSetInventoryPermMask (SL; Halcyon does not implement it).** SL: "Sets the given permission category to the new
+  value on the inventory item." The MASK_* number alone picks the category - MASK_BASE the base, MASK_OWNER the
+  owner (current), MASK_GROUP, MASK_EVERYONE, MASK_NEXT the next-owner mask - as llSetObjectPermMask does. YEngine's
+  limit, which ANDed the MASK_* number with the item's PERM_* bits and so wrote the BASE mask for every category once
+  the base was not full, is gone. The rest is as PHLOX-21: the god-functions gate and an administrator owner, the four
+  PERM_* bits written with the item's other bits kept, and base / owner / next kept copyable or transferable.
+- **A parcel-paused timer keeps its time (Halcyon).** Halcyon (ExecutionScheduler.InjectScript): `readyOn = now +
+  (TimerInterval - (StateCapturedOn - TimerLastScheduledOn))`, StateCapturedOn being the pause. At the pause Phlox keeps
+  the time the timer had left (transient, scheduler-side, never saved); on the resume the next timer event comes after
+  that time, and the timer then runs at its own interval (re-armed at each event, as always). The pause's own length
+  does not count, so a pause longer than the interval changes nothing: no event at once, no missed events made up, one
+  event after the time that was left. A timer whose event was already posted but not yet delivered at the pause has no
+  time left and fires at once on the resume (Halcyon's remainder of zero or less). TimerLastScheduledOn is set as if the
+  timer had been scheduled that long before, so a later save or a second pause measures from the same schedule
+  (Halcyon kept the old value and would count the first pause again on a second one; not copied). A new
+  llSetTimerEvent, a reset, an owner stop or an unload drops the kept time.
+- **SyscallSleepRaceTests** (test only). `EveryScriptResumes` pumped for a fixed 4 s and failed once under full-suite
+  load; it now pumps until every script has said its line, up to 60 s, and asserts the same thing (all 12 resumed).
+
+Known limits:
+- NGC core's `IGroupsModule.InviteGroup` / `EjectGroupMember` return nothing, so the groups module's own refusals
+  (Halcyon's PERMISSION when the inviter lacks the group power, MUTED, the data provider's codes) cannot reach the
+  script: iwGroupInvite / iwGroupEject answer 0 whenever the core module accepted the call. Needs a core interface
+  change (CORE lane); Phlox cannot change it.
+- llSetInventoryPermMask: SL's DEBUG_CHANNEL error for a missing item and its 10 s forced delay are not applied (a
+  missing item is silent and there is no delay, as in YEngine and PHLOX-21). Deferred.
+
+Tests: `DroppedChecksTests` (+5, 22): success 0; bad group key (text and NULL_KEY) 3; bad user key 3; unknown role and
+null roles 3; no groups module 2; a throwing module 2. `SmallCorrectnessTests.SetInventoryPermMaskWritesTheCategoryItIsGiven`
+(5 cases): on an item with a base without move, each of MASK_BASE, MASK_OWNER, MASK_GROUP, MASK_EVERYONE, MASK_NEXT
+writes its own field and leaves the other four. `NoScriptParcelTests` (+2, 23): a 10 s timer paused with 7 s left is
+due in about 7 s after a 3 s pause, not 10; a 2 s timer paused with about 1.3 s left for 4 s gives no event while
+paused, one event about 1.3 s after the resume, then is re-armed at 2 s. The timer tests read the scheduler's own wake
+heap, not wall-clock ticks.
+
+No function index or declared return type changed; the compiled script format, the saved state and the cache are not
+affected.
+
+What residents will notice: group invite and eject scripts see Halcyon's codes (0 for done, 3 for a bad argument, 2
+for a server problem, 5 for the creator rule); a god's llSetInventoryPermMask changes the mask it names; a timer on a
+No Scripts parcel picks up where it left off when scripts are allowed again.

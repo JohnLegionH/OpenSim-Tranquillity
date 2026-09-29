@@ -3132,9 +3132,11 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-21 E4: a god function, as YEngine (LSL_Api.llSetInventoryPermMask) - only with
-        /// [InWorldz.Phlox] AllowGodFunctions and an administrator owner; a mask other than MASK_BASE is
-        /// limited by the base (and, below MASK_OWNER, the current) permissions; copy/transfer is kept.
+        /// PHLOX-21 E4: a god function, as YEngine (LSL_Api.llSetInventoryPermMask) - only with AllowGodFunctions and
+        /// an administrator owner; copy/transfer is kept. PHLOX-44: the MASK_* number alone picks the category, as
+        /// llSetObjectPermMask does (SL: "Sets the given permission category to the new value on the inventory item";
+        /// Halcyon does not implement it). YEngine's limit ANDed the MASK_* number with the item's PERM_* bits, which
+        /// sent every category but MASK_BASE to the base mask once the base was not full; it is not carried.
         /// </summary>
         public void llSetInventoryPermMask(string itemName, int mask, int value)
         {
@@ -3143,13 +3145,6 @@ namespace Phlox.ScriptEngine
 
             TaskInventoryItem item = m_host.Inventory.GetInventoryItem(itemName);
             if (item == null) return;
-
-            if (mask != MASK_BASE)
-            {
-                mask &= PermissionMaskToLSLPerm(item.BasePermissions);
-                if (mask != MASK_OWNER)
-                    mask &= PermissionMaskToLSLPerm(item.CurrentPermissions);
-            }
 
             switch (mask)
             {
@@ -3177,18 +3172,6 @@ namespace Phlox.ScriptEngine
         }
 
         private const uint FullPerms = (uint)OpenSim.Framework.PermissionMask.All;
-
-        private static int PermissionMaskToLSLPerm(uint value)
-        {
-            value &= FullPerms;
-            if (value == FullPerms) return PERM_ALL;
-            int ret = 0;
-            if ((value & (uint)OpenSim.Framework.PermissionMask.Copy) != 0) ret |= PERM_COPY;
-            if ((value & (uint)OpenSim.Framework.PermissionMask.Modify) != 0) ret |= PERM_MODIFY;
-            if ((value & (uint)OpenSim.Framework.PermissionMask.Move) != 0) ret |= PERM_MOVE;
-            if ((value & (uint)OpenSim.Framework.PermissionMask.Transfer) != 0) ret |= PERM_TRANSFER;
-            return ret;
-        }
 
         private static uint LSLPermToPermissionMask(int lslperm, uint oldvalue)
         {
@@ -14335,7 +14318,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     return -1;
             }
         }
-        /// <summary>PHLOX-41: Halcyon's Constants.GenericReturnCodes.PERMISSION, iwGroupInvite/iwGroupEject's refusal.</summary>
+        // Halcyon's Constants.GenericReturnCodes, iwGroupInvite/iwGroupEject's answers (Halcyon OpenSim/Framework/Constants.cs).
+        /// <summary>PHLOX-44: SUCCESS - Halcyon's groups module answers it when the invite or eject was done.</summary>
+        private const int HALCYON_RC_SUCCESS = 0;
+        /// <summary>PHLOX-44: ERROR - "generic error, internal server failure (like module not available)".</summary>
+        private const int HALCYON_RC_ERROR = 2;
+        /// <summary>PHLOX-44: PARAMETER - a bad group or user key, a bad group, or an unknown role.</summary>
+        private const int HALCYON_RC_PARAMETER = 3;
+        /// <summary>PHLOX-41: PERMISSION - the refusal when the script's owner is not its creator.</summary>
         private const int HALCYON_RC_PERMISSION = 5;
 
         /// <summary>
@@ -14348,11 +14338,15 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return item != null && item.CreatorID == item.OwnerID;
         }
 
+        /// <summary>
+        /// Halcyon (LSLSystemAPI.iwGroupInvite): PARAMETER for a bad key, a bad group or an unknown role, PERMISSION when
+        /// the script's owner is not its creator, otherwise the groups module's result. Core's IGroupsModule.InviteGroup
+        /// returns nothing, so a call it accepts answers SUCCESS; no module or a failing one answers ERROR (PHLOX-44).
+        /// </summary>
         public int iwGroupInvite(string group, string user, string role)
         {
-            // Faithful port from Halcyon
-            if (!UUID.TryParse(group, out UUID groupID) || groupID == UUID.Zero) return -3;
-            if (!UUID.TryParse(user, out UUID userID) || userID == UUID.Zero) return -3;
+            if (!UUID.TryParse(group, out UUID groupID) || groupID == UUID.Zero) return HALCYON_RC_PARAMETER;
+            if (!UUID.TryParse(user, out UUID userID) || userID == UUID.Zero) return HALCYON_RC_PARAMETER;
             if (string.IsNullOrEmpty(role)) role = "Everyone";
 
             if (!ScriptOwnerIsCreator())
@@ -14364,11 +14358,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             try
             {
                 IGroupsModule groupsModule = World?.RequestModuleInterface<IGroupsModule>();
-                if (groupsModule == null) return -1;
+                if (groupsModule == null) return HALCYON_RC_ERROR;
 
                 // Look up the role by name
                 List<GroupRolesData> roles = groupsModule.GroupRoleDataRequest(null, groupID);
-                if (roles == null || roles.Count == 0) return -3;
+                if (roles == null) return HALCYON_RC_PARAMETER;   // Halcyon: "groupID bad, or internal/system error"
 
                 UUID roleID = UUID.Zero;
                 bool found = false;
@@ -14381,22 +14375,23 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         break;
                     }
                 }
-                if (!found) return -3;
+                if (!found) return HALCYON_RC_PARAMETER;          // Halcyon: "unknown role"
 
                 groupsModule.InviteGroup(null, m_host.OwnerID, groupID, userID, roleID);
-                return 1;
+                return HALCYON_RC_SUCCESS;
             }
             catch (Exception e)
             {
                 m_log.LogWarning("[PhloxAPI]: iwGroupInvite exception: {0}", e.Message);
-                return -1;
+                return HALCYON_RC_ERROR;
             }
         }
+
+        /// <summary>Halcyon (LSLSystemAPI.iwGroupEject), with the same answers as <see cref="iwGroupInvite"/> (PHLOX-44).</summary>
         public int iwGroupEject(string group, string user)
         {
-            // Faithful port from Halcyon
-            if (!UUID.TryParse(group, out UUID groupID) || groupID == UUID.Zero) return -3;
-            if (!UUID.TryParse(user, out UUID userID) || userID == UUID.Zero) return -3;
+            if (!UUID.TryParse(group, out UUID groupID) || groupID == UUID.Zero) return HALCYON_RC_PARAMETER;
+            if (!UUID.TryParse(user, out UUID userID) || userID == UUID.Zero) return HALCYON_RC_PARAMETER;
 
             if (!ScriptOwnerIsCreator())
             {
@@ -14407,14 +14402,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             try
             {
                 IGroupsModule groupsModule = World?.RequestModuleInterface<IGroupsModule>();
-                if (groupsModule == null) return -1;
+                if (groupsModule == null) return HALCYON_RC_ERROR;
                 groupsModule.EjectGroupMember(null, m_host.OwnerID, groupID, userID);
-                return 1;
+                return HALCYON_RC_SUCCESS;
             }
             catch (Exception e)
             {
                 m_log.LogWarning("[PhloxAPI]: iwGroupEject exception: {0}", e.Message);
-                return -1;
+                return HALCYON_RC_ERROR;
             }
         }
         public int iwClampInt(int value, int min, int max)
