@@ -9138,19 +9138,15 @@ private static string ConvToString(object o)
         }
 
         // OSSL: void osTeleportAgent(string agent, string region, vector pos, vector lookat)
-        // Mirrors Shim_iwTeleportAgent — same args, async dispatch.
+        // PHLOX-52: on the script thread, as YEngine: the Severe gate's refusal must stop the script (an async body's
+        // exception is only logged), and the other-region teleport is already fired on its own thread.
         static private void Shim_osTeleportAgent(SyscallShim self)
         {
             Vector3 lookat = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
             Vector3 pos = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
             string region = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             string agent = ConvToString(self._interpreter.ScriptState.Operands.Pop());
-
-            
-            RunAsync(self, delegate()
-            {
-                self._systemAPI.osTeleportAgent(agent, region, pos, lookat);
-            });
+            self._systemAPI.osTeleportAgent(agent, region, pos, lookat);
         }
 
         // PHLOX-2b - OSSL: void osTeleportAgent(string agent, vector pos, vector lookat)
@@ -9175,12 +9171,8 @@ private static string ConvToString(object o)
             int regionY = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
             int regionX = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
             string agent = ConvToString(self._interpreter.ScriptState.Operands.Pop());
-
-            
-            RunAsync(self, delegate()
-            {
-                self._systemAPI.osTeleportAgent(agent, regionX, regionY, pos, lookat);
-            });
+            // PHLOX-52: on the script thread, as Shim_osTeleportAgent (Severe gate; the teleport is fired on its own thread).
+            self._systemAPI.osTeleportAgent(agent, regionX, regionY, pos, lookat);
         }
 
         // PHLOX-2b - LSL: void llLinkPlaySound(int link, string sound, float volume)

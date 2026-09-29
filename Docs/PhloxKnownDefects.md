@@ -4111,3 +4111,44 @@ script and another avatar's script, a linked prim, names versus keys. 21 are red
 `phlox49-probe.lsl` + `phlox49-probe-auto-testisle.yaml` (ops folder).
 
 No function index or declared return type changed. No bytecode, serialization or cache change.
+
+## PHLOX-52 - teleport powers: llTeleportAgent follows SL, iwTeleportAgent keeps Halcyon's rule with its holes closed (audit S4)
+
+HALCYON-DIFF S4 (rows F131/F273, F132/F272), John's ruling (a), 2026-09-29. Before this change llTeleportAgent was
+iwTeleportAgent under another name (no PERMISSION_TELEPORT, the landmark read as a region name), no teleport path
+refused a god, and on group-owned land any object merely set to the land's group had the land owner's teleport power.
+
+- **llTeleportAgent / llTeleportAgentGlobalCoords** follow the SL wiki: PERMISSION_TELEPORT granted by the avatar being
+  teleported; the owner only, unless the script's experience is allowed in the region and granted by that avatar (the
+  experience path Phlox already has, `HasExperiencePermission`); not from a temporary attachment; not a sitting avatar.
+  Each refusal is an error on DEBUG_CHANNEL and nobody moves. llTeleportAgent's landmark is the NAME of a Landmark item
+  in the prim's inventory, "" meaning `position` in this region; a missing name or an item that is not a landmark is an
+  error (a region name no longer works). Throttle: 4 at once, then one per 1.4 s; an empty bucket is an error and 10 s
+  of refusals. The wiki names no scope for the throttle; Phlox keeps it per script. No sleep. The wiki's error texts are
+  not quoted there; Phlox's are its own.
+- **iwTeleportAgent, llTeleportAgentHome, llEjectFromLand** (Halcyon's IsTeleportAuthorized): the object's owner (a god
+  owner included); never another god (`IsViewerUIGod || IsGod`, Halcyon's GodLevel > 0); an estate owner or manager; or
+  land rights on the object's parcel and the avatar's parcel through `HasParcelPowers(owner, parcel, null)` - on group
+  land only an object deeded to that group. Halcyon and SL also admit an owner holding the group's "Eject and freeze"
+  power; the ruling does not. llEjectFromLand stays Halcyon's (sends the avatar home, 5 s), not SL's (to the parcel
+  edge, no delay).
+- **osTeleportAgent** follows YEngine's OSSL: the region-name and grid-coordinate forms need the Severe threat level
+  (`Allow_osTeleportAgent` / OSFunctionThreatLevel) and now stop the script with YEngine's permission error when refused
+  (their shims run on the script thread; the cross-region teleport is fired on its own thread as YEngine does); the
+  local form is ungated. Who: the owner, the PERMISSION_TELEPORT granter, or YEngine's land rule (parcel owner, estate
+  owner/manager, group-owned land and the object's group TAG). Refused: 500 ms; in-region 500 ms; other region 5 s.
+  **YEngine has no god check here and admits the group tag; Phlox keeps parity** (core list). osTeleportOwner and
+  osLocalTeleportAgent use the same helpers, ungated as upstream.
+
+Operators: a Phlox script using the region-name or grid form of osTeleportAgent now needs OSSL's Severe level for its
+owner, as it always did under YEngine.
+
+YEngine differs (read-only, for the core list): llTeleportAgent teleports any avatar that granted PERMISSION_TELEPORT
+and keeps OpenSim's legacy land-owner path without a permission; llEjectFromLand and the os teleports have no god check;
+llTeleportAgentHome refuses gods by account level (UserLevel >= 200) and checks only the avatar's parcel owner.
+
+Tests: `LlTeleportAgentTests` (10), `IwTeleportAgentTests` (6), `TeleportHomeAndEjectTests` (4), `OsTeleportAgentTests`
+(6), all parallel; every teleport ends in a recording transfer module, nothing reaches a network service. 20 of 26 are
+red without the change. Probe: `phlox52-probe.lsl` + `phlox52-probe-auto-testisle.yaml` (ops folder).
+
+No function index or declared return type changed. No bytecode, serialization or cache change.

@@ -2537,23 +2537,19 @@ namespace Phlox.ScriptEngine
         }
         // ── Teleport helpers (ported from Halcyon) ────────────────────────────
 
-        private bool HasLandPrivileges(ILandObject parcel)
-        {
-            if (parcel == null) return false;
-            // Script owner owns this parcel (includes estate owner)
-            if (parcel.LandData.OwnerID == m_host.OwnerID)
-                return true;
-            // Estate manager
-            if (World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID))
-                return true;
-            // Group-deeded land: this tree doesn't have CanEditParcel with GroupPowers,
-            // so check if script owner's group matches the parcel group
-            if (parcel.LandData.IsGroupOwned && parcel.LandData.GroupID == m_host.GroupID
-                && m_host.GroupID != UUID.Zero)
-                return true;
-            return false;
-        }
+        /// <summary>
+        /// PHLOX-52 (audit S4/F131/F273). An avatar with god powers: Halcyon's "targetSP.GodLevel > 0" is the level
+        /// granted when god mode is switched on (ScenePresence.GrantGodlikePowers); NGC keeps that as IsViewerUIGod /
+        /// IsGod (GodController.cs:129-130).
+        /// </summary>
+        private static bool IsGodTarget(ScenePresence sp) => sp.IsViewerUIGod || sp.IsGod;
 
+        /// <summary>
+        /// Halcyon IsTeleportAuthorized (LSLSystemAPI.cs:14923-14961), the rule of iwTeleportAgent, llTeleportAgentHome
+        /// and llEjectFromLand. PHLOX-52: "scripts cannot force-TP gods, unless the god is the owner of the script" is
+        /// back (F273), and the land test is HasParcelPowers with no group role (F272, John's ruling (a)): on group land
+        /// only an object deeded to that group, never one merely set to the group.
+        /// </summary>
         private bool IsTeleportAuthorized(ScenePresence targetSP)
         {
             // Agent must be in this region
@@ -2563,6 +2559,10 @@ namespace Phlox.ScriptEngine
             // Always allow HUDs, attachments and objects owned by the same user
             if (targetSP.UUID == m_host.OwnerID)
                 return true;
+
+            // Scripts cannot force-teleport gods, unless the god is the owner of the script (above)
+            if (IsGodTarget(targetSP))
+                return false;
 
             // Estate manager can always teleport
             if (World.RegionInfo.EstateSettings.IsEstateManagerOrOwner(m_host.OwnerID))
@@ -2578,16 +2578,86 @@ namespace Phlox.ScriptEngine
             Vector3 agentPos = targetSP.AbsolutePosition;
             ILandObject agentLand = World.LandChannel.GetLandObject(agentPos.X, agentPos.Y);
 
-            if (HasLandPrivileges(objectLand))
+            if (HasParcelPowers(m_host.OwnerID, objectLand, null))
             {
                 // If avatar parcel can't be determined but script has land privs, allow it
                 if (agentLand == null)
                     return true;
-                if (HasLandPrivileges(agentLand))
+                if (HasParcelPowers(m_host.OwnerID, agentLand, null))
                     return true;
             }
 
             return false;
+        }
+
+        // SL llTeleportAgent: "Only 4 initial teleports can be done immediately, or You can keep teleporting every 1.4
+        // seconds"; throttled, "No further teleports will succeed until 10 seconds have passed". The wiki names no scope;
+        // this is per script (LSLSystemAPI is per script).
+        private const int SlTeleportBurst = 4, SlTeleportRefillMs = 1400, SlTeleportLockoutMs = 10000;
+        private readonly object m_slTeleportLock = new object();
+        private double m_slTeleportTokens = SlTeleportBurst;
+        private long m_slTeleportLastMs = Environment.TickCount64, m_slTeleportLockedUntilMs;
+
+        private bool SlTeleportThrottleAllows()
+        {
+            lock (m_slTeleportLock)
+            {
+                long now = Environment.TickCount64;
+                if (now < m_slTeleportLockedUntilMs) return false;
+                m_slTeleportTokens = Math.Min(SlTeleportBurst, m_slTeleportTokens + (now - m_slTeleportLastMs) / (double)SlTeleportRefillMs);
+                m_slTeleportLastMs = now;
+                if (m_slTeleportTokens >= 1) { m_slTeleportTokens -= 1; return true; }
+                m_slTeleportLockedUntilMs = now + SlTeleportLockoutMs;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// PHLOX-52: SL's gate for llTeleportAgent and llTeleportAgentGlobalCoords. "This function can only teleport the
+        /// owner of the object (unless part of an Experience)"; "If the script lacks the permission PERMISSION_TELEPORT,
+        /// the script will shout an error on DEBUG_CHANNEL and the operation fails"; "If PERMISSION_TELEPORT is granted by
+        /// anyone other than agent, then when the function is called an error will be shouted"; "Does not work in scripts
+        /// within attached temp objects"; "Sitting avatars cannot be teleported using this function". The experience case
+        /// is the one already in Phlox (HasExperiencePermission: the script's experience is allowed here and the agent
+        /// granted it). Returns the avatar to move, or null.
+        /// </summary>
+        private ScenePresence SlTeleportTarget(string fn, string agent)
+        {
+            if (m_host?.ParentGroup == null || World == null) return null;
+            if (IsTempAttachment(m_host.ParentGroup))
+            {
+                ShoutError(fn + ": Temporary attachments cannot request runtime permissions to teleport.");
+                return null;
+            }
+            if (!UUID.TryParse(agent, out UUID agentId) || agentId.IsZero()) return null;
+            ScenePresence sp = World.GetScenePresence(agentId);
+            if (sp == null || sp.IsChildAgent || sp.IsDeleted || sp.IsInTransit) return null;
+
+            if (!HasExperiencePermission(agentId))
+            {
+                TaskInventoryItem item = GetInventorySelf();
+                if (item == null || (item.PermsMask & PERMISSION_TELEPORT) == 0)
+                {
+                    ShoutError(fn + ": Script trying to teleport an agent but PERMISSION_TELEPORT permission not set!");
+                    return null;
+                }
+                if (item.PermsGranter != agentId)
+                {
+                    ShoutError(fn + ": PERMISSION_TELEPORT was granted by someone other than the agent to teleport.");
+                    return null;
+                }
+                if (agentId != m_host.OwnerID)
+                {
+                    ShoutError(fn + ": can only teleport the owner of the object.");
+                    return null;
+                }
+            }
+            if (sp.IsSatOnObject || sp.ParentID != 0)
+            {
+                ShoutError(fn + ": Sitting avatars cannot be teleported; use llUnSit first.");
+                return null;
+            }
+            return sp;
         }
 
         // ── Teleport functions ───────────────────────────────────────────────
@@ -2625,59 +2695,155 @@ namespace Phlox.ScriptEngine
             World.RequestTeleportLocation(targetSP.ControllingClient,
                 region, pos, lookAt, (uint)OpenMetaverse.TeleportFlags.ViaLocation);
         }
+
+        // ── osTeleportAgent / osTeleportOwner: YEngine's OSSL (OSSL_Api.cs:895-1096), PHLOX-52 ───────────────
+        // Not the iw rule: the Severe threat level on the region-name and grid forms, checkAllowAgentTPbyLandOwner, the
+        // 500 ms refusal and 500 / 5000 ms teleport sleeps. YEngine has no god check here and admits the object's group
+        // tag on group land; both are kept for parity (noted for the core list).
+
+        /// <summary>OSSL_Api.cs:895-933 checkAllowAgentTPbyLandOwner: the owner, the PERMISSION_TELEPORT granter, or the land rule.</summary>
+        private bool OsslAgentTeleportAllowed(UUID agentId, Vector3 pos)
+            => m_host.OwnerID == agentId
+                || (OsslItem?.PermsGranter == agentId && (OsslItem.PermsMask & PERMISSION_TELEPORT) != 0)
+                || OsslLandOwnerAllows(pos);
+
+        /// <summary>The root presence an OSSL teleport may act on (OSSL_Api.cs:966-967), or null.</summary>
+        private ScenePresence OsslTeleportTarget(string agent, out UUID agentId)
+        {
+            agentId = UUID.Zero;
+            if (m_host == null || World == null || !UUID.TryParse(agent, out agentId)) return null;
+            ScenePresence sp = World.GetScenePresence(agentId);
+            return sp == null || sp.IsDeleted || sp.IsChildAgent || sp.IsInTransit ? null : sp;
+        }
+
+        /// <summary>OSSL_Api.cs:952-959 - Severe ("High because there is no security check. High griefer potential").</summary>
         public void osTeleportAgent(string agent, string region, Vector3 pos, Vector3 lookAt)
         {
-            // OSSL alias for iwTeleportAgent.
-            // OSSL semantics: region "" means same region.
-            // Auth check (owner / estate manager) is already enforced inside iwTeleportAgent
-            // via IsTeleportAuthorized().
-            iwTeleportAgent(agent, region, pos, lookAt);
+            OsslCheck(TlSevere, "osTeleportAgent");
+            OsslTeleportAgent(agent, region, pos, lookAt);
         }
 
-        /// <summary>
-        /// PHLOX-2b. OSSL_Api.cs:1051 - teleport the agent within THIS region. OSSL treats an empty
-        /// region name as "here" and so does iwTeleportAgent, which this tree's four-argument form
-        /// already documents, so the local teleport is that call with no region.
-        /// </summary>
+        /// <summary>OSSL_Api.cs:961-994 TeleportAgent(region name). "" or this region's name (any case) is here.</summary>
+        private void OsslTeleportAgent(string agent, string regionName, Vector3 pos, Vector3 lookAt)
+        {
+            ScenePresence sp = OsslTeleportTarget(agent, out UUID agentId);
+            if (sp == null) return;
+            if (!OsslAgentTeleportAllowed(agentId, sp.AbsolutePosition)) { ScriptSleep(500); return; }
+
+            if (string.IsNullOrEmpty(regionName) || regionName.Equals(World.RegionInfo.RegionName, StringComparison.InvariantCultureIgnoreCase))
+            {
+                World.RequestTeleportLocation(sp.ControllingClient, World.RegionInfo.RegionName, pos, lookAt,
+                    (uint)OpenMetaverse.TeleportFlags.ViaLocation);
+                ScriptSleep(500);
+            }
+            else
+            {
+                Util.FireAndForget(o => World.RequestTeleportLocation(sp.ControllingClient, regionName, pos, lookAt,
+                    (uint)OpenMetaverse.TeleportFlags.ViaLocation), null, "PhloxOSSL.TeleportAgentByRegionName");
+                ScriptSleep(5000);
+            }
+        }
+
+        /// <summary>OSSL_Api.cs:1032-1074 - ungated upstream. A position inside this region teleports here; outside it
+        /// is read as an offset from this region's corner and sent to the region there.</summary>
         public void osTeleportAgent(string agent, Vector3 pos, Vector3 lookAt)
         {
-            iwTeleportAgent(agent, String.Empty, pos, lookAt);
+            ScenePresence sp = OsslTeleportTarget(agent, out UUID agentId);
+            if (sp == null) return;
+            if (!OsslAgentTeleportAllowed(agentId, sp.AbsolutePosition)) { ScriptSleep(500); return; }
+
+            RegionInfo ri = World.RegionInfo;
+            double px = pos.X, py = pos.Y;
+            if (px >= 0 && px < ri.RegionSizeX && py >= 0 && py < ri.RegionSizeY)
+            {
+                World.RequestTeleportLocation(sp.ControllingClient, ri.RegionName, pos, lookAt,
+                    (uint)OpenMetaverse.TeleportFlags.ViaLocation);
+                ScriptSleep(500);
+                return;
+            }
+
+            px += ri.WorldLocX;
+            py += ri.WorldLocY;
+            int gx = (int)px / 256, gy = (int)py / 256;
+            px -= 256 * gx;
+            py -= 256 * gy;
+            ulong regionHandle = Util.RegionGridLocToHandle((uint)gx, (uint)gy);
+            var local = new Vector3((float)px, (float)py, pos.Z);
+            Util.FireAndForget(o => World.RequestTeleportLocation(sp.ControllingClient, regionHandle, local, lookAt,
+                (uint)OpenMetaverse.TeleportFlags.ViaLocation), null, "PhloxOSSL.TeleportAgentByFarPos");
+            ScriptSleep(5000);
+        }
+
+        /// <summary>OSSL_Api.cs:996-1003 - Severe. Grid coordinates (region units, not metres).</summary>
+        public void osTeleportAgent(string agent, int regionGridX, int regionGridY, Vector3 pos, Vector3 lookAt)
+        {
+            OsslCheck(TlSevere, "osTeleportAgent");
+            OsslTeleportAgent(agent, regionGridX, regionGridY, pos, lookAt);
+        }
+
+        /// <summary>OSSL_Api.cs:1005-1030 TeleportAgent(grid coordinates).</summary>
+        private void OsslTeleportAgent(string agent, int regionGridX, int regionGridY, Vector3 pos, Vector3 lookAt)
+        {
+            ScenePresence sp = OsslTeleportTarget(agent, out UUID agentId);
+            if (sp == null) return;
+            if (!OsslAgentTeleportAllowed(agentId, sp.AbsolutePosition)) { ScriptSleep(500); return; }
+
+            ulong regionHandle = Util.RegionGridLocToHandle((uint)regionGridX, (uint)regionGridY);
+            Util.FireAndForget(o => World.RequestTeleportLocation(sp.ControllingClient, regionHandle, pos, lookAt,
+                (uint)OpenMetaverse.TeleportFlags.ViaLocation), null, "PhloxOSSL.TeleportAgentByRegionCoords");
+            ScriptSleep(5000);
         }
 
         /// <summary>
-        /// PHLOX-2b. OSSL_Api.cs:1015 - teleport to the region at these GRID coordinates (region
-        /// units, not metres). The handle is built the same way llTeleportAgentGlobalCoords builds
-        /// its own, and authorisation is the same IsTeleportAuthorized check every other teleport
-        /// here goes through - OSSL gates this one on ThreatLevel.Severe for the same reason.
+        /// PHLOX-52: SL llTeleportAgent. "Teleports an agent to a landmark stored in the object's inventory. If landmark is
+        /// an empty string, the avatar is teleported to the location position in the current region." "If landmark is not
+        /// an empty string and landmark is missing from the prim's inventory or it is not a landmark then an error is
+        /// shouted on DEBUG_CHANNEL." The landmark is an inventory NAME only (YEngine also takes a key or a region name).
         /// </summary>
-        public void osTeleportAgent(string agent, int regionGridX, int regionGridY, Vector3 pos, Vector3 lookAt)
-        {
-            if (!UUID.TryParse(agent, out UUID agentId)) return;
-            ScenePresence sp = World?.GetScenePresence(agentId);
-            if (sp == null || sp.IsChildAgent || sp.IsInTransit) return;
-            if (!IsTeleportAuthorized(sp)) return;
-
-            ulong regionHandle = OpenMetaverse.Utils.UIntsToLong(
-                (uint)(regionGridX * 256), (uint)(regionGridY * 256));
-
-            sp.ControllingClient.SendTeleportStart((uint)OpenMetaverse.TeleportFlags.DisableCancel);
-            World.RequestTeleportLocation(sp.ControllingClient, regionHandle,
-                pos, lookAt, (uint)OpenMetaverse.TeleportFlags.ViaLocation);
-        }
-
         public void llTeleportAgent(string agent, string landmark, Vector3 pos, Vector3 lookAt)
         {
-            // SL: teleport to landmark name or "" for same region
-            // In OpenSim, we treat the landmark parameter as a region name (same as iwTeleportAgent)
-            iwTeleportAgent(agent, landmark, pos, lookAt);
+            ScenePresence sp = SlTeleportTarget("llTeleportAgent", agent);
+            if (sp == null) return;
+
+            if (string.IsNullOrEmpty(landmark))
+            {
+                if (!SlTeleportThrottleAllows()) { ShoutError("llTeleportAgent: Too many teleports; throttled for 10 seconds."); return; }
+                World.RequestTeleportLocation(sp.ControllingClient, World.RegionInfo.RegionHandle,
+                    pos, lookAt, (uint)OpenMetaverse.TeleportFlags.ViaLocation);
+                return;
+            }
+
+            TaskInventoryItem lmItem = null;
+            lock (m_host.TaskInventory)
+            {
+                foreach (var kvp in m_host.TaskInventory)
+                    if (kvp.Value.Name == landmark) { lmItem = kvp.Value; break; }
+            }
+            AssetLandmark lm = null;
+            if (lmItem != null && lmItem.Type == (int)AssetType.Landmark)
+            {
+                AssetBase asset = World.AssetService?.Get(lmItem.AssetID.ToString());
+                if (asset?.Data != null && asset.Data.Length > 0 && asset.Type == (sbyte)AssetType.Landmark)
+                {
+                    try { lm = new AssetLandmark(asset); }
+                    catch (Exception) { lm = null; }
+                }
+            }
+            if (lm == null)
+            {
+                ShoutError("llTeleportAgent: Could not find landmark '" + landmark + "' in the object's inventory.");
+                return;
+            }
+            if (!SlTeleportThrottleAllows()) { ShoutError("llTeleportAgent: Too many teleports; throttled for 10 seconds."); return; }
+            World.RequestTeleportLandmark(sp.ControllingClient, lm, lookAt);
         }
+
+        /// <summary>PHLOX-52: SL llTeleportAgentGlobalCoords - the llTeleportAgent gate and throttle, to global coordinates.</summary>
         public void llTeleportAgentGlobalCoords(string agent, Vector3 globalCoords, Vector3 regionPos, Vector3 lookAt)
         {
-            // SL: teleport to global coordinates. globalCoords.X/Y are in global meters (region_x * 256 + local)
-            if (!UUID.TryParse(agent, out UUID agentId)) return;
-            ScenePresence sp = World?.GetScenePresence(agentId);
+            ScenePresence sp = SlTeleportTarget("llTeleportAgentGlobalCoords", agent);
             if (sp == null) return;
-            if (!IsTeleportAuthorized(sp)) return;
+            if (!SlTeleportThrottleAllows()) { ShoutError("llTeleportAgentGlobalCoords: Too many teleports; throttled for 10 seconds."); return; }
 
             // Convert global coords to region handle
             uint regionX = (uint)((int)globalCoords.X / 256);
@@ -8071,6 +8237,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             ScriptSleep(100);
         }
 
+        /// <summary>
+        /// Halcyon LSLSystemAPI.cs:7348-7351: the avatar is sent home through llTeleportAgentHome, so the same
+        /// authorization (PHLOX-52: no god, group land only for deeded objects) and the same 5 s sleep.
+        /// </summary>
         public void llEjectFromLand(string pest)
         {
             llTeleportAgentHome(pest);
@@ -10071,10 +10241,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (!UUID.TryParse(agent, out UUID agentId)) return;
             ScenePresence presence = World?.GetScenePresence(agentId);
             if (presence == null || presence.IsDeleted || presence.IsInTransit) return;
-            bool allowed = m_host.OwnerID == agentId
-                || (OsslItem?.PermsGranter == agentId && (OsslItem.PermsMask & PERMISSION_TELEPORT) != 0)
-                || OsslLandOwnerAllows(presence.AbsolutePosition);
-            if (!allowed) return;
+            if (!OsslAgentTeleportAllowed(agentId, presence.AbsolutePosition)) return;
             World.RequestLocalTeleport(presence, position, velocity, lookat, flags);
         }
 
@@ -10092,28 +10259,28 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         private static readonly OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel
             TlNone = OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.None;
 
-        /// <summary>OSSL_Api.cs:1077-1081 - None. The owner through the region-name teleport door (iwTeleportAgent).</summary>
+        /// <summary>OSSL_Api.cs:1076-1082 - None. The owner through YEngine's region-name TeleportAgent (PHLOX-52: not the Severe door).</summary>
         public void osTeleportOwner(string regionName, Vector3 position, Vector3 lookat)
         {
             OsslCheck(TlNone, "osTeleportOwner");
             if (m_host == null) return;
-            iwTeleportAgent(m_host.OwnerID.ToString(), regionName, position, lookat);
+            OsslTeleportAgent(m_host.OwnerID.ToString(), regionName, position, lookat);
         }
 
-        /// <summary>OSSL_Api.cs:1085-1089 - None. Grid coordinates, through the PHLOX-2b five-argument osTeleportAgent.</summary>
+        /// <summary>OSSL_Api.cs:1084-1089 - None. Grid coordinates, through YEngine's grid TeleportAgent (PHLOX-52).</summary>
         public void osTeleportOwner(int regionGridX, int regionGridY, Vector3 position, Vector3 lookat)
         {
             OsslCheck(TlNone, "osTeleportOwner");
             if (m_host == null) return;
-            osTeleportAgent(m_host.OwnerID.ToString(), regionGridX, regionGridY, position, lookat);
+            OsslTeleportAgent(m_host.OwnerID.ToString(), regionGridX, regionGridY, position, lookat);
         }
 
-        /// <summary>OSSL_Api.cs:1092-1096 - None. Within this region.</summary>
+        /// <summary>OSSL_Api.cs:1091-1096 - None. The three-argument osTeleportAgent, ungated upstream (PHLOX-52).</summary>
         public void osTeleportOwner(Vector3 position, Vector3 lookat)
         {
             OsslCheck(TlNone, "osTeleportOwner");
             if (m_host == null) return;
-            iwTeleportAgent(m_host.OwnerID.ToString(), string.Empty, position, lookat);
+            osTeleportAgent(m_host.OwnerID.ToString(), position, lookat);
         }
 
         /// <summary>OSSL_Api.cs:3705-3727 - Severe. Every root presence with that name: Kick with the alert when there is one, then CloseAgent.</summary>
