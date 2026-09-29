@@ -4075,3 +4075,39 @@ the same result). 25 are red without the change. Probe: `phlox51-probe.lsl` + `p
 (ops folder).
 
 No function index or declared return type changed. No bytecode, serialization or cache change.
+
+## PHLOX-49 - texture keys and inventory keys a script may see (D5, audit S9 / F136 / F215)
+
+HALCYON-DIFF decision D5, John's ruling (a), 2026-09-26: "Halcyon's texture-UUID rule (inventory name if present, key
+only if full-perm, else NULL_KEY); iwGetLinkInventoryKey gets the full-perm rule."
+
+One helper, `LSLSystemAPI.AssetKeyIfFullPerm(assetID, ownerPerms)`, decides whether a script may see an asset key: only
+when the owner's permissions are copy, modify and transfer, else NULL_KEY. Every read below goes through it.
+
+- llGetInventoryKey (unchanged, PHLOX-21) and **iwGetLinkInventoryKey** (was: the raw asset key of any item): the item's
+  CurrentPermissions. Halcyon's GetInventoryKey also gave a script its own key (IsMyScript, audit F165); that exception
+  was not ruled on and is still absent, as in SL and YEngine.
+- Halcyon's ConditionalTextureNameOrUUID (LSLSystemAPI.cs:2300-2316): the texture's name when it is in the script's
+  own prim, else the key when the prim read is full-perm for its owner (`part.OwnerMask`), else NULL_KEY. Now used by
+  **PRIM_TEXTURE** and the **PRIM_TYPE sculpt map** (was: the raw key), as well as llGetTexture, PRIM_NORMAL,
+  PRIM_SPECULAR, PRIM_PROJECTOR and the IW_PRIM_PROJECTOR reads (already on it). Same for llGetPrimitiveParams,
+  llGetLinkPrimitiveParams and osGetPrimitiveParams. As in Halcyon, the name is looked up in the SCRIPT's prim even when
+  llGetLinkPrimitiveParams reads another prim (SL says the target prim).
+- **llGetRenderMaterial, PRIM_RENDER_MATERIAL** and the **PRIM_GLTF_BASE_COLOR / _NORMAL / _METALLIC_ROUGHNESS /
+  _EMISSIVE** texture (were: the raw key). Halcyon has no rule, so SL's: "NULL_KEY is returned when the owner does not
+  have full permissions to the object and the Material is not in the prim's inventory", with the name looked up in
+  the target prim. The SL wiki says nothing on the GLTF texture reads; they take the same rule. An unset GLTF texture is
+  still "".
+
+A texture set from inventory by name now reads back as that name through PRIM_TEXTURE, as llGetTexture already did.
+
+YEngine differs: its llGetTexture, PRIM_TEXTURE, sculpt map and PRIM_PROJECTOR give the name, else the raw key with no
+permission check; PRIM_NORMAL / PRIM_SPECULAR give the key when the owner can edit the object; llGetRenderMaterial
+applies the full-perm rule to the group's EffectiveOwnerPerms. It has no iwGetLinkInventoryKey, PRIM_RENDER_MATERIAL
+read or GLTF reads. The OSSL key functions (osGetLinkInventoryKey(s)) already check full-perm and are unchanged.
+
+Tests: `TextureKeyPrivacyTests` (27, parallel): full-perm, no-copy, no-mod and no-transfer objects and items, the owner's
+script and another avatar's script, a linked prim, names versus keys. 21 are red without the change. Probe:
+`phlox49-probe.lsl` + `phlox49-probe-auto-testisle.yaml` (ops folder).
+
+No function index or declared return type changed. No bytecode, serialization or cache change.

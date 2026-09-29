@@ -3351,9 +3351,7 @@ namespace Phlox.ScriptEngine
                     {
                         // PHLOX-21 (YEngine llGetInventoryKey): the asset key only for an item that is
                         // copy, modify and transfer for its owner; anything less reads NULL_KEY.
-                        const uint full = (uint)(OpenSim.Framework.PermissionMask.Copy | OpenSim.Framework.PermissionMask.Modify | OpenSim.Framework.PermissionMask.Transfer);
-                        return (kvp.Value.CurrentPermissions & full) == full
-                            ? kvp.Value.AssetID.ToString() : UUID.Zero.ToString();
+                        return AssetKeyIfFullPerm(kvp.Value.AssetID, kvp.Value.CurrentPermissions);
                     }
             return UUID.Zero.ToString();
         }
@@ -3868,7 +3866,8 @@ namespace Phlox.ScriptEngine
             foreach (SceneObjectPart part in GetLinkParts(linknumber))
                 lock (part.TaskInventory)
                     foreach (var kvp in part.TaskInventory)
-                        if (kvp.Value.Name == name) return kvp.Value.AssetID.ToString();
+                        // PHLOX-49 (D5, audit F136): llGetInventoryKey's rule, as Halcyon's shared GetInventoryKey.
+                        if (kvp.Value.Name == name) return AssetKeyIfFullPerm(kvp.Value.AssetID, kvp.Value.CurrentPermissions);
             return UUID.Zero.ToString();
         }
         public string iwGetLinkInventoryCreator(int linknumber, string item)
@@ -4836,12 +4835,15 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         /// Reverse lookup: given an asset UUID, return the inventory item name if it
         /// exists in the host prim's task inventory; otherwise string.Empty.
         /// </summary>
-        private string InventoryName(UUID assetID)
+        private string InventoryName(UUID assetID) => InventoryName(m_host, assetID);
+
+        /// <summary>The same reverse lookup in the given prim's task inventory.</summary>
+        private static string InventoryName(SceneObjectPart part, UUID assetID)
         {
             if (assetID == UUID.Zero) return string.Empty;
-            lock (m_host.TaskInventory)
+            lock (part.TaskInventory)
             {
-                foreach (var kvp in m_host.TaskInventory)
+                foreach (var kvp in part.TaskInventory)
                 {
                     if (kvp.Value.AssetID == assetID)
                         return kvp.Value.Name;
@@ -4853,13 +4855,22 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         /// <summary>
         /// True if the permission mask includes full modify/copy/transfer.
         /// </summary>
-        private bool IsFullPerm(uint permsMask)
+        private static bool IsFullPerm(uint permsMask)
         {
             const uint full = (uint)(OpenSim.Framework.PermissionMask.Modify
                                    | OpenSim.Framework.PermissionMask.Copy
                                    | OpenSim.Framework.PermissionMask.Transfer);
             return (permsMask & full) == full;
         }
+
+        /// <summary>
+        /// PHLOX-49 (HALCYON-DIFF D5): the one rule for whether a script may see an asset key. The key shows only when
+        /// the owner's permissions on it are copy, modify and transfer; otherwise NULL_KEY. Inventory keys
+        /// (llGetInventoryKey, iwGetLinkInventoryKey) pass the item's CurrentPermissions; texture and material keys
+        /// (ConditionalTextureNameOrUUID) pass the prim's OwnerMask, as Halcyon's IsFullPerm(part.OwnerMask).
+        /// </summary>
+        private static string AssetKeyIfFullPerm(UUID assetID, uint ownerPerms)
+            => assetID != UUID.Zero && IsFullPerm(ownerPerms) ? assetID.ToString() : UUID.Zero.ToString();
 
         // ── Texture workhorses (ported from Halcyon, adapted to this tree's SOP API) ──
 
@@ -6735,7 +6746,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         if (te == null) { result.Add(UUID.Zero.ToString()); result.Add(new Vector3(1,1,0)); result.Add(Vector3.Zero); result.Add(0f); break; }
                         Primitive.TextureEntryFace f = face == ALL_SIDES ? te.DefaultTexture : te.GetFace((uint)face);
                         if (f == null) f = te.DefaultTexture;
-                        result.Add(f.TextureID.ToString());
+                        // PHLOX-49 (D5, audit F215): Halcyon's name / full-perm key / NULL_KEY rule.
+                        result.Add(ConditionalTextureNameOrUUID(part, f.TextureID));
                         result.Add(new Vector3(f.RepeatU, f.RepeatV, 0));
                         result.Add(new Vector3(f.OffsetU, f.OffsetV, 0));
                         result.Add(f.Rotation);
@@ -7006,7 +7018,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                                 result.Add(new Vector3(shape.ProfileBegin / 50000.0f, 1 - shape.ProfileEnd / 50000.0f, 0));
                                 break;
                             case 7:
-                                result.Add(shape.SculptTexture.ToString());
+                                // PHLOX-49 (D5, audit F215): Halcyon's PRIM_TYPE_SCULPT read.
+                                result.Add(ConditionalTextureNameOrUUID(part, shape.SculptTexture));
                                 result.Add((int)shape.SculptType);
                                 break;
                             case 6:
@@ -7060,7 +7073,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                             foreach (var entry in shape_rm.RenderMaterials.entries)
                             {
                                 if (entry.te_index == (byte)face)
-                                { matId = entry.id.ToString(); break; }
+                                { matId = ConditionalMaterialNameOrUUID(part, entry.id.ToString()); break; }
                             }
                         }
                         result.Add(matId);
@@ -7229,24 +7242,35 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// A texture as a script may see it (Halcyon ConditionalTextureNameOrUUID, used by llGetTexture and the
-        /// PRIM_NORMAL / PRIM_SPECULAR reads): its name when it is in this prim's inventory; its key on a full-perm
-        /// object; otherwise NULL_KEY.
+        /// A texture as a script may see it (Halcyon ConditionalTextureNameOrUUID, LSLSystemAPI.cs:2300-2316, used by
+        /// llGetTexture, PRIM_TEXTURE, the PRIM_TYPE sculpt map, PRIM_NORMAL / PRIM_SPECULAR and the projector reads):
+        /// its name when it is in the script's prim's inventory (Halcyon's InventoryName searches m_host even when
+        /// llGetLinkPrimitiveParams reads another prim); else its key when <paramref name="part"/> is full-perm for its
+        /// owner (<see cref="AssetKeyIfFullPerm"/>); otherwise NULL_KEY.
+        /// <paramref name="namesFrom"/>: the prim whose inventory names it, for the reads Halcyon has no rule for and
+        /// SL names "a material in the inventory of the target prim" (PRIM_RENDER_MATERIAL, and the GLTF reads with it).
         /// </summary>
-        private string ConditionalTextureNameOrUUID(SceneObjectPart part, UUID assetID)
+        private string ConditionalTextureNameOrUUID(SceneObjectPart part, UUID assetID, SceneObjectPart namesFrom = null)
         {
             if (assetID == UUID.Zero) return UUID.Zero.ToString();
 
             // If the texture is in the prim's inventory, return the inventory name.
-            string name = InventoryName(assetID);
+            string name = InventoryName(namesFrom ?? m_host, assetID);
             if (!string.IsNullOrEmpty(name)) return name;
 
             // Not in prim inventory — only reveal the UUID on full-perm objects.
-            if (IsFullPerm(part.OwnerMask))
-                return assetID.ToString();
-
-            return UUID.Zero.ToString();
+            return AssetKeyIfFullPerm(assetID, part.OwnerMask);
         }
+
+        /// <summary>
+        /// PHLOX-49: a render material or GLTF texture key as a script may see it. SL (llGetRenderMaterial): "If the
+        /// Material is in the prim's inventory, the return value is the inventory name ... NULL_KEY is returned when the
+        /// owner does not have full permissions to the object and the Material is not in the prim's inventory." A GLTF
+        /// override texture that is not a key (none set: empty) is returned as stored.
+        /// </summary>
+        private string ConditionalMaterialNameOrUUID(SceneObjectPart part, string stored)
+            => UUID.TryParse(stored, out UUID id) && id != UUID.Zero
+                ? ConditionalTextureNameOrUUID(part, id, namesFrom: part) : stored;
 
         public void llScaleTexture(float u, float v, int face)
         {
@@ -16059,7 +16083,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             foreach (var entry in shape.RenderMaterials.entries)
             {
                 if (entry.te_index == (byte)face)
-                    return entry.id.ToString();
+                    return ConditionalMaterialNameOrUUID(m_host, entry.id.ToString());
             }
             return string.Empty;
         }
@@ -16395,7 +16419,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             var osd = GetGLTFOverrideMap(part, face);
 
             // texture
-            result.Add(osd != null && osd.ContainsKey("tex") ? osd["tex"].AsString() : string.Empty);
+            result.Add(ConditionalMaterialNameOrUUID(part, osd != null && osd.ContainsKey("tex") ? osd["tex"].AsString() : string.Empty));
             // repeats
             if (osd != null && osd.ContainsKey("rep") && osd["rep"] is OpenMetaverse.StructuredData.OSDArray repArr && repArr.Count >= 2)
                 result.Add(new Vector3((float)repArr[0].AsReal(), (float)repArr[1].AsReal(), 0f));
@@ -16432,7 +16456,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             var osd = GetGLTFOverrideMap(part, face);
 
             // texture
-            result.Add(osd != null && osd.ContainsKey(texKey) ? osd[texKey].AsString() : string.Empty);
+            result.Add(ConditionalMaterialNameOrUUID(part, osd != null && osd.ContainsKey(texKey) ? osd[texKey].AsString() : string.Empty));
             // repeats
             if (osd != null && osd.ContainsKey(repKey) && osd[repKey] is OpenMetaverse.StructuredData.OSDArray repArr && repArr.Count >= 2)
                 result.Add(new Vector3((float)repArr[0].AsReal(), (float)repArr[1].AsReal(), 0f));
