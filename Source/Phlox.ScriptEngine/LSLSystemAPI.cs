@@ -2036,6 +2036,19 @@ namespace Phlox.ScriptEngine
             return false;
         }
 
+        /// <summary>
+        /// PHLOX-48 (HALCYON-DIFF S13): every give asks this first. Halcyon _GiveInventory / _GiveLinkInventoryList: a
+        /// recipient who muted the object or its owner is not offered anything - IW_DELIVER_MUTED, the normal delay, a
+        /// server-log line and nothing said to the script. A prim has no mute list, so it is not looked up.
+        /// </summary>
+        private bool GiveRefusedByMute(UUID destId, string what)
+        {
+            if (World.GetSceneObjectPart(destId) != null) return false;
+            if (!IsScriptMuted(destId)) return false;
+            m_log.LogInformation("[PhloxAPI]: Not offering {0} from muted {1} to {2}", what, m_host.ParentGroup.UUID, destId);
+            return true;
+        }
+
         public void llTakeCamera(string avatar)
         {
             // Deprecated — no-op in modern viewers
@@ -3465,6 +3478,7 @@ namespace Phlox.ScriptEngine
                 llSay(0, "Could not parse destination key: " + destination);
                 return;
             }
+            if (GiveRefusedByMute(destId, "inventory")) return;   // PHLOX-48
 
             // Find the item in task inventory
             TaskInventoryItem item = null;
@@ -3493,6 +3507,7 @@ namespace Phlox.ScriptEngine
         {
             if (m_host == null || World == null) return;
             if (!UUID.TryParse(target, out UUID destId) || destId == UUID.Zero) return;
+            if (GiveRefusedByMute(destId, "inventory list")) { ScriptSleep(3000); return; }   // PHLOX-48
 
             // SL: the avatar must be in, or able to see into, the region (SVC-868). YEngine gives nothing to one
             // with no presence here - "we could check if it is a grid user ... but that increases security risk" -
@@ -3915,6 +3930,7 @@ namespace Phlox.ScriptEngine
                 if (item != null) break;
             }
             if (!anyPart) return IW_DELIVER_PRIM;
+            if (GiveRefusedByMute(destId, "inventory")) return IW_DELIVER_MUTED;   // PHLOX-48: before the item, as Halcyon
             if (item == null || sourcePart == null)
             {
                 ShoutError($"Could not find item '{inventory}'");
@@ -4041,6 +4057,7 @@ namespace Phlox.ScriptEngine
             // Faithful port: give inventory items from a specific link prim
             if (m_host == null || World == null) return;
             if (!UUID.TryParse(target, out UUID destId) || destId == UUID.Zero) return;
+            if (GiveRefusedByMute(destId, "inventory list")) { ScriptSleep(3000); return; }   // PHLOX-48; D15 otherwise unchanged
 
             foreach (SceneObjectPart part in GetLinkParts(linknumber))
             {
@@ -4113,6 +4130,7 @@ namespace Phlox.ScriptEngine
 
             SceneObjectPart part = GetLinkParts(linknumber).FirstOrDefault();
             if (part == null) return IW_DELIVER_PRIM;
+            if (GiveRefusedByMute(destId, "inventory list")) return IW_DELIVER_MUTED;   // PHLOX-48
 
             var itemIDs = new List<UUID>();
             for (int i = 0; i < inventory.Length; i++)

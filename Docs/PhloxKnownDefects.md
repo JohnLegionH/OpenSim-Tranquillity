@@ -3982,3 +3982,48 @@ runs the work item, the event is in no scheduler queue. With test classes runnin
 therefore arrive after a test's fixed window even though neither scheduler showed work pending. The harness's
 "finish what is still on its way" wait reads the counter. No behaviour change, and no bytecode, serialization or
 cache change.
+
+## PHLOX-48 - gives from scripted objects respect the recipient's mute list (audit S13)
+
+HALCYON-DIFF S13, rows F126 and F176. Before this change no give checked whether the recipient had muted the object
+or its owner, so IW_DELIVER_MUTED was never returned and a muter received whatever the object sent.
+
+One helper, `LSLSystemAPI.GiveRefusedByMute`, runs first in every give: llGiveInventory, llGiveInventoryList,
+iwGiveLinkInventory, iwGiveLinkInventoryList, iwDeliverInventory and iwDeliverInventoryList. It uses PHLOX-45's
+`IsScriptMuted` (Halcyon's rule): the recipient is muted when their mute list has a row for the object's owner or for
+the object. When they are muted:
+
+- Nothing is given, and no offer is sent.
+- llGiveInventory, llGiveInventoryList, iwGiveLinkInventory and iwGiveLinkInventoryList say nothing (no
+  DEBUG_CHANNEL error) and keep their normal sleep (2 s, 3 s, 2 s, 3 s).
+- iwDeliverInventory and iwDeliverInventoryList return IW_DELIVER_MUTED (2) after the usual 100 ms.
+- The server log gets Halcyon's line: "Not offering inventory [list] from muted <object> to <avatar>".
+
+This follows Halcyon's _GiveInventory and _GiveLinkInventoryList. SL's wiki says an avatar who refuses a give "by
+manual decline or muting" does not get it. The check order is Halcyon's: after the key parse and after the "is there
+a prim" test, but before the item lookup, so a muted give of a missing item returns MUTED. Some cases are not looked
+up at all: the owner as recipient ("don't make this call if it's a dialog to yourself") and a prim destination (a prim
+has no mute list).
+
+What is left unchanged:
+
+- A region with no IMuteListService registered, meaning `[Modules] MuteListService` is not configured, behaves as
+  before: nothing counts as muted.
+- A mute service that throws is read as "not muted" and logged (PHLOX-45).
+- D15 still holds: iwGiveLinkInventoryList still delivers to absent avatars; only the mute check is added.
+- Mute-by-name rows (no id) are not matched, as in PHLOX-45.
+
+Not in S13 and not changed:
+
+- llInstantMessage, llRegionSayTo and llDialog. Halcyon's engine never mute-checked these.
+- Halcyon dropped an object's IM to a muter in core (MessageTransferModule), and NGC's MessageTransferModule has no
+  such check. That is a core item.
+
+YEngine has no mute check anywhere, so it still delivers to a muter. The two engines now differ on this. They agree
+when there is no mute service, and for the owner and prim destinations.
+
+Tests: `MuteListGiveTests` (7). 4 are red without the change. The 3 that pass on both sides are the no-service
+theory row, owner/prim-not-looked-up and failing-service. They pin today's behaviour.
+Probe: none. Every case needs a second avatar who has muted the object or tester1.
+
+No function index or declared return type changed. No bytecode, serialization or cache change.
