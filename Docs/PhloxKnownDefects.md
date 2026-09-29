@@ -3678,3 +3678,67 @@ Tests: `CacheSchemaBumpTests` (2).
 
 What residents will notice: group officers' land scripts (ban and pass lists, parcel music and media) work again on
 group land for members holding the right group ability; iwHasParcelPowers answers for the ability asked about.
+
+## PHLOX-43 - No Scripts parcels enforced live (D11): scripts pause and resume with the parcel rules
+
+HALCYON-DIFF decision D11, ruled (a): enforce No Scripts parcels live, exempting attachments and scripts holding taken
+controls. Built on CORE-3 (EventManager.OnGroupCrossedToNewParcel, OnObjectOwnerOrGroupChanged, IParcelScriptPolicyEngine).
+Closes F386 and F417 (moved-in objects kept running, moved-out objects never started) for Phlox. YEngine is unchanged:
+the core still refuses its scripts at start on land that forbids them, and nothing stops them afterwards.
+
+- **Phlox owns the rule.** PhloxEngine implements IParcelScriptPolicyEngine (EnforcesParcelScriptRules = true), so the
+  core's start-time check lets every Phlox script start and the parcel rule is Phlox's. A disallowed script starts
+  PAUSED (rez, region start, arrival, duplicate), never refused.
+- **One check**, PhloxEngine.ScriptMayRunHere: an attachment may run; otherwise Halcyon's rule (EngineInterface.
+  ScriptsCanRun) at the object's position - the object's owner owns the parcel, or AllowOtherScripts, or AllowGroupScripts
+  and the object's group is the parcel's group; otherwise a script holding taken controls on an avatar right now may run.
+  No parcel: not allowed. No estate-manager or god exemption. One deviation from Halcyon's code: the group test needs
+  the parcel to HAVE a group (core's rule; Halcyon compared zero with zero, so a groupless object ran on a groupless
+  parcel with only group scripts allowed). A region with no land module has no parcel rules.
+- **Controls are read from the avatar**: the script's permission granter's ScenePresence registrations for that item.
+  Core has no accessor, so the private `ScenePresence.scriptedcontrols` is read by reflection under its own lock
+  (`NoScriptParcelTests.TheControlsCheckReadsTheAvatarsRegistrations` fails if core renames it; the engine logs one
+  warning and treats the script as not holding controls). Phlox's own record of llTakeControls is never used.
+- **Triggers** (events only, no timer, no scan of the scene): script start; OnGroupCrossedToNewParcel (setter moves,
+  physics moves, the first parcel on add, a detached object landing); OnObjectOwnerOrGroupChanged; OnLandObjectAdded
+  (flags, owner, group, sale, subdivide, join); OnAttach (attach and detach); llTakeControls / llReleaseControls; and,
+  for the core clearing controls, the client's OnForceReleaseControls ("release keys"), OnMakeChildAgent and
+  OnRemovePresence. A trigger only queues a check; the scheduler thread decides and pauses or resumes.
+- **Cost.** An object event checks that object's own scripts. A parcel change looks up the parcel under each object
+  running Phlox scripts (one array lookup per object, attachments skipped) and decides only for the scripts on the
+  parcel that changed. Measured (Debug, test host): 200 scripted objects, 100 on the changed parcel - 200 scanned,
+  100 decided, 100 paused, 0 others touched, one scheduler pass about 1 ms. A move inside one parcel raises nothing.
+- **Pause, never stop or reset.** LocalDisableFlag.Parcel (transient, never saved). RunState, the frame, globals and the
+  script's own queued events stay. Its run-queue place and its wakes (sleep, timer, touch repeat, event-delay floor)
+  come off; the sensor repeat stops; the prim's event mask goes to 0. Listens stay registered.
+- **Events while paused are dropped**, as Halcyon (ExecutionScheduler, pending events: "killed and disabled scripts
+  should no longer respond to outside stimuli"). state_entry and state_exit (the script's own state change) are queued
+  instead, as Halcyon queues state_entry. Events already queued before the pause are kept.
+- **Resume** re-arms the timer (a full interval from the resume), restarts the sensor repeat from its record, and
+  continues by RunState: mid-event back on the run queue, a sleep re-armed with the time it had, an idle script with
+  queued events starts the next one, a syscall waits for its return as usual.
+- **Owner-stopped is not parcel-paused.** The owner's stop is GeneralEnable (saved) and the item's Running flag; the
+  parcel's pause is its own bit. Resuming for the parcel never starts a script the owner stopped; the owner starting a
+  script on disallowed land leaves it paused (its owed state_entry waits). The Running checkbox and llGetScriptState
+  show the owner's setting, so a parcel-paused script shows Running. `phlox status` shows `HELD: Parcel` with the reason.
+
+Known limits:
+- The core clears controls in ScenePresence.ClearControls with no event of its own. Where that happens without one of
+  the events above (the avatar leaving or going child, "release keys"), a script on disallowed land that was running
+  only because it held controls keeps running until its next trigger, when the check asks the avatar again and pauses
+  it. Test: ControlsClearedByTheCoreWithNoEventAreSeenAtTheNextDecision.
+- Linking is not a trigger: a prim linked into an object standing on other land is checked at that object's next trigger.
+- The timer restarts a full interval after the resume (Halcyon kept the time that was left).
+- A reset of a paused script (llResetOtherScript, the viewer's Reset) resets it and leaves it paused; its state_entry
+  runs on resume.
+
+Tests: `NoScriptParcelTests` (21): the rule; the opt-in; start through the core on no-scripts land (paused, not refused,
+state_entry held then run); region start with restored state (paused, then carries on with its globals); flag change
+pause and resume with globals kept and no reset; parcel sold to the object's owner; setter move and physics move onto
+and off the parcel; an attachment runs and the dropped object pauses; controls held keep it running, "release keys"
+pauses it, controls cleared with no event are seen at the next decision, llReleaseControls pauses it; group scripts
+with the group flag; object group and owner changes; listen and touch events while paused dropped and the listen back
+after; a queued event kept and a sleep carried on; owner-stopped stays stopped when the parcel allows it; the owner
+starting on no-scripts land leaves it paused; a reset of a paused script stays paused and starts fresh on resume; 200 objects, only the changed parcel's scripts touched.
+
+No bytecode, serialization or cache change.

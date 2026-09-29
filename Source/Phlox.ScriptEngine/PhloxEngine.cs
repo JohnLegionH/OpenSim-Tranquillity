@@ -31,7 +31,7 @@ namespace Phlox.ScriptEngine
     /// <summary>B2: where syscalls that can reach a service run.</summary>
     public enum ServiceCallDeferralMode { Auto, Always, Never }
 
-    public class PhloxEngine : INonSharedRegionModule, IScriptEngine, IScriptModule
+    public class PhloxEngine : INonSharedRegionModule, IScriptEngine, IScriptModule, IParcelScriptPolicyEngine
     {
         private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
@@ -229,6 +229,13 @@ namespace Phlox.ScriptEngine
             m_Scene.EventManager.OnScriptAtRotTargetEvent    += OnScriptAtRotTargetEvent;
             m_Scene.EventManager.OnScriptNotAtRotTargetEvent += OnScriptNotAtRotTargetEvent;
             m_Scene.EventManager.OnObjectBeingRemovedFromScene += OnObjectBeingRemovedFromScene;
+            // PHLOX-43 (D11): the triggers for the No Scripts parcel check (CORE-3's events and the land events)
+            m_Scene.EventManager.OnGroupCrossedToNewParcel   += OnGroupCrossedToNewParcel;
+            m_Scene.EventManager.OnObjectOwnerOrGroupChanged += OnObjectOwnerOrGroupChanged;
+            m_Scene.EventManager.OnLandObjectAdded           += OnLandObjectChanged;
+            m_Scene.EventManager.OnNewClient                 += OnNewClientForControls;
+            m_Scene.EventManager.OnMakeChildAgent            += OnMakeChildAgentForControls;
+            m_Scene.EventManager.OnRemovePresence            += OnRemovePresenceForControls;
             IMoneyModule moneyModule = m_Scene.RequestModuleInterface<IMoneyModule>();
             if (moneyModule != null)
                 moneyModule.OnObjectPaid += HandleObjectPaid;
@@ -336,7 +343,8 @@ namespace Phlox.ScriptEngine
             o.Output($"  RunState      : {st.RunState}" + (st.PendingSyscall is null ? "" : $"  (in {st.PendingSyscall})"));
             o.Output($"  enabled       : Enabled={st.Enabled} GeneralEnable={st.GeneralEnable} suspended={st.Suspended}"
                 + (st.LocalDisable is null ? "" : $"  HELD: {st.LocalDisable}"
-                    + (st.LocalDisable.Contains("StateLoadFailed") ? " (state load failed - row kept, never run or saved this process; restart to retry)" : "")));
+                    + (st.LocalDisable.Contains("StateLoadFailed") ? " (state load failed - row kept, never run or saved this process; restart to retry)" : "")
+                    + (st.LocalDisable.Contains("Parcel") ? " (PHLOX-43: the parcel does not allow this script; paused until it does, not stopped)" : "")));
             o.Output($"  Running flag  : {(item is null ? "(unknown)" : item.ScriptRunning.ToString())}");
             if (st.TerminatedReason is not null)
                 o.Output($"  terminated    : {st.TerminatedReason}  (PHLOX-18: stays stopped; reset it, or tick Running, to start it fresh)");
@@ -474,6 +482,12 @@ namespace Phlox.ScriptEngine
             m_Scene.EventManager.OnScriptColliding         -= OnScriptColliding;
             m_Scene.EventManager.OnScriptColliderStart     -= OnScriptColliderStart;
             m_Scene.EventManager.OnObjectBeingRemovedFromScene -= OnObjectBeingRemovedFromScene;
+            m_Scene.EventManager.OnGroupCrossedToNewParcel   -= OnGroupCrossedToNewParcel;
+            m_Scene.EventManager.OnObjectOwnerOrGroupChanged -= OnObjectOwnerOrGroupChanged;
+            m_Scene.EventManager.OnLandObjectAdded           -= OnLandObjectChanged;
+            m_Scene.EventManager.OnNewClient                 -= OnNewClientForControls;
+            m_Scene.EventManager.OnMakeChildAgent            -= OnMakeChildAgentForControls;
+            m_Scene.EventManager.OnRemovePresence            -= OnRemovePresenceForControls;
             LSLSystemAPI.ClearRegionCharacters(scene.RegionInfo.RegionID);
             m_MasterScheduler?.Stop();
             AsyncCommands?.Shutdown();
@@ -881,6 +895,120 @@ namespace Phlox.ScriptEngine
             PostObjectEvent(localID, new EventParams(
                 "attach", new object[] { avatarID.ToString() },
                 s_emptyDetectParams));
+            // PHLOX-43: worn, an object's scripts always run; dropped, the parcel under it decides
+            SceneObjectGroup group = m_Scene?.GetGroupByPrim(localID);
+            if (group != null) m_ExeScheduler?.RequestParcelCheck(group);
+        }
+
+        // ── PHLOX-43: No Scripts parcels enforced live (HALCYON-DIFF D11, ruled (a)) ─────────────────
+
+        /// <summary>
+        /// IParcelScriptPolicyEngine: the core lets Phlox's scripts start on any parcel and leaves the parcel rule to
+        /// Phlox, which pauses and resumes them live (PhloxExecutionScheduler, PHLOX-43).
+        /// </summary>
+        public bool EnforcesParcelScriptRules => true;
+
+        private void OnGroupCrossedToNewParcel(SceneObjectGroup group, ILandObject oldParcel, ILandObject newParcel)
+            => m_ExeScheduler?.RequestParcelCheck(group);
+
+        private void OnObjectOwnerOrGroupChanged(SceneObjectGroup group, UUID oldOwner, UUID newOwner, UUID oldGroup, UUID newGroup)
+            => m_ExeScheduler?.RequestParcelCheck(group);
+
+        /// <summary>Flags, owner, group, sale, subdivide and join all arrive here (LandManagementModule.UpdateLandObject).</summary>
+        private void OnLandObjectChanged(ILandObject parcel)
+        {
+            if (parcel?.LandData != null) m_ExeScheduler?.RequestParcelCheckForParcel(parcel.LandData.LocalID);
+        }
+
+        // The core tells no engine when it clears an avatar's taken controls (CORE-3 notes). These are the events that
+        // go with it: the viewer's "release keys" (ScenePresence.HandleForceReleaseControls, registered on the client
+        // before OnNewClient is raised, so it has run by the time the check does) and the avatar leaving the region or
+        // becoming a child agent (ClearControls). Each asks again only for scripts running because they held controls.
+        private void OnNewClientForControls(IClientAPI client) => client.OnForceReleaseControls += OnForceReleaseControls;
+        private void OnForceReleaseControls(IClientAPI remoteClient, UUID agentID) => m_ExeScheduler?.RequestControlHoldersCheck();
+        private void OnMakeChildAgentForControls(ScenePresence presence) => m_ExeScheduler?.RequestControlHoldersCheck();
+        private void OnRemovePresenceForControls(UUID agentId) => m_ExeScheduler?.RequestControlHoldersCheck();
+
+        /// <summary>A script took or released controls.</summary>
+        internal void RequestParcelCheck(UUID itemId) => m_ExeScheduler?.RequestParcelCheckForItem(itemId);
+
+        /// <summary>
+        /// Halcyon's rule (EngineInterface.ScriptsCanRun): the object's owner owns the parcel, or the parcel allows other
+        /// scripts, or it allows group scripts and the object's group is the parcel's group. No parcel: not allowed. The
+        /// group test needs the parcel to have a group, as core's CanRunScript does (Halcyon compared zero with zero).
+        /// </summary>
+        internal static bool ParcelAllowsScripts(LandData land, UUID objectOwner, UUID objectGroup)
+        {
+            if (land == null) return false;
+            if (land.OwnerID == objectOwner) return true;
+            if ((land.Flags & (uint)ParcelFlags.AllowOtherScripts) != 0) return true;
+            return (land.Flags & (uint)ParcelFlags.AllowGroupScripts) != 0
+                   && land.GroupID.IsNotZero() && land.GroupID == objectGroup;
+        }
+
+        /// <summary>The local id of the parcel under an object, the lookup core's CanRunScript uses; -1 for none.</summary>
+        internal int ParcelLocalIdAt(SceneObjectGroup group)
+        {
+            ILandChannel land = m_Scene?.LandChannel;
+            if (land == null) return -1;
+            Vector3 pos = group.AbsolutePosition;
+            return land.GetLandObjectClippedXY(pos.X, pos.Y)?.LandData?.LocalID ?? -1;
+        }
+
+        /// <summary>
+        /// "May this script run here" (D11): an attachment may; a script the parcel allows may; a script holding taken
+        /// controls on an avatar right now may (<paramref name="onlyByControls"/>); nothing else. No estate-manager or god
+        /// exemption. A region with no land module has no parcel rules.
+        /// </summary>
+        internal bool ScriptMayRunHere(SceneObjectPart part, UUID itemId, out bool onlyByControls)
+        {
+            onlyByControls = false;
+            SceneObjectGroup group = part?.ParentGroup;
+            if (group == null || group.IsAttachment) return true;
+            ILandChannel landChannel = m_Scene?.LandChannel;
+            if (landChannel == null) return true;
+
+            Vector3 pos = group.AbsolutePosition;
+            ILandObject parcel = landChannel.GetLandObjectClippedXY(pos.X, pos.Y);
+            if (ParcelAllowsScripts(parcel?.LandData, part.OwnerID, part.GroupID)) return true;
+
+            if (ScriptHoldsControls(part, itemId))
+            {
+                onlyByControls = true;
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>Asks the avatar the script's controls were taken on (the permission granter), never Phlox's own record.</summary>
+        private bool ScriptHoldsControls(SceneObjectPart part, UUID itemId)
+        {
+            TaskInventoryItem item = part.Inventory.GetInventoryItem(itemId);
+            if (item == null || item.PermsGranter.IsZero()) return false;
+            return AvatarHoldsControls(m_Scene.GetScenePresence(item.PermsGranter), itemId);
+        }
+
+        // ScenePresence keeps its control registrations in a private dictionary keyed by script item id and has no
+        // accessor for "does this script hold controls", so it is read here, under the lock ScenePresence itself takes.
+        private static readonly FieldInfo s_ScriptedControls =
+            typeof(ScenePresence).GetField("scriptedcontrols", BindingFlags.NonPublic | BindingFlags.Instance);
+        private static int s_ScriptedControlsWarned;
+
+        /// <summary>True when the controls check can see the avatar's registrations (a test pins this).</summary>
+        internal static bool ControlsFieldFound
+            => s_ScriptedControls != null && typeof(System.Collections.IDictionary).IsAssignableFrom(s_ScriptedControls.FieldType);
+
+        /// <summary>Does this avatar hold taken controls for this script item right now?</summary>
+        internal static bool AvatarHoldsControls(ScenePresence presence, UUID itemId)
+        {
+            if (presence == null) return false;
+            if (s_ScriptedControls?.GetValue(presence) is not System.Collections.IDictionary controls)
+            {
+                if (Interlocked.Exchange(ref s_ScriptedControlsWarned, 1) == 0)
+                    m_log.LogWarning("[PhloxEngine]: ScenePresence.scriptedcontrols not found; scripts holding controls are not exempt from No Scripts parcels");
+                return false;
+            }
+            lock (controls) return controls.Contains(itemId);
         }
 
         // ── Moving events ──────────────────────────────────────────────────────

@@ -1749,6 +1749,7 @@ namespace Phlox.ScriptEngine
             sp.RegisterControlEventsToScript(controls, accept, pass_on, m_host.LocalId, m_itemID);
             m_thisScript.ScriptState.MiscAttributes[(int)RuntimeState.MiscAttr.Control] =
                 new object[] { controls, accept, pass_on };
+            m_ScriptEngine?.RequestParcelCheck(m_itemID);   // PHLOX-43: holding controls exempts it from a No Scripts parcel
         }
 
         public void llReleaseControls() => ReleaseControlsInternal();
@@ -1765,6 +1766,7 @@ namespace Phlox.ScriptEngine
             // after this point, handle the null-sp case explicitly.
             sp?.UnRegisterControlEventsToScript(m_host.LocalId, m_itemID);
             m_thisScript?.ScriptState?.MiscAttributes?.Remove((int)RuntimeState.MiscAttr.Control);
+            m_ScriptEngine?.RequestParcelCheck(m_itemID);   // PHLOX-43: without controls a No Scripts parcel pauses it
         }
 
         public void llTakeCamera(string avatar)
@@ -2992,6 +2994,24 @@ namespace Phlox.ScriptEngine
                 m_localID, m_itemID, name, keyID, type, range, arc, rate, m_host);
             m_thisScript.ScriptState.MiscAttributes[(int)RuntimeState.MiscAttr.SensorRepeat] =
                 new object[] { name, id, type, range, arc, rate };
+        }
+
+        /// <summary>PHLOX-43: the prim this script lives in.</summary>
+        internal SceneObjectPart HostPart => m_host;
+
+        /// <summary>PHLOX-43: a parcel pause stops the sensor repeat; the record in MiscAttributes stays for the resume.</summary>
+        internal void PauseSensorForParcel()
+        {
+            if (m_thisScript?.ScriptState?.MiscAttributes?.ContainsKey((int)RuntimeState.MiscAttr.SensorRepeat) == true)
+                m_ScriptEngine.AsyncCommands?.SensorRepeatPlugin.UnSetSenseRepeaterEvents(m_localID, m_itemID);
+        }
+
+        /// <summary>PHLOX-43: the resume starts the sensor repeat again from its record, as a state restore does.</summary>
+        internal void RestoreSensorAfterParcel()
+        {
+            if (m_thisScript?.ScriptState?.MiscAttributes != null
+                && m_thisScript.ScriptState.MiscAttributes.TryGetValue((int)RuntimeState.MiscAttr.SensorRepeat, out object[] s))
+                llSensorRepeat((string)s[0], (string)s[1], (int)s[2], (float)s[3], (float)s[4], (float)s[5]);
         }
 
         public void llSensorRemove()

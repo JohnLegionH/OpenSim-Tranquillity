@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Region.Framework.Interfaces;
+using OpenSim.Region.Framework.Scenes;
 using OpenSim.Region.ScriptEngine.Interfaces;
 using InWorldz.Phlox.VM;
 using InWorldz.Phlox.Glue;
@@ -96,6 +97,22 @@ namespace Phlox.ScriptEngine
 
         // Reset requests
         private readonly Queue<UUID> m_PendingResets = new();
+
+        // PHLOX-43 (D11): No Scripts parcels enforced live. Scene events only ask for a check; the check and the
+        // pause/resume it leads to run here, on the scheduler thread, like enable/disable. Nothing polls.
+        private enum ParcelCheckKind { Item, Group, Parcel, ControlHolders }
+        private struct ParcelCheckReq { public ParcelCheckKind Kind; public UUID ItemId; public SceneObjectGroup Group; public int ParcelLocalId; }
+        private readonly Queue<ParcelCheckReq> m_ParcelChecks = new();
+        /// <summary>PHLOX-43: each script's API, for its host prim and its sensor. Scheduler thread only.</summary>
+        private readonly System.Collections.Generic.Dictionary<UUID, LSLSystemAPI> m_Apis = new();
+        /// <summary>PHLOX-43: scripts whose last check allowed them only because they held taken controls - the ones to
+        /// ask again when the core clears controls. The check itself always asks the avatar. Scheduler thread only.</summary>
+        private readonly HashSet<UUID> m_ControlsExempt = new();
+
+        /// <summary>PHLOX-43: what the parcel checks have done, for tests and the cost report.</summary>
+        internal struct ParcelStats { public long Scanned, Evaluated, Paused, Resumed; }
+        private ParcelStats m_ParcelStats;
+        internal ParcelStats ParcelCounters => m_ParcelStats;
 
         // Syscall returns
         private readonly Queue<SyscallReturn> m_SyscallReturns = new();
@@ -232,6 +249,7 @@ namespace Phlox.ScriptEngine
 
             lock (m_AllScriptsLock)
                 m_AllScripts[interp.ItemId] = interp;
+            m_Apis[interp.ItemId] = sysApi;
             interp.SetScriptEventFlags();
 
             if (holdStateLoadFailed)
@@ -262,6 +280,7 @@ namespace Phlox.ScriptEngine
                     interp.ScriptState.GeneralEnable = false;
                     lock (m_AllScriptsLock) m_HeldFresh.Add(req.ItemID);
                     m_log.LogInformation("[PhloxExe]: {0} loaded STOPPED (item Running flag off); no state_entry until reset or Running is ticked", req.ItemID);
+                    EvaluateParcelRule(req.ItemID);   // PHLOX-43: so the owner starting it on disallowed land leaves it paused
                     return;
                 }
                 sysApi.OnScriptReset();
@@ -416,7 +435,11 @@ namespace Phlox.ScriptEngine
             // Only add to run queue if fresh — restored scripts wait for events
             if (freshStart)
                 AddToRunQueue(interp);
-            
+
+            // PHLOX-43: every start (rez, region start, arrival, duplicate) is checked against the parcel. A script the
+            // parcel does not allow starts paused - never refused - with everything above in place for its resume.
+            EvaluateParcelRule(req.ItemID);
+
             m_WorkArrived();
         }
 
@@ -507,10 +530,24 @@ namespace Phlox.ScriptEngine
             return true;
         }
 
+        /// <summary>
+        /// The Running checkbox and llGetScriptState: the owner's setting. PHLOX-43: a pause by the parcel is not the
+        /// owner's, so it does not untick the box; any other hold (StateLoadFailed, CrossingWait) still does.
+        /// </summary>
         public bool GetScriptRunning(UUID itemId)
         {
             Interpreter script;
-            return m_AllScripts.TryGetValue(itemId, out script) && script.ScriptState.Enabled;
+            if (!m_AllScripts.TryGetValue(itemId, out script)) return false;
+            var st = script.ScriptState;
+            return st.GeneralEnable && (st.LocalDisable & ~RuntimeState.LocalDisableFlag.Parcel) == RuntimeState.LocalDisableFlag.None;
+        }
+
+        /// <summary>PHLOX-43: is this script paused by the parcel rule?</summary>
+        internal bool IsParcelPaused(UUID itemId)
+        {
+            lock (m_AllScriptsLock)
+                return m_AllScripts.TryGetValue(itemId, out Interpreter s)
+                       && (s.ScriptState.LocalDisable & RuntimeState.LocalDisableFlag.Parcel) != 0;
         }
 
         public Interpreter FindScript(UUID itemId)
@@ -805,6 +842,8 @@ namespace Phlox.ScriptEngine
                 m_AllScripts.Remove(itemId);
                 m_HeldFresh.Remove(itemId);
             }
+            m_Apis.Remove(itemId);
+            m_ControlsExempt.Remove(itemId);
         }
 
         // ── Main work loop ─────────────────────────────────────────────────────
@@ -818,6 +857,7 @@ namespace Phlox.ScriptEngine
             WorkerThreadId = System.Threading.Thread.CurrentThread.ManagedThreadId;
             CheckSleepingScripts();
             ProcessEventQueue();
+            ProcessParcelChecks();   // PHLOX-43
             ProcessEnableDisable();
             ProcessSuspendResume();
             ProcessResets();
@@ -847,6 +887,7 @@ namespace Phlox.ScriptEngine
             if (m_RunQueue.Count > 0) return true;
             lock (m_PendingEvents) if (m_PendingEvents.Count > 0) return true;
             lock (m_EnableDisableQueue) if (m_EnableDisableQueue.Count > 0) return true;
+            lock (m_ParcelChecks) if (m_ParcelChecks.Count > 0) return true;
             lock (m_SuspendResumeQueue) if (m_SuspendResumeQueue.Count > 0) return true;
             lock (m_PendingResets) if (m_PendingResets.Count > 0) return true;
             lock (m_SyscallReturns) if (m_SyscallReturns.Count > 0) return true;
@@ -1056,6 +1097,18 @@ namespace Phlox.ScriptEngine
                     continue;
                 }
 
+                // PHLOX-43: a script paused by the parcel keeps what belongs to its own state change - Halcyon queues
+                // state_entry for a disabled script - and runs it on resume. Everything else is dropped below.
+                if ((script.ScriptState.LocalDisable & RuntimeState.LocalDisableFlag.Parcel) != 0
+                    && (pe.Evt.EventType == SupportedEventList.Events.STATE_ENTRY || pe.Evt.EventType == SupportedEventList.Events.STATE_EXIT))
+                {
+                    pe.Evt.SignalCompleted();
+                    script.ScriptState.QueueEvent(pe.Evt);
+                    continue;
+                }
+
+                // Halcyon (ExecutionScheduler, pending events): "killed and disabled scripts should no longer respond
+                // to outside stimuli". PHLOX-43: that is also what a parcel pause does with an event that arrives.
                 if (!script.ScriptState.Enabled && pe.Evt.EventType != SupportedEventList.Events.STATE_ENTRY)
                 {
                     pe.Evt.SignalCompleted();
@@ -1231,6 +1284,172 @@ namespace Phlox.ScriptEngine
             }
         }
 
+        // ── PHLOX-43: No Scripts parcels (D11) ────────────────────────────────
+
+        /// <summary>A script's parcel standing may have changed (it took or released controls).</summary>
+        internal void RequestParcelCheckForItem(UUID itemId) => EnqueueParcelCheck(new ParcelCheckReq { Kind = ParcelCheckKind.Item, ItemId = itemId });
+
+        /// <summary>An object moved to another parcel, changed owner or group, or was attached or dropped.</summary>
+        internal void RequestParcelCheck(SceneObjectGroup group)
+        {
+            if (group == null) return;
+            EnqueueParcelCheck(new ParcelCheckReq { Kind = ParcelCheckKind.Group, Group = group });
+        }
+
+        /// <summary>A parcel's flags, owner, group or shape changed (EventManager.OnLandObjectAdded).</summary>
+        internal void RequestParcelCheckForParcel(int parcelLocalId)
+            => EnqueueParcelCheck(new ParcelCheckReq { Kind = ParcelCheckKind.Parcel, ParcelLocalId = parcelLocalId });
+
+        /// <summary>The core may have cleared an avatar's taken controls: ask again for the scripts running only by them.</summary>
+        internal void RequestControlHoldersCheck() => EnqueueParcelCheck(new ParcelCheckReq { Kind = ParcelCheckKind.ControlHolders });
+
+        private void EnqueueParcelCheck(ParcelCheckReq req)
+        {
+            lock (m_ParcelChecks) m_ParcelChecks.Enqueue(req);
+            m_WorkArrived?.Invoke();
+        }
+
+        private void ProcessParcelChecks()
+        {
+            List<ParcelCheckReq> batch;
+            lock (m_ParcelChecks)
+            {
+                if (m_ParcelChecks.Count == 0) return;
+                batch = new List<ParcelCheckReq>(m_ParcelChecks);
+                m_ParcelChecks.Clear();
+            }
+
+            var done = new HashSet<UUID>();   // one decision per script per pass
+            foreach (var req in batch)
+            {
+                switch (req.Kind)
+                {
+                    case ParcelCheckKind.Item:
+                        if (done.Add(req.ItemId)) EvaluateParcelRule(req.ItemId);
+                        break;
+
+                    case ParcelCheckKind.Group:
+                        // the object's own scripts only
+                        var group = req.Group;
+                        if (group.IsDeleted || !group.ContainsScripts()) break;
+                        foreach (SceneObjectPart part in group.Parts)
+                            foreach (TaskInventoryItem item in part.Inventory.GetInventoryItems(InventoryType.LSL))
+                                if (m_AllScripts.ContainsKey(item.ItemID) && done.Add(item.ItemID))
+                                    EvaluateParcelRule(item.ItemID);
+                        break;
+
+                    case ParcelCheckKind.Parcel:
+                        // This engine's own scripts, one parcel lookup per object, and a decision only for the scripts
+                        // whose object stands on the parcel that changed. Attachments are always allowed; skipped.
+                        var onParcel = new System.Collections.Generic.Dictionary<UUID, bool>();
+                        foreach (var kv in m_Apis)
+                        {
+                            SceneObjectGroup g = kv.Value.HostPart?.ParentGroup;
+                            if (g == null || g.IsDeleted || g.IsAttachment) continue;
+                            m_ParcelStats.Scanned++;
+                            if (!onParcel.TryGetValue(g.UUID, out bool on))
+                            {
+                                on = m_Engine != null && m_Engine.ParcelLocalIdAt(g) == req.ParcelLocalId;
+                                onParcel[g.UUID] = on;
+                            }
+                            if (on && done.Add(kv.Key)) EvaluateParcelRule(kv.Key);
+                        }
+                        break;
+
+                    case ParcelCheckKind.ControlHolders:
+                        foreach (UUID id in new List<UUID>(m_ControlsExempt))
+                            if (done.Add(id)) EvaluateParcelRule(id);
+                        break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// "May this script run here", asked of the engine (PhloxEngine.ScriptMayRunHere), and the pause or resume it
+        /// calls for. Scheduler thread.
+        /// </summary>
+        private void EvaluateParcelRule(UUID itemId)
+        {
+            if (!m_AllScripts.TryGetValue(itemId, out Interpreter script)) return;
+            if (!m_Apis.TryGetValue(itemId, out LSLSystemAPI api)) return;
+            SceneObjectPart part = api.HostPart;
+            if (part?.ParentGroup == null || part.ParentGroup.IsDeleted || m_Engine == null) return;
+
+            m_ParcelStats.Evaluated++;
+            bool allowed = m_Engine.ScriptMayRunHere(part, itemId, out bool onlyByControls);
+            if (onlyByControls) m_ControlsExempt.Add(itemId); else m_ControlsExempt.Remove(itemId);
+
+            if (allowed) ResumeForParcel(script, api);
+            else PauseForParcel(script, api);
+        }
+
+        /// <summary>
+        /// Pause, never stop or reset: RunState, the frame, globals and the script's own queued events stay as they are.
+        /// Its wakes (sleep, timer, touch repeat, event-delay floor) come off the heap and its sensor repeat stops;
+        /// listens stay registered and what they deliver is dropped (ProcessEventQueue).
+        /// </summary>
+        private void PauseForParcel(Interpreter script, LSLSystemAPI api)
+        {
+            var st = script.ScriptState;
+            if ((st.LocalDisable & RuntimeState.LocalDisableFlag.Parcel) != 0) return;
+            st.LocalDisable |= RuntimeState.LocalDisableFlag.Parcel;
+            m_ParcelStats.Paused++;
+
+            RemoveFromRunQueue(script.ItemId);
+            RemoveWake(m_StdSleepHandles, script.ItemId);
+            RemoveWake(m_TimerHandles, script.ItemId);
+            RemoveWake(m_TouchHandles, script.ItemId);
+            RemoveWake(m_MinDelayHandles, script.ItemId);
+            api.PauseSensorForParcel();
+            script.SetScriptEventFlags();   // no events while LocalDisable is set: the prim stops advertising touch etc.
+            m_log.LogDebug("[PhloxExe]: {0} paused: the parcel does not allow it", script.ItemId);
+        }
+
+        /// <summary>
+        /// Clear the parcel pause. A script its owner stopped stays stopped: nothing is re-armed unless it is enabled
+        /// once the parcel bit is off.
+        /// </summary>
+        private void ResumeForParcel(Interpreter script, LSLSystemAPI api)
+        {
+            var st = script.ScriptState;
+            if ((st.LocalDisable & RuntimeState.LocalDisableFlag.Parcel) == 0) return;
+            st.LocalDisable &= ~RuntimeState.LocalDisableFlag.Parcel;
+            m_ParcelStats.Resumed++;
+            script.SetScriptEventFlags();
+            if (!st.Enabled) return;
+
+            if (st.TimerInterval > 0 && !m_TimerHandles.ContainsKey(script.ItemId))
+                TrackTimer(script, InWorldz.Phlox.Util.Clock.Now + (ulong)st.TimerInterval, false);
+            api.RestoreSensorAfterParcel();
+
+            switch (st.RunState)
+            {
+                case RuntimeState.Status.Running:
+                    AddToRunQueue(script);
+                    break;
+                case RuntimeState.Status.Sleeping:
+                    if (!m_StdSleepHandles.ContainsKey(script.ItemId))
+                        TrackSleep(script, st.NextWakeup);
+                    break;
+                case RuntimeState.Status.Waiting:
+                    bool queued;
+                    lock (st.EventQueueLock) queued = st.EventQueue != null && st.EventQueue.Count > 0;
+                    if (queued) DeliverNextQueuedEvent(script);
+                    break;
+                // Syscall: the return arrives as usual and queues it.
+            }
+            m_log.LogDebug("[PhloxExe]: {0} resumed: the parcel allows it", script.ItemId);
+        }
+
+        private void RemoveWake(System.Collections.Generic.Dictionary<UUID, C5.IPriorityQueueHandle<SleepEntry>> handles, UUID itemId)
+        {
+            if (handles.TryGetValue(itemId, out var h))
+            {
+                handles.Remove(itemId);
+                m_SleepHeap.Delete(h);
+            }
+        }
+
         private void ProcessResets()
         {
             // Drain the entire queue in one pass (see ProcessEnableDisable note).
@@ -1391,6 +1610,12 @@ namespace Phlox.ScriptEngine
 
         private void AddToRunQueue(Interpreter script)
         {
+            // PHLOX-43: a script paused by the parcel is never queued. RunState is left as it is (a syscall return has
+            // already set Running), and ResumeForParcel queues it by that RunState. This one gate covers a syscall
+            // return, a reset, the owner's Running checkbox and a queued-event delivery.
+            if ((script.ScriptState.LocalDisable & RuntimeState.LocalDisableFlag.Parcel) != 0)
+                return;
+
             // Suspended scripts never enter the run queue (removal at suspend + this gate
             // keeps DoTimeslices' hot path free of per-slice flag checks and keeps
             // HasWork() honest — a run queue holding only suspended scripts would make
