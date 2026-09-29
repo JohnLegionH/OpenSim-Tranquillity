@@ -233,8 +233,7 @@ namespace Phlox.ScriptEngine
             m_Scene.EventManager.OnGroupCrossedToNewParcel   += OnGroupCrossedToNewParcel;
             m_Scene.EventManager.OnObjectOwnerOrGroupChanged += OnObjectOwnerOrGroupChanged;
             m_Scene.EventManager.OnLandObjectAdded           += OnLandObjectChanged;
-            m_Scene.EventManager.OnNewClient                 += OnNewClientForControls;
-            m_Scene.EventManager.OnMakeChildAgent            += OnMakeChildAgentForControls;
+            m_Scene.EventManager.OnScriptControlsReleased    += OnScriptControlsReleased;
             m_Scene.EventManager.OnRemovePresence            += OnRemovePresenceForControls;
             IMoneyModule moneyModule = m_Scene.RequestModuleInterface<IMoneyModule>();
             if (moneyModule != null)
@@ -485,8 +484,7 @@ namespace Phlox.ScriptEngine
             m_Scene.EventManager.OnGroupCrossedToNewParcel   -= OnGroupCrossedToNewParcel;
             m_Scene.EventManager.OnObjectOwnerOrGroupChanged -= OnObjectOwnerOrGroupChanged;
             m_Scene.EventManager.OnLandObjectAdded           -= OnLandObjectChanged;
-            m_Scene.EventManager.OnNewClient                 -= OnNewClientForControls;
-            m_Scene.EventManager.OnMakeChildAgent            -= OnMakeChildAgentForControls;
+            m_Scene.EventManager.OnScriptControlsReleased    -= OnScriptControlsReleased;
             m_Scene.EventManager.OnRemovePresence            -= OnRemovePresenceForControls;
             LSLSystemAPI.ClearRegionCharacters(scene.RegionInfo.RegionID);
             m_MasterScheduler?.Stop();
@@ -920,13 +918,16 @@ namespace Phlox.ScriptEngine
             if (parcel?.LandData != null) m_ExeScheduler?.RequestParcelCheckForParcel(parcel.LandData.LocalID);
         }
 
-        // The core tells no engine when it clears an avatar's taken controls (CORE-3 notes). These are the events that
-        // go with it: the viewer's "release keys" (ScenePresence.HandleForceReleaseControls, registered on the client
-        // before OnNewClient is raised, so it has run by the time the check does) and the avatar leaving the region or
-        // becoming a child agent (ClearControls). Each asks again only for scripts running because they held controls.
-        private void OnNewClientForControls(IClientAPI client) => client.OnForceReleaseControls += OnForceReleaseControls;
-        private void OnForceReleaseControls(IClientAPI remoteClient, UUID agentID) => m_ExeScheduler?.RequestControlHoldersCheck();
-        private void OnMakeChildAgentForControls(ScenePresence presence) => m_ExeScheduler?.RequestControlHoldersCheck();
+        // CORE-4: the scene raises OnScriptControlsReleased whenever a registration goes away, the script's own release
+        // or the core's (the viewer's release keys, ClearControls on a crossing, a stand-up, a permission revoke, the
+        // avatar leaving the region), after ScenePresence has let go of its lock. Exactly those scripts are asked again.
+        private void OnScriptControlsReleased(UUID agentId, UUID[] scriptItemIds)
+        {
+            foreach (UUID itemId in scriptItemIds) m_ExeScheduler?.RequestParcelCheckForItem(itemId);
+        }
+
+        // Kept as a backstop: Scene.RemoveClient raises it before the presence goes, and the release event comes from
+        // ScenePresence.Dispose in RemoveClient's finally block, which an earlier exception there would skip.
         private void OnRemovePresenceForControls(UUID agentId) => m_ExeScheduler?.RequestControlHoldersCheck();
 
         /// <summary>A script took or released controls.</summary>
@@ -988,28 +989,9 @@ namespace Phlox.ScriptEngine
             return AvatarHoldsControls(m_Scene.GetScenePresence(item.PermsGranter), itemId);
         }
 
-        // ScenePresence keeps its control registrations in a private dictionary keyed by script item id and has no
-        // accessor for "does this script hold controls", so it is read here, under the lock ScenePresence itself takes.
-        private static readonly FieldInfo s_ScriptedControls =
-            typeof(ScenePresence).GetField("scriptedcontrols", BindingFlags.NonPublic | BindingFlags.Instance);
-        private static int s_ScriptedControlsWarned;
-
-        /// <summary>True when the controls check can see the avatar's registrations (a test pins this).</summary>
-        internal static bool ControlsFieldFound
-            => s_ScriptedControls != null && typeof(System.Collections.IDictionary).IsAssignableFrom(s_ScriptedControls.FieldType);
-
-        /// <summary>Does this avatar hold taken controls for this script item right now?</summary>
+        /// <summary>Does this avatar hold taken controls for this script item right now? (ScenePresence.HasScriptControls)</summary>
         internal static bool AvatarHoldsControls(ScenePresence presence, UUID itemId)
-        {
-            if (presence == null) return false;
-            if (s_ScriptedControls?.GetValue(presence) is not System.Collections.IDictionary controls)
-            {
-                if (Interlocked.Exchange(ref s_ScriptedControlsWarned, 1) == 0)
-                    m_log.LogWarning("[PhloxEngine]: ScenePresence.scriptedcontrols not found; scripts holding controls are not exempt from No Scripts parcels");
-                return false;
-            }
-            lock (controls) return controls.Contains(itemId);
-        }
+            => presence != null && presence.HasScriptControls(itemId);
 
         // ── Moving events ──────────────────────────────────────────────────────
 

@@ -165,11 +165,13 @@ public class NoScriptParcelTests
     }
 
     /// <summary>The test's own look at the avatar's control registrations - not the engine's code under test.</summary>
-    private static bool Holds(ScenePresence sp, UUID itemId)
+    private static bool Holds(ScenePresence sp, UUID itemId) => sp.HasScriptControls(itemId);
+
+    private static bool EngineSaysHolds(ScenePresence sp, UUID itemId)
     {
-        var f = typeof(ScenePresence).GetField("scriptedcontrols", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        var d = (System.Collections.IDictionary)f.GetValue(sp)!;
-        lock (d) return d.Contains(itemId);
+        var m = typeof(PhloxEngine).GetMethod("AvatarHoldsControls", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static);
+        Assert.True(m != null, "PhloxEngine.AvatarHoldsControls is missing");
+        return (bool)m!.Invoke(null, new object[] { sp, itemId })!;
     }
 
     private void Log(Land l, string what) => _out.WriteLine(what + ": said=[" + string.Join(" | ", l.H.Said.TakeLast(12)) + "]");
@@ -509,9 +511,19 @@ public class NoScriptParcelTests
     };
 
     [Fact]
-    public void TheControlsCheckReadsTheAvatarsRegistrations()
+    public void TheControlsCheckAsksScenePresenceHasScriptControls()
     {
-        Assert.True(Static<bool>("ControlsFieldFound"), "ScenePresence.scriptedcontrols not found; the controls exemption cannot see the avatar");
+        using var l = new Land();
+        var sp = SceneHelpers.AddScenePresence(l.H.Scene, Resident);
+        var sog = l.AddObject("ctl0", East, Resident);
+        var id = l.Rez(sog.RootPart, Controller, GrantControls(sp.UUID));
+        Assert.True(l.PumpUntil(() => Holds(sp, id)));   // state_entry has taken them
+
+        Assert.True(EngineSaysHolds(sp, id));
+        Assert.False(EngineSaysHolds(sp, UUID.Random()));
+        Assert.False(EngineSaysHolds(null!, id));
+        sp.ClearControls();
+        Assert.False(EngineSaysHolds(sp, id));
     }
 
     [Fact]
@@ -532,8 +544,8 @@ public class NoScriptParcelTests
         l.Pump(300);
         Assert.True(l.LastTick("ctl") > running);
 
-        // the viewer's "release keys": ScenePresence.HandleForceReleaseControls clears them; Phlox is told nothing
-        // directly, so it re-asks the avatar on the client's event
+        // the viewer's "release keys": ScenePresence.HandleForceReleaseControls clears them and the scene raises
+        // OnScriptControlsReleased for this item
         var client = sp.ControllingClient;
         var evt = client.GetType().GetField("OnForceReleaseControls", BindingFlags.NonPublic | BindingFlags.Instance)!;
         ((ForceReleaseControls)evt.GetValue(client)!).Invoke(client, sp.UUID);
@@ -547,7 +559,7 @@ public class NoScriptParcelTests
     }
 
     [Fact]
-    public void ControlsClearedByTheCoreWithNoEventAreSeenAtTheNextDecision()
+    public void ControlsClearedByTheCorePauseTheScriptAtOnce()
     {
         using var l = new Land();
         var sp = SceneHelpers.AddScenePresence(l.H.Scene, Resident);
@@ -558,15 +570,17 @@ public class NoScriptParcelTests
         l.Pump();
         Assert.False(l.Paused(id));
 
-        // ScenePresence.ClearControls raises nothing; Phlox's own record (MiscAttr.Control) still says "taken"
+        // ClearControls (the core's release on a crossing) raises OnScriptControlsReleased for this item; nothing else
+        // happens, and Phlox's own record (MiscAttr.Control) still says "taken". Before CORE-4 this waited for the next
+        // trigger.
         sp.ClearControls();
-        l.Pump();
-        Assert.False(l.Paused(id));
-
-        // any later decision asks the avatar, not Phlox's memory
-        l.SetFlags(l.WestParcel, otherScripts: false, groupScripts: false);
-        l.Pump();
+        Assert.False(Holds(sp, id));
+        l.Pump(100);
+        int atPause = l.LastTick("ctl2");
+        l.Pump(400);
+        Log(l, "after ClearControls");
         Assert.True(l.Paused(id));
+        Assert.Equal(atPause, l.LastTick("ctl2"));
     }
 
     [Fact]

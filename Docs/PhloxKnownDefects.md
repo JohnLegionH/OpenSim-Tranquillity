@@ -3697,14 +3697,15 @@ the core still refuses its scripts at start on land that forbids them, and nothi
   the parcel to HAVE a group (core's rule; Halcyon compared zero with zero, so a groupless object ran on a groupless
   parcel with only group scripts allowed). A region with no land module has no parcel rules.
 - **Controls are read from the avatar**: the script's permission granter's ScenePresence registrations for that item.
-  Core has no accessor, so the private `ScenePresence.scriptedcontrols` is read by reflection under its own lock
-  (`NoScriptParcelTests.TheControlsCheckReadsTheAvatarsRegistrations` fails if core renames it; the engine logs one
-  warning and treats the script as not holding controls). Phlox's own record of llTakeControls is never used.
+  ~~Core has no accessor, so the private `ScenePresence.scriptedcontrols` is read by reflection under its own lock.~~
+  Resolved in CORE-4: `ScenePresence.HasScriptControls(itemId)`, no reflection. Phlox's own record of llTakeControls
+  is never used.
 - **Triggers** (events only, no timer, no scan of the scene): script start; OnGroupCrossedToNewParcel (setter moves,
   physics moves, the first parcel on add, a detached object landing); OnObjectOwnerOrGroupChanged; OnLandObjectAdded
   (flags, owner, group, sale, subdivide, join); OnAttach (attach and detach); llTakeControls / llReleaseControls; and,
-  for the core clearing controls, the client's OnForceReleaseControls ("release keys"), OnMakeChildAgent and
-  OnRemovePresence. A trigger only queues a check; the scheduler thread decides and pauses or resumes.
+  for the core clearing controls, since CORE-4 `EventManager.OnScriptControlsReleased` (exactly the released items)
+  plus OnRemovePresence as a backstop (before CORE-4: the client's OnForceReleaseControls, OnMakeChildAgent and
+  OnRemovePresence). A trigger only queues a check; the scheduler thread decides and pauses or resumes.
 - **Cost.** An object event checks that object's own scripts. A parcel change looks up the parcel under each object
   running Phlox scripts (one array lookup per object, attachments skipped) and decides only for the scripts on the
   parcel that changed. Measured (Debug, test host): 200 scripted objects, 100 on the changed parcel - 200 scanned,
@@ -3724,10 +3725,11 @@ the core still refuses its scripts at start on land that forbids them, and nothi
   show the owner's setting, so a parcel-paused script shows Running. `phlox status` shows `HELD: Parcel` with the reason.
 
 Known limits:
-- The core clears controls in ScenePresence.ClearControls with no event of its own. Where that happens without one of
+- ~~The core clears controls in ScenePresence.ClearControls with no event of its own. Where that happens without one of
   the events above (the avatar leaving or going child, "release keys"), a script on disallowed land that was running
   only because it held controls keeps running until its next trigger, when the check asks the avatar again and pauses
-  it. Test: ControlsClearedByTheCoreWithNoEventAreSeenAtTheNextDecision.
+  it.~~ Resolved in CORE-4: every core release raises OnScriptControlsReleased and the script pauses at once. Test:
+  ControlsClearedByTheCorePauseTheScriptAtOnce.
 - Linking is not a trigger: a prim linked into an object standing on other land is checked at that object's next trigger.
 - ~~The timer restarts a full interval after the resume (Halcyon kept the time that was left).~~ Resolved in PHLOX-44.
 - A reset of a paused script (llResetOtherScript, the viewer's Reset) resets it and leaves it paused; its state_entry
@@ -3795,3 +3797,29 @@ affected.
 What residents will notice: group invite and eject scripts see Halcyon's codes (0 for done, 3 for a bad argument, 2
 for a server problem, 5 for the creator rule); a god's llSetInventoryPermMask changes the mask it names; a timer on a
 No Scripts parcel picks up where it left off when scripts are allowed again.
+
+## CORE-4 - No Scripts controls exemption uses ScenePresence.HasScriptControls and OnScriptControlsReleased (no reflection)
+
+Core commit (for NGC develop, `fix/script-controls-api`): `ScenePresence.HasScriptControls(itemId)` and
+`EventManager.OnScriptControlsReleased(agentId, itemIds)`. The event fires whenever a registration goes away: the
+script's own release, the viewer's "release keys", ClearControls on a crossing, a stand-up, a permission revoke or
+script removal, the avatar leaving the region, and an incoming agent update without it. Only the removed ids are
+carried, and the event is raised outside the registrations lock.
+
+- PhloxEngine.AvatarHoldsControls asks `HasScriptControls`. The reflection on `ScenePresence.scriptedcontrols`, its
+  warning and `ControlsFieldFound` are gone.
+- OnScriptControlsReleased queues a parcel check for exactly the released items. This resolves PHLOX-43's gap: a script
+  on disallowed land running only because it held controls now pauses as soon as the core releases them.
+- Dropped triggers:
+  - the client's OnForceReleaseControls: HandleForceReleaseControls raises the new event itself.
+  - OnMakeChildAgent: MakeChildAgent changes no registration, so the check cannot answer differently. The crossing's
+    ClearControls raises the new event.
+- Kept: OnRemovePresence, as a backstop. The release on leaving comes from ScenePresence.Dispose in the finally block
+  of Scene.RemoveClient, which an earlier exception in that block would skip.
+
+Tests: `NoScriptParcelTests` (23):
+- `TheControlsCheckAsksScenePresenceHasScriptControls` replaces the reflection pin.
+- `ControlsClearedByTheCorePauseTheScriptAtOnce` replaces `ControlsClearedByTheCoreWithNoEventAreSeenAtTheNextDecision`.
+  ClearControls alone pauses the script. Red without the engine change: the script is not paused.
+
+No bytecode, serialization or cache change.
