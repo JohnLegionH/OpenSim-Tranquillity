@@ -3973,3 +3973,12 @@ Probe: `phlox47-probe.lsl` + `phlox47-probe-auto-testisle.yaml` (not run). The p
 endpoint and reads the headers with llGetHTTPHeader.
 
 No function index or declared return type changed. No bytecode, serialization or cache change.
+
+## PHLOX-50 - test suite speed: one inert test seam
+
+`PhloxEngine.ObjectPostsInFlight` (internal) counts object events that PostObjectEvent has handed to the thread pool
+and not yet posted to their scripts. Nothing in production reads it; the counter is the only change. Until the pool
+runs the work item, the event is in no scheduler queue. With test classes running in parallel, a link_message could
+therefore arrive after a test's fixed window even though neither scheduler showed work pending. The harness's
+"finish what is still on its way" wait reads the counter. No behaviour change, and no bytecode, serialization or
+cache change.

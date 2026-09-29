@@ -15,7 +15,7 @@ namespace InWorldz.Phlox.Tests;
 /// llGetLocalPos in an unattached root, an attachment's root and a child; llGetRot, PRIM_ROTATION and PRIM_POS_LOCAL on
 /// an attachment's root; and a long list mixing these rules with earlier ones.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class PrimParamsOmegaClickSitShapeTests
 {
     private readonly ITestOutputHelper _out;

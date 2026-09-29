@@ -15,7 +15,7 @@ namespace InWorldz.Phlox.Tests;
 /// broadcast chat (EventManager.OnChatBroadcast). The sender never hears itself, and no listen in either
 /// engine hears one message twice.
 /// </summary>
-[Collection("phlox-state")]
+[Collection("phlox-yengine")]
 public class CrossEngineChatTests
 {
     private readonly ITestOutputHelper _out;

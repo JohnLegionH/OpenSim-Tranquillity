@@ -20,7 +20,7 @@ namespace InWorldz.Phlox.Tests;
 /// revoked"; llRequestPermissions: "PERMISSION_TELEPORT cannot be held by temporary attachments").
 /// The per-event table is in the work folder's STATE.md.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class PermissionLifecycleTests
 {
     private const int TAKE_CONTROLS = 0x4, TRIGGER_ANIMATION = 0x10, TELEPORT = 0x1000, CONTROL_CAMERA = 0x800;
@@ -240,7 +240,7 @@ public class PermissionLifecycleTests
     {
         using var h = new SchedulerHarness();
         var id = h.RezScript(Lifecycle);
-        h.Pump();
+        PumpUntil(h, () => h.Said.Any(s => s.StartsWith("start", StringComparison.Ordinal)));   // PHLOX-50: until it has started
         var client = Present(h, h.Prim.OwnerID);
         var sp = h.Scene.GetScenePresence(client.AgentId);
         var sog = h.Prim.ParentGroup;
@@ -267,7 +267,7 @@ public class PermissionLifecycleTests
     {
         using var h = new SchedulerHarness();
         var id = h.RezScript(Lifecycle);
-        h.Pump();
+        PumpUntil(h, () => h.Said.Any(s => s.StartsWith("start", StringComparison.Ordinal)));   // PHLOX-50: until it has started
         var client = Present(h, h.Prim.OwnerID);
         var sp = h.Scene.GetScenePresence(client.AgentId);
         var sog = h.Prim.ParentGroup;
@@ -307,7 +307,7 @@ public class PermissionLifecycleTests
         var mutes = new FakeMutes();
         h.Scene.RegisterModuleInterface<IMuteListService>(mutes);
         var id = h.RezScript(Lifecycle);
-        h.Pump();
+        PumpUntil(h, () => h.Said.Any(s => s.StartsWith("start", StringComparison.Ordinal)));   // PHLOX-50: until it has started
         var client = Present(h, UUID.Random());
         mutes.Muted[client.AgentId] = new List<UUID> { muted == "owner" ? h.Prim.OwnerID : h.Prim.ParentGroup.UUID };
 
@@ -328,7 +328,7 @@ public class PermissionLifecycleTests
         var mutes = new FakeMutes();
         h.Scene.RegisterModuleInterface<IMuteListService>(mutes);
         var id = h.RezScript(Lifecycle);
-        h.Pump();
+        PumpUntil(h, () => h.Said.Any(s => s.StartsWith("start", StringComparison.Ordinal)));   // PHLOX-50: until it has started
         var client = Present(h, UUID.Random());
         mutes.Muted[client.AgentId] = new List<UUID> { UUID.Random() };
         Say(h, "ask " + client.AgentId + " " + TRIGGER_ANIMATION);
@@ -409,7 +409,7 @@ public class PermissionLifecycleTests
     {
         using var h = new SchedulerHarness();
         var id = h.RezScript(Lifecycle);
-        h.Pump();
+        PumpUntil(h, () => h.Said.Any(s => s.StartsWith("start", StringComparison.Ordinal)));   // PHLOX-50: until it has started
         var client = Present(h, UUID.Random());
         Grant(h, client, id, TRIGGER_ANIMATION | CONTROL_CAMERA);
         h.Scene.CloseAgent(client.AgentId, false);
@@ -433,7 +433,7 @@ public class PermissionLifecycleTests
     {
         using var h = new SchedulerHarness();
         var id = h.RezScript(Lifecycle);
-        h.Pump();
+        PumpUntil(h, () => h.Said.Any(s => s.StartsWith("start", StringComparison.Ordinal)));   // PHLOX-50: until it has started
         var client = Present(h, UUID.Random());
         Grant(h, client, id, TRIGGER_ANIMATION);
         h.Scene.CloseAgent(client.AgentId, false);

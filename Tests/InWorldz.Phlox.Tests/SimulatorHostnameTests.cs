@@ -8,7 +8,7 @@ namespace InWorldz.Phlox.Tests;
 /// host name, as Halcyon (Scene.GetEnv "simulator_hostname" => RegionInfo.ExternalHostName) does,
 /// not the name of the machine the simulator runs on.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class SimulatorHostnameTests
 {
     private readonly ITestOutputHelper _out;

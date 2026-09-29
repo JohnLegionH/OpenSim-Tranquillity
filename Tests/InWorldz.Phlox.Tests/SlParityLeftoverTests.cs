@@ -18,7 +18,7 @@ namespace InWorldz.Phlox.Tests;
 /// ("Equality test on lists does not compare contents, only the length", same page).</item>
 /// </list>
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class SlParityLeftoverTests
 {
     private const int DebugChannel = 0x7FFFFFFF;

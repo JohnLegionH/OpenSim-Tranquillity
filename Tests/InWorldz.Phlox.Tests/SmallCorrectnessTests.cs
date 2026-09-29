@@ -14,7 +14,7 @@ using PermissionMask = OpenSim.Framework.PermissionMask;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>PHLOX-21 part E. Small correctness fixes, one test each.</summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class SmallCorrectnessTests
 {
     private readonly ITestOutputHelper _out;

@@ -21,7 +21,7 @@ namespace InWorldz.Phlox.Tests;
 /// (https://wiki.secondlife.com/wiki/LlCreateLink);
 /// llSetObjectPermMask sits behind YEngine's god-functions gate ([YEngine] AllowGodFunctions and an administrator owner).
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class DroppedChecksTests
 {
     private const int ATTACH = 0x20, CHANGE_LINKS = 0x80;

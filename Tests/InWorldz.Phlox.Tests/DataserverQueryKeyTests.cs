@@ -12,7 +12,7 @@ namespace InWorldz.Phlox.Tests;
 /// (https://wiki.secondlife.com/wiki/Dataserver). Each request here is used as an expression and
 /// compared with the event's key.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class DataserverQueryKeyTests
 {
     private readonly ITestOutputHelper _out;

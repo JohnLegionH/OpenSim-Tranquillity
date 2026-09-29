@@ -13,7 +13,7 @@ namespace InWorldz.Phlox.Tests;
 /// value and runs async is exercised here twice - as a statement and as an assignment - and the
 /// list is checked against the dispatch table itself, so a new async entry cannot land uncovered.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class AsyncReturnGuardTests
 {
     private readonly ITestOutputHelper _out;

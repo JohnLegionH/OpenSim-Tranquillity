@@ -21,7 +21,7 @@ namespace InWorldz.Phlox.Tests;
 /// one upstream's NPCModuleTests builds (AvatarFactory, UserManagement, Attachments, NPCModule,
 /// BasicInventoryAccess) plus BotManager, with [NPC] Enabled and the OSSL level at High.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class OsslNpcTests
 {
     private readonly ITestOutputHelper _out;

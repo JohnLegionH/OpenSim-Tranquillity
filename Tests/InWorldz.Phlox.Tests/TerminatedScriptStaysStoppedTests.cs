@@ -14,7 +14,7 @@ namespace InWorldz.Phlox.Tests;
 ///
 /// <para>Shares StateManager's one SQLite file with the other round-trip tests, hence the collection.</para>
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class TerminatedScriptStaysStoppedTests
 {
     private readonly ITestOutputHelper _out;

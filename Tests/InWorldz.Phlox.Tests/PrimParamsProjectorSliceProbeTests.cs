@@ -22,7 +22,7 @@ namespace InWorldz.Phlox.Tests;
 /// helper (SL's mask bits); CLICK_ACTION_PAY reverting to CLICK_ACTION_NONE without a money event; and
 /// llGetRootRotation on an attachment returning the wearer's rotation.
 /// </summary>
-[Collection("phlox-state")]
+[Collection("phlox-yengine")]
 public class PrimParamsProjectorSliceProbeTests
 {
     private readonly ITestOutputHelper _out;

@@ -15,7 +15,7 @@ namespace InWorldz.Phlox.Tests;
 /// 10m per call for unattached root prims". Halcyon's caps: an attached root 3.5 m from the attach point, a child of an
 /// attachment 54 m from the root, any other child 256 m.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class LlSetPosSharesPrimPositionTests
 {
     private readonly ITestOutputHelper _out;

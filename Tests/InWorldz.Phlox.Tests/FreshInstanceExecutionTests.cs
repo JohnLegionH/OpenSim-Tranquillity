@@ -21,7 +21,7 @@ namespace InWorldz.Phlox.Tests;
 /// A green run here is a real result, not a failure of the test.
 /// </para>
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class FreshInstanceExecutionTests
 {
     private readonly ITestOutputHelper _out;

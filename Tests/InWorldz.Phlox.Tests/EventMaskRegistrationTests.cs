@@ -11,7 +11,7 @@ namespace InWorldz.Phlox.Tests;
 /// <c>touch_start</c> never fires. Observed in world — llSetColor, llSetText,
 /// llSay and llOwnerSay all ran, the Running box was ticked, and the prim could not be clicked.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class EventMaskRegistrationTests
 {
     private readonly ITestOutputHelper _out;

@@ -17,7 +17,7 @@ namespace InWorldz.Phlox.Tests;
 /// item's answer and stored whatever bits the viewer sent.
 /// https://wiki.secondlife.com/wiki/LlRequestPermissions (implicit grants), .../LlAttachToAvatar.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class PermissionsTests
 {
     private const int TRIGGER_ANIMATION = 0x10, ATTACH = 0x20, RELEASE_OWNERSHIP = 0x40, OVERRIDE_ANIMATIONS = 0x8000;

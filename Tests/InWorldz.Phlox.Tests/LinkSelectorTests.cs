@@ -13,7 +13,7 @@ namespace InWorldz.Phlox.Tests;
 /// and link 0 the root; a positive number that link. An unknown negative number or one past the last link
 /// selects nothing.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class LinkSelectorTests
 {
     private readonly ITestOutputHelper _out;
@@ -60,6 +60,9 @@ public class LinkSelectorTests
         WaitFor(h, said => said.Contains("done"));
         Assert.True(h.Said.Contains("done"), "the sender never ran: " + string.Join(" | ", h.Said));
         h.PumpFor(TimeSpan.FromMilliseconds(500));
+        // PHLOX-50: under load a delivery can still be queued when the 500 ms window ends; finish what is queued
+        // (the window above is unchanged, so "not selected" still means nothing arrived in it or after).
+        h.PumpUntilIdle(TimeSpan.FromSeconds(20));
         _out.WriteLine(string.Join("\n", h.Said));
     }
 

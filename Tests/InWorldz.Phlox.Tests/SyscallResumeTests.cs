@@ -17,7 +17,7 @@ namespace InWorldz.Phlox.Tests;
 /// is what <c>LastSyscallIndex</c> is now persisted for (tag 22).
 /// </para>
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class SyscallResumeTests
 {
     private readonly ITestOutputHelper _out;

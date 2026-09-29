@@ -17,7 +17,7 @@ namespace InWorldz.Phlox.Tests;
 /// YEngine (LSL_Api.cs llGiveInventoryList, "Unable to give list, destination not found"), it gives an avatar with
 /// no presence here nothing.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class GiveToAbsentAvatarTests
 {
     private readonly ITestOutputHelper _out;

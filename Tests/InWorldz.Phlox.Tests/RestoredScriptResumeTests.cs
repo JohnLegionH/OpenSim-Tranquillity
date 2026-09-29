@@ -35,7 +35,7 @@ namespace InWorldz.Phlox.Tests;
 /// against PHLOX-3 candidate (iv): it is more global state reachable from a harness test.
 /// </para>
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class RestoredScriptResumeTests
 {
     private readonly ITestOutputHelper _out;
@@ -205,6 +205,32 @@ public class RestoredScriptResumeTests
 /// <summary>
 /// PHLOX-4: one collection, so the tests that share the single script_state.db file cannot run beside
 /// each other or beside anything else that builds an engine.
+/// PHLOX-50: it runs alone, after every other collection. Only the classes that need that are in it:
+/// - process-wide test seams every engine reads: Clock.SetSourceForTesting (ClockBasisTests, RemainingStubTests),
+///   StateManager.FailLoadForTest (StateLoadFailedHoldTests), PhloxScriptLoader.CompileDelayForTest / ErrorWaitTimeout /
+///   OwnerAlertGrace (CompileOffSchedulerTests, CompileErrorsToEditorTests), SyscallShim.ThrowForTest
+///   (ThrownSyscallStaysDeadTests);
+/// - the compile cache files on disk (CacheSchemaBumpTests) and the state database file itself (StateDbContentionTests);
+/// - tests that measure real time and would read machine load as a failure: timer cadence and floor, the reset
+///   throttle (ScriptCleanupTests), regex timeouts (ListenRegexTimeoutTests, RobustnessTests), the parcel timer
+///   (NoScriptParcelTests), ticks counted while a lookup is held (AvatarName2KeyTests).
+/// Every other class builds its own harness (its own Scene and engine) and runs in parallel:
+/// - script_state.db rows are keyed by item id and every test makes its own random ids; engines sharing the file side
+///   by side is the PHLOX-11 design (WAL, busy timeout, one static writer lock), and 13 harness classes already ran in
+///   parallel before PHLOX-50;
+/// - the core HttpRequestModule's statics are used by one class only (PhloxHttpHeaderTests), which runs its own tests
+///   one at a time;
+/// - the one process-wide store scenes share, NullPresenceData, is swapped under its own lock by
+///   SchedulerHarness.NewScene, so a scene being built never disturbs another class's avatars (PHLOX-50's first
+///   parallel run threw in NullPresenceData.Get before that).
 /// </summary>
 [CollectionDefinition("phlox-state", DisableParallelization = true)]
 public class PhloxStateCollection { }
+
+/// <summary>
+/// PHLOX-50: the classes that stand YEngine up beside Phlox. YEngine keeps compiler state in statics
+/// (MMRScriptBinOpStr, MMRDelegateCommon), so two YEngines never run at once; the collection runs in parallel with
+/// the Phlox-only classes, whose scenes YEngine never sees.
+/// </summary>
+[CollectionDefinition("phlox-yengine")]
+public class PhloxYEngineCollection { }

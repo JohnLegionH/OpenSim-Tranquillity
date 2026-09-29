@@ -13,7 +13,7 @@ namespace InWorldz.Phlox.Tests;
 /// region_product_name => RegionInfo.RegionType, region_product_sku and sim_channel => "OpenSim"),
 /// not a fixed product name of one grid.
 /// </summary>
-[Collection("phlox-state")]
+[Collection("phlox-yengine")]
 public class GetEnvProductKeysTests
 {
     private static readonly string[] Keys = { "region_product_name", "region_product_sku", "sim_channel" };

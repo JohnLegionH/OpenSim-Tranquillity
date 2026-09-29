@@ -19,7 +19,7 @@ namespace InWorldz.Phlox.Tests;
 /// second thread while the test thread pumps - the same shape as production, where physics or an async
 /// syscall thread waits and the script thread runs the handlers.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class DamageEventsTests
 {
     private readonly ITestOutputHelper _out;

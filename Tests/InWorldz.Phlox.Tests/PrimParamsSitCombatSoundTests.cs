@@ -20,7 +20,7 @@ namespace InWorldz.Phlox.Tests;
 /// read back by Phlox; the saved form; the region's sit path refusing a manual sit on a scripted-only prim; and
 /// PRIM_OMEGA on a seated avatar shouting SL's "PRIM_OMEGA disallowed on agent" while the rest of the list applies.
 /// </summary>
-[Collection("phlox-state")]
+[Collection("phlox-yengine")]
 public class PrimParamsSitCombatSoundTests
 {
     private readonly ITestOutputHelper _out;

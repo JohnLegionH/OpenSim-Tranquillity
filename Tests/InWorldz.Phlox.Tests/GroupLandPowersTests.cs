@@ -22,7 +22,7 @@ namespace InWorldz.Phlox.Tests;
 /// The land is three strips: west (x &lt; 86) owned by the group G, middle (x &lt; 172) owned by the person P,
 /// east owned by a stranger and tagged (not deeded) to G.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class GroupLandPowersTests
 {
     private static readonly Vector3 West = new(40, 128, 25), Middle = new(128, 128, 25), East = new(210, 128, 25);

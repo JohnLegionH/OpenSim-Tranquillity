@@ -19,7 +19,7 @@ namespace InWorldz.Phlox.Tests;
 /// the wrong type) and the ranges SL gives; the same material state read and written from a YEngine script's API;
 /// IW_PRIM_ALPHA against llSetAlpha / llGetAlpha; and PRIM_OMEGA read back in SL's form.
 /// </summary>
-[Collection("phlox-state")]
+[Collection("phlox-yengine")]
 public class PrimParamsSurfaceMaterialTests
 {
     private readonly ITestOutputHelper _out;

@@ -15,7 +15,7 @@ namespace InWorldz.Phlox.Tests;
 /// <para>Every test here is red on the tree before the port: the filter stored nothing, the animation
 /// set stayed empty, the start string was always blank and the XOR was always <c>""</c>.</para>
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class UpstreamPortedStubTests
 {
     private readonly ITestOutputHelper _out;

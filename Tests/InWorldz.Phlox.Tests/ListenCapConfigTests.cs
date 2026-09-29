@@ -14,7 +14,7 @@ namespace InWorldz.Phlox.Tests;
 /// means the same thing to both engines. With no key the script cap stays 65, as before. A value that is not an
 /// integer keeps the default, as WorldComm does, and Phlox logs one warning.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class ListenCapConfigTests
 {
     private readonly ITestOutputHelper _out;

@@ -14,7 +14,7 @@ namespace InWorldz.Phlox.Tests;
 /// PermissionErrorToOwner). Dispatch is proven through the harness (a script calls each one and says
 /// the result); the gate is proven by the same script under four configurations.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class OsslInfoFunctionsTests
 {
     private readonly ITestOutputHelper _out;

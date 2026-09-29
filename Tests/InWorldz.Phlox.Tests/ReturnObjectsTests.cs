@@ -19,7 +19,7 @@ namespace InWorldz.Phlox.Tests;
 /// owners or an ERR_* flag." The objects go back to their owners' Lost and Found through the core's parcel-return call.
 /// The land is three strips: west (x &lt; 86) and middle (x &lt; 172) owned by the script owner, east owned by someone else.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class ReturnObjectsTests
 {
     private const int PERMISSION_RETURN_OBJECTS = 0x10000;

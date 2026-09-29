@@ -17,7 +17,7 @@ namespace InWorldz.Phlox.Tests;
 /// parameters - <c>(key id, integer button_levels, list axes)</c> - not four.
 /// </para>
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class SlEventRecognitionTests
 {
     private readonly ITestOutputHelper _out;

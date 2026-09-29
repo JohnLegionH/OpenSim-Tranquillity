@@ -10,7 +10,7 @@ namespace InWorldz.Phlox.Tests;
 /// own threat level. One script calls every one through the harness and says a value the test asserts
 /// exactly; the Low-gated one is checked both ways.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class OsslPureHelpersTests
 {
     private readonly ITestOutputHelper _out;

@@ -1313,6 +1313,7 @@ namespace Phlox.ScriptEngine
             // returns true *before* events are actually delivered. No current caller
             // (OnScriptChangedEvent, OnSceneObjectPartUpdated, PostTouchEvent,
             //  PostObjectLinksetDataEvent) inspects the return value, so this is safe.
+            Interlocked.Increment(ref m_ObjectPostsInFlight);   // PHLOX-50: counted only, see ObjectPostsInFlight
             ThreadPool.UnsafeQueueUserWorkItem(_ =>
             {
                 try
@@ -1335,10 +1336,23 @@ namespace Phlox.ScriptEngine
                         "[PhloxEngine]: PostObjectEvent deferred dispatch failed for localID {0}: {1}",
                         localID, e);
                 }
+                finally
+                {
+                    Interlocked.Decrement(ref m_ObjectPostsInFlight);
+                }
             }, null);
 
             return true;
         }
+
+        private int m_ObjectPostsInFlight;
+
+        /// <summary>
+        /// PHLOX-50 test seam, inert in production (a counter nothing acts on): object events handed to the thread pool
+        /// above and not yet posted to their scripts. Until the pool runs the work item the event is in no scheduler
+        /// queue, so a test waiting for "nothing pending" reads this too.
+        /// </summary>
+        internal int ObjectPostsInFlight => Volatile.Read(ref m_ObjectPostsInFlight);
 
         public bool PostObjectLinksetDataEvent(uint localID, int action,
             ReadOnlySpan<char> name, ReadOnlySpan<char> value)

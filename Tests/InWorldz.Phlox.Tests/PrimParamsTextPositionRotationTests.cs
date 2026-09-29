@@ -18,7 +18,7 @@ namespace InWorldz.Phlox.Tests;
 /// quirk, as Halcyon and OpenSim do it); a seated avatar reads back its offset and rotation relative to the root, in
 /// the root's frame; and the rule numbers OpenSim defines beyond SL's are skipped by OpenSim's count.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class PrimParamsTextPositionRotationTests
 {
     private readonly ITestOutputHelper _out;

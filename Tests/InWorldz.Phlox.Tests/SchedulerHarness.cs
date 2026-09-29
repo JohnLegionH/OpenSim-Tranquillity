@@ -53,7 +53,7 @@ public sealed class SchedulerHarness : IDisposable
         configure?.Invoke(config);
         Config = config;
 
-        Scene = new SceneHelpers().SetupScene();
+        Scene = NewScene();
 
         if (withYEngine)
         {
@@ -114,6 +114,29 @@ public sealed class SchedulerHarness : IDisposable
 
         // The master scheduler owns a thread; this harness drives DoWork itself instead, so stop it.
         StopMasterThread();
+    }
+
+    /// <summary>
+    /// PHLOX-50: SceneHelpers' constructor sets the process-wide <c>NullPresenceData.Instance</c> to null and replaces it
+    /// (OpenSim.Tests.Common SceneHelpers.StartPresenceService: "some services share data via statics, so we need to
+    /// null every time"). With test classes in parallel that did two things: a presence call in another class while
+    /// Instance was null threw in NullPresenceData.Get, and every other scene's presence rows were dropped. Every
+    /// NullPresenceData method runs under its private static s_lock and delegates to Instance, so holding that lock
+    /// while the scene is built, and putting the previous Instance back, makes the swap invisible: no call sees null,
+    /// and every scene keeps using the one shared store its comment describes ("Test storage shared by every scene in
+    /// the process"). No production code is involved; the core is only read.
+    /// </summary>
+    private static TestScene NewScene()
+    {
+        var store = typeof(OpenSim.Data.Null.NullPresenceData);
+        object storeLock = store.GetField("s_lock", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+        lock (storeLock)
+        {
+            var kept = OpenSim.Data.Null.NullPresenceData.Instance;
+            TestScene scene = new SceneHelpers().SetupScene();
+            if (kept != null) OpenSim.Data.Null.NullPresenceData.Instance = kept;
+            return scene;
+        }
     }
 
     private static object Field(object o, string name)
@@ -271,13 +294,37 @@ public sealed class SchedulerHarness : IDisposable
         var loaderDoWork = m_loader.GetType().GetMethod("DoWork");
         var exeDoWork = m_exe.GetType().GetMethod("DoWork");
 
+        bool loadPending = false;
         for (var i = 0; i < rounds; i++)
         {
             var l = loaderDoWork!.Invoke(m_loader, null);
             var e = exeDoWork!.Invoke(m_exe, null);
+            loadPending = Pending(l);
             if (!Pending(l) && !Pending(e)) { /* keep pumping a little; events can arrive late */ }
             System.Threading.Thread.Sleep(1);
         }
+        if (loadPending || Engine.ObjectPostsInFlight > 0) FinishLateLoads();
+    }
+
+    /// <summary>
+    /// PHLOX-50: a script whose compile was still running, or an object event still with the thread pool, when a fixed
+    /// window ended (a loaded machine, test classes in parallel) is waited for, and its first events are run, as they
+    /// would have been inside the window on a quiet machine. Only ever after the window, never instead of it, and only
+    /// when something was still on its way: on a quiet machine this never runs, so no window changes there.
+    /// </summary>
+    private void FinishLateLoads()
+    {
+        var loaderDoWork = m_loader.GetType().GetMethod("DoWork");
+        var exeDoWork = m_exe.GetType().GetMethod("DoWork");
+        var until = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (DateTime.UtcNow < until)
+        {
+            var l = loaderDoWork!.Invoke(m_loader, null);
+            exeDoWork!.Invoke(m_exe, null);
+            if (!Pending(l)) break;
+            System.Threading.Thread.Sleep(1);
+        }
+        PumpUntilIdle(TimeSpan.FromSeconds(30));
     }
 
     /// <summary>PHLOX-4b probe: the interpreter's RuntimeState, by reflection.</summary>
@@ -364,12 +411,37 @@ public sealed class SchedulerHarness : IDisposable
         var loaderDoWork = m_loader.GetType().GetMethod("DoWork");
         var exeDoWork = m_exe.GetType().GetMethod("DoWork");
         var until = DateTime.UtcNow + how;
+        bool loadPending = false;
         while (DateTime.UtcNow < until)
         {
-            loaderDoWork!.Invoke(m_loader, null);
+            loadPending = Pending(loaderDoWork!.Invoke(m_loader, null));
             exeDoWork!.Invoke(m_exe, null);
             System.Threading.Thread.Sleep(1);
         }
+        if (loadPending || Engine.ObjectPostsInFlight > 0) FinishLateLoads();
+    }
+
+    /// <summary>
+    /// PHLOX-50: pump until neither scheduler reports work pending, and no object event is still with the thread pool
+    /// (PhloxEngine.ObjectPostsInFlight), for <paramref name="quietRounds"/> rounds in a row, or
+    /// <paramref name="limit"/> passes; false on the limit. Used AFTER a test's own settle window, never instead of it,
+    /// so a "nothing arrived" window is never shorter - only a delivery that is still queued under load is waited for.
+    /// </summary>
+    public bool PumpUntilIdle(TimeSpan limit, int quietRounds = 5)
+    {
+        var loaderDoWork = m_loader.GetType().GetMethod("DoWork");
+        var exeDoWork = m_exe.GetType().GetMethod("DoWork");
+        var until = DateTime.UtcNow + limit;
+        int quiet = 0;
+        while (DateTime.UtcNow < until)
+        {
+            var l = loaderDoWork!.Invoke(m_loader, null);
+            var e = exeDoWork!.Invoke(m_exe, null);
+            quiet = Pending(l) || Pending(e) || Engine.ObjectPostsInFlight > 0 ? 0 : quiet + 1;
+            if (quiet >= quietRounds) return true;
+            System.Threading.Thread.Sleep(1);
+        }
+        return false;
     }
 
     private static bool Pending(object workStatus)

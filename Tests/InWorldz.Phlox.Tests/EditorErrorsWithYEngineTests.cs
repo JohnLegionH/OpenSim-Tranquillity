@@ -17,7 +17,7 @@ namespace InWorldz.Phlox.Tests;
 /// the pop-up). PHLOX-22 C's tests registered Phlox alone. Also here: a compile that fails before the editor's
 /// GetScriptErrors reaches Phlox must reach the editor ONCE - no pop-up as well.
 /// </summary>
-[Collection("phlox-state")]
+[Collection("phlox-yengine")]
 public class EditorErrorsWithYEngineTests
 {
     private readonly ITestOutputHelper _out;

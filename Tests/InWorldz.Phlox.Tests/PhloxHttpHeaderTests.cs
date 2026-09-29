@@ -19,7 +19,7 @@ namespace InWorldz.Phlox.Tests;
 /// cause a runtime script error." What is checked is what the core's HttpRequestModule actually puts on the wire, read
 /// by a loopback listener, not the script's view.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class PhloxHttpHeaderTests
 {
     private const string Shard = "PhloxTestShard";

@@ -20,7 +20,7 @@ namespace InWorldz.Phlox.Tests;
 /// groups know I'm online" (the directory-visibility preference), and "0" if it has, or if the
 /// preference cannot be read. Groups are not consulted, as in Halcyon.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class DataOnlinePrivacyTests
 {
     private readonly ITestOutputHelper _out;

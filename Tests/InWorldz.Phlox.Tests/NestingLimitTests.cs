@@ -11,7 +11,7 @@ namespace InWorldz.Phlox.Tests;
 /// (PhloxCompileProbe) - "cold" is a fresh process per case, "warm" one process that compiled 100 ordinary
 /// scripts first - and both must give the same outcome. The child also means a real stack overflow kills only it.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class NestingLimitTests
 {
     private readonly ITestOutputHelper _out;

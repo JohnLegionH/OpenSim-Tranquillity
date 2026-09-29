@@ -15,7 +15,7 @@ namespace InWorldz.Phlox.Tests;
 /// after the last select was invisible - the menu still read "Touch" with TouchName set to "Enter".
 /// </para>
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class TouchLabelToViewerTests
 {
     private readonly ITestOutputHelper _out;

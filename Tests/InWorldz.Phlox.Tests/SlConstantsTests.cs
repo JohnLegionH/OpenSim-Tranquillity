@@ -24,7 +24,7 @@ namespace InWorldz.Phlox.Tests;
 /// SL constant with SL's value, the implementation must not keep private copies that disagree, and
 /// each family that did disagree is pinned by one behaviour test using the fixture's value.
 /// </summary>
-[Collection("phlox-state")]
+// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class SlConstantsTests
 {
     private readonly ITestOutputHelper _out;
