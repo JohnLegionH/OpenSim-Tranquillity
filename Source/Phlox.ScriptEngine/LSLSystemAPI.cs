@@ -11962,6 +11962,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (!httpMod.CheckThrottle(m_localID, m_host.OwnerID))
                 return UUID.Zero.ToString();
 
+            // PHLOX-51: the operator's outbound filter, where and as YEngine applies it (after the throttle, before the
+            // parameters are read).
+            if (!OutboundAllowed(httpMod, "llHttpRequest", url))
+                return string.Empty;
+
             // Parse parameter pairs into list and custom headers dict. PHLOX-47: header names are case-insensitive
             // (SL: "RFC 2616 § 4.2 defines HTTP header field names as case-insensitive"), so one spelling is one header.
             var paramList  = new List<string>();
@@ -12023,6 +12028,42 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 : httpMod.StartHttpRequest(m_localID, m_itemID, url, paramList, headers, body);
             return reqID == UUID.Zero ? UUID.Zero.ToString() : reqID.ToString();
         }
+        /// <summary>
+        /// PHLOX-51 (audit F366): the core's outbound URL filter for user scripts, [Network] OutboundDisallowForUserScripts
+        /// (default: loopback, private and reserved IPv4 ranges) and OutboundDisallowForUserScriptsExcept - the one
+        /// OutboundUrlFilter object the core HttpRequestModule builds, through IHttpRequestModule.CheckAllowed, which is
+        /// what YEngine's llHTTPRequest calls (LSL_Api.cs:14762). It resolves the host and checks every IPv4 address; a
+        /// DNS error is allowed and a host with no IPv4 address is refused, both as the filter decides for YEngine. There
+        /// is no allowance for the region's own HTTP server or llRequestURL URLs, in YEngine either.
+        /// Only an absolute http or https URL is checked: the core opens nothing else (System.Uri, HttpClient).
+        /// A refused call gets YEngine's result: its Error text on DEBUG_CHANNEL, a 1 s sleep, and "" to the script, with
+        /// no request and no response event.
+        /// </summary>
+        private bool OutboundAllowed(IHttpRequestModule httpMod, string function, string url)
+        {
+            if (httpMod == null || url == null) return true;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri uri)) return true;
+            if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return true;
+            if (httpMod.CheckAllowed(uri)) return true;
+            YEngineError(function, string.Format("Request to {0} disallowed by filter", url));
+            ScriptSleep(1000);
+            return false;
+        }
+
+        /// <summary>
+        /// PHLOX-51: YEngine's LSL_Api.Error (LSL_Api.cs:15684-15696) as a script sees it: "command: message", cut to 1023
+        /// characters, on DEBUG_CHANNEL through the scene (viewers, Phlox's listens) and through WorldComm (YEngine's
+        /// listens). Unlike <see cref="ShoutError"/> there is no "Script error: " prefix, so both engines say the same text.
+        /// </summary>
+        private void YEngineError(string command, string message)
+        {
+            string text = command + ": " + message;
+            if (text.Length > 1023) text = text.Substring(0, 1023);
+            m_host?.ParentGroup?.Scene?.SimChat(text, ChatTypeEnum.DebugChannel, DEBUG_CHANNEL,
+                m_host.ParentGroup.RootPart.AbsolutePosition, m_host.Name, m_host.UUID, false);
+            ChatToWorldComm(ChatTypeEnum.Shout, DEBUG_CHANNEL, text);
+        }
+
         private enum CustomHeader { Allowed, Dropped, RuntimeError }
 
         /// <summary>HTTP token separators (RFC 7230): a header name containing one of these, a space or a control is not a name.</summary>
@@ -12250,6 +12291,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             {
                 IXMLRPC xmlrpcMod = World?.RequestModuleInterface<IXMLRPC>();
                 if (xmlrpcMod == null) { ScriptSleep(3000); return UUID.Zero.ToString(); }
+                // PHLOX-51: the same outbound filter as llHTTPRequest. YEngine does not check llSendRemoteData (core
+                // XMLRPCModule posts to dest unchecked), so here Phlox is stricter: a destination the operator's filter
+                // refuses for llHTTPRequest is refused here too, with the same result.
+                if (!OutboundAllowed(World.RequestModuleInterface<IHttpRequestModule>(), "llSendRemoteData", dest))
+                    return string.Empty;
                 ScriptSleep(3000);
                 return xmlrpcMod.SendRemoteData(m_localID, m_itemID, channel, dest, idata, sdata).ToString();
             }

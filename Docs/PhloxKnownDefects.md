@@ -4027,3 +4027,51 @@ theory row, owner/prim-not-looked-up and failing-service. They pin today's behav
 Probe: none. Every case needs a second avatar who has muted the object or tester1.
 
 No function index or declared return type changed. No bytecode, serialization or cache change.
+
+## PHLOX-51 - outbound URL filter: Phlox scripts obey OutboundDisallowForUserScripts as YEngine does (audit F366)
+
+HALCYON-DIFF row F366, the URL-filter half. John's ruling (a), 2026-09-29: same setting, same defaults as YEngine.
+Before this change a Phlox llHTTPRequest never consulted the core's outbound filter, so a Phlox script could reach
+loopback and LAN services (Robust's ports among them) that a YEngine script on the same region cannot.
+
+The filter is the core's own: `[Network] OutboundDisallowForUserScripts` (default 0.0.0.0/8, 10/8, 100.64/10, 127/8,
+169.254/16, 172.16/12, 192.0.0/24, 192.0.2/24, 192.88.99/24, 192.168/16, 198.18/15, 198.51.100/24, 203.0.113/24,
+224/4, 240/4, 255.255.255.255) and `OutboundDisallowForUserScriptsExcept` (default empty), the one OutboundUrlFilter
+object the core HttpRequestModule builds, reached through `IHttpRequestModule.CheckAllowed` - the call YEngine's
+llHTTPRequest makes (LSL_Api.cs:14762). One helper, `LSLSystemAPI.OutboundAllowed`, applies it:
+
+- llHTTPRequest: after the throttle and before the parameters are read, as YEngine.
+- llSendRemoteData: before the core XMLRPC module is called. **Phlox is stricter than YEngine here**: YEngine's
+  llSendRemoteData is not filtered (core XMLRPCModule posts to `dest` unchecked). The module only exists when
+  `[XMLRPC] XmlRpcPort` is set; Legion does not set it.
+
+As the filter decides for YEngine: the host is resolved at call time and every IPv4 address is checked; a DNS failure is
+allowed; a host with no IPv4 address (an IPv6 literal) is refused; an Except entry `host:port` is resolved at startup
+and matches that address and port only; an Except network (`a.b.c.d/n`) opens the range. There is no allowance for the
+region's own HTTP server or llRequestURL URLs, in either engine. Only absolute http/https URLs are checked, because the
+core opens nothing else.
+
+A refused call gets YEngine's result: "llHttpRequest: Request to <url> disallowed by filter" (or "llSendRemoteData:
+...") on DEBUG_CHANNEL - through the scene and through WorldComm, without Phlox's usual "Script error: " prefix, so
+both engines say the same text - a 1 s sleep, "" returned to the script (not NULL_KEY), no request and no response
+event.
+
+Already filtered by the core for both engines, unchanged: redirects of an llHTTPRequest (HttpRequestModule, status 499
+"URL from HTTP redirect blocked: <url>") and osSetDynamicTextureURL* (LoadImageURLModule, its own filter from the same
+keys).
+
+Not closed (core, both engines): the vector-render "Image w,h,url" draw command in osSetDynamicTextureData* is fetched by
+core VectorRenderModule.ImageHttpRequest without any filter. Phlox cannot check it without re-implementing core's
+draw-command parser; the fix belongs in VectorRenderModule. llEmail connects to the operator's SMTP server, not a
+script-chosen host, and is out of scope.
+
+Operators: on a grid whose own host name resolves to a private address on the region server (Legion: legiongrid.ddns.net
+-> 192.168.1.225 via the hosts file), calls to another object's llRequestURL URL are refused for both engines unless
+`OutboundDisallowForUserScriptsExcept` names it, e.g. `legiongrid.ddns.net:9000` (resolved at startup).
+
+Tests: `PhloxOutboundFilterTests` (35, collection "phlox-http" with PhloxHttpHeaderTests, whose loopback listener now
+needs an Except entry) and `PhloxOutboundFilterYEngineTests` (1, "phlox-state": both engines, the same refused request,
+the same result). 25 are red without the change. Probe: `phlox51-probe.lsl` + `phlox51-probe-auto-testisle.yaml`
+(ops folder).
+
+No function index or declared return type changed. No bytecode, serialization or cache change.

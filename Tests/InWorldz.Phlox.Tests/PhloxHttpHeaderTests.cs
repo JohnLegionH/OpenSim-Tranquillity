@@ -19,7 +19,9 @@ namespace InWorldz.Phlox.Tests;
 /// cause a runtime script error." What is checked is what the core's HttpRequestModule actually puts on the wire, read
 /// by a loopback listener, not the script's view.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// PHLOX-50: no longer in "phlox-state". PHLOX-51: in "phlox-http" with PhloxOutboundFilterTests: both build the core
+// HttpRequestModule, whose outbound URL filter is process-wide.
+[Collection("phlox-http")]
 public class PhloxHttpHeaderTests
 {
     private const string Shard = "PhloxTestShard";
@@ -110,7 +112,14 @@ public class PhloxHttpHeaderTests
 
         public Rig()
         {
-            H = new SchedulerHarness(cfg => cfg.AddConfig("Network").Set("shard", Shard));
+            // PHLOX-51: the listener is on loopback, which the outbound filter refuses by default; this Except entry
+            // lets these requests through as an operator's would.
+            H = new SchedulerHarness(cfg =>
+            {
+                var n = cfg.AddConfig("Network");
+                n.Set("shard", Shard);
+                n.Set("OutboundDisallowForUserScriptsExcept", "127.0.0.1:" + L.Port);
+            });
             m_http.Initialise(H.Config);
             m_http.AddRegion(H.Scene);
         }
