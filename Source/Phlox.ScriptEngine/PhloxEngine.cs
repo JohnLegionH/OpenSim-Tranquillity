@@ -910,7 +910,11 @@ namespace Phlox.ScriptEngine
             => m_ExeScheduler?.RequestParcelCheck(group);
 
         private void OnObjectOwnerOrGroupChanged(SceneObjectGroup group, UUID oldOwner, UUID newOwner, UUID oldGroup, UUID newGroup)
-            => m_ExeScheduler?.RequestParcelCheck(group);
+        {
+            // PHLOX-45: a new owner ends every grant in the object, and the controls the old grants took
+            if (oldOwner != newOwner) m_ExeScheduler?.RequestOwnerChanged(group);
+            m_ExeScheduler?.RequestParcelCheck(group);
+        }
 
         /// <summary>Flags, owner, group, sale, subdivide and join all arrive here (LandManagementModule.UpdateLandObject).</summary>
         private void OnLandObjectChanged(ILandObject parcel)
@@ -921,9 +925,41 @@ namespace Phlox.ScriptEngine
         // CORE-4: the scene raises OnScriptControlsReleased whenever a registration goes away, the script's own release
         // or the core's (the viewer's release keys, ClearControls on a crossing, a stand-up, a permission revoke, the
         // avatar leaving the region), after ScenePresence has let go of its lock. Exactly those scripts are asked again.
+        //
+        // PHLOX-45: a release Phlox did not ask for, on an avatar still here (not a child, not crossing, not leaving), is
+        // the core's stand-up, Release Keys, detach or drop: the script loses TAKE_CONTROLS and CONTROL_CAMERA as in
+        // Halcyon's handleMustReleaseControls. Decided here, on the releasing thread, while the avatar's state is the one
+        // the release happened in; the permission change itself runs on the scheduler thread.
         private void OnScriptControlsReleased(UUID agentId, UUID[] scriptItemIds)
         {
-            foreach (UUID itemId in scriptItemIds) m_ExeScheduler?.RequestParcelCheckForItem(itemId);
+            bool mustRelease = false;
+            if (t_ownControlChange == 0)
+            {
+                ScenePresence sp = m_Scene?.GetScenePresence(agentId);
+                mustRelease = sp != null && !sp.IsDeleted && !sp.IsChildAgent && !sp.IsInTransit;
+            }
+            foreach (UUID itemId in scriptItemIds)
+            {
+                if (mustRelease) m_ExeScheduler?.RequestControlsReleasedByCore(itemId, agentId);
+                m_ExeScheduler?.RequestParcelCheckForItem(itemId);
+            }
+        }
+
+        [ThreadStatic] private static int t_ownControlChange;
+
+        /// <summary>
+        /// PHLOX-45: marks a register/unregister Phlox makes itself (llTakeControls, EndPermissions); the core raises
+        /// OnScriptControlsReleased synchronously on the same thread, and that release is already handled.
+        /// </summary>
+        internal static OwnControlChangeScope OwnControlChange()
+        {
+            t_ownControlChange++;
+            return default;
+        }
+
+        internal readonly struct OwnControlChangeScope : IDisposable
+        {
+            public void Dispose() => t_ownControlChange--;
         }
 
         // Kept as a backstop: Scene.RemoveClient raises it before the presence goes, and the release event comes from

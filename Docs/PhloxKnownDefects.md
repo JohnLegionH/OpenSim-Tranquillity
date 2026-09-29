@@ -3823,3 +3823,52 @@ Tests: `NoScriptParcelTests` (23):
   ClearControls alone pauses the script. Red without the engine change: the script is not paused.
 
 No bytecode, serialization or cache change.
+
+## PHLOX-45 - the script permission lifecycle (audit S8)
+
+HALCYON-DIFF S8 (rows F001, F016, F084, F085, F086, F103), with F094 (re-targeting a request) and F109 (animating a
+granter who left). ll functions follow Halcyon where it has the rule and SL where it does not.
+
+One helper, `LSLSystemAPI.EndPermissions(revoke, releaseControls, forgetControls)`, ends permissions and what they
+started, for every path:
+
+| event | what ends |
+|---|---|
+| reset (llResetScript, llResetOtherScript, the viewer's Reset, recompile) | every permission; the taken controls and the saved Control record |
+| llRequestPermissions(NULL_KEY or 0) | the same, then run_time_permissions(0) |
+| a request for another avatar, or without TAKE_CONTROLS | the controls and TAKE_CONTROLS at once; the answer replaces the rest |
+| a request to someone not here, or to someone who muted the owner or the object | every permission (muted: no dialog and no event) |
+| a dialog answer without TAKE_CONTROLS; llReleaseControls | the controls and TAKE_CONTROLS |
+| the core lets go of the controls on an avatar still here (stand, Release Keys, detach, drop) | TAKE_CONTROLS and CONTROL_CAMERA, and the Control record, for every script of the object that held them |
+| a new owner | every permission, and the controls the old grant took (the core clears the grant but not the controls) |
+| unload | the controls, on an avatar still here; the grant and the record stay with the saved state |
+| llStartAnimation, llStopAnimation, iwStart/StopLinkAnimation with the granter gone | TRIGGER_ANIMATION, then run_time_permissions with what is left |
+
+- A temporary attachment (worn, not from inventory) asking for PERMISSION_TELEPORT gets Halcyon's error and the bit
+  is stripped.
+- The mute check reads the target's list from `IMuteListService.MuteListRequest`. NGC has no mute query, and any row
+  counts, as in Halcyon's IsMuted.
+- A release the core raises for Phlox's own register or unregister is marked (thread-static) and ignored. A release on
+  a child or in-transit avatar is ignored too (crossings, departures), so its grant and Control record stay.
+
+Deliberately unchanged: a reset or a lost grant does not stop an animation already playing or clear the camera. SL's
+llStartAnimation example stops the animation itself before llResetScript, and Halcyon's OnScriptReset does neither.
+A state change keeps every permission.
+
+Deferred, each needing a core change:
+- On a stand, a script in another prim that holds CONTROL_CAMERA but no controls keeps CONTROL_CAMERA. The core strips
+  only the sat-on prim, and Phlox has no stand event without controls.
+- Release Keys does not stand the avatar up (Halcyon and SL do).
+- A detach does not clear the follow camera.
+- Core StandUp also strips TAKE_CONTROLS and CONTROL_CAMERA from items another avatar granted in the sat-on prim.
+
+YEngine, same cases: reset, release and re-target agree. llRequestPermissions(NULL_KEY) is a no-op in YEngine. YEngine
+has no temp TELEPORT strip, no mute check and no absent-granter revoke.
+
+Tests: `PermissionLifecycleTests` (25). 18 are red without the change; 7 are guards that pass on both sides: state
+change, group change, the granter leaving, a crossing, re-take and pass-on, an attachment from inventory, and a mute of
+somebody else.
+Probe: `phlox45-probe.lsl` + `phlox45-probe-auto-testisle.yaml` (not run). It covers the paths with no dialog, using a
+sitter's implicit grant.
+
+No function index or declared return type changed. No bytecode, serialization or cache change.

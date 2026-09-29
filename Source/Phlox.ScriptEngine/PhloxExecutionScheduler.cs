@@ -114,6 +114,11 @@ namespace Phlox.ScriptEngine
         /// ask again when the core clears controls. The check itself always asks the avatar. Scheduler thread only.</summary>
         private readonly HashSet<UUID> m_ControlsExempt = new();
 
+        // PHLOX-45: permission ends the scene reports (the core's release of controls on an avatar still here, a new
+        // owner). Queued from region threads; EndPermissions runs here, on the scheduler thread, like every script call.
+        private struct PermsEndReq { public UUID ItemId; public UUID AgentId; public SceneObjectGroup Group; }
+        private readonly Queue<PermsEndReq> m_PermsEnds = new();
+
         /// <summary>PHLOX-43: what the parcel checks have done, for tests and the cost report.</summary>
         internal struct ParcelStats { public long Scanned, Evaluated, Paused, Resumed; }
         private ParcelStats m_ParcelStats;
@@ -288,7 +293,7 @@ namespace Phlox.ScriptEngine
                     EvaluateParcelRule(req.ItemID);   // PHLOX-43: so the owner starting it on disallowed land leaves it paused
                     return;
                 }
-                sysApi.OnScriptReset();
+                sysApi.OnFreshStart();   // PHLOX-45: not a reset - the item's grant is the core's (CreateScriptInstance)
                 PostEvent(req.ItemID, new PostedEvent
                 {
                     EventType = SupportedEventList.Events.STATE_ENTRY,
@@ -863,6 +868,7 @@ namespace Phlox.ScriptEngine
             WorkerThreadId = System.Threading.Thread.CurrentThread.ManagedThreadId;
             CheckSleepingScripts();
             ProcessEventQueue();
+            ProcessPermsEnds();      // PHLOX-45, before the parcel checks it may call for
             ProcessParcelChecks();   // PHLOX-43
             ProcessEnableDisable();
             ProcessSuspendResume();
@@ -894,6 +900,7 @@ namespace Phlox.ScriptEngine
             lock (m_PendingEvents) if (m_PendingEvents.Count > 0) return true;
             lock (m_EnableDisableQueue) if (m_EnableDisableQueue.Count > 0) return true;
             lock (m_ParcelChecks) if (m_ParcelChecks.Count > 0) return true;
+            lock (m_PermsEnds) if (m_PermsEnds.Count > 0) return true;
             lock (m_SuspendResumeQueue) if (m_SuspendResumeQueue.Count > 0) return true;
             lock (m_PendingResets) if (m_PendingResets.Count > 0) return true;
             lock (m_SyscallReturns) if (m_SyscallReturns.Count > 0) return true;
@@ -1287,6 +1294,46 @@ namespace Phlox.ScriptEngine
                     TerminateWithError(script, e);
                 }
                 return;
+            }
+        }
+
+        // ── PHLOX-45: permission lifecycle (HALCYON-DIFF S8) ───────────────────
+
+        /// <summary>The core released this script's controls on an avatar still in the region (stand, Release Keys, detach, drop).</summary>
+        internal void RequestControlsReleasedByCore(UUID itemId, UUID agentId) => EnqueuePermsEnd(new PermsEndReq { ItemId = itemId, AgentId = agentId });
+
+        /// <summary>The object has a new owner.</summary>
+        internal void RequestOwnerChanged(SceneObjectGroup group)
+        {
+            if (group != null) EnqueuePermsEnd(new PermsEndReq { Group = group });
+        }
+
+        private void EnqueuePermsEnd(PermsEndReq req)
+        {
+            lock (m_PermsEnds) m_PermsEnds.Enqueue(req);
+            m_WorkArrived?.Invoke();
+        }
+
+        private void ProcessPermsEnds()
+        {
+            List<PermsEndReq> batch;
+            lock (m_PermsEnds)
+            {
+                if (m_PermsEnds.Count == 0) return;
+                batch = new List<PermsEndReq>(m_PermsEnds);
+                m_PermsEnds.Clear();
+            }
+            foreach (var req in batch)
+            {
+                if (req.Group == null)
+                {
+                    if (m_Apis.TryGetValue(req.ItemId, out LSLSystemAPI api)) api.ControlsReleasedByCore(req.AgentId);
+                    continue;
+                }
+                if (req.Group.IsDeleted) continue;
+                foreach (SceneObjectPart part in req.Group.Parts)
+                    foreach (TaskInventoryItem item in part.Inventory.GetInventoryItems(InventoryType.LSL))
+                        if (m_Apis.TryGetValue(item.ItemID, out LSLSystemAPI owned)) owned.OwnerChanged();
             }
         }
 

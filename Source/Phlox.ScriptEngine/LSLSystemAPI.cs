@@ -246,12 +246,28 @@ namespace Phlox.ScriptEngine
 
 
         // A reset and a state change drop every listen, as Halcyon's UnregisterScriptFromNotifications does.
-        public void OnScriptReset() => m_ScriptEngine?.ListenManager?.Remove(m_itemID);
+        // PHLOX-45: a reset also ends every permission and the controls taken under them (Halcyon OnScriptReset:
+        // ReleaseControlsInternal, then PermsChange(item, UUID.Zero, 0); SL llTakeControls: "The script will also lose
+        // this permission on reset"). Animations already playing and camera parameters stay, as in both.
+        public void OnScriptReset()
+        {
+            m_ScriptEngine?.ListenManager?.Remove(m_itemID);
+            EndPermissions(ALL_PERMISSIONS, releaseControls: true, forgetControls: true);
+        }
+        /// <summary>
+        /// PHLOX-45: a script loaded with no saved state. Only the listens go, as before: the permissions are the item's,
+        /// which the core sets when it starts the script (SceneObjectPartInventory.CreateScriptInstance), and a fresh start
+        /// is not the owner's or the script's reset.
+        /// </summary>
+        internal void OnFreshStart() => m_ScriptEngine?.ListenManager?.Remove(m_itemID);
         public void OnStateChange() => m_ScriptEngine?.ListenManager?.Remove(m_itemID);
         public void OnScriptUnloaded(ScriptUnloadReason reason, RuntimeState.LocalDisableFlag localFlag)
         {
             m_host?.RemoveScriptEvents(m_itemID);
             m_ScriptEngine.ListenManager?.Remove(m_itemID);
+            // PHLOX-45: Halcyon OnScriptUnloaded "silently release controls". The permissions and the Control record stay
+            // with the item and its saved state (a crossing object takes them with it); only an avatar still here is let go.
+            EndPermissions(0, releaseControls: true, forgetControls: false);
         }
         public void AddExecutionTime(double ms) => m_host?.ParentGroup?.AddScriptLPS((int)ms);
         public void OnScriptInjected(bool fromCrossing)
@@ -1656,7 +1672,7 @@ namespace Phlox.ScriptEngine
             // A viewer can only grant what was asked; extra bits in the answer are not a grant.
             int granted = answer & m_requestedPerms;
             if ((granted & SlConst.PERMISSION_TAKE_CONTROLS) == 0)
-                ReleaseControlsInternal();
+                EndPermissions(SlConst.PERMISSION_TAKE_CONTROLS, releaseControls: true, forgetControls: true);
             TaskInventoryItem item;
             lock (m_host.TaskInventory)
                 item = m_host.TaskInventory[invItemID];
@@ -1675,14 +1691,27 @@ namespace Phlox.ScriptEngine
             lock (m_host.TaskInventory)
                 item = m_host.TaskInventory[invItemID];
 
+            // PHLOX-45: Halcyon :4518-4527; SL llRequestPermissions "PERMISSION_TELEPORT cannot be held by temporary
+            // attachments". The rest of the request goes on (TELEPORT alone becomes a release).
+            if ((perm & PERMISSION_TELEPORT) != 0 && IsTempAttachment(m_host.ParentGroup))
+            {
+                ShoutError("Temporary attachments cannot request runtime permissions to teleport.");
+                perm &= ~PERMISSION_TELEPORT;
+            }
+
             if (agentID == UUID.Zero || perm == 0)
             {
-                PermsChange(item, UUID.Zero, 0);
+                EndPermissions(ALL_PERMISSIONS, releaseControls: true, forgetControls: true);
                 m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
                     "run_time_permissions", new object[] { 0 },
                     new DetectParams[0]));
                 return;
             }
+
+            // PHLOX-45: Halcyon :4544-4545; SL llTakeControls, the permission is revoked by "a new llRequestPermissions
+            // call". Another avatar, or a request without TAKE_CONTROLS: the controls and the permission go now.
+            if (item.PermsGranter != agentID || (perm & SlConst.PERMISSION_TAKE_CONTROLS) == 0)
+                EndPermissions(SlConst.PERMISSION_TAKE_CONTROLS, releaseControls: true, forgetControls: true);
 
             if (RequestImplicitPermissions(perm, item, agentID))
                 return;
@@ -1690,11 +1719,19 @@ namespace Phlox.ScriptEngine
             ScenePresence presence = World.GetScenePresence(agentID);
             if (presence == null)
             {
-                PermsChange(item, UUID.Zero, 0);
+                EndPermissions(ALL_PERMISSIONS, releaseControls: true, forgetControls: true);
                 ScriptSleep(200);
                 m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
                     "run_time_permissions", new object[] { 0 },
                     new DetectParams[0]));
+                return;
+            }
+
+            // PHLOX-45: Halcyon :4565-4571, only when a dialog would be sent: someone who muted the owner or the object
+            // gets none, and the request ends unanswered (no run_time_permissions).
+            if (IsScriptMuted(agentID))
+            {
+                EndPermissions(ALL_PERMISSIONS, releaseControls: true, forgetControls: true);
                 return;
             }
 
@@ -1746,27 +1783,151 @@ namespace Phlox.ScriptEngine
             }
             ScenePresence sp = World.GetScenePresence(item.PermsGranter);
             if (sp == null || sp.IsChildAgent) return;
-            sp.RegisterControlEventsToScript(controls, accept, pass_on, m_host.LocalId, m_itemID);
+            // PHLOX-45: the script's own call; a release the core raises for it (a re-take, or pass_on without accept) is
+            // not a stand-up (PhloxEngine.OnScriptControlsReleased)
+            using (PhloxEngine.OwnControlChange())
+                sp.RegisterControlEventsToScript(controls, accept, pass_on, m_host.LocalId, m_itemID);
             m_thisScript.ScriptState.MiscAttributes[(int)RuntimeState.MiscAttr.Control] =
                 new object[] { controls, accept, pass_on };
             m_ScriptEngine?.RequestParcelCheck(m_itemID);   // PHLOX-43: holding controls exempts it from a No Scripts parcel
         }
 
-        public void llReleaseControls() => ReleaseControlsInternal();
+        /// <summary>
+        /// PHLOX-45: SL llReleaseControls "If PERMISSION_TAKE_CONTROLS was previously granted, it will be revoked." (Halcyon
+        /// :3756-3759, ReleaseControlsInternal with releasePerms).
+        /// </summary>
+        public void llReleaseControls() => EndPermissions(SlConst.PERMISSION_TAKE_CONTROLS, releaseControls: true, forgetControls: true);
 
-        /// <summary>PHLOX-21: llReleaseControls, also taken when a permission answer leaves out TAKE_CONTROLS.</summary>
-        private void ReleaseControlsInternal()
+        // ── PHLOX-45 (HALCYON-DIFF S8): the permission lifecycle ────────────────
+
+        /// <summary>Every permission bit: the granter goes too.</summary>
+        internal const int ALL_PERMISSIONS = -1;
+
+        /// <summary>
+        /// The one place a script's permissions end, with what they started. Every lifecycle path comes here: reset,
+        /// llRequestPermissions (release, another avatar, no TAKE_CONTROLS, absent, muted), a dialog answer without
+        /// TAKE_CONTROLS, llReleaseControls, the core's release of controls on a stand, Release Keys, detach or drop, an
+        /// owner change, unload, and an animation call for a granter who is not here.
+        /// </summary>
+        /// <param name="revoke">The bits that end; <see cref="ALL_PERMISSIONS"/> clears the grant. The granter is cleared
+        /// when nothing is left (Halcyon: "if (item.PermsMask == 0) item.PermsGranter = UUID.Zero").</param>
+        /// <param name="releaseControls">Let go of the controls this script took, on whichever avatar here holds them.</param>
+        /// <param name="forgetControls">Drop the Control record too, so a restart or a restore does not take them again.</param>
+        /// <remarks>
+        /// Animations already playing and camera parameters are left alone: SL clears the camera on a stand or detach,
+        /// which the core does (ScenePresence.StandUp), and neither SL nor Halcyon stops an animation when a grant ends.
+        /// The item is persisted only when it changed, so resetting a script with no grant does not mark its object changed.
+        /// </remarks>
+        internal void EndPermissions(int revoke, bool releaseControls, bool forgetControls)
         {
             TaskInventoryItem item = GetInventorySelf();
-            if (item == null) return;
-            ScenePresence sp = World.GetScenePresence(item.PermsGranter);
-            // Null-conditional (not early-return): we need to reach the MiscAttributes
-            // Remove below even when the avatar has left the region, so a stale
-            // Control entry isn't restored after the next restart. If you add code
-            // after this point, handle the null-sp case explicitly.
-            sp?.UnRegisterControlEventsToScript(m_host.LocalId, m_itemID);
-            m_thisScript?.ScriptState?.MiscAttributes?.Remove((int)RuntimeState.MiscAttr.Control);
-            m_ScriptEngine?.RequestParcelCheck(m_itemID);   // PHLOX-43: without controls a No Scripts parcel pauses it
+            if (releaseControls)
+            {
+                var misc = m_thisScript?.ScriptState?.MiscAttributes;
+                bool hadRecord = misc != null && misc.ContainsKey((int)RuntimeState.MiscAttr.Control);
+                if (forgetControls && hadRecord) misc.Remove((int)RuntimeState.MiscAttr.Control);
+                ScenePresence holder = ControlsHolder(item?.PermsGranter ?? UUID.Zero, hadRecord);
+                if (holder != null)
+                    using (PhloxEngine.OwnControlChange())
+                        holder.UnRegisterControlEventsToScript(m_host.LocalId, m_itemID);
+                if (hadRecord || holder != null)
+                    m_ScriptEngine?.RequestParcelCheck(m_itemID);   // PHLOX-43: without controls a No Scripts parcel pauses it
+            }
+
+            if (item == null || revoke == 0) return;
+            int mask = revoke == ALL_PERMISSIONS ? 0 : item.PermsMask & ~revoke;
+            UUID granter = mask == 0 ? UUID.Zero : item.PermsGranter;
+            bool changed = mask != item.PermsMask || granter != item.PermsGranter;
+            PermsChange(changed ? item : null, granter, mask);
+        }
+
+        /// <summary>
+        /// The avatar holding this script's taken controls: the granter when it holds them, else - when the script has a
+        /// Control record and the core already cleared or changed the granter (an owner change) - any root avatar that
+        /// does. A child agent is never asked: its controls went with the crossing.
+        /// </summary>
+        private ScenePresence ControlsHolder(UUID granter, bool hadRecord)
+        {
+            Scene world = World;
+            if (world == null) return null;
+            if (granter != UUID.Zero)
+            {
+                ScenePresence sp = world.GetScenePresence(granter);
+                if (sp != null && !sp.IsChildAgent && sp.HasScriptControls(m_itemID)) return sp;
+            }
+            if (!hadRecord) return null;
+            ScenePresence found = null;
+            world.ForEachRootScenePresence(p => { if (found == null && p.HasScriptControls(m_itemID)) found = p; });
+            return found;
+        }
+
+        /// <summary>
+        /// The core let go of this script's controls on an avatar still in the region: a stand-up, Release Keys, a detach
+        /// or a drop (PhloxEngine.OnScriptControlsReleased; crossings and departures never come here). Halcyon's
+        /// handleMustReleaseControls: only for the permission holder, "On stand, lose both PERMISSION_CONTROL_CAMERA and
+        /// PERMISSION_TAKE_CONTROLS". Scheduler thread.
+        /// </summary>
+        internal void ControlsReleasedByCore(UUID agentId)
+        {
+            TaskInventoryItem item = GetInventorySelf();
+            if (item == null || item.PermsGranter != agentId) return;
+            var misc = m_thisScript?.ScriptState?.MiscAttributes;
+            if (misc == null || !misc.ContainsKey((int)RuntimeState.MiscAttr.Control)) return;   // already ended here
+            ScenePresence sp = World?.GetScenePresence(agentId);
+            if (sp != null && sp.HasScriptControls(m_itemID)) return;                            // taken again since
+            EndPermissions(SlConst.PERMISSION_TAKE_CONTROLS | SlConst.PERMISSION_CONTROL_CAMERA,
+                           releaseControls: true, forgetControls: true);
+        }
+
+        /// <summary>
+        /// The object has a new owner. Halcyon clears every item's grant (ApplyNextOwnerPermissions, Rationalize) and so
+        /// does the core (ChangeInventoryOwner), but neither lets go of controls the old grant took. Scheduler thread.
+        /// </summary>
+        internal void OwnerChanged() => EndPermissions(ALL_PERMISSIONS, releaseControls: true, forgetControls: true);
+
+        /// <summary>
+        /// Halcyon :4117-4126 (and llStopAnimation, iwStart/StopLinkAnimation): "Emulate SL's behavior of clearing this
+        /// permission when this is called for an agent outside this region" - TRIGGER_ANIMATION ends and
+        /// run_time_permissions says what is left.
+        /// </summary>
+        private void AnimationGranterAbsent()
+        {
+            EndPermissions(SlConst.PERMISSION_TRIGGER_ANIMATION, releaseControls: false, forgetControls: false);
+            TaskInventoryItem item = GetInventorySelf();
+            m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
+                "run_time_permissions", new object[] { item?.PermsMask ?? 0 },
+                new DetectParams[0]));
+        }
+
+        /// <summary>A temporary attachment: worn, and not from inventory (the core's own test, AttachmentsModule).</summary>
+        private static bool IsTempAttachment(SceneObjectGroup group)
+            => group != null && group.IsAttachment && group.FromItemID.IsZero();
+
+        /// <summary>
+        /// Halcyon IsScriptMuted: never for the owner; muted when the target has muted the object's owner or the object.
+        /// NGC has no mute query, so the target's list is read from IMuteListService (lines "type id name|flags", as
+        /// MuteListService writes them); like Halcyon's IsMuted, any row counts, whatever its flags.
+        /// </summary>
+        private bool IsScriptMuted(UUID target)
+        {
+            if (target == m_host.OwnerID) return false;
+            IMuteListService mutes = World?.RequestModuleInterface<IMuteListService>();
+            if (mutes == null) return false;
+            byte[] data;
+            try { data = mutes.MuteListRequest(target, 0); }
+            catch (Exception e)
+            {
+                m_log.LogWarning("[PhloxAPI]: mute list of {0} could not be read: {1}", target, e.Message);
+                return false;
+            }
+            if (data == null || data.Length <= 1) return false;
+            UUID owner = m_host.OwnerID, obj = m_host.ParentGroup.UUID;
+            foreach (string line in Encoding.UTF8.GetString(data).Split('\n'))
+            {
+                string[] f = line.Split(' ', 3);
+                if (f.Length >= 2 && UUID.TryParse(f[1], out UUID id) && (id == owner || id == obj)) return true;
+            }
+            return false;
         }
 
         public void llTakeCamera(string avatar)
@@ -2450,7 +2611,7 @@ namespace Phlox.ScriptEngine
             if ((item.PermsMask & PERMISSION_TRIGGER_ANIMATION) == 0) return;
 
             ScenePresence sp = World?.GetScenePresence(item.PermsGranter);
-            if (sp == null || sp.IsChildAgent) return;
+            if (sp == null || sp.IsChildAgent) { AnimationGranterAbsent(); return; }
 
             // Resolve to UUID: try inventory first, then direct parse
             UUID animID = FindInventoryItem(anim, (int)AssetType.Animation)?.AssetID ?? UUID.Zero;
@@ -2468,7 +2629,7 @@ namespace Phlox.ScriptEngine
             if ((item.PermsMask & PERMISSION_TRIGGER_ANIMATION) == 0) return;
 
             ScenePresence sp = World?.GetScenePresence(item.PermsGranter);
-            if (sp == null || sp.IsChildAgent) return;
+            if (sp == null || sp.IsChildAgent) { AnimationGranterAbsent(); return; }
 
             UUID animID;
             if (!UUID.TryParse(anim, out animID))
@@ -2485,7 +2646,7 @@ namespace Phlox.ScriptEngine
             if ((item.PermsMask & PERMISSION_TRIGGER_ANIMATION) == 0) return;
 
             ScenePresence sp = World?.GetScenePresence(item.PermsGranter);
-            if (sp == null || sp.IsChildAgent) return;
+            if (sp == null || sp.IsChildAgent) { AnimationGranterAbsent(); return; }
 
             // Find animation in the specified link's inventory
             UUID animID = UUID.Zero;
@@ -2510,7 +2671,7 @@ namespace Phlox.ScriptEngine
             if ((item.PermsMask & PERMISSION_TRIGGER_ANIMATION) == 0) return;
 
             ScenePresence sp = World?.GetScenePresence(item.PermsGranter);
-            if (sp == null || sp.IsChildAgent) return;
+            if (sp == null || sp.IsChildAgent) { AnimationGranterAbsent(); return; }
 
             UUID animID = UUID.Zero;
             if (!UUID.TryParse(anim, out animID))
