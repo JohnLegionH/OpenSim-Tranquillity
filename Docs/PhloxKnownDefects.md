@@ -3927,3 +3927,49 @@ Deferred:
 
 Tests: `ScriptCleanupTests` (21; 15 red without the change - the other 6 are the controls and the llSleep delete).
 No bytecode, serialization or cache change.
+
+## PHLOX-47 - llHTTPRequest headers: the X-SecondLife-* values are the simulator's and cannot be forged (audit S11)
+
+HALCYON-DIFF S11, row F266, plus the reserved-header half of F366. Before this change Phlox sent none of the
+X-SecondLife-* headers and passed every HTTP_CUSTOM_HEADER through as given. A script could therefore send any
+X-SecondLife-Owner-Key it liked, and two letter cases of one name were both sent.
+
+- The simulator's nine headers are built as Halcyon's llHTTPRequest builds them and set last, so they always win:
+  X-SecondLife-Shard, -Object-Name, -Object-Key, -Region, -Local-Position, -Local-Velocity, -Local-Rotation,
+  -Owner-Name and -Owner-Key.
+  - Region follows SL: "the global coordinates of the region's south-west corner" (WorldLocX/Y, as YEngine).
+    Halcyon printed grid units.
+  - Shard comes from [Network] shard, default "OpenSim": the same setting and default YEngine reads, so both engines
+    in a region report the same shard. Halcyon's default was "Production".
+- The header table is case-insensitive (SL: "RFC 2616 § 4.2 defines HTTP header field names as case-insensitive").
+- HTTP_CUSTOM_HEADER:
+  - Any name starting with x-secondlife, in any letter case, is dropped silently (Halcyon ScriptCanChangeHeader).
+  - Content-Type is SL's "runtime script error": `llHTTPRequest: Content-Type cannot be set with
+    HTTP_CUSTOM_HEADER; use HTTP_MIMETYPE.` goes to DEBUG_CHANNEL and no request is made (NULL_KEY). SL publishes no
+    error text; this one is Phlox's.
+  - A name that is not an HTTP token, or a name or value containing a line break, is dropped.
+  - A duplicate of an allowed header is appended after ", " (Halcyon).
+- HTTP_MIMETYPE with a line break is refused with an error, and no request is made. The core writes the MIME type
+  into Content-Type without validation, so before this change a line break there sent a header line of the script's
+  choosing, X-SecondLife-Owner-Key included. Found by the new wire-level test.
+- A line break in the URL is not a way in: System.Uri escapes it into the path.
+
+Not changed:
+- Phlox still does not apply the core's outbound URL filter ([Network] OutboundDisallowForUserScripts), which YEngine
+  applies before every request. Phlox scripts can reach loopback and private addresses that YEngine scripts cannot.
+  This narrows behaviour, and the audit left it open ("needs a decision"): waiting for John's ruling.
+- Halcyon's 10-per-object and 200-per-region in-flight caps are not added. The core's CheckThrottle stays, and this
+  is not forgery.
+- User-Agent is unchanged; Halcyon lets scripts set it.
+
+YEngine: it builds the same nine headers and applies the URL filter. It blocks only the nine exact x-secondlife names,
+silently. It refuses Content-Type, Accept, Host, From, Referer, User-Agent, TE, Trailer, Upgrade and Via with "Name is
+invalid as a custom header at parameter N". It limits requests to 8 custom headers, 253 characters each. It does not
+check HTTP_MIMETYPE for line breaks.
+
+Tests: `PhloxHttpHeaderTests` (40), reading the raw request the core's HttpRequestModule puts on a loopback socket. 39
+are red without the change. The HTTP_MIMETYPE-sets-Content-Type guard passes on both sides.
+Probe: `phlox47-probe.lsl` + `phlox47-probe-auto-testisle.yaml` (not run). The probe calls its own llRequestURL
+endpoint and reads the headers with llGetHTTPHeader.
+
+No function index or declared return type changed. No bytecode, serialization or cache change.

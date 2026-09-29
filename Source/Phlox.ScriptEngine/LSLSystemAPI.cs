@@ -11944,9 +11944,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (!httpMod.CheckThrottle(m_localID, m_host.OwnerID))
                 return UUID.Zero.ToString();
 
-            // Parse parameter pairs into list and custom headers dict
+            // Parse parameter pairs into list and custom headers dict. PHLOX-47: header names are case-insensitive
+            // (SL: "RFC 2616 § 4.2 defines HTTP header field names as case-insensitive"), so one spelling is one header.
             var paramList  = new List<string>();
-            var headers    = new Dictionary<string, string>();
+            var headers    = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var data       = parameters.Data;
 
             for (int i = 0; i + 1 < data.Length; i += 2)
@@ -11964,14 +11965,38 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 {
                     string headerName  = value;
                     string headerValue = data[i + 2].ToString();
-                    headers[headerName] = headerValue;
                     i++; // consume the extra param
+                    switch (CustomHeaderRule(headerName, headerValue))
+                    {
+                        case CustomHeader.RuntimeError:
+                            // SL: "Use HTTP_MIMETYPE to set the Content-Type header. Attempts to use HTTP_CUSTOM_HEADER to set
+                            // it will cause a runtime script error." The request is not made.
+                            ShoutError("llHTTPRequest: Content-Type cannot be set with HTTP_CUSTOM_HEADER; use HTTP_MIMETYPE.");
+                            return UUID.Zero.ToString();
+                        case CustomHeader.Dropped:
+                            continue;
+                    }
+                    // Halcyon: "In SL, duplicate headers add to the existing header after a comma+space"
+                    headers[headerName] = headers.TryGetValue(headerName, out string earlier) ? earlier + ", " + headerValue : headerValue;
                     continue;
+                }
+
+                // PHLOX-47: HTTP_MIMETYPE becomes the Content-Type line as given (HttpRequestModule adds it without
+                // validation), so a line break in it would write a header line of the script's choosing - an
+                // X-SecondLife-Owner-Key among them. SL: "MIME types must be specified in the format:
+                // type/subtype[;option=value]". Refused like a Content-Type custom header: an error and no request.
+                if (option == (int)HttpRequestConstants.HTTP_MIMETYPE && (value.IndexOf('\r') >= 0 || value.IndexOf('\n') >= 0))
+                {
+                    ShoutError("llHTTPRequest: HTTP_MIMETYPE must be type/subtype[;option=value], without a line break.");
+                    return UUID.Zero.ToString();
                 }
 
                 paramList.Add(option.ToString());
                 paramList.Add(value);
             }
+
+            // PHLOX-47: the simulator's own values, set last so they always win over anything the script sent
+            AddSimulatorHeaders(headers);
 
             // PHLOX-46: recorded against this script, so a reset or removal can end it and a late response is dropped
             var httpPlugin = m_ScriptEngine.AsyncCommands?.HttpRequestPlugin;
@@ -11980,6 +12005,69 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 : httpMod.StartHttpRequest(m_localID, m_itemID, url, paramList, headers, body);
             return reqID == UUID.Zero ? UUID.Zero.ToString() : reqID.ToString();
         }
+        private enum CustomHeader { Allowed, Dropped, RuntimeError }
+
+        /// <summary>HTTP token separators (RFC 7230): a header name containing one of these, a space or a control is not a name.</summary>
+        private const string HeaderNameSeparators = "()<>@,;:\\\"/[]?={}";
+
+        /// <summary>
+        /// PHLOX-47 (HALCYON-DIFF S11): what an HTTP_CUSTOM_HEADER may set. Halcyon ScriptsHttpRequests.ScriptCanChangeHeader:
+        /// every name starting "x-secondlife", in any letter case, is "reserved for internal use only" and skipped
+        /// silently (SL: "certain headers, such as the default headers, are blocked for security reasons").
+        /// Content-Type is SL's runtime script error (Halcyon skipped it silently). A name or value with a line break, or a
+        /// name that is not an HTTP token, cannot be one header and is dropped: it would write a second header line.
+        /// </summary>
+        private static CustomHeader CustomHeaderRule(string name, string value)
+        {
+            if (string.IsNullOrEmpty(name)) return CustomHeader.Dropped;
+            if (string.Equals(name, "Content-Type", StringComparison.OrdinalIgnoreCase)) return CustomHeader.RuntimeError;
+            if (name.StartsWith("x-secondlife", StringComparison.OrdinalIgnoreCase)) return CustomHeader.Dropped;
+            foreach (char c in name)
+                if (c <= ' ' || c >= 127 || HeaderNameSeparators.IndexOf(c) >= 0) return CustomHeader.Dropped;
+            if (value != null && (value.IndexOf('\r') >= 0 || value.IndexOf('\n') >= 0)) return CustomHeader.Dropped;
+            return CustomHeader.Allowed;
+        }
+
+        /// <summary>
+        /// PHLOX-47: the nine X-SecondLife-* headers SL's simulator sends (wiki llHTTPRequest), built as Halcyon's
+        /// llHTTPRequest builds them. Region: SL's "global coordinates of the region's south-west corner" (WorldLocX/Y, as
+        /// YEngine; Halcyon printed grid units). Shard: [Network] shard, default "OpenSim", the setting and default YEngine
+        /// reads, so both engines in a region report the same shard.
+        /// </summary>
+        private void AddSimulatorHeaders(Dictionary<string, string> headers)
+        {
+            foreach (string reserved in headers.Keys.Where(k => k.StartsWith("x-secondlife", StringComparison.OrdinalIgnoreCase)).ToList())
+                headers.Remove(reserved);
+
+            Vector3 position = m_host.AbsolutePosition;
+            Vector3 velocity = m_host.Velocity;
+            Quaternion rotation = m_host.RotationOffset;
+            UUID owner = m_host.OwnerID;
+            ScenePresence sp = World.GetScenePresence(owner);
+            string ownerName = sp != null ? sp.Name : OwnerNameLookup(owner);
+            RegionInfo ri = World.RegionInfo;
+            string shard = m_ScriptEngine?.ConfigSource?.Configs["Network"]?.GetString("shard", "OpenSim") ?? "OpenSim";
+            System.Globalization.CultureInfo inv = System.Globalization.CultureInfo.InvariantCulture;
+
+            headers["X-SecondLife-Shard"] = shard;
+            headers["X-SecondLife-Object-Name"] = m_host.Name;
+            headers["X-SecondLife-Object-Key"] = m_host.UUID.ToString();
+            headers["X-SecondLife-Region"] = string.Format(inv, "{0} ({1}, {2})", ri.RegionName, ri.WorldLocX, ri.WorldLocY);
+            headers["X-SecondLife-Local-Position"] = string.Format(inv, "({0:0.000000}, {1:0.000000}, {2:0.000000})", position.X, position.Y, position.Z);
+            headers["X-SecondLife-Local-Velocity"] = string.Format(inv, "({0:0.000000}, {1:0.000000}, {2:0.000000})", velocity.X, velocity.Y, velocity.Z);
+            headers["X-SecondLife-Local-Rotation"] = string.Format(inv, "({0:0.000000}, {1:0.000000}, {2:0.000000}, {3:0.000000})", rotation.X, rotation.Y, rotation.Z, rotation.W);
+            headers["X-SecondLife-Owner-Name"] = ownerName;
+            headers["X-SecondLife-Owner-Key"] = owner.ToString();
+        }
+
+        /// <summary>osKey2Name's lookup without its OSSL threat-level check: the account service, then user management.</summary>
+        private string OwnerNameLookup(UUID key)
+        {
+            UserAccount account = World?.UserAccountService?.GetUserAccount(World.RegionInfo.ScopeID, key);
+            if (account != null) return account.Name;
+            return World?.RequestModuleInterface<IUserManagement>()?.GetUserName(key) ?? string.Empty;
+        }
+
         public void llHTTPResponse(string request_id, int status, string body)
         {
             // Sends an HTTP response back to the caller of an llRequestURL endpoint
