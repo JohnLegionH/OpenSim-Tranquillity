@@ -455,9 +455,9 @@ public class ScriptCleanupTests
 
     /// <summary>
     /// A response to another engine's request that Phlox's pump happens to take is not dropped. PHLOX-55: it goes to that
-    /// engine as YEngine's pump sends it (PhloxCrossEngineHttpResponseTests proves the delivery with YEngine running), and
-    /// Phlox's own scripts in the prim no longer get it, as they never did when YEngine's pump took it. Before PHLOX-55 it
-    /// was posted through Phlox only, so the witness heard it and the script that asked did not.
+    /// engine as YEngine's pump sends it (PhloxCrossEngineHttpResponseTests proves the delivery with YEngine running).
+    /// CORE-6: Phlox's own scripts in the prim get it too, once: SL - "triggered in all scripts in the prim, not just in the
+    /// requesting script" (PHLOX-55 had them not get it, as YEngine's pump then never gave them one).
     /// </summary>
     [Fact]
     public void AnotherEnginesResponseIsNotDropped()
@@ -471,7 +471,48 @@ public class ScriptCleanupTests
         r.Http.Respond(new FakeReq { ItemID = other.ItemID, LocalID = r.H.Prim.LocalId, ReqID = UUID.Random() }, "theirs");
         Assert.True(r.PumpUntil(() => r.Http.Completed.IsEmpty), "the pump never took the response");
         Assert.Equal(0L, r.H.Engine.AsyncCommands.HttpRequestPlugin.DroppedResponses);   // taken as another engine's, not dropped
-        Quiet(r, 800, "witness heard");                                                 // and not posted to Phlox's scripts
+        Assert.True(r.PumpUntil(() => r.Count("witness heard theirs") == 1), "the prim's Phlox script never heard it");
+        Quiet(r, 800, "witness heard");                                                 // once
+    }
+
+    /// <summary>The response as the core's pump (Shared/Api/Plugins/HttpRequest.cs) offers one it took to Phlox.</summary>
+    private static bool OfferAsCorePump(Rig r, UUID reqID, string body) =>
+        r.H.Engine.PostObjectEvent(r.H.Prim.LocalId, new EventParams("http_response", new object[]
+        {
+            new LSL_Types.LSLString(reqID.ToString()), new LSL_Types.LSLInteger(200), new LSL_Types.list(), new LSL_Types.LSLString(body)
+        }, new DetectParams[0]));
+
+    /// <summary>
+    /// CORE-6: YEngine's pump (the core) can take a Phlox script's response and offer it to Phlox's PostObjectEvent. A live
+    /// one is delivered once and is no longer outstanding.
+    /// </summary>
+    [Fact]
+    public void LiveHttpResponseOfferedByAnotherPumpIsDelivered()
+    {
+        using var r = new Rig();
+        Armed(r);
+        var req = r.Http.InFlight.Values.Single();
+        r.Http.InFlight.TryRemove(req.ReqID, out _);                 // taken by the other pump, never by Phlox's
+        Assert.True(OfferAsCorePump(r, req.ReqID, "fresh"));
+        Assert.True(r.PumpUntil(() => r.Count("response fresh") == 1));
+        Quiet(r, 800, "response");
+        Assert.Equal(0, r.HttpTracked);
+    }
+
+    /// <summary>
+    /// CORE-6: the same when the script was reset since it asked - dropped (PHLOX-46), whichever pump took it.
+    /// </summary>
+    [Fact]
+    public void LateHttpResponseForAResetScriptOfferedByAnotherPumpIsDropped()
+    {
+        using var r = new Rig();
+        Armed(r);
+        var req = r.Http.InFlight.Values.Single();
+        r.Say(7, "reset");
+        Assert.True(r.PumpUntil(() => r.Count("entry") == 2));
+        Assert.False(OfferAsCorePump(r, req.ReqID, "late"));
+        Quiet(r, 800, "response");
+        Assert.Equal(1L, r.H.Engine.AsyncCommands.HttpRequestPlugin.DroppedResponses);
     }
 
     private const string Reader = @"

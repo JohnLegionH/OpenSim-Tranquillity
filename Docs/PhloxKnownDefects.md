@@ -4283,6 +4283,7 @@ YEngine's list would change how YEngine's pump runs, and Phlox's `PostObjectEven
 YEngine's "first engine that accepts" loop would then hand YEngine responses to Phlox. Tracked by the skipped test
 `PhloxCrossEngineHttpResponseTests.EveryPhloxResponseReachesItsScriptWhicheverPumpTakesIt`.
 The XMLRPC pump (`AsyncCommand/Plugins/XmlRequest.cs`) has the same shape: it posts through Phlox only. Not changed.
+**Both fixed by CORE-6 (core change plus the Phlox side, below).**
 
 ### The .schema_version check
 
@@ -4495,3 +4496,78 @@ report without it (PHLOX-56's notes list LSLError returns as "no sleep"). A late
 the pause everywhere, under ChatThrottle.
 
 No function index, declared return type or constant changed. No bytecode, serialization or cache-format change.
+
+## CORE-6 - script responses reach their scripts whichever engine's pump takes them
+
+The core half is on its own branch for NGC develop (`fix/cross-engine-script-responses`, two commits), cherry-picked
+here. This section is the Phlox half, and what the pair does on a region that runs YEngine and Phlox.
+
+### The rule
+
+- http_response, SL wiki (llHTTPRequest): "The corresponding http_response event will be triggered in all scripts in the
+  prim, not just in the requesting script." So every script in the prim gets it once, whichever engine runs it.
+- remote_data: SL's pages do not say who gets it (the functions are deprecated). OpenSim gives it to the one script it is
+  for (by item id), and that stays.
+
+### Before
+
+- YEngine's pump offered what it took to YEngine instances only. Phlox scripts' responses it took were lost: 38-47 of 50
+  in PHLOX-55's runs. YEngine's list also held other regions' YEngines, so a prim in another region with the same local id
+  could get the response.
+- Phlox's pump (PHLOX-55): its own responses went to Phlox scripts only, another engine's to the first other engine that
+  took it. In a prim with a YEngine and a Phlox script, only the asking engine's script heard the response.
+- The XML-RPC module handed out a request by peeking, so two pumps could both deliver it. YEngine's XML-RPC pump never
+  offered another engine's item to that engine, and Phlox's offered none to any other engine.
+- Phlox's own XML-RPC pump posted remote_data to Phlox in YEngine's argument types (LSL_Types), which Phlox's VM does not
+  take.
+
+### Now
+
+- Core (cherry-picked, 2 commits): whichever pump takes an http_response offers it once to each script engine of the
+  request's own region. YEngine gets exactly the LSL_Types it always got. Any other engine gets plain values, the way core
+  modules post to any engine (UrlModule): string id, int status, object[] metadata, string body. remote_data goes to
+  YEngine as before, or, if YEngine does not run the item, to each other engine once (plain values). The XML-RPC module
+  hands each request to one pump.
+- Phlox's pump (`AsyncCommand/Plugins/HttpRequest.cs`): a response it takes, Phlox's or another engine's, goes to Phlox's
+  scripts in the prim and to each other engine once (YEngine's argument types, built for each). It no longer stops at the
+  first engine that takes it. PHLOX-46's drop of a reset or removed script's late response is unchanged.
+- Another pump's offer (`PhloxEngine.PostObjectEvent`): an offered http_response is checked against Phlox's request
+  tracking (`HttpRequest.Offered`). A live Phlox request is delivered, and it no longer stays "outstanding" (PHLOX-55's
+  runs left the lost count there). A request whose Phlox script was reset or removed since is dropped, as PHLOX-46 drops
+  it when Phlox's own pump takes it. That works because the ids a reset or removal forgets are kept 10 minutes
+  (`m_Forgotten`), well past the core's request timeout (30 s by default) and the one pump pass a completed response
+  waits.
+- Phlox's XML-RPC pump (`AsyncCommand/Plugins/XmlRequest.cs`): a request for an item Phlox runs (or is loading) goes to
+  Phlox, as before. Any other goes to each other script engine of the regions once, and only the engine that runs the
+  item posts it.
+- `PhloxEngine.ToPhloxArgs`: an event argument in LSL_Types (string, integer, float, key, vector, rotation, list) is
+  turned into the value Phlox's VM takes before the event is queued. An array with none is passed on as it is.
+
+### What operators will notice
+
+On regions that run YEngine and Phlox:
+- Phlox scripts get every llHTTPRequest response, and every remote_data.
+- A prim with scripts in both engines: every script hears every http_response of the prim, once, as in SL.
+- On a simulator with several regions, a response no longer lands in another region's prim that has the same local id
+  (YEngine-only simulators too).
+
+Regions running one engine see no change.
+
+### Tests
+
+- `PhloxCrossEngineHttpResponseTests` ("phlox-state"):
+  - `EveryPhloxResponseReachesItsScriptWhicheverPumpTakesIt` is un-skipped. It now asserts the full set: no request lost
+    in either engine, no duplicate, no wrong script, body, status or stray, and none left outstanding.
+  - New: `EveryScriptInAMixedPrimHearsEachResponseOnce` (a YEngine and a Phlox script in each of 10 prims, 100 requests;
+    both scripts hear each response of their prim once, 200 hearings).
+  - New: `EveryRemoteDataReachesItsPhloxScriptWhicheverPumpTakesIt`, the XML-RPC counterpart. 15 Phlox scripts, 2 calls
+    each (llRemoteDataReply sleeps 3 s and the module waits 9 s), both pumps running, a real XMLRPCModule with no
+    listener. Every call is answered by its own script, once.
+  - New: `YEngineArgumentTypesAreConvertedForPhlox`.
+- `ScriptCleanupTests`:
+  - `AnotherEnginesResponseIsNotDropped` now asserts the SL rule: the prim's Phlox script hears another engine's response
+    once. PHLOX-55 asserted it did not. That contract changed on purpose, and the assertion is exact (once), not looser.
+  - New: `LiveHttpResponseOfferedByAnotherPumpIsDelivered` and `LateHttpResponseForAResetScriptOfferedByAnotherPumpIsDropped`.
+- Timing wait (test-only, PHLOX-54's way): `OverloadByTypeTests` (both tests) waited a fixed second for a script's eight
+  llSays. With PHLOX-56's 15 ms per llSay, one full run caught it short ("rr=1" not yet said). They now wait for the
+  script's last line, up to 30 s. No assertion changed.

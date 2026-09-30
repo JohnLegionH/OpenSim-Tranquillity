@@ -23,6 +23,17 @@ public class OverloadByTypeTests
     private static SchedulerHarness Scene() => new SchedulerHarness(
         cfg => cfg.AddConfig("OSSL").Set("OSFunctionThreatLevel", "Severe"));
 
+    /// <summary>
+    /// CORE-6 (PHLOX-54's way): pump until the script's last line is said, up to 30 s, instead of a fixed second. Each
+    /// llSay now pauses 15 ms (PHLOX-56), and under a full parallel run the second was not always enough.
+    /// </summary>
+    private static void PumpUntilSaid(SchedulerHarness h, string lastLinePrefix)
+    {
+        var until = DateTime.UtcNow.AddSeconds(30);
+        while (!h.Said.Any(s => s.StartsWith(lastLinePrefix, StringComparison.Ordinal)) && DateTime.UtcNow < until)
+            h.PumpFor(TimeSpan.FromMilliseconds(50));
+    }
+
     /// <summary>The two osSetPenColor forms differ only in the type of their second argument.</summary>
     [Fact]
     public void OsSetPenColorPicksTheStringFormOrTheVectorFormByType()
@@ -32,7 +43,7 @@ public class OverloadByTypeTests
             llSay(0, ""name="" + osSetPenColor("""", ""Red""));
             llSay(0, ""vec="" + osSetPenColor("""", <1,0,0>));
         } }");
-        h.PumpFor(TimeSpan.FromSeconds(1));
+        PumpUntilSaid(h, "vec=");
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "]");
 
         // the colour-name form passes the name through; the vector form renders AARRGGBB - two shims
@@ -64,7 +75,7 @@ public class OverloadByTypeTests
             llSay(0, ""slerpv="" + (string)osSlerp(<1,0,0>, <0,1,0>, 1.0));
             llSay(0, ""slerpr="" + (string)osSlerp(<0,0,0,1>, <0,0,0,1>, 1.0));
         } }");
-        h.PumpFor(TimeSpan.FromSeconds(1));
+        PumpUntilSaid(h, "slerpr=");
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "]");
 
         Assert.Contains("ff=1", h.Said);

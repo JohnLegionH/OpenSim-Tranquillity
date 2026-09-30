@@ -85,14 +85,11 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
                             m_log.LogDebug("[Phlox HTTP]: late http_response {0} for {1} dropped (script reset or gone)", req.ReqID, req.ItemID);
                         break;
 
-                    case Owner.OtherEngine:
-                        // PHLOX-55: the core's one completed queue is drained by every engine's pump, so this can be a
-                        // YEngine script's response. It goes out exactly as YEngine's own pump sends it.
-                        PostAsYEngine(req);
-                        break;
-
                     default:
                     {
+                        // CORE-6: SL - "triggered in all scripts in the prim, not just in the requesting script". Phlox's
+                        // own request or another engine's (PHLOX-55: the core's one completed queue is drained by every
+                        // engine's pump), every script in the prim gets it: Phlox's here, each other engine's through it.
                         object[] resobj = new object[]
                         {
                             req.ReqID.ToString(),
@@ -107,6 +104,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
                         if (m_log.IsEnabled(LogLevel.Debug))
                             m_log.LogDebug("[Phlox HTTP]: http_response {0} status {1} -> prim {2} (accepted={3})",
                                 req.ReqID, resobj[1], req.LocalID, posted);
+                        PostToOtherEngines(req);
                         break;
                     }
                 }
@@ -116,38 +114,35 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
         }
 
         /// <summary>
-        /// PHLOX-55: a response this pump took for a script another engine runs. YEngine's pump
-        /// (OpenSim.Region.ScriptEngine.Shared/Api/Plugins/HttpRequest.cs) builds these arguments and offers the event to
-        /// each engine's PostObjectEvent in turn, stopping at the first that takes it. The same is done here through the
-        /// region's other script engines. Phlox is left out: its PostObjectEvent accepts any prim that exists, and it
-        /// does not run this script.
+        /// CORE-6: the region's other script engines get the response for their scripts in the prim, each engine once, as
+        /// the core's pump (OpenSim.Region.ScriptEngine.Shared/Api/Plugins/HttpRequest.cs) offers what it takes: the same
+        /// arguments (LSLString id, LSLInteger status, empty list, LSLString body), built for each engine, and no stopping
+        /// at the first that takes it - each engine posts only to its own scripts. Phlox is left out: it had it above.
         /// </summary>
-        private void PostAsYEngine(IHttpServiceRequest req)
+        private void PostToOtherEngines(IHttpServiceRequest req)
         {
-            object[] resobj = new object[]
-            {
-                new LSL_Types.LSLString(req.ReqID.ToString()),
-                new LSL_Types.LSLInteger(req.Status),
-                new LSL_Types.list(),
-                new LSL_Types.LSLString(req.ResponseBody)
-            };
-
-            bool posted = false;
+            int offered = 0;
             IScriptModule[] engines = m_CmdManager.m_ScriptEngine.World?.RequestModuleInterfaces<IScriptModule>() ?? Array.Empty<IScriptModule>();
+            var seen = new List<IScriptEngine>();
             foreach (IScriptModule m in engines)
             {
-                if (ReferenceEquals(m, m_CmdManager.m_ScriptEngine) || m is not IScriptEngine e)
+                if (ReferenceEquals(m, m_CmdManager.m_ScriptEngine) || m is not IScriptEngine e || seen.Contains(e))
                     continue;
-                if (e.PostObjectEvent(req.LocalID, new EventParams("http_response", resobj, new DetectParams[0])))
+                seen.Add(e);
+                object[] resobj = new object[]
                 {
-                    posted = true;
-                    break;
-                }
+                    new LSL_Types.LSLString(req.ReqID.ToString()),
+                    new LSL_Types.LSLInteger(req.Status),
+                    new LSL_Types.list(),
+                    new LSL_Types.LSLString(req.ResponseBody)
+                };
+                e.PostObjectEvent(req.LocalID, new EventParams("http_response", resobj, new DetectParams[0]));
+                offered++;
             }
 
             if (m_log.IsEnabled(LogLevel.Debug))
-                m_log.LogDebug("[Phlox HTTP]: http_response {0} status {1} for another engine's script {2} -> prim {3} (accepted={4})",
-                    req.ReqID, req.Status, req.ItemID, req.LocalID, posted);
+                m_log.LogDebug("[Phlox HTTP]: http_response {0} for script {1} offered to {2} other engine(s), prim {3}",
+                    req.ReqID, req.ItemID, offered, req.LocalID);
         }
 
         // ── PHLOX-46: requests belong to the script that made them (HALCYON-DIFF S12) ──
@@ -157,9 +152,16 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
         // outstanding requests; a reset or removal forgets them, and a response whose id is no longer here is dropped
         // when its script is a Phlox script (it was reset) or is no longer in the prim (it was deleted). Anything else
         // is another engine's request that this pump happened to take; PHLOX-55 posts it through that engine.
+        //
+        // CORE-6: another engine's pump can take a Phlox request's response and offer it to Phlox (PostObjectEvent). It
+        // carries no script id, so the ids a reset or removal forgets are kept a while (m_Forgotten) and such an offer is
+        // dropped too (Offered). A forgotten id is kept 10 minutes: the core times a request out long before that
+        // (ScriptsHttpRequestModule, 30 s by default) and a completed one waits one pump pass.
 
+        private static readonly TimeSpan ForgottenKept = TimeSpan.FromMinutes(10);
         private readonly object m_TrackLock = new object();
         private readonly Dictionary<UUID, UUID> m_Outstanding = new();   // request id -> script item id
+        private readonly Dictionary<UUID, DateTime> m_Forgotten = new();   // request id -> when its script was reset or removed
         private long m_Dropped;
 
         /// <summary>
@@ -185,7 +187,10 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
         private Owner Complete(IHttpServiceRequest req)
         {
             lock (m_TrackLock)
+            {
                 if (m_Outstanding.Remove(req.ReqID)) return Owner.Phlox;
+                if (m_Forgotten.Remove(req.ReqID)) return Owner.Dropped;   // its Phlox script was reset or removed since
+            }
 
             if (m_CmdManager.m_ScriptEngine is global::Phlox.ScriptEngine.PhloxEngine phlox && phlox.HasOrIsLoading(req.ItemID))
                 return Owner.Dropped;   // a Phlox script that has been reset since it asked
@@ -206,10 +211,43 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
                 List<UUID> mine = null;
                 foreach (var kvp in m_Outstanding)
                     if (kvp.Value == itemID) (mine ??= new List<UUID>()).Add(kvp.Key);
+                DateTime now = DateTime.UtcNow;
                 if (mine != null)
-                    foreach (UUID id in mine) m_Outstanding.Remove(id);
+                    foreach (UUID id in mine)
+                    {
+                        m_Outstanding.Remove(id);
+                        m_Forgotten[id] = now;
+                    }
+                if (m_Forgotten.Count > 0)
+                {
+                    List<UUID> old = null;
+                    foreach (var kvp in m_Forgotten)
+                        if (now - kvp.Value > ForgottenKept) (old ??= new List<UUID>()).Add(kvp.Key);
+                    if (old != null)
+                        foreach (UUID id in old) m_Forgotten.Remove(id);
+                }
             }
             m_CmdManager.m_ScriptEngine.World?.RequestModuleInterface<IHttpRequestModule>()?.StopHttpRequest(localID, itemID);
+        }
+
+        /// <summary>
+        /// CORE-6: an http_response offered to Phlox's PostObjectEvent - by this pump after Complete, or by another engine's
+        /// pump that took it. False when it is a Phlox request whose script was reset or removed since (PHLOX-46: dropped).
+        /// A live Phlox request is no longer outstanding: another pump delivered it.
+        /// </summary>
+        internal bool Offered(object requestID)
+        {
+            if (requestID == null || !UUID.TryParse(requestID.ToString(), out UUID id)) return true;
+            lock (m_TrackLock)
+            {
+                if (m_Forgotten.Remove(id))
+                {
+                    System.Threading.Interlocked.Increment(ref m_Dropped);
+                    return false;
+                }
+                m_Outstanding.Remove(id);
+            }
+            return true;
         }
 
         internal int OutstandingCount { get { lock (m_TrackLock) return m_Outstanding.Count; } }

@@ -1205,7 +1205,7 @@ namespace Phlox.ScriptEngine
             var evt = new InWorldz.Phlox.VM.PostedEvent
             {
                 EventType = (InWorldz.Phlox.Types.SupportedEventList.Events)eventInfo.TableIndex,
-                Args = parms.Params,
+                Args = ToPhloxArgs(parms.Params),
                 DetectVars = detectVars,
                 Completed = completed
             };
@@ -1213,6 +1213,34 @@ namespace Phlox.ScriptEngine
             m_ExeScheduler.PostEvent(itemID, evt);
             return true;
         }
+
+        /// <summary>
+        /// CORE-6: arguments in YEngine's types (OpenSim.Region.ScriptEngine.Shared.LSL_Types) as Phlox's VM takes them:
+        /// string, int, float, OpenMetaverse vectors and rotations, lists as object[] (Normalize makes them LSLList). The
+        /// core's pumps built remote_data that way for every engine, and Phlox's own XML-RPC pump did too, so a Phlox script
+        /// got values its VM does not know. Other arguments, and an array with none of these, are passed on as they are.
+        /// </summary>
+        internal static object[] ToPhloxArgs(object[] args)
+        {
+            if (args == null || !Array.Exists(args, IsLslType)) return args;
+            return Array.ConvertAll(args, ToPhloxValue);
+        }
+
+        private static bool IsLslType(object a) =>
+            a is LSL_Types.LSLString || a is LSL_Types.LSLInteger || a is LSL_Types.LSLFloat || a is LSL_Types.key
+            || a is LSL_Types.Vector3 || a is LSL_Types.Quaternion || a is LSL_Types.list;
+
+        private static object ToPhloxValue(object a) => a switch
+        {
+            LSL_Types.LSLString s => s.m_string,
+            LSL_Types.LSLInteger i => i.value,
+            LSL_Types.LSLFloat f => (float)f.value,
+            LSL_Types.key k => k.value,
+            LSL_Types.Vector3 v => new Vector3((float)v.x, (float)v.y, (float)v.z),
+            LSL_Types.Quaternion q => new Quaternion((float)q.x, (float)q.y, (float)q.z, (float)q.s),
+            LSL_Types.list l => Array.ConvertAll(l.Data, ToPhloxValue),
+            _ => a
+        };
 
         /// <summary>
         /// PHLOX-6. on_death - "triggered on all attachments worn by an avatar when that avatar's
@@ -1357,6 +1385,12 @@ namespace Phlox.ScriptEngine
         {
             SceneObjectPart part = World?.GetSceneObjectPart(localID);
             if (part == null) return false;
+
+            // CORE-6: any engine's pump can take a Phlox script's http_response and offer it here. A reset or removed Phlox
+            // script's late one is dropped (PHLOX-46), whichever pump took it.
+            if (parms.EventName == "http_response" && parms.Params != null && parms.Params.Length > 0
+                && AsyncCommands?.HttpRequestPlugin is { } http && !http.Offered(parms.Params[0]))
+                return false;
 
             // Defer the inventory snapshot and event dispatch to a thread pool work item.
             //

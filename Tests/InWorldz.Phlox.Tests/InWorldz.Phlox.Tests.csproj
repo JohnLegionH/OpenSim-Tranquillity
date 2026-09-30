@@ -45,6 +45,10 @@
       <HintPath>..\..\Library\C5.dll</HintPath>
       <Private>true</Private>
     </Reference>
+    <!-- CORE-6: the XML-RPC cross-engine test calls XMLRPCModule.XmlRpcRemoteData, which takes Nwc.XmlRpc types. -->
+    <Reference Include="XMLRPC">
+      <HintPath>..\..\Library\XMLRPC.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
 </Project>
