@@ -192,7 +192,10 @@ public class SmallCorrectnessTests
         var item = h.RezScript($"default {{ state_entry() {{ integer r = llManageEstateAccess(ESTATE_ACCESS_ALLOWED_AGENT_ADD, \"{client.AgentId}\"); " +
                                "integer bad = llManageEstateAccess(ESTATE_ACCESS_ALLOWED_AGENT_ADD, \"not a key\"); " +
                                "llSay(0, \"r=\" + (string)r + \" bad=\" + (string)bad); } }");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        // PHLOX-54: wait for the result, not the clock. Each call takes 200 ms of syscall time, and a fixed 2 s window was
+        // once too short with classes running in parallel (the script was still parked in the syscall).
+        var until = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (!h.Said.Any(s => s.StartsWith("r=")) && DateTime.UtcNow < until) h.Pump(20);
         _out.WriteLine(Said(h) + " || " + h.DumpFrame(item));
         Assert.True(h.Said.Contains("r=1 bad=0"), Said(h));
         Assert.Contains(client.AgentId, h.Scene.RegionInfo.EstateSettings.EstateAccess);

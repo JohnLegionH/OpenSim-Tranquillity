@@ -3951,7 +3951,8 @@ X-SecondLife-Owner-Key it liked, and two letter cases of one name were both sent
   - A duplicate of an allowed header is appended after ", " (Halcyon).
 - HTTP_MIMETYPE with a line break is refused with an error, and no request is made. The core writes the MIME type
   into Content-Type without validation, so before this change a line break there sent a header line of the script's
-  choosing, X-SecondLife-Owner-Key included. Found by the new wire-level test.
+  choosing, X-SecondLife-Owner-Key included. Found by the new wire-level test. **Superseded by PHLOX-54:** Phlox now
+  refuses every value the core's `HttpRequestMimeType.IsValid` refuses, with YEngine's text and result.
 - A line break in the URL is not a way in: System.Uri escapes it into the path.
 
 Not changed:
@@ -3964,8 +3965,8 @@ Not changed:
 
 YEngine: it builds the same nine headers and applies the URL filter. It blocks only the nine exact x-secondlife names,
 silently. It refuses Content-Type, Accept, Host, From, Referer, User-Agent, TE, Trailer, Upgrade and Via with "Name is
-invalid as a custom header at parameter N". It limits requests to 8 custom headers, 253 characters each. It does not
-check HTTP_MIMETYPE for line breaks.
+invalid as a custom header at parameter N". It limits requests to 8 custom headers, 253 characters each. It did not
+check HTTP_MIMETYPE for line breaks; since CORE-5 it refuses any invalid media type (see PHLOX-54).
 
 Tests: `PhloxHttpHeaderTests` (40), reading the raw request the core's HttpRequestModule puts on a loopback socket. 39
 are red without the change. The HTTP_MIMETYPE-sets-Content-Type guard passes on both sides.
@@ -4200,5 +4201,56 @@ Tests: `EstateAccessTests` (17, parallel), `IwTeleportAgentTests` (7), `Teleport
 store, grid-user lookup, IM and teleport is an in-memory recorder, nothing reaches a network service.
 `AsyncReturnGuardTests` now calls llManageEstateAccess with NULL_KEY (the harness has no permissions module, so everybody
 is a god there); `ManageEstateAccessIsFalseForAnOwnerWhoIsNotAManager` hooks IsAdministrator to "nobody".
+
+No function index or declared return type changed. No constant, bytecode, serialization or cache change.
+
+## PHLOX-54 - HTTP_MIMETYPE reported as YEngine reports it; test harnesses get their own bytecode folders
+
+### HTTP_MIMETYPE
+
+Since CORE-5 the core refuses any HTTP_MIMETYPE that is not a media type (`HttpRequestMimeType.IsValid`: type/subtype,
+optional `;` parameters, no control character), and YEngine says why. PHLOX-47's own check looked only for a line
+break, so any other invalid value (a bare `json`, an empty string, a control character) went to the core and came back
+as NULL_KEY with no message.
+
+- Before: a line break gave `Script error: llHTTPRequest: HTTP_MIMETYPE must be type/subtype[;option=value], without a
+  line break.` and NULL_KEY; any other invalid value gave NULL_KEY and no message.
+- Now: Phlox calls `HttpRequestMimeType.IsValid` itself before the core, and gives YEngine's result:
+  `llHTTPRequest: HTTP_MIMETYPE is not a valid media type` on DEBUG_CHANNEL (no "Script error: " prefix), a 1 s
+  sleep, `""` to the script, no request and no http_response.
+- Valid values, with or without parameters, are sent exactly as before.
+
+Tests: `PhloxHttpHeaderTests` (50; 10 new, and `ALineBreakInTheMimeTypeCannotAddATrustedHeader` now expects the new text
+and `""`) and `PhloxMimeTypeYEngineTests` (7, YEngine and Phlox side by side on one region: CR, LF, a header
+injection, `json`, empty, and two valid values with parameters). Every endpoint is a loopback listener.
+
+Found, not changed: both engines' HTTP pumps take completed requests from the core's one queue. Phlox's
+(`AsyncCommand/Plugins/HttpRequest.cs`) posts what it takes through Phlox only, so a YEngine script's http_response is
+lost when Phlox's pump gets there first. YEngine's pump posts through every engine, so Phlox's responses are never lost.
+Only regions running both engines are affected.
+
+### Bytecode folders in tests (inert production seam)
+
+`PhloxScriptLoader` keeps its cache in `ScriptEngines/Phlox/bytecode`, relative to the working directory, and reads the
+`.schema_version` stamp outside its try block. In the test host every harness used that one folder. On a fresh output
+folder (no stamp), test classes starting in parallel each wrote the stamp while another read it, and the read threw
+IOException out of harness set-up (seen once in a batch 5 run).
+
+- Seam: `PhloxEngine.BytecodeCacheDir` (internal, null). When set before AddRegion, the loader uses that folder and its
+  stamp instead of the constant. Production never sets it, so every path is the constant, as before.
+- The harness gives each test class its own folder under a per-run root in the test output folder, and removes that
+  root when the process exits. `CacheSchemaBumpTests` keeps the production folder and stays in "phlox-state" (serial).
+  The test host can be ended before that cleanup finishes, so a new run also removes roots that earlier runs of the
+  harness left behind, and only those whose process has ended.
+- Two timing waits found by the stress runs, both test-only:
+  - The harness's "finish what is still on its way" wait (PHLOX-50) now also waits for a load the loader still reports
+    as in progress (`PhloxScriptLoader.IsLoading`) for an item in the scene. A compile running on the compile thread is
+    not counted by the loader's WorkIsPending, so `RestoredScriptResumeTests` could capture a script that had no
+    interpreter yet.
+  - `SmallCorrectnessTests.ManageEstateAccessReturnsAnIntegerAndLeavesTheStackClean` now waits for the script's result
+    (up to 30 s) instead of a fixed 2 s.
+
+Still open in production: the same unguarded stamp read can throw if several regions' engines start at once on a
+fresh install. A later change could put the read inside the try, or take a lock.
 
 No function index or declared return type changed. No constant, bytecode, serialization or cache change.

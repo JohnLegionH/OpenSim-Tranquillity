@@ -1540,6 +1540,14 @@ namespace Phlox.ScriptEngine
         public IConfig Config => m_Config;
         public IConfigSource ConfigSource => m_ConfigSource;
         public string ScriptEnginePath => "ScriptEngines/Phlox";
+
+        /// <summary>
+        /// PHLOX-54: test seam, inert in production. The folder for this engine's bytecode cache and its schema stamp,
+        /// read once when <see cref="AddRegion"/> builds the loader. Null (always, outside tests) means the loader's
+        /// constant "ScriptEngines/Phlox/bytecode", exactly as before. Test harnesses running in parallel set it so
+        /// each class has its own folder instead of all sharing one.
+        /// </summary>
+        internal string BytecodeCacheDir { get; set; }
         public string ScriptClassName => "PhloxScript";
         public string ScriptBaseClassName => "InWorldz.Phlox.VM.Interpreter";
         public string[] ScriptReferencedAssemblies => Array.Empty<string>();

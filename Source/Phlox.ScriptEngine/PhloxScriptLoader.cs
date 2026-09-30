@@ -47,7 +47,12 @@ namespace Phlox.ScriptEngine
         //       number (they overflowed to -1); cached bytecode still carries -1. A recompile keeps each
         //       script's saved state (SerializedRuntimeState.ToRuntimeStateFor).
         private const int CACHE_SCHEMA_VERSION = 4;
-        private const string VERSION_FILE = "ScriptEngines/Phlox/bytecode/.schema_version";
+        private const string VERSION_FILE_NAME = ".schema_version";
+
+        // PHLOX-54: CACHE_DIR and its stamp, unless the engine was given another folder (a test seam; production never
+        // sets one, so these are the constants above).
+        private readonly string m_CacheDir;
+        private readonly string m_VersionFile;
 
         private readonly IAssetService m_AssetService;
         private readonly PhloxExecutionScheduler m_ExeScheduler;
@@ -133,8 +138,10 @@ namespace Phlox.ScriptEngine
             m_ExeScheduler = exeScheduler;
             m_WorkArrived = workArrived;
             m_Engine = engine;
+            m_CacheDir = engine?.BytecodeCacheDir ?? CACHE_DIR;
+            m_VersionFile = Path.Combine(m_CacheDir, VERSION_FILE_NAME);
 
-            Directory.CreateDirectory(CACHE_DIR);
+            Directory.CreateDirectory(m_CacheDir);
             EnsureCacheSchemaVersion();
 
             m_CompileThread = new System.Threading.Thread(CompileLoop, CompileStackSize)
@@ -149,9 +156,9 @@ namespace Phlox.ScriptEngine
         private void EnsureCacheSchemaVersion()
         {
             int diskVersion = 0;
-            if (File.Exists(VERSION_FILE))
+            if (File.Exists(m_VersionFile))
             {
-                if (!int.TryParse(File.ReadAllText(VERSION_FILE).Trim(), out diskVersion))
+                if (!int.TryParse(File.ReadAllText(m_VersionFile).Trim(), out diskVersion))
                     diskVersion = 0;
             }
 
@@ -165,10 +172,10 @@ namespace Phlox.ScriptEngine
                 try
                 {
                     // Delete all .plx files; leave the directory structure.
-                    foreach (string plx in Directory.GetFiles(CACHE_DIR, "*.plx", SearchOption.AllDirectories))
+                    foreach (string plx in Directory.GetFiles(m_CacheDir, "*.plx", SearchOption.AllDirectories))
                         File.Delete(plx);
 
-                    File.WriteAllText(VERSION_FILE, CACHE_SCHEMA_VERSION.ToString());
+                    File.WriteAllText(m_VersionFile, CACHE_SCHEMA_VERSION.ToString());
                     m_log.LogInformation("[PhloxLoader]: Bytecode cache purged and version stamp updated.");
                 }
                 catch (Exception ex)
@@ -539,7 +546,7 @@ namespace Phlox.ScriptEngine
             catch (Exception e) { m_log.LogError(e, "[PhloxLoader]: compile thread stopped by an exception"); }
         }
 
-        private static void RunCompile(CompileJob job)
+        private void RunCompile(CompileJob job)
         {
             var listener = new LogOutputListener(job.Requests.Count > 0 ? job.Requests[0].ItemID : UUID.Zero);
             var frontend = new CompilerFrontend(listener, ".");
@@ -878,7 +885,7 @@ namespace Phlox.ScriptEngine
             m_ExeScheduler.FinishedLoading(req, compiled);
         }
 
-        private static void SaveToDiskCache(CompiledScript compiled)
+        private void SaveToDiskCache(CompiledScript compiled)
         {
             try
             {
@@ -894,10 +901,10 @@ namespace Phlox.ScriptEngine
             }
         }
 
-        private static string GetCachePath(UUID assetId)
+        private string GetCachePath(UUID assetId)
         {
             string prefix = assetId.ToString().Substring(0, CACHE_PREFIX_LEN);
-            return Path.Combine(CACHE_DIR, prefix, assetId.ToString() + SCRIPT_EXT);
+            return Path.Combine(m_CacheDir, prefix, assetId.ToString() + SCRIPT_EXT);
         }
 
         private void AddToUnloadedCache(UUID assetId, CompiledScript script)

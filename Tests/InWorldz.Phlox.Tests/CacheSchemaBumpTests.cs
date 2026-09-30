@@ -17,8 +17,10 @@ namespace InWorldz.Phlox.Tests;
 [Collection("phlox-state")]
 public class CacheSchemaBumpTests
 {
-    // The loader's relative paths (PhloxScriptLoader.CACHE_DIR, VERSION_FILE).
-    private const string CacheDir = "ScriptEngines/Phlox/bytecode";
+    // The loader's relative paths (PhloxScriptLoader.CACHE_DIR and its stamp). PHLOX-54: harnesses get a folder per test
+    // class; this class deliberately keeps the production folder (its engines are built with it), which is why it stays
+    // in "phlox-state" and runs alone.
+    private const string CacheDir = SchedulerHarness.ProductionBytecodeDir;
     private static readonly string VersionFile = Path.Combine(CacheDir, ".schema_version");
 
     private readonly ITestOutputHelper _out;
@@ -71,7 +73,7 @@ public class CacheSchemaBumpTests
         var assetId = UUID.Random();
         var itemId = UUID.Random();
 
-        using (var h1 = new SchedulerHarness())
+        using (var h1 = new SchedulerHarness(bytecodeDir: CacheDir))
         {
             // The old table wrote IW_POWER_FREEZE_EJECT as 4294967296, which the assembler loads as -1.
             WriteCache(assetId, PowerScript.Replace("IW_POWER_FREEZE_EJECT", "4294967296"));
@@ -85,7 +87,7 @@ public class CacheSchemaBumpTests
         }
 
         StampPreviousSchema();
-        using var h2 = new SchedulerHarness();
+        using var h2 = new SchedulerHarness(bytecodeDir: CacheDir);
         Assert.False(File.Exists(CachePath(assetId)), "the bump did not purge the old bytecode");
         Assert.Equal(CurrentSchema.ToString(), File.ReadAllText(VersionFile).Trim());
 
@@ -111,7 +113,7 @@ public class CacheSchemaBumpTests
         var assetId = UUID.Random();
         var itemId = UUID.Random();
 
-        using (var h1 = new SchedulerHarness())
+        using (var h1 = new SchedulerHarness(bytecodeDir: CacheDir))
         {
             h1.RezScript(sleepScript, assetId, itemId);
             Assert.True(PumpUntil(h1, () => h1.RunStateOf(itemId) == "Sleeping", TimeSpan.FromSeconds(20)),
@@ -121,7 +123,7 @@ public class CacheSchemaBumpTests
         }
 
         StampPreviousSchema();
-        using var h2 = new SchedulerHarness();
+        using var h2 = new SchedulerHarness(bytecodeDir: CacheDir);
         Assert.False(File.Exists(CachePath(assetId)), "the bump did not purge the bytecode");
 
         h2.RezScript(sleepScript, assetId, itemId);

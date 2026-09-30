@@ -284,13 +284,56 @@ public class PhloxHttpHeaderTests
     public void ALineBreakInTheMimeTypeCannotAddATrustedHeader()
     {
         using var r = new Rig();
-        // The core writes the MIME type as the Content-Type line without validation; before PHLOX-47 this sent a
-        // second header line "X-SecondLife-Owner-Key: forged-by-script". Refused: an error and no request.
+        // The core writes the MIME type as the Content-Type line; before PHLOX-47 this sent a second header line
+        // "X-SecondLife-Owner-Key: forged-by-script". Refused: an error and no request. PHLOX-54: YEngine's error and
+        // result (was "Script error: ... without a line break." and NULL_KEY).
         string head = r.Request("[HTTP_METHOD, \"POST\", HTTP_MIMETYPE, \"text/plain\" + llUnescapeURL(\"%0D%0A\") + \"X-SecondLife-Owner-Key: forged-by-script\"]",
                                 expectSent: false);
         Assert.Null(head);
-        Assert.Contains("req=" + UUID.Zero, r.H.Said);
-        Assert.Contains("Script error: llHTTPRequest: HTTP_MIMETYPE must be type/subtype[;option=value], without a line break.", r.H.Said);
+        Assert.Contains("req=", r.H.Said);
+        Assert.Contains((DebugChannel, MimeTypeRefused), r.H.SaidOn);
+    }
+
+    private const int DebugChannel = 2147483647;
+
+    /// <summary>PHLOX-54: YEngine's text for an invalid HTTP_MIMETYPE (LSL_Api.llHTTPRequest, "command: message").</summary>
+    internal const string MimeTypeRefused = "llHTTPRequest: HTTP_MIMETYPE is not a valid media type";
+
+    /// <summary>
+    /// PHLOX-54: every value HttpRequestMimeType.IsValid refuses is refused by Phlox itself, with YEngine's result: its
+    /// text on DEBUG_CHANNEL, "" to the script (not NULL_KEY), no "Script error", and nothing on the wire. Before, a
+    /// value without a line break went to the core, which refused it silently: NULL_KEY and no message.
+    /// </summary>
+    [Theory]
+    [InlineData("\"text/plain\" + llUnescapeURL(\"%0D\") + \"X-SecondLife-Owner-Key: forged-by-script\"")]   // CR
+    [InlineData("\"text/plain\" + llUnescapeURL(\"%0A\") + \"X-SecondLife-Owner-Key: forged-by-script\"")]   // LF
+    [InlineData("\"text/plain;charset=utf-8\" + llUnescapeURL(\"%0D%0A%0D%0A\") + \"smuggled body\"")]       // header/body injection
+    [InlineData("\"json\"")]                                                                                 // a bare word
+    [InlineData("\"\"")]                                                                                     // empty
+    public void AMimeTypeThatIsNotAMediaTypeIsRefusedAsYEngineRefusesIt(string mimeTypeLsl)
+    {
+        using var r = new Rig();
+        string head = r.Request("[HTTP_METHOD, \"POST\", HTTP_MIMETYPE, " + mimeTypeLsl + "]", expectSent: false);
+        Assert.Null(head);
+        Assert.Contains("req=", r.H.Said);
+        Assert.DoesNotContain("req=" + UUID.Zero, r.H.Said);
+        Assert.Contains((DebugChannel, MimeTypeRefused), r.H.SaidOn);
+        Assert.DoesNotContain(r.H.Said, s => s.StartsWith("Script error") || s.StartsWith("status="));
+    }
+
+    /// <summary>PHLOX-54: a media type with parameters is still sent, as the Content-Type line, exactly as given.</summary>
+    [Theory]
+    [InlineData("text/plain;charset=utf-8")]
+    [InlineData("text/plain; charset=utf-8")]
+    [InlineData("application/json; charset=\"utf-8\"")]
+    [InlineData("text/xml;charset=UTF-8;version=1")]
+    [InlineData("application/vnd.api+json")]
+    public void AValidMimeTypeWithParametersIsSentAsGiven(string mimeType)
+    {
+        using var r = new Rig();
+        string head = r.Request("[HTTP_METHOD, \"POST\", HTTP_MIMETYPE, " + Lsl(mimeType) + "]");
+        Assert.Equal(new[] { mimeType }, ValuesOf(head, "Content-Type"));
+        Assert.DoesNotContain(r.H.SaidOn, m => m.Channel == DebugChannel);
     }
 
     [Fact]

@@ -12349,14 +12349,17 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     continue;
                 }
 
-                // PHLOX-47: HTTP_MIMETYPE becomes the Content-Type line as given (HttpRequestModule adds it without
-                // validation), so a line break in it would write a header line of the script's choosing - an
-                // X-SecondLife-Owner-Key among them. SL: "MIME types must be specified in the format:
-                // type/subtype[;option=value]". Refused like a Content-Type custom header: an error and no request.
-                if (option == (int)HttpRequestConstants.HTTP_MIMETYPE && (value.IndexOf('\r') >= 0 || value.IndexOf('\n') >= 0))
+                // PHLOX-47: HTTP_MIMETYPE becomes the Content-Type line as given, so a line break in it would write a
+                // header line of the script's choosing - an X-SecondLife-Owner-Key among them. PHLOX-54: the core now
+                // refuses any value that is not a media type (HttpRequestMimeType.IsValid: type/subtype, optional
+                // ;parameters, no control character) and YEngine reports it (LSL_Api.llHTTPRequest); Phlox checks the
+                // same function first and gives YEngine's result: its text on DEBUG_CHANNEL, a 1 s sleep, "" to the
+                // script, no request.
+                if (option == (int)HttpRequestConstants.HTTP_MIMETYPE && !HttpRequestMimeType.IsValid(value))
                 {
-                    ShoutError("llHTTPRequest: HTTP_MIMETYPE must be type/subtype[;option=value], without a line break.");
-                    return UUID.Zero.ToString();
+                    YEngineError("llHTTPRequest", HttpRequestMimeType.InvalidMessage);
+                    ScriptSleep(1000);
+                    return string.Empty;
                 }
 
                 paramList.Add(option.ToString());

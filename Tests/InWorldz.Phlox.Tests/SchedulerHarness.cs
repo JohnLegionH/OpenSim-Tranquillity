@@ -43,7 +43,11 @@ public sealed class SchedulerHarness : IDisposable
 
     /// <param name="configure">PHLOX-12: a hook to add config sections (e.g. [OSSL]) before the engine reads them.</param>
     /// <param name="withYEngine">Register YEngine alongside Phlox, first, as a region running both does.</param>
-    public SchedulerHarness(Action<IConfigSource> configure = null, bool withYEngine = false)
+    /// <param name="bytecodeDir">
+    /// PHLOX-54: the engine's bytecode cache folder. Null (the default) is the calling test class's own folder, see
+    /// <see cref="BytecodeDirForCaller"/>; <see cref="ProductionBytecodeDir"/> is the loader's own shared folder.
+    /// </param>
+    public SchedulerHarness(Action<IConfigSource> configure = null, bool withYEngine = false, string bytecodeDir = null)
     {
         var config = new IniConfigSource();
         var phlox = config.AddConfig("InWorldz.Phlox");
@@ -73,6 +77,9 @@ public sealed class SchedulerHarness : IDisposable
         }
 
         Engine = new PhloxEngine();
+        BytecodeDir = bytecodeDir ?? BytecodeDirForCaller();
+        // A relative folder is the production one, resolved as the loader resolves it; the seam is left unset for it.
+        if (Path.IsPathRooted(BytecodeDir)) Engine.BytecodeCacheDir = BytecodeDir;
         Engine.Initialise(config);
         Engine.AddRegion(Scene);
         // RegionLoaded needs an IWorldComm; the test scene has none, so one is registered first.
@@ -137,6 +144,85 @@ public sealed class SchedulerHarness : IDisposable
             if (kept != null) OpenSim.Data.Null.NullPresenceData.Instance = kept;
             return scene;
         }
+    }
+
+    /// <summary>PHLOX-54: the loader's own folder (PhloxScriptLoader.CACHE_DIR), relative to the working directory.</summary>
+    public const string ProductionBytecodeDir = "ScriptEngines/Phlox/bytecode";
+
+    /// <summary>PHLOX-54: the folder this harness's engine caches bytecode in.</summary>
+    public string BytecodeDir { get; }
+
+    /// <summary>
+    /// PHLOX-54: one root per test run for the classes' bytecode folders, under the test output folder. The harness made
+    /// it, so the harness removes it when the process exits. The test host can be ended before that finishes (a full
+    /// run left part of its root behind), so a new run also removes the roots earlier runs of this harness left:
+    /// only "run-&lt;pid&gt;-&lt;id&gt;" folders under harness-bytecode, and only when that process is no longer running.
+    /// </summary>
+    private static readonly System.Lazy<string> s_bytecodeRunRoot = new(() =>
+    {
+        string parent = Path.Combine(AppContext.BaseDirectory, "ScriptEngines", "Phlox", "harness-bytecode");
+        Directory.CreateDirectory(parent);
+        foreach (string earlier in Directory.GetDirectories(parent, "run-*"))
+        {
+            string[] parts = Path.GetFileName(earlier).Split('-');
+            if (parts.Length == 3 && int.TryParse(parts[1], out int pid) && pid != Environment.ProcessId && !ProcessRunning(pid))
+                RemoveTree(earlier);
+        }
+
+        string root = Path.Combine(parent, "run-" + Environment.ProcessId + "-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(root);
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => RemoveTree(root);
+        return root;
+    });
+
+    private static bool ProcessRunning(int pid)
+    {
+        try { using var p = System.Diagnostics.Process.GetProcessById(pid); return !p.HasExited; }
+        catch (ArgumentException) { return false; }
+        catch { return true; }   // cannot tell: leave it
+    }
+
+    /// <summary>PHLOX-54: removes a harness bytecode root file by file, going on past any entry it cannot remove.</summary>
+    private static void RemoveTree(string dir)
+    {
+        try
+        {
+            foreach (string f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                try { File.Delete(f); } catch { }
+            foreach (string d in Directory.GetDirectories(dir, "*", SearchOption.AllDirectories).OrderByDescending(d => d.Length))
+                try { Directory.Delete(d); } catch { }
+            Directory.Delete(dir);
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// PHLOX-54: the bytecode folder for the test class building this harness. Every loader used to share the working
+    /// directory's "ScriptEngines/Phlox/bytecode", and its schema stamp is read outside the loader's try
+    /// (PhloxScriptLoader.EnsureCacheSchemaVersion): with no stamp on disk, classes starting in parallel each wrote it
+    /// while another read it, and the read threw IOException out of harness set-up (B5-PREP's one failure).
+    /// The class is the outermost frame on the stack whose method belongs to this test assembly (the test method, its
+    /// async state machine or a lambda, walked up to the top-level type), so the 389 construction sites need no
+    /// change. xUnit runs one class's tests one at a time, so harnesses of one class share a folder as all harnesses
+    /// did before (a restore test's second engine can still load the first one's bytecode), and no two classes do.
+    /// A harness built from no test class gets a folder of its own.
+    /// </summary>
+    private static string BytecodeDirForCaller()
+    {
+        Assembly tests = typeof(SchedulerHarness).Assembly;
+        Type owner = null;
+        foreach (var frame in new System.Diagnostics.StackTrace(1, false).GetFrames())
+        {
+            Type t = frame.GetMethod()?.DeclaringType;
+            if (t == null || t.Assembly != tests) continue;
+            while (t.DeclaringType != null) t = t.DeclaringType;
+            if (t != typeof(SchedulerHarness)) owner = t;   // keep going: the last one found is the outermost
+        }
+        string name = owner?.FullName ?? ("unowned-" + Guid.NewGuid().ToString("N"));
+        foreach (char c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '_');
+        string dir = Path.Combine(s_bytecodeRunRoot.Value, name);
+        Directory.CreateDirectory(dir);
+        return dir;
     }
 
     private static object Field(object o, string name)
@@ -303,7 +389,31 @@ public sealed class SchedulerHarness : IDisposable
             if (!Pending(l) && !Pending(e)) { /* keep pumping a little; events can arrive late */ }
             System.Threading.Thread.Sleep(1);
         }
-        if (loadPending || Engine.ObjectPostsInFlight > 0) FinishLateLoads();
+        if (loadPending || Engine.ObjectPostsInFlight > 0 || AnyLoadOutstanding()) FinishLateLoads();
+    }
+
+    /// <summary>
+    /// PHLOX-54: a load the loader has not finished, for an item still in the scene. The loader's WorkIsPending does not
+    /// count a compile running on its compile thread (PhloxScriptLoader.HasPendingWork), so a window could end with the
+    /// script still compiling, no interpreter and no late-load wait (RestoredScriptResumeTests under parallel load:
+    /// "captured in RunState=(no interpreter)"). PhloxScriptLoader.IsLoading is the loader's own answer per item; an item
+    /// no longer in the scene (removed while loading) never gets an outcome and is not waited for.
+    /// </summary>
+    private bool AnyLoadOutstanding()
+    {
+        var loader = (global::Phlox.ScriptEngine.PhloxScriptLoader)m_loader;
+        object outcomes = loader.GetType().GetField("m_Outcomes", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(loader)!;
+        var latest = (Dictionary<UUID, long>)loader.GetType().GetField("m_LatestSerial", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(loader)!;
+        UUID[] items;
+        lock (outcomes) items = latest.Keys.ToArray();
+        foreach (UUID item in items)
+        {
+            if (!loader.IsLoading(item)) continue;
+            foreach (var sog in Scene.GetSceneObjectGroups())
+                foreach (var part in sog.Parts)
+                    if (part.Inventory.GetInventoryItem(item) != null) return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -321,7 +431,7 @@ public sealed class SchedulerHarness : IDisposable
         {
             var l = loaderDoWork!.Invoke(m_loader, null);
             exeDoWork!.Invoke(m_exe, null);
-            if (!Pending(l)) break;
+            if (!Pending(l) && !AnyLoadOutstanding()) break;
             System.Threading.Thread.Sleep(1);
         }
         PumpUntilIdle(TimeSpan.FromSeconds(30));
@@ -418,7 +528,7 @@ public sealed class SchedulerHarness : IDisposable
             exeDoWork!.Invoke(m_exe, null);
             System.Threading.Thread.Sleep(1);
         }
-        if (loadPending || Engine.ObjectPostsInFlight > 0) FinishLateLoads();
+        if (loadPending || Engine.ObjectPostsInFlight > 0 || AnyLoadOutstanding()) FinishLateLoads();
     }
 
     /// <summary>
