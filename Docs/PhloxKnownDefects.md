@@ -4696,3 +4696,69 @@ master scheduler in 8 parallel lanes, the loop kept busy by work signals right u
 thread in under 1 s (the join allows 5 s). On the old code 18 of 800 stops took 5.0 s and left the thread running; on
 the new code the slowest took 7.4 ms. ErrorPauseTests, which lost the most to the stall, runs its 182 tests in about
 13 s with the harness back on `StopThread`.
+
+## PHLOX-61 - script data fixes: vector/rotation parts, list and string ranges, (integer) limits, PRIM_TEXTURE by name, shininess (fixed)
+
+All five are run-time fixes (VM and LSLSystemAPI). No compiled bytecode changes and there is no cache bump. Sources,
+quotes and Halcyon/YEngine lines for each are in the work folder's STATE.md.
+
+1. **Whole numbers into vector and rotation parts.** The VM stored a part with a raw `(float)` cast, so an integer on
+   the stack threw InvalidCastException at 7 places (`Interpreter.Actions.cs` `_AssignSubscript`: vector x/y/z,
+   rotation x/y/z/s). The old tree fixed it in `ea5028f1ef`; the same `ConvToFloat` change is ported with its tests.
+   LSL source such as `v.z = 10;`, `q.s = 5;` and `v.y += 1;` already worked on the old code (the compiler converts
+   the integer first); the throw is reached by bytecode that stores an integer, as the old tree's assembly tests do.
+   No LSL source shape that reaches it was found.
+2. **List and string ranges (C10).** SL's rule, from the wiki: a negative index counts from the end once; when start >
+   end the range is `[0, end] + [start, -1]`; indexes outside the list select nothing. Now used by llList2List,
+   llDeleteSubList, llGetSubString, llDeleteSubString and llListReplaceList (an inverted range keeps what lies between
+   and puts src after it, as Halcyon and YEngine). llList2ListStrided follows its own wiki caveat: an inverted range is
+   the whole list, and only indexes that are multiples of stride are returned. Before: an inverted range gave [] or
+   the input unchanged, llListReplaceList duplicated items, llList2ListStrided wrapped, ignored the stride alignment and
+   returned [] for start == end, and a start past the end threw (llList2List of a 3-item list with 5, 10: an
+   OverflowException that stopped the script; llDeleteSubString("abc", 5, 10) the same).
+3. **(integer), llFloor, llCeil, llRound of NaN, infinity and out-of-range floats** give -2147483648, as SL's wiki
+   (llFloor: "-2147483648 (0x80000000) if the arithmetic result is outside of the range of valid integers") and
+   Halcyon (.NET Framework's conversion). On .NET 10 a plain cast saturates: NaN gave 0 and +inf 2147483647.
+   YEngine still gives those (its `conv.i4` and `(int)Math.Floor` saturate on .NET 10); Phlox now differs from it here.
+4. **PRIM_TEXTURE by an inventory texture's name (C9).** A name blanked the face. It now resolves the texture item of
+   that name in the script's prim (then a UUID), as SL and Halcyon; a name that is not a texture there, or not found,
+   leaves the face's texture as it is and still applies repeats, offsets and rotation (Halcyon, YEngine). NULL_KEY
+   also leaves the texture (it used to blank it), as in Halcyon and YEngine. PHLOX-49's read rule is unchanged: the
+   texture reads back as its name.
+5. **PRIM_BUMP_SHINY shininess (C9).** The script's 0-3 went into the bump bits and the bump then cleared it, so
+   shininess was never set; the read returned 64/128/192 for a viewer-set shine. Now PRIM_SHINY_* goes in the top two
+   bits of the material byte (`<< 6`, verified against the UtopiaSkye.OpenMetaverse 1.1.7 package the lane builds with:
+   `Shininess.Low = 64`, SHINY_MASK 0xC0, BUMP_MASK 0x1F, FULLBRIGHT_MASK 0x20) and reads back `>> 6`. A shiny value
+   outside 0-3 is none (Halcyon, YEngine); a bump value keeps to its five bits so it cannot change fullbright or shine.
+
+### What residents will notice
+
+- `llList2List(list, start, end)` and `llDeleteSubList` with start after end now return SL's result (the two ends of
+  the list, or what lies between), and a start past the end of the list no longer stops the script with an error.
+- `llGetSubString`, `llDeleteSubString`, `llListReplaceList` and `llList2ListStrided` give SL's results for inverted
+  and out-of-range indexes.
+- `(integer)` of NaN or of a float too large for an integer, and llFloor/llCeil/llRound of one, give -2147483648 as in
+  SL, instead of 0 or 2147483647.
+- `llSetPrimitiveParams([PRIM_TEXTURE, face, "texture name", ...])` shows the texture instead of a blank face.
+- `PRIM_BUMP_SHINY` now makes a face shiny, and `llGetPrimitiveParams([PRIM_BUMP_SHINY, face])` reads 0-3.
+
+### Found, not changed
+
+- A float literal of more than 7 significant digits loses digits at compile time: `(string)2147483520.0` says
+  `2147484000.000000`. This is a compiler change (it would change bytecode), so it belongs to PHLOX-63.
+- `llDumpList2String` writes a vector in a list as `<2, 3, 0>`, not SL's `<2.00000, 3.00000, 0.00000>`.
+- llSetTexture (and the other `KeyOrName` users) still take any inventory item's name, not only a texture's, and look
+  for a UUID before a name.
+- llList2ListSlice was not changed (not part of the shared bug; no SL wiki rule checked here).
+- The SL DEBUG_CHANNEL error for a texture name that is not found is not said (Halcyon and YEngine say none).
+
+### Tests
+
+`ScriptDataFixesTests` (81 tests, runs in parallel: each test builds its own harness or interpreter). The old tree's two
+assembly tests, ported, plus every vector and rotation part; LSL part stores into locals and globals; every range shape
+(normal, negative, inverted, one or both ends outside, either side, int.MinValue/MaxValue, the wiki examples, the
+3-item "5, 10" crash, empty lists and strings) for the six functions; NaN, both infinities and just past each integer
+limit for (integer) in a script and for llFloor/llCeil/llRound; PRIM_TEXTURE by name set and read back through
+llGetPrimitiveParams and llGetLinkPrimitiveParams (child prim), with an unknown name, a notecard name and a key;
+PRIM_BUMP_SHINY for every shininess with three bumps, own prim and child, fullbright kept, and out-of-range values.
+On the old code 37 of the 81 fail.

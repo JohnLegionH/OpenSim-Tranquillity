@@ -574,9 +574,11 @@ namespace Phlox.ScriptEngine
         public int llAbs(int i) => i == int.MinValue ? i : Math.Abs(i);
         public float llFabs(float f) => Math.Abs(f);
         public float llFrand(float mag) => (float)(ThreadRandom.NextDouble() * mag);
-        public int llFloor(float f) => (int)Math.Floor(f);
-        public int llCeil(float f) => (int)Math.Ceiling(f);
-        public int llRound(float f) => (int)Math.Round(f, MidpointRounding.AwayFromZero);
+        // PHLOX-61: SL wiki llFloor, "The returned value is -2147483648 (0x80000000) if the arithmetic result is outside
+        // of the range of valid integers"; NaN too. A plain (int) saturates on .NET 9+ x64.
+        public int llFloor(float f) => InWorldz.Phlox.Util.LslConvert.FloatToInteger(Math.Floor(f));
+        public int llCeil(float f) => InWorldz.Phlox.Util.LslConvert.FloatToInteger(Math.Ceiling(f));
+        public int llRound(float f) => InWorldz.Phlox.Util.LslConvert.FloatToInteger(Math.Round(f, MidpointRounding.AwayFromZero));
         public float llAcos(float f) => (float)Math.Acos(f);
         public float llAsin(float f) => (float)Math.Asin(f);
         public float llLog10(float f) => (float)Math.Log10(f);
@@ -5297,6 +5299,27 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
+        /// PHLOX-61 (C9): a texture as PRIM_TEXTURE names it. SL wiki: "a texture in the inventory of the prim this
+        /// script is in or a UUID of a texture". The script's prim's texture item of that name first (Halcyon's
+        /// KeyOrName order: "no-one can name an inventory item with a UUID string" and get the named key), then a UUID.
+        /// Only a texture item matches, as SL's "it is not a texture" rule and YEngine's
+        /// GetAssetIdFromItemName(m_host, texture, AssetType.Texture). UUID.Zero when neither.
+        /// </summary>
+        private UUID TextureKeyOrName(string k)
+        {
+            if (string.IsNullOrEmpty(k)) return UUID.Zero;
+            lock (m_host.TaskInventory)
+            {
+                foreach (var kvp in m_host.TaskInventory)
+                {
+                    if (kvp.Value.Name == k && kvp.Value.Type == (int)AssetType.Texture)
+                        return kvp.Value.AssetID;
+                }
+            }
+            return UUID.TryParse(k, out UUID id) ? id : UUID.Zero;
+        }
+
+        /// <summary>
         /// Reverse lookup: given an asset UUID, return the inventory item name if it
         /// exists in the host prim's task inventory; otherwise string.Empty.
         /// </summary>
@@ -6024,10 +6047,12 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     try { offsets = (Vector3)data[idx++]; } catch { idx++; break; }
                     try { rot     = (float)Convert.ToDouble(data[idx++]); } catch { break; }
                     Primitive.TextureEntry texEntry = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
+                    // PHLOX-61 (C9): SL wiki PRIM_TEXTURE, "a texture in the inventory of the prim this script is in or a
+                    // UUID of a texture". A name no longer blanks the face. Neither found: the texture stays as it is and
+                    // the rest still applies (Halcyon SetTexture + ScaleTexture/OffsetTexture/RotateTexture).
+                    UUID texUUID = TextureKeyOrName(tex);
                     void ApplyTex(Primitive.TextureEntryFace f) {
-                        UUID texUUID;
-                        if (!UUID.TryParse(tex, out texUUID)) texUUID = UUID.Zero;
-                        f.TextureID = texUUID;
+                        if (texUUID != UUID.Zero) f.TextureID = texUUID;
                         f.RepeatU = repeats.X; f.RepeatV = repeats.Y;
                         f.OffsetU = offsets.X; f.OffsetV = offsets.Y;
                         f.Rotation = rot;
@@ -6073,9 +6098,13 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     try { shiny = Convert.ToInt32(data[idx++]); } catch { idx++; break; }
                     try { bump  = Convert.ToInt32(data[idx++]); } catch { break; }
                     Primitive.TextureEntry te = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
+                    // PHLOX-61 (C9): PRIM_SHINY_* 0..3 go in the top two bits of the material byte (OpenMetaverse
+                    // Shininess Low = 0x40 .. High = 0xC0); anything else is none (Halcyon and YEngine SetShiny). The bump
+                    // keeps to its five bits (BUMP_MASK 0x1F) so it cannot write the fullbright or shiny bits.
+                    Shininess shinyBits = shiny >= 0 && shiny <= 3 ? (Shininess)(shiny << 6) : Shininess.None;
                     void ApplyBS(Primitive.TextureEntryFace f) {
-                        f.Shiny = (Shininess)shiny;
-                        f.Bump  = (Bumpiness)bump;
+                        f.Shiny = shinyBits;
+                        f.Bump  = (Bumpiness)(bump & 0x1F);
                     }
                     if (face == ALL_SIDES) { for (int i = 0; i < 8; i++) ApplyBS(te.CreateFace((uint)i)); }
                     else { try { ApplyBS(te.CreateFace((uint)face)); } catch { } }
@@ -7246,7 +7275,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         int face; try { face = Convert.ToInt32(data[idx++]); } catch { break; }
                         Primitive.TextureEntry te = part.Shape.Textures;
                         Primitive.TextureEntryFace f = te == null ? null : (face == ALL_SIDES ? te.DefaultTexture : te.GetFace((uint)face));
-                        result.Add((int)(f?.Shiny ?? Shininess.None));
+                        result.Add((int)(f?.Shiny ?? Shininess.None) >> 6);   // PHLOX-61: back to PRIM_SHINY_* 0..3
                         result.Add((int)(f?.Bump  ?? Bumpiness.None));
                         break;
                     }
@@ -12838,26 +12867,50 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public string llToUpper(string src) => src?.ToUpper() ?? string.Empty;
         public string llToLower(string src) => src?.ToLower() ?? string.Empty;
 
+        // PHLOX-61 (C10): SL's range rule for llGetSubString, llDeleteSubString, llList2List, llDeleteSubList and
+        // llListReplaceList. SL wiki: "Negative indexes count from the far end, the first item being indexed as
+        // -length, the last as -1." / "If start > end then the range operated on starts at 0 and goes to end and then
+        // starts again at start and goes to -1." / out-of-range indexes "are treated as if they were there but were
+        // removed just before output". So: add the length to a negative index once; the range is [start, end], or
+        // [0, end] + [start, -1] when start > end; indexes outside the list select nothing. Halcyon's GetSublist is
+        // this rule; its DeleteSublist and llDeleteSubString are off by one on the inverted case (PHLOX-61 STATE.md).
+        private static void NormaliseLslRange(int length, ref int start, ref int end)
+        {
+            if (start < 0) start += length;
+            if (end < 0) end += length;
+        }
+
+        private static bool InLslRange(int index, int start, int end)
+            => start <= end ? index >= start && index <= end : index <= end || index >= start;
+
         public string llGetSubString(string src, int start, int end)
         {
             if (src == null) return string.Empty;
             int len = src.Length;
-            if (start < 0) start = Math.Max(len + start, 0);
-            if (end < 0) end = len + end;
-            if (start > end || start >= len) return string.Empty;
-            end = Math.Min(end, len - 1);
-            return src.Substring(start, end - start + 1);
+            NormaliseLslRange(len, ref start, ref end);
+            if (start <= end)
+            {
+                int s = Math.Max(start, 0), e = Math.Min(end, len - 1);
+                return s > e ? string.Empty : src.Substring(s, e - s + 1);
+            }
+            string head = end >= 0 ? src.Substring(0, Math.Min(end, len - 1) + 1) : string.Empty;
+            string tail = start < len ? src.Substring(Math.Max(start, 0)) : string.Empty;
+            return head + tail;
         }
 
         public string llDeleteSubString(string src, int start, int end)
         {
             if (src == null) return string.Empty;
             int len = src.Length;
-            if (start < 0) start = Math.Max(len + start, 0);
-            if (end < 0) end = len + end;
-            if (start > end) return src;
-            start = Math.Max(0, start); end = Math.Min(len - 1, end);
-            return src.Remove(start, end - start + 1);
+            NormaliseLslRange(len, ref start, ref end);
+            if (start <= end)
+            {
+                int s = Math.Max(start, 0), e = Math.Min(end, len - 1);
+                return s > e ? src : src.Remove(s, e - s + 1);
+            }
+            // Inverted: [0, end] and [start, -1] go, what lies between them stays.
+            int keepFrom = Math.Max(end + 1, 0), keepTo = Math.Min(start - 1, len - 1);
+            return keepFrom > keepTo ? string.Empty : src.Substring(keepFrom, keepTo - keepFrom + 1);
         }
 
         public string llInsertString(string dst, int position, string src)
@@ -13332,29 +13385,25 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
         public LSLList llList2List(LSLList src, int start, int end)
         {
+            // PHLOX-61 (C10): SL's range rule (see NormaliseLslRange). Start past the end no longer throws.
             if (src == null || src.Length == 0) return new LSLList();
             int len = src.Length;
-            if (start < 0) start = Math.Max(len + start, 0);
-            if (end < 0) end = len + end;
-            if (start > end) return new LSLList();
-            end = Math.Min(end, len - 1);
-            int count = end - start + 1;
-            var result = new object[count];
-            Array.Copy(src.Data, start, result, 0, count);
+            NormaliseLslRange(len, ref start, ref end);
+            var result = new List<object>();
+            for (int i = 0; i < len; i++)
+                if (InLslRange(i, start, end)) result.Add(src.Data[i]);
             return new LSLList(result);
         }
         public LSLList llDeleteSubList(LSLList src, int start, int end)
         {
+            // PHLOX-61 (C10): SL's range rule; start > end deletes [0, end] and [start, -1].
             if (src == null) return new LSLList();
             int len = src.Length;
-            if (start < 0) start = Math.Max(len + start, 0);
-            if (end < 0) end = len + end;
-            if (start > end) return src;
-            start = Math.Max(0, start); end = Math.Min(len - 1, end);
-            var result = new System.Collections.Generic.List<object>();
+            NormaliseLslRange(len, ref start, ref end);
+            var result = new List<object>();
             for (int i = 0; i < len; i++)
-                if (i < start || i > end) result.Add(src.Data[i]);
-            return new LSLList(result.ToArray());
+                if (!InLslRange(i, start, end)) result.Add(src.Data[i]);
+            return new LSLList(result);
         }
         public int llGetListEntryType(LSLList src, int index)
         {
@@ -13438,31 +13487,18 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         public LSLList llList2ListStrided(LSLList src, int start, int end, int stride)
         {
-            if (src == null) return new LSLList();
+            // PHLOX-61 (C10). SL wiki: "Returns a list of all the entries in the strided list whose index is a multiple
+            // of stride in the range start to end"; "start & end will not form an exclusion range when start is past
+            // end ... instead it will act as if start was zero & end was -1"; stride "if less than 1 it is assumed to be
+            // 1". YEngine agrees; Halcyon returned [] for start == end and wrapped an inverted range.
+            if (src == null || src.Length == 0) return new LSLList();
             var result = new List<object>();
             int len = src.Length;
-            if (start < 0) start = len + start;
-            if (end < 0)   end   = len + end;
-            start = Math.Max(0, Math.Min(start, len - 1));
-            end   = Math.Max(0, Math.Min(end,   len - 1));
-            if (stride == 0) stride = 1;
-            if (start == end) return new LSLList(result);
-
-            if (stride > 0)
-            {
-                if (start <= end)
-                    for (int i = start; i <= end; i += stride) result.Add(src.Data[i]);
-                else
-                {
-                    for (int i = start; i < len; i += stride) result.Add(src.Data[i]);
-                    for (int i = 0; i <= end; i += stride) result.Add(src.Data[i]);
-                }
-            }
-            else
-            {
-                if (start >= end)
-                    for (int i = start; i >= end && i >= 0; i += stride) result.Add(src.Data[i]);
-            }
+            if (stride < 1) stride = 1;
+            NormaliseLslRange(len, ref start, ref end);
+            if (start > end) { start = 0; end = len - 1; }
+            long first = (Math.Max(start, 0) + (long)stride - 1) / stride * stride;
+            for (long i = first; i <= end && i < len; i += stride) result.Add(src.Data[i]);
             return new LSLList(result);
         }
         public LSLList llListInsertList(LSLList dest, LSLList src, int start)
@@ -13605,16 +13641,26 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             if (dest == null) dest = new LSLList();
             if (src == null) src = new LSLList();
+            // PHLOX-61 (C10): SL's range rule (see NormaliseLslRange). SL wiki: "If end is a negative index past the
+            // beginning, then the operating range would be [start, -1]." / "If end is a positive index past the end, then
+            // the operating range would be [0, end]." An inverted range keeps what lies between end and start and puts
+            // src after it (Halcyon and YEngine: dest.GetSublist(end + 1, start - 1) + src).
             int len = dest.Length;
-            if (start < 0) start = Math.Max(len + start, 0);
-            if (end < 0) end = len + end;
-            start = Math.Max(0, Math.Min(start, len));
-            end = Math.Max(0, Math.Min(end, len - 1));
-            var result = new System.Collections.Generic.List<object>();
-            for (int i = 0; i < start; i++) result.Add(dest.Data[i]);
-            result.AddRange(src.Data);
-            for (int i = end + 1; i < len; i++) result.Add(dest.Data[i]);
-            return new LSLList(result.ToArray());
+            NormaliseLslRange(len, ref start, ref end);
+            var result = new List<object>(len + src.Length);
+            if (start <= end)
+            {
+                int insertAt = Math.Min(Math.Max(start, 0), len);
+                for (int i = 0; i < insertAt; i++) result.Add(dest.Data[i]);
+                result.AddRange(src.Data);
+                for (int i = end >= len ? len : Math.Max(end + 1, insertAt); i < len; i++) result.Add(dest.Data[i]);
+            }
+            else
+            {
+                for (int i = Math.Max(end + 1, 0); i < Math.Min(start, len); i++) result.Add(dest.Data[i]);
+                result.AddRange(src.Data);
+            }
+            return new LSLList(result);
         }
         public float llListStatistics(int operation, LSLList src)
         {
