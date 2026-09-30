@@ -4666,3 +4666,33 @@ No production change. Three kinds of test fix in `Tests/InWorldz.Phlox.Tests`:
 Full `InWorldz.Phlox.Tests` run: 12 m 59 s before (4015 passed, 2 skipped; PHLOX-58 measured 12 m 26 s), 7 m 00 s and
 7 m 09 s after, green both times, the same 4017 test names. The serial "phlox-state" phase went from 543 s (run 1) to
 258 s (run 2; ErrorPauseTests 115 s -> 10 s, AntiAbuseSlowdownTests 54 s -> 4 s, IwStringCodecGoldenTests 27 s -> 2 s).
+
+## PHLOX-60 - a region stop could lose its signal to the master scheduler thread (fixed)
+
+PHLOX-59 found it and worked around it in the test harness; this is the production fix.
+
+`PhloxMasterScheduler.StopThread` sets `m_Stop`, signals the work loop once and joins for up to 5 s. The loop read
+`m_Stop` and only then Reset the signal, so a stop landing between the two had its signal erased. With no work queued
+the loop then waited for a signal that never came, and the join timed out. The loop now reads `m_Stop` again right
+after the Reset. The stop writes the flag before it signals, so that read can never miss it. Nothing else changes.
+
+Phlox's other background loops were checked for the same shape: the loader's compile thread (a BlockingCollection,
+woken by CompleteAdding), the editor's compile-outcome wait (Monitor.Wait under the same lock as its stop check), the
+service-call threads (a counting semaphore, bounded wait) and the async drain workers (no wait), the StateManager
+flush thread (already re-checks its flag after its Reset) and the async command pump (a sleep poll, no signal). None
+can lose a stop.
+
+The harness workaround is gone: the harness stops the thread through `StopThread` again.
+
+### What operators will notice
+
+- A region stop (or a Phlox engine shutdown) no longer waits an extra 5 s now and then (about 1 stop in 12 in tests).
+- It no longer leaves a Phlox master scheduler thread stuck behind it in the simulator process.
+
+### Tests
+
+`MasterSchedulerStopTests` (runs in parallel; every cycle builds its own schedulers): 800 start/stop cycles of a real
+master scheduler in 8 parallel lanes, the loop kept busy by work signals right up to the stop. Every stop must end the
+thread in under 1 s (the join allows 5 s). On the old code 18 of 800 stops took 5.0 s and left the thread running; on
+the new code the slowest took 7.4 ms. ErrorPauseTests, which lost the most to the stall, runs its 182 tests in about
+13 s with the harness back on `StopThread`.

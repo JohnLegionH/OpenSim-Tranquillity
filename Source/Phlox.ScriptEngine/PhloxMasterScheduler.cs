@@ -88,6 +88,12 @@ namespace Phlox.ScriptEngine
                         // which could be 60+ seconds later if nothing else was happening.
                         m_ActionEvent.Reset();
 
+                        // PHLOX-60: StopThread sets m_Stop and then signals. A stop that landed after the loop's
+                        // m_Stop check and before the Reset above had its signal erased, and with no work queued the
+                        // loop then waited forever (StopThread's 5 s join timed out). m_Stop is written before the
+                        // signal, so reading it again after the Reset can never miss that stop.
+                        if (m_Stop) break;
+
                         WorkStatus exeStatus = m_ExeScheduler.DoWork();
                         WorkStatus loadStatus = m_ScriptLoader.DoWork();
 
