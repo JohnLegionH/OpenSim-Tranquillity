@@ -297,15 +297,20 @@ public class ErrorPauseTests
         Assert.Equal(Show(off.Ret), Show(on.Ret));
     }
 
-    /// <summary>A missing notecard: Halcyon shouted and paused; Phlox reports nothing there, so nothing pauses.</summary>
+    /// <summary>
+    /// A missing notecard: Halcyon shouted and paused. PHLOX-58 left Phlox silent there; PHLOX-62 (John's ruling (a))
+    /// raises Halcyon's error, which pauses 15 ms like the others (the other new errors: HalcyonChecksTests).
+    /// </summary>
     [Fact]
-    public void AMissingNotecardForLlGetNotecardLineStaysSilentAndUnpaused()
+    public void AMissingNotecardForLlGetNotecardLineNowErrorsAndPauses()
     {
         var c = new Case("llGetNotecardLine", a => a.llGetNotecardLine("nope", 0));
         var on = Run(c, chatThrottle: true);
         var off = Run(c, chatThrottle: false);
-        Assert.Empty(on.Errors);
-        Assert.Equal(off.Ms, on.Ms);
+        Assert.Equal(new[] { "Script error: Notecard 'nope' could not be found." }, on.Errors);
+        Assert.Equal(on.Errors, off.Errors);
+        Assert.Equal(15, on.Ms);
+        Assert.Equal(0, off.Ms);
     }
 
     /// <summary>iwStringCodec paused before PHLOX-58 (PHLOX-57); it pauses once, not twice.</summary>

@@ -160,22 +160,41 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
 
         private static readonly TimeSpan ForgottenKept = TimeSpan.FromMinutes(10);
         private readonly object m_TrackLock = new object();
-        private readonly Dictionary<UUID, UUID> m_Outstanding = new();   // request id -> script item id
+        private readonly Dictionary<UUID, (UUID Item, UUID Object)> m_Outstanding = new();   // request id -> script item, object
         private readonly Dictionary<UUID, DateTime> m_Forgotten = new();   // request id -> when its script was reset or removed
         private long m_Dropped;
 
+        // PHLOX-62 (HALCYON-DIFF S11): Halcyon's in-flight caps, ScriptsHttpRequests.cs:88-99 - MAX_SINGLE_OBJECT_QUEUE_SIZE
+        // (per object, keyed by the object group, :373-376) and MAX_REQUEST_QUEUE_SIZE (per region, :271-272). A request is
+        // in flight from its start until its response is taken or its script is reset or removed. The region count is
+        // this engine's (Phlox scripts'); the core keeps no count Phlox can read. The core's rate limit is separate.
+        internal const int MaxInFlightPerObject = 10;
+        internal const int MaxInFlightPerRegion = 200;
+
         /// <summary>
         /// llHTTPRequest: start the request and record it in one step. The core can complete a request before
-        /// StartHttpRequest returns (a filtered URL), and the pump must not see it untracked.
+        /// StartHttpRequest returns (a filtered URL), and the pump must not see it untracked. PHLOX-62: refused, without
+        /// starting, when the object already has <see cref="MaxInFlightPerObject"/> requests in flight or the region
+        /// <see cref="MaxInFlightPerRegion"/> (<paramref name="capped"/> true, NULL_KEY).
         /// </summary>
-        internal UUID Start(UUID itemID, Func<UUID> start)
+        internal UUID Start(UUID itemID, UUID objectID, Func<UUID> start, out bool capped)
         {
             lock (m_TrackLock)
             {
+                capped = m_Outstanding.Count >= MaxInFlightPerRegion || InFlightFor(objectID) >= MaxInFlightPerObject;
+                if (capped) return UUID.Zero;
                 UUID reqID = start();
-                if (!reqID.IsZero()) m_Outstanding[reqID] = itemID;
+                if (!reqID.IsZero()) m_Outstanding[reqID] = (itemID, objectID);
                 return reqID;
             }
+        }
+
+        private int InFlightFor(UUID objectID)
+        {
+            int n = 0;
+            foreach (var v in m_Outstanding.Values)
+                if (v.Object == objectID) n++;
+            return n;
         }
 
         private enum Owner { Phlox, OtherEngine, Dropped }
@@ -210,7 +229,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
             {
                 List<UUID> mine = null;
                 foreach (var kvp in m_Outstanding)
-                    if (kvp.Value == itemID) (mine ??= new List<UUID>()).Add(kvp.Key);
+                    if (kvp.Value.Item == itemID) (mine ??= new List<UUID>()).Add(kvp.Key);
                 DateTime now = DateTime.UtcNow;
                 if (mine != null)
                     foreach (UUID id in mine)

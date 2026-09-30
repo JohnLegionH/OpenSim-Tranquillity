@@ -73,6 +73,13 @@ namespace Phlox.ScriptEngine
         public bool AllowGodFunctions { get; private set; }
 
         /// <summary>
+        /// PHLOX-62: YEngine's [YEngine] AutomaticLinkPermission (default false; LSL_Api.LoadConfig, LSL_Api.cs:519), read
+        /// from the same key so one setting means the same for both engines: when true, llCreateLink and llBreakLink need no
+        /// PERMISSION_CHANGE_LINKS and llGetPermissions reports it (as YEngine and Halcyon).
+        /// </summary>
+        public bool AutomaticLinkPermission { get; private set; }
+
+        /// <summary>
         /// PHLOX-46: Halcyon's reset throttle (LSLSystemAPI.ThrottleScriptResets): more than 5 resets of one script in one
         /// second puts it to sleep for 5 s, with a warning once an hour. [InWorldz.Phlox] ResetThrottle, default true: one of
         /// Halcyon's anti-abuse slowdowns, restored on by default with an operator setting as D1 rules for the others.
@@ -176,6 +183,7 @@ namespace Phlox.ScriptEngine
             // An [InWorldz.Phlox] AllowGodFunctions, where set, still wins, as it did before.
             AllowGodFunctions = m_Config.GetBoolean("AllowGodFunctions",
                 config.Configs["YEngine"]?.GetBoolean("AllowGodFunctions", false) ?? false);
+            AutomaticLinkPermission = config.Configs["YEngine"]?.GetBoolean("AutomaticLinkPermission", false) ?? false;
             if (MinTimerInterval < 0f) MinTimerInterval = 0f;
             m_log.LogInformation("[PhloxEngine]: MinTimerInterval = {0}s", MinTimerInterval);
             ResetThrottle = m_Config.GetBoolean("ResetThrottle", true);

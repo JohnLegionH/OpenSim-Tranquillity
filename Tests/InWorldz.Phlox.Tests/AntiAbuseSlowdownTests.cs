@@ -500,7 +500,7 @@ public class AntiAbuseSlowdownTests
 
     /// <summary>
     /// Halcyon GetNotecardSegment: 25 ms uncached; cached, 1 ms only on lines 0, 16, 32 ... read from offset 0; a
-    /// missing card does not sleep.
+    /// missing card has no read sleep (PHLOX-62: it now has Halcyon's error, whose 15 ms is ChatThrottle's).
     /// </summary>
     [Fact]
     public void LineReadsSleep25UncachedAnd1MsOnEverySixteenthCachedLine()
@@ -521,7 +521,7 @@ public class AntiAbuseSlowdownTests
         Assert.Equal(0, r.Sleep(item, api => api.iwGetNotecardSegment("card", 16, 1, 5)));
         Assert.Equal(1, r.Sleep(item, api => api.iwGetLinkNotecardLine(SlConst.LINK_THIS, "card", 16)));
         Assert.Equal(0, r.Sleep(item, api => api.iwGetLinkNotecardSegment(SlConst.LINK_THIS, "card", 17, 0, 5)));
-        Assert.Equal(0, r.Sleep(item, api => api.llGetNotecardLine("no such card", 0)));
+        Assert.Equal(15, r.Sleep(item, api => api.llGetNotecardLine("no such card", 0)));   // PHLOX-62: the error's pause
     }
 
     [Fact]
@@ -536,7 +536,8 @@ public class AntiAbuseSlowdownTests
         UntilCached(r, card.AssetID);
         Assert.Equal(0, r.Sleep(item, api => api.llGetNumberOfNotecardLines("card")));
         Assert.Equal(0, r.Sleep(item, api => api.llGetNotecardLine("card", 0)));
-        Assert.Equal(0, r.Sleep(item, api => api.llGetNumberOfNotecardLines("no such card")));
+        // PHLOX-62: the missing card's error still pauses 15 ms - ChatThrottle's pause, not a notecard read delay.
+        Assert.Equal(15, r.Sleep(item, api => api.llGetNumberOfNotecardLines("no such card")));
     }
 
     /// <summary>

@@ -4762,3 +4762,100 @@ limit for (integer) in a script and for llFloor/llCeil/llRound; PRIM_TEXTURE by 
 llGetPrimitiveParams and llGetLinkPrimitiveParams (child prim), with an unknown name, a notecard name and a key;
 PRIM_BUMP_SHINY for every shininess with three bumps, own prim and child, fullbright kept, and out-of-range values.
 On the old code 37 of the 81 fail.
+
+## PHLOX-62 - Halcyon's remaining checks and errors (fixed; llCreateLink's delay left for a ruling)
+
+All run-time (LSLSystemAPI, the HTTP plugin, PhloxEngine's config read). No bytecode change, no cache bump, no new
+setting. Sources with Halcyon, SL and YEngine quotes, and the full list of error sites: the work folder's STATE.md.
+
+1. **Checks Halcyon made (S14, S17).**
+   - `iwSetGround` follows Halcyon's TerrainModule.SetTerrain: a height outside 0..1024 or a corner outside the region
+     changes nothing (Phlox used to clamp the rectangle into the region and set any height); a god sets any cell; anyone
+     else sets only the cells they may terraform, each held within the estate's terrain raise/lower limits of the baked
+     terrain, as NGC core holds the viewer's terrain brush. Silent, as in Halcyon.
+   - A rez with a NaN rotation (llRezObject, llRezAtRoot, iwRezObject, iwRezAtRoot, iwRezAt) is refused with Halcyon's
+     error and no delay. Halcyon's other rez guard, the bad-user (nuke / blacklisted owner) list, is not ported: NGC core
+     has no such list.
+   - `llClearCameraParams` needs PERMISSION_CONTROL_CAMERA from a granter, as Halcyon (silent without it; SL shouts).
+   - `llGiveMoney` needs PERMISSION_DEBIT granted by the script's owner, as Halcyon and SL (a debit granted by someone
+     else was accepted). Phlox still moves no money.
+2. **HTTP in flight (S11).** Halcyon's caps: 10 requests in flight per object and 200 per region. Nothing enforced them
+   (the core's HTTP module has a rate limit only). A request over either cap is not made: llHTTPRequest returns NULL_KEY
+   after 80 ms (Halcyon's ERROR_DELAY) and says nothing. A request is in flight until its response is taken or its
+   script is reset or removed. The region cap counts Phlox scripts' requests (YEngine's are not visible to Phlox).
+3. **Errors Halcyon raised where Phlox was silent (John's ruling (a)).** Each is said on DEBUG_CHANNEL with Halcyon's
+   text and the 15 ms error pause (ChatThrottle), and the call does what Halcyon did after it (listed below).
+4. **A script's own inventory key (F165, ruling (a)).** `llGetInventoryKey(llGetScriptName())` and
+   `iwGetLinkInventoryKey` on the script's own prim give the script its own asset key whatever its permissions, as
+   Halcyon's IsMyScript allowed. Every other item still needs to be copy, modify and transfer. YEngine has no such
+   exception.
+5. **AutomaticLinkPermission.** Phlox reads YEngine's `[YEngine] AutomaticLinkPermission` (default false), so one
+   setting means the same for both engines: when true, llCreateLink and llBreakLink need no PERMISSION_CHANGE_LINKS
+   and llGetPermissions reports it.
+6. **llCreateLink's delay: not changed.** SL documents 0.1 s; Halcyon (and YEngine by default) sleep 1 s. Phlox keeps
+   1 s until John rules.
+
+### What residents will notice
+
+New messages on DEBUG_CHANNEL (each with Phlox's usual "Script error: " in front):
+- `Notecard 'NAME' could not be found.` - llGetNotecardLine and llGetNumberOfNotecardLines with a notecard that is not
+  in the prim (or an empty name); the call still returns NULL_KEY.
+- `LSL Runtime Error: First parameter to llDialog needs to be a key` - llDialog, and llTextBox (Halcyon's text), when the
+  avatar is not a key.
+- `LSL Runtime Error: No more than 12 buttons can be shown`, `LSL Runtime Error: button label cannot be blank`,
+  `LSL Runtime Error: button label cannot be longer than 24 characters` - llDialog. **The dialog is not shown** (before,
+  Phlox showed the first 12 buttons, cut long labels to 24 characters and showed blank ones), and the call no longer
+  sleeps its second.
+- `LSL Runtime Error: llSetVehicleType(N) is not valid.`, `llSetVehicleFloatParam(P, V) is not valid.`,
+  `llSetVehicleVectorParam(P, <x, y, z>) is not valid.`, `llSetVehicleRotationParam(P, <x, y, z, s>) is not valid.` -
+  a type or parameter Phlox does not define, or a NaN value. The setting is not applied.
+- `Invalid number of parameters in options list for llHTTPRequest.` and `Invalid number of parameters in the
+  HTTP_CUSTOM_HEADER options for llHTTPRequest.` - an option with no value (it used to be dropped, or an
+  HTTP_CUSTOM_HEADER read as a pair); no request is made and the call returns NULL_KEY.
+- `LSL Runtime Error: No permissions to return objects`, `LSL Runtime Error: No parcel/region permission to return
+  objects`, `LSL Runtime Error: No parcel found for permissions to return objects`, `LSL Runtime Error: No item found
+  from which to run script` - llReturnObjectsByOwner / llReturnObjectsByID, alongside the same error codes as before.
+- `Command deprecated: llSound`, `... llMakeExplosion`, `... llMakeFountain`, `... llMakeSmoke`, `... llMakeFire`,
+  `... llTakeCamera`, `... llReleaseCamera`.
+- `Command not implemented: llPointAt`, `... llStopPointAt`, `... llGodLikeRezObject`, `... llCollisionSprite`,
+  `... botChangeOwner`, `... llSetStatus - STATUS_RETURN_AT_EDGE`, `... llGetStatus - STATUS_RETURN_AT_EDGE`,
+  `... llGiveMoney` (a region with no money module), `... llParcelMediaCommandList parameter not supported yet: NAME`,
+  `... llParcelMediaQuery parameter do not supported yet: NAME` (Halcyon's wording).
+- `LSL Runtime Error: Bad key in llGiveMoney` - a destination that is not a key.
+- `The first argument of PARCEL_MEDIA_COMMAND_SIZE must be an integer.` / `The second argument ...`.
+- `Unable to create requested object. Position is invalid.` - a rez with a NaN rotation (no pause: Halcyon's rez calls
+  were long-running).
+- `Notecard asset storage failed!` - iwMakeNotecard when the asset service does not store the notecard; no notecard item
+  is made (no pause, as in Halcyon).
+- `llGiveMoney: PERMISSION_DEBIT not granted.` (existing text) now also when the debit was granted by someone other than
+  the owner.
+
+Other changes a resident can see: iwSetGround respects the estate's terrain limits and refuses out-of-range heights and
+rectangles; the 11th HTTP request in flight from one object gets NULL_KEY; a script can read its own asset key.
+
+### Found, not changed
+
+- `llSetVehicleFlags(VEHICLE_FLAG_CAMERA_DECOUPLED)`: Halcyon said "is not implemented"; NGC implements it
+  (SceneObjectPart sets PrimFlags.CameraDecoupled), so Phlox says nothing.
+- `llBreakAllLinks` checks no PERMISSION_CHANGE_LINKS in Phlox or Halcyon; SL and YEngine require it.
+- STATUS_RETURN_AT_EDGE is not acted on (YEngine sets it on the part); Phlox now says so, as Halcyon did.
+- A notecard whose asset cannot be fetched still answers its dataserver event (end of file, or "0"); Halcyon shouted and
+  sent none.
+- llHTTPRequest's existing non-integer-flag text is Phlox's ("Invalid flag in llHTTPRequest parameters."), not Halcyon's
+  ("Invalid flag passed in parameters list of llHTTPRequest.").
+- The bad-user rez guard needs a core list (Halcyon's nuke / blacklist-owner commands).
+
+### Tests
+
+`HalcyonChecksTests` (139 tests, collection "phlox-state": it freezes the process-wide engine Clock). 39 error paths,
+each three ways: the exact text once, the 15 ms (plus any later sleep, which replaces it on the script's thread), and
+with ChatThrottle = false the text with no pause; plus refused dialogs not sent and a whole one sent; every defined
+VEHICLE_* constant accepted; odd HTTP option lists start nothing; the HTTP caps (the 11th per object, 80 ms with either
+ChatThrottle, no error; answers and resets free slots; another object has its own 10; the region stops at 200);
+iwSetGround's limits, god, per-cell land and bounds; the NaN rez guard; llClearCameraParams through a client that counts
+clears; llGiveMoney's granter; iwMakeNotecard's storage failure; the own-key rule; AutomaticLinkPermission on and off.
+On the old code 132 of the 143 new and changed tests fail. Changed existing tests (the ruling changes what they pinned):
+`ErrorPauseTests.AMissingNotecardForLlGetNotecardLineStaysSilentAndUnpaused` is now
+`AMissingNotecardForLlGetNotecardLineNowErrorsAndPauses`; two AntiAbuseSlowdownTests missing-notecard lines expect the
+error's 15 ms; ScriptCleanupTests' 500-script test expects 100 requests in flight (10 per object), its cleanup
+assertions unchanged.

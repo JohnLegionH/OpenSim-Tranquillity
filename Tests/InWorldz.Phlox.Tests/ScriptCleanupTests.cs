@@ -680,7 +680,10 @@ public class ScriptCleanupTests
         var sw = System.Diagnostics.Stopwatch.StartNew();
         foreach (var sog in objects)
             for (int i = 0; i < 50; i++) items.Add((sog, r.Rez(sog.RootPart, Holder, asset)));
-        Assert.True(r.PumpUntil(() => r.Sensors == 500 && r.Http.InFlight.Count == 500 && r.Url.Total == 500 && r.Listens == 500 && r.Timers == 500, 180),
+        // PHLOX-62: Halcyon's in-flight cap holds 10 requests per object, so 10 of each object's 50 are in flight (100);
+        // the other 400 scripts' requests got NULL_KEY. The cleanup below is unchanged.
+        const int httpInFlight = 10 * 10;
+        Assert.True(r.PumpUntil(() => r.Sensors == 500 && r.Http.InFlight.Count == httpInFlight && r.Url.Total == 500 && r.Listens == 500 && r.Timers == 500, 180),
             $"not all armed: loaded={r.Loaded} sensors={r.Sensors} http={r.Http.InFlight.Count} urls={r.Url.Total} listens={r.Listens} timers={r.Timers}");
         long armedMs = sw.ElapsedMilliseconds;
         r.Say(5, "hello all");                           // a listen-rate record for every script

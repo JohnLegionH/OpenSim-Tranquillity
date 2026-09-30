@@ -206,6 +206,15 @@ namespace Phlox.ScriptEngine
             ChatSleep();
         }
 
+        // PHLOX-62 (ruling (a)): Halcyon's three wrappers of ScriptShoutError, with their texts (LSLSystemAPI.cs:14497-14513).
+        // Used where Halcyon raised them and Phlox was silent: lanes/work/phlox-62/STATE.md item 3.
+        private void LSLError(string msg) => ScriptShoutError("LSL Runtime Error: " + msg);
+        private void NotImplemented(string command) => ScriptShoutError("Command not implemented: " + command);
+        private void Deprecated(string command) => ScriptShoutError("Command deprecated: " + command);
+
+        /// <summary>PHLOX-62 (S11): Halcyon llHTTPRequest's ERROR_DELAY after a refused request (LSLSystemAPI.cs:13762).</summary>
+        internal const int HTTP_CAPPED_DELAY = 80;
+
         /// <summary>Halcyon botWhisper ... botTouchObject (LSLSystemAPI.cs:17867-17996): ScriptSleep(15) after the call.</summary>
         private void BotSleep()
         {
@@ -832,10 +841,11 @@ namespace Phlox.ScriptEngine
 		public void llDialog(string avatar, string message, LSLList buttons, int chat_channel)
 		{
 			if (m_host == null) return;
-			if (!UUID.TryParse(avatar, out UUID avatarId)) return;
-
-			ScenePresence sp = World?.GetScenePresence(avatarId);
-			if (sp == null || sp.IsChildAgent) return;
+			// PHLOX-62 (ruling (a)): Halcyon's checks and errors, in its order (LSLSystemAPI.cs:8816-8846); each refuses the
+			// dialog (no 1 s sleep). SL: "An error will be shouted on DEBUG_CHANNEL, if there are more than 12 buttons"; a label
+			// of length zero or over 24 fails too. Halcyon counts characters, as here.
+			if (!UUID.TryParse(avatar, out UUID avatarId)) { LSLError("First parameter to llDialog needs to be a key"); return; }
+			if (buttons != null && buttons.Length > 12) { LSLError("No more than 12 buttons can be shown"); return; }
 
 			var buttonList = new List<string>();
 			if (buttons != null)
@@ -843,12 +853,15 @@ namespace Phlox.ScriptEngine
 				foreach (var o in buttons.Data)
 				{
 					string label = o?.ToString() ?? string.Empty;
-					if (label.Length > 24) label = label.Substring(0, 24);
+					if (string.IsNullOrEmpty(label)) { LSLError("button label cannot be blank"); return; }
+					if (label.Length > 24) { LSLError("button label cannot be longer than 24 characters"); return; }
 					buttonList.Add(label);
-					if (buttonList.Count >= 12) break;
 				}
 			}
 			if (buttonList.Count == 0) buttonList.Add("OK");
+
+			ScenePresence sp = World?.GetScenePresence(avatarId);
+			if (sp == null || sp.IsChildAgent) return;
 
 			string ownerFirst = string.Empty, ownerLast = string.Empty;
 			ScenePresence ownerSp = World?.GetScenePresence(m_host.OwnerID);
@@ -880,9 +893,11 @@ namespace Phlox.ScriptEngine
 		}
         public void llTextBox(string avatar, string message, int chat_channel)
         {
-            if (!UUID.TryParse(avatar, out UUID av) || av == UUID.Zero) return;
             IDialogModule dm = World?.RequestModuleInterface<IDialogModule>();
             if (dm == null) return;
+            // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:5779-5783, its text naming llDialog.
+            if (!UUID.TryParse(avatar, out UUID av)) { LSLError("First parameter to llDialog needs to be a key"); return; }
+            if (av == UUID.Zero) return;
             if (message != null && message.Length > 1024) message = message.Substring(0, 1024);
             dm.SendTextBoxToUser(av, message, chat_channel, m_host.Name, m_host.UUID, m_host.OwnerID);
             ScriptSleep(1000);
@@ -1375,6 +1390,10 @@ namespace Phlox.ScriptEngine
             if ((status & STATUS_DIE_AT_EDGE) != 0)
                 m_host.SetDieAtEdge(on);
 
+            // PHLOX-62 (ruling (a)): Phlox does not act on it; Halcyon said so (LSLSystemAPI.cs:1557-1560).
+            if ((status & STATUS_RETURN_AT_EDGE) != 0)
+                NotImplemented("llSetStatus - STATUS_RETURN_AT_EDGE");
+
             if ((status & STATUS_SANDBOX) != 0)
                 m_host.SetStatusSandbox(on);   // PHLOX-21, as YEngine
 
@@ -1431,6 +1450,9 @@ namespace Phlox.ScriptEngine
                     return m_host.GetDieAtEdge() ? 1 : 0;
                 case STATUS_SANDBOX:
                     return m_host.GetStatusSandbox() ? 1 : 0;
+                case STATUS_RETURN_AT_EDGE:
+                    NotImplemented("llGetStatus - STATUS_RETURN_AT_EDGE");   // PHLOX-62: Halcyon LSLSystemAPI.cs:1659-1661
+                    return 0;
                 case STATUS_ROTATE_X:
                     return (m_host.RotationAxisLocks & 0x01) == 0 ? 1 : 0;
                 case STATUS_ROTATE_Y:
@@ -1441,8 +1463,23 @@ namespace Phlox.ScriptEngine
                     return 0;
             }
         }
+        // PHLOX-62 (ruling (a)): Halcyon's vehicle validators (OpenSim/Region/Physics/Manager/Vehicle/*.cs) - the ids
+        // Phlox's constants define (DefaultConstants VEHICLE_*) - and its LSLError on anything else or a NaN
+        // (LSLSystemAPI.cs:8541-8621). An invalid call is not applied and returns before Halcyon's PhySleep.
+        private static bool VehicleTypeValid(int t) => (t >= 0 && t <= 5) || t == 10001 || t == 10002;
+        private static bool VehicleFloatParamValid(int p) =>
+            ((p >= 24 && p <= 40) && p != 30 && p != 31 && p != 34 && p != 35) || (p >= 11001 && p <= 11006);
+        private static bool VehicleVectorParamValid(int p) =>
+            (p >= 16 && p <= 20) || p == 30 || p == 31 || p == 34 || p == 35 || p == 12001 || p == 12002;
+        private static bool VehicleRotationParamValid(int p) => p == 44;
+
         public void llSetVehicleType(int type)
         {
+            if (m_host?.ParentGroup != null && !m_host.ParentGroup.IsDeleted && !VehicleTypeValid(type))
+            {
+                LSLError("llSetVehicleType(" + type.ToString() + ") is not valid.");
+                return;
+            }
             try
             {
                 if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
@@ -1450,11 +1487,18 @@ namespace Phlox.ScriptEngine
                 if (pa == null) return;
                 pa.VehicleType = type;
             }
-            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path
+            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path it applies
         }
 
         public void llSetVehicleFloatParam(int param, float value)
         {
+            // Halcyon also takes a vector parameter here (as <v, v, v>); Phlox hands the float to physics, as before.
+            if (m_host?.ParentGroup != null && !m_host.ParentGroup.IsDeleted
+                && (float.IsNaN(value) || !(VehicleFloatParamValid(param) || VehicleVectorParamValid(param))))
+            {
+                LSLError("llSetVehicleFloatParam(" + param.ToString() + ", " + value.ToString() + ") is not valid.");
+                return;
+            }
             try
             {
                 if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
@@ -1462,11 +1506,17 @@ namespace Phlox.ScriptEngine
                 if (pa == null) return;
                 pa.VehicleFloatParam(param, value);
             }
-            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path
+            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path it applies
         }
 
         public void llSetVehicleVectorParam(int param, Vector3 vec)
         {
+            if (m_host?.ParentGroup != null && !m_host.ParentGroup.IsDeleted
+                && (float.IsNaN(vec.X) || float.IsNaN(vec.Y) || float.IsNaN(vec.Z) || !VehicleVectorParamValid(param)))
+            {
+                LSLError("llSetVehicleVectorParam(" + param.ToString() + ", " + vec.ToString() + ") is not valid.");
+                return;
+            }
             try
             {
                 if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
@@ -1474,12 +1524,17 @@ namespace Phlox.ScriptEngine
                 if (pa == null) return;
                 pa.VehicleVectorParam(param, vec);
             }
-            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path
+            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path it applies
         }
 
         public void llSetVehicleRotationParam(int param, Quaternion rot)
         {
             if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
+            if (float.IsNaN(rot.X) || float.IsNaN(rot.Y) || float.IsNaN(rot.Z) || float.IsNaN(rot.W) || !VehicleRotationParamValid(param))
+            {
+                LSLError("llSetVehicleRotationParam(" + param.ToString() + ", " + rot.ToString() + ") is not valid.");
+                return;
+            }
             PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
             if (pa == null) return;
             pa.VehicleRotationParam(param, rot);
@@ -2081,7 +2136,8 @@ namespace Phlox.ScriptEngine
         {
             TaskInventoryItem item = GetInventorySelf();
             if (item == null) return 0;
-            return item.PermsMask;
+            // PHLOX-62: AutomaticLinkPermission reports PERMISSION_CHANGE_LINKS (YEngine LSL_Api.cs:4755, Halcyon :4702).
+            return AutomaticLinkPermission ? item.PermsMask | PERMISSION_CHANGE_LINKS : item.PermsMask;
         }
         public void llTakeControls(int controls, int accept, int pass_on)
         {
@@ -2255,15 +2311,10 @@ namespace Phlox.ScriptEngine
             return true;
         }
 
-        public void llTakeCamera(string avatar)
-        {
-            // Deprecated — no-op in modern viewers
-        }
+        // Deprecated - no-op in modern viewers. PHLOX-62 (ruling (a)): Halcyon's Deprecated, LSLSystemAPI.cs:3867, 3873.
+        public void llTakeCamera(string avatar) => Deprecated("llTakeCamera");
 
-        public void llReleaseCamera(string avatar)
-        {
-            // Deprecated — no-op in modern viewers
-        }
+        public void llReleaseCamera(string avatar) => Deprecated("llReleaseCamera");
 
         public void llSetCameraEyeOffset(Vector3 offset)
         {
@@ -2301,6 +2352,9 @@ namespace Phlox.ScriptEngine
         {
             TaskInventoryItem item = GetInventorySelf();
             if (item == null) return;
+            // PHLOX-62 (S17): Halcyon needs PERMISSION_CONTROL_CAMERA from a granter and returns silently without it
+            // (LSLSystemAPI.cs:13650-13659). (SL shouts an error there; Halcyon does not.)
+            if (item.PermsGranter == UUID.Zero || (item.PermsMask & PERMISSION_CONTROL_CAMERA) == 0) return;
             ScenePresence sp = World.GetScenePresence(item.PermsGranter);
             if (sp == null || sp.IsChildAgent) return;
             sp.ControllingClient.SendClearFollowCamProperties(m_host.ParentUUID);
@@ -3867,6 +3921,13 @@ namespace Phlox.ScriptEngine
                     if (kvp.Value.Name == name) return kvp.Value.Type;
             return -1;
         }
+        /// <summary>
+        /// PHLOX-62 (F165, ruling (a)): Halcyon's IsMyScript (LSLSystemAPI.cs:6293-6296) - the item is this script itself, in
+        /// this prim. Halcyon's GetInventoryKey (:6309-6310) gives it its own asset key whatever its permissions.
+        /// </summary>
+        private bool IsMyScript(SceneObjectPart part, TaskInventoryItem item)
+            => part == m_host && item.Type == (int)AssetType.LSLText && item.ItemID == m_itemID;
+
         public string llGetInventoryKey(string name)
         {
             if (m_host == null) return UUID.Zero.ToString();
@@ -3876,7 +3937,9 @@ namespace Phlox.ScriptEngine
                     {
                         // PHLOX-21 (YEngine llGetInventoryKey): the asset key only for an item that is
                         // copy, modify and transfer for its owner; anything less reads NULL_KEY.
-                        return AssetKeyIfFullPerm(kvp.Value.AssetID, kvp.Value.CurrentPermissions);
+                        // PHLOX-62 (F165, ruling (a)): and the calling script's own key (Halcyon IsMyScript).
+                        return IsMyScript(m_host, kvp.Value) ? kvp.Value.AssetID.ToString()
+                            : AssetKeyIfFullPerm(kvp.Value.AssetID, kvp.Value.CurrentPermissions);
                     }
             return UUID.Zero.ToString();
         }
@@ -4112,7 +4175,17 @@ namespace Phlox.ScriptEngine
                 AssetBase asset = new AssetBase(UUID.Random(), name, (sbyte)AssetType.Notecard, m_host.OwnerID.ToString());
                 asset.Description = "Script Generated Notecard";
                 asset.Data = Encoding.UTF8.GetBytes(sNotecardData);
-                World.AssetService.Store(asset);
+                // PHLOX-62 (ruling (a)): Halcyon iwMakeNotecard shouts when storing the asset fails and makes no item. Its call
+                // was long-running (its ScriptSleep did nothing), so ShoutError: no pause (PHLOX-58's rule).
+                string stored;
+                try { stored = World.AssetService.Store(asset); }
+                catch (Exception se) { m_log.LogWarning("[PhloxAPI]: iwMakeNotecard store: {0}", se.Message); stored = null; }
+                if (string.IsNullOrEmpty(stored))
+                {
+                    ShoutError("Notecard asset storage failed!");
+                    ScriptSleep(5000);
+                    return;
+                }
 
                 // Create task inventory item
                 TaskInventoryItem taskItem = new TaskInventoryItem();
@@ -4151,7 +4224,13 @@ namespace Phlox.ScriptEngine
         {
             if (m_host == null) return UUID.Zero.ToString();
             TaskInventoryItem item = string.IsNullOrEmpty(name) ? null : FindInventoryItem(name, (int)AssetType.Notecard);
-            if (item == null) { NotecardSleep(NOTECARD_COUNT_ERROR_DELAY); return UUID.Zero.ToString(); }
+            if (item == null)
+            {
+                // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:14543-14547, the error, then its 100 ms (which replaces the 15).
+                ScriptShoutError("Notecard '" + name + "' could not be found.");
+                NotecardSleep(NOTECARD_COUNT_ERROR_DELAY);
+                return UUID.Zero.ToString();
+            }
             UUID queryID = NewDataserverQuery();   // PHLOX-46
             bool cached = AnswerNotecardRead(item.AssetID, queryID, c => c.LineCount.ToString(), "0", "llGetNumberOfNotecardLines");
             NotecardSleep(cached ? NOTECARD_COUNT_FAST_DELAY : NOTECARD_COUNT_LONG_DELAY);
@@ -4164,9 +4243,14 @@ namespace Phlox.ScriptEngine
         /// </summary>
         public string llGetNotecardLine(string name, int line)
         {
-            if (m_host == null || string.IsNullOrEmpty(name)) return UUID.Zero.ToString();
-            TaskInventoryItem item = FindInventoryItem(name, (int)AssetType.Notecard);
-            if (item == null) return UUID.Zero.ToString();
+            if (m_host == null) return UUID.Zero.ToString();
+            TaskInventoryItem item = string.IsNullOrEmpty(name) ? null : FindInventoryItem(name, (int)AssetType.Notecard);
+            if (item == null)
+            {
+                // PHLOX-62 (ruling (a)): Halcyon GetNotecardSegment, LSLSystemAPI.cs:14624-14628 (no delay after it).
+                ScriptShoutError("Notecard '" + name + "' could not be found.");
+                return UUID.Zero.ToString();
+            }
             UUID queryID = NewDataserverQuery();   // PHLOX-46
             int lineNum = line;
             bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardLineAnswer(c, lineNum), "\n\n\n", "llGetNotecardLine");
@@ -4361,7 +4445,9 @@ namespace Phlox.ScriptEngine
                 lock (part.TaskInventory)
                     foreach (var kvp in part.TaskInventory)
                         // PHLOX-49 (D5, audit F136): llGetInventoryKey's rule, as Halcyon's shared GetInventoryKey.
-                        if (kvp.Value.Name == name) return AssetKeyIfFullPerm(kvp.Value.AssetID, kvp.Value.CurrentPermissions);
+                        if (kvp.Value.Name == name)
+                            return IsMyScript(part, kvp.Value) ? kvp.Value.AssetID.ToString()   // PHLOX-62 (F165)
+                                : AssetKeyIfFullPerm(kvp.Value.AssetID, kvp.Value.CurrentPermissions);
             return UUID.Zero.ToString();
         }
         public string iwGetLinkInventoryCreator(int linknumber, string item)
@@ -4738,6 +4824,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         /// </summary>
         private string RezObjectInternal(string inventory, Vector3 pos, Vector3 vel, Quaternion rot, int param, bool atRoot, string startString)
         {
+            if (RezRotationIsNaN(rot)) return UUID.Zero.ToString();
             ScriptSleep(100);
             if (m_host == null || World == null) return UUID.Zero.ToString();
 
@@ -4798,8 +4885,21 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             finally { m_ScriptEngine.SysReturn(m_itemID, result, 0); }
         }
 
+        /// <summary>
+        /// PHLOX-62 (S17): Halcyon iwRezAt (LSLSystemAPI.cs:3168-3173) refuses a NaN rotation with this error and no delay
+        /// (sleepTime = 0), before its 10 m check. Its rez calls were long-running, so ShoutError: no pause (PHLOX-58).
+        /// Halcyon's other guard there, IsBadUser (:3160-3166), reads a nuke/blacklist-owner list NGC core does not have.
+        /// </summary>
+        private bool RezRotationIsNaN(Quaternion rot)
+        {
+            if (!(float.IsNaN(rot.X) || float.IsNaN(rot.Y) || float.IsNaN(rot.Z) || float.IsNaN(rot.W))) return false;
+            ShoutError("Unable to create requested object. Position is invalid.");
+            return true;
+        }
+
         public string iwRezAt(string inventory, int rezAtRoot, Vector3 pos, Vector3 vel, Quaternion rot, int param)
         {
+            if (RezRotationIsNaN(rot)) return UUID.Zero.ToString();
             ScriptSleep(100);
             if (m_host == null || World == null) return UUID.Zero.ToString();
 
@@ -4841,7 +4941,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         public string iwRezPrim(LSLList primParams, LSLList particleSystem, LSLList inventory, Vector3 pos, Vector3 vel, Quaternion rot, int param) { /* InWorldz-specific — no OpenSim equivalent */ return UUID.Zero.ToString(); }
-        public void llGodLikeRezObject(string inventory, Vector3 pos) { /* No god mode */ }
+        public void llGodLikeRezObject(string inventory, Vector3 pos) => NotImplemented("llGodLikeRezObject");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:4384
         public void llDie()
         {
             if (m_host == null) return;
@@ -4996,18 +5096,45 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             }
         }
         /// <summary>PHLOX-17: real now - the heightmap over the rectangle, where the owner may terraform, then a taint (the door osSetTerrainHeight/osTerrainFlush share).</summary>
+        /// <summary>
+        /// PHLOX-62 (S14): Halcyon's TerrainModule.SetTerrain rule (TerrainModule.cs:655-688, :610-641), silent to the script
+        /// as there: a height outside 0..1024 or a corner outside the region changes nothing; a god sets any cell; anyone else
+        /// the cells they may terraform, each held within the estate's raise/lower limits of the baked terrain, as NGC core
+        /// holds the viewer's brush (TerrainModule.LimitChannelChanges against Scene.Bakedmap).
+        /// </summary>
         public void iwSetGround(int x1, int y1, int x2, int y2, float height)
         {
             if (World?.Heightmap == null || m_host == null) return;
-            int sx = Math.Max(0, Math.Min(x1, x2)), ex = Math.Min((int)World.RegionInfo.RegionSizeX - 1, Math.Max(x1, x2));
-            int sy = Math.Max(0, Math.Min(y1, y2)), ey = Math.Min((int)World.RegionInfo.RegionSizeY - 1, Math.Max(y1, y2));
+            if (!(height >= 0.0f && height <= 1024.0f)) return;
+            int sx = Math.Min(x1, x2), ex = Math.Max(x1, x2), sy = Math.Min(y1, y2), ey = Math.Max(y1, y2);
+            if (sx < 0 || sy < 0 || ex >= (int)World.RegionInfo.RegionSizeX || ey >= (int)World.RegionInfo.RegionSizeY) return;
+
+            UUID owner = m_host.OwnerID;
+            bool god = World.Permissions.IsGod(owner);
+            ITerrainChannel baked = god ? null : World.Bakedmap;
+            RegionSettings rs = World.RegionInfo.RegionSettings;
+            float lower = (float)rs.TerrainLowerLimit, raise = (float)rs.TerrainRaiseLimit;
             bool any = false;
             for (int x = sx; x <= ex; x++) for (int y = sy; y <= ey; y++)
-                if (World.Permissions.CanTerraformLand(m_host.OwnerID, new Vector3(x, y, 0))) { World.Heightmap[x, y] = height; any = true; }
+            {
+                if (!god && !World.Permissions.CanTerraformLand(owner, new Vector3(x, y, 0))) continue;
+                float h = height;
+                if (baked != null)
+                {
+                    float b = baked[x, y];
+                    if (h - b > raise) h = b + raise;
+                    else if (h - b < lower) h = b + lower;
+                }
+                World.Heightmap[x, y] = h;
+                any = true;
+            }
             if (any) World.RequestModuleInterface<ITerrainModule>()?.TaintTerrain();
         }
         public int llCheckRezError(Vector3 pos, int isTemp, int landImpact) { /* InWorldz Scene.CheckRezError not in OpenSim */ return 0; }
         public int iwCheckRezError(Vector3 pos, int isTemp, int landImpact) { /* InWorldz Scene.CheckRezError not in OpenSim */ return 0; }
+        /// <summary>PHLOX-62: [YEngine] AutomaticLinkPermission, as YEngine reads it (PhloxEngine.AutomaticLinkPermission).</summary>
+        private bool AutomaticLinkPermission => m_ScriptEngine != null && m_ScriptEngine.AutomaticLinkPermission;
+
         public void llCreateLink(string target, int parent)
         {
             if (m_host?.ParentGroup == null) return;
@@ -5016,7 +5143,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             // Requires PERMISSION_CHANGE_LINKS
             TaskInventoryItem item = GetInventorySelf();
             if (item == null) return;
-            if ((item.PermsMask & PERMISSION_CHANGE_LINKS) == 0)
+            // PHLOX-62: with AutomaticLinkPermission neither check applies (YEngine LSL_Api.cs:4790).
+            if (!AutomaticLinkPermission && (item.PermsMask & PERMISSION_CHANGE_LINKS) == 0)
             {
                 // Halcyon's text (the SL wiki says only that an error is shouted).
                 ScriptShoutError("Script trying to link but PERMISSION_CHANGE_LINKS permission not set!");
@@ -5025,7 +5153,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             }
             // PHLOX-41, SL (wiki llCreateLink): "If the permission PERMISSION_CHANGE_LINKS is granted by anyone other
             // than the owner, then when the function is called an error will be shouted". YEngine's text.
-            if (item.PermsGranter != m_host.ParentGroup.OwnerID)
+            if (!AutomaticLinkPermission && item.PermsGranter != m_host.ParentGroup.OwnerID)
             {
                 ShoutError("llCreateLink: PERMISSION_CHANGE_LINKS not set by script owner");
                 return;
@@ -5081,7 +5209,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             // Requires PERMISSION_CHANGE_LINKS
             TaskInventoryItem item = GetInventorySelf();
             if (item == null) return;
-            if ((item.PermsMask & PERMISSION_CHANGE_LINKS) == 0)
+            if (!AutomaticLinkPermission && (item.PermsMask & PERMISSION_CHANGE_LINKS) == 0)   // PHLOX-62 (YEngine :4868)
             {
                 ScriptShoutError("llBreakLink: PERMISSION_CHANGE_LINKS not set");
                 ScriptSleep(1000);
@@ -7856,7 +7984,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 		}
         // ── Sound ──────────────────────────────────────────────────────────────
 
-        public void llSound(string sound, float volume, int queue, int loop) { /* Deprecated */ }
+        public void llSound(string sound, float volume, int queue, int loop) => Deprecated("llSound");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:2752
         public void llPlaySound(string sound, float volume)
         {
             if (m_host == null) return;
@@ -8056,7 +8184,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             result.Add(sound == part.invalidCollisionSoundUUID ? UUID.Zero.ToString() : sound.ToString());
             result.Add(part.CollisionSoundVolume);
         }
-        public void llCollisionSprite(string impact_sprite) { /* NotImplemented in Halcyon */ }
+        public void llCollisionSprite(string impact_sprite) => NotImplemented("llCollisionSprite");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:5835
 
         // ── Particles ──────────────────────────────────────────────────────────
 
@@ -8265,10 +8393,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 return new Vector3(x, y, z);
             return Vector3.Zero;
         }
-        public void llMakeExplosion(int particles, float scale, float vel, float lifetime, float arc, string texture, Vector3 offset) { /* Deprecated */ }
-        public void llMakeFountain(int particles, float scale, float vel, float lifetime, float arc, int bounce, string texture, Vector3 offset, float bounce_offset) { /* Deprecated */ }
-        public void llMakeSmoke(int particles, float scale, float vel, float lifetime, float arc, string texture, Vector3 offset) { /* Deprecated */ }
-        public void llMakeFire(int particles, float scale, float vel, float lifetime, float arc, string texture, Vector3 offset) { /* Deprecated */ }
+        public void llMakeExplosion(int particles, float scale, float vel, float lifetime, float arc, string texture, Vector3 offset) => Deprecated("llMakeExplosion");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:3104
+        public void llMakeFountain(int particles, float scale, float vel, float lifetime, float arc, int bounce, string texture, Vector3 offset, float bounce_offset) => Deprecated("llMakeFountain");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:3110
+        public void llMakeSmoke(int particles, float scale, float vel, float lifetime, float arc, string texture, Vector3 offset) => Deprecated("llMakeSmoke");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:3116
+        public void llMakeFire(int particles, float scale, float vel, float lifetime, float arc, string texture, Vector3 offset) => Deprecated("llMakeFire");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:3122
 
         // ── Terrain / environment ──────────────────────────────────────────────
 
@@ -8698,10 +8826,17 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         {
                             if (commandList.Data[i + 1] is int && commandList.Data[i + 2] is int)
                             { width = (int)commandList.Data[i + 1]; height = (int)commandList.Data[i + 2]; update = true; }
+                            // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:13148, 13150.
+                            else if (commandList.Data[i + 1] is int)
+                                ScriptShoutError("The second argument of PARCEL_MEDIA_COMMAND_SIZE must be an integer.");
+                            else
+                                ScriptShoutError("The first argument of PARCEL_MEDIA_COMMAND_SIZE must be an integer.");
                             ++i; ++i;
                         }
                         break;
                     default:
+                        // PHLOX-62 (ruling (a)): Halcyon :13155-13157, naming the command as its Enum.Parse did.
+                        NotImplemented("llParcelMediaCommandList parameter not supported yet: " + command.ToString());
                         break;
                 }
             }
@@ -8773,6 +8908,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                             list.Add(ld?.MediaHeight ?? 0);
                             break;
                         default:
+                            // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:13281-13285, its text.
+                            NotImplemented("llParcelMediaQuery parameter do not supported yet: "
+                                + ((ParcelMediaCommandEnum)aList.GetLSLIntegerItem(i)).ToString());
                             break;
                     }
                 }
@@ -9006,8 +9144,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     m_host.UpdateRotation(target);
             }
         }
-        public void llPointAt(Vector3 pos) { /* Deprecated */ }
-        public void llStopPointAt() { /* Deprecated */ }
+        public void llPointAt(Vector3 pos) => NotImplemented("llPointAt");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:4332
+        public void llStopPointAt() => NotImplemented("llStopPointAt");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:4338
         /// <summary>
         /// PHLOX-7a. Ported from upstream LSL_Api.cs:4036-4043. wiki: "Sets the collision filter,
         /// exclusively or inclusively" - accept TRUE keeps only matches, FALSE excludes them; a blank
@@ -12163,6 +12301,22 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 return m_host.TaskInventory.TryGetValue(invItemID, out TaskInventoryItem item) ? item : null;
         }
 
+        /// <summary>
+        /// PHLOX-62 (ruling (a)): Halcyon llReturnObjectsByOwner's finally (LSLSystemAPI.cs:18415-18431) - its LSLError for
+        /// each failure code it reports; the code is returned as before.
+        /// </summary>
+        private int ReturnObjectsError(int rc)
+        {
+            switch (rc)
+            {
+                case ERR_GENERIC: LSLError("No parcel found for permissions to return objects"); break;
+                case ERR_PARCEL_PERMISSIONS: LSLError("No parcel/region permission to return objects"); break;
+                case ERR_RUNTIME_PERMISSIONS: LSLError("No permissions to return objects"); break;
+                case ERR_MALFORMED_PARAMS: LSLError("Bad parameters on scripted call to return objects"); break;
+            }
+            return rc;
+        }
+
         public int llReturnObjectsByOwner(string owner, int scope)
         {
             // Order of the checks as Halcyon (LSLSystemAPI.cs:18348-18436).
@@ -12171,10 +12325,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (targetAgentID.IsZero()) return 0;
 
             TaskInventoryItem item = ReturnScriptItem();
-            if (item == null) return ERR_GENERIC;
+            if (item == null) { LSLError("No item found from which to run script"); return ERR_GENERIC; }   // PHLOX-62: Halcyon :18356-18360
 
             int rc = CheckReturnPermission(item);
-            if (rc != 0) return rc;
+            if (rc != 0) return ReturnObjectsError(rc);
 
             if (scope != OBJECT_RETURN_PARCEL && scope != OBJECT_RETURN_PARCEL_OWNER && scope != OBJECT_RETURN_REGION)
                 return ERR_MALFORMED_PARAMS;
@@ -12183,7 +12337,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             {
                 Vector3 currentPos = m_host.ParentGroup.AbsolutePosition;
                 ILandObject currentParcel = World.LandChannel.GetLandObject(currentPos.X, currentPos.Y);
-                if (currentParcel == null) return ERR_GENERIC;
+                // PHLOX-62: Halcyon reports this one only for OBJECT_RETURN_REGION (:18388-18391; the parcel scopes fail on
+                // its null parcel and return ERR_GENERIC unreported).
+                if (currentParcel == null) return scope == OBJECT_RETURN_REGION ? ReturnObjectsError(ERR_GENERIC) : ERR_GENERIC;
 
                 // The parcels in scope, by local id.
                 var inScope = new HashSet<int>();
@@ -12192,19 +12348,19 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     case OBJECT_RETURN_PARCEL:
                         // SL: "all objects on the same parcel as the script"; lsl_definitions: "Requires the script owner
                         // to be an estate manager or the parcel owner."
-                        if (!MayReturnOnParcel(currentParcel)) return ERR_PARCEL_PERMISSIONS;
+                        if (!MayReturnOnParcel(currentParcel)) return ReturnObjectsError(ERR_PARCEL_PERMISSIONS);
                         inScope.Add(currentParcel.LandData.LocalID);
                         break;
                     case OBJECT_RETURN_PARCEL_OWNER:
                         // SL: "over parcels owned by the owner of the script".
                         foreach (ILandObject p in World.LandChannel.AllParcels())
                             if (p.LandData.OwnerID == m_host.OwnerID) inScope.Add(p.LandData.LocalID);
-                        if (inScope.Count == 0) return ERR_PARCEL_PERMISSIONS;
+                        if (inScope.Count == 0) return ReturnObjectsError(ERR_PARCEL_PERMISSIONS);
                         break;
                     case OBJECT_RETURN_REGION:
                         // lsl_definitions: "Only works if the script is owned by the estate owner or an estate manager."
                         // (Halcyon walks every parcel and stops at the first the owner may not touch.)
-                        if (!IsEstateOwnerOrManager(m_host.OwnerID)) return ERR_PARCEL_PERMISSIONS;
+                        if (!IsEstateOwnerOrManager(m_host.OwnerID)) return ReturnObjectsError(ERR_PARCEL_PERMISSIONS);
                         break;
                 }
 
@@ -12248,10 +12404,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             try
             {
                 TaskInventoryItem item = ReturnScriptItem();
-                if (item == null) return ERR_GENERIC;
+                if (item == null) { LSLError("No item found from which to run script"); return ERR_GENERIC; }   // PHLOX-62: Halcyon :18445-18449
 
                 int rc = CheckReturnPermission(item);
-                if (rc != 0) return rc;
+                if (rc != 0) return ReturnObjectsError(rc);   // PHLOX-62: Halcyon :18456-18460
 
                 // Every element must be a key before anything moves (Halcyon :18463-18465).
                 var ids = new List<UUID>();
@@ -12494,8 +12650,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             var headers    = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var data       = parameters.Data;
 
-            for (int i = 0; i + 1 < data.Length; i += 2)
+            for (int i = 0; i < data.Length; i += 2)
             {
+                // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:13784-13788 - a flag with no value is an error, not dropped.
+                if (i + 1 >= data.Length)
+                {
+                    ScriptShoutError("Invalid number of parameters in options list for llHTTPRequest.");
+                    return UUID.Zero.ToString();
+                }
                 int option;
                 if (!int.TryParse(data[i].ToString(), out option))
                 {
@@ -12504,8 +12666,15 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 }
                 string value = data[i + 1].ToString();
 
+                // PHLOX-62 (ruling (a)): Halcyon :13803-13807 - HTTP_CUSTOM_HEADER without its value is an error.
+                if (option == 5 && i + 2 >= data.Length)
+                {
+                    ScriptShoutError("Invalid number of parameters in the HTTP_CUSTOM_HEADER options for llHTTPRequest.");
+                    return UUID.Zero.ToString();
+                }
+
                 // HTTP_CUSTOM_HEADER (5) has an extra param: name, value
-                if (option == 5 && i + 2 < data.Length)
+                if (option == 5)
                 {
                     string headerName  = value;
                     string headerValue = data[i + 2].ToString();
@@ -12547,9 +12716,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
             // PHLOX-46: recorded against this script, so a reset or removal can end it and a late response is dropped
             var httpPlugin = m_ScriptEngine.AsyncCommands?.HttpRequestPlugin;
+            UUID objectID = m_host.ParentGroup?.UUID ?? m_host.UUID;
+            bool capped = false;
             UUID reqID = httpPlugin != null
-                ? httpPlugin.Start(m_itemID, () => httpMod.StartHttpRequest(m_localID, m_itemID, url, paramList, headers, body))
+                ? httpPlugin.Start(m_itemID, objectID, () => httpMod.StartHttpRequest(m_localID, m_itemID, url, paramList, headers, body), out capped)
                 : httpMod.StartHttpRequest(m_localID, m_itemID, url, paramList, headers, body);
+            // PHLOX-62 (S11): Halcyon's in-flight caps refuse with NULL_KEY and no error; its llHTTPRequest then sleeps
+            // ERROR_DELAY, 80 ms (LSLSystemAPI.cs:13762, 13845-13846).
+            if (capped) ScriptSleep(HTTP_CAPPED_DELAY);
             return reqID == UUID.Zero ? UUID.Zero.ToString() : reqID.ToString();
         }
         /// <summary>
@@ -14536,23 +14710,26 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         public int llGiveMoney(string destination, int amount)
         {
-            // No economy module available in this tree
-            if (!UUID.TryParse(destination, out UUID destId) || destId == UUID.Zero)
-            { ScriptSleep(3000); return 0; }
-            if (amount <= 0) { ScriptSleep(3000); return 0; }
-
+            // PHLOX-62: Halcyon's order (LSLSystemAPI.cs:2978-3014). Phlox moves no money; every path still sleeps 3 s.
             TaskInventoryItem item = GetInventorySelf();
             if (item == null) { ScriptSleep(3000); return 0; }
 
-            // Check PERMISSION_DEBIT (0x02)
-            if ((item.PermsMask & PERMISSION_DEBIT) == 0)
+            // PERMISSION_DEBIT (0x02), granted by the owner: Halcyon CheckRuntimePerms(item, item.OwnerID, PERMISSION_DEBIT)
+            // (:2993, :4467-4473); SL: "it must be granted by the owner". Phlox's text, as before.
+            if ((item.PermsMask & PERMISSION_DEBIT) == 0 || item.PermsGranter != item.OwnerID)
             {
                 ScriptShoutError("llGiveMoney: PERMISSION_DEBIT not granted.");
                 ScriptSleep(3000);
                 return 0;
             }
 
-            // No economy module — silently return 0
+            // PHLOX-62 (ruling (a)): Halcyon :2999-3003.
+            if (!UUID.TryParse(destination, out UUID destId)) { LSLError("Bad key in llGiveMoney"); ScriptSleep(3000); return 0; }
+            if (destId == UUID.Zero || amount <= 0) { ScriptSleep(3000); return 0; }
+
+            // PHLOX-62 (ruling (a)): Halcyon :3006-3010 - no money module is "not implemented". With one, Phlox still
+            // returns 0 (it has no money support).
+            if (World?.RequestModuleInterface<IMoneyModule>() == null) NotImplemented("llGiveMoney");
             ScriptSleep(3000);
             return 0;
         }
@@ -15561,10 +15738,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return string.Empty;
         }
 
-        public void botChangeOwner(string botID, string newOwnerID)
-        {
-            // NotImplemented in Halcyon — kept as no-op
-        }
+        // NotImplemented in Halcyon - kept as no-op. PHLOX-62 (ruling (a)): with Halcyon's error, LSLSystemAPI.cs:17301.
+        public void botChangeOwner(string botID, string newOwnerID) => NotImplemented("botChangeOwner");
 
         public LSLList botGetAllBotsInRegion()
         {

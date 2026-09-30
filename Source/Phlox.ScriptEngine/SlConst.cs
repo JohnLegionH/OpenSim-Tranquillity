@@ -367,6 +367,7 @@ namespace Phlox.ScriptEngine
         public const int STATUS_DIE_AT_EDGE = 128;
         public const int STATUS_PHANTOM = 16;
         public const int STATUS_PHYSICS = 1;
+        public const int STATUS_RETURN_AT_EDGE = 256;
         public const int STATUS_ROTATE_X = 2;
         public const int STATUS_ROTATE_Y = 4;
         public const int STATUS_ROTATE_Z = 8;
