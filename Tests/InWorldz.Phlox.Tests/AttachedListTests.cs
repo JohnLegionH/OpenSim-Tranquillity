@@ -40,7 +40,7 @@ public class AttachedListTests
         var aboveHuds = Wear(h, sp, (uint)AttachmentPoint.HUDBottomRight + 1);
 
         h.RezScript($"default {{ state_entry() {{ llSay(0, \"worn=\" + llDumpList2String(llGetAttachedList(\"{sp.UUID}\"), \",\")); }} }}");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("worn=")));
         var line = h.Said.FirstOrDefault(s => s.StartsWith("worn="));
         Assert.True(line != null, string.Join(" | ", h.Said));
         _out.WriteLine(line);
@@ -60,7 +60,7 @@ public class AttachedListTests
         Wear(h, sp, (uint)AttachmentPoint.HUDCenter);
 
         h.RezScript($"default {{ state_entry() {{ list l = llGetAttachedList(\"{sp.UUID}\"); llSay(0, \"count=\" + (string)llGetListLength(l)); }} }}");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("count=")));
         Assert.Contains("count=0", h.Said);
     }
 }

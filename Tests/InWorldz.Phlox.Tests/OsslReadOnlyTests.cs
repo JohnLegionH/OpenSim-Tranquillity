@@ -39,7 +39,8 @@ public class OsslReadOnlyTests
             llSay(0, ""all="" + osGetNotecard(""cfg""));
             llSay(0, ""missing="" + (string)osGetNumberOfNotecardLines(""nope""));
         } }");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("missing=")) &&
+                          h.SaidOn.Any(s => s.Channel == DebugChannel && s.Message.Contains("Notecard 'nope' could not be found")));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "] errors=[" + Errors(h) + "]");
 
         Assert.Contains("n=2", h.Said);
@@ -77,6 +78,7 @@ public class OsslReadOnlyTests
             llSay(0, ""owner="" + (string)(osGetInventoryLastOwner(""cfg"") == """ + nc.OwnerID + @"""));
         } }");
         h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("owner=")));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "] errors=[" + Errors(h) + "]");
 
         Assert.Contains("key=1", h.Said);
@@ -120,6 +122,7 @@ public class OsslReadOnlyTests
             llSay(0, ""home="" + osGetAvatarHomeURI(llGetOwner()) + ""|"");
         } }");
         h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("home=")));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "] errors=[" + Errors(h) + "]");
 
         Assert.Contains("prims=1|other=1|bogus=0", h.Said);
@@ -154,10 +157,12 @@ public class OsslReadOnlyTests
         }
         listen(integer c, string n, key k, string m) { llSay(0, ""heard="" + m); } }");
         h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Contains("handle=1") && h.Said.Any(s => s.StartsWith("bad=")));
         // a second prim speaks on channel 7 once the listener is up: "hello" matches ^hel+o$, "goodbye" does not
         var speaker = SceneHelpers.AddSceneObject(h.Scene, "speaker", h.Prim.OwnerID);
         h.RezScriptInto(speaker.RootPart, "default { state_entry() { llSay(7, \"hello\"); llSay(7, \"goodbye\"); } }");
         h.PumpFor(TimeSpan.FromSeconds(3));
+        h.PumpUntil(() => h.Said.Contains("heard=hello"));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "] errors=[" + Errors(h) + "]");
 
         Assert.Contains("heal=2.500000|gender=female|nogender=unknown", h.Said);   // the default shape's male param is 0
@@ -179,6 +184,7 @@ public class OsslReadOnlyTests
         TaskInventoryHelpers.AddNotecard(h.Scene.AssetService, h.Prim, "cfg", UUID.Random(), UUID.Random(), "first line");
         h.RezScript(@"default { state_entry() { osGetNotecardLine(""cfg"", 0); llSay(0, ""after""); } }");
         h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.SaidOn.Any(s => s.Channel == DebugChannel && s.Message.Contains("osGetNotecardLine permission denied")));
 
         Assert.DoesNotContain("after", h.Said);
         Assert.Single(h.SaidOn, s => s.Channel == DebugChannel && s.Message.Contains("osGetNotecardLine permission denied"));

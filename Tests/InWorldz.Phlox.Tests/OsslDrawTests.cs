@@ -81,7 +81,7 @@ public class OsslDrawTests
             llSay(0, ""bad="" + osDrawPolygon("""", [1, 2], [3, 4]) + ""|"");
             llSay(0, ""sz="" + (string)osGetDrawStringSize(""vector"", ""Hello"", ""Arial"", 24));
         } }");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("sz=")));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "] errors=[" + Errors(h) + "]");
 
         string d = h.Said.First(s => s.StartsWith("d=")).Substring(2);
@@ -107,7 +107,8 @@ public class OsslDrawTests
             llSay(0, ""id="" + id);
             llSay(0, ""sz="" + (string)osGetDrawStringSize(""vector"", ""Hello"", ""Arial"", 24));
         } }");
-        h.PumpFor(TimeSpan.FromSeconds(3));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("sz=")) && h.Prim.Shape.Textures.DefaultTexture.TextureID != before
+            && cache.Get(h.Prim.Shape.Textures.DefaultTexture.TextureID.ToString(), out _));
         UUID after = h.Prim.Shape.Textures.DefaultTexture.TextureID;
         _out.WriteLine("before=" + before + " after=" + after + " said=[" + string.Join(" | ", h.Said) + "] errors=[" + Errors(h) + "]");
 
@@ -131,6 +132,7 @@ public class OsslDrawTests
         UUID before = h.Prim.Shape.Textures.DefaultTexture.TextureID;
         h.RezScript(@"default { state_entry() { osSetDynamicTextureURL("""", ""image"", ""http://example/x.png"", """", 0); llSay(0, ""after""); } }");
         h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.SaidOn.Any(s => s.Channel == DebugChannel && s.Message.Contains("osSetDynamicTextureURL permission denied")));
 
         Assert.DoesNotContain("after", h.Said);
         Assert.Single(h.SaidOn, s => s.Channel == DebugChannel && s.Message.Contains("osSetDynamicTextureURL permission denied"));

@@ -102,7 +102,7 @@ public class SyscallResumeTests
         using (var h1 = new SchedulerHarness())
         {
             h1.RezScript(TouchScript, assetId, itemId);
-            h1.Pump();
+            h1.PumpUntil(() => h1.Said.Contains("ready") && h1.RunStateOf(itemId) == "Waiting");
             Assert.Contains("ready", h1.Said);
 
             var st = h1.StateOf(itemId)!;
@@ -118,14 +118,14 @@ public class SyscallResumeTests
 
         using var h2 = new SchedulerHarness();
         h2.RezScript(TouchScript, assetId, itemId);
-        h2.Pump();
+        h2.PumpUntil(() => h2.RunStateOf(itemId) == "Waiting");
 
         _out.WriteLine("after restore: RunState=" + h2.RunStateOf(itemId));
         Assert.Equal("Waiting", h2.RunStateOf(itemId));
 
         // Not stuck: it takes a new event.
         h2.PostTouch(itemId);
-        h2.Pump();
+        h2.PumpUntil(() => h2.Said.Contains("touched"));
         _out.WriteLine("said=[" + string.Join(",", h2.Said) + "]");
         Assert.Contains("touched", h2.Said);
     }

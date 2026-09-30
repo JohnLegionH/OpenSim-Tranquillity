@@ -114,6 +114,7 @@ public class RobustnessTests
                                "llSay(0, \"iw=\" + (string)iwMatchString(\"" + Victim + "\", \"" + Evil + "\", IW_MATCH_REGEX)); " +
                                "llSay(0, \"os=\" + (string)llGetListLength(osMatchString(\"" + Victim + "\", \"" + Evil + "\", 0))); } }");
         h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.Said.Contains("tick") && h.RunStateOf(evil) == "Waiting");
         Assert.Contains("tick", h.Said);
         h.ClearSaid(evil);
 
@@ -130,6 +131,7 @@ public class RobustnessTests
 
         h.ClearSaid(evil);
         h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.Said.Count(s => s == "tick") >= 3);
         Assert.True(h.Said.Count(s => s == "tick") >= 3, "the other script's timer stopped: [" + string.Join(" | ", h.Said) + "]");
     }
 
@@ -138,8 +140,9 @@ public class RobustnessTests
     {
         using var h = new SchedulerHarness();
         var evil = h.RezScript("default { state_entry() { } listen(integer c, string n, key k, string m) { llSay(0, \"evil heard\"); } }");
-        h.RezScript("default { state_entry() { llListen(5, \"\", NULL_KEY, \"\"); } listen(integer c, string n, key k, string m) { llSay(0, \"heard \" + m); } }");
+        var listener = h.RezScript("default { state_entry() { llListen(5, \"\", NULL_KEY, \"\"); } listen(integer c, string n, key k, string m) { llSay(0, \"heard \" + m); } }");
         h.Pump();
+        h.PumpUntil(() => h.RunStateOf(evil) == "Waiting" && h.RunStateOf(listener) == "Waiting");
         h.Engine.ListenManager.Add(h.Prim.LocalId, evil, h.Prim.UUID, 5, "", UUID.Zero, Evil, 2);
 
         var sw = Stopwatch.StartNew();
@@ -148,6 +151,7 @@ public class RobustnessTests
         Assert.Null(deliver.Exception);
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(1), $"delivery took {sw.Elapsed.TotalMilliseconds:F0} ms");
         h.Pump();
+        h.PumpUntil(() => h.Said.Contains("heard " + Victim));
         Assert.Contains("heard " + Victim, h.Said);
         Assert.DoesNotContain("evil heard", h.Said);
     }

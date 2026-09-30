@@ -100,7 +100,7 @@ public class SlConstantsTests
         var names = new[] { "EOF", "NAK", "JSON_INVALID", "JSON_OBJECT", "JSON_ARRAY", "JSON_NUMBER", "JSON_STRING", "JSON_NULL", "JSON_TRUE", "JSON_FALSE", "JSON_DELETE" };
         using var h = new SchedulerHarness();
         h.RezScript("default { state_entry() { " + string.Concat(names.Select(Probe)) + " } }");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith(names[^1] + "=")));
         _out.WriteLine(string.Join(" | ", h.Said));
         foreach (var n in names)
         {
@@ -163,7 +163,7 @@ public class SlConstantsTests
         sp.Flying = false;
         sp.AgentControlFlags = 1;   // AGENT_CONTROL_AT_POS: walking forward
         h.RezScript($"default {{ state_entry() {{ llSay(0, \"walk=\" + (string)((llGetAgentInfo(\"{sp.UUID}\") & {Sl("AGENT_WALKING")}) != 0)); }} }}");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("walk=")));
         Assert.True(h.Said.Contains("walk=1"), Said(h));
     }
 
@@ -181,7 +181,7 @@ public class SlConstantsTests
         var sp = h.Scene.GetScenePresence(client.AgentId);
         sp.AbsolutePosition = new Vector3(200, 200, 25);
         h.RezScript($"default {{ state_entry() {{ llSay(0, \"list=\" + llList2CSV(llGetAgentList({Sl("AGENT_LIST_REGION")}, []))); }} }}");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("list=")));
         Assert.True(h.Said.Contains("list=" + sp.UUID), Said(h));
     }
 
@@ -190,7 +190,7 @@ public class SlConstantsTests
     {
         using var h = new SchedulerHarness();
         h.RezScript($"default {{ state_entry() {{ llParticleSystem([{Sl("PSYS_PART_START_GLOW")}, 0.5, {Sl("PSYS_PART_END_GLOW")}, 0.25]); llSay(0, \"set\"); }} }}");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("set"));
         Assert.Contains("set", h.Said);
         // libOMV's ParticleSystem(byte[], int) in this build does not decode the glow block back, so
         // the serialized system is read directly: the extended data carries a flags word
@@ -213,7 +213,7 @@ public class SlConstantsTests
         using var h = new SchedulerHarness();
         var mat = UUID.Random();
         h.RezScript($"default {{ state_entry() {{ llSetPrimitiveParams([{Sl("PRIM_RENDER_MATERIAL")}, 0, \"{mat}\"]); llSay(0, \"got=\" + llList2String(llGetPrimitiveParams([{Sl("PRIM_RENDER_MATERIAL")}, 0]), 0)); }} }}");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("got=")));
         Assert.True(h.Said.Contains("got=" + mat), Said(h));
         Assert.Contains(h.Prim.Shape.RenderMaterials?.entries ?? Array.Empty<Primitive.RenderMaterials.RenderMaterialEntry>(), e => e.te_index == 0 && e.id == mat);
     }
@@ -223,7 +223,7 @@ public class SlConstantsTests
     {
         using var h = new SchedulerHarness();
         h.RezScript($"default {{ state_entry() {{ llSetStatus({Sl("STATUS_SANDBOX")}, TRUE); llSay(0, \"sandbox=\" + (string)llGetStatus({Sl("STATUS_SANDBOX")}) + \" shadows=\" + (string)llGetStatus({Sl("STATUS_CAST_SHADOWS")})); }} }}");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("sandbox=")));
         Assert.True(h.Said.Contains("sandbox=1 shadows=0"), Said(h));
         Assert.True(h.Prim.GetStatusSandbox());
     }
@@ -237,9 +237,9 @@ public class SlConstantsTests
         var child = group.Parts.First(p => p != group.RootPart);
         var item = h.RezScriptInto(child, $"default {{ state_entry() {{ llRequestPermissions(llGetOwner(), PERMISSION_CHANGE_LINKS); }} " +
                                           $"run_time_permissions(integer p) {{ llBreakLink({Sl("LINK_THIS")}); llSay(0, \"broke\"); }} }}");
-        h.Pump();
+        h.PumpUntil(() => owner.ScriptQuestions.Count >= 1);
         owner.FireScriptAnswer(child.UUID, item, Sl("PERMISSION_CHANGE_LINKS"));
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("broke") && group.PrimCount == 2);
         Assert.Contains("broke", h.Said);
         Assert.NotSame(group, child.ParentGroup);
         Assert.Equal(2, group.PrimCount);
@@ -253,7 +253,7 @@ public class SlConstantsTests
         // iwGetAgentData is the synchronous twin of llRequestAgentData and shares its DATA_* switch; the
         // llRequestAgentData form is in DataserverQueryKeyTests (part F), which it needs to return at all.
         h.RezScript($"default {{ state_entry() {{ llSay(0, \"ds=\" + iwGetAgentData(\"{client.AgentId}\", {Sl("DATA_PAYINFO")})); }} }}");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("ds=")));
         Assert.True(h.Said.Any(s => Regex.IsMatch(s, "^ds=[0-3]$")), Said(h));
     }
 
@@ -264,7 +264,7 @@ public class SlConstantsTests
         var bots = RecordingBots.Create(out var rec);
         h.Scene.RegisterModuleInterface<IBotManager>(bots);
         h.RezScript($"default {{ state_entry() {{ llCreateCharacter([{Sl("CHARACTER_DESIRED_SPEED")}, 3.5]); llUpdateCharacter([{Sl("CHARACTER_DESIRED_SPEED")}, 2.0]); llSay(0, \"done\"); }} }}");
-        h.Pump();
+        h.PumpUntil(() => { lock (rec.Speeds) return h.Said.Contains("done") && rec.Speeds.Count >= 2; });
         Assert.Contains("done", h.Said);
         Assert.Equal(new[] { 3.5f, 2.0f }, rec.Speeds);
     }
@@ -279,7 +279,7 @@ public class SlConstantsTests
         {
             h.RezScript($"default {{ state_entry() {{ list r = llCastRay(<10,10,50>, <10,10,0>, [{Sl("RC_MAX_HITS")}, 3, {Sl("RC_DATA_FLAGS")}, {Sl("RC_GET_NORMAL")}]); " +
                         "llSay(0, \"n=\" + (string)llGetListLength(r) + \" status=\" + (string)llList2Integer(r, -1) + \" normal=\" + (string)llList2Vector(r, 2)); } }");
-            h.Pump();
+            h.PumpUntil(() => h.Said.Any(s => s.StartsWith("n=")));
             Assert.True(h.Said.Contains("n=10 status=3 normal=<0.00000, 0.00000, 1.00000>"), Said(h));
         }
         finally { h.Scene.PhysicsScene = old; }

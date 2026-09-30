@@ -40,6 +40,7 @@ public class TerminatedScriptStaysStoppedTests
         {
             h1.RezScript(Crasher, assetId, itemId);
             h1.PumpFor(TimeSpan.FromSeconds(1));
+            h1.PumpUntil(() => h1.RunStateOf(itemId) == "Killed" && h1.SaidOn.Any(s => s.Channel == DebugChannel && s.Message.Contains("osSetRot permission denied")));
             _out.WriteLine("engine 1: said=[" + string.Join(" | ", h1.Said) + "] errors=[" + Errors(h1) + "] RunState=" + h1.RunStateOf(itemId));
 
             Assert.Equal(1, h1.Said.Count(s => s == "up"));
@@ -59,6 +60,7 @@ public class TerminatedScriptStaysStoppedTests
         using var h2 = Scene();
         h2.RezScript(Crasher, assetId, itemId);
         h2.PumpFor(TimeSpan.FromSeconds(1));
+        h2.PumpUntil(() => h2.StatusOf(itemId).Contains("osSetRot"));
         _out.WriteLine("engine 2 after restore: said=[" + string.Join(" | ", h2.Said) + "] errors=[" + Errors(h2) + "] RunState=" + h2.RunStateOf(itemId));
 
         // no state_entry, no re-throw, still stopped, still with its reason
@@ -70,7 +72,7 @@ public class TerminatedScriptStaysStoppedTests
 
         // a reset starts it fresh: state_entry runs (and crashes again, as an in-world prim would)
         h2.Engine.ResetScript(itemId);
-        h2.PumpFor(TimeSpan.FromSeconds(1));
+        h2.PumpUntil(() => h2.SaidOn.Any(s => s.Channel == DebugChannel && s.Message.Contains("osSetRot permission denied")) && h2.RunStateOf(itemId) == "Killed" && !h2.Engine.GetScriptState(itemId));
         _out.WriteLine("engine 2 after reset: said=[" + string.Join(" | ", h2.Said) + "] errors=[" + Errors(h2) + "]");
         Assert.Equal(1, h2.Said.Count(s => s == "up"));
         Assert.Single(h2.SaidOn, s => s.Channel == DebugChannel && s.Message.Contains("osSetRot permission denied"));
@@ -82,13 +84,13 @@ public class TerminatedScriptStaysStoppedTests
     {
         using var h = Scene();
         var itemId = h.RezScript(Crasher);
-        h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.RunStateOf(itemId) == "Killed" && !h.Engine.GetScriptState(itemId));
         Assert.Equal(1, h.Said.Count(s => s == "up"));
         Assert.False(h.Engine.GetScriptState(itemId));
 
         // the viewer's checkbox: TriggerStartScript, which PhloxEngine turns into an enable request
         h.Scene.EventManager.TriggerStartScript(h.Prim.LocalId, itemId);
-        h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.SaidOn.Count(s => s.Channel == DebugChannel && s.Message.Contains("osSetRot permission denied")) >= 2);
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "] errors=[" + Errors(h) + "]");
 
         Assert.Equal(2, h.Said.Count(s => s == "up"));   // ran state_entry again from a fresh state, not from the dead frame
@@ -106,8 +108,9 @@ public class TerminatedScriptStaysStoppedTests
         Assert.False(h.Engine.GetScriptState(itemId));
         Assert.False(h.IsOnRunQueue(itemId));
 
+        h.PumpUntil(() => h.InterpreterFor(itemId) != null);
         h.Scene.EventManager.TriggerStartScript(h.Prim.LocalId, itemId);
-        h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.Said.Contains("up") && h.Engine.GetScriptState(itemId));
         Assert.Contains("up", h.Said);
         Assert.True(h.Engine.GetScriptState(itemId));
     }
@@ -128,7 +131,7 @@ public class TerminatedScriptStaysStoppedTests
         using (var h1 = Scene())
         {
             h1.RezScript(Crasher, assetId, itemId);
-            h1.PumpFor(TimeSpan.FromSeconds(1));
+            h1.PumpUntil(() => h1.RunStateOf(itemId) == "Killed");
             Assert.Equal(1, h1.Said.Count(s => s == "up"));
             Assert.Equal("Killed", h1.RunStateOf(itemId));
             h1.ShutdownStateManager();   // the only save a region stop makes - no SaveState / ScriptUnloaded
@@ -137,6 +140,7 @@ public class TerminatedScriptStaysStoppedTests
         using var h2 = Scene();
         h2.RezScript(Crasher, assetId, itemId);   // the item as the region DB presents it: Running flag at its default, true
         h2.PumpFor(TimeSpan.FromSeconds(1));
+        h2.PumpUntil(() => h2.StatusOf(itemId).Contains("osSetRot"));
         _out.WriteLine("engine 2 after the restart path: said=[" + string.Join(" | ", h2.Said) + "] errors=[" + Errors(h2) + "] RunState=" + h2.RunStateOf(itemId));
 
         Assert.DoesNotContain("up", h2.Said);                                        // no state_entry

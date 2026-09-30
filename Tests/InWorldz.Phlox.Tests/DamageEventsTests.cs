@@ -42,7 +42,7 @@ public class DamageEventsTests
     }
 
     /// <summary>Run the region-side damage on another thread and pump the scheduler until it returns.</summary>
-    private static void DamageWhilePumping(SchedulerHarness h, Action damage, int maxMs = 5000)
+    private static void DamageWhilePumping(SchedulerHarness h, Action damage, Func<bool> landed, int maxMs = 30000)
     {
         var t = Task.Run(damage);
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -50,6 +50,7 @@ public class DamageEventsTests
         Assert.True(t.IsCompleted, "the damage call did not return");
         t.GetAwaiter().GetResult();
         h.PumpFor(TimeSpan.FromMilliseconds(300));   // let final_damage handlers run
+        h.PumpUntil(landed);                         // PHLOX-59: and wait for the line the caller asserts
     }
 
     private const string Halver = @"default {
@@ -71,12 +72,13 @@ public class DamageEventsTests
         using var h = new SchedulerHarness();
         var sp = Vulnerable(h);
         h.RezScript(Halver);
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("up"));
         Assert.Contains("up", h.Said);
         Wear(sp, h.Prim.ParentGroup);
 
         var src = UUID.Random();
-        DamageWhilePumping(h, () => sp.ApplyDamage(src, UUID.Random(), 0, 20f, 5 /* DAMAGE_TYPE_FIRE */, true));
+        DamageWhilePumping(h, () => sp.ApplyDamage(src, UUID.Random(), 0, 20f, 5 /* DAMAGE_TYPE_FIRE */, true),
+            () => h.Said.Contains("fd=1:10.000000/5/20.000000"));
 
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "]");
         Assert.Contains(h.Said, s => s.StartsWith("od=1:20.000000/5/20.000000 from " + src));
@@ -95,13 +97,14 @@ public class DamageEventsTests
             state_entry() { llSay(0, ""up2""); }
             final_damage(integer n) { llSay(0, ""fd2="" + (string)llList2Float(llDetectedDamage(0), 0)); }
         }");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("up") && h.Said.Contains("up2"));
         Assert.Contains("up", h.Said);
         Assert.Contains("up2", h.Said);
         Wear(sp, h.Prim.ParentGroup);
         Wear(sp, second);
 
-        DamageWhilePumping(h, () => sp.ApplyDamage(UUID.Random(), UUID.Random(), 0, 20f, 0, true));
+        DamageWhilePumping(h, () => sp.ApplyDamage(UUID.Random(), UUID.Random(), 0, 20f, 0, true),
+            () => h.Said.Contains("fd2=10.000000"));
 
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "]");
         Assert.Contains("fd2=10.000000", h.Said);       // the halver's adjustment is what everyone sees land
@@ -119,13 +122,13 @@ public class DamageEventsTests
             state_entry() { llSay(0, ""wup""); }
             on_damage(integer n) { llSay(0, ""hit by "" + llDetectedKey(0) + "" owner "" + llDetectedOwner(0) + "" amt "" + (string)llList2Float(llDetectedDamage(0), 0)); }
         }");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("wup"));
         Assert.Contains("wup", h.Said);
         Wear(sp, worn);
 
         h.RezScript("default { state_entry() { llDamage(\"" + sp.UUID + "\", 10, DAMAGE_TYPE_GENERIC); llSay(0, \"shot\"); } }");
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        while (sw.ElapsedMilliseconds < 5000 && !h.Said.Any(s => s.StartsWith("hit by"))) h.PumpOnce();
+        while (sw.ElapsedMilliseconds < 30000 && !(h.Said.Any(s => s.StartsWith("hit by")) && h.Said.Contains("shot"))) h.PumpOnce();
         h.PumpFor(TimeSpan.FromMilliseconds(300));
 
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "]");
@@ -141,6 +144,7 @@ public class DamageEventsTests
         var sp = Vulnerable(h);
         h.RezScript("default { state_entry() { llAdjustDamage(0, 1.0); llSay(0, \"after\"); } }");
         h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.Said.Contains("after") && h.SaidOn.Any(s => s.Channel == 0x7FFFFFFF && s.Message.Contains("llAdjustDamage")));
 
         Assert.Contains("after", h.Said);
         Assert.Contains(h.SaidOn, s => s.Channel == 0x7FFFFFFF && s.Message.Contains("llAdjustDamage"));

@@ -35,7 +35,7 @@ public class CompileOffSchedulerTests : IDisposable
         using var h = new SchedulerHarness();
         h.RezScript("default { state_entry() { llSetTimerEvent(0.1); } timer() { llSay(0, \"tick\"); } }");
         var toucher = h.RezScript("default { touch_start(integer n) { llSay(0, \"touched\"); } }");
-        PumpUntil(h, () => h.Said.Count(s => s == "tick") >= 3, TimeSpan.FromSeconds(5));
+        PumpUntil(h, () => h.Said.Count(s => s == "tick") >= 3, TimeSpan.FromSeconds(30));
         Assert.True(h.Said.Count(s => s == "tick") >= 3, "the timer script never started");
 
         SlowCompile("SLOW-B1", 3000);
@@ -54,7 +54,8 @@ public class CompileOffSchedulerTests : IDisposable
         }
         int ticks = h.Said.Count(s => s == "tick");
         _out.WriteLine($"in the 3 s compile window: {ticks} ticks at [{string.Join(",", ticksAt)}] ms; touched={h.Said.Contains("touched")}; slow started={h.Said.Contains("slow started")}");
-        PumpUntil(h, () => h.Said.Contains("slow started"), TimeSpan.FromSeconds(5));
+        PumpUntil(h, () => h.Said.Contains("slow started"), TimeSpan.FromSeconds(30));
+        h.PumpUntil(() => h.Said.Contains("touched") && h.Said.Contains("slow started"));
 
         Assert.True(ticks >= 20, $"the 0.1 s timer fired {ticks} times during a 3 s compile (about 30 expected): the scheduler waited on the compile");
         Assert.Contains("touched", h.Said);
@@ -69,7 +70,7 @@ public class CompileOffSchedulerTests : IDisposable
         var item = h.RezScript("// SLOW-B2\ndefault { state_entry() { llSay(0, \"version A\"); } }");
         h.PumpOnce();   // version A is now compiling
         h.ResaveScript(item, "default { state_entry() { llSay(0, \"version B\"); } }");
-        PumpUntil(h, () => h.Said.Contains("version B"), TimeSpan.FromSeconds(5));
+        PumpUntil(h, () => h.Said.Contains("version B"), TimeSpan.FromSeconds(30));
         PumpUntil(h, () => false, TimeSpan.FromSeconds(2.5));   // past A's compile, so a stale start would show
         _out.WriteLine($"said: [{string.Join(" | ", h.Said)}] status: {h.StatusOf(item)}");
         Assert.Contains("version B", h.Said);
@@ -83,7 +84,7 @@ public class CompileOffSchedulerTests : IDisposable
         SlowCompile("SLOW-B3", 1500);
         h.RezScript("// SLOW-B3\ndefault { state_entry() { llSay(0, \"first\"); } }");
         h.RezScript("default { state_entry() { llSay(0, \"second\"); } }");
-        PumpUntil(h, () => h.Said.Contains("first") && h.Said.Contains("second"), TimeSpan.FromSeconds(6));
+        PumpUntil(h, () => h.Said.Contains("first") && h.Said.Contains("second"), TimeSpan.FromSeconds(30));
         _out.WriteLine($"said: [{string.Join(" | ", h.Said)}]");
         Assert.Equal(new[] { "first", "second" }, h.Said.Where(s => s == "first" || s == "second").ToArray());
     }
@@ -96,7 +97,7 @@ public class CompileOffSchedulerTests : IDisposable
         var slow = h.RezScript("// SLOW-B4\ndefault { state_entry() { llSay(0, \"slow ran\"); } }");
         h.PumpOnce();   // compiling
         h.Engine.SetScriptState(slow, false, false);   // what llSetScriptState(name, FALSE) calls
-        PumpUntil(h, () => h.InterpreterFor(slow) != null, TimeSpan.FromSeconds(5));
+        PumpUntil(h, () => h.InterpreterFor(slow) != null, TimeSpan.FromSeconds(30));
         PumpUntil(h, () => false, TimeSpan.FromSeconds(0.5));
         _out.WriteLine($"status: {h.StatusOf(slow)} said: [{string.Join(" | ", h.Said)}]");
         Assert.NotNull(h.InterpreterFor(slow));
@@ -112,7 +113,7 @@ public class CompileOffSchedulerTests : IDisposable
         var slow = h.RezScript("// SLOW-B5\ndefault { state_entry() { llSay(0, \"entry\"); } }");
         h.PumpOnce();   // compiling
         h.Engine.ResetScript(slow);   // llResetOtherScript / the viewer's Reset
-        PumpUntil(h, () => h.Said.Contains("entry"), TimeSpan.FromSeconds(5));
+        PumpUntil(h, () => h.Said.Contains("entry"), TimeSpan.FromSeconds(30));
         PumpUntil(h, () => false, TimeSpan.FromSeconds(0.5));
         _out.WriteLine($"said: [{string.Join(" | ", h.Said)}]");
         Assert.Equal(1, h.Said.Count(s => s == "entry"));   // started once, fresh; not lost, not doubled

@@ -37,7 +37,8 @@ default
     {
         using var h = new SchedulerHarness();
         h.RezScript(Touchable);
-        h.Pump();
+        h.PumpUntil(() => h.Prim.ScriptEvents.HasFlag(scriptEvents.touch_start) &&
+                          (h.Prim.AggregatedScriptEvents & scriptEvents.anytouch) != 0);
 
         _out.WriteLine($"ScriptEvents={h.Prim.ScriptEvents} Aggregated={h.Prim.AggregatedScriptEvents} aggregated={h.Prim.AggregatedScriptEvents}");
 
@@ -60,7 +61,9 @@ default
         h.RezScript(Touchable, asset);
         h.Pump();
         h.RezScript(Touchable, asset);   // second instance of the same asset: the shared path
-        h.Pump();
+        h.PumpUntil(() => h.Said.Count(s => s == "ready") >= 2 &&
+                          h.Prim.ScriptEvents.HasFlag(scriptEvents.touch_start) &&
+                          (h.Prim.AggregatedScriptEvents & scriptEvents.anytouch) != 0);
 
         Assert.True(h.Prim.ScriptEvents.HasFlag(scriptEvents.touch_start),
             $"mask after a shared start={h.Prim.ScriptEvents}");
@@ -74,12 +77,12 @@ default
         // world - EventManager.TriggerObjectGrab into the engine's OnObjectGrab handler.
         using var h = new SchedulerHarness();
         var item = h.RezScript(Touchable);
-        h.Pump();
+        h.PumpUntil(() => h.SaidAnything(item));
         Assert.True(h.SaidAnything(item), "state_entry must have run before touch means anything");
 
         h.ClearSaid(item);
         h.TouchViaScene();
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(m => m.Contains("Touched")));
 
         Assert.Contains(h.Said, m => m.Contains("Touched"));
     }

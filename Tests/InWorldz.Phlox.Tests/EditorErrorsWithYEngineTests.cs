@@ -78,7 +78,7 @@ public class EditorErrorsWithYEngineTests
         using var h = new SchedulerHarness(withYEngine: true);
         var (errors, _) = Save(h, "default { state_entry() { llSay(0, \"saved beside yengine\"); } }");
         Assert.Empty(errors);
-        var until = DateTime.UtcNow.AddSeconds(5);
+        var until = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < until && !h.Said.Contains("saved beside yengine")) h.PumpOnce();
         Assert.Contains("saved beside yengine", h.Said);
     }
@@ -120,7 +120,7 @@ public class EditorErrorsWithYEngineTests
         using var h = new SchedulerHarness(withYEngine: true);
         h.Scene.RegisterModuleInterface<IDialogModule>(RecordingDialogs.Create(out var rec));
         h.RezScript(Fixture("phlox22-syntaxerror.lsl"));   // a rez, not a Save: no editor will ask
-        var until = DateTime.UtcNow.AddSeconds(8);
+        var until = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < until && rec.Alerts.Count == 0) h.PumpOnce();
         PumpFor(h, TimeSpan.FromSeconds(1));
         _out.WriteLine($"alerts=[{string.Join(" | ", rec.Alerts)}]");

@@ -55,7 +55,7 @@ public class TimerFloorTests
     {
         using var h = new SchedulerHarness();
         var item = h.RezScript("default { state_entry() { " + call + " } }");
-        h.Pump();
+        h.PumpUntil(() => h.InterpreterFor(item) != null && h.RunStateOf(item) == "Waiting");   // state_entry ran
         var ms = TimerIntervalOf(h, item);
         o.WriteLine(call + "  ->  " + ms + " ms");
         return ms;

@@ -22,7 +22,7 @@ public class SyscallSingleReturnTests
     {
         using var h = new SchedulerHarness();
         var slow = UUID.Random();
-        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Next", "Call", slow, "pw");
+        SchedulerHarness.CreateUser(h.Scene, "Next", "Call", slow, "pw");
         // The next call is parked for 800 ms: long enough for any stray second return to arrive in it.
         ServiceCallDeferralTests.InstallAccountDelay(h, id => id == slow ? 800 : 0);
 
@@ -37,7 +37,7 @@ default
         llSay(0, ""next ["" + n + ""]"");
     }
 }");
-        var until = DateTime.UtcNow.AddSeconds(10);
+        var until = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < until && !h.Said.Any(m => m.StartsWith("next")))
             h.PumpFor(TimeSpan.FromMilliseconds(50));
         h.PumpFor(TimeSpan.FromMilliseconds(300));

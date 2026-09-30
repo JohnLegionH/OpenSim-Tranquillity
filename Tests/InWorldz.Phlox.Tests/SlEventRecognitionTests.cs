@@ -66,7 +66,7 @@ default
             final_damage(integer n) {}
             on_death() {}
         }");
-        h.Pump();
+        h.PumpUntil(() => h.Prim.ScriptEvents.HasFlag(scriptEvents.on_damage) && h.Prim.ScriptEvents.HasFlag(scriptEvents.final_damage) && h.Prim.ScriptEvents.HasFlag(scriptEvents.on_death));
         _out.WriteLine($"ScriptEvents={h.Prim.ScriptEvents}");
 
         // These are the bits 'phlox status' prints; before PHLOX-6 none of them existed.
@@ -91,7 +91,7 @@ default
         Assert.NotNull(sp);
 
         var item = h.RezScript(@"default { state_entry() { llSay(0, ""up""); } on_death() { llSay(0, ""dead""); } }");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("up"));
         Assert.Contains("up", h.Said);
 
         // Wear the prim: what GetAttachments() enumerates is what on_death is posted to.
@@ -101,7 +101,7 @@ default
         Assert.Contains(sog, sp.GetAttachments());
 
         h.Scene.EventManager.TriggerAvatarKill(0, sp);
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("dead"));
 
         _out.WriteLine("said=[" + string.Join(",", h.Said) + "]");
         Assert.Contains("dead", h.Said);
@@ -122,13 +122,13 @@ default
             state_entry() { llSay(0, ""up""); }
             path_update(integer type, list reserved) { llSay(0, ""path"" + (string)type); }
         }");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("up"));
         Assert.Contains("up", h.Said);
 
         // BOT_MOVE_COMPLETE (1) -> PU_GOAL_REACHED (1), reserved list empty - what FirePathEvent posts.
         bool posted = h.Engine.PostScriptEvent(item, "path_update", new object[] { 1, new object[0] });
         Assert.True(posted, "the engine did not recognise path_update");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("path1"));
 
         _out.WriteLine("said=[" + string.Join(",", h.Said) + "]");
         Assert.Contains("path1", h.Said);
@@ -142,9 +142,10 @@ default
             path_update(integer type, list reserved) { llSay(0, ""path"" + (string)type); }
         }");
         h.Pump();
+        h.PumpUntil(() => h.InterpreterFor(item) != null && h.RunStateOf(item) == "Waiting");
         // BOT_MOVE_FAILED (3, a navigation timeout) -> PU_FAILURE_UNREACHABLE (4).
         Assert.True(h.Engine.PostScriptEvent(item, "path_update", new object[] { 4, new object[0] }));
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("path4"));
         Assert.Contains("path4", h.Said);
     }
 }

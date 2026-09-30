@@ -4641,3 +4641,28 @@ with the 15 ms that Halcyon's LSLError gives there.
 Not driven by a test: llRequestPermissions from a temporary attachment, llAttachToAvatarTemp's transfer refusal, the
 seated-avatar texture rules, llRemoteLoadScriptPin's ownership refusal and botFollowAvatar (which needs a bot module).
 Each uses the same one-line change as the tested paths.
+
+## PHLOX-59 - test flake sweep and suite speed (tests only)
+
+No production change. Three kinds of test fix in `Tests/InWorldz.Phlox.Tests`:
+
+- **Wait for the result.** A fixed window (`Pump()`, `PumpFor`, a sleep) followed by an assert that something DID
+  happen fails when a loaded machine is slower than the window. 139 such sites now wait for what they assert, through
+  the new `SchedulerHarness.PumpUntil(condition, cap)` (30 s cap). 69 windows followed by both kinds of assert keep
+  their window and then wait for the positive part. Polls with caps under 30 s were raised to 30 s. Every "did not
+  happen" window is unchanged (38 sites). No assertion changed, no test added, removed or skipped.
+- **Shared store.** Every test scene's authentication service writes `NullAuthenticationData`'s static, unlocked
+  Dictionary (`Source/OpenSim.Data.Null/NullAuthenticationData.cs`). Two classes creating users at once threw in
+  set-up (B6-PREP, `ServiceCallDeferralTests`). Phlox tests now create users through `SchedulerHarness.CreateUser`,
+  under one lock.
+- **The harness's 5 s stall.** `PhloxMasterScheduler.StopThread` sets `m_Stop`, signals once and joins for 5 s. Its
+  work loop reads `m_Stop` before it Resets the signal, so a stop that lands between the two is lost; with no work
+  queued the loop waits forever and the join times out. Every harness stops that thread just after the engine starts,
+  and about 1 harness in 12 lost the 5 s (ErrorPauseTests alone: 1 m 51 s, of which 8 s was the tests). The harness
+  now sets the same flag and signals until the thread has ended. The race is in production code and is NOT changed:
+  a region stop that meets it waits 5 s and leaves the master thread blocked (a background thread). Reported for a
+  production fix.
+
+Full `InWorldz.Phlox.Tests` run: 12 m 59 s before (4015 passed, 2 skipped; PHLOX-58 measured 12 m 26 s), 7 m 00 s and
+7 m 09 s after, green both times, the same 4017 test names. The serial "phlox-state" phase went from 543 s (run 1) to
+258 s (run 2; ErrorPauseTests 115 s -> 10 s, AntiAbuseSlowdownTests 54 s -> 4 s, IwStringCodecGoldenTests 27 s -> 2 s).

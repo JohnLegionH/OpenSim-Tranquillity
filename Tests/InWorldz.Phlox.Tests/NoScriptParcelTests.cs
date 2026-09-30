@@ -106,7 +106,7 @@ public class NoScriptParcelTests
         }
 
         /// <summary>Pump until the condition holds, up to <paramref name="maxMs"/>.</summary>
-        public bool PumpUntil(Func<bool> condition, int maxMs = 20000)
+        public bool PumpUntil(Func<bool> condition, int maxMs = 30000)
         {
             var until = DateTime.UtcNow.AddMilliseconds(maxMs);
             while (!condition())
@@ -215,6 +215,7 @@ public class NoScriptParcelTests
         // the core's start path: CreateScriptInstance -> CanRunScript(item, part, engineEnforces) -> OnRezScript
         bool started = sog.RootPart.Inventory.CreateScriptInstance(item, 0, false, l.H.Engine.Name, 0);
         l.Pump();
+        l.PumpUntil(() => l.Paused(item.ItemID), 30000);
         Log(l, "start on west");
 
         Assert.True(started);
@@ -225,7 +226,7 @@ public class NoScriptParcelTests
         Assert.Contains("LocalDisable=Parcel", l.H.StatusOf(item.ItemID));
 
         l.SetFlags(l.WestParcel, otherScripts: true, groupScripts: false);
-        l.Pump();
+        l.PumpUntil(() => !l.Paused(item.ItemID) && l.Said("start entry") && l.Ticks("start") > 0, 30000);
         Log(l, "west allows");
         Assert.False(l.Paused(item.ItemID));
         Assert.True(l.Said("start entry"));                     // the held state_entry runs now
@@ -242,7 +243,7 @@ public class NoScriptParcelTests
         {
             var sog = l1.AddObject("rs", East, Resident);
             l1.Rez(sog.RootPart, Ticker, itemId: itemId, assetId: assetId);
-            l1.Pump(600);
+            l1.PumpUntil(() => l1.Ticks("rs") > 0, 30000);
             before = l1.LastTick("rs");
             Assert.True(before > 0);
             l1.H.SaveState(itemId);
@@ -252,12 +253,14 @@ public class NoScriptParcelTests
         var sog2 = l2.AddObject("rs", West, Resident);                       // the object now stands on west
         l2.Rez(sog2.RootPart, Ticker, itemId: itemId, assetId: assetId, stateSource: 0 /* RegionStart */);
         l2.Pump(600);
+        l2.PumpUntil(() => l2.Paused(itemId), 30000);
         Log(l2, "region start on west");
         Assert.True(l2.Paused(itemId));
         Assert.Equal(0, l2.Ticks("rs"));
 
         l2.SetFlags(l2.WestParcel, otherScripts: true, groupScripts: false);
         l2.Pump(600);
+        l2.PumpUntil(() => !l2.Paused(itemId) && l2.LastTick("rs") > before, 30000);
         Log(l2, "west allows");
         Assert.False(l2.H.Said.Contains("rs entry"));                        // restored, not restarted
         Assert.True(l2.LastTick("rs") > before);                              // n carried on from where it was
@@ -273,19 +276,22 @@ public class NoScriptParcelTests
         var sog = l.AddObject("flag", West, Resident);
         l.SetFlags(l.WestParcel, otherScripts: true, groupScripts: false);
         var id = l.Rez(sog.RootPart, Ticker);
-        l.Pump(500);
+        l.PumpUntil(() => l.Ticks("flag") > 0, 30000);
         Assert.True(l.Ticks("flag") > 0);
 
         l.SetFlags(l.WestParcel, otherScripts: false, groupScripts: false);
         l.Pump(100);
+        l.PumpUntil(() => l.Paused(id), 30000);
         int atPause = l.LastTick("flag");
         l.Pump(500);
+        l.PumpUntil(() => l.Paused(id), 30000);
         Log(l, "flag off");
         Assert.True(l.Paused(id));
         Assert.Equal(atPause, l.LastTick("flag"));                           // silent while paused
 
         l.SetFlags(l.WestParcel, otherScripts: true, groupScripts: false);
         l.Pump(500);
+        l.PumpUntil(() => !l.Paused(id) && l.LastTick("flag") > atPause, 30000);
         Log(l, "flag on");
         Assert.False(l.Paused(id));
         Assert.True(l.LastTick("flag") > atPause);
@@ -395,14 +401,14 @@ public class NoScriptParcelTests
         using var l = new Land();
         var sog = l.AddObject("pown", West, Resident);
         var id = l.Rez(sog.RootPart, Ticker);
-        l.Pump();
+        l.PumpUntil(() => l.Paused(id), 30000);
         Assert.True(l.Paused(id));
 
         // the parcel is sold to the object's owner
         LandData d = l.WestParcel.LandData.Copy();
         d.OwnerID = Resident;
         l.H.Scene.LandChannel.UpdateLandObject(l.WestParcel.LandData.LocalID, d);
-        l.Pump();
+        l.PumpUntil(() => !l.Paused(id) && l.Ticks("pown") > 0, 30000);
         Assert.False(l.Paused(id));
         Assert.True(l.Ticks("pown") > 0);
     }
@@ -415,18 +421,20 @@ public class NoScriptParcelTests
         using var l = new Land();
         var sog = l.AddObject("mover", East, Resident);
         var id = l.Rez(sog.RootPart, Ticker);
-        l.Pump();
+        l.PumpUntil(() => l.Ticks("mover") > 0, 30000);
         Assert.True(l.Ticks("mover") > 0);
 
         sog.AbsolutePosition = West;                                           // llSetPos, an edit, a grab
         l.Pump(100);
+        l.PumpUntil(() => l.Paused(id), 30000);
         int atPause = l.LastTick("mover");
         l.Pump(400);
+        l.PumpUntil(() => l.Paused(id), 30000);
         Assert.True(l.Paused(id));
         Assert.Equal(atPause, l.LastTick("mover"));
 
         sog.AbsolutePosition = East;
-        l.Pump();
+        l.PumpUntil(() => !l.Paused(id) && l.LastTick("mover") > atPause, 30000);
         Assert.False(l.Paused(id));
         Assert.True(l.LastTick("mover") > atPause);
     }
@@ -437,7 +445,7 @@ public class NoScriptParcelTests
         using var l = new Land();
         var sog = l.AddObject("phys", East, Resident);
         var id = l.Rez(sog.RootPart, Ticker);
-        l.Pump();
+        l.PumpUntil(() => l.Ticks("phys") > 0, 30000);
         Assert.True(l.Ticks("phys") > 0);
 
         var pa = sog.RootPart.PhysActor;
@@ -447,14 +455,16 @@ public class NoScriptParcelTests
         pa.Position = West;
         pa.RequestPhysicsterseUpdate();
         l.Pump(100);
+        l.PumpUntil(() => l.Paused(id), 30000);
         int atPause = l.LastTick("phys");
         l.Pump(400);
+        l.PumpUntil(() => l.Paused(id), 30000);
         Assert.True(l.Paused(id));
         Assert.Equal(atPause, l.LastTick("phys"));
 
         pa.Position = East;
         pa.RequestPhysicsterseUpdate();
-        l.Pump();
+        l.PumpUntil(() => !l.Paused(id) && l.LastTick("phys") > atPause, 30000);
         Assert.False(l.Paused(id));
         Assert.True(l.LastTick("phys") > atPause);
     }
@@ -472,6 +482,7 @@ public class NoScriptParcelTests
         sog.AttachmentPoint = (uint)AttachmentPoint.Chest;
         var id = l.Rez(sog.RootPart, Ticker);
         l.Pump();
+        l.PumpUntil(() => l.Ticks("worn") > 0, 30000);
         Log(l, "attachment on west");
         Assert.False(l.Paused(id));
         Assert.True(l.Ticks("worn") > 0);
@@ -481,8 +492,10 @@ public class NoScriptParcelTests
         sog.AttachedAvatar = UUID.Zero;
         l.H.Scene.EventManager.TriggerOnAttach(sog.LocalId, sog.UUID, UUID.Zero);
         l.Pump(100);
+        l.PumpUntil(() => l.Paused(id), 30000);
         int atPause = l.LastTick("worn");
         l.Pump(400);
+        l.PumpUntil(() => l.Paused(id), 30000);
         Assert.True(l.Paused(id));
         Assert.Equal(atPause, l.LastTick("worn"));
 
@@ -490,7 +503,7 @@ public class NoScriptParcelTests
         sog.IsAttachment = true;
         sog.AttachedAvatar = sp.UUID;
         l.H.Scene.EventManager.TriggerOnAttach(sog.LocalId, sog.UUID, sp.UUID);
-        l.Pump();
+        l.PumpUntil(() => !l.Paused(id) && l.LastTick("worn") > atPause, 30000);
         Assert.False(l.Paused(id));
         Assert.True(l.LastTick("worn") > atPause);
     }
@@ -541,7 +554,7 @@ public class NoScriptParcelTests
         Log(l, "controls held on west");
         Assert.False(l.Paused(id));                                             // exempt: it holds controls
         int running = l.LastTick("ctl");
-        l.Pump(300);
+        l.PumpUntil(() => l.LastTick("ctl") > running, 30000);
         Assert.True(l.LastTick("ctl") > running);
 
         // the viewer's "release keys": ScenePresence.HandleForceReleaseControls clears them and the scene raises
@@ -551,8 +564,10 @@ public class NoScriptParcelTests
         ((ForceReleaseControls)evt.GetValue(client)!).Invoke(client, sp.UUID);
         Assert.False(Holds(sp, id));
         l.Pump(100);
+        l.PumpUntil(() => l.Paused(id), 30000);
         int atPause = l.LastTick("ctl");
         l.Pump(400);
+        l.PumpUntil(() => l.Paused(id), 30000);
         Log(l, "after force release");
         Assert.True(l.Paused(id));
         Assert.Equal(atPause, l.LastTick("ctl"));
@@ -576,8 +591,10 @@ public class NoScriptParcelTests
         sp.ClearControls();
         Assert.False(Holds(sp, id));
         l.Pump(100);
+        l.PumpUntil(() => l.Paused(id), 30000);
         int atPause = l.LastTick("ctl2");
         l.Pump(400);
+        l.PumpUntil(() => l.Paused(id), 30000);
         Log(l, "after ClearControls");
         Assert.True(l.Paused(id));
         Assert.Equal(atPause, l.LastTick("ctl2"));
@@ -597,10 +614,12 @@ public class NoScriptParcelTests
         Assert.False(l.Paused(id));
 
         l.H.Scene.SimChat("go", ChatTypeEnum.Region, 7, West, "tester", UUID.Random(), false);
-        l.Pump(100);
+        l.PumpUntil(() => l.Said("ctl3 released"), 30000);
+        l.PumpUntil(() => l.Paused(id), 30000);
         Assert.True(l.Said("ctl3 released"));
         int atPause = l.LastTick("ctl3");
         l.Pump(400);
+        l.PumpUntil(() => l.Paused(id), 30000);
         Assert.True(l.Paused(id));
         Assert.Equal(atPause, l.LastTick("ctl3"));
     }
@@ -617,12 +636,13 @@ public class NoScriptParcelTests
         var a = l.Rez(inGroup.RootPart, Ticker);
         var b = l.Rez(other.RootPart, Ticker);
         l.Pump();
+        l.PumpUntil(() => l.Paused(b), 30000);
         Assert.False(l.Paused(a));
         Assert.True(l.Paused(b));
 
         // the group flag off: the group script pauses too
         l.SetFlags(l.WestParcel, otherScripts: false, groupScripts: false);
-        l.Pump();
+        l.PumpUntil(() => l.Paused(a), 30000);
         Assert.True(l.Paused(a));
     }
 
@@ -633,19 +653,19 @@ public class NoScriptParcelTests
         l.SetFlags(l.WestParcel, otherScripts: false, groupScripts: true, group: GroupA);
         var sog = l.AddObject("chg", West, Resident, GroupB);
         var id = l.Rez(sog.RootPart, Ticker);
-        l.Pump();
+        l.PumpUntil(() => l.Paused(id), 30000);
         Assert.True(l.Paused(id));
 
         sog.SetGroup(GroupA, null);                           // the viewer's Set Group
-        l.Pump();
+        l.PumpUntil(() => !l.Paused(id), 30000);
         Assert.False(l.Paused(id));
 
         sog.SetGroup(GroupB, null);
-        l.Pump();
+        l.PumpUntil(() => l.Paused(id), 30000);
         Assert.True(l.Paused(id));
 
         sog.SetOwnerId(ParcelOwner);                          // given to the parcel owner
-        l.Pump();
+        l.PumpUntil(() => !l.Paused(id), 30000);
         Assert.False(l.Paused(id));
     }
 
@@ -662,11 +682,11 @@ public class NoScriptParcelTests
         }";
         var sog = l.AddObject("ev", East, Resident);
         var id = l.Rez(sog.RootPart, src);
-        l.Pump();
+        l.PumpUntil(() => l.Said("ready"), 30000);
         Assert.True(l.Said("ready"));
 
         sog.AbsolutePosition = West;
-        l.Pump();
+        l.PumpUntil(() => l.Paused(id), 30000);
         Assert.True(l.Paused(id));
         l.H.Scene.SimChat("while-paused", ChatTypeEnum.Region, 5, West, "tester", UUID.Random(), false);
         PostTouch(l, id);
@@ -677,9 +697,10 @@ public class NoScriptParcelTests
         Log(l, "resumed");
         Assert.False(l.Said("heard while-paused"));        // dropped (Halcyon)
         Assert.False(l.Said("touched"));
+        l.PumpUntil(() => !l.Paused(id), 30000);
 
         l.H.Scene.SimChat("after", ChatTypeEnum.Region, 5, East, "tester", UUID.Random(), false);
-        l.Pump();
+        l.PumpUntil(() => l.Said("heard after"), 30000);
         Assert.True(l.Said("heard after"));                 // the listen is still there
     }
 
@@ -694,9 +715,9 @@ public class NoScriptParcelTests
         }";
         var sog = l.AddObject("q", East, Resident);
         var id = l.Rez(sog.RootPart, src);
-        l.Pump();
+        l.PumpUntil(() => l.Said("ready"), 30000);
         PostTouch(l, id);
-        l.Pump(100);
+        l.PumpUntil(() => l.Said("sleeping"), 30000);
         Assert.True(l.Said("sleeping"));
         // arrives while the handler sleeps, so it waits on the script's own queue
         l.Exe.PostEvent(id, new global::InWorldz.Phlox.VM.PostedEvent
@@ -708,13 +729,14 @@ public class NoScriptParcelTests
 
         sog.AbsolutePosition = West;                           // paused mid-sleep, one event queued
         l.Pump(900);
+        l.PumpUntil(() => l.Paused(id), 30000);
         Log(l, "paused mid-sleep");
         Assert.True(l.Paused(id));
         Assert.False(l.Said("woke"));
         Assert.False(l.Said("queued ran"));
 
         sog.AbsolutePosition = East;
-        l.Pump(900);
+        l.PumpUntil(() => l.Said("woke") && l.Said("queued ran"), 30000);
         Log(l, "resumed");
         Assert.True(l.Said("woke"));                           // the sleep carried on
         Assert.True(l.Said("queued ran"));                     // the queued event was kept
@@ -735,23 +757,24 @@ public class NoScriptParcelTests
         using var l = new Land();
         var sog = l.AddObject("own", West, Resident);
         var id = l.Rez(sog.RootPart, Ticker);
-        l.Pump();
+        l.PumpUntil(() => l.Paused(id), 30000);
         Assert.True(l.Paused(id));
         Assert.True(l.H.Engine.GetScriptState(id));                           // the owner's setting: running
 
         l.H.Scene.EventManager.TriggerStopScript(sog.RootPart.LocalId, id);   // the viewer's Running checkbox off
-        l.Pump();
+        l.PumpUntil(() => !l.H.Engine.GetScriptState(id), 30000);
         Assert.False(l.H.Engine.GetScriptState(id));
 
         l.SetFlags(l.WestParcel, otherScripts: true, groupScripts: false);
         l.Pump();
+        l.PumpUntil(() => !l.Paused(id), 30000);
         Assert.False(l.Paused(id));
         Assert.Equal(0, l.Ticks("own"));                                       // the parcel does not start it
         Assert.False(l.Said("own entry"));
         Assert.False(l.H.Engine.GetScriptState(id));
 
         l.H.Scene.EventManager.TriggerStartScript(sog.RootPart.LocalId, id);  // the owner does
-        l.Pump();
+        l.PumpUntil(() => l.Said("own entry") && l.Ticks("own") > 0, 30000);
         Assert.True(l.Said("own entry"));
         Assert.True(l.Ticks("own") > 0);
     }
@@ -765,20 +788,22 @@ public class NoScriptParcelTests
         l.Pump();
         l.H.Scene.EventManager.TriggerStopScript(sog.RootPart.LocalId, id);
         l.Pump(100);
+        l.PumpUntil(() => !l.H.Engine.GetScriptState(id), 30000);
         int stoppedAt = l.LastTick("own2");
 
         sog.AbsolutePosition = West;
-        l.Pump();
+        l.PumpUntil(() => l.Paused(id), 30000);
         Assert.True(l.Paused(id));
 
         l.H.Scene.EventManager.TriggerStartScript(sog.RootPart.LocalId, id);
         l.Pump();
+        l.PumpUntil(() => l.H.Engine.GetScriptState(id), 30000);
         Assert.True(l.Paused(id));
         Assert.True(l.H.Engine.GetScriptState(id));
         Assert.Equal(stoppedAt, l.LastTick("own2"));
 
         sog.AbsolutePosition = East;
-        l.Pump();
+        l.PumpUntil(() => !l.Paused(id), 30000);
         Assert.False(l.Paused(id));
     }
 
@@ -788,11 +813,11 @@ public class NoScriptParcelTests
         using var l = new Land();
         var sog = l.AddObject("rst", East, Resident);
         var id = l.Rez(sog.RootPart, Ticker);
-        l.Pump();
+        l.PumpUntil(() => l.Ticks("rst") > 0, 30000);
         Assert.True(l.Ticks("rst") > 0);
 
         sog.AbsolutePosition = West;
-        l.Pump();
+        l.PumpUntil(() => l.Paused(id), 30000);
         Assert.True(l.Paused(id));
         l.H.ClearSaid(id);
 
@@ -802,7 +827,7 @@ public class NoScriptParcelTests
         Assert.False(l.Said("rst entry"));
 
         sog.AbsolutePosition = East;
-        l.Pump();
+        l.PumpUntil(() => !l.Paused(id) && l.Said("rst entry") && l.Ticks("rst") > 0, 30000);
         Assert.False(l.Paused(id));
         Assert.True(l.Said("rst entry"));
         Assert.Equal(1, l.H.Said.Where(s => s.StartsWith("rst tick ")).Select(s => int.Parse(s.Substring(9))).Min());   // globals reset

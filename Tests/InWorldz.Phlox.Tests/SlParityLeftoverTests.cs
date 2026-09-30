@@ -31,6 +31,7 @@ public class SlParityLeftoverTests
         using var h = new SchedulerHarness();
         h.RezScript("default { state_entry() { integer z = 0; llSay(0, (string)(1 / z)); } }");
         h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.SaidOn.Any(s => s.Channel == DebugChannel));
 
         var said = h.SaidOn;
         var onDebug = said.Where(s => s.Channel == DebugChannel).ToList();
@@ -55,7 +56,7 @@ public class SlParityLeftoverTests
         // local) - a harness limitation, not the engine's; noted in PhloxKnownDefects PHLOX-9.
         using var h = new SchedulerHarness();
         h.RezScript("default { state_entry() { quaternion q = <0, 0, 0, 1>; llSay(0, \"q=\" + (string)(q == ZERO_ROTATION)); } }");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("q=")));
         Assert.Contains("q=1", h.Said);
     }
 
@@ -77,7 +78,7 @@ public class SlParityLeftoverTests
     {
         using var h = new SchedulerHarness();
         h.RezScript("default { state_entry() { integer x = 1; x = x << 3; x = x >> 1; llSay(0, \"x=\" + (string)x); } }");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("x=")));
         Assert.Contains("x=4", h.Said);
     }
 

@@ -44,7 +44,7 @@ public class AvatarName2KeyTests
         var body = string.Concat(args.Select((a, i) => $"llSay(0, \"K{i}:\" + (string)iwAvatarName2Key({a})); "));
         h.RezScript("default { state_entry() { " + body + "llSay(0, \"done\"); } " +
                     "dataserver(key q, string d) { llSay(0, \"DS:\" + d); } }");
-        Assert.True(PumpUntil(h, () => h.Said.Contains("done"), TimeSpan.FromSeconds(20)),
+        Assert.True(PumpUntil(h, () => h.Said.Contains("done"), TimeSpan.FromSeconds(30)),
             "the script never finished: " + string.Join(" | ", h.Said));
         h.PumpFor(TimeSpan.FromMilliseconds(500));   // room for a stray dataserver event
         _out.WriteLine(string.Join(" | ", h.Said) + " || debug: " +
@@ -83,7 +83,7 @@ public class AvatarName2KeyTests
     {
         using var h = new SchedulerHarness();
         var id = UUID.Random();
-        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Far", "Away", id, "pw");
+        SchedulerHarness.CreateUser(h.Scene, "Far", "Away", id, "pw");
         Assert.Equal(id.ToString(), Ask(h, "\"Far\", \"Away\"").Single());
     }
 
@@ -109,7 +109,7 @@ public class AvatarName2KeyTests
     {
         using var h = new SchedulerHarness();
         var id = UUID.Random();
-        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Off", "Thread", id, "pw");
+        SchedulerHarness.CreateUser(h.Scene, "Off", "Thread", id, "pw");
         int lookupThread = -1;
         InstallNameLookupHook(h, "Off", () => lookupThread = Environment.CurrentManagedThreadId);
 
@@ -127,7 +127,7 @@ public class AvatarName2KeyTests
     {
         using var h = new SchedulerHarness();
         var id = UUID.Random();
-        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Held", "Open", id, "pw");
+        SchedulerHarness.CreateUser(h.Scene, "Held", "Open", id, "pw");
         using var gate = new ManualResetEventSlim(false);
         using var entered = new ManualResetEventSlim(false);
         InstallNameLookupHook(h, "Held", () => { entered.Set(); gate.Wait(TimeSpan.FromSeconds(30)); });
@@ -139,9 +139,10 @@ public class AvatarName2KeyTests
             h.RezScript(@"default { state_entry() { llSay(0, ""A asks""); key k = iwAvatarName2Key(""Held"", ""Open""); llSay(0, ""A got "" + (string)k); }
                                     dataserver(key q, string d) { llSay(0, ""DS:"" + d); } }");
 
-            Assert.True(PumpUntil(h, () => entered.IsSet, TimeSpan.FromSeconds(10)), "the lookup never reached the account service");
+            Assert.True(PumpUntil(h, () => entered.IsSet, TimeSpan.FromSeconds(30)), "the lookup never reached the account service");
             int ticksBefore = h.Said.Count(s => s == "B tick");
             h.PumpFor(TimeSpan.FromMilliseconds(1500));
+            h.PumpUntil(() => h.Said.Count(s => s == "B tick") - ticksBefore >= 8);
             int ticksWhileHeld = h.Said.Count(s => s == "B tick") - ticksBefore;
             _out.WriteLine($"B ticked {ticksWhileHeld} times while A's lookup was held");
             Assert.DoesNotContain(h.Said, s => s.StartsWith("A got"));
@@ -149,7 +150,7 @@ public class AvatarName2KeyTests
         }
         finally { gate.Set(); }
 
-        Assert.True(PumpUntil(h, () => h.Said.Any(s => s.StartsWith("A got")), TimeSpan.FromSeconds(10)),
+        Assert.True(PumpUntil(h, () => h.Said.Any(s => s.StartsWith("A got")), TimeSpan.FromSeconds(30)),
             "A never answered: " + string.Join(" | ", h.Said.TakeLast(5)));
         h.PumpFor(TimeSpan.FromMilliseconds(500));
         Assert.Contains("A got " + id, h.Said);

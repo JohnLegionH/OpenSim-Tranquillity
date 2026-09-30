@@ -44,7 +44,7 @@ public class MuteListGiveTests
     private static UserAccount NewUser(SchedulerHarness h)
     {
         UUID id = UUID.Random();
-        return UserAccountHelpers.CreateUserWithInventory(h.Scene, "Mute", "Tester" + id.ToString().Substring(0, 8), id, "pw");
+        return SchedulerHarness.CreateUser(h.Scene, "Mute", "Tester" + id.ToString().Substring(0, 8), id, "pw");
     }
 
     private static void AddGift(SchedulerHarness h, string name)

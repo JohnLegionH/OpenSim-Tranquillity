@@ -47,7 +47,7 @@ public class LinkSelectorTests
             Assert.True(h.Said.Contains("ready " + p.Name), $"receiver in {p.Name} never started: [{string.Join(" | ", h.Said)}]");
     }
 
-    private static void WaitFor(SchedulerHarness h, Func<IReadOnlyList<string>, bool> done, double seconds = 10)
+    private static void WaitFor(SchedulerHarness h, Func<IReadOnlyList<string>, bool> done, double seconds = 30)
     {
         var until = DateTime.UtcNow.AddSeconds(seconds);
         while (DateTime.UtcNow < until && !done(h.Said)) h.PumpOnce();

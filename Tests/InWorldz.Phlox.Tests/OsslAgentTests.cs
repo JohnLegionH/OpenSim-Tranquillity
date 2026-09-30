@@ -35,7 +35,7 @@ public class OsslAgentTests
         return sp;
     }
 
-    private static void PumpUntil(SchedulerHarness h, Func<bool> done, int maxMs = 5000)
+    private static void PumpUntil(SchedulerHarness h, Func<bool> done, int maxMs = 30000)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         while (sw.ElapsedMilliseconds < maxMs && !done()) h.PumpOnce();
@@ -54,7 +54,7 @@ public class OsslAgentTests
             state_entry() { llSay(0, ""wup""); }
             on_damage(integer n) { llSay(0, ""hit by "" + llDetectedKey(0) + "" amt "" + (string)llList2Float(llDetectedDamage(0), 0)); }
         }");
-        h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.Said.Contains("wup"));
         Assert.Contains("wup", h.Said);
         worn.AttachedAvatar = sp.UUID;
         sp.AddAttachment(worn);
@@ -98,7 +98,7 @@ public class OsslAgentTests
             llSay(0, ""name="" + osKey2Name(k));
             llSay(0, ""key="" + (string)osAvatarName2Key(""" + sp.Firstname + @""", """ + sp.Lastname + @"""));
         } }");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("key=")));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "] errors=[" + Errors(h) + "]");
 
         Assert.Contains("type=1|byname=1|bogus=-1", h.Said);
@@ -146,6 +146,7 @@ public class OsslAgentTests
         var sp = h.Scene.GetScenePresence(h.AddClient().AgentId);
         h.RezScript("default { state_entry() { osKickAvatar(\"" + sp.UUID + "\", \"bye\"); llSay(0, \"kicked\"); } }");
         PumpUntil(h, () => h.Scene.GetScenePresence(sp.UUID) == null);
+        h.PumpUntil(() => h.Said.Contains("kicked"));
 
         Assert.Contains("kicked", h.Said);
         Assert.Null(h.Scene.GetScenePresence(sp.UUID));
@@ -176,6 +177,7 @@ public class OsslAgentTests
         var sp = h.Scene.GetScenePresence(h.AddClient().AgentId);
         h.RezScript("default { state_entry() { osKickAvatar(\"" + sp.UUID + "\", \"bye\"); llSay(0, \"after\"); } }");
         h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.SaidOn.Any(s => s.Channel == DebugChannel && s.Message.Contains("osKickAvatar permission denied")));
 
         Assert.DoesNotContain("after", h.Said);
         Assert.Single(h.SaidOn, s => s.Channel == DebugChannel && s.Message.Contains("osKickAvatar permission denied"));

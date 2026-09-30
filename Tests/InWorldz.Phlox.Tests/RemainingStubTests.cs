@@ -36,10 +36,10 @@ public class RemainingStubTests
             llSitTarget(<0,0,0.5>, ZERO_ROTATION);
             llSay(0, ""withtarget="" + (string)llGetLinkSitFlags(LINK_THIS));
         } }");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("withtarget=")));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "]");
 
-        Assert.Contains("flags=34", h.Said);              // 0x02 | 0x20
+        Assert.Contains("flags=34", h.Said);             // 0x02 | 0x20
         Assert.Contains("withtarget=35", h.Said);         // ... | 0x01 once a sit target exists
         // The bits the region honours today went where the sit path looks for them.
         Assert.True(h.Prim.AllowUnsit);
@@ -71,13 +71,14 @@ public class RemainingStubTests
                 state_entry() { llMinEventDelay(1.0); llResetTime(); llSay(0, ""armed""); }
                 touch_start(integer n) { llSay(0, ""t="" + (string)llGetTime()); }
             }");
-            h.Pump();
+            h.PumpUntil(() => h.Said.Contains("armed"));
             Assert.Contains("armed", h.Said);
 
             h.PostTouch(item);
             h.PumpFor(TimeSpan.FromMilliseconds(10));
             h.PostTouch(item);
             h.PumpFor(TimeSpan.FromSeconds(2.5));
+            h.PumpUntil(() => h.Said.Count(s => s.StartsWith("t=")) >= 2);
 
             var times = h.Said.Where(s => s.StartsWith("t=")).Select(s => float.Parse(s[2..], System.Globalization.CultureInfo.InvariantCulture)).ToList();
             _out.WriteLine("touch handler starts at: " + string.Join(", ", times));
@@ -113,7 +114,7 @@ public class RemainingStubTests
             llSay(0, ""peak="" + (string)peak);
             llSay(0, ""grew="" + (string)(peak > base + 4000));
         } }");
-        h.Pump(600);
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("grew=")));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "]");
 
         Assert.Contains("before=0", h.Said);              // never profiled: no peak, not 16384
@@ -135,7 +136,7 @@ public class RemainingStubTests
             }
             dataserver(key q, string d) { llSay(0, ""ds="" + d); }
         }");
-        h.PumpFor(TimeSpan.FromSeconds(4));   // three calls, 1 s sleep each
+        h.PumpUntil(() => h.Said.Count(s => s.StartsWith("ds=")) >= 3);   // three calls, 1 s sleep each
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "]");
 
         Assert.Contains("ds=up", h.Said);
@@ -160,7 +161,7 @@ public class RemainingStubTests
             }
             dataserver(key q, string d) { llSay(0, ""ds="" + d); }
         }");
-        h.PumpFor(TimeSpan.FromSeconds(3));
+        h.PumpUntil(() => h.Said.Contains("key=1") && h.Said.Contains("ds=unknown region") && h.Said.Contains("ds=rating or region unknown"));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "]");
 
         Assert.Contains("key=1", h.Said);

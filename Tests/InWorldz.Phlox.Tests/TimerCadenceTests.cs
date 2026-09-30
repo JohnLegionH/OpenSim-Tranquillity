@@ -31,7 +31,7 @@ default
     }
 }
 ");
-        h.Pump();
+        h.PumpUntil(() => h.InterpreterFor(item) != null && h.RunStateOf(item) == "Waiting");   // state_entry ran: the timer is armed
         h.ClearSaid(item);
 
         h.PumpFor(TimeSpan.FromSeconds(3.5));

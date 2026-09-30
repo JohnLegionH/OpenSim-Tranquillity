@@ -133,13 +133,16 @@ public class PhloxHttpHeaderTests
             string u = url ?? "\"" + L.Url + "\"";
             H.RezScript("default { state_entry() { key k = llHTTPRequest(" + u + ", " + options + ", \"hello\"); " +
                         "llSay(0, \"req=\" + (string)k); } http_response(key id, integer st, list m, string b) { llSay(0, \"status=\" + (string)st); } }");
-            var until = DateTime.UtcNow.AddSeconds(expectSent ? 20 : 3);
+            var until = DateTime.UtcNow.AddSeconds(expectSent ? 30 : 3);
             while (DateTime.UtcNow < until)
             {
                 lock (L.Heads) if (L.Heads.Count > 0 && expectSent) break;
                 H.PumpOnce();
                 Thread.Sleep(2);
             }
+            // A refused request keeps the fixed window above (nothing arrived); the script's own "req=" line, said after
+            // any refusal it reports, is then waited for.
+            if (!expectSent) H.PumpUntil(() => H.Said.Any(s => s.StartsWith("req=")));
             lock (L.Heads)
             {
                 if (expectSent) Assert.True(L.Heads.Count == 1, "requests received: " + L.Heads.Count + "; said=[" + string.Join(" | ", H.Said) + "]");

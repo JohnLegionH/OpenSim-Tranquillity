@@ -85,7 +85,7 @@ public class GroupLandPowersTests
     private List<string> Run(Rig r, string body)
     {
         r.H.RezScript("default { state_entry() { " + body + " llSay(0, \"done\"); } }");
-        Assert.True(PumpUntil(r.H, () => r.H.Said.Contains("done"), TimeSpan.FromSeconds(20)),
+        Assert.True(PumpUntil(r.H, () => r.H.Said.Contains("done"), TimeSpan.FromSeconds(30)),
             "the script never finished: " + string.Join(" | ", r.H.Said));
         _out.WriteLine(string.Join("\n", r.H.Said));
         return r.H.Said.ToList();
@@ -396,7 +396,7 @@ public class GroupLandPowersTests
     // ── llUnSit (another object's sitter) ──────────────────────────────────────
 
     /// <summary>An avatar sits on a stranger's chair on <paramref name="at"/>; the script unsits them.</summary>
-    private bool Unsat(Rig r, Vector3 at)
+    private bool Unsat(Rig r, Vector3 at, bool expectUnsat)
     {
         var chair = SceneHelpers.AddSceneObject(r.H.Scene, "chair", r.Stranger);
         chair.UpdateGroupPosition(at + new Vector3(3, 0, 0));
@@ -406,34 +406,36 @@ public class GroupLandPowersTests
         sp.HandleAgentRequestSit(sp.ControllingClient, sp.UUID, chair.RootPart.UUID, Vector3.Zero);
         Assert.True(sp.ParentID != 0, "the avatar did not sit");
         Run(r, $"llUnSit({Q(sp.UUID)});");
-        r.H.PumpFor(TimeSpan.FromMilliseconds(200));
+        // A caller expecting the unsit waits for it; one expecting none keeps the fixed window that proves it did not happen.
+        if (expectUnsat) r.H.PumpUntil(() => sp.ParentID == 0);
+        else r.H.PumpFor(TimeSpan.FromMilliseconds(200));
         return sp.ParentID == 0;
     }
 
     [Fact]
     public void UnSitOnGroupLandNeedsADeededObjectNotAMembersPowers()
     {
-        using (var r = NewRig(Owner.Group, West)) Assert.True(Unsat(r, West));
-        using (var r = NewRig(Member, West, (Member, ulong.MaxValue))) Assert.False(Unsat(r, West));
-        using (var r = NewRig(UUID.Random(), West)) Assert.False(Unsat(r, West));
+        using (var r = NewRig(Owner.Group, West)) Assert.True(Unsat(r, West, expectUnsat: true));
+        using (var r = NewRig(Member, West, (Member, ulong.MaxValue))) Assert.False(Unsat(r, West, expectUnsat: false));
+        using (var r = NewRig(UUID.Random(), West)) Assert.False(Unsat(r, West, expectUnsat: false));
     }
 
     [Fact]
     public void UnSitWorksForTheParcelOwnerAManagerAndAGodButNotAStranger()
     {
         UUID manager = UUID.Random();
-        using (var r = NewRig(UUID.Zero, Middle)) Assert.True(Unsat(r, Middle));
+        using (var r = NewRig(UUID.Zero, Middle)) Assert.True(Unsat(r, Middle, expectUnsat: true));
         using (var r = NewRig(manager, East))
         {
             r.H.Scene.RegionInfo.EstateSettings.AddEstateManager(manager);
-            Assert.True(Unsat(r, East));
+            Assert.True(Unsat(r, East, expectUnsat: true));
         }
         using (var r = NewRig(UUID.Zero, East))
         {
             r.H.Prim.OwnerID = r.God;
-            Assert.True(Unsat(r, East));
+            Assert.True(Unsat(r, East, expectUnsat: true));
         }
-        using (var r = NewRig(UUID.Zero, East)) Assert.False(Unsat(r, East));
+        using (var r = NewRig(UUID.Zero, East)) Assert.False(Unsat(r, East, expectUnsat: false));
     }
 
     /// <summary>Owner shorthand: <see cref="Group"/> makes the object deeded to G (owner = G).</summary>

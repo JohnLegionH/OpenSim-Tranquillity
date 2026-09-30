@@ -43,7 +43,7 @@ public class PrimParamsPositionRotationFlagsTests
         foreach (var p in parts) p.UpdateFlag = PrimUpdateFlags.None;
     }
 
-    private static void WaitFor(SchedulerHarness h, Func<IReadOnlyList<string>, bool> done, double seconds = 10)
+    private static void WaitFor(SchedulerHarness h, Func<IReadOnlyList<string>, bool> done, double seconds = 30)
     {
         var until = DateTime.UtcNow.AddSeconds(seconds);
         while (DateTime.UtcNow < until && !done(h.Said)) h.PumpOnce();

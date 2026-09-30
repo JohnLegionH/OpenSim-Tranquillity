@@ -90,7 +90,7 @@ public class ServiceCallDeferralTests
     {
         using var h = Harness(deferral);
         var slow = UUID.Random();
-        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Slow", "Lookup", slow, "pw");
+        SchedulerHarness.CreateUser(h.Scene, "Slow", "Lookup", slow, "pw");
         InstallAccountDelay(h, id => id == slow ? 3000 : 0);
 
         h.RezScript(@"default { state_entry() { llSetTimerEvent(0.1); } timer() { llSay(0, ""B tick""); } }");
@@ -107,7 +107,7 @@ default
     }
 }");
         var sw = Stopwatch.StartNew();
-        Assert.True(PumpUntil(h, () => h.Said.Any(m => m.StartsWith("A got")), TimeSpan.FromSeconds(15)), "A never answered: " + string.Join(",", h.Said.TakeLast(5)));
+        Assert.True(PumpUntil(h, () => h.Said.Any(m => m.StartsWith("A got")), TimeSpan.FromSeconds(30)), "A never answered: " + string.Join(",", h.Said.TakeLast(5)));
         var waited = sw.Elapsed;
 
         var said = h.Said.ToList();
@@ -150,8 +150,8 @@ default
     {
         using var h = Harness(timeoutMs: 1000);
         var first = UUID.Random(); var second = UUID.Random();
-        UserAccountHelpers.CreateUserWithInventory(h.Scene, "First", "User", first, "pw");
-        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Second", "User", second, "pw");
+        SchedulerHarness.CreateUser(h.Scene, "First", "User", first, "pw");
+        SchedulerHarness.CreateUser(h.Scene, "Second", "User", second, "pw");
         InstallAccountDelay(h, id => id == first ? 1500 : id == second ? 800 : 0);
 
         h.RezScript(@"
@@ -166,7 +166,7 @@ default
         llSay(0, ""done"");
     }
 }");
-        Assert.True(PumpUntil(h, () => h.Said.Contains("done"), TimeSpan.FromSeconds(10)), string.Join(",", h.Said));
+        Assert.True(PumpUntil(h, () => h.Said.Contains("done"), TimeSpan.FromSeconds(30)), string.Join(",", h.Said));
         h.PumpFor(TimeSpan.FromMilliseconds(500));
         var said = h.Said.Where(m => m.StartsWith("T") || m == "done").ToList();
         _out.WriteLine("said: " + string.Join(" | ", said));
@@ -182,8 +182,8 @@ default
     {
         using var h = Harness();
         var first = UUID.Random(); var second = UUID.Random();
-        UserAccountHelpers.CreateUserWithInventory(h.Scene, "First", "User", first, "pw");
-        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Second", "User", second, "pw");
+        SchedulerHarness.CreateUser(h.Scene, "First", "User", first, "pw");
+        SchedulerHarness.CreateUser(h.Scene, "Second", "User", second, "pw");
         InstallAccountDelay(h, id => id == first ? 1500 : id == second ? 2500 : 0);
 
         h.Prim.Description = first.ToString();
@@ -199,7 +199,7 @@ default
         h.PumpFor(TimeSpan.FromMilliseconds(400));   // parked in the first call
         h.Prim.Description = second.ToString();
         h.Scene.EventManager.TriggerScriptReset(h.Prim.LocalId, item);
-        Assert.True(PumpUntil(h, () => h.Said.Any(m => m.StartsWith("got")), TimeSpan.FromSeconds(10)), string.Join(",", h.Said));
+        Assert.True(PumpUntil(h, () => h.Said.Any(m => m.StartsWith("got")), TimeSpan.FromSeconds(30)), string.Join(",", h.Said));
         h.PumpFor(TimeSpan.FromMilliseconds(500));
         var got = h.Said.Where(m => m.StartsWith("got")).ToList();
         _out.WriteLine("said: " + string.Join(" | ", got));
@@ -212,7 +212,7 @@ default
     {
         using var h = new SchedulerHarness(cfg => cfg.Configs["InWorldz.Phlox"].Set("ServiceCallThreads", "3"));
         var ids = Enumerable.Range(0, 9).Select(_ => UUID.Random()).ToList();
-        for (int i = 0; i < ids.Count; i++) UserAccountHelpers.CreateUserWithInventory(h.Scene, "Storm", "User" + i, ids[i], "pw");
+        for (int i = 0; i < ids.Count; i++) SchedulerHarness.CreateUser(h.Scene, "Storm", "User" + i, ids[i], "pw");
         InstallAccountDelay(h, _ => 400);
         foreach (var id in ids)
             h.RezScript(@"default { state_entry() { llSay(0, ""storm "" + llGetUsername(""" + id + @""")); } }");
@@ -220,7 +220,7 @@ default
         var exe = typeof(global::Phlox.ScriptEngine.PhloxEngine).GetField("m_ExeScheduler", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(h.Engine)!;
         var count = exe.GetType().GetProperty("ServiceThreadCount", BindingFlags.NonPublic | BindingFlags.Instance)!;
         int max = 0;
-        PumpUntil(h, () => { max = Math.Max(max, (int)count.GetValue(exe)!); return h.Said.Count(m => m.StartsWith("storm")) == ids.Count; }, TimeSpan.FromSeconds(15));
+        PumpUntil(h, () => { max = Math.Max(max, (int)count.GetValue(exe)!); return h.Said.Count(m => m.StartsWith("storm")) == ids.Count; }, TimeSpan.FromSeconds(30));
         _out.WriteLine($"answered {h.Said.Count(m => m.StartsWith("storm"))}/{ids.Count}; service threads peaked at {max}");
         Assert.Equal(ids.Count, h.Said.Count(m => m.StartsWith("storm")));
         Assert.InRange(max, 1, 3);

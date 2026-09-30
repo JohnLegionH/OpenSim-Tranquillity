@@ -66,6 +66,7 @@ public class OsslNpcTests
             llSay(0, ""done"");
         } }");
         h.PumpFor(TimeSpan.FromSeconds(3));
+        h.PumpUntil(() => h.Said.Contains("done") && h.ClientChat.Any(c => c.Channel == 0 && c.Message == "hello"));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "] errors=[" + Errors(h) + "] client=[" + string.Join(" | ", h.ClientChat.Select(c => $"{c.Sender}:{c.Channel}:{c.Message}")) + "]");
 
         Assert.Contains("done", h.Said);
@@ -90,7 +91,7 @@ public class OsslNpcTests
         h.Prim.OwnerID = owner.UUID;
         h.RezScript(@"default { state_entry() { llSay(0, ""npc="" + (string)osNpcCreate(""Owned"", ""Npc"", llGetPos() + <2,0,0>, """")); }
                                  touch_start(integer n) { llSay(0, ""removed""); } }");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("npc=")));
         var npc = UUID.Parse(h.Said.First(s => s.StartsWith("npc=")).Substring(4));
         var mgr = h.Scene.RequestModuleInterface<IBotManager>();
         Assert.True(mgr.IsBot(npc));
@@ -99,13 +100,14 @@ public class OsslNpcTests
         var other = SceneHelpers.AddSceneObject(h.Scene, "other prim", UUID.Random());
         h.RezScriptInto(other.RootPart, "default { state_entry() { osNpcRemove(\"" + npc + "\"); llSay(0, \"tried\"); } }");
         h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Contains("tried"));
         Assert.Contains("tried", h.Said);
         Assert.True(mgr.IsBot(npc), "a non-owner removed an owned NPC");
         Assert.NotNull(h.Scene.GetScenePresence(npc));
 
         // the owner's own prim removes it
         h.RezScript("default { state_entry() { osNpcRemove(\"" + npc + "\"); llSay(0, \"gone\"); } }");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Contains("gone") && !mgr.IsBot(npc));
         Assert.Contains("gone", h.Said);
         Assert.False(mgr.IsBot(npc));
         _out.WriteLine("errors=[" + Errors(h) + "]");
@@ -118,7 +120,7 @@ public class OsslNpcTests
         var client = h.AddClient();
         h.Prim.OwnerID = h.Scene.GetScenePresence(client.AgentId).UUID;
         h.RezScript(@"default { state_entry() { key n = osNpcCreate(""Free"", ""Npc"", llGetPos() + <2,0,0>, """", OS_NPC_NOT_OWNED); llSay(0, ""npc="" + (string)n); llSay(0, ""owner="" + (string)(osNpcGetOwner(n) == n)); } }");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("owner=")));
         var npc = UUID.Parse(h.Said.First(s => s.StartsWith("npc=")).Substring(4));
         Assert.Contains("owner=1", h.Said);                            // upstream: an unowned NPC's owner is itself
         var mgr = h.Scene.RequestModuleInterface<IBotManager>();
@@ -126,7 +128,7 @@ public class OsslNpcTests
 
         var other = SceneHelpers.AddSceneObject(h.Scene, "other prim", UUID.Random());
         h.RezScriptInto(other.RootPart, "default { state_entry() { osNpcRemove(\"" + npc + "\"); llSay(0, \"tried\"); } }");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => !mgr.IsBot(npc));
         Assert.False(mgr.IsBot(npc));
     }
 
@@ -138,6 +140,7 @@ public class OsslNpcTests
         h.Prim.OwnerID = h.Scene.GetScenePresence(client.AgentId).UUID;
         h.RezScript(@"default { state_entry() { osNpcCreate(""No"", ""Npc"", llGetPos(), """"); llSay(0, ""after""); } }");
         h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.SaidOn.Any(s => s.Channel == DebugChannel && s.Message.Contains("osNpcCreate permission denied")));
         Assert.DoesNotContain("after", h.Said);
         Assert.Single(h.SaidOn, s => s.Channel == DebugChannel && s.Message.Contains("osNpcCreate permission denied"));
         Assert.Empty(h.Scene.RequestModuleInterface<IBotManager>().GetAllBots());

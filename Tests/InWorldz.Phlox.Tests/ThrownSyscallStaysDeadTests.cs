@@ -38,6 +38,7 @@ public class ThrownSyscallStaysDeadTests
         using var h = new SchedulerHarness(cfg => cfg.AddConfig("OSSL").Set("Allow_osGetSimulatorVersion", "false"));
         var item = h.RezScript(@"default { state_entry() { llSay(0, ""v="" + osGetSimulatorVersion()); llSay(0, ""after""); } }");
         h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.RunStateOf(item) == "Killed" && h.SaidOn.Any(s => s.Channel == DebugChannel));
         AssertDeadOnce(h, item, "osGetSimulatorVersion disabled in region configuration");
     }
 
@@ -51,6 +52,7 @@ public class ThrownSyscallStaysDeadTests
             using var h = new SchedulerHarness();
             var item = h.RezScript(@"default { state_entry() { llSay(0, ""k="" + (string)llGetKey()); llSay(0, ""after""); } }");
             h.PumpFor(TimeSpan.FromSeconds(2));
+            h.PumpUntil(() => h.RunStateOf(item) == "Killed" && h.SaidOn.Any(s => s.Channel == DebugChannel));
             AssertDeadOnce(h, item, "forced by the test");
         }
         finally { InWorldz.Phlox.Glue.SyscallShim.ThrowForTest = null; }

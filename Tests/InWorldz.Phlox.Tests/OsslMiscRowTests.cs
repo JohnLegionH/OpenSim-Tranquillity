@@ -39,7 +39,7 @@ public class OsslMiscRowTests
             llSay(0, ""nextlast="" + (string)osListFindListNext([1,2,1,2,9], [1,2], 0, -1, -1));
             llSay(0, ""nextmiss="" + (string)osListFindListNext([1,2,1,2,9], [7], 0, -1, 0));
         } }");
-        h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("nextmiss=")));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "]");
 
         // the variable itself changed - the whole point of the in-place forms
@@ -75,7 +75,7 @@ public class OsslMiscRowTests
             osRemoveLinkInventory(LINK_THIS, ""nosuchitem"");
             llSay(0, ""done"");
         } }");
-        h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.Said.Contains("done"));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "]");
 
         Assert.Contains("sitpos=<0.00000, 0.00000, 1.00000>", h.Said);
@@ -97,7 +97,7 @@ public class OsslMiscRowTests
         h.RezScript(@"default { state_entry() {
             llSay(0, ""saved="" + (string)osAgentSaveAppearance(""" + UUID.Random() + @""", ""outfit""));
         } }");
-        h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("saved=")) && h.SaidOn.Any(s => s.Channel == DebugChannel && s.Message.Contains("no such agent")));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "] err=[" +
             string.Join(" | ", h.SaidOn.Where(s => s.Channel == DebugChannel).Select(s => s.Message)) + "]");
 

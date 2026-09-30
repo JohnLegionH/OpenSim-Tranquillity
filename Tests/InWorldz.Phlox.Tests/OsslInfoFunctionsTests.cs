@@ -46,6 +46,7 @@ public class OsslInfoFunctionsTests
             llSay(0, ""done"");
         } }");
         h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Contains("done"));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "] denials=[" + Denials(h) + "]");
 
         Assert.Contains("done", h.Said);
@@ -66,6 +67,7 @@ public class OsslInfoFunctionsTests
         using var h = new SchedulerHarness();
         h.RezScript(HomeUriScript);
         h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.SaidOn.Any(s => s.Channel == DebugChannel && s.Message.Contains("OSSL Permission Error: osGetGridHomeURI permission denied.  Allowed threat level is VeryLow but function threat level is Moderate")));
         _out.WriteLine("denials=[" + Denials(h) + "]");
 
         Assert.DoesNotContain(h.Said, s => s.StartsWith("home="));
@@ -79,7 +81,7 @@ public class OsslInfoFunctionsTests
     {
         using var h = new SchedulerHarness(Ossl(("OSFunctionThreatLevel", "Moderate")));
         h.RezScript(HomeUriScript);
-        h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.Said.Contains("after"));
         Assert.Contains(h.Said, s => s.StartsWith("home="));
         Assert.Contains("after", h.Said);
     }
@@ -90,7 +92,7 @@ public class OsslInfoFunctionsTests
         using (var h = new SchedulerHarness(Ossl(("Allow_osGetGridHomeURI", "true"))))
         {
             h.RezScript(HomeUriScript);
-            h.PumpFor(TimeSpan.FromSeconds(1));
+            h.PumpUntil(() => h.Said.Any(s => s.StartsWith("home=")));
             Assert.Contains(h.Said, s => s.StartsWith("home="));
         }
         var listed = UUID.Random();
@@ -101,6 +103,7 @@ public class OsslInfoFunctionsTests
             // owner, so that keyword matches trivially in this scene.)
             h.RezScript(HomeUriScript);
             h.PumpFor(TimeSpan.FromSeconds(1));
+            h.PumpUntil(() => h.SaidOn.Any(s => s.Channel == DebugChannel && s.Message.Contains("osGetGridHomeURI permission denied")));
             _out.WriteLine("denials=[" + Denials(h) + "]");
             Assert.DoesNotContain(h.Said, s => s.StartsWith("home="));
             Assert.Contains(h.SaidOn, s => s.Channel == DebugChannel && s.Message.Contains("osGetGridHomeURI permission denied"));
@@ -109,13 +112,13 @@ public class OsslInfoFunctionsTests
         {
             h.Prim.OwnerID = listed;                                     // now the prim's owner IS on the list
             h.RezScript(HomeUriScript);
-            h.PumpFor(TimeSpan.FromSeconds(1));
+            h.PumpUntil(() => h.Said.Any(s => s.StartsWith("home=")));
             Assert.Contains(h.Said, s => s.StartsWith("home="));
         }
         using (var h = new SchedulerHarness(Ossl(("Allow_osGetGridHomeURI", "false"))))
         {
             h.RezScript(HomeUriScript);
-            h.PumpFor(TimeSpan.FromSeconds(1));
+            h.PumpUntil(() => h.SaidOn.Any(s => s.Channel == DebugChannel && s.Message.Contains("osGetGridHomeURI disabled in region configuration")));
             Assert.Contains(h.SaidOn, s => s.Channel == DebugChannel && s.Message.Contains("osGetGridHomeURI disabled in region configuration"));
         }
     }
@@ -126,6 +129,7 @@ public class OsslInfoFunctionsTests
         using var h = new SchedulerHarness(Ossl(("AllowOSFunctions", "false"), ("PermissionErrorToOwner", "true")));
         h.RezScript(@"default { state_entry() { vector s = osGetRegionSize(); llSay(0, ""size""); } }");
         h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.SaidOn.Any(s => s.Channel == DebugChannel && s.Message.Contains("(OWNER)OSSL Permission Error: All unsafe OSSL funtions disabled")));
         Assert.DoesNotContain("size", h.Said);
         Assert.Contains(h.SaidOn, s => s.Channel == DebugChannel && s.Message.Contains("(OWNER)OSSL Permission Error: All unsafe OSSL funtions disabled"));
     }

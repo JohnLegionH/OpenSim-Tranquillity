@@ -101,7 +101,7 @@ public class PhloxOutboundFilterTests
             H.RezScript("default { state_entry() { key k = llHTTPRequest(" + Lsl(url) + ", [], \"\"); llSay(0, \"req=\" + (string)k); } " +
                         "http_response(key id, integer st, list m, string b) { llSay(0, \"status=\" + (string)st); } }");
             PumpUntil(() => H.Said.Any(s => s.StartsWith("req=")) && (!expectSent || H.Said.Any(s => s.StartsWith("status="))),
-                      expectSent ? 20 : 6);
+                      30);
             if (!expectSent) PumpFor(0.5);   // anything on its way would land now
         }
 
@@ -335,7 +335,7 @@ public class PhloxOutboundFilterTests
         var x = new RecordingXmlRpc();
         r.H.Scene.RegisterModuleInterface<IXMLRPC>(x);
         r.H.RezScript("default { state_entry() { key k = llSendRemoteData(NULL_KEY, " + Lsl(url) + ", 1, \"s\"); llSay(0, \"req=[\" + (string)k + \"]\"); } }");
-        r.PumpUntil(() => r.H.Said.Any(s => s.StartsWith("req=")), 15);
+        r.PumpUntil(() => r.H.Said.Any(s => s.StartsWith("req=")), 30);
         return x;
     }
 
@@ -382,16 +382,18 @@ public class PhloxOutboundFilterYEngineTests
         // YEngine
         var yPart = r.H.Prim;
         var item = SchedulerHarnessYEngine.Rez(r.H, yPart, src);
-        r.PumpUntil(() => r.H.Said.Any(s => s.StartsWith("req=")), 20);
+        r.PumpUntil(() => r.H.Said.Any(s => s.StartsWith("req=")), 30);
         r.PumpFor(1.0);
+        r.PumpUntil(() => r.H.SaidOn.Any(m => m.Channel == DebugChannel && m.Message == PhloxOutboundFilterTests.Blocked("llHttpRequest", url)), 30);
         var ySaid = r.H.Said.ToList();
         var yDebug = r.H.SaidOn.Where(m => m.Channel == DebugChannel).Select(m => m.Message).Distinct().ToList();
         r.H.ClearSaid(item);
 
         // Phlox
         r.H.RezScript(src);
-        r.PumpUntil(() => r.H.Said.Any(s => s.StartsWith("req=")), 20);
+        r.PumpUntil(() => r.H.Said.Any(s => s.StartsWith("req=")), 30);
         r.PumpFor(1.0);
+        r.PumpUntil(() => r.H.SaidOn.Any(m => m.Channel == DebugChannel && m.Message == PhloxOutboundFilterTests.Blocked("llHttpRequest", url)), 30);
         var pSaid = r.H.Said.ToList();
         var pDebug = r.H.SaidOn.Where(m => m.Channel == DebugChannel).Select(m => m.Message).Distinct().ToList();
 

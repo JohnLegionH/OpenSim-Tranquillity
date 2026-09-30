@@ -31,7 +31,7 @@ public class ListenLimitTests
     private static string Fill(int channelBase, int count)
         => $"for (i = 1; i <= {count}; ++i) {{ h = llListen({channelBase} + i, \"\", NULL_KEY, \"\"); if (h <= 0) ++bad; }} ";
 
-    private static string WaitLine(SchedulerHarness h, string prefix, double seconds = 10)
+    private static string WaitLine(SchedulerHarness h, string prefix, double seconds = 30)
     {
         var until = DateTime.UtcNow.AddSeconds(seconds);
         while (DateTime.UtcNow < until && !h.Said.Any(s => s.StartsWith(prefix))) h.PumpOnce();
@@ -197,7 +197,7 @@ public class ListenLimitTests
         var f = Fields(WaitLine(h, "loaded "));
         Assert.True(h.Engine.ListenManager.IsActive(item, f["first"]));
         h.Scene.EventManager.TriggerRemoveScript(h.Prim.LocalId, item);
-        var until = DateTime.UtcNow.AddSeconds(5);
+        var until = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < until && h.Engine.ListenManager.IsActive(item, f["first"]) != null) h.PumpOnce();
         Assert.Null(h.Engine.ListenManager.IsActive(item, f["first"]));
         Assert.Null(h.Engine.ListenManager.IsActive(item, f["last"]));
@@ -238,6 +238,7 @@ public class ListenLimitTests
                                          $"llRegionSayTo(\"{target.RootPart.UUID}\", 7, \"control\"); }} }}");
         WaitLine(h, "target heard 7:control");
         h.PumpFor(TimeSpan.FromMilliseconds(400));
+        h.PumpUntil(() => DebugLines(h).Contains("Script error: Cannot use llRegionSayTo() on DEBUG_CHANNEL."));
         _out.WriteLine(string.Join("\n", h.SaidOn.Select(s => s.Channel + ": " + s.Message)));
 
         Assert.DoesNotContain(h.Said, s => s.StartsWith("target heard " + DebugChannel));

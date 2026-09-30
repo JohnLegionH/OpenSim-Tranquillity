@@ -43,7 +43,7 @@ public class SmallCorrectnessTests
         using var h = new SchedulerHarness();
         h.Prim.PhysActor = new MassiveActor();   // the test scene's physics gives every prim mass 0
         h.RezScript("default { state_entry() { llSay(0, \"mass=\" + (string)llGetMass() + \" mks=\" + (string)llGetMassMKS()); } }");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("mass=")));
         var line = h.Said.FirstOrDefault(s => s.StartsWith("mass="));
         Assert.True(line != null, Said(h));
         var parts = line.Split(' ');
@@ -63,7 +63,7 @@ public class SmallCorrectnessTests
         var moap = RecordingMoap.Create(out var rec);
         h.Scene.RegisterModuleInterface<IMoapModule>(moap);
         h.RezScript("default { state_entry() { llSay(0, \"status=\" + (string)llClearLinkMedia(LINK_THIS, 2)); } }");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("status=")) && rec.Cleared.Count > 0);
         Assert.True(h.Said.Contains("status=0"), Said(h));
         Assert.Equal(new[] { (h.Prim.LocalId, 2) }, rec.Cleared);
     }
@@ -115,7 +115,7 @@ public class SmallCorrectnessTests
         h.Scene.Permissions.OnIsAdministrator += id => id == owner;
         var item = AddTexture(h);
         h.RezScript(SetNextToCopyOnly);
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("done"));
         Assert.Contains("done", h.Said);
         Assert.Equal((uint)PermissionMask.Copy, item.NextPermissions & (uint)(PermissionMask.Copy | PermissionMask.Modify | PermissionMask.Transfer));
     }
@@ -152,7 +152,7 @@ public class SmallCorrectnessTests
         };
 
         h.RezScript("default { state_entry() { llSetInventoryPermMask(\"tex\", " + mask + ", PERM_COPY); llSay(0, \"done\"); } }");
-        Assert.True(PumpUntil(h, () => h.Said.Contains("done"), TimeSpan.FromSeconds(20)), Said(h));
+        Assert.True(PumpUntil(h, () => h.Said.Contains("done"), TimeSpan.FromSeconds(30)), Said(h));
 
         var after = new Dictionary<string, uint>
         {
@@ -176,6 +176,7 @@ public class SmallCorrectnessTests
         uint before = item.NextPermissions;
         h.RezScript(SetNextToCopyOnly);
         h.Pump();
+        h.PumpUntil(() => h.Said.Contains("done"));
         Assert.Contains("done", h.Said);
         Assert.Equal(before, item.NextPermissions);
     }
@@ -216,8 +217,8 @@ public class SmallCorrectnessTests
         var client = h.AddClient();
         h.RezScript($"default {{ state_entry() {{ llSay(0, \"r=\" + (string)llManageEstateAccess(ESTATE_ACCESS_ALLOWED_AGENT_ADD, \"{client.AgentId}\")); }} }}");
         // Under full-suite load the said line can come after a fixed 2 s, so pump until it is said.
-        Assert.True(PumpUntil(h, () => h.Said.Any(s => s.StartsWith("r=")), TimeSpan.FromSeconds(20)),
-            "nothing said within 20 s: [" + Said(h) + "]");
+        Assert.True(PumpUntil(h, () => h.Said.Any(s => s.StartsWith("r=")), TimeSpan.FromSeconds(30)),
+            "nothing said within 30 s: [" + Said(h) + "]");
         Assert.True(h.Said.Contains("r=0"), Said(h));
     }
 }

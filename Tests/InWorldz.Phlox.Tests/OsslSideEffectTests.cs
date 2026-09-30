@@ -32,6 +32,7 @@ public class OsslSideEffectTests
         using var h = Scene();
         h.RezScript(@"default { state_entry() { osSetRot(llGetKey(), <0,0,0.707107,0.707107>); llSay(0, ""done""); } }");
         h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Contains("done"));
         _out.WriteLine("rot=" + h.Prim.ParentGroup.GroupRotation + " errors=[" + Errors(h) + "]");
 
         Assert.Contains("done", h.Said);
@@ -55,6 +56,7 @@ public class OsslSideEffectTests
             llSay(0, ""after="" + (string)llGetNumberOfPrims());
         } }");
         h.PumpFor(TimeSpan.FromSeconds(4));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("after=")));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "] errors=[" + Errors(h) + "]");
 
         // no PERMISSION_CHANGE_LINKS was ever granted, and llCreateLink would have refused; the forced form links
@@ -82,6 +84,7 @@ public class OsslSideEffectTests
             llSay(0, ""done"");
         } }");
         h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Contains("done"));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "] errors=[" + Errors(h) + "]");
 
         Assert.Contains("done", h.Said);
@@ -106,6 +109,7 @@ public class OsslSideEffectTests
             llSay(0, ""r="" + (string)r);
         } }");
         h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("r=")));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "] pos=" + h.Prim.ParentGroup.AbsolutePosition + " errors=[" + Errors(h) + "]");
 
         Assert.Contains("r=1", h.Said);
@@ -126,6 +130,7 @@ public class OsslSideEffectTests
             dataserver(key q, string data) { llSay(0, ""ds="" + data + ""|from="" + (string)(q == llGetKey())); }
         }");
         h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("ds=")));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "] errors=[" + Errors(h) + "]");
 
         Assert.Contains("ds=ping|from=1", h.Said);
@@ -140,6 +145,7 @@ public class OsslSideEffectTests
         using var h = Scene("VeryLow");
         h.RezScript(@"default { state_entry() { osSetRot(llGetKey(), <0,0,0.707107,0.707107>); llSay(0, ""after""); } }");
         h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.SaidOn.Any(s => s.Channel == DebugChannel && s.Message.Contains("osSetRot permission denied")));
 
         Assert.DoesNotContain("after", h.Said);
         Assert.Single(h.SaidOn, s => s.Channel == DebugChannel && s.Message.Contains("osSetRot permission denied"));

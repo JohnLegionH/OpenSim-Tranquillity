@@ -46,7 +46,7 @@ public class OsslPureHelpersTests
     {
         using var h = new SchedulerHarness();
         h.RezScript(Script);
-        h.PumpFor(TimeSpan.FromSeconds(3));
+        h.PumpUntil(() => h.Said.Contains("done"));
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "] errors=[" + string.Join(" | ", h.SaidOn.Where(s => s.Channel == DebugChannel).Select(s => s.Message)) + "]");
 
         Assert.Contains("done", h.Said);
@@ -75,13 +75,14 @@ public class OsslPureHelpersTests
         {
             h.RezScript(@"default { state_entry() { llSay(0, ""rx="" + (string)osRegexIsMatch(""abc"", ""^a"")); } }");
             h.PumpFor(TimeSpan.FromSeconds(1));
+            h.PumpUntil(() => h.SaidOn.Any(s => s.Channel == DebugChannel && s.Message.Contains("osRegexIsMatch permission denied")));
             Assert.DoesNotContain(h.Said, s => s.StartsWith("rx="));
             Assert.Single(h.SaidOn, s => s.Channel == DebugChannel && s.Message.Contains("osRegexIsMatch permission denied"));
         }
         using (var h = new SchedulerHarness(cfg => cfg.AddConfig("OSSL").Set("OSFunctionThreatLevel", "Low")))
         {
             h.RezScript(@"default { state_entry() { llSay(0, ""rx="" + (string)osRegexIsMatch(""abc"", ""^a"") + (string)osRegexIsMatch(""abc"", ""^b"")); } }");
-            h.PumpFor(TimeSpan.FromSeconds(1));
+            h.PumpUntil(() => h.Said.Any(s => s.StartsWith("rx=")));
             Assert.Contains("rx=10", h.Said);
         }
     }

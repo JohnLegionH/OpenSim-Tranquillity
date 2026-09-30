@@ -23,7 +23,7 @@ public class SimulatorHostnameTests
         Assert.NotEqual(external, System.Net.Dns.GetHostName());
 
         h.RezScript("default { state_entry() { llSay(0, \"host=\" + llGetSimulatorHostname()); llSay(0, \"env=\" + llGetEnv(\"simulator_hostname\")); } }");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("env=")));
         _out.WriteLine(string.Join(" | ", h.Said));
         Assert.Contains("host=" + external, h.Said);
         Assert.Contains("env=" + external, h.Said);

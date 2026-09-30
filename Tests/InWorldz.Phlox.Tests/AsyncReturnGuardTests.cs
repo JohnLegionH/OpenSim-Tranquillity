@@ -105,10 +105,11 @@ public class AsyncReturnGuardTests
         var asgn = h.RezScript("default { state_entry() { " + LslType(e.Ret) + " v = " + call + "; " +
                                "llSay(0, \"A:v=\" + (string)v); llSay(0, \"A:done\"); } }");
 
-        var until = DateTime.UtcNow.AddSeconds(5);
+        var until = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < until && !(h.Said.Contains("S:done") && h.Said.Contains("A:done")))
         { h.PumpOnce(); Thread.Sleep(1); }
         h.Pump(20);   // let each handler finish and the script go idle
+        h.PumpUntil(() => h.RunStateOf(stmt) == "Waiting" && h.RunStateOf(asgn) == "Waiting");
 
         var debug = h.SaidOn.Where(s => s.Channel == 0x7FFFFFFF).Select(s => s.Message).ToList();
         _out.WriteLine($"{fn}: said=[{string.Join(" | ", h.Said)}] debug=[{string.Join(" | ", debug)}]");

@@ -66,7 +66,7 @@ public class ChatRangeTests
     private static UUID Listen(SchedulerHarness h, SceneObjectPart part, string tag, params int[] channels)
         => h.RezScriptInto(part, Listener(tag, channels));
 
-    private static void WaitFor(SchedulerHarness h, Func<IReadOnlyList<string>, bool> done, double seconds = 10)
+    private static void WaitFor(SchedulerHarness h, Func<IReadOnlyList<string>, bool> done, double seconds = 30)
     {
         var until = DateTime.UtcNow.AddSeconds(seconds);
         while (DateTime.UtcNow < until && !done(h.Said)) h.PumpOnce();

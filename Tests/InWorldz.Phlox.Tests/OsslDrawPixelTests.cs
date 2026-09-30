@@ -89,8 +89,13 @@ public class OsslDrawPixelTests
         {
             h.Scene.RegisterModuleInterface<IAssetCache>(cache);
             SceneHelpers.SetupSceneModules(h.Scene, h.Config, new DynamicTextureModule(), new VectorRenderModule());
+            UUID before = h.Prim.Shape.Textures.DefaultTexture.TextureID;
             h.RezScript("default { state_entry() { llSay(0, \"id=\" + osSetDynamicTextureData(\"\", \"vector\", \"" + LiveDrawList + "\", \"\", 0)); } }");
-            h.PumpFor(TimeSpan.FromSeconds(3));
+            h.PumpUntil(() =>
+            {
+                UUID now = h.Prim.Shape.Textures.DefaultTexture.TextureID;
+                return h.Said.Any(s => s.StartsWith("id=")) && now != before && cache.Get(now.ToString(), out _);
+            });
             UUID face = h.Prim.Shape.Textures.DefaultTexture.TextureID;
             Assert.True(cache.Get(face.ToString(), out var asset), "the face's texture is not in the cache; said=[" + string.Join(" | ", h.Said) + "]");
             var (bmp, magic, reds, box) = Decode(asset.Data);

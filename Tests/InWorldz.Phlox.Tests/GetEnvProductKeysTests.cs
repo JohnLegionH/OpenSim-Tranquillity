@@ -38,7 +38,7 @@ public class GetEnvProductKeysTests
 
         h.RezScript("default { state_entry() { list k = [" + string.Join(", ", Keys.Select(k => "\"" + k + "\""))
             + "]; integer i; for (i = 0; i < llGetListLength(k); ++i) llSay(0, llList2String(k, i) + \"=\" + llGetEnv(llList2String(k, i))); } }");
-        h.Pump();
+        h.PumpUntil(() => Keys.All(k => h.Said.Any(s => s.StartsWith(k + "="))));
         _out.WriteLine(string.Join(" | ", h.Said));
 
         foreach (var key in Keys)
@@ -72,7 +72,7 @@ public class GetEnvProductKeysTests
         yengine.Initialize(h.YEngine, h.Prim, item);
 
         h.RezScript("default { state_entry() { llSay(0, \"grid=\" + llGetEnv(\"grid\") + \"|unknown=\" + llGetEnv(\"no such key\")); } }");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("grid=")));
         _out.WriteLine(string.Join(" | ", h.Said));
 
         Assert.Equal(expected, (string)yengine.llGetEnv("grid"));

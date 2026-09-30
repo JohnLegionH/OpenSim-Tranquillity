@@ -43,7 +43,7 @@ public class UpstreamPortedStubTests
             state_entry() { llCollisionFilter(""Enemy"", NULL_KEY, FALSE); llSay(0, ""armed""); }
             collision_start(integer n) { llSay(0, ""hit:"" + llDetectedName(0)); }
         }");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("armed"));
         Assert.Contains("armed", h.Said);
 
         // The detected object is not in the scene, so DetectParams.Populate cannot name it and
@@ -54,7 +54,7 @@ public class UpstreamPortedStubTests
         Assert.Equal(0, h.Said.Count(s => s.StartsWith("hit:")));
 
         h.Scene.EventManager.TriggerScriptCollidingStart(h.Prim.LocalId, CollisionFrom("Friend", UUID.Random()));
-        h.Pump();
+        h.PumpUntil(() => h.Said.Count(s => s.StartsWith("hit:")) >= 1);
         _out.WriteLine("said=[" + string.Join(",", h.Said) + "]");
         Assert.Equal(1, h.Said.Count(s => s.StartsWith("hit:")));
     }
@@ -64,15 +64,17 @@ public class UpstreamPortedStubTests
     public void AnAcceptFilterLetsOnlyThatNameThrough()
     {
         using var h = new SchedulerHarness();
-        h.RezScript(@"default {
+        var item = h.RezScript(@"default {
             state_entry() { llCollisionFilter(""Ball"", NULL_KEY, TRUE); }
             collision_start(integer n) { llSay(0, ""hit:"" + llDetectedName(0)); }
         }");
         h.Pump();
+        h.PumpUntil(() => h.InterpreterFor(item) != null && h.RunStateOf(item) == "Waiting");
 
         h.Scene.EventManager.TriggerScriptCollidingStart(h.Prim.LocalId, CollisionFrom("Rock", UUID.Random()));
         h.Scene.EventManager.TriggerScriptCollidingStart(h.Prim.LocalId, CollisionFrom("Ball", UUID.Random()));
         h.Pump();
+        h.PumpUntil(() => h.Said.Count(s => s.StartsWith("hit:")) >= 1);
 
         // Rock is filtered out, Ball is not: exactly one collision event of the two.
         Assert.Equal(1, h.Said.Count(s => s.StartsWith("hit:")));
@@ -101,7 +103,7 @@ public class UpstreamPortedStubTests
                 llSay(0, ""after="" + (string)llGetListLength(llGetObjectAnimationNames()));
             }
         }");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("after=")));
 
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "]");
         Assert.Contains("n=1", h.Said);
@@ -121,7 +123,7 @@ public class UpstreamPortedStubTests
         using var h = new SchedulerHarness();
         h.Prim.ParentGroup.RezStringParameter = "hello from the rezzer";
         h.RezScript(@"default { state_entry() { llSay(0, ""start="" + llGetStartString()); } }");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("start=")));
         Assert.Contains("start=hello from the rezzer", h.Said);
     }
 

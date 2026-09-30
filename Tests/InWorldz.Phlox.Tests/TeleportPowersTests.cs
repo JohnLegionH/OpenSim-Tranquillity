@@ -128,7 +128,7 @@ internal sealed class TeleportRig : IDisposable
         return sp;
     }
 
-    public bool PumpUntil(Func<bool> done, int seconds = 20)
+    public bool PumpUntil(Func<bool> done, int seconds = 30)
     {
         var until = DateTime.UtcNow + TimeSpan.FromSeconds(seconds);
         while (!done())
@@ -476,7 +476,7 @@ public class TeleportHomeAndEjectTests
     private static bool SentHome(TeleportRig r, string fn, ScenePresence target)
     {
         r.H.RezScript("default { state_entry() { " + fn + "(" + TeleportRig.Q(target.UUID) + "); llSay(0, \"done\"); } }");
-        return r.PumpUntil(() => r.Moved(target.UUID, "home"), 10);
+        return r.PumpUntil(() => r.Moved(target.UUID, "home"), 30);
     }
 
     [Theory]
@@ -529,7 +529,7 @@ public class OsTeleportAgentTests
 
     private static readonly UUID Member = new("52525252-0000-4000-8000-000000000003");
 
-    private bool Teleports(TeleportRig r, ScenePresence target, string form = "region")
+    private bool Teleports(TeleportRig r, ScenePresence target, string form = "region", bool expectMoved = true)
     {
         string k = TeleportRig.Q(target.UUID);
         r.Run(form switch
@@ -538,7 +538,9 @@ public class OsTeleportAgentTests
             "local" => $"osTeleportAgent({k}, <30, 40, 25>, <1, 0, 0>);",
             _ => $"osTeleportAgent({k}, 1000, 1000, <30, 40, 25>, <1, 0, 0>);",
         });
-        if (form == "grid") r.PumpUntil(() => r.Moved(target.UUID), 2);   // YEngine fires the grid teleport on another thread
+        // YEngine fires the grid teleport on another thread. PHLOX-59: up to 30 s to wait for a move; the old 2 s window
+        // stays for a teleport that must not happen.
+        if (form == "grid") r.PumpUntil(() => r.Moved(target.UUID), expectMoved ? 30 : 2);
         return r.Moved(target.UUID, "tp");
     }
 
@@ -549,6 +551,7 @@ public class OsTeleportAgentTests
         var owner = r.Avatar(r.Owner, TeleportRig.Middle);
         r.H.RezScript($"default {{ state_entry() {{ osTeleportAgent({TeleportRig.Q(owner.UUID)}, \"\", <30, 40, 25>, <1, 0, 0>); llSay(0, \"after\"); }} }}");
         r.H.PumpFor(TimeSpan.FromSeconds(1));
+        r.H.PumpUntil(() => r.Errors.Contains("osTeleportAgent permission denied"));
         Assert.DoesNotContain("after", r.H.Said);
         Assert.Contains("osTeleportAgent permission denied", r.Errors);
         Assert.Empty(r.Tp.Calls);
@@ -567,7 +570,7 @@ public class OsTeleportAgentTests
         using (var r = new TeleportRig(_out, UUID.Zero, TeleportRig.East, threat: "Severe"))
             Assert.True(Teleports(r, r.Avatar(UUID.Random(), TeleportRig.Middle), form));
         using (var r = new TeleportRig(_out, UUID.Zero, TeleportRig.Middle, threat: "Severe"))
-            Assert.False(Teleports(r, r.Avatar(UUID.Random(), TeleportRig.East), form));
+            Assert.False(Teleports(r, r.Avatar(UUID.Random(), TeleportRig.East), form, expectMoved: false));
     }
 
     [Fact]

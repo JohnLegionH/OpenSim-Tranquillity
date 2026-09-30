@@ -32,7 +32,7 @@ default
     }
 }
 ");
-        h.Pump();
+        h.PumpUntil(() => h.RunStateOf(item) == "Waiting" && h.Prim.TouchName == "Enter");
 
         _out.WriteLine($"RunState={h.RunStateOf(item)} TouchName='{h.Prim.TouchName}'");
 
@@ -42,7 +42,7 @@ default
         // and the script is still able to take a touch afterwards
         h.ClearSaid(item);
         h.TouchViaScene();
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(m => m.Contains("Entered")));
         Assert.Contains(h.Said, m => m.Contains("Entered"));
     }
 
@@ -63,7 +63,7 @@ default
     }
 }
 ");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(m => m.Contains("after the teleport call")) && h.RunStateOf(item) != "Syscall");
 
         _out.WriteLine($"RunState={h.RunStateOf(item)} said=[{string.Join(",", h.Said)}]");
 

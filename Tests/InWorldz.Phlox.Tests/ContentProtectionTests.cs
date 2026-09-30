@@ -40,7 +40,7 @@ public class ContentProtectionTests
         var full = AddTexture(h, "full", FullPerm);
         AddTexture(h, "nomod", (uint)(PermissionMask.Copy | PermissionMask.Transfer));
         h.RezScript("default { state_entry() { llSay(0, \"full=\" + (string)llGetInventoryKey(\"full\")); llSay(0, \"nomod=\" + (string)llGetInventoryKey(\"nomod\")); } }");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("nomod=")));
         Assert.Contains("full=" + full, h.Said);
         Assert.Contains("nomod=" + UUID.Zero, h.Said);
     }
@@ -67,7 +67,7 @@ public class ContentProtectionTests
         var rec = FakeUrls(h);
         var req = UUID.Random();
         h.RezScript("default { state_entry() { llSetContentType(\"" + req + "\", " + constant + "); llSay(0, \"set\"); } }");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("set") && rec.LastType(req) != null);
         Assert.Contains("set", h.Said);
         Assert.Equal(mime, rec.LastType(req));
     }
@@ -79,7 +79,7 @@ public class ContentProtectionTests
         var rec = FakeUrls(h);
         var req = UUID.Random();
         h.RezScript("default { state_entry() { llSetContentType(\"" + req + "\", CONTENT_TYPE_HTML); llSay(0, \"set\"); } }");
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("set") && rec.LastType(req) != null);
         Assert.Contains("set", h.Said);
         Assert.Equal("text/plain", rec.LastType(req));
     }

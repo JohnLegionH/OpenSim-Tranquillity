@@ -93,8 +93,8 @@ public class RestoredScriptResumeTests
     {
         var (before, captured) = CaptureAndRestore(
             SleepScript,
-            (h, id) => { h.Pump(20); },                     // into the llSleep, and stop there
-            (h, id) => { h.PumpFor(TimeSpan.FromSeconds(3)); },  // past the wake-up
+            (h, id) => { h.PumpUntil(() => h.RunStateOf(id) == "Sleeping" && h.Said.Contains("a")); },   // into the llSleep, and stop there
+            (h, id) => { h.PumpFor(TimeSpan.FromSeconds(3)); h.PumpUntil(() => h.Said.Contains("b")); },  // past the wake-up
             out var after);
 
         Assert.Equal("Sleeping", captured);
@@ -135,7 +135,7 @@ public class RestoredScriptResumeTests
             h1.RezScript(CountingScript, assetId, itemId);
             // PHLOX-22 B: the compile runs on the loader's compile thread, so the pass that starts the script (and
             // gives it its first timeslice) is a later one, not the first.
-            var started = DateTime.UtcNow.AddSeconds(10);
+            var started = DateTime.UtcNow.AddSeconds(30);
             do { h1.PumpOnce(); } while (h1.InterpreterFor(itemId) == null && DateTime.UtcNow < started);
             Assert.Equal("Running", h1.RunStateOf(itemId));
             dumpAtCapture = h1.DumpFrame(itemId);
@@ -185,7 +185,7 @@ public class RestoredScriptResumeTests
         using (var h1 = new SchedulerHarness())
         {
             h1.RezScript(TouchScript, assetId, itemId);
-            h1.Pump();
+            h1.PumpUntil(() => h1.Said.Contains("ready") && h1.RunStateOf(itemId) == "Waiting");
             Assert.Contains("ready", h1.Said);
             h1.QueueEventOnScriptState(itemId);            // straight onto ScriptState.EventQueue
             Assert.Equal("Waiting", h1.RunStateOf(itemId));
@@ -194,7 +194,7 @@ public class RestoredScriptResumeTests
 
         using var h2 = new SchedulerHarness();
         h2.RezScript(TouchScript, assetId, itemId);
-        h2.Pump();
+        h2.PumpUntil(() => h2.Said.Contains("touched"));
 
         // No new event is posted here on purpose: the queued one must be enough.
         _out.WriteLine("after restore said=[" + string.Join(",", h2.Said) + "]");

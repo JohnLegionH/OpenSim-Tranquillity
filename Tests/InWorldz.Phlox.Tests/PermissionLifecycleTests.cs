@@ -62,7 +62,7 @@ public class PermissionLifecycleTests
     private static void Say(SchedulerHarness h, string msg)
         => h.Scene.SimChat(msg, ChatTypeEnum.Region, 7, h.Prim.AbsolutePosition, "tester", UUID.Random(), false);
 
-    private static bool PumpUntil(SchedulerHarness h, Func<bool> done, int seconds = 20)
+    private static bool PumpUntil(SchedulerHarness h, Func<bool> done, int seconds = 30)
     {
         var until = DateTime.UtcNow + TimeSpan.FromSeconds(seconds);
         while (!done())
@@ -413,7 +413,7 @@ public class PermissionLifecycleTests
         var client = Present(h, UUID.Random());
         Grant(h, client, id, TRIGGER_ANIMATION | CONTROL_CAMERA);
         h.Scene.CloseAgent(client.AgentId, false);
-        h.Pump();
+        h.PumpUntil(() => { var p = h.Scene.GetScenePresence(client.AgentId); return p == null || p.IsChildAgent || p.IsDeleted; });
         var gone = h.Scene.GetScenePresence(client.AgentId);
         Assert.True(gone == null || gone.IsChildAgent || gone.IsDeleted, "the avatar is still here: deleted=" + gone?.IsDeleted);
         // leaving changes no permission by itself
@@ -437,7 +437,7 @@ public class PermissionLifecycleTests
         var client = Present(h, UUID.Random());
         Grant(h, client, id, TRIGGER_ANIMATION);
         h.Scene.CloseAgent(client.AgentId, false);
-        h.Pump();
+        h.PumpUntil(() => { var p = h.Scene.GetScenePresence(client.AgentId); return p == null || p.IsChildAgent || p.IsDeleted; });
         Command(h, "stopanim", "stopped");
         Assert.True(PumpUntil(h, () => h.Said.Contains("rtp=0")), "said=[" + string.Join(" | ", h.Said) + "]");
         Assert.Equal("stopped perms=0 key=" + UUID.Zero, Last(h, "stopped"));

@@ -47,7 +47,7 @@ default
     {
         using var h = new SchedulerHarness();
         var item = h.RezScript(SaysHello);
-        h.Pump();
+        h.PumpUntil(() => h.InterpreterFor(item) != null && h.SaidAnything(item));
 
         _out.WriteLine(h.Diagnose(item));
 
@@ -63,11 +63,11 @@ default
         using var h = new SchedulerHarness();
 
         var first = h.RezScript(SaysHello);
-        h.Pump();
+        h.PumpUntil(() => h.SaidAnything(first));
         Assert.True(h.SaidAnything(first), "the first instance must run before the shared path means anything");
 
         var second = h.RezScript(SaysHello);
-        h.Pump();
+        h.PumpUntil(() => h.InterpreterFor(second) != null && h.Said.Count(s => s == "Hello, Avatar!") >= 2);
 
         _out.WriteLine($"second instance RunState={h.RunStateOf(second)}");
         Assert.NotNull(h.InterpreterFor(second));
@@ -80,12 +80,12 @@ default
     {
         using var h = new SchedulerHarness();
         var item = h.RezScript(SaysHello);
-        h.Pump();
+        h.PumpUntil(() => h.SaidAnything(item));
         Assert.True(h.SaidAnything(item), $"state_entry never ran; RunState={h.RunStateOf(item)}");
 
         h.ClearSaid(item);
         h.PostTouch(item);
-        h.Pump();
+        h.PumpUntil(() => h.SaidAnything(item));
 
         Assert.True(h.SaidAnything(item),
             $"a posted touch_start was never delivered; RunState={h.RunStateOf(item)}");

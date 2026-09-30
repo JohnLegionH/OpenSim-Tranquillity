@@ -37,7 +37,7 @@ default
     }
 }
 ");
-        h.Pump();
+        h.PumpUntil(() => h.Prim.TouchName == "Enter" && client.ObjectPropertiesSent.Any(e => ReferenceEquals(e, h.Prim)));
 
         _out.WriteLine($"TouchName='{h.Prim.TouchName}' propertiesSent={client.ObjectPropertiesSent.Count}");
 
@@ -60,7 +60,8 @@ default
 
         // One line of LSL: the compiler does not care, and it keeps the attribute data literal-free.
         h.RezScript("default { state_entry() { " + call + " } }");
-        h.Pump();
+        h.PumpUntil(() => client.ObjectPropertiesSent.Any(e => ReferenceEquals(e, h.Prim))
+            && h.Prim.GetType().GetProperty(property)!.GetValue(h.Prim)?.ToString() == expected);
 
         var actual = h.Prim.GetType().GetProperty(property)!.GetValue(h.Prim)?.ToString();
         _out.WriteLine($"{property}='{actual}' propertiesSent={client.ObjectPropertiesSent.Count}");

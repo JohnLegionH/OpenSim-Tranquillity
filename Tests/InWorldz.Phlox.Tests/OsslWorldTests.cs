@@ -59,6 +59,7 @@ public class OsslWorldTests
             llSay(0, ""done"");
         } }");
         h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Contains("done"));
         _out.WriteLine("before=" + before + " after=" + h.Scene.Heightmap[10, 10] + " said=[" + string.Join(" | ", h.Said) + "] errors=[" + Errors(h) + "]");
 
         Assert.Contains("done", h.Said);
@@ -87,6 +88,7 @@ public class OsslWorldTests
             llSay(0, ""done"");
         } }");
         h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Contains("done"));
         var after = h.Scene.LandChannel.GetLandObject(h.Prim.AbsolutePosition.X, h.Prim.AbsolutePosition.Y);
         _out.WriteLine("name=" + after.LandData.Name + " said=[" + string.Join(" | ", h.Said) + "] errors=[" + Errors(h) + "]");
 
@@ -112,6 +114,7 @@ public class OsslWorldTests
             llSay(0, ""sun="" + (string)osGetSunParam(""year_length"") + ""|wind="" + osWindActiveModelPluginName() + ""|"");
         } }");
         h.PumpFor(TimeSpan.FromSeconds(2));
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("sun=")));
         _out.WriteLine("calls=[" + string.Join(" | ", restart.Calls) + "] said=[" + string.Join(" | ", h.Said) + "] errors=[" + Errors(h) + "]");
 
         Assert.Contains("r1=1", h.Said);
@@ -134,6 +137,7 @@ public class OsslWorldTests
         float before = h.Scene.Heightmap[10, 10];
         h.RezScript(@"default { state_entry() { osRegionRestart(120.0); llSay(0, ""after""); } }");
         h.PumpFor(TimeSpan.FromSeconds(1));
+        h.PumpUntil(() => h.SaidOn.Any(s => s.Channel == DebugChannel && s.Message.Contains("osRegionRestart permission denied")));
 
         Assert.DoesNotContain("after", h.Said);
         Assert.Single(h.SaidOn, s => s.Channel == DebugChannel && s.Message.Contains("osRegionRestart permission denied"));

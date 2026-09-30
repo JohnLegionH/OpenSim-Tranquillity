@@ -232,6 +232,25 @@ public sealed class SchedulerHarness : IDisposable
     {
         // PHLOX-22 B: the thread only - Stop() is region shutdown and would also stop the loader's compile thread.
         var ms = Field(Engine, "m_MasterScheduler");
+
+        // PHLOX-59: PhloxMasterScheduler.StopThread sets m_Stop, signals once and joins for up to 5 s. Its work loop
+        // checks m_Stop and only then Resets the signal, so a stop that lands between the two is lost and, with no work
+        // queued, the loop waits for a signal that never comes: the join times out after 5 s. Right after the engine
+        // starts (every harness) that happened on about 1 harness in 12, 5 s each (run 1's trx). Here the harness sets
+        // the same flag and signals until the thread has ended, so it ends as StopThread intends, without the 5 s. The
+        // race itself is in production code and is reported, not changed.
+        var thread = ms?.GetType().GetField("m_Thread", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(ms) as System.Threading.Thread;
+        var stopFlag = ms?.GetType().GetField("m_Stop", BindingFlags.NonPublic | BindingFlags.Instance);
+        var wake = ms?.GetType().GetMethod("WorkArrived", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (thread != null && stopFlag != null && wake != null)
+        {
+            stopFlag.SetValue(ms, true);
+            var until = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+            do wake.Invoke(ms, null);
+            while (!thread.Join(10) && DateTime.UtcNow < until);
+            if (!thread.IsAlive) return;
+        }
+
         var stop = ms?.GetType().GetMethod("StopThread", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)
                    ?? ms?.GetType().GetMethod("Stop", BindingFlags.Public | BindingFlags.Instance);
         stop?.Invoke(ms, null);
@@ -552,6 +571,49 @@ public sealed class SchedulerHarness : IDisposable
             System.Threading.Thread.Sleep(1);
         }
         return false;
+    }
+
+    /// <summary>
+    /// PHLOX-59: pump both schedulers until <paramref name="done"/> holds, or <paramref name="cap"/> (30 s by default)
+    /// passes; false on the cap. The shape of every "wait for the result" in this project: a fixed window followed by
+    /// an assert that something DID happen fails when a loaded machine is slower than the window, so the window
+    /// becomes this. A window that proves something did NOT happen stays a fixed window.
+    /// </summary>
+    public bool PumpUntil(Func<bool> done, TimeSpan? cap = null)
+    {
+        var loaderDoWork = m_loader.GetType().GetMethod("DoWork");
+        var exeDoWork = m_exe.GetType().GetMethod("DoWork");
+        var until = DateTime.UtcNow + (cap ?? TimeSpan.FromSeconds(30));
+        while (!done())
+        {
+            if (DateTime.UtcNow >= until) return false;
+            loaderDoWork!.Invoke(m_loader, null);
+            exeDoWork!.Invoke(m_exe, null);
+            System.Threading.Thread.Sleep(1);
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// PHLOX-59: every test scene's authentication service stores passwords in NullAuthenticationData's static,
+    /// unlocked Dictionary (OpenSim.Data.Null/NullAuthenticationData.cs), which UserAccountHelpers.CreateUserWithInventory
+    /// writes through SetPassword. Two test classes creating users at once threw "Operations that change non-concurrent
+    /// collections must have exclusive access" in set-up (B6-PREP, ServiceCallDeferralTests). Every Phlox test creates
+    /// its users here, under one lock; nothing in a Phlox test reads that store. The core fix (a lock in the store) is
+    /// on the core list.
+    /// </summary>
+    public static readonly object SharedUserStoreLock = new();
+
+    /// <summary>PHLOX-59: <see cref="UserAccountHelpers.CreateUserWithInventory(Scene)"/> under <see cref="SharedUserStoreLock"/>.</summary>
+    public static OpenSim.Services.Interfaces.UserAccount CreateUser(Scene scene)
+    {
+        lock (SharedUserStoreLock) return UserAccountHelpers.CreateUserWithInventory(scene);
+    }
+
+    /// <summary>PHLOX-59: the named form, under <see cref="SharedUserStoreLock"/>.</summary>
+    public static OpenSim.Services.Interfaces.UserAccount CreateUser(Scene scene, string firstName, string lastName, UUID userId, string pw)
+    {
+        lock (SharedUserStoreLock) return UserAccountHelpers.CreateUserWithInventory(scene, firstName, lastName, userId, pw);
     }
 
     private static bool Pending(object workStatus)

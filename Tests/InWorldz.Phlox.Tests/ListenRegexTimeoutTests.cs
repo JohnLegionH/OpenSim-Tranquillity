@@ -30,7 +30,7 @@ public class ListenRegexTimeoutTests
                              "listen(integer c, string n, key k, string m) { llSay(0, \"s1 heard\"); } }");
         h.RezScript("default { state_entry() { llListen(5, \"someone\", NULL_KEY, \"\"); llSay(0, \"s2 ready\"); } " +
                     "listen(integer c, string n, key k, string m) { llSay(0, \"s2 heard \" + m); } }");
-        var until = DateTime.UtcNow.AddSeconds(5);
+        var until = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < until && !(h.Said.Any(s => s.StartsWith("h=")) && h.Said.Contains("s2 ready"))) h.PumpOnce();
         var handleLine = h.Said.FirstOrDefault(s => s.StartsWith("h="));
         Assert.True(handleLine != null && handleLine != "h=-1" && handleLine != "h=0", "osListenRegex did not register: [" + string.Join(" | ", h.Said) + "]");
@@ -53,7 +53,7 @@ public class ListenRegexTimeoutTests
         total.Stop();
         _out.WriteLine($"total={total.Elapsed.TotalMilliseconds:F0} ms per line=[{string.Join(", ", perLine.Select(t => t.ToString("F0")))}]");
 
-        until = DateTime.UtcNow.AddSeconds(3);
+        until = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < until && h.Said.Count(s => s.StartsWith("s2 heard ")) < 20) h.PumpOnce();
         h.Pump(20);
         var debug = h.SaidOn.Where(s => s.Channel == DebugChannel).Select(s => s.Message).ToList();

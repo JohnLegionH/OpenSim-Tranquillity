@@ -69,10 +69,11 @@ public class PermissionsTests
         var rec = FakeAttachments(h);
         var owner = Present(h, h.Prim.OwnerID);
         var item = h.RezScript(Asker(h.Prim.OwnerID, TRIGGER_ANIMATION, tryAttach: true));
-        h.Pump();
+        h.PumpUntil(() => owner.ScriptQuestions.Count >= 1);
         Assert.Single(owner.ScriptQuestions);
         owner.FireScriptAnswer(h.Prim.UUID, item, TRIGGER_ANIMATION);
         h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("perms=")));
         Assert.Contains("rtp=16", h.Said);
         Assert.True(rec.Calls.Count(c => c == "AttachObject") == 0, "AttachObject reached with only TRIGGER_ANIMATION: [" + string.Join(",", rec.Calls) + "]");
     }
@@ -86,6 +87,7 @@ public class PermissionsTests
         Wear(h, h.Scene.GetScenePresence(h.Prim.OwnerID));
         h.RezScript(Asker(h.Prim.OwnerID, TRIGGER_ANIMATION, tryDetach: true));
         h.Pump();
+        h.PumpUntil(() => h.Said.Any(s => s.StartsWith("perms=")));
         Assert.Contains("rtp=16", h.Said);
         Assert.True(!rec.Calls.Contains("DetachSingleAttachmentToInv"), "detached with only TRIGGER_ANIMATION: [" + string.Join(",", rec.Calls) + "]");
     }
@@ -97,9 +99,9 @@ public class PermissionsTests
         var rec = FakeAttachments(h);
         var owner = Present(h, h.Prim.OwnerID);
         var item = h.RezScript(Asker(h.Prim.OwnerID, ATTACH, tryAttach: true));
-        h.Pump();
+        h.PumpUntil(() => owner.ScriptQuestions.Count >= 1);
         owner.FireScriptAnswer(h.Prim.UUID, item, ATTACH);
-        h.Pump();
+        h.PumpUntil(() => { lock (rec.Calls) return h.Said.Contains("rtp=32") && rec.Calls.Contains("AttachObject"); });
         Assert.Contains("rtp=32", h.Said);
         Assert.Contains("AttachObject", rec.Calls);
     }
@@ -113,9 +115,10 @@ public class PermissionsTests
         var client = Present(h, other);
         var item = h.RezScript("default { state_entry() { llRequestPermissions(\"" + other + "\", PERMISSION_ATTACH); } " +
                                "run_time_permissions(integer p) { llSay(0, \"rtp=\" + (string)p); llAttachToAvatar(ATTACH_CHEST); } }");
-        h.Pump();
+        h.PumpUntil(() => client.ScriptQuestions.Count >= 1);
         client.FireScriptAnswer(h.Prim.UUID, item, ATTACH);
         h.Pump();
+        h.PumpUntil(() => h.Said.Contains("rtp=32"));
         Assert.Contains("rtp=32", h.Said);
         Assert.DoesNotContain("AttachObject", rec.Calls);
     }
@@ -134,12 +137,14 @@ public class PermissionsTests
 
         h.RezScript(Asker(sitterId, TRIGGER_ANIMATION));
         h.Pump();
+        h.PumpUntil(() => h.Said.Contains("perms=16"));
         Assert.Contains("rtp=16", h.Said);
         Assert.True(sitter.ScriptQuestions.Count == 0, "the sitter was asked for TRIGGER_ANIMATION");
 
         h.RezScript(Asker(sitterId, ATTACH));
         h.RezScript(Asker(sitterId, RELEASE_OWNERSHIP));
         h.Pump();
+        h.PumpUntil(() => sitter.ScriptQuestions.Count >= 2);
         Assert.DoesNotContain("rtp=32", h.Said);
         Assert.DoesNotContain("rtp=64", h.Said);
         Assert.Equal(2, sitter.ScriptQuestions.Count);
@@ -154,8 +159,8 @@ public class PermissionsTests
         h.RezScript(Asker(h.Prim.OwnerID, OVERRIDE_ANIMATIONS | TRIGGER_ANIMATION));
         // The silent grant arrives as run_time_permissions some rounds later; a fixed pump count can end first.
         var granted = "rtp=" + (OVERRIDE_ANIMATIONS | TRIGGER_ANIMATION);
-        Assert.True(PumpUntil(h, () => h.Said.Contains(granted), TimeSpan.FromSeconds(20)),
-            "no grant within 20 s: [" + string.Join(" | ", h.Said) + "]");
+        Assert.True(PumpUntil(h, () => h.Said.Contains(granted), TimeSpan.FromSeconds(30)),
+            "no grant within 30 s: [" + string.Join(" | ", h.Said) + "]");
         Assert.Empty(wearer.ScriptQuestions);
     }
 
@@ -165,7 +170,7 @@ public class PermissionsTests
         using var h = new SchedulerHarness();
         var owner = Present(h, h.Prim.OwnerID);
         var item = h.RezScript(Asker(h.Prim.OwnerID, TRIGGER_ANIMATION));
-        h.Pump();
+        h.PumpUntil(() => owner.ScriptQuestions.Count >= 1);
         Assert.Single(owner.ScriptQuestions);
         owner.FireScriptAnswer(h.Prim.UUID, UUID.Random(), TRIGGER_ANIMATION);
         h.Pump();
@@ -173,7 +178,7 @@ public class PermissionsTests
         Assert.Equal(0, h.Prim.Inventory.GetInventoryItem(item).PermsMask);
         // The real answer still lands afterwards: the stray one did not tear the wait down.
         owner.FireScriptAnswer(h.Prim.UUID, item, TRIGGER_ANIMATION);
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("rtp=16"));
         Assert.Contains("rtp=16", h.Said);
     }
 
@@ -183,9 +188,9 @@ public class PermissionsTests
         using var h = new SchedulerHarness();
         var owner = Present(h, h.Prim.OwnerID);
         var item = h.RezScript(Asker(h.Prim.OwnerID, TRIGGER_ANIMATION));
-        h.Pump();
+        h.PumpUntil(() => owner.ScriptQuestions.Count >= 1);
         owner.FireScriptAnswer(h.Prim.UUID, item, TRIGGER_ANIMATION | ATTACH | 0x2 /* DEBIT */);
-        h.Pump();
+        h.PumpUntil(() => h.Said.Contains("perms=16"));
         Assert.Contains("rtp=16", h.Said);
         Assert.Contains("perms=16", h.Said);
         Assert.Equal(TRIGGER_ANIMATION, h.Prim.Inventory.GetInventoryItem(item).PermsMask);

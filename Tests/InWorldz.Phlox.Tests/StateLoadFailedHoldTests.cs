@@ -44,7 +44,7 @@ public class StateLoadFailedHoldTests
         using (var h1 = new SchedulerHarness())
         {
             h1.RezScript(Src, assetId, itemId);
-            h1.Pump();
+            h1.PumpUntil(() => h1.Said.Contains("up"));
             Assert.Contains("up", h1.Said);
             h1.SaveState(itemId);
         }
@@ -58,6 +58,13 @@ public class StateLoadFailedHoldTests
             using var h2 = new SchedulerHarness();
             h2.RezScript(Src, assetId, itemId);
             h2.PumpFor(TimeSpan.FromSeconds(1));
+            h2.PumpUntil(() =>
+            {
+                var held = (StateManager)h2.StateManagerOf();
+                var st = h2.StatusOf(itemId);
+                return held.IsLoadFailed(itemId) && held.LoadFailures >= 2 &&
+                       st.Contains("StateLoadFailed") && st.Contains("Enabled=False");
+            });
 
             Assert.DoesNotContain("up", h2.Said);                    // no fresh state_entry
             var sm = (StateManager)h2.StateManagerOf();
@@ -87,7 +94,7 @@ public class StateLoadFailedHoldTests
             h3.Pump();
             Assert.DoesNotContain("up", h3.Said);                    // restored, not fresh
             h3.PostTouch(itemId);
-            h3.PumpFor(TimeSpan.FromMilliseconds(500));
+            h3.PumpUntil(() => h3.Said.Any(s => s.StartsWith("g=")));
             _out.WriteLine("said=[" + string.Join(" | ", h3.Said) + "]");
             Assert.Contains("g=42", h3.Said);                        // 41 from the first run, +1
         }

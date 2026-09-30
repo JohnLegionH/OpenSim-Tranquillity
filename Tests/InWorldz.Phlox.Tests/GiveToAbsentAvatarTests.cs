@@ -51,7 +51,7 @@ public class GiveToAbsentAvatarTests
     public void DeliverToAnAvatarWithAnAccountButNoPresenceLandsAndReturnsOk()
     {
         using var h = new SchedulerHarness();
-        var absent = UserAccountHelpers.CreateUserWithInventory(h.Scene);   // an account, never in this region
+        var absent = SchedulerHarness.CreateUser(h.Scene);   // an account, never in this region
         Assert.Null(h.Scene.GetScenePresence(absent.PrincipalID));
         AddGift(h, "gift");
         var line = Run(h, $"llSay(0, \"rc=\" + (string)iwDeliverInventory(LINK_THIS, \"{absent.PrincipalID}\", \"gift\"));", "rc=");
@@ -63,7 +63,7 @@ public class GiveToAbsentAvatarTests
     public void LlGiveInventoryToAnAbsentAvatarLandsWithoutAnError()
     {
         using var h = new SchedulerHarness();
-        var absent = UserAccountHelpers.CreateUserWithInventory(h.Scene);
+        var absent = SchedulerHarness.CreateUser(h.Scene);
         AddGift(h, "gift2");
         Run(h, $"llGiveInventory(\"{absent.PrincipalID}\", \"gift2\"); llSay(0, \"gave\");", "gave");
         Assert.Equal(1, CountInInventory(h, absent.PrincipalID, "gift2"));
@@ -74,7 +74,7 @@ public class GiveToAbsentAvatarTests
     public void DeliverListToAnAbsentAvatarLandsAndReturnsOk()
     {
         using var h = new SchedulerHarness();
-        var absent = UserAccountHelpers.CreateUserWithInventory(h.Scene);
+        var absent = SchedulerHarness.CreateUser(h.Scene);
         AddGift(h, "gift3");
         var line = Run(h, $"llSay(0, \"rc=\" + (string)iwDeliverInventoryList(LINK_THIS, \"{absent.PrincipalID}\", \"box\", [\"gift3\"]));", "rc=");
         Assert.Equal("rc=" + IW_DELIVER_OK, line);
@@ -89,7 +89,7 @@ public class GiveToAbsentAvatarTests
     public void LlGiveInventoryListToAnAvatarWithNoPresenceGivesNothing()
     {
         using var h = new SchedulerHarness();
-        var absent = UserAccountHelpers.CreateUserWithInventory(h.Scene);   // an account, never in this region
+        var absent = SchedulerHarness.CreateUser(h.Scene);   // an account, never in this region
         Assert.Null(h.Scene.GetScenePresence(absent.PrincipalID));
         AddGift(h, "gift6");
         Run(h, $"llGiveInventoryList(\"{absent.PrincipalID}\", \"box6\", [\"gift6\"]); llSay(0, \"gave\");", "gave");
@@ -102,7 +102,7 @@ public class GiveToAbsentAvatarTests
     public void LlGiveInventoryListToAPresentAvatarDeliversAFolder()
     {
         using var h = new SchedulerHarness();
-        var account = UserAccountHelpers.CreateUserWithInventory(h.Scene);
+        var account = SchedulerHarness.CreateUser(h.Scene);
         var present = SceneHelpers.AddScenePresence(h.Scene, account.PrincipalID);
         AddGift(h, "gift7");
         Run(h, $"llGiveInventoryList(\"{present.UUID}\", \"box7\", [\"gift7\"]); llSay(0, \"gave\");", "gave");
@@ -126,7 +126,7 @@ public class GiveToAbsentAvatarTests
     public void DeliverToAPresentAvatarIsUnchanged()
     {
         using var h = new SchedulerHarness();
-        var account = UserAccountHelpers.CreateUserWithInventory(h.Scene);   // a real user: an account and an inventory
+        var account = SchedulerHarness.CreateUser(h.Scene);   // a real user: an account and an inventory
         var present = SceneHelpers.AddScenePresence(h.Scene, account.PrincipalID);
         AddGift(h, "gift5");
         var line = Run(h, $"llSay(0, \"rc=\" + (string)iwDeliverInventory(LINK_THIS, \"{present.UUID}\", \"gift5\"));", "rc=");

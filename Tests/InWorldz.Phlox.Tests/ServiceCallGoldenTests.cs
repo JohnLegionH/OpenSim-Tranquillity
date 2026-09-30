@@ -120,7 +120,7 @@ default
             cfg.Configs["InWorldz.Phlox"].Set("ServiceCallDeferral", deferral);
             cfg.AddConfig("OSSL").Set("OSFunctionThreatLevel", "Severe");
         });
-        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Golden", "Avatar", Account, "pw");
+        SchedulerHarness.CreateUser(h.Scene, "Golden", "Avatar", Account, "pw");
         SceneHelpers.AddScenePresence(h.Scene, Present);
         TaskInventoryHelpers.AddNotecard(h.Scene.AssetService, h.Prim, "nc", UUID.Random(), UUID.Random(), "line one\nline two\nline three");
         var chat = new List<(string From, int Channel, string Msg)>();
