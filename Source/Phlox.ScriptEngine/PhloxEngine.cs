@@ -103,6 +103,12 @@ namespace Phlox.ScriptEngine
         public bool NotecardCacheEnabled { get; private set; } = true;
         /// <summary>PHLOX-56: iwFormatString's 100 ms. [InWorldz.Phlox] FormatStringThrottle.</summary>
         public bool FormatStringThrottle { get; private set; } = true;
+        /// <summary>
+        /// PHLOX-64: PHLOX-62's HTTP in-flight caps (Halcyon's, 10 per object and 200 per region, a refused llHTTPRequest
+        /// gives NULL_KEY after 80 ms). [InWorldz.Phlox] HttpInFlightThrottle, default true; false removes both caps and
+        /// the 80 ms.
+        /// </summary>
+        public bool HttpInFlightThrottle { get; private set; } = true;
 
         /// <summary>PHLOX-56: this region's notecard cache (used only while <see cref="NotecardCacheEnabled"/>).</summary>
         internal PhloxNotecardCache NotecardCache { get; } = new PhloxNotecardCache();
@@ -195,10 +201,12 @@ namespace Phlox.ScriptEngine
             NotecardThrottle = m_Config.GetBoolean("NotecardThrottle", true);
             NotecardCacheEnabled = m_Config.GetBoolean("NotecardCache", true);
             FormatStringThrottle = m_Config.GetBoolean("FormatStringThrottle", true);
+            HttpInFlightThrottle = m_Config.GetBoolean("HttpInFlightThrottle", true);   // PHLOX-64
             m_log.LogInformation("[PhloxEngine]: Anti-abuse slowdowns: ResetThrottle = {0}, ChatThrottle = {1}, BotThrottle = {2}, " +
-                "PhysicsThrottle = {3}, LinkMessageThrottle = {4}, NotecardThrottle = {5}, NotecardCache = {6}, FormatStringThrottle = {7}",
+                "PhysicsThrottle = {3}, LinkMessageThrottle = {4}, NotecardThrottle = {5}, NotecardCache = {6}, FormatStringThrottle = {7}, " +
+                "HttpInFlightThrottle = {8}",
                 ResetThrottle, ChatThrottle, BotThrottle, PhysicsThrottle, LinkMessageThrottle, NotecardThrottle,
-                NotecardCacheEnabled, FormatStringThrottle);
+                NotecardCacheEnabled, FormatStringThrottle, HttpInFlightThrottle);
 
             // B2: syscalls that can reach a service run off the scheduler thread.
             // auto (default) = inline when the answer is local or cached, deferred otherwise;

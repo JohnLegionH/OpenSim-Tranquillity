@@ -692,7 +692,8 @@ public class AntiAbuseSlowdownTests
     // ── settings and the startup line ──────────────────────────────────────────────────────────────
 
     private static readonly string[] Keys =
-        { "ResetThrottle", "ChatThrottle", "BotThrottle", "PhysicsThrottle", "LinkMessageThrottle", "NotecardThrottle", "NotecardCache", "FormatStringThrottle" };
+        { "ResetThrottle", "ChatThrottle", "BotThrottle", "PhysicsThrottle", "LinkMessageThrottle", "NotecardThrottle", "NotecardCache", "FormatStringThrottle",
+          "HttpInFlightThrottle" };   // PHLOX-64
 
     private sealed class Capture : ILoggerFactory, ILoggerProvider
     {
@@ -735,6 +736,19 @@ public class AntiAbuseSlowdownTests
         Assert.Single(lines);
         _out.WriteLine(lines[0]);
         Assert.Equal("[PhloxEngine]: Anti-abuse slowdowns: " + string.Join(", ", Keys.Select(k => k + " = True")), lines[0]);
+    }
+
+    /// <summary>PHLOX-64: the line's exact text, nine settings, HttpInFlightThrottle last (batch 7's verify reads it).</summary>
+    [Fact]
+    public void TheStartupLineListsNineSettingsWithTheHttpSwitchLast()
+    {
+        var lines = StartupLines(null);
+        Assert.Single(lines);
+        Assert.Equal("[PhloxEngine]: Anti-abuse slowdowns: ResetThrottle = True, ChatThrottle = True, BotThrottle = True, " +
+            "PhysicsThrottle = True, LinkMessageThrottle = True, NotecardThrottle = True, NotecardCache = True, " +
+            "FormatStringThrottle = True, HttpInFlightThrottle = True", lines[0]);
+        Assert.Equal(9, lines[0].Split(" = ").Length - 1);
+        Assert.EndsWith("HttpInFlightThrottle = False", StartupLines(c => c.Set("HttpInFlightThrottle", "false")).Single());
     }
 
     [Fact]

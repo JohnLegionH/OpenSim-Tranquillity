@@ -389,17 +389,124 @@ default
     }
 
     [Fact]
-    public void TheScriptsExperienceIsTheNamespaceAndWithoutOneTheOwnersIs()
+    public void TheScriptsExperienceIsTheNamespaceAndWithoutOneTheSlNamesSayNoExperience()
     {
         var store = new FakeStore();
         using (var r = Ask(store, @"ask(llCreateKeyValue(""a"", ""xp""), ""create"");", 1))
             Assert.Equal("xp", store.Data[Exp]["a"]);
 
-        // Kept from before PHLOX-63: a script with no Experience uses its owner's id (SL would say XP_ERROR_NO_EXPERIENCE).
+        // PHLOX-64 (John: follow SL): until then a script with no Experience used its owner's id; now XP_ERROR_NO_EXPERIENCE.
         var store2 = new FakeStore();
         using var r2 = Ask(store2, @"ask(llCreateKeyValue(""a"", ""owner""), ""create"");", 1, experience: UUID.Zero);
-        Assert.Equal("1,owner", r2.Answer("create"));
-        Assert.Equal("owner", store2.Data[r2.H.Prim.OwnerID]["a"]);
+        Assert.Equal("0,5", r2.Answer("create"));
+        Assert.Empty(store2.Data);
+    }
+
+    // ── PHLOX-64: a script with no Experience (John: follow SL) ──
+    // wiki (each call): "For this function to work, the script must be compiled into an Experience."; llGetExperienceErrorMessage:
+    // XP_ERROR_NO_EXPERIENCE | 5 | "This script is not associated with an experience." Phlox's own names keep the owner id.
+
+    [Theory]
+    [InlineData("never")]
+    [InlineData("auto")]
+    public void EverySlNameWithNoExperienceAnswersFiveAndTouchesNothing(string deferral)
+    {
+        var store = new FakeStore();
+        using var r = Ask(store, @"
+        ask(llCreateKeyValue(""a"", ""1""), ""create"");
+        ask(llReadKeyValue(""a""), ""read"");
+        ask(llUpdateKeyValue(""a"", ""2"", TRUE, ""1""), ""update"");
+        ask(llUpdateKeyValue(""a"", ""2"", ""1""), ""update3"");
+        ask(llDeleteKeyValue(""a""), ""delete"");
+        ask(llKeyCountKeyValue(), ""count"");
+        ask(llKeysKeyValue(0, 1), ""keys"");
+        ask(llDataSizeKeyValue(), ""size"");", 8, experience: UUID.Zero, deferral: deferral);
+        foreach (string t in new[] { "create", "read", "update", "update3", "delete", "count", "keys", "size" })
+            Assert.Equal("0,5", r.Answer(t));                  // XP_ERROR_NO_EXPERIENCE
+        Assert.Empty(store.ExperiencesSeen);                   // the store was never called
+        Assert.Empty(store.Data);
+    }
+
+    [Fact]
+    public void PhloxsOwnNamesWithNoExperienceKeepTheOwnersId()
+    {
+        var store = new FakeStore();
+        using var r = Ask(store, @"
+        llSay(0, ""c|"" + llCreateKeyValueSL(""a"", ""1""));
+        llSay(0, ""u|"" + llUpdateKeyValueSL(""a"", ""2"", ""1""));
+        llSay(0, ""r|"" + llReadKeyValueSL(""a""));
+        ask(llReadKeyValue(""a""), ""slread"");
+        llSay(0, ""clear|"" + (string)llClearKeyValue());
+        llSay(0, ""gone|"" + llReadKeyValueSL(""a""));", 6, experience: UUID.Zero);
+        Assert.Equal("1,1", r.Answer("c"));
+        Assert.Equal("1,2", r.Answer("u"));
+        Assert.Equal("1,2", r.Answer("r"));
+        Assert.Equal("0,5", r.Answer("slread"));               // SL's name does not reach the owner's data
+        Assert.Equal("0", r.Answer("clear"));
+        Assert.Equal("0,14", r.Answer("gone"));
+        Assert.NotEmpty(store.ExperiencesSeen);
+        Assert.All(store.ExperiencesSeen, e => Assert.Equal(r.H.Prim.OwnerID, e));
+        Assert.Empty(store.Data[r.H.Prim.OwnerID]);
+    }
+
+    // ── PHLOX-64: SL's value limit ──
+    // wiki llCreateKeyValue / llUpdateKeyValue: "As of Jan 1, 2016 maximum bytes is 1011 for key and 4095 for value for both
+    // LSO and Mono scripts."; over it XP_ERROR_INVALID_PARAMETERS (3), "One of the string arguments was too big to fit in the
+    // key-value store." Bytes are UTF-8: 2048 x "é" is 4096 bytes.
+
+    private const string BuildValues = @"
+        string x = ""x""; integer i;
+        for (i = 0; i < 12; i++) x += x;                                         // 4096 bytes
+        string e = llUnescapeURL(""%C3%A9"");
+        for (i = 0; i < 11; i++) e += e;                                         // 2048 x U+00E9 = 4096 bytes
+        string x4094 = llGetSubString(x, 0, 4093); string x4095 = llGetSubString(x, 0, 4094);
+        string e4095 = llGetSubString(e, 1, -1) + ""x"";                        // 2047 x 2 + 1 = 4095 bytes";
+
+    [Fact]
+    public void AValueOver4095BytesIsInvalidParametersAndNotWritten()
+    {
+        var store = new FakeStore();
+        using var r = Ask(store, BuildValues + @"
+        ask(llCreateKeyValue(""c4094"", x4094), ""c4094"");
+        ask(llCreateKeyValue(""c4095"", x4095), ""c4095"");
+        ask(llCreateKeyValue(""c4096"", x), ""c4096"");
+        ask(llCreateKeyValue(""e4095"", e4095), ""e4095"");
+        ask(llCreateKeyValue(""e4096"", e), ""e4096"");
+        ask(llUpdateKeyValue(""u"", x, FALSE, """"), ""u4096"");
+        ask(llUpdateKeyValue(""u"", x4095, FALSE, """"), ""u4095"");
+        ask(llUpdateKeyValue(""c4094"", e, """"), ""u3e4096"");
+        ask(llUpdateKeyValue(""c4094"", x4095, """"), ""u3x4095"");", 9);
+        foreach (string t in new[] { "c4094", "c4095", "e4095", "u4095", "u3x4095" })
+            Assert.StartsWith("1,", r.Answer(t));
+        foreach (string t in new[] { "c4096", "e4096", "u4096", "u3e4096" })
+            Assert.Equal("0,3", r.Answer(t));                  // XP_ERROR_INVALID_PARAMETERS
+        var d = store.Data[Exp];
+        Assert.Equal(4095, d["c4094"].Length);                 // updated by u3x4095 only; u3e4096 wrote nothing
+        Assert.Equal(4095, d["c4095"].Length);
+        Assert.Equal(4095, System.Text.Encoding.UTF8.GetByteCount(d["e4095"]));
+        Assert.Equal(4095, d["u"].Length);
+        Assert.False(d.ContainsKey("c4096"));
+        Assert.False(d.ContainsKey("e4096"));
+    }
+
+    [Fact]
+    public void TheSlSuffixedNamesKeepTheValueLimitToo()
+    {
+        var store = new FakeStore();
+        using var r = Ask(store, BuildValues + @"
+        llSay(0, ""c4095|"" + llGetSubString(llCreateKeyValueSL(""s"", x4095), 0, 1));
+        llSay(0, ""c4096|"" + llCreateKeyValueSL(""t"", x));
+        llSay(0, ""ce4096|"" + llCreateKeyValueSL(""t"", e));
+        llSay(0, ""u4096|"" + llUpdateKeyValueSL(""s"", x, x4095));
+        llSay(0, ""u4094|"" + llGetSubString(llUpdateKeyValueSL(""s"", x4094, x4095), 0, 1));", 5);
+        Assert.Equal("1,", r.Answer("c4095"));
+        Assert.Equal("0,3", r.Answer("c4096"));
+        Assert.Equal("0,3", r.Answer("ce4096"));
+        Assert.Equal("0,3", r.Answer("u4096"));
+        Assert.Equal("1,", r.Answer("u4094"));
+        var d = store.Data[Exp];
+        Assert.Equal(4094, d["s"].Length);
+        Assert.False(d.ContainsKey("t"));
     }
 
     [Fact]

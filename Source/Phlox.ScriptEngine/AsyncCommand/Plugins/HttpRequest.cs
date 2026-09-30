@@ -175,13 +175,16 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
         /// llHTTPRequest: start the request and record it in one step. The core can complete a request before
         /// StartHttpRequest returns (a filtered URL), and the pump must not see it untracked. PHLOX-62: refused, without
         /// starting, when the object already has <see cref="MaxInFlightPerObject"/> requests in flight or the region
-        /// <see cref="MaxInFlightPerRegion"/> (<paramref name="capped"/> true, NULL_KEY).
+        /// <see cref="MaxInFlightPerRegion"/> (<paramref name="capped"/> true, NULL_KEY). PHLOX-64: only while the engine's
+        /// [InWorldz.Phlox] HttpInFlightThrottle is on (default true); with it off nothing is capped.
         /// </summary>
         internal UUID Start(UUID itemID, UUID objectID, Func<UUID> start, out bool capped)
         {
+            bool enforceCaps = (m_CmdManager.m_ScriptEngine as global::Phlox.ScriptEngine.PhloxEngine)?.HttpInFlightThrottle ?? true;
             lock (m_TrackLock)
             {
-                capped = m_Outstanding.Count >= MaxInFlightPerRegion || InFlightFor(objectID) >= MaxInFlightPerObject;
+                capped = enforceCaps
+                    && (m_Outstanding.Count >= MaxInFlightPerRegion || InFlightFor(objectID) >= MaxInFlightPerObject);
                 if (capped) return UUID.Zero;
                 UUID reqID = start();
                 if (!reqID.IsZero()) m_Outstanding[reqID] = (itemID, objectID);

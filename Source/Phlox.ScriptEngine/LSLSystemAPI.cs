@@ -12722,7 +12722,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 ? httpPlugin.Start(m_itemID, objectID, () => httpMod.StartHttpRequest(m_localID, m_itemID, url, paramList, headers, body), out capped)
                 : httpMod.StartHttpRequest(m_localID, m_itemID, url, paramList, headers, body);
             // PHLOX-62 (S11): Halcyon's in-flight caps refuse with NULL_KEY and no error; its llHTTPRequest then sleeps
-            // ERROR_DELAY, 80 ms (LSLSystemAPI.cs:13762, 13845-13846).
+            // ERROR_DELAY, 80 ms (LSLSystemAPI.cs:13762, 13845-13846). PHLOX-64: HttpInFlightThrottle = false, never capped.
             if (capped) ScriptSleep(HTTP_CAPPED_DELAY);
             return reqID == UUID.Zero ? UUID.Zero.ToString() : reqID.ToString();
         }
@@ -17560,11 +17560,12 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         }
 
         // Phlox's synchronous key-value contract, kept for the *SL names (618-620), which answer at once:
-        // 0 ok · -1 invalid/error · -2 duplicate (create) · -3 CAS-fail/not-found (update) · -5 quota exceeded.
+        // 0 ok · -1 invalid/error · -2 duplicate (create) · -3 CAS-fail/not-found (update) · -5 quota exceeded · -6 value over 4095 bytes (PHLOX-64).
         // Until PHLOX-63 these were the bodies of llCreateKeyValue / llReadKeyValue / llUpdateKeyValue(3).
         private int SyncCreateKeyValue(string key, string value)
         {
             if (string.IsNullOrEmpty(key) || key.Length > MAX_EXPERIENCE_KEY_LENGTH) return -1;
+            if (BadKvValue(value)) return -6;   // PHLOX-64: SL's 4095-byte value limit
             var expService = GetExperienceAdapter();
             UUID expId = GetScriptExperienceId();
             if (expService == null || expId == UUID.Zero)
@@ -17613,6 +17614,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         private int SyncUpdateKeyValue(string key, string value, string check)
         {
             if (string.IsNullOrEmpty(key) || key.Length > MAX_EXPERIENCE_KEY_LENGTH) return -1;
+            if (BadKvValue(value)) return -6;   // PHLOX-64: SL's 4095-byte value limit
             var expService = GetExperienceAdapter();
             UUID expId = GetScriptExperienceId();
             if (expService == null || expId == UUID.Zero)
@@ -17643,8 +17645,12 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         // state or was removed in between is dropped by PostDataserverEvent. The store work runs inside the syscall,
         // which the shim hands to the region's service lane (Defer, B2): the scheduler thread never waits on the store,
         // and one script's answers arrive in the order it asked.
-        // Kept from before: a script with no Experience uses its owner's id as the namespace, so XP_ERROR_NO_EXPERIENCE
-        // is never given. No key-value store at all (no IExperienceService) answers XP_ERROR_STORE_DISABLED.
+        // No key-value store at all (no IExperienceService) answers XP_ERROR_STORE_DISABLED.
+        // PHLOX-64 (John's ruling: follow SL): a script not compiled into an Experience (its item's ExperienceID is zero,
+        // GetScriptExperienceId) answers XP_ERROR_NO_EXPERIENCE, "This script is not associated with an experience."
+        // (wiki llGetExperienceErrorMessage; each call's page: "the script must be compiled into an Experience"), and
+        // the store is not touched. Until PHLOX-64 the owner's id was used; Phlox's own names (llClearKeyValue and the
+        // *SL variants) keep that fallback, so data stored under an owner's id stays reachable through them.
 
         private delegate string KeyValueWork(PhloxExperienceAdapter store, UUID experienceId);
 
@@ -17653,12 +17659,13 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             UUID queryID = NewDataserverQuery();
             string reply;
             PhloxExperienceAdapter store = GetExperienceAdapter();
+            UUID expId;
             if (store == null || !store.HasKeyValueStore)
                 reply = "0," + XP_ERROR_STORE_DISABLED;
+            else if ((expId = GetScriptExperienceId()) == UUID.Zero)
+                reply = "0," + XP_ERROR_NO_EXPERIENCE;
             else
             {
-                UUID expId = GetScriptExperienceId();
-                if (expId == UUID.Zero) expId = m_host.OwnerID;
                 try
                 {
                     reply = work(store, expId);
@@ -17678,11 +17685,18 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
         private static string KvFail(int xpError) => "0," + xpError;
 
+        // PHLOX-64: SL's value limit, wiki llCreateKeyValue / llUpdateKeyValue: "As of Jan 1, 2016 maximum bytes is 1011 for
+        // key and 4095 for value for both LSO and Mono scripts." Over it is XP_ERROR_INVALID_PARAMETERS, "One of the
+        // string arguments was too big to fit in the key-value store." (wiki llGetExperienceErrorMessage). Nothing is
+        // written. Before, the store got the value: MySQL's VARCHAR(4095) column refused it (strict mode) or cut it.
+        private const int MAX_EXPERIENCE_VALUE_BYTES = 4095;
+        private static bool BadKvValue(string value) => KvBytes(value) > MAX_EXPERIENCE_VALUE_BYTES;
+
         /// <summary>wiki: key llCreateKeyValue(string k, string v). An existing key is XP_ERROR_STORAGE_EXCEPTION.</summary>
         public string llCreateKeyValue(string key, string value)
             => KeyValueRequest("llCreateKeyValue", (store, expId) =>
             {
-                if (BadKvKey(key)) return KvFail(XP_ERROR_INVALID_PARAMETERS);
+                if (BadKvKey(key) || BadKvValue(value)) return KvFail(XP_ERROR_INVALID_PARAMETERS);
                 value ??= string.Empty;
                 if (store.DataSizeKeyValue(expId) + KvBytes(key) + KvBytes(value) > MAX_DATA_QUOTA)
                     return KvFail(XP_ERROR_QUOTA_EXCEEDED);
@@ -17715,7 +17729,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         public string llUpdateKeyValue(string k, string v, int isChecked, string original_value)
             => KeyValueRequest("llUpdateKeyValue", (store, expId) =>
             {
-                if (BadKvKey(k)) return KvFail(XP_ERROR_INVALID_PARAMETERS);
+                if (BadKvKey(k) || BadKvValue(v)) return KvFail(XP_ERROR_INVALID_PARAMETERS);
                 v ??= string.Empty;
                 if (ExceedsQuota(store, expId, k, v)) return KvFail(XP_ERROR_QUOTA_EXCEEDED);
                 string status = store.UpdateKeyValueStatus(expId, k, v, isChecked != 0, original_value);
@@ -17811,7 +17825,8 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         // The ...SL wrappers present SL's async-dataserver CSV shape "1,<value>" (success) /
         // "0,<XP_ERROR>" (failure). T1 makes the failure payload a NUMERIC XP_ERROR code (was a
         // free-text message), matching SL and the port source. They answer at once (Phlox's own names);
-        // PHLOX-63 left them exactly as they were - SL's names now answer in dataserver.
+        // PHLOX-63 left them exactly as they were - SL's names now answer in dataserver. PHLOX-64: they (and
+        // llClearKeyValue) keep the owner-id fallback for a script with no Experience; SL's 4095-byte value limit applies.
         public string llCreateKeyValueSL(string key, string value)
         {
             int result = SyncCreateKeyValue(key, value);
@@ -17819,6 +17834,8 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                 return "1," + (value ?? string.Empty);
             if (result == -5) // over the 128 MiB quota (T2)
                 return "0," + XP_ERROR_QUOTA_EXCEEDED;
+            if (result == -6) // PHLOX-64: value over SL's 4095 bytes
+                return "0," + XP_ERROR_INVALID_PARAMETERS;
             // SL: creating an existing key (or a generic KV failure) => XP_ERROR_STORAGE_EXCEPTION.
             return "0," + XP_ERROR_STORAGE_EXCEPTION;
         }
@@ -17839,6 +17856,8 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                 return "1," + (value ?? string.Empty);
             if (result == -5) // over the 128 MiB quota (T2)
                 return "0," + XP_ERROR_QUOTA_EXCEEDED;
+            if (result == -6) // PHLOX-64: value over SL's 4095 bytes
+                return "0," + XP_ERROR_INVALID_PARAMETERS;
             // SL: a checked-update mismatch (CAS fail) => XP_ERROR_RETRY_UPDATE (15).
             return "0," + XP_ERROR_RETRY_UPDATE;
         }

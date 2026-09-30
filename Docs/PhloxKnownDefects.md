@@ -4940,3 +4940,62 @@ PHLOX-9's `SlParityLeftoverTests.ShiftAssignIsASyntaxErrorOnItsLine` is now
 `ShiftAssignIsAnIntegerExtensionAndOtherwiseAnErrorOnItsLine` (D7 (c) overturns what it pinned).
 On the old code 81 of the 107 new and changed tests fail; the 26 that pass are the unchanged behaviour (literals of
 few digits, the *SL names, the forms that still compile, the golden transcript, the earlier bump tests).
+
+## PHLOX-64 - loose ends from the rulings of 2026-09-30: key-value with no Experience, value size, the HTTP caps' switch, llCreateLink's delay (fixed)
+
+Run-time only: no bytecode change, no cache bump. Sources and quotes are in the work folder's STATE.md.
+
+1. **Key-value from a script with no Experience follows SL (John's ruling).** Each SL page says "For this function to
+   work, the script must be compiled into an Experience."; the error table gives XP_ERROR_NO_EXPERIENCE (5), "This
+   script is not associated with an experience." The SL names - `llCreateKeyValue`, `llReadKeyValue`,
+   `llUpdateKeyValue` (both forms), `llDeleteKeyValue`, `llKeyCountKeyValue`, `llKeysKeyValue`, `llDataSizeKeyValue` -
+   still return their request key, and the `dataserver` answer is `0,5`; nothing is read or written. A script is in an
+   Experience when its inventory item carries an ExperienceID (set when it is compiled into one; `GetScriptExperienceId`
+   through `PhloxExperienceAdapter.GetScriptExperience`), which is SL's meaning and the test YEngine makes. A region
+   with no Experience service still answers `0,12` first. Until now PHLOX-63 used the owner's id as the store for such
+   a script. **Phlox's own names keep that owner fallback:** `llClearKeyValue`, `llCreateKeyValueSL`,
+   `llReadKeyValueSL` and `llUpdateKeyValueSL` from a script with no Experience still use the owner's id, so data
+   stored under an owner's id stays reachable through them.
+2. **Value size: SL's 4095 bytes.** SL wiki (`llCreateKeyValue`, `llUpdateKeyValue`): "As of Jan 1, 2016 maximum bytes
+   is 1011 for key and 4095 for value for both LSO and Mono scripts." A longer value (UTF-8 bytes) is refused with
+   XP_ERROR_INVALID_PARAMETERS (3), "One of the string arguments was too big to fit in the key-value store." - `0,3`
+   from `llCreateKeyValue` and both `llUpdateKeyValue` forms, and at once from `llCreateKeyValueSL` and
+   `llUpdateKeyValueSL` (the same store). Nothing is written; 4095 bytes is accepted. Before, the value went to the
+   store: MySQL's `experience_kv.value` is VARCHAR(4095) characters, so an oversized value failed there in strict mode
+   (`0,13`, or `0,15` from `llUpdateKeyValueSL`) or was cut to 4095 characters otherwise, and a value of at most 4095
+   characters but more than 4095 bytes was stored.
+3. **HTTP in-flight caps switch.** PHLOX-62's caps (Halcyon's: 10 requests in flight per object, 200 per region, the
+   refused `llHTTPRequest` returns NULL_KEY after 80 ms) now have a setting, `[InWorldz.Phlox] HttpInFlightThrottle`,
+   default `true` (the caps stay on). `false` removes both caps and the 80 ms. The core's own rate limit is unchanged.
+4. **llCreateLink keeps its 1 s delay (John's ruling).** SL's is 0.1 s; Halcyon's and YEngine's are 1 s. YEngine's
+   delay (`m_sleepMsOnCreateLink = 1000`, `LSL_Api.cs:155`) is not read from any setting (only YEngine's general
+   `ScriptDelayFactor` scales all its sleeps), so Phlox has no setting to share with it and nothing changed.
+
+### What residents will notice
+
+- **Scripts with no Experience now get `0,5` from the SL-named key-value calls** (`llCreateKeyValue`,
+  `llReadKeyValue`, `llUpdateKeyValue`, `llDeleteKeyValue`, `llKeyCountKeyValue`, `llKeysKeyValue`,
+  `llDataSizeKeyValue`), as in SL: compile the script into an Experience to use the store. Data a script stored under
+  its owner's id before stays there and is still reached by `llReadKeyValueSL`, `llUpdateKeyValueSL`,
+  `llCreateKeyValueSL` and `llClearKeyValue`.
+- A key-value value over 4095 bytes gets `0,3` and is not stored.
+
+### What operators will notice
+
+- New setting `[InWorldz.Phlox] HttpInFlightThrottle`, default `true` (PHLOX-62's HTTP in-flight caps stay on); set
+  `false` to remove them.
+- The startup line now lists nine settings:
+  `[PhloxEngine]: Anti-abuse slowdowns: ResetThrottle = True, ChatThrottle = True, BotThrottle = True, PhysicsThrottle = True, LinkMessageThrottle = True, NotecardThrottle = True, NotecardCache = True, FormatStringThrottle = True, HttpInFlightThrottle = True`
+- No database change, no cache bump.
+
+### Tests
+
+In `KeyValueSlFormTests`: every SL name with no Experience answers `0,5` and the store is never called (two deferral
+modes); Phlox's own names with no Experience use the owner's id (and the SL read of the same key answers `0,5`); values
+of 4094, 4095 and 4096 bytes, and 4095 / 4096 bytes of two-byte characters, for create and both updates; the *SL
+names at and over the limit. In `HalcyonChecksTests`: the switch unset and `true` (the 11th request NULL_KEY after
+80 ms), and `false` (31 requests from one object and the region past 200, all started, no 80 ms). In
+`AntiAbuseSlowdownTests`: the startup line's exact text. Existing tests changed: `KeyValueSlFormTests.
+TheScriptsExperienceIsTheNamespaceAndWithoutOneTheOwnersIs` is now `...AndWithoutOneTheSlNamesSayNoExperience` (the
+ruling overturns what it pinned); `AntiAbuseSlowdownTests`' key list gains `HttpInFlightThrottle`. On the old code 11
+of the 13 new and changed tests fail; the 2 that pass are the switch-on cases (the caps as they were).

@@ -437,6 +437,51 @@ public class HalcyonChecksTests
         Assert.Equal(80, ms);
     }
 
+    // ── PHLOX-64: [InWorldz.Phlox] HttpInFlightThrottle, the caps' switch (default true) ──
+
+    private static Rig HttpRig(string setting) => new Rig(configure: setting == null ? null
+        : cfg => cfg.Configs["InWorldz.Phlox"].Set("HttpInFlightThrottle", setting));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("true")]
+    public void WithTheSwitchOnTheEleventhRequestGetsNullKeyAnd80Ms(string setting)
+    {
+        using var r = HttpRig(setting);
+        var http = new HoldingHttp();
+        r.H.Scene.RegisterModuleInterface<IHttpRequestModule>(http);
+        for (int i = 0; i < PerObject; i++)
+            Assert.NotEqual(UUID.Zero.ToString(), r.Api.llHTTPRequest("http://example.invalid/" + i, new LSLList(), ""));
+        var (ms, key) = r.Accounted(a => a.llHTTPRequest("http://example.invalid/x", new LSLList(), ""));
+        Assert.Equal(UUID.Zero.ToString(), key);
+        Assert.Equal(80, ms);
+        Assert.Equal(PerObject, http.Started);
+    }
+
+    [Fact]
+    public void WithTheSwitchOffNeitherCapNorThe80MsApplies()
+    {
+        using var r = HttpRig("false");
+        var http = new HoldingHttp();
+        r.H.Scene.RegisterModuleInterface<IHttpRequestModule>(http);
+        for (int i = 0; i < 3 * PerObject; i++)
+        {
+            var (ms, key) = r.Accounted(a => a.llHTTPRequest("http://example.invalid/" + i, new LSLList(), ""));
+            Assert.Equal(0, ms);
+            Assert.NotEqual(UUID.Zero.ToString(), key);
+        }
+        Assert.Equal(0, r.Effective(a => a.llHTTPRequest("http://example.invalid/y", new LSLList(), "")));
+        Assert.Equal(3 * PerObject + 1, http.Started);
+
+        // The region's 200: filled past it through the plugin's own entry point, and this object still starts.
+        for (int i = r.H.Engine.AsyncCommands.HttpRequestPlugin.OutstandingCount; i < PerRegion + 5; i++)
+            Assert.NotEqual(UUID.Zero, StartOther(r));
+        var (ms2, key2) = r.Accounted(a => a.llHTTPRequest("http://example.invalid/z", new LSLList(), ""));
+        Assert.Equal(0, ms2);
+        Assert.NotEqual(UUID.Zero.ToString(), key2);
+        Assert.Equal(PerRegion + 6, r.H.Engine.AsyncCommands.HttpRequestPlugin.OutstandingCount);
+    }
+
     // ── item 1 ──
 
     private static void Terrain(Rig r, bool god, Func<Vector3, bool> mayTerraform, float bakedHeight, double raise, double lower)
