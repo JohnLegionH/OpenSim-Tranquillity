@@ -4332,3 +4332,94 @@ The XMLRPC pump (`AsyncCommand/Plugins/XmlRequest.cs`) has the same shape: it po
   `AStrangerOnlineElsewhere...` missed its window once in a full run, with the script not yet started.
 
 No function index or declared return type changed. No constant, bytecode, serialization or cache change.
+
+## PHLOX-56 - Halcyon's anti-abuse slowdowns restored (D1, audit S15)
+
+D1: "Restore the anti-abuse slowdowns: 15 ms chat pause, PhySleep over 30 ms physics frames, llMessageLinked
+back-pressure, notecard and iwFormatString delays. ON by default, each with an operator setting. Include
+iwAvatarName2Key's 100 ms / 1000 ms delays. Add a notecard cache."
+
+Each slowdown is Halcyon's `ScriptSleep` at Halcyon's call point: the call does what it did before, and the script's
+next line runs after the sleep. A sleep sets the wake-up time; it does not add to one already set in the same call.
+None of them logs anything, as none did in Halcyon. The Halcyon source lines, SL's documentation and YEngine's
+behaviour for each are in the work folder's STATE.md.
+
+- **Chat** (`ChatThrottle`): 15 ms after llSay, llShout, llWhisper, llRegionSay, llRegionSayTo and llOwnerSay, so at
+  most about 66 chat calls a second per script. There is no sleep when the call is refused (llRegionSay on channel 0,
+  llRegionSayTo to DEBUG_CHANNEL or to a bad or NULL key). llOwnerSay sleeps even when the owner is not in the region,
+  as Halcyon's does.
+- **Bots** (`BotThrottle`): 15 ms after botWhisper, botSay, botShout, botStartTyping, botStopTyping, botSitObject,
+  botStandUp and botTouchObject, also when the region has no bot module. There is no sleep for a bad bot or object key.
+- **Physics** (`PhysicsThrottle`), Halcyon's PhySleep: when the physics frame time, averaged over the last 10 frames,
+  is over 30 ms, the script sleeps that many ms (31 ms frames give a 31 ms sleep; 30 ms frames give none). This applies
+  to llSetScale, PRIM_SIZE (per prim), llSetStatus STATUS_PHYSICS (not when refused for size) and STATUS_PHANTOM,
+  llSetForce, llSetTorque, llSetForceAndTorque, llApplyImpulse, llApplyRotationalImpulse, llPushObject (once a push is
+  allowed), llSetVehicleType, llSetVehicleFloatParam, llSetVehicleVectorParam, and llSetPhysicsMaterial (for a prim with
+  a physics actor). PRIM_PHYSICS and PRIM_PHANTOM do not sleep, as in Halcyon. In llSetPrimitiveParams and
+  llSetLinkPrimitiveParams, the call's own 200 ms comes last and replaces it, as in Halcyon. The frame time is the
+  scene's own (UpdatePhysics + UpdatePreparePhysics, the sum the sim stats report), sampled once per heartbeat frame.
+  Halcyon's PhysX measured its own step; a physics engine that steps on its own thread reports only the heartbeat's
+  share here.
+- **Link messages** (`LinkMessageThrottle`): after llMessageLinked or botMessageLinked, the sender sleeps 50 ms when any
+  receiving Phlox script's event queue is 80% full or more (52 or more of 64 queued). The message is still sent. A
+  YEngine script in the prim does not count: Phlox cannot see its queue, and Halcyon treated a script it did not run
+  as having room.
+- **Notecards** (`NotecardThrottle`):
+  - llGetNumberOfNotecardLines and iwGetLinkNumberOfNotecardLines sleep 25 ms when the answer comes from the cache,
+    50 ms when it is fetched, and 100 ms when there is no such notecard. For the link form, the 100 ms applies only
+    when the link is a single prim.
+  - llGetNotecardLine, iwGetNotecardSegment, iwGetLinkNotecardLine and iwGetLinkNotecardSegment sleep 25 ms when
+    fetched. From the cache they sleep 1 ms on lines 0, 16, 32 ... read from offset 0, and nothing otherwise. A
+    missing notecard does not sleep.
+  - The answers, error text and not-found results are unchanged.
+- **Notecard cache** (`NotecardCache`): Halcyon's NotecardCache, with one cache per region's engine. It holds the lines
+  Phlox already parsed, keyed by asset id, so a cached read gives exactly what a fetch gives, without a thread-pool
+  asset fetch. An entry is dropped at the next uncached read once it has gone unread for more than 60 s. Saving a
+  notecard gives it a new asset id, so an entry never goes stale.
+- **iwFormatString** (`FormatStringThrottle`): 100 ms when the engine's millisecond clock moved during a substitution
+  step. That is Halcyon's elapsed-tick check on Phlox's one clock, the same tick source on Windows. Halcyon's float
+  cast of the tick count, which loses precision after a few hours of uptime, is not copied.
+- **iwAvatarName2Key**: 100 ms for an avatar in the region and 1000 ms otherwise. These were already Halcyon's values
+  since D3, so there is no new setting (turning one off would change today's behaviour). Tests now pin both delays.
+
+Not ported: Halcyon's `ScriptSleep(ERROR_DELAY)` inside its notecard asset callback. It ran on the asset thread after
+the call had returned and raced the script's own state. Halcyon's llHTTPRequest queue back-pressure is not part of D1
+and is not ported.
+
+### What operators will notice
+
+Every setting is in `[InWorldz.Phlox]`, defaults to `true`, and `false` restores the behaviour before PHLOX-56:
+
+| setting | default | turn off with |
+|---|---|---|
+| `ChatThrottle` | true | `ChatThrottle = false` |
+| `BotThrottle` | true | `BotThrottle = false` |
+| `PhysicsThrottle` | true | `PhysicsThrottle = false` |
+| `LinkMessageThrottle` | true | `LinkMessageThrottle = false` |
+| `NotecardThrottle` | true | `NotecardThrottle = false` |
+| `NotecardCache` | true | `NotecardCache = false` |
+| `FormatStringThrottle` | true | `FormatStringThrottle = false` |
+
+- Scripts that chat in tight loops, flood link messages, read notecards line by line, or push physics setters while
+  the sim is dilating now run more slowly, as they did on InWorldz. For example, reading a 1,000-line notecard costs
+  about 25 ms for the first line plus about 62 ms for the cached rest, where Phlox had no delay at all. A chat loop
+  tops out at about 66 messages a second.
+- Repeated notecard reads no longer fetch the asset each time.
+- Each region logs one startup line with every value, replacing PHLOX-46's `ResetThrottle = ...` line:
+  `[PhloxEngine]: Anti-abuse slowdowns: ResetThrottle = True, ChatThrottle = True, BotThrottle = True,
+  PhysicsThrottle = True, LinkMessageThrottle = True, NotecardThrottle = True, NotecardCache = True,
+  FormatStringThrottle = True`
+
+### Tests
+
+`AntiAbuseSlowdownTests` ("phlox-state": it freezes the engine's process-wide clock, and one test swaps the process-wide
+logger factory to read the startup line). The frozen clock makes each sleep an exact number (NextWakeup - now), and
+proves that a sleeping script does not run on until the clock passes its wake-up. 85 tests: 43 red without the change (every sleep, the cache, the settings and the startup line); the 42 that pass on the old code are the controls - each setting off, the refused calls, the frozen-clock iwFormatString, PRIM_PHYSICS/PRIM_PHANTOM and the two iwAvatarName2Key delays already live since D3.
+
+Timing wait, test-only: `ScriptCleanupTests` (`AnOwedDataserverAnswerIsDelivered`, `LateDataserverAnswerAfterAResetIsDropped`,
+`LateDataserverAnswerForADeletedScriptIsDroppedAndNotHeld`) took the script's "entry" line as the sign its listen was
+open, but the script says "entry" before it calls llListen. With the 15 ms chat pause the test's "read" came first and
+was never heard (3 of 3 failed, every run). The tests now wait for the listen itself (entry said and one listen open).
+No assertion changed.
+
+No function index or declared return type changed. No constant, bytecode, serialization or cache-format change.

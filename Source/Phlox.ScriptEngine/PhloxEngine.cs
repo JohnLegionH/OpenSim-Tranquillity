@@ -79,6 +79,57 @@ namespace Phlox.ScriptEngine
         /// </summary>
         public bool ResetThrottle { get; private set; } = true;
 
+        // PHLOX-56 (D1): the rest of Halcyon's anti-abuse slowdowns, each on by default under its own [InWorldz.Phlox] key;
+        // false is exactly the behaviour before PHLOX-56. The rules and their Halcyon sources are on the LSLSystemAPI helpers.
+
+        /// <summary>PHLOX-56: 15 ms after llSay, llShout, llWhisper, llRegionSay, llRegionSayTo and llOwnerSay. [InWorldz.Phlox] ChatThrottle.</summary>
+        public bool ChatThrottle { get; private set; } = true;
+        /// <summary>PHLOX-56: 15 ms after the bot chat, typing, sit, stand and touch calls. [InWorldz.Phlox] BotThrottle.</summary>
+        public bool BotThrottle { get; private set; } = true;
+        /// <summary>PHLOX-56: Halcyon's PhySleep on the physics setters. [InWorldz.Phlox] PhysicsThrottle.</summary>
+        public bool PhysicsThrottle { get; private set; } = true;
+        /// <summary>PHLOX-56: 50 ms back-pressure on llMessageLinked / botMessageLinked. [InWorldz.Phlox] LinkMessageThrottle.</summary>
+        public bool LinkMessageThrottle { get; private set; } = true;
+        /// <summary>PHLOX-56: Halcyon's notecard read delays. [InWorldz.Phlox] NotecardThrottle.</summary>
+        public bool NotecardThrottle { get; private set; } = true;
+        /// <summary>PHLOX-56: the parsed-notecard cache (Halcyon's NotecardCache). [InWorldz.Phlox] NotecardCache.</summary>
+        public bool NotecardCacheEnabled { get; private set; } = true;
+        /// <summary>PHLOX-56: iwFormatString's 100 ms. [InWorldz.Phlox] FormatStringThrottle.</summary>
+        public bool FormatStringThrottle { get; private set; } = true;
+
+        /// <summary>PHLOX-56: this region's notecard cache (used only while <see cref="NotecardCacheEnabled"/>).</summary>
+        internal PhloxNotecardCache NotecardCache { get; } = new PhloxNotecardCache();
+
+        /// <summary>
+        /// PHLOX-56: Halcyon's PhysicsScene.SimulationFrameTimeAvg - a MovingIntegerAverage(10) of the physics frame time
+        /// (InWorldz.PhysxPhysics/PhysxScene.cs:134, 192-197, 413). Fed once per heartbeat frame from the scene's own
+        /// timings (UpdatePhysics + UpdatePreparePhysics, which the sim stats add up as the physics ms), while
+        /// PhysicsThrottle is on.
+        /// </summary>
+        private readonly MovingIntegerAverage m_PhysicsFrameTimes = new MovingIntegerAverage(10);
+        internal int PhysicsFrameTimeAvg => m_PhysicsFrameTimes.CalculateAverage();
+
+        private void OnFrameForPhysicsTime()
+        {
+            Scene scene = m_Scene;
+            if (scene == null) return;
+            m_PhysicsFrameTimes.AddValue(scene.MonitorPhysicsUpdateTime + scene.MonitorPhysicsSyncTime);
+        }
+
+        /// <summary>
+        /// PHLOX-56: Halcyon's EngineInterface.GetEventQueueFreeSpacePercentage (EngineInterface.cs:814-824): 1.0 for a
+        /// script this engine does not run, 0 when the queue is full, else 1 - queued / MAX_EVENT_QUEUE_SIZE.
+        /// </summary>
+        internal float GetEventQueueFreeSpacePercentage(UUID itemID)
+        {
+            InWorldz.Phlox.VM.Interpreter script = m_ExeScheduler?.FindScript(itemID);
+            if (script == null) return 1.0f;
+            int queued;
+            lock (script.ScriptState.EventQueueLock) queued = script.ScriptState.EventQueue.Count;
+            if (queued >= InWorldz.Phlox.VM.RuntimeState.MAX_EVENT_QUEUE_SIZE) return 0.0f;
+            return 1.0f - (float)queued / InWorldz.Phlox.VM.RuntimeState.MAX_EVENT_QUEUE_SIZE;
+        }
+
         /// <summary>PHLOX-12. The [OSSL] permission gate, read from the same config YEngine reads.</summary>
         internal OsslGate Ossl { get; private set; } = new OsslGate(null);
 
@@ -128,7 +179,18 @@ namespace Phlox.ScriptEngine
             if (MinTimerInterval < 0f) MinTimerInterval = 0f;
             m_log.LogInformation("[PhloxEngine]: MinTimerInterval = {0}s", MinTimerInterval);
             ResetThrottle = m_Config.GetBoolean("ResetThrottle", true);
-            m_log.LogInformation("[PhloxEngine]: ResetThrottle = {0}", ResetThrottle);
+            // PHLOX-56 (D1): Halcyon's anti-abuse slowdowns, on by default; one line per region with every value.
+            ChatThrottle = m_Config.GetBoolean("ChatThrottle", true);
+            BotThrottle = m_Config.GetBoolean("BotThrottle", true);
+            PhysicsThrottle = m_Config.GetBoolean("PhysicsThrottle", true);
+            LinkMessageThrottle = m_Config.GetBoolean("LinkMessageThrottle", true);
+            NotecardThrottle = m_Config.GetBoolean("NotecardThrottle", true);
+            NotecardCacheEnabled = m_Config.GetBoolean("NotecardCache", true);
+            FormatStringThrottle = m_Config.GetBoolean("FormatStringThrottle", true);
+            m_log.LogInformation("[PhloxEngine]: Anti-abuse slowdowns: ResetThrottle = {0}, ChatThrottle = {1}, BotThrottle = {2}, " +
+                "PhysicsThrottle = {3}, LinkMessageThrottle = {4}, NotecardThrottle = {5}, NotecardCache = {6}, FormatStringThrottle = {7}",
+                ResetThrottle, ChatThrottle, BotThrottle, PhysicsThrottle, LinkMessageThrottle, NotecardThrottle,
+                NotecardCacheEnabled, FormatStringThrottle);
 
             // B2: syscalls that can reach a service run off the scheduler thread.
             // auto (default) = inline when the answer is local or cached, deferred otherwise;
@@ -244,6 +306,7 @@ namespace Phlox.ScriptEngine
             m_Scene.EventManager.OnLandObjectAdded           += OnLandObjectChanged;
             m_Scene.EventManager.OnScriptControlsReleased    += OnScriptControlsReleased;
             m_Scene.EventManager.OnRemovePresence            += OnRemovePresenceForControls;
+            if (PhysicsThrottle) m_Scene.EventManager.OnFrame += OnFrameForPhysicsTime;   // PHLOX-56
             IMoneyModule moneyModule = m_Scene.RequestModuleInterface<IMoneyModule>();
             if (moneyModule != null)
                 moneyModule.OnObjectPaid += HandleObjectPaid;
@@ -473,6 +536,7 @@ namespace Phlox.ScriptEngine
             m_Scene.EventManager.OnObjectDeGrab -= OnObjectDeGrab;
             m_Scene.EventManager.OnScriptChangedEvent -= OnScriptChangedEvent;
             m_Scene.EventManager.OnScriptControlEvent -= OnScriptControlEvent;
+            m_Scene.EventManager.OnFrame -= OnFrameForPhysicsTime;   // PHLOX-56
             IMoneyModule moneyModule = m_Scene.RequestModuleInterface<IMoneyModule>();
             if (moneyModule != null)
                 moneyModule.OnObjectPaid -= HandleObjectPaid;

@@ -183,6 +183,148 @@ namespace Phlox.ScriptEngine
             m_thisScript.ScriptState.RunState = RuntimeState.Status.Sleeping;
         }
 
+        // ── PHLOX-56 (D1): Halcyon's anti-abuse slowdowns ──────────────────────────────────────────
+        // Each is Halcyon's ScriptSleep at Halcyon's call point, under its own [InWorldz.Phlox] setting (on by default;
+        // off is exactly the behaviour before PHLOX-56). The script sees its call work as before and runs on after the
+        // sleep. None logs, as none did in Halcyon. The rules with their Halcyon lines: lanes/work/phlox-56/STATE.md.
+
+        /// <summary>Halcyon SimChat / llRegionSay / llOwnerSay (LSLSystemAPI.cs:1042-1085, 12727-12732): ScriptSleep(15).</summary>
+        private void ChatSleep()
+        {
+            if (m_ScriptEngine != null && m_ScriptEngine.ChatThrottle) ScriptSleep(15);
+        }
+
+        /// <summary>Halcyon botWhisper ... botTouchObject (LSLSystemAPI.cs:17867-17996): ScriptSleep(15) after the call.</summary>
+        private void BotSleep()
+        {
+            if (m_ScriptEngine != null && m_ScriptEngine.BotThrottle) ScriptSleep(15);
+        }
+
+        // Halcyon LSLSystemAPI.cs:60
+        private const int MAX_PHYSICS_TIME_BEFORE_DILATION = 30;
+
+        /// <summary>
+        /// Halcyon PhySleep (LSLSystemAPI.cs:1592-1614): when the physics frame time, averaged over the last 10 frames,
+        /// is over 30 ms, the script sleeps that many ms.
+        /// </summary>
+        private void PhySleep()
+        {
+            if (m_ScriptEngine == null || !m_ScriptEngine.PhysicsThrottle) return;
+            int cmdTime = m_ScriptEngine.PhysicsFrameTimeAvg;
+            if (cmdTime > MAX_PHYSICS_TIME_BEFORE_DILATION)
+                ScriptSleep(cmdTime);
+        }
+
+        /// <summary>
+        /// Halcyon llMessageLinked / botMessageLinked (LSLSystemAPI.cs:5886-5899, 18169-18185): after posting, a 50 ms sleep
+        /// when any receiving script's event queue has 20% or less free (52 or more of 64 queued). A script this engine does
+        /// not run (YEngine's) counts as free, as Halcyon's GetEventQueueFreeSpacePercentage does for an unknown item.
+        /// </summary>
+        private void LinkMessageBackPressure(IEnumerable<UUID> receivers)
+        {
+            if (m_ScriptEngine == null || !m_ScriptEngine.LinkMessageThrottle) return;
+            const float LOW_SPACE_THRESHOLD = 0.2f;
+            const int LOW_SPACE_DELAY = 50;
+            foreach (UUID item in receivers)
+            {
+                if (m_ScriptEngine.GetEventQueueFreeSpacePercentage(item) <= LOW_SPACE_THRESHOLD)
+                {
+                    ScriptSleep(LOW_SPACE_DELAY);
+                    return;
+                }
+            }
+        }
+
+        private static IEnumerable<UUID> ScriptItemsIn(IEnumerable<SceneObjectPart> parts)
+        {
+            var items = new List<UUID>();
+            foreach (SceneObjectPart part in parts)
+            {
+                if (part?.TaskInventory == null) continue;
+                lock (part.TaskInventory)
+                {
+                    foreach (var kvp in part.TaskInventory)
+                        if (kvp.Value.Type == (int)AssetType.LSLText || kvp.Value.Type == INVENTORY_SCRIPT)
+                            items.Add(kvp.Value.ItemID);
+                }
+            }
+            return items;
+        }
+
+        private void NotecardSleep(int ms)
+        {
+            if (m_ScriptEngine != null && m_ScriptEngine.NotecardThrottle) ScriptSleep(ms);
+        }
+
+        // Halcyon GetNumberOfNotecardLines (LSLSystemAPI.cs:14523-14525)
+        private const int NOTECARD_COUNT_ERROR_DELAY = 100;
+        private const int NOTECARD_COUNT_LONG_DELAY = 50;
+        private const int NOTECARD_COUNT_FAST_DELAY = 25;
+        // Halcyon GetNotecardSegment (LSLSystemAPI.cs:14604-14606)
+        private const int NOTECARD_LINE_LONG_DELAY = 25;
+        private const int NOTECARD_LINE_FAST_DELAY = 1;
+        private const int NOTECARD_LINES_PER_DELAY = 16;
+
+        /// <summary>Halcyon GetNotecardSegment's cached-read delay: 1 ms on every 16th line read from offset 0.</summary>
+        private void NotecardLineCachedSleep(int line, int startOffset)
+        {
+            if (((line % NOTECARD_LINES_PER_DELAY) == 0) && (startOffset == 0))
+                NotecardSleep(NOTECARD_LINE_FAST_DELAY);
+        }
+
+        /// <summary>
+        /// Answer a notecard read with <paramref name="answer"/> of the notecard's text. From the region's notecard cache
+        /// when it is on and holds the asset (true: a cached read); otherwise fetched on the thread pool as before PHLOX-56,
+        /// cached when the cache is on, and the cache swept as Halcyon's CacheCheck does after a miss (false).
+        /// <paramref name="onMissing"/> answers a missing asset or a failure; <paramref name="logAs"/> names the call in
+        /// the error log (null: not logged, as the link variants never logged).
+        /// </summary>
+        private bool AnswerNotecardRead(UUID assetId, UUID queryID, Func<PhloxNotecardCache.Card, string> answer,
+            string onMissing, string logAs)
+        {
+            PhloxNotecardCache cache = m_ScriptEngine != null && m_ScriptEngine.NotecardCacheEnabled ? m_ScriptEngine.NotecardCache : null;
+            if (cache != null && cache.TryGet(assetId, out PhloxNotecardCache.Card cached))
+            {
+                PostDataserverEvent(queryID, answer(cached));
+                return true;
+            }
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    AssetBase asset = World.AssetService.Get(assetId.ToString());
+                    if (asset == null || asset.Data == null) { PostDataserverEvent(queryID, onMissing); return; }
+                    var card = new PhloxNotecardCache.Card(StripNotecardHeader(OpenMetaverse.Utils.BytesToString(asset.Data)));
+                    cache?.Cache(assetId, card);
+                    PostDataserverEvent(queryID, answer(card));
+                }
+                catch (Exception ex)
+                {
+                    if (logAs != null) m_log.LogError("[PhloxAPI]: {0} ex: {1}", logAs, ex.Message);
+                    PostDataserverEvent(queryID, onMissing);
+                }
+            });
+            cache?.CacheCheck();
+            return false;
+        }
+
+        /// <summary>What a line read answers today: the line, or EOF ("\n\n\n") past either end.</summary>
+        private static string NotecardLineAnswer(PhloxNotecardCache.Card card, int line) => card.Line(line) ?? "\n\n\n";
+
+        /// <summary>What iwGetNotecardSegment answers today: part of the line from startOffset, at most maxLength (&gt; 0) chars.</summary>
+        private static string NotecardSegmentAnswer(PhloxNotecardCache.Card card, int line, int startOffset, int maxLength)
+        {
+            string result = card.Line(line);
+            if (result == null) return "\n\n\n";
+            if (startOffset > 0 && startOffset < result.Length)
+                result = result.Substring(startOffset);
+            else if (startOffset >= result.Length)
+                result = string.Empty;
+            if (maxLength > 0 && result.Length > maxLength)
+                result = result.Substring(0, maxLength);
+            return result;
+        }
+
         protected TaskInventoryItem GetInventorySelf()
         {
             // PHLOX-46: a derezzed part has no inventory left by the time its scripts unload; the NRE here stopped DoUnload
@@ -542,6 +684,7 @@ namespace Phlox.ScriptEngine
             m_host?.ParentGroup?.Scene?.SimChat(msg, ChatTypeEnum.Say, channel,
                 m_host.AbsolutePosition, m_host.Name, m_host.UUID, false);
             ChatToWorldComm(ChatTypeEnum.Say, channel, msg);
+            ChatSleep();   // PHLOX-56
         }
 
         public void llShout(int channel, string msg)
@@ -549,6 +692,7 @@ namespace Phlox.ScriptEngine
             m_host?.ParentGroup?.Scene?.SimChat(msg, ChatTypeEnum.Shout, channel,
                 m_host.AbsolutePosition, m_host.Name, m_host.UUID, false);
             ChatToWorldComm(ChatTypeEnum.Shout, channel, msg);
+            ChatSleep();   // PHLOX-56
         }
 
         public void llWhisper(int channel, string msg)
@@ -556,16 +700,20 @@ namespace Phlox.ScriptEngine
             m_host?.ParentGroup?.Scene?.SimChat(msg, ChatTypeEnum.Whisper, channel,
                 m_host.AbsolutePosition, m_host.Name, m_host.UUID, false);
             ChatToWorldComm(ChatTypeEnum.Whisper, channel, msg);
+            ChatSleep();   // PHLOX-56
         }
 
         public void llOwnerSay(string msg)
         {
             UUID ownerID = m_host?.OwnerID ?? UUID.Zero;
-            if (ownerID == UUID.Zero) return;
-            ScenePresence sp = World?.GetScenePresence(ownerID);
-            sp?.ControllingClient?.SendChatMessage(msg, (byte)ChatTypeEnum.Owner,
-                m_host.AbsolutePosition, m_host.Name, m_host.UUID, m_host.UUID,
-                (byte)ChatSourceType.Object, (byte)ChatAudibleLevel.Fully);
+            if (ownerID != UUID.Zero)
+            {
+                ScenePresence sp = World?.GetScenePresence(ownerID);
+                sp?.ControllingClient?.SendChatMessage(msg, (byte)ChatTypeEnum.Owner,
+                    m_host.AbsolutePosition, m_host.Name, m_host.UUID, m_host.UUID,
+                    (byte)ChatSourceType.Object, (byte)ChatAudibleLevel.Fully);
+            }
+            ChatSleep();   // PHLOX-56: Halcyon's llOwnerSay sleeps whether or not the owner hears it
         }
 
 		public void llRegionSay(int channel, string msg)
@@ -578,6 +726,7 @@ namespace Phlox.ScriptEngine
 			m_host?.ParentGroup?.Scene?.SimChat(msg, ChatTypeEnum.Region, channel,
 				m_host.AbsolutePosition, m_host.Name, m_host.UUID, false);
 			ChatToWorldComm(ChatTypeEnum.Region, channel, msg);
+			ChatSleep();   // PHLOX-56
 		}
 
 		/// <summary>
@@ -627,11 +776,14 @@ namespace Phlox.ScriptEngine
 			// The listens the core WorldComm holds (YEngine's) hear it through DeliverMessageTo, as YEngine's own
 			// llRegionSayTo reaches them. On channel 0 to an avatar DeliverMessageTo only sends it to the viewer,
 			// which has had it above, so it is not called.
-			if (channel == 0 && sp != null) return;
-			string name = m_host.Name;
-			UUID id = m_host.UUID;
-			Vector3 pos = m_host.AbsolutePosition;
-			m_ScriptEngine.SendToWorldComm(w => w.DeliverMessageTo(targetId, channel, pos, name, id, msg));
+			if (!(channel == 0 && sp != null))
+			{
+				string name = m_host.Name;
+				UUID id = m_host.UUID;
+				Vector3 pos = m_host.AbsolutePosition;
+				m_ScriptEngine.SendToWorldComm(w => w.DeliverMessageTo(targetId, channel, pos, name, id, msg));
+			}
+			ChatSleep();   // PHLOX-56: after a send; the refusals above return without it, as Halcyon's
 		}
 
 		public void llInstantMessage(string user, string message)
@@ -871,6 +1023,7 @@ namespace Phlox.ScriptEngine
             scale.Y = Math.Max(0.01f, Math.Min(64f, scale.Y));
             scale.Z = Math.Max(0.01f, Math.Min(64f, scale.Z));
             m_host.Resize(scale);
+            PhySleep();   // PHLOX-56
         }
         public int llScaleByFactor(float factor)
         {
@@ -1024,12 +1177,16 @@ namespace Phlox.ScriptEngine
 
         public void llSetForce(Vector3 force, int local)
         {
-            if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-            if ((m_host.ParentGroup.RootPart.Flags & PrimFlags.Physics) == 0) return;
-            PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-            if (pa == null) return;
-            if (local != 0) force *= m_host.GetWorldRotation();
-            pa.Force = force;
+            try
+            {
+                if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
+                if ((m_host.ParentGroup.RootPart.Flags & PrimFlags.Physics) == 0) return;
+                PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
+                if (pa == null) return;
+                if (local != 0) force *= m_host.GetWorldRotation();
+                pa.Force = force;
+            }
+            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path
         }
 
         public Vector3 llGetForce()
@@ -1041,12 +1198,16 @@ namespace Phlox.ScriptEngine
 
         public void llSetTorque(Vector3 torque, int local)
         {
-            if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-            if ((m_host.ParentGroup.RootPart.Flags & PrimFlags.Physics) == 0) return;
-            PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-            if (pa == null) return;
-            if (local != 0) torque *= m_host.GetWorldRotation();
-            pa.Torque = torque;
+            try
+            {
+                if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
+                if ((m_host.ParentGroup.RootPart.Flags & PrimFlags.Physics) == 0) return;
+                PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
+                if (pa == null) return;
+                if (local != 0) torque *= m_host.GetWorldRotation();
+                pa.Torque = torque;
+            }
+            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path
         }
 
         public void llSetForceAndTorque(Vector3 force, Vector3 torque, int local)
@@ -1057,18 +1218,26 @@ namespace Phlox.ScriptEngine
 
         public void llApplyImpulse(Vector3 force, int local)
         {
-            if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-            if ((m_host.ParentGroup.RootPart.Flags & PrimFlags.Physics) == 0) return;
-            if (force.LengthSquared() > 20000f * 20000f)
-                force = Vector3.Normalize(force) * 20000f;
-            m_host.ApplyImpulse(force, local != 0);
+            try
+            {
+                if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
+                if ((m_host.ParentGroup.RootPart.Flags & PrimFlags.Physics) == 0) return;
+                if (force.LengthSquared() > 20000f * 20000f)
+                    force = Vector3.Normalize(force) * 20000f;
+                m_host.ApplyImpulse(force, local != 0);
+            }
+            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path
         }
 
         public void llApplyRotationalImpulse(Vector3 force, int local)
         {
-            if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-            if ((m_host.ParentGroup.RootPart.Flags & PrimFlags.Physics) == 0) return;
-            m_host.ApplyAngularImpulse(force, local != 0);
+            try
+            {
+                if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
+                if ((m_host.ParentGroup.RootPart.Flags & PrimFlags.Physics) == 0) return;
+                m_host.ApplyAngularImpulse(force, local != 0);
+            }
+            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path
         }
         public void llMoveToTarget(Vector3 target, float tau)
         {
@@ -1168,11 +1337,17 @@ namespace Phlox.ScriptEngine
             if (group == null) return;
             bool on = value != 0;
 
+            // PHLOX-56: Halcyon's PhySleep after each (LSLSystemAPI.cs:1506, 1516); none when physics is refused for size
             if ((status & STATUS_PHYSICS) != 0)
-                SetObjectPhysics(group, on);
+            {
+                if (SetObjectPhysics(group, on)) PhySleep();
+            }
 
             if ((status & STATUS_PHANTOM) != 0)
+            {
                 group.ScriptSetPhantomStatus(on);
+                PhySleep();
+            }
 
             if ((status & STATUS_CAST_SHADOWS) != 0)
             {
@@ -1208,17 +1383,19 @@ namespace Phlox.ScriptEngine
         /// STATUS_PHYSICS and PRIM_PHYSICS on the whole object (Halcyon llSetStatus): turning physics on is refused
         /// when any prim is larger than the region's physical-prim size.
         /// </summary>
-        private void SetObjectPhysics(SceneObjectGroup group, bool on)
+        /// <returns>false when turning physics on was refused (PHLOX-56: Halcyon does not PhySleep then)</returns>
+        private bool SetObjectPhysics(SceneObjectGroup group, bool on)
         {
             if (on)
             {
                 foreach (SceneObjectPart p in group.Parts)
                 {
                     if (p.Scale.X > World.m_maxPhys || p.Scale.Y > World.m_maxPhys || p.Scale.Z > World.m_maxPhys)
-                        return;
+                        return false;
                 }
             }
             group.ScriptSetPhysicsStatus(on);
+            return true;
         }
 
         public int llGetStatus(int status)
@@ -1252,26 +1429,38 @@ namespace Phlox.ScriptEngine
         }
         public void llSetVehicleType(int type)
         {
-            if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-            PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-            if (pa == null) return;
-            pa.VehicleType = type;
+            try
+            {
+                if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
+                PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
+                if (pa == null) return;
+                pa.VehicleType = type;
+            }
+            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path
         }
 
         public void llSetVehicleFloatParam(int param, float value)
         {
-            if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-            PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-            if (pa == null) return;
-            pa.VehicleFloatParam(param, value);
+            try
+            {
+                if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
+                PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
+                if (pa == null) return;
+                pa.VehicleFloatParam(param, value);
+            }
+            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path
         }
 
         public void llSetVehicleVectorParam(int param, Vector3 vec)
         {
-            if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-            PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-            if (pa == null) return;
-            pa.VehicleVectorParam(param, vec);
+            try
+            {
+                if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
+                PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
+                if (pa == null) return;
+                pa.VehicleVectorParam(param, vec);
+            }
+            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path
         }
 
         public void llSetVehicleRotationParam(int param, Quaternion rot)
@@ -1316,6 +1505,7 @@ namespace Phlox.ScriptEngine
             // SL: "llSetPhysicsMaterial silently fails if called from an attachment."
             if (m_host.ParentGroup?.IsAttachment == true) return;
             PrimSetPhysicsMaterial(m_host, mask, density, friction, restitution, gravityMultiplier);
+            if (m_host.PhysActor != null) PhySleep();   // PHLOX-56: Halcyon's, for a prim with a physics actor
         }
 
         /// <summary>
@@ -1650,8 +1840,10 @@ namespace Phlox.ScriptEngine
             var parms = new EventParams("link_message",
                 new object[] { m_host.LinkNum, num, str ?? string.Empty, id ?? UUID.Zero.ToString() },
                 new DetectParams[0]);
-            foreach (var p in GetLinkParts(linknum))
+            var targets = GetLinkParts(linknum).ToList();
+            foreach (var p in targets)
                 m_ScriptEngine.PostObjectEvent(p.LocalId, parms);
+            LinkMessageBackPressure(ScriptItemsIn(targets));   // PHLOX-56
         }
         public int llGetStartParameter()
         {
@@ -3937,49 +4129,35 @@ namespace Phlox.ScriptEngine
             }
             ScriptSleep(5000);
         }
+        /// <summary>
+        /// PHLOX-56: Halcyon's GetNumberOfNotecardLines delays (LSLSystemAPI.cs:14521-14580) - 25 ms answered from the
+        /// notecard cache, 50 ms fetched, 100 ms when there is no such notecard - and its cache. The answer is unchanged.
+        /// </summary>
         public string llGetNumberOfNotecardLines(string name)
         {
-            if (m_host == null || string.IsNullOrEmpty(name)) return UUID.Zero.ToString();
-            TaskInventoryItem item = FindInventoryItem(name, (int)AssetType.Notecard);
-            if (item == null) return UUID.Zero.ToString();
+            if (m_host == null) return UUID.Zero.ToString();
+            TaskInventoryItem item = string.IsNullOrEmpty(name) ? null : FindInventoryItem(name, (int)AssetType.Notecard);
+            if (item == null) { NotecardSleep(NOTECARD_COUNT_ERROR_DELAY); return UUID.Zero.ToString(); }
             UUID queryID = NewDataserverQuery();   // PHLOX-46
-            UUID assetId = item.AssetID;
-            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try
-                {
-                    AssetBase asset = World.AssetService.Get(assetId.ToString());
-                    if (asset == null || asset.Data == null) { PostDataserverEvent(queryID, "0"); return; }
-                    string body = StripNotecardHeader(OpenMetaverse.Utils.BytesToString(asset.Data));
-                    int count = body.Length == 0 ? 0 : body.Split('\n').Length;
-                    PostDataserverEvent(queryID, count.ToString());
-                }
-                catch (Exception ex) { m_log.LogError("[PhloxAPI]: llGetNumberOfNotecardLines ex: {0}", ex.Message); PostDataserverEvent(queryID, "0"); }
-            });
+            bool cached = AnswerNotecardRead(item.AssetID, queryID, c => c.LineCount.ToString(), "0", "llGetNumberOfNotecardLines");
+            NotecardSleep(cached ? NOTECARD_COUNT_FAST_DELAY : NOTECARD_COUNT_LONG_DELAY);
             return queryID.ToString();
         }
 
+        /// <summary>
+        /// PHLOX-56: Halcyon's GetNotecardSegment delays (LSLSystemAPI.cs:14602-14661) - 25 ms fetched; from the cache,
+        /// 1 ms on lines 0, 16, 32 ... read from offset 0 and none otherwise; none for a missing notecard - and its cache.
+        /// </summary>
         public string llGetNotecardLine(string name, int line)
         {
             if (m_host == null || string.IsNullOrEmpty(name)) return UUID.Zero.ToString();
             TaskInventoryItem item = FindInventoryItem(name, (int)AssetType.Notecard);
             if (item == null) return UUID.Zero.ToString();
             UUID queryID = NewDataserverQuery();   // PHLOX-46
-            UUID assetId = item.AssetID;
             int lineNum = line;
-            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try
-                {
-                    AssetBase asset = World.AssetService.Get(assetId.ToString());
-                    if (asset == null || asset.Data == null) { PostDataserverEvent(queryID, "\n\n\n"); return; }
-                    string body = StripNotecardHeader(OpenMetaverse.Utils.BytesToString(asset.Data));
-                    string[] lines = body.Split('\n');
-                    if (lineNum < 0 || lineNum >= lines.Length) PostDataserverEvent(queryID, "\n\n\n");
-                    else PostDataserverEvent(queryID, lines[lineNum].TrimEnd('\r'));
-                }
-                catch (Exception ex) { m_log.LogError("[PhloxAPI]: llGetNotecardLine ex: {0}", ex.Message); PostDataserverEvent(queryID, "\n\n\n"); }
-            });
+            bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardLineAnswer(c, lineNum), "\n\n\n", "llGetNotecardLine");
+            if (cached) NotecardLineCachedSleep(line, 0);
+            else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
             return queryID.ToString();
         }
         public string iwGetNotecardSegment(string name, int line, int startOffset, int maxLength)
@@ -3989,28 +4167,11 @@ namespace Phlox.ScriptEngine
             TaskInventoryItem item = FindInventoryItem(name, (int)AssetType.Notecard);
             if (item == null) { ShoutError("Notecard '" + name + "' could not be found."); return UUID.Zero.ToString(); }
             UUID queryID = NewDataserverQuery();   // PHLOX-46
-            UUID assetId = item.AssetID;
             int lineNum = line;
-            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try
-                {
-                    AssetBase asset = World.AssetService.Get(assetId.ToString());
-                    if (asset == null || asset.Data == null) { PostDataserverEvent(queryID, "\n\n\n"); return; }
-                    string body = StripNotecardHeader(OpenMetaverse.Utils.BytesToString(asset.Data));
-                    string[] lines = body.Split('\n');
-                    if (lineNum < 0 || lineNum >= lines.Length) { PostDataserverEvent(queryID, "\n\n\n"); return; }
-                    string result = lines[lineNum].TrimEnd('\r');
-                    if (startOffset > 0 && startOffset < result.Length)
-                        result = result.Substring(startOffset);
-                    else if (startOffset >= result.Length)
-                        result = string.Empty;
-                    if (maxLength > 0 && result.Length > maxLength)
-                        result = result.Substring(0, maxLength);
-                    PostDataserverEvent(queryID, result);
-                }
-                catch (Exception ex) { m_log.LogError("[PhloxAPI]: iwGetNotecardSegment ex: {0}", ex.Message); PostDataserverEvent(queryID, "\n\n\n"); }
-            });
+            bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardSegmentAnswer(c, lineNum, startOffset, maxLength),
+                "\n\n\n", "iwGetNotecardSegment");
+            if (cached) NotecardLineCachedSleep(line, startOffset);   // PHLOX-56, as llGetNotecardLine
+            else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
             return queryID.ToString();
         }
         public string llGetNotecardLineSync(string name, int line)
@@ -4480,22 +4641,15 @@ namespace Phlox.ScriptEngine
                 }
                 if (item == null) continue;
                 UUID queryID = NewDataserverQuery();   // PHLOX-46
-                UUID assetId = item.AssetID;
-                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
-                {
-                    try
-                    {
-                        AssetBase asset = World.AssetService.Get(assetId.ToString());
-                        if (asset == null || asset.Data == null) { PostDataserverEvent(queryID, "0"); return; }
-                        string body = StripNotecardHeader(OpenMetaverse.Utils.BytesToString(asset.Data));
-                        int count = body.Length == 0 ? 0 : body.Split('\n').Length;
-                        PostDataserverEvent(queryID, count.ToString());
-                    }
-                    catch { PostDataserverEvent(queryID, "0"); }
-                });
+                // PHLOX-56: Halcyon's GetNumberOfNotecardLines delays and cache, as llGetNumberOfNotecardLines
+                bool cached = AnswerNotecardRead(item.AssetID, queryID, c => c.LineCount.ToString(), "0", null);
+                NotecardSleep(cached ? NOTECARD_COUNT_FAST_DELAY : NOTECARD_COUNT_LONG_DELAY);
                 return queryID.ToString();
             }
             ShoutError("iwGetLinkNumberOfNotecardLines: Link number " + linknumber + " does not contain notecard '" + name + "'.");
+            // PHLOX-56: Halcyon sleeps 100 ms when the link is one prim without the notecard; a link of several prims
+            // was refused before any read (LSLSystemAPI.cs:14585-14599), without a sleep.
+            if (GetLinkParts(linknumber).Take(2).Count() == 1) NotecardSleep(NOTECARD_COUNT_ERROR_DELAY);
             return UUID.Zero.ToString();
         }
         public string iwGetLinkNotecardLine(int linknumber, string name, int line)
@@ -4513,21 +4667,11 @@ namespace Phlox.ScriptEngine
                 }
                 if (item == null) continue;
                 UUID queryID = NewDataserverQuery();   // PHLOX-46
-                UUID assetId = item.AssetID;
                 int lineNum = line;
-                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
-                {
-                    try
-                    {
-                        AssetBase asset = World.AssetService.Get(assetId.ToString());
-                        if (asset == null || asset.Data == null) { PostDataserverEvent(queryID, "\n\n\n"); return; }
-                        string body = StripNotecardHeader(OpenMetaverse.Utils.BytesToString(asset.Data));
-                        string[] lines = body.Split('\n');
-                        if (lineNum < 0 || lineNum >= lines.Length) PostDataserverEvent(queryID, "\n\n\n");
-                        else PostDataserverEvent(queryID, lines[lineNum].TrimEnd('\r'));
-                    }
-                    catch { PostDataserverEvent(queryID, "\n\n\n"); }
-                });
+                // PHLOX-56: Halcyon's GetNotecardSegment delays and cache, as llGetNotecardLine
+                bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardLineAnswer(c, lineNum), "\n\n\n", null);
+                if (cached) NotecardLineCachedSleep(line, 0);
+                else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
                 return queryID.ToString();
             }
             ShoutError("iwGetLinkNotecardLine: Notecard '" + name + "' not found in link " + linknumber + ".");
@@ -4548,28 +4692,12 @@ namespace Phlox.ScriptEngine
                 }
                 if (item == null) continue;
                 UUID queryID = NewDataserverQuery();   // PHLOX-46
-                UUID assetId = item.AssetID;
                 int lineNum = line;
-                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
-                {
-                    try
-                    {
-                        AssetBase asset = World.AssetService.Get(assetId.ToString());
-                        if (asset == null || asset.Data == null) { PostDataserverEvent(queryID, "\n\n\n"); return; }
-                        string body = StripNotecardHeader(OpenMetaverse.Utils.BytesToString(asset.Data));
-                        string[] lines = body.Split('\n');
-                        if (lineNum < 0 || lineNum >= lines.Length) { PostDataserverEvent(queryID, "\n\n\n"); return; }
-                        string result = lines[lineNum].TrimEnd('\r');
-                        if (startOffset > 0 && startOffset < result.Length)
-                            result = result.Substring(startOffset);
-                        else if (startOffset >= result.Length)
-                            result = string.Empty;
-                        if (maxLength > 0 && result.Length > maxLength)
-                            result = result.Substring(0, maxLength);
-                        PostDataserverEvent(queryID, result);
-                    }
-                    catch { PostDataserverEvent(queryID, "\n\n\n"); }
-                });
+                // PHLOX-56: Halcyon's GetNotecardSegment delays and cache, as iwGetNotecardSegment
+                bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardSegmentAnswer(c, lineNum, startOffset, maxLength),
+                    "\n\n\n", null);
+                if (cached) NotecardLineCachedSleep(line, startOffset);
+                else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
                 return queryID.ToString();
             }
             return UUID.Zero.ToString();
@@ -4799,15 +4927,18 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (pusheeIsAvatar && pusheeAv != null)
             {
                 PhysicsActor pa = pusheeAv.PhysicsActor;
-                if (pa == null) return;
-                if (local != 0)
-                    appliedImpulse *= m_host.GetWorldRotation();
-                pa.AddForce(appliedImpulse, true);
+                if (pa != null)
+                {
+                    if (local != 0)
+                        appliedImpulse *= m_host.GetWorldRotation();
+                    pa.AddForce(appliedImpulse, true);
+                }
             }
             else if (pusheeOb != null)
             {
                 pusheeOb.ApplyImpulse(appliedImpulse, local != 0);
             }
+            PhySleep();   // PHLOX-56: Halcyon's, once a push is allowed (LSLSystemAPI.cs:6055)
         }
         public void llSetDamage(float damage)
         {
@@ -5958,6 +6089,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     scale.Y = Math.Max(0.01f, Math.Min(64f, scale.Y));
                     scale.Z = Math.Max(0.01f, Math.Min(64f, scale.Z));
                     part.Resize(scale);
+                    PhySleep();   // PHLOX-56: Halcyon's SetPrimParams PRIM_SIZE goes through SetScale
                     break;
                 }
 
@@ -12832,6 +12964,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             if (String.IsNullOrEmpty(str)) return str;
             int len = values.Length;
+            // PHLOX-56: Halcyon (LSLSystemAPI.cs:15930, 15959-15964): 100 ms whenever the tick count moved during a step
+            bool throttle = m_ScriptEngine != null && m_ScriptEngine.FormatStringThrottle;
+            ulong time1 = throttle ? InWorldz.Phlox.Util.Clock.Now : 0;
             for (int i = 0; i < len; i++)
             {
                 string pattern = "{" + Convert.ToString(i) + "}";
@@ -12847,6 +12982,15 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 {
                     ShoutError("Return value from iwFormatString is greater than 64kb");
                     return String.Empty;
+                }
+                if (throttle)
+                {
+                    ulong time2 = InWorldz.Phlox.Util.Clock.Now;
+                    if (time2 > time1)
+                    {
+                        ScriptSleep(100);
+                        time1 = time2;
+                    }
                 }
             }
             return str;
@@ -15834,6 +15978,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.BotChat(id, channel, message, ChatTypeEnum.Whisper, m_host.OwnerID);
+            BotSleep();   // PHLOX-56
         }
 
         public void botSay(string botID, int channel, string message)
@@ -15844,6 +15989,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.BotChat(id, channel, message, ChatTypeEnum.Say, m_host.OwnerID);
+            BotSleep();   // PHLOX-56
         }
 
         public void botShout(string botID, int channel, string message)
@@ -15854,6 +16000,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.BotChat(id, channel, message, ChatTypeEnum.Shout, m_host.OwnerID);
+            BotSleep();   // PHLOX-56
         }
 
         public void botStartTyping(string botID)
@@ -15864,6 +16011,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.BotChat(id, 0, string.Empty, ChatTypeEnum.StartTyping, m_host.OwnerID);
+            BotSleep();   // PHLOX-56
         }
 
         public void botStopTyping(string botID)
@@ -15874,6 +16022,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.BotChat(id, 0, string.Empty, ChatTypeEnum.StopTyping, m_host.OwnerID);
+            BotSleep();   // PHLOX-56
         }
 
         public void botSendInstantMessage(string botID, string userID, string message)
@@ -15911,6 +16060,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.SitBotOnObject(id, objID, m_host.OwnerID);
+            BotSleep();   // PHLOX-56
         }
 
         public void botStandUp(string botID)
@@ -15921,6 +16071,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.StandBotUp(id, m_host.OwnerID);
+            BotSleep();   // PHLOX-56
         }
 
         public void botTouchObject(string botID, string objectID)
@@ -15934,6 +16085,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.BotTouchObject(id, objID, m_host.OwnerID);
+            BotSleep();   // PHLOX-56
         }
 
         public void botGiveInventory(string botID, string destination, string inventory)
@@ -16059,6 +16211,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (botSP == null) return;
 
             List<SceneObjectGroup> groups = botSP.GetAttachments();
+            var receivers = new List<UUID>();   // PHLOX-56
             foreach (SceneObjectGroup group in groups)
             {
                 foreach (SceneObjectPart part in group.Parts)
@@ -16078,10 +16231,12 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                             object[] resobj = new object[] { linkNumber, num, msg, id };
                             m_ScriptEngine.PostScriptEvent(item.ItemID,
                                 new EventParams("link_message", resobj, new DetectParams[0]));
+                            receivers.Add(item.ItemID);
                         }
                     }
                 }
             }
+            LinkMessageBackPressure(receivers);   // PHLOX-56
         }
 
         // ── Bot Tagging ────────────────────────────────────────────────────────

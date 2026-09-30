@@ -502,7 +502,8 @@ public class ScriptCleanupTests
         using var r = new Rig();
         var gate = SlowNotecard(r);
         r.Rez(r.H.Prim, Reader);
-        Assert.True(r.PumpUntil(() => r.Count("entry") == 1));
+        // PHLOX-56: the script says "entry" before it opens its listen, and llSay now sleeps 15 ms: wait for the listen
+        Assert.True(r.PumpUntil(() => r.Count("entry") == 1 && r.Listens == 1));
         r.Say(7, "read");
         Assert.True(r.PumpUntil(() => r.Count("asked") == 1 && gate.Waiting == 1));
         gate.Release.Set();
@@ -515,7 +516,8 @@ public class ScriptCleanupTests
         using var r = new Rig();
         var gate = SlowNotecard(r);
         r.Rez(r.H.Prim, Reader);
-        Assert.True(r.PumpUntil(() => r.Count("entry") == 1));
+        // PHLOX-56: the script says "entry" before it opens its listen, and llSay now sleeps 15 ms: wait for the listen
+        Assert.True(r.PumpUntil(() => r.Count("entry") == 1 && r.Listens == 1));
         r.Say(7, "read");
         Assert.True(r.PumpUntil(() => r.Count("asked") == 1 && gate.Waiting == 1), "the fetch never started");
         r.Say(7, "reset");
@@ -531,7 +533,8 @@ public class ScriptCleanupTests
         using var r = new Rig();
         var gate = SlowNotecard(r);
         var id = r.Rez(r.H.Prim, Reader);
-        Assert.True(r.PumpUntil(() => r.Count("entry") == 1));
+        // PHLOX-56: the script says "entry" before it opens its listen, and llSay now sleeps 15 ms: wait for the listen
+        Assert.True(r.PumpUntil(() => r.Count("entry") == 1 && r.Listens == 1));
         r.Say(7, "read");
         Assert.True(r.PumpUntil(() => r.Count("asked") == 1 && gate.Waiting == 1), "the fetch never started");
         r.Delete(r.H.Prim, id);
