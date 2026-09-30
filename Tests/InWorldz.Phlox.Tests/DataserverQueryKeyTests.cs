@@ -24,7 +24,11 @@ public class DataserverQueryKeyTests
         var client = h.AddClient();
         h.RezScript("key q; default { state_entry() { q = " + request(client) + "; llSay(0, \"asked \" + (string)q); } " +
                     "dataserver(key id, string d) { llSay(0, \"answer match=\" + (string)(id == q) + \" data=\" + d); } }");
-        h.PumpFor(TimeSpan.FromSeconds(3));
+        // PHLOX-55: wait for the answer (up to 30 s), not a fixed 3 s; under a full parallel run the script had not yet
+        // spoken once when the window ended.
+        var until = DateTime.UtcNow.AddSeconds(30);
+        while (!h.Said.Any(s => s.StartsWith("answer ")) && DateTime.UtcNow < until)
+            h.PumpFor(TimeSpan.FromMilliseconds(50));
         var said = string.Join(" | ", h.Said);
         _out.WriteLine(said + " || debug: " + string.Join(" | ", h.SaidOn.Where(s => s.Channel == 0x7FFFFFFF).Select(s => s.Message)));
         Assert.True(h.Said.Any(s => s.StartsWith("asked ") && s != "asked " + OpenMetaverse.UUID.Zero), "no query key came back: " + said);

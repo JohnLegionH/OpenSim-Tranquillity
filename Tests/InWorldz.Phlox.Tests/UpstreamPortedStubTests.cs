@@ -129,6 +129,14 @@ public class UpstreamPortedStubTests
     /// The write half: llRezObjectWithParams with REZ_PARAM_STRING stores it on the object it rezzes.
     /// A real inventory object is rezzed in the test scene and its group inspected.
     /// </summary>
+    /// <summary>PHLOX-55: pump until a line starting with <paramref name="prefix"/> has been said, up to 30 s.</summary>
+    private static void WaitFor(SchedulerHarness h, string prefix)
+    {
+        var until = DateTime.UtcNow.AddSeconds(30);
+        while (!h.Said.Any(s => s.StartsWith(prefix)) && DateTime.UtcNow < until)
+            h.PumpFor(TimeSpan.FromMilliseconds(50));
+    }
+
     [Fact]
     public void RezObjectWithParamsStoresTheStringOnTheRezzedObject()
     {
@@ -140,7 +148,7 @@ public class UpstreamPortedStubTests
             llRezObjectWithParams(""child"", [REZ_PARAM_STRING, ""from-parent"", REZ_POS, llGetPos() + <0,0,1>, FALSE, FALSE]);
             llSay(0, ""rezzed"");
         } }");
-        h.PumpFor(TimeSpan.FromSeconds(1));
+        WaitFor(h, "rezzed");   // PHLOX-55: wait for the result, not a fixed 1 s
         Assert.Contains("rezzed", h.Said);
 
         var child = h.Scene.GetSceneObjectGroups().FirstOrDefault(g => g.UUID != h.Prim.ParentGroup.UUID && g.OwnerID == owner);
@@ -166,7 +174,7 @@ public class UpstreamPortedStubTests
             llSay(0, ""c="" + llXorBase64Strings(""QUJD"", ""QQ==""));
             llSay(0, ""d="" + llXorBase64Strings(""QUJD"", ""QUJD""));
         } }");
-        h.PumpFor(TimeSpan.FromSeconds(2));   // four calls, 0.3 s sleep each
+        WaitFor(h, "d=");   // four calls, 0.3 s sleep each. PHLOX-55: wait for the last line, not a fixed 2 s (missed once)
 
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "]");
         Assert.Contains("a=", h.Said);

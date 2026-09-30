@@ -453,7 +453,12 @@ public class ScriptCleanupTests
         Assert.Equal(0, r.HttpTracked);
     }
 
-    /// <summary>A response to another engine's request that Phlox's pump happens to take is posted as before.</summary>
+    /// <summary>
+    /// A response to another engine's request that Phlox's pump happens to take is not dropped. PHLOX-55: it goes to that
+    /// engine as YEngine's pump sends it (PhloxCrossEngineHttpResponseTests proves the delivery with YEngine running), and
+    /// Phlox's own scripts in the prim no longer get it, as they never did when YEngine's pump took it. Before PHLOX-55 it
+    /// was posted through Phlox only, so the witness heard it and the script that asked did not.
+    /// </summary>
     [Fact]
     public void AnotherEnginesResponseIsNotDropped()
     {
@@ -464,7 +469,9 @@ public class ScriptCleanupTests
         // an item in the prim that Phlox does not run (another engine's script)
         var other = TaskInventoryHelpers.AddScript(r.H.Scene.AssetService, r.H.Prim, UUID.Random(), UUID.Random(), "yengine-one", "// other engine");
         r.Http.Respond(new FakeReq { ItemID = other.ItemID, LocalID = r.H.Prim.LocalId, ReqID = UUID.Random() }, "theirs");
-        Assert.True(r.PumpUntil(() => r.Count("witness heard theirs") == 1), "a foreign engine's response was dropped");
+        Assert.True(r.PumpUntil(() => r.Http.Completed.IsEmpty), "the pump never took the response");
+        Assert.Equal(0L, r.H.Engine.AsyncCommands.HttpRequestPlugin.DroppedResponses);   // taken as another engine's, not dropped
+        Quiet(r, 800, "witness heard");                                                 // and not posted to Phlox's scripts
     }
 
     private const string Reader = @"

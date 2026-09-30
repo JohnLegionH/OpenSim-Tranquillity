@@ -76,7 +76,8 @@ public class SmallCorrectnessTests
         using var h = new SchedulerHarness();
         var client = h.AddClient();
         h.RezScript($"default {{ state_entry() {{ llRequestAgentData(\"{client.AgentId}\", DATA_ONLINE); }} dataserver(key q, string d) {{ llSay(0, \"online=\" + d); }} }}");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        // PHLOX-55: wait for the answer, not a fixed 2 s (the "nowhere" case below missed that window once in a full run).
+        PumpUntil(h, () => h.Said.Any(s => s.StartsWith("online=")), TimeSpan.FromSeconds(30));
         Assert.True(h.Said.Contains("online=1"), Said(h));
     }
 
@@ -85,7 +86,7 @@ public class SmallCorrectnessTests
     {
         using var h = new SchedulerHarness();
         h.RezScript($"default {{ state_entry() {{ llRequestAgentData(\"{UUID.Random()}\", DATA_ONLINE); }} dataserver(key q, string d) {{ llSay(0, \"online=\" + d); }} }}");
-        h.PumpFor(TimeSpan.FromSeconds(2));
+        PumpUntil(h, () => h.Said.Any(s => s.StartsWith("online=")), TimeSpan.FromSeconds(30));   // PHLOX-55: as above
         Assert.True(h.Said.Contains("online=0"), Said(h));
     }
 

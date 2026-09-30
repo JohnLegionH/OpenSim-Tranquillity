@@ -4227,7 +4227,8 @@ injection, `json`, empty, and two valid values with parameters). Every endpoint 
 Found, not changed: both engines' HTTP pumps take completed requests from the core's one queue. Phlox's
 (`AsyncCommand/Plugins/HttpRequest.cs`) posts what it takes through Phlox only, so a YEngine script's http_response is
 lost when Phlox's pump gets there first. YEngine's pump posts through every engine, so Phlox's responses are never lost.
-Only regions running both engines are affected.
+Only regions running both engines are affected. **PHLOX-55: the YEngine half is fixed; the claim about YEngine's pump
+was wrong, and Phlox's responses taken by it are lost (still open, see PHLOX-55).**
 
 ### Bytecode folders in tests (inert production seam)
 
@@ -4251,6 +4252,83 @@ IOException out of harness set-up (seen once in a batch 5 run).
     (up to 30 s) instead of a fixed 2 s.
 
 Still open in production: the same unguarded stamp read can throw if several regions' engines start at once on a
-fresh install. A later change could put the read inside the try, or take a lock.
+fresh install. A later change could put the read inside the try, or take a lock. **Fixed by PHLOX-55.**
+
+No function index or declared return type changed. No constant, bytecode, serialization or cache change.
+
+## PHLOX-55 - http_response across engines; the schema stamp check guarded
+
+### http_response when a region runs YEngine and Phlox
+
+The core keeps one queue of completed llHTTPRequest calls per region (`HttpRequestModule.GetNextCompletedRequest`
+dequeues, so a response is taken by exactly one pump). YEngine's pump and Phlox's pump both drain it, each every 100 ms.
+
+- Before: a YEngine script's response taken by Phlox's pump (`AsyncCommand/Plugins/HttpRequest.cs`) was posted through
+  Phlox only. The YEngine script never got it; any Phlox script in the same prim did. Measured: 29 of 50 YEngine
+  responses lost in one run.
+- Now: Phlox's pump sends such a response exactly as YEngine's pump does (`Shared/Api/Plugins/HttpRequest.cs`): the
+  same four arguments (LSLString id, LSLInteger status, empty list, LSLString body), offered to each of the region's
+  other script engines' `PostObjectEvent(localID, EventParams)` in turn, stopping at the first that takes it. Phlox
+  scripts in that prim no longer get it, as they never did when YEngine's pump took it. Measured: 0 of 50 lost, six
+  runs.
+- Phlox's own requests, and the PHLOX-46 drop of a reset or removed script's late response, are unchanged.
+
+**Still open (needs a YEngine or core change): Phlox scripts' responses taken by YEngine's pump are lost.** PHLOX-54's
+note that "YEngine's pump posts through every engine" was wrong. That pump's engine list is the Shared
+`AsyncCommandManager`'s static list, and only YEngine instances are added to it (through LSL_Api). Phlox has its own
+same-named class with its own list. So a Phlox script's response that YEngine's pump takes goes to YEngine scripts only.
+Measured with this fix in: 38, 40 and 47 of 50 Phlox responses lost in three runs; Phlox's pump showed 0 dropped and
+exactly the lost number still outstanding, so it never saw them. Phlox cannot fix this alone. Registering Phlox into
+YEngine's list would change how YEngine's pump runs, and Phlox's `PostObjectEvent` accepts any existing prim, so
+YEngine's "first engine that accepts" loop would then hand YEngine responses to Phlox. Tracked by the skipped test
+`PhloxCrossEngineHttpResponseTests.EveryPhloxResponseReachesItsScriptWhicheverPumpTakesIt`.
+The XMLRPC pump (`AsyncCommand/Plugins/XmlRequest.cs`) has the same shape: it posts through Phlox only. Not changed.
+
+### The .schema_version check
+
+`PhloxScriptLoader.EnsureCacheSchemaVersion` runs as each region's engine starts. The stamp was read (`File.Exists`,
+`File.ReadAllText`) outside the method's try, and every engine checked at the same time.
+
+- Before: on a fresh install or after a schema bump, regions starting together each purged the cache and wrote the
+  stamp. One could read the stamp while another was writing it: an IOException ("being used by another process") out of
+  the loader's constructor, so that region's Phlox did not start. Measured: 26-36 loader exceptions and 30-43 rounds
+  with the wrong number of purges in 60 rounds of 8 loaders each (stamp missing, old or unreadable).
+- Now: the whole check (read, compare, purge, write) is in one try and runs under one process-wide lock. A failure,
+  including a stamp that cannot be read, is logged ("Failed to check or purge cache") and the engine starts. A failed
+  purge was always handled that way. Engines check one at a time: the first purges and writes the stamp, and the rest
+  read it. Measured: 0 exceptions, exactly one purge (none with a current stamp), and the current stamp at the end, in
+  60 rounds of each case.
+- What the stamp means and when a purge happens are unchanged. `PurgedCache` (internal) records that a loader purged;
+  only tests read it.
+
+### What operators will notice
+
+- On regions running both engines, YEngine scripts now get every llHTTPRequest response. Before, about half could be
+  missing.
+- A Phlox script on such a region can still miss responses (often most of them) until YEngine's pump is changed.
+  Regions running Phlox alone are not affected.
+- A simulator starting several regions at once on a fresh install or after a schema bump logs one purge warning, not
+  one per region, and no region's Phlox fails to start on the stamp.
+
+### Tests
+
+- `PhloxCrossEngineHttpResponseTests` ("phlox-state"; it needs YEngine's statics and the core HttpRequestModule's
+  process-wide filter at once, as PhloxMimeTypeYEngineTests does). Ten prims with a YEngine script and ten with a Phlox
+  script each make 5 requests (50 per engine) to a loopback listener that answers each path with its own body and a
+  200 or 202, while both pumps run. Every YEngine request gets exactly one response in its own script, with its body
+  and status; no script gets a duplicate, another script's response, or a stray. Red on the old code: 29 YEngine
+  responses lost. The Phlox half is the skipped test above.
+- `CacheSchemaStampConcurrencyTests` (parallel; its own folder per test through PHLOX-54's `BytecodeCacheDir` seam).
+  Eight loaders are released together, then each waits a random 0-1.5 ms (a spin), for 60 rounds per stamp case:
+  missing, old, unreadable, current. Red on the old code (with only the `PurgedCache` observation added): IOExceptions
+  in all three purge cases, and 8 purges per round without the stagger.
+- `ScriptCleanupTests.AnotherEnginesResponseIsNotDropped` (PHLOX-46) asserted the old path, where a Phlox witness
+  heard another engine's response. It now asserts the new contract: the pump takes the response, does not count it as
+  dropped, and does not post it to Phlox's scripts.
+- Timing waits, test-only: `SmallCorrectnessTests.DataOnlineIs{One,Zero}...`, `UpstreamPortedStubTests`
+  (`XorBase64Strings...`, `RezObjectWithParams...`) and `DataserverQueryKeyTests` now wait for the script's line (up
+  to 30 s) instead of a fixed 1-3 s; `DataOnlinePrivacyTests.Ask` waits up to 30 s instead of 5 s. Each of
+  `DataOnlineIsZero...`, `XorBase64Strings...`, `RequestAgentDataNameReturnsTheEventsKey` and
+  `AStrangerOnlineElsewhere...` missed its window once in a full run, with the script not yet started.
 
 No function index or declared return type changed. No constant, bytecode, serialization or cache change.

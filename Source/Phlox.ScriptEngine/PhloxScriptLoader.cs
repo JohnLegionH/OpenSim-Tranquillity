@@ -149,38 +149,52 @@ namespace Phlox.ScriptEngine
             m_CompileThread.Start();
         }
 
+        // PHLOX-55: every region's engine runs the stamp check when it starts, and on a fresh install several regions
+        // start at once. One process-wide lock makes them take turns, so one purges and writes the stamp and the rest
+        // read it. Held across folders too; the check is a stat, a small read and, once, a purge.
+        private static readonly object s_SchemaCheckLock = new object();
+
+        /// <summary>PHLOX-55 test observation: this loader found the stamp old or missing and purged the cache.</summary>
+        internal bool PurgedCache { get; private set; }
+
         /// <summary>
         /// If the on-disk cache was written with an older schema version, wipe it
         /// so stale .plx files don't cause null-ref crashes on deserialize.
+        /// PHLOX-55: the whole check (read, compare, purge, write) is guarded and runs one engine at a time. Any failure,
+        /// a stamp that cannot be read included, is logged and the engine starts, as a failed purge always was.
         /// </summary>
         private void EnsureCacheSchemaVersion()
         {
-            int diskVersion = 0;
-            if (File.Exists(m_VersionFile))
+            lock (s_SchemaCheckLock)
             {
-                if (!int.TryParse(File.ReadAllText(m_VersionFile).Trim(), out diskVersion))
-                    diskVersion = 0;
-            }
-
-            if (diskVersion < CACHE_SCHEMA_VERSION)
-            {
-                m_log.LogWarning(
-                    "[PhloxLoader]: Cache schema version on disk ({0}) is older than current ({1}). " +
-                    "Purging stale bytecode cache so scripts recompile cleanly.",
-                    diskVersion, CACHE_SCHEMA_VERSION);
-
                 try
                 {
-                    // Delete all .plx files; leave the directory structure.
-                    foreach (string plx in Directory.GetFiles(m_CacheDir, "*.plx", SearchOption.AllDirectories))
-                        File.Delete(plx);
+                    int diskVersion = 0;
+                    if (File.Exists(m_VersionFile))
+                    {
+                        if (!int.TryParse(File.ReadAllText(m_VersionFile).Trim(), out diskVersion))
+                            diskVersion = 0;
+                    }
 
-                    File.WriteAllText(m_VersionFile, CACHE_SCHEMA_VERSION.ToString());
-                    m_log.LogInformation("[PhloxLoader]: Bytecode cache purged and version stamp updated.");
+                    if (diskVersion < CACHE_SCHEMA_VERSION)
+                    {
+                        m_log.LogWarning(
+                            "[PhloxLoader]: Cache schema version on disk ({0}) is older than current ({1}). " +
+                            "Purging stale bytecode cache so scripts recompile cleanly.",
+                            diskVersion, CACHE_SCHEMA_VERSION);
+                        PurgedCache = true;
+
+                        // Delete all .plx files; leave the directory structure.
+                        foreach (string plx in Directory.GetFiles(m_CacheDir, "*.plx", SearchOption.AllDirectories))
+                            File.Delete(plx);
+
+                        File.WriteAllText(m_VersionFile, CACHE_SCHEMA_VERSION.ToString());
+                        m_log.LogInformation("[PhloxLoader]: Bytecode cache purged and version stamp updated.");
+                    }
                 }
                 catch (Exception ex)
                 {
-                    m_log.LogError("[PhloxLoader]: Failed to purge cache: {0}", ex.Message);
+                    m_log.LogError("[PhloxLoader]: Failed to check or purge cache: {0}", ex.Message);
                 }
             }
         }
