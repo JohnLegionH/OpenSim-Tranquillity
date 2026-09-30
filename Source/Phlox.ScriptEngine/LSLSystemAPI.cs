@@ -194,6 +194,18 @@ namespace Phlox.ScriptEngine
             if (m_ScriptEngine != null && m_ScriptEngine.ChatThrottle) ScriptSleep(15);
         }
 
+        /// <summary>
+        /// PHLOX-58: Halcyon's ScriptShoutError (LSLSystemAPI.cs:14483-14486) - the error on DEBUG_CHANNEL, then SimChat's
+        /// 15 ms (:1042-1046); LSLError, NotImplemented and Deprecated go through it. Used exactly where Halcyon used it in a
+        /// call that is not long-running (its ScriptSleep does nothing in one, :145-156). Its plain ShoutError, which does
+        /// not pause, stays ShoutError here. The paths with their Halcyon lines: lanes/work/phlox-58/STATE.md.
+        /// </summary>
+        private void ScriptShoutError(string errorText)
+        {
+            ShoutError(errorText);
+            ChatSleep();
+        }
+
         /// <summary>Halcyon botWhisper ... botTouchObject (LSLSystemAPI.cs:17867-17996): ScriptSleep(15) after the call.</summary>
         private void BotSleep()
         {
@@ -502,7 +514,7 @@ namespace Phlox.ScriptEngine
                             m_host.ParentGroup?.Name, m_host.LinkNum < 2 ? string.Empty : " link #" + m_host.LinkNum,
                             (int)m_host.AbsolutePosition.X, (int)m_host.AbsolutePosition.Y, (int)m_host.AbsolutePosition.Z);
                         m_log.LogWarning("[Phlox]: Script '{0}' calling llResetScript too frequently: {1}", llGetScriptName(), context);
-                        ShoutError("Script '" + llGetScriptName() + "' calling llResetScript too frequently: " + context);
+                        ScriptShoutError("Script '" + llGetScriptName() + "' calling llResetScript too frequently: " + context);
                         m_resetWarned = DateTime.UtcNow;
                     }
                     ResetSleepCount++;
@@ -720,7 +732,7 @@ namespace Phlox.ScriptEngine
 		{
 			if (channel == 0)
 			{
-				ShoutError("llRegionSay: cannot use channel 0");
+				ScriptShoutError("llRegionSay: cannot use channel 0");
 				return;
 			}
 			m_host?.ParentGroup?.Scene?.SimChat(msg, ChatTypeEnum.Region, channel,
@@ -755,7 +767,7 @@ namespace Phlox.ScriptEngine
 			// Halcyon (LSLSystemAPI.cs:1089-1093) refuses DEBUG_CHANNEL with this error, and nothing is sent.
 			if (channel == DEBUG_CHANNEL)
 			{
-				ShoutError("Cannot use llRegionSayTo() on DEBUG_CHANNEL.");
+				ScriptShoutError("Cannot use llRegionSayTo() on DEBUG_CHANNEL.");
 				return;
 			}
 			if (!UUID.TryParse(destId, out UUID targetId) || targetId == UUID.Zero) return;
@@ -1110,7 +1122,7 @@ namespace Phlox.ScriptEngine
             // PERMISSION_TRACK_CAMERA = 0x400
             if ((item.PermsMask & PERMISSION_TRACK_CAMERA) == 0)
             {
-                ShoutError("No permissions to track the camera");
+                ScriptShoutError("No permissions to track the camera");
                 return Vector3.Zero;
             }
             ScenePresence presence = World?.GetScenePresence(item.PermsGranter);
@@ -1126,7 +1138,7 @@ namespace Phlox.ScriptEngine
             // PERMISSION_TRACK_CAMERA = 0x400
             if ((item.PermsMask & PERMISSION_TRACK_CAMERA) == 0)
             {
-                ShoutError("No permissions to track the camera");
+                ScriptShoutError("No permissions to track the camera");
                 return Quaternion.Identity;
             }
             ScenePresence presence = World?.GetScenePresence(item.PermsGranter);
@@ -1696,7 +1708,7 @@ namespace Phlox.ScriptEngine
             TaskInventoryItem item = FindInventoryItem(name, (int)AssetType.LSLText);
             if (item == null)
             {
-                ShoutError("llResetOtherScript: script '" + name + "' not found");
+                ScriptShoutError("llResetOtherScript: script '" + name + "' not found");
                 return;
             }
             m_ScriptEngine.ApiResetScript(item.ItemID);
@@ -1708,7 +1720,7 @@ namespace Phlox.ScriptEngine
             TaskInventoryItem item = FindInventoryItem(name, (int)AssetType.LSLText);
             if (item == null)
             {
-                ShoutError("llGetScriptState: script '" + name + "' not found");
+                ScriptShoutError("llGetScriptState: script '" + name + "' not found");
                 return 0;
             }
             return item.ScriptRunning ? 1 : 0;
@@ -1720,7 +1732,7 @@ namespace Phlox.ScriptEngine
             TaskInventoryItem item = FindInventoryItem(name, (int)AssetType.LSLText);
             if (item == null)
             {
-                ShoutError("llSetScriptState: script '" + name + "' not found");
+                ScriptShoutError("llSetScriptState: script '" + name + "' not found");
                 return;
             }
             // Use EventManager directly — SetScriptRunning requires IClientAPI
@@ -1751,7 +1763,7 @@ namespace Phlox.ScriptEngine
         {
             if (pin == 0)
             {
-                ShoutError("llRemoteLoadScriptPin: PIN cannot be zero.");
+                ScriptShoutError("llRemoteLoadScriptPin: PIN cannot be zero.");
                 ScriptSleep(3000);
                 return 0;
             }
@@ -1767,19 +1779,19 @@ namespace Phlox.ScriptEngine
             SceneObjectPart part = World?.GetSceneObjectPart(destId);
             if (part == null)
             {
-                ShoutError("llRemoteLoadScriptPin: Target prim [" + destId.ToString() + "] not found.");
+                ScriptShoutError("llRemoteLoadScriptPin: Target prim [" + destId.ToString() + "] not found.");
                 ScriptSleep(3000);
                 return 0;
             }
             if (m_host.OwnerID != part.OwnerID)
             {
-                ShoutError("llRemoteLoadScriptPin: Target prim ownership does not match.");
+                ScriptShoutError("llRemoteLoadScriptPin: Target prim ownership does not match.");
                 ScriptSleep(3000);
                 return 0;
             }
             if (m_host.UUID == destId)
             {
-                ShoutError("llRemoteLoadScriptPin: Target prim cannot be the source prim.");
+                ScriptShoutError("llRemoteLoadScriptPin: Target prim cannot be the source prim.");
                 ScriptSleep(3000);
                 return 0;
             }
@@ -1993,7 +2005,7 @@ namespace Phlox.ScriptEngine
             // attachments". The rest of the request goes on (TELEPORT alone becomes a release).
             if ((perm & PERMISSION_TELEPORT) != 0 && IsTempAttachment(m_host.ParentGroup))
             {
-                ShoutError("Temporary attachments cannot request runtime permissions to teleport.");
+                ScriptShoutError("Temporary attachments cannot request runtime permissions to teleport.");
                 perm &= ~PERMISSION_TELEPORT;
             }
 
@@ -2539,7 +2551,7 @@ namespace Phlox.ScriptEngine
 
             if (sp.UUID != grp.OwnerID && !GiveToTempWearer(grp, sp, item))
             {
-                ShoutError("llAttachToAvatarTemp: No permission to transfer");
+                ScriptShoutError("llAttachToAvatarTemp: No permission to transfer");
                 return;
             }
             // Not added to inventory: AttachmentsModule deletes an attachment with no FromItemID on detach.
@@ -4165,7 +4177,7 @@ namespace Phlox.ScriptEngine
             // Faithful port: read a segment of a notecard line (offset + length)
             if (m_host == null || string.IsNullOrEmpty(name)) return UUID.Zero.ToString();
             TaskInventoryItem item = FindInventoryItem(name, (int)AssetType.Notecard);
-            if (item == null) { ShoutError("Notecard '" + name + "' could not be found."); return UUID.Zero.ToString(); }
+            if (item == null) { ScriptShoutError("Notecard '" + name + "' could not be found."); return UUID.Zero.ToString(); }
             UUID queryID = NewDataserverQuery();   // PHLOX-46
             int lineNum = line;
             bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardSegmentAnswer(c, lineNum, startOffset, maxLength),
@@ -4278,7 +4290,7 @@ namespace Phlox.ScriptEngine
         {
             if (matchtype > 2)
             {
-                ShoutError("IW_MATCH_COUNT/REGEX not valid for iwSearchLinkInventory");
+                ScriptShoutError("IW_MATCH_COUNT/REGEX not valid for iwSearchLinkInventory");
                 return new LSLList();
             }
             List<object> ret = new List<object>();
@@ -4646,7 +4658,7 @@ namespace Phlox.ScriptEngine
                 NotecardSleep(cached ? NOTECARD_COUNT_FAST_DELAY : NOTECARD_COUNT_LONG_DELAY);
                 return queryID.ToString();
             }
-            ShoutError("iwGetLinkNumberOfNotecardLines: Link number " + linknumber + " does not contain notecard '" + name + "'.");
+            ScriptShoutError("iwGetLinkNumberOfNotecardLines: Link number " + linknumber + " does not contain notecard '" + name + "'.");
             // PHLOX-56: Halcyon sleeps 100 ms when the link is one prim without the notecard; a link of several prims
             // was refused before any read (LSLSystemAPI.cs:14585-14599), without a sleep.
             if (GetLinkParts(linknumber).Take(2).Count() == 1) NotecardSleep(NOTECARD_COUNT_ERROR_DELAY);
@@ -4675,6 +4687,9 @@ namespace Phlox.ScriptEngine
                 return queryID.ToString();
             }
             ShoutError("iwGetLinkNotecardLine: Notecard '" + name + "' not found in link " + linknumber + ".");
+            // PHLOX-58: Halcyon (LSLSystemAPI.cs:14674-14684) reads the link's first prim, whose GetNotecardSegment pauses
+            // on a missing notecard (:14627); a link number with no prim returns without an error or a pause.
+            if (GetLinkParts(linknumber).Any()) ChatSleep();
             return UUID.Zero.ToString();
         }
         public string iwGetLinkNotecardSegment(int linknumber, string name, int line, int startOffset, int maxLength)
@@ -5002,7 +5017,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if ((item.PermsMask & PERMISSION_CHANGE_LINKS) == 0)
             {
                 // Halcyon's text (the SL wiki says only that an error is shouted).
-                ShoutError("Script trying to link but PERMISSION_CHANGE_LINKS permission not set!");
+                ScriptShoutError("Script trying to link but PERMISSION_CHANGE_LINKS permission not set!");
                 ScriptSleep(1000);
                 return;
             }
@@ -5066,7 +5081,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (item == null) return;
             if ((item.PermsMask & PERMISSION_CHANGE_LINKS) == 0)
             {
-                ShoutError("llBreakLink: PERMISSION_CHANGE_LINKS not set");
+                ScriptShoutError("llBreakLink: PERMISSION_CHANGE_LINKS not set");
                 ScriptSleep(1000);
                 return;
             }
@@ -6400,7 +6415,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     UUID texID = KeyOrName(data[idx + 1]?.ToString());
                     if (texID == UUID.Zero)
                     {
-                        ShoutError("The second argument of IW_PRIM_PROJECTOR must not be NULL_KEY.");
+                        ScriptShoutError("The second argument of IW_PRIM_PROJECTOR must not be NULL_KEY.");
                         break;
                     }
                     PrimitiveBaseShape shape = part.Shape;
@@ -6428,7 +6443,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     UUID texID = KeyOrName(data[idx]?.ToString());
                     if (texID == UUID.Zero)
                     {
-                        ShoutError("The argument of IW_PRIM_PROJECTOR_TEXTURE must not be NULL_KEY.");
+                        ScriptShoutError("The argument of IW_PRIM_PROJECTOR_TEXTURE must not be NULL_KEY.");
                         break;
                     }
                     part.Shape.ProjectionTextureUUID = texID;
@@ -6925,7 +6940,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     case PRIM_ALPHA_MODE:
                     case IW_PRIM_ALPHA:
                         if (idx < data.Length) idx++;
-                        ShoutError("texture info cannot be accessed for avatars.");
+                        ScriptShoutError("texture info cannot be accessed for avatars.");
                         break;
                     case PRIM_RENDER_MATERIAL:
                     case PRIM_GLTF_BASE_COLOR:
@@ -8584,7 +8599,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                                 if (UUID.TryParse((string)commandList.Data[i + 1], out UUID agentID))
                                     presence = World.GetScenePresence(agentID);
                             }
-                            else ShoutError("The argument of PARCEL_MEDIA_COMMAND_AGENT must be a key");
+                            else ScriptShoutError("The argument of PARCEL_MEDIA_COMMAND_AGENT must be a key");
                             ++i;
                         }
                         break;
@@ -8600,7 +8615,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         if ((i + 1) < commandList.Length)
                         {
                             if (commandList.Data[i + 1] is string) { url = (string)commandList.Data[i + 1]; update = true; }
-                            else ShoutError("The argument of PARCEL_MEDIA_COMMAND_URL must be a string.");
+                            else ScriptShoutError("The argument of PARCEL_MEDIA_COMMAND_URL must be a string.");
                             ++i;
                         }
                         break;
@@ -8613,7 +8628,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                                     textureID = UUID.Zero;
                                 update = true;
                             }
-                            else ShoutError("The argument of PARCEL_MEDIA_COMMAND_TEXTURE must be a string or key.");
+                            else ScriptShoutError("The argument of PARCEL_MEDIA_COMMAND_TEXTURE must be a string or key.");
                             ++i;
                         }
                         break;
@@ -8621,7 +8636,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         if ((i + 1) < commandList.Length)
                         {
                             if (commandList.Data[i + 1] is float) time = (float)commandList.Data[i + 1];
-                            else ShoutError("The argument of PARCEL_MEDIA_COMMAND_TIME must be a float.");
+                            else ScriptShoutError("The argument of PARCEL_MEDIA_COMMAND_TIME must be a float.");
                             ++i;
                         }
                         break;
@@ -8629,7 +8644,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         if ((i + 1) < commandList.Length)
                         {
                             if (commandList.Data[i + 1] is int) { autoAlign = (int)commandList.Data[i + 1] == 1; update = true; }
-                            else ShoutError("The argument of PARCEL_MEDIA_COMMAND_AUTO_ALIGN must be an integer.");
+                            else ScriptShoutError("The argument of PARCEL_MEDIA_COMMAND_AUTO_ALIGN must be an integer.");
                             ++i;
                         }
                         break;
@@ -8637,7 +8652,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         if ((i + 1) < commandList.Length)
                         {
                             if (commandList.Data[i + 1] is string) { mediaType = (string)commandList.Data[i + 1]; update = true; }
-                            else ShoutError("The argument of PARCEL_MEDIA_COMMAND_TYPE must be a string.");
+                            else ScriptShoutError("The argument of PARCEL_MEDIA_COMMAND_TYPE must be a string.");
                             ++i;
                         }
                         break;
@@ -8645,7 +8660,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         if ((i + 1) < commandList.Length)
                         {
                             if (commandList.Data[i + 1] is string) { description = (string)commandList.Data[i + 1]; update = true; }
-                            else ShoutError("The argument of PARCEL_MEDIA_COMMAND_DESC must be a string.");
+                            else ScriptShoutError("The argument of PARCEL_MEDIA_COMMAND_DESC must be a string.");
                             ++i;
                         }
                         break;
@@ -12455,7 +12470,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 int option;
                 if (!int.TryParse(data[i].ToString(), out option))
                 {
-                    ShoutError("Invalid flag in llHTTPRequest parameters.");
+                    ScriptShoutError("Invalid flag in llHTTPRequest parameters.");
                     return UUID.Zero.ToString();
                 }
                 string value = data[i + 1].ToString();
@@ -12980,7 +12995,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 else break;
                 if (str.Length > 32768)
                 {
-                    ShoutError("Return value from iwFormatString is greater than 64kb");
+                    ScriptShoutError("Return value from iwFormatString is greater than 64kb");
                     return String.Empty;
                 }
                 if (throttle)
@@ -13007,11 +13022,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             private readonly LSLSystemAPI m_api;
             public CodecHost(LSLSystemAPI api) { m_api = api; }
-            public void LSLError(string msg)
-            {
-                m_api.ShoutError("LSL Runtime Error: " + msg);
-                m_api.ChatSleep();
-            }
+            public void LSLError(string msg) => m_api.ScriptShoutError("LSL Runtime Error: " + msg);
             public void ScriptSleep(int delay) => m_api.ScriptSleep(delay);
         }
         public string iwReverseString(string src) => new string(src?.ToCharArray() ?? Array.Empty<char>());
@@ -13845,13 +13856,13 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     if (len1 < len2) return 0;
                     return listCompare(list1.GetSublist(len1 - len2, len1 - 1), list2);
                 case 2:
-                    ShoutError("IW_MATCH_REGEX not implemented for iwMatchList.");
+                    ScriptShoutError("IW_MATCH_REGEX not implemented for iwMatchList.");
                     break;
                 case 3:
-                    ShoutError("IW_MATCH_COUNT not implemented for iwMatchList.");
+                    ScriptShoutError("IW_MATCH_COUNT not implemented for iwMatchList.");
                     break;
                 case 4:
-                    ShoutError("IW_MATCH_COUNT_REGEX not implemented for iwMatchList.");
+                    ScriptShoutError("IW_MATCH_COUNT_REGEX not implemented for iwMatchList.");
                     break;
             }
             return 0;
@@ -13887,7 +13898,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (stride < 1) return new LSLList(src.Data.Reverse().ToArray());
             if (src.Length % stride != 0)
             {
-                ShoutError(string.Format("Error: stride argument is {0}, but source list length is not divisible by {0}", stride));
+                ScriptShoutError(string.Format("Error: stride argument is {0}, but source list length is not divisible by {0}", stride));
                 return new LSLList();
             }
             List<object> ret = new List<object>();
@@ -14490,7 +14501,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             // Check PERMISSION_DEBIT (0x02)
             if ((item.PermsMask & PERMISSION_DEBIT) == 0)
             {
-                ShoutError("llGiveMoney: PERMISSION_DEBIT not granted.");
+                ScriptShoutError("llGiveMoney: PERMISSION_DEBIT not granted.");
                 ScriptSleep(3000);
                 return 0;
             }
@@ -14617,7 +14628,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (count > 16) count = 16;
             else if (count <= 0)
             {
-                ShoutError("You must request at least one result from llCastRay.");
+                ScriptShoutError("You must request at least one result from llCastRay.");
                 return new LSLList();
             }
 
@@ -15284,7 +15295,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
             if (!ScriptOwnerIsCreator())
             {
-                ShoutError("LSL Runtime Error: iwGroupInvite requires the owner of the calling script to be the creator of the script.");
+                ScriptShoutError("LSL Runtime Error: iwGroupInvite requires the owner of the calling script to be the creator of the script.");
                 return HALCYON_RC_PERMISSION;
             }
 
@@ -15328,7 +15339,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
             if (!ScriptOwnerIsCreator())
             {
-                ShoutError("LSL Runtime Error: iwGroupEject requires the owner of the calling script to be the creator of the script.");
+                ScriptShoutError("LSL Runtime Error: iwGroupEject requires the owner of the calling script to be the creator of the script.");
                 return HALCYON_RC_PERMISSION;
             }
 
@@ -15364,7 +15375,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             if (matchType > 2)
             {
-                ShoutError("IW_MATCH_COUNT/REGEX not valid for iwSearchLinksByName");
+                ScriptShoutError("IW_MATCH_COUNT/REGEX not valid for iwSearchLinksByName");
                 return new LSLList();
             }
             List<object> ret = new List<object>();
@@ -15384,7 +15395,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             if (matchType > 2)
             {
-                ShoutError("IW_MATCH_COUNT/REGEX not valid for iwSearchLinksByDesc");
+                ScriptShoutError("IW_MATCH_COUNT/REGEX not valid for iwSearchLinksByDesc");
                 return new LSLList();
             }
             List<object> ret = new List<object>();
@@ -15860,7 +15871,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     int option = options.GetLSLIntegerItem(i);
                     if (dictOptions.ContainsKey(option))
                     {
-                        ShoutError(string.Format("botFollowAvatar: options list already includes option {0}", option));
+                        ScriptShoutError(string.Format("botFollowAvatar: options list already includes option {0}", option));
                         dictOptions.Remove(option);
                     }
                     dictOptions.Add(option, options.Data[i + 1]);
@@ -15920,7 +15931,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 int option = options.GetLSLIntegerItem(i);
                 if (dictOptions.ContainsKey(option))
                 {
-                    ShoutError(string.Format("botSetNavigationPoints: options list already includes option {0}", option));
+                    ScriptShoutError(string.Format("botSetNavigationPoints: options list already includes option {0}", option));
                     dictOptions.Remove(option);
                 }
                 dictOptions.Add(option, options.Data[i + 1]);
@@ -15944,7 +15955,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 int option = options.GetLSLIntegerItem(i);
                 if (dictOptions.ContainsKey(option))
                 {
-                    ShoutError(string.Format("botWanderWithin: options list already includes option {0}", option));
+                    ScriptShoutError(string.Format("botWanderWithin: options list already includes option {0}", option));
                     dictOptions.Remove(option);
                 }
                 dictOptions.Add(option, options.Data[i + 1]);

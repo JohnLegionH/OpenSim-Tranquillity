@@ -147,15 +147,17 @@ public class AntiAbuseSlowdownTests
         Assert.Equal(0, r.Sleep(item, api => Chat(api, fn)));
     }
 
-    /// <summary>Halcyon returns before its ScriptSleep on these errors: nothing is sent and nothing sleeps.</summary>
+    /// <summary>
+    /// Halcyon returns before its ScriptSleep on these refusals: nothing is sent and nothing sleeps. (llRegionSay on
+    /// channel 0 and llRegionSayTo on DEBUG_CHANNEL are refused with an LSLError, which pauses 15 ms as every Halcyon
+    /// script error did: PHLOX-58, ErrorPauseTests.)
+    /// </summary>
     [Fact]
     public void RefusedChatDoesNotSleep()
     {
         using var r = new Rig();
         UUID item = r.Loaded();
         r.Freeze();
-        Assert.Equal(0, r.Sleep(item, api => api.llRegionSay(0, "x")));
-        Assert.Equal(0, r.Sleep(item, api => api.llRegionSayTo(UUID.Random().ToString(), 0x7FFFFFFF, "x")));   // DEBUG_CHANNEL
         Assert.Equal(0, r.Sleep(item, api => api.llRegionSayTo(UUID.Zero.ToString(), 5, "x")));
         Assert.Equal(0, r.Sleep(item, api => api.llRegionSayTo("not a key", 5, "x")));
     }

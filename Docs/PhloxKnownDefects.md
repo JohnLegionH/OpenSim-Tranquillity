@@ -4346,9 +4346,10 @@ None of them logs anything, as none did in Halcyon. The Halcyon source lines, SL
 behaviour for each are in the work folder's STATE.md.
 
 - **Chat** (`ChatThrottle`): 15 ms after llSay, llShout, llWhisper, llRegionSay, llRegionSayTo and llOwnerSay, so at
-  most about 66 chat calls a second per script. There is no sleep when the call is refused (llRegionSay on channel 0,
-  llRegionSayTo to DEBUG_CHANNEL or to a bad or NULL key). llOwnerSay sleeps even when the owner is not in the region,
-  as Halcyon's does.
+  most about 66 chat calls a second per script. There is no sleep when the call is refused silently (llRegionSayTo to a
+  bad or NULL key). llRegionSay on channel 0 and llRegionSayTo to DEBUG_CHANNEL are refused with an error, and since
+  PHLOX-58 that error pauses 15 ms, as every Halcyon script error did (see PHLOX-58 below). llOwnerSay sleeps even when
+  the owner is not in the region, as Halcyon's does.
 - **Bots** (`BotThrottle`): 15 ms after botWhisper, botSay, botShout, botStartTyping, botStopTyping, botSitObject,
   botStandUp and botTouchObject, also when the region has no bot module. There is no sleep for a bad bot or object key.
 - **Physics** (`PhysicsThrottle`), Halcyon's PhySleep: when the physics frame time, averaged over the last 10 frames,
@@ -4405,6 +4406,10 @@ Every setting is in `[InWorldz.Phlox]`, defaults to `true`, and `false` restores
   the sim is dilating now run more slowly, as they did on InWorldz. For example, reading a 1,000-line notecard costs
   about 25 ms for the first line plus about 62 ms for the cached rest, where Phlox had no delay at all. A chat loop
   tops out at about 66 messages a second.
+- `ChatThrottle` also covers the error pause (PHLOX-58): a script error that Halcyon paused on pauses the script
+  15 ms after the error is shown on DEBUG_CHANNEL, so a script that errors in a loop runs more slowly, as on InWorldz.
+  The error text, channel and the call's result are unchanged. `ChatThrottle = false` turns this pause off with the
+  chat pause.
 - Repeated notecard reads no longer fetch the asset each time.
 - Each region logs one startup line with every value, replacing PHLOX-46's `ResetThrottle = ...` line:
   `[PhloxEngine]: Anti-abuse slowdowns: ResetThrottle = True, ChatThrottle = True, BotThrottle = True,
@@ -4493,7 +4498,7 @@ YEngine has no iwStringCodec; the function is Phlox-only (InWorldz).
 Halcyon's LSLError chats through SimChat and so sleeps 15 ms (LSLSystemAPI.cs:14510, 14483-14486, 1041-1045). Phlox's
 `ShoutError` never sleeps. iwStringCodec now adds the pause itself. The other functions that report an LSLError still
 report without it (PHLOX-56's notes list LSLError returns as "no sleep"). A later session can decide whether to apply
-the pause everywhere, under ChatThrottle.
+the pause everywhere, under ChatThrottle. (PHLOX-58 did: see its section.)
 
 No function index, declared return type or constant changed. No bytecode, serialization or cache-format change.
 
@@ -4571,3 +4576,68 @@ Regions running one engine see no change.
 - Timing wait (test-only, PHLOX-54's way): `OverloadByTypeTests` (both tests) waited a fixed second for a script's eight
   llSays. With PHLOX-56's 15 ms per llSay, one full run caught it short ("rr=1" not yet said). They now wait for the
   script's last line, up to 30 s. No assertion changed.
+
+## PHLOX-58 - every script error Halcyon paused on pauses 15 ms (ChatThrottle)
+
+John approved this on 2026-09-30. PHLOX-57 found it (above, "Found, not changed").
+
+### The rule
+
+Halcyon reported script errors two ways. `ScriptShoutError` (LSLSystemAPI.cs:14483-14486) says the error on
+DEBUG_CHANNEL through SimChat, which sleeps 15 ms (:1042-1046). LSLError, NotImplemented and Deprecated all go
+through it. Its plain `ShoutError` (:14492-14495) says the error with no sleep. Halcyon's ScriptSleep also did nothing
+inside a long-running call (:145-156), which returns its delay with SysReturn instead.
+
+So Phlox pauses 15 ms exactly where Halcyon called ScriptShoutError in a call that is not long-running. The pause is
+PHLOX-56's chat pause through the same helper, under `ChatThrottle`. `ChatThrottle = false` turns every error pause
+off. The pause changes no error text, channel, return value or ordering. A longer sleep that the call sets after the
+error (llCreateLink's 1 s, llRemoteLoadScriptPin's 3 s, the reset throttle's 5 s, and others) still sets the wake-up,
+as in Halcyon, where one sleep replaces the other.
+
+### Where it pauses
+
+The reset throttle's warning; llRegionSay on channel 0; llRegionSayTo on DEBUG_CHANNEL; llGetCameraPos and
+llGetCameraRot without the permission; llResetOtherScript, llGetScriptState and llSetScriptState on a missing script;
+llRemoteLoadScriptPin with PIN 0, a missing target, another owner's target, or its own prim; llRequestPermissions asking
+a temporary attachment for teleport; llAttachToAvatarTemp without transfer permission; iwGetNotecardSegment on a missing
+notecard; iwSearchInventory and iwSearchLinkInventory with a COUNT match type; iwGetLinkNumberOfNotecardLines; and
+iwGetLinkNotecardLine when the link is a prim; llCreateLink and llBreakLink without PERMISSION_CHANGE_LINKS;
+IW_PRIM_PROJECTOR and IW_PRIM_PROJECTOR_TEXTURE with NULL_KEY; texture rules asked of a seated avatar; the seven
+llParcelMediaCommandList argument errors; llHTTPRequest with a non-integer flag; iwFormatString over 64 kB; iwMatchList
+with a REGEX or COUNT type; iwReverseList with a bad stride; llGiveMoney without PERMISSION_DEBIT; llCastRay asking for no
+hits; iwGroupInvite and iwGroupEject when the owner is not the creator; iwSearchLinksByName and iwSearchLinksByDesc with a
+COUNT type; the repeated-option errors of botFollowAvatar, botSetNavigationPoints and botWanderWithin; and every
+iwStringCodec error (already paused by PHLOX-57; it pauses once, not twice).
+
+### Where it does not pause
+
+- Halcyon used ShoutError: llSetKeyframedMotion outside the root, llRemoteLoadScriptPin's PIN mismatch or other load
+  refusal, and a script stopped by a run-time error.
+- Halcyon's error was inside a long-running call: llRezObject, llRezAtRoot, iwRezObject and iwRezAtRoot;
+  llGiveInventory, iwGiveLinkInventory, iwDeliverInventory, llGiveInventoryList and iwGiveLinkInventoryList;
+  llManageEstateAccess; botCreateBot, botSetOutfit, botChangeOutfit and botGiveInventory.
+- Halcyon had no error there, or no such function: iwRezAt (Halcyon's is an internal helper of the long-running rez
+  calls; no synchronous Halcyon iwRezAt can be confirmed from its source), llCreateLink's other refusals, the SL
+  functions Halcyon lacked (llTeleportAgent, animation overrides, llGetInventoryDesc, the notecard Sync functions,
+  llComputeHash, llHMAC, environment, llSetAgentRot, llSetGroundTexture, llAdjustDamage), the texture and sound names
+  and rule checks Halcyon did not check, the YEngine-style llHTTPRequest errors (HTTP_MIMETYPE, the outbound filter,
+  Content-Type in a custom header), the regex time-outs, and every OSSL and NPC error.
+- Halcyon paused but Phlox reports no error, so there is nothing to pause: llGetNotecardLine and
+  llGetNumberOfNotecardLines on a missing notecard, llDialog and llTextBox checks, vehicle parameter checks,
+  llReturnObjectsBy*, and Halcyon's NotImplemented and Deprecated stubs. Adding those errors would change what scripts
+  see; not done here.
+
+The full table, with the Halcyon line for every path, is in the work folder's STATE.md.
+
+### Tests
+
+`ErrorPauseTests` ("phlox-state": it freezes the process-wide clock). For each paused path: the pause, measured by
+running the call in a syscall context that adds up every sleep; the same with ChatThrottle off, without it; the same
+text and result either way; and the wake-up on the script's own thread (15 ms, or the call's later, longer sleep). The
+unpaused paths are unchanged with ChatThrottle on or off. `AntiAbuseSlowdownTests.RefusedChatDoesNotSleep` asserted no
+sleep for llRegionSay on channel 0 and llRegionSayTo on DEBUG_CHANNEL; those two assertions moved to `ErrorPauseTests`
+with the 15 ms that Halcyon's LSLError gives there.
+
+Not driven by a test: llRequestPermissions from a temporary attachment, llAttachToAvatarTemp's transfer refusal, the
+seated-avatar texture rules, llRemoteLoadScriptPin's ownership refusal and botFollowAvatar (which needs a bot module).
+Each uses the same one-line change as the tested paths.
