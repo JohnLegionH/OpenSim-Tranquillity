@@ -63,6 +63,10 @@
     <Compile Include="AsyncCommand\Plugins\HttpRequest.cs" />
     <Compile Include="AsyncCommand\Plugins\XmlRequest.cs" />
     <Compile Include="StateManager.cs" />
+    <Compile Include="Codecs\HalcyonStringCodec.cs" />
+    <Compile Include="Codecs\FrameworkGzip.cs" />
+    <Compile Include="Codecs\ZlibDeflate.cs" />
+    <Compile Include="Codecs\FrameworkText.cs" />
   </ItemGroup>
 
 </Project>

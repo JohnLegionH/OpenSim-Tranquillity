@@ -4423,3 +4423,75 @@ was never heard (3 of 3 failed, every run). The tests now wait for the listen it
 No assertion changed.
 
 No function index or declared return type changed. No constant, bytecode, serialization or cache-format change.
+
+## PHLOX-57 - iwStringCodec: Halcyon's codecs, proven byte for byte (D13, audit S16 / F319)
+
+Before, `iwStringCodec` returned its input for every codec, the hashes and `aes` included, with no error and no sleep. A
+script that "encrypted" or "hashed" a secret got the plaintext back. D13: port Halcyon's codecs with byte-for-byte tests.
+
+### What it does now
+
+Halcyon's code (`InWorldz/InWorldz.Phlox.Engine/LSLSystemAPI.cs:16053-16955`, CodecUtil and iwStringCodec) is in
+`Source/Phlox.ScriptEngine/Codecs/HalcyonStringCodec.cs`, line for line: base16, uuid, base64, base64-safe,
+base4096/base4k, ascii, gzip, ascii-zip, md5, sha1/sha128, sha2/sha256, sha384, sha512, aes-key (PBKDF2-SHA1) and aes
+(CBC/PKCS7); operations 0 decode, 1 encode, 2 validate; the "input codec", "output codec", "nonce", "salt", "rounds",
+"key", "key codec" and "vector" parameters; every error text, limit and sleep. Halcyon's own gaps are kept as it had
+them, because scripts written for it saw them:
+- the dashed hash names (`sha-1`, `sha-256`, ...) are accepted and return "";
+- base16 validation fails any text containing a letter;
+- base4096 validation answers "INVALID CODEC";
+- ascii-zip decoding does not turn `\uXXXX` back into characters.
+
+Errors: Halcyon's LSLError. The text is `LSL Runtime Error: <message>` on DEBUG_CHANNEL (shown as "Script error: ...") and
+the call returns "" and the script goes on. Like every Halcyon chat, the error pauses the script 15 ms; that pause is
+PHLOX-56's `ChatThrottle`.
+
+Sleeps: for inputs of 1000 characters or more, `(length / 100) * 5` ms; from 8000, `* 10`; from 16000, `* 20`. For
+aes-key, `max(100, rounds)` ms. A later sleep replaces an earlier one, as in Halcyon.
+
+Bad input Halcyon did not catch (for example, base16 text that is not hex, an odd AES key size, or rounds that are not a
+number) throws out of the call. As with any exception from a call, the script stops and the owner reads the message.
+The message is .NET Framework's wording, as Halcyon's owners saw it. A hash with an unknown output codec says its error
+and then returns null. The VM refuses to push that ("Attempt to push null operand") and the script stops, as it did
+under Halcyon's VM.
+
+### .NET 10 is not Halcyon's .NET Framework 4.7.1
+
+Halcyon's code run unchanged on .NET 10 gives different answers in these places. The port reproduces Framework's
+answers:
+
+| where | .NET 10 | Framework (Halcyon) | port |
+|---|---|---|---|
+| gzip encode | header `...00 0a`, zlib-ng body | header `1f8b0800000000000400`, stock zlib level-6 body | `Codecs/ZlibDeflate.cs`: zlib 1.2.13 deflate, level 6 |
+| gzip decode | every gzip member; zlib-ng inflate | first member only; its managed inflater through an 8192-byte buffer (a short stream that ends early gives ""; a distance before the start reads zeros) | `Codecs/FrameworkGzip.cs` |
+| aes decode | `CryptoStream.Read` returns part: "Hello, World!" came back as "Hello, W" | the whole text | whole-block decrypt |
+| aes-key | a salt under 8 bytes accepted | ArgumentException | the check restored |
+| base4096 decode | `Uri.EscapeDataString`: no limit; U+FFFD for a lone high surrogate | 65520+ chars and lone high surrogates throw UriFormatException | `Codecs/FrameworkText.cs` |
+| base64 / base16 validate | newer Unicode tables (259 characters differ) | Framework's tables | Framework's tables |
+| uuid validate | OMV trims spaces | LibreMetaverse 1.0.2: 32 or 36 characters only | Halcyon's rule |
+| exception text | `(Parameter 'x')`, quoted input | `\r\nParameter name: x`, Framework wording | Framework wording |
+
+### Proof
+
+`Tests/InWorldz.Phlox.Tests/Golden/` (see its README): 1529 calls through Halcyon's own iwStringCodec, run on .NET
+Framework 4.8.1 with Halcyon's own LSLList and LibreMetaverse. Each call checks the result, the exception type and
+message, every error and the sleep. The golden files also hold 6431 gzip streams through Framework's GZipStream, 3441
+strings through Framework's Uri.EscapeDataString, and Framework's character classes for all 65536 UTF-16 units. The
+gzip bodies also equal Python's zlib 1.2.13.
+
+The tests are `IwStringCodecGoldenTests` ("phlox-state", because the clock is frozen so each sleep reads exactly) and
+`IwStringCodecTests` (parallel: the fuzz corpus, Uri, char classes, and what a script sees). There are 55 tests, all red
+on the old code.
+
+### YEngine
+
+YEngine has no iwStringCodec; the function is Phlox-only (InWorldz).
+
+### Found, not changed
+
+Halcyon's LSLError chats through SimChat and so sleeps 15 ms (LSLSystemAPI.cs:14510, 14483-14486, 1041-1045). Phlox's
+`ShoutError` never sleeps. iwStringCodec now adds the pause itself. The other functions that report an LSLError still
+report without it (PHLOX-56's notes list LSLError returns as "no sleep"). A later session can decide whether to apply
+the pause everywhere, under ChatThrottle.
+
+No function index, declared return type or constant changed. No bytecode, serialization or cache-format change.

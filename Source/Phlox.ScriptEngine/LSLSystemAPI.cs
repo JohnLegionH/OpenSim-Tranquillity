@@ -12995,7 +12995,25 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             }
             return str;
         }
-        public string iwStringCodec(string str, string pattern, int operation, LSLList extraParams) { /* Requires InWorldz CodecUtil class — not available */ return str ?? string.Empty; }
+        /// <summary>
+        /// PHLOX-57 (HALCYON-DIFF D13): Halcyon's codecs, ported in Codecs/HalcyonStringCodec.cs and proven byte for byte
+        /// against Halcyon's own code (Tests/InWorldz.Phlox.Tests/Golden). Halcyon's LSLError is its ScriptShoutError: the
+        /// error on DEBUG_CHANNEL and the 15 ms chat pause (ChatThrottle, as PHLOX-56 made it).
+        /// </summary>
+        public string iwStringCodec(string str, string pattern, int operation, LSLList extraParams)
+            => Codecs.HalcyonStringCodec.iwStringCodec(new CodecHost(this), str, pattern, operation, extraParams);
+
+        private sealed class CodecHost : Codecs.HalcyonStringCodec.IHost
+        {
+            private readonly LSLSystemAPI m_api;
+            public CodecHost(LSLSystemAPI api) { m_api = api; }
+            public void LSLError(string msg)
+            {
+                m_api.ShoutError("LSL Runtime Error: " + msg);
+                m_api.ChatSleep();
+            }
+            public void ScriptSleep(int delay) => m_api.ScriptSleep(delay);
+        }
         public string iwReverseString(string src) => new string(src?.ToCharArray() ?? Array.Empty<char>());
         public int iwChar2Int(string src, int index)
         {

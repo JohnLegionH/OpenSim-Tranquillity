@@ -17,6 +17,10 @@
   <ItemGroup>
     <None Include="dispatch-baseline.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Fixtures\*.lsl" CopyToOutputDirectory="PreserveNewest" />
+    <!-- PHLOX-57: iwStringCodec golden vectors from Halcyon's own code on .NET Framework (Golden/README.md). The
+         generator's sources are kept beside them and are not part of this build. -->
+    <None Include="Golden\*.jsonl;Golden\*.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Remove="Golden\**" />
   </ItemGroup>
 
   <ItemGroup>
