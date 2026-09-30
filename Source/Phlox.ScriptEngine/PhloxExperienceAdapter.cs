@@ -88,6 +88,24 @@ namespace Phlox.ScriptEngine
         public bool DeleteKeyValue(UUID experienceId, string key)
             => m_service != null && m_service.DeleteKey(experienceId, key) == "success";
 
+        // PHLOX-63: the SL-form calls answer with an XP_ERROR_* per NGC status, so they need the status itself, not the
+        // bool above. Same service calls; null means there is no key-value store.
+
+        /// <summary>True when the NGC key-value store (IExperienceService) is present.</summary>
+        public bool HasKeyValueStore => m_service != null;
+
+        /// <summary>NGC CreateKeyValue: "success" / "exists" / "full" / "error".</summary>
+        public string CreateKeyValueStatus(UUID experienceId, string key, string value)
+            => m_service?.CreateKeyValue(experienceId, key, value);
+
+        /// <summary>NGC UpdateKeyValue: "success" / "mismatch" / "missing" / "full" / "error". It never creates a key.</summary>
+        public string UpdateKeyValueStatus(UUID experienceId, string key, string value, bool check, string original)
+            => m_service?.UpdateKeyValue(experienceId, key, value, check, original ?? string.Empty);
+
+        /// <summary>NGC DeleteKey: "success" / "missing" / "failed".</summary>
+        public string DeleteKeyValueStatus(UUID experienceId, string key)
+            => m_service?.DeleteKey(experienceId, key);
+
         public int KeyCountKeyValue(UUID experienceId)
             => m_service?.GetKeyCount(experienceId) ?? 0;
 

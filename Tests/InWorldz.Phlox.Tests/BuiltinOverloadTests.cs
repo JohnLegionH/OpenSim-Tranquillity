@@ -186,7 +186,7 @@ public class BuiltinOverloadTests
     [InlineData("list l = llSortListStrided([1, \"a\", 2, \"b\"], 2, 0, TRUE);")]
     [InlineData("string h = llSHA256String(\"abc\", 7);")]
     [InlineData("llTargetedEmail(2, \"who@example.com\", \"s\", \"m\");")]
-    [InlineData("integer r = llUpdateKeyValue(\"k\", \"v\", \"old\");")]
+    [InlineData("key r = llUpdateKeyValue(\"k\", \"v\", \"old\");")]   // PHLOX-63: answers in dataserver, returns its key
     [InlineData("llDerezObject(llGetKey());")]
     public void TheOlderSpellingStillCompiles(string body)
     {

@@ -6876,13 +6876,13 @@ private static string ConvToString(object o)
         {
             string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
-            Defer(self, "llCreateKeyValue", new object[] { p0, p1 }, () => ConvToLSLType(self._systemAPI.llCreateKeyValue(p0, p1)), -1, false);
+            Defer(self, "llCreateKeyValue", new object[] { p0, p1 }, () => ConvToLSLType(self._systemAPI.llCreateKeyValue(p0, p1)), "00000000-0000-0000-0000-000000000000", false);
         }
 
         static private void Shim_llReadKeyValue(SyscallShim self)
         {
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
-            Defer(self, "llReadKeyValue", new object[] { p0 }, () => ConvToLSLType(self._systemAPI.llReadKeyValue(p0)), "", false);
+            Defer(self, "llReadKeyValue", new object[] { p0 }, () => ConvToLSLType(self._systemAPI.llReadKeyValue(p0)), "00000000-0000-0000-0000-000000000000", false);
         }
 
         static private void Shim_llUpdateKeyValue(SyscallShim self)
@@ -6890,30 +6890,30 @@ private static string ConvToString(object o)
             string p2 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
-            Defer(self, "llUpdateKeyValue", new object[] { p0, p1, p2 }, () => ConvToLSLType(self._systemAPI.llUpdateKeyValue(p0, p1, p2)), -1, false);
+            Defer(self, "llUpdateKeyValue", new object[] { p0, p1, p2 }, () => ConvToLSLType(self._systemAPI.llUpdateKeyValue(p0, p1, p2)), "00000000-0000-0000-0000-000000000000", false);
         }
 
         static private void Shim_llDeleteKeyValue(SyscallShim self)
         {
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
-            Defer(self, "llDeleteKeyValue", new object[] { p0 }, () => ConvToLSLType(self._systemAPI.llDeleteKeyValue(p0)), -1, false);
+            Defer(self, "llDeleteKeyValue", new object[] { p0 }, () => ConvToLSLType(self._systemAPI.llDeleteKeyValue(p0)), "00000000-0000-0000-0000-000000000000", false);
         }
 
         static private void Shim_llKeyCountKeyValue(SyscallShim self)
         {
-            Defer(self, "llKeyCountKeyValue", new object[0], () => ConvToLSLType(self._systemAPI.llKeyCountKeyValue()), 0, false);
+            Defer(self, "llKeyCountKeyValue", new object[0], () => ConvToLSLType(self._systemAPI.llKeyCountKeyValue()), "00000000-0000-0000-0000-000000000000", false);
         }
 
         static private void Shim_llKeysKeyValue(SyscallShim self)
         {
             int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
             int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
-            Defer(self, "llKeysKeyValue", new object[] { p0, p1 }, () => ConvToLSLType(self._systemAPI.llKeysKeyValue(p0, p1)), new LSLList(), false);
+            Defer(self, "llKeysKeyValue", new object[] { p0, p1 }, () => ConvToLSLType(self._systemAPI.llKeysKeyValue(p0, p1)), "00000000-0000-0000-0000-000000000000", false);
         }
 
         static private void Shim_llDataSizeKeyValue(SyscallShim self)
         {
-            Defer(self, "llDataSizeKeyValue", new object[0], () => ConvToLSLType(self._systemAPI.llDataSizeKeyValue()), 0, false);
+            Defer(self, "llDataSizeKeyValue", new object[0], () => ConvToLSLType(self._systemAPI.llDataSizeKeyValue()), "00000000-0000-0000-0000-000000000000", false);
         }
 
         static private void Shim_llClearKeyValue(SyscallShim self)

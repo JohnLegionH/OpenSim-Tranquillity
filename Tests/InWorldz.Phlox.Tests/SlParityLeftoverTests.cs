@@ -13,7 +13,9 @@ namespace InWorldz.Phlox.Tests;
 /// <item><c>quaternion</c> is a type name interchangeable with <c>rotation</c>
 /// (https://wiki.secondlife.com/wiki/Quaternion);</item>
 /// <item><c>&lt;&lt;=</c> and <c>&gt;&gt;=</c> are not LSL (https://wiki.secondlife.com/wiki/LSL_Operators
-/// lists no shift-assign) - YEngine's acceptance was an extension Phlox had copied;</item>
+/// lists no shift-assign) - YEngine's acceptance was an extension Phlox had copied. PHLOX-63: HALCYON-DIFF D7 ruled (c)
+/// "Accept &lt;&lt;= and &gt;&gt;= as an extension", so they compile again for integers (Halcyon's rule) and stay an
+/// error on their line for any other type (ShiftAssignTests);</item>
 /// <item><c>list != list</c> is the length difference, <c>==</c> is TRUE when the lengths match
 /// ("Equality test on lists does not compare contents, only the length", same page).</item>
 /// </list>
@@ -60,17 +62,21 @@ public class SlParityLeftoverTests
         Assert.Contains("q=1", h.Said);
     }
 
-    // ---- 3. <<= and >>= are not LSL ---------------------------------------------------------------
+    // ---- 3. <<= and >>= are not SL; PHLOX-63 (D7 (c)): an integer-only extension -------------------
 
     [Theory]
     [InlineData("<<=")]
     [InlineData(">>=")]
-    public void ShiftAssignIsASyntaxErrorOnItsLine(string op)
+    public void ShiftAssignIsAnIntegerExtensionAndOtherwiseAnErrorOnItsLine(string op)
     {
         var src = "default\n{\n    state_entry()\n    {\n        integer x = 1;\n        x " + op + " 1;\n    }\n}\n";
-        var compiled = PhloxCompiler.CompileTo(src, out var listener);
-        Assert.True(listener.HasErrors(), "compiled without error: " + listener.Report);
-        Assert.Contains(listener.Errors, e => e.Contains("line 6:"));
+        PhloxCompiler.CompileTo(src, out var listener);
+        Assert.False(listener.HasErrors(), "an integer shift-assign did not compile: " + listener.Report);
+
+        var fsrc = "default\n{\n    state_entry()\n    {\n        float x = 1.0;\n        x " + op + " 1;\n    }\n}\n";
+        PhloxCompiler.CompileTo(fsrc, out var flistener);
+        Assert.True(flistener.HasErrors(), "a float shift-assign compiled: " + flistener.Report);
+        Assert.Contains(flistener.Errors, e => e.Contains("line 6:"));
     }
 
     [Fact]

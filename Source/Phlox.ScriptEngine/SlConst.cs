@@ -384,6 +384,7 @@ namespace Phlox.ScriptEngine
 
         // ── XP_* ──────────────────────────────────────────────────────────
         public const int XP_ERROR_EXPERIENCE_DISABLED = 8;
+        public const int XP_ERROR_INVALID_PARAMETERS = 3;
         public const int XP_ERROR_KEY_NOT_FOUND = 14;
         public const int XP_ERROR_MATURITY_EXCEEDED = 16;
         public const int XP_ERROR_NONE = 0;
@@ -394,5 +395,6 @@ namespace Phlox.ScriptEngine
         public const int XP_ERROR_REQUEST_PERM_TIMEOUT = 18;
         public const int XP_ERROR_RETRY_UPDATE = 15;
         public const int XP_ERROR_STORAGE_EXCEPTION = 13;
+        public const int XP_ERROR_STORE_DISABLED = 12;
     }
 }

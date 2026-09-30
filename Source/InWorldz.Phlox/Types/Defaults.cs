@@ -4292,51 +4292,54 @@ namespace InWorldz.Phlox.Types
                 TableIndex = 609
             }},
 			// ── Tier 5: Experience KVP Store ──
+            // PHLOX-63 (ruling (b)): 610-616 are SL's form - they return a request key and the answer arrives in a
+            // dataserver event ("1,..." / "0,<XP_ERROR_*>"). 617 llClearKeyValue and the 618-620 *SL names are Phlox's own
+            // and stay synchronous.
             {"llCreateKeyValue", new FunctionSig {
                 FunctionName = "llCreateKeyValue",
-                ReturnType = VarType.Integer,
+                ReturnType = VarType.Key,
                 ParamTypes = new VarType[] { VarType.String, VarType.String },
                 ParamNames = new string[] { "key", "value" },
                 TableIndex = 610
             }},
             {"llReadKeyValue", new FunctionSig {
                 FunctionName = "llReadKeyValue",
-                ReturnType = VarType.String,
+                ReturnType = VarType.Key,
                 ParamTypes = new VarType[] { VarType.String },
                 ParamNames = new string[] { "key" },
                 TableIndex = 611
             }},
             {"llUpdateKeyValue", new FunctionSig {
                 FunctionName = "llUpdateKeyValue",
-                ReturnType = VarType.Integer,
+                ReturnType = VarType.Key,
                 ParamTypes = new VarType[] { VarType.String, VarType.String, VarType.String },
                 ParamNames = new string[] { "key", "value", "check" },
                 TableIndex = 612
             }},
             {"llDeleteKeyValue", new FunctionSig {
                 FunctionName = "llDeleteKeyValue",
-                ReturnType = VarType.Integer,
+                ReturnType = VarType.Key,
                 ParamTypes = new VarType[] { VarType.String },
                 ParamNames = new string[] { "key" },
                 TableIndex = 613
             }},
             {"llKeyCountKeyValue", new FunctionSig {
                 FunctionName = "llKeyCountKeyValue",
-                ReturnType = VarType.Integer,
+                ReturnType = VarType.Key,
                 ParamTypes = new VarType[] {},
                 ParamNames = new string[] {},
                 TableIndex = 614
             }},
             {"llKeysKeyValue", new FunctionSig {
                 FunctionName = "llKeysKeyValue",
-                ReturnType = VarType.List,
+                ReturnType = VarType.Key,
                 ParamTypes = new VarType[] { VarType.Integer, VarType.Integer },
                 ParamNames = new string[] { "start", "count" },
                 TableIndex = 615
             }},
             {"llDataSizeKeyValue", new FunctionSig {
                 FunctionName = "llDataSizeKeyValue",
-                ReturnType = VarType.Integer,
+                ReturnType = VarType.Key,
                 ParamTypes = new VarType[] {},
                 ParamNames = new string[] {},
                 TableIndex = 616

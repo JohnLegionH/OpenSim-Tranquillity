@@ -1003,13 +1003,13 @@ namespace InWorldz.Phlox.Glue
 		void llPatrolPoints(LSLList points, LSLList options);
 		
 		// ── Tier 5: Experience KVP Store ──
-        int llCreateKeyValue(string key, string value);
+        string llCreateKeyValue(string key, string value);
         string llReadKeyValue(string key);
-        int llUpdateKeyValue(string key, string value, string check);
-        int llDeleteKeyValue(string key);
-        int llKeyCountKeyValue();
-        LSLList llKeysKeyValue(int start, int count);
-        int llDataSizeKeyValue();
+        string llUpdateKeyValue(string key, string value, string check);
+        string llDeleteKeyValue(string key);
+        string llKeyCountKeyValue();
+        string llKeysKeyValue(int start, int count);
+        string llDataSizeKeyValue();
         int llClearKeyValue();
         string llCreateKeyValueSL(string key, string value);
         string llReadKeyValueSL(string key);

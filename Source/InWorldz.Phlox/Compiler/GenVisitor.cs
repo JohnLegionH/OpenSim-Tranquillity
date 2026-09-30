@@ -72,11 +72,57 @@ namespace InWorldz.Phlox.Compiler
                 throw new Types.TooManyErrorsException("Too many errors", null);
         }
 
+        /// <summary>
+        /// PHLOX-63: the literal as assembler text that reads back as exactly the same 32-bit float. A custom format
+        /// ("0.0###...") on a float keeps only 7 significant digits, so 2147483520.0 was written 2147484000.0 (read back as
+        /// 2147483904) and 1.17549435E-38 as 0.0. The shortest round-trip digits ("R") are written out as plain decimal,
+        /// because the assembler's FLOAT token has no exponent (Assembler.g4 FLOAT).
+        /// </summary>
         private static string FormatFloat(string text)
         {
-            if (float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float f))
-                return f.ToString("0.0##############", CultureInfo.InvariantCulture);
-            return text;
+            if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float f))
+                return text;
+            if (!float.IsFinite(f))
+                return f.ToString("0.0##############", CultureInfo.InvariantCulture);   // as before: not a number the assembler reads
+            return PlainDecimal(f.ToString("R", CultureInfo.InvariantCulture));
+        }
+
+        /// <summary>"2.1474835E+09" -> "2147483500.0", "1.1754944E-38" -> "0.000...011754944", "0.5" -> "0.5".</summary>
+        private static string PlainDecimal(string r)
+        {
+            bool negative = r.StartsWith("-", StringComparison.Ordinal);
+            if (negative) r = r.Substring(1);
+            int exponent = 0;
+            int e = r.IndexOfAny(new[] { 'E', 'e' });
+            if (e >= 0)
+            {
+                exponent = int.Parse(r.Substring(e + 1), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture);
+                r = r.Substring(0, e);
+            }
+            int dot = r.IndexOf('.');
+            string digits = dot < 0 ? r : r.Remove(dot, 1);
+            int pointAt = (dot < 0 ? r.Length : dot) + exponent;   // digits before the decimal point
+            string whole, fraction;
+            if (pointAt <= 0)
+            {
+                whole = "0";
+                fraction = new string('0', -pointAt) + digits;
+            }
+            else if (pointAt >= digits.Length)
+            {
+                whole = digits + new string('0', pointAt - digits.Length);
+                fraction = string.Empty;
+            }
+            else
+            {
+                whole = digits.Substring(0, pointAt);
+                fraction = digits.Substring(pointAt);
+            }
+            whole = whole.TrimStart('0');
+            if (whole.Length == 0) whole = "0";
+            fraction = fraction.TrimEnd('0');
+            if (fraction.Length == 0) fraction = "0";
+            return (negative ? "-" : string.Empty) + whole + "." + fraction;
         }
 
         private string DoPromotion(IParseTree node, string st)

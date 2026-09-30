@@ -4859,3 +4859,84 @@ On the old code 132 of the 143 new and changed tests fail. Changed existing test
 `AMissingNotecardForLlGetNotecardLineNowErrorsAndPauses`; two AntiAbuseSlowdownTests missing-notecard lines expect the
 error's 15 ms; ScriptCleanupTests' 500-script test expects 100 requests in flight (10 per object), its cleanup
 assertions unchanged.
+
+## PHLOX-63 - the one recompile: <<= and >>= (D7), SL's Experience key-value form, exact float literals (fixed)
+
+All three change compiled bytecode, so they share one bytecode cache bump (schema 4 -> 5). Sources and quotes are in
+the work folder's STATE.md.
+
+1. **`<<=` and `>>=` (HALCYON-DIFF D7, ruled (c): "Accept <<= and >>= as an extension; quaternion stays a type.").**
+   PHLOX-9 had taken the two tokens out of `grammar/LSL.g4` (SL has no shift-assign); they are back in the statement
+   and the assignment-expression rules, as in the old tree's grammar, and the parser is regenerated
+   (`grammar/buildgrammar4.sh`). Code generation was still there (`GenVisitor`, `TypesVisitor`, `SymbolTable`,
+   `iilsa`/`iirsa`). As in Halcyon they are integer only: `x <<= n` is `x = x << n`, the value is an integer, at the
+   assignment operators' level (right associative). Any other type - float, a vector or rotation part, string, key,
+   list, or a non-integer right side - is still a compile error: "Type mismatch: cannot apply '<<=' to float and
+   integer". Scripts written for SL never use them; they are for InWorldz content that Halcyon compiled.
+2. **Experience key-value, SL's form (ruling (b)).** `llCreateKeyValue`, `llReadKeyValue`, `llUpdateKeyValue` (SL's
+   4-argument form and Phlox's 3-argument form, which is the checked form when its third argument is not empty),
+   `llDeleteKeyValue`, `llKeyCountKeyValue`, `llKeysKeyValue` and `llDataSizeKeyValue` return a request key; the answer
+   is a `dataserver` event with that key and SL's text: `1,<value>` (create, read, update), `1,<deleted value>`
+   (delete), `1,<count>`, `1,<key>,<key>,...` (at most 4096 characters of keys), `1,<used bytes>,134217728`, or
+   `0,<XP_ERROR_*>`: 3 an empty key or one over 1011 bytes; 11 over the quota; 12 the region has no Experience
+   service; 13 a key that already exists (create), a key that does not exist (delete), or a store failure; 14 a key
+   that does not exist (read) or a first index at or past the number of keys; 15 a checked update whose original
+   value no longer matches. An update of a key that does not exist creates it (SL wiki; before, the 4-argument form
+   answered 15). Storage is NGC's Experience store as before (no schema change). A script with no Experience still
+   uses its owner's id as its store (Phlox's existing rule), so XP_ERROR_NO_EXPERIENCE (5) is never answered, where
+   SL would. Each request id is recorded (PHLOX-46): an answer owed to a script that was reset, changed state or was
+   removed in between is dropped. The work runs on the region's service lane (B2), so the region's script thread does
+   not wait on the store and one script's answers come in the order it asked.
+   Unchanged: `llClearKeyValue` (Phlox's own, returns 0 / -1 at once) and `llCreateKeyValueSL`, `llReadKeyValueSL`,
+   `llUpdateKeyValueSL` (Phlox's own, return `1,...` / `0,<code>` at once).
+3. **Exact float literals.** The compiler wrote each float literal for the assembler with a custom format
+   (`GenVisitor.FormatFloat`, `"0.0##############"`), which keeps 7 significant digits: `2147483520.0` became
+   2147483904, `16777215.0` became 16777220, and `1.17549435E-38` became 0. It now writes the shortest digits that
+   read back as the same 32-bit float, in plain decimal (the assembler's FLOAT token has no exponent), so every literal
+   keeps its exact IEEE-754 single value, as SL's float is ("uses 32 bit in IEEE-754 form"). Literals of 6 significant
+   digits or fewer, such as 0.5 or 3.14159, always compiled to the right value and are unchanged.
+
+### What residents will notice
+
+- **Scripts that use the key-value store's immediate answer must be changed.** `integer r = llCreateKeyValue(k, v);`,
+  `string v = llReadKeyValue(k);` used as the value, `llKeysKeyValue` used as a list, and the other plain names used
+  as numbers now fail to compile or get a key instead of the answer. Keep the key and read the answer in `dataserver`,
+  as in SL:
+  `key req = llReadKeyValue("score");` then `dataserver(key id, string data) { if (id == req && llGetSubString(data, 0, 0) == "1") ... llGetSubString(data, 2, -1) ... }`.
+  Scripts that already used SL's 4-argument `llUpdateKeyValue`, or the `...KeyValueSL` names, keep working.
+- Every Phlox script is compiled once again at the next region start. A running script keeps its variables, state,
+  timers and listens; a script whose code changed (one using a key-value call, a long float literal or the new
+  operators) that was saved in the middle of an event resumes idle with that event dropped.
+- `x <<= n;` and `x >>= n;` compile for integers (InWorldz scripts that used them compile again).
+- Float literals with more than 7 significant digits now keep their value: `(integer)2147483520.0` is 2147483520 and
+  `16777215.0` is 16777215. Printing a large float with `(string)` still shows 7 significant digits (see below).
+
+### What operators will notice
+
+- The Phlox bytecode cache is cleared once at the next region start (schema 5) and every script recompiles; expect
+  the first start after the update to take longer, as after PHLOX-42's bump. Saved script state is kept.
+- No new setting, no database change.
+
+### Found, not changed
+
+- `(string)` of a float (and llList2String of one) prints 7 significant digits then six decimals
+  (`Util/Encoding.cs` `f.ToString("0.000000")`): `(string)2147483520.0` says `2147484000.000000` though the value is
+  exact. Run-time only; belongs with D10's float printing rules.
+- Key-value: SL's value limit (4095 bytes) is not checked, and SL's XP_ERROR_NO_EXPERIENCE is never answered (see 2).
+- `!` and `&&` on a key compile in Phlox and stop the script at run time ("input string was not in a correct format");
+  SL refuses them at compile time.
+
+### Tests
+
+`ShiftAssignTests` (28), `FloatLiteralTests` (35) and `KeyValueSlFormTests` (34) run in parallel (compiler and VM only,
+or a harness per test with the fake store registered on its own scene); `CacheSchemaBumpTests` gains a schema-4 script
+(globals, a non-default state, a float global) that resumes under 5. Key-value: every function's success and each
+error code it gives, the dataserver text, answers in call order under each deferral mode, the returned keys, the
+4096-character cut, both quotas, a store failure, a region with no Experience service, the owner fallback, the *SL
+names unchanged, and a reset while a read is held in the store (its answer dropped; a second script's answer arrives).
+Existing tests changed: `ServiceCallGoldenTests` reports the plain key-value names' return as "is a key";
+`BuiltinOverloadTests.TheOlderSpellingStillCompiles` keeps the 3-argument llUpdateKeyValue as `key r = ...`;
+PHLOX-9's `SlParityLeftoverTests.ShiftAssignIsASyntaxErrorOnItsLine` is now
+`ShiftAssignIsAnIntegerExtensionAndOtherwiseAnErrorOnItsLine` (D7 (c) overturns what it pinned).
+On the old code 81 of the 107 new and changed tests fail; the 26 that pass are the unchanged behaviour (literals of
+few digits, the *SL names, the forms that still compile, the golden transcript, the earlier bump tests).

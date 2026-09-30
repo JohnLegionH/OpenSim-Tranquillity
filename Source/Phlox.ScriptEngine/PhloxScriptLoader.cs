@@ -46,7 +46,10 @@ namespace Phlox.ScriptEngine
         //   4 — PHLOX-42: the 17 IW_POWER_* constants for group-power bits 31-48 load as minus their bit
         //       number (they overflowed to -1); cached bytecode still carries -1. A recompile keeps each
         //       script's saved state (SerializedRuntimeState.ToRuntimeStateFor).
-        private const int CACHE_SCHEMA_VERSION = 4;
+        //   5 — PHLOX-63, the one recompile: <<= and >>= (D7), SL's Experience key-value form (610-616 return a
+        //       request key; the answer arrives in dataserver), and exact float literals (more than 7 significant
+        //       digits were rounded). State kept as in 4.
+        private const int CACHE_SCHEMA_VERSION = 5;
         private const string VERSION_FILE_NAME = ".schema_version";
 
         // PHLOX-54: CACHE_DIR and its stamp, unless the engine was given another folder (a test seam; production never

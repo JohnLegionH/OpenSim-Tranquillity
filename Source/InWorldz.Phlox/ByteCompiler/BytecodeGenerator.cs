@@ -286,7 +286,7 @@ namespace InWorldz.Phlox.ByteCompiler
             switch (operand.Type)
             {
                 case AssemblerParser.INT: val = ConvertToInt(operand.Text); break;
-                case AssemblerParser.FLOAT: val = GetConstantPoolIndex(Convert.ToSingle(operand.Text)); break;
+                case AssemblerParser.FLOAT: val = GetConstantPoolIndex(Convert.ToSingle(operand.Text, System.Globalization.CultureInfo.InvariantCulture)); break;
                 case AssemblerParser.STRING: val = GetConstantPoolIndex(UnescapeStringChars(operand.Text)); break;
                 case AssemblerParser.VECTOR: val = GetConstantPoolIndex(Vector3.Parse(operand.Text)); break;
                 case AssemblerParser.ROTATION: val = GetConstantPoolIndex(Quaternion.Parse(operand.Text)); break;

@@ -106,6 +106,60 @@ public class CacheSchemaBumpTests
         Assert.True(File.Exists(CachePath(assetId)), "the recompiled bytecode was not cached");
     }
 
+    // PHLOX-63 (schema 4 -> 5): float literals keep their exact value now. The schema-4 compiler wrote 2147483520.0 as
+    // "2147484000.0", which the assembler read as 2147483904 - so that is what the old bytecode holds.
+    private const string FloatStateScript =
+        "float big = 2147483520.0;\n" +
+        "integer count;\n" +
+        "default {\n" +
+        "    state_entry() { count = 7; state counting; }\n" +
+        "}\n" +
+        "state counting {\n" +
+        "    state_entry() { llSay(0, \"entry \" + (string)(integer)big); }\n" +
+        "    touch_start(integer n) { count = count << 1;\n" +
+        "        llSay(0, \"touch \" + (string)count + \" saved \" + (string)(integer)big + \" now \" + (string)(integer)2147483520.0); }\n" +
+        "}\n";
+
+    [Fact]
+    public void AScriptSavedUnderSchema4KeepsItsGlobalsAndStateUnder5()
+    {
+        Assert.Equal(5, CurrentSchema);
+        var assetId = UUID.Random();
+        var itemId = UUID.Random();
+
+        using (var h1 = new SchedulerHarness(bytecodeDir: CacheDir))
+        {
+            WriteCache(assetId, FloatStateScript.Replace("2147483520.0", "2147483904.0"));
+            h1.RezScript(FloatStateScript, assetId, itemId);
+            Assert.True(PumpUntil(h1, () => h1.Said.Contains("entry -2147483648"), TimeSpan.FromSeconds(20)),
+                "the old bytecode did not run from the cache: " + h1.Diagnose(itemId));
+            h1.PostTouch(itemId);
+            Assert.True(PumpUntil(h1, () => h1.Said.Contains("touch 14 saved -2147483648 now -2147483648"), TimeSpan.FromSeconds(20)),
+                "old bytecode: " + string.Join(" | ", h1.Said));
+            h1.SaveState(itemId);
+        }
+
+        StampPreviousSchema();
+        using var h2 = new SchedulerHarness(bytecodeDir: CacheDir);
+        Assert.False(File.Exists(CachePath(assetId)), "the bump did not purge the old bytecode");
+        Assert.Equal("5", File.ReadAllText(VersionFile).Trim());
+
+        h2.RezScript(FloatStateScript, assetId, itemId);
+        Assert.True(PumpUntil(h2, () => h2.InterpreterFor(itemId) != null, TimeSpan.FromSeconds(20)),
+            "not recompiled: " + h2.Diagnose(itemId));
+        h2.Pump(20);
+        h2.PostTouch(itemId);
+        Assert.True(PumpUntil(h2, () => h2.Said.Any(s => s.StartsWith("touch ")), TimeSpan.FromSeconds(20)),
+            "no touch after the recompile: " + h2.Diagnose(itemId));
+        _out.WriteLine("after the bump: " + string.Join(" | ", h2.Said));
+
+        // Globals kept (count 14 -> 28, big still the value it was saved with), still in state counting (no
+        // state_entry), and the new bytecode's literal is exact.
+        Assert.Contains("touch 28 saved -2147483648 now 2147483520", h2.Said);
+        Assert.DoesNotContain(h2.Said, s => s.StartsWith("entry"));
+        Assert.True(File.Exists(CachePath(assetId)), "the recompiled bytecode was not cached");
+    }
+
     [Fact]
     public void AScriptWhoseBytecodeDidNotChangeResumesItsSleepAcrossTheBump()
     {

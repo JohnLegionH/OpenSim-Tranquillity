@@ -17559,10 +17559,10 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             return used - oldPair + newPair > MAX_DATA_QUOTA;
         }
 
-        // KV int return contract: 0 ok · -1 invalid/error · -2 duplicate (create) ·
-        // -3 CAS-fail/not-found (update) · -4 not-found (delete) · -5 quota exceeded (create/update).
-        // The ...SL wrappers translate these to the SL XP_ERROR codes.
-        public int llCreateKeyValue(string key, string value)
+        // Phlox's synchronous key-value contract, kept for the *SL names (618-620), which answer at once:
+        // 0 ok · -1 invalid/error · -2 duplicate (create) · -3 CAS-fail/not-found (update) · -5 quota exceeded.
+        // Until PHLOX-63 these were the bodies of llCreateKeyValue / llReadKeyValue / llUpdateKeyValue(3).
+        private int SyncCreateKeyValue(string key, string value)
         {
             if (string.IsNullOrEmpty(key) || key.Length > MAX_EXPERIENCE_KEY_LENGTH) return -1;
             var expService = GetExperienceAdapter();
@@ -17586,12 +17586,12 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             }
             catch (Exception ex)
             {
-                m_log.LogWarning("[PhloxAPI]: llCreateKeyValue failed: {0}", ex.Message);
+                m_log.LogWarning("[PhloxAPI]: llCreateKeyValueSL failed: {0}", ex.Message);
                 return -1;
             }
         }
 
-        public string llReadKeyValue(string key)
+        private string SyncReadKeyValue(string key)
         {
             if (string.IsNullOrEmpty(key)) return string.Empty;
             var expService = GetExperienceAdapter();
@@ -17605,12 +17605,12 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             }
             catch (Exception ex)
             {
-                m_log.LogWarning("[PhloxAPI]: llReadKeyValue failed: {0}", ex.Message);
+                m_log.LogWarning("[PhloxAPI]: llReadKeyValueSL failed: {0}", ex.Message);
                 return string.Empty;
             }
         }
 
-        public int llUpdateKeyValue(string key, string value, string check)
+        private int SyncUpdateKeyValue(string key, string value, string check)
         {
             if (string.IsNullOrEmpty(key) || key.Length > MAX_EXPERIENCE_KEY_LENGTH) return -1;
             var expService = GetExperienceAdapter();
@@ -17631,87 +17631,158 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             }
             catch (Exception ex)
             {
-                m_log.LogWarning("[PhloxAPI]: llUpdateKeyValue failed: {0}", ex.Message);
+                m_log.LogWarning("[PhloxAPI]: llUpdateKeyValueSL failed: {0}", ex.Message);
                 return -1;
             }
         }
 
-        public int llDeleteKeyValue(string key)
+        // ── PHLOX-63: SL's key-value form (ruling (b)) ──
+        // wiki: every call "Start[s] an asynchronous transaction" and returns a key; the answer is a dataserver event
+        // with that key and cdl = llDumpList2String([ 1, ... ],",") on success or [ 0, integer error ] (XP_ERROR_*).
+        // The query id is recorded (NewDataserverQuery, PHLOX-46), so an answer owed to a script that was reset, changed
+        // state or was removed in between is dropped by PostDataserverEvent. The store work runs inside the syscall,
+        // which the shim hands to the region's service lane (Defer, B2): the scheduler thread never waits on the store,
+        // and one script's answers arrive in the order it asked.
+        // Kept from before: a script with no Experience uses its owner's id as the namespace, so XP_ERROR_NO_EXPERIENCE
+        // is never given. No key-value store at all (no IExperienceService) answers XP_ERROR_STORE_DISABLED.
+
+        private delegate string KeyValueWork(PhloxExperienceAdapter store, UUID experienceId);
+
+        private string KeyValueRequest(string fn, KeyValueWork work)
         {
-            if (string.IsNullOrEmpty(key)) return -1;
-            var expService = GetExperienceAdapter();
-            UUID expId = GetScriptExperienceId();
-            if (expService == null || expId == UUID.Zero)
-                expId = m_host.OwnerID;
-            try
+            UUID queryID = NewDataserverQuery();
+            string reply;
+            PhloxExperienceAdapter store = GetExperienceAdapter();
+            if (store == null || !store.HasKeyValueStore)
+                reply = "0," + XP_ERROR_STORE_DISABLED;
+            else
             {
-                bool ok = expService != null
-                    ? expService.DeleteKeyValue(expId, key)
-                    : false;
-                return ok ? 0 : -4; // -4 = key not found
+                UUID expId = GetScriptExperienceId();
+                if (expId == UUID.Zero) expId = m_host.OwnerID;
+                try
+                {
+                    reply = work(store, expId);
+                }
+                catch (Exception ex)
+                {
+                    m_log.LogWarning("[PhloxAPI]: {0} failed: {1}", fn, ex.Message);
+                    reply = "0," + XP_ERROR_STORAGE_EXCEPTION;
+                }
             }
-            catch (Exception ex)
-            {
-                m_log.LogWarning("[PhloxAPI]: llDeleteKeyValue failed: {0}", ex.Message);
-                return -1;
-            }
+            PostDataserverEvent(queryID, reply);
+            return queryID.ToString();
         }
 
-        public int llKeyCountKeyValue()
-        {
-            var expService = GetExperienceAdapter();
-            UUID expId = GetScriptExperienceId();
-            if (expService == null || expId == UUID.Zero)
-                expId = m_host.OwnerID;
-            try
-            {
-                return expService?.KeyCountKeyValue(expId) ?? 0;
-            }
-            catch (Exception ex)
-            {
-                m_log.LogWarning("[PhloxAPI]: llKeyCountKeyValue failed: {0}", ex.Message);
-                return 0;
-            }
-        }
+        // SL: keys are at most 1011 bytes (wiki llCreateKeyValue); an empty key names nothing.
+        private static bool BadKvKey(string key) => string.IsNullOrEmpty(key) || KvBytes(key) > MAX_EXPERIENCE_KEY_LENGTH;
 
-        public LSLList llKeysKeyValue(int start, int count)
-        {
-            if (count <= 0) count = 100;
-            if (count > 1000) count = 1000;
-            if (start < 0) start = 0;
-            var expService = GetExperienceAdapter();
-            UUID expId = GetScriptExperienceId();
-            if (expService == null || expId == UUID.Zero)
-                expId = m_host.OwnerID;
-            try
-            {
-                var keys = expService?.KeysKeyValue(expId, start, count);
-                if (keys == null || keys.Count == 0) return new LSLList();
-                return new LSLList(keys.Select(k => (object)k).ToArray());
-            }
-            catch (Exception ex)
-            {
-                m_log.LogWarning("[PhloxAPI]: llKeysKeyValue failed: {0}", ex.Message);
-                return new LSLList();
-            }
-        }
+        private static string KvFail(int xpError) => "0," + xpError;
 
-        public int llDataSizeKeyValue()
-        {
-            var expService = GetExperienceAdapter();
-            UUID expId = GetScriptExperienceId();
-            if (expService == null || expId == UUID.Zero)
-                expId = m_host.OwnerID;
-            try
+        /// <summary>wiki: key llCreateKeyValue(string k, string v). An existing key is XP_ERROR_STORAGE_EXCEPTION.</summary>
+        public string llCreateKeyValue(string key, string value)
+            => KeyValueRequest("llCreateKeyValue", (store, expId) =>
             {
-                return (int)(expService?.DataSizeKeyValue(expId) ?? 0);
-            }
-            catch (Exception ex)
+                if (BadKvKey(key)) return KvFail(XP_ERROR_INVALID_PARAMETERS);
+                value ??= string.Empty;
+                if (store.DataSizeKeyValue(expId) + KvBytes(key) + KvBytes(value) > MAX_DATA_QUOTA)
+                    return KvFail(XP_ERROR_QUOTA_EXCEEDED);
+                switch (store.CreateKeyValueStatus(expId, key, value))
+                {
+                    case "success": return "1," + value;
+                    case "full": return KvFail(XP_ERROR_QUOTA_EXCEEDED);
+                    default: return KvFail(XP_ERROR_STORAGE_EXCEPTION);   // "exists" (wiki) or a store error
+                }
+            });
+
+        /// <summary>wiki: key llReadKeyValue(string k). A missing key is XP_ERROR_KEY_NOT_FOUND.</summary>
+        public string llReadKeyValue(string key)
+            => KeyValueRequest("llReadKeyValue", (store, expId) =>
             {
-                m_log.LogWarning("[PhloxAPI]: llDataSizeKeyValue failed: {0}", ex.Message);
-                return 0;
-            }
-        }
+                if (BadKvKey(key)) return KvFail(XP_ERROR_INVALID_PARAMETERS);
+                string value = store.ReadKeyValue(expId, key);
+                return value == null ? KvFail(XP_ERROR_KEY_NOT_FOUND) : "1," + value;
+            });
+
+        /// <summary>Phlox's 3-argument llUpdateKeyValue(k, v, check): the SL 4-argument call with checked = (check != "").</summary>
+        public string llUpdateKeyValue(string key, string value, string check)
+            => llUpdateKeyValue(key, value, string.IsNullOrEmpty(check) ? 0 : 1, check);
+
+        /// <summary>
+        /// wiki: key llUpdateKeyValue(string k, string v, integer checked, string original_value). XP_ERROR_RETRY_UPDATE
+        /// when checked and the stored value is not original_value; a key that does not exist "will generate a new key with
+        /// the specified value, as if you had used llCreateKeyValue" (NGC's update does not create, so it is created here).
+        /// </summary>
+        public string llUpdateKeyValue(string k, string v, int isChecked, string original_value)
+            => KeyValueRequest("llUpdateKeyValue", (store, expId) =>
+            {
+                if (BadKvKey(k)) return KvFail(XP_ERROR_INVALID_PARAMETERS);
+                v ??= string.Empty;
+                if (ExceedsQuota(store, expId, k, v)) return KvFail(XP_ERROR_QUOTA_EXCEEDED);
+                string status = store.UpdateKeyValueStatus(expId, k, v, isChecked != 0, original_value);
+                if (status == "missing")
+                {
+                    status = store.CreateKeyValueStatus(expId, k, v);
+                    if (status == "exists") return KvFail(XP_ERROR_RETRY_UPDATE);   // created by someone else meanwhile
+                }
+                switch (status)
+                {
+                    case "success": return "1," + v;
+                    case "mismatch": return KvFail(XP_ERROR_RETRY_UPDATE);
+                    case "full": return KvFail(XP_ERROR_QUOTA_EXCEEDED);
+                    default: return KvFail(XP_ERROR_STORAGE_EXCEPTION);
+                }
+            });
+
+        /// <summary>
+        /// wiki: key llDeleteKeyValue(string k); success is [ 1, string value ] - the value deleted, read first (as the old
+        /// tree's 5e1a8837f9 did); a missing key is XP_ERROR_STORAGE_EXCEPTION.
+        /// </summary>
+        public string llDeleteKeyValue(string key)
+            => KeyValueRequest("llDeleteKeyValue", (store, expId) =>
+            {
+                if (BadKvKey(key)) return KvFail(XP_ERROR_INVALID_PARAMETERS);
+                string old = store.ReadKeyValue(expId, key);
+                return store.DeleteKeyValueStatus(expId, key) == "success"
+                    ? "1," + (old ?? string.Empty)
+                    : KvFail(XP_ERROR_STORAGE_EXCEPTION);   // "missing" (wiki) or a store error
+            });
+
+        /// <summary>wiki: key llKeyCountKeyValue(); success is [ 1, integer pairs ].</summary>
+        public string llKeyCountKeyValue()
+            => KeyValueRequest("llKeyCountKeyValue", (store, expId) => "1," + store.KeyCountKeyValue(expId));
+
+        // wiki llKeysKeyValue: "may return fewer keys than requested if ... the result list exceeds 4096 characters".
+        private const int MAX_KEYS_REPLY_CHARS = 4096;
+
+        /// <summary>
+        /// wiki: key llKeysKeyValue(integer first, integer count); success is llDumpList2String([ 1 ] + keys, ","), and
+        /// "XP_ERROR_KEY_NOT_FOUND is returned if there index given is greater than or equal to the number of keys".
+        /// Phlox's clamps are kept: count &lt;= 0 is 100, count &gt; 1000 is 1000, first &lt; 0 is 0.
+        /// </summary>
+        public string llKeysKeyValue(int start, int count)
+            => KeyValueRequest("llKeysKeyValue", (store, expId) =>
+            {
+                if (count <= 0) count = 100;
+                if (count > 1000) count = 1000;
+                if (start < 0) start = 0;
+                if (start >= store.KeyCountKeyValue(expId)) return KvFail(XP_ERROR_KEY_NOT_FOUND);
+                List<string> keys = store.KeysKeyValue(expId, start, count);
+                var reply = new System.Text.StringBuilder("1");
+                int used = 0;
+                foreach (string k in keys)
+                {
+                    int add = (used == 0 ? 0 : 1) + k.Length;
+                    if (used + add > MAX_KEYS_REPLY_CHARS) break;
+                    reply.Append(',').Append(k);
+                    used += add;
+                }
+                return used == 0 && keys.Count == 0 ? KvFail(XP_ERROR_KEY_NOT_FOUND) : reply.ToString();
+            });
+
+        /// <summary>wiki: key llDataSizeKeyValue(); success is "1,&lt;used&gt;,&lt;quota&gt;" in bytes (Phlox's quota: 128 MiB).</summary>
+        public string llDataSizeKeyValue()
+            => KeyValueRequest("llDataSizeKeyValue", (store, expId) =>
+                "1," + store.DataSizeKeyValue(expId) + "," + MAX_DATA_QUOTA);
 
         public int llClearKeyValue()
         {
@@ -17739,11 +17810,11 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
         // The ...SL wrappers present SL's async-dataserver CSV shape "1,<value>" (success) /
         // "0,<XP_ERROR>" (failure). T1 makes the failure payload a NUMERIC XP_ERROR code (was a
-        // free-text message), matching SL and the port source. (The underlying KV model stays synchronous —
-        // the async request-key + dataserver-event contract is a later architecture slice, not T1.)
+        // free-text message), matching SL and the port source. They answer at once (Phlox's own names);
+        // PHLOX-63 left them exactly as they were - SL's names now answer in dataserver.
         public string llCreateKeyValueSL(string key, string value)
         {
-            int result = llCreateKeyValue(key, value);
+            int result = SyncCreateKeyValue(key, value);
             if (result == 0)
                 return "1," + (value ?? string.Empty);
             if (result == -5) // over the 128 MiB quota (T2)
@@ -17754,7 +17825,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
         public string llReadKeyValueSL(string key)
         {
-            string val = llReadKeyValue(key);
+            string val = SyncReadKeyValue(key);
             if (!string.IsNullOrEmpty(val))
                 return "1," + val;
             // SL: a missing key => XP_ERROR_KEY_NOT_FOUND (14). (SS-4)
@@ -17763,7 +17834,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
         public string llUpdateKeyValueSL(string key, string value, string check)
         {
-            int result = llUpdateKeyValue(key, value, check);
+            int result = SyncUpdateKeyValue(key, value, check);
             if (result == 0)
                 return "1," + (value ?? string.Empty);
             if (result == -5) // over the 128 MiB quota (T2)
@@ -17771,7 +17842,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             // SL: a checked-update mismatch (CAS fail) => XP_ERROR_RETRY_UPDATE (15).
             return "0," + XP_ERROR_RETRY_UPDATE;
         }
-		
+
         // ── Tier 6: Standalone ──
 
         public string llSignRSA(string data, string privateKeyPem, string algorithm)
@@ -18584,51 +18655,6 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             {
                 ScriptSleep(20000);
             }
-        }
-
-        /// <summary>
-        /// wiki: key llUpdateKeyValue(string k, string v, integer checked, string original_value) -
-        /// asynchronous; the dataserver event carries "1,value" on success or "0,error" on failure,
-        /// XP_ERROR_RETRY_UPDATE when checked is TRUE and original_value no longer matches. The
-        /// checked update goes through the Experience KV adapter's compare-and-set; an unchecked one
-        /// writes unconditionally. The 3-argument synchronous form at 612 is untouched.
-        /// </summary>
-        public string llUpdateKeyValue(string k, string v, int isChecked, string original_value)
-        {
-            UUID requestId = UUID.Random();
-            string reply;
-            if (string.IsNullOrEmpty(k) || k.Length > MAX_EXPERIENCE_KEY_LENGTH)
-                reply = "0," + XP_ERROR_KEY_NOT_FOUND;
-            else
-            {
-                var expService = GetExperienceAdapter();
-                UUID expId = GetScriptExperienceId();
-                if (expService == null || expId == UUID.Zero) expId = m_host.OwnerID;
-                try
-                {
-                    if (expService == null) reply = "0," + XP_ERROR_RETRY_UPDATE;
-                    else if (ExceedsQuota(expService, expId, k, v)) reply = "0," + XP_ERROR_QUOTA_EXCEEDED;
-                    else if (isChecked != 0)
-                        reply = expService.UpdateKeyValue(expId, k, v, original_value) ? "1," + v : "0," + XP_ERROR_RETRY_UPDATE;
-                    else
-                    {
-                        // Unchecked: an unconditional write - compare against whatever is there now.
-                        string current = expService.ReadKeyValue(expId, k);
-                        reply = expService.UpdateKeyValue(expId, k, v, current) ? "1," + v : "0," + XP_ERROR_RETRY_UPDATE;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    m_log.LogWarning("[PhloxAPI]: llUpdateKeyValue(4) failed: {0}", ex.Message);
-                    reply = "0," + XP_ERROR_RETRY_UPDATE;
-                }
-            }
-            m_ScriptEngine?.PostScriptEvent(m_itemID, new InWorldz.Phlox.VM.PostedEvent
-            {
-                EventType = SupportedEventList.Events.DATASERVER,
-                Args = new object[] { requestId.ToString(), reply },
-            });
-            return requestId.ToString();
         }
 
         /// <summary>

@@ -51,13 +51,13 @@ default
         say(""osGetNumberOfNotecardLines|"" + (string)osGetNumberOfNotecardLines(""nc""));
         say(""llAgentInExperience|"" + (string)llAgentInExperience(G));
         say(""llGetExperienceDetails|"" + llList2CSV(llGetExperienceDetails(NULL_KEY)));
-        say(""llReadKeyValue|"" + (string)llReadKeyValue(""k""));
-        say(""llCreateKeyValue|"" + (string)llCreateKeyValue(""k"", ""v""));
+        say(""llReadKeyValue|"" + isKey((string)llReadKeyValue(""k"")));
+        say(""llCreateKeyValue|"" + isKey((string)llCreateKeyValue(""k"", ""v"")));
         say(""llUpdateKeyValue|"" + isKey((string)llUpdateKeyValue(""k"", ""v2"", FALSE, """")));
-        say(""llDeleteKeyValue|"" + (string)llDeleteKeyValue(""k""));
-        say(""llKeyCountKeyValue|"" + (string)llKeyCountKeyValue());
-        say(""llKeysKeyValue|"" + (string)llKeysKeyValue(0, 10));
-        say(""llDataSizeKeyValue|"" + (string)llDataSizeKeyValue());
+        say(""llDeleteKeyValue|"" + isKey((string)llDeleteKeyValue(""k"")));
+        say(""llKeyCountKeyValue|"" + isKey((string)llKeyCountKeyValue()));
+        say(""llKeysKeyValue|"" + isKey((string)llKeysKeyValue(0, 10)));
+        say(""llDataSizeKeyValue|"" + isKey((string)llDataSizeKeyValue()));
         say(""osInviteToGroup|"" + (string)osInviteToGroup(P));
         say(""osEjectFromGroup|"" + (string)osEjectFromGroup(P));
         say(""iwGroupInvite|"" + (string)iwGroupInvite(NULL_KEY, P, """"));
@@ -96,7 +96,7 @@ default
         say(""llCreateKeyValueSL|"" + (string)llCreateKeyValueSL(""k2"", ""v""));
         say(""llReadKeyValueSL|"" + (string)llReadKeyValueSL(""k2""));
         say(""llUpdateKeyValueSL|"" + (string)llUpdateKeyValueSL(""k2"", ""v3"", ""v""));
-        say(""llUpdateKeyValue.3|"" + (string)llUpdateKeyValue(""k2"", ""v4"", ""v3""));
+        say(""llUpdateKeyValue.3|"" + isKey((string)llUpdateKeyValue(""k2"", ""v4"", ""v3"")));
         say(""llClearKeyValue|"" + (string)llClearKeyValue());
         say(""osNpcCreate|"" + isKey((string)osNpcCreate(""Npc"", ""One"", <128, 128, 25>, """")));
         say(""osNpcCreate.5|"" + isKey((string)osNpcCreate(""Npc"", ""Two"", <128, 128, 25>, """", 0)));
