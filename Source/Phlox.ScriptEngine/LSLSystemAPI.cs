@@ -1462,8 +1462,10 @@ namespace Phlox.ScriptEngine
             SceneObjectPart part = World?.GetSceneObjectPart(key);
             if (part != null) return part.ParentGroup.GetMass();
             ScenePresence sp = World?.GetScenePresence(key);
-            if (sp?.PhysicsActor != null) return sp.PhysicsActor.Mass;
-            return 0f;
+            if (sp == null) return 0f;
+            // SL: "This function returns a mass of 0.01 for child agents." (Halcyon too.)
+            if (sp.IsChildAgent) return 0.01f;
+            return sp.GetMass();
         }
         public void llSetBuoyancy(float buoyancy)
         {
@@ -1639,16 +1641,14 @@ namespace Phlox.ScriptEngine
             try
             {
                 if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-                PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-                if (pa == null) return;
-                pa.VehicleType = type;
+                m_host.ParentGroup.RootPart.SetVehicleType(type);
             }
             finally { PhySleep(); }   // Halcyon sleeps on every path it applies
         }
 
         public void llSetVehicleFloatParam(int param, float value)
         {
-            // Halcyon also takes a vector parameter here (as <v, v, v>); Phlox hands the float to physics, as before.
+            // A vector parameter takes <value, value, value> (Halcyon :8577; SOPVehicle.ProcessFloatVehicleParam).
             if (m_host?.ParentGroup != null && !m_host.ParentGroup.IsDeleted
                 && (float.IsNaN(value) || !(VehicleFloatParamValid(param) || VehicleVectorParamValid(param))))
             {
@@ -1658,9 +1658,7 @@ namespace Phlox.ScriptEngine
             try
             {
                 if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-                PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-                if (pa == null) return;
-                pa.VehicleFloatParam(param, value);
+                m_host.ParentGroup.RootPart.SetVehicleFloatParam(param, value);
             }
             finally { PhySleep(); }   // Halcyon sleeps on every path it applies
         }
@@ -1676,9 +1674,7 @@ namespace Phlox.ScriptEngine
             try
             {
                 if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-                PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-                if (pa == null) return;
-                pa.VehicleVectorParam(param, vec);
+                m_host.ParentGroup.RootPart.SetVehicleVectorParam(param, vec);
             }
             finally { PhySleep(); }   // Halcyon sleeps on every path it applies
         }
@@ -1691,25 +1687,20 @@ namespace Phlox.ScriptEngine
                 LSLError("llSetVehicleRotationParam(" + param.ToString() + ", " + rot.ToString() + ") is not valid.");
                 return;
             }
-            PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-            if (pa == null) return;
-            pa.VehicleRotationParam(param, rot);
+            m_host.ParentGroup.RootPart.SetVehicleRotationParam(param, NormalizedRot(rot));   // Halcyon Rot2Quaternion
         }
 
+        // VEHICLE_FLAG_CAMERA_DECOUPLED is kept by SOPVehicle, so Halcyon's "is not implemented" error is not needed.
         public void llSetVehicleFlags(int flags)
         {
             if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-            PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-            if (pa == null) return;
-            pa.VehicleFlags(flags, false);
+            m_host.ParentGroup.RootPart.SetVehicleFlags(flags, false);
         }
 
         public void llRemoveVehicleFlags(int flags)
         {
             if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
-            PhysicsActor pa = m_host.ParentGroup.RootPart.PhysActor;
-            if (pa == null) return;
-            pa.VehicleFlags(flags, true);
+            m_host.ParentGroup.RootPart.SetVehicleFlags(flags, true);
         }
         public LSLList llGetPhysicsMaterial()
         {
@@ -1777,7 +1768,9 @@ namespace Phlox.ScriptEngine
             {
                 if (keyframes.Length == 0 && options.Length == 0)
                 {
-                    // Stop and clear
+                    // Stop and clear. The motion runs on the scene's keyframe timer, so dropping the reference
+                    // alone left it moving the object with nothing able to stop it (Halcyon stops it here).
+                    m_host.ParentGroup.RootPart.KeyframeMotion?.Stop();
                     m_host.ParentGroup.RootPart.KeyframeMotion = null;
                     return;
                 }
@@ -1855,6 +1848,7 @@ namespace Phlox.ScriptEngine
 
                 KeyframeMotion motion = new KeyframeMotion(m_host.ParentGroup, playMode, dFlags);
                 motion.SetKeyframes(kfArray);
+                m_host.ParentGroup.RootPart.KeyframeMotion?.Stop();   // a new motion replaces the running one
                 m_host.ParentGroup.RootPart.KeyframeMotion = motion;
                 motion.Start();
             }
