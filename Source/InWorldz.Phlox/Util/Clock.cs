@@ -3,7 +3,7 @@ using System;
 namespace InWorldz.Phlox.Util
 {
     /// <summary>
-    /// PHLOX-4. The single tick source for the whole script engine.
+    /// The single tick source for the whole script engine.
     ///
     /// <para>
     /// There used to be two, on different bases, and both were broken:

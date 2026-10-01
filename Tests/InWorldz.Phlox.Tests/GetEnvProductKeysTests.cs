@@ -50,7 +50,7 @@ public class GetEnvProductKeysTests
     }
 
     /// <summary>
-    /// PHLOX-36. llGetEnv("grid"): the grid name osGetGridName reads (Scene.SceneGridInfo.GridName), the same in both
+    /// llGetEnv("grid"): the grid name osGetGridName reads (Scene.SceneGridInfo.GridName), the same in both
     /// engines through LSL_Api.EnvGridName. A grid with no name configured, and a scene with no grid info, answer "",
     /// as an unknown key does.
     /// </summary>

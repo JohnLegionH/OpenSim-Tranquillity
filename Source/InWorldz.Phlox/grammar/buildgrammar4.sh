@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate the ANTLR4 LSL front end from LSL.g4 (PHLOX-9, 2026-09-09).
+# Regenerate the ANTLR4 LSL front end from LSL.g4.
 #
 #   bash Source/InWorldz.Phlox/grammar/buildgrammar4.sh
 #

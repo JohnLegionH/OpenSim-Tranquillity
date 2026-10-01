@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-3a. A script in an in-world prim crashes the compiler.
+/// A script in an in-world prim crashes the compiler.
 ///
 /// <para>
 /// Every region start logged
@@ -91,7 +91,7 @@ state onHigh
 }
 
 /// <summary>
-/// PHLOX-3a step 4. The owner-visible path has to tell a compiler crash apart from a fault in the
+/// The owner-visible path has to tell a compiler crash apart from a fault in the
 /// script. Before this, both arrived as "script failed to compile" followed by whatever string the
 /// compiler produced — so a NullReferenceException read to the resident as a verdict on their code.
 /// </summary>

@@ -7,7 +7,7 @@ using Xunit;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-8. Phlox's constant table against upstream <c>LSL_Constants.cs</c> and the SL wiki, by name and
+/// Phlox's constant table against upstream <c>LSL_Constants.cs</c> and the SL wiki, by name and
 /// by value (<c>Docs/audit/phlox-constants-audit.py</c>). Two things are pinned here:
 /// <list type="bullet">
 /// <item>every name upstream declares that Phlox lacked now compiles — <c>Fixtures/phlox8-upstream-names.lsl</c>

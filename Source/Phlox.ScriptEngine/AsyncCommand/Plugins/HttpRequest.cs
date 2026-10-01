@@ -25,10 +25,10 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// Ported from Halcyon/InWorldz to Legion Grid (dotnet10-modernization)
+// Ported from Halcyon/InWorldz to this engine
 // Adaptations:
 //   - HttpRequestObject replaced with IHttpServiceRequest interface (no concrete cast)
-//   - Uses PostObjectEvent by LocalID; PHLOX-55: another engine's response goes through the region's other engines
+//   - Uses PostObjectEvent by LocalID; another engine's response goes through the region's other engines
 
 using System;
 using System.Collections.Generic;
@@ -79,7 +79,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
                 switch (Complete(req))
                 {
                     case Owner.Dropped:
-                        // PHLOX-46: the script that asked is gone or was reset since - dropped here, never queued.
+                        // The script that asked is gone or was reset since - dropped here, never queued.
                         System.Threading.Interlocked.Increment(ref m_Dropped);
                         if (m_log.IsEnabled(LogLevel.Debug))
                             m_log.LogDebug("[Phlox HTTP]: late http_response {0} for {1} dropped (script reset or gone)", req.ReqID, req.ItemID);
@@ -87,8 +87,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
 
                     default:
                     {
-                        // CORE-6: SL - "triggered in all scripts in the prim, not just in the requesting script". Phlox's
-                        // own request or another engine's (PHLOX-55: the core's one completed queue is drained by every
+                        // SL - "triggered in all scripts in the prim, not just in the requesting script". Phlox's
+                        // own request or another engine's (the core's one completed queue is drained by every
                         // engine's pump), every script in the prim gets it: Phlox's here, each other engine's through it.
                         object[] resobj = new object[]
                         {
@@ -114,7 +114,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
         }
 
         /// <summary>
-        /// CORE-6: the region's other script engines get the response for their scripts in the prim, each engine once, as
+        /// The region's other script engines get the response for their scripts in the prim, each engine once, as
         /// the core's pump (OpenSim.Region.ScriptEngine.Shared/Api/Plugins/HttpRequest.cs) offers what it takes: the same
         /// arguments (LSLString id, LSLInteger status, empty list, LSLString body), built for each engine, and no stopping
         /// at the first that takes it - each engine posts only to its own scripts. Phlox is left out: it had it above.
@@ -145,15 +145,15 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
                     req.ReqID, req.ItemID, offered, req.LocalID);
         }
 
-        // ── PHLOX-46: requests belong to the script that made them (HALCYON-DIFF S12) ──
+        // ── Requests belong to the script that made them ──
         //
         // The core stops a script's PENDING requests (HttpRequestModule.StopHttpRequest), but one that has already
         // completed stays in its completed queue and would still be posted. So Phlox keeps the ids of its scripts'
         // outstanding requests; a reset or removal forgets them, and a response whose id is no longer here is dropped
         // when its script is a Phlox script (it was reset) or is no longer in the prim (it was deleted). Anything else
-        // is another engine's request that this pump happened to take; PHLOX-55 posts it through that engine.
+        // is another engine's request that this pump happened to take; it is posted through that engine.
         //
-        // CORE-6: another engine's pump can take a Phlox request's response and offer it to Phlox (PostObjectEvent). It
+        // Another engine's pump can take a Phlox request's response and offer it to Phlox (PostObjectEvent). It
         // carries no script id, so the ids a reset or removal forgets are kept a while (m_Forgotten) and such an offer is
         // dropped too (Offered). A forgotten id is kept 10 minutes: the core times a request out long before that
         // (ScriptsHttpRequestModule, 30 s by default) and a completed one waits one pump pass.
@@ -164,7 +164,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
         private readonly Dictionary<UUID, DateTime> m_Forgotten = new();   // request id -> when its script was reset or removed
         private long m_Dropped;
 
-        // PHLOX-62 (HALCYON-DIFF S11): Halcyon's in-flight caps, ScriptsHttpRequests.cs:88-99 - MAX_SINGLE_OBJECT_QUEUE_SIZE
+        // Halcyon's in-flight caps, ScriptsHttpRequests.cs:88-99 - MAX_SINGLE_OBJECT_QUEUE_SIZE
         // (per object, keyed by the object group, :373-376) and MAX_REQUEST_QUEUE_SIZE (per region, :271-272). A request is
         // in flight from its start until its response is taken or its script is reset or removed. The region count is
         // this engine's (Phlox scripts'); the core keeps no count Phlox can read. The core's rate limit is separate.
@@ -173,9 +173,9 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
 
         /// <summary>
         /// llHTTPRequest: start the request and record it in one step. The core can complete a request before
-        /// StartHttpRequest returns (a filtered URL), and the pump must not see it untracked. PHLOX-62: refused, without
+        /// StartHttpRequest returns (a filtered URL), and the pump must not see it untracked. Refused, without
         /// starting, when the object already has <see cref="MaxInFlightPerObject"/> requests in flight or the region
-        /// <see cref="MaxInFlightPerRegion"/> (<paramref name="capped"/> true, NULL_KEY). PHLOX-64: only while the engine's
+        /// <see cref="MaxInFlightPerRegion"/> (<paramref name="capped"/> true, NULL_KEY). Only while the engine's
         /// [InWorldz.Phlox] HttpInFlightThrottle is on (default true); with it off nothing is capped.
         /// </summary>
         internal UUID Start(UUID itemID, UUID objectID, Func<UUID> start, out bool capped)
@@ -203,7 +203,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
         private enum Owner { Phlox, OtherEngine, Dropped }
 
         /// <summary>
-        /// Whose response this is: a live request of a Phlox script, a request of a script another engine runs (PHLOX-55),
+        /// Whose response this is: a live request of a Phlox script, a request of a script another engine runs,
         /// or one to drop (a Phlox script reset since it asked, or a script or prim that is gone).
         /// </summary>
         private Owner Complete(IHttpServiceRequest req)
@@ -223,7 +223,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
         }
 
         /// <summary>
-        /// PHLOX-46: the script is reset or removed. Its requests are forgotten and the core stops the ones still in flight
+        /// The script is reset or removed. Its requests are forgotten and the core stops the ones still in flight
         /// (Halcyon AsyncCommandManager.RemoveScript: iHttpReq.StopHttpRequest(localID, itemID)).
         /// </summary>
         public void RemoveEvents(uint localID, OpenMetaverse.UUID itemID)
@@ -253,8 +253,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
         }
 
         /// <summary>
-        /// CORE-6: an http_response offered to Phlox's PostObjectEvent - by this pump after Complete, or by another engine's
-        /// pump that took it. False when it is a Phlox request whose script was reset or removed since (PHLOX-46: dropped).
+        /// An http_response offered to Phlox's PostObjectEvent - by this pump after Complete, or by another engine's
+        /// pump that took it. False when it is a Phlox request whose script was reset or removed since (dropped).
         /// A live Phlox request is no longer outstanding: another pump delivered it.
         /// </summary>
         internal bool Offered(object requestID)

@@ -4,12 +4,12 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// B2. A deferred syscall body that calls ScriptSleep ran on the async worker and wrote
+/// A deferred syscall body that calls ScriptSleep ran on the async worker and wrote
 /// RunState = Sleeping directly (LSLSystemAPI.ScriptSleep). If that write landed after the scheduler
 /// had already taken the script off the run queue as Syscall, the script was left Sleeping but tracked
 /// by nothing, and its return was dropped because it was no longer in Syscall - stranded for good.
 /// llRezObject never signalled a return at all, so it depended entirely on winning that race.
-/// Written against the pre-B2 code first; these must fail there and pass after the fix.
+/// Written against the unfixed code first; these must fail there and pass after the fix.
 /// </summary>
 public class SyscallSleepRaceTests
 {
@@ -34,7 +34,7 @@ default
 }
 "));
         // Every body sleeps at most 2000 ms, but under full-suite load a fixed 4 s window was not always
-        // enough (PHLOX-44), so pump until every script has said its line. A stranded script never says it,
+        // enough, so pump until every script has said its line. A stranded script never says it,
         // and still fails the assertion below, after the timeout instead of after 4 s.
         bool AllSaid()
         {

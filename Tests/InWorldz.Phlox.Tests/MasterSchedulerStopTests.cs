@@ -13,9 +13,9 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-60. <c>PhloxMasterScheduler.StopThread</c> sets <c>m_Stop</c>, signals once and joins for up to 5 s. The work
+/// <c>PhloxMasterScheduler.StopThread</c> sets <c>m_Stop</c>, signals once and joins for up to 5 s. The work
 /// loop used to read <c>m_Stop</c> and only then Reset the signal, so a stop landing between the two was erased; with
-/// no work queued the loop then waited forever and the join timed out (PHLOX-59: about 1 harness stop in 12). A region
+/// no work queued the loop then waited forever and the join timed out (about 1 harness stop in 12). A region
 /// stop that met it took 5 s longer and left the thread blocked. Here a real master scheduler is started and stopped
 /// many times, in parallel lanes, with the loop kept busy by work signals right up to the stop (the moment the race
 /// needs), and every stop must end the thread well inside the join.

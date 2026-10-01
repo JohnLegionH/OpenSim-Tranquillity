@@ -11,13 +11,13 @@ using Xunit;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-21 part A. The permission bits Phlox tested were not SL's: attach and detach were gated on
+/// The permission bits Phlox tested were not SL's: attach and detach were gated on
 /// PERMISSION_TRIGGER_ANIMATION (0x10) instead of PERMISSION_ATTACH (0x20), the implicit grants gave a
 /// sitter RELEASE_OWNERSHIP and missed OVERRIDE_ANIMATIONS for a wearer, and the answer handler took any
 /// item's answer and stored whatever bits the viewer sent.
 /// https://wiki.secondlife.com/wiki/LlRequestPermissions (implicit grants), .../LlAttachToAvatar.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class PermissionsTests
 {
     private const int TRIGGER_ANIMATION = 0x10, ATTACH = 0x20, RELEASE_OWNERSHIP = 0x40, OVERRIDE_ANIMATIONS = 0x8000;
@@ -201,7 +201,7 @@ public class PermissionsTests
 public class RecordingAttachments : DispatchProxy
 {
     public List<string> Calls { get; } = new();
-    /// <summary>PHLOX-41: each call with its arguments, under the same lock as <see cref="Calls"/>.</summary>
+    /// <summary>Each call with its arguments, under the same lock as <see cref="Calls"/>.</summary>
     public List<(string Name, object[] Args)> Invocations { get; } = new();
 
     public static IAttachmentsModule Create(out RecordingAttachments rec)

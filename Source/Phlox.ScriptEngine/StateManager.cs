@@ -31,7 +31,7 @@ using OpenSim.Framework;
 
 namespace Phlox.ScriptEngine
 {
-    /// <summary>PHLOX-11. The state row exists (or may) and could not be read: hold the script, keep the row.</summary>
+    /// <summary>The state row exists (or may) and could not be read: hold the script, keep the row.</summary>
     internal sealed class StateLoadFailedException : Exception
     {
         public UUID ItemId { get; }
@@ -47,13 +47,13 @@ namespace Phlox.ScriptEngine
         private const string DB_FILE = "ScriptEngines/Phlox/state/script_state.db";
         private readonly string m_DbFile;
 
-        // PHLOX-11 diagnostics: what the log lines count, readable by a test.
+        // Diagnostics: what the log lines count, readable by a test.
         internal int LoadFailures;
         internal string LastLoadError;
         internal int FlushFailures;
         internal string LastFlushError;
 
-        // PHLOX-11. In world, three regions restored in parallel against one script_state.db and
+        // In world, three regions restored in parallel against one script_state.db and
         // got "database is locked" on a load AND on the flush 300 ms later - and a failed load is a
         // script restarted from state_entry with its globals gone. Three things, all here:
         //   (a) journal_mode=WAL + synchronous=NORMAL, set ONCE per manager under the writer lock (the
@@ -92,7 +92,7 @@ namespace Phlox.ScriptEngine
 
         public StateManager(PhloxEngine engine) : this(engine, DB_FILE) { }
 
-        /// <summary>PHLOX-11: the DB file is a parameter so a test can run against a temp file.</summary>
+        /// <summary>The DB file is a parameter so a test can run against a temp file.</summary>
         internal StateManager(PhloxEngine engine, string dbFile)
         {
             m_Engine = engine;
@@ -131,7 +131,7 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-11. A script whose saved state could not be READ must never be written: the row on
+        /// A script whose saved state could not be READ must never be written: the row on
         /// disk is the only copy of its globals, and a fresh state_entry saved over it would destroy
         /// them. The scheduler holds such a script Disabled; this refuses every save for it until the
         /// next process, whose load will try again.
@@ -150,7 +150,7 @@ namespace Phlox.ScriptEngine
         {
             lock (m_Lock)
             {
-                if (m_LoadFailed.Contains(interp.ItemId)) return;   // PHLOX-11: never overwrite an unread row
+                if (m_LoadFailed.Contains(interp.ItemId)) return;   // Never overwrite an unread row
                 if (m_Dirty.TryGetValue(interp.ItemId, out var entry))
                 {
                     entry.ExecutionCount++;
@@ -189,7 +189,7 @@ namespace Phlox.ScriptEngine
         /// <summary>
         /// Loads saved state for a script, validating that the asset ID matches.
         /// Returns null if no state exists or the script has been modified since last save.
-        /// PHLOX-11: a DATABASE failure is not "no state" - the row may well be there. One retry after
+        /// A DATABASE failure is not "no state" - the row may well be there. One retry after
         /// the busy timeout, then <see cref="StateLoadFailedException"/>, which the scheduler turns into
         /// a script held Disabled with the row untouched, never into a fresh start.
         /// </summary>
@@ -244,7 +244,7 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-67: <see cref="DeleteState"/> when the item has a row (or unsaved state). Reading first keeps the common
+        /// <see cref="DeleteState"/> when the item has a row (or unsaved state). Reading first keeps the common
         /// case - another engine's script that never had a row - off the writer. A read that fails deletes anyway.
         /// </summary>
         public void DeleteStateIfPresent(UUID itemId)

@@ -6,7 +6,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-21b B. PHLOX-21 C made a timed-out osListenRegex filter "no match", but the listener stayed
+/// A timed-out osListenRegex filter was made "no match", but the listener stayed
 /// active, so every later line on its channel paid the 250 ms timeout again - on the chat thread,
 /// for every listener behind it. A listener whose pattern times out is now switched off exactly as
 /// llListenControl(handle, FALSE) would, and its owner is told once on DEBUG_CHANNEL.

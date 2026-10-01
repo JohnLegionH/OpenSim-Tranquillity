@@ -10,7 +10,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-19: the OSSL read-only remainder, each ported from OSSL_Api.cs under its upstream threat level through
+/// The OSSL read-only remainder, each ported from OSSL_Api.cs under its upstream threat level through
 /// OsslGate. Value assertions per group; the notecard trio reads a real notecard asset from the harness asset service.
 /// </summary>
 public class OsslReadOnlyTests

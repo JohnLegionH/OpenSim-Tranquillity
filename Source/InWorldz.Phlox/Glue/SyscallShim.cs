@@ -487,7 +487,7 @@ private static string ConvToString(object o)
                 Shim_llManageEstateAccess,  //404
 				Shim_iwSubStringIndex,      //405
                 Shim_llLinkSitTarget,       //406
-				Shim_llGetMassMKS,          //407 (PHLOX-21: was Shim_llGetMass)
+				Shim_llGetMassMKS,          //407 (was Shim_llGetMass)
                 Shim_iwGetObjectMassMKS,    //408
                 Shim_llSetLinkCamera,       //409
 				Shim_iwSetGround,           //410
@@ -758,310 +758,310 @@ private static string ConvToString(object o)
 								Shim_botSetPersistentData,      //671
 								Shim_osTeleportAgent,           //672
 								Shim_osGetAvatarList,           //673
-								Shim_osTeleportAgentLocal,      //674  PHLOX-2b
-								Shim_osTeleportAgentGrid,       //675  PHLOX-2b
-								Shim_llLinkPlaySound3,          //676  PHLOX-2b
-								Shim_llsRGB2Linear,             //677  PHLOX-5
-								Shim_llListSortStrided,         //678  PHLOX-5
-								Shim_llSHA256String1,           //679  PHLOX-5
-								Shim_llTargetedEmail3,          //680  PHLOX-5
-								Shim_llUpdateKeyValue4,         //681  PHLOX-5
-								Shim_llDerezObject2,            //682  PHLOX-5
-								Shim_osGetGridName,                  //683  PHLOX-12
-								Shim_osGetGridNick,                  //684  PHLOX-12
-								Shim_osGetGridHomeURI,               //685  PHLOX-12
-								Shim_osGetGridLoginURI,              //686  PHLOX-12
-								Shim_osGetGridGatekeeperURI,         //687  PHLOX-12
-								Shim_osGetGridCustom,                //688  PHLOX-12
-								Shim_osGetRegionSize,                //689  PHLOX-12
-								Shim_osGetRegionStats,               //690  PHLOX-12
-								Shim_osGetSimulatorVersion,          //691  PHLOX-12
-								Shim_osGetAgents,                    //692  PHLOX-12
-								Shim_osGetMapTexture,                //693  PHLOX-12
-								Shim_osGetPhysicsEngineType,         //694  PHLOX-12
-								Shim_osGetPhysicsEngineName,         //695  PHLOX-12
-								Shim_osGetSimulatorMemory,           //696  PHLOX-12
-								Shim_osGetSimulatorMemoryKB,         //697  PHLOX-12
-								Shim_osGetHealth,                    //698  PHLOX-12
-								Shim_osGetScriptEngineName,          //699  PHLOX-12
-								Shim_osAESEncrypt,                   //700  PHLOX-13
-								Shim_osAESDecrypt,                   //701  PHLOX-13
-								Shim_osAESEncryptTo,                 //702  PHLOX-13
-								Shim_osAESDecryptFrom,               //703  PHLOX-13
-								Shim_osAngleBetween,                 //704  PHLOX-13
-								Shim_osApproxEquals,                 //705  PHLOX-13
-								Shim_osApproxEquals3,                //706  PHLOX-13
-								Shim_osCheckODE,                     //707  PHLOX-13
-								Shim_osFormatString,                 //708  PHLOX-13
-								Shim_osIsNotValidNumber,             //709  PHLOX-13
-								Shim_osIsUUID,                       //710  PHLOX-13
-								Shim_osListAsFloat,                  //711  PHLOX-13
-								Shim_osListAsInteger,                //712  PHLOX-13
-								Shim_osListAsString,                 //713  PHLOX-13
-								Shim_osListAsVector,                 //714  PHLOX-13
-								Shim_osListAsRotation,               //715  PHLOX-13
-								Shim_osMatchString,                  //716  PHLOX-13
-								Shim_osMax,                          //717  PHLOX-13
-								Shim_osMin,                          //718  PHLOX-13
-								Shim_osRegexIsMatch,                 //719  PHLOX-13
-								Shim_osRound,                        //720  PHLOX-13
-								Shim_osSHA256,                       //721  PHLOX-13
-								Shim_osSlerp,                        //722  PHLOX-13
-								Shim_osStringStartsWith,             //723  PHLOX-13
-								Shim_osStringEndsWith,               //724  PHLOX-13
-								Shim_osStringIndexOf,                //725  PHLOX-13
-								Shim_osStringIndexOf5,               //726  PHLOX-13
-								Shim_osStringLastIndexOf,            //727  PHLOX-13
-								Shim_osStringLastIndexOf5,           //728  PHLOX-13
-								Shim_osStringRemove,                 //729  PHLOX-13
-								Shim_osStringReplace,                //730  PHLOX-13
-								Shim_osStringSubString,              //731  PHLOX-13
-								Shim_osStringSubString3,             //732  PHLOX-13
-								Shim_osUnixTimeToTimestamp,          //733  PHLOX-13
-								Shim_osVecDistSquare,                //734  PHLOX-13
-								Shim_osVecMagSquare,                 //735  PHLOX-13
-								Shim_osIsNpc,                        //736  PHLOX-14
-								Shim_osNpcCreate,                    //737  PHLOX-14
-								Shim_osNpcCreate5,                   //738  PHLOX-14
-								Shim_osNpcSaveAppearance,            //739  PHLOX-14
-								Shim_osNpcSaveAppearance3,           //740  PHLOX-14
-								Shim_osNpcLoadAppearance,            //741  PHLOX-14
-								Shim_osNpcGetOwner,                  //742  PHLOX-14
-								Shim_osNpcGetPos,                    //743  PHLOX-14
-								Shim_osNpcMoveTo,                    //744  PHLOX-14
-								Shim_osNpcMoveToTarget,              //745  PHLOX-14
-								Shim_osNpcGetRot,                    //746  PHLOX-14
-								Shim_osNpcSetRot,                    //747  PHLOX-14
-								Shim_osNpcStopMoveToTarget,          //748  PHLOX-14
-								Shim_osNpcSetProfileAbout,           //749  PHLOX-14
-								Shim_osNpcSetProfileImage,           //750  PHLOX-14
-								Shim_osNpcSay,                       //751  PHLOX-14
-								Shim_osNpcSay3,                      //752  PHLOX-14
-								Shim_osNpcShout,                     //753  PHLOX-14
-								Shim_osNpcWhisper,                   //754  PHLOX-14
-								Shim_osNpcSit,                       //755  PHLOX-14
-								Shim_osNpcStand,                     //756  PHLOX-14
-								Shim_osNpcRemove,                    //757  PHLOX-14
-								Shim_osNpcPlayAnimation,             //758  PHLOX-14
-								Shim_osNpcStopAnimation,             //759  PHLOX-14
-								Shim_osNpcTouch,                     //760  PHLOX-14
-								Shim_osSetRot,                        //761  PHLOX-15
-								Shim_osForceCreateLink,               //762  PHLOX-15
-								Shim_osForceBreakLink,                //763  PHLOX-15
-								Shim_osForceBreakAllLinks,            //764  PHLOX-15
-								Shim_osTeleportObject,                //765  PHLOX-15
-								Shim_osSetSpeed,                      //766  PHLOX-15
-								Shim_osSetOwnerSpeed,                 //767  PHLOX-15
-								Shim_osSetContentType,                //768  PHLOX-15
-								Shim_osSetPrimFloatOnWater,           //769  PHLOX-15
-								Shim_osVolumeDetect,                  //770  PHLOX-15
-								Shim_osSetPrimitiveParams,            //771  PHLOX-15
-								Shim_osGetPrimitiveParams,            //772  PHLOX-15
-								Shim_osGetLinkPrimitiveParams,        //773  PHLOX-15
-								Shim_osSetProjectionParams,           //774  PHLOX-15
-								Shim_osSetProjectionParams6,          //775  PHLOX-15
-								Shim_osSetInertia,                    //776  PHLOX-15
-								Shim_osSetInertiaAsBox,               //777  PHLOX-15
-								Shim_osSetInertiaAsSphere,            //778  PHLOX-15
-								Shim_osSetInertiaAsCylinder,          //779  PHLOX-15
-								Shim_osClearInertia,                  //780  PHLOX-15
-								Shim_osSetSitActiveRange,             //781  PHLOX-15
-								Shim_osSetLinkSitActiveRange,         //782  PHLOX-15
-								Shim_osSetStandTarget,                //783  PHLOX-15
-								Shim_osSetLinkStandTarget,            //784  PHLOX-15
-								Shim_osAdjustSoundVolume,             //785  PHLOX-15
-								Shim_osSetSoundRadius,                //786  PHLOX-15
-								Shim_osPlaySound,                     //787  PHLOX-15
-								Shim_osLoopSound,                     //788  PHLOX-15
-								Shim_osLoopSoundMaster,               //789  PHLOX-15
-								Shim_osLoopSoundSlave,                //790  PHLOX-15
-								Shim_osPlaySoundSlave,                //791  PHLOX-15
-								Shim_osTriggerSound,                  //792  PHLOX-15
-								Shim_osTriggerSoundLimited,           //793  PHLOX-15
-								Shim_osStopSound,                     //794  PHLOX-15
-								Shim_osTriggerSoundAtPos,             //795  PHLOX-15
-								Shim_osCollisionSound,                //796  PHLOX-15
-								Shim_osForceAttachToAvatar,           //797  PHLOX-15
-								Shim_osForceAttachToAvatarFromInventory, //798  PHLOX-15
-								Shim_osForceAttachToOtherAvatarFromInventory, //799  PHLOX-15
-								Shim_osForceDetachFromAvatar,         //800  PHLOX-15
-								Shim_osForceDropAttachment,           //801  PHLOX-15
-								Shim_osForceDropAttachmentAt,         //802  PHLOX-15
-								Shim_osMessageObject,                 //803  PHLOX-15
-								Shim_osResetAllScripts,               //804  PHLOX-15
-								Shim_osRequestURL,                    //805  PHLOX-15
-								Shim_osRequestSecureURL,              //806  PHLOX-15
-								Shim_osReplaceString,                 //807  PHLOX-15
-								Shim_osClearObjectAnimations,         //808  PHLOX-15
-								Shim_osLocalTeleportAgent,            //809  PHLOX-15
-								Shim_osConsoleCommand,                //810  PHLOX-15
-								Shim_osTeleportOwner,                 //811  PHLOX-16
-								Shim_osTeleportOwner4,                //812  PHLOX-16
-								Shim_osTeleportOwner2,                //813  PHLOX-16
-								Shim_osKickAvatar,                    //814  PHLOX-16
-								Shim_osKickAvatar2,                   //815  PHLOX-16
-								Shim_osAvatarPlayAnimation,           //816  PHLOX-16
-								Shim_osAvatarStopAnimation,           //817  PHLOX-16
-								Shim_osAvatarName2Key,                //818  PHLOX-16
-								Shim_osKey2Name,                      //819  PHLOX-16
-								Shim_osGetAgentIP,                    //820  PHLOX-16
-								Shim_osOwnerSaveAppearance,           //821  PHLOX-16
-								Shim_osOwnerSaveAppearance2,          //822  PHLOX-16
-								Shim_osCauseDamage,                   //823  PHLOX-16
-								Shim_osCauseHealing,                  //824  PHLOX-16
-								Shim_osSetHealth,                     //825  PHLOX-16
-								Shim_osSetHealRate,                   //826  PHLOX-16
-								Shim_osForceOtherSit,                 //827  PHLOX-16
-								Shim_osForceOtherSit2,                //828  PHLOX-16
-								Shim_osDie,                           //829  PHLOX-16
-								Shim_osDropAttachment,                //830  PHLOX-16
-								Shim_osDropAttachmentAt,              //831  PHLOX-16
-								Shim_osInviteToGroup,                 //832  PHLOX-16
-								Shim_osEjectFromGroup,                //833  PHLOX-16
-								Shim_osAvatarType,                    //834  PHLOX-16
-								Shim_osAvatarType2,                   //835  PHLOX-16
-								Shim_osSetTerrainHeight,              //836  PHLOX-17
-								Shim_osTerrainSetHeight,              //837  PHLOX-17
-								Shim_osGetTerrainHeight,              //838  PHLOX-17
-								Shim_osTerrainGetHeight,              //839  PHLOX-17
-								Shim_osTerrainFlush,                  //840  PHLOX-17
-								Shim_osRegionRestart,                 //841  PHLOX-17
-								Shim_osRegionRestart2,                //842  PHLOX-17
-								Shim_osRegionNotice,                  //843  PHLOX-17
-								Shim_osRegionNotice2,                 //844  PHLOX-17
-								Shim_osSetRegionWaterHeight,          //845  PHLOX-17
-								Shim_osSetRegionSunSettings,          //846  PHLOX-17
-								Shim_osSetEstateSunSettings,          //847  PHLOX-17
-								Shim_osGetCurrentSunHour,             //848  PHLOX-17
-								Shim_osGetSunParam,                   //849  PHLOX-17
-								Shim_osSunGetParam,                   //850  PHLOX-17
-								Shim_osSetSunParam,                   //851  PHLOX-17
-								Shim_osSunSetParam,                   //852  PHLOX-17
-								Shim_osWindActiveModelPluginName,     //853  PHLOX-17
-								Shim_osSetWindParam,                  //854  PHLOX-17
-								Shim_osGetWindParam,                  //855  PHLOX-17
-								Shim_osParcelJoin,                    //856  PHLOX-17
-								Shim_osParcelSubdivide,               //857  PHLOX-17
-								Shim_osSetParcelDetails,              //858  PHLOX-17
-								Shim_osParcelSetDetails,              //859  PHLOX-17
-								Shim_osSetParcelMusicURL,             //860  PHLOX-17
-								Shim_osSetParcelMediaURL,             //861  PHLOX-17
-								Shim_osSetParcelSIPAddress,           //862  PHLOX-17
-								Shim_osSetTerrainTexture,             //863  PHLOX-17
-								Shim_osSetTerrainTextures,            //864  PHLOX-17
-								Shim_osSetTerrainTextureHeight,       //865  PHLOX-17
-								Shim_osGetParcelDetails,              //866  PHLOX-17
-								Shim_osSetDynamicTextureURL,          //867  PHLOX-18
-								Shim_osSetDynamicTextureURLBlend,     //868  PHLOX-18
-								Shim_osSetDynamicTextureURLBlendFace, //869  PHLOX-18
-								Shim_osSetDynamicTextureData,         //870  PHLOX-18
-								Shim_osSetDynamicTextureDataBlend,    //871  PHLOX-18
-								Shim_osSetDynamicTextureDataBlendFace, //872  PHLOX-18
-								Shim_osDrawResetTransform,            //873  PHLOX-18
-								Shim_osDrawRotationTransform,         //874  PHLOX-18
-								Shim_osDrawScaleTransform,            //875  PHLOX-18
-								Shim_osDrawTranslationTransform,      //876  PHLOX-18
-								Shim_osMovePen,                       //877  PHLOX-18
-								Shim_osDrawLine,                      //878  PHLOX-18
-								Shim_osDrawLine3,                     //879  PHLOX-18
-								Shim_osDrawText,                      //880  PHLOX-18
-								Shim_osDrawEllipse,                   //881  PHLOX-18
-								Shim_osDrawFilledEllipse,             //882  PHLOX-18
-								Shim_osDrawRectangle,                 //883  PHLOX-18
-								Shim_osDrawFilledRectangle,           //884  PHLOX-18
-								Shim_osDrawFilledPolygon,             //885  PHLOX-18
-								Shim_osDrawPolygon,                   //886  PHLOX-18
-								Shim_osSetFontSize,                   //887  PHLOX-18
-								Shim_osSetFontName,                   //888  PHLOX-18
-								Shim_osSetPenSize,                    //889  PHLOX-18
-								Shim_osSetPenColor,                   //890  PHLOX-18
-								Shim_osSetPenColor3,                  //891  PHLOX-18
-								Shim_osSetPenColour,                  //892  PHLOX-18
-								Shim_osSetPenCap,                     //893  PHLOX-18
-								Shim_osDrawImage,                     //894  PHLOX-18
-								Shim_osGetDrawStringSize,             //895  PHLOX-18
-								Shim_osGetNotecardLine,               //896  PHLOX-19
-								Shim_osGetNotecard,                   //897  PHLOX-19
-								Shim_osGetNumberOfNotecardLines,      //898  PHLOX-19
-								Shim_osGetAvatarHomeURI,              //899  PHLOX-19
-								Shim_osGetNumberOfAttachments,        //900  PHLOX-19
-								Shim_osGetRegionMapTexture,           //901  PHLOX-19
-								Shim_osGetLinkNumber,                 //902  PHLOX-19
-								Shim_osGetRezzingObject,              //903  PHLOX-19
-								Shim_osListenRegex,                   //904  PHLOX-19
-								Shim_osDetectedCountry,               //905  PHLOX-19
-								Shim_osGetAgentCountry,               //906  PHLOX-19
-								Shim_osGetGender,                     //907  PHLOX-19
-								Shim_osGetHealRate,                   //908  PHLOX-19
-								Shim_osGetApparentTime,               //909  PHLOX-19
-								Shim_osGetApparentTimeString,         //910  PHLOX-19
-								Shim_osGetApparentRegionTime,         //911  PHLOX-19
-								Shim_osGetApparentRegionTimeString,   //912  PHLOX-19
-								Shim_osGetPSTWallclock,               //913  PHLOX-19
-								Shim_osGetLastChangedEventKey,        //914  PHLOX-19
-								Shim_osGetLinkColor,                  //915  PHLOX-19
-								Shim_osGetSitActiveRange,             //916  PHLOX-19
-								Shim_osGetLinkSitActiveRange,         //917  PHLOX-19
-								Shim_osGetStandTarget,                //918  PHLOX-19
-								Shim_osGetLinkStandTarget,            //919  PHLOX-19
-								Shim_osGetPrimCount,                  //920  PHLOX-19
-								Shim_osGetPrimCount1,                 //921  PHLOX-19
-								Shim_osGetSittingAvatarsCount,        //922  PHLOX-19
-								Shim_osGetSittingAvatarsCount1,       //923  PHLOX-19
-								Shim_osGetParcelDwell,                //924  PHLOX-19
-								Shim_osGetParcelID,                   //925  PHLOX-19
-								Shim_osGetParcelIDs,                  //926  PHLOX-19
-								Shim_osGetInventoryLastOwner,         //927  PHLOX-19
-								Shim_osGetInventoryItemKey,           //928  PHLOX-19
-								Shim_osGetInventoryName,              //929  PHLOX-19
-								Shim_osGetInventoryDesc,              //930  PHLOX-19
-								Shim_osGetInventoryItemKeys,          //931  PHLOX-19
-								Shim_osGetInventoryNames,             //932  PHLOX-19
-								Shim_osGetLinkInventoryName,          //933  PHLOX-19
-								Shim_osGetLinkInventoryDesc,          //934  PHLOX-19
-								Shim_osGetLinkInventoryKey,           //935  PHLOX-19
-								Shim_osGetLinkInventoryKeys,          //936  PHLOX-19
-								Shim_osGetLinkInventoryItemKey,       //937  PHLOX-19
-								Shim_osGetLinkInventoryItemKeys,      //938  PHLOX-19
-								Shim_osGetLinkInventoryNames,         //939  PHLOX-19
-								Shim_osSetProjectionParamsKey,        //940  PHLOX-20
-								Shim_osSetDynamicTextureDataFace,     //941  PHLOX-20
-								Shim_osSetPenColorVec,                //942  PHLOX-20
-								Shim_osApproxEqualsVec,               //943  PHLOX-20
-								Shim_osApproxEqualsRot,               //944  PHLOX-20
-								Shim_osApproxEqualsVec3,              //945  PHLOX-20
-								Shim_osApproxEqualsRot3,              //946  PHLOX-20
-								Shim_osSlerpVec,                      //947  PHLOX-20
-								Shim_osGetSitTargetPos,               //948  PHLOX-20
-								Shim_osGetSitTargetRot,               //949  PHLOX-20
-								Shim_osLoadedCreationDate,            //950  PHLOX-20
-								Shim_osLoadedCreationTime,            //951  PHLOX-20
-								Shim_osLoadedCreationID,              //952  PHLOX-20
-								Shim_osTemperature2sRGB,              //953  PHLOX-20
-								Shim_osOldList2ListStrided,           //954  PHLOX-20
-								Shim_osListFindListNext,              //955  PHLOX-20
-								Shim_osListSortInPlace,               //956  PHLOX-20
-								Shim_osListSortInPlaceStrided,        //957  PHLOX-20
-								Shim_osParticleSystem,                //958  PHLOX-20
-								Shim_osLinkParticleSystem,            //959  PHLOX-20
-								Shim_osPreloadSound,                  //960  PHLOX-20
-								Shim_osGetInertiaData,                //961  PHLOX-20
-								Shim_osGetNPCList,                    //962  PHLOX-20
-								Shim_osRemoveLinkInventory,           //963  PHLOX-20
-								Shim_osPerlinNoise2D,                 //964  PHLOX-20
-								Shim_osAgentSaveAppearance,           //965  PHLOX-20
-								Shim_osAgentSaveAppearance3,          //966  PHLOX-20
+								Shim_osTeleportAgentLocal,      //674
+								Shim_osTeleportAgentGrid,       //675
+								Shim_llLinkPlaySound3,          //676
+								Shim_llsRGB2Linear,             //677
+								Shim_llListSortStrided,         //678
+								Shim_llSHA256String1,           //679
+								Shim_llTargetedEmail3,          //680
+								Shim_llUpdateKeyValue4,         //681
+								Shim_llDerezObject2,            //682
+								Shim_osGetGridName,                  //683
+								Shim_osGetGridNick,                  //684
+								Shim_osGetGridHomeURI,               //685
+								Shim_osGetGridLoginURI,              //686
+								Shim_osGetGridGatekeeperURI,         //687
+								Shim_osGetGridCustom,                //688
+								Shim_osGetRegionSize,                //689
+								Shim_osGetRegionStats,               //690
+								Shim_osGetSimulatorVersion,          //691
+								Shim_osGetAgents,                    //692
+								Shim_osGetMapTexture,                //693
+								Shim_osGetPhysicsEngineType,         //694
+								Shim_osGetPhysicsEngineName,         //695
+								Shim_osGetSimulatorMemory,           //696
+								Shim_osGetSimulatorMemoryKB,         //697
+								Shim_osGetHealth,                    //698
+								Shim_osGetScriptEngineName,          //699
+								Shim_osAESEncrypt,                   //700
+								Shim_osAESDecrypt,                   //701
+								Shim_osAESEncryptTo,                 //702
+								Shim_osAESDecryptFrom,               //703
+								Shim_osAngleBetween,                 //704
+								Shim_osApproxEquals,                 //705
+								Shim_osApproxEquals3,                //706
+								Shim_osCheckODE,                     //707
+								Shim_osFormatString,                 //708
+								Shim_osIsNotValidNumber,             //709
+								Shim_osIsUUID,                       //710
+								Shim_osListAsFloat,                  //711
+								Shim_osListAsInteger,                //712
+								Shim_osListAsString,                 //713
+								Shim_osListAsVector,                 //714
+								Shim_osListAsRotation,               //715
+								Shim_osMatchString,                  //716
+								Shim_osMax,                          //717
+								Shim_osMin,                          //718
+								Shim_osRegexIsMatch,                 //719
+								Shim_osRound,                        //720
+								Shim_osSHA256,                       //721
+								Shim_osSlerp,                        //722
+								Shim_osStringStartsWith,             //723
+								Shim_osStringEndsWith,               //724
+								Shim_osStringIndexOf,                //725
+								Shim_osStringIndexOf5,               //726
+								Shim_osStringLastIndexOf,            //727
+								Shim_osStringLastIndexOf5,           //728
+								Shim_osStringRemove,                 //729
+								Shim_osStringReplace,                //730
+								Shim_osStringSubString,              //731
+								Shim_osStringSubString3,             //732
+								Shim_osUnixTimeToTimestamp,          //733
+								Shim_osVecDistSquare,                //734
+								Shim_osVecMagSquare,                 //735
+								Shim_osIsNpc,                        //736
+								Shim_osNpcCreate,                    //737
+								Shim_osNpcCreate5,                   //738
+								Shim_osNpcSaveAppearance,            //739
+								Shim_osNpcSaveAppearance3,           //740
+								Shim_osNpcLoadAppearance,            //741
+								Shim_osNpcGetOwner,                  //742
+								Shim_osNpcGetPos,                    //743
+								Shim_osNpcMoveTo,                    //744
+								Shim_osNpcMoveToTarget,              //745
+								Shim_osNpcGetRot,                    //746
+								Shim_osNpcSetRot,                    //747
+								Shim_osNpcStopMoveToTarget,          //748
+								Shim_osNpcSetProfileAbout,           //749
+								Shim_osNpcSetProfileImage,           //750
+								Shim_osNpcSay,                       //751
+								Shim_osNpcSay3,                      //752
+								Shim_osNpcShout,                     //753
+								Shim_osNpcWhisper,                   //754
+								Shim_osNpcSit,                       //755
+								Shim_osNpcStand,                     //756
+								Shim_osNpcRemove,                    //757
+								Shim_osNpcPlayAnimation,             //758
+								Shim_osNpcStopAnimation,             //759
+								Shim_osNpcTouch,                     //760
+								Shim_osSetRot,                        //761
+								Shim_osForceCreateLink,               //762
+								Shim_osForceBreakLink,                //763
+								Shim_osForceBreakAllLinks,            //764
+								Shim_osTeleportObject,                //765
+								Shim_osSetSpeed,                      //766
+								Shim_osSetOwnerSpeed,                 //767
+								Shim_osSetContentType,                //768
+								Shim_osSetPrimFloatOnWater,           //769
+								Shim_osVolumeDetect,                  //770
+								Shim_osSetPrimitiveParams,            //771
+								Shim_osGetPrimitiveParams,            //772
+								Shim_osGetLinkPrimitiveParams,        //773
+								Shim_osSetProjectionParams,           //774
+								Shim_osSetProjectionParams6,          //775
+								Shim_osSetInertia,                    //776
+								Shim_osSetInertiaAsBox,               //777
+								Shim_osSetInertiaAsSphere,            //778
+								Shim_osSetInertiaAsCylinder,          //779
+								Shim_osClearInertia,                  //780
+								Shim_osSetSitActiveRange,             //781
+								Shim_osSetLinkSitActiveRange,         //782
+								Shim_osSetStandTarget,                //783
+								Shim_osSetLinkStandTarget,            //784
+								Shim_osAdjustSoundVolume,             //785
+								Shim_osSetSoundRadius,                //786
+								Shim_osPlaySound,                     //787
+								Shim_osLoopSound,                     //788
+								Shim_osLoopSoundMaster,               //789
+								Shim_osLoopSoundSlave,                //790
+								Shim_osPlaySoundSlave,                //791
+								Shim_osTriggerSound,                  //792
+								Shim_osTriggerSoundLimited,           //793
+								Shim_osStopSound,                     //794
+								Shim_osTriggerSoundAtPos,             //795
+								Shim_osCollisionSound,                //796
+								Shim_osForceAttachToAvatar,           //797
+								Shim_osForceAttachToAvatarFromInventory, //798
+								Shim_osForceAttachToOtherAvatarFromInventory, //799
+								Shim_osForceDetachFromAvatar,         //800
+								Shim_osForceDropAttachment,           //801
+								Shim_osForceDropAttachmentAt,         //802
+								Shim_osMessageObject,                 //803
+								Shim_osResetAllScripts,               //804
+								Shim_osRequestURL,                    //805
+								Shim_osRequestSecureURL,              //806
+								Shim_osReplaceString,                 //807
+								Shim_osClearObjectAnimations,         //808
+								Shim_osLocalTeleportAgent,            //809
+								Shim_osConsoleCommand,                //810
+								Shim_osTeleportOwner,                 //811
+								Shim_osTeleportOwner4,                //812
+								Shim_osTeleportOwner2,                //813
+								Shim_osKickAvatar,                    //814
+								Shim_osKickAvatar2,                   //815
+								Shim_osAvatarPlayAnimation,           //816
+								Shim_osAvatarStopAnimation,           //817
+								Shim_osAvatarName2Key,                //818
+								Shim_osKey2Name,                      //819
+								Shim_osGetAgentIP,                    //820
+								Shim_osOwnerSaveAppearance,           //821
+								Shim_osOwnerSaveAppearance2,          //822
+								Shim_osCauseDamage,                   //823
+								Shim_osCauseHealing,                  //824
+								Shim_osSetHealth,                     //825
+								Shim_osSetHealRate,                   //826
+								Shim_osForceOtherSit,                 //827
+								Shim_osForceOtherSit2,                //828
+								Shim_osDie,                           //829
+								Shim_osDropAttachment,                //830
+								Shim_osDropAttachmentAt,              //831
+								Shim_osInviteToGroup,                 //832
+								Shim_osEjectFromGroup,                //833
+								Shim_osAvatarType,                    //834
+								Shim_osAvatarType2,                   //835
+								Shim_osSetTerrainHeight,              //836
+								Shim_osTerrainSetHeight,              //837
+								Shim_osGetTerrainHeight,              //838
+								Shim_osTerrainGetHeight,              //839
+								Shim_osTerrainFlush,                  //840
+								Shim_osRegionRestart,                 //841
+								Shim_osRegionRestart2,                //842
+								Shim_osRegionNotice,                  //843
+								Shim_osRegionNotice2,                 //844
+								Shim_osSetRegionWaterHeight,          //845
+								Shim_osSetRegionSunSettings,          //846
+								Shim_osSetEstateSunSettings,          //847
+								Shim_osGetCurrentSunHour,             //848
+								Shim_osGetSunParam,                   //849
+								Shim_osSunGetParam,                   //850
+								Shim_osSetSunParam,                   //851
+								Shim_osSunSetParam,                   //852
+								Shim_osWindActiveModelPluginName,     //853
+								Shim_osSetWindParam,                  //854
+								Shim_osGetWindParam,                  //855
+								Shim_osParcelJoin,                    //856
+								Shim_osParcelSubdivide,               //857
+								Shim_osSetParcelDetails,              //858
+								Shim_osParcelSetDetails,              //859
+								Shim_osSetParcelMusicURL,             //860
+								Shim_osSetParcelMediaURL,             //861
+								Shim_osSetParcelSIPAddress,           //862
+								Shim_osSetTerrainTexture,             //863
+								Shim_osSetTerrainTextures,            //864
+								Shim_osSetTerrainTextureHeight,       //865
+								Shim_osGetParcelDetails,              //866
+								Shim_osSetDynamicTextureURL,          //867
+								Shim_osSetDynamicTextureURLBlend,     //868
+								Shim_osSetDynamicTextureURLBlendFace, //869
+								Shim_osSetDynamicTextureData,         //870
+								Shim_osSetDynamicTextureDataBlend,    //871
+								Shim_osSetDynamicTextureDataBlendFace, //872
+								Shim_osDrawResetTransform,            //873
+								Shim_osDrawRotationTransform,         //874
+								Shim_osDrawScaleTransform,            //875
+								Shim_osDrawTranslationTransform,      //876
+								Shim_osMovePen,                       //877
+								Shim_osDrawLine,                      //878
+								Shim_osDrawLine3,                     //879
+								Shim_osDrawText,                      //880
+								Shim_osDrawEllipse,                   //881
+								Shim_osDrawFilledEllipse,             //882
+								Shim_osDrawRectangle,                 //883
+								Shim_osDrawFilledRectangle,           //884
+								Shim_osDrawFilledPolygon,             //885
+								Shim_osDrawPolygon,                   //886
+								Shim_osSetFontSize,                   //887
+								Shim_osSetFontName,                   //888
+								Shim_osSetPenSize,                    //889
+								Shim_osSetPenColor,                   //890
+								Shim_osSetPenColor3,                  //891
+								Shim_osSetPenColour,                  //892
+								Shim_osSetPenCap,                     //893
+								Shim_osDrawImage,                     //894
+								Shim_osGetDrawStringSize,             //895
+								Shim_osGetNotecardLine,               //896
+								Shim_osGetNotecard,                   //897
+								Shim_osGetNumberOfNotecardLines,      //898
+								Shim_osGetAvatarHomeURI,              //899
+								Shim_osGetNumberOfAttachments,        //900
+								Shim_osGetRegionMapTexture,           //901
+								Shim_osGetLinkNumber,                 //902
+								Shim_osGetRezzingObject,              //903
+								Shim_osListenRegex,                   //904
+								Shim_osDetectedCountry,               //905
+								Shim_osGetAgentCountry,               //906
+								Shim_osGetGender,                     //907
+								Shim_osGetHealRate,                   //908
+								Shim_osGetApparentTime,               //909
+								Shim_osGetApparentTimeString,         //910
+								Shim_osGetApparentRegionTime,         //911
+								Shim_osGetApparentRegionTimeString,   //912
+								Shim_osGetPSTWallclock,               //913
+								Shim_osGetLastChangedEventKey,        //914
+								Shim_osGetLinkColor,                  //915
+								Shim_osGetSitActiveRange,             //916
+								Shim_osGetLinkSitActiveRange,         //917
+								Shim_osGetStandTarget,                //918
+								Shim_osGetLinkStandTarget,            //919
+								Shim_osGetPrimCount,                  //920
+								Shim_osGetPrimCount1,                 //921
+								Shim_osGetSittingAvatarsCount,        //922
+								Shim_osGetSittingAvatarsCount1,       //923
+								Shim_osGetParcelDwell,                //924
+								Shim_osGetParcelID,                   //925
+								Shim_osGetParcelIDs,                  //926
+								Shim_osGetInventoryLastOwner,         //927
+								Shim_osGetInventoryItemKey,           //928
+								Shim_osGetInventoryName,              //929
+								Shim_osGetInventoryDesc,              //930
+								Shim_osGetInventoryItemKeys,          //931
+								Shim_osGetInventoryNames,             //932
+								Shim_osGetLinkInventoryName,          //933
+								Shim_osGetLinkInventoryDesc,          //934
+								Shim_osGetLinkInventoryKey,           //935
+								Shim_osGetLinkInventoryKeys,          //936
+								Shim_osGetLinkInventoryItemKey,       //937
+								Shim_osGetLinkInventoryItemKeys,      //938
+								Shim_osGetLinkInventoryNames,         //939
+								Shim_osSetProjectionParamsKey,        //940
+								Shim_osSetDynamicTextureDataFace,     //941
+								Shim_osSetPenColorVec,                //942
+								Shim_osApproxEqualsVec,               //943
+								Shim_osApproxEqualsRot,               //944
+								Shim_osApproxEqualsVec3,              //945
+								Shim_osApproxEqualsRot3,              //946
+								Shim_osSlerpVec,                      //947
+								Shim_osGetSitTargetPos,               //948
+								Shim_osGetSitTargetRot,               //949
+								Shim_osLoadedCreationDate,            //950
+								Shim_osLoadedCreationTime,            //951
+								Shim_osLoadedCreationID,              //952
+								Shim_osTemperature2sRGB,              //953
+								Shim_osOldList2ListStrided,           //954
+								Shim_osListFindListNext,              //955
+								Shim_osListSortInPlace,               //956
+								Shim_osListSortInPlaceStrided,        //957
+								Shim_osParticleSystem,                //958
+								Shim_osLinkParticleSystem,            //959
+								Shim_osPreloadSound,                  //960
+								Shim_osGetInertiaData,                //961
+								Shim_osGetNPCList,                    //962
+								Shim_osRemoveLinkInventory,           //963
+								Shim_osPerlinNoise2D,                 //964
+								Shim_osAgentSaveAppearance,           //965
+								Shim_osAgentSaveAppearance3,          //966
         };
 
         /// <summary>
-        /// PHLOX-2g. Run a long-running syscall off the script thread and ALWAYS signal completion,
+        /// Run a long-running syscall off the script thread and ALWAYS signal completion,
         /// including when the body throws. Before this each async shim posted the work and trusted
         /// the API implementation to return; 24 of them called implementations that never did, and
         /// the script hung in Status.Syscall permanently.
         /// </summary>
         private static void RunAsync(SyscallShim self, Action body)
         {
-            // B2: the call takes the script's next syscall sequence number and runs inside a
+            // The call takes the script's next syscall sequence number and runs inside a
             // SyscallContext, so a ScriptSleep in the body becomes the return's delay instead of a
             // RunState write from this thread, and CompleteSyscall posts exactly one return carrying
             // the number. LastSyscallIndex is now cleared by the scheduler when it applies that return
@@ -1082,14 +1082,14 @@ private static string ConvToString(object o)
         }
 
         /// <summary>
-        /// B2. Set by the scheduler: hands a syscall that may reach a service to the region's
+        /// Set by the scheduler: hands a syscall that may reach a service to the region's
         /// service lane. Null (a host without one) keeps every call inline, as before.
         /// </summary>
         public DeferServiceCallDelegate DeferServiceCall { get; set; }
         public delegate void DeferServiceCallDelegate(DeferredServiceCall call);
 
         /// <summary>
-        /// B2. The inline-or-deferred decision for a syscall that can leave the process.
+        /// The inline-or-deferred decision for a syscall that can leave the process.
         /// <paramref name="call"/> is the shim's original body - the API call and its LSL conversion,
         /// returning the value to push, or null for a void function - so the script receives a value
         /// computed by exactly the same code either way. Inline when the API says no service is
@@ -1171,12 +1171,12 @@ private static string ConvToString(object o)
 
         #region ISyscallShim Members
 
-        /// <summary>PHLOX-13 test seam: make a shim throw as a broken implementation would. Null in production.</summary>
+        /// <summary>Test seam: make a shim throw as a broken implementation would. Null in production.</summary>
         public static Func<int, Exception> ThrowForTest;
 
         public void Call(int funcid)
         {
-            // PHLOX-2g: remember what we are about to run, so 'phlox status' can name it if the
+            // Remember what we are about to run, so 'phlox status' can name it if the
             // call parks the script in Status.Syscall and never completes.
             if (_interpreter != null) _interpreter.ScriptState.LastSyscallIndex = funcid;
             try
@@ -1186,7 +1186,7 @@ private static string ConvToString(object o)
             }
             catch
             {
-                // PHLOX-13: an exception escaping a shim terminates the script (the scheduler's job);
+                // An exception escaping a shim terminates the script (the scheduler's job);
                 // it is not parked in a syscall, whatever the shim managed to set before it threw.
                 if (_interpreter != null)
                 {
@@ -1196,11 +1196,11 @@ private static string ConvToString(object o)
                 }
                 throw;
             }
-            // PHLOX-4c: Call is the one choke point every shim returns through. If the shim did not
+            // Call is the one choke point every shim returns through. If the shim did not
             // park the script in Syscall - a synchronous call that has already returned, or llSleep
             // which set Sleeping - then the script is not 'in' a syscall any more and the index must
             // not outlive the call. The async and deferred cases are reset by the scheduler when it
-            // applies the call's return (B2), because there the shim returns while the body runs on.
+            // applies the call's return, because there the shim returns while the body runs on.
             if (_interpreter != null && _interpreter.ScriptState.RunState != VM.RuntimeState.Status.Syscall)
                 _interpreter.ScriptState.LastSyscallIndex = -1;
         }
@@ -4471,7 +4471,7 @@ private static string ConvToString(object o)
             int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop()); 
             int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
 
-            int ret = self._systemAPI.llClearLinkMedia(p0, p1);   // PHLOX-21 E2: was llClearPrimMedia(p0) - the link taken as the face
+            int ret = self._systemAPI.llClearLinkMedia(p0, p1);   // Was llClearPrimMedia(p0) - the link taken as the face
 
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }
@@ -6195,7 +6195,7 @@ private static string ConvToString(object o)
             int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
 
-            // PHLOX-21b A: the value goes back through the call's sequenced return. This used to push
+            // The value goes back through the call's sequenced return. This used to push
             // `ret` here, on the scheduler thread, before the async body had run - null, which killed
             // an assigning script ("Attempt to push null operand") - and the return itself carried nothing.
             RunAsync(self, delegate()
@@ -6206,7 +6206,7 @@ private static string ConvToString(object o)
             });
         }
 
-        // ── Batch 10: SL compatibility shims ──
+        // ── SL compatibility shims ──
 
         static private void Shim_llChar(SyscallShim self)
         {
@@ -6291,7 +6291,7 @@ private static string ConvToString(object o)
             self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
         }
 
-        // ---- PHLOX-5: SL names and arities -------------------------------------------------
+        // ---- SL names and arities -------------------------------------------------
         static private void Shim_llsRGB2Linear(SyscallShim self)
         {
             Vector3 p0 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
@@ -6347,7 +6347,7 @@ private static string ConvToString(object o)
             self._systemAPI.llDerezObject(p0);
         }
 
-        // ── Batch 11: Medium-effort SL compatibility shims ──
+        // ── Medium-effort SL compatibility shims ──
 
         static private void Shim_llTeleportAgent(SyscallShim self)
         {
@@ -6463,7 +6463,7 @@ private static string ConvToString(object o)
             self._systemAPI.llSetLinkSitFlags(p0, p1);
         }
 
-        // ── Batch 12: String/List/Crypto SL compatibility shims ──
+        // ── String/List/Crypto SL compatibility shims ──
 
         static private void Shim_llReplaceSubString(SyscallShim self)
         {
@@ -6563,7 +6563,7 @@ private static string ConvToString(object o)
             self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
         }
 
-        // ── Batch 13: Linkset Data shims ──
+        // ── Linkset Data shims ──
 
         static private void Shim_llLinksetDataAvailable(SyscallShim self)
         {
@@ -6780,7 +6780,7 @@ private static string ConvToString(object o)
 
         static private void Shim_llAdjustDamage(SyscallShim self)
         {
-            // PHLOX-10: SL form (integer number, float new_damage)
+            // SL form (integer number, float new_damage)
             float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
             int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
             self._systemAPI.llAdjustDamage(p0, p1);
@@ -6790,7 +6790,7 @@ private static string ConvToString(object o)
         {
             float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
-            // PHLOX-10: goes through ApplyDamage, which waits on on_damage - never from the script thread
+            // Goes through ApplyDamage, which waits on on_damage - never from the script thread
             RunAsync(self, delegate() { self._systemAPI.llSetHealth(p0, p1); });
         }
 
@@ -7126,7 +7126,7 @@ private static string ConvToString(object o)
 		static private void Shim_llDetectedDamage(SyscallShim self)
         {
             int p0 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
-            LSLList ret = self._systemAPI.llDetectedDamage(p0);   // PHLOX-10: a list, per the wiki
+            LSLList ret = self._systemAPI.llDetectedDamage(p0);   // A list, per the wiki
             self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
         }
 		static private void Shim_llDamage(SyscallShim self)
@@ -7134,11 +7134,11 @@ private static string ConvToString(object o)
             int p2 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
             float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
-            // PHLOX-10: goes through ApplyDamage, which waits on on_damage - never from the script thread
+            // Goes through ApplyDamage, which waits on on_damage - never from the script thread
             RunAsync(self, delegate() { self._systemAPI.llDamage(p0, p1, p2); });
         }
 
-        // ── PHLOX-12: OSSL information functions ──
+        // ── OSSL information functions ──
         static private void Shim_osGetGridName(SyscallShim self)
         {
             string ret = self._systemAPI.osGetGridName();
@@ -7227,7 +7227,7 @@ private static string ConvToString(object o)
             self._interpreter.ScriptState.Operands.Push(ConvToLSLType(ret));
         }
 
-        // ── PHLOX-13: OSSL pure helpers ──
+        // ── OSSL pure helpers ──
         static private void Shim_osAESEncrypt(SyscallShim self)
         {
             string p1 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
@@ -7265,7 +7265,7 @@ private static string ConvToString(object o)
             float ret = self._systemAPI.osAngleBetween(p0, p1);
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }
-        // PHLOX-20 PART 1: the misc row and the list family
+        // The misc row and the list family
         static private void Shim_osGetSitTargetPos(SyscallShim self)
         {
             Vector3 ret = self._systemAPI.osGetSitTargetPos();
@@ -7388,7 +7388,7 @@ private static string ConvToString(object o)
             string ret = self._systemAPI.osAgentSaveAppearance(p0, p1, p2);
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }
-        // PHLOX-20: the type-discriminated overloads
+        // The type-discriminated overloads
         static private void Shim_osSetProjectionParamsKey(SyscallShim self)
         {
             float p5 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
@@ -7682,7 +7682,7 @@ private static string ConvToString(object o)
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }
 
-        // ── PHLOX-14: osNpc* ──
+        // ── osNpc* ──
         static private void Shim_osIsNpc(SyscallShim self)
         {
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
@@ -7837,7 +7837,7 @@ private static string ConvToString(object o)
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
             self._systemAPI.osNpcStopAnimation(p0, p1);
         }
-        // ── PHLOX-15 shims ──
+        // ── OSSL side-effect shims (prim, sound, links, attachments, misc) ──
         static private void Shim_osSetRot(SyscallShim self)
         {
             Quaternion p1 = ConvToQuat(self._interpreter.ScriptState.Operands.Pop());
@@ -8159,7 +8159,7 @@ private static string ConvToString(object o)
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }
 
-        // ── PHLOX-16 shims ──
+        // ── OSSL agent, teleport, kick, animation and group shims ──
         static private void Shim_osTeleportOwner(SyscallShim self)
         {
             Vector3 p2 = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
@@ -8240,7 +8240,7 @@ private static string ConvToString(object o)
         {
             float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
-            // PHLOX-10 door: ApplyDamage waits on on_damage - never from the script thread
+            // The damage door: ApplyDamage waits on on_damage - never from the script thread
             RunAsync(self, delegate() { self._systemAPI.osCauseDamage(p0, p1); });
         }
         static private void Shim_osCauseHealing(SyscallShim self)
@@ -8253,7 +8253,7 @@ private static string ConvToString(object o)
         {
             float p1 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
             string p0 = ConvToString(self._interpreter.ScriptState.Operands.Pop());
-            // PHLOX-10 door: ApplyDamage waits on on_damage - never from the script thread
+            // The damage door: ApplyDamage waits on on_damage - never from the script thread
             RunAsync(self, delegate() { self._systemAPI.osSetHealth(p0, p1); });
         }
         static private void Shim_osSetHealRate(SyscallShim self)
@@ -8312,7 +8312,7 @@ private static string ConvToString(object o)
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }
 
-        // ── PHLOX-17 shims ──
+        // ── OSSL parcel, estate, terrain, wind and sun shims ──
         static private void Shim_osSetTerrainHeight(SyscallShim self)
         {
             float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());
@@ -8503,7 +8503,7 @@ private static string ConvToString(object o)
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }
 
-        // ── PHLOX-18 shims ──
+        // ── OSSL draw and dynamic-texture shims ──
         static private void Shim_osSetDynamicTextureURL(SyscallShim self)
         {
             int p4 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
@@ -8754,7 +8754,7 @@ private static string ConvToString(object o)
             self._interpreter.SafeOperandsPush(ConvToLSLType(ret));
         }
 
-        // ── PHLOX-19 shims ──
+        // ── OSSL read-only remainder shims ──
         static private void Shim_osGetNotecardLine(SyscallShim self)
         {
             int p1 = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
@@ -9138,7 +9138,7 @@ private static string ConvToString(object o)
         }
 
         // OSSL: void osTeleportAgent(string agent, string region, vector pos, vector lookat)
-        // PHLOX-52: on the script thread, as YEngine: the Severe gate's refusal must stop the script (an async body's
+        // On the script thread, as YEngine: the Severe gate's refusal must stop the script (an async body's
         // exception is only logged), and the other-region teleport is already fired on its own thread.
         static private void Shim_osTeleportAgent(SyscallShim self)
         {
@@ -9149,7 +9149,7 @@ private static string ConvToString(object o)
             self._systemAPI.osTeleportAgent(agent, region, pos, lookat);
         }
 
-        // PHLOX-2b - OSSL: void osTeleportAgent(string agent, vector pos, vector lookat)
+        // OSSL: void osTeleportAgent(string agent, vector pos, vector lookat)
         static private void Shim_osTeleportAgentLocal(SyscallShim self)
         {
             Vector3 lookat = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
@@ -9163,7 +9163,7 @@ private static string ConvToString(object o)
             });
         }
 
-        // PHLOX-2b - OSSL: void osTeleportAgent(string agent, int regionX, int regionY, vector pos, vector lookat)
+        // OSSL: void osTeleportAgent(string agent, int regionX, int regionY, vector pos, vector lookat)
         static private void Shim_osTeleportAgentGrid(SyscallShim self)
         {
             Vector3 lookat = ConvToVector(self._interpreter.ScriptState.Operands.Pop());
@@ -9171,11 +9171,11 @@ private static string ConvToString(object o)
             int regionY = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
             int regionX = ConvToInt(self._interpreter.ScriptState.Operands.Pop());
             string agent = ConvToString(self._interpreter.ScriptState.Operands.Pop());
-            // PHLOX-52: on the script thread, as Shim_osTeleportAgent (Severe gate; the teleport is fired on its own thread).
+            // On the script thread, as Shim_osTeleportAgent (Severe gate; the teleport is fired on its own thread).
             self._systemAPI.osTeleportAgent(agent, regionX, regionY, pos, lookat);
         }
 
-        // PHLOX-2b - LSL: void llLinkPlaySound(int link, string sound, float volume)
+        // LSL: void llLinkPlaySound(int link, string sound, float volume)
         static private void Shim_llLinkPlaySound3(SyscallShim self)
         {
             float p2 = ConvToFloat(self._interpreter.ScriptState.Operands.Pop());

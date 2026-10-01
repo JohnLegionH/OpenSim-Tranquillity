@@ -16,11 +16,11 @@ using Clock = InWorldz.Phlox.Util.Clock;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-58: Halcyon paused a script 15 ms on every script error it reported with ScriptShoutError (LSLError,
+/// Halcyon paused a script 15 ms on every script error it reported with ScriptShoutError (LSLError,
 /// NotImplemented and Deprecated go through it): the error is chat, and Halcyon's SimChat sleeps 15 ms
-/// (LSLSystemAPI.cs:14483-14486, :1042-1046). Phlox pauses at the same errors, under PHLOX-56's ChatThrottle. Errors
+/// (LSLSystemAPI.cs:14483-14486, :1042-1046). Phlox pauses at the same errors, under the ChatThrottle setting. Errors
 /// Halcyon reported with its plain ShoutError, or inside a long-running call (where its ScriptSleep did nothing,
-/// :145-156), do not pause. The path table with Halcyon's lines: lanes/work/phlox-58/STATE.md.
+/// :145-156), do not pause.
 ///
 /// <para>Two measurements. "Accounted" runs the call inside a SyscallContext, where every ScriptSleep of the call adds
 /// to one total, so the 15 ms is seen even when a later sleep of the same call (llCreateLink's 1000 ms, say) sets the
@@ -208,7 +208,7 @@ public class ErrorPauseTests
         new("iwStringCodec bad codec", a => a.iwStringCodec("Hello", "rot13", 1, new LSLList())),
     }.ToDictionary(c => c.Name);
 
-    /// <summary>Errors Phlox reports where Halcyon did not pause (STATE.md "LEFT ALONE"); the error is still said.</summary>
+    /// <summary>Errors Phlox reports where Halcyon did not pause; the error is still said.</summary>
     private static readonly Dictionary<string, Case> Unpaused = new Case[]
     {
         new("llRezObject too far (Halcyon: async)", a => { a.llRezObject("nope", new Vector3(9999, 9999, 9999), Vector3.Zero, Quaternion.Identity, 0); return null; }),
@@ -298,7 +298,7 @@ public class ErrorPauseTests
     }
 
     /// <summary>
-    /// A missing notecard: Halcyon shouted and paused. PHLOX-58 left Phlox silent there; PHLOX-62 (John's ruling (a))
+    /// A missing notecard: Halcyon shouted and paused. Phlox was silent there; it now
     /// raises Halcyon's error, which pauses 15 ms like the others (the other new errors: HalcyonChecksTests).
     /// </summary>
     [Fact]
@@ -313,7 +313,7 @@ public class ErrorPauseTests
         Assert.Equal(0, off.Ms);
     }
 
-    /// <summary>iwStringCodec paused before PHLOX-58 (PHLOX-57); it pauses once, not twice.</summary>
+    /// <summary>iwStringCodec already paused on its own errors; it pauses once, not twice.</summary>
     [Fact]
     public void IwStringCodecPausesOnceNotTwice()
     {

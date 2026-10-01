@@ -9,7 +9,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-11. A load that still fails after the retry must NOT fall through to a fresh script: the
+/// A load that still fails after the retry must NOT fall through to a fresh script: the
 /// script is held Disabled (LocalDisableFlag.StateLoadFailed, visible in phlox status), never runs
 /// state_entry, and - the point - its state row is never overwritten, so the next process recovers it.
 /// The failure is injected through StateManager.FailLoadForTest, the way the database would throw.

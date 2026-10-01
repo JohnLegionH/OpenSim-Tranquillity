@@ -8,7 +8,7 @@ namespace InWorldz.Phlox.Tests;
 /// Compile a one-event script, run its state_entry on a bare interpreter with the recording
 /// ISystemAPI, and hand back every API call that reached it. No scene, no scheduler, no clock -
 /// the value a script computes is observed as the argument it passes to llSay. Same shape as the
-/// private helper in BuiltinOverloadTests and ConstantsAuditTests; shared from PHLOX-9 on.
+/// private helper in BuiltinOverloadTests and ConstantsAuditTests, shared.
 /// </summary>
 internal static class HandDrivenRun
 {

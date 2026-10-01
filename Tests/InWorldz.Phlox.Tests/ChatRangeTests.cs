@@ -16,7 +16,7 @@ namespace InWorldz.Phlox.Tests;
 /// avatar. A prim never hears its own chat; other prims of the same object do. llRegionSayTo reaches only
 /// its target (Halcyon's DestIdMatches), on the channel it was sent on, and never its sender.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class ChatRangeTests
 {
     private readonly ITestOutputHelper _out;

@@ -5,13 +5,13 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-55: several regions' engines starting at once on one bytecode folder. Each loader checks the
+/// Several regions' engines starting at once on one bytecode folder. Each loader checks the
 /// <c>.schema_version</c> stamp when it is built (PhloxScriptLoader.EnsureCacheSchemaVersion). Before, the stamp was read
 /// outside the method's try block and every loader checked at the same time, so one could read while another wrote it
-/// (IOException out of the constructor, found by PHLOX-54) and several could purge. Now the check is guarded and runs one
+/// (IOException out of the constructor) and several could purge. Now the check is guarded and runs one
 /// loader at a time: no exception, exactly one purge when the stamp is old or missing, none when it is current, and the
 /// current stamp at the end.
-/// Each test uses its own folder through the PHLOX-54 seam (PhloxEngine.BytecodeCacheDir), so the class runs in parallel.
+/// Each test uses its own folder through a test seam (PhloxEngine.BytecodeCacheDir), so the class runs in parallel.
 /// </summary>
 public class CacheSchemaStampConcurrencyTests
 {

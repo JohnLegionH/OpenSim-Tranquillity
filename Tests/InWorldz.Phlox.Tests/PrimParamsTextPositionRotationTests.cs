@@ -18,7 +18,7 @@ namespace InWorldz.Phlox.Tests;
 /// quirk, as Halcyon and OpenSim do it); a seated avatar reads back its offset and rotation relative to the root, in
 /// the root's frame; and the rule numbers OpenSim defines beyond SL's are skipped by OpenSim's count.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class PrimParamsTextPositionRotationTests
 {
     private readonly ITestOutputHelper _out;
@@ -306,7 +306,7 @@ public class PrimParamsTextPositionRotationTests
         Assert.Equal("after too", prim.Text);
         Assert.Equal("after|before", Line(h, "got="));
         Assert.DoesNotContain(Errors(h), m => m.Contains("error running rule"));
-        // PHLOX-38: applied (PRIM_PHYSICS_MATERIAL as OpenSim's LSL_Api applies it), so never logged as not implemented.
+        // Applied (PRIM_PHYSICS_MATERIAL as OpenSim's LSL_Api applies it), so never logged as not implemented.
         Assert.DoesNotContain(code, UnimplementedRulesLogged(h, item));
     }
 

@@ -18,8 +18,8 @@ namespace InWorldz.Phlox.Compiler
     /// </summary>
     public class AnalyzeVisitor : LSLBaseVisitor<object>
     {
-        // PHLOX-21: the recursive dispatch runs out of stack before a deeply nested tree does (DepthGuard).
-        // PHLOX-22 A: the counted limits (NestingLimits) are the rule, the same levels the parser counted;
+        // The recursive dispatch runs out of stack before a deeply nested tree does (DepthGuard).
+        // The counted limits (NestingLimits) are the rule, the same levels the parser counted;
         // DepthGuard stays as the backstop. VisitChildren goes through Visit so every child is counted.
         private readonly NestingCounter _nesting = new NestingCounter();
 

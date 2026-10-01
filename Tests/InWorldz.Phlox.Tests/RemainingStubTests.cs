@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-7b. The remaining stubs: sit flags, llMinEventDelay, the memory profiler, and
+/// The remaining stubs: sit flags, llMinEventDelay, the memory profiler, and
 /// llRequestSimulatorData beyond the local region. Same method as 7a - wiki page first, upstream
 /// body where one exists, Phlox conventions kept - and every test here is red on the tree before
 /// the port.

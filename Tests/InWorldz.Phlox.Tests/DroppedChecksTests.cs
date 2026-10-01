@@ -13,7 +13,7 @@ using PermissionMask = OpenSim.Framework.PermissionMask;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-41. Checks Phlox had dropped (HALCYON-DIFF "dropped checks"):
+/// Checks Phlox had dropped, restored as Halcyon has them:
 /// iwGroupInvite / iwGroupEject need the script's owner to be its creator (Halcyon ScriptOwnerIsCreator);
 /// llAttachToAvatarTemp on a non-owner hands the object to the wearer, and refuses a no-transfer object
 /// (Halcyon AttachInternal, https://wiki.secondlife.com/wiki/LlAttachToAvatarTemp);
@@ -21,7 +21,7 @@ namespace InWorldz.Phlox.Tests;
 /// (https://wiki.secondlife.com/wiki/LlCreateLink);
 /// llSetObjectPermMask sits behind YEngine's god-functions gate ([YEngine] AllowGodFunctions and an administrator owner).
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class DroppedChecksTests
 {
     private const int ATTACH = 0x20, CHANGE_LINKS = 0x80;
@@ -80,7 +80,7 @@ public class DroppedChecksTests
         RezAsCreator(h, InviteAndEject, h.Prim.OwnerID);
         h.Pump();
         h.PumpUntil(() => h.Said.Any(s => s.StartsWith("ej=")));
-        // PHLOX-44: Halcyon returns the groups module's result, GenericReturnCodes.SUCCESS (0) when it was done.
+        // Halcyon returns the groups module's result, GenericReturnCodes.SUCCESS (0) when it was done.
         Assert.True(h.Said.Contains("inv=0") && h.Said.Contains("ej=0"), Said(h));
         Assert.Contains("InviteGroup", rec.Calls);
         Assert.Contains("EjectGroupMember", rec.Calls);
@@ -103,7 +103,7 @@ public class DroppedChecksTests
         Assert.DoesNotContain("EjectGroupMember", rec.Calls);
     }
 
-    // PHLOX-44: the other return codes are Halcyon's Constants.GenericReturnCodes (SUCCESS 0, ERROR 2, PARAMETER 3,
+    // The other return codes are Halcyon's Constants.GenericReturnCodes (SUCCESS 0, ERROR 2, PARAMETER 3,
     // PERMISSION 5), not Phlox's old -3 / -1 / 1.
 
     private const string G = "5a5a5a5a-0000-4000-8000-0000000041a1", U = "5a5a5a5a-0000-4000-8000-0000000041a2";
@@ -440,9 +440,9 @@ public class DroppedChecksTests
 public class RecordingGroups : DispatchProxy
 {
     public List<string> Calls { get; } = new();
-    /// <summary>PHLOX-44: InviteGroup and EjectGroupMember throw, as a failing groups service would.</summary>
+    /// <summary>InviteGroup and EjectGroupMember throw, as a failing groups service would.</summary>
     public bool Throws;
-    /// <summary>PHLOX-44: GroupRoleDataRequest answers null (Halcyon: "groupID bad, or internal/system error").</summary>
+    /// <summary>GroupRoleDataRequest answers null (Halcyon: "groupID bad, or internal/system error").</summary>
     public bool NullRoles;
 
     public static IGroupsModule Create(out RecordingGroups rec)

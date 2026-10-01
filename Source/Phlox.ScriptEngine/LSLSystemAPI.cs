@@ -39,9 +39,9 @@ namespace Phlox.ScriptEngine
 {
     public class LSLSystemAPI : ISystemAPI, InWorldz.Phlox.Glue.ISyscallDeferralAdvisor
     {
-        // ── B2: inline or deferred ──────────────────────────────────────────
+        // ── Inline or deferred ──────────────────────────────────────────────
         //
-        // Answer inline (exactly as before B2) when the call cannot leave the process: the subject
+        // Answer inline (exactly as without deferral) when the call cannot leave the process: the subject
         // is in this region, or the answer is already in the local cache the service call consults
         // FIRST (RemoteUserAccountServicesConnector.GetUserAccount -> UserAccountCache;
         // RegionAssetConnector.Get -> the asset cache). A cache hit therefore returns exactly what the
@@ -132,7 +132,7 @@ namespace Phlox.ScriptEngine
             }
         }
 
-        /// <summary>B2: is an answer for this account already in the local user-account cache?</summary>
+        /// <summary>Is an answer for this account already in the local user-account cache?</summary>
         private bool AccountCached(UUID id, bool requireAccount)
         {
             var cache = World?.RequestModuleInterface<IUserAccountCacheModule>();
@@ -175,7 +175,7 @@ namespace Phlox.ScriptEngine
         protected void ScriptSleep(int ms)
         {
             if (m_thisScript == null || ms <= 0) return;
-            // B2: on an off-thread call for this script the delay travels with the call's
+            // On an off-thread call for this script the delay travels with the call's
             // return. Writing RunState from this thread stranded the script (SyscallSleepRaceTests).
             var ctx = InWorldz.Phlox.Glue.SyscallContext.Current;
             if (ctx != null && ctx.ItemId == m_itemID) { ctx.AddDelay(ms); return; }
@@ -183,10 +183,10 @@ namespace Phlox.ScriptEngine
             m_thisScript.ScriptState.RunState = RuntimeState.Status.Sleeping;
         }
 
-        // ── PHLOX-56 (D1): Halcyon's anti-abuse slowdowns ──────────────────────────────────────────
+        // ── Halcyon's anti-abuse slowdowns ─────────────────────────────────────────────────────────
         // Each is Halcyon's ScriptSleep at Halcyon's call point, under its own [InWorldz.Phlox] setting (on by default;
-        // off is exactly the behaviour before PHLOX-56). The script sees its call work as before and runs on after the
-        // sleep. None logs, as none did in Halcyon. The rules with their Halcyon lines: lanes/work/phlox-56/STATE.md.
+        // off is exactly the behaviour without them). The script sees its call work as before and runs on after the
+        // sleep. None logs, as none did in Halcyon.
 
         /// <summary>Halcyon SimChat / llRegionSay / llOwnerSay (LSLSystemAPI.cs:1042-1085, 12727-12732): ScriptSleep(15).</summary>
         private void ChatSleep()
@@ -195,10 +195,10 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-58: Halcyon's ScriptShoutError (LSLSystemAPI.cs:14483-14486) - the error on DEBUG_CHANNEL, then SimChat's
+        /// Halcyon's ScriptShoutError (LSLSystemAPI.cs:14483-14486) - the error on DEBUG_CHANNEL, then SimChat's
         /// 15 ms (:1042-1046); LSLError, NotImplemented and Deprecated go through it. Used exactly where Halcyon used it in a
         /// call that is not long-running (its ScriptSleep does nothing in one, :145-156). Its plain ShoutError, which does
-        /// not pause, stays ShoutError here. The paths with their Halcyon lines: lanes/work/phlox-58/STATE.md.
+        /// not pause, stays ShoutError here.
         /// </summary>
         private void ScriptShoutError(string errorText)
         {
@@ -206,13 +206,13 @@ namespace Phlox.ScriptEngine
             ChatSleep();
         }
 
-        // PHLOX-62 (ruling (a)): Halcyon's three wrappers of ScriptShoutError, with their texts (LSLSystemAPI.cs:14497-14513).
-        // Used where Halcyon raised them and Phlox was silent: lanes/work/phlox-62/STATE.md item 3.
+        // Halcyon's three wrappers of ScriptShoutError, with their texts (LSLSystemAPI.cs:14497-14513).
+        // Used where Halcyon raised them and Phlox was silent.
         private void LSLError(string msg) => ScriptShoutError("LSL Runtime Error: " + msg);
         private void NotImplemented(string command) => ScriptShoutError("Command not implemented: " + command);
         private void Deprecated(string command) => ScriptShoutError("Command deprecated: " + command);
 
-        /// <summary>PHLOX-62 (S11): Halcyon llHTTPRequest's ERROR_DELAY after a refused request (LSLSystemAPI.cs:13762).</summary>
+        /// <summary>Halcyon llHTTPRequest's ERROR_DELAY after a refused request (LSLSystemAPI.cs:13762).</summary>
         internal const int HTTP_CAPPED_DELAY = 80;
 
         /// <summary>Halcyon botWhisper ... botTouchObject (LSLSystemAPI.cs:17867-17996): ScriptSleep(15) after the call.</summary>
@@ -295,13 +295,13 @@ namespace Phlox.ScriptEngine
 
         /// <summary>
         /// Answer a notecard read with <paramref name="answer"/> of the notecard's text. From the region's notecard cache
-        /// when it is on and holds the asset (true: a cached read); otherwise fetched on the thread pool as before PHLOX-56,
+        /// when it is on and holds the asset (true: a cached read); otherwise fetched on the thread pool,
         /// cached when the cache is on, and the cache swept as Halcyon's CacheCheck does after a miss (false).
         /// <paramref name="logAs"/> names the call in the error log (null: not logged, as the link variants never logged).
-        /// PHLOX-65: a fetch that finds no notecard asset is Halcyon's (LSLSystemAPI.cs:14563-14569, 14646-14652): the error
+        /// A fetch that finds no notecard asset is Halcyon's (LSLSystemAPI.cs:14563-14569, 14646-14652): the error
         /// "Notecard '<paramref name="cardName"/>' could not be found." shouted and no dataserver answer (Phlox answered
         /// "0" or EOF). Halcyon also paused the script (ScriptSleep(ERROR_DELAY), its ScriptShoutError's 15 ms); here the
-        /// fetch runs on the thread pool, where a ScriptSleep would set the run state off the script's own thread (the B2
+        /// fetch runs on the thread pool, where a ScriptSleep would set the run state off the script's own thread (the
         /// strand, SyscallSleepRaceTests), so the error is shouted without a pause.
         /// </summary>
         private bool AnswerNotecardRead(UUID assetId, UUID queryID, Func<PhloxNotecardCache.Card, string> answer,
@@ -356,7 +356,7 @@ namespace Phlox.ScriptEngine
 
         protected TaskInventoryItem GetInventorySelf()
         {
-            // PHLOX-46: a derezzed part has no inventory left by the time its scripts unload; the NRE here stopped DoUnload
+            // A derezzed part has no inventory left by the time its scripts unload; the NRE here stopped DoUnload
             // half way and left every derezzed script loaded.
             var inventory = m_host?.TaskInventory;
             if (inventory == null) return null;
@@ -385,14 +385,14 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-2g. The backstop completion for a long-running syscall. Twenty-four async shims set
+        /// The backstop completion for a long-running syscall. Twenty-four async shims set
         /// RunState=Syscall and called an implementation that never signalled a return, so the script
         /// stayed in Syscall for ever - no error, no timeout, every later event piling up in its
         /// queue. That is what the manhole was doing at 19:21 with four queued events.
         /// </summary>
         public void CompleteSyscall()
         {
-            // B2: post the call's one return - the body's own SysReturn result if it gave one,
+            // Post the call's one return - the body's own SysReturn result if it gave one,
             // else nothing - with every ScriptSleep of the body as its delay and the call's sequence
             // number, so a late or repeated completion cannot land in a later syscall.
             var ctx = InWorldz.Phlox.Glue.SyscallContext.Current;
@@ -405,7 +405,7 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-9. Run-time errors go out on DEBUG_CHANNEL, as SL does (wiki: "chat channel reserved for
+        /// Run-time errors go out on DEBUG_CHANNEL, as SL does (wiki: "chat channel reserved for
         /// script debugging and error messages"; viewers route it to the script-error window and filter
         /// out other owners' objects) - not shouted on channel 0, where every avatar in range read them
         /// in local chat. The text is unchanged. ChatModule turns the channel into ChatTypeEnum.DebugChannel.
@@ -420,7 +420,7 @@ namespace Phlox.ScriptEngine
 
 
         // A reset and a state change drop every listen, as Halcyon's UnregisterScriptFromNotifications does.
-        // PHLOX-45: a reset also ends every permission and the controls taken under them (Halcyon OnScriptReset:
+        // A reset also ends every permission and the controls taken under them (Halcyon OnScriptReset:
         // ReleaseControlsInternal, then PermsChange(item, UUID.Zero, 0); SL llTakeControls: "The script will also lose
         // this permission on reset"). Animations already playing and camera parameters stay, as in both.
         public void OnScriptReset()
@@ -430,7 +430,7 @@ namespace Phlox.ScriptEngine
             ThrottleScriptResets();
         }
         /// <summary>
-        /// PHLOX-45: a script loaded with no saved state. Only the listens go, as before: the permissions are the item's,
+        /// A script loaded with no saved state. Only the listens go, as before: the permissions are the item's,
         /// which the core sets when it starts the script (SceneObjectPartInventory.CreateScriptInstance), and a fresh start
         /// is not the owner's or the script's reset.
         /// </summary>
@@ -440,16 +440,16 @@ namespace Phlox.ScriptEngine
         {
             m_host?.RemoveScriptEvents(m_itemID);
             ReleaseScriptResources(ScriptEnd.Unload);
-            // PHLOX-45: Halcyon OnScriptUnloaded "silently release controls". The permissions and the Control record stay
+            // Halcyon OnScriptUnloaded "silently release controls". The permissions and the Control record stay
             // with the item and its saved state (a crossing object takes them with it); only an avatar still here is let go.
             EndPermissions(0, releaseControls: true, forgetControls: false);
         }
-        // ── PHLOX-46: what ends with the script (HALCYON-DIFF S12) ─────────────
+        // ── What ends with the script ──────────────────────────────────────────
 
         internal enum ScriptEnd { Reset, StateChange, Unload }
 
         /// <summary>
-        /// PHLOX-46. The one place a script's resources end: OnScriptReset, OnStateChange and OnScriptUnloaded call it, and
+        /// The one place a script's resources end: OnScriptReset, OnStateChange and OnScriptUnloaded call it, and
         /// every reset (llResetScript, llResetOtherScript, the viewer's Reset, osResetAllScripts, a crashed script's
         /// reset), state change and unload (delete, derez, recompile, region shutdown) reaches one of those three. Timers,
         /// sleeps and touch waits belong to the scheduler, which ends them one step earlier on the same three paths
@@ -497,7 +497,7 @@ namespace Phlox.ScriptEngine
         // reset, state change or unload, and is dropped (PostDataserverEvent). Written from pool threads.
         private readonly System.Collections.Concurrent.ConcurrentDictionary<UUID, byte> m_PendingDataserver = new();
 
-        /// <summary>PHLOX-46: a new dataserver query id, recorded as owed a reply.</summary>
+        /// <summary>A new dataserver query id, recorded as owed a reply.</summary>
         private UUID NewDataserverQuery()
         {
             UUID id = UUID.Random();
@@ -514,7 +514,7 @@ namespace Phlox.ScriptEngine
         private DateTime m_resetWarned = DateTime.MinValue;
 
         /// <summary>
-        /// PHLOX-46: Halcyon's reset throttle - more than 5 resets of this script in one second and it sleeps 5 s before
+        /// Halcyon's reset throttle - more than 5 resets of this script in one second and it sleeps 5 s before
         /// its state_entry, with a warning in the log and on DEBUG_CHANNEL once an hour. [InWorldz.Phlox] ResetThrottle.
         /// </summary>
         private void ThrottleScriptResets()
@@ -543,7 +543,7 @@ namespace Phlox.ScriptEngine
             m_resetSecond = now;
         }
 
-        /// <summary>PHLOX-46: times this script has been put to sleep by the reset throttle (tests).</summary>
+        /// <summary>Times this script has been put to sleep by the reset throttle (tests).</summary>
         internal int ResetSleepCount { get; private set; }
 
         public void AddExecutionTime(double ms) => m_host?.ParentGroup?.AddScriptLPS((int)ms);
@@ -591,7 +591,7 @@ namespace Phlox.ScriptEngine
         public int llAbs(int i) => i == int.MinValue ? i : Math.Abs(i);
         public float llFabs(float f) => Math.Abs(f);
         public float llFrand(float mag) => (float)(ThreadRandom.NextDouble() * mag);
-        // PHLOX-61: SL wiki llFloor, "The returned value is -2147483648 (0x80000000) if the arithmetic result is outside
+        // SL wiki llFloor, "The returned value is -2147483648 (0x80000000) if the arithmetic result is outside
         // of the range of valid integers"; NaN too. A plain (int) saturates on .NET 9+ x64.
         public int llFloor(float f) => InWorldz.Phlox.Util.LslConvert.FloatToInteger(Math.Floor(f));
         public int llCeil(float f) => InWorldz.Phlox.Util.LslConvert.FloatToInteger(Math.Ceiling(f));
@@ -715,7 +715,7 @@ namespace Phlox.ScriptEngine
             m_host?.ParentGroup?.Scene?.SimChat(msg, ChatTypeEnum.Say, channel,
                 m_host.AbsolutePosition, m_host.Name, m_host.UUID, false);
             ChatToWorldComm(ChatTypeEnum.Say, channel, msg);
-            ChatSleep();   // PHLOX-56
+            ChatSleep();
         }
 
         public void llShout(int channel, string msg)
@@ -723,7 +723,7 @@ namespace Phlox.ScriptEngine
             m_host?.ParentGroup?.Scene?.SimChat(msg, ChatTypeEnum.Shout, channel,
                 m_host.AbsolutePosition, m_host.Name, m_host.UUID, false);
             ChatToWorldComm(ChatTypeEnum.Shout, channel, msg);
-            ChatSleep();   // PHLOX-56
+            ChatSleep();
         }
 
         public void llWhisper(int channel, string msg)
@@ -731,7 +731,7 @@ namespace Phlox.ScriptEngine
             m_host?.ParentGroup?.Scene?.SimChat(msg, ChatTypeEnum.Whisper, channel,
                 m_host.AbsolutePosition, m_host.Name, m_host.UUID, false);
             ChatToWorldComm(ChatTypeEnum.Whisper, channel, msg);
-            ChatSleep();   // PHLOX-56
+            ChatSleep();
         }
 
         public void llOwnerSay(string msg)
@@ -744,7 +744,7 @@ namespace Phlox.ScriptEngine
                     m_host.AbsolutePosition, m_host.Name, m_host.UUID, m_host.UUID,
                     (byte)ChatSourceType.Object, (byte)ChatAudibleLevel.Fully);
             }
-            ChatSleep();   // PHLOX-56: Halcyon's llOwnerSay sleeps whether or not the owner hears it
+            ChatSleep();   // Halcyon's llOwnerSay sleeps whether or not the owner hears it
         }
 
 		public void llRegionSay(int channel, string msg)
@@ -757,7 +757,7 @@ namespace Phlox.ScriptEngine
 			m_host?.ParentGroup?.Scene?.SimChat(msg, ChatTypeEnum.Region, channel,
 				m_host.AbsolutePosition, m_host.Name, m_host.UUID, false);
 			ChatToWorldComm(ChatTypeEnum.Region, channel, msg);
-			ChatSleep();   // PHLOX-56
+			ChatSleep();
 		}
 
 		/// <summary>
@@ -814,7 +814,7 @@ namespace Phlox.ScriptEngine
 				Vector3 pos = m_host.AbsolutePosition;
 				m_ScriptEngine.SendToWorldComm(w => w.DeliverMessageTo(targetId, channel, pos, name, id, msg));
 			}
-			ChatSleep();   // PHLOX-56: after a send; the refusals above return without it, as Halcyon's
+			ChatSleep();   // After a send; the refusals above return without it, as Halcyon's
 		}
 
 		public void llInstantMessage(string user, string message)
@@ -849,7 +849,7 @@ namespace Phlox.ScriptEngine
 		public void llDialog(string avatar, string message, LSLList buttons, int chat_channel)
 		{
 			if (m_host == null) return;
-			// PHLOX-62 (ruling (a)): Halcyon's checks and errors, in its order (LSLSystemAPI.cs:8816-8846); each refuses the
+			// Halcyon's checks and errors, in its order (LSLSystemAPI.cs:8816-8846); each refuses the
 			// dialog (no 1 s sleep). SL: "An error will be shouted on DEBUG_CHANNEL, if there are more than 12 buttons"; a label
 			// of length zero or over 24 fails too. Halcyon counts characters, as here.
 			if (!UUID.TryParse(avatar, out UUID avatarId)) { LSLError("First parameter to llDialog needs to be a key"); return; }
@@ -903,7 +903,7 @@ namespace Phlox.ScriptEngine
         {
             IDialogModule dm = World?.RequestModuleInterface<IDialogModule>();
             if (dm == null) return;
-            // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:5779-5783, its text naming llDialog.
+            // Halcyon LSLSystemAPI.cs:5779-5783, its text naming llDialog.
             if (!UUID.TryParse(avatar, out UUID av)) { LSLError("First parameter to llDialog needs to be a key"); return; }
             if (av == UUID.Zero) return;
             if (message != null && message.Length > 1024) message = message.Substring(0, 1024);
@@ -917,7 +917,7 @@ namespace Phlox.ScriptEngine
         public string llGetOwner() => m_host?.OwnerID.ToString() ?? UUID.Zero.ToString();
         public string llGetCreator() => m_host?.CreatorID.ToString() ?? UUID.Zero.ToString();
         public string llGetObjectName() => m_host?.Name ?? string.Empty;
-        /// <summary>PROPS-1: the name is in the full ObjectProperties reply (LLClientView.cs:6381),
+        /// <summary>The name is in the full ObjectProperties reply (LLClientView.cs:6381),
         /// so a change has to be pushed or the viewer keeps what it had at the last select.</summary>
         public void llSetObjectName(string name)
         {
@@ -927,7 +927,7 @@ namespace Phlox.ScriptEngine
             m_host.SendPropertiesToAllClients();
         }
         public string llGetObjectDesc() => m_host?.Description ?? string.Empty;
-        /// <summary>PROPS-1: same for the description (LLClientView.cs:6384).</summary>
+        /// <summary>Same for the description (LLClientView.cs:6384).</summary>
         public void llSetObjectDesc(string name)
         {
             if (m_host == null) return;
@@ -1060,7 +1060,7 @@ namespace Phlox.ScriptEngine
             scale.Y = Math.Max(0.01f, Math.Min(64f, scale.Y));
             scale.Z = Math.Max(0.01f, Math.Min(64f, scale.Z));
             m_host.Resize(scale);
-            PhySleep();   // PHLOX-56
+            PhySleep();
         }
         public int llScaleByFactor(float factor)
         {
@@ -1223,7 +1223,7 @@ namespace Phlox.ScriptEngine
                 if (local != 0) force *= m_host.GetWorldRotation();
                 pa.Force = force;
             }
-            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path
+            finally { PhySleep(); }   // Halcyon sleeps on every path
         }
 
         public Vector3 llGetForce()
@@ -1244,7 +1244,7 @@ namespace Phlox.ScriptEngine
                 if (local != 0) torque *= m_host.GetWorldRotation();
                 pa.Torque = torque;
             }
-            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path
+            finally { PhySleep(); }   // Halcyon sleeps on every path
         }
 
         public void llSetForceAndTorque(Vector3 force, Vector3 torque, int local)
@@ -1263,7 +1263,7 @@ namespace Phlox.ScriptEngine
                     force = Vector3.Normalize(force) * 20000f;
                 m_host.ApplyImpulse(force, local != 0);
             }
-            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path
+            finally { PhySleep(); }   // Halcyon sleeps on every path
         }
 
         public void llApplyRotationalImpulse(Vector3 force, int local)
@@ -1274,7 +1274,7 @@ namespace Phlox.ScriptEngine
                 if ((m_host.ParentGroup.RootPart.Flags & PrimFlags.Physics) == 0) return;
                 m_host.ApplyAngularImpulse(force, local != 0);
             }
-            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path
+            finally { PhySleep(); }   // Halcyon sleeps on every path
         }
         public void llMoveToTarget(Vector3 target, float tau)
         {
@@ -1288,7 +1288,7 @@ namespace Phlox.ScriptEngine
             m_host.ParentGroup.StopMoveToTarget();
         }
         /// <summary>
-        /// PHLOX-21b C: YEngine's scope (LSL_Api.llGetMass) - the whole object from any prim of it, and
+        /// YEngine's scope (LSL_Api.llGetMass) - the whole object from any prim of it, and
         /// the wearer's mass from an attachment. This used to be the script's own prim only.
         /// </summary>
         public float llGetMass()
@@ -1299,10 +1299,10 @@ namespace Phlox.ScriptEngine
                 return World?.GetScenePresence(group.AttachedAvatar)?.GetMass() ?? 0f;
             return group.GetMass();
         }
-        /// <summary>PHLOX-21 E1: kilograms - 100 x llGetMass, as YEngine (LSL_Api.llGetMassMKS).</summary>
+        /// <summary>Kilograms - 100 x llGetMass, as YEngine (LSL_Api.llGetMassMKS).</summary>
         public float llGetMassMKS() => 100f * llGetMass();
         /// <summary>
-        /// PHLOX-22 D: kilograms - 100 x llGetObjectMass for the same object, as llGetMassMKS is 100 x llGetMass
+        /// Kilograms - 100 x llGetObjectMass for the same object, as llGetMassMKS is 100 x llGetMass
         /// (YEngine, LSL_Api.llGetMassMKS). It returned the same number as llGetObjectMass. Halcyon's body does too:
         /// its Kilograms2Lindograms is the identity ("returning kg/100.0 would break existing content"); Phlox follows
         /// its own llGetMass/llGetMassMKS pair instead.
@@ -1374,7 +1374,7 @@ namespace Phlox.ScriptEngine
             if (group == null) return;
             bool on = value != 0;
 
-            // PHLOX-56: Halcyon's PhySleep after each (LSLSystemAPI.cs:1506, 1516); none when physics is refused for size
+            // Halcyon's PhySleep after each (LSLSystemAPI.cs:1506, 1516); none when physics is refused for size
             if ((status & STATUS_PHYSICS) != 0)
             {
                 if (SetObjectPhysics(group, on)) PhySleep();
@@ -1398,13 +1398,13 @@ namespace Phlox.ScriptEngine
             if ((status & STATUS_DIE_AT_EDGE) != 0)
                 m_host.SetDieAtEdge(on);
 
-            // PHLOX-65: as YEngine (LSL_Api.cs:1577-1578); the core returns the object at a region edge (Scene.cs:2977,
-            // SceneObjectGroup.cs:874). Was PHLOX-62's "Command not implemented" (Halcyon :1557-1560).
+            // As YEngine (LSL_Api.cs:1577-1578); the core returns the object at a region edge (Scene.cs:2977,
+            // SceneObjectGroup.cs:874), where Halcyon answered "Command not implemented" (:1557-1560).
             if ((status & STATUS_RETURN_AT_EDGE) != 0)
                 m_host.SetReturnAtEdge(on);
 
             if ((status & STATUS_SANDBOX) != 0)
-                m_host.SetStatusSandbox(on);   // PHLOX-21, as YEngine
+                m_host.SetStatusSandbox(on);   // As YEngine
 
             // Rotation axis locks — byte bitmask: bit0=X, bit1=Y, bit2=Z
             if ((status & (STATUS_ROTATE_X | STATUS_ROTATE_Y | STATUS_ROTATE_Z)) != 0)
@@ -1425,7 +1425,7 @@ namespace Phlox.ScriptEngine
         /// STATUS_PHYSICS and PRIM_PHYSICS on the whole object (Halcyon llSetStatus): turning physics on is refused
         /// when any prim is larger than the region's physical-prim size.
         /// </summary>
-        /// <returns>false when turning physics on was refused (PHLOX-56: Halcyon does not PhySleep then)</returns>
+        /// <returns>false when turning physics on was refused (Halcyon does not PhySleep then)</returns>
         private bool SetObjectPhysics(SceneObjectGroup group, bool on)
         {
             if (on)
@@ -1460,7 +1460,7 @@ namespace Phlox.ScriptEngine
                 case STATUS_SANDBOX:
                     return m_host.GetStatusSandbox() ? 1 : 0;
                 case STATUS_RETURN_AT_EDGE:
-                    return m_host.GetReturnAtEdge() ? 1 : 0;   // PHLOX-65: YEngine LSL_Api.cs:1649
+                    return m_host.GetReturnAtEdge() ? 1 : 0;   // YEngine LSL_Api.cs:1649
                 case STATUS_ROTATE_X:
                     return (m_host.RotationAxisLocks & 0x01) == 0 ? 1 : 0;
                 case STATUS_ROTATE_Y:
@@ -1471,7 +1471,7 @@ namespace Phlox.ScriptEngine
                     return 0;
             }
         }
-        // PHLOX-62 (ruling (a)): Halcyon's vehicle validators (OpenSim/Region/Physics/Manager/Vehicle/*.cs) - the ids
+        // Halcyon's vehicle validators (OpenSim/Region/Physics/Manager/Vehicle/*.cs) - the ids
         // Phlox's constants define (DefaultConstants VEHICLE_*) - and its LSLError on anything else or a NaN
         // (LSLSystemAPI.cs:8541-8621). An invalid call is not applied and returns before Halcyon's PhySleep.
         private static bool VehicleTypeValid(int t) => (t >= 0 && t <= 5) || t == 10001 || t == 10002;
@@ -1495,7 +1495,7 @@ namespace Phlox.ScriptEngine
                 if (pa == null) return;
                 pa.VehicleType = type;
             }
-            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path it applies
+            finally { PhySleep(); }   // Halcyon sleeps on every path it applies
         }
 
         public void llSetVehicleFloatParam(int param, float value)
@@ -1514,7 +1514,7 @@ namespace Phlox.ScriptEngine
                 if (pa == null) return;
                 pa.VehicleFloatParam(param, value);
             }
-            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path it applies
+            finally { PhySleep(); }   // Halcyon sleeps on every path it applies
         }
 
         public void llSetVehicleVectorParam(int param, Vector3 vec)
@@ -1532,7 +1532,7 @@ namespace Phlox.ScriptEngine
                 if (pa == null) return;
                 pa.VehicleVectorParam(param, vec);
             }
-            finally { PhySleep(); }   // PHLOX-56: Halcyon sleeps on every path it applies
+            finally { PhySleep(); }   // Halcyon sleeps on every path it applies
         }
 
         public void llSetVehicleRotationParam(int param, Quaternion rot)
@@ -1582,7 +1582,7 @@ namespace Phlox.ScriptEngine
             // SL: "llSetPhysicsMaterial silently fails if called from an attachment."
             if (m_host.ParentGroup?.IsAttachment == true) return;
             PrimSetPhysicsMaterial(m_host, mask, density, friction, restitution, gravityMultiplier);
-            if (m_host.PhysActor != null) PhySleep();   // PHLOX-56: Halcyon's, for a prim with a physics actor
+            if (m_host.PhysActor != null) PhySleep();   // Halcyon's, for a prim with a physics actor
         }
 
         /// <summary>
@@ -1719,7 +1719,7 @@ namespace Phlox.ScriptEngine
         // ── Timer / sleep ──────────────────────────────────────────────────────
 
         /// <summary>
-        /// PHLOX-3b. A positive request below the region's floor is raised to it.
+        /// A positive request below the region's floor is raised to it.
         ///
         /// <para>
         /// Zero and negative are left exactly as they were: the SL wiki says "Passing in 0.0 stops
@@ -1753,11 +1753,11 @@ namespace Phlox.ScriptEngine
             m_ScriptEngine.SetTimerEvent(m_localID, m_itemID, applied);
         }
 
-        /// <summary>PHLOX-3b: one clamp message per script instance, however often it re-arms.</summary>
+        /// <summary>One clamp message per script instance, however often it re-arms.</summary>
         private bool m_timerFloorLogged;
         public void llSleep(float sec) => ScriptSleep((int)(sec * 1000));
         /// <summary>
-        /// PHLOX-7b. wiki: "Set the minimum time between events being handled" - a floor between
+        /// Wiki: "Set the minimum time between events being handled" - a floor between
         /// handler starts for THIS script, events inside the window queued, not dropped. The old
         /// comment said the scheduler made this unnecessary; serialising events is not the same as
         /// spacing them. Upstream forwards to the engine too (LSL_Api.cs:4433-4444).
@@ -1920,7 +1920,7 @@ namespace Phlox.ScriptEngine
             var targets = GetLinkParts(linknum).ToList();
             foreach (var p in targets)
                 m_ScriptEngine.PostObjectEvent(p.LocalId, parms);
-            LinkMessageBackPressure(ScriptItemsIn(targets));   // PHLOX-56
+            LinkMessageBackPressure(ScriptItemsIn(targets));
         }
         public int llGetStartParameter()
         {
@@ -1946,7 +1946,7 @@ namespace Phlox.ScriptEngine
         }
         public int llGetMemoryLimit() { return 131072; /* 128 * 1024 */ }
         /// <summary>
-        /// PHLOX-7b. wiki: "Enables or disables the scripts profiling state" - PROFILE_SCRIPT_MEMORY (1)
+        /// Wiki: "Enables or disables the scripts profiling state" - PROFILE_SCRIPT_MEMORY (1)
         /// starts recording, PROFILE_NONE (0) stops it, and llGetSPMaxMemory then returns "the most
         /// memory used at any one time". Upstream is a no-op (LSL_Api.cs:17570); Phlox has MemInfo, so
         /// this is a peak field and two reads. Starting resets the peak to the current usage.
@@ -1967,7 +1967,7 @@ namespace Phlox.ScriptEngine
         // ── Permissions ────────────────────────────────────────────────────────
 
         private IClientAPI m_waitingForScriptAnswer = null;
-        /// <summary>PHLOX-21: the mask the pending question asked for; an answer is stored ANDed with it.</summary>
+        /// <summary>The mask the pending question asked for; an answer is stored ANDed with it.</summary>
         private int m_requestedPerms;
 
         private UUID InventorySelf()
@@ -1992,7 +1992,7 @@ namespace Phlox.ScriptEngine
 
         private int GetImplicitPermissions(TaskInventoryItem item, UUID agentID)
         {
-            // PHLOX-21: SL's implicit grants (wiki llRequestPermissions), as YEngine gives them
+            // SL's implicit grants (wiki llRequestPermissions), as YEngine gives them
             // (LSL_Api.llRequestPermissions). A sitter anywhere on the linkset counts, not only the
             // root's sit-target avatar.
             if (agentID == UUID.Zero) return 0;
@@ -2038,7 +2038,7 @@ namespace Phlox.ScriptEngine
         private void handleScriptAnswer(IClientAPI client, UUID taskID, UUID itemID, int answer)
         {
             if (taskID != m_host.UUID) return;
-            // PHLOX-21: every script in the prim listens on the same client; an answer is for one item.
+            // Every script in the prim listens on the same client; an answer is for one item.
             if (itemID != m_itemID) return;
             if (m_waitingForScriptAnswer == null || client != m_waitingForScriptAnswer) return;
             ClearWaitingForScriptAnswer(client);
@@ -2066,7 +2066,7 @@ namespace Phlox.ScriptEngine
             lock (m_host.TaskInventory)
                 item = m_host.TaskInventory[invItemID];
 
-            // PHLOX-45: Halcyon :4518-4527; SL llRequestPermissions "PERMISSION_TELEPORT cannot be held by temporary
+            // Halcyon :4518-4527; SL llRequestPermissions "PERMISSION_TELEPORT cannot be held by temporary
             // attachments". The rest of the request goes on (TELEPORT alone becomes a release).
             if ((perm & PERMISSION_TELEPORT) != 0 && IsTempAttachment(m_host.ParentGroup))
             {
@@ -2083,7 +2083,7 @@ namespace Phlox.ScriptEngine
                 return;
             }
 
-            // PHLOX-45: Halcyon :4544-4545; SL llTakeControls, the permission is revoked by "a new llRequestPermissions
+            // Halcyon :4544-4545; SL llTakeControls, the permission is revoked by "a new llRequestPermissions
             // call". Another avatar, or a request without TAKE_CONTROLS: the controls and the permission go now.
             if (item.PermsGranter != agentID || (perm & SlConst.PERMISSION_TAKE_CONTROLS) == 0)
                 EndPermissions(SlConst.PERMISSION_TAKE_CONTROLS, releaseControls: true, forgetControls: true);
@@ -2102,7 +2102,7 @@ namespace Phlox.ScriptEngine
                 return;
             }
 
-            // PHLOX-45: Halcyon :4565-4571, only when a dialog would be sent: someone who muted the owner or the object
+            // Halcyon :4565-4571, only when a dialog would be sent: someone who muted the owner or the object
             // gets none, and the request ends unanswered (no run_time_permissions).
             if (IsScriptMuted(agentID))
             {
@@ -2144,7 +2144,7 @@ namespace Phlox.ScriptEngine
         {
             TaskInventoryItem item = GetInventorySelf();
             if (item == null) return 0;
-            // PHLOX-62: AutomaticLinkPermission reports PERMISSION_CHANGE_LINKS (YEngine LSL_Api.cs:4755, Halcyon :4702).
+            // AutomaticLinkPermission reports PERMISSION_CHANGE_LINKS (YEngine LSL_Api.cs:4755, Halcyon :4702).
             return AutomaticLinkPermission ? item.PermsMask | PERMISSION_CHANGE_LINKS : item.PermsMask;
         }
         public void llTakeControls(int controls, int accept, int pass_on)
@@ -2159,22 +2159,22 @@ namespace Phlox.ScriptEngine
             }
             ScenePresence sp = World.GetScenePresence(item.PermsGranter);
             if (sp == null || sp.IsChildAgent) return;
-            // PHLOX-45: the script's own call; a release the core raises for it (a re-take, or pass_on without accept) is
+            // The script's own call; a release the core raises for it (a re-take, or pass_on without accept) is
             // not a stand-up (PhloxEngine.OnScriptControlsReleased)
             using (PhloxEngine.OwnControlChange())
                 sp.RegisterControlEventsToScript(controls, accept, pass_on, m_host.LocalId, m_itemID);
             m_thisScript.ScriptState.MiscAttributes[(int)RuntimeState.MiscAttr.Control] =
                 new object[] { controls, accept, pass_on };
-            m_ScriptEngine?.RequestParcelCheck(m_itemID);   // PHLOX-43: holding controls exempts it from a No Scripts parcel
+            m_ScriptEngine?.RequestParcelCheck(m_itemID);   // Holding controls exempts it from a No Scripts parcel
         }
 
         /// <summary>
-        /// PHLOX-45: SL llReleaseControls "If PERMISSION_TAKE_CONTROLS was previously granted, it will be revoked." (Halcyon
+        /// SL llReleaseControls "If PERMISSION_TAKE_CONTROLS was previously granted, it will be revoked." (Halcyon
         /// :3756-3759, ReleaseControlsInternal with releasePerms).
         /// </summary>
         public void llReleaseControls() => EndPermissions(SlConst.PERMISSION_TAKE_CONTROLS, releaseControls: true, forgetControls: true);
 
-        // ── PHLOX-45 (HALCYON-DIFF S8): the permission lifecycle ────────────────
+        // ── The permission lifecycle ────────────────────────────────────────────
 
         /// <summary>Every permission bit: the granter goes too.</summary>
         internal const int ALL_PERMISSIONS = -1;
@@ -2207,7 +2207,7 @@ namespace Phlox.ScriptEngine
                     using (PhloxEngine.OwnControlChange())
                         holder.UnRegisterControlEventsToScript(m_host.LocalId, m_itemID);
                 if (hadRecord || holder != null)
-                    m_ScriptEngine?.RequestParcelCheck(m_itemID);   // PHLOX-43: without controls a No Scripts parcel pauses it
+                    m_ScriptEngine?.RequestParcelCheck(m_itemID);   // Without controls a No Scripts parcel pauses it
             }
 
             if (item == null || revoke == 0) return;
@@ -2307,7 +2307,7 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-48 (HALCYON-DIFF S13): every give asks this first. Halcyon _GiveInventory / _GiveLinkInventoryList: a
+        /// Every give asks this first. Halcyon _GiveInventory / _GiveLinkInventoryList: a
         /// recipient who muted the object or its owner is not offered anything - IW_DELIVER_MUTED, the normal delay, a
         /// server-log line and nothing said to the script. A prim has no mute list, so it is not looked up.
         /// </summary>
@@ -2319,7 +2319,7 @@ namespace Phlox.ScriptEngine
             return true;
         }
 
-        // Deprecated - no-op in modern viewers. PHLOX-62 (ruling (a)): Halcyon's Deprecated, LSLSystemAPI.cs:3867, 3873.
+        // Deprecated - no-op in modern viewers. Halcyon's Deprecated, LSLSystemAPI.cs:3867, 3873.
         public void llTakeCamera(string avatar) => Deprecated("llTakeCamera");
 
         public void llReleaseCamera(string avatar) => Deprecated("llReleaseCamera");
@@ -2360,7 +2360,7 @@ namespace Phlox.ScriptEngine
         {
             TaskInventoryItem item = GetInventorySelf();
             if (item == null) return;
-            // PHLOX-62 (S17): Halcyon needs PERMISSION_CONTROL_CAMERA from a granter and returns silently without it
+            // Halcyon needs PERMISSION_CONTROL_CAMERA from a granter and returns silently without it
             // (LSLSystemAPI.cs:13650-13659). (SL shouts an error there; Halcyon does not.)
             if (item.PermsGranter == UUID.Zero || (item.PermsMask & PERMISSION_CONTROL_CAMERA) == 0) return;
             ScenePresence sp = World.GetScenePresence(item.PermsGranter);
@@ -2383,9 +2383,9 @@ namespace Phlox.ScriptEngine
             m_host.SetForceMouselook(mouselook != 0);
         }
         /// <summary>
-        /// PHLOX-21 E5: the table returns integer and the async shim returns only what the body hands to
-        /// SysReturn, so TRUE/FALSE goes back through B2's sequenced return on every path.
-        /// PHLOX-53 (audit S3, F317/F274): InWorldz llManageEstateAccess. After a change the object's owner gets an IM
+        /// The table returns integer and the async shim returns only what the body hands to
+        /// SysReturn, so TRUE/FALSE goes back through the deferred call's sequenced return on every path.
+        /// InWorldz llManageEstateAccess. After a change the object's owner gets an IM
         /// ("... has been banned from REGION" and so on) and the call takes 200 ms, unless the script holds
         /// PERMISSION_SILENT_ESTATE_MANAGEMENT (SL: "the object owner receives notifications by default").
         /// </summary>
@@ -2403,14 +2403,14 @@ namespace Phlox.ScriptEngine
             finally { m_ScriptEngine.SysReturn(m_itemID, result, delay); }
         }
 
-        // Phlox's action numbers (DefaultConstants.cs), not SL's 0x4..0x80: renumbering is John's open decision.
+        // Phlox's action numbers (DefaultConstants.cs), not SL's 0x4..0x80: renumbering them is an open decision.
         private const int EstateAllowedAgentAdd = 0, EstateAllowedAgentRemove = 1, EstateAllowedGroupAdd = 2,
             EstateAllowedGroupRemove = 3, EstateBannedAgentAdd = 4, EstateBannedAgentRemove = 5,
             EstateQueryCanManage = 11000, EstateQueryAllowedAgent = 11001, EstateQueryAllowedGroup = 11002,
             EstateQueryBannedAgent = 11003;
 
         /// <summary>
-        /// PHLOX-53: Halcyon ManageEstateAccess over EstateManagementModule's EstateAllowUser / EstateAllowGroup /
+        /// Halcyon ManageEstateAccess over EstateManagementModule's EstateAllowUser / EstateAllowGroup /
         /// EstateBanUser / Estate*Query (EstateManagementModule.cs:258-460). Who may call: CanIssueEstateCommand, i.e. a
         /// god, the estate owner or an estate manager (SL: "the object owner is the Estate Owner or an Estate Manager"),
         /// through the same EstateSettings and IsGod helpers HasParcelPowers uses. QUERY_CAN_MANAGE answers anyone,
@@ -2590,7 +2590,7 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-41. SL (wiki llAttachToAvatarTemp) and Halcyon (AttachInternal): any avatar who granted
+        /// SL (wiki llAttachToAvatarTemp) and Halcyon (AttachInternal): any avatar who granted
         /// PERMISSION_ATTACH can wear it; a non-owner becomes the owner ("Can be used on non-owners (changing ownership
         /// to the wearer)"), which needs the transfer right or fails with "No permission to transfer"; an object
         /// already attached fails silently; no inventory is created. After the change of owner the permissions are
@@ -2623,7 +2623,7 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-41: hand a live object to its temp wearer the way the scene sells an object "Original"
+        /// Hand a live object to its temp wearer the way the scene sells an object "Original"
         /// (BuySellModule, SaleType.Original) and YEngine's llAttachToAvatarTemp do it: transfer right on the
         /// effective owner perms, SetOwner, then the contents follow with next-owner perms and CHANGED_OWNER.
         /// False, and nothing changed, without the transfer right.
@@ -2781,7 +2781,7 @@ namespace Phlox.ScriptEngine
             if (m_host == null) return;
             m_host.SitName = text;
 
-            // PROPS-1: the sit label rides the same wire as the touch label - the full
+            // The sit label rides the same wire as the touch label - the full
             // ObjectProperties reply (LLClientView.cs:6390), which the region otherwise sends only
             // on select. Right-click asks for ObjectPropertiesFamily, which carries neither.
             if (m_host.ParentGroup != null) m_host.ParentGroup.HasGroupChanged = true;
@@ -2793,7 +2793,7 @@ namespace Phlox.ScriptEngine
             if (m_host == null) return;
             m_host.TouchName = text;
 
-            // PHLOX-2g: setting the field is not enough - the viewer's context menu comes from the
+            // Setting the field is not enough - the viewer's context menu comes from the
             // object update, so without scheduling one the menu keeps whatever it last received.
             // That is why the manhole's menu still read "Touch" after its state_entry had run
             // llSetTouchText("Enter") successfully. llSetClickAction next door already marks the
@@ -2801,7 +2801,7 @@ namespace Phlox.ScriptEngine
             if (m_host.ParentGroup != null) m_host.ParentGroup.HasGroupChanged = true;
             m_host.ScheduleFullUpdate();
 
-            // PROPS-1: the ObjectUpdate above does NOT carry the touch label. The viewer takes it
+            // The ObjectUpdate above does NOT carry the touch label. The viewer takes it
             // from the full ObjectProperties reply, which the region otherwise sends only on
             // select - a right-click asks for ObjectPropertiesFamily, which has no touch name.
             // Without this push the menu keeps whatever it was told when the object was last
@@ -2956,7 +2956,7 @@ namespace Phlox.ScriptEngine
         // ── Teleport helpers (ported from Halcyon) ────────────────────────────
 
         /// <summary>
-        /// PHLOX-52 (audit S4/F131/F273). An avatar with god powers: Halcyon's "targetSP.GodLevel > 0" is the level
+        /// An avatar with god powers: Halcyon's "targetSP.GodLevel > 0" is the level
         /// granted when god mode is switched on (ScenePresence.GrantGodlikePowers); NGC keeps that as IsViewerUIGod /
         /// IsGod (GodController.cs:129-130).
         /// </summary>
@@ -2964,8 +2964,8 @@ namespace Phlox.ScriptEngine
 
         /// <summary>
         /// Halcyon IsTeleportAuthorized (LSLSystemAPI.cs:14923-14961), the rule of iwTeleportAgent, llTeleportAgentHome
-        /// and llEjectFromLand. PHLOX-52: "scripts cannot force-TP gods, unless the god is the owner of the script" is
-        /// back (F273). PHLOX-53 corrects PHLOX-52's land test (F272): Halcyon's HasLandPrivileges is
+        /// and llEjectFromLand. Halcyon's "scripts cannot force-TP gods, unless the god is the owner of the script" is
+        /// applies. The land test is Halcyon's too: its HasLandPrivileges is
         /// CanEditParcel(owner, parcel, GroupPowers.LandEjectAndFreeze), and SL (wiki llTeleportAgentHome, llEjectFromLand)
         /// admits on group land "The object is deeded to the same group" or "The object owner must have 'Eject and freeze
         /// Residents on parcels' ability in the group". So on group land: an object deeded to that group, or an owner who
@@ -3034,7 +3034,7 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-52: SL's gate for llTeleportAgent and llTeleportAgentGlobalCoords. "This function can only teleport the
+        /// SL's gate for llTeleportAgent and llTeleportAgentGlobalCoords. "This function can only teleport the
         /// owner of the object (unless part of an Experience)"; "If the script lacks the permission PERMISSION_TELEPORT,
         /// the script will shout an error on DEBUG_CHANNEL and the operation fails"; "If PERMISSION_TELEPORT is granted by
         /// anyone other than agent, then when the function is called an error will be shouted"; "Does not work in scripts
@@ -3117,7 +3117,7 @@ namespace Phlox.ScriptEngine
                 region, pos, lookAt, (uint)OpenMetaverse.TeleportFlags.ViaLocation);
         }
 
-        // ── osTeleportAgent / osTeleportOwner: YEngine's OSSL (OSSL_Api.cs:895-1096), PHLOX-52 ───────────────
+        // ── osTeleportAgent / osTeleportOwner: YEngine's OSSL (OSSL_Api.cs:895-1096) ─────────────────────────
         // Not the iw rule: the Severe threat level on the region-name and grid forms, checkAllowAgentTPbyLandOwner, the
         // 500 ms refusal and 500 / 5000 ms teleport sleeps. YEngine has no god check here and admits the object's group
         // tag on group land; both are kept for parity (noted for the core list).
@@ -3216,7 +3216,7 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-52: SL llTeleportAgent. "Teleports an agent to a landmark stored in the object's inventory. If landmark is
+        /// SL llTeleportAgent. "Teleports an agent to a landmark stored in the object's inventory. If landmark is
         /// an empty string, the avatar is teleported to the location position in the current region." "If landmark is not
         /// an empty string and landmark is missing from the prim's inventory or it is not a landmark then an error is
         /// shouted on DEBUG_CHANNEL." The landmark is an inventory NAME only (YEngine also takes a key or a region name).
@@ -3259,7 +3259,7 @@ namespace Phlox.ScriptEngine
             World.RequestTeleportLandmark(sp.ControllingClient, lm, lookAt);
         }
 
-        /// <summary>PHLOX-52: SL llTeleportAgentGlobalCoords - the llTeleportAgent gate and throttle, to global coordinates.</summary>
+        /// <summary>SL llTeleportAgentGlobalCoords - the llTeleportAgent gate and throttle, to global coordinates.</summary>
         public void llTeleportAgentGlobalCoords(string agent, Vector3 globalCoords, Vector3 regionPos, Vector3 lookAt)
         {
             ScenePresence sp = SlTeleportTarget("llTeleportAgentGlobalCoords", agent);
@@ -3513,7 +3513,7 @@ namespace Phlox.ScriptEngine
         public void llRequestUsername(string id)
         {
             if (!UUID.TryParse(id, out UUID key)) { ReturnQueryKey(UUID.Zero); return; }
-            UUID requestID = NewDataserverQuery();   // PHLOX-66: on the one dataserver path
+            UUID requestID = NewDataserverQuery();   // On the one dataserver path
             ReturnQueryKey(requestID);
 
             // Fire the dataserver event with the name (synchronous in Phlox)
@@ -3572,12 +3572,12 @@ namespace Phlox.ScriptEngine
             catch { return string.Empty; }
         }
         /// <summary>
-        /// PHLOX-21: DATA_PAYINFO - PAYMENT_INFO_ON_FILE | PAYMENT_INFO_USED, from the account's flags
+        /// DATA_PAYINFO - PAYMENT_INFO_ON_FILE | PAYMENT_INFO_USED, from the account's flags
         /// as YEngine reads them ((UserFlags &gt;&gt; 2) &amp; 3); "0" for an agent with no account here.
         /// </summary>
         private bool IsOnline(UUID agent)
         {
-            // PHLOX-21 E3, as YEngine (LSL_Api.llRequestAgentData): an avatar in this region is online;
+            // As YEngine (LSL_Api.llRequestAgentData): an avatar in this region is online;
             // otherwise the presence service is asked for a root agent in any region.
             ScenePresence sp = World?.GetScenePresence(agent);
             if (sp != null && !sp.IsChildAgent) return true;
@@ -3860,17 +3860,17 @@ namespace Phlox.ScriptEngine
                 new object[] { name, id, type, range, arc, rate };
         }
 
-        /// <summary>PHLOX-43: the prim this script lives in.</summary>
+        /// <summary>The prim this script lives in.</summary>
         internal SceneObjectPart HostPart => m_host;
 
-        /// <summary>PHLOX-43: a parcel pause stops the sensor repeat; the record in MiscAttributes stays for the resume.</summary>
+        /// <summary>A parcel pause stops the sensor repeat; the record in MiscAttributes stays for the resume.</summary>
         internal void PauseSensorForParcel()
         {
             if (m_thisScript?.ScriptState?.MiscAttributes?.ContainsKey((int)RuntimeState.MiscAttr.SensorRepeat) == true)
                 m_ScriptEngine.AsyncCommands?.SensorRepeatPlugin.UnSetSenseRepeaterEvents(m_localID, m_itemID);
         }
 
-        /// <summary>PHLOX-43: the resume starts the sensor repeat again from its record, as a state restore does.</summary>
+        /// <summary>The resume starts the sensor repeat again from its record, as a state restore does.</summary>
         internal void RestoreSensorAfterParcel()
         {
             if (m_thisScript?.ScriptState?.MiscAttributes != null
@@ -3927,7 +3927,7 @@ namespace Phlox.ScriptEngine
             return -1;
         }
         /// <summary>
-        /// PHLOX-62 (F165, ruling (a)): Halcyon's IsMyScript (LSLSystemAPI.cs:6293-6296) - the item is this script itself, in
+        /// Halcyon's IsMyScript (LSLSystemAPI.cs:6293-6296) - the item is this script itself, in
         /// this prim. Halcyon's GetInventoryKey (:6309-6310) gives it its own asset key whatever its permissions.
         /// </summary>
         private bool IsMyScript(SceneObjectPart part, TaskInventoryItem item)
@@ -3940,9 +3940,9 @@ namespace Phlox.ScriptEngine
                 foreach (var kvp in m_host.TaskInventory)
                     if (kvp.Value.Name == name)
                     {
-                        // PHLOX-21 (YEngine llGetInventoryKey): the asset key only for an item that is
+                        // As YEngine's llGetInventoryKey: the asset key only for an item that is
                         // copy, modify and transfer for its owner; anything less reads NULL_KEY.
-                        // PHLOX-62 (F165, ruling (a)): and the calling script's own key (Halcyon IsMyScript).
+                        // And the calling script's own key (Halcyon IsMyScript).
                         return IsMyScript(m_host, kvp.Value) ? kvp.Value.AssetID.ToString()
                             : AssetKeyIfFullPerm(kvp.Value.AssetID, kvp.Value.CurrentPermissions);
                     }
@@ -4003,8 +4003,8 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-21 E4: a god function, as YEngine (LSL_Api.llSetInventoryPermMask) - only with AllowGodFunctions and
-        /// an administrator owner; copy/transfer is kept. PHLOX-44: the MASK_* number alone picks the category, as
+        /// A god function, as YEngine (LSL_Api.llSetInventoryPermMask) - only with AllowGodFunctions and
+        /// an administrator owner; copy/transfer is kept. The MASK_* number alone picks the category, as
         /// llSetObjectPermMask does (SL: "Sets the given permission category to the new value on the inventory item";
         /// Halcyon does not implement it). YEngine's limit ANDed the MASK_* number with the item's PERM_* bits, which
         /// sent every category but MASK_BASE to the base mask once the base was not full; it is not carried.
@@ -4069,7 +4069,7 @@ namespace Phlox.ScriptEngine
                 llSay(0, "Could not parse destination key: " + destination);
                 return;
             }
-            if (GiveRefusedByMute(destId, "inventory")) return;   // PHLOX-48
+            if (GiveRefusedByMute(destId, "inventory")) return;
 
             // Find the item in task inventory
             TaskInventoryItem item = null;
@@ -4090,7 +4090,7 @@ namespace Phlox.ScriptEngine
                 return;
             }
 
-            // PHLOX-22 D: YEngine's delivery (a prim, or an avatar here, elsewhere or offline); no null client.
+            // YEngine's delivery (a prim, or an avatar here, elsewhere or offline); no null client.
             if (GiveTaskItem(m_host, item, destId, out string failure) != IW_DELIVER_OK)
                 ShoutError($"Failed to give '{inventory}': {failure}");
         }
@@ -4098,7 +4098,7 @@ namespace Phlox.ScriptEngine
         {
             if (m_host == null || World == null) return;
             if (!UUID.TryParse(target, out UUID destId) || destId == UUID.Zero) return;
-            if (GiveRefusedByMute(destId, "inventory list")) { ScriptSleep(3000); return; }   // PHLOX-48
+            if (GiveRefusedByMute(destId, "inventory list")) { ScriptSleep(3000); return; }
 
             // SL: the avatar must be in, or able to see into, the region (SVC-868). YEngine gives nothing to one
             // with no presence here - "we could check if it is a grid user ... but that increases security risk" -
@@ -4180,8 +4180,8 @@ namespace Phlox.ScriptEngine
                 AssetBase asset = new AssetBase(UUID.Random(), name, (sbyte)AssetType.Notecard, m_host.OwnerID.ToString());
                 asset.Description = "Script Generated Notecard";
                 asset.Data = Encoding.UTF8.GetBytes(sNotecardData);
-                // PHLOX-62 (ruling (a)): Halcyon iwMakeNotecard shouts when storing the asset fails and makes no item. Its call
-                // was long-running (its ScriptSleep did nothing), so ShoutError: no pause (PHLOX-58's rule).
+                // Halcyon iwMakeNotecard shouts when storing the asset fails and makes no item. Its call
+                // was long-running (its ScriptSleep did nothing), so ShoutError: no pause.
                 string stored;
                 try { stored = World.AssetService.Store(asset); }
                 catch (Exception se) { m_log.LogWarning("[PhloxAPI]: iwMakeNotecard store: {0}", se.Message); stored = null; }
@@ -4222,7 +4222,7 @@ namespace Phlox.ScriptEngine
             ScriptSleep(5000);
         }
         /// <summary>
-        /// PHLOX-56: Halcyon's GetNumberOfNotecardLines delays (LSLSystemAPI.cs:14521-14580) - 25 ms answered from the
+        /// Halcyon's GetNumberOfNotecardLines delays (LSLSystemAPI.cs:14521-14580) - 25 ms answered from the
         /// notecard cache, 50 ms fetched, 100 ms when there is no such notecard - and its cache. The answer is unchanged.
         /// </summary>
         public string llGetNumberOfNotecardLines(string name)
@@ -4231,19 +4231,19 @@ namespace Phlox.ScriptEngine
             TaskInventoryItem item = string.IsNullOrEmpty(name) ? null : FindInventoryItem(name, (int)AssetType.Notecard);
             if (item == null)
             {
-                // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:14543-14547, the error, then its 100 ms (which replaces the 15).
+                // Halcyon LSLSystemAPI.cs:14543-14547, the error, then its 100 ms (which replaces the 15).
                 ScriptShoutError("Notecard '" + name + "' could not be found.");
                 NotecardSleep(NOTECARD_COUNT_ERROR_DELAY);
                 return UUID.Zero.ToString();
             }
-            UUID queryID = NewDataserverQuery();   // PHLOX-46
+            UUID queryID = NewDataserverQuery();
             bool cached = AnswerNotecardRead(item.AssetID, queryID, c => c.LineCount.ToString(), name, "llGetNumberOfNotecardLines");
             NotecardSleep(cached ? NOTECARD_COUNT_FAST_DELAY : NOTECARD_COUNT_LONG_DELAY);
             return queryID.ToString();
         }
 
         /// <summary>
-        /// PHLOX-56: Halcyon's GetNotecardSegment delays (LSLSystemAPI.cs:14602-14661) - 25 ms fetched; from the cache,
+        /// Halcyon's GetNotecardSegment delays (LSLSystemAPI.cs:14602-14661) - 25 ms fetched; from the cache,
         /// 1 ms on lines 0, 16, 32 ... read from offset 0 and none otherwise; none for a missing notecard - and its cache.
         /// </summary>
         public string llGetNotecardLine(string name, int line)
@@ -4252,11 +4252,11 @@ namespace Phlox.ScriptEngine
             TaskInventoryItem item = string.IsNullOrEmpty(name) ? null : FindInventoryItem(name, (int)AssetType.Notecard);
             if (item == null)
             {
-                // PHLOX-62 (ruling (a)): Halcyon GetNotecardSegment, LSLSystemAPI.cs:14624-14628 (no delay after it).
+                // Halcyon GetNotecardSegment, LSLSystemAPI.cs:14624-14628 (no delay after it).
                 ScriptShoutError("Notecard '" + name + "' could not be found.");
                 return UUID.Zero.ToString();
             }
-            UUID queryID = NewDataserverQuery();   // PHLOX-46
+            UUID queryID = NewDataserverQuery();
             int lineNum = line;
             bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardLineAnswer(c, lineNum), name, "llGetNotecardLine");
             if (cached) NotecardLineCachedSleep(line, 0);
@@ -4269,11 +4269,11 @@ namespace Phlox.ScriptEngine
             if (m_host == null || string.IsNullOrEmpty(name)) return UUID.Zero.ToString();
             TaskInventoryItem item = FindInventoryItem(name, (int)AssetType.Notecard);
             if (item == null) { ScriptShoutError("Notecard '" + name + "' could not be found."); return UUID.Zero.ToString(); }
-            UUID queryID = NewDataserverQuery();   // PHLOX-46
+            UUID queryID = NewDataserverQuery();
             int lineNum = line;
             bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardSegmentAnswer(c, lineNum, startOffset, maxLength),
                 name, "iwGetNotecardSegment");
-            if (cached) NotecardLineCachedSleep(line, startOffset);   // PHLOX-56, as llGetNotecardLine
+            if (cached) NotecardLineCachedSleep(line, startOffset);   // As llGetNotecardLine
             else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
             return queryID.ToString();
         }
@@ -4319,7 +4319,7 @@ namespace Phlox.ScriptEngine
         {
             // Looks up a landmark by name and fires dataserver with its position
             if (m_host == null) return UUID.Zero.ToString();
-            UUID queryID = NewDataserverQuery();   // PHLOX-46
+            UUID queryID = NewDataserverQuery();
 
             TaskInventoryItem landmark = null;
             lock (m_host.TaskInventory)
@@ -4449,9 +4449,9 @@ namespace Phlox.ScriptEngine
             foreach (SceneObjectPart part in GetLinkParts(linknumber))
                 lock (part.TaskInventory)
                     foreach (var kvp in part.TaskInventory)
-                        // PHLOX-49 (D5, audit F136): llGetInventoryKey's rule, as Halcyon's shared GetInventoryKey.
+                        // llGetInventoryKey's rule, as Halcyon's shared GetInventoryKey.
                         if (kvp.Value.Name == name)
-                            return IsMyScript(part, kvp.Value) ? kvp.Value.AssetID.ToString()   // PHLOX-62 (F165)
+                            return IsMyScript(part, kvp.Value) ? kvp.Value.AssetID.ToString()
                                 : AssetKeyIfFullPerm(kvp.Value.AssetID, kvp.Value.CurrentPermissions);
             return UUID.Zero.ToString();
         }
@@ -4487,7 +4487,7 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-21b A: iwGiveLinkInventory's body, now returning Halcyon's IW_DELIVER_* code
+        /// iwGiveLinkInventory's body, now returning Halcyon's IW_DELIVER_* code
         /// (InWorldz.Phlox.Engine/LSLSystemAPI.cs GiveLinkInventory/_GiveInventory) so
         /// iwDeliverInventory can hand it back.
         /// </summary>
@@ -4514,20 +4514,20 @@ namespace Phlox.ScriptEngine
                 if (item != null) break;
             }
             if (!anyPart) return IW_DELIVER_PRIM;
-            if (GiveRefusedByMute(destId, "inventory")) return IW_DELIVER_MUTED;   // PHLOX-48: before the item, as Halcyon
+            if (GiveRefusedByMute(destId, "inventory")) return IW_DELIVER_MUTED;   // Before the item, as Halcyon
             if (item == null || sourcePart == null)
             {
                 ShoutError($"Could not find item '{inventory}'");
                 return IW_DELIVER_NONE;
             }
 
-            // PHLOX-22 D: YEngine's delivery - no null client into Scene.MoveTaskInventoryItem (Scene.Inventory.cs:1479).
+            // YEngine's delivery - no null client into Scene.MoveTaskInventoryItem (Scene.Inventory.cs:1479).
             int rc = GiveTaskItem(sourcePart, item, destId, out string failure);
             if (rc != IW_DELIVER_OK) ShoutError($"Failed to give '{inventory}': {failure}");
             return rc;
         }
 
-        // ── PHLOX-22 D: giving task inventory to an avatar who may not be in this region ────────────
+        // ── Giving task inventory to an avatar who may not be in this region ────────────────────────
         //
         // YEngine (LSL_Api.llGiveInventory): a prim destination is a task-to-task move; an avatar is accepted when
         // present here, or known to the grid - a user account, or an online grid user - and is given the item with
@@ -4641,7 +4641,7 @@ namespace Phlox.ScriptEngine
             // Faithful port: give inventory items from a specific link prim
             if (m_host == null || World == null) return;
             if (!UUID.TryParse(target, out UUID destId) || destId == UUID.Zero) return;
-            if (GiveRefusedByMute(destId, "inventory list")) { ScriptSleep(3000); return; }   // PHLOX-48; D15 otherwise unchanged
+            if (GiveRefusedByMute(destId, "inventory list")) { ScriptSleep(3000); return; }   // otherwise unchanged
 
             foreach (SceneObjectPart part in GetLinkParts(linknumber))
             {
@@ -4660,7 +4660,7 @@ namespace Phlox.ScriptEngine
                         }
                     }
                 }
-                if (itemIDs.Count > 0 && GiveTaskItems(part, destId, folder, itemIDs, out string failure) != IW_DELIVER_OK)   // PHLOX-22 D
+                if (itemIDs.Count > 0 && GiveTaskItems(part, destId, folder, itemIDs, out string failure) != IW_DELIVER_OK)
                     ShoutError($"Failed to give inventory list: {failure}");
             }
             ScriptSleep(3000);
@@ -4682,7 +4682,7 @@ namespace Phlox.ScriptEngine
             return UUID.Zero.ToString();
         }
         /// <summary>
-        /// PHLOX-21b A: the table returns integer and the async shim returns only what the body hands to
+        /// The table returns integer and the async shim returns only what the body hands to
         /// SysReturn. Halcyon (InWorldz.Phlox.Engine/LSLSystemAPI.cs iwDeliverInventory ->
         /// GiveLinkInventory(.., 100, includeRC: true)) returns an IW_DELIVER_* code from a finally,
         /// IW_DELIVER_PRIM if the body never got as far as a prim, and sleeps 100 ms, not 2 s.
@@ -4695,7 +4695,7 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-21b A: Halcyon's iwDeliverInventoryList (GiveInventoryList(.., 100, includeRC: true) ->
+        /// Halcyon's iwDeliverInventoryList (GiveInventoryList(.., 100, includeRC: true) ->
         /// _GiveLinkInventoryList): the first prim of the link set gives, a named item missing from it
         /// aborts with IW_DELIVER_ITEM, an empty list is IW_DELIVER_NONE, no prim is IW_DELIVER_PRIM.
         /// The code goes back from a finally, so every path returns one.
@@ -4714,7 +4714,7 @@ namespace Phlox.ScriptEngine
 
             SceneObjectPart part = GetLinkParts(linknumber).FirstOrDefault();
             if (part == null) return IW_DELIVER_PRIM;
-            if (GiveRefusedByMute(destId, "inventory list")) return IW_DELIVER_MUTED;   // PHLOX-48
+            if (GiveRefusedByMute(destId, "inventory list")) return IW_DELIVER_MUTED;
 
             var itemIDs = new List<UUID>();
             for (int i = 0; i < inventory.Length; i++)
@@ -4729,7 +4729,7 @@ namespace Phlox.ScriptEngine
             }
             if (itemIDs.Count == 0) return IW_DELIVER_NONE;
 
-            return GiveTaskItems(part, destId, folder, itemIDs, out _);   // PHLOX-22 D
+            return GiveTaskItems(part, destId, folder, itemIDs, out _);
         }
         public string iwGetLinkNumberOfNotecardLines(int linknumber, string name)
         {
@@ -4745,14 +4745,14 @@ namespace Phlox.ScriptEngine
                         { item = kvp.Value; break; }
                 }
                 if (item == null) continue;
-                UUID queryID = NewDataserverQuery();   // PHLOX-46
-                // PHLOX-56: Halcyon's GetNumberOfNotecardLines delays and cache, as llGetNumberOfNotecardLines
+                UUID queryID = NewDataserverQuery();
+                // Halcyon's GetNumberOfNotecardLines delays and cache, as llGetNumberOfNotecardLines
                 bool cached = AnswerNotecardRead(item.AssetID, queryID, c => c.LineCount.ToString(), name, null);
                 NotecardSleep(cached ? NOTECARD_COUNT_FAST_DELAY : NOTECARD_COUNT_LONG_DELAY);
                 return queryID.ToString();
             }
             ScriptShoutError("iwGetLinkNumberOfNotecardLines: Link number " + linknumber + " does not contain notecard '" + name + "'.");
-            // PHLOX-56: Halcyon sleeps 100 ms when the link is one prim without the notecard; a link of several prims
+            // Halcyon sleeps 100 ms when the link is one prim without the notecard; a link of several prims
             // was refused before any read (LSLSystemAPI.cs:14585-14599), without a sleep.
             if (GetLinkParts(linknumber).Take(2).Count() == 1) NotecardSleep(NOTECARD_COUNT_ERROR_DELAY);
             return UUID.Zero.ToString();
@@ -4771,16 +4771,16 @@ namespace Phlox.ScriptEngine
                         { item = kvp.Value; break; }
                 }
                 if (item == null) continue;
-                UUID queryID = NewDataserverQuery();   // PHLOX-46
+                UUID queryID = NewDataserverQuery();
                 int lineNum = line;
-                // PHLOX-56: Halcyon's GetNotecardSegment delays and cache, as llGetNotecardLine
+                // Halcyon's GetNotecardSegment delays and cache, as llGetNotecardLine
                 bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardLineAnswer(c, lineNum), name, null);
                 if (cached) NotecardLineCachedSleep(line, 0);
                 else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
                 return queryID.ToString();
             }
             ShoutError("iwGetLinkNotecardLine: Notecard '" + name + "' not found in link " + linknumber + ".");
-            // PHLOX-58: Halcyon (LSLSystemAPI.cs:14674-14684) reads the link's first prim, whose GetNotecardSegment pauses
+            // Halcyon (LSLSystemAPI.cs:14674-14684) reads the link's first prim, whose GetNotecardSegment pauses
             // on a missing notecard (:14627); a link number with no prim returns without an error or a pause.
             if (GetLinkParts(linknumber).Any()) ChatSleep();
             return UUID.Zero.ToString();
@@ -4799,9 +4799,9 @@ namespace Phlox.ScriptEngine
                         { item = kvp.Value; break; }
                 }
                 if (item == null) continue;
-                UUID queryID = NewDataserverQuery();   // PHLOX-46
+                UUID queryID = NewDataserverQuery();
                 int lineNum = line;
-                // PHLOX-56: Halcyon's GetNotecardSegment delays and cache, as iwGetNotecardSegment
+                // Halcyon's GetNotecardSegment delays and cache, as iwGetNotecardSegment
                 bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardSegmentAnswer(c, lineNum, startOffset, maxLength),
                     name, null);
                 if (cached) NotecardLineCachedSleep(line, startOffset);
@@ -4823,7 +4823,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             => RezObjectInternal(inventory, pos, vel, rot, param, atRoot, null);
 
         /// <summary>
-        /// PHLOX-7a: the one rez path, now carrying REZ_PARAM_STRING. Upstream stores it on the rezzed
+        /// The one rez path, now carrying REZ_PARAM_STRING. Upstream stores it on the rezzed
         /// group (LSL_Api.cs:3894, sog.RezStringParameter) and llGetStartString reads it back
         /// (LSL_Api.cs:4589-4593); until now Phlox parsed REZ_PARAM only and the string went nowhere.
         /// </summary>
@@ -4873,7 +4873,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return result;
         }
         /// <summary>
-        /// PHLOX-21b A: the table returns key and the async shim returns only what the body hands to
+        /// The table returns key and the async shim returns only what the body hands to
         /// SysReturn. Halcyon (InWorldz.Phlox.Engine/LSLSystemAPI.cs iwRezObject/iwRezAtRoot) returns
         /// iwRezAt's result - the last rezzed group's root key, NULL_KEY on every failure - from a
         /// finally; so does this, with NULL_KEY (not Halcyon's "") if the rez throws.
@@ -4891,8 +4891,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PHLOX-62 (S17): Halcyon iwRezAt (LSLSystemAPI.cs:3168-3173) refuses a NaN rotation with this error and no delay
-        /// (sleepTime = 0), before its 10 m check. Its rez calls were long-running, so ShoutError: no pause (PHLOX-58).
+        /// Halcyon iwRezAt (LSLSystemAPI.cs:3168-3173) refuses a NaN rotation with this error and no delay
+        /// (sleepTime = 0), before its 10 m check. Its rez calls were long-running, so ShoutError: no pause.
         /// Halcyon's other guard there, IsBadUser (:3160-3166), reads a nuke/blacklist-owner list NGC core does not have.
         /// </summary>
         private bool RezRotationIsNaN(Quaternion rot)
@@ -4946,7 +4946,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         public string iwRezPrim(LSLList primParams, LSLList particleSystem, LSLList inventory, Vector3 pos, Vector3 vel, Quaternion rot, int param) { /* InWorldz-specific — no OpenSim equivalent */ return UUID.Zero.ToString(); }
-        public void llGodLikeRezObject(string inventory, Vector3 pos) => NotImplemented("llGodLikeRezObject");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:4384
+        public void llGodLikeRezObject(string inventory, Vector3 pos) => NotImplemented("llGodLikeRezObject");   // Halcyon LSLSystemAPI.cs:4384
         public void llDie()
         {
             if (m_host == null) return;
@@ -5060,7 +5060,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             {
                 pusheeOb.ApplyImpulse(appliedImpulse, local != 0);
             }
-            PhySleep();   // PHLOX-56: Halcyon's, once a push is allowed (LSLSystemAPI.cs:6055)
+            PhySleep();   // Halcyon's, once a push is allowed (LSLSystemAPI.cs:6055)
         }
         public void llSetDamage(float damage)
         {
@@ -5100,9 +5100,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 }
             }
         }
-        /// <summary>PHLOX-17: real now - the heightmap over the rectangle, where the owner may terraform, then a taint (the door osSetTerrainHeight/osTerrainFlush share).</summary>
+        /// <summary>Real now - the heightmap over the rectangle, where the owner may terraform, then a taint (the door osSetTerrainHeight/osTerrainFlush share).</summary>
         /// <summary>
-        /// PHLOX-62 (S14): Halcyon's TerrainModule.SetTerrain rule (TerrainModule.cs:655-688, :610-641), silent to the script
+        /// Halcyon's TerrainModule.SetTerrain rule (TerrainModule.cs:655-688, :610-641), silent to the script
         /// as there: a height outside 0..1024 or a corner outside the region changes nothing; a god sets any cell; anyone else
         /// the cells they may terraform, each held within the estate's raise/lower limits of the baked terrain, as NGC core
         /// holds the viewer's brush (TerrainModule.LimitChannelChanges against Scene.Bakedmap).
@@ -5137,7 +5137,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
         public int llCheckRezError(Vector3 pos, int isTemp, int landImpact) { /* InWorldz Scene.CheckRezError not in OpenSim */ return 0; }
         public int iwCheckRezError(Vector3 pos, int isTemp, int landImpact) { /* InWorldz Scene.CheckRezError not in OpenSim */ return 0; }
-        /// <summary>PHLOX-62: [YEngine] AutomaticLinkPermission, as YEngine reads it (PhloxEngine.AutomaticLinkPermission).</summary>
+        /// <summary>[YEngine] AutomaticLinkPermission, as YEngine reads it (PhloxEngine.AutomaticLinkPermission).</summary>
         private bool AutomaticLinkPermission => m_ScriptEngine != null && m_ScriptEngine.AutomaticLinkPermission;
 
         public void llCreateLink(string target, int parent)
@@ -5148,7 +5148,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             // Requires PERMISSION_CHANGE_LINKS
             TaskInventoryItem item = GetInventorySelf();
             if (item == null) return;
-            // PHLOX-62: with AutomaticLinkPermission neither check applies (YEngine LSL_Api.cs:4790).
+            // With AutomaticLinkPermission neither check applies (YEngine LSL_Api.cs:4790).
             if (!AutomaticLinkPermission && (item.PermsMask & PERMISSION_CHANGE_LINKS) == 0)
             {
                 // Halcyon's text (the SL wiki says only that an error is shouted).
@@ -5156,7 +5156,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 ScriptSleep(1000);
                 return;
             }
-            // PHLOX-41, SL (wiki llCreateLink): "If the permission PERMISSION_CHANGE_LINKS is granted by anyone other
+            // SL (wiki llCreateLink): "If the permission PERMISSION_CHANGE_LINKS is granted by anyone other
             // than the owner, then when the function is called an error will be shouted". YEngine's text.
             if (!AutomaticLinkPermission && item.PermsGranter != m_host.ParentGroup.OwnerID)
             {
@@ -5169,8 +5169,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PHLOX-15: llCreateLink after its PERMISSION_CHANGE_LINKS check - the door osForceCreateLink takes (OSSL_Api.cs:2784-2789 calls the same split, m_LSL_Api.CreateLink).
-        /// PHLOX-41: SL's conditions - "target must be modifiable and have the same owner. This object must also be
+        /// llCreateLink after its PERMISSION_CHANGE_LINKS check - the door osForceCreateLink takes (OSSL_Api.cs:2784-2789 calls the same split, m_LSL_Api.CreateLink).
+        /// SL's conditions - "target must be modifiable and have the same owner. This object must also be
         /// modifiable." - with modify read from each root's OwnerMask as Halcyon and YEngine read it. Returns why it
         /// did not link (llCreateLink shouts it, as SL does; osForceCreateLink stays silent, as YEngine's CreateLink),
         /// or null.
@@ -5214,7 +5214,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             // Requires PERMISSION_CHANGE_LINKS
             TaskInventoryItem item = GetInventorySelf();
             if (item == null) return;
-            if (!AutomaticLinkPermission && (item.PermsMask & PERMISSION_CHANGE_LINKS) == 0)   // PHLOX-62 (YEngine :4868)
+            if (!AutomaticLinkPermission && (item.PermsMask & PERMISSION_CHANGE_LINKS) == 0)   // as YEngine, LSL_Api.cs:4868
             {
                 ScriptShoutError("llBreakLink: PERMISSION_CHANGE_LINKS not set");
                 ScriptSleep(1000);
@@ -5224,7 +5224,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             BreakLinkCore(linknum);
         }
 
-        /// <summary>PHLOX-15: llBreakLink after its PERMISSION_CHANGE_LINKS check - the door osForceBreakLink takes (OSSL_Api.cs:2792-2797).</summary>
+        /// <summary>llBreakLink after its PERMISSION_CHANGE_LINKS check - the door osForceBreakLink takes (OSSL_Api.cs:2792-2797).</summary>
         private void BreakLinkCore(int linknum)
         {
             if (m_host?.ParentGroup == null || m_host.ParentGroup.IsAttachment) return;
@@ -5241,7 +5241,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 return;
             }
 
-            // PHLOX-21: SL's link constants, handled as YEngine does (LSL_Api.BreakLink): LINK_THIS is
+            // SL's link constants, handled as YEngine does (LSL_Api.BreakLink): LINK_THIS is
             // the script's own prim; LINK_SET, LINK_ALL_OTHERS and LINK_ALL_CHILDREN name no single
             // prim; anything below LINK_THIS is invalid. (-1 is LINK_SET, not LINK_THIS.)
             if (linknum < LINK_THIS) return;
@@ -5272,11 +5272,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (m_host?.ParentGroup == null) return;
             if (m_host.ParentGroup.IsAttachment) return;
 
-            // PHLOX-65: SL wiki llBreakAllLinks: "the script must request the PERMISSION_CHANGE_LINKS permission with
+            // SL wiki llBreakAllLinks: "the script must request the PERMISSION_CHANGE_LINKS permission with
             // llRequestPermissions and it must be granted by the owner"; without it "the script will shout an error on
             // DEBUG_CHANNEL and the operation fails (but the script continues to run)"; "If PERMISSION_CHANGE_LINKS is
             // granted by anyone other than the owner, then when the function is called an error will be shouted".
-            // YEngine LSL_Api.cs:4963-4975 checks it unless AutomaticLinkPermission, as Phlox's llBreakLink (PHLOX-62)
+            // YEngine LSL_Api.cs:4963-4975 checks it unless AutomaticLinkPermission, as Phlox's llBreakLink
             // and llCreateLink do; their texts and forms. Halcyon had no check.
             TaskInventoryItem item = GetInventorySelf();
             if (item == null) return;
@@ -5294,7 +5294,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             BreakAllLinksCore();
         }
 
-        /// <summary>PHLOX-65: llBreakAllLinks after its permission checks - the door osForceBreakAllLinks takes (OSSL_Api.cs:2800-2805 calls BreakAllLinks).</summary>
+        /// <summary>llBreakAllLinks after its permission checks - the door osForceBreakAllLinks takes (OSSL_Api.cs:2800-2805 calls BreakAllLinks).</summary>
         private void BreakAllLinksCore()
         {
             if (m_host?.ParentGroup == null || m_host.ParentGroup.IsAttachment) return;
@@ -5459,7 +5459,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PHLOX-61 (C9): a texture as PRIM_TEXTURE names it. SL wiki: "a texture in the inventory of the prim this
+        /// A texture as PRIM_TEXTURE names it. SL wiki: "a texture in the inventory of the prim this
         /// script is in or a UUID of a texture". The script's prim's texture item of that name first (Halcyon's
         /// KeyOrName order: "no-one can name an inventory item with a UUID string" and get the named key), then a UUID.
         /// Only a texture item matches, as SL's "it is not a texture" rule and YEngine's
@@ -5512,7 +5512,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PHLOX-49 (HALCYON-DIFF D5): the one rule for whether a script may see an asset key. The key shows only when
+        /// The one rule for whether a script may see an asset key. The key shows only when
         /// the owner's permissions on it are copy, modify and transfer; otherwise NULL_KEY. Inventory keys
         /// (llGetInventoryKey, iwGetLinkInventoryKey) pass the item's CurrentPermissions; texture and material keys
         /// (ConditionalTextureNameOrUUID) pass the prim's OwnerMask, as Halcyon's IsFullPerm(part.OwnerMask).
@@ -6207,7 +6207,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     try { offsets = (Vector3)data[idx++]; } catch { idx++; break; }
                     try { rot     = (float)Convert.ToDouble(data[idx++]); } catch { break; }
                     Primitive.TextureEntry texEntry = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
-                    // PHLOX-61 (C9): SL wiki PRIM_TEXTURE, "a texture in the inventory of the prim this script is in or a
+                    // SL wiki PRIM_TEXTURE, "a texture in the inventory of the prim this script is in or a
                     // UUID of a texture". A name no longer blanks the face. Neither found: the texture stays as it is and
                     // the rest still applies (Halcyon SetTexture + ScaleTexture/OffsetTexture/RotateTexture).
                     UUID texUUID = TextureKeyOrName(tex);
@@ -6258,7 +6258,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     try { shiny = Convert.ToInt32(data[idx++]); } catch { idx++; break; }
                     try { bump  = Convert.ToInt32(data[idx++]); } catch { break; }
                     Primitive.TextureEntry te = part.Shape.Textures ?? new Primitive.TextureEntry(UUID.Zero);
-                    // PHLOX-61 (C9): PRIM_SHINY_* 0..3 go in the top two bits of the material byte (OpenMetaverse
+                    // PRIM_SHINY_* 0..3 go in the top two bits of the material byte (OpenMetaverse
                     // Shininess Low = 0x40 .. High = 0xC0); anything else is none (Halcyon and YEngine SetShiny). The bump
                     // keeps to its five bits (BUMP_MASK 0x1F) so it cannot write the fullbright or shiny bits.
                     Shininess shinyBits = shiny >= 0 && shiny <= 3 ? (Shininess)(shiny << 6) : Shininess.None;
@@ -6293,7 +6293,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     scale.Y = Math.Max(0.01f, Math.Min(64f, scale.Y));
                     scale.Z = Math.Max(0.01f, Math.Min(64f, scale.Z));
                     part.Resize(scale);
-                    PhySleep();   // PHLOX-56: Halcyon's SetPrimParams PRIM_SIZE goes through SetScale
+                    PhySleep();   // Halcyon's SetPrimParams PRIM_SIZE goes through SetScale
                     break;
                 }
 
@@ -7401,7 +7401,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         if (te == null) { result.Add(UUID.Zero.ToString()); result.Add(new Vector3(1,1,0)); result.Add(Vector3.Zero); result.Add(0f); break; }
                         Primitive.TextureEntryFace f = face == ALL_SIDES ? te.DefaultTexture : te.GetFace((uint)face);
                         if (f == null) f = te.DefaultTexture;
-                        // PHLOX-49 (D5, audit F215): Halcyon's name / full-perm key / NULL_KEY rule.
+                        // Halcyon's name / full-perm key / NULL_KEY rule.
                         result.Add(ConditionalTextureNameOrUUID(part, f.TextureID));
                         result.Add(new Vector3(f.RepeatU, f.RepeatV, 0));
                         result.Add(new Vector3(f.OffsetU, f.OffsetV, 0));
@@ -7435,7 +7435,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         int face; try { face = Convert.ToInt32(data[idx++]); } catch { break; }
                         Primitive.TextureEntry te = part.Shape.Textures;
                         Primitive.TextureEntryFace f = te == null ? null : (face == ALL_SIDES ? te.DefaultTexture : te.GetFace((uint)face));
-                        result.Add((int)(f?.Shiny ?? Shininess.None) >> 6);   // PHLOX-61: back to PRIM_SHINY_* 0..3
+                        result.Add((int)(f?.Shiny ?? Shininess.None) >> 6);   // Back to PRIM_SHINY_* 0..3
                         result.Add((int)(f?.Bump  ?? Bumpiness.None));
                         break;
                     }
@@ -7596,7 +7596,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
                     case PRIM_OMEGA:
                     {
-                        // SL's form (John's ruling, 2026-09-27): "the vector is normalized, and the spinrate is
+                        // SL's form: "the vector is normalized, and the spinrate is
                         // multiplied by the magnitude of the original vector", then the gain (PrimOmega).
                         PrimOmega(part, out Vector3 axis, out float spinrate, out float gain);
                         result.Add(axis);
@@ -7673,7 +7673,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                                 result.Add(new Vector3(shape.ProfileBegin / 50000.0f, 1 - shape.ProfileEnd / 50000.0f, 0));
                                 break;
                             case 7:
-                                // PHLOX-49 (D5, audit F215): Halcyon's PRIM_TYPE_SCULPT read.
+                                // Halcyon's PRIM_TYPE_SCULPT read.
                                 result.Add(ConditionalTextureNameOrUUID(part, shape.SculptTexture));
                                 result.Add((int)shape.SculptType);
                                 break;
@@ -7840,7 +7840,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         public Vector3 llGetColor(int face) => ColorOf(m_host, face);
 
-        /// <summary>PHLOX-19: llGetColor over any part, shared with osGetLinkColor (upstream LSL_Api.GetColor).</summary>
+        /// <summary>llGetColor over any part, shared with osGetLinkColor (upstream LSL_Api.GetColor).</summary>
         private static Vector3 ColorOf(SceneObjectPart part, int face)
         {
             if (part == null) return Vector3.Zero;
@@ -7918,7 +7918,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PHLOX-49: a render material or GLTF texture key as a script may see it. SL (llGetRenderMaterial): "If the
+        /// A render material or GLTF texture key as a script may see it. SL (llGetRenderMaterial): "If the
         /// Material is in the prim's inventory, the return value is the inventory name ... NULL_KEY is returned when the
         /// owner does not have full permissions to the object and the Material is not in the prim's inventory." A GLTF
         /// override texture that is not a key (none set: empty) is returned as stored.
@@ -8016,7 +8016,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 		}
         // ── Sound ──────────────────────────────────────────────────────────────
 
-        public void llSound(string sound, float volume, int queue, int loop) => Deprecated("llSound");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:2752
+        public void llSound(string sound, float volume, int queue, int loop) => Deprecated("llSound");   // Halcyon LSLSystemAPI.cs:2752
         public void llPlaySound(string sound, float volume)
         {
             if (m_host == null) return;
@@ -8028,7 +8028,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             sm.SendSound(m_host, soundID, volume, false, 0, false, false);
         }
 
-        /// <summary>PHLOX-2b. LSL_Api.cs:2939-2942 - the three-argument form is the four with flags 0.</summary>
+        /// <summary>LSL_Api.cs:2939-2942 - the three-argument form is the four with flags 0.</summary>
         public void llLinkPlaySound(int link, string sound, float volume)
         {
             llLinkPlaySound(link, sound, volume, 0);
@@ -8216,7 +8216,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             result.Add(sound == part.invalidCollisionSoundUUID ? UUID.Zero.ToString() : sound.ToString());
             result.Add(part.CollisionSoundVolume);
         }
-        public void llCollisionSprite(string impact_sprite) => NotImplemented("llCollisionSprite");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:5835
+        public void llCollisionSprite(string impact_sprite) => NotImplemented("llCollisionSprite");   // Halcyon LSLSystemAPI.cs:5835
 
         // ── Particles ──────────────────────────────────────────────────────────
 
@@ -8425,10 +8425,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 return new Vector3(x, y, z);
             return Vector3.Zero;
         }
-        public void llMakeExplosion(int particles, float scale, float vel, float lifetime, float arc, string texture, Vector3 offset) => Deprecated("llMakeExplosion");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:3104
-        public void llMakeFountain(int particles, float scale, float vel, float lifetime, float arc, int bounce, string texture, Vector3 offset, float bounce_offset) => Deprecated("llMakeFountain");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:3110
-        public void llMakeSmoke(int particles, float scale, float vel, float lifetime, float arc, string texture, Vector3 offset) => Deprecated("llMakeSmoke");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:3116
-        public void llMakeFire(int particles, float scale, float vel, float lifetime, float arc, string texture, Vector3 offset) => Deprecated("llMakeFire");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:3122
+        public void llMakeExplosion(int particles, float scale, float vel, float lifetime, float arc, string texture, Vector3 offset) => Deprecated("llMakeExplosion");   // Halcyon LSLSystemAPI.cs:3104
+        public void llMakeFountain(int particles, float scale, float vel, float lifetime, float arc, int bounce, string texture, Vector3 offset, float bounce_offset) => Deprecated("llMakeFountain");   // Halcyon LSLSystemAPI.cs:3110
+        public void llMakeSmoke(int particles, float scale, float vel, float lifetime, float arc, string texture, Vector3 offset) => Deprecated("llMakeSmoke");   // Halcyon LSLSystemAPI.cs:3116
+        public void llMakeFire(int particles, float scale, float vel, float lifetime, float arc, string texture, Vector3 offset) => Deprecated("llMakeFire");   // Halcyon LSLSystemAPI.cs:3122
 
         // ── Terrain / environment ──────────────────────────────────────────────
 
@@ -8604,7 +8604,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         public LSLList llGetParcelDetails(Vector3 pos, LSLList parms) => ParcelDetailsOf(World?.GetLandData(pos.X, pos.Y), parms);
 
-        /// <summary>PHLOX-17: llGetParcelDetails over a LandData, shared with osGetParcelDetails (by parcel id).</summary>
+        /// <summary>llGetParcelDetails over a LandData, shared with osGetParcelDetails (by parcel id).</summary>
         private LSLList ParcelDetailsOf(LandData land, LSLList parms)
         {
             if (land == null) return new LSLList(0);
@@ -8728,7 +8728,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         /// <summary>
         /// Halcyon LSLSystemAPI.cs:7348-7351: the avatar is sent home through llTeleportAgentHome, so the same
-        /// authorization (PHLOX-52: no god; PHLOX-53: group land for deeded objects or an owner with Eject and Freeze) and
+        /// authorization (no god; group land for deeded objects or an owner with Eject and Freeze) and
         /// the same 5 s sleep.
         /// </summary>
         public void llEjectFromLand(string pest)
@@ -8858,7 +8858,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         {
                             if (commandList.Data[i + 1] is int && commandList.Data[i + 2] is int)
                             { width = (int)commandList.Data[i + 1]; height = (int)commandList.Data[i + 2]; update = true; }
-                            // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:13148, 13150.
+                            // Halcyon LSLSystemAPI.cs:13148, 13150.
                             else if (commandList.Data[i + 1] is int)
                                 ScriptShoutError("The second argument of PARCEL_MEDIA_COMMAND_SIZE must be an integer.");
                             else
@@ -8867,7 +8867,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                         }
                         break;
                     default:
-                        // PHLOX-62 (ruling (a)): Halcyon :13155-13157, naming the command as its Enum.Parse did.
+                        // Halcyon :13155-13157, naming the command as its Enum.Parse did.
                         NotImplemented("llParcelMediaCommandList parameter not supported yet: " + command.ToString());
                         break;
                 }
@@ -8940,7 +8940,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                             list.Add(ld?.MediaHeight ?? 0);
                             break;
                         default:
-                            // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:13281-13285, its text.
+                            // Halcyon LSLSystemAPI.cs:13281-13285, its text.
                             NotImplemented("llParcelMediaQuery parameter do not supported yet: "
                                 + ((ParcelMediaCommandEnum)aList.GetLSLIntegerItem(i)).ToString());
                             break;
@@ -8991,7 +8991,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         private const int IW_POWER_FIRST_HIGH_BIT = 31, IW_POWER_HIGHEST_BIT = 48;
 
         /// <summary>
-        /// PHLOX-42 (D14): the land-rights rule every land function asks, Halcyon's CanEditParcel ->
+        /// The land-rights rule every land function asks, Halcyon's CanEditParcel ->
         /// GenericParcelOwnerPermission (PermissionsModule.cs:1002-1042). <paramref name="user"/> may act on
         /// <paramref name="parcel"/> when it owns the parcel ("This also includes group-deeded objects on group-deeded
         /// land"); on group-owned land when it is the group, or a member holding ANY of <paramref name="powers"/> (0 =
@@ -9176,10 +9176,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     m_host.UpdateRotation(target);
             }
         }
-        public void llPointAt(Vector3 pos) => NotImplemented("llPointAt");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:4332
-        public void llStopPointAt() => NotImplemented("llStopPointAt");   // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:4338
+        public void llPointAt(Vector3 pos) => NotImplemented("llPointAt");   // Halcyon LSLSystemAPI.cs:4332
+        public void llStopPointAt() => NotImplemented("llStopPointAt");   // Halcyon LSLSystemAPI.cs:4338
         /// <summary>
-        /// PHLOX-7a. Ported from upstream LSL_Api.cs:4036-4043. wiki: "Sets the collision filter,
+        /// Ported from upstream LSL_Api.cs:4036-4043. wiki: "Sets the collision filter,
         /// exclusively or inclusively" - accept TRUE keeps only matches, FALSE excludes them; a blank
         /// name or a null/invalid id matches everything. The part stores it
         /// (SceneObjectPart.SetCollisionFilter) and the region's own collision path consults
@@ -9371,7 +9371,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         public void llSetObjectPermMask(int mask, int value)
         {
-            // PHLOX-41: a god function (SL: "This function can only be executed in God Mode"), gated as YEngine gates it
+            // A god function (SL: "This function can only be executed in God Mode"), gated as YEngine gates it
             // (LSL_Api.llSetObjectPermMask): AllowGodFunctions and an administrator owner.
             if (m_host == null) return;
             if (m_ScriptEngine == null || !m_ScriptEngine.AllowGodFunctions) return;
@@ -9406,7 +9406,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PHLOX-21: llGetAgentList's scope as YEngine reads it (LSL_Api.llGetAgentList) - SL's
+        /// llGetAgentList's scope as YEngine reads it (LSL_Api.llGetAgentList) - SL's
         /// AGENT_LIST_PARCEL (1), AGENT_LIST_PARCEL_OWNER (2) or AGENT_LIST_REGION (4), with the
         /// AGENT_LIST_EXCLUDENPC flag; PARCEL_OWNER is every parcel with the same owner as the one the
         /// object is on. Null for any other scope (INVALID_SCOPE). Gods and child agents are not listed.
@@ -9464,7 +9464,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return new LSLList(result);
         }
 
-        // ── PHLOX-12: OSSL read-only information functions ─────────────────────────────────────
+        // ── OSSL read-only information functions ───────────────────────────────────────────────
         // Each ported from Source/OpenSim.Region.ScriptEngine.Shared/Api/OSSL_Api.cs (line cited) with
         // the SAME threat level and the same [OSSL] keys, through OsslGate. A denied call throws, and
         // the script stops with YEngine's message on DEBUG_CHANNEL.
@@ -9604,7 +9604,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return dot >= 0 ? n.Substring(dot + 1) : n;
         }
 
-        // ── PHLOX-13: OSSL pure helpers, ported from OSSL_Api.cs (line cited), same threat level via OsslGate ──
+        // ── OSSL pure helpers, ported from OSSL_Api.cs (line cited), same threat level via OsslGate ──
         /// <summary>OSSL_Api.cs:6586 - ungated upstream.</summary>
         public string osAESEncrypt(string secret, string plainText)
         {
@@ -9649,7 +9649,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return (float)Math.Atan2(mcross, dot);
         }
 
-        // ── PHLOX-20 PART 1: PHLOX-12's misc row and the list family ──────────────
+        // ── OSSL sit target, misc and list functions ───────────────────────────────
 
         /// <summary>OSSL_Api.cs:5985-5988 - ungated upstream: this prim's sit target offset.</summary>
         public Vector3 osGetSitTargetPos() => m_host?.SitTargetPosition ?? Vector3.Zero;
@@ -9814,7 +9814,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PHLOX-65: the caller's list takes the sorted order in both of LSLList's stores - the Data array the VM's
+        /// The caller's list takes the sorted order in both of LSLList's stores - the Data array the VM's
         /// list operations read and the member list that GetLSLStringItem, (string)list and now llDumpList2String /
         /// llList2CSV / llList2String read. Only Data was written, so those saw the unsorted list.
         /// </summary>
@@ -9947,16 +9947,16 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return (a > b + e || a < b - e) ? 0 : 1;
         }
 
-        /// <summary>PHLOX-20: OSSL_Api.cs:5432-5447 - ungated upstream, the fixed 1.0e-6 of the float form on each component.</summary>
+        /// <summary>OSSL_Api.cs:5432-5447 - ungated upstream, the fixed 1.0e-6 of the float form on each component.</summary>
         public int osApproxEquals(Vector3 va, Vector3 vb) => OsslApproxEquals(va, vb, 1.0e-6f);
 
-        /// <summary>PHLOX-20: OSSL_Api.cs:5450-5466 - the same with the caller's margin.</summary>
+        /// <summary>OSSL_Api.cs:5450-5466 - the same with the caller's margin.</summary>
         public int osApproxEquals(Vector3 va, Vector3 vb, float margin) => OsslApproxEquals(va, vb, Math.Abs(margin));
 
-        /// <summary>PHLOX-20: OSSL_Api.cs:5469-5488 - all four components of the rotation.</summary>
+        /// <summary>OSSL_Api.cs:5469-5488 - all four components of the rotation.</summary>
         public int osApproxEquals(Quaternion ra, Quaternion rb) => OsslApproxEquals(ra, rb, 1.0e-6f);
 
-        /// <summary>PHLOX-20: OSSL_Api.cs:5491-5510 - the same with the caller's margin.</summary>
+        /// <summary>OSSL_Api.cs:5491-5510 - the same with the caller's margin.</summary>
         public int osApproxEquals(Quaternion ra, Quaternion rb, float margin) => OsslApproxEquals(ra, rb, Math.Abs(margin));
 
         private static int OsslApproxEquals(Vector3 a, Vector3 b, float e)
@@ -10102,7 +10102,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PHLOX-20: OSSL_Api.cs:5931-5940 - the vector form, ungated upstream. Upstream's
+        /// OSSL_Api.cs:5931-5940 - the vector form, ungated upstream. Upstream's
         /// LSL_Types.Vector3.Slerp (LSL_Types.cs:417-438) does NOT normalise its inputs and falls back
         /// to a straight lerp when the vectors are nearly parallel; mirrored exactly.
         /// </summary>
@@ -10236,7 +10236,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return a.LengthSquared();
         }
 
-        // ── PHLOX-15: OSSL side-effect functions, ported from OSSL_Api.cs (line cited per function), each under its
+        // ── OSSL side-effect functions, ported from OSSL_Api.cs (line cited per function), each under its
         //    upstream key and threat level through OsslGate; "master" = upstream's bare CheckThreatLevel() ──
         private static readonly OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel
             TlVeryLow  = OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.VeryLow,
@@ -10295,7 +10295,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             BreakLinkCore(linknum);
         }
 
-        /// <summary>OSSL_Api.cs:2800-2805 - VeryLow. llBreakAllLinks without its permission checks (PHLOX-65: BreakAllLinksCore).</summary>
+        /// <summary>OSSL_Api.cs:2800-2805 - VeryLow. llBreakAllLinks without its permission checks (BreakAllLinksCore).</summary>
         public void osForceBreakAllLinks()
         {
             OsslCheck(TlVeryLow, "osForceBreakAllLinks");
@@ -10418,7 +10418,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PHLOX-20: OSSL_Api.cs:3921-3935 - ungated upstream. The prim is addressed by key and must be
+        /// OSSL_Api.cs:3921-3935 - ungated upstream. The prim is addressed by key and must be
         /// owned by this prim's owner; a key that is not a UUID, or zero, means this prim. Arity 6 like
         /// the link form above, told apart by the first argument's type.
         /// </summary>
@@ -10765,12 +10765,12 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return 1;
         }
 
-        // ── PHLOX-16: OSSL agent, teleport, kick, animation and group functions, ported from OSSL_Api.cs (line cited per
+        // ── OSSL agent, teleport, kick, animation and group functions, ported from OSSL_Api.cs (line cited per
         //    function), each under its upstream key and threat level through OsslGate ──
         private static readonly OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel
             TlNone = OpenSim.Region.ScriptEngine.Shared.Api.Interfaces.ThreatLevel.None;
 
-        /// <summary>OSSL_Api.cs:1076-1082 - None. The owner through YEngine's region-name TeleportAgent (PHLOX-52: not the Severe door).</summary>
+        /// <summary>OSSL_Api.cs:1076-1082 - None. The owner through YEngine's region-name TeleportAgent (not the Severe door).</summary>
         public void osTeleportOwner(string regionName, Vector3 position, Vector3 lookat)
         {
             OsslCheck(TlNone, "osTeleportOwner");
@@ -10778,7 +10778,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             OsslTeleportAgent(m_host.OwnerID.ToString(), regionName, position, lookat);
         }
 
-        /// <summary>OSSL_Api.cs:1084-1089 - None. Grid coordinates, through YEngine's grid TeleportAgent (PHLOX-52).</summary>
+        /// <summary>OSSL_Api.cs:1084-1089 - None. Grid coordinates, through YEngine's grid TeleportAgent.</summary>
         public void osTeleportOwner(int regionGridX, int regionGridY, Vector3 position, Vector3 lookat)
         {
             OsslCheck(TlNone, "osTeleportOwner");
@@ -10786,7 +10786,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             OsslTeleportAgent(m_host.OwnerID.ToString(), regionGridX, regionGridY, position, lookat);
         }
 
-        /// <summary>OSSL_Api.cs:1091-1096 - None. The three-argument osTeleportAgent, ungated upstream (PHLOX-52).</summary>
+        /// <summary>OSSL_Api.cs:1091-1096 - None. The three-argument osTeleportAgent, ungated upstream.</summary>
         public void osTeleportOwner(Vector3 position, Vector3 lookat)
         {
             OsslCheck(TlNone, "osTeleportOwner");
@@ -10881,8 +10881,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// OSSL_Api.cs:3475-3479 - High. Upstream writes the appearance into a notecard; here, as for osNpcSaveAppearance
-        /// (PHLOX-14), the "notecard" is an outfit name in BotManager's store, scoped to the owner - which is exactly
+        /// OSSL_Api.cs:3475-3479 - High. Upstream writes the appearance into a notecard; here, as for osNpcSaveAppearance,
+        /// the "notecard" is an outfit name in BotManager's store, scoped to the owner - which is exactly
         /// what SaveOutfitToDatabase captures. The key returned is the outfit's key in that store.
         /// </summary>
         public string osOwnerSaveAppearance(string notecard) => osOwnerSaveAppearance(notecard, 1);
@@ -10898,7 +10898,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// OSSL_Api.cs:3764-3792 - High. Through PHLOX-10's one door with this prim as the source, so the target's
+        /// OSSL_Api.cs:3764-3792 - High. Through llDamage's one door with this prim as the source, so the target's
         /// attachments get on_damage with this prim as the detected key; the parcel (upstream) or the region must allow damage.
         /// Death (health at or below 0) is the door's business, not repeated here.
         /// </summary>
@@ -10908,7 +10908,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (World == null || m_host == null || !UUID.TryParse(avatar, out UUID avatarId)) return;
             ScenePresence presence = World.GetScenePresence(avatarId);
             if (presence == null || presence.IsChildAgent) return;
-            // upstream admits the call on the parcel flag alone; here the region's AllowDamage (the rule PHLOX-10's
+            // upstream admits the call on the parcel flag alone; here the region's AllowDamage (the rule
             // llDamage applies in this tree) admits it as well, so a damage-enabled region needs no per-parcel flag
             LandData land = World.GetLandData(m_host.GetWorldPosition());
             bool parcelAllows = land != null && (land.Flags & (uint)ParcelFlags.AllowDamage) != 0;
@@ -10928,7 +10928,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// OSSL_Api.cs:3820-3835 - High. Clamped to 1..100; a decrease goes through PHLOX-10's door as damage from
+        /// OSSL_Api.cs:3820-3835 - High. Clamped to 1..100; a decrease goes through llDamage's door as damage from
         /// this prim (the llSetHealth rule), an increase is set directly.
         /// </summary>
         public void osSetHealth(string avatar, float health)
@@ -11059,7 +11059,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return av.IsNPC ? 2 : 1;
         }
 
-        // ── PHLOX-17: OSSL parcel, estate, terrain, wind and sun functions, ported from OSSL_Api.cs (line cited per
+        // ── OSSL parcel, estate, terrain, wind and sun functions, ported from OSSL_Api.cs (line cited per
         //    function), each under its upstream key and threat level through OsslGate ──
 
         private bool TerrainInBounds(int x, int y, string fn)
@@ -11431,7 +11431,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return ParcelDetailsOf(parcel?.LandData, param);
         }
 
-        // ── PHLOX-18 PART 1: OSSL draw and dynamic-texture functions, ported from OSSL_Api.cs (line cited per function).
+        // ── OSSL draw and dynamic-texture functions, ported from OSSL_Api.cs (line cited per function).
         //    The draw helpers append to a command string the VectorRender module parses; the texture calls hand it to
         //    the DynamicTexture module (IDynamicTextureManager), which renders synchronously and puts the asset on the face. ──
 
@@ -11478,7 +11478,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return tm.AddDynamicTextureData(World.RegionInfo.RegionID, m_host.UUID, contentType, data ?? string.Empty, extraParams, blend, disp, alpha, face).ToString();
         }
 
-        /// <summary>PHLOX-20: OSSL_Api.cs:790-813 - VeryLow, the data form with a face; the five-argument form is this with face -1.</summary>
+        /// <summary>OSSL_Api.cs:790-813 - VeryLow, the data form with a face; the five-argument form is this with face -1.</summary>
         public string osSetDynamicTextureDataFace(string dynamicID, string contentType, string data, string extraParams, int timer, int face)
             => OsslDynamicTextureData("osSetDynamicTextureData", dynamicID, contentType, data, extraParams, false, 3, 255, face);
 
@@ -11541,7 +11541,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public string osSetPenSize(string drawList, int penSize) { OsslCheck(); return drawList + "PenSize " + penSize + "; "; }
         /// <summary>OSSL_Api.cs:1392-1397 - a colour name or hex.</summary>
         public string osSetPenColor(string drawList, string color) { OsslCheck(); return drawList + "PenColor " + color + "; "; }
-        /// <summary>PHLOX-20: OSSL_Api.cs:1400-1419 - the vector form, opaque; arity 2 like the colour-name form and told apart by type.</summary>
+        /// <summary>OSSL_Api.cs:1400-1419 - the vector form, opaque; arity 2 like the colour-name form and told apart by type.</summary>
         public string osSetPenColor(string drawList, Vector3 color) => osSetPenColor(drawList, color, 1.0f);
 
         /// <summary>OSSL_Api.cs:1422-1446 - vector and alpha as AARRGGBB.</summary>
@@ -11568,7 +11568,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return new Vector3((float)xSize, (float)ySize, 0f);
         }
 
-        // ── PHLOX-19: OSSL read-only remainder, ported from OSSL_Api.cs (line cited per function), each gated function
+        // ── OSSL read-only remainder, ported from OSSL_Api.cs (line cited per function), each gated function
         //    under its upstream key and threat level through OsslGate; "master" = upstream's bare CheckThreatLevel() ──
 
         private const uint OsslFullPerms = (uint)(OpenSim.Framework.PermissionMask.Copy | OpenSim.Framework.PermissionMask.Transfer | OpenSim.Framework.PermissionMask.Modify);
@@ -11945,7 +11945,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return ret;
         }
 
-        // ── PHLOX-14: osNpc* - a second door onto BotManager's bots (one BotData per NPC), ported from OSSL_Api.cs ──
+        // ── osNpc* - a second door onto BotManager's bots (one BotData per NPC), ported from OSSL_Api.cs ──
         private const int OS_NPC_NOT_OWNED = 0x2, OS_NPC_SENSE_AS_AGENT = 0x4, OS_NPC_OBJECT_GROUP = 0x8, OS_NPC_NO_FLY = 1, OS_NPC_RUNNING = 4;
         private IBotManager NpcMgr() => World?.RequestModuleInterface<IBotManager>();
         private static bool NpcKey(string npc, out UUID id) => UUID.TryParse(npc, out id) && id.IsNotZero();
@@ -11965,7 +11965,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 ShoutError("NPC module not enabled");
                 return UUID.Zero.ToString();
             }
-            // OS_NPC_OBJECT_GROUP: BotManager's CreateNPC call carries no group - accepted, not applied (recorded in PHLOX-14).
+            // OS_NPC_OBJECT_GROUP: BotManager's CreateNPC call carries no group - accepted, not applied.
             UUID id = mgr.CreateBot(firstname, lastname, position, notecard ?? string.Empty, m_itemID, m_host.OwnerID, owned, senseAsAgent, out string reason);
             if (reason != null) ShoutError("osNpcCreate: " + reason);
             return id.ToString();
@@ -12222,7 +12222,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return new LSLList(result);
         }
 
-        // ── Object return (PHLOX-40, audit S2) ─────────────────────────────────
+        // ── Object return ──────────────────────────────────────────────────────
         //
         // SL: "Returns an integer that is the number of objects successfully returned to their owners or an ERR_* flag."
         // Objects are RETURNED to their owners' Lost and Found, never deleted, through the core's own parcel-return call
@@ -12345,7 +12345,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PHLOX-62 (ruling (a)): Halcyon llReturnObjectsByOwner's finally (LSLSystemAPI.cs:18415-18431) - its LSLError for
+        /// Halcyon llReturnObjectsByOwner's finally (LSLSystemAPI.cs:18415-18431) - its LSLError for
         /// each failure code it reports; the code is returned as before.
         /// </summary>
         private int ReturnObjectsError(int rc)
@@ -12368,7 +12368,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (targetAgentID.IsZero()) return 0;
 
             TaskInventoryItem item = ReturnScriptItem();
-            if (item == null) { LSLError("No item found from which to run script"); return ERR_GENERIC; }   // PHLOX-62: Halcyon :18356-18360
+            if (item == null) { LSLError("No item found from which to run script"); return ERR_GENERIC; }   // Halcyon :18356-18360
 
             int rc = CheckReturnPermission(item);
             if (rc != 0) return ReturnObjectsError(rc);
@@ -12380,7 +12380,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             {
                 Vector3 currentPos = m_host.ParentGroup.AbsolutePosition;
                 ILandObject currentParcel = World.LandChannel.GetLandObject(currentPos.X, currentPos.Y);
-                // PHLOX-62: Halcyon reports this one only for OBJECT_RETURN_REGION (:18388-18391; the parcel scopes fail on
+                // Halcyon reports this one only for OBJECT_RETURN_REGION (:18388-18391; the parcel scopes fail on
                 // its null parcel and return ERR_GENERIC unreported).
                 if (currentParcel == null) return scope == OBJECT_RETURN_REGION ? ReturnObjectsError(ERR_GENERIC) : ERR_GENERIC;
 
@@ -12447,10 +12447,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             try
             {
                 TaskInventoryItem item = ReturnScriptItem();
-                if (item == null) { LSLError("No item found from which to run script"); return ERR_GENERIC; }   // PHLOX-62: Halcyon :18445-18449
+                if (item == null) { LSLError("No item found from which to run script"); return ERR_GENERIC; }   // Halcyon :18445-18449
 
                 int rc = CheckReturnPermission(item);
-                if (rc != 0) return ReturnObjectsError(rc);   // PHLOX-62: Halcyon :18456-18460
+                if (rc != 0) return ReturnObjectsError(rc);   // Halcyon :18456-18460
 
                 // Every element must be a key before anything moves (Halcyon :18463-18465).
                 var ids = new List<UUID>();
@@ -12682,12 +12682,12 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (!httpMod.CheckThrottle(m_localID, m_host.OwnerID))
                 return UUID.Zero.ToString();
 
-            // PHLOX-51: the operator's outbound filter, where and as YEngine applies it (after the throttle, before the
+            // The operator's outbound filter, where and as YEngine applies it (after the throttle, before the
             // parameters are read).
             if (!OutboundAllowed(httpMod, "llHttpRequest", url))
                 return string.Empty;
 
-            // Parse parameter pairs into list and custom headers dict. PHLOX-47: header names are case-insensitive
+            // Parse parameter pairs into list and custom headers dict. Header names are case-insensitive
             // (SL: "RFC 2616 § 4.2 defines HTTP header field names as case-insensitive"), so one spelling is one header.
             var paramList  = new List<string>();
             var headers    = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -12695,13 +12695,13 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
             for (int i = 0; i < data.Length; i += 2)
             {
-                // PHLOX-62 (ruling (a)): Halcyon LSLSystemAPI.cs:13784-13788 - a flag with no value is an error, not dropped.
+                // Halcyon LSLSystemAPI.cs:13784-13788 - a flag with no value is an error, not dropped.
                 if (i + 1 >= data.Length)
                 {
                     ScriptShoutError("Invalid number of parameters in options list for llHTTPRequest.");
                     return UUID.Zero.ToString();
                 }
-                // PHLOX-65: Halcyon's test and text (LSLSystemAPI.cs:13780-13799): the flag as the list writes it
+                // Halcyon's test and text (LSLSystemAPI.cs:13780-13799): the flag as the list writes it
                 // (GetLSLStringItem, so 1.0 is "1.000000" and is refused) must parse as an integer.
                 int option;
                 if (!int.TryParse(parameters.GetLSLStringItem(i), out option))
@@ -12711,7 +12711,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 }
                 string value = data[i + 1].ToString();
 
-                // PHLOX-62 (ruling (a)): Halcyon :13803-13807 - HTTP_CUSTOM_HEADER without its value is an error.
+                // Halcyon :13803-13807 - HTTP_CUSTOM_HEADER without its value is an error.
                 if (option == 5 && i + 2 >= data.Length)
                 {
                     ScriptShoutError("Invalid number of parameters in the HTTP_CUSTOM_HEADER options for llHTTPRequest.");
@@ -12739,8 +12739,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     continue;
                 }
 
-                // PHLOX-47: HTTP_MIMETYPE becomes the Content-Type line as given, so a line break in it would write a
-                // header line of the script's choosing - an X-SecondLife-Owner-Key among them. PHLOX-54: the core now
+                // HTTP_MIMETYPE becomes the Content-Type line as given, so a line break in it would write a
+                // header line of the script's choosing - an X-SecondLife-Owner-Key among them. The core now
                 // refuses any value that is not a media type (HttpRequestMimeType.IsValid: type/subtype, optional
                 // ;parameters, no control character) and YEngine reports it (LSL_Api.llHTTPRequest); Phlox checks the
                 // same function first and gives YEngine's result: its text on DEBUG_CHANNEL, a 1 s sleep, "" to the
@@ -12756,23 +12756,23 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 paramList.Add(value);
             }
 
-            // PHLOX-47: the simulator's own values, set last so they always win over anything the script sent
+            // The simulator's own values, set last so they always win over anything the script sent
             AddSimulatorHeaders(headers);
 
-            // PHLOX-46: recorded against this script, so a reset or removal can end it and a late response is dropped
+            // Recorded against this script, so a reset or removal can end it and a late response is dropped
             var httpPlugin = m_ScriptEngine.AsyncCommands?.HttpRequestPlugin;
             UUID objectID = m_host.ParentGroup?.UUID ?? m_host.UUID;
             bool capped = false;
             UUID reqID = httpPlugin != null
                 ? httpPlugin.Start(m_itemID, objectID, () => httpMod.StartHttpRequest(m_localID, m_itemID, url, paramList, headers, body), out capped)
                 : httpMod.StartHttpRequest(m_localID, m_itemID, url, paramList, headers, body);
-            // PHLOX-62 (S11): Halcyon's in-flight caps refuse with NULL_KEY and no error; its llHTTPRequest then sleeps
-            // ERROR_DELAY, 80 ms (LSLSystemAPI.cs:13762, 13845-13846). PHLOX-64: HttpInFlightThrottle = false, never capped.
+            // Halcyon's in-flight caps refuse with NULL_KEY and no error; its llHTTPRequest then sleeps
+            // ERROR_DELAY, 80 ms (LSLSystemAPI.cs:13762, 13845-13846). HttpInFlightThrottle = false, never capped.
             if (capped) ScriptSleep(HTTP_CAPPED_DELAY);
             return reqID == UUID.Zero ? UUID.Zero.ToString() : reqID.ToString();
         }
         /// <summary>
-        /// PHLOX-51 (audit F366): the core's outbound URL filter for user scripts, [Network] OutboundDisallowForUserScripts
+        /// The core's outbound URL filter for user scripts, [Network] OutboundDisallowForUserScripts
         /// (default: loopback, private and reserved IPv4 ranges) and OutboundDisallowForUserScriptsExcept - the one
         /// OutboundUrlFilter object the core HttpRequestModule builds, through IHttpRequestModule.CheckAllowed, which is
         /// what YEngine's llHTTPRequest calls (LSL_Api.cs:14762). It resolves the host and checks every IPv4 address; a
@@ -12794,7 +12794,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PHLOX-51: YEngine's LSL_Api.Error (LSL_Api.cs:15684-15696) as a script sees it: "command: message", cut to 1023
+        /// YEngine's LSL_Api.Error (LSL_Api.cs:15684-15696) as a script sees it: "command: message", cut to 1023
         /// characters, on DEBUG_CHANNEL through the scene (viewers, Phlox's listens) and through WorldComm (YEngine's
         /// listens). Unlike <see cref="ShoutError"/> there is no "Script error: " prefix, so both engines say the same text.
         /// </summary>
@@ -12813,7 +12813,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         private const string HeaderNameSeparators = "()<>@,;:\\\"/[]?={}";
 
         /// <summary>
-        /// PHLOX-47 (HALCYON-DIFF S11): what an HTTP_CUSTOM_HEADER may set. Halcyon ScriptsHttpRequests.ScriptCanChangeHeader:
+        /// What an HTTP_CUSTOM_HEADER may set. Halcyon ScriptsHttpRequests.ScriptCanChangeHeader:
         /// every name starting "x-secondlife", in any letter case, is "reserved for internal use only" and skipped
         /// silently (SL: "certain headers, such as the default headers, are blocked for security reasons").
         /// Content-Type is SL's runtime script error (Halcyon skipped it silently). A name or value with a line break, or a
@@ -12831,7 +12831,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PHLOX-47: the nine X-SecondLife-* headers SL's simulator sends (wiki llHTTPRequest), built as Halcyon's
+        /// The nine X-SecondLife-* headers SL's simulator sends (wiki llHTTPRequest), built as Halcyon's
         /// llHTTPRequest builds them. Region: SL's "global coordinates of the region's south-west corner" (WorldLocX/Y, as
         /// YEngine; Halcyon printed grid units). Shard: [Network] shard, default "OpenSim", the setting and default YEngine
         /// reads, so both engines in a region report the same shard.
@@ -12889,7 +12889,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         public void llSetContentType(string request_id, int content_type)
         {
-            // PHLOX-21: SL's CONTENT_TYPE_* numbering, and YEngine's HTML rule (LSL_Api.llSetContentType).
+            // SL's CONTENT_TYPE_* numbering, and YEngine's HTML rule (LSL_Api.llSetContentType).
             IUrlModule urlMod = World.RequestModuleInterface<IUrlModule>();
             if (urlMod == null) return;
             if (!UUID.TryParse(request_id, out UUID reqID) || reqID == UUID.Zero) return;
@@ -12910,7 +12910,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PHLOX-21: text/html is served only to the object owner's own viewer in this region, so a
+        /// Text/html is served only to the object owner's own viewer in this region, so a
         /// script cannot serve a page to a stranger's browser (YEngine LSL_Api.llSetContentType): the
         /// owner is present, the request came from the embedded browser, and from the owner's address.
         /// </summary>
@@ -13034,7 +13034,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             {
                 IXMLRPC xmlrpcMod = World?.RequestModuleInterface<IXMLRPC>();
                 if (xmlrpcMod == null) { ScriptSleep(3000); return UUID.Zero.ToString(); }
-                // PHLOX-51: the same outbound filter as llHTTPRequest. YEngine does not check llSendRemoteData (core
+                // The same outbound filter as llHTTPRequest. YEngine does not check llSendRemoteData (core
                 // XMLRPCModule posts to dest unchecked), so here Phlox is stricter: a destination the operator's filter
                 // refuses for llHTTPRequest is refused here too, with the same result.
                 if (!OutboundAllowed(World.RequestModuleInterface<IHttpRequestModule>(), "llSendRemoteData", dest))
@@ -13086,13 +13086,13 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public string llToUpper(string src) => src?.ToUpper() ?? string.Empty;
         public string llToLower(string src) => src?.ToLower() ?? string.Empty;
 
-        // PHLOX-61 (C10): SL's range rule for llGetSubString, llDeleteSubString, llList2List, llDeleteSubList and
+        // SL's range rule for llGetSubString, llDeleteSubString, llList2List, llDeleteSubList and
         // llListReplaceList. SL wiki: "Negative indexes count from the far end, the first item being indexed as
         // -length, the last as -1." / "If start > end then the range operated on starts at 0 and goes to end and then
         // starts again at start and goes to -1." / out-of-range indexes "are treated as if they were there but were
         // removed just before output". So: add the length to a negative index once; the range is [start, end], or
         // [0, end] + [start, -1] when start > end; indexes outside the list select nothing. Halcyon's GetSublist is
-        // this rule; its DeleteSublist and llDeleteSubString are off by one on the inverted case (PHLOX-61 STATE.md).
+        // this rule; its DeleteSublist and llDeleteSubString are off by one on the inverted case.
         private static void NormaliseLslRange(int length, ref int start, ref int end)
         {
             if (start < 0) start += length;
@@ -13251,7 +13251,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             if (String.IsNullOrEmpty(str)) return str;
             int len = values.Length;
-            // PHLOX-56: Halcyon (LSLSystemAPI.cs:15930, 15959-15964): 100 ms whenever the tick count moved during a step
+            // Halcyon (LSLSystemAPI.cs:15930, 15959-15964): 100 ms whenever the tick count moved during a step
             bool throttle = m_ScriptEngine != null && m_ScriptEngine.FormatStringThrottle;
             ulong time1 = throttle ? InWorldz.Phlox.Util.Clock.Now : 0;
             for (int i = 0; i < len; i++)
@@ -13283,9 +13283,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return str;
         }
         /// <summary>
-        /// PHLOX-57 (HALCYON-DIFF D13): Halcyon's codecs, ported in Codecs/HalcyonStringCodec.cs and proven byte for byte
+        /// Halcyon's codecs, ported in Codecs/HalcyonStringCodec.cs and proven byte for byte
         /// against Halcyon's own code (Tests/InWorldz.Phlox.Tests/Golden). Halcyon's LSLError is its ScriptShoutError: the
-        /// error on DEBUG_CHANNEL and the 15 ms chat pause (ChatThrottle, as PHLOX-56 made it).
+        /// error on DEBUG_CHANNEL and the 15 ms chat pause (ChatThrottle).
         /// </summary>
         public string iwStringCodec(string str, string pattern, int operation, LSLList extraParams)
             => Codecs.HalcyonStringCodec.iwStringCodec(new CodecHost(this), str, pattern, operation, extraParams);
@@ -13358,7 +13358,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         private const string s_b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
         /// <summary>
-        /// PHLOX-7a. Ported as-is from upstream LSL_Api.cs:14509-14580. wiki: deprecated in favour of
+        /// Ported as-is from upstream LSL_Api.cs:14509-14580. wiki: deprecated in favour of
         /// llXorBase64, sleeps 0.3 s, and "incorrectly performs an exclusive or on two Base64 strings" -
         /// the padding quirks below ARE the documented behaviour, not a bug to fix here.
         /// </summary>
@@ -13551,10 +13551,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         // ── Lists ──────────────────────────────────────────────────────────────
 
         public int llGetListLength(LSLList src) => src?.Length ?? 0;
-        // PHLOX-65: Halcyon's llList2Integer / llList2Float / llList2String (LSLSystemAPI.cs:6533-6561) - the element as
+        // Halcyon's llList2Integer / llList2Float / llList2String (LSLSystemAPI.cs:6533-6561) - the element as
         // LSLList converts it, the conversion (string)list and the casts use: llList2String of 2.0 is "2.000000" and of a
         // vector "<1.000000, 2.000000, 3.000000>" (SL wiki List: "abc123.140000<0.000000, 0.000000, 0.000000>"), not .NET's
-        // "2" / "<1, 2, 3>"; llList2Integer of 1.7 is 1 and of NaN or 1e10 -2147483648 (D10), and of "0x1F" 31, where
+        // "2" / "<1, 2, 3>"; llList2Integer of 1.7 is 1 and of NaN or 1e10 -2147483648, and of "0x1F" 31, where
         // Convert.ToInt32 rounded, saturated and threw.
         public int llList2Integer(LSLList src, int index)
         {
@@ -13582,7 +13582,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             var v = src.Data[i];
             return v?.ToString() ?? UUID.Zero.ToString();
         }
-        // PHLOX-65 (D10 (a)): Halcyon's llList2Vector / llList2Rot (:6582-6600), a string element read by Halcyon's parser.
+        // Halcyon's llList2Vector / llList2Rot (:6582-6600), a string element read by Halcyon's parser.
         public Vector3 llList2Vector(LSLList src, int index)
         {
             if (src == null) return Vector3.Zero;
@@ -13597,7 +13597,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
         public LSLList llList2List(LSLList src, int start, int end)
         {
-            // PHLOX-61 (C10): SL's range rule (see NormaliseLslRange). Start past the end no longer throws.
+            // SL's range rule (see NormaliseLslRange). Start past the end no longer throws.
             if (src == null || src.Length == 0) return new LSLList();
             int len = src.Length;
             NormaliseLslRange(len, ref start, ref end);
@@ -13608,7 +13608,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
         public LSLList llDeleteSubList(LSLList src, int start, int end)
         {
-            // PHLOX-61 (C10): SL's range rule; start > end deletes [0, end] and [start, -1].
+            // SL's range rule; start > end deletes [0, end] and [start, -1].
             if (src == null) return new LSLList();
             int len = src.Length;
             NormaliseLslRange(len, ref start, ref end);
@@ -13634,14 +13634,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
         public string llList2CSV(LSLList src)
         {
-            // PHLOX-65: each element as (string)list writes it (LSLList.GetLSLStringItem: floats, vectors and rotations
+            // Each element as (string)list writes it (LSLList.GetLSLStringItem: floats, vectors and rotations
             // with 6 decimals, YEngine's form), joined with SL's ", " (wiki: "the values are separated with a comma and a
             // space"). Was .NET's ToString: "2", "<2, 3, 0>".
             if (src == null || src.Length == 0) return string.Empty;
             return string.Join(", ", ListElementStrings(src));
         }
 
-        /// <summary>PHLOX-65: every element of the list as (string)list writes it.</summary>
+        /// <summary>Every element of the list as (string)list writes it.</summary>
         private static IEnumerable<string> ListElementStrings(LSLList src)
         {
             for (int i = 0; i < src.Length; i++) yield return src.GetLSLStringItem(i);
@@ -13708,7 +13708,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         public LSLList llList2ListStrided(LSLList src, int start, int end, int stride)
         {
-            // PHLOX-61 (C10). SL wiki: "Returns a list of all the entries in the strided list whose index is a multiple
+            // SL wiki: "Returns a list of all the entries in the strided list whose index is a multiple
             // of stride in the range start to end"; "start & end will not form an exclusion range when start is past
             // end ... instead it will act as if start was zero & end was -1"; stride "if less than 1 it is assumed to be
             // 1". YEngine agrees; Halcyon returned [] for start == end and wrapped an inverted range.
@@ -13797,12 +13797,12 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
         public LSLList llList2ListSlice(LSLList src, int start, int end, int stride, int slice_index)
         {
-            // PHLOX-65. SL wiki: "Returns a list of the slice_index'th element of every stride in strided list whose index
+            // SL wiki: "Returns a list of the slice_index'th element of every stride in strided list whose index
             // is a multiple of stride in the range start to end"; "If slice_index is negative it is counted from the end of
             // its stride regardless of whether or not the stride exceeds the end of the list"; "start & end will form an
             // exclusion range when start is past end"; stride "if less than 1 it is assumed to be 1". Its five examples on
             // [0,1,2,3,4,5,6] - (0,-1,3,0) [0,3,6], (0,-1,3,1) [1,4], (1,-1,3,1) [2,5], (2,-1,3,-1) [4], (4,2,1,0)
-            // [0,1,2,4,5,6] - are the range taken by llList2List's rule (PHLOX-61, exclusion range included) and the
+            // [0,1,2,4,5,6] - are the range taken by llList2List's rule (exclusion range included) and the
             // slice_index'th element of each stride of it, the last stride short. A slice_index outside -stride .. stride-1
             // selects nothing. Was: an inverted range gave []. YEngine differs (whole list for an inverted range, strides
             // at multiples of stride from 0).
@@ -13860,7 +13860,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             if (dest == null) dest = new LSLList();
             if (src == null) src = new LSLList();
-            // PHLOX-61 (C10): SL's range rule (see NormaliseLslRange). SL wiki: "If end is a negative index past the
+            // SL's range rule (see NormaliseLslRange). SL wiki: "If end is a negative index past the
             // beginning, then the operating range would be [start, -1]." / "If end is a positive index past the end, then
             // the operating range would be [0, end]." An inverted range keeps what lies between end and start and puts
             // src after it (Halcyon and YEngine: dest.GetSublist(end + 1, start - 1) + src).
@@ -13912,7 +13912,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
         public string llDumpList2String(LSLList src, string separator)
         {
-            // PHLOX-65: SL wiki: "Each element of the list is converted to string format in the result, so floats expand to
+            // SL wiki: "Each element of the list is converted to string format in the result, so floats expand to
             // six digits of precision, rotations and vectors are represented with "<" and ">" characters" - the (string)list
             // form (Halcyon: GetLSLStringItem, LSLSystemAPI.cs:8785). Was .NET's ToString: "2", "<2, 3, 0>".
             if (src == null || src.Length == 0) return string.Empty;
@@ -14233,10 +14233,10 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         public void llRequestAgentData(string id, int data)
         {
-            if (m_host == null) { ReturnQueryKey(UUID.Zero); return; }   // PHLOX-21b A: every path returns
+            if (m_host == null) { ReturnQueryKey(UUID.Zero); return; }   // Every path returns
             if (!UUID.TryParse(id, out UUID agentId)) { ReturnQueryKey(UUID.Zero); return; }
 
-            UUID queryID = NewDataserverQuery();   // PHLOX-46
+            UUID queryID = NewDataserverQuery();
             ReturnQueryKey(queryID);
             UUID capturedQuery = queryID;
             UUID capturedAgent = agentId;
@@ -14302,14 +14302,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             ScriptSleep(100);
         }
         /// <summary>
-        /// PHLOX-7b. wiki: "Requests data about region. When data is available the dataserver event
+        /// Wiki: "Requests data about region. When data is available the dataserver event
         /// will be raised"; DATA_SIM_POS a vector of the region's global position, DATA_SIM_STATUS
         /// "up"/..., DATA_SIM_RATING "PG"/"MATURE"/"ADULT"/"UNKNOWN", 1.0 s sleep. Ported from upstream
         /// LSL_Api.cs:13389-13485: the local region answers from RegionInfo; any other region is
         /// resolved through GridService.GetRegionByName, with the hypergrid RegionSecret dance for
         /// POS. Two departures from upstream, both towards the wiki: POS is in metres (upstream returns
         /// region units against the wiki's "global position"), and an unknown region answers with the
-        /// wiki's texts rather than "unknown". The reply goes by the dataserver door PHLOX-5 opened.
+        /// wiki's texts rather than "unknown". The reply goes by the dataserver door.
         /// </summary>
         public string llRequestSimulatorData(string simulator, int data)
         {
@@ -14324,7 +14324,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             static string Rating(int maturity) => maturity switch { 0 => "PG", 1 => "MATURE", 2 => "ADULT", _ => "UNKNOWN" };
             static string PosOf(uint worldX, uint worldY) => new Vector3(worldX, worldY, 0f).ToString();
 
-            UUID queryID = NewDataserverQuery();   // PHLOX-46
+            UUID queryID = NewDataserverQuery();
             string reply;
             if (simulator.Equals(World.RegionInfo.RegionName, StringComparison.OrdinalIgnoreCase))
             {
@@ -14411,7 +14411,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (stats == null || statType < 0 || statType >= stats.Length) return 0f;
             return stats[statType];
         }
-        /// <summary>PHLOX-7b. wiki: "the most bytes used while llScriptProfiler was last active".
+        /// <summary>Wiki: "the most bytes used while llScriptProfiler was last active".
         /// 0 when profiling was never started - there is no LSO fixed size to report here.</summary>
         public int llGetSPMaxMemory()
         {
@@ -14420,7 +14420,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             st.SampleMemoryPeak();
             return st.PeakMemoryUsed;
         }
-        /// <summary>PHLOX-7a. Ported from upstream LSL_Api.cs:4548-4556. wiki: "Returns a list of names
+        /// <summary>Ported from upstream LSL_Api.cs:4548-4556. wiki: "Returns a list of names
         /// of animations playing in the current object"; the part tracks them in AnimationsNames.</summary>
         public LSLList llGetObjectAnimationNames()
         {
@@ -14432,7 +14432,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return new LSLList(ret);
         }
         /// <summary>
-        /// PHLOX-7a. Ported from upstream LSL_Api.cs:4533-4541. wiki: the animation is "an item in the
+        /// Ported from upstream LSL_Api.cs:4533-4541. wiki: the animation is "an item in the
         /// inventory of the prim this script is in" - resolved by inventory name, then the default
         /// avatar animation names, never by UUID. The part manages the set and sends the update;
         /// whether anything moves is the mesh's business (Animesh needs a skeleton).
@@ -14447,14 +14447,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 m_host.AddAnimation(animID, anim);
         }
 
-        /// <summary>PHLOX-7a. Ported from upstream LSL_Api.cs:4543-4546 - by the same name it was started with.</summary>
+        /// <summary>Ported from upstream LSL_Api.cs:4543-4546 - by the same name it was started with.</summary>
         public void llStopObjectAnimation(string anim)
         {
             m_host?.RemoveAnimation(anim);
         }
 
         /// <summary>
-        /// PHLOX-7b. wiki: llGetLinkSitFlags reads the flags on the link's sit target. Upstream
+        /// Wiki: llGetLinkSitFlags reads the flags on the link's sit target. Upstream
         /// (LSL_Api.cs:21155-21166) hard-codes ALLOW_UNSIT | NO_COLLIDE | NO_DAMAGE as "forced" and
         /// stores nothing; this reports the part's real state. SIT_TARGET is read-only, from
         /// IsSitTargetSet; ALLOW_UNSIT and SCRIPTED_ONLY are the part properties ScenePresence honours
@@ -14493,11 +14493,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PHLOX-7b. wiki: "Sets flags on the link's sittarget." Upstream's is a no-op (LSL_Api.cs:21168).
+        /// Wiki: "Sets flags on the link's sittarget." Upstream's is a no-op (LSL_Api.cs:21168).
         /// Here ALLOW_UNSIT and SCRIPTED_ONLY are honoured by the region's sit path today, through the
         /// part properties it already checks; NO_COLLIDE and NO_DAMAGE are stored for read-back only -
         /// the presence has no seated collision-volume toggle and no damage distribution to seated
-        /// avatars (the PHLOX-6 damage hook does not exist). SIT_TARGET is read-only and ignored.
+        /// avatars (there is no damage hook for that). SIT_TARGET is read-only and ignored.
         /// </summary>
         public void llSetLinkSitFlags(int link, int flags)
         {
@@ -14720,7 +14720,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             TaskInventoryItem item = FindInventoryItem(name, (int)AssetType.Animation);
             if (item == null) { ScriptSleep(1000); return UUID.Zero.ToString(); }
 
-            UUID queryID = NewDataserverQuery();   // PHLOX-46
+            UUID queryID = NewDataserverQuery();
             UUID assetId = item.AssetID;
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
             {
@@ -14758,7 +14758,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         public int llGiveMoney(string destination, int amount)
         {
-            // PHLOX-62: Halcyon's order (LSLSystemAPI.cs:2978-3014). Phlox moves no money; every path still sleeps 3 s.
+            // Halcyon's order (LSLSystemAPI.cs:2978-3014). Phlox moves no money; every path still sleeps 3 s.
             TaskInventoryItem item = GetInventorySelf();
             if (item == null) { ScriptSleep(3000); return 0; }
 
@@ -14771,11 +14771,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 return 0;
             }
 
-            // PHLOX-62 (ruling (a)): Halcyon :2999-3003.
+            // Halcyon :2999-3003.
             if (!UUID.TryParse(destination, out UUID destId)) { LSLError("Bad key in llGiveMoney"); ScriptSleep(3000); return 0; }
             if (destId == UUID.Zero || amount <= 0) { ScriptSleep(3000); return 0; }
 
-            // PHLOX-62 (ruling (a)): Halcyon :3006-3010 - no money module is "not implemented". With one, Phlox still
+            // Halcyon :3006-3010 - no money module is "not implemented". With one, Phlox still
             // returns 0 (it has no money support).
             if (World?.RequestModuleInterface<IMoneyModule>() == null) NotImplemented("llGiveMoney");
             ScriptSleep(3000);
@@ -14784,7 +14784,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public string llTransferLindenDollars(string destination, int amount)
         {
             // No economy module available in this tree
-            UUID txnId = NewDataserverQuery();   // PHLOX-46
+            UUID txnId = NewDataserverQuery();
             PostDataserverEvent(txnId, "LINDENDOLLAR_INSUFFICIENTFUNDS");
             return txnId.ToString();
         }
@@ -14882,7 +14882,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             float dist = dir.Length();
 
             // RC_* are SL's values from SlConst. The local copies here once disagreed with them, so
-            // options were mis-parsed and llCastRay dropped the normal (2b84e458b3, PHLOX-21).
+            // options were mis-parsed and llCastRay dropped the normal (2b84e458b3).
 
             int count = 1;
             int dataFlags = 0;
@@ -15534,17 +15534,17 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             }
         }
         // Halcyon's Constants.GenericReturnCodes, iwGroupInvite/iwGroupEject's answers (Halcyon OpenSim/Framework/Constants.cs).
-        /// <summary>PHLOX-44: SUCCESS - Halcyon's groups module answers it when the invite or eject was done.</summary>
+        /// <summary>SUCCESS - Halcyon's groups module answers it when the invite or eject was done.</summary>
         private const int HALCYON_RC_SUCCESS = 0;
-        /// <summary>PHLOX-44: ERROR - "generic error, internal server failure (like module not available)".</summary>
+        /// <summary>ERROR - "generic error, internal server failure (like module not available)".</summary>
         private const int HALCYON_RC_ERROR = 2;
-        /// <summary>PHLOX-44: PARAMETER - a bad group or user key, a bad group, or an unknown role.</summary>
+        /// <summary>PARAMETER - a bad group or user key, a bad group, or an unknown role.</summary>
         private const int HALCYON_RC_PARAMETER = 3;
-        /// <summary>PHLOX-41: PERMISSION - the refusal when the script's owner is not its creator.</summary>
+        /// <summary>PERMISSION - the refusal when the script's owner is not its creator.</summary>
         private const int HALCYON_RC_PERMISSION = 5;
 
         /// <summary>
-        /// PHLOX-41: Halcyon's ScriptOwnerIsCreator - the calling script's owner must be its creator, so a resold
+        /// Halcyon's ScriptOwnerIsCreator - the calling script's owner must be its creator, so a resold
         /// object cannot invite or eject on its new owner's behalf with someone else's script.
         /// </summary>
         private bool ScriptOwnerIsCreator()
@@ -15556,7 +15556,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         /// <summary>
         /// Halcyon (LSLSystemAPI.iwGroupInvite): PARAMETER for a bad key, a bad group or an unknown role, PERMISSION when
         /// the script's owner is not its creator, otherwise the groups module's result. Core's IGroupsModule.InviteGroup
-        /// returns nothing, so a call it accepts answers SUCCESS; no module or a failing one answers ERROR (PHLOX-44).
+        /// returns nothing, so a call it accepts answers SUCCESS; no module or a failing one answers ERROR.
         /// </summary>
         public int iwGroupInvite(string group, string user, string role)
         {
@@ -15602,7 +15602,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             }
         }
 
-        /// <summary>Halcyon (LSLSystemAPI.iwGroupEject), with the same answers as <see cref="iwGroupInvite"/> (PHLOX-44).</summary>
+        /// <summary>Halcyon (LSLSystemAPI.iwGroupEject), with the same answers as <see cref="iwGroupInvite"/>.</summary>
         public int iwGroupEject(string group, string user)
         {
             if (!UUID.TryParse(group, out UUID groupID) || groupID == UUID.Zero) return HALCYON_RC_PARAMETER;
@@ -15786,7 +15786,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             return string.Empty;
         }
 
-        // NotImplemented in Halcyon - kept as no-op. PHLOX-62 (ruling (a)): with Halcyon's error, LSLSystemAPI.cs:17301.
+        // NotImplemented in Halcyon - kept as no-op. With Halcyon's error, LSLSystemAPI.cs:17301.
         public void botChangeOwner(string botID, string newOwnerID) => NotImplemented("botChangeOwner");
 
         public LSLList botGetAllBotsInRegion()
@@ -16276,7 +16276,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.BotChat(id, channel, message, ChatTypeEnum.Whisper, m_host.OwnerID);
-            BotSleep();   // PHLOX-56
+            BotSleep();
         }
 
         public void botSay(string botID, int channel, string message)
@@ -16287,7 +16287,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.BotChat(id, channel, message, ChatTypeEnum.Say, m_host.OwnerID);
-            BotSleep();   // PHLOX-56
+            BotSleep();
         }
 
         public void botShout(string botID, int channel, string message)
@@ -16298,7 +16298,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.BotChat(id, channel, message, ChatTypeEnum.Shout, m_host.OwnerID);
-            BotSleep();   // PHLOX-56
+            BotSleep();
         }
 
         public void botStartTyping(string botID)
@@ -16309,7 +16309,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.BotChat(id, 0, string.Empty, ChatTypeEnum.StartTyping, m_host.OwnerID);
-            BotSleep();   // PHLOX-56
+            BotSleep();
         }
 
         public void botStopTyping(string botID)
@@ -16320,7 +16320,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.BotChat(id, 0, string.Empty, ChatTypeEnum.StopTyping, m_host.OwnerID);
-            BotSleep();   // PHLOX-56
+            BotSleep();
         }
 
         public void botSendInstantMessage(string botID, string userID, string message)
@@ -16358,7 +16358,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.SitBotOnObject(id, objID, m_host.OwnerID);
-            BotSleep();   // PHLOX-56
+            BotSleep();
         }
 
         public void botStandUp(string botID)
@@ -16369,7 +16369,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.StandBotUp(id, m_host.OwnerID);
-            BotSleep();   // PHLOX-56
+            BotSleep();
         }
 
         public void botTouchObject(string botID, string objectID)
@@ -16383,7 +16383,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             IBotManager manager = GetBotManager();
             if (manager != null)
                 manager.BotTouchObject(id, objID, m_host.OwnerID);
-            BotSleep();   // PHLOX-56
+            BotSleep();
         }
 
         public void botGiveInventory(string botID, string destination, string inventory)
@@ -16509,7 +16509,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (botSP == null) return;
 
             List<SceneObjectGroup> groups = botSP.GetAttachments();
-            var receivers = new List<UUID>();   // PHLOX-56
+            var receivers = new List<UUID>();
             foreach (SceneObjectGroup group in groups)
             {
                 foreach (SceneObjectPart part in group.Parts)
@@ -16534,7 +16534,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     }
                 }
             }
-            LinkMessageBackPressure(receivers);   // PHLOX-56
+            LinkMessageBackPressure(receivers);
         }
 
         // ── Bot Tagging ────────────────────────────────────────────────────────
@@ -16653,19 +16653,19 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// PHLOX-21 (C-5). The table says these requests return the query key, but their bodies were
+        /// The table says these requests return the query key, but their bodies were
         /// void: the async shim (SyscallShim.RunAsync) returns only what the body hands to SysReturn,
         /// so the script got nothing back and stopped with "Stack empty". The key goes back through
-        /// B2's sequenced return (SysReturn records it on the call's SyscallContext; CompleteSyscall
+        /// the deferred call's sequenced return (SysReturn records it on the call's SyscallContext; CompleteSyscall
         /// posts it with the call's sequence number), and the dataserver event carries the same key.
         /// </summary>
         private void ReturnQueryKey(UUID queryID) => m_ScriptEngine.SysReturn(m_itemID, queryID.ToString(), 0);
 
         private void PostDataserverEvent(UUID queryID, string data)
         {
-            // PHLOX-46: the asking script gets only a reply it is still owed - one asked for before a reset, state change or
+            // The asking script gets only a reply it is still owed - one asked for before a reset, state change or
             // unload is not posted to it (Halcyon Dataserver.RemoveEvents).
-            // PHLOX-66 (D8 (a)): every other script in the prim gets it all the same (SL: "all scripts within the same prim
+            // Every other script in the prim gets it all the same (SL: "all scripts within the same prim
             // where the request was made"; the wiki says nothing of a reset, state change or removal in between).
             bool owed = m_PendingDataserver.TryRemove(queryID, out _);
             m_ScriptEngine?.PostDataserverToPrim(m_host, owed ? UUID.Zero : m_itemID, queryID.ToString(), data);
@@ -16680,7 +16680,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             int bodyStart = raw.IndexOf('\n', marker + 1);
             if (bodyStart < 0) return string.Empty;
             string body = raw.Substring(bodyStart + 1);
-            // PHLOX-19: the body is followed by "}\n" (AssetNotecard.Encode and the viewer both write it so), which the
+            // The body is followed by "}\n" (AssetNotecard.Encode and the viewer both write it so), which the
             // EndsWith checks below never matched - the last line came back as "text}" with an empty line after it.
             // "Text length N" says how long the body is; take exactly that when it fits.
             string lenText = raw.Substring(marker + 13, bodyStart - (marker + 13)).Trim();
@@ -16734,7 +16734,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 				case SupportedEventList.Events.HTTP_REQUEST:        return (ulong)scriptEvents.http_request;
 				case SupportedEventList.Events.TRANSACTION_RESULT:  return (ulong)scriptEvents.transaction_result;
 				case SupportedEventList.Events.LINKSET_DATA:        return (ulong)scriptEvents.linkset_data;
-				// PHLOX-6: the five SL events, now in both enums.
+				// The five SL events, now in both enums.
 				case SupportedEventList.Events.PATH_UPDATE:         return (ulong)scriptEvents.path_update;
 				case SupportedEventList.Events.ON_DAMAGE:           return (ulong)scriptEvents.on_damage;
 				case SupportedEventList.Events.FINAL_DAMAGE:        return (ulong)scriptEvents.final_damage;
@@ -17319,10 +17319,10 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         }
 
         /// <summary>
-        /// PHLOX-10. SL's llAdjustDamage(integer number, float new_damage): inside on_damage, rewrite the
+        /// SL's llAdjustDamage(integer number, float new_damage): inside on_damage, rewrite the
         /// pending entry's amount before it lands (wiki: "modifies the amount of damage that will be applied
         /// by the current on_damage event after it has completed"). Anywhere else: an error on DEBUG_CHANNEL,
-        /// as the wiki says. Out-of-range or negative index: silent. The pre-PHLOX-10 (key, amount) form,
+        /// as the wiki says. Out-of-range or negative index: silent. The older (key, amount) form,
         /// an OpenSim-ism with the same arity, is gone - llDamage is the SL way to deal damage.
         /// </summary>
         public void llAdjustDamage(int number, float newDamage)
@@ -17350,7 +17350,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                 return;
 
             health = Math.Clamp(health, 0f, 100f);
-            // PHLOX-10: an absolute set is a damage of (current - target) through the one door - a heal is
+            // An absolute set is a damage of (current - target) through the one door - a heal is
             // a negative amount. Invulnerable / god presences keep their health, as the door rules.
             sp.ApplyDamage(m_host.UUID, m_host.OwnerID, m_host.LocalId, sp.Health - health, DamageEntry.TYPE_GENERIC, true);
         }
@@ -17360,12 +17360,12 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 		// Region-qualified key: (regionID, prim localID). LocalIDs are unique only within
 		// a single region; in a multi-region process two prims in different regions can share
 		// a localID. Keying by (regionID, localID) prevents cross-region character state
-		// collision. See memory-session-f-plan.md (M-14).
+		// collision.
 		private (UUID, uint) CharKey => (World.RegionInfo.RegionID, m_host.LocalId);
 		private static readonly Dictionary<(UUID, uint), UUID> s_primCharacters = new();
 		private static readonly object s_charLock = new();
 
-        // Called by PhloxEngine.OnObjectBeingRemovedFromScene when a prim leaves the scene (M-14b).
+        // Called by PhloxEngine.OnObjectBeingRemovedFromScene when a prim leaves the scene.
         // Removes the dict entry and returns the botID so the caller can remove the bot from BotManager.
         // Returns UUID.Zero if no character was registered for this prim.
         internal static UUID ClearCharacter(UUID regionID, uint localID)
@@ -17382,7 +17382,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             return UUID.Zero;
         }
 
-        // Called by PhloxEngine.RemoveRegion to purge all character dict entries for a region (M-14b).
+        // Called by PhloxEngine.RemoveRegion to purge all character dict entries for a region.
         // BotManager.RemoveRegion already removes the bot NPCs; this cleans only the dict.
         internal static void ClearRegionCharacters(UUID regionID)
         {
@@ -17580,14 +17580,14 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         // ── 610–620: Experience KV Store (upgraded to use ExperienceService) ──
 
         // ── SL Experience error codes (XP_ERROR_*) + limits, ported from the port source
-        //    (port-source-2026-07-22) to match the SL wiki XP_ERROR table 0-18.
-        //    Script-surface conformance — Experience port T1 (SS-1..9). ──
+        //    to match the SL wiki XP_ERROR table 0-18.
+        //    Script-surface conformance with SL. ──
         // SL key-value key length cap (SL wiki llCreateKeyValue): 1011 bytes (was 255).
         private const int MAX_EXPERIENCE_KEY_LENGTH = 1011;
         // Viewer experience-property bit PROPERTY_DISABLED (indra VP_DISABLED = 1<<6);
         // used to report the llGetExperienceDetails state field.
         private const int VP_DISABLED = 1 << 6;
-        // SL per-experience KV quota: 128 MiB (was NGC's 16 MiB). T2 ports the port source's DEC-2/UNV-5.
+        // SL per-experience KV quota: 128 MiB (was NGC's 16 MiB).
         private const long MAX_DATA_QUOTA = 128L * 1024 * 1024;
 
         // UTF-8 byte count for a KV key/value — the quota basis (matches the port source's KvBytes and the
@@ -17607,12 +17607,12 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         }
 
         // Phlox's synchronous key-value contract, kept for the *SL names (618-620), which answer at once:
-        // 0 ok · -1 invalid/error · -2 duplicate (create) · -3 CAS-fail/not-found (update) · -5 quota exceeded · -6 value over 4095 bytes (PHLOX-64).
-        // Until PHLOX-63 these were the bodies of llCreateKeyValue / llReadKeyValue / llUpdateKeyValue(3).
+        // 0 ok · -1 invalid/error · -2 duplicate (create) · -3 CAS-fail/not-found (update) · -5 quota exceeded · -6 value over 4095 bytes.
+        // Before SL's dataserver form these were the bodies of llCreateKeyValue / llReadKeyValue / llUpdateKeyValue(3).
         private int SyncCreateKeyValue(string key, string value)
         {
             if (string.IsNullOrEmpty(key) || key.Length > MAX_EXPERIENCE_KEY_LENGTH) return -1;
-            if (BadKvValue(value)) return -6;   // PHLOX-64: SL's 4095-byte value limit
+            if (BadKvValue(value)) return -6;   // SL's 4095-byte value limit
             var expService = GetExperienceAdapter();
             UUID expId = GetScriptExperienceId();
             if (expService == null || expId == UUID.Zero)
@@ -17622,7 +17622,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             }
             try
             {
-                // T2/DEC-2: quota check BEFORE the write (as the port source — never write-then-detect). A create
+                // Quota check BEFORE the write (as the port source — never write-then-detect). A create
                 // only ADDS a pair; reject if that would exceed 128 MiB -> -5 (llCreateKeyValueSL emits
                 // 0,11 = XP_ERROR_QUOTA_EXCEEDED). No write.
                 if (expService != null && expService.DataSizeKeyValue(expId) + KvBytes(key) + KvBytes(value) > MAX_DATA_QUOTA)
@@ -17661,14 +17661,14 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         private int SyncUpdateKeyValue(string key, string value, string check)
         {
             if (string.IsNullOrEmpty(key) || key.Length > MAX_EXPERIENCE_KEY_LENGTH) return -1;
-            if (BadKvValue(value)) return -6;   // PHLOX-64: SL's 4095-byte value limit
+            if (BadKvValue(value)) return -6;   // SL's 4095-byte value limit
             var expService = GetExperienceAdapter();
             UUID expId = GetScriptExperienceId();
             if (expService == null || expId == UUID.Zero)
                 expId = m_host.OwnerID;
             try
             {
-                // T2/DEC-2: delta-aware quota check BEFORE the write (port source ExceedsQuota). If the
+                // Delta-aware quota check BEFORE the write (port source ExceedsQuota). If the
                 // projected total after this update exceeds 128 MiB -> -5 (llUpdateKeyValueSL emits
                 // 0,11). No write. (If a CAS would also fail, quota wins at the boundary — benign.)
                 if (expService != null && ExceedsQuota(expService, expId, key, value))
@@ -17685,18 +17685,18 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             }
         }
 
-        // ── PHLOX-63: SL's key-value form (ruling (b)) ──
+        // ── SL's key-value form ──
         // wiki: every call "Start[s] an asynchronous transaction" and returns a key; the answer is a dataserver event
         // with that key and cdl = llDumpList2String([ 1, ... ],",") on success or [ 0, integer error ] (XP_ERROR_*).
-        // The query id is recorded (NewDataserverQuery, PHLOX-46), so an answer owed to a script that was reset, changed
+        // The query id is recorded (NewDataserverQuery), so an answer owed to a script that was reset, changed
         // state or was removed in between is dropped by PostDataserverEvent. The store work runs inside the syscall,
-        // which the shim hands to the region's service lane (Defer, B2): the scheduler thread never waits on the store,
+        // which the shim hands to the region's service lane (Defer): the scheduler thread never waits on the store,
         // and one script's answers arrive in the order it asked.
         // No key-value store at all (no IExperienceService) answers XP_ERROR_STORE_DISABLED.
-        // PHLOX-64 (John's ruling: follow SL): a script not compiled into an Experience (its item's ExperienceID is zero,
+        // As SL: a script not compiled into an Experience (its item's ExperienceID is zero,
         // GetScriptExperienceId) answers XP_ERROR_NO_EXPERIENCE, "This script is not associated with an experience."
         // (wiki llGetExperienceErrorMessage; each call's page: "the script must be compiled into an Experience"), and
-        // the store is not touched. Until PHLOX-64 the owner's id was used; Phlox's own names (llClearKeyValue and the
+        // the store is not touched. Phlox once used the owner's id here; Phlox's own names (llClearKeyValue and the
         // *SL variants) keep that fallback, so data stored under an owner's id stays reachable through them.
 
         private delegate string KeyValueWork(PhloxExperienceAdapter store, UUID experienceId);
@@ -17732,7 +17732,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
         private static string KvFail(int xpError) => "0," + xpError;
 
-        // PHLOX-64: SL's value limit, wiki llCreateKeyValue / llUpdateKeyValue: "As of Jan 1, 2016 maximum bytes is 1011 for
+        // SL's value limit, wiki llCreateKeyValue / llUpdateKeyValue: "As of Jan 1, 2016 maximum bytes is 1011 for
         // key and 4095 for value for both LSO and Mono scripts." Over it is XP_ERROR_INVALID_PARAMETERS, "One of the
         // string arguments was too big to fit in the key-value store." (wiki llGetExperienceErrorMessage). Nothing is
         // written. Before, the store got the value: MySQL's VARCHAR(4095) column refused it (strict mode) or cut it.
@@ -17870,18 +17870,18 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         }
 
         // The ...SL wrappers present SL's async-dataserver CSV shape "1,<value>" (success) /
-        // "0,<XP_ERROR>" (failure). T1 makes the failure payload a NUMERIC XP_ERROR code (was a
+        // "0,<XP_ERROR>" (failure). The failure payload is a NUMERIC XP_ERROR code (was a
         // free-text message), matching SL and the port source. They answer at once (Phlox's own names);
-        // PHLOX-63 left them exactly as they were - SL's names now answer in dataserver. PHLOX-64: they (and
+        // unchanged when SL's names moved to dataserver answers. They (and
         // llClearKeyValue) keep the owner-id fallback for a script with no Experience; SL's 4095-byte value limit applies.
         public string llCreateKeyValueSL(string key, string value)
         {
             int result = SyncCreateKeyValue(key, value);
             if (result == 0)
                 return "1," + (value ?? string.Empty);
-            if (result == -5) // over the 128 MiB quota (T2)
+            if (result == -5) // over the 128 MiB quota
                 return "0," + XP_ERROR_QUOTA_EXCEEDED;
-            if (result == -6) // PHLOX-64: value over SL's 4095 bytes
+            if (result == -6) // Value over SL's 4095 bytes
                 return "0," + XP_ERROR_INVALID_PARAMETERS;
             // SL: creating an existing key (or a generic KV failure) => XP_ERROR_STORAGE_EXCEPTION.
             return "0," + XP_ERROR_STORAGE_EXCEPTION;
@@ -17892,7 +17892,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             string val = SyncReadKeyValue(key);
             if (!string.IsNullOrEmpty(val))
                 return "1," + val;
-            // SL: a missing key => XP_ERROR_KEY_NOT_FOUND (14). (SS-4)
+            // SL: a missing key => XP_ERROR_KEY_NOT_FOUND (14).
             return "0," + XP_ERROR_KEY_NOT_FOUND;
         }
 
@@ -17901,9 +17901,9 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             int result = SyncUpdateKeyValue(key, value, check);
             if (result == 0)
                 return "1," + (value ?? string.Empty);
-            if (result == -5) // over the 128 MiB quota (T2)
+            if (result == -5) // over the 128 MiB quota
                 return "0," + XP_ERROR_QUOTA_EXCEEDED;
-            if (result == -6) // PHLOX-64: value over SL's 4095 bytes
+            if (result == -6) // Value over SL's 4095 bytes
                 return "0," + XP_ERROR_INVALID_PARAMETERS;
             // SL: a checked-update mismatch (CAS fail) => XP_ERROR_RETRY_UPDATE (15).
             return "0," + XP_ERROR_RETRY_UPDATE;
@@ -18172,7 +18172,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             // Async lookup — fires dataserver event with the user's UUID
             if (string.IsNullOrEmpty(username)) return string.Empty;
 
-            UUID reqID = NewDataserverQuery();   // PHLOX-46
+            UUID reqID = NewDataserverQuery();
 
             // Normalize "first.last" to "first last"
             string normalized = username.Replace('.', ' ').Trim();
@@ -18270,7 +18270,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                 case 11: return "experience data quota exceeded";
                 case 12: return "key-value store is disabled";
                 case 13: return "key-value store communication failed";
-                // T1/SS-5,8,9: rows 14-18 corrected to the SL wiki XP_ERROR table (were shifted:
+                // Rows 14-18 corrected to the SL wiki XP_ERROR table (were shifted:
                 // 14 said "key already exists", 15/16/17 were off by one, 18 was missing).
                 case XP_ERROR_KEY_NOT_FOUND: return "key doesn't exist";
                 case XP_ERROR_RETRY_UPDATE: return "retry update";
@@ -18399,7 +18399,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
             if (string.IsNullOrEmpty(inventory)) return;
 
-            // PHLOX-7a: these were 1,2,3,8,4,7 - a private numbering that matched neither SL nor
+            // These were 1,2,3,8,4,7 - a private numbering that matched neither SL nor
             // upstream, so a script written to the SL constants had every rule misread. Now the
             // values in LSL_Constants.cs:1131-1154, the same ones DefaultConstants exposes.
             string startString = null;
@@ -18609,7 +18609,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         }
 
         // ── 651: llGetStartString ──
-        /// <summary>PHLOX-7a. Ported from upstream LSL_Api.cs:4589-4593. wiki: "Returns a string that was
+        /// <summary>Ported from upstream LSL_Api.cs:4589-4593. wiki: "Returns a string that was
         /// passed to the object's root prim on rez with llRezObjectWithParams"; blank when the object was
         /// rezzed any other way.</summary>
         public string llGetStartString()
@@ -18654,7 +18654,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         }
 
         // ── 653: llTargetedEmail ──
-        // ---- PHLOX-5: SL names and arities. Each is the SL behaviour, not a forward. ------------
+        // ---- SL names and arities. Each is the SL behaviour, not a forward. ------------
 
         /// <summary>wiki: llsRGB2Linear(vector srgb) - the SL spelling. Same conversion; the older
         /// llSRGB2Linear stays as an alias. (The wiki notes the name is a misnomer - LSL colour is
@@ -18819,7 +18819,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
         // ── 655: llDetectedDamage ──
         /// <summary>
-        /// PHLOX-10. [float damage, integer damage_type, float original_damage] for pending entry n
+        /// [float damage, integer damage_type, float original_damage] for pending entry n
         /// (wiki). Inside on_damage, damage is the amount as adjusted so far; inside final_damage, what
         /// landed. From any other handler: an empty list, as the wiki says.
         /// </summary>
@@ -18838,7 +18838,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
         // ── 656: llDamage ──
         /// <summary>
-        /// PHLOX-10. llDamage(key target, float damage, integer damage_type): damage through the one door,
+        /// llDamage(key target, float damage, integer damage_type): damage through the one door,
         /// this prim as the source, so the target's attachments get on_damage (llDetectedKey == this prim)
         /// and final_damage. Avatars only here (the wiki also allows tasks and redirects seated avatars to
         /// their seat - not done); region damage must be on; no throttle yet. Runs as an async syscall so
@@ -18987,7 +18987,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             return expService.IsAgentGranted(experienceId, agentId);
         }
 
-        // ── D1 consent state (ported from port-source-2026-07-22). One pending request per
+        // ── Consent state. One pending request per
         //    script instance (LSLSystemAPI is per-script), keyed by ItemID; the ScriptAnswerYes packet
         //    carries no ExperienceID, so the answer is correlated by TaskID + ItemID via OnScriptAnswer. ──
         private const int PERMISSION_EXPERIENCE = 0x2000;       // JoinAnExperience bit
@@ -19013,7 +19013,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             var expService = GetExperienceAdapter();
             UUID experienceId = GetScriptExperienceId();
 
-            // No experience associated with this script -> XP_ERROR_NO_EXPERIENCE (5). (SS-7)
+            // No experience associated with this script -> XP_ERROR_NO_EXPERIENCE (5).
             if (expService == null || experienceId == UUID.Zero)
             {
                 m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
@@ -19023,7 +19023,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                 return;
             }
 
-            // T5b block-wins: a region-BLOCKED experience is denied regardless of allow/trusted/prior-
+            // Block wins: a region-BLOCKED experience is denied regardless of allow/trusted/prior-
             // grant, land-scope XP_ERROR_NOT_PERMITTED_LAND (17). Checked FIRST (before admission,
             // trusted, and already-granted) so block wins over everything. (The port source also has a parcel-
             // block tier at this precedence — deferred; Tranquillity has no parcel-experience source.)
@@ -19036,13 +19036,13 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                 return;
             }
 
-            // Admission (T5): the experience must be enabled on this land — estate-ALLOWED or region-
+            // Admission: the experience must be enabled on this land — estate-ALLOWED or region-
             // TRUSTED (estate KeyExperiences). A trusted experience is a stronger allow, so it admits
             // here and is silently granted below (previously a trusted-but-not-allowed experience was
             // wrongly denied 17 before the trusted check). The port source's admission also has grid-wide + parcel-
             // ALLOW tiers, and a region/parcel BLOCK-wins tier; those have NO source in NGC (no grid-wide
-            // bit, no region-block store, no ILandObject experience methods) — the flagged T5 STOP (see
-            // experience-port-ledger.md). Not admitted -> land-scope XP_ERROR_NOT_PERMITTED_LAND (17).
+            // bit, no region-block store, no ILandObject experience methods), so they are not represented.
+            // Not admitted -> land-scope XP_ERROR_NOT_PERMITTED_LAND (17).
             if (!IsExperienceAdmitted(expService, experienceId))
             {
                 m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
@@ -19063,9 +19063,9 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                 return;
             }
 
-            // T3/D1 gate order (port source): the agent's PERSONAL block wins over everything below and is
+            // Gate order (as the port source): the agent's PERSONAL block wins over everything below and is
             // checked BEFORE the already-granted short-circuit, so a resident who blocked this experience
-            // is never re-granted (SL code 4). (The Block-button persistence loop is T4.)
+            // is never re-granted (SL code 4).
             if (expService.IsAgentBlocked(experienceId, agentId))
             {
                 m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
@@ -19083,8 +19083,8 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                 return;
             }
 
-            // T5 trusted enforcement. A region-TRUSTED experience (Tranquillity estate KeyExperiences)
-            // grants silently — no dialog. Checked AFTER agent-block (T4), so a personally-blocked
+            // Trusted enforcement. A region-TRUSTED experience (Tranquillity estate KeyExperiences)
+            // grants silently — no dialog. Checked AFTER agent-block, so a personally-blocked
             // experience is denied 4 even if trusted (block wins over trusted — the port source's order).
             if (expService.GetTrustedExperiences(World.RegionInfo.RegionID).Contains(experienceId))
             {
@@ -19206,10 +19206,10 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                     new DetectParams[0]));
         }
 
-        // T5 admission — the portable subset of the port source's ladder (IsExperienceAdmittedAt): an experience
+        // Admission — the portable subset of the port source's ladder (IsExperienceAdmittedAt): an experience
         // is admitted on this land if the estate ALLOWS it OR it is region-TRUSTED (estate KeyExperiences).
         // The port source's grid-wide + parcel-ALLOW admission tiers and the region/parcel BLOCK-wins tier have no
-        // NGC source (see the T5 STOP in experience-port-ledger.md) and are not represented here.
+        // NGC source and are not represented here.
         private bool IsExperienceAdmitted(PhloxExperienceAdapter expService, UUID experienceId)
         {
             UUID regionId = World.RegionInfo.RegionID;
@@ -19217,7 +19217,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                 || expService.GetTrustedExperiences(regionId).Contains(experienceId);
         }
 
-        // T5b block-wins tier (port source IsExperienceBlockedInRegion): an experience on the estate
+        // Block-wins tier (the port source's IsExperienceBlockedInRegion): an experience on the estate
         // BlockedExperiences list is denied regardless of allow/trusted/prior-grant. Region granularity
         // only — the port source also has a parcel-block tier with no NGC parcel-experience source (deferred).
         private bool IsExperienceBlockedInRegion(PhloxExperienceAdapter expService, UUID experienceId)
@@ -19237,16 +19237,16 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             UUID experienceId = GetScriptExperienceId();
             if (expService == null || experienceId == UUID.Zero) return 0;
 
-            // SS-6 (presence + agent-block in T1, admission in T5, region-block in T5b): the target agent
+            // The target agent
             // must be PARTICIPATING here — a ROOT presence in this region — with block-wins over grant, AND
             // the experience must not be region-BLOCKED and must be ADMITTED on this land (estate allow OR
             // trusted). The port source's HasExperiencePermission also applies a parcel BLOCK-wins tier, which has no
-            // NGC source (the T5 STOP) — deferred to a separate project (region granularity only here).
+            // NGC source — deferred to a separate project (region granularity only here).
             ScenePresence sp = World?.GetScenePresence(agentId);
             if (sp == null || sp.IsChildAgent) return 0;
-            if (IsExperienceBlockedInRegion(expService, experienceId)) return 0; // T5b region block wins
+            if (IsExperienceBlockedInRegion(expService, experienceId)) return 0; // region block wins
             if (expService.IsAgentBlocked(experienceId, agentId)) return 0;    // agent block wins
-            if (!IsExperienceAdmitted(expService, experienceId)) return 0;     // T5: admitted on this land
+            if (!IsExperienceAdmitted(expService, experienceId)) return 0;     // admitted on this land
             return expService.IsAgentGranted(experienceId, agentId) ? 1 : 0;
         }
 
@@ -19265,7 +19265,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             if (exp == null)
                 return new LSLList();
 
-            // T1/SS-1: SL layout is [ name, owner key, experience id, state (int), state message,
+            // SL layout is [ name, owner key, experience id, state (int), state message,
             // group key ] — NOT the old [name, owner, description, group, maturity, ""], which
             // silently returned wrong data at every index for SL-written scripts (High severity).
             // State uses the XP_ERROR vocabulary: NONE(0) for a valid enabled experience,

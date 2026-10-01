@@ -6,8 +6,8 @@ using OpenSim.Tests.Common;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// B2. The bot functions post their own SysReturn (with the result and delay) from a finally
-/// inside the body. B2 moved their shims from the raw async delegate to RunAsync, whose completion also
+/// The bot functions post their own SysReturn (with the result and delay) from a finally
+/// inside the body. Deferral moved their shims from the raw async delegate to RunAsync, whose completion also
 /// posts a return; without the per-call SyscallContext that would be TWO returns, the second a null
 /// that could land in the script's NEXT syscall. The context keeps it to one: the body's result wins,
 /// and the completion posts it once, sequenced.

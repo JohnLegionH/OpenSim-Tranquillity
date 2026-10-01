@@ -11,12 +11,12 @@ using Phlox.ScriptEngine;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-2e. A whole script engine on a test scene, driven by hand: rez a script the way
+/// A whole script engine on a test scene, driven by hand: rez a script the way
 /// <c>EventManager.OnRezScript</c> does, then pump <c>DoWork</c> instead of running the master
 /// scheduler's thread, so a test is deterministic and cannot hang.
 ///
 /// <para>
-/// This is the harness PHLOX-2d named as the gap and could not build in the time it had. Everything
+/// This is the harness the scheduler's tests lacked. Everything
 /// before it either compiled a script (<see cref="PhloxCompiler"/>) or asserted the scheduler's
 /// source text; neither could see whether a script instance actually runs, which is precisely what
 /// two earlier builds both failed to do in world.
@@ -32,7 +32,7 @@ public sealed class SchedulerHarness : IDisposable
     private readonly object m_exe;
 
     /// <summary>
-    /// PHLOX-22 C follow-up: a real YEngine on the same scene, added BEFORE Phlox as on a region running both
+    /// A real YEngine on the same scene, added BEFORE Phlox as on a region running both
     /// ([REGIONMODULE] Adding scene "<region>" to non-shared module "YEngine" precedes "InWorldz.Phlox"), so
     /// SceneObjectPartInventory.GetScriptErrors asks YEngine first. Null unless requested.
     /// </summary>
@@ -41,10 +41,10 @@ public sealed class SchedulerHarness : IDisposable
     public OpenSim.Region.CoreModules.Scripting.WorldComm.WorldCommModule WorldComm { get; }
     private readonly string m_yengineDir;
 
-    /// <param name="configure">PHLOX-12: a hook to add config sections (e.g. [OSSL]) before the engine reads them.</param>
+    /// <param name="configure">A hook to add config sections (e.g. [OSSL]) before the engine reads them.</param>
     /// <param name="withYEngine">Register YEngine alongside Phlox, first, as a region running both does.</param>
     /// <param name="bytecodeDir">
-    /// PHLOX-54: the engine's bytecode cache folder. Null (the default) is the calling test class's own folder, see
+    /// The engine's bytecode cache folder. Null (the default) is the calling test class's own folder, see
     /// <see cref="BytecodeDirForCaller"/>; <see cref="ProductionBytecodeDir"/> is the loader's own shared folder.
     /// </param>
     public SchedulerHarness(Action<IConfigSource> configure = null, bool withYEngine = false, string bytecodeDir = null)
@@ -100,7 +100,7 @@ public sealed class SchedulerHarness : IDisposable
         // llSay goes Scene.SimChat -> EventManager.OnChatFromWorld (Scene.PacketHandlers.cs:51-85),
         // so the real path is observed rather than a stub API injected into the engine - the engine
         // builds its own LSLSystemAPI inside FinishedLoading and takes no seam for one.
-        // PHLOX-14: NPC chat arrives as CLIENT chat (NPCAvatar is a client), with the NPC as sender.
+        // NPC chat arrives as CLIENT chat (NPCAvatar is a client), with the NPC as sender.
         Scene.EventManager.OnChatFromClient += (sender, chat) =>
         {
             lock (m_said) m_clientChat.Add((chat.Channel, chat.Message ?? string.Empty, chat.Sender?.AgentId ?? chat.SenderUUID));
@@ -123,14 +123,14 @@ public sealed class SchedulerHarness : IDisposable
         StopMasterThread();
     }
 
-    /// <summary>PHLOX-54: the loader's own folder (PhloxScriptLoader.CACHE_DIR), relative to the working directory.</summary>
+    /// <summary>The loader's own folder (PhloxScriptLoader.CACHE_DIR), relative to the working directory.</summary>
     public const string ProductionBytecodeDir = "ScriptEngines/Phlox/bytecode";
 
-    /// <summary>PHLOX-54: the folder this harness's engine caches bytecode in.</summary>
+    /// <summary>The folder this harness's engine caches bytecode in.</summary>
     public string BytecodeDir { get; }
 
     /// <summary>
-    /// PHLOX-54: one root per test run for the classes' bytecode folders, under the test output folder. The harness made
+    /// One root per test run for the classes' bytecode folders, under the test output folder. The harness made
     /// it, so the harness removes it when the process exits. The test host can be ended before that finishes (a full
     /// run left part of its root behind), so a new run also removes the roots earlier runs of this harness left:
     /// only "run-&lt;pid&gt;-&lt;id&gt;" folders under harness-bytecode, and only when that process is no longer running.
@@ -159,7 +159,7 @@ public sealed class SchedulerHarness : IDisposable
         catch { return true; }   // cannot tell: leave it
     }
 
-    /// <summary>PHLOX-54: removes a harness bytecode root file by file, going on past any entry it cannot remove.</summary>
+    /// <summary>Removes a harness bytecode root file by file, going on past any entry it cannot remove.</summary>
     private static void RemoveTree(string dir)
     {
         try
@@ -174,10 +174,10 @@ public sealed class SchedulerHarness : IDisposable
     }
 
     /// <summary>
-    /// PHLOX-54: the bytecode folder for the test class building this harness. Every loader used to share the working
+    /// The bytecode folder for the test class building this harness. Every loader used to share the working
     /// directory's "ScriptEngines/Phlox/bytecode", and its schema stamp is read outside the loader's try
     /// (PhloxScriptLoader.EnsureCacheSchemaVersion): with no stamp on disk, classes starting in parallel each wrote it
-    /// while another read it, and the read threw IOException out of harness set-up (B5-PREP's one failure).
+    /// while another read it, and the read threw IOException out of harness set-up.
     /// The class is the outermost frame on the stack whose method belongs to this test assembly (the test method, its
     /// async state machine or a lambda, walked up to the top-level type), so the 389 construction sites need no
     /// change. xUnit runs one class's tests one at a time, so harnesses of one class share a folder as all harnesses
@@ -207,7 +207,7 @@ public sealed class SchedulerHarness : IDisposable
 
     private void StopMasterThread()
     {
-        // PHLOX-22 B: the thread only - Stop() is region shutdown and would also stop the loader's compile thread.
+        // The thread only - Stop() is region shutdown and would also stop the loader's compile thread.
         var ms = Field(Engine, "m_MasterScheduler");
         var stop = ms?.GetType().GetMethod("StopThread", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)
                    ?? ms?.GetType().GetMethod("Stop", BindingFlags.Public | BindingFlags.Instance);
@@ -221,13 +221,13 @@ public sealed class SchedulerHarness : IDisposable
     /// (<c>PhloxScriptLoader.cs:301-307</c>), so a harness that skips this tests nothing.
     /// </summary>
     /// <summary>
-    /// PHLOX-4: rez with BOTH ids pinned. A restore test has to stand a second engine up and rez the
+    /// Rez with BOTH ids pinned. A restore test has to stand a second engine up and rez the
     /// same item and asset, because StateManager.LoadState keys on the item id and discards the row
     /// when the asset id does not match.
     /// </summary>
     public UUID RezScript(string source, UUID assetId, UUID itemId) => RezScript(source, assetId, itemId, running: true);
 
-    /// <summary>PHLOX-18: rez with the item's Running flag as given - false is the viewer's unticked checkbox.</summary>
+    /// <summary>Rez with the item's Running flag as given - false is the viewer's unticked checkbox.</summary>
     public UUID RezScript(string source, UUID assetId, UUID itemId, bool running)
     {
         var item = TaskInventoryHelpers.AddScript(
@@ -239,12 +239,12 @@ public sealed class SchedulerHarness : IDisposable
         return item.ItemID;
     }
 
-    /// <summary>PHLOX-4: the engine's StateManager, which is internal - reached by reflection.</summary>
+    /// <summary>The engine's StateManager, which is internal - reached by reflection.</summary>
     public object StateManagerOf() => Engine.GetType()
         .GetProperty("StateManager", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)
         ?.GetValue(Engine);
 
-    /// <summary>PHLOX-4: save this script the way shutdown does, through ScriptUnloaded.</summary>
+    /// <summary>Save this script the way shutdown does, through ScriptUnloaded.</summary>
     public void SaveState(UUID itemId)
     {
         var sm = StateManagerOf();
@@ -255,7 +255,7 @@ public sealed class SchedulerHarness : IDisposable
     }
 
     /// <summary>
-    /// PHLOX-18b: the real shutdown save. PhloxEngine.OnShutdown calls StateManager.Stop() and nothing else - no
+    /// The real shutdown save. PhloxEngine.OnShutdown calls StateManager.Stop() and nothing else - no
     /// ScriptUnloaded for any script - so only the dirty set reaches the row. SaveState above is the unload path,
     /// which a region stop never takes.
     /// </summary>
@@ -278,7 +278,7 @@ public sealed class SchedulerHarness : IDisposable
         return item.ItemID;
     }
 
-    /// <summary>PHLOX-10: rez a script into a part other than the harness prim (a second attachment).</summary>
+    /// <summary>Rez a script into a part other than the harness prim (a second attachment).</summary>
     public UUID RezScriptInto(SceneObjectPart part, string source)
     {
         var item = TaskInventoryHelpers.AddScript(
@@ -289,11 +289,11 @@ public sealed class SchedulerHarness : IDisposable
         return item.ItemID;
     }
 
-    /// <summary>PHLOX-22 B: the engine's PhloxScriptLoader.</summary>
+    /// <summary>The engine's PhloxScriptLoader.</summary>
     public object Loader => m_loader;
 
     /// <summary>
-    /// PHLOX-22 B: save new text into an existing script item the way the viewer's Save does - the item gets a new
+    /// Save new text into an existing script item the way the viewer's Save does - the item gets a new
     /// asset, then the region removes and re-rezzes it (Scene.CapsUpdateTaskInventoryScriptAsset).
     /// </summary>
     public void ResaveScript(UUID itemId, string source)
@@ -311,10 +311,10 @@ public sealed class SchedulerHarness : IDisposable
         rez.Invoke(Engine, new object[] { Prim.LocalId, itemId, source, 0, false, Engine.Name, 0 });
     }
 
-    /// <summary>PHLOX-13: is the script on the run queue?</summary>
+    /// <summary>Is the script on the run queue?</summary>
     public bool IsOnRunQueue(UUID itemId) => ((global::Phlox.ScriptEngine.PhloxExecutionScheduler)m_exe).IsOnRunQueue(itemId);
 
-    /// <summary>PHLOX-11: the scheduler's status record for a script, as `phlox status` reads it.</summary>
+    /// <summary>The scheduler's status record for a script, as `phlox status` reads it.</summary>
     public string StatusOf(UUID itemId)
     {
         var st = ((global::Phlox.ScriptEngine.PhloxExecutionScheduler)m_exe).GetStatus(itemId);
@@ -324,7 +324,7 @@ public sealed class SchedulerHarness : IDisposable
     private int m_scriptSeq;
 
     /// <summary>
-    /// PROPS-1: add a real client to the scene so what the region SENDS can be asserted, not just
+    /// Add a real client to the scene so what the region SENDS can be asserted, not just
     /// what it stores on the part.
     /// </summary>
     public OpenSim.Tests.Common.TestClient AddClient()
@@ -370,7 +370,7 @@ public sealed class SchedulerHarness : IDisposable
     }
 
     /// <summary>
-    /// PHLOX-54: a load the loader has not finished, for an item still in the scene. The loader's WorkIsPending does not
+    /// A load the loader has not finished, for an item still in the scene. The loader's WorkIsPending does not
     /// count a compile running on its compile thread (PhloxScriptLoader.HasPendingWork), so a window could end with the
     /// script still compiling, no interpreter and no late-load wait (RestoredScriptResumeTests under parallel load:
     /// "captured in RunState=(no interpreter)"). PhloxScriptLoader.IsLoading is the loader's own answer per item; an item
@@ -394,7 +394,7 @@ public sealed class SchedulerHarness : IDisposable
     }
 
     /// <summary>
-    /// PHLOX-50: a script whose compile was still running, or an object event still with the thread pool, when a fixed
+    /// A script whose compile was still running, or an object event still with the thread pool, when a fixed
     /// window ended (a loaded machine, test classes in parallel) is waited for, and its first events are run, as they
     /// would have been inside the window on a quiet machine. Only ever after the window, never instead of it, and only
     /// when something was still on its way: on a quiet machine this never runs, so no window changes there.
@@ -414,7 +414,7 @@ public sealed class SchedulerHarness : IDisposable
         PumpUntilIdle(TimeSpan.FromSeconds(30));
     }
 
-    /// <summary>PHLOX-4b probe: the interpreter's RuntimeState, by reflection.</summary>
+    /// <summary>Probe: the interpreter's RuntimeState, by reflection.</summary>
     public object StateOf(UUID itemId)
     {
         var interp = InterpreterFor(itemId);
@@ -425,21 +425,21 @@ public sealed class SchedulerHarness : IDisposable
         => o.GetType().GetProperty(name)?.GetValue(o)
            ?? o.GetType().GetField(name, BindingFlags.Public | BindingFlags.Instance)?.GetValue(o);
 
-    /// <summary>PHLOX-4c probe: the syscall the script is parked in, or -1; int.MinValue if no state.</summary>
+    /// <summary>Probe: the syscall the script is parked in, or -1; int.MinValue if no state.</summary>
     public int LastSyscallIndexOf(UUID itemId)
     {
         var st = StateOf(itemId);
         return st == null ? int.MinValue : (int)(Member(st, "LastSyscallIndex") ?? int.MinValue);
     }
 
-    /// <summary>PHLOX-4b probe (b): the instruction pointer right now, or -1.</summary>
+    /// <summary>Probe: the instruction pointer right now, or -1.</summary>
     public int IpOf(UUID itemId)
     {
         var st = StateOf(itemId);
         return st == null ? -1 : (int)(Member(st, "IP") ?? -1);
     }
 
-    /// <summary>PHLOX-4b probe (c): TopFrame locals with their CLR types, operands, calls, IP.</summary>
+    /// <summary>Probe: TopFrame locals with their CLR types, operands, calls, IP.</summary>
     public string DumpFrame(UUID itemId)
     {
         var st = StateOf(itemId);
@@ -466,7 +466,7 @@ public sealed class SchedulerHarness : IDisposable
         return sb.ToString();
     }
 
-    /// <summary>PHLOX-4: exactly one DoWork on each scheduler - one timeslice, no more.</summary>
+    /// <summary>Exactly one DoWork on each scheduler - one timeslice, no more.</summary>
     public void PumpOnce()
     {
         m_loader.GetType().GetMethod("DoWork")!.Invoke(m_loader, null);
@@ -474,7 +474,7 @@ public sealed class SchedulerHarness : IDisposable
     }
 
     /// <summary>
-    /// PHLOX-4: put an event straight on the script's OWN queue (ScriptState.EventQueue), which is
+    /// Put an event straight on the script's OWN queue (ScriptState.EventQueue), which is
     /// what a script that was interrupted mid-event has when it is saved - not the scheduler's
     /// pending list.
     /// </summary>
@@ -509,7 +509,7 @@ public sealed class SchedulerHarness : IDisposable
     }
 
     /// <summary>
-    /// PHLOX-50: pump until neither scheduler reports work pending, and no object event is still with the thread pool
+    /// Pump until neither scheduler reports work pending, and no object event is still with the thread pool
     /// (PhloxEngine.ObjectPostsInFlight), for <paramref name="quietRounds"/> rounds in a row, or
     /// <paramref name="limit"/> passes; false on the limit. Used AFTER a test's own settle window, never instead of it,
     /// so a "nothing arrived" window is never shorter - only a delivery that is still queued under load is waited for.
@@ -532,7 +532,7 @@ public sealed class SchedulerHarness : IDisposable
     }
 
     /// <summary>
-    /// PHLOX-59: pump both schedulers until <paramref name="done"/> holds, or <paramref name="cap"/> (30 s by default)
+    /// Pump both schedulers until <paramref name="done"/> holds, or <paramref name="cap"/> (30 s by default)
     /// passes; false on the cap. The shape of every "wait for the result" in this project: a fixed window followed by
     /// an assert that something DID happen fails when a loaded machine is slower than the window, so the window
     /// becomes this. A window that proves something did NOT happen stays a fixed window.
@@ -560,14 +560,14 @@ public sealed class SchedulerHarness : IDisposable
     private readonly List<string> m_said = new();
     private readonly List<(int Channel, string Message)> m_saidOn = new();
     private readonly List<(int Channel, string Message, UUID Sender)> m_clientChat = new();
-    /// <summary>PHLOX-14: chat that came in as client chat (NPCs), with the sender's key.</summary>
+    /// <summary>Chat that came in as client chat (NPCs), with the sender's key.</summary>
     public IReadOnlyList<(int Channel, string Message, UUID Sender)> ClientChat { get { lock (m_said) return m_clientChat.ToArray(); } }
-    /// <summary>PHLOX-14: the config the engine was initialised with, for adding scene modules after construction.</summary>
+    /// <summary>The config the engine was initialised with, for adding scene modules after construction.</summary>
     public IConfigSource Config { get; }
 
     /// <summary>Everything any script in this scene has said, in order.</summary>
     public IReadOnlyList<string> Said { get { lock (m_said) return m_said.ToArray(); } }
-    /// <summary>PHLOX-9: the same chat with its channel - run-time errors must land on DEBUG_CHANNEL, not 0.</summary>
+    /// <summary>The same chat with its channel - run-time errors must land on DEBUG_CHANNEL, not 0.</summary>
     public IReadOnlyList<(int Channel, string Message)> SaidOn { get { lock (m_said) return m_saidOn.ToArray(); } }
 
     /// <summary>Whether anything has been said since the last <see cref="ClearSaid"/>.</summary>

@@ -3,7 +3,7 @@ using System;
 namespace InWorldz.Phlox.Types
 {
     /// <summary>
-    /// PHLOX-3a. Tells a compiler <b>crash</b> apart from a script <b>error</b>.
+    /// Tells a compiler <b>crash</b> apart from a script <b>error</b>.
     ///
     /// <para>
     /// <c>CompilerFrontend.Compile</c> ends in a blanket <c>catch (Exception e)</c> that reported
@@ -11,8 +11,8 @@ namespace InWorldz.Phlox.Types
     /// <c>NullReferenceException</c> in the type-check pass reached the resident as
     /// <i>"Object reference not set to an instance of an object."</i> — indistinguishable, in the log
     /// and in the owner's dialog, from a message about their own script. Someone was being told their
-    /// script was wrong when what actually happened is that the compiler fell over. PHLOX-3a's
-    /// <c>state default;</c> defect sat in world for as long as it did partly because of that.
+    /// script was wrong when what actually happened is that the compiler fell over. A
+    /// <c>state default;</c> compiler defect went unnoticed in world for a long time partly because of that.
     /// </para>
     ///
     /// <para>

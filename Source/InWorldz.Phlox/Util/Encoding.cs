@@ -112,11 +112,11 @@ namespace InWorldz.Phlox.Util
             return value;
         }
 
-        // PHLOX-65 (item 3, SL wiki Typecast): (string) of a float has 6 decimals - `(string) -PI; // "-3.141593" with
+        // SL wiki Typecast: (string) of a float has 6 decimals - `(string) -PI; // "-3.141593" with
         // precision set to 6 decimal places by zero padding or rounding` - and of a vector or rotation 5 - `(string) <1.0,
         // 2.3, 4.56>; // "<1.00000, 2.30000, 4.56000>"`; lists use 6 for all three (wiki List). The float's own value is
         // written: formatting a float keeps only 7 significant digits on .NET (2147483520.0 printed "2147484000.000000"),
-        // so each value is widened to double first, which is exact. D10 (a), Halcyon's rule: -0 prints as 0 (any value
+        // so each value is widened to double first, which is exact. Halcyon's rule: -0 prints as 0 (any value
         // that rounds to all zeros has no sign, as .NET Framework wrote it; .NET Core 3.0+ writes "-0.000000"). The
         // invariant culture gives Halcyon's "Infinity", "-Infinity" and "NaN" and a '.' whatever the host's culture.
         private static string Fixed(float f, string format)
@@ -158,7 +158,7 @@ namespace InWorldz.Phlox.Util
             return Fixed(f, Six);
         }
 
-        // PHLOX-65 (D10 (a), F451): Halcyon's string -> vector / rotation, its libomv Vector3.Parse / Quaternion.Parse
+        // Halcyon's string -> vector / rotation, its libomv Vector3.Parse / Quaternion.Parse
         // under TryParse (ThirdParty/libopenmetaverse/OpenMetaverseTypes/Vector3.cs:355-377, Quaternion.cs:664-697): every
         // '<' and '>' removed, split on ',', each part trimmed and parsed as .NET Framework's Single.Parse with en-US; too
         // few parts or a bad part fails. A vector takes the first three parts of any longer list; a rotation of exactly

@@ -11,7 +11,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-11. In world, at a region start: <c>[PhloxState] Failed to load state ... "database is
+/// In world, at a region start: <c>[PhloxState] Failed to load state ... "database is
 /// locked"</c> and <c>Batch flush failed: "database is locked"</c> - three regions restoring in parallel
 /// while StateManager.FlushLoop writes every 2.5 s, one SQLite file. A failed load is a script that
 /// restarted from state_entry with its globals gone. This is that shape against a real temp DB with

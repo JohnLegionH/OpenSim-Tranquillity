@@ -19,12 +19,12 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-21 part D. SL's own constant table (secondlife/lsl-definitions @ 10741b9, dumped into
+/// SL's own constant table (secondlife/lsl-definitions @ 10741b9, dumped into
 /// Fixtures/sl-constants-10741b9.txt) is the reference: the compiler's table must carry every public
 /// SL constant with SL's value, the implementation must not keep private copies that disagree, and
 /// each family that did disagree is pinned by one behaviour test using the fixture's value.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class SlConstantsTests
 {
     private readonly ITestOutputHelper _out;

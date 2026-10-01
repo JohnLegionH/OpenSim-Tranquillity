@@ -74,7 +74,7 @@ namespace InWorldz.Phlox.Serialization
         public Dictionary<int, SerializedLSLPrimitive[]> MiscAttributes;
 
         /// <summary>
-        /// PHLOX-4b. Which syscall was in flight when the state was captured, as a
+        /// Which syscall was in flight when the state was captured, as a
         /// <c>FunctionSig.TableIndex</c>, or -1 for none. Without it a script saved mid-syscall could
         /// not be resumed at all: the call has no completion coming, so the only way back is to push
         /// that function's return value ourselves, and that needs to know which function it was.
@@ -87,7 +87,7 @@ namespace InWorldz.Phlox.Serialization
         [ProtoMember(22)]
         public int LastSyscallIndex = -1;
 
-        /// <summary>PHLOX-7b. Tags 23-25. Rows written before them load as 0 / false / 0, which is
+        /// <summary>Tags 23-25. Rows written before them load as 0 / false / 0, which is
         /// "no floor, not profiling, no peak" - exactly what an older script had.</summary>
         [ProtoMember(23)]
         public int MinEventDelayMs;
@@ -96,7 +96,7 @@ namespace InWorldz.Phlox.Serialization
         [ProtoMember(25)]
         public int PeakMemoryUsed;
 
-        /// <summary>PHLOX-18. Tag 26: the error a crashed script stopped on; null for every row written before it and for a script that is not crashed.</summary>
+        /// <summary>Tag 26: the error a crashed script stopped on; null for every row written before it and for a script that is not crashed.</summary>
         [ProtoMember(26)]
         public string TerminatedReason;
 
@@ -146,7 +146,7 @@ namespace InWorldz.Phlox.Serialization
             try { globalsSnapshot = (object[])state.Globals.Clone(); }
             catch { globalsSnapshot = state.Globals; }
 
-            // PHLOX-12 0b: the operand stack was the one live collection still walked in place
+            // The operand stack was the one live collection still walked in place
             // (FromPrimitiveStack enumerates it) while the script thread pushes and pops.
             Stack<object> operandsSnapshot;
             try { operandsSnapshot = new Stack<object>(new Stack<object>(state.Operands)); }

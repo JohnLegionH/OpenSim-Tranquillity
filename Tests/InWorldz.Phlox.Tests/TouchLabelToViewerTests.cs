@@ -4,7 +4,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PROPS-1. Setting the touch label has to reach the viewer, not just the part.
+/// Setting the touch label has to reach the viewer, not just the part.
 ///
 /// <para>
 /// The label a viewer shows comes from the FULL ObjectProperties reply -
@@ -15,7 +15,7 @@ namespace InWorldz.Phlox.Tests;
 /// after the last select was invisible - the menu still read "Touch" with TouchName set to "Enter".
 /// </para>
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class TouchLabelToViewerTests
 {
     private readonly ITestOutputHelper _out;
@@ -51,7 +51,7 @@ default
     [InlineData("llSetObjectDesc(\"Described\");", "Description", "Described")]
     public void EveryPropertySetterPushesObjectPropertiesToClients(string call, string property, string expected)
     {
-        // PROPS-1: the sit label, name and description all live in the same full ObjectProperties
+        // The sit label, name and description all live in the same full ObjectProperties
         // reply as the touch label (LLClientView.cs:6381, :6384, :6390) and had the identical
         // defect - set the field, never tell anyone.
         using var h = new SchedulerHarness();

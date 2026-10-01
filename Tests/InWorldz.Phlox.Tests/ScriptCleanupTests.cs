@@ -19,11 +19,10 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-46 (HALCYON-DIFF S12): what ends with a script. On delete, reset and unload a script's sensor repeat, outstanding
+/// What ends with a script. On delete, reset and unload a script's sensor repeat, outstanding
 /// HTTP requests, URLs, listens, timer, sleep and owed dataserver replies end (XML-RPC channels on delete/unload); a late
 /// reply for a script that is gone or was reset is dropped at once; events for an item that is not loaded are not kept
 /// (only a load in flight holds them, at most 32 for 60 s, as Halcyon's DeferredEventManager); a reset flood is throttled.
-/// The per-resource table with its sources is in the work folder's STATE.md.
 ///
 /// <para>The region's HTTP, URL and XML-RPC modules are fakes registered on the test scene: they record what the engine
 /// asks of them and let a test hand back a response whenever it likes, including after the script is gone. The engine,
@@ -128,7 +127,7 @@ public class ScriptCleanupTests
             H.Scene.RegisterModuleInterface<IXMLRPC>(Xml);
         }
 
-        // Every table is read through its private field, so the same test runs against the engine before PHLOX-46 (red)
+        // Every table is read through its private field, so the same test runs against an engine without them (red)
         // and after it; a table the old engine does not have reads as 0 there.
         public PhloxExecutionScheduler Exe => (PhloxExecutionScheduler)Field(H.Engine, "m_ExeScheduler");
         public int Sensors => CountOf(H.Engine.AsyncCommands.SensorRepeatPlugin, "SenseRepeaters");
@@ -149,7 +148,7 @@ public class ScriptCleanupTests
                 return (d.Count, events);
             }
         }
-        /// <summary>Events dropped because their item was not loaded (PHLOX-46's counter; -1 before it).</summary>
+        /// <summary>Events dropped because their item was not loaded (-1 on an engine without the counter).</summary>
         public long Dropped => (long?)Field(Exe, "m_DroppedForUnloaded", optional: true) ?? -1;
         public int ResetSleeps(UUID item)
             => (int?)typeof(LSLSystemAPI).GetProperty("ResetSleepCount", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(Api(item)) ?? 0;
@@ -454,10 +453,10 @@ public class ScriptCleanupTests
     }
 
     /// <summary>
-    /// A response to another engine's request that Phlox's pump happens to take is not dropped. PHLOX-55: it goes to that
+    /// A response to another engine's request that Phlox's pump happens to take is not dropped. It goes to that
     /// engine as YEngine's pump sends it (PhloxCrossEngineHttpResponseTests proves the delivery with YEngine running).
-    /// CORE-6: Phlox's own scripts in the prim get it too, once: SL - "triggered in all scripts in the prim, not just in the
-    /// requesting script" (PHLOX-55 had them not get it, as YEngine's pump then never gave them one).
+    /// Phlox's own scripts in the prim get it too, once: SL - "triggered in all scripts in the prim, not just in the
+    /// requesting script" (they once did not, as YEngine's pump never gave them one).
     /// </summary>
     [Fact]
     public void AnotherEnginesResponseIsNotDropped()
@@ -483,7 +482,7 @@ public class ScriptCleanupTests
         }, new DetectParams[0]));
 
     /// <summary>
-    /// CORE-6: YEngine's pump (the core) can take a Phlox script's response and offer it to Phlox's PostObjectEvent. A live
+    /// YEngine's pump (the core) can take a Phlox script's response and offer it to Phlox's PostObjectEvent. A live
     /// one is delivered once and is no longer outstanding.
     /// </summary>
     [Fact]
@@ -500,7 +499,7 @@ public class ScriptCleanupTests
     }
 
     /// <summary>
-    /// CORE-6: the same when the script was reset since it asked - dropped (PHLOX-46), whichever pump took it.
+    /// The same when the script was reset since it asked - dropped, whichever pump took it.
     /// </summary>
     [Fact]
     public void LateHttpResponseForAResetScriptOfferedByAnotherPumpIsDropped()
@@ -543,7 +542,7 @@ public class ScriptCleanupTests
         using var r = new Rig();
         var gate = SlowNotecard(r);
         r.Rez(r.H.Prim, Reader);
-        // PHLOX-56: the script says "entry" before it opens its listen, and llSay now sleeps 15 ms: wait for the listen
+        // The script says "entry" before it opens its listen, and llSay now sleeps 15 ms: wait for the listen
         Assert.True(r.PumpUntil(() => r.Count("entry") == 1 && r.Listens == 1));
         r.Say(7, "read");
         Assert.True(r.PumpUntil(() => r.Count("asked") == 1 && gate.Waiting == 1));
@@ -557,7 +556,7 @@ public class ScriptCleanupTests
         using var r = new Rig();
         var gate = SlowNotecard(r);
         r.Rez(r.H.Prim, Reader);
-        // PHLOX-56: the script says "entry" before it opens its listen, and llSay now sleeps 15 ms: wait for the listen
+        // The script says "entry" before it opens its listen, and llSay now sleeps 15 ms: wait for the listen
         Assert.True(r.PumpUntil(() => r.Count("entry") == 1 && r.Listens == 1));
         r.Say(7, "read");
         Assert.True(r.PumpUntil(() => r.Count("asked") == 1 && gate.Waiting == 1), "the fetch never started");
@@ -574,7 +573,7 @@ public class ScriptCleanupTests
         using var r = new Rig();
         var gate = SlowNotecard(r);
         var id = r.Rez(r.H.Prim, Reader);
-        // PHLOX-56: the script says "entry" before it opens its listen, and llSay now sleeps 15 ms: wait for the listen
+        // The script says "entry" before it opens its listen, and llSay now sleeps 15 ms: wait for the listen
         Assert.True(r.PumpUntil(() => r.Count("entry") == 1 && r.Listens == 1));
         r.Say(7, "read");
         Assert.True(r.PumpUntil(() => r.Count("asked") == 1 && gate.Waiting == 1), "the fetch never started");
@@ -680,7 +679,7 @@ public class ScriptCleanupTests
         var sw = System.Diagnostics.Stopwatch.StartNew();
         foreach (var sog in objects)
             for (int i = 0; i < 50; i++) items.Add((sog, r.Rez(sog.RootPart, Holder, asset)));
-        // PHLOX-62: Halcyon's in-flight cap holds 10 requests per object, so 10 of each object's 50 are in flight (100);
+        // Halcyon's in-flight cap holds 10 requests per object, so 10 of each object's 50 are in flight (100);
         // the other 400 scripts' requests got NULL_KEY. The cleanup below is unchanged.
         const int httpInFlight = 10 * 10;
         Assert.True(r.PumpUntil(() => r.Sensors == 500 && r.Http.InFlight.Count == httpInFlight && r.Url.Total == 500 && r.Listens == 500 && r.Timers == 500, 180),

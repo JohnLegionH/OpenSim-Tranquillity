@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-20 PART 1. PHLOX-12's "misc" row and the list family: readers that answer from the prim, the region
+/// The OSSL sit target, misc and list functions: readers that answer from the prim, the region
 /// or the list itself, plus the two OSSL functions with value semantics - osListSortInPlace and its strided
 /// twin sort the caller's own list rather than returning a new one.
 /// </summary>

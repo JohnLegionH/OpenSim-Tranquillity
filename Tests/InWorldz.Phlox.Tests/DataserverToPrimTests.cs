@@ -12,11 +12,11 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-66 (HALCYON-DIFF D8, ruling (a)): a dataserver answer goes to every script in the asking script's prim, each with
+/// A dataserver answer goes to every script in the asking script's prim, each with
 /// the same query key and data. SL wiki dataserver: "Dataserver requests will trigger dataserver events in all scripts
 /// within the same prim where the request was made." "dataserver events will not be triggered in scripts contained in
 /// other prims in the same linked object." The wiki says nothing of a reset, state change or removal before the answer,
-/// so PHLOX-46's rule is kept for the asker (an answer it is no longer owed is not posted to it) and the others still get
+/// so the reset rule is kept for the asker (an answer it is no longer owed is not posted to it) and the others still get
 /// it. The cross-engine case (a YEngine script in the prim) is DataserverToPrimYEngineTests.
 /// Each test has its own harness and scene (the notecard gate is that scene's asset service, the key-value fake is
 /// registered on that scene only), so the class runs in parallel. No network.
@@ -206,7 +206,7 @@ public class DataserverToPrimTests
         string key = r.AskedKey();
         Assert.True(r.PumpUntil(() => r.Count("B got " + key + " line zero") == 1 && r.Count("C got " + key + " line zero") == 1),
             "the other scripts did not get it: " + string.Join(" | ", r.H.Said));
-        r.Quiet(1000, "A got", "D got");                 // PHLOX-46: not to the reset asker; never another prim
+        r.Quiet(1000, "A got", "D got");                 // Not to the reset asker; never another prim
         Assert.Equal(0, r.CountStart("A got"));
     }
 
@@ -248,7 +248,7 @@ public class DataserverToPrimTests
     [Fact]
     public void AnAnswerOwedToNoOneElseStillReachesTheAskerAlone()
     {
-        // one script in the prim: as before PHLOX-66, it gets its answer once
+        // one script in the prim: it gets its answer once
         using var r = new Rig();
         var gate = r.SlowNotecard("only line");
         r.Rez(r.H.Prim, "a asker", Asker(@"llGetNotecardLine(""card"", 0)"));
@@ -264,7 +264,7 @@ public class DataserverToPrimTests
 }
 
 /// <summary>
-/// PHLOX-66, item 3: a YEngine script in the asking Phlox script's prim gets the answer too, through the region's other
+/// Item 3: a YEngine script in the asking Phlox script's prim gets the answer too, through the region's other
 /// script engines (IScriptModule that is IScriptEngine, PostObjectEvent(localID, EventParams)) - no core change. A YEngine
 /// script in another prim does not. In "phlox-yengine", as CrossEngineChatTests (YEngine's statics).
 /// </summary>

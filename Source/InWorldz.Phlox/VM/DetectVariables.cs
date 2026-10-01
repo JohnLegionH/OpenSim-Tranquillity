@@ -293,7 +293,7 @@ namespace InWorldz.Phlox.VM
         [ProtoMember(26)]
         public string BotID;
 
-        // PHLOX-10: damage events. The three values persist with a saved event; the adjust hook is a
+        // Damage events. The three values persist with a saved event; the adjust hook is a
         // live callback into the pending batch and does not (an on_damage restored from disk cannot
         // adjust anything - the batch it belonged to is long applied).
         [ProtoMember(27)]

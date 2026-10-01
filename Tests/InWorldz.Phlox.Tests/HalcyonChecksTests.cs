@@ -19,11 +19,11 @@ using Clock = InWorldz.Phlox.Util.Clock;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-62: Halcyon's remaining checks and errors. Item 3 (John's ruling (a)): where Halcyon raised an error through
+/// Halcyon's remaining checks and errors. Item 3: where Halcyon raised an error through
 /// ScriptShoutError / LSLError / NotImplemented / Deprecated and Phlox was silent, Phlox now says Halcyon's text on
 /// DEBUG_CHANNEL with the 15 ms pause (ChatThrottle); items 1, 2, 4 and 5: iwSetGround's estate limits, the NaN-rotation
 /// rez guard, llClearCameraParams' permission, llGiveMoney's granter, the HTTP in-flight caps, a script's own inventory
-/// key, and [YEngine] AutomaticLinkPermission. The path table with Halcyon's lines: lanes/work/phlox-62/STATE.md.
+/// key, and [YEngine] AutomaticLinkPermission.
 ///
 /// <para>"Accounted" runs the call inside a SyscallContext, where every ScriptSleep of the call adds up, so the 15 ms is
 /// seen even when a later sleep of the call sets the wake-up; "Effective" is the wake-up left on the script's thread on
@@ -392,7 +392,7 @@ public class HalcyonChecksTests
     }
 
     /// <summary>A request of another object through the plugin's Start, as llHTTPRequest calls it (by reflection, so this
-    /// class also builds against the code before PHLOX-62 for the red run).</summary>
+    /// class also builds against code without these checks for the red run).</summary>
     private static UUID StartOther(Rig r)
     {
         object plugin = r.H.Engine.AsyncCommands.HttpRequestPlugin;
@@ -434,7 +434,7 @@ public class HalcyonChecksTests
         Assert.Equal(80, ms);
     }
 
-    // ── PHLOX-64: [InWorldz.Phlox] HttpInFlightThrottle, the caps' switch (default true) ──
+    // ── [InWorldz.Phlox] HttpInFlightThrottle, the caps' switch (default true) ──
 
     private static Rig HttpRig(string setting) => new Rig(configure: setting == null ? null
         : cfg => cfg.Configs["InWorldz.Phlox"].Set("HttpInFlightThrottle", setting));
@@ -631,7 +631,7 @@ public class HalcyonChecksTests
         Assert.Null(r.H.Prim.Inventory.GetInventoryItem("card"));
     }
 
-    // ── item 4: F165 ──
+    // ── item 4: a script's own inventory key ──
 
     [Fact]
     public void AScriptGetsItsOwnAssetKeyButNoOtherNonFullPermItem()

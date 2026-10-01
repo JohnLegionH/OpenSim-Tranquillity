@@ -1,5 +1,5 @@
 /*
- * PHLOX-21. Every regular expression built from script input runs with a match timeout, so a
+ * Every regular expression built from script input runs with a match timeout, so a
  * pattern with catastrophic backtracking - (a+)+$ against a long run of a's - costs a quarter of a
  * second and a "regex timed out" error instead of holding the scheduler (or chat delivery) for
  * minutes.

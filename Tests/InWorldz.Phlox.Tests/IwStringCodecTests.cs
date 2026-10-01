@@ -15,7 +15,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-57 (HALCYON-DIFF D13): the parts of iwStringCodec that lean on .NET Framework behaviour .NET 10 changed, each
+/// The parts of iwStringCodec that lean on .NET Framework behaviour .NET 10 changed, each
 /// against Framework 4.8.1's own answers (Golden/README.md), and what a script sees. No clock, no process-wide state:
 /// runs in parallel.
 /// </summary>

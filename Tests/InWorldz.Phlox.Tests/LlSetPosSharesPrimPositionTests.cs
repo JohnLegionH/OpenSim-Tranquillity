@@ -9,13 +9,13 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-39: llSetPos goes through the same helper as PRIM_POSITION (Halcyon runs both through SetPos(part, v, true)),
+/// llSetPos goes through the same helper as PRIM_POSITION (Halcyon runs both through SetPos(part, v, true)),
 /// so the two cannot disagree. SL llSetPos: a child's vector is "a local coordinate relative to the root prim", an
 /// attached root's "relative to the attach point", an unattached root's a region coordinate, and "Movement is capped to
 /// 10m per call for unattached root prims". Halcyon's caps: an attached root 3.5 m from the attach point, a child of an
 /// attachment 54 m from the root, any other child 256 m.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class LlSetPosSharesPrimPositionTests
 {
     private readonly ITestOutputHelper _out;

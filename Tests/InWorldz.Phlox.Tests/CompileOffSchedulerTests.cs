@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-22 B. The master scheduler never waits on a compile. Before, PhloxScriptLoader.CompileOnCompilerThread
+/// The master scheduler never waits on a compile. Before, PhloxScriptLoader.CompileOnCompilerThread
 /// ran the compile on a 16 MB thread but Join()ed it from the loader's DoWork, which runs on the master scheduler
 /// thread, so every script on that scheduler stopped for the whole compile (9.45 s for 7,500 nested calls).
 /// A test-only hook (PhloxScriptLoader.CompileDelayForTest) makes one compile take as long as a test needs.

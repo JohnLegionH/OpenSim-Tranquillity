@@ -1,4 +1,4 @@
-"""PHLOX-8. Phlox's LSL constant table against upstream's, by name and by value.
+"""Phlox's LSL constant table against upstream's, by name and by value.
 
 Re-runnable: python Docs/audit/phlox-constants-audit.py  [--json out.json]
 

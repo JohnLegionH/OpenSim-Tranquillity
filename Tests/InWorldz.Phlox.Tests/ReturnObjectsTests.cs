@@ -12,14 +12,14 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-40 (audit S2): llReturnObjectsByOwner and llReturnObjectsByID checked only that PERMISSION_RETURN_OBJECTS was
+/// llReturnObjectsByOwner and llReturnObjectsByID checked only that PERMISSION_RETURN_OBJECTS was
 /// set, never who granted it, and DELETED the objects. SL: "If the script is owned by an agent, PERMISSION_RETURN_OBJECTS
 /// may be granted by the owner. If the script is owned by a group, this permission may be granted by an agent belonging
 /// to the group's 'Owners' role." Both "Returns an integer that is the number of objects successfully returned to their
 /// owners or an ERR_* flag." The objects go back to their owners' Lost and Found through the core's parcel-return call.
 /// The land is three strips: west (x &lt; 86) and middle (x &lt; 172) owned by the script owner, east owned by someone else.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class ReturnObjectsTests
 {
     private const int PERMISSION_RETURN_OBJECTS = 0x10000;

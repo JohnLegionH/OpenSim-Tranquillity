@@ -17,10 +17,10 @@ using Clock = InWorldz.Phlox.Util.Clock;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-56 (HALCYON-DIFF D1, audit S15): Halcyon's anti-abuse slowdowns, each on by default under its own
+/// Halcyon's anti-abuse slowdowns, each on by default under its own
 /// [InWorldz.Phlox] setting - ChatThrottle, BotThrottle, PhysicsThrottle, LinkMessageThrottle, NotecardThrottle,
-/// NotecardCache, FormatStringThrottle - and false restores what Phlox did before. Every rule, its Halcyon source and the
-/// SL and YEngine comparison is in the work folder's STATE.md.
+/// NotecardCache, FormatStringThrottle - and false restores what Phlox did before. Each rule's Halcyon source is on its
+/// LSLSystemAPI helper.
 ///
 /// <para>A slowdown is Halcyon's ScriptSleep: the call returns and the script's wake-up is set that many ms ahead. The
 /// engine's clock (Clock) is frozen by these tests, so the sleep a call sets is read exactly as NextWakeup - now, and a
@@ -150,7 +150,7 @@ public class AntiAbuseSlowdownTests
     /// <summary>
     /// Halcyon returns before its ScriptSleep on these refusals: nothing is sent and nothing sleeps. (llRegionSay on
     /// channel 0 and llRegionSayTo on DEBUG_CHANNEL are refused with an LSLError, which pauses 15 ms as every Halcyon
-    /// script error did: PHLOX-58, ErrorPauseTests.)
+    /// script error did: ErrorPauseTests.)
     /// </summary>
     [Fact]
     public void RefusedChatDoesNotSleep()
@@ -464,7 +464,7 @@ public class AntiAbuseSlowdownTests
     private static TaskInventoryItem AddCard(Rig r, string name = "card", string text = Card)
         => TaskInventoryHelpers.AddNotecard(r.H.Scene.AssetService, r.H.Prim, name, UUID.Random(), UUID.Random(), text);
 
-    /// <summary>The region's notecard cache, by reflection so this file builds against the engine before PHLOX-56 (red).</summary>
+    /// <summary>The region's notecard cache, by reflection so this file builds against an engine without one.</summary>
     private static CacheView CacheOf(Rig r)
     {
         var p = typeof(PhloxEngine).GetProperty("NotecardCache", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
@@ -500,7 +500,7 @@ public class AntiAbuseSlowdownTests
 
     /// <summary>
     /// Halcyon GetNotecardSegment: 25 ms uncached; cached, 1 ms only on lines 0, 16, 32 ... read from offset 0; a
-    /// missing card has no read sleep (PHLOX-62: it now has Halcyon's error, whose 15 ms is ChatThrottle's).
+    /// missing card has no read sleep (it has Halcyon's error, whose 15 ms is ChatThrottle's).
     /// </summary>
     [Fact]
     public void LineReadsSleep25UncachedAnd1MsOnEverySixteenthCachedLine()
@@ -521,7 +521,7 @@ public class AntiAbuseSlowdownTests
         Assert.Equal(0, r.Sleep(item, api => api.iwGetNotecardSegment("card", 16, 1, 5)));
         Assert.Equal(1, r.Sleep(item, api => api.iwGetLinkNotecardLine(SlConst.LINK_THIS, "card", 16)));
         Assert.Equal(0, r.Sleep(item, api => api.iwGetLinkNotecardSegment(SlConst.LINK_THIS, "card", 17, 0, 5)));
-        Assert.Equal(15, r.Sleep(item, api => api.llGetNotecardLine("no such card", 0)));   // PHLOX-62: the error's pause
+        Assert.Equal(15, r.Sleep(item, api => api.llGetNotecardLine("no such card", 0)));   // The error's pause
     }
 
     [Fact]
@@ -536,7 +536,7 @@ public class AntiAbuseSlowdownTests
         UntilCached(r, card.AssetID);
         Assert.Equal(0, r.Sleep(item, api => api.llGetNumberOfNotecardLines("card")));
         Assert.Equal(0, r.Sleep(item, api => api.llGetNotecardLine("card", 0)));
-        // PHLOX-62: the missing card's error still pauses 15 ms - ChatThrottle's pause, not a notecard read delay.
+        // The missing card's error still pauses 15 ms - ChatThrottle's pause, not a notecard read delay.
         Assert.Equal(15, r.Sleep(item, api => api.llGetNumberOfNotecardLines("no such card")));
     }
 
@@ -545,7 +545,7 @@ public class AntiAbuseSlowdownTests
     /// taken out of the asset service after the first read and the cached answers still come.
     /// </summary>
     /// <summary>One read of each kind, each asked after the last answered, reported on channel 7 as one line.</summary>
-    // PHLOX-66: every reader in the prim gets every answer (D8, SL), so each takes only its own (the wiki's advice:
+    // Every reader in the prim gets every answer (SL), so each takes only its own (the wiki's advice:
     // "always use the queryid key"); before, a finished first reader went on asking on the second reader's answers.
     private const string Reader = @"
         list got;
@@ -620,8 +620,8 @@ public class AntiAbuseSlowdownTests
         r.Now += 60_000;
         r.Sleep(item, api => api.llGetNotecardLine("other", 0));         // an uncached read purges: 60 s is not over 60 s
         Assert.True(CacheOf(r).IsCached(card.AssetID), "dropped at exactly 60 s");
-        // PHLOX-65: that read fetches "other" on the thread pool; until it is cached the next read is uncached too and
-        // purges "card" at 61 s (the B7-PREP flake). The clock is frozen, so waiting does not move the 60 s.
+        // That read fetches "other" on the thread pool; until it is cached the next read is uncached too and
+        // purges "card" at 61 s. The clock is frozen, so waiting does not move the 60 s.
         UntilCached(r, other.AssetID);
 
         r.Now += 1;
@@ -700,7 +700,7 @@ public class AntiAbuseSlowdownTests
 
     private static readonly string[] Keys =
         { "ResetThrottle", "ChatThrottle", "BotThrottle", "PhysicsThrottle", "LinkMessageThrottle", "NotecardThrottle", "NotecardCache", "FormatStringThrottle",
-          "HttpInFlightThrottle" };   // PHLOX-64
+          "HttpInFlightThrottle" };
 
     private sealed class Capture : ILoggerFactory, ILoggerProvider
     {
@@ -745,7 +745,7 @@ public class AntiAbuseSlowdownTests
         Assert.Equal("[PhloxEngine]: Anti-abuse slowdowns: " + string.Join(", ", Keys.Select(k => k + " = True")), lines[0]);
     }
 
-    /// <summary>PHLOX-64: the line's exact text, nine settings, HttpInFlightThrottle last (batch 7's verify reads it).</summary>
+    /// <summary>The line's exact text, nine settings, HttpInFlightThrottle last (log checks may read it).</summary>
     [Fact]
     public void TheStartupLineListsNineSettingsWithTheHttpSwitchLast()
     {
@@ -790,7 +790,7 @@ public class AntiAbuseSlowdownTests
         }
     }
 
-    // ── 7. iwAvatarName2Key: Halcyon's 100 ms / 1000 ms, already live (D3); pinned here ──────────────
+    // ── 7. iwAvatarName2Key: Halcyon's 100 ms / 1000 ms, already live; pinned here ───────────────────
 
     private static ulong Name2KeyWake(Rig r, string first, string last)
     {

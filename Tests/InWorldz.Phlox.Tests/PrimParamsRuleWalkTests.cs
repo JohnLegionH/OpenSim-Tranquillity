@@ -13,7 +13,7 @@ namespace InWorldz.Phlox.Tests;
 /// define ends the walk with SL's script error; PRIM_LINK_TARGET retargets the getter; and the same lists move a
 /// seated avatar.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class PrimParamsRuleWalkTests
 {
     private readonly ITestOutputHelper _out;

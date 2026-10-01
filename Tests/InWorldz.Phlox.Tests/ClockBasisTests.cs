@@ -6,7 +6,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-4, part 3. One clock for the engine.
+/// One clock for the engine.
 ///
 /// <para>
 /// The scheduler used to compare its queues against

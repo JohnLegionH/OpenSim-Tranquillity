@@ -9,7 +9,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-22 D. A give to an avatar who is not in this region - online elsewhere or offline - is delivered the way
+/// A give to an avatar who is not in this region - online elsewhere or offline - is delivered the way
 /// YEngine's llGiveInventory does it (Scene.MoveTaskInventoryItem by avatar id, no client), not by passing a null
 /// client into the client overload, which dereferenced it (Scene.Inventory.cs:1479). The iwDeliver* codes are
 /// Halcyon's. And iwGetObjectMassMKS is 100 x llGetObjectMass for the same object, like llGetMassMKS.
@@ -17,7 +17,7 @@ namespace InWorldz.Phlox.Tests;
 /// YEngine (LSL_Api.cs llGiveInventoryList, "Unable to give list, destination not found"), it gives an avatar with
 /// no presence here nothing.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class GiveToAbsentAvatarTests
 {
     private readonly ITestOutputHelper _out;

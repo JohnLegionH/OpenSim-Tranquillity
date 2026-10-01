@@ -106,14 +106,14 @@ namespace InWorldz.Phlox.VM
         public bool GeneralEnable;
 
         /// <summary>
-        /// PHLOX-2g: the TableIndex of the syscall most recently dispatched, so a script parked in
+        /// The TableIndex of the syscall most recently dispatched, so a script parked in
         /// Status.Syscall can say WHICH call it is parked in. Diagnostic only - never persisted,
         /// never read by the VM.
         /// </summary>
         public int LastSyscallIndex = -1;
 
         /// <summary>
-        /// B2: the sequence number of the syscall this script most recently parked in
+        /// The sequence number of the syscall this script most recently parked in
         /// Status.Syscall. Every off-thread call takes a process-wide unique number
         /// (SyscallContext.NextSeq, so a reset's fresh state cannot reuse one); a return is applied only if
         /// it carries the current one, so a result that arrives after a reset, a state change or a
@@ -122,22 +122,22 @@ namespace InWorldz.Phlox.VM
         /// </summary>
         public int SyscallSeq;
 
-        /// <summary>PHLOX-7b. llMinEventDelay: the floor, in ms, between event handler starts for
+        /// <summary>llMinEventDelay: the floor, in ms, between event handler starts for
         /// this script. 0 = none. Persisted (tag 23); old rows load as 0.</summary>
         public int MinEventDelayMs = 0;
 
-        /// <summary>PHLOX-7b. The Clock tick before which the next handler may not start. Not
+        /// <summary>The Clock tick before which the next handler may not start. Not
         /// persisted - it is relative to this process's clock and a restore starts allowed.</summary>
         public ulong NextEventAllowedOn = 0;
 
-        /// <summary>PHLOX-7b. llScriptProfiler(PROFILE_SCRIPT_MEMORY) is on (tag 24).</summary>
+        /// <summary>llScriptProfiler(PROFILE_SCRIPT_MEMORY) is on (tag 24).</summary>
         public bool ProfilingMemory = false;
 
-        /// <summary>PHLOX-7b. High-water mark of MemInfo.MemoryUsed since profiling last started,
+        /// <summary>High-water mark of MemInfo.MemoryUsed since profiling last started,
         /// sampled at event boundaries and at the two API reads (tag 25).</summary>
         public int PeakMemoryUsed = 0;
 
-        /// <summary>PHLOX-7b: fold the current usage into the peak while profiling.</summary>
+        /// <summary>Fold the current usage into the peak while profiling.</summary>
         public void SampleMemoryPeak()
         {
             if (ProfilingMemory && MemInfo != null && MemInfo.MemoryUsed > PeakMemoryUsed)
@@ -197,7 +197,7 @@ namespace InWorldz.Phlox.VM
             Operands.Clear();
             IP = 0;
             NextWakeup = 0;
-            LastSyscallIndex = -1;   // PHLOX-4b: no parked syscall for the scheduler to resume
+            LastSyscallIndex = -1;   // No parked syscall for the scheduler to resume
             RunState = Status.Waiting;
         }
 
@@ -286,7 +286,7 @@ namespace InWorldz.Phlox.VM
             CrossingWait    = (1 << 1),
 
             /// <summary>
-            /// PHLOX-11. The script's saved state row could not be read at load; the script is held
+            /// The script's saved state row could not be read at load; the script is held
             /// here, with a fresh interpreter that must never run or save, so the row survives for
             /// the next process to try again.
             /// </summary>
@@ -301,7 +301,7 @@ namespace InWorldz.Phlox.VM
         public LocalDisableFlag LocalDisable;
 
         /// <summary>
-        /// PHLOX-18: why TerminateWithError stopped this script, or null. Persisted (SerializedRuntimeState tag 26)
+        /// Why TerminateWithError stopped this script, or null. Persisted (SerializedRuntimeState tag 26)
         /// so a crashed script restores stopped and `phlox status` can say why; cleared by a reset, which is how
         /// it comes back.
         /// </summary>
@@ -347,7 +347,7 @@ namespace InWorldz.Phlox.VM
         /// <param name="numGlobals">Number of global variables in the associated script</param>
         public RuntimeState(int numGlobals)
         {
-            // PHLOX-2f: a brand-new script is ENABLED. Only Reset() used to set this, so a fresh
+            // A brand-new script is ENABLED. Only Reset() used to set this, so a fresh
             // instance was born with GeneralEnable false, and PhloxExecutionScheduler.FinishedLoading
             // computes the script's event mask (:184) BEFORE the freshStart branch resets it (:190).
             // LSLSystemAPI.SetScriptEventFlags gates the whole mask on GeneralEnable
@@ -383,7 +383,7 @@ namespace InWorldz.Phlox.VM
             TopFrame = null;
             Calls.Clear();
             Operands.Clear();
-            lock (EventQueueLock) EventQueue.Clear();   // PHLOX-12 0b: every mutation under the lock the saver snapshots under
+            lock (EventQueueLock) EventQueue.Clear();   // Every mutation under the lock the saver snapshots under
             NextWakeup = 0;
             StateCapturedOn = 0;
             TimerLastScheduledOn = 0;
@@ -487,7 +487,7 @@ namespace InWorldz.Phlox.VM
             TopFrame = null;
             Calls.Clear();
             Operands.Clear();
-            lock (EventQueueLock) EventQueue.Clear();   // PHLOX-12 0b
+            lock (EventQueueLock) EventQueue.Clear();
         }
 
         public DetectVariables GetDetectVariables(int index)
@@ -528,7 +528,7 @@ namespace InWorldz.Phlox.VM
         {
             PostedEvent foundEvt;
 
-            lock (EventQueueLock)   // PHLOX-12 0b
+            lock (EventQueueLock)
             {
                 if (EventQueue.Find(
                     delegate (PostedEvent evt) {

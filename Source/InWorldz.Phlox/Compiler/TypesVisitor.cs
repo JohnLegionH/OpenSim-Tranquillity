@@ -20,8 +20,8 @@ namespace InWorldz.Phlox.Compiler
     /// </summary>
     public class TypesVisitor : LSLBaseVisitor<ISymbolType>
     {
-        // PHLOX-21: the recursive dispatch runs out of stack before a deeply nested tree does (DepthGuard).
-        // PHLOX-22 A: the counted limits (NestingLimits) are the rule, the same levels the parser counted;
+        // The recursive dispatch runs out of stack before a deeply nested tree does (DepthGuard).
+        // The counted limits (NestingLimits) are the rule, the same levels the parser counted;
         // DepthGuard stays as the backstop. VisitChildren goes through Visit so every child is counted.
         private readonly NestingCounter _nesting = new NestingCounter();
 
@@ -280,7 +280,7 @@ namespace InWorldz.Phlox.Compiler
         {
             // Verify the target state exists.
             //
-            // PHLOX-3a: `state default;` is valid LSL - the wiki's own example does it - and the
+            // `state default;` is valid LSL - the wiki's own example does it - and the
             // grammar matches `default` as a KEYWORD, not an ID (LSL.g4:87,
             // `stateNode='state' (ID | 'default') SEMI`). So ID() is null for exactly that case and
             // this dereferenced it, throwing a NullReferenceException out of the whole compile.
@@ -400,7 +400,7 @@ namespace InWorldz.Phlox.Compiler
                 return t;
             }
             // &&  ||  — result is always integer (boolean)
-            // PHLOX-65: SL refuses a key operand at compile time (LL's operator table, as Tailslide's types.cc has it:
+            // SL refuses a key operand at compile time (LL's operator table, as Tailslide's types.cc has it:
             // OP_BOOLEAN_AND / OP_BOOLEAN_OR take LST_INTEGER, LST_INTEGER only); Phlox compiled it and the script
             // stopped at run time. Only the key is refused here: the other non-integer operands keep compiling.
             for (int i = 0; i < children.Length; i++)
@@ -571,7 +571,7 @@ namespace InWorldz.Phlox.Compiler
         public override ISymbolType VisitUnaryBoolNot([NotNull] LSLParser.UnaryBoolNotContext context)
         {
             ISymbolType t = Visit(context.unaryExpression());
-            // PHLOX-65: SL refuses '!' on a key at compile time (Tailslide types.cc: {'!', LST_INTEGER, LST_NONE,
+            // SL refuses '!' on a key at compile time (Tailslide types.cc: {'!', LST_INTEGER, LST_NONE,
             // LST_BOOLEAN}); Phlox compiled it and the script stopped at run time.
             if (t == SymbolTable.KEY)
                 ErrorAtContext(context, "Type mismatch: '!' cannot be applied to a key");
@@ -699,7 +699,7 @@ namespace InWorldz.Phlox.Compiler
             }
 
             MethodSymbol methSym = ResolveCall(context, funcName, argTypes);
-            if (methSym != null) _annotations.SetSymbol(context, methSym);   // PHLOX-20: the gen pass reads this choice
+            if (methSym != null) _annotations.SetSymbol(context, methSym);   // The gen pass reads this choice
 
             if (methSym == null)
             {
@@ -842,7 +842,7 @@ namespace InWorldz.Phlox.Compiler
         {
             string funcName = context.ID().GetText();
 
-            // PHLOX-2b/2c: arguments first, because the arity chooses the overload. A
+            // Arguments first, because the arity chooses the overload. A
             // statement-level call reaches this visitor rather than VisitMethodCallPostfix, and
             // missing that is why 2b resolved nothing - both paths must use the same rule.
             List<ISymbolType> argTypes = new List<ISymbolType>();
@@ -851,7 +851,7 @@ namespace InWorldz.Phlox.Compiler
                     argTypes.Add(Visit(expr));
 
             MethodSymbol methSym = ResolveCall(context, funcName, argTypes);
-            if (methSym != null) _annotations.SetSymbol(context, methSym);   // PHLOX-20: the gen pass reads this choice
+            if (methSym != null) _annotations.SetSymbol(context, methSym);   // The gen pass reads this choice
 
             if (methSym == null)
             {
@@ -973,7 +973,7 @@ namespace InWorldz.Phlox.Compiler
         }
 
         /// <summary>
-        /// PHLOX-2b. Resolve a call to a method symbol, choosing among a built-in's overloads by
+        /// Resolve a call to a method symbol, choosing among a built-in's overloads by
         /// the number of arguments at the call site. The bare name is tried first, so a
         /// single-signature built-in and every user function resolve exactly as they did; only a
         /// name that has a <c>name$&lt;arity&gt;</c> sibling can pick anything else.
@@ -995,7 +995,7 @@ namespace InWorldz.Phlox.Compiler
             if (!Defaults.SystemMethods.TryGetValue(funcName, out var sigs) || sigs.Count < 2)
                 return bare;
 
-            // PHLOX-20: among the signatures of this arity, the argument TYPES choose.
+            // Among the signatures of this arity, the argument TYPES choose.
             var argVarTypes = new List<VarType?>(argCount);
             foreach (ISymbolType t in argTypes)
             {

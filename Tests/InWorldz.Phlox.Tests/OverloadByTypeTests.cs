@@ -8,7 +8,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-20 PART 0. Phlox chose a built-in's overload by the NUMBER of arguments (PHLOX-2b/2c), so two
+/// Phlox chose a built-in's overload by the NUMBER of arguments, so two
 /// signatures of one name and one arity could not both exist - five OSSL forms were left out for that reason
 /// alone. The type pass now chooses among the signatures of the call's arity by the ARGUMENT TYPES, exact
 /// match ahead of an LSL implicit widening, and hands the gen pass the symbol it picked; every such signature
@@ -24,8 +24,8 @@ public class OverloadByTypeTests
         cfg => cfg.AddConfig("OSSL").Set("OSFunctionThreatLevel", "Severe"));
 
     /// <summary>
-    /// CORE-6 (PHLOX-54's way): pump until the script's last line is said, up to 30 s, instead of a fixed second. Each
-    /// llSay now pauses 15 ms (PHLOX-56), and under a full parallel run the second was not always enough.
+    /// Pump until the script's last line is said, up to 30 s, instead of a fixed second. Each
+    /// llSay now pauses 15 ms, and under a full parallel run the second was not always enough.
     /// </summary>
     private static void PumpUntilSaid(SchedulerHarness h, string lastLinePrefix)
     {
@@ -91,8 +91,8 @@ public class OverloadByTypeTests
     }
 
     /// <summary>
-    /// The chooser itself: an exact type beats a widening, a widening still resolves, and the arity forms
-    /// PHLOX-2b landed keep resolving exactly as they did.
+    /// The chooser itself: an exact type beats a widening, a widening still resolves, and the arity forms added
+    /// earlier keep resolving exactly as they did.
     /// </summary>
     [Fact]
     public void SelectOverloadPrefersAnExactMatchAndStillAllowsTheLslWidenings()
@@ -125,7 +125,7 @@ public class OverloadByTypeTests
         Assert.False(amb4.HasValue);
     }
 
-    /// <summary>Every signature in the table still has a symbol name of its own - the collision PHLOX-20 fixed.</summary>
+    /// <summary>Every signature in the table still has a symbol name of its own - no name collision.</summary>
     [Fact]
     public void EverySignatureHasItsOwnSymbolName()
     {

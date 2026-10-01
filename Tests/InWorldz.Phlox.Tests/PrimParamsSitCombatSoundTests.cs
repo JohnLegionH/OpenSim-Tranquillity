@@ -12,7 +12,7 @@ using LSL_List = OpenSim.Region.ScriptEngine.Shared.LSL_Types.list;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-37. PRIM_ALLOW_UNSIT, PRIM_SCRIPTED_SIT_ONLY, PRIM_SIT_FLAGS, PRIM_DAMAGE, PRIM_HEALTH and PRIM_COLLISION_SOUND
+/// PRIM_ALLOW_UNSIT, PRIM_SCRIPTED_SIT_ONLY, PRIM_SIT_FLAGS, PRIM_DAMAGE, PRIM_HEALTH and PRIM_COLLISION_SOUND
 /// set and read back against the scene state each one uses (SceneObjectPart.AllowUnsit, ScriptedSitOnly,
 /// SitFlagsStored, SceneObjectGroup.Damage, CollisionSound / CollisionSoundVolume / CollisionSoundType), on the root and
 /// on a child; their value counts in a long list; SL's error cases; the ll functions that share each helper

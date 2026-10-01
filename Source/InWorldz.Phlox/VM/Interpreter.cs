@@ -26,10 +26,10 @@ namespace InWorldz.Phlox.VM
 
         public UUID ItemId;
 
-        /// <summary>B2: an exception from a deferred service call, raised by the next Tick.</summary>
+        /// <summary>An exception from a deferred service call, raised by the next Tick.</summary>
         private Exception _pendingFault;
 
-        /// <summary>B2: the scheduler hands a deferred call's exception back to the script here.</summary>
+        /// <summary>The scheduler hands a deferred call's exception back to the script here.</summary>
         public void SetPendingFault(Exception fault) { _pendingFault = fault; }
 
         // Host prim LocalId, stamped at load; used off the hot path to resolve the owning
@@ -205,7 +205,7 @@ namespace InWorldz.Phlox.VM
         /// </summary>
         public void Tick()
         {
-            // B2: a deferred service call threw on its worker. Raise it here, inside the
+            // A deferred service call threw on its worker. Raise it here, inside the
             // script's own tick, so the scheduler handles it exactly as it would have handled the
             // same exception thrown inline by the shim.
             var fault = _pendingFault;

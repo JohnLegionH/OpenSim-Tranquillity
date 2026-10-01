@@ -19,7 +19,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// SSB-NPC-1: an NPC created from a server-baked owner renders as a cloud on a server-side-baking region.
+/// An NPC created from a server-baked owner renders as a cloud on a server-side-baking region.
 ///
 /// <para>
 /// The NPC's appearance is a clone of the owner's (<c>NPCModule.CreateNPC</c>, <c>BotManager.CreateBot</c>):

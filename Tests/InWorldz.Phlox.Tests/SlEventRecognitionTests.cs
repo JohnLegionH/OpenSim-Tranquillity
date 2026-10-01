@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-6. Five SL events Phlox did not recognise: <c>path_update</c>, <c>on_damage</c>,
+/// Five SL events Phlox did not recognise: <c>path_update</c>, <c>on_damage</c>,
 /// <c>final_damage</c>, <c>on_death</c>, <c>game_control</c>. A script declaring any of these handlers
 /// failed to compile - the compiler rejected the handler name outright.
 ///
@@ -17,7 +17,7 @@ namespace InWorldz.Phlox.Tests;
 /// parameters - <c>(key id, integer button_levels, list axes)</c> - not four.
 /// </para>
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class SlEventRecognitionTests
 {
     private readonly ITestOutputHelper _out;
@@ -69,7 +69,7 @@ default
         h.PumpUntil(() => h.Prim.ScriptEvents.HasFlag(scriptEvents.on_damage) && h.Prim.ScriptEvents.HasFlag(scriptEvents.final_damage) && h.Prim.ScriptEvents.HasFlag(scriptEvents.on_death));
         _out.WriteLine($"ScriptEvents={h.Prim.ScriptEvents}");
 
-        // These are the bits 'phlox status' prints; before PHLOX-6 none of them existed.
+        // These are the bits 'phlox status' prints.
         Assert.True(h.Prim.ScriptEvents.HasFlag(scriptEvents.on_damage), $"on_damage missing: {h.Prim.ScriptEvents}");
         Assert.True(h.Prim.ScriptEvents.HasFlag(scriptEvents.final_damage), $"final_damage missing: {h.Prim.ScriptEvents}");
         Assert.True(h.Prim.ScriptEvents.HasFlag(scriptEvents.on_death), $"on_death missing: {h.Prim.ScriptEvents}");

@@ -12,7 +12,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-17: the OSSL parcel, estate, terrain, wind and sun family, each ported from OSSL_Api.cs under its upstream
+/// The OSSL parcel, estate, terrain, wind and sun family, each ported from OSSL_Api.cs under its upstream
 /// threat level through OsslGate. One dispatch test per group with an assertion on the scene: the heightmap read back,
 /// the parcel renamed, the restart scheduled through the region's restart module.
 /// </summary>

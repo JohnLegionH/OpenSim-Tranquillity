@@ -12,14 +12,14 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-10 PART 2. The SL damage events off the one door, in SL order: on_damage (before, adjustable,
+/// The SL damage events off the one door, in SL order: on_damage (before, adjustable,
 /// waited on), apply, final_damage (what landed), on_death. Wiki: on_damage, final_damage,
 /// llDetectedDamage ([damage, damage_type, original_damage]), llAdjustDamage(number, new_damage), llDamage.
 /// The harness drives the scheduler by hand, so the region-side call that waits on on_damage runs on a
 /// second thread while the test thread pumps - the same shape as production, where physics or an async
 /// syscall thread waits and the script thread runs the handlers.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class DamageEventsTests
 {
     private readonly ITestOutputHelper _out;
@@ -50,7 +50,7 @@ public class DamageEventsTests
         Assert.True(t.IsCompleted, "the damage call did not return");
         t.GetAwaiter().GetResult();
         h.PumpFor(TimeSpan.FromMilliseconds(300));   // let final_damage handlers run
-        h.PumpUntil(landed);                         // PHLOX-59: and wait for the line the caller asserts
+        h.PumpUntil(landed);                         // And wait for the line the caller asserts
     }
 
     private const string Halver = @"default {

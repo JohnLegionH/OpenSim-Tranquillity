@@ -10,11 +10,11 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-21b C. llGetMass's scope follows YEngine (LSL_Api.llGetMass): the whole object's mass
+/// llGetMass's scope follows YEngine (LSL_Api.llGetMass): the whole object's mass
 /// (m_host.ParentGroup.GetMass()) from any prim of it, and the wearer's mass from an attachment.
 /// Before, Phlox returned the script's own prim only. llGetMassMKS stays 100 x llGetMass.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class MassScopeTests
 {
     private readonly ITestOutputHelper _out;

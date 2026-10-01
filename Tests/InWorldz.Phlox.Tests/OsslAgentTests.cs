@@ -10,7 +10,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-16: the OSSL agent, teleport, kick, animation and group family, each ported from OSSL_Api.cs under its
+/// The OSSL agent, teleport, kick, animation and group family, each ported from OSSL_Api.cs under its
 /// upstream threat level through OsslGate. One dispatch test per group with an assertion on the scene.
 /// </summary>
 public class OsslAgentTests
@@ -42,7 +42,7 @@ public class OsslAgentTests
         h.PumpFor(TimeSpan.FromMilliseconds(300));
     }
 
-    // ------------------------------------------------------------------ damage through PHLOX-10's door
+    // ------------------------------------------------------------------ damage through llDamage's door
 
     [Fact]
     public void CauseDamageReachesTheWornAttachmentWithTheCallerAsDetectedKey()

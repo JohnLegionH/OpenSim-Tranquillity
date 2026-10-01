@@ -1,4 +1,4 @@
-# PHLOX-57: turns fuzz.py's corpus (one hex stream per line) and GzProbe's Framework results (one line each) into
+# Turns fuzz.py's corpus (one hex stream per line) and GzProbe's Framework results (one line each) into
 # gzip-decoder-vectors.jsonl: the base streams once, each case as a truncation or bit flip of a base or as raw hex,
 # each result as the output bytes (hex, when short) or their length and SHA-256, or the exception "Type: message".
 # usage: python compact_fuzz.py gzip-fuzz.txt gzip-fuzz-framework.txt gzip-decoder-vectors.jsonl

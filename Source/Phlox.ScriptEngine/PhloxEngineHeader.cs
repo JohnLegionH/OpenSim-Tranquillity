@@ -7,7 +7,7 @@ using System.Collections.Generic;
 namespace Phlox.ScriptEngine
 {
     /// <summary>
-    /// PHLOX-67: which engine a script belongs to, by the first-line header ("//&lt;engine&gt;:&lt;language&gt;") exactly as
+    /// Which engine a script belongs to, by the first-line header ("//&lt;engine&gt;:&lt;language&gt;") exactly as
     /// YEngine reads it (XMREngine.OnRezScript). Every engine of a region receives every rez with the region's default
     /// engine name, and each decides for itself; with both engines deciding by this one rule, a script runs in one.
     /// </summary>

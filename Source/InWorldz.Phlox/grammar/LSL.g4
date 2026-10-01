@@ -128,7 +128,7 @@ expr
     ;
 
 assignmentExpression
-    : booleanExpression (('=' | '+=' | '-=' | '*=' | '/=' | '%=' | '<<=' | '>>=') assignmentExpression)*    // PHLOX-63 (D7 (c)): <<= / >>= accepted as an extension (Halcyon compiled them; integer only)
+    : booleanExpression (('=' | '+=' | '-=' | '*=' | '/=' | '%=' | '<<=' | '>>=') assignmentExpression)*    // <<= / >>= accepted as an extension (Halcyon compiled them; integer only)
     ;
 
 booleanExpression
@@ -226,7 +226,7 @@ TYPE
     | 'key'
     | 'vector'
     | 'rotation'
-    | 'quaternion'   // PHLOX-9: SL keyword, interchangeable with rotation (wiki: Quaternion)
+    | 'quaternion'   // SL keyword, interchangeable with rotation (wiki: Quaternion)
     | 'string'
     | 'list'
     ;

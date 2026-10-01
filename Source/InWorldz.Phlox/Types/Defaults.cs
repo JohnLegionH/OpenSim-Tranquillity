@@ -6,7 +6,7 @@ namespace InWorldz.Phlox.Types
 	public class Defaults
 	{
 		/// <summary>
-		/// PHLOX-2b. The literal table, one entry per SIGNATURE. The dictionary key is a bare
+		/// The literal table, one entry per SIGNATURE. The dictionary key is a bare
 		/// function name for the 674 that have only one signature, and a mangled
 		/// <c>name$&lt;arity&gt;</c> for the overloads added since - a Dictionary literal cannot hold
 		/// the same key twice, and the key was never what resolves a call. <c>FunctionName</c> is,
@@ -3746,7 +3746,7 @@ namespace InWorldz.Phlox.Types
 			// === ADD THESE LINES to Defaults.cs ===
 // Insert BEFORE the closing "};" of the dictionary, after the iwRezAt entry (TableIndex 531)
 
-            // ── Batch 10: SL compatibility functions ──
+            // ── SL compatibility functions ──
             {"llChar", new FunctionSig {
                 FunctionName = "llChar",
                 ReturnType = VarType.String,
@@ -4251,7 +4251,7 @@ namespace InWorldz.Phlox.Types
             {"llAdjustDamage", new FunctionSig {
                 FunctionName = "llAdjustDamage",
                 ReturnType = VarType.Void,
-                ParamTypes = new VarType[] { VarType.Integer, VarType.Float },   // PHLOX-10: SL form
+                ParamTypes = new VarType[] { VarType.Integer, VarType.Float },   // SL form
                 ParamNames = new string[] { "number", "new_damage" },
                 TableIndex = 604
             }},
@@ -4292,7 +4292,7 @@ namespace InWorldz.Phlox.Types
                 TableIndex = 609
             }},
 			// ── Tier 5: Experience KVP Store ──
-            // PHLOX-63 (ruling (b)): 610-616 are SL's form - they return a request key and the answer arrives in a
+            // 610-616 are SL's form - they return a request key and the answer arrives in a
             // dataserver event ("1,..." / "0,<XP_ERROR_*>"). 617 llClearKeyValue and the 618-620 *SL names are Phlox's own
             // and stay synchronous.
             {"llCreateKeyValue", new FunctionSig {
@@ -4624,7 +4624,7 @@ namespace InWorldz.Phlox.Types
             }},
             {"llDetectedDamage", new FunctionSig {
                 FunctionName = "llDetectedDamage",
-                ReturnType = VarType.List,   // PHLOX-10: [damage, damage_type, original_damage]
+                ReturnType = VarType.List,   // [damage, damage_type, original_damage]
                 ParamTypes = new VarType[] { VarType.Integer },
                 ParamNames = new string[] { "number" },
                 TableIndex = 655
@@ -4759,7 +4759,7 @@ namespace InWorldz.Phlox.Types
                 TableIndex = 673
             }},
 
-            // ---------------------------------------------------------------- PHLOX-2b overloads
+            // ---------------------------------------------------------------- Overloads
             // Appended above the historical 674 so no existing TableIndex moves. Each needs a shim
             // at the matching position in SyscallShim._shimMap.
 
@@ -4792,7 +4792,7 @@ namespace InWorldz.Phlox.Types
                 TableIndex = 676
             }},
 
-            // ---------------------------------------------------------------- PHLOX-5 SL names and arities
+            // ---------------------------------------------------------------- SL names and arities
             // SL is the authority for names and signatures; every older Phlox spelling and arity stays
             // above, so existing content compiles unchanged. Appended, so nothing moves.
 
@@ -4858,7 +4858,7 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "id", "flag" },
                 TableIndex = 682
             }},
-            // PHLOX-12: OSSL read-only information functions, ported from OSSL_Api.cs with the same [OSSL] gate
+            // OSSL read-only information functions, ported from OSSL_Api.cs with the same [OSSL] gate
             {"osGetGridName", new FunctionSig {
                 FunctionName = "osGetGridName",
                 ReturnType = VarType.String,
@@ -4978,7 +4978,7 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] {  },
                 TableIndex = 699
             }},
-            // PHLOX-13: OSSL pure helpers (string/list/format/regex/crypto/maths), ported from OSSL_Api.cs, same gate
+            // OSSL pure helpers (string/list/format/regex/crypto/maths), ported from OSSL_Api.cs, same gate
             {"osAESEncrypt", new FunctionSig {
                 FunctionName = "osAESEncrypt",
                 ReturnType = VarType.String,
@@ -5231,7 +5231,7 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "a" },
                 TableIndex = 735
             }},
-            // PHLOX-14: osNpc* - a second door onto BotManager, ported from OSSL_Api.cs with the same [OSSL] gate
+            // osNpc* - a second door onto BotManager, ported from OSSL_Api.cs with the same [OSSL] gate
             {"osIsNpc", new FunctionSig {
                 FunctionName = "osIsNpc",
                 ReturnType = VarType.Integer,
@@ -5407,7 +5407,7 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "npc", "object_key", "link_num" },
                 TableIndex = 760
             }},
-            // PHLOX-15: OSSL side-effect functions, 761-810
+            // OSSL side-effect functions, 761-810
             {"osSetRot", new FunctionSig {
                 FunctionName = "osSetRot",
                 ReturnType = VarType.Void,
@@ -5758,7 +5758,7 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "command" },
                 TableIndex = 810
             }},
-            // PHLOX-16: OSSL agent, teleport, kick, animation and group functions, 811-835
+            // OSSL agent, teleport, kick, animation and group functions, 811-835
             {"osTeleportOwner", new FunctionSig {
                 FunctionName = "osTeleportOwner",
                 ReturnType = VarType.Void,
@@ -5934,7 +5934,7 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "sFirstName", "sLastName" },
                 TableIndex = 835
             }},
-            // PHLOX-17: OSSL parcel, estate, terrain, wind and sun functions, 836-866
+            // OSSL parcel, estate, terrain, wind and sun functions, 836-866
             {"osSetTerrainHeight", new FunctionSig {
                 FunctionName = "osSetTerrainHeight",
                 ReturnType = VarType.Integer,
@@ -6152,7 +6152,7 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "id", "param" },
                 TableIndex = 866
             }},
-            // PHLOX-18: OSSL draw and dynamic-texture functions, 867-895
+            // OSSL draw and dynamic-texture functions, 867-895
             {"osSetDynamicTextureURL", new FunctionSig {
                 FunctionName = "osSetDynamicTextureURL",
                 ReturnType = VarType.String,
@@ -6356,7 +6356,7 @@ namespace InWorldz.Phlox.Types
                 ParamNames = new string[] { "contentType", "text", "fontName", "fontSize" },
                 TableIndex = 895
             }},
-            // PHLOX-19: OSSL read-only remainder, 896-939
+            // OSSL read-only remainder, 896-939
             {"osGetNotecardLine", new FunctionSig {
                 FunctionName = "osGetNotecardLine",
                 ReturnType = VarType.String,
@@ -6666,7 +6666,7 @@ namespace InWorldz.Phlox.Types
                 TableIndex = 939
             }},
 
-            // ---------------------------------------------------------------- PHLOX-20 overloads
+            // ---------------------------------------------------------------- Overloads chosen by argument type
             // Chosen by argument TYPE, not arity: every one of these shares its arity with a
             // signature of the same name that Phlox already had.
             {"osSetProjectionParams__6_kikfff", new FunctionSig {
@@ -6726,8 +6726,8 @@ namespace InWorldz.Phlox.Types
                 TableIndex = 947
             }},
 
-            // ---------------------------------------------------------------- PHLOX-20 PART 1
-            // PHLOX-12's "misc" row and the list family.
+            // ----------------------------------------------------------------
+            // OSSL sit target, misc and list functions.
             {"osGetSitTargetPos", new FunctionSig {
                 FunctionName = "osGetSitTargetPos",
                 ReturnType = VarType.Vector,
@@ -6864,7 +6864,7 @@ namespace InWorldz.Phlox.Types
          };
 
         /// <summary>
-        /// PHLOX-2b. Built-ins by name, every signature of that name, in table order. This is what
+        /// Built-ins by name, every signature of that name, in table order. This is what
         /// the compiler resolves against: a call is matched on name <b>and</b> signature, so the
         /// three <c>osTeleportAgent</c> forms are three candidates under one name.
         /// </summary>
@@ -6883,14 +6883,14 @@ namespace InWorldz.Phlox.Types
         }
 
         /// <summary>
-        /// PHLOX-2b. The name a signature is known by inside the compiler. The first signature
+        /// The name a signature is known by inside the compiler. The first signature
         /// declared for a name keeps the bare name, so every script that compiled before still
         /// resolves to the same symbol and the same TableIndex; later overloads are mangled
         /// <c>name$&lt;arity&gt;</c>. Both the symbol table and the assembler derive their keys from
         /// here, so they cannot disagree about which shim a call reaches.
         /// </summary>
         /// <summary>
-        /// PHLOX-2c. What separates a built-in's name from its arity in an overload's symbol name.
+        /// What separates a built-in's name from its arity in an overload's symbol name.
         /// It must be legal in the ASSEMBLER's identifier rule, because the emitted instruction is
         /// literally <c>syscall &lt;symbol name&gt;</c> - '$' was tried and the assembly lexer split
         /// on it ("no viable alternative at input 'syscallosTeleportAgent3'"). No LSL or OSSL
@@ -6906,12 +6906,12 @@ namespace InWorldz.Phlox.Types
 
             string mangled = sig.FunctionName + OverloadSeparator + sig.ParamTypes.Length;
 
-            // PHLOX-20: two signatures of the SAME arity would both mangle to that, and the second
+            // Two signatures of the SAME arity would both mangle to that, and the second
             // Define would collide - which is why the type-discriminated forms (osSetPenColor by
             // vector, osApproxEquals by vector or rotation, osSlerp by vector, osSetProjectionParams
             // by key) could not be landed before. Give every one of them a name of its own by
             // appending the parameter types; the arity-only name is kept where it is still unique,
-            // so every overload landed before PHLOX-20 resolves to exactly the symbol it did.
+            // so every overload that resolved by arity alone resolves to exactly the symbol it did.
             int shareArity = 0;
             foreach (FunctionSig other in list)
                 if (other.TableIndex != list[0].TableIndex && other.ParamTypes.Length == sig.ParamTypes.Length)
@@ -6924,7 +6924,7 @@ namespace InWorldz.Phlox.Types
             return codes.ToString();
         }
 
-        /// <summary>PHLOX-20. One character per type, for the symbol name of a same-arity overload.</summary>
+        /// <summary>One character per type, for the symbol name of a same-arity overload.</summary>
         static private char TypeCode(VarType t)
         {
             switch (t)
@@ -6941,8 +6941,8 @@ namespace InWorldz.Phlox.Types
         }
 
         /// <summary>
-        /// PHLOX-20. Choose among a built-in's signatures by the ARGUMENT TYPES, not just their
-        /// number - the rule PHLOX-2b left for later, and the reason five OSSL forms sat unlandable.
+        /// Choose among a built-in's signatures by the ARGUMENT TYPES, not just their
+        /// number. Without it five OSSL forms could not be added.
         /// Only signatures of the call's arity are candidates. An argument that matches its parameter
         /// exactly is worth more than one that reaches it through an LSL implicit widening
         /// (integer to float, key and string either way); anything else makes the candidate unviable.
@@ -6987,13 +6987,13 @@ namespace InWorldz.Phlox.Types
             return best;
         }
 
-        /// <summary>PHLOX-20. LSL's implicit argument conversions - the same pair the type pass allows.</summary>
+        /// <summary>LSL's implicit argument conversions - the same pair the type pass allows.</summary>
         static private bool CanWiden(VarType from, VarType to)
             => (from == VarType.Integer && to == VarType.Float)
             || (from == VarType.Key && to == VarType.String)
             || (from == VarType.String && to == VarType.Key);
 
-        /// <summary>PHLOX-20. A signature as a script author writes it, for the ambiguity message.</summary>
+        /// <summary>A signature as a script author writes it, for the ambiguity message.</summary>
         static public string DescribeSignature(FunctionSig sig)
             => sig.FunctionName + "(" + string.Join(", ", Array.ConvertAll(sig.ParamTypes, t => t.ToString().ToLowerInvariant())) + ")";
 

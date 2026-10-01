@@ -18,7 +18,7 @@ namespace InWorldz.Phlox.Compiler
 
             {"TOUCH_INVALID_TEXCOORD",     new ConstantSymbol("TOUCH_INVALID_TEXCOORD", SymbolTable.VECTOR, "<-1.0,-1.0,0.0>")},
             {"TOUCH_INVALID_VECTOR",       new ConstantSymbol("TOUCH_INVALID_VECTOR", SymbolTable.VECTOR, "<0.0,0.0,0.0>")},
-            {"TOUCH_INVALID_FACE",         new ConstantSymbol("TOUCH_INVALID_FACE", SymbolTable.INT, "-1")},  // PHLOX-8: was 0x7FFFFFFF; wiki says 0xFFFFFFFF, i.e. -1 as a 32-bit integer, and upstream/Halcyon agree
+            {"TOUCH_INVALID_FACE",         new ConstantSymbol("TOUCH_INVALID_FACE", SymbolTable.INT, "-1")},  // Was 0x7FFFFFFF; wiki says 0xFFFFFFFF, i.e. -1 as a 32-bit integer, and upstream/Halcyon agree
 
 
             {"PAY_HIDE", new ConstantSymbol("PAY_HIDE", SymbolTable.INT, "-1")},
@@ -293,9 +293,9 @@ namespace InWorldz.Phlox.Compiler
             {"LINKSETDATA_UPDATE", new ConstantSymbol("LINKSETDATA_UPDATE", SymbolTable.INT, "1")},
             {"LINKSETDATA_DELETE", new ConstantSymbol("LINKSETDATA_DELETE", SymbolTable.INT, "2")},
             {"LINKSETDATA_MULTIDELETE", new ConstantSymbol("LINKSETDATA_MULTIDELETE", SymbolTable.INT, "3")},
-            // PHLOX-5. DEREZ_* per wiki.secondlife.com/wiki/LlDerezObject; the TARGETED_EMAIL_* values
+            // DEREZ_* per wiki.secondlife.com/wiki/LlDerezObject; the TARGETED_EMAIL_* values
             // are upstream's (OpenSim.Region.ScriptEngine.Shared/Api/ScriptBase/LSL_Constants.cs:1033-1034).
-            // PHLOX-7a. The llRezObjectWithParams rule and flag constants, values from upstream
+            // The llRezObjectWithParams rule and flag constants, values from upstream
             // LSL_Constants.cs:1131-1154. None existed here before: a script could only call
             // llRezObjectWithParams with bare numbers, and Phlox's own numbering disagreed with SL.
             {"REZ_PARAM", new ConstantSymbol("REZ_PARAM", SymbolTable.INT, "0")},
@@ -319,7 +319,7 @@ namespace InWorldz.Phlox.Compiler
             {"REZ_LOCK_AXES", new ConstantSymbol("REZ_LOCK_AXES", SymbolTable.INT, "11")},
             {"REZ_DAMAGE_TYPE", new ConstantSymbol("REZ_DAMAGE_TYPE", SymbolTable.INT, "12")},
             {"REZ_PARAM_STRING", new ConstantSymbol("REZ_PARAM_STRING", SymbolTable.INT, "13")},
-            // PHLOX-7b. SIT_FLAG_* per wiki.secondlife.com/wiki/LlSetLinkSitFlags (= LSL_Constants.cs:1156-1160);
+            // SIT_FLAG_* per wiki.secondlife.com/wiki/LlSetLinkSitFlags (= LSL_Constants.cs:1156-1160);
             // PROFILE_* per wiki.secondlife.com/wiki/LlScriptProfiler (= LSL_Constants.cs:554-555).
             {"SIT_FLAG_SIT_TARGET", new ConstantSymbol("SIT_FLAG_SIT_TARGET", SymbolTable.INT, "1")},
             {"SIT_FLAG_ALLOW_UNSIT", new ConstantSymbol("SIT_FLAG_ALLOW_UNSIT", SymbolTable.INT, "2")},
@@ -328,7 +328,7 @@ namespace InWorldz.Phlox.Compiler
             {"SIT_FLAG_NO_DAMAGE", new ConstantSymbol("SIT_FLAG_NO_DAMAGE", SymbolTable.INT, "32")},
             {"PROFILE_NONE", new ConstantSymbol("PROFILE_NONE", SymbolTable.INT, "0")},
             {"PROFILE_SCRIPT_MEMORY", new ConstantSymbol("PROFILE_SCRIPT_MEMORY", SymbolTable.INT, "1")},
-            // PHLOX-10: DAMAGE_TYPE_* per https://wiki.secondlife.com/wiki/LlDamage (upstream has none)
+            // DAMAGE_TYPE_* per https://wiki.secondlife.com/wiki/LlDamage (upstream has none)
             {"DAMAGE_TYPE_IMPACT",         new ConstantSymbol("DAMAGE_TYPE_IMPACT",         SymbolTable.INT, "-1")},
             {"DAMAGE_TYPE_GENERIC",        new ConstantSymbol("DAMAGE_TYPE_GENERIC",        SymbolTable.INT, "0")},
             {"DAMAGE_TYPE_ACID",           new ConstantSymbol("DAMAGE_TYPE_ACID",           SymbolTable.INT, "1")},
@@ -735,7 +735,7 @@ namespace InWorldz.Phlox.Compiler
             {"WIND_SPEED_TERRAIN_TURBULENCE", new ConstantSymbol("WIND_SPEED_TERRAIN_TURBULENCE", SymbolTable.INT, "2")},
 
             // IW_POWER_*: OpenMetaverse GroupPowers bits, for iwHasParcelPowers. An LSL integer is 32 bits: bits 31-48
-            // are written as minus their bit number and decoded by iwHasParcelPowers (PHLOX-42). Their 64-bit values
+            // are written as minus their bit number and decoded by iwHasParcelPowers. Their 64-bit values
             // overflowed to -1 in the assembler (as in Halcyon's), so each asked for every power.
             {"IW_POWER_INVITE", new ConstantSymbol("IW_POWER_INVITE", SymbolTable.INT, "2")},
             {"IW_POWER_EJECT", new ConstantSymbol("IW_POWER_EJECT", SymbolTable.INT, "4") },
@@ -850,7 +850,7 @@ namespace InWorldz.Phlox.Compiler
 
             {"BOT_CREATE_DEFAULT", new ConstantSymbol("BOT_CREATE_DEFAULT", SymbolTable.INT, "0")},
             
-            // PHLOX-6. PU_* per wiki.secondlife.com/wiki/Path_update (values quoted there in hex).
+            // PU_* per wiki.secondlife.com/wiki/Path_update (values quoted there in hex).
             {"PU_SLOWDOWN_DISTANCE_REACHED", new ConstantSymbol("PU_SLOWDOWN_DISTANCE_REACHED", SymbolTable.INT, "0")},
             {"PU_GOAL_REACHED", new ConstantSymbol("PU_GOAL_REACHED", SymbolTable.INT, "1")},
             {"PU_FAILURE_INVALID_START", new ConstantSymbol("PU_FAILURE_INVALID_START", SymbolTable.INT, "2")},
@@ -946,7 +946,7 @@ namespace InWorldz.Phlox.Compiler
 			{ "ERR_THROTTLED",              new ConstantSymbol("ERR_THROTTLED",                 SymbolTable.INT, "-5") },
 
 
-            // PHLOX-8 (2026-09-09): every name upstream LSL_Constants.cs declares that Phlox did not - an SL
+            // Every name upstream LSL_Constants.cs declares that Phlox did not - an SL
             // script naming any of them failed to compile here. Values are upstream's, in upstream's order;
             // Docs/audit/phlox-constants-audit.py is the audit that produced the list and re-runs to zero.
             {"OS_APIVERSION",                      new ConstantSymbol("OS_APIVERSION",                      SymbolTable.INT, "25")},
@@ -1258,7 +1258,7 @@ namespace InWorldz.Phlox.Compiler
             {"TRANSFER_NO_PERMS",                  new ConstantSymbol("TRANSFER_NO_PERMS",                  SymbolTable.INT, "-6")},
             {"TRANSFER_NO_ATTACHMENT",             new ConstantSymbol("TRANSFER_NO_ATTACHMENT",             SymbolTable.INT, "-7")},
 
-            // PHLOX-21 D3: the public SL constants Phlox lacked, from secondlife/lsl-definitions @ 10741b9
+            // The public SL constants Phlox lacked, from secondlife/lsl-definitions @ 10741b9
             // (Tests/InWorldz.Phlox.Tests/Fixtures/sl-constants-10741b9.txt). Additions only.
             {"AGENT_AUTOMATED",                      new ConstantSymbol("AGENT_AUTOMATED",                       SymbolTable.INT, "16384")},
             {"AGENT_FLOATING_VIA_SCRIPTED_ATTACHMENT", new ConstantSymbol("AGENT_FLOATING_VIA_SCRIPTED_ATTACHMENT", SymbolTable.INT, "32768")},

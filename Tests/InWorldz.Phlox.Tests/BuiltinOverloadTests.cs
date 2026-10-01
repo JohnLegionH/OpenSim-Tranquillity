@@ -3,7 +3,7 @@ using Xunit;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-2. Built-in (<c>ll*</c> / <c>os*</c>) functions that OSSL overloads must resolve by
+/// Built-in (<c>ll*</c> / <c>os*</c>) functions that OSSL overloads must resolve by
 /// name **and** signature, as they do on every other engine that offers them.
 ///
 /// <para>
@@ -70,7 +70,7 @@ public class BuiltinOverloadTests
         Assert.False(four.HasErrors(), $"llLinkPlaySound(int, string, float, int): {four.Report}");
     }
 
-    // ------------------------------------------------------------------ PHLOX-5: SL names and arities
+    // ------------------------------------------------------------------ SL names and arities
 
     /// <summary>
     /// Compile a state_entry body, run it against the recording ISystemAPI, and return every
@@ -186,7 +186,7 @@ public class BuiltinOverloadTests
     [InlineData("list l = llSortListStrided([1, \"a\", 2, \"b\"], 2, 0, TRUE);")]
     [InlineData("string h = llSHA256String(\"abc\", 7);")]
     [InlineData("llTargetedEmail(2, \"who@example.com\", \"s\", \"m\");")]
-    [InlineData("key r = llUpdateKeyValue(\"k\", \"v\", \"old\");")]   // PHLOX-63: answers in dataserver, returns its key
+    [InlineData("key r = llUpdateKeyValue(\"k\", \"v\", \"old\");")]   // Answers in dataserver, returns its key
     [InlineData("llDerezObject(llGetKey());")]
     public void TheOlderSpellingStillCompiles(string body)
     {
@@ -211,7 +211,7 @@ public class BuiltinOverloadTests
     [Fact]
     public void TheRejectionListsTheAcceptedSignatures()
     {
-        // The message that sent this session looking at the wrong thing said "expects 4
+        // The message that sent an earlier investigation looking at the wrong thing said "expects 4
         // arguments, got 3" - true of one overload and misleading about the function. With
         // several accepted forms the error has to say what they are.
         var c = PhloxCompiler.CompileInDefault(@"
@@ -228,7 +228,7 @@ public class BuiltinOverloadTests
 }
 
 /// <summary>
-/// PHLOX-2, the other half of the scope ruling: <b>user-function overloading stays rejected.</b>
+/// The other half of the rule: <b>user-function overloading stays rejected.</b>
 /// SL has no user-function overloading, so rejecting it is the parity behaviour and Phlox's
 /// existing rule is correct. YEngine accepts it (its symbol table is keyed by name plus
 /// signature, <c>MMRScriptVarDict.cs:132-151</c>), which makes the two engines in this tree

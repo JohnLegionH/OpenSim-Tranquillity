@@ -54,7 +54,7 @@ namespace InWorldz.Phlox.Types
             LINKSET_DATA,
             EXPERIENCE_PERMISSIONS,
             EXPERIENCE_PERMISSIONS_DENIED,
-            // PHLOX-6. Five SL events Phlox did not recognise: a script declaring any handler below
+            // Five SL events Phlox did not recognise: a script declaring any handler below
             // failed to compile. Appended so no existing value moves (the enum value is the event's
             // TableIndex and a saved PostedEvent carries it).
             PATH_UPDATE,
@@ -340,7 +340,7 @@ namespace InWorldz.Phlox.Types
                 TableIndex = (int) Events.EXPERIENCE_PERMISSIONS_DENIED
             }},
 
-            // ---------------------------------------------------------------- PHLOX-6
+            // ----------------------------------------------------------------
             // wiki.secondlife.com/wiki/Path_update - "path_update( integer type, list reserved )".
             // DELIVERED: BotManager.FirePathEvent posts it beside bot_update for every bot path
             // outcome, type mapped to PU_* (BOT_MOVE_COMPLETE -> PU_GOAL_REACHED, BOT_MOVE_FAILED ->

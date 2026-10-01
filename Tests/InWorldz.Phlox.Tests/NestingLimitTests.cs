@@ -5,19 +5,19 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-22 A. Nesting limits are COUNTED, so a script compiles or fails the same way whatever the JIT has done:
-/// PHLOX-21's stack-based guard tripped at ~3,017 levels in a fresh process and ~9,739 in a warm one, so the
+/// Nesting limits are COUNTED, so a script compiles or fails the same way whatever the JIT has done:
+/// The earlier stack-based guard tripped at ~3,017 levels in a fresh process and ~9,739 in a warm one, so the
 /// same script compiled on a running region and failed in the harness. Every case runs in a child process
 /// (PhloxCompileProbe) - "cold" is a fresh process per case, "warm" one process that compiled 100 ordinary
 /// scripts first - and both must give the same outcome. The child also means a real stack overflow kills only it.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class NestingLimitTests
 {
     private readonly ITestOutputHelper _out;
     public NestingLimitTests(ITestOutputHelper o) => _out = o;
 
-    // The limits (InWorldz.Phlox.Compiler.NestingLimits); chosen from measurement, see PhloxKnownDefects PHLOX-22.
+    // The limits (InWorldz.Phlox.Compiler.NestingLimits); chosen from measurement, see PhloxKnownDefects.
     private const int ExprLimit = 1000;
     private const int BlockLimit = 500;
     private const int ChainLimit = 2500;

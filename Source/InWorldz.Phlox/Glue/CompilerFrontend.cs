@@ -113,7 +113,7 @@ namespace InWorldz.Phlox.Glue
         }
 
         /// <summary>
-        /// PHLOX-22 A: a linear pre-pass over the tokens that bounds brace depth before the parser runs. The grammar's
+        /// A linear pre-pass over the tokens that bounds brace depth before the parser runs. The grammar's
         /// `statement : funcBlock | funcBlockContent` (whose anonBlock is also a funcBlock) is ambiguous for every
         /// '{', so prediction reads ahead to the matching '}' - the rest of the script - once per level, before the
         /// counted limit can trip: a 200,000-deep script cost 501 scans of ~6 MB. Every counted block adds at most
@@ -146,7 +146,7 @@ namespace InWorldz.Phlox.Glue
                 LSLLexer lexer = new LSLLexer(input);
                 CommonTokenStream tokens = new CommonTokenStream(lexer);
 
-                // PHLOX-22 A: two-stage parse. Full-context (LL) prediction resolves the grammar's dangling
+                // Two-stage parse. Full-context (LL) prediction resolves the grammar's dangling
                 // 'else' and its assignment chains by walking the WHOLE parser stack at every decision: the
                 // cost grew with the square of the nesting (500 nested ifs: 8.7 s; 200 chained assignments:
                 // 7.1 s) and its recursion (ParserATNSimulator.Closure_) overflowed the stack at a 10,000-branch
@@ -278,8 +278,8 @@ namespace InWorldz.Phlox.Glue
             }
             catch (NestingTooDeepException e)
             {
-                // PHLOX-21: a script nested past what the stack can walk is the script's error.
-                // PHLOX-22 A: normally a counted limit, whose message names it ("... (limit N)").
+                // A script nested past what the stack can walk is the script's error.
+                // Normally a counted limit, whose message names it ("... (limit N)").
                 _listener.Error($"line {e.Line}:{e.Column} {e.Message}");
             }
             catch (TooManyErrorsException e)
@@ -288,7 +288,7 @@ namespace InWorldz.Phlox.Glue
             }
             catch (Exception e)
             {
-                // PHLOX-3a: this used to report e.Message and nothing else, so a compiler crash
+                // This used to report e.Message and nothing else, so a compiler crash
                 // was indistinguishable from a fault in the script - in the log and in the
                 // owner's dialog alike. CompilerCrash.Format marks it and carries the type and
                 // stack, which the listener logs and the owner-visible path deliberately does not

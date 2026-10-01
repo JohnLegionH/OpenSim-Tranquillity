@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-3b. <c>llSetTimerEvent</c> had no floor, so a script could ask a region for any rate it liked
+/// <c>llSetTimerEvent</c> had no floor, so a script could ask a region for any rate it liked
 /// and get it.
 ///
 /// <para>

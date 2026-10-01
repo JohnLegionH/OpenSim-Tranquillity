@@ -11,7 +11,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-21 part C. A script's text must not be able to take the region down or stall it:
+/// A script's text must not be able to take the region down or stall it:
 /// deep nesting is a compile error, not a stack overflow (which no catch can stop and which ends the
 /// process), and a script-supplied regular expression cannot hold the scheduler thread.
 /// </summary>

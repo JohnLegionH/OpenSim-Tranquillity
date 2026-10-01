@@ -8,8 +8,8 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-63, Experience key-value ruling (b): "port the SL form (calls return a request key, the answer arrives in a
-/// dataserver event)". Each SL wiki page gives the answer as cdl = llDumpList2String([ 1, ... ],",") on success and
+/// Experience key-value calls take SL's form (calls return a request key, the answer arrives in a
+/// dataserver event). Each SL wiki page gives the answer as cdl = llDumpList2String([ 1, ... ],",") on success and
 /// [ 0, integer error ] (XP_ERROR_*) on failure. The store is NGC's IExperienceService, here an in-memory fake that
 /// answers with NGC's own statuses (Source/OpenSim.Services.ExperienceService/ExperienceService.cs:268-326). Each test
 /// builds its own harness and registers the fake on its own scene only, so the class runs in parallel. No network.
@@ -22,7 +22,7 @@ public class KeyValueSlFormTests
     private const long PhloxQuota = 128L * 1024 * 1024;   // LSLSystemAPI.MAX_DATA_QUOTA
 
     /// <summary>NGC ExperienceService's key-value logic over a dictionary, plus test knobs.</summary>
-    internal sealed class FakeStore : IExperienceService   // PHLOX-66: DataserverToPrimTests uses it too
+    internal sealed class FakeStore : IExperienceService   // DataserverToPrimTests uses it too
     {
         public readonly ConcurrentDictionary<UUID, SortedDictionary<string, string>> Data = new();
         public readonly ConcurrentQueue<UUID> ExperiencesSeen = new();
@@ -395,14 +395,14 @@ default
         using (var r = Ask(store, @"ask(llCreateKeyValue(""a"", ""xp""), ""create"");", 1))
             Assert.Equal("xp", store.Data[Exp]["a"]);
 
-        // PHLOX-64 (John: follow SL): until then a script with no Experience used its owner's id; now XP_ERROR_NO_EXPERIENCE.
+        // As SL: a script with no Experience once used its owner's id; now XP_ERROR_NO_EXPERIENCE.
         var store2 = new FakeStore();
         using var r2 = Ask(store2, @"ask(llCreateKeyValue(""a"", ""owner""), ""create"");", 1, experience: UUID.Zero);
         Assert.Equal("0,5", r2.Answer("create"));
         Assert.Empty(store2.Data);
     }
 
-    // ── PHLOX-64: a script with no Experience (John: follow SL) ──
+    // ── A script with no Experience (as SL) ──
     // wiki (each call): "For this function to work, the script must be compiled into an Experience."; llGetExperienceErrorMessage:
     // XP_ERROR_NO_EXPERIENCE | 5 | "This script is not associated with an experience." Phlox's own names keep the owner id.
 
@@ -449,7 +449,7 @@ default
         Assert.Empty(store.Data[r.H.Prim.OwnerID]);
     }
 
-    // ── PHLOX-64: SL's value limit ──
+    // ── SL's value limit ──
     // wiki llCreateKeyValue / llUpdateKeyValue: "As of Jan 1, 2016 maximum bytes is 1011 for key and 4095 for value for both
     // LSO and Mono scripts."; over it XP_ERROR_INVALID_PARAMETERS (3), "One of the string arguments was too big to fit in the
     // key-value store." Bytes are UTF-8: 2048 x "é" is 4096 bytes.
@@ -532,7 +532,7 @@ default
     }
 
     /// <summary>
-    /// PHLOX-46's rule: an answer owed to a script that was reset in between is dropped. The read is held in the store
+    /// The reset rule: an answer owed to a script that was reset in between is dropped. The read is held in the store
     /// while the script is reset; after it is let go, a second script's read (same store) is answered, and the reset
     /// script never hears the first answer.
     /// </summary>

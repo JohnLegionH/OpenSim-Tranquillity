@@ -17,9 +17,9 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-43. No Scripts parcels enforced live (HALCYON-DIFF D11, ruled (a)). A script that the parcel under its object
+/// No Scripts parcels enforced live. A script that the parcel under its object
 /// does not allow is paused, never stopped or reset, and runs on when the parcel allows it again. Attachments and
-/// scripts holding taken controls are exempt. The rule where D11 is silent is Halcyon's (EngineInterface.ScriptsCanRun):
+/// scripts holding taken controls are exempt. Where that rule is silent, Halcyon's applies (EngineInterface.ScriptsCanRun):
 /// the object's owner owns the parcel, or the parcel allows other scripts, or it allows group scripts and the object's
 /// group is the parcel's group. No parcel: not allowed. No estate-manager or god exemption.
 ///
@@ -135,7 +135,7 @@ public class NoScriptParcelTests
         public bool Paused(UUID itemId) => H.StatusOf(itemId).Contains("LocalDisable=Parcel");
         public void Pump(int ms = 400) => H.PumpFor(TimeSpan.FromMilliseconds(ms));
 
-        /// <summary>The scheduler's parcel-check counters (PHLOX-43), by reflection so this file builds without them.</summary>
+        /// <summary>The scheduler's parcel-check counters, by reflection so this file builds without them.</summary>
         public (long Scanned, long Evaluated, long Paused, long Resumed) Counters()
         {
             var p = Exe.GetType().GetProperty("ParcelCounters", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -148,7 +148,7 @@ public class NoScriptParcelTests
         public void Dispose() => H.Dispose();
     }
 
-    // The engine's new members are reached by reflection, so the red run (source without PHLOX-43) builds and fails on
+    // The engine's new members are reached by reflection, so the red run (source without the parcel check) builds and fails on
     // behaviour rather than on missing names.
     private static bool Allows(LandData land, UUID owner, UUID group)
     {
@@ -301,7 +301,7 @@ public class NoScriptParcelTests
         Assert.Equal(Enumerable.Range(1, ticks.Count), ticks);
     }
 
-    // ── PHLOX-44: a paused timer keeps the time it had left (Halcyon) ─────────────
+    // ── A paused timer keeps the time it had left (Halcyon) ───────────────────────
 
     /// <summary>
     /// Milliseconds until the script's timer wake, or null when none is armed. Read from the scheduler's own heap by
@@ -450,7 +450,7 @@ public class NoScriptParcelTests
 
         var pa = sog.RootPart.PhysActor;
         Assert.NotNull(pa);
-        // as CORE-3's test: the physics engine moves the body without the group setter, then asks for a terse update
+        // as the core's parcel-crossing test: the physics engine moves the body without the group setter, then asks for a terse update
         pa.OnRequestTerseUpdate += sog.RootPart.PhysicsRequestingTerseUpdate;
         pa.Position = West;
         pa.RequestPhysicsterseUpdate();
@@ -586,7 +586,7 @@ public class NoScriptParcelTests
         Assert.False(l.Paused(id));
 
         // ClearControls (the core's release on a crossing) raises OnScriptControlsReleased for this item; nothing else
-        // happens, and Phlox's own record (MiscAttr.Control) still says "taken". Before CORE-4 this waited for the next
+        // happens, and Phlox's own record (MiscAttr.Control) still says "taken". Before the core raised it, this waited for the next
         // trigger.
         sp.ClearControls();
         Assert.False(Holds(sp, id));

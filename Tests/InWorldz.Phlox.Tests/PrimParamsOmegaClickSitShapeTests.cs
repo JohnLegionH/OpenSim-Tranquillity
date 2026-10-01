@@ -15,7 +15,7 @@ namespace InWorldz.Phlox.Tests;
 /// llGetLocalPos in an unattached root, an attachment's root and a child; llGetRot, PRIM_ROTATION and PRIM_POS_LOCAL on
 /// an attachment's root; and a long list mixing these rules with earlier ones.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class PrimParamsOmegaClickSitShapeTests
 {
     private readonly ITestOutputHelper _out;
@@ -140,7 +140,7 @@ public class PrimParamsOmegaClickSitShapeTests
         Assert.NotEqual(PrimUpdateFlags.None, parts[0].UpdateFlag);
         Assert.NotEqual(PrimUpdateFlags.None, parts[1].UpdateFlag);
 
-        // Read back in SL's form (PHLOX-36): the normalised axis, the spinrate times the axis's length, the gain.
+        // Read back in SL's form: the normalised axis, the spinrate times the axis's length, the gain.
         var r = Fields(h, "r=", 3);
         Near(new Vector3(0, 0, 1), r[0]);
         Near(TwoPi, r[1]);
@@ -190,7 +190,7 @@ public class PrimParamsOmegaClickSitShapeTests
 
         Near(Vector3.Zero, parts[0].AngularVelocity);
         Near(Vector3.Zero, parts[1].AngularVelocity);
-        // The values read are the ones set (PHLOX-36), gain 0 included.
+        // The values read are the ones set, gain 0 included.
         var got = Fields(h, "got=", 6);
         Near(new Vector3(0, 0, 1), got[0]);
         Near(2f, got[1]);

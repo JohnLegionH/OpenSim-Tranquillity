@@ -10,11 +10,11 @@ using Xunit;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-21 part B. llGetInventoryKey hands out an asset key only for a full-perm item
+/// llGetInventoryKey hands out an asset key only for a full-perm item
 /// (https://wiki.secondlife.com/wiki/LlGetInventoryKey), and llSetContentType uses SL's numbering and
 /// gives text/html only to the owner's own viewer (https://wiki.secondlife.com/wiki/LlSetContentType).
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class ContentProtectionTests
 {
     private const uint FullPerm = (uint)(PermissionMask.Copy | PermissionMask.Modify | PermissionMask.Transfer);

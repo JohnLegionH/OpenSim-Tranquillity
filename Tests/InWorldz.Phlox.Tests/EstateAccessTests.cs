@@ -11,7 +11,7 @@ using Xunit.Abstractions;
 
 namespace InWorldz.Phlox.Tests;
 
-// PHLOX-53 (audit S3 / F317 / F274): llManageEstateAccess follows Halcyon's EstateManagementModule (EstateBanUser,
+// llManageEstateAccess follows Halcyon's EstateManagementModule (EstateBanUser,
 // EstateAllowUser, EstateAllowGroup, the Estate*Query calls) and InWorldz LSLSystemAPI ManageEstateAccess /
 // llManageEstateAccess: god, estate owner or estate manager may call; the estate owner, estate managers, the object's
 // owner and gods are never banned; a ban clears the allowed entry and sends a present avatar home (or logs them out
@@ -19,7 +19,7 @@ namespace InWorldz.Phlox.Tests;
 // PERMISSION_SILENT_ESTATE_MANAGEMENT. The action numbers are Phlox's (0..5), unchanged.
 // No test reaches a network service: the estate store, the grid-user service, the IM transfer and the teleport are all
 // in-memory recorders.
-// PHLOX-50 grouping: no process-wide state (no Clock seam, no shared files), so the class runs in parallel.
+// Test grouping: no process-wide state (no Clock seam, no shared files), so the class runs in parallel.
 
 /// <summary>Who the object's owner is on the estate.</summary>
 public enum EstateRole { Nobody, Manager, EstateOwner, God }

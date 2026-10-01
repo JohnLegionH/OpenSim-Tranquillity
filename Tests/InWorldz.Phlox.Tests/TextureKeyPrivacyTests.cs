@@ -14,9 +14,9 @@ using PermissionMask = OpenSim.Framework.PermissionMask;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-49 (HALCYON-DIFF D5, audit S9 / F136 / F215). Which asset keys a script may see:
+/// Which asset keys a script may see:
 /// - llGetInventoryKey and iwGetLinkInventoryKey: the asset key of an item that is copy, modify and transfer for its
-///   owner, else NULL_KEY (llGetInventoryKey's rule since PHLOX-21; Halcyon's GetInventoryKey used it for both).
+///   owner, else NULL_KEY (llGetInventoryKey's rule; Halcyon's GetInventoryKey used it for both).
 /// - llGetTexture, PRIM_TEXTURE, the PRIM_TYPE sculpt map, the projector reads: Halcyon's ConditionalTextureNameOrUUID -
 ///   the name when the texture is in the script's prim, else the key when the object is full-perm for its owner, else
 ///   NULL_KEY.
@@ -26,7 +26,7 @@ namespace InWorldz.Phlox.Tests;
 /// Each case runs with a full-perm, no-copy, no-mod and no-transfer object or item, from the owner's script and from a
 /// script another avatar put in.
 /// </summary>
-// PHLOX-50 grouping: this class builds its own harness and touches no process-wide seam, so it runs in parallel.
+// Test grouping: this class builds its own harness and touches no process-wide seam, so it runs in parallel.
 public class TextureKeyPrivacyTests
 {
     private readonly ITestOutputHelper _out;

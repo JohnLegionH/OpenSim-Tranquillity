@@ -10,7 +10,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-67. YEngine reads a script's first line ("//YEngine:", XMREngine.OnRezScript) to decide whether the script is
+/// YEngine reads a script's first line ("//YEngine:", XMREngine.OnRezScript) to decide whether the script is
 /// its own; Phlox ran every script whenever it was the default engine. On a region running both, with Phlox the default,
 /// a script starting "//YEngine:" ran in both engines; with YEngine the default, a script naming Phlox ran in neither.
 /// Phlox now applies YEngine's rule: the engine the first line names if it is loaded, otherwise the default engine.

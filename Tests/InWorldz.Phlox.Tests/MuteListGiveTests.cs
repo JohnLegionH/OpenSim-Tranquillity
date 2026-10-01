@@ -9,11 +9,11 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-48 (HALCYON-DIFF S13, F126/F176): a give to an avatar who has muted the object, or its owner, is not made.
+/// A give to an avatar who has muted the object, or its owner, is not made.
 /// Halcyon (InWorldz.Phlox.Engine/LSLSystemAPI.cs IsScriptMuted :4388-4403, _GiveInventory :5368-5372,
 /// _GiveLinkInventoryList :8443-8447): "Not offering inventory from muted ...", IW_DELIVER_MUTED, the normal delay, and
 /// the ll/iwGive forms say nothing. SL (wiki llGiveInventory): an avatar that refuses "by manual decline or muting" does
-/// not get it. The per-function table is in the work folder's STATE.md.
+/// not get it.
 /// </summary>
 // Parallel: the fake mute service is registered on this test's own scene; none of the process-wide hooks
 // (Clock, FailLoadForTest, compile delays, ThrowForTest, cache/state-DB files, real-time measurement) is touched.
@@ -119,7 +119,7 @@ public class MuteListGiveTests
     }
 
     /// <summary>
-    /// D15 keeps iwGiveLinkInventoryList delivering to absent avatars; the mute check is added in front of it: an absent
+    /// iwGiveLinkInventoryList keeps delivering to absent avatars; the mute check is added in front of it: an absent
     /// muter gets nothing (and iwDeliverInventory says MUTED), an absent avatar who muted nobody still gets the folder.
     /// </summary>
     [Fact]
@@ -168,7 +168,7 @@ public class MuteListGiveTests
         Assert.Contains(box.RootPart.Inventory.GetInventoryItems(), i => i.Name == "p1");
     }
 
-    /// <summary>A mute service that fails is read as "not muted" (PHLOX-45's IsScriptMuted): the give goes ahead.</summary>
+    /// <summary>A mute service that fails is read as "not muted" (IsScriptMuted): the give goes ahead.</summary>
     [Fact]
     public void AFailingMuteServiceDoesNotStopTheGive()
     {

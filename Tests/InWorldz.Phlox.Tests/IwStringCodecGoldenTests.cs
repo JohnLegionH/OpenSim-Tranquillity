@@ -17,7 +17,7 @@ using Clock = InWorldz.Phlox.Util.Clock;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-57 (HALCYON-DIFF D13): iwStringCodec against Halcyon's own code, byte for byte. Golden/iwStringCodec-vectors.jsonl
+/// iwStringCodec against Halcyon's own code, byte for byte. Golden/iwStringCodec-vectors.jsonl
 /// holds 1511 calls run through Halcyon's iwStringCodec and CodecUtil (LSLSystemAPI.cs:16053-16955, compiled unchanged)
 /// on .NET Framework 4.8.1 with Halcyon's own LSLList and LibreMetaverse (Golden/README.md): every codec, both directions
 /// and validate, empty and large inputs, non-ASCII text and bad input. For each call the result (or its SHA-256 when
@@ -248,7 +248,7 @@ public class IwStringCodecGoldenTests
         Assert.True(failures.Count == 0, failures.Count + " of " + count + " calls differ from Halcyon:\n" + string.Join("\n", failures.Take(25)));
     }
 
-    /// <summary>ChatThrottle off (PHLOX-56's setting for Halcyon's chat pause): an error is still said, with no 15 ms sleep.</summary>
+    /// <summary>ChatThrottle off (the setting for Halcyon's chat pause): an error is still said, with no 15 ms sleep.</summary>
     [Fact]
     public void WithChatThrottleOffAnErrorDoesNotSleep()
     {

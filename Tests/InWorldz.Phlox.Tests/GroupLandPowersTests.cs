@@ -13,7 +13,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-42 (HALCYON-DIFF D14, ruled (a)): Halcyon's group-land power rules. Every land function in scope asks one
+/// Halcyon's group-land power rules. Every land function in scope asks one
 /// helper, Halcyon's CanEditParcel -> GenericParcelOwnerPermission (PermissionsModule.cs:1002-1042): the parcel owner;
 /// on group-owned land the group itself (a deeded object) or a member holding ANY of the requested powers; on
 /// group-tagged land AllowSetHome only; an estate owner or manager; a god. The pass and ban lists ask LandManageAllowed,
@@ -22,7 +22,7 @@ namespace InWorldz.Phlox.Tests;
 /// The land is three strips: west (x &lt; 86) owned by the group G, middle (x &lt; 172) owned by the person P,
 /// east owned by a stranger and tagged (not deeded) to G.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class GroupLandPowersTests
 {
     private static readonly Vector3 West = new(40, 128, 25), Middle = new(128, 128, 25), East = new(210, 128, 25);
@@ -347,7 +347,7 @@ public class GroupLandPowersTests
     [Fact]
     public void IwHasParcelPowersIsZeroForANonMemberWhoseObjectCarriesTheParcelsGroupTag()
     {
-        // F216: the port answered 1 whenever the object's group tag matched the parcel's group.
+        // The port answered 1 whenever the object's group tag matched the parcel's group.
         using var r = NewRig(UUID.Random(), West);
         Assert.All(AllPowers(r).Values, v => Assert.Equal(0, v));
         r.H.ClearSaid(default);

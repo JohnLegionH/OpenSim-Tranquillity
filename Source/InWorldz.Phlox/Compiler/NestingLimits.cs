@@ -6,7 +6,7 @@ namespace InWorldz.Phlox.Compiler
     public enum NestingKind { Expression, Block, ElseIfChain, AssignmentChain }
 
     /// <summary>
-    /// PHLOX-22 A. The nesting limits, COUNTED - the same in a cold or warm process, Debug or Release. PHLOX-21's
+    /// The nesting limits, COUNTED - the same in a cold or warm process, Debug or Release. The earlier
     /// stack-based guard (<see cref="DepthGuard"/>) tripped at ~3,017 expression levels in a fresh process and
     /// ~9,739 in a warm one, so one script compiled on a running region and failed in the harness; it stays as a
     /// backstop only.
@@ -18,7 +18,7 @@ namespace InWorldz.Phlox.Compiler
     /// chain; its links are not blocks, because a 1,000-branch menu is real content. Assignment chain (LSL):
     /// the '=' links inside one expression - <c>x = a = b = 0</c> is 2.</para>
     ///
-    /// <para>The values come from measurement (PhloxKnownDefects, PHLOX-22). Stack: the lowest cold capacity of
+    /// <para>The values come from measurement (PhloxKnownDefects). Stack: the lowest cold capacity of
     /// the 16 MB compile thread is ~2,410 expression levels (a visitor pass), far higher for blocks and chains.
     /// Time: a script with a syntax error is parsed again with full-context (LL) prediction, whose cost grows much
     /// faster than the nesting for else-if chains (5,000 branches: 19.7 s cold) and assignment chains (100 links:
@@ -49,7 +49,7 @@ namespace InWorldz.Phlox.Compiler
     }
 
     /// <summary>
-    /// PHLOX-22 A. The active nesting of one parse or one tree walk. <see cref="Enter"/> throws
+    /// The active nesting of one parse or one tree walk. <see cref="Enter"/> throws
     /// <see cref="NestingTooDeepException"/> with the kind's message when a limit is passed.
     /// </summary>
     public sealed class NestingCounter

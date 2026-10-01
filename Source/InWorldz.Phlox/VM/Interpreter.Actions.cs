@@ -1090,7 +1090,7 @@ namespace InWorldz.Phlox.VM
         }
 
         /// <summary>
-        /// PHLOX-65 (C8, D10 (a) "exact quaternion multiply"): LSL's <c>lhs * rhs</c> with SL's operand order and formula.
+        /// Exact quaternion multiply: LSL's <c>lhs * rhs</c> with SL's operand order and formula.
         /// LL's operator*(a, b) (llquaternion.cpp) is x = b.w*a.x + b.x*a.w + b.y*a.z - b.z*a.y, ..., w = b.w*a.w -
         /// b.x*a.x - b.y*a.y - b.z*a.z: the Hamilton product rhs (x) lhs, unnormalised, no sign change (SL wiki Rotation:
         /// "rotation r3 = r1 * r2;" applies r1, then r2). YEngine's LSL_Types operator * is the same. The package's
@@ -1316,7 +1316,7 @@ namespace InWorldz.Phlox.VM
             }
             else if (a is float)
             {
-                SafeOperandsPush(Util.LslConvert.FloatToInteger((float)a));   // PHLOX-61: NaN and out of range give -2147483648, as SL
+                SafeOperandsPush(Util.LslConvert.FloatToInteger((float)a));   // NaN and out of range give -2147483648, as SL
             }
             else if (a is int)
             {
@@ -1437,7 +1437,7 @@ namespace InWorldz.Phlox.VM
             if (a is string)
             {
                 Vector3 ret;
-                if (Util.Encoding.TryParseLslVector((string)a, out ret))   // PHLOX-65: Halcyon's parser (D10)
+                if (Util.Encoding.TryParseLslVector((string)a, out ret))   // Halcyon's parser
                 {
                     SafeOperandsPush(ret);
                 }
@@ -1465,7 +1465,7 @@ namespace InWorldz.Phlox.VM
             {
                 Quaternion ret;
 
-                if (Util.Encoding.TryParseLslRotation((string)a, out ret))   // PHLOX-65: Halcyon's parser (D10)
+                if (Util.Encoding.TryParseLslRotation((string)a, out ret))   // Halcyon's parser
                 {
                     SafeOperandsPush(ret);
                 }
@@ -2574,7 +2574,7 @@ namespace InWorldz.Phlox.VM
         }
 
         /// <summary>
-        /// PHLOX-9. SL: <c>a != b</c> on lists is <c>llGetListLength(a) - llGetListLength(b)</c> - the length
+        /// SL: <c>a != b</c> on lists is <c>llGetListLength(a) - llGetListLength(b)</c> - the length
         /// difference, not 0/1 ("Equality test on lists does not compare contents, only the length").
         /// <c>==</c> (Op_Leq) stays 0/1: TRUE when the lengths match.
         /// </summary>

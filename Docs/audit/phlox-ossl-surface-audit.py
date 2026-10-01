@@ -18,7 +18,7 @@ def phlox():
         if pt and pt.group(1).strip():
             types = [t.strip().replace("VarType.", "") for t in pt.group(1).split(",") if t.strip()]
         fn = name.group(1) if name else m.group("key")
-        # PHLOX-20: the raw key is a SYMBOL name (name, name__arity, name__arity_types) and several
+        # The raw key is a SYMBOL name (name, name__arity, name__arity_types) and several
         # keys share one FUNCTION name - every one of them is a signature Phlox really has. Keying
         # the audit by the key made every overload past the first invisible.
         out.setdefault(fn, []).append({
@@ -104,7 +104,7 @@ res = {
     "arity_mismatch": arity,
     "type_mismatch": types_bad,
 }
-# PHLOX-20: beside this script, not in one session's scratchpad
+# Beside this script, not in a temporary folder
 io.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "audit.json"),
         "w", encoding="utf-8").write(json.dumps(res, indent=1))
 

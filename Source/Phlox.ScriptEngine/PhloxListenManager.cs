@@ -39,7 +39,7 @@ namespace Phlox.ScriptEngine
         public string FilterName;   // empty string = wildcard
         public UUID FilterKey;      // UUID.Zero = wildcard
         public string FilterMsg;    // empty string = wildcard
-        /// <summary>PHLOX-19 (osListenRegex): when set, the name / message filter is a regular expression instead of an exact match.</summary>
+        /// <summary>osListenRegex: when set, the name / message filter is a regular expression instead of an exact match.</summary>
         public System.Text.RegularExpressions.Regex NameRegex;
         public System.Text.RegularExpressions.Regex MsgRegex;
         public int RegexBitfield;   // as osListenRegex was given it; 0 for llListen
@@ -71,10 +71,10 @@ namespace Phlox.ScriptEngine
         /// max_listens_per_region: WorldCommModule's default (m_maxlisteners = 1000).</summary>
         public const int DefaultMaxListensPerRegion = 1000;
 
-        /// <summary>PHLOX-39: the per-script cap in force; int.MaxValue when the config asks for no limit.</summary>
+        /// <summary>The per-script cap in force; int.MaxValue when the config asks for no limit.</summary>
         public int MaxListensPerScript { get; }
 
-        /// <summary>PHLOX-39: the per-region cap in force, never below <see cref="MaxListensPerScript"/>.</summary>
+        /// <summary>The per-region cap in force, never below <see cref="MaxListensPerScript"/>.</summary>
         public int MaxListensPerRegion { get; }
 
         // Every listen this engine holds in the region, active or switched off, for the per-region cap.
@@ -84,7 +84,7 @@ namespace Phlox.ScriptEngine
         public int ListenCount { get { lock (m_Lock) return m_ListenCount; } }
 
         /// <summary>
-        /// PHLOX-39: [LL-Functions] max_listens_per_region and max_listens_per_script, read as the core WorldCommModule
+        /// [LL-Functions] max_listens_per_region and max_listens_per_script, read as the core WorldCommModule
         /// reads them for YEngine (WorldCommModule.Initialise), so one config value means the same to both engines:
         /// one GetInt each, the region's first, with WorldComm's defaults 1000 and 65; a value that does not parse ends
         /// the read there and keeps the defaults for it and the key after it, as WorldComm's single try does; a value
@@ -168,7 +168,7 @@ namespace Phlox.ScriptEngine
                        int channel, string name, UUID key, string msg)
             => Add(localID, itemID, hostID, channel, name, key, msg, 0);
 
-        /// <summary>PHLOX-19: osListenRegex - bit 1 (OS_LISTEN_REGEX_NAME) makes the name a regex, bit 2 (OS_LISTEN_REGEX_MESSAGE) the message; the caller has validated them.</summary>
+        /// <summary>osListenRegex - bit 1 (OS_LISTEN_REGEX_NAME) makes the name a regex, bit 2 (OS_LISTEN_REGEX_MESSAGE) the message; the caller has validated them.</summary>
         public int Add(uint localID, UUID itemID, UUID hostID,
                        int channel, string name, UUID key, string msg, int regexBitfield)
         {
@@ -253,7 +253,7 @@ namespace Phlox.ScriptEngine
             }
         }
 
-        /// <summary>PHLOX-21b B: is this listen registered and active? Null if it is not registered.</summary>
+        /// <summary>Is this listen registered and active? Null if it is not registered.</summary>
         internal bool? IsActive(UUID itemID, int handle)
         {
             lock (m_Lock)
@@ -286,7 +286,7 @@ namespace Phlox.ScriptEngine
             }
         }
 
-        /// <summary>PHLOX-46: the script is unloaded - its listens and its listen-rate record go (the record was never freed).</summary>
+        /// <summary>The script is unloaded - its listens and its listen-rate record go (the record was never freed).</summary>
         public void Forget(UUID itemID)
         {
             lock (m_Lock)
@@ -296,7 +296,7 @@ namespace Phlox.ScriptEngine
             }
         }
 
-        /// <summary>PHLOX-46: scripts with a listen, and scripts with a rate record (tests and the leak check).</summary>
+        /// <summary>Scripts with a listen, and scripts with a rate record (tests and the leak check).</summary>
         internal int ScriptsWithListens { get { lock (m_Lock) return m_ByItem.Count; } }
         internal int RateRecords { get { lock (m_Lock) return m_RateTracker.Count; } }
 
@@ -440,9 +440,9 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-21: an osListenRegex filter that times out (ScriptRegex.MatchTimeout) does not match,
+        /// An osListenRegex filter that times out (ScriptRegex.MatchTimeout) does not match,
         /// and delivery to every other listener carries on.
-        /// PHLOX-21b B: it also switches the listener off, exactly as llListenControl(handle, FALSE)
+        /// It also switches the listener off, exactly as llListenControl(handle, FALSE)
         /// would, so the pattern cannot cost a timeout on every later line of the channel. The owner
         /// is told once on DEBUG_CHANNEL and the region logs it once; llListenControl(handle, TRUE)
         /// turns it back on.

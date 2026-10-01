@@ -4,7 +4,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-63, HALCYON-DIFF D7 ruled (c): "Accept &lt;&lt;= and &gt;&gt;= as an extension; quaternion stays a type."
+/// The rule: accept &lt;&lt;= and &gt;&gt;= as an extension; quaternion stays a type.
 /// Halcyon compiled them for integers only (templates iilsa / iirsa): x &lt;&lt;= n is x = x &lt;&lt; n, and the result is
 /// an integer. Both the statement form and the assignment expression, at the assignment operators' level (right
 /// associative, below every other operator). Every other operand type stays a compile error with the type-mismatch
@@ -117,7 +117,7 @@ public class ShiftAssignTests
         Assert.Equal(new[] { "8", "10" }, r.Said);
     }
 
-    /// <summary>What D7 rules out: anything but integer &lt;&lt;= integer is still a compile error, saying why.</summary>
+    /// <summary>What stays an error: anything but integer &lt;&lt;= integer is still a compile error, saying why.</summary>
     [Theory]
     [InlineData("float f = 1.0; f <<= 1;", "<<=", "float and integer")]
     [InlineData("float f = 8.0; f >>= 1;", ">>=", "float and integer")]

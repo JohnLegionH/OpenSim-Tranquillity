@@ -16,13 +16,13 @@ using PermissionMask = OpenSim.Framework.PermissionMask;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-61 script data fixes, each against its source (work folder phlox-61/STATE.md):
-/// 1. a whole number stored into a vector or rotation part (old tree ea5028f1ef, its two tests ported);
-/// 2. SL's list and string range rule (C10) for llList2List, llDeleteSubList, llGetSubString, llDeleteSubString,
+/// Script data fixes, each against its source:
+/// 1. a whole number stored into a vector or rotation part (from an earlier tree, its two tests ported);
+/// 2. SL's list and string range rule for llList2List, llDeleteSubList, llGetSubString, llDeleteSubString,
 ///    llListReplaceList, llList2ListStrided, including start past the end (it threw);
 /// 3. (integer), llFloor, llCeil, llRound of NaN, infinities and out-of-range floats give -2147483648 (SL);
-/// 4. PRIM_TEXTURE by the name of a texture in the script's prim (C9);
-/// 5. PRIM_BUMP_SHINY's shininess, set and read (C9).
+/// 4. PRIM_TEXTURE by the name of a texture in the script's prim;
+/// 5. PRIM_BUMP_SHINY's shininess, set and read.
 /// Each test builds its own harness or interpreter and touches no process-wide state, so the class runs in parallel.
 /// No network: the harness scene is in-process.
 /// </summary>
@@ -44,7 +44,7 @@ public class ScriptDataFixesTests
         return i;
     }
 
-    /// <summary>Ported from the old tree's Subscript.cs TestSubscriptIntCoercion (ea5028f1ef).</summary>
+    /// <summary>Ported from an earlier tree's Subscript.cs TestSubscriptIntCoercion.</summary>
     [Fact]
     public void SubscriptIntCoercion()
     {
@@ -68,7 +68,7 @@ public class ScriptDataFixesTests
         Assert.Equal(1.2f, v.Y, 4);
     }
 
-    /// <summary>Ported from the old tree's Subscript.cs TestRotationSubscriptIntCoercion (ea5028f1ef).</summary>
+    /// <summary>Ported from an earlier tree's Subscript.cs TestRotationSubscriptIntCoercion.</summary>
     [Fact]
     public void RotationSubscriptIntCoercion()
     {
@@ -323,7 +323,7 @@ public class ScriptDataFixesTests
         llOwnerSay((string)(integer)top);
         llOwnerSay((string)(integer)(-top));
         llOwnerSay((string)(integer)-1.9);");
-        // Factors of at most 7 digits: a longer float literal loses digits at compile time (reported in PHLOX-61, not
+        // Factors of at most 7 digits: a longer float literal loses digits at compile time (a known limit, not
         // changed here), which would test the constant rather than the cast.
         _out.WriteLine(r.Describe());
         Assert.True(r.Ok, r.Describe());
@@ -407,10 +407,10 @@ public class ScriptDataFixesTests
         Assert.Equal(TexAsset, child.Shape.Textures.GetFace(0).TextureID);
         string[] own = Line(h, "own").Split('|');
         string[] link = Line(h, "link").Split('|');
-        // PHLOX-49's read rule: a texture in the script's prim reads back as its name.
+        // The read rule: a texture in the script's prim reads back as its name.
         Assert.Equal("brick", own[0]);
         Assert.Equal("brick", link[0]);
-        Assert.StartsWith("<2.000000, 3.000000,", own[1]);   // PHLOX-65: llDumpList2String writes SL's 6 decimals
+        Assert.StartsWith("<2.000000, 3.000000,", own[1]);   // llDumpList2String writes SL's 6 decimals
         Assert.StartsWith("<4.000000, 5.000000,", link[1]);
     }
 
@@ -428,7 +428,7 @@ public class ScriptDataFixesTests
         var f = h.Prim.Shape.Textures.GetFace(0);
         Assert.Equal(OldTex, f.TextureID);   // not blanked, not the notecard's asset
         Assert.Equal(3f, f.RepeatU);          // the rest of the rule still applied
-        Assert.StartsWith("<2.000000, 2.000000,", Line(h, "a").Split('|')[1]);   // PHLOX-65: SL's 6 decimals
+        Assert.StartsWith("<2.000000, 2.000000,", Line(h, "a").Split('|')[1]);   // SL's 6 decimals
     }
 
     [Fact]

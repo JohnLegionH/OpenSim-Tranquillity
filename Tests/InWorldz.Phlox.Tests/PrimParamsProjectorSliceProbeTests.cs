@@ -14,7 +14,7 @@ using LSL_List = OpenSim.Region.ScriptEngine.Shared.LSL_Types.list;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-38. PRIM_SLICE, PRIM_PROJECTOR, the IW_PRIM_PROJECTOR rules, PRIM_REFLECTION_PROBE and OpenSim's
+/// PRIM_SLICE, PRIM_PROJECTOR, the IW_PRIM_PROJECTOR rules, PRIM_REFLECTION_PROBE and OpenSim's
 /// PRIM_PHYSICS_MATERIAL set and read back against the scene state each one uses (the shape's PathBegin / PathEnd or
 /// ProfileBegin / ProfileEnd, its Projection* fields, its ReflectionProbe, the part's Density / Friction / Restitution /
 /// GravityModifier and the physics actor); their value counts in a long list; the error cases; what a YEngine script's
@@ -766,7 +766,7 @@ public class PrimParamsProjectorSliceProbeTests
         // SL: "In an attached object, returns region rotation of avatar NOT of the object's root prim."
         var root = Line(h, "root=").Split('|');
         Near(wearerRot, root[0]);
-        Near(wearerRot, root[1]);           // the same read as llGetRot on the root (PHLOX-35)
+        Near(wearerRot, root[1]);           // the same read as llGetRot on the root
         Near(wearerRot, Line(h, "child="));
     }
 

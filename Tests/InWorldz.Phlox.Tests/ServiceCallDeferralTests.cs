@@ -38,7 +38,7 @@ public class DelayProxy<T> : DispatchProxy where T : class
 }
 
 /// <summary>
-/// B2. Syscalls that can reach a service run on the region's service lane, not inline on its
+/// Syscalls that can reach a service run on the region's service lane, not inline on its
 /// scheduler thread; the value a script receives is unchanged, only when it receives it.
 /// </summary>
 public class ServiceCallDeferralTests
@@ -130,7 +130,7 @@ default
         Assert.True(ticks >= 15, $"B ticked only {ticks} times while A waited");
     }
 
-    /// <summary>The same scenario with deferral off (the pre-B2 behaviour): the region stops dead.</summary>
+    /// <summary>The same scenario with deferral off (everything inline): the region stops dead.</summary>
     [Fact]
     public void WithDeferralOffTheWholeRegionStopsForTheCall()
     {

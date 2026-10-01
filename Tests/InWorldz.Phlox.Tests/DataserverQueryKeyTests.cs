@@ -7,12 +7,12 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-21 part F (C-5). The key a dataserver request returns is the key its dataserver event
+/// The key a dataserver request returns is the key its dataserver event
 /// carries - that is how a script matches the answer to the question
 /// (https://wiki.secondlife.com/wiki/Dataserver). Each request here is used as an expression and
 /// compared with the event's key.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class DataserverQueryKeyTests
 {
     private readonly ITestOutputHelper _out;
@@ -24,7 +24,7 @@ public class DataserverQueryKeyTests
         var client = h.AddClient();
         h.RezScript("key q; default { state_entry() { q = " + request(client) + "; llSay(0, \"asked \" + (string)q); } " +
                     "dataserver(key id, string d) { llSay(0, \"answer match=\" + (string)(id == q) + \" data=\" + d); } }");
-        // PHLOX-55: wait for the answer (up to 30 s), not a fixed 3 s; under a full parallel run the script had not yet
+        // Wait for the answer (up to 30 s), not a fixed 3 s; under a full parallel run the script had not yet
         // spoken once when the window ended.
         var until = DateTime.UtcNow.AddSeconds(30);
         while (!h.Said.Any(s => s.StartsWith("answer ")) && DateTime.UtcNow < until)

@@ -15,7 +15,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// DRAW-1: what a dynamic texture actually contains. PHLOX-18 pinned a new texture id on the face; in world, the
+/// What a dynamic texture actually contains. The earlier tests pinned a new texture id on the face; in world, the
 /// same draw list gave a flat grey prim. This renders that draw list through the real modules, takes the
 /// J2K bytes the face now points at, decodes them the way the sim itself decodes textures (CoreJ2K), and
 /// asserts pixels: red where the text is, the upstream default white background elsewhere.
@@ -73,10 +73,10 @@ public class OsslDrawPixelTests
                        $"p(30,30)={bmp.GetPixel(30, 30)} p(200,200)={bmp.GetPixel(200, 200)} redPixels={reds} redBox={box}");
 
         Assert.Equal(256, bmp.Width);
-        Assert.StartsWith("FF-4F-FF-51", magic);   // DRAW-1: a raw J2K codestream (SOC, SIZ), not a JP2 signature box
+        Assert.StartsWith("FF-4F-FF-51", magic);   // A raw J2K codestream (SOC, SIZ), not a JP2 signature box
         Assert.True(IsWhite(bmp.GetPixel(200, 200)), "background at (200,200) is not white: " + bmp.GetPixel(200, 200));
         Assert.True(reds > 50, "no red text pixels at all: the font or the pen never drew");
-        Assert.True(box.Top >= 18, "the text sits above the pen position (Skia baseline semantics), red box " + box);   // DRAW-1: pen = top-left, as GDI
+        Assert.True(box.Top >= 18, "the text sits above the pen position (Skia baseline semantics), red box " + box);   // Pen = top-left, as GDI
         Assert.True(RedNear(bmp, 30, 30), "no red within 3 px of (30,30): " + bmp.GetPixel(30, 30) + " (red box " + box + ")");
     }
 
@@ -103,7 +103,7 @@ public class OsslDrawPixelTests
                            $"p(30,30)={bmp.GetPixel(30, 30)} p(200,200)={bmp.GetPixel(200, 200)} redPixels={reds} redBox={box}");
 
             Assert.Equal((sbyte)AssetType.Texture, asset.Type);
-            Assert.StartsWith("FF-4F-FF-51", magic);   // DRAW-1: a raw J2K codestream, which is what the viewer's OPJ_CODEC_J2K decoder reads
+            Assert.StartsWith("FF-4F-FF-51", magic);   // A raw J2K codestream, which is what the viewer's OPJ_CODEC_J2K decoder reads
             Assert.True(IsWhite(bmp.GetPixel(200, 200)), "background at (200,200) is not white: " + bmp.GetPixel(200, 200));
             Assert.True(box.Top >= 18, "the text sits above the pen position, red box " + box);
             Assert.True(RedNear(bmp, 30, 30), "no red within 3 px of (30,30): " + bmp.GetPixel(30, 30) + " (red box " + box + ")");

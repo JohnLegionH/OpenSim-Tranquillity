@@ -14,7 +14,7 @@ namespace InWorldz.Phlox.Tests;
 /// per rule; PRIM_PHYSICS, PRIM_PHANTOM and PRIM_TEMP_ON_REZ set the whole object's flags, even through a child
 /// link, and read them back.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class PrimParamsPositionRotationFlagsTests
 {
     private readonly ITestOutputHelper _out;
@@ -285,7 +285,7 @@ public class PrimParamsPositionRotationFlagsTests
         Assert.Equal("0|0|0|0|0|0", Line(h, "after="));
     }
 
-    // ── A long list mixing them with PHLOX-33's rules ─────────────────────────
+    // ── A long list mixing them with other rules ───────────────────────────────
 
     [Fact]
     public void ALongListMixingTheseRulesWithOthersAppliesEveryRule()

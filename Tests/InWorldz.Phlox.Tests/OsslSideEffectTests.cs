@@ -9,7 +9,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-15: the OSSL side-effect family (osSet*, osForce*, sound, links, attachments, misc), each ported from
+/// The OSSL side-effect family (osSet*, osForce*, sound, links, attachments, misc), each ported from
 /// OSSL_Api.cs under its upstream threat level through OsslGate. One dispatch test per group with an assertion on
 /// the scene, not on what the script said about itself.
 /// </summary>

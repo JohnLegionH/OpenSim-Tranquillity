@@ -5,10 +5,10 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-2e. Does a script instance actually run?
+/// Does a script instance actually run?
 ///
 /// <para>
-/// A build carrying PHLOX-2d's fix — a fresh script is left <c>Waiting</c> so
+/// A build carrying the fresh-start fix — a fresh script is left <c>Waiting</c> so
 /// <c>ProcessEventQueue</c> starts its <c>state_entry</c> — changed nothing in world: a fresh
 /// prim with the default New Script logged <c>Starting shared script 2074003b</c> and
 /// then said nothing. So the question this file exists to answer is whether the scheduler runs a
@@ -21,7 +21,7 @@ namespace InWorldz.Phlox.Tests;
 /// A green run here is a real result, not a failure of the test.
 /// </para>
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class FreshInstanceExecutionTests
 {
     private readonly ITestOutputHelper _out;

@@ -72,7 +72,7 @@ namespace InWorldz.Phlox.SLua
             }
             catch (InWorldz.Phlox.Compiler.NestingTooDeepException e)
             {
-                // PHLOX-21: nesting deeper than the stack can walk is a compile error, not a crash.
+                // Nesting deeper than the stack can walk is a compile error, not a crash.
                 if (listener != null) listener.Error(string.Format("SLua: {0} (line {1})", e.Message, e.Line));
                 return null;
             }
@@ -307,7 +307,7 @@ namespace InWorldz.Phlox.SLua
 
         public SLuaParser(List<Tok> toks) { _t = toks; }
 
-        // PHLOX-22 A: the counted nesting limits (NestingLimits) - expressions in ParseUnary and the '..' chain,
+        // The counted nesting limits (NestingLimits) - expressions in ParseUnary and the '..' chain,
         // blocks in ParseBlock (every then/else/loop/function body), else-if chains per 'elseif' link. The stack
         // guard (DepthGuard) stays as the backstop.
         private readonly InWorldz.Phlox.Compiler.NestingCounter _nest = new InWorldz.Phlox.Compiler.NestingCounter();
@@ -615,7 +615,7 @@ namespace InWorldz.Phlox.SLua
             return new IfStmt { Cond = cond, Then = then, Else = els, Line = line };
         }
 
-        /// <summary>PHLOX-22 A: one more link of an else-if chain (its own limit, not a block).</summary>
+        /// <summary>One more link of an else-if chain (its own limit, not a block).</summary>
         private Stmt ParseElseIfLink()
         {
             Nest(InWorldz.Phlox.Compiler.NestingKind.ElseIfChain);
@@ -690,7 +690,7 @@ namespace InWorldz.Phlox.SLua
             if (IsOp(".."))   // right-associative
             {
                 Eat();
-                Nest(InWorldz.Phlox.Compiler.NestingKind.Expression);   // PHLOX-22 A: each '..' link is a level
+                Nest(InWorldz.Phlox.Compiler.NestingKind.Expression);   // Each '..' link is a level
                 Expr r;
                 try { r = ParseConcat(); }
                 finally { Unnest(InWorldz.Phlox.Compiler.NestingKind.Expression); }
@@ -723,7 +723,7 @@ namespace InWorldz.Phlox.SLua
             return l;
         }
 
-        /// <summary>PHLOX-22 A: every expression level passes through here once (see NestingCounter).</summary>
+        /// <summary>Every expression level passes through here once (see NestingCounter).</summary>
         private Expr ParseUnary()
         {
             Nest(InWorldz.Phlox.Compiler.NestingKind.Expression);
@@ -1100,7 +1100,7 @@ namespace InWorldz.Phlox.SLua
         }
         private static void ScanStmtForNested(Stmt s, HashSet<string> names)
         {
-            InWorldz.Phlox.Compiler.DepthGuard.Check(s?.Line ?? 0, 0);   // PHLOX-21
+            InWorldz.Phlox.Compiler.DepthGuard.Check(s?.Line ?? 0, 0);
             switch (s)
             {
                 case LocalDecl ld: ScanExprForNested(ld.Init, names); break;
@@ -1121,7 +1121,7 @@ namespace InWorldz.Phlox.SLua
         }
         private static void ScanExprForNested(Expr e, HashSet<string> names)
         {
-            InWorldz.Phlox.Compiler.DepthGuard.Check(e?.Line ?? 0, 0);   // PHLOX-21
+            InWorldz.Phlox.Compiler.DepthGuard.Check(e?.Line ?? 0, 0);
             switch (e)
             {
                 case FuncExpr fe: AllNamesList(fe.Body, names); break;
@@ -1144,7 +1144,7 @@ namespace InWorldz.Phlox.SLua
         private static void AllNamesList(List<Stmt> body, HashSet<string> names) { foreach (var s in body) AllNamesStmt(s, names); }
         private static void AllNamesStmt(Stmt s, HashSet<string> names)
         {
-            InWorldz.Phlox.Compiler.DepthGuard.Check(s?.Line ?? 0, 0);   // PHLOX-21
+            InWorldz.Phlox.Compiler.DepthGuard.Check(s?.Line ?? 0, 0);
             switch (s)
             {
                 case LocalDecl ld: AllNamesExpr(ld.Init, names); break;
@@ -1165,7 +1165,7 @@ namespace InWorldz.Phlox.SLua
         }
         private static void AllNamesExpr(Expr e, HashSet<string> names)
         {
-            InWorldz.Phlox.Compiler.DepthGuard.Check(e?.Line ?? 0, 0);   // PHLOX-21
+            InWorldz.Phlox.Compiler.DepthGuard.Check(e?.Line ?? 0, 0);
             switch (e)
             {
                 case NameRef nr: names.Add(nr.Name); break;
@@ -1191,7 +1191,7 @@ namespace InWorldz.Phlox.SLua
         private static void CollectLLEvents(List<Stmt> body, HashSet<string> evs) { foreach (var s in body) LLEStmt(s, evs); }
         private static void LLEStmt(Stmt s, HashSet<string> evs)
         {
-            InWorldz.Phlox.Compiler.DepthGuard.Check(s?.Line ?? 0, 0);   // PHLOX-21
+            InWorldz.Phlox.Compiler.DepthGuard.Check(s?.Line ?? 0, 0);
             switch (s)
             {
                 case LocalDecl ld: LLEExpr(ld.Init, evs); break;
@@ -1212,7 +1212,7 @@ namespace InWorldz.Phlox.SLua
         }
         private static void LLEExpr(Expr e, HashSet<string> evs)
         {
-            InWorldz.Phlox.Compiler.DepthGuard.Check(e?.Line ?? 0, 0);   // PHLOX-21
+            InWorldz.Phlox.Compiler.DepthGuard.Check(e?.Line ?? 0, 0);
             switch (e)
             {
                 case MethodCall mc:
@@ -1437,7 +1437,7 @@ namespace InWorldz.Phlox.SLua
             int max = 0;
             void Walk(List<Stmt> list)
             {
-                InWorldz.Phlox.Compiler.DepthGuard.Check(list.Count > 0 ? list[0].Line : 0, 0);   // PHLOX-21
+                InWorldz.Phlox.Compiler.DepthGuard.Check(list.Count > 0 ? list[0].Line : 0, 0);
                 foreach (var s in list)
                 {
                     if (s is ReturnStmt r) max = Math.Max(max, r.Values.Count);
@@ -1493,7 +1493,7 @@ namespace InWorldz.Phlox.SLua
 
         private void EmitStmt(Stmt s)
         {
-            InWorldz.Phlox.Compiler.DepthGuard.Check(s?.Line ?? 0, 0);   // PHLOX-21
+            InWorldz.Phlox.Compiler.DepthGuard.Check(s?.Line ?? 0, 0);
             switch (s)
             {
                 case LocalDecl ld:
@@ -1888,7 +1888,7 @@ namespace InWorldz.Phlox.SLua
         // ---- expressions ----
         private VarType EmitExpr(Expr e)
         {
-            InWorldz.Phlox.Compiler.DepthGuard.Check(e?.Line ?? 0, 0);   // PHLOX-21
+            InWorldz.Phlox.Compiler.DepthGuard.Check(e?.Line ?? 0, 0);
             switch (e)
             {
                 case NumberLit n:

@@ -9,7 +9,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-22 C. The script editor's Save goes Scene.CapsUpdateTaskInventoryScriptAsset ->
+/// The script editor's Save goes Scene.CapsUpdateTaskInventoryScriptAsset ->
 /// SceneObjectPartInventory.CreateScriptInstanceEr, which asks every engine's GetScriptErrors for the item just
 /// rezzed and returns the list to the viewer (compiled = list empty). Phlox answered an empty list at once, so the
 /// viewer said "compiled" for any script. It now waits for that item's compile, as YEngine does, and answers

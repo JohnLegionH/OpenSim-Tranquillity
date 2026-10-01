@@ -25,7 +25,7 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// Ported from Halcyon/InWorldz to Legion Grid (dotnet10-modernization)
+// Ported from Halcyon/InWorldz to this engine
 
 using System;
 using System.Collections.Generic;
@@ -108,7 +108,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
         }
 
         /// <summary>
-        /// CORE-6: remote_data goes to the one script it is for. The core's XML-RPC module is shared by every region and
+        /// remote_data goes to the one script it is for. The core's XML-RPC module is shared by every region and
         /// drained by every engine's pump, so this pump can take a request for a script another engine, or another
         /// region's Phlox, runs. Phlox's PostScriptEvent says yes to any item, so it is asked whether it runs the script;
         /// if not, each other script engine of the regions is offered it once (the core's pump,
@@ -138,7 +138,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
         }
 
         /// <summary>
-        /// PHLOX-46: the script is removed. Its channels close and its llSendRemoteData requests are cancelled (Halcyon
+        /// The script is removed. Its channels close and its llSendRemoteData requests are cancelled (Halcyon
         /// AsyncCommandManager.RemoveScript: xmlrpc.DeleteChannels(itemID); xmlrpc.CancelSRDRequests(itemID)). Not called
         /// on a reset or a state change: Halcyon's XmlRequestPlugin.RemoveEvents did nothing there, SL says nothing, and a
         /// reset script that opens its channel again gets the same one.

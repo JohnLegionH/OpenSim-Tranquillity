@@ -1,12 +1,12 @@
 /*
- * PHLOX-56 (HALCYON-DIFF D1). Two small pieces of Halcyon the anti-abuse slowdowns need.
+ * Two small pieces of Halcyon the anti-abuse slowdowns need.
  *
  * PhloxNotecardCache is Halcyon's NotecardCache (InWorldz.Phlox.Engine/LSLSystemAPI.cs:18541-18727): parsed notecards
  * by asset id, so repeated reads of one notecard are answered from memory instead of an asset fetch each. As Halcyon's:
  * an entry is refreshed by every read of it, IsCached does not look at age, and CacheCheck - run on every read that
  * missed the cache - drops the entries not read for more than NOTECARD_CACHE_TIMEOUT (60 s). Unlike Halcyon's (one
  * static cache per process), there is one per region's engine. It holds the lines Phlox already parsed a notecard into
- * before PHLOX-56 (LSLSystemAPI.StripNotecardHeader, split on '\n'), so a cached read answers exactly what a fetch does.
+ * without a cache (LSLSystemAPI.StripNotecardHeader, split on '\n'), so a cached read answers exactly what a fetch does.
  * Asset ids are content addresses: a notecard saved with new text gets a new asset id, so an entry never goes stale.
  *
  * MovingIntegerAverage is Halcyon's (OpenSim/Framework MovingIntegerAverage): the last n values, averaged with integer

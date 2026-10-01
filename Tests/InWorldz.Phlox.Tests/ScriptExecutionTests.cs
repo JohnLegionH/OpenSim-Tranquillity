@@ -5,7 +5,7 @@ using InWorldz.Phlox.VM;
 using Xunit;
 namespace InWorldz.Phlox.Tests;
 /// <summary>
-/// PHLOX-2d. Everything before this ran the compiler; nothing ran a script. In world the manhole
+/// Everything before this ran the compiler; nothing ran a script. In world the manhole
 /// compiled and then did nothing — no <c>state_entry</c>, no error — and the suite could not say
 /// whether compiled bytecode still executes.
 ///
@@ -76,7 +76,7 @@ public class RecordingSystemApi : DispatchProxy
     {
         _calls.Add(targetMethod.Name + "(" + string.Join(", ", args ?? Array.Empty<object>()) + ")");
         var rt = targetMethod.ReturnType;
-        // PHLOX-5: a null string or list pushed onto the operand stack throws in SafeOperandsPush,
+        // A null string or list pushed onto the operand stack throws in SafeOperandsPush,
         // and the aborted syscall is then re-dispatched - which recorded every non-void call twice
         // and made llGetKey() unusable in a recorded script. Empty values are what a script would
         // get from a quiet API, and they keep the VM on its rails.
@@ -86,7 +86,7 @@ public class RecordingSystemApi : DispatchProxy
     }
 }
 /// <summary>
-/// PHLOX-2d. The start path, pinned at source level because constructing the scheduler needs a
+/// The start path, pinned at source level because constructing the scheduler needs a
 /// Scene and a prim. The defect was not in dispatch — <see cref="ScriptExecutionTests"/> shows a
 /// compiled script's state_entry reaching the API — it was that a freshly started script was set
 /// Running before its state_entry was posted, and ProcessEventQueue only STARTS an event for a

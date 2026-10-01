@@ -16,12 +16,12 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-14. osNpc* is a second door onto BotManager's bots, not a second NPC system: an osNpcCreate'd
+/// osNpc* is a second door onto BotManager's bots, not a second NPC system: an osNpcCreate'd
 /// NPC is a bot (botGetBotsWithTag sees it, botIsBot says so), one BotData per NPC. The scene is the
 /// one upstream's NPCModuleTests builds (AvatarFactory, UserManagement, Attachments, NPCModule,
 /// BasicInventoryAccess) plus BotManager, with [NPC] Enabled and the OSSL level at High.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class OsslNpcTests
 {
     private readonly ITestOutputHelper _out;

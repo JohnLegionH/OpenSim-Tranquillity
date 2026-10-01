@@ -3,7 +3,7 @@ using System;
 namespace InWorldz.Phlox.Util
 {
     /// <summary>
-    /// PHLOX-61. Float to integer as LSL does it. SL wiki (Typecast): "Typecasting from a float to an integer merely
+    /// Float to integer as LSL does it. SL wiki (Typecast): "Typecasting from a float to an integer merely
     /// removes the portion of the number following the decimal point"; (llFloor): "The returned value is -2147483648
     /// (0x80000000) if the arithmetic result is outside of the range of valid integers (-2147483648 to 2147483647
     /// inclusive)". NaN gives -2147483648 too, as SL and Halcyon (.NET Framework x64 cvttss2si) do. A plain C# cast

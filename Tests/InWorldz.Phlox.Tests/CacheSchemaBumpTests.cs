@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-42: the bytecode cache schema was bumped because 17 IW_POWER_* constants changed value and cached bytecode
+/// The bytecode cache schema was bumped because 17 IW_POWER_* constants changed value and cached bytecode
 /// still carries the old -1. A bump purges the cached .plx files (PhloxScriptLoader.EnsureCacheSchemaVersion); each
 /// script is then compiled again from its source and its saved state is restored onto the new bytecode by
 /// SerializedRuntimeState.ToRuntimeStateFor: globals, LSL state, queue, timers and listens are kept; an in-progress
@@ -17,7 +17,7 @@ namespace InWorldz.Phlox.Tests;
 [Collection("phlox-state")]
 public class CacheSchemaBumpTests
 {
-    // The loader's relative paths (PhloxScriptLoader.CACHE_DIR and its stamp). PHLOX-54: harnesses get a folder per test
+    // The loader's relative paths (PhloxScriptLoader.CACHE_DIR and its stamp). Harnesses get a folder per test
     // class; this class deliberately keeps the production folder (its engines are built with it), which is why it stays
     // in "phlox-state" and runs alone.
     private const string CacheDir = SchedulerHarness.ProductionBytecodeDir;
@@ -106,7 +106,7 @@ public class CacheSchemaBumpTests
         Assert.True(File.Exists(CachePath(assetId)), "the recompiled bytecode was not cached");
     }
 
-    // PHLOX-63 (schema 4 -> 5): float literals keep their exact value now. The schema-4 compiler wrote 2147483520.0 as
+    // Schema 4 -> 5: float literals keep their exact value now. The schema-4 compiler wrote 2147483520.0 as
     // "2147484000.0", which the assembler read as 2147483904 - so that is what the old bytecode holds.
     private const string FloatStateScript =
         "float big = 2147483520.0;\n" +

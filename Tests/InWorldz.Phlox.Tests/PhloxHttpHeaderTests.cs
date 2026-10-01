@@ -13,13 +13,13 @@ using Xunit;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-47 (HALCYON-DIFF S11): llHTTPRequest sends the simulator's X-SecondLife-* headers and a script cannot forge,
+/// llHTTPRequest sends the simulator's X-SecondLife-* headers and a script cannot forge,
 /// replace or remove them. Halcyon ScriptsHttpRequests.ScriptCanChangeHeader refuses "x-secondlife*" (any letter case);
 /// SL llHTTPRequest: "Use HTTP_MIMETYPE to set the Content-Type header. Attempts to use HTTP_CUSTOM_HEADER to set it will
 /// cause a runtime script error." What is checked is what the core's HttpRequestModule actually puts on the wire, read
 /// by a loopback listener, not the script's view.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state". PHLOX-51: in "phlox-http" with PhloxOutboundFilterTests: both build the core
+// No longer in "phlox-state". In "phlox-http" with PhloxOutboundFilterTests: both build the core
 // HttpRequestModule, whose outbound URL filter is process-wide.
 [Collection("phlox-http")]
 public class PhloxHttpHeaderTests
@@ -112,7 +112,7 @@ public class PhloxHttpHeaderTests
 
         public Rig()
         {
-            // PHLOX-51: the listener is on loopback, which the outbound filter refuses by default; this Except entry
+            // The listener is on loopback, which the outbound filter refuses by default; this Except entry
             // lets these requests through as an operator's would.
             H = new SchedulerHarness(cfg =>
             {
@@ -287,8 +287,8 @@ public class PhloxHttpHeaderTests
     public void ALineBreakInTheMimeTypeCannotAddATrustedHeader()
     {
         using var r = new Rig();
-        // The core writes the MIME type as the Content-Type line; before PHLOX-47 this sent a second header line
-        // "X-SecondLife-Owner-Key: forged-by-script". Refused: an error and no request. PHLOX-54: YEngine's error and
+        // The core writes the MIME type as the Content-Type line; unchecked, this sent a second header line
+        // "X-SecondLife-Owner-Key: forged-by-script". Refused: an error and no request. YEngine's error and
         // result (was "Script error: ... without a line break." and NULL_KEY).
         string head = r.Request("[HTTP_METHOD, \"POST\", HTTP_MIMETYPE, \"text/plain\" + llUnescapeURL(\"%0D%0A\") + \"X-SecondLife-Owner-Key: forged-by-script\"]",
                                 expectSent: false);
@@ -299,11 +299,11 @@ public class PhloxHttpHeaderTests
 
     private const int DebugChannel = 2147483647;
 
-    /// <summary>PHLOX-54: YEngine's text for an invalid HTTP_MIMETYPE (LSL_Api.llHTTPRequest, "command: message").</summary>
+    /// <summary>YEngine's text for an invalid HTTP_MIMETYPE (LSL_Api.llHTTPRequest, "command: message").</summary>
     internal const string MimeTypeRefused = "llHTTPRequest: HTTP_MIMETYPE is not a valid media type";
 
     /// <summary>
-    /// PHLOX-54: every value HttpRequestMimeType.IsValid refuses is refused by Phlox itself, with YEngine's result: its
+    /// Every value HttpRequestMimeType.IsValid refuses is refused by Phlox itself, with YEngine's result: its
     /// text on DEBUG_CHANNEL, "" to the script (not NULL_KEY), no "Script error", and nothing on the wire. Before, a
     /// value without a line break went to the core, which refused it silently: NULL_KEY and no message.
     /// </summary>
@@ -324,7 +324,7 @@ public class PhloxHttpHeaderTests
         Assert.DoesNotContain(r.H.Said, s => s.StartsWith("Script error") || s.StartsWith("status="));
     }
 
-    /// <summary>PHLOX-54: a media type with parameters is still sent, as the Content-Type line, exactly as given.</summary>
+    /// <summary>A media type with parameters is still sent, as the Content-Type line, exactly as given.</summary>
     [Theory]
     [InlineData("text/plain;charset=utf-8")]
     [InlineData("text/plain; charset=utf-8")]

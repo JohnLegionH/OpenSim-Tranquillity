@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-4. A script saved mid-flight does not resume where it stopped.
+/// A script saved mid-flight does not resume where it stopped.
 ///
 /// <para>
 /// <c>PhloxExecutionScheduler.FinishedLoading</c> restores the whole saved <c>RuntimeState</c> — RunState,
@@ -31,11 +31,11 @@ namespace InWorldz.Phlox.Tests;
 ///
 /// <para>
 /// <b>They share one SQLite file</b> (<c>StateManager.DB_FILE</c> is a fixed relative path), so they are
-/// one xUnit collection and must not run beside each other. That shared file is also worth noting
-/// against PHLOX-3 candidate (iv): it is more global state reachable from a harness test.
+/// one xUnit collection and must not run beside each other. That shared file is also worth noting:
+/// it is more global state reachable from a harness test.
 /// </para>
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class RestoredScriptResumeTests
 {
     private readonly ITestOutputHelper _out;
@@ -77,7 +77,7 @@ public class RestoredScriptResumeTests
         return (before, stateAtCapture);
     }
 
-    /// <summary>PHLOX-4c: the index as the second engine left it once the handler finished.</summary>
+    /// <summary>The index as the second engine left it once the handler finished.</summary>
     private int m_lastIndexAfter = int.MinValue;
 
     private const string SleepScript =
@@ -107,7 +107,7 @@ public class RestoredScriptResumeTests
         // re-run of state_entry would show up as "a" appearing again; it must not.
         Assert.DoesNotContain("a", after);
         Assert.Equal(1, after.Count(s => s == "b"));
-        // PHLOX-4c: LastSyscallIndex means 'the syscall I am parked in'. The handler has finished,
+        // LastSyscallIndex means 'the syscall I am parked in'. The handler has finished,
         // so the script is parked in nothing, and a state saved now must not carry llSleep's index.
         Assert.Equal(-1, m_lastIndexAfter);
     }
@@ -120,7 +120,7 @@ public class RestoredScriptResumeTests
     /// never finishes the loop and "done" never arrives.
     /// </summary>
     /// <summary>
-    /// PHLOX-4b PART 1. Un-skipped and instrumented: three probes that say WHY a restored Running
+    /// Un-skipped and instrumented: three probes that say WHY a restored Running
     /// script does not finish, before anything in the engine is touched.
     /// </summary>
     [Fact]
@@ -133,7 +133,7 @@ public class RestoredScriptResumeTests
         using (var h1 = new SchedulerHarness())
         {
             h1.RezScript(CountingScript, assetId, itemId);
-            // PHLOX-22 B: the compile runs on the loader's compile thread, so the pass that starts the script (and
+            // The compile runs on the loader's compile thread, so the pass that starts the script (and
             // gives it its first timeslice) is a later one, not the first.
             var started = DateTime.UtcNow.AddSeconds(30);
             do { h1.PumpOnce(); } while (h1.InterpreterFor(itemId) == null && DateTime.UtcNow < started);
@@ -203,9 +203,9 @@ public class RestoredScriptResumeTests
 }
 
 /// <summary>
-/// PHLOX-4: one collection, so the tests that share the single script_state.db file cannot run beside
+/// One collection, so the tests that share the single script_state.db file cannot run beside
 /// each other or beside anything else that builds an engine.
-/// PHLOX-50: it runs alone, after every other collection. Only the classes that need that are in it:
+/// It runs alone, after every other collection. Only the classes that need that are in it:
 /// - process-wide test seams every engine reads: Clock.SetSourceForTesting (ClockBasisTests, RemainingStubTests),
 ///   StateManager.FailLoadForTest (StateLoadFailedHoldTests), PhloxScriptLoader.CompileDelayForTest / ErrorWaitTimeout /
 ///   OwnerAlertGrace (CompileOffSchedulerTests, CompileErrorsToEditorTests), SyscallShim.ThrowForTest
@@ -216,19 +216,19 @@ public class RestoredScriptResumeTests
 ///   (NoScriptParcelTests), ticks counted while a lookup is held (AvatarName2KeyTests).
 /// Every other class builds its own harness (its own Scene and engine) and runs in parallel:
 /// - script_state.db rows are keyed by item id and every test makes its own random ids; engines sharing the file side
-///   by side is the PHLOX-11 design (WAL, busy timeout, one static writer lock), and 13 harness classes already ran in
-///   parallel before PHLOX-50;
+///   by side is the state store's design (WAL, busy timeout, one static writer lock), and 13 harness classes ran in
+///   parallel before this class did;
 /// - the core HttpRequestModule's statics are used by one class only (PhloxHttpHeaderTests), which runs its own tests
 ///   one at a time;
 /// - the one process-wide store scenes share, NullPresenceData, is locked on every access and no longer replaced
-///   when a scene is built (core #222), so a scene being built never disturbs another class's avatars (PHLOX-50's
+///   when a scene is built (core #222), so a scene being built never disturbs another class's avatars (the
 ///   first parallel run threw in NullPresenceData.Get before that).
 /// </summary>
 [CollectionDefinition("phlox-state", DisableParallelization = true)]
 public class PhloxStateCollection { }
 
 /// <summary>
-/// PHLOX-50: the classes that stand YEngine up beside Phlox. YEngine keeps compiler state in statics
+/// The classes that stand YEngine up beside Phlox. YEngine keeps compiler state in statics
 /// (MMRScriptBinOpStr, MMRDelegateCommon), so two YEngines never run at once; the collection runs in parallel with
 /// the Phlox-only classes, whose scenes YEngine never sees.
 /// </summary>

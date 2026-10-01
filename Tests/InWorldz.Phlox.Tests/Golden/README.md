@@ -1,6 +1,6 @@
-# iwStringCodec golden vectors (PHLOX-57, HALCYON-DIFF D13)
+# iwStringCodec golden vectors
 
-HALCYON-DIFF D13 ports Halcyon's iwStringCodec and requires byte-for-byte proof. Every file here was produced by
+Phlox ports Halcyon's iwStringCodec, and the port requires byte-for-byte proof. Every file here was produced by
 **Halcyon's own code or by .NET Framework itself** on .NET Framework 4.8.1 (Windows 11, 2026-09-30). Halcyon targets
 .NET Framework 4.7.1, and the generator's entry assembly declares 4.7.1 so the runtime takes the same compatibility
 paths. The tests: `IwStringCodecGoldenTests` and `IwStringCodecTests`.

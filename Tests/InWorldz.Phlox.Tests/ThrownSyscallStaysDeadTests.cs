@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-13 PART 0. An exception escaping a syscall shim terminates the script ONCE. PHLOX-12 saw three
+/// An exception escaping a syscall shim terminates the script ONCE. There used to be three
 /// stops per OSSL denial - the permission error, then "Unable to cast Int32 to String", then "Stack
 /// empty" - because the timeslice's catch marked the script Killed but never took it off the run queue,
 /// so the next pass ticked the dead script again on its torn operand stack. After: one stop, one

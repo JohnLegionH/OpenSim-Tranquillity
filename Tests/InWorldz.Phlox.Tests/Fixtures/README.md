@@ -12,4 +12,4 @@ worthless without the body, so the body is committed.
 
 | file | asset | why it is here |
 |---|---|---|
-| `lmap4.lsl` | `1ee3b9b1-39c7-4f20-a5f3-6dbd79046218` | PHLOX-3a. A four-state lamp from a resident's prim (`lmap4`). Crashed the Phlox compiler with a `NullReferenceException` on every region start. sha256 `d92967d068e5f693ccf5de669659cd3522f672290f54e7005ff4d7c27699f352`. |
+| `lmap4.lsl` | `1ee3b9b1-39c7-4f20-a5f3-6dbd79046218` | A four-state lamp from a resident's prim (`lmap4`). Crashed the Phlox compiler with a `NullReferenceException` on every region start. sha256 `d92967d068e5f693ccf5de669659cd3522f672290f54e7005ff4d7c27699f352`. |

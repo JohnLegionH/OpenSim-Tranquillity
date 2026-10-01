@@ -43,16 +43,16 @@ namespace Phlox.ScriptEngine
         //   3 — compiler correctness fixes (assignments in expressions, +/- and && / || / | & ^
         //       chains, typed constants, statement promotions): bytecode from an earlier compiler
         //       computes the wrong values, so every cached script is recompiled once.
-        //   4 — PHLOX-42: the 17 IW_POWER_* constants for group-power bits 31-48 load as minus their bit
+        //   4 — the 17 IW_POWER_* constants for group-power bits 31-48 load as minus their bit
         //       number (they overflowed to -1); cached bytecode still carries -1. A recompile keeps each
         //       script's saved state (SerializedRuntimeState.ToRuntimeStateFor).
-        //   5 — PHLOX-63, the one recompile: <<= and >>= (D7), SL's Experience key-value form (610-616 return a
+        //   5 — one recompile for three changes: <<= and >>=, SL's Experience key-value form (610-616 return a
         //       request key; the answer arrives in dataserver), and exact float literals (more than 7 significant
         //       digits were rounded). State kept as in 4.
         private const int CACHE_SCHEMA_VERSION = 5;
         private const string VERSION_FILE_NAME = ".schema_version";
 
-        // PHLOX-54: CACHE_DIR and its stamp, unless the engine was given another folder (a test seam; production never
+        // CACHE_DIR and its stamp, unless the engine was given another folder (a test seam; production never
         // sets one, so these are the constants above).
         private readonly string m_CacheDir;
         private readonly string m_VersionFile;
@@ -83,7 +83,7 @@ namespace Phlox.ScriptEngine
 
         private readonly object m_AssetLock = new();
 
-        // ── PHLOX-22 B: compiles run on ONE long-lived "Phlox compile" thread, never on the master scheduler ──
+        // ── Compiles run on ONE long-lived "Phlox compile" thread, never on the master scheduler ──
         // DoWork hands a CompileJob to the thread and returns; the thread posts the finished job to
         // m_FinishedCompiles and wakes the scheduler; a later DoWork starts it. Everything below except the two
         // queues is touched only on the master scheduler thread (DoWork), as the rest of the loader always was.
@@ -152,18 +152,18 @@ namespace Phlox.ScriptEngine
             m_CompileThread.Start();
         }
 
-        // PHLOX-55: every region's engine runs the stamp check when it starts, and on a fresh install several regions
+        // Every region's engine runs the stamp check when it starts, and on a fresh install several regions
         // start at once. One process-wide lock makes them take turns, so one purges and writes the stamp and the rest
         // read it. Held across folders too; the check is a stat, a small read and, once, a purge.
         private static readonly object s_SchemaCheckLock = new object();
 
-        /// <summary>PHLOX-55 test observation: this loader found the stamp old or missing and purged the cache.</summary>
+        /// <summary>Test observation: this loader found the stamp old or missing and purged the cache.</summary>
         internal bool PurgedCache { get; private set; }
 
         /// <summary>
         /// If the on-disk cache was written with an older schema version, wipe it
         /// so stale .plx files don't cause null-ref crashes on deserialize.
-        /// PHLOX-55: the whole check (read, compare, purge, write) is guarded and runs one engine at a time. Any failure,
+        /// The whole check (read, compare, purge, write) is guarded and runs one engine at a time. Any failure,
         /// a stamp that cannot be read included, is logged and the engine starts, as a failed purge always was.
         /// </summary>
         private void EnsureCacheSchemaVersion()
@@ -222,7 +222,7 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-67: the first-line rule gives this item to another engine. Now, on the caller's thread (the editor's
+        /// The first-line rule gives this item to another engine. Now, on the caller's thread (the editor's
         /// GetScriptErrors follows on it): forget its load record, so no query answers with an earlier Phlox outcome,
         /// and drop its loads still queued. Then on the load worker, after any unload posted before this: unload a Phlox
         /// instance if there is one and delete the item's state row, so it is never restored into a later instance.
@@ -251,7 +251,7 @@ namespace Phlox.ScriptEngine
             m_WorkArrived();
         }
 
-        /// <summary>PHLOX-67: is the item's latest load still wanted (false once the item was disowned)?</summary>
+        /// <summary>Is the item's latest load still wanted (false once the item was disowned)?</summary>
         private bool IsOwned(UUID itemID)
         {
             lock (m_Outcomes) return m_LatestSerial.ContainsKey(itemID);
@@ -313,14 +313,14 @@ namespace Phlox.ScriptEngine
 
         private void PerformUnload(PhloxUnloadRequest req)
         {
-            // PHLOX-22 B: a compile of this item still running is now stale.
+            // A compile of this item still running is now stale.
             BumpGeneration(req.ItemID);
             lock (m_PendingOps) m_PendingOps.Remove(req.ItemID);
-            m_ExeScheduler.DropDeferred(req.ItemID);   // PHLOX-46: events held for a load that is now cancelled
+            m_ExeScheduler.DropDeferred(req.ItemID);   // Events held for a load that is now cancelled
             Interpreter script = m_ExeScheduler.FindScript(req.ItemID);
             if (script != null)
                 UnloadScript(req, script);
-            // PHLOX-67: after the unload's save, so the row cannot come back; an empty check first, as most items
+            // After the unload's save, so the row cannot come back; an empty check first, as most items
             // disowned (every other engine's script in the region) never had a row.
             if (req.Disown)
                 m_ExeScheduler.DeleteStateRowIfAny(req.ItemID);
@@ -350,7 +350,7 @@ namespace Phlox.ScriptEngine
                 req = m_PendingLoads.First.Value;
                 m_PendingLoads.RemoveFirst();
             }
-            // PHLOX-22 B: a prim with a compile outstanding starts its scripts in rez order - later loads wait.
+            // A prim with a compile outstanding starts its scripts in rez order - later loads wait.
             if (req.Prim != null && m_PrimBlocks.ContainsKey(req.Prim.LocalId))
             {
                 if (!m_DeferredByPrim.TryGetValue(req.Prim.LocalId, out var list))
@@ -370,7 +370,7 @@ namespace Phlox.ScriptEngine
             // fails alone, with a full diagnostic; every other script still loads.
             try
             {
-                // PHLOX-67: a load that waited behind its prim's compile while the item went to another engine.
+                // A load that waited behind its prim's compile while the item went to another engine.
                 if (!IsOwned(req.ItemID)) return;
                 req.Generation = BumpGeneration(req.ItemID);
 
@@ -388,7 +388,7 @@ namespace Phlox.ScriptEngine
                 if (TryStartFromDiskCache(assetId, req)) { Started(req); return; }
 
                 // 4. Need to compile from source text (already in req.ScriptText from OnRezScript).
-                // PHLOX-22 B: handed to the compile thread; a later DoWork starts it.
+                // Handed to the compile thread; a later DoWork starts it.
                 if (!string.IsNullOrEmpty(req.ScriptText))
                 {
                     SubmitTextCompile(assetId, req);
@@ -401,7 +401,7 @@ namespace Phlox.ScriptEngine
             catch (Exception ex)
             {
                 LogLoadFailure(req, ex);
-                PublishOutcome(req, new List<string> { "script load failed: " + ex.Message });   // PHLOX-22 C: never leave an editor waiting
+                PublishOutcome(req, new List<string> { "script load failed: " + ex.Message });   // Never leave an editor waiting
             }
         }
 
@@ -531,7 +531,7 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-2: tell the owner once, with the script's name, that their script did not compile.
+        /// Tell the owner once, with the script's name, that their script did not compile.
         /// The log line above stays exactly as it was - this is in addition to it, not instead.
         /// </summary>
         private static void ReportCompileFailureToOwner(PhloxLoadRequest req, IReadOnlyList<string> errors)
@@ -548,20 +548,20 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-21: the stack a compile runs on. Both front ends recurse once per level of the
-        /// script's nesting. PHLOX-22 A: the limit is COUNTED (InWorldz.Phlox.Compiler.NestingLimits -
+        /// The stack a compile runs on. Both front ends recurse once per level of the
+        /// script's nesting. The limit is COUNTED (InWorldz.Phlox.Compiler.NestingLimits -
         /// 1,000 expression levels, 500 blocks, 2,500 else-if branches, 64 chained assignments), the same
         /// in a cold or a warm process. The stack guard (DepthGuard) is only the backstop: how many levels
         /// 16 MB holds depends on JIT warm-up (~2,410 expression levels cold in the lowest pass, ~7,668
-        /// warm), which is why PHLOX-21's "about 4,000" was never a real limit.
+        /// warm), which is why an earlier "about 4,000" was never a real limit.
         /// </summary>
         internal const int CompileStackSize = 16 * 1024 * 1024;
 
-        /// <summary>PHLOX-22 B, tests only: milliseconds a compile of this script text should take extra (0 = none).</summary>
+        /// <summary>Tests only: milliseconds a compile of this script text should take extra (0 = none).</summary>
         internal static Func<string, int> CompileDelayForTest;
 
         /// <summary>
-        /// PHLOX-21: compile on a fresh thread with <see cref="CompileStackSize"/> and wait for it. PHLOX-22 B: the
+        /// Compile on a fresh thread with <see cref="CompileStackSize"/> and wait for it. The
         /// loader no longer uses this - DoWork never waits on a compile (<see cref="CompileLoop"/>); it stays for
         /// callers that want one compile on the loader's stack size, synchronously (RobustnessTests).
         /// </summary>
@@ -586,11 +586,11 @@ namespace Phlox.ScriptEngine
             return result;
         }
 
-        /// <summary>PHLOX-22 B: is the compile thread still running? (False after <see cref="Stop"/> once it has finished.)</summary>
+        /// <summary>Is the compile thread still running? (False after <see cref="Stop"/> once it has finished.)</summary>
         internal bool CompileThreadAlive => m_CompileThread != null && m_CompileThread.IsAlive;
 
         /// <summary>
-        /// PHLOX-22 B: the compile thread. It compiles one job at a time on its <see cref="CompileStackSize"/> stack,
+        /// The compile thread. It compiles one job at a time on its <see cref="CompileStackSize"/> stack,
         /// saves the bytecode to the disk cache and posts the job back; it never touches the scheduler or a script.
         /// </summary>
         private void CompileLoop()
@@ -633,7 +633,7 @@ namespace Phlox.ScriptEngine
             job.Errors = new List<string>(listener.Errors);
         }
 
-        /// <summary>PHLOX-22 B: compile this script's text off the scheduler, joining a compile of the same asset if one is running.</summary>
+        /// <summary>Compile this script's text off the scheduler, joining a compile of the same asset if one is running.</summary>
         private void SubmitTextCompile(UUID assetId, PhloxLoadRequest req)
         {
             BlockPrim(req);
@@ -680,7 +680,7 @@ namespace Phlox.ScriptEngine
         private bool IsCurrent(PhloxLoadRequest req)
             => m_ItemGeneration.TryGetValue(req.ItemID, out long g) && g == req.Generation;
 
-        /// <summary>PHLOX-22 B: start the finished compiles (master scheduler thread).</summary>
+        /// <summary>Start the finished compiles (master scheduler thread).</summary>
         private bool ProcessFinishedCompiles()
         {
             bool any = false;
@@ -715,7 +715,7 @@ namespace Phlox.ScriptEngine
                         job.AssetId, req.ItemID);
                     var errors = job.Errors.Count > 0 ? job.Errors
                         : new List<string> { job.Failure != null ? "internal compiler error: " + job.Failure.Message : "script failed to compile" };
-                    // PHLOX-22 C: an editor save gets its errors in the editor; anything else is told as before.
+                    // An editor save gets its errors in the editor; anything else is told as before.
                     if (!PublishOutcome(req, errors))
                         ReportUnlessClaimed(req, errors);
                 }
@@ -752,7 +752,7 @@ namespace Phlox.ScriptEngine
             if (ops.Reset) m_ExeScheduler.ResetScript(req.ItemID);
         }
 
-        /// <summary>PHLOX-22 B: is a load of this item posted, waiting or compiling (so the scheduler does not have it yet)?</summary>
+        /// <summary>Is a load of this item posted, waiting or compiling (so the scheduler does not have it yet)?</summary>
         internal bool IsLoading(UUID itemId)
         {
             lock (m_Outcomes)
@@ -762,7 +762,7 @@ namespace Phlox.ScriptEngine
             }
         }
 
-        /// <summary>PHLOX-22 B: llSetScriptState / the Running checkbox on an item still loading - applied when it starts.</summary>
+        /// <summary>llSetScriptState / the Running checkbox on an item still loading - applied when it starts.</summary>
         internal void NoteScriptState(UUID itemId, bool enable)
         {
             if (!IsLoading(itemId)) return;
@@ -773,7 +773,7 @@ namespace Phlox.ScriptEngine
             }
         }
 
-        /// <summary>PHLOX-22 B: a reset of an item still loading - applied when it starts.</summary>
+        /// <summary>A reset of an item still loading - applied when it starts.</summary>
         internal void NoteReset(UUID itemId)
         {
             if (!IsLoading(itemId)) return;
@@ -784,7 +784,7 @@ namespace Phlox.ScriptEngine
             }
         }
 
-        // ── PHLOX-22 C: the result of an item's latest load, for GetScriptErrors (the script editor's Save) ──
+        // ── The result of an item's latest load, for GetScriptErrors (the script editor's Save) ──
         //
         // YEngine's GetScriptErrors (XMREngine.cs:1967) blocks until the compile of the item just rezzed has posted
         // its errors - an empty list for success. The region calls it synchronously from CreateScriptInstanceEr,
@@ -846,7 +846,7 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-22 C: the compile errors of this item's latest load - empty when it compiled and started - waiting
+        /// The compile errors of this item's latest load - empty when it compiled and started - waiting
         /// for that load to finish. Null when Phlox has no load of this item (another engine's script).
         /// </summary>
         internal List<string> WaitForCompileErrors(UUID itemId, TimeSpan timeout)
@@ -861,7 +861,7 @@ namespace Phlox.ScriptEngine
                 {
                     while (true)
                     {
-                        if (!m_LatestSerial.ContainsKey(itemId)) return null;   // PHLOX-67: disowned while waiting
+                        if (!m_LatestSerial.ContainsKey(itemId)) return null;   // Disowned while waiting
                         if (m_Outcomes.TryGetValue(itemId, out var o) && o.Serial >= wanted)
                         {
                             // The editor has it: no pop-up for the same failure (see ReportUnlessClaimed).
@@ -890,7 +890,7 @@ namespace Phlox.ScriptEngine
                 pending = m_WaitingForCompile.Dequeue();
             }
 
-            // PHLOX-22 B: to the compile thread like every other compile. Asset-server loads never kept rez order
+            // To the compile thread like every other compile. Asset-server loads never kept rez order
             // (the fetch is asynchronous), so they block no prim.
             var job = new CompileJob { AssetId = pending.AssetId, ScriptText = pending.ScriptText, FromAssetServer = true };
             job.Requests.AddRange(pending.Requests);
@@ -984,7 +984,7 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-22 B: region shutdown. Queued compiles are dropped; one already running finishes on its thread and is
+        /// Region shutdown. Queued compiles are dropped; one already running finishes on its thread and is
         /// thrown away, never half-started; the thread then ends. Does not wait for it.
         /// </summary>
         internal void Stop()
@@ -1007,7 +1007,7 @@ namespace Phlox.ScriptEngine
 
         public LogOutputListener(UUID itemId) { m_ItemId = itemId; }
 
-        /// <summary>PHLOX-2: every error, in order, so the owner can be told what the log already says.</summary>
+        /// <summary>Every error, in order, so the owner can be told what the log already says.</summary>
         private readonly List<string> m_Errors = new List<string>();
 
         /// <summary>The compiler's errors for this script, in the order it reported them.</summary>
@@ -1030,7 +1030,7 @@ namespace Phlox.ScriptEngine
     }
 
     /// <summary>
-    /// PHLOX-2. A script that will not compile has always been a log line and nothing else
+    /// A script that will not compile has always been a log line and nothing else
     /// (<see cref="LogOutputListener.Error"/>), so the resident whose object is broken is never
     /// told and the object gives no sign. SL sends the owner the compiler's message; this is that.
     ///
@@ -1040,7 +1040,7 @@ namespace Phlox.ScriptEngine
     public static class PhloxCompileErrorReport
     {
         /// <summary>
-        /// PHLOX-22 C: compiler messages in YEngine's editor format, "(line,col) Error: message"
+        /// Compiler messages in YEngine's editor format, "(line,col) Error: message"
         /// (XMRInstCtor.ErrorHandler), which the viewer's script editor shows in its error pane. The
         /// "N syntax error(s)" summary is dropped - each error already has its own line.
         /// </summary>
@@ -1068,7 +1068,7 @@ namespace Phlox.ScriptEngine
         /// </summary>
         public static string Build(string objectName, string scriptName, IReadOnlyList<string> errors)
         {
-            // PHLOX-3a: a compiler crash is not a script error and must not be reported as one.
+            // A compiler crash is not a script error and must not be reported as one.
             // The resident gets the exception TYPE and the fact that the operator has it; the
             // stack stays in the region log, where LogOutputListener already put it.
             string crash = errors is null ? null

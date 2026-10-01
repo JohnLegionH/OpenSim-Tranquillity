@@ -10,13 +10,13 @@ using Xunit;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-10 PART 1. Damage reaches ScenePresence.Health through ONE door, ApplyDamage, and nothing
+/// Damage reaches ScenePresence.Health through ONE door, ApplyDamage, and nothing
 /// changes for the caller: a collision with a Damage-bearing prim, a fall onto the ground and a
 /// scripted llAdjustDamage take exactly what they took before, and Health 0 still fires
 /// EventManager.OnAvatarKilled. These are characterisation tests - green before the refactor, green
 /// after - so the PART 2 events can hang off the door without moving a number.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class DamageDoorTests
 {
     private static ScenePresence Vulnerable(SchedulerHarness h)
@@ -71,7 +71,7 @@ public class DamageDoorTests
         using var h = new SchedulerHarness();
         var sp = Vulnerable(h);
         h.RezScript("default { state_entry() { llDamage(\"" + sp.UUID + "\", 30, DAMAGE_TYPE_GENERIC); llSay(0, \"h=\" + (string)llGetHealth(\"" + sp.UUID + "\")); llDamage(\"" + sp.UUID + "\", -50, DAMAGE_TYPE_GENERIC); llSay(0, \"h2=\" + (string)llGetHealth(\"" + sp.UUID + "\")); } }");
-        // PHLOX-50: until the script has said both lines (was a fixed 3 s window, too short under load)
+        // Until the script has said both lines (was a fixed 3 s window, too short under load)
         var until = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < until && !h.Said.Any(s => s.StartsWith("h2=", StringComparison.Ordinal))) h.PumpOnce();
 

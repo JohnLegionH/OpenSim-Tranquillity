@@ -350,7 +350,7 @@ namespace InWorldz.Phlox.Types
             else if (_members[index] is string)
             {
                 Vector3 ret;
-                if (Util.Encoding.TryParseLslVector((string)_members[index], out ret))   // PHLOX-65: Halcyon's parser (D10)
+                if (Util.Encoding.TryParseLslVector((string)_members[index], out ret))   // Halcyon's parser
                 {
                     return ret;
                 }
@@ -373,7 +373,7 @@ namespace InWorldz.Phlox.Types
             else if (_members[index] is string)
             {
                 Quaternion ret;
-                if (Util.Encoding.TryParseLslRotation((string)_members[index], out ret))   // PHLOX-65: Halcyon's parser (D10)
+                if (Util.Encoding.TryParseLslRotation((string)_members[index], out ret))   // Halcyon's parser
                 {
                     return ret;
                 }
@@ -418,7 +418,7 @@ namespace InWorldz.Phlox.Types
             }
             else if (_members[index] is float)
             {
-                return Util.LslConvert.FloatToInteger((float)_members[index]);   // PHLOX-65 (D10): NaN and out of range give -2147483648
+                return Util.LslConvert.FloatToInteger((float)_members[index]);   // NaN and out of range give -2147483648
             }
             else if (_members[index] is string)
             {

@@ -6,9 +6,9 @@ using Antlr4.Runtime.Tree;
 namespace InWorldz.Phlox.Compiler
 {
     /// <summary>
-    /// PHLOX-22: this is now the BACKSTOP only; the primary rule is the counted <see cref="NestingLimits"/>, which
+    /// This is now the BACKSTOP only; the primary rule is the counted <see cref="NestingLimits"/>, which
     /// does not move with JIT warm-up the way remaining stack does.
-    /// PHLOX-21. Both front ends are recursive descent over the script's own nesting, so a script
+    /// Both front ends are recursive descent over the script's own nesting, so a script
     /// nested deeply enough overflowed the stack - which no catch can stop, and which ends the region.
     /// Every recursive entry calls <see cref="Check(int,int)"/>; when the thread is running out of
     /// stack it throws <see cref="NestingTooDeepException"/>, which the front ends report as an
@@ -38,7 +38,7 @@ namespace InWorldz.Phlox.Compiler
     {
         public int Line { get; }
         public int Column { get; }
-        /// <summary>PHLOX-22 A: the counted limit that was passed, or null for the stack backstop.</summary>
+        /// <summary>The counted limit that was passed, or null for the stack backstop.</summary>
         public NestingKind? Kind { get; }
 
         /// <summary>The stack backstop (<see cref="DepthGuard.Check(int,int)"/>).</summary>
@@ -48,7 +48,7 @@ namespace InWorldz.Phlox.Compiler
             Column = column;
         }
 
-        /// <summary>PHLOX-22 A: a counted limit (<see cref="NestingLimits"/>).</summary>
+        /// <summary>A counted limit (<see cref="NestingLimits"/>).</summary>
         public NestingTooDeepException(int line, int column, NestingKind kind) : base(NestingLimits.Message(kind))
         {
             Line = line;

@@ -25,7 +25,7 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// Ported from Halcyon/InWorldz to this engine (dotnet10-modernization)
+// Ported from Halcyon/InWorldz to this engine
 // Adaptations:
 //   - ThreadTracker removed (not present in modern OpenSim)
 //   - IScriptEngine is PhloxEngine which already implements the interface
@@ -129,7 +129,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
         private static readonly object m_cmdHandlerThreadLock = new object();
 
         /// <summary>
-        /// PROPS-1 (found in world): this was a race. The IsAlive check and the assignment
+        /// Found in world: this was a race. The IsAlive check and the assignment
         /// were unguarded, so two engines constructing at once could both pass the check, the second
         /// overwrite the static before the first reached Start(), and one of them then call Start()
         /// on a thread the other had already started - "Thread is running or terminated; it cannot
@@ -214,8 +214,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
         }
 
         /// <summary>
-        /// Remove a specific script and all its pending async commands (Halcyon AsyncCommandManager.RemoveScript). PHLOX-46:
-        /// reached through LSLSystemAPI.ReleaseScriptResources on unload; each plugin forgets the item as well as stopping it.
+        /// Remove a specific script and all its pending async commands (Halcyon AsyncCommandManager.RemoveScript).
+        /// Reached through LSLSystemAPI.ReleaseScriptResources on unload; each plugin forgets the item as well as stopping it.
         /// </summary>
         public static void RemoveScript(IScriptEngine engine, uint localID, UUID itemID)
         {

@@ -2,7 +2,7 @@ using System.Diagnostics;
 using InWorldz.Phlox.Glue;
 using InWorldz.Phlox.Types;
 
-// PHLOX-22 A. Compiles generated scripts on a thread with the loader's 16 MB stack, in its own process, so a test
+// Compiles generated scripts on a thread with the loader's 16 MB stack, in its own process, so a test
 // can see a real stack overflow (which no catch stops) as a dead child instead of a dead test host - and so "cold"
 // means what it says: a fresh process whose compiler has never run.
 //

@@ -16,8 +16,8 @@ namespace InWorldz.Phlox.Compiler
     /// </summary>
     public class GenVisitor : LSLBaseVisitor<string>
     {
-        // PHLOX-21: the recursive dispatch runs out of stack before a deeply nested tree does (DepthGuard).
-        // PHLOX-22 A: the counted limits (NestingLimits) are the rule, the same levels the parser counted;
+        // The recursive dispatch runs out of stack before a deeply nested tree does (DepthGuard).
+        // The counted limits (NestingLimits) are the rule, the same levels the parser counted;
         // DepthGuard stays as the backstop. VisitChildren goes through Visit so every child is counted.
         private readonly NestingCounter _nesting = new NestingCounter();
 
@@ -73,7 +73,7 @@ namespace InWorldz.Phlox.Compiler
         }
 
         /// <summary>
-        /// PHLOX-63: the literal as assembler text that reads back as exactly the same 32-bit float. A custom format
+        /// The literal as assembler text that reads back as exactly the same 32-bit float. A custom format
         /// ("0.0###...") on a float keeps only 7 significant digits, so 2147483520.0 was written 2147484000.0 (read back as
         /// 2147483904) and 1.17549435E-38 as 0.0. The shortest round-trip digits ("R") are written out as plain decimal,
         /// because the assembler's FLOAT token has no exponent (Assembler.g4 FLOAT).
@@ -745,7 +745,7 @@ namespace InWorldz.Phlox.Compiler
         {
             string funcName = GetCallName(context.postfixExpression());
             MethodSymbol methSym = funcName != null
-                ? (GetSymbol(context) as MethodSymbol      // PHLOX-20: the type pass's choice, types and all
+                ? (GetSymbol(context) as MethodSymbol      // The type pass's choice, types and all
                    ?? ResolveCallForGen(funcName, context.callParamList()?.expr()?.Length ?? 0)) : null;
 
             var exprs = new List<string>();
@@ -837,7 +837,7 @@ namespace InWorldz.Phlox.Compiler
         public override string VisitFuncCall([NotNull] LSLParser.FuncCallContext context)
         {
             string funcName = context.ID().GetText();
-            MethodSymbol methSym = GetSymbol(context) as MethodSymbol   // PHLOX-20: the type pass's choice, types and all
+            MethodSymbol methSym = GetSymbol(context) as MethodSymbol   // The type pass's choice, types and all
                 ?? ResolveCallForGen(funcName, context.callParamList()?.expr()?.Length ?? 0);
 
             var exprs = new List<string>();
@@ -1097,11 +1097,11 @@ namespace InWorldz.Phlox.Compiler
         }
 
         /// <summary>
-        /// PHLOX-20: the type pass now annotates the call with the symbol it chose, by argument type,
+        /// The type pass now annotates the call with the symbol it chose, by argument type,
         /// and this is the fallback for a call it never annotated (an error subtree, or a tree the type
         /// pass did not reach). The two agree on every call that type-checked.
         ///
-        /// PHLOX-2b. The same overload choice the type pass made, by the same rule - the bare name
+        /// The same overload choice the type pass made, by the same rule - the bare name
         /// unless its arity does not fit and a <c>name$&lt;arity&gt;</c> sibling does. Both passes
         /// deriving the symbol the same way is what makes the emitted <c>syscall &lt;name&gt;</c>
         /// reach the shim the type checker approved; the assembler keys its table off the same

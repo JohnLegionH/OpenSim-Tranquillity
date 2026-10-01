@@ -8,13 +8,13 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-12 PART 2. The first OSSL family on Phlox: seventeen read-only information functions, each
+/// The first OSSL family on Phlox: seventeen read-only information functions, each
 /// ported from OSSL_Api.cs with the same threat level, behind OsslGate - the same [OSSL] keys YEngine
 /// reads (AllowOSFunctions, OSFunctionThreatLevel, Allow_&lt;fn&gt;, Creators_&lt;fn&gt;,
 /// PermissionErrorToOwner). Dispatch is proven through the harness (a script calls each one and says
 /// the result); the gate is proven by the same script under four configurations.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class OsslInfoFunctionsTests
 {
     private readonly ITestOutputHelper _out;

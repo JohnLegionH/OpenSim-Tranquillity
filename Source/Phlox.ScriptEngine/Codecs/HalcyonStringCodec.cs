@@ -1,6 +1,6 @@
 /*
  * iwStringCodec, ported from Halcyon: InWorldz/InWorldz.Phlox.Engine/LSLSystemAPI.cs:16053-16662 (CodecUtil)
- * and :16666-16955 (iwStringCodec), HALCYON-DIFF decision D13. The code keeps Halcyon's structure, names,
+ * and :16666-16955 (iwStringCodec). The code keeps Halcyon's structure, names,
  * messages, limits and sleeps. Halcyon ran on .NET Framework 4.7.1; where .NET 10 behaves differently the
  * Framework behaviour is reproduced, each place marked "Framework:". Proven byte for byte by the golden
  * vectors in Tests/InWorldz.Phlox.Tests/Golden/, produced by Halcyon's own code on .NET Framework 4.8.1.

@@ -7,14 +7,14 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-18 PART 0. A script terminated by a runtime error stays stopped until it is reset, the way SL keeps a
+/// A script terminated by a runtime error stays stopped until it is reset, the way SL keeps a
 /// crashed script halted: TerminateWithError turns the Running flag off exactly as llSetScriptState(FALSE) and the
 /// viewer's checkbox do - GeneralEnable in the persisted state, and the item's flag - and records why. A restore
 /// therefore holds it (no state_entry, not on the run queue) and a reset, or ticking Running, starts it fresh.
 ///
 /// <para>Shares StateManager's one SQLite file with the other round-trip tests, hence the collection.</para>
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class TerminatedScriptStaysStoppedTests
 {
     private readonly ITestOutputHelper _out;
@@ -116,7 +116,7 @@ public class TerminatedScriptStaysStoppedTests
     }
 
     /// <summary>
-    /// PHLOX-18b. The path a real restart takes and the round trip above does not. A region stop never calls
+    /// The path a real restart takes and the round trip above does not. A region stop never calls
     /// ScriptUnloaded: PhloxEngine.OnShutdown calls StateManager.Stop(), which flushes the DIRTY set only, and a script
     /// that crashed in its first slice was never marked dirty - the crash branch of RunNextScript returns before
     /// ScriptChanged. Its row still carried the previous asset, was discarded as stale at the next load, and the script

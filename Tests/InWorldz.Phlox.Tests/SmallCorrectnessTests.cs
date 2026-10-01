@@ -13,8 +13,8 @@ using PermissionMask = OpenSim.Framework.PermissionMask;
 
 namespace InWorldz.Phlox.Tests;
 
-/// <summary>PHLOX-21 part E. Small correctness fixes, one test each.</summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+/// <summary>Small correctness fixes, one test each.</summary>
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class SmallCorrectnessTests
 {
     private readonly ITestOutputHelper _out;
@@ -35,7 +35,7 @@ public class SmallCorrectnessTests
         return true;
     }
 
-    // ---- E1: llGetMassMKS is 100 x llGetMass (wiki: mass in kilograms; YEngine LSL_Api.llGetMassMKS) ----
+    // ---- llGetMassMKS is 100 x llGetMass (wiki: mass in kilograms; YEngine LSL_Api.llGetMassMKS) ----
 
     [Fact]
     public void GetMassMksIsAHundredTimesGetMass()
@@ -54,7 +54,7 @@ public class SmallCorrectnessTests
         Assert.InRange(mks, mass * 100 * 0.999f, mass * 100 * 1.001f);
     }
 
-    // ---- E2: llClearLinkMedia(link, face) clears that face of that link ----
+    // ---- llClearLinkMedia(link, face) clears that face of that link ----
 
     [Fact]
     public void ClearLinkMediaClearsTheNamedFaceOfTheNamedLink()
@@ -68,7 +68,7 @@ public class SmallCorrectnessTests
         Assert.Equal(new[] { (h.Prim.LocalId, 2) }, rec.Cleared);
     }
 
-    // ---- E3: DATA_ONLINE answers "1" for an avatar that is online ----
+    // ---- DATA_ONLINE answers "1" for an avatar that is online ----
 
     [Fact]
     public void DataOnlineIsOneForAPresentAvatar()
@@ -76,7 +76,7 @@ public class SmallCorrectnessTests
         using var h = new SchedulerHarness();
         var client = h.AddClient();
         h.RezScript($"default {{ state_entry() {{ llRequestAgentData(\"{client.AgentId}\", DATA_ONLINE); }} dataserver(key q, string d) {{ llSay(0, \"online=\" + d); }} }}");
-        // PHLOX-55: wait for the answer, not a fixed 2 s (the "nowhere" case below missed that window once in a full run).
+        // Wait for the answer, not a fixed 2 s (the "nowhere" case below missed that window once in a full run).
         PumpUntil(h, () => h.Said.Any(s => s.StartsWith("online=")), TimeSpan.FromSeconds(30));
         Assert.True(h.Said.Contains("online=1"), Said(h));
     }
@@ -86,11 +86,11 @@ public class SmallCorrectnessTests
     {
         using var h = new SchedulerHarness();
         h.RezScript($"default {{ state_entry() {{ llRequestAgentData(\"{UUID.Random()}\", DATA_ONLINE); }} dataserver(key q, string d) {{ llSay(0, \"online=\" + d); }} }}");
-        PumpUntil(h, () => h.Said.Any(s => s.StartsWith("online=")), TimeSpan.FromSeconds(30));   // PHLOX-55: as above
+        PumpUntil(h, () => h.Said.Any(s => s.StartsWith("online=")), TimeSpan.FromSeconds(30));   // As above
         Assert.True(h.Said.Contains("online=0"), Said(h));
     }
 
-    // ---- E4: llSetInventoryPermMask is a god function (YEngine: AllowGodFunctions and an administrator owner) ----
+    // ---- llSetInventoryPermMask is a god function (YEngine: AllowGodFunctions and an administrator owner) ----
 
     private static TaskInventoryItem AddTexture(SchedulerHarness h)
     {
@@ -120,7 +120,7 @@ public class SmallCorrectnessTests
         Assert.Equal((uint)PermissionMask.Copy, item.NextPermissions & (uint)(PermissionMask.Copy | PermissionMask.Modify | PermissionMask.Transfer));
     }
 
-    // PHLOX-44: the MASK_* number alone picks the category (SL: "Sets the given permission category to the new value
+    // The MASK_* number alone picks the category (SL: "Sets the given permission category to the new value
     // on the inventory item"; Halcyon's and Phlox's llSetObjectPermMask). YEngine's limit ANDed the MASK_* number with
     // the item's PERM_* bits, so with a base mask that is not full every category but MASK_BASE collapsed to 0, the base.
 
@@ -181,7 +181,7 @@ public class SmallCorrectnessTests
         Assert.Equal(before, item.NextPermissions);
     }
 
-    // ---- E5: llManageEstateAccess returns an integer, and leaves the operand stack clean ----
+    // ---- llManageEstateAccess returns an integer, and leaves the operand stack clean ----
 
     [Fact]
     public void ManageEstateAccessReturnsAnIntegerAndLeavesTheStackClean()
@@ -194,7 +194,7 @@ public class SmallCorrectnessTests
         var item = h.RezScript($"default {{ state_entry() {{ integer r = llManageEstateAccess(ESTATE_ACCESS_ALLOWED_AGENT_ADD, \"{client.AgentId}\"); " +
                                "integer bad = llManageEstateAccess(ESTATE_ACCESS_ALLOWED_AGENT_ADD, \"not a key\"); " +
                                "llSay(0, \"r=\" + (string)r + \" bad=\" + (string)bad); } }");
-        // PHLOX-54: wait for the result, not the clock. Each call takes 200 ms of syscall time, and a fixed 2 s window was
+        // Wait for the result, not the clock. Each call takes 200 ms of syscall time, and a fixed 2 s window was
         // once too short with classes running in parallel (the script was still parked in the syscall).
         var until = DateTime.UtcNow + TimeSpan.FromSeconds(30);
         while (!h.Said.Any(s => s.StartsWith("r=")) && DateTime.UtcNow < until) h.Pump(20);
@@ -212,7 +212,7 @@ public class SmallCorrectnessTests
     public void ManageEstateAccessIsFalseForAnOwnerWhoIsNotAManager()
     {
         using var h = new SchedulerHarness();
-        // PHLOX-53: gods may manage (Halcyon CanIssueEstateCommand); without the hook everybody is a god.
+        // Gods may manage (Halcyon CanIssueEstateCommand); without the hook everybody is a god.
         h.Scene.Permissions.OnIsAdministrator += id => false;
         var client = h.AddClient();
         h.RezScript($"default {{ state_entry() {{ llSay(0, \"r=\" + (string)llManageEstateAccess(ESTATE_ACCESS_ALLOWED_AGENT_ADD, \"{client.AgentId}\")); }} }}");

@@ -5,7 +5,7 @@ using Xunit;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-2b's guard against the failure mode that made PHLOX-2 stop short of this work: adding
+/// A guard against the failure mode that once stopped this work short: adding
 /// built-in overloads must not move any existing function's dispatch index.
 ///
 /// <para>
@@ -80,16 +80,16 @@ public class DispatchIndexGuardTests
         Assert.True(gone.Count == 0, "built-ins vanished from the table: " + string.Join(", ", gone));
         Assert.True(moved.Count == 0,
             "a moved TableIndex is a different function at runtime, silently: " + string.Join(", ", moved));
-        // 674 at 34fb6d201b; PHLOX-5 added two NEW names (llsRGB2Linear, llListSortStrided) - the
+        // 674 at 34fb6d201b; then two NEW names (llsRGB2Linear, llListSortStrided) - the
         // four SL-arity overloads share existing names and do not add entries. Regenerated with
         // RegenerateBaseline below, never by hand.
-        // PHLOX-20 added eight signatures but only ONE new NAME (osSetDynamicTextureDataFace): the other
+        // The type-chosen overloads added eight signatures but only ONE new NAME (osSetDynamicTextureDataFace): the other
         // seven are type-discriminated overloads of names already here, and the baseline is keyed by name.
         Assert.Equal(932, baseline.Count);
     }
 
     /// <summary>
-    /// PHLOX-5. The baseline is REGENERATED from the table, not hand-edited: run this one test with
+    /// The baseline is REGENERATED from the table, not hand-edited: run this one test with
     /// PHLOX_REGEN_BASELINE=1 in the environment and it rewrites dispatch-baseline.txt in the SOURCE
     /// tree from Current(). Without the variable it is a no-op that passes, so it can live here.
     /// </summary>
@@ -136,7 +136,7 @@ public class DispatchIndexGuardTests
 }
 
 /// <summary>
-/// PHLOX-2c. The table's dictionary KEY must be the function's own name, or the name-keyed lookups
+/// The table's dictionary KEY must be the function's own name, or the name-keyed lookups
 /// miss it. Found while building the dispatch baseline: <c>botRemoveBot</c> was keyed
 /// <c>"Shim_botRemoveBot"</c>, so <c>Defaults.TryGetMethod("botRemoveBot")</c> returned false and
 /// both the SLua bridge (<c>SLuaCompiler.cs:2118</c>) and the interpreter's method map
@@ -172,7 +172,7 @@ public class TableKeyTests
             var key = (string)e.Key;
             var sig = (InWorldz.Phlox.Types.FunctionSig)e.Value!;
             var expectedOverload = sig.FunctionName + InWorldz.Phlox.Types.Defaults.OverloadSeparator + sig.ParamTypes.Length;
-            // PHLOX-20: a signature that shares its arity with another of the same name is keyed by type
+            // A signature that shares its arity with another of the same name is keyed by type
             // as well, which is exactly what SymbolNameFor calls it. The arity-only form stays legal for
             // the entries that had it before the type codes existed.
             var expectedTyped = InWorldz.Phlox.Types.Defaults.SymbolNameFor(sig);

@@ -3,8 +3,8 @@ using Antlr4.Runtime;
 using InWorldz.Phlox.Compiler;
 
 /// <summary>
-/// PHLOX-21 / PHLOX-22 A. The nesting checks on the generated parser's rule entry, kept out of LSLParser.cs so
-/// regenerating the grammar does not drop them. PHLOX-22: the primary rule is COUNTED (<see cref="NestingLimits"/>);
+/// The nesting checks on the generated parser's rule entry, kept out of LSLParser.cs so
+/// regenerating the grammar does not drop them. The primary rule is COUNTED (<see cref="NestingLimits"/>);
 /// <see cref="DepthGuard"/> stays as the stack backstop.
 /// </summary>
 public partial class LSLParser

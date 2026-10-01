@@ -8,14 +8,14 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-7a. Four functions that were no-ops or default returns in Phlox while upstream
+/// Four functions that were no-ops or default returns in Phlox while upstream
 /// <c>LSL_Api</c> implements them. Each is ported from the upstream body (line ranges cited on the
 /// implementations) after checking that the SL wiki page agrees with upstream.
 ///
 /// <para>Every test here is red on the tree before the port: the filter stored nothing, the animation
 /// set stayed empty, the start string was always blank and the XOR was always <c>""</c>.</para>
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class UpstreamPortedStubTests
 {
     private readonly ITestOutputHelper _out;
@@ -131,7 +131,7 @@ public class UpstreamPortedStubTests
     /// The write half: llRezObjectWithParams with REZ_PARAM_STRING stores it on the object it rezzes.
     /// A real inventory object is rezzed in the test scene and its group inspected.
     /// </summary>
-    /// <summary>PHLOX-55: pump until a line starting with <paramref name="prefix"/> has been said, up to 30 s.</summary>
+    /// <summary>Pump until a line starting with <paramref name="prefix"/> has been said, up to 30 s.</summary>
     private static void WaitFor(SchedulerHarness h, string prefix)
     {
         var until = DateTime.UtcNow.AddSeconds(30);
@@ -150,7 +150,7 @@ public class UpstreamPortedStubTests
             llRezObjectWithParams(""child"", [REZ_PARAM_STRING, ""from-parent"", REZ_POS, llGetPos() + <0,0,1>, FALSE, FALSE]);
             llSay(0, ""rezzed"");
         } }");
-        WaitFor(h, "rezzed");   // PHLOX-55: wait for the result, not a fixed 1 s
+        WaitFor(h, "rezzed");   // Wait for the result, not a fixed 1 s
         Assert.Contains("rezzed", h.Said);
 
         var child = h.Scene.GetSceneObjectGroups().FirstOrDefault(g => g.UUID != h.Prim.ParentGroup.UUID && g.OwnerID == owner);
@@ -176,7 +176,7 @@ public class UpstreamPortedStubTests
             llSay(0, ""c="" + llXorBase64Strings(""QUJD"", ""QQ==""));
             llSay(0, ""d="" + llXorBase64Strings(""QUJD"", ""QUJD""));
         } }");
-        WaitFor(h, "d=");   // four calls, 0.3 s sleep each. PHLOX-55: wait for the last line, not a fixed 2 s (missed once)
+        WaitFor(h, "d=");   // four calls, 0.3 s sleep each. Wait for the last line, not a fixed 2 s (missed once)
 
         _out.WriteLine("said=[" + string.Join(" | ", h.Said) + "]");
         Assert.Contains("a=", h.Said);

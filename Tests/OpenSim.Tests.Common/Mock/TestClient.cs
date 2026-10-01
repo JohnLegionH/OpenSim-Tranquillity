@@ -967,7 +967,7 @@ public class TestClient : IClientAPI, IClientCore
     {
     }
 
-    /// <summary>PROPS-1: every entity this client was sent full ObjectProperties for, in order.</summary>
+    /// <summary>Every entity this client was sent full ObjectProperties for, in order.</summary>
     public readonly List<ISceneEntity> ObjectPropertiesSent = new List<ISceneEntity>();
 
     public void SendObjectPropertiesReply(ISceneEntity entity)
@@ -1432,7 +1432,7 @@ public class TestClient : IClientAPI, IClientCore
         throw new NotImplementedException();
     }
 
-    /// <summary>PHLOX-21: every permission question sent to this client, so a test can assert one was (or was not) asked.</summary>
+    /// <summary>Every permission question sent to this client, so a test can assert one was (or was not) asked.</summary>
     public List<(UUID TaskID, UUID ItemID, int Question)> ScriptQuestions { get; } = new();
 
     public void SendScriptQuestion(UUID taskID, string taskName, string ownerName, UUID itemID, int question, UUID experience)
@@ -1440,7 +1440,7 @@ public class TestClient : IClientAPI, IClientCore
         lock (ScriptQuestions) ScriptQuestions.Add((taskID, itemID, question));
     }
 
-    /// <summary>PHLOX-21: answer a permission question the way the viewer's ScriptAnswerYes packet does.</summary>
+    /// <summary>Answer a permission question the way the viewer's ScriptAnswerYes packet does.</summary>
     public void FireScriptAnswer(UUID taskID, UUID itemID, int answer)
         => OnScriptAnswer?.Invoke(this, taskID, itemID, answer);
 

@@ -50,7 +50,7 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// PHLOX-22 B: stop only this scheduler's own thread. The test harness drives DoWork itself and needs the
+        /// Stop only this scheduler's own thread. The test harness drives DoWork itself and needs the
         /// loader's compile thread to keep running; region shutdown is <see cref="Stop"/>.
         /// </summary>
         internal void StopThread()
@@ -88,7 +88,7 @@ namespace Phlox.ScriptEngine
                         // which could be 60+ seconds later if nothing else was happening.
                         m_ActionEvent.Reset();
 
-                        // PHLOX-60: StopThread sets m_Stop and then signals. A stop that landed after the loop's
+                        // StopThread sets m_Stop and then signals. A stop that landed after the loop's
                         // m_Stop check and before the Reset above had its signal erased, and with no work queued the
                         // loop then waited forever (StopThread's 5 s join timed out). m_Stop is written before the
                         // signal, so reading it again after the Reset can never miss that stop.
@@ -105,7 +105,7 @@ namespace Phlox.ScriptEngine
 
                         if (wakeAt != ulong.MaxValue)
                         {
-                            // PHLOX-4: wakeAt and now are both InWorldz.Phlox.Util.Clock, so there is
+                            // wakeAt and now are both InWorldz.Phlox.Util.Clock, so there is
                             // one basis for the whole engine. This used to read a 30-bit MASKED uptime
                             // tick (OpenSim.Framework.Util.EnvironmentTickCount), which drops back to
                             // near zero every 12.4 days - below every queued wakeAt, making waitMs

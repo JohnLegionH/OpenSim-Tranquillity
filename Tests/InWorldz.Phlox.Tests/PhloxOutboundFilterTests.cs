@@ -14,7 +14,7 @@ using Xunit;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-51 (audit F366, the URL-filter half): a Phlox script's outbound requests obey the core's outbound URL filter,
+/// A Phlox script's outbound requests obey the core's outbound URL filter,
 /// [Network] OutboundDisallowForUserScripts (default: loopback, private and reserved IPv4 ranges) and
 /// OutboundDisallowForUserScriptsExcept, exactly as YEngine's llHTTPRequest does (LSL_Api.cs:14762): the core
 /// HttpRequestModule's own filter object, checked after the throttle and before anything is sent. A refused call gets
@@ -362,7 +362,7 @@ public class PhloxOutboundFilterTests
 }
 
 /// <summary>
-/// PHLOX-51: the two engines side by side on one region, the same refused request from each: the same text on
+/// The two engines side by side on one region, the same refused request from each: the same text on
 /// DEBUG_CHANNEL, the same "" return, no request. In "phlox-state" (runs alone): it needs YEngine's statics and the core
 /// HttpRequestModule's process-wide filter at once.
 /// </summary>
@@ -408,7 +408,7 @@ public class PhloxOutboundFilterYEngineTests
     }
 }
 
-/// <summary>PHLOX-51: CrossEngineChatTests' way of putting a script on YEngine.</summary>
+/// <summary>CrossEngineChatTests' way of putting a script on YEngine.</summary>
 internal static class SchedulerHarnessYEngine
 {
     public static UUID Rez(SchedulerHarness h, OpenSim.Region.Framework.Scenes.SceneObjectPart part, string source)
@@ -425,7 +425,7 @@ internal static class SchedulerHarnessYEngine
 }
 
 /// <summary>
-/// PHLOX-51: the classes that build the core HttpRequestModule, whose outbound filter and clients are process-wide
+/// The classes that build the core HttpRequestModule, whose outbound filter and clients are process-wide
 /// statics (built by the first Initialise, dropped by the last Close). They run one at a time, in parallel with the rest.
 /// </summary>
 [CollectionDefinition("phlox-http")]

@@ -20,7 +20,7 @@ namespace InWorldz.Phlox.Tests;
 /// groups know I'm online" (the directory-visibility preference), and "0" if it has, or if the
 /// preference cannot be read. Groups are not consulted, as in Halcyon.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class DataOnlinePrivacyTests
 {
     private readonly ITestOutputHelper _out;
@@ -41,7 +41,7 @@ public class DataOnlinePrivacyTests
     private string Ask(SchedulerHarness h, UUID who)
     {
         h.RezScript($"default {{ state_entry() {{ llRequestAgentData(\"{who}\", DATA_ONLINE); }} dataserver(key q, string d) {{ llSay(0, \"online=\" + d); }} }}");
-        // PHLOX-55: 30 s, not 5 s: under a full parallel run the script had not yet answered once at 5 s.
+        // 30 s, not 5 s: under a full parallel run the script had not yet answered once at 5 s.
         Assert.True(PumpUntil(h, () => h.Said.Any(s => s.StartsWith("online=")), TimeSpan.FromSeconds(30)), string.Join(" | ", h.Said));
         string line = h.Said.First(s => s.StartsWith("online="));
         _out.WriteLine(line);

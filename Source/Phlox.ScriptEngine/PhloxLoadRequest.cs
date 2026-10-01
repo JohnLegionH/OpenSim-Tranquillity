@@ -16,10 +16,10 @@ namespace Phlox.ScriptEngine
         public bool PostOnRez;
         public int StateSource;
         public SceneObjectPart Prim;
-        /// <summary>PHLOX-22 B: the item's load generation when this request was processed; a compile that finishes
+        /// <summary>The item's load generation when this request was processed; a compile that finishes
         /// after a newer load or an unload of the same item is stale and does not start.</summary>
         public long Generation;
-        /// <summary>PHLOX-22 C: posting order of this item's loads, so GetScriptErrors waits for the one just saved.</summary>
+        /// <summary>Posting order of this item's loads, so GetScriptErrors waits for the one just saved.</summary>
         public long Serial;
     }
 
@@ -27,7 +27,7 @@ namespace Phlox.ScriptEngine
     {
         public uint LocalID;
         public UUID ItemID;
-        /// <summary>PHLOX-67: the item is another engine's now - also delete its Phlox state row, after any save.</summary>
+        /// <summary>The item is another engine's now - also delete its Phlox state row, after any save.</summary>
         public bool Disown;
     }
 }

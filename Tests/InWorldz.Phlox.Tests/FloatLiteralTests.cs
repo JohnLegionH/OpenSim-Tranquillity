@@ -6,7 +6,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-63: a float literal keeps its exact 32-bit value. SL wiki Float: "The LSL "float" type is a floating point data
+/// A float literal keeps its exact 32-bit value. SL wiki Float: "The LSL "float" type is a floating point data
 /// type that uses 32 bit in IEEE-754 form." "The valid range is 1.401298464E-45 to 3.402823466E+38". "Floats can be
 /// specified in scientific notation such as 2.6E-5." Before, GenVisitor.FormatFloat wrote the literal for the assembler
 /// with a custom format that keeps 7 significant digits: 2147483520.0 became 2147484000.0 (read back as 2147483904) and

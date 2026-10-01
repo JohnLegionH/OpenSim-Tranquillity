@@ -6,12 +6,12 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-2f. A fresh script instance runs its <c>state_entry</c> but never registers its event
+/// A fresh script instance runs its <c>state_entry</c> but never registers its event
 /// mask, so the region does not know the prim is touchable: no touch cursor, and
 /// <c>touch_start</c> never fires. Observed in world — llSetColor, llSetText,
 /// llSay and llOwnerSay all ran, the Running box was ticked, and the prim could not be clicked.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class EventMaskRegistrationTests
 {
     private readonly ITestOutputHelper _out;

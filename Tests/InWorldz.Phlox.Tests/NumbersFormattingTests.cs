@@ -16,9 +16,9 @@ using PermissionMask = OpenSim.Framework.PermissionMask;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-65 numbers, formatting and small leftovers, each against its source (work folder phlox-65/STATE.md):
-/// 1. C8: rotation multiply with SL's operand order and formula, no identity shortcut, no sign flip; r/r, v*r, v/r;
-/// 2. D10 (a): -0 prints as 0, infinities and NaN as Halcyon printed them, (integer) of NaN through llList2Integer,
+/// Numbers, formatting and small leftovers, each against its source:
+/// 1. Rotation multiply with SL's operand order and formula, no identity shortcut, no sign flip; r/r, v*r, v/r;
+/// 2. -0 prints as 0, infinities and NaN as Halcyon printed them, (integer) of NaN through llList2Integer,
 ///    Halcyon's string -> vector / rotation parser; division by zero and NaN comparisons pinned;
 /// 3. (string) of a float shows its own value with 6 decimals, vectors and rotations with 5;
 /// 4. llDumpList2String, llList2CSV and llList2String write elements as (string)list does;
@@ -62,7 +62,7 @@ public class NumbersFormattingTests
         b.W * a.Z + b.Z * a.W + b.X * a.Y - b.Y * a.X,
         b.W * a.W - b.X * a.X - b.Y * a.Y - b.Z * a.Z);
 
-    // ── 1. C8 rotation arithmetic ────────────────────────────────────────────────────────────────
+    // ── 1. Rotation arithmetic ───────────────────────────────────────────────────────────────────
 
     [Fact]
     public void IdentityTimesIdentityIsTheIdentityNotItsNegative()
@@ -127,7 +127,7 @@ public class NumbersFormattingTests
         Assert.Equal("<0.00000, -1.00000, 0.00000>", said[1]);
     }
 
-    // ── 2. D10 float edge rules ──────────────────────────────────────────────────────────────────
+    // ── 2. Float edge rules ──────────────────────────────────────────────────────────────────────
 
     [Fact]
     public void NegativeZeroPrintsAsZero()
@@ -188,7 +188,7 @@ public class NumbersFormattingTests
         Assert.Equal(12f, api.llList2Float(l, 7));
     }
 
-    /// <summary>(text, (string)(vector)text) - Halcyon's split-and-trim parser (REPORT F451's table).</summary>
+    /// <summary>(text, (string)(vector)text) - Halcyon's split-and-trim parser.</summary>
     public static TheoryData<string, string> VectorTexts => new()
     {
         { "<1,2,3>", "<1.00000, 2.00000, 3.00000>" },

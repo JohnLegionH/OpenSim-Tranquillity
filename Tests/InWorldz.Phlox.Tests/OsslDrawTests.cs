@@ -13,7 +13,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-18 PART 1: the OSSL draw-list helpers and the dynamic-texture calls, ported from OSSL_Api.cs. The helpers
+/// The OSSL draw-list helpers and the dynamic-texture calls, ported from OSSL_Api.cs. The helpers
 /// are pinned by the command string they build; the texture call end to end - DynamicTextureModule plus the Skia
 /// VectorRenderModule in the scene - by the texture id that lands on the prim's faces.
 /// </summary>

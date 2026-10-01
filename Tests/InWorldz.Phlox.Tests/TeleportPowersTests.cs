@@ -12,17 +12,17 @@ using Xunit.Abstractions;
 
 namespace InWorldz.Phlox.Tests;
 
-// PHLOX-52 (audit S4 / F131 / F132 / F272 / F273, John's ruling (a)): who a script may teleport or eject.
+// Who a script may teleport or eject.
 // - llTeleportAgent / llTeleportAgentGlobalCoords follow SL: PERMISSION_TELEPORT from the avatar teleported, the owner
 //   only (or an experience the avatar granted), a landmark by inventory name or "" for this region, SL's throttle.
 // - iwTeleportAgent, llTeleportAgentHome, llEjectFromLand follow Halcyon's IsTeleportAuthorized with its holes closed:
-//   never a god (unless the god owns the object), land rights on group land for an object deeded to the group or (PHLOX-53)
+//   never a god (unless the god owns the object), land rights on group land for an object deeded to the group or
 //   an owner holding the group's Eject and Freeze power.
 // - osTeleportAgent follows YEngine's OSSL (Severe on the region and grid forms, checkAllowAgentTPbyLandOwner, no god
 //   rule - parity).
 // No test reaches a network service: every teleport ends in a recording IEntityTransferModule, and every destination is
 // this region, a landmark asset in the harness's memory asset service, or a grid handle the recorder never resolves.
-// PHLOX-50 grouping: none of these classes touches process-wide state (no Clock seam, no shared files), so they run in
+// Test grouping: none of these classes touches process-wide state (no Clock seam, no shared files), so they run in
 // parallel, one harness per test.
 
 /// <summary>Records every teleport the scene asks the transfer module for; moves nobody.</summary>
@@ -431,7 +431,7 @@ public class IwTeleportAgentTests
     [Fact]
     public void AGroupTaggedObjectIsRefusedOnGroupLandUnlessItsOwnerHoldsEjectAndFreeze()
     {
-        // audit F132/F272: the port admitted any object carrying the land's group tag. PHLOX-53 correction: Halcyon's
+        // The port admitted any object carrying the land's group tag. The correction: Halcyon's
         // HasLandPrivileges asks CanEditParcel(owner, parcel, LandEjectAndFreeze), and SL admits "The object owner must
         // have 'Eject and freeze Residents on parcels' ability in the group". Every other power is not enough.
         using (var r = new TeleportRig(_out, Member, TeleportRig.West, null, (Member, ulong.MaxValue & ~(ulong)GroupPowers.LandEjectAndFreeze)))
@@ -538,7 +538,7 @@ public class OsTeleportAgentTests
             "local" => $"osTeleportAgent({k}, <30, 40, 25>, <1, 0, 0>);",
             _ => $"osTeleportAgent({k}, 1000, 1000, <30, 40, 25>, <1, 0, 0>);",
         });
-        // YEngine fires the grid teleport on another thread. PHLOX-59: up to 30 s to wait for a move; the old 2 s window
+        // YEngine fires the grid teleport on another thread. Up to 30 s to wait for a move; the old 2 s window
         // stays for a teleport that must not happen.
         if (form == "grid") r.PumpUntil(() => r.Moved(target.UUID), expectMoved ? 30 : 2);
         return r.Moved(target.UUID, "tp");

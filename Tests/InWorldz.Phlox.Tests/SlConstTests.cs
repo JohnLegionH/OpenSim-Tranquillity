@@ -7,7 +7,7 @@ using Xunit;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-21 A1. SlConst is the implementation's one copy of the SL constants it tests against; the
+/// SlConst is the implementation's one copy of the SL constants it tests against; the
 /// compiler's table is what scripts see. They must agree name for name and value for value.
 /// </summary>
 public class SlConstTests

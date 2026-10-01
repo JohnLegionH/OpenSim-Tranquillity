@@ -4,12 +4,12 @@ using InWorldz.Phlox.Types;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-2. Compile a script and collect what the compiler said about it.
+/// Compile a script and collect what the compiler said about it.
 ///
 /// <para>
 /// <see cref="CompilerFrontend"/> takes an <see cref="ILSLListener"/> and a template path it
 /// stores but never reads, so a compile needs no scene, no region and no disk. This is the
-/// harness whose absence made PHLOX-1 report YEngine's overload verdict from reading the
+/// harness whose absence once meant reporting YEngine's overload verdict from reading the
 /// source instead of running a compile.
 /// </para>
 /// </summary>
@@ -44,7 +44,7 @@ public sealed class PhloxCompiler : ILSLListener
     }
 
     /// <summary>
-    /// PHLOX-2d: the compiled script itself, for tests that need to RUN it rather than only compile
+    /// The compiled script itself, for tests that need to RUN it rather than only compile
     /// it. Null when the compile failed; the listener's errors say why.
     /// </summary>
     public static InWorldz.Phlox.VM.CompiledScript CompileTo(string source, out PhloxCompiler listener)

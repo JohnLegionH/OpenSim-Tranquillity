@@ -5,7 +5,7 @@ using Xunit;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-9. Four small SL-parity leftovers, each pinned against the SL wiki:
+/// Four small SL-parity leftovers, each pinned against the SL wiki:
 /// <list type="bullet">
 /// <item>a script run-time error is chatted on DEBUG_CHANNEL (0x7FFFFFFF) - the channel viewers route
 /// to the owner's script-error window - and not shouted on channel 0 where every avatar in range read it
@@ -13,14 +13,14 @@ namespace InWorldz.Phlox.Tests;
 /// <item><c>quaternion</c> is a type name interchangeable with <c>rotation</c>
 /// (https://wiki.secondlife.com/wiki/Quaternion);</item>
 /// <item><c>&lt;&lt;=</c> and <c>&gt;&gt;=</c> are not LSL (https://wiki.secondlife.com/wiki/LSL_Operators
-/// lists no shift-assign) - YEngine's acceptance was an extension Phlox had copied. PHLOX-63: HALCYON-DIFF D7 ruled (c)
+/// lists no shift-assign) - YEngine's acceptance was an extension Phlox had copied. The rule is
 /// "Accept &lt;&lt;= and &gt;&gt;= as an extension", so they compile again for integers (Halcyon's rule) and stay an
 /// error on their line for any other type (ShiftAssignTests);</item>
 /// <item><c>list != list</c> is the length difference, <c>==</c> is TRUE when the lengths match
 /// ("Equality test on lists does not compare contents, only the length", same page).</item>
 /// </list>
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class SlParityLeftoverTests
 {
     private const int DebugChannel = 0x7FFFFFFF;
@@ -55,14 +55,14 @@ public class SlParityLeftoverTests
         Assert.NotNull(compiled);
         // Runtime on the real path (scheduler + LSLSystemAPI): a script with a local store NREs in
         // Op_Store on the bare hand-driven interpreter (MemInfo.ReplaceStored over a never-initialised
-        // local) - a harness limitation, not the engine's; noted in PhloxKnownDefects PHLOX-9.
+        // local) - a harness limitation, not the engine's; noted in PhloxKnownDefects.
         using var h = new SchedulerHarness();
         h.RezScript("default { state_entry() { quaternion q = <0, 0, 0, 1>; llSay(0, \"q=\" + (string)(q == ZERO_ROTATION)); } }");
         h.PumpUntil(() => h.Said.Any(s => s.StartsWith("q=")));
         Assert.Contains("q=1", h.Said);
     }
 
-    // ---- 3. <<= and >>= are not SL; PHLOX-63 (D7 (c)): an integer-only extension -------------------
+    // ---- 3. <<= and >>= are not SL; an integer-only extension -------------------
 
     [Theory]
     [InlineData("<<=")]

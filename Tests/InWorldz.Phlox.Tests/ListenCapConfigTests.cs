@@ -8,13 +8,13 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-39: Phlox's listen caps come from [LL-Functions] max_listens_per_script and max_listens_per_region, read
+/// Phlox's listen caps come from [LL-Functions] max_listens_per_script and max_listens_per_region, read
 /// the way the core WorldCommModule reads them for YEngine (WorldCommModule.Initialise: one GetInt each with defaults
 /// 65 and 1000; a value below 1 means no limit; a region cap below the script cap is raised to it), so one config value
 /// means the same thing to both engines. With no key the script cap stays 65, as before. A value that is not an
 /// integer keeps the default, as WorldComm does, and Phlox logs one warning.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class ListenCapConfigTests
 {
     private readonly ITestOutputHelper _out;
@@ -47,7 +47,7 @@ public class ListenCapConfigTests
         return line!;
     }
 
-    // By reflection, so this file builds against the engine before PHLOX-39 and the red run shows what is missing.
+    // By reflection, so this file builds against an engine without these settings and the red run shows what is missing.
     private static int Prop(SchedulerHarness h, string name)
     {
         object mgr = h.Engine.ListenManager;

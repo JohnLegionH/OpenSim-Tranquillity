@@ -9,12 +9,12 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-22 C follow-up, found in world. Saving phlox22-syntaxerror.lsl and phlox21-deepnest.lsl
+/// Found in world. Saving phlox22-syntaxerror.lsl and phlox21-deepnest.lsl
 /// showed NO error in the editor, and the deep-nest error came as the owner pop-up. A region that runs YEngine AND
 /// Phlox adds YEngine to the scene first, so SceneObjectPartInventory.GetScriptErrors asks it first, and
 /// YEngine's GetScriptErrors waited - with no timeout and nothing to wake it - for an item it had declined in
 /// OnRezScript: the Save never returned and Phlox was never asked (so no editor claimed the errors, and Phlox sent
-/// the pop-up). PHLOX-22 C's tests registered Phlox alone. Also here: a compile that fails before the editor's
+/// the pop-up). CompileErrorsToEditorTests registered Phlox alone. Also here: a compile that fails before the editor's
 /// GetScriptErrors reaches Phlox must reach the editor ONCE - no pop-up as well.
 /// </summary>
 [Collection("phlox-yengine")]

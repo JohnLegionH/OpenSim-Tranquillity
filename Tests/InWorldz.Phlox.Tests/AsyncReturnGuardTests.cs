@@ -7,13 +7,13 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-21b A. An async syscall (<c>SyscallShim.RunAsync</c>) returns only what its body hands to
+/// An async syscall (<c>SyscallShim.RunAsync</c>) returns only what its body hands to
 /// <c>SysReturn</c>; a body that hands nothing leaves a value-returning call with nothing on the
 /// operand stack, and the script "was killed with Stack empty". Every table entry that returns a
 /// value and runs async is exercised here twice - as a statement and as an assignment - and the
 /// list is checked against the dispatch table itself, so a new async entry cannot land uncovered.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class AsyncReturnGuardTests
 {
     private readonly ITestOutputHelper _out;
@@ -36,7 +36,7 @@ public class AsyncReturnGuardTests
         ("iwRezObject",            VarType.Key,     "\"nothing\", ZERO_VECTOR, ZERO_VECTOR, ZERO_ROTATION, 0", NullKey),
         ("iwRezAtRoot",            VarType.Key,     "\"nothing\", ZERO_VECTOR, ZERO_VECTOR, ZERO_ROTATION, 0", NullKey),
         ("iwRezAt",                VarType.Key,     "\"nothing\", 0, ZERO_VECTOR, ZERO_VECTOR, ZERO_ROTATION, 0", NullKey),
-        // PHLOX-53: the harness has no permissions module, so everybody is a god and may manage the estate; a NULL_KEY
+        // The harness has no permissions module, so everybody is a god and may manage the estate; a NULL_KEY
         // target is FALSE on every path (SL: "FALSE if ... invalid or null id").
         ("llManageEstateAccess",   VarType.Integer, "0, NULL_KEY",                                 "0"),
         ("botCreateBot",           VarType.Key,     "\"A\", \"Bot\", \"\", ZERO_VECTOR, 0",        null),

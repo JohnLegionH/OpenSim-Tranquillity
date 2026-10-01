@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-4b part 3. A script saved mid-syscall.
+/// A script saved mid-syscall.
 ///
 /// <para>
 /// This is the state with no way home. A sleeping script has a wake-up time and a running one has a
@@ -17,7 +17,7 @@ namespace InWorldz.Phlox.Tests;
 /// is what <c>LastSyscallIndex</c> is now persisted for (tag 22).
 /// </para>
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class SyscallResumeTests
 {
     private readonly ITestOutputHelper _out;

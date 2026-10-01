@@ -14,7 +14,7 @@ namespace InWorldz.Phlox.Glue
         void SetScriptEventFlags();
 
         /// <summary>
-        /// PHLOX-2g: signal that a long-running syscall has finished, so the scheduler can take the
+        /// Signal that a long-running syscall has finished, so the scheduler can take the
         /// script out of <c>Status.Syscall</c>. An implementation that already posts its own return
         /// may call this too - a return that arrives when the script is no longer in Syscall is
         /// ignored (<c>PhloxExecutionScheduler.ProcessSyscallReturns:897</c>).
@@ -411,13 +411,13 @@ namespace InWorldz.Phlox.Glue
         void iwTeleportAgent(string agent, string region, Vector3 pos, Vector3 lookat);
         void osTeleportAgent(string agent, string region, Vector3 pos, Vector3 lookat);
 
-        /// <summary>PHLOX-2b: OSSL_Api.cs:1051 - teleport within the current region.</summary>
+        /// <summary>OSSL_Api.cs:1051 - teleport within the current region.</summary>
         void osTeleportAgent(string agent, Vector3 pos, Vector3 lookat);
 
-        /// <summary>PHLOX-2b: OSSL_Api.cs:1015 - teleport to a region named by grid coordinates.</summary>
+        /// <summary>OSSL_Api.cs:1015 - teleport to a region named by grid coordinates.</summary>
         void osTeleportAgent(string agent, int regionGridX, int regionGridY, Vector3 pos, Vector3 lookat);
         LSLList osGetAvatarList();
-        // PHLOX-12: OSSL information functions
+        // OSSL information functions
         string osGetGridName();
         string osGetGridNick();
         string osGetGridHomeURI();
@@ -435,62 +435,62 @@ namespace InWorldz.Phlox.Glue
         int osGetSimulatorMemoryKB();
         float osGetHealth(string agent);
         string osGetScriptEngineName();
-        // PHLOX-13: OSSL pure helpers
+        // OSSL pure helpers
         string osAESEncrypt(string secret, string plainText);
         string osAESDecrypt(string secret, string encryptedText);
         string osAESEncryptTo(string secret, string plainText, string ivString);
         string osAESDecryptFrom(string secret, string encryptedText, string ivString);
         float osAngleBetween(Vector3 a, Vector3 b);
 
-        // ── PHLOX-20 PART 1: PHLOX-12's misc row and the list family ──────────────
-        /// <summary>PHLOX-20: OSSL_Api.cs:5985 - this prim's sit target offset.</summary>
+        // ── OSSL sit target, misc and list functions ───────────────────────────────
+        /// <summary>OSSL_Api.cs:5985 - this prim's sit target offset.</summary>
         Vector3 osGetSitTargetPos();
-        /// <summary>PHLOX-20: OSSL_Api.cs:5990 - this prim's sit target rotation.</summary>
+        /// <summary>OSSL_Api.cs:5990 - this prim's sit target rotation.</summary>
         Quaternion osGetSitTargetRot();
-        /// <summary>PHLOX-20: OSSL_Api.cs:2721 - Low.</summary>
+        /// <summary>OSSL_Api.cs:2721 - Low.</summary>
         string osLoadedCreationDate();
-        /// <summary>PHLOX-20: OSSL_Api.cs:2728 - Low.</summary>
+        /// <summary>OSSL_Api.cs:2728 - Low.</summary>
         string osLoadedCreationTime();
-        /// <summary>PHLOX-20: OSSL_Api.cs:2735 - Low.</summary>
+        /// <summary>OSSL_Api.cs:2735 - Low.</summary>
         string osLoadedCreationID();
-        /// <summary>PHLOX-20: OSSL_Api.cs:6660 - blackbody temperature to linear sRGB.</summary>
+        /// <summary>OSSL_Api.cs:6660 - blackbody temperature to linear sRGB.</summary>
         Vector3 osTemperature2sRGB(float dtemp);
-        /// <summary>PHLOX-20: OSSL_Api.cs:6477 - the pre-2010 llList2ListStrided semantics.</summary>
+        /// <summary>OSSL_Api.cs:6477 - the pre-2010 llList2ListStrided semantics.</summary>
         LSLList osOldList2ListStrided(LSLList src, int start, int end, int stride);
-        /// <summary>PHLOX-20: OSSL_Api.cs:6695 - the nth occurrence of a sublist within a range.</summary>
+        /// <summary>OSSL_Api.cs:6695 - the nth occurrence of a sublist within a range.</summary>
         int osListFindListNext(LSLList lsrc, LSLList ltest, int lstart, int lend, int linstance);
-        /// <summary>PHLOX-20: OSSL_Api.cs:6417 - sorts the caller's list itself.</summary>
+        /// <summary>OSSL_Api.cs:6417 - sorts the caller's list itself.</summary>
         void osListSortInPlace(LSLList src, int stride, int ascending);
-        /// <summary>PHLOX-20: OSSL_Api.cs:6422 - the same, keyed on one element of the stride.</summary>
+        /// <summary>OSSL_Api.cs:6422 - the same, keyed on one element of the stride.</summary>
         void osListSortInPlaceStrided(LSLList src, int stride, int strideIndex, int ascending);
-        /// <summary>PHLOX-20: OSSL_Api.cs:6318 - llParticleSystem without the 0.1 s sleep.</summary>
+        /// <summary>OSSL_Api.cs:6318 - llParticleSystem without the 0.1 s sleep.</summary>
         void osParticleSystem(LSLList rules);
-        /// <summary>PHLOX-20: OSSL_Api.cs:6324 - the same for a link.</summary>
+        /// <summary>OSSL_Api.cs:6324 - the same for a link.</summary>
         void osLinkParticleSystem(int linknumber, LSLList rules);
-        /// <summary>PHLOX-20: OSSL_Api.cs:5150 - llPreloadSound for a link, without its sleep.</summary>
+        /// <summary>OSSL_Api.cs:5150 - llPreloadSound for a link, without its sleep.</summary>
         void osPreloadSound(int linknum, string sound);
-        /// <summary>PHLOX-20: OSSL_Api.cs:4704 - mass, centre of mass, inertia, aux.</summary>
+        /// <summary>OSSL_Api.cs:4704 - mass, centre of mass, inertia, aux.</summary>
         LSLList osGetInertiaData();
-        /// <summary>PHLOX-20: OSSL_Api.cs:3988 - None. Every NPC in the region.</summary>
+        /// <summary>OSSL_Api.cs:3988 - None. Every NPC in the region.</summary>
         LSLList osGetNPCList();
-        /// <summary>PHLOX-20: OSSL_Api.cs:5724 - removes an item from a linked prim.</summary>
+        /// <summary>OSSL_Api.cs:5724 - removes an item from a linked prim.</summary>
         void osRemoveLinkInventory(int linkNumber, string name);
-        /// <summary>PHLOX-20: OSSL_Api.cs:6313 - TerrainUtil's Perlin noise.</summary>
+        /// <summary>OSSL_Api.cs:6313 - TerrainUtil's Perlin noise.</summary>
         float osPerlinNoise2D(float x, float y, int octaves, float persistence);
-        /// <summary>PHLOX-20: OSSL_Api.cs:3489 - VeryHigh. Saves another agent's outfit.</summary>
+        /// <summary>OSSL_Api.cs:3489 - VeryHigh. Saves another agent's outfit.</summary>
         string osAgentSaveAppearance(string avatarKey, string notecard);
-        /// <summary>PHLOX-20: OSSL_Api.cs:3499 - VeryHigh.</summary>
+        /// <summary>OSSL_Api.cs:3499 - VeryHigh.</summary>
         string osAgentSaveAppearance(string avatarKey, string notecard, int includeHuds);
 
         int osApproxEquals(float a, float b);
         int osApproxEquals(float a, float b, float margin);
-        /// <summary>PHLOX-20: OSSL_Api.cs:5432 - the vector form, chosen by type over the float pair.</summary>
+        /// <summary>OSSL_Api.cs:5432 - the vector form, chosen by type over the float pair.</summary>
         int osApproxEquals(Vector3 va, Vector3 vb);
-        /// <summary>PHLOX-20: OSSL_Api.cs:5469 - the rotation form.</summary>
+        /// <summary>OSSL_Api.cs:5469 - the rotation form.</summary>
         int osApproxEquals(Quaternion ra, Quaternion rb);
-        /// <summary>PHLOX-20: OSSL_Api.cs:5450 - the vector form with a margin.</summary>
+        /// <summary>OSSL_Api.cs:5450 - the vector form with a margin.</summary>
         int osApproxEquals(Vector3 va, Vector3 vb, float margin);
-        /// <summary>PHLOX-20: OSSL_Api.cs:5491 - the rotation form with a margin.</summary>
+        /// <summary>OSSL_Api.cs:5491 - the rotation form with a margin.</summary>
         int osApproxEquals(Quaternion ra, Quaternion rb, float margin);
         int osCheckODE();
         string osFormatString(string str, LSLList strings);
@@ -508,7 +508,7 @@ namespace InWorldz.Phlox.Glue
         float osRound(float value, int ndigits);
         string osSHA256(string input);
         Quaternion osSlerp(Quaternion a, Quaternion b, float amount);
-        /// <summary>PHLOX-20: OSSL_Api.cs:5931 - the vector form, chosen by type over the rotation one.</summary>
+        /// <summary>OSSL_Api.cs:5931 - the vector form, chosen by type over the rotation one.</summary>
         Vector3 osSlerp(Vector3 a, Vector3 b, float amount);
         int osStringStartsWith(string src, string value, int ignorecase);
         int osStringEndsWith(string src, string value, int ignorecase);
@@ -523,7 +523,7 @@ namespace InWorldz.Phlox.Glue
         string osUnixTimeToTimestamp(int time);
         float osVecDistSquare(Vector3 a, Vector3 b);
         float osVecMagSquare(Vector3 a);
-        // PHLOX-14: osNpc* on top of BotManager
+        // osNpc* on top of BotManager
         int osIsNpc(string npc);
         string osNpcCreate(string firstname, string lastname, Vector3 position, string notecard);
         string osNpcCreate(string firstname, string lastname, Vector3 position, string notecard, int options);
@@ -549,7 +549,7 @@ namespace InWorldz.Phlox.Glue
         void osNpcPlayAnimation(string npc, string animation);
         void osNpcStopAnimation(string npc, string animation);
         void osNpcTouch(string npc, string object_key, int link_num);
-        // PHLOX-15: OSSL side-effect functions (prim, sound, links, attachments, misc)
+        // OSSL side-effect functions (prim, sound, links, attachments, misc)
         void osSetRot(string target, Quaternion rotation);
         void osForceCreateLink(string target, int parent);
         void osForceBreakLink(int linknum);
@@ -565,7 +565,7 @@ namespace InWorldz.Phlox.Glue
         LSLList osGetLinkPrimitiveParams(int linknumber, LSLList rules);
         void osSetProjectionParams(int projection, string texture, float fov, float focus, float amb);
         void osSetProjectionParams(int linknum, int projection, string texture, float fov, float focus, float amb);
-        /// <summary>PHLOX-20: OSSL_Api.cs:3921 - the prim-by-key form, arity 6 like the link form and told apart by type.</summary>
+        /// <summary>OSSL_Api.cs:3921 - the prim-by-key form, arity 6 like the link form and told apart by type.</summary>
         void osSetProjectionParams(string prim, int projection, string texture, float fov, float focus, float amb);
         void osSetInertia(float mass, Vector3 centerOfMass, Vector3 principalInertiaScaled, Quaternion lslrot);
         void osSetInertiaAsBox(float mass, Vector3 boxSize, Vector3 centerOfMass, Quaternion lslrot);
@@ -602,7 +602,7 @@ namespace InWorldz.Phlox.Glue
         int osClearObjectAnimations();
         void osLocalTeleportAgent(string agent, Vector3 position, Vector3 velocity, Vector3 lookat, int flags);
         int osConsoleCommand(string command);
-        // PHLOX-16: OSSL agent, teleport, kick, animation and group functions
+        // OSSL agent, teleport, kick, animation and group functions
         void osTeleportOwner(string regionName, Vector3 position, Vector3 lookat);
         void osTeleportOwner(int regionGridX, int regionGridY, Vector3 position, Vector3 lookat);
         void osTeleportOwner(Vector3 position, Vector3 lookat);
@@ -628,7 +628,7 @@ namespace InWorldz.Phlox.Glue
         int osEjectFromGroup(string agentId);
         int osAvatarType(string avkey);
         int osAvatarType(string sFirstName, string sLastName);
-        // PHLOX-17: OSSL parcel, estate, terrain, wind and sun functions
+        // OSSL parcel, estate, terrain, wind and sun functions
         int osSetTerrainHeight(int x, int y, float val);
         int osTerrainSetHeight(int x, int y, float val);
         float osGetTerrainHeight(int x, int y);
@@ -660,12 +660,12 @@ namespace InWorldz.Phlox.Glue
         void osSetTerrainTextures(LSLList textures, int ltypes);
         void osSetTerrainTextureHeight(int corner, float low, float high);
         LSLList osGetParcelDetails(string id, LSLList param);
-        // PHLOX-18: OSSL draw and dynamic-texture functions
+        // OSSL draw and dynamic-texture functions
         string osSetDynamicTextureURL(string dynamicID, string contentType, string url, string extraParams, int timer);
         string osSetDynamicTextureURLBlend(string dynamicID, string contentType, string url, string extraParams, int timer, int alpha);
         string osSetDynamicTextureURLBlendFace(string dynamicID, string contentType, string url, string extraParams, int blend, int disp, int timer, int alpha, int face);
         string osSetDynamicTextureData(string dynamicID, string contentType, string data, string extraParams, int timer);
-        /// <summary>PHLOX-20: OSSL_Api.cs:790 - the face form, arity 6 like DataBlend and told apart by nothing but its name.</summary>
+        /// <summary>OSSL_Api.cs:790 - the face form, arity 6 like DataBlend and told apart by nothing but its name.</summary>
         string osSetDynamicTextureDataFace(string dynamicID, string contentType, string data, string extraParams, int timer, int face);
         string osSetDynamicTextureDataBlend(string dynamicID, string contentType, string data, string extraParams, int timer, int alpha);
         string osSetDynamicTextureDataBlendFace(string dynamicID, string contentType, string data, string extraParams, int blend, int disp, int timer, int alpha, int face);
@@ -687,14 +687,14 @@ namespace InWorldz.Phlox.Glue
         string osSetFontName(string drawList, string fontName);
         string osSetPenSize(string drawList, int penSize);
         string osSetPenColor(string drawList, string color);
-        /// <summary>PHLOX-20: OSSL_Api.cs:1400 - the vector form, arity 2 like the colour-name one.</summary>
+        /// <summary>OSSL_Api.cs:1400 - the vector form, arity 2 like the colour-name one.</summary>
         string osSetPenColor(string drawList, Vector3 color);
         string osSetPenColor(string drawList, Vector3 color, float alpha);
         string osSetPenColour(string drawList, string colour);
         string osSetPenCap(string drawList, string direction, string type);
         string osDrawImage(string drawList, int width, int height, string imageUrl);
         Vector3 osGetDrawStringSize(string contentType, string text, string fontName, int fontSize);
-        // PHLOX-19: OSSL read-only remainder
+        // OSSL read-only remainder
         string osGetNotecardLine(string name, int line);
         string osGetNotecard(string name);
         int osGetNumberOfNotecardLines(string name);
@@ -897,7 +897,7 @@ namespace InWorldz.Phlox.Glue
 		// === ADD THESE LINES to ISystemAPI.cs ===
 		// Insert BEFORE the closing "}" of the interface, after "void llResetAnimationOverride(string anim_state);"
 
-        // ── Batch 10: SL compatibility functions ──
+        // ── SL compatibility functions ──
         string llChar(int unicode);
         int llOrd(string src, int index);
         string llComputeHash(string src, string algorithm);
@@ -912,7 +912,7 @@ namespace InWorldz.Phlox.Glue
         string llGetObjectLinkKey(string objectId, int linknumber);
         void llDerezObject(string id);
 
-        // ── Batch 11: Medium-effort SL compatibility ──
+        // ── Medium-effort SL compatibility ──
         void llTeleportAgent(string agent, string landmark, Vector3 pos, Vector3 lookAt);
         void llTeleportAgentGlobalCoords(string agent, Vector3 globalCoords, Vector3 regionPos, Vector3 lookAt);
         int llScaleByFactor(float factor);
@@ -930,7 +930,7 @@ namespace InWorldz.Phlox.Glue
         int llGetLinkSitFlags(int link);
         void llSetLinkSitFlags(int link, int flags);
 
-        // ── Batch 12: String/List/Crypto SL compatibility ──
+        // ── String/List/Crypto SL compatibility ──
         string llReplaceSubString(string src, string pattern, string replacement, int count);
         int llListFindStrided(LSLList src, LSLList test, int start, int end, int stride);
         LSLList llList2ListSlice(LSLList src, int start, int end, int stride, int slice_index);
@@ -940,13 +940,13 @@ namespace InWorldz.Phlox.Glue
         string llSHA256String(string src, int nonce);
         void llLinkPlaySound(int link, string sound, float volume, int flags);
 
-        /// <summary>PHLOX-2b: LSL_Api.cs:2939 - the three-argument form, flags defaulted to 0.</summary>
+        /// <summary>LSL_Api.cs:2939 - the three-argument form, flags defaulted to 0.</summary>
         void llLinkPlaySound(int link, string sound, float volume);
         Vector3 llLinear2sRGB(Vector3 color);
         Vector3 llSRGB2Linear(Vector3 color);
 		Vector3 llWorldPosToHUD(Vector3 worldPos);
 
-        // ── Batch 13: Linkset Data ──
+        // ── Linkset Data ──
         int llLinksetDataAvailable();
         int llLinksetDataCountKeys();
         string llLinksetDataRead(string name);
@@ -1051,7 +1051,7 @@ namespace InWorldz.Phlox.Glue
         void llSetGroundTexture(string texture, int corner);
         void llTargetedEmail(int targetType, string address, string subject, string message);
 
-        // ---- PHLOX-5: SL names and arities. Older spellings above stay as aliases. ----
+        // ---- SL names and arities. Older spellings above stay as aliases. ----
         Vector3 llsRGB2Linear(Vector3 srgb);
         LSLList llListSortStrided(LSLList src, int stride, int stride_index, int ascending);
         string llSHA256String(string src);

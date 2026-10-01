@@ -1,5 +1,5 @@
 /*
- * PHLOX-21. SL constants the implementation needs, by their SL names and with SL's values, so a
+ * SL constants the implementation needs, by their SL names and with SL's values, so a
  * function body never carries a bare number (or a private copy) that can drift from the compiler's
  * table. LSLSystemAPI.cs reaches them through "using static". SlConstTests.SlConstMatchesTable pins
  * every field here against InWorldz.Phlox.Compiler.DefaultConstants.Constants, and

@@ -6,11 +6,11 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-13 PART 1. The pure-helper family from the PHLOX-12 map, each ported from OSSL_Api.cs at its
+/// The OSSL pure-helper family, each ported from OSSL_Api.cs at its
 /// own threat level. One script calls every one through the harness and says a value the test asserts
 /// exactly; the Low-gated one is checked both ways.
 /// </summary>
-// PHLOX-50: no longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
+// No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class OsslPureHelpersTests
 {
     private readonly ITestOutputHelper _out;

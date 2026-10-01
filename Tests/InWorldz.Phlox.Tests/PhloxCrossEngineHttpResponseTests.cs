@@ -16,7 +16,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-55: one region running YEngine and Phlox, both HTTP pumps running. The core keeps one completed-request queue per
+/// One region running YEngine and Phlox, both HTTP pumps running. The core keeps one completed-request queue per
 /// region (HttpRequestModule.GetNextCompletedRequest dequeues), and whichever engine's pump takes a response must get it
 /// to the script that asked, whichever engine runs it. Before, a YEngine script's response taken by Phlox's pump was
 /// posted through Phlox only and lost.
@@ -24,7 +24,7 @@ namespace InWorldz.Phlox.Tests;
 /// listener that answers each path with its own body and status. Every YEngine request must get exactly one
 /// http_response, in the script that made it, with its body and status; no script gets a duplicate, another script's
 /// response or a wrong body or status.
-/// CORE-6: YEngine's pump (the core's Shared/Api/Plugins/HttpRequest.cs) now offers what it takes to every script engine
+/// YEngine's pump (the core's Shared/Api/Plugins/HttpRequest.cs) now offers what it takes to every script engine
 /// of the region, so a Phlox script's response it takes reaches it too. And, as SL says ("triggered in all scripts in the
 /// prim, not just in the requesting script"), a prim with a YEngine and a Phlox script gets each response in both.
 /// In "phlox-state" (runs alone), as PhloxMimeTypeYEngineTests: it needs YEngine's statics and the core HttpRequestModule's
@@ -103,7 +103,7 @@ public class PhloxCrossEngineHttpResponseTests
                                   int WrongScript, int WrongBody, int WrongStatus, int Strays, int Outstanding);
 
     /// <param name="engines">whose responses the wait is for: "Y", or "YP" for both.</param>
-    /// <param name="mixed">CORE-6: the YEngine and the Phlox script of each pair share one prim, and each must hear every
+    /// <param name="mixed">The YEngine and the Phlox script of each pair share one prim, and each must hear every
     /// response of that prim (SL). Otherwise each script has a prim of its own.</param>
     private Outcome Run(string engines, bool mixed = false)
     {
@@ -211,7 +211,7 @@ public class PhloxCrossEngineHttpResponseTests
     }
 
     /// <summary>
-    /// CORE-6: an event argument in YEngine's types reaches a Phlox script as the value Phlox's VM takes.
+    /// An event argument in YEngine's types reaches a Phlox script as the value Phlox's VM takes.
     /// </summary>
     [Fact]
     public void YEngineArgumentTypesAreConvertedForPhlox()
@@ -246,7 +246,7 @@ public class PhloxCrossEngineHttpResponseTests
     }
 
     /// <summary>
-    /// CORE-6, the XML-RPC counterpart: the core's XMLRPCModule is drained by YEngine's pump and Phlox's. Each incoming
+    /// The XML-RPC counterpart: the core's XMLRPCModule is drained by YEngine's pump and Phlox's. Each incoming
     /// remote_data must reach the Phlox script that opened the channel, once, whichever pump took it; the script's
     /// llRemoteDataReply answers the caller. Before, one YEngine's pump took went to YEngine only, and the caller got
     /// "Script timeout" 9 s later. No listener: the module is enabled by a port it never opens (PostInitialise not called)
@@ -308,7 +308,7 @@ public class PhloxCrossEngineHttpResponseTests
     }
 
     /// <summary>
-    /// CORE-6: SL - "The corresponding http_response event will be triggered in all scripts in the prim, not just in the
+    /// SL - "The corresponding http_response event will be triggered in all scripts in the prim, not just in the
     /// requesting script." A YEngine and a Phlox script in each prim: both hear every response of their prim, once each,
     /// whichever script asked and whichever pump took it.
     /// </summary>

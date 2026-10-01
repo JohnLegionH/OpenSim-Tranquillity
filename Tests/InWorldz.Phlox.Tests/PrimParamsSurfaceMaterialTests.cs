@@ -13,7 +13,7 @@ using LSL_List = OpenSim.Region.ScriptEngine.Shared.LSL_Types.list;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-36. PRIM_TEXGEN, PRIM_NORMAL, PRIM_SPECULAR, PRIM_ALPHA_MODE, IW_PRIM_ALPHA and PRIM_CAST_SHADOWS set and read
+/// PRIM_TEXGEN, PRIM_NORMAL, PRIM_SPECULAR, PRIM_ALPHA_MODE, IW_PRIM_ALPHA and PRIM_CAST_SHADOWS set and read
 /// back on one face and on ALL_SIDES, against the scene (the face's TexMapType, its colour, and the FaceMaterial the
 /// region's materials module keeps for it), with SL's documented error cases (a face that does not exist, values of
 /// the wrong type) and the ranges SL gives; the same material state read and written from a YEngine script's API;

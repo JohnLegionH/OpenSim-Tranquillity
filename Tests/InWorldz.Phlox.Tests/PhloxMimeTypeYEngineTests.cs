@@ -6,7 +6,7 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-54: the two engines side by side on one region, the same HTTP_MIMETYPE from each. The core refuses a value that
+/// The two engines side by side on one region, the same HTTP_MIMETYPE from each. The core refuses a value that
 /// is not a media type (HttpRequestMimeType.IsValid) and YEngine says why; Phlox must give the same result: the same
 /// text on DEBUG_CHANNEL, the same "" return, and nothing on the wire. A valid value is sent by both.
 /// In "phlox-state" (runs alone), as PhloxOutboundFilterYEngineTests: it needs YEngine's statics and the core

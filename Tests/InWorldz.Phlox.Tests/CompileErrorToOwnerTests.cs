@@ -4,7 +4,7 @@ using Xunit;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-2 part 3. A script that will not compile must reach its owner, not only the region log.
+/// A script that will not compile must reach its owner, not only the region log.
 /// Before this, <c>LogOutputListener.Error</c> wrote one line to the log and that was the whole of
 /// it — the resident whose object was broken was never told and the object gave no sign. Both in-world
 /// failures that started this were found by reading the startup log.

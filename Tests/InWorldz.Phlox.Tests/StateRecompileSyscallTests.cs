@@ -6,8 +6,8 @@ using Xunit;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// PHLOX-23: a state saved parked in a syscall, restored onto recompiled bytecode, must come back
-/// idle with no syscall to resume. LastSyscallIndex (PHLOX-4b) is what the scheduler's Syscall arm
+/// A state saved parked in a syscall, restored onto recompiled bytecode, must come back
+/// idle with no syscall to resume. LastSyscallIndex is what the scheduler's Syscall arm
 /// resumes from; left set, it names a call the dropped event will never return from.
 /// </summary>
 public class StateRecompileSyscallTests

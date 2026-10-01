@@ -1,5 +1,5 @@
 /*
- * PHLOX-12. The OSSL permission gate, ported from OSSL_Api.CheckThreatLevel / CheckThreatLevelTest
+ * The OSSL permission gate, ported from OSSL_Api.CheckThreatLevel / CheckThreatLevelTest
  * (Source/OpenSim.Region.ScriptEngine.Shared/Api/OSSL_Api.cs:180-215, 301-530) so that a grid
  * operator's [OSSL] settings mean the same thing on Phlox as on YEngine. Keys honoured, all from the
  * [OSSL] section (falling back to the engine's own section when [OSSL] is absent, as upstream does):

@@ -17,7 +17,7 @@ namespace InWorldz.Phlox.VM
         public int TransitionToState = NO_TRANSITION;
 
         /// <summary>
-        /// PHLOX-10. Invoked exactly once by the scheduler when this event is DONE with - its handler
+        /// Invoked exactly once by the scheduler when this event is DONE with - its handler
         /// finished, or it was dropped (no handler, script disabled, queue full, script not loaded,
         /// terminated). Not serialized. on_damage is the one SL event the region waits on.
         /// </summary>
