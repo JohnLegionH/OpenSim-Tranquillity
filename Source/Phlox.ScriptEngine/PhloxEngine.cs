@@ -429,18 +429,26 @@ namespace Phlox.ScriptEngine
             o.Output($"  script name   : {item?.Name ?? "(not in prim inventory)"}");
             o.Output($"  RunState      : {st.RunState}" + (st.PendingSyscall is null ? "" : $"  (in {st.PendingSyscall})"));
             o.Output($"  enabled       : Enabled={st.Enabled} GeneralEnable={st.GeneralEnable} suspended={st.Suspended}"
-                + (st.LocalDisable is null ? "" : $"  HELD: {st.LocalDisable}"
-                    + (st.LocalDisable.Contains("StateLoadFailed") ? " (state load failed - row kept, never run or saved this process; restart to retry)" : "")
-                    + (st.LocalDisable.Contains("Parcel") ? " (PHLOX-43: the parcel does not allow this script; paused until it does, not stopped)" : "")));
+                + HeldText(st.LocalDisable));
             o.Output($"  Running flag  : {(item is null ? "(unknown)" : item.ScriptRunning.ToString())}");
             if (st.TerminatedReason is not null)
-                o.Output($"  terminated    : {st.TerminatedReason}  (PHLOX-18: stays stopped; reset it, or tick Running, to start it fresh)");
+                o.Output(TerminatedLine(st.TerminatedReason));
             o.Output($"  queued events : {st.QueuedEvents}");
             o.Output($"  LSL state     : {st.LslState}");
             o.Output($"  timer         : {(st.TimerIntervalMs > 0 ? st.TimerIntervalMs + " ms" : "not set")}");
             o.Output($"  region mask   : part.ScriptEvents={part?.ScriptEvents.ToString() ?? "(no part)"}");
             o.Output($"  aggregate     : {part?.AggregatedScriptEvents.ToString() ?? "(no part)"}");
         }
+
+        /// <summary>The status line's note on why a script is held, in words an operator reads.</summary>
+        internal static string HeldText(string localDisable)
+            => localDisable is null ? "" : $"  HELD: {localDisable}"
+                + (localDisable.Contains("StateLoadFailed") ? " (state load failed - row kept, never run or saved this process; restart to retry)" : "")
+                + (localDisable.Contains("Parcel") ? " (the parcel does not allow this script; paused until it does, not stopped)" : "");
+
+        /// <summary>The status line for a script that stopped itself: it stays stopped until reset or set running.</summary>
+        internal static string TerminatedLine(string reason)
+            => $"  terminated    : {reason}  (stays stopped; reset it, or tick Running, to start it fresh)";
 
         /// <summary>When there is no interpreter, say what the prim still knows about the item.</summary>
         private void LogLoadContext(UUID itemId)
