@@ -459,12 +459,15 @@ namespace Phlox.ScriptEngine
             MainConsole.Instance.Output("  and no prim in this region holds an inventory item with that id.");
         }
 
-        /// <summary>The engine named in the script's own header, or this region's default.</summary>
+        /// <summary>The engine named in the script's own header if loaded, or this region's default (PHLOX-67's rule).</summary>
         private string ScriptEngineNameFor(TaskInventoryItem item)
         {
             try
             {
                 string engine = m_Scene?.DefaultScriptEngine;
+                AssetBase asset = m_Scene?.AssetService?.Get(item.AssetID.ToString());
+                if (asset?.Data != null)
+                    engine = PhloxEngineHeader.Owner(OpenMetaverse.Utils.BytesToString(asset.Data), engine, LoadedEngineNames());
                 return string.IsNullOrEmpty(engine) ? "(unknown)" : engine;
             }
             catch { return "(unknown)"; }
@@ -598,7 +601,14 @@ namespace Phlox.ScriptEngine
         private void OnRezScript(uint localID, UUID itemID, string script,
             int startParam, bool postOnRez, string engine, int stateSource)
         {
-            if (engine != Name) return;
+            // PHLOX-67: every engine of the region gets every rez, with the region's default engine name; the script's
+            // first line can name another. Phlox runs it exactly when YEngine's rule picks Phlox, so on a region running
+            // both a script runs in one. A script that is not Phlox's leaves nothing of Phlox behind (Disown).
+            if (!IsPhloxScript(script, engine))
+            {
+                m_ScriptLoader?.Disown(localID, itemID);
+                return;
+            }
 
             SceneObjectPart part = m_Scene.GetSceneObjectPart(localID);
             if (part == null)
@@ -619,6 +629,16 @@ namespace Phlox.ScriptEngine
                 StateSource = stateSource,
                 Prim = part,
             });
+        }
+
+        /// <summary>PHLOX-67: does the first-line rule (<see cref="PhloxEngineHeader"/>) give this script to Phlox?</summary>
+        private bool IsPhloxScript(string script, string defaultEngine)
+            => PhloxEngineHeader.Owner(script, defaultEngine, LoadedEngineNames()) == Name;
+
+        private IEnumerable<string> LoadedEngineNames()
+        {
+            foreach (IScriptModule m in m_Scene?.RequestModuleInterfaces<IScriptModule>() ?? Array.Empty<IScriptModule>())
+                if (m != null) yield return m.ScriptEngineName;
         }
 
         private void OnRemoveScript(uint localID, UUID itemID)
@@ -1620,15 +1640,18 @@ namespace Phlox.ScriptEngine
         public bool SuspendScript(UUID itemID)
             => m_ExeScheduler != null && m_ExeScheduler.RequestSuspend(itemID);
 
-        // Returning TRUE for unknown scripts is deliberate (fe31bac769): Phlox scripts are
-        // never rez-suspended, so "not suspended" IS success — returning false made
+        // Returning TRUE for a Phlox script that is not yet running is deliberate (fe31bac769): Phlox
+        // scripts are never rez-suspended, so "not suspended" IS success — returning false made
         // SceneObjectPartInventory.ResumeScripts() `continue` past the changed(CHANGED_OWNER)
-        // post, swallowing that event on ownership transfer. Known suspended scripts now
-        // actually resume (RequestResume is a cheap no-op for non-suspended ones).
+        // post, swallowing that event on ownership transfer (the load is still compiling then; the
+        // event is held for it). Known suspended scripts now actually resume (RequestResume is a cheap
+        // no-op for non-suspended ones). PHLOX-67: false for another engine's script - ResumeScripts
+        // clears OwnerChanged after the first engine that answers true, so answering true for a
+        // YEngine script asked of Phlox first took its changed(CHANGED_OWNER) away.
         public bool ResumeScript(UUID itemID)
         {
             m_ExeScheduler?.RequestResume(itemID);
-            return true;
+            return HasOrIsLoading(itemID);
         }
         public int GetScriptsMemory(List<UUID> itemIDs)
         {

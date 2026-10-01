@@ -5139,3 +5139,66 @@ script and the username request (it was already posted to the whole prim). Chang
 reader script did not check the query key, so the finished first reader went on reacting to the second reader's
 answers (and asking again) - the change residents will notice. The reader now takes only answers to its own key; the
 assertions are unchanged.
+
+## PHLOX-67 - the first-line engine header (//YEngine:) is honoured as YEngine does (fixed)
+
+Run-time only: no bytecode change, no cache bump, no new setting. Quotes, the start paths and the queries are in the
+work folder's STATE.md.
+
+1. **The rule.** YEngine reads a script's first line (`XMREngine.OnRezScript`): `//` at the very start, the line up to the
+   first `\n` (which must come after index 5), trimmed; the first `:` at index 3 or more; the name before it, trailing
+   blanks trimmed, compared case-sensitively with the `ScriptEngineName` of the engines loaded in the region. A loaded
+   engine named there owns the script; otherwise (no header, or a name no loaded engine has, such as `// Note: ...`) the
+   region's `DefaultScriptEngine` does. Every engine of the region receives every rez with the default engine's name
+   and decides for itself; the core reads the header only for the parcel-rules check (`Scene.ResolveScriptEngine`).
+2. **Phlox ignored the header** (`if (engine != Name) return;`). With Phlox the default and YEngine loaded, a script
+   starting `//YEngine:` ran in both engines; with YEngine the default, a script starting `//InWorldz.Phlox:` ran in
+   neither. Phlox now applies the same rule (`PhloxEngineHeader`, the parse call for call) at `OnRezScript`, the one
+   place every Phlox start passes through (rez, re-rez, copy, attach, crossing, edit and recompile, the region-start
+   loader, and Phlox's own state restore, which happens inside the load). A header naming an engine that is not loaded
+   falls to the default, as in YEngine.
+3. **A script that is not Phlox's leaves nothing of Phlox behind.** Its earlier Phlox load record is forgotten at once
+   (so the editor's Save shows the owning engine's errors, not an earlier Phlox compile's), a queued Phlox load of it is
+   dropped, an instance is unloaded, and its Phlox state row is deleted, so a stale row is never restored into a later
+   Phlox instance (same asset back with Phlox after an operator unloads YEngine). Phlox's answers to the region's
+   queries for it are those for a script that is not its own: `HasScript`, the running flag, `GetScriptState`,
+   `GetScriptErrors`, suspend, reset, start/stop, execution time and memory. `ResumeScript` answered true for any
+   item; `SceneObjectPartInventory.ResumeScripts` clears `OwnerChanged` after the first engine that answers true, so a
+   YEngine script asked of Phlox first lost its `changed(CHANGED_OWNER)`. It now answers true only for a Phlox script
+   (loaded or still loading - fe31bac769's case). `phlox status` shows the engine the rule picks.
+4. **Not changed (YEngine's own behaviour):** YEngine declines a script it owns whose header has a language other than
+   `lsl` (`//YEngine: my notes`, `//YEngine:slua`), and any `//MRM:` script; such a script runs in no engine.
+5. **Found, not changed: SLua on a YEngine-default region.** SLua source starts with `--`, never `//`, so its owner is the
+   default engine: with YEngine the default, YEngine compiles it as LSL and fails, and Phlox never sees it. A
+   `//InWorldz.Phlox:` first line sends it to Phlox, but then the source no longer starts with `--` and Phlox compiles
+   it as LSL. SLua runs only where Phlox is the default engine.
+
+### What residents will notice
+
+- On a region running both engines, a script whose first line is `//YEngine:` now runs only under YEngine (it used to
+  run under Phlox as well, doing everything twice: two chat lines, two listens, two timers).
+- On a region whose default engine is YEngine, a script whose first line is `//InWorldz.Phlox:` now runs under Phlox
+  (it ran nowhere).
+- A YEngine script in an object given to a new owner gets `changed(CHANGED_OWNER)` whichever engine the region asks first.
+
+### What operators will notice
+
+- No new setting, no database change, no cache bump. A Phlox state row of a script another engine now owns is deleted
+  when that script is rezzed or the region starts.
+
+### Tests
+
+New `EngineHeaderTests` (14, in "phlox-yengine": YEngine's statics). Every rez goes through the region's own path
+(`CreateScriptInstance` / `CreateScriptInstances`, offered to both engines): no header with Phlox the default runs in
+Phlox only; `//YEngine:` with both loaded runs in YEngine only (one chat line, no Phlox instance); `//YEngine:` with
+YEngine not loaded runs in Phlox (the default); Phlox's own header with YEngine the default runs in Phlox only; no header
+with YEngine the default runs in YEngine only; the region-start loader partitions a prim of four scripts the same way
+under either default; an edit adding the header moves the script to YEngine (editor errors empty) and one removing it
+brings it back to Phlox from `state_entry`; an edit moving a script that last failed Phlox's compile shows the owning
+engine's answer, not Phlox's old error; a Phlox state row for an item YEngine took is not restored when Phlox gets it
+back; 17 header variants (spacing, `\r`, case, colon position, not first line, not `//`, an unloaded engine, an ordinary
+comment) run in the engine the rule picks, cross-checked with `Scene.ResolveScriptEngine`; `//YEngine: my notes` runs in
+neither; a skipped script's queries (running flag, errors at once, state, reset, suspend/resume, top scripts,
+`changed(CHANGED_OWNER)`) get YEngine's answers; a Phlox script still loading still gets `changed(CHANGED_OWNER)`. On the
+old code 11 of the 14 fail; the 3 that pass are the unchanged cases (no header with Phlox the default, the unloaded-engine
+fallback, a loading Phlox script's `changed`).

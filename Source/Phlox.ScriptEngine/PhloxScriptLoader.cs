@@ -221,6 +221,42 @@ namespace Phlox.ScriptEngine
             m_WorkArrived();
         }
 
+        /// <summary>
+        /// PHLOX-67: the first-line rule gives this item to another engine. Now, on the caller's thread (the editor's
+        /// GetScriptErrors follows on it): forget its load record, so no query answers with an earlier Phlox outcome,
+        /// and drop its loads still queued. Then on the load worker, after any unload posted before this: unload a Phlox
+        /// instance if there is one and delete the item's state row, so it is never restored into a later instance.
+        /// </summary>
+        internal void Disown(uint localID, UUID itemID)
+        {
+            lock (m_Outcomes)
+            {
+                m_LatestSerial.Remove(itemID);
+                m_Outcomes.Remove(itemID);
+                m_UnclaimedFailures.Remove(itemID);
+                System.Threading.Monitor.PulseAll(m_Outcomes);
+            }
+            lock (m_PendingOps) m_PendingOps.Remove(itemID);
+            lock (m_PendingLoads)
+            {
+                for (var n = m_PendingLoads.First; n != null;)
+                {
+                    var next = n.Next;
+                    if (n.Value.ItemID == itemID) m_PendingLoads.Remove(n);
+                    n = next;
+                }
+            }
+            lock (m_PendingUnloads)
+                m_PendingUnloads.AddLast(new PhloxUnloadRequest { LocalID = localID, ItemID = itemID, Disown = true });
+            m_WorkArrived();
+        }
+
+        /// <summary>PHLOX-67: is the item's latest load still wanted (false once the item was disowned)?</summary>
+        private bool IsOwned(UUID itemID)
+        {
+            lock (m_Outcomes) return m_LatestSerial.ContainsKey(itemID);
+        }
+
         public WorkStatus DoWork()
         {
             bool didWork = false;
@@ -282,8 +318,16 @@ namespace Phlox.ScriptEngine
             lock (m_PendingOps) m_PendingOps.Remove(req.ItemID);
             m_ExeScheduler.DropDeferred(req.ItemID);   // PHLOX-46: events held for a load that is now cancelled
             Interpreter script = m_ExeScheduler.FindScript(req.ItemID);
-            if (script == null) return;
+            if (script != null)
+                UnloadScript(req, script);
+            // PHLOX-67: after the unload's save, so the row cannot come back; an empty check first, as most items
+            // disowned (every other engine's script in the region) never had a row.
+            if (req.Disown)
+                m_ExeScheduler.DeleteStateRowIfAny(req.ItemID);
+        }
 
+        private void UnloadScript(PhloxUnloadRequest req, Interpreter script)
+        {
             m_ExeScheduler.DoUnload(req.ItemID);
 
             LoadedScript ls;
@@ -326,6 +370,8 @@ namespace Phlox.ScriptEngine
             // fails alone, with a full diagnostic; every other script still loads.
             try
             {
+                // PHLOX-67: a load that waited behind its prim's compile while the item went to another engine.
+                if (!IsOwned(req.ItemID)) return;
                 req.Generation = BumpGeneration(req.ItemID);
 
                 // Find asset UUID from prim inventory
@@ -815,6 +861,7 @@ namespace Phlox.ScriptEngine
                 {
                     while (true)
                     {
+                        if (!m_LatestSerial.ContainsKey(itemId)) return null;   // PHLOX-67: disowned while waiting
                         if (m_Outcomes.TryGetValue(itemId, out var o) && o.Serial >= wanted)
                         {
                             // The editor has it: no pop-up for the same failure (see ReportUnlessClaimed).
