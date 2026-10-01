@@ -13297,7 +13297,17 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             public void LSLError(string msg) => m_api.ScriptShoutError("LSL Runtime Error: " + msg);
             public void ScriptSleep(int delay) => m_api.ScriptSleep(delay);
         }
-        public string iwReverseString(string src) => new string(src?.ToCharArray() ?? Array.Empty<char>());
+        /// <summary>
+        /// Halcyon (InWorldz.Phlox.Engine/LSLSystemAPI.cs iwReverseString): the UTF-16 code units in
+        /// reverse order, so a surrogate pair comes back with its halves swapped and a combining mark
+        /// lands before the character it followed. Kept as Halcyon has it.
+        /// </summary>
+        public string iwReverseString(string src)
+        {
+            if (src == null) return String.Empty;
+            if (src.Length <= 1) return src;
+            return new string(src.Reverse().ToArray());
+        }
         public int iwChar2Int(string src, int index)
         {
             if (String.IsNullOrEmpty(src)) return 0;
