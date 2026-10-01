@@ -598,9 +598,7 @@ namespace Phlox.ScriptEngine
             {
                 try
                 {
-                    result = InWorldz.Phlox.SLua.SLuaCompiler.IsLuaScript(scriptText)
-                        ? frontend.CompileLua(scriptText)
-                        : frontend.Compile(scriptText);
+                    result = CompileByLanguage(frontend, scriptText);
                 }
                 catch (Exception e) { failure = e; }
             }, CompileStackSize)
@@ -609,6 +607,35 @@ namespace Phlox.ScriptEngine
             t.Join();
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
             return result;
+        }
+
+        /// <summary>
+        /// Compile the script as LSL or SLua. A first line naming Phlox ("//InWorldz.Phlox:&lt;language&gt;", the header that
+        /// gives a script to Phlox on any region, <see cref="PhloxEngineHeader"/>) decides by its language part, read as
+        /// YEngine reads its own: "" or "lsl" is LSL; "slua" is SLua, compiled with the header line blanked (its newline
+        /// kept) so error line numbers match the source; anything else is a compile error on line 1. The language part
+        /// is lowercased first, as YEngine does, so "SLua" and "SLUA" are SLua too. Without that header, the source decides
+        /// (<see cref="InWorldz.Phlox.SLua.SLuaCompiler.IsLuaScript"/>).
+        /// </summary>
+        internal static CompiledScript CompileByLanguage(CompilerFrontend frontend, string scriptText)
+        {
+            if (PhloxEngineHeader.NamedEngine(scriptText) == PhloxEngineHeader.PhloxName)
+            {
+                string language = PhloxEngineHeader.Language(scriptText);
+                if (language == "slua")
+                    return frontend.CompileLua(scriptText[scriptText.IndexOf('\n')..]);
+                if (language.Length > 0 && language != "lsl")
+                {
+                    string header = scriptText[..scriptText.IndexOf('\n')].TrimEnd('\r');
+                    frontend.Listener?.Error($"line 1:0 the first line {header} names the language \"{language}\"; " +
+                                             "Phlox runs lsl or slua");
+                    return null;
+                }
+                return frontend.Compile(scriptText);
+            }
+            return InWorldz.Phlox.SLua.SLuaCompiler.IsLuaScript(scriptText)
+                ? frontend.CompileLua(scriptText)
+                : frontend.Compile(scriptText);
         }
 
         /// <summary>Is the compile thread still running? (False after <see cref="Stop"/> once it has finished.)</summary>
@@ -644,9 +671,7 @@ namespace Phlox.ScriptEngine
                 BeforeCompileForTest?.Invoke(job.ScriptText);
                 int delay = CompileDelayForTest?.Invoke(job.ScriptText) ?? 0;
                 if (delay > 0) System.Threading.Thread.Sleep(delay);
-                job.Compiled = InWorldz.Phlox.SLua.SLuaCompiler.IsLuaScript(job.ScriptText)
-                    ? frontend.CompileLua(job.ScriptText)
-                    : frontend.Compile(job.ScriptText);
+                job.Compiled = CompileByLanguage(frontend, job.ScriptText);
                 if (job.Compiled != null)
                 {
                     job.Compiled.AssetId = job.AssetId;

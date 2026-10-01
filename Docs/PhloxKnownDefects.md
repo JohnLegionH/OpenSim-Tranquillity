@@ -128,7 +128,9 @@ These are facts about Phlox's compiler. Where SL's rule is known, it is cited.
 - A script runs on the region's default engine (`[Startup] DefaultScriptEngine`) unless
   its first line names another one. Phlox reads that line exactly as YEngine does:
   - `//YEngine:` keeps a script on YEngine;
-  - `//InWorldz.Phlox:` puts it on Phlox.
+  - `//InWorldz.Phlox:` puts it on Phlox;
+  - `//InWorldz.Phlox:slua` puts it on Phlox and compiles the rest as SLua. Another language
+    name after `//InWorldz.Phlox:` is a compile error in the editor.
 - The header must be the very first characters of the script. The name is case-sensitive.
   A header naming an engine that is not loaded is ignored, and the script goes to the default
   engine.
@@ -161,7 +163,8 @@ These are facts about Phlox's compiler. Where SL's rule is known, it is cited.
   `try`/`catch`/`finally`/`throw`, arrays, `foreach`, classes and the `xmr*` functions.
 - YEngine accepts several user functions with the same name and different parameters.
   Phlox rejects them, as SL does.
-- Phlox compiles SLua scripts; YEngine does not.
+- Phlox compiles SLua scripts; YEngine does not. Where YEngine is the default, an SLua script
+  needs `//InWorldz.Phlox:slua` as its first line to run on Phlox.
 
 ### Function sets
 - **YEngine has, Phlox lacks:**

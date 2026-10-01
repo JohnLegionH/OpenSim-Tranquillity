@@ -59,12 +59,17 @@ default { state_entry() { llOwnerSay("I run on YEngine"); } }
 - **Names.** `//YEngine:` keeps a script on YEngine; `//InWorldz.Phlox:` puts it on Phlox.
 - **Unknown names.** A header naming an engine that is not loaded in the region is ignored,
   and the script runs on the default engine.
-- **Text after the colon.** Leave nothing after the colon (YEngine also accepts `lsl`).
-  YEngine treats other text there as a language name and does not run a script whose
-  language is not LSL.
-- **SLua.** SLua scripts cannot carry a header (see below).
+- **The language part.** Text after the colon is a language name. Both engines read it the
+  same way: blanks around it are ignored, case does not matter, and a single character
+  written directly after the colon is ignored.
+  - Nothing, or `lsl`, means LSL, on either engine.
+  - `//InWorldz.Phlox:slua` puts the script on Phlox and compiles the rest as SLua (see below).
+  - Any other text after `//InWorldz.Phlox:` is a compile error on line 1, shown in the
+    script editor. The script does not run on either engine.
+  - YEngine does not run a script whose `//YEngine:` header names a language other than
+    LSL, and reports no error.
 
-The header is an ordinary comment to the compiler, so the same script compiles on either
+An LSL header is an ordinary comment to the compiler, so the same script compiles on either
 engine.
 
 ## What changing the default engine does to existing scripts
@@ -195,10 +200,25 @@ Object names match without regard to case. The commands act in the region select
 ## SLua
 
 - **What counts as SLua.** Phlox compiles a script as SLua when its text, after any leading
-  white space, begins with `--`. The usual first line is `--!slua`.
-- **Where it runs.** Only Phlox knows SLua, and an SLua script cannot carry an engine header
-  (its first line is not a `//` comment). SLua therefore runs only in regions where Phlox is
-  the default engine.
-- **Elsewhere.** Where YEngine is the default, YEngine receives the script as LSL.
+  white space, begins with `--`. The usual first line is `--!slua`. It also compiles a script
+  as SLua when its first line is `//InWorldz.Phlox:slua`.
+- **Where it runs.** Only Phlox knows SLua. Without a header, an SLua script goes to the
+  default engine, so it runs only where Phlox is the default. Where YEngine is the default,
+  YEngine receives it as LSL and it fails to compile.
+- **The `//InWorldz.Phlox:slua` header.** Make this the first line, and the script runs on
+  Phlox as SLua in any region where Phlox is loaded, whatever the default engine:
+
+  ```lua
+  //InWorldz.Phlox:slua
+  ll.Say(0, "Hello from SLua")
+  ```
+
+  - The header is read like any engine header. The engine name `InWorldz.Phlox` is exact
+    and case-sensitive. The language part may be written in any case (`slua`, `SLua`).
+  - Phlox blanks the header line before compiling. Line numbers in error messages still
+    match the script as written.
+  - In a region where Phlox is not loaded, the header names no loaded engine, so the
+    script goes to the default engine. YEngine then does not run it, because the language
+    is not LSL.
 
 More on SLua is in [PhloxSLua.md](PhloxSLua.md).

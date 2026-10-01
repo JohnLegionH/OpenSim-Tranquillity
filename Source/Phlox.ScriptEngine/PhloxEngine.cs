@@ -53,7 +53,7 @@ namespace Phlox.ScriptEngine
 
         #region INonSharedRegionModule
 
-        public string Name => "InWorldz.Phlox";
+        public string Name => PhloxEngineHeader.PhloxName;
         public Type ReplaceableInterface => null;
 
         /// <summary>
