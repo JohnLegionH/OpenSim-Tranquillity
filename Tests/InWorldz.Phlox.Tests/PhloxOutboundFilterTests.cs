@@ -169,7 +169,7 @@ public class PhloxOutboundFilterTests
     [InlineData("http://192.0.0.1/x")]
     [InlineData("http://192.0.2.1/x")]
     [InlineData("http://192.88.99.1/x")]
-    [InlineData("http://192.168.1.225:9000/lslhttp/x/")]
+    [InlineData("http://192.168.0.10:9000/lslhttp/x/")]
     [InlineData("http://198.18.0.1/x")]
     [InlineData("http://198.51.100.1/x")]
     [InlineData("http://203.0.113.1/x")]
@@ -253,7 +253,7 @@ public class PhloxOutboundFilterTests
     [Fact]
     public void AnExceptHostNameEntryIsResolvedAtStartup()
     {
-        // The Legion case: OutboundDisallowForUserScriptsExcept = <grid host>:<http port>.
+        // The usual case: OutboundDisallowForUserScriptsExcept = <grid host>:<http port>.
         using var r = new Rig(except: port => "localhost:" + port);
         r.Request(r.Loopback("localhost"), expectSent: true);
         AssertSent(r);
@@ -264,7 +264,7 @@ public class PhloxOutboundFilterTests
     /// <summary>
     /// An llRequestURL URL is "http://" + ExternalHostNameForLSL + ":" + port + "/lslhttp/&lt;id&gt;" (core UrlModule.cs:241).
     /// YEngine gives it no allowance: its host is checked like any other. On a region whose host name resolves to a
-    /// private address (Legion's legiongrid.ddns.net resolves to 192.168.1.225 on the region server) it is refused unless
+    /// private address (say grid.example.org resolves to 192.168.0.10 on the region server) it is refused unless
     /// an Except entry names it. The listener stands in for the region's HTTP server.
     /// </summary>
     [Fact]

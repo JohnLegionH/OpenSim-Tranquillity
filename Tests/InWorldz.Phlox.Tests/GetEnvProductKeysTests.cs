@@ -55,7 +55,7 @@ public class GetEnvProductKeysTests
     /// as an unknown key does.
     /// </summary>
     [Theory]
-    [InlineData("configured", "Legion Test Grid")]
+    [InlineData("configured", "Example Test Grid")]
     [InlineData("unconfigured", "")]
     [InlineData("no grid info", "")]
     public void GridAnswersWhatYEngineAnswers(string grid, string expected)
@@ -64,7 +64,7 @@ public class GetEnvProductKeysTests
         // The test scene's grid info is built from a config with no grid name, so it holds GridInfo's stand-in; a
         // configured name reaches it through the GridName setter, as SimulatorFeaturesModule sets it from config.
         Assert.Equal("Another bad configured grid", h.Scene.SceneGridInfo.GridName);
-        if (grid == "configured") h.Scene.SceneGridInfo.GridName = "Legion Test Grid";
+        if (grid == "configured") h.Scene.SceneGridInfo.GridName = "Example Test Grid";
         if (grid == "no grid info") h.Scene.SceneGridInfo = null;
 
         var item = TaskInventoryHelpers.AddScript(h.Scene.AssetService, h.Prim, UUID.Random(), UUID.Random(), "yengine-api", "default { }");
