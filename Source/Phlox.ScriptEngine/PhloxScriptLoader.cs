@@ -228,7 +228,9 @@ namespace Phlox.ScriptEngine
         /// The first-line rule gives this item to another engine. Now, on the caller's thread (the editor's
         /// GetScriptErrors follows on it): forget its load record, so no query answers with an earlier Phlox outcome,
         /// and drop its loads still queued. Then on the load worker, after any unload posted before this: unload a Phlox
-        /// instance if there is one and delete the item's state row, so it is never restored into a later instance.
+        /// instance if there is one, with its normal save. The item's state row is kept, as YEngine keeps its own state
+        /// file for a script it declines (XMREngine.OnRezScript): if the script comes back to Phlox with the same asset it
+        /// resumes from that row, and an edited script has a new asset, so LoadState does not restore the row.
         /// </summary>
         internal void Disown(uint localID, UUID itemID)
         {
@@ -251,7 +253,7 @@ namespace Phlox.ScriptEngine
                 }
             }
             lock (m_PendingUnloads)
-                m_PendingUnloads.AddLast(new PhloxUnloadRequest { LocalID = localID, ItemID = itemID, Disown = true });
+                m_PendingUnloads.AddLast(new PhloxUnloadRequest { LocalID = localID, ItemID = itemID });
             m_WorkArrived();
         }
 
@@ -324,10 +326,6 @@ namespace Phlox.ScriptEngine
             Interpreter script = m_ExeScheduler.FindScript(req.ItemID);
             if (script != null)
                 UnloadScript(req, script);
-            // After the unload's save, so the row cannot come back; an empty check first, as most items
-            // disowned (every other engine's script in the region) never had a row.
-            if (req.Disown)
-                m_ExeScheduler.DeleteStateRowIfAny(req.ItemID);
         }
 
         private void UnloadScript(PhloxUnloadRequest req, Interpreter script)

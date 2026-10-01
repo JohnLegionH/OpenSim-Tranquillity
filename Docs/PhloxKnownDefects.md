@@ -140,6 +140,10 @@ These are facts about Phlox's compiler. Where SL's rule is known, it is cited.
   checked against the script asset. YEngine writes a `.state` file per script. The engines
   never read each other's state: a script that changes engine starts fresh, with
   `state_entry`.
+- **Handed-off scripts keep their Phlox state.** When a script moves to another engine,
+  Phlox keeps its saved state, as YEngine keeps its own for a script it declines. If the
+  script comes back to Phlox unchanged, it resumes from that state. Anything it did on the
+  other engine is not carried over.
 - **What survives.** A Phlox script resumes where it was after a region or simulator restart.
   It starts fresh when its source changes, and when it is reset.
 - **State is not carried inside objects.** YEngine embeds script state in the serialized

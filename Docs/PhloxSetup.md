@@ -75,14 +75,16 @@ engine.
 - **They start fresh.** The engines do not share saved state, so a script that changes
   engine starts from `state_entry` with its globals at their initial values. This includes
   timers, listens and the current state.
-- **Phlox state does not come back.** When Phlox hands a script to another engine, it
-  deletes its own saved state for that script. Switching back later does not restore it.
+- **Phlox keeps its saved state.** When Phlox hands a script to another engine, it keeps its
+  own saved state for that script. If you switch back, a script that comes back to Phlox
+  unchanged resumes where it left off under Phlox. What happened under the other engine is
+  not carried over. A script that was edited in the meantime starts fresh.
 - **Headed scripts stay.** Scripts whose first line names a loaded engine keep that engine
   and their state.
 
 Before switching a region that runs scripts which must keep their state (counters, vendors,
 door states held in globals), either add `//YEngine:` as their first line or accept that they
-reset once.
+start fresh on the other engine.
 
 ## Settings in `[InWorldz.Phlox]`
 
