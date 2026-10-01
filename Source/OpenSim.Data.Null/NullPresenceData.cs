@@ -38,8 +38,9 @@ public class NullPresenceData : IPresenceData
 
     public static NullPresenceData Instance;
 
-    // Test storage shared by every scene in the process (Instance); test classes run in parallel,
-    // so every access is serialised. Monitor is re-entrant, so the delegation to Instance is safe.
+    // One store is shared by every presence service in the process (Instance): a standalone's regions, or
+    // test scenes set up in parallel. Every access is serialised; Monitor is re-entrant, so the delegation
+    // to Instance under the lock is safe.
     private static readonly object s_lock = new object();
 
     Dictionary<UUID, PresenceData> m_presenceData = new Dictionary<UUID, PresenceData>();
