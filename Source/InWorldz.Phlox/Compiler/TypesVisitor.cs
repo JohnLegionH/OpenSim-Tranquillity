@@ -400,7 +400,15 @@ namespace InWorldz.Phlox.Compiler
                 return t;
             }
             // &&  ||  — result is always integer (boolean)
-            foreach (var c in children) Visit(c);
+            // PHLOX-65: SL refuses a key operand at compile time (LL's operator table, as Tailslide's types.cc has it:
+            // OP_BOOLEAN_AND / OP_BOOLEAN_OR take LST_INTEGER, LST_INTEGER only); Phlox compiled it and the script
+            // stopped at run time. Only the key is refused here: the other non-integer operands keep compiling.
+            for (int i = 0; i < children.Length; i++)
+            {
+                ISymbolType t = Visit(children[i]);
+                if (t == SymbolTable.KEY)
+                    ErrorAtContext(children[i], $"Type mismatch: '{GetOpAt(context, i == 0 ? 1 : i)}' cannot be applied to a key");
+            }
             SetType(context, SymbolTable.INT);
             return SymbolTable.INT;
         }
@@ -562,7 +570,11 @@ namespace InWorldz.Phlox.Compiler
 
         public override ISymbolType VisitUnaryBoolNot([NotNull] LSLParser.UnaryBoolNotContext context)
         {
-            Visit(context.unaryExpression());
+            ISymbolType t = Visit(context.unaryExpression());
+            // PHLOX-65: SL refuses '!' on a key at compile time (Tailslide types.cc: {'!', LST_INTEGER, LST_NONE,
+            // LST_BOOLEAN}); Phlox compiled it and the script stopped at run time.
+            if (t == SymbolTable.KEY)
+                ErrorAtContext(context, "Type mismatch: '!' cannot be applied to a key");
             // ! always produces integer (boolean)
             SetType(context, SymbolTable.INT);
             return SymbolTable.INT;

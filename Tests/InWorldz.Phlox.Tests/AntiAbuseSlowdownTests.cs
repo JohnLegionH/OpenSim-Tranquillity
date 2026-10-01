@@ -616,6 +616,9 @@ public class AntiAbuseSlowdownTests
         r.Now += 60_000;
         r.Sleep(item, api => api.llGetNotecardLine("other", 0));         // an uncached read purges: 60 s is not over 60 s
         Assert.True(CacheOf(r).IsCached(card.AssetID), "dropped at exactly 60 s");
+        // PHLOX-65: that read fetches "other" on the thread pool; until it is cached the next read is uncached too and
+        // purges "card" at 61 s (the B7-PREP flake). The clock is frozen, so waiting does not move the 60 s.
+        UntilCached(r, other.AssetID);
 
         r.Now += 1;
         r.Sleep(item, api => api.llGetNotecardLine("other", 0));         // cached now: no purge on a cached read

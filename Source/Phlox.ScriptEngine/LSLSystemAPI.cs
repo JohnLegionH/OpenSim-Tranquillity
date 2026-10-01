@@ -297,11 +297,15 @@ namespace Phlox.ScriptEngine
         /// Answer a notecard read with <paramref name="answer"/> of the notecard's text. From the region's notecard cache
         /// when it is on and holds the asset (true: a cached read); otherwise fetched on the thread pool as before PHLOX-56,
         /// cached when the cache is on, and the cache swept as Halcyon's CacheCheck does after a miss (false).
-        /// <paramref name="onMissing"/> answers a missing asset or a failure; <paramref name="logAs"/> names the call in
-        /// the error log (null: not logged, as the link variants never logged).
+        /// <paramref name="logAs"/> names the call in the error log (null: not logged, as the link variants never logged).
+        /// PHLOX-65: a fetch that finds no notecard asset is Halcyon's (LSLSystemAPI.cs:14563-14569, 14646-14652): the error
+        /// "Notecard '<paramref name="cardName"/>' could not be found." shouted and no dataserver answer (Phlox answered
+        /// "0" or EOF). Halcyon also paused the script (ScriptSleep(ERROR_DELAY), its ScriptShoutError's 15 ms); here the
+        /// fetch runs on the thread pool, where a ScriptSleep would set the run state off the script's own thread (the B2
+        /// strand, SyscallSleepRaceTests), so the error is shouted without a pause.
         /// </summary>
         private bool AnswerNotecardRead(UUID assetId, UUID queryID, Func<PhloxNotecardCache.Card, string> answer,
-            string onMissing, string logAs)
+            string cardName, string logAs)
         {
             PhloxNotecardCache cache = m_ScriptEngine != null && m_ScriptEngine.NotecardCacheEnabled ? m_ScriptEngine.NotecardCache : null;
             if (cache != null && cache.TryGet(assetId, out PhloxNotecardCache.Card cached))
@@ -314,7 +318,11 @@ namespace Phlox.ScriptEngine
                 try
                 {
                     AssetBase asset = World.AssetService.Get(assetId.ToString());
-                    if (asset == null || asset.Data == null) { PostDataserverEvent(queryID, onMissing); return; }
+                    if (asset == null || asset.Data == null || asset.Type != (sbyte)AssetType.Notecard)
+                    {
+                        ShoutError("Notecard '" + cardName + "' could not be found.");
+                        return;
+                    }
                     var card = new PhloxNotecardCache.Card(StripNotecardHeader(OpenMetaverse.Utils.BytesToString(asset.Data)));
                     cache?.Cache(assetId, card);
                     PostDataserverEvent(queryID, answer(card));
@@ -322,7 +330,7 @@ namespace Phlox.ScriptEngine
                 catch (Exception ex)
                 {
                     if (logAs != null) m_log.LogError("[PhloxAPI]: {0} ex: {1}", logAs, ex.Message);
-                    PostDataserverEvent(queryID, onMissing);
+                    ShoutError("Notecard '" + cardName + "' could not be found.");
                 }
             });
             cache?.CacheCheck();
@@ -1390,9 +1398,10 @@ namespace Phlox.ScriptEngine
             if ((status & STATUS_DIE_AT_EDGE) != 0)
                 m_host.SetDieAtEdge(on);
 
-            // PHLOX-62 (ruling (a)): Phlox does not act on it; Halcyon said so (LSLSystemAPI.cs:1557-1560).
+            // PHLOX-65: as YEngine (LSL_Api.cs:1577-1578); the core returns the object at a region edge (Scene.cs:2977,
+            // SceneObjectGroup.cs:874). Was PHLOX-62's "Command not implemented" (Halcyon :1557-1560).
             if ((status & STATUS_RETURN_AT_EDGE) != 0)
-                NotImplemented("llSetStatus - STATUS_RETURN_AT_EDGE");
+                m_host.SetReturnAtEdge(on);
 
             if ((status & STATUS_SANDBOX) != 0)
                 m_host.SetStatusSandbox(on);   // PHLOX-21, as YEngine
@@ -1451,8 +1460,7 @@ namespace Phlox.ScriptEngine
                 case STATUS_SANDBOX:
                     return m_host.GetStatusSandbox() ? 1 : 0;
                 case STATUS_RETURN_AT_EDGE:
-                    NotImplemented("llGetStatus - STATUS_RETURN_AT_EDGE");   // PHLOX-62: Halcyon LSLSystemAPI.cs:1659-1661
-                    return 0;
+                    return m_host.GetReturnAtEdge() ? 1 : 0;   // PHLOX-65: YEngine LSL_Api.cs:1649
                 case STATUS_ROTATE_X:
                     return (m_host.RotationAxisLocks & 0x01) == 0 ? 1 : 0;
                 case STATUS_ROTATE_Y:
@@ -4232,7 +4240,7 @@ namespace Phlox.ScriptEngine
                 return UUID.Zero.ToString();
             }
             UUID queryID = NewDataserverQuery();   // PHLOX-46
-            bool cached = AnswerNotecardRead(item.AssetID, queryID, c => c.LineCount.ToString(), "0", "llGetNumberOfNotecardLines");
+            bool cached = AnswerNotecardRead(item.AssetID, queryID, c => c.LineCount.ToString(), name, "llGetNumberOfNotecardLines");
             NotecardSleep(cached ? NOTECARD_COUNT_FAST_DELAY : NOTECARD_COUNT_LONG_DELAY);
             return queryID.ToString();
         }
@@ -4253,7 +4261,7 @@ namespace Phlox.ScriptEngine
             }
             UUID queryID = NewDataserverQuery();   // PHLOX-46
             int lineNum = line;
-            bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardLineAnswer(c, lineNum), "\n\n\n", "llGetNotecardLine");
+            bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardLineAnswer(c, lineNum), name, "llGetNotecardLine");
             if (cached) NotecardLineCachedSleep(line, 0);
             else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
             return queryID.ToString();
@@ -4267,7 +4275,7 @@ namespace Phlox.ScriptEngine
             UUID queryID = NewDataserverQuery();   // PHLOX-46
             int lineNum = line;
             bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardSegmentAnswer(c, lineNum, startOffset, maxLength),
-                "\n\n\n", "iwGetNotecardSegment");
+                name, "iwGetNotecardSegment");
             if (cached) NotecardLineCachedSleep(line, startOffset);   // PHLOX-56, as llGetNotecardLine
             else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
             return queryID.ToString();
@@ -4742,7 +4750,7 @@ namespace Phlox.ScriptEngine
                 if (item == null) continue;
                 UUID queryID = NewDataserverQuery();   // PHLOX-46
                 // PHLOX-56: Halcyon's GetNumberOfNotecardLines delays and cache, as llGetNumberOfNotecardLines
-                bool cached = AnswerNotecardRead(item.AssetID, queryID, c => c.LineCount.ToString(), "0", null);
+                bool cached = AnswerNotecardRead(item.AssetID, queryID, c => c.LineCount.ToString(), name, null);
                 NotecardSleep(cached ? NOTECARD_COUNT_FAST_DELAY : NOTECARD_COUNT_LONG_DELAY);
                 return queryID.ToString();
             }
@@ -4769,7 +4777,7 @@ namespace Phlox.ScriptEngine
                 UUID queryID = NewDataserverQuery();   // PHLOX-46
                 int lineNum = line;
                 // PHLOX-56: Halcyon's GetNotecardSegment delays and cache, as llGetNotecardLine
-                bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardLineAnswer(c, lineNum), "\n\n\n", null);
+                bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardLineAnswer(c, lineNum), name, null);
                 if (cached) NotecardLineCachedSleep(line, 0);
                 else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
                 return queryID.ToString();
@@ -4798,7 +4806,7 @@ namespace Phlox.ScriptEngine
                 int lineNum = line;
                 // PHLOX-56: Halcyon's GetNotecardSegment delays and cache, as iwGetNotecardSegment
                 bool cached = AnswerNotecardRead(item.AssetID, queryID, c => NotecardSegmentAnswer(c, lineNum, startOffset, maxLength),
-                    "\n\n\n", null);
+                    name, null);
                 if (cached) NotecardLineCachedSleep(line, startOffset);
                 else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
                 return queryID.ToString();
@@ -5266,6 +5274,33 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             if (m_host?.ParentGroup == null) return;
             if (m_host.ParentGroup.IsAttachment) return;
+
+            // PHLOX-65: SL wiki llBreakAllLinks: "the script must request the PERMISSION_CHANGE_LINKS permission with
+            // llRequestPermissions and it must be granted by the owner"; without it "the script will shout an error on
+            // DEBUG_CHANNEL and the operation fails (but the script continues to run)"; "If PERMISSION_CHANGE_LINKS is
+            // granted by anyone other than the owner, then when the function is called an error will be shouted".
+            // YEngine LSL_Api.cs:4963-4975 checks it unless AutomaticLinkPermission, as Phlox's llBreakLink (PHLOX-62)
+            // and llCreateLink do; their texts and forms. Halcyon had no check.
+            TaskInventoryItem item = GetInventorySelf();
+            if (item == null) return;
+            if (!AutomaticLinkPermission && (item.PermsMask & PERMISSION_CHANGE_LINKS) == 0)
+            {
+                ScriptShoutError("llBreakAllLinks: PERMISSION_CHANGE_LINKS not set");
+                return;
+            }
+            if (!AutomaticLinkPermission && item.PermsGranter != m_host.ParentGroup.OwnerID)
+            {
+                ShoutError("llBreakAllLinks: PERMISSION_CHANGE_LINKS not set by script owner");
+                return;
+            }
+
+            BreakAllLinksCore();
+        }
+
+        /// <summary>PHLOX-65: llBreakAllLinks after its permission checks - the door osForceBreakAllLinks takes (OSSL_Api.cs:2800-2805 calls BreakAllLinks).</summary>
+        private void BreakAllLinksCore()
+        {
+            if (m_host?.ParentGroup == null || m_host.ParentGroup.IsAttachment) return;
 
             SceneObjectGroup parentGroup = m_host.ParentGroup;
             if (parentGroup.PrimCount < 2) return;
@@ -9778,7 +9813,18 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             OsslCheck();
             if (src?.Data == null || src.Data.Length == 0) return;
             var sorted = llListSort(src, stride, ascending);
+            SortInPlace(src, sorted);
+        }
+
+        /// <summary>
+        /// PHLOX-65: the caller's list takes the sorted order in both of LSLList's stores - the Data array the VM's
+        /// list operations read and the member list that GetLSLStringItem, (string)list and now llDumpList2String /
+        /// llList2CSV / llList2String read. Only Data was written, so those saw the unsorted list.
+        /// </summary>
+        private static void SortInPlace(LSLList src, LSLList sorted)
+        {
             Array.Copy(sorted.Data, src.Data, src.Data.Length);
+            for (int i = 0; i < src.Members.Count; i++) src.Members[i] = sorted.Data[i];
         }
 
         /// <summary>OSSL_Api.cs:6422-6425 - the same, keyed on one element of each stride (llListSortStrided's order).</summary>
@@ -9787,7 +9833,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             OsslCheck();
             if (src?.Data == null || src.Data.Length == 0) return;
             var sorted = llListSortStrided(src, stride, strideIndex, ascending);
-            Array.Copy(sorted.Data, src.Data, src.Data.Length);
+            SortInPlace(src, sorted);
         }
 
         /// <summary>OSSL_Api.cs:6318-6322 - ungated upstream: llParticleSystem without its sleep.</summary>
@@ -10252,11 +10298,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             BreakLinkCore(linknum);
         }
 
-        /// <summary>OSSL_Api.cs:2800-2805 - VeryLow. Phlox's llBreakAllLinks carries no permission check, so it is the core.</summary>
+        /// <summary>OSSL_Api.cs:2800-2805 - VeryLow. llBreakAllLinks without its permission checks (PHLOX-65: BreakAllLinksCore).</summary>
         public void osForceBreakAllLinks()
         {
             OsslCheck(TlVeryLow, "osForceBreakAllLinks");
-            llBreakAllLinks();
+            BreakAllLinksCore();
         }
 
         /// <summary>OSSL_Api.cs:4954-4975 - Severe. Another owner's object only where the land owner rule allows; SceneObjectGroup.TeleportObject does the move (OSTPOBJ_* flags).</summary>
@@ -12658,10 +12704,12 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                     ScriptShoutError("Invalid number of parameters in options list for llHTTPRequest.");
                     return UUID.Zero.ToString();
                 }
+                // PHLOX-65: Halcyon's test and text (LSLSystemAPI.cs:13780-13799): the flag as the list writes it
+                // (GetLSLStringItem, so 1.0 is "1.000000" and is refused) must parse as an integer.
                 int option;
-                if (!int.TryParse(data[i].ToString(), out option))
+                if (!int.TryParse(parameters.GetLSLStringItem(i), out option))
                 {
-                    ScriptShoutError("Invalid flag in llHTTPRequest parameters.");
+                    ScriptShoutError("Invalid flag passed in parameters list of llHTTPRequest.");
                     return UUID.Zero.ToString();
                 }
                 string value = data[i + 1].ToString();
@@ -13506,28 +13554,28 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         // ── Lists ──────────────────────────────────────────────────────────────
 
         public int llGetListLength(LSLList src) => src?.Length ?? 0;
+        // PHLOX-65: Halcyon's llList2Integer / llList2Float / llList2String (LSLSystemAPI.cs:6533-6561) - the element as
+        // LSLList converts it, the conversion (string)list and the casts use: llList2String of 2.0 is "2.000000" and of a
+        // vector "<1.000000, 2.000000, 3.000000>" (SL wiki List: "abc123.140000<0.000000, 0.000000, 0.000000>"), not .NET's
+        // "2" / "<1, 2, 3>"; llList2Integer of 1.7 is 1 and of NaN or 1e10 -2147483648 (D10), and of "0x1F" 31, where
+        // Convert.ToInt32 rounded, saturated and threw.
         public int llList2Integer(LSLList src, int index)
         {
-            if (src == null || src.Length == 0) return 0;
-            int i = index < 0 ? src.Length + index : index;
-            if (i < 0 || i >= src.Length) return 0;
-            try { return Convert.ToInt32(src.Data[i]); } catch { return 0; }
+            if (src == null) return 0;
+            if (index < 0) index = src.Length + index;
+            return src.GetLSLIntegerItem(index);
         }
         public float llList2Float(LSLList src, int index)
         {
-            if (src == null || src.Length == 0) return 0f;
-            int i = index < 0 ? src.Length + index : index;
-            if (i < 0 || i >= src.Length) return 0f;
-            try { return (float)Convert.ToDouble(src.Data[i]); } catch { return 0f; }
+            if (src == null) return 0f;
+            if (index < 0) index = src.Length + index;
+            return src.GetLSLFloatItem(index);
         }
         public string llList2String(LSLList src, int index)
         {
-            if (src == null || src.Length == 0) return string.Empty;
-            int i = index < 0 ? src.Length + index : index;
-            if (i < 0 || i >= src.Length) return string.Empty;
-            var v = src.Data[i];
-            if (v == null) return string.Empty;
-            return v.ToString();
+            if (src == null) return string.Empty;
+            if (index < 0) index = src.Length + index;
+            return src.GetLSLStringItem(index);
         }
         public string llList2Key(LSLList src, int index)
         {
@@ -13537,25 +13585,18 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             var v = src.Data[i];
             return v?.ToString() ?? UUID.Zero.ToString();
         }
+        // PHLOX-65 (D10 (a)): Halcyon's llList2Vector / llList2Rot (:6582-6600), a string element read by Halcyon's parser.
         public Vector3 llList2Vector(LSLList src, int index)
         {
-            if (src == null || src.Length == 0) return Vector3.Zero;
-            int i = index < 0 ? src.Length + index : index;
-            if (i < 0 || i >= src.Length) return Vector3.Zero;
-            var v = src.Data[i];
-            if (v is Vector3 vec) return vec;
-            if (v is string s) try { return Vector3.Parse(s); } catch { }
-            return Vector3.Zero;
+            if (src == null) return Vector3.Zero;
+            if (index < 0) index = src.Length + index;
+            return src.GetVector3Item(index);
         }
         public Quaternion llList2Rot(LSLList src, int index)
         {
-            if (src == null || src.Length == 0) return Quaternion.Identity;
-            int i = index < 0 ? src.Length + index : index;
-            if (i < 0 || i >= src.Length) return Quaternion.Identity;
-            var v = src.Data[i];
-            if (v is Quaternion q) return q;
-            if (v is string s) try { return Quaternion.Parse(s); } catch { }
-            return Quaternion.Identity;
+            if (src == null) return Quaternion.Identity;
+            if (index < 0) index = src.Length + index;
+            return src.GetQuaternionItem(index);
         }
         public LSLList llList2List(LSLList src, int start, int end)
         {
@@ -13596,8 +13637,17 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
         public string llList2CSV(LSLList src)
         {
+            // PHLOX-65: each element as (string)list writes it (LSLList.GetLSLStringItem: floats, vectors and rotations
+            // with 6 decimals, YEngine's form), joined with SL's ", " (wiki: "the values are separated with a comma and a
+            // space"). Was .NET's ToString: "2", "<2, 3, 0>".
             if (src == null || src.Length == 0) return string.Empty;
-            return string.Join(", ", System.Linq.Enumerable.Select(src.Data, o => o?.ToString() ?? string.Empty));
+            return string.Join(", ", ListElementStrings(src));
+        }
+
+        /// <summary>PHLOX-65: every element of the list as (string)list writes it.</summary>
+        private static IEnumerable<string> ListElementStrings(LSLList src)
+        {
+            for (int i = 0; i < src.Length; i++) yield return src.GetLSLStringItem(i);
         }
         public LSLList llCSV2List(string src)
         {
@@ -13750,25 +13800,23 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
         public LSLList llList2ListSlice(LSLList src, int start, int end, int stride, int slice_index)
         {
-            // SL: extract the slice_index'th element from each stride in range start..end
+            // PHLOX-65. SL wiki: "Returns a list of the slice_index'th element of every stride in strided list whose index
+            // is a multiple of stride in the range start to end"; "If slice_index is negative it is counted from the end of
+            // its stride regardless of whether or not the stride exceeds the end of the list"; "start & end will form an
+            // exclusion range when start is past end"; stride "if less than 1 it is assumed to be 1". Its five examples on
+            // [0,1,2,3,4,5,6] - (0,-1,3,0) [0,3,6], (0,-1,3,1) [1,4], (1,-1,3,1) [2,5], (2,-1,3,-1) [4], (4,2,1,0)
+            // [0,1,2,4,5,6] - are the range taken by llList2List's rule (PHLOX-61, exclusion range included) and the
+            // slice_index'th element of each stride of it, the last stride short. A slice_index outside -stride .. stride-1
+            // selects nothing. Was: an inverted range gave []. YEngine differs (whole list for an inverted range, strides
+            // at multiples of stride from 0).
             if (src == null || src.Length == 0) return new LSLList();
-            int len = src.Length;
             if (stride < 1) stride = 1;
-            // Resolve negative indices
-            if (start < 0) start = len + start;
-            if (end < 0) end = len + end;
-            start = Math.Max(0, start);
-            end = Math.Min(len - 1, end);
-            // Resolve negative slice_index (counts from end of stride)
-            if (slice_index < 0) slice_index = stride + slice_index;
+            if (slice_index < 0) slice_index += stride;
             if (slice_index < 0 || slice_index >= stride) return new LSLList();
+            object[] range = llList2List(src, start, end).Data;
             var result = new List<object>();
-            for (int i = start; i <= end; i += stride)
-            {
-                int idx = i + slice_index;
-                if (idx <= end && idx < len)
-                    result.Add(src.Data[idx]);
-            }
+            for (long i = slice_index; i < range.Length; i += stride)
+                result.Add(range[i]);
             return new LSLList(result);
         }
         public LSLList llSortListStrided(LSLList src, int stride, int stride_index, int ascending)
@@ -13867,8 +13915,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
         public string llDumpList2String(LSLList src, string separator)
         {
+            // PHLOX-65: SL wiki: "Each element of the list is converted to string format in the result, so floats expand to
+            // six digits of precision, rotations and vectors are represented with "<" and ">" characters" - the (string)list
+            // form (Halcyon: GetLSLStringItem, LSLSystemAPI.cs:8785). Was .NET's ToString: "2", "<2, 3, 0>".
             if (src == null || src.Length == 0) return string.Empty;
-            return string.Join(separator ?? string.Empty, System.Linq.Enumerable.Select(src.Data, o => o?.ToString() ?? string.Empty));
+            return string.Join(separator ?? string.Empty, ListElementStrings(src));
         }
         public LSLList llParseString2List(string src, LSLList separators, LSLList spacers)
         {

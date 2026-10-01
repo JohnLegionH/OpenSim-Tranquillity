@@ -4999,3 +4999,86 @@ names at and over the limit. In `HalcyonChecksTests`: the switch unset and `true
 TheScriptsExperienceIsTheNamespaceAndWithoutOneTheOwnersIs` is now `...AndWithoutOneTheSlNamesSayNoExperience` (the
 ruling overturns what it pinned); `AntiAbuseSlowdownTests`' key list gains `HttpInFlightThrottle`. On the old code 11
 of the 13 new and changed tests fail; the 2 that pass are the switch-on cases (the caps as they were).
+
+## PHLOX-65 - numbers and formatting: rotation multiply (C8), float edge rules (D10), float strings, list dumps, and this week's leftovers (fixed)
+
+Compiler type check and run time only: no change to the bytecode of any script that compiled before (a script with
+`!`, `&&` or `||` on a key no longer compiles), no cache bump, no new setting. Sources and quotes are in the work
+folder's STATE.md.
+
+1. **Rotation multiply (C8, D10 "exact quaternion multiply").** `r1 * r2` is SL's formula with SL's operand order
+   (LL's `operator*(a, b)`: the Hamilton product r2 (x) r1, unnormalised), as YEngine's. The math package's `*`
+   returned one operand unchanged when the other's |W| was over 0.999999, so rotations under about 0.16 degrees and
+   unnormalised rotations were lost from `r*r`, `r/r`, `v*r` and `v/r`; and Phlox (as Halcyon) negated the product,
+   the same rotation with every component's sign flipped (`ZERO_ROTATION * ZERO_ROTATION` printed `<0.00000, 0.00000,
+   0.00000, -1.00000>`). `r1 / r2` is `r1 *` the conjugate of `r2` (SL: "The divide operation does a negative
+   rotation"). SLua's dynamic `*` and `/` use the same code.
+2. **Float edge rules (D10 (a), Halcyon's).** A float that prints as all zeros prints without a sign (`-0.0` is
+   `0.000000`; .NET 10 wrote `-0.000000`), in floats, vectors, rotations and lists. Infinities and NaN print as
+   `Infinity`, `-Infinity`, `NaN` whatever the host's culture (and the decimal point is always `.`).
+   `llList2Integer` of a float that is NaN or out of range gives -2147483648 (PHLOX-61 did the casts). String to
+   vector or rotation (casts, `llList2Vector`, `llList2Rot`) is Halcyon's parser: every `<` and `>` dropped, split on
+   commas, each part trimmed; so `"1,2,3"`, `"<1,2,3"` and `"<1, 2,  3>"` are vectors, `"<1,2,3,4>"` is a vector of the
+   first three, `"<1,2,3>xyz"` and a part too large for a float are ZERO_VECTOR; a rotation of three parts gets
+   W = sqrt(1 - x*x - y*y - z*z) (0 if negative). Float division by zero (an infinity), integer division by zero (the
+   script stops with a math error) and NaN comparisons were already Halcyon's and are unchanged (tests pin them).
+3. **(string) of a float shows its own value.** SL wiki (Typecast): 6 decimals for a float, 5 for a vector or
+   rotation. Phlox kept only 7 significant digits: `(string)2147483520.0` printed `2147484000.000000`. Now it prints
+   `2147483520.000000`, `(string)123456.7` is `123456.703125` (the float's value) and
+   `(string)<2147483520.0, 1234.567, 0>` is `<2147483520.00000, 1234.56702, 0.00000>`.
+4. **List dumps.** `llDumpList2String`, `llList2CSV` and `llList2String` write each element as `(string)list` does
+   (SL wiki: "floats expand to six digits of precision"): `2.000000`, `<1.000000, 2.000000, 3.000000>`, not .NET's `2`
+   and `<1, 2, 3>`. `llList2Integer`, `llList2Float`, `llList2String`, `llList2Vector` and `llList2Rot` are Halcyon's
+   again (the element as the list converts it): `llList2Integer` of `1.7` is 1 (it rounded to 2) and of `"0x1F"` 31 (it
+   was 0). Found on the way: `osListSortInPlace` and `osListSortInPlaceStrided` wrote only one of the list's two stores,
+   so `(string)list` (and now the dumps) still saw the unsorted list; both stores are written now.
+5. **llBreakAllLinks needs PERMISSION_CHANGE_LINKS**, granted by the owner (SL wiki; YEngine), unless `[YEngine]
+   AutomaticLinkPermission` is true. Without it: `llBreakAllLinks: PERMISSION_CHANGE_LINKS not set` on DEBUG_CHANNEL
+   (with the 15 ms error pause) and nothing is unlinked; granted by someone else: `llBreakAllLinks:
+   PERMISSION_CHANGE_LINKS not set by script owner`. `osForceBreakAllLinks` still needs no permission.
+6. **`!`, `&&` and `||` on a key are compile errors** (`Type mismatch: '!' cannot be applied to a key`), as in SL (LL's
+   operator table: integer operands only). They compiled and then stopped the script at run time. `if (k)` is
+   unchanged. Other non-integer operands of these operators still compile (not changed here).
+7. **STATUS_RETURN_AT_EDGE works** as in YEngine: `llSetStatus` sets it, `llGetStatus` reads it, and the region
+   returns the object at a region edge. PHLOX-62 reported it as not implemented.
+8. **A notecard whose asset cannot be fetched** (missing, or not a notecard): Halcyon's `Notecard '<name>' could not be
+   found.` on DEBUG_CHANNEL and no `dataserver` answer, for all six notecard reads (Phlox answered `0` or EOF). The
+   error comes from the fetch thread without Halcyon's pause: a pause set from that thread could strand the script.
+9. **llHTTPRequest**: a flag that is not an integer (as the list writes it, so `1.0` too) gets Halcyon's text,
+   `Invalid flag passed in parameters list of llHTTPRequest.`, and no request.
+10. **llList2ListSlice** follows the SL wiki's examples: the range by `llList2List`'s rule (an inverted range is an
+   exclusion range: `llList2ListSlice([0,1,2,3,4,5,6], 4, 2, 1, 0)` is `[0,1,2,4,5,6]`; it was `[]`), then the
+   slice_index'th element of each stride of it. YEngine differs (it gives the whole list for an inverted range).
+
+### What residents will notice
+
+- Rotations multiply as in SL: products have SL's signs, and small or unnormalised rotations are no longer ignored
+  (a rotation of 0.1 degrees now turns a vector; many of them add up).
+- `llDumpList2String`, `llList2CSV` and `llList2String` print floats, vectors and rotations with 6 decimals, as in SL.
+  Scripts that parsed the old short form (`<2, 3, 0>`, `2`) see the SL form.
+- Large floats print their real value; `-0` prints as `0`; infinities print `Infinity`.
+- Strings like `"1,2,3"` and `"<1, 2,  3>"` cast to vectors; `"<1,2,3>junk"` gives ZERO_VECTOR.
+- `llBreakAllLinks` needs PERMISSION_CHANGE_LINKS from the owner, as in SL.
+- A script using `!`, `&&` or `||` on a key fails to compile with a clear error instead of stopping when it runs.
+- STATUS_RETURN_AT_EDGE returns the object at a region edge.
+- A notecard read whose asset is gone gets an error and no `dataserver` event, as in Halcyon (it got an empty answer).
+
+### What operators will notice
+
+- No new setting, no database change, no cache bump. `[YEngine] AutomaticLinkPermission` now also covers
+  `llBreakAllLinks`.
+
+### Tests
+
+New `NumbersFormattingTests` (76): the rotation products against LL's formula written out, the 0.1-degree and
+unnormalised cases, r/r and v/r; -0, Infinity and NaN printing, division by zero and NaN comparisons pinned; Halcyon's
+parser on 13 vector and 7 rotation strings, and through llList2Vector / llList2Rot; float, vector and rotation strings;
+the three list dumps (harness and engine); the in-place sorts; llBreakAllLinks with no grant, the owner's, another's,
+AutomaticLinkPermission, and osForceBreakAllLinks; STATUS_RETURN_AT_EDGE; the missing / wrong-type notecard for six
+reads and a present one; llHTTPRequest's flag; the key compile errors and what still compiles; llList2ListSlice's 13
+cases. Changed: `AntiAbuseSlowdownTests.ACardIsDroppedSixtySecondsAfterItsLastUseAtTheNextUncachedRead` now waits for
+the second card to be cached before reading it again (the B7-PREP flake: the read could still be uncached and purge
+the first card at 61 s); `ScriptDataFixesTests`' two PRIM_TEXTURE tests read the dump in SL's form; the two
+STATUS_RETURN_AT_EDGE rows left `HalcyonChecksTests`' error table (6 cases: the table feeds three theories). On the old
+code 52 of the 79 new and changed tests fail; the 27 that pass pin unchanged behaviour or cases the old code already
+got right.

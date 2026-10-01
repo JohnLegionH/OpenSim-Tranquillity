@@ -1089,9 +1089,23 @@ namespace InWorldz.Phlox.VM
             SafeOperandsPush(a - b);
         }
 
-        private Quaternion _QuatMul(Quaternion b, Quaternion a)
+        /// <summary>
+        /// PHLOX-65 (C8, D10 (a) "exact quaternion multiply"): LSL's <c>lhs * rhs</c> with SL's operand order and formula.
+        /// LL's operator*(a, b) (llquaternion.cpp) is x = b.w*a.x + b.x*a.w + b.y*a.z - b.z*a.y, ..., w = b.w*a.w -
+        /// b.x*a.x - b.y*a.y - b.z*a.z: the Hamilton product rhs (x) lhs, unnormalised, no sign change (SL wiki Rotation:
+        /// "rotation r3 = r1 * r2;" applies r1, then r2). YEngine's LSL_Types operator * is the same. The package's
+        /// operator * returned one operand unchanged when the other's |W| > 0.999999 (rotations under about 0.16 degrees
+        /// were lost) and Halcyon negated the product (the same rotation with every sign flipped).
+        /// </summary>
+        private static Quaternion _QuatMul(Quaternion lhs, Quaternion rhs)
         {
-            return Quaternion.Negate(a * b);
+            return Quaternion.Multiply(in rhs, in lhs);
+        }
+
+        /// <summary>LSL's <c>lhs / rhs</c>: lhs * the conjugate of rhs (SL: "The divide operation does a negative rotation"; YEngine's operator /).</summary>
+        private static Quaternion _QuatDiv(Quaternion lhs, Quaternion rhs)
+        {
+            return _QuatMul(lhs, new Quaternion(-rhs.X, -rhs.Y, -rhs.Z, rhs.W));
         }
 
         private void Op_Rmul()
@@ -1107,8 +1121,7 @@ namespace InWorldz.Phlox.VM
             Quaternion b = (Quaternion)_state.Operands.Pop();
             Quaternion a = (Quaternion)_state.Operands.Pop();
 
-            Quaternion binv = new Quaternion(b.X, b.Y, b.Z, -b.W);
-            SafeOperandsPush(Quaternion.Negate(_QuatMul(a, binv)));
+            SafeOperandsPush(_QuatDiv(a, b));
         }
 
         private void Op_Req()
@@ -1424,7 +1437,7 @@ namespace InWorldz.Phlox.VM
             if (a is string)
             {
                 Vector3 ret;
-                if (Vector3.TryParse((string)a, out ret))
+                if (Util.Encoding.TryParseLslVector((string)a, out ret))   // PHLOX-65: Halcyon's parser (D10)
                 {
                     SafeOperandsPush(ret);
                 }
@@ -1452,7 +1465,7 @@ namespace InWorldz.Phlox.VM
             {
                 Quaternion ret;
 
-                if (Quaternion.TryParse((string)a, out ret))
+                if (Util.Encoding.TryParseLslRotation((string)a, out ret))   // PHLOX-65: Halcyon's parser (D10)
                 {
                     SafeOperandsPush(ret);
                 }
@@ -2220,8 +2233,7 @@ namespace InWorldz.Phlox.VM
                     }
                     else if (a is Quaternion aq3 && b is Quaternion bq3b)
                     {
-                        Quaternion binv = new Quaternion(bq3b.X, bq3b.Y, bq3b.Z, -bq3b.W);
-                        return Quaternion.Negate(_QuatMul(aq3, binv));
+                        return _QuatDiv(aq3, bq3b);
                     }
                     break;
                 case 4: // % -> cross (vectors)

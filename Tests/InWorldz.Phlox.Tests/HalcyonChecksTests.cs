@@ -38,7 +38,6 @@ public class HalcyonChecksTests
     public HalcyonChecksTests(ITestOutputHelper o) => _out = o;
 
     private const int DEBUG_CHANNEL = 0x7FFFFFFF;
-    private const int STATUS_RETURN_AT_EDGE = 256;
     private const string Idle = "default { state_entry() { } }";
     private const string LslErr = "Script error: LSL Runtime Error: ";
     private const string NotImpl = "Script error: Command not implemented: ";
@@ -212,8 +211,6 @@ public class HalcyonChecksTests
         new("llGodLikeRezObject", a => { a.llGodLikeRezObject("x", V); return null; }, NotImpl + "llGodLikeRezObject"),
         new("llCollisionSprite", a => { a.llCollisionSprite("x"); return null; }, NotImpl + "llCollisionSprite"),
         new("botChangeOwner", a => { a.botChangeOwner(UUID.Random().ToString(), UUID.Random().ToString()); return null; }, NotImpl + "botChangeOwner"),
-        new("llSetStatus STATUS_RETURN_AT_EDGE", a => { a.llSetStatus(STATUS_RETURN_AT_EDGE, 1); return null; }, NotImpl + "llSetStatus - STATUS_RETURN_AT_EDGE"),
-        new("llGetStatus STATUS_RETURN_AT_EDGE", a => a.llGetStatus(STATUS_RETURN_AT_EDGE), NotImpl + "llGetStatus - STATUS_RETURN_AT_EDGE", Returns: 0),
         new("llGiveMoney bad key", a => a.llGiveMoney("not a key", 5), LslErr + "Bad key in llGiveMoney", Later: 3000, Setup: GrantDebitByOwner, Returns: 0),
         new("llGiveMoney no money module", a => a.llGiveMoney(UUID.Random().ToString(), 5), NotImpl + "llGiveMoney", Later: 3000, Setup: GrantDebitByOwner, Returns: 0),
         new("llGiveMoney DEBIT granted by another", a => a.llGiveMoney(UUID.Random().ToString(), 5), "Script error: llGiveMoney: PERMISSION_DEBIT not granted.", Later: 3000,

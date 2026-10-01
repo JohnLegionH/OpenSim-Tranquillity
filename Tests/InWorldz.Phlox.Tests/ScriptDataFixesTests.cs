@@ -410,8 +410,8 @@ public class ScriptDataFixesTests
         // PHLOX-49's read rule: a texture in the script's prim reads back as its name.
         Assert.Equal("brick", own[0]);
         Assert.Equal("brick", link[0]);
-        Assert.StartsWith("<2, 3,", own[1]);
-        Assert.StartsWith("<4, 5,", link[1]);
+        Assert.StartsWith("<2.000000, 3.000000,", own[1]);   // PHLOX-65: llDumpList2String writes SL's 6 decimals
+        Assert.StartsWith("<4.000000, 5.000000,", link[1]);
     }
 
     [Fact]
@@ -428,7 +428,7 @@ public class ScriptDataFixesTests
         var f = h.Prim.Shape.Textures.GetFace(0);
         Assert.Equal(OldTex, f.TextureID);   // not blanked, not the notecard's asset
         Assert.Equal(3f, f.RepeatU);          // the rest of the rule still applied
-        Assert.StartsWith("<2, 2,", Line(h, "a").Split('|')[1]);
+        Assert.StartsWith("<2.000000, 2.000000,", Line(h, "a").Split('|')[1]);   // PHLOX-65: SL's 6 decimals
     }
 
     [Fact]
