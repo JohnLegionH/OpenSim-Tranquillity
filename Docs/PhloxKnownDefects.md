@@ -310,9 +310,10 @@ name) promises.
 
 ### Functions that act only in part
 - `llRezObjectWithParams`:
-  - It is declared with no return value, so `key k = llRezObjectWithParams(...)` does not
-    compile. SL returns the new object's key
-    ([LlRezObjectWithParams](https://wiki.secondlife.com/wiki/LlRezObjectWithParams)).
+  - It returns the new object's key, the one `object_rez` reports, and `""` on failure, as
+    SL's LSL does ([LlRezObjectWithParams](https://wiki.secondlife.com/wiki/LlRezObjectWithParams)).
+    SLua's `ll.RezObjectWithParams` also returns `""` on failure, where SL's Lua returns
+    `NULL_KEY`. YEngine returns `NULL_KEY` on failure.
   - `REZ_FLAGS` and `REZ_DAMAGE` are ignored.
   - A `REZ_*` rule it does not handle is skipped without consuming its value, so the rules
     after it are misread.
@@ -343,7 +344,9 @@ name) promises.
     `OBJECT_PRIM_COUNT`, `OBJECT_TOTAL_INVENTORY_COUNT`, `OBJECT_REZZER_KEY`,
     `OBJECT_CREATION_TIME`, `OBJECT_SIT_COUNT`, `OBJECT_TEXT`, `OBJECT_SCALE` and others.
 - `llHash`: see section 1.
-- `iwReverseString` returns its input unchanged.
+- `iwReverseString` reverses UTF-16 code units, as Halcyon does: a character outside the
+  Basic Multilingual Plane (most emoji) comes back as two broken halves, and a combining
+  accent moves in front of the letter it belonged to.
 - `iwMatchList` supports only `IW_MATCH_HEAD` and `IW_MATCH_TAIL`. The regex and count
   match types shout "not implemented" and return 0.
 - `iwStringCodec` validation (`VALIDATE`) of the base4k codec always answers
