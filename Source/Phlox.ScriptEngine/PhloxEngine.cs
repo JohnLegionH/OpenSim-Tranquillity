@@ -632,6 +632,7 @@ namespace Phlox.ScriptEngine
                 LocalID = localID,
                 ItemID = itemID,
                 ScriptText = script,
+                AssetId = part.Inventory.GetInventoryItem(itemID)?.AssetID ?? UUID.Zero,
                 StartParam = startParam,
                 PostOnRez = postOnRez,
                 StateSource = stateSource,

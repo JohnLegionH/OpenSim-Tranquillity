@@ -12,6 +12,9 @@ namespace Phlox.ScriptEngine
         public uint LocalID;
         public UUID ItemID;
         public string ScriptText;
+        /// <summary>The asset <see cref="ScriptText"/> came from: the item's asset when the load was posted, the moment the
+        /// region read that text. A later save gives the item a new asset; this load still compiles and caches as its own.</summary>
+        public UUID AssetId;
         public int StartParam;
         public bool PostOnRez;
         public int StateSource;

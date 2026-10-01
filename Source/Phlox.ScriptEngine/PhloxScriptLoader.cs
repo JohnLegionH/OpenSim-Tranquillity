@@ -209,6 +209,9 @@ namespace Phlox.ScriptEngine
                 req.Serial = ++m_SerialCounter;
                 m_LatestSerial[req.ItemID] = req.Serial;
             }
+            // The region rezzes and then asks for the errors on the same thread (CreateScriptInstanceEr): that editor
+            // waits for this load, not for one a later save posted in between.
+            t_PostedOnThisThread = (req.ItemID, req.Serial);
             lock (m_PendingLoads)
                 m_PendingLoads.AddLast(req);
             m_WorkArrived();
@@ -233,6 +236,7 @@ namespace Phlox.ScriptEngine
             {
                 m_LatestSerial.Remove(itemID);
                 m_Outcomes.Remove(itemID);
+                m_EarlierOutcomes.Remove(itemID);
                 m_UnclaimedFailures.Remove(itemID);
                 System.Threading.Monitor.PulseAll(m_Outcomes);
             }
@@ -372,11 +376,30 @@ namespace Phlox.ScriptEngine
             {
                 // A load that waited behind its prim's compile while the item went to another engine.
                 if (!IsOwned(req.ItemID)) return;
+
+                // An instance of this item on another asset is still here: an earlier load started in the moment between a
+                // save's unload and its new asset. The latest load replaces it, as that save's unload would have.
+                if (req.AssetId != UUID.Zero && IsLatest(req))
+                {
+                    Interpreter leftover = m_ExeScheduler.FindScript(req.ItemID);
+                    if (leftover != null && leftover.Script.AssetId != req.AssetId)
+                        UnloadScript(new PhloxUnloadRequest { LocalID = req.LocalID, ItemID = req.ItemID }, leftover);
+                }
                 req.Generation = BumpGeneration(req.ItemID);
 
-                // Find asset UUID from prim inventory
-                UUID assetId = FindAssetId(req);
+                // The asset this load's text came from. Not the item's asset now: a save while this load waited has
+                // already given the item its new asset, and that asset's text is the newer load's.
+                UUID assetId = req.AssetId != UUID.Zero ? req.AssetId : FindAssetId(req);
                 if (assetId == UUID.Zero) { PublishOutcome(req, new List<string> { "script item not found" }); return; }
+
+                // A later save of the item is already posted: this load must not start. Compiled already, it has no
+                // errors to report; otherwise it still compiles below, for its own editor, and never starts.
+                if (!IsLatest(req) && IsCompiled(assetId))
+                {
+                    m_log.LogInformation("[PhloxLoader]: Not starting {0} for item {1}: the item was saved again", assetId, req.ItemID);
+                    PublishOutcome(req, new List<string>());
+                    return;
+                }
 
                 // 1. Already loaded and running (shared script)
                 if (TryStartSharedScript(assetId, req)) { Started(req); return; }
@@ -560,6 +583,10 @@ namespace Phlox.ScriptEngine
         /// <summary>Tests only: milliseconds a compile of this script text should take extra (0 = none).</summary>
         internal static Func<string, int> CompileDelayForTest;
 
+        /// <summary>Tests only: called on the compile thread with the script text just before this loader compiles it,
+        /// so a test can hold one compile while it saves again. Per loader, so classes using it still run in parallel.</summary>
+        internal Action<string> BeforeCompileForTest;
+
         /// <summary>
         /// Compile on a fresh thread with <see cref="CompileStackSize"/> and wait for it. The
         /// loader no longer uses this - DoWork never waits on a compile (<see cref="CompileLoop"/>); it stays for
@@ -616,6 +643,7 @@ namespace Phlox.ScriptEngine
             var sw = Stopwatch.StartNew();
             try
             {
+                BeforeCompileForTest?.Invoke(job.ScriptText);
                 int delay = CompileDelayForTest?.Invoke(job.ScriptText) ?? 0;
                 if (delay > 0) System.Threading.Thread.Sleep(delay);
                 job.Compiled = InWorldz.Phlox.SLua.SLuaCompiler.IsLuaScript(job.ScriptText)
@@ -678,7 +706,23 @@ namespace Phlox.ScriptEngine
         }
 
         private bool IsCurrent(PhloxLoadRequest req)
-            => m_ItemGeneration.TryGetValue(req.ItemID, out long g) && g == req.Generation;
+            => m_ItemGeneration.TryGetValue(req.ItemID, out long g) && g == req.Generation && IsLatest(req);
+
+        /// <summary>
+        /// Is this the item's latest load: no later load posted, not disowned, and the item still at this load's asset? A
+        /// save gives the item its new asset before it posts the new load, so a load whose asset the item no longer has
+        /// is superseded even while the new load is still on its way.
+        /// </summary>
+        private bool IsLatest(PhloxLoadRequest req)
+        {
+            lock (m_Outcomes)
+                if (!m_LatestSerial.TryGetValue(req.ItemID, out long s) || s != req.Serial) return false;
+            return req.AssetId == UUID.Zero || req.Prim?.Inventory.GetInventoryItem(req.ItemID)?.AssetID == req.AssetId;
+        }
+
+        /// <summary>Is there bytecode for this asset, loaded, recently unloaded or on disk?</summary>
+        private bool IsCompiled(UUID assetId)
+            => m_LoadedScripts.ContainsKey(assetId) || m_UnloadedCache.ContainsKey(assetId) || File.Exists(GetCachePath(assetId));
 
         /// <summary>Start the finished compiles (master scheduler thread).</summary>
         private bool ProcessFinishedCompiles()
@@ -703,7 +747,12 @@ namespace Phlox.ScriptEngine
         {
             var live = job.Requests.Where(IsCurrent).ToList();
             foreach (var stale in job.Requests.Where(r => !IsCurrent(r)))
+            {
                 m_log.LogInformation("[PhloxLoader]: Discarding stale compile of {0} for item {1} (re-saved or removed while compiling)", job.AssetId, stale.ItemID);
+                // Never started, but its own save's editor still gets this compile's result. No owner alert: it never ran.
+                if (IsOwned(stale.ItemID))
+                    PublishOutcome(stale, job.Compiled != null ? new List<string>() : CompileErrors(job));
+            }
 
             if (job.Compiled == null)
             {
@@ -713,8 +762,7 @@ namespace Phlox.ScriptEngine
                 {
                     m_log.LogError(job.FromAssetServer ? "[PhloxLoader]: Compilation failed (from asset server) for {0} item {1}" : "[PhloxLoader]: Compilation failed for {0} item {1}",
                         job.AssetId, req.ItemID);
-                    var errors = job.Errors.Count > 0 ? job.Errors
-                        : new List<string> { job.Failure != null ? "internal compiler error: " + job.Failure.Message : "script failed to compile" };
+                    var errors = CompileErrors(job);
                     // An editor save gets its errors in the editor; anything else is told as before.
                     if (!PublishOutcome(req, errors))
                         ReportUnlessClaimed(req, errors);
@@ -736,6 +784,10 @@ namespace Phlox.ScriptEngine
                 else m_LoadedScripts[job.AssetId] = new LoadedScript { Script = job.Compiled, RefCount = started };
             }
         }
+
+        private static List<string> CompileErrors(CompileJob job)
+            => job.Errors.Count > 0 ? job.Errors
+                : new List<string> { job.Failure != null ? "internal compiler error: " + job.Failure.Message : "script failed to compile" };
 
         /// <summary>A request's script has started: publish success for an editor, then apply any state change made while it loaded.</summary>
         private void Started(PhloxLoadRequest req)
@@ -797,6 +849,12 @@ namespace Phlox.ScriptEngine
         internal const string ErrorWaitTimedOut = "timedout waiting for errors";
 
         private readonly Dictionary<UUID, (long Serial, List<string> Errors)> m_Outcomes = new();
+        // Outcomes of an item's earlier loads, newest last, kept only for items loaded more than once, so each save's
+        // editor gets its own compile's result. A few per item; guarded by m_Outcomes.
+        private readonly Dictionary<UUID, List<(long Serial, List<string> Errors)>> m_EarlierOutcomes = new();
+        private const int EarlierOutcomesKept = 4;
+        // The item and serial of the load this thread posted last (see PostLoadRequest).
+        [ThreadStatic] private static (UUID Item, long Serial) t_PostedOnThisThread;
         private readonly Dictionary<UUID, long> m_LatestSerial = new();
         private readonly Dictionary<UUID, int> m_EditorWaiters = new();
         private long m_SerialCounter;
@@ -838,8 +896,15 @@ namespace Phlox.ScriptEngine
         {
             lock (m_Outcomes)
             {
-                if (!m_Outcomes.TryGetValue(req.ItemID, out var prev) || prev.Serial <= req.Serial)
+                bool had = m_Outcomes.TryGetValue(req.ItemID, out var prev);
+                if (!had || prev.Serial <= req.Serial)
+                {
+                    if (had && prev.Serial < req.Serial)
+                        KeepEarlier(req.ItemID, prev);
                     m_Outcomes[req.ItemID] = (req.Serial, errors);
+                }
+                else
+                    KeepEarlier(req.ItemID, (req.Serial, errors));
                 System.Threading.Monitor.PulseAll(m_Outcomes);
                 return m_EditorWaiters.TryGetValue(req.ItemID, out int n) && n > 0;
             }
@@ -855,6 +920,10 @@ namespace Phlox.ScriptEngine
             lock (m_Outcomes)
             {
                 if (!m_LatestSerial.TryGetValue(itemId, out long wanted)) return null;
+                // The load this thread posted, when it posted one for this item (the region's save does), else the latest.
+                var posted = t_PostedOnThisThread;
+                t_PostedOnThisThread = default;   // One answer per load posted; a later query on this thread is not this save's.
+                if (posted.Item == itemId && posted.Serial <= wanted) wanted = posted.Serial;
                 m_EditorWaiters.TryGetValue(itemId, out int n);
                 m_EditorWaiters[itemId] = n + 1;
                 try
@@ -862,7 +931,7 @@ namespace Phlox.ScriptEngine
                     while (true)
                     {
                         if (!m_LatestSerial.ContainsKey(itemId)) return null;   // Disowned while waiting
-                        if (m_Outcomes.TryGetValue(itemId, out var o) && o.Serial >= wanted)
+                        if (OutcomeFor(itemId, wanted) is { } o)
                         {
                             // The editor has it: no pop-up for the same failure (see ReportUnlessClaimed).
                             if (m_UnclaimedFailures.TryGetValue(itemId, out long failed) && failed <= o.Serial) m_UnclaimedFailures.Remove(itemId);
@@ -879,6 +948,28 @@ namespace Phlox.ScriptEngine
                     if (--m_EditorWaiters[itemId] <= 0) m_EditorWaiters.Remove(itemId);
                 }
             }
+        }
+
+        /// <summary>
+        /// The outcome an editor waiting for load <paramref name="wanted"/> gets: that load's own, or, if its load will not
+        /// report (it never reached a compile), the newer load's. Null while neither is in. Under m_Outcomes.
+        /// </summary>
+        private (long Serial, List<string> Errors)? OutcomeFor(UUID itemId, long wanted)
+        {
+            bool have = m_Outcomes.TryGetValue(itemId, out var o);
+            if (have && o.Serial == wanted) return o;
+            if (m_EarlierOutcomes.TryGetValue(itemId, out var earlier))
+                foreach (var e in earlier)
+                    if (e.Serial == wanted) return e;
+            if (have && o.Serial > wanted) return o;
+            return null;
+        }
+
+        private void KeepEarlier(UUID itemId, (long Serial, List<string> Errors) outcome)
+        {
+            if (!m_EarlierOutcomes.TryGetValue(itemId, out var list)) m_EarlierOutcomes[itemId] = list = new();
+            list.Add(outcome);
+            if (list.Count > EarlierOutcomesKept) list.RemoveAt(0);
         }
 
         private bool ProcessNextCompile()
