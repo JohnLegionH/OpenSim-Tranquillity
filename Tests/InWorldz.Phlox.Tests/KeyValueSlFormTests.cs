@@ -22,7 +22,7 @@ public class KeyValueSlFormTests
     private const long PhloxQuota = 128L * 1024 * 1024;   // LSLSystemAPI.MAX_DATA_QUOTA
 
     /// <summary>NGC ExperienceService's key-value logic over a dictionary, plus test knobs.</summary>
-    private sealed class FakeStore : IExperienceService
+    internal sealed class FakeStore : IExperienceService   // PHLOX-66: DataserverToPrimTests uses it too
     {
         public readonly ConcurrentDictionary<UUID, SortedDictionary<string, string>> Data = new();
         public readonly ConcurrentQueue<UUID> ExperiencesSeen = new();

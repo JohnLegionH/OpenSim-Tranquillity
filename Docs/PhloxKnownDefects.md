@@ -3917,9 +3917,9 @@ Deferred:
 - A stopped (not running) script keeps its sensor repeat and outstanding requests; its events are dropped. Halcyon
   released them on disable (findings #562). Not delete, reset or unload.
 - llRequestUsername answers through PostObjectEvent (every script in the prim, posted from a pool thread) and is not
-  tracked, so a reset right after the call can still see its reply.
+  tracked, so a reset right after the call can still see its reply. (PHLOX-66: now on the one tracked path.)
 - D8 (dataserver to every script in the prim) is not implemented; when it is, the owed-reply record stays with the
-  script that asked.
+  script that asked. (PHLOX-66: done, and the record stayed with the asker.)
 - The loader keeps one small record per item id ever loaded (generation, latest serial, outcome), for the stale-compile
   and editor-error checks. Not a queue and not per event; untouched.
 - Phlox's and YEngine's pumps both take from the core's one completed-HTTP queue; a response is posted by whichever pump
@@ -5082,3 +5082,60 @@ the first card at 61 s); `ScriptDataFixesTests`' two PRIM_TEXTURE tests read the
 STATUS_RETURN_AT_EDGE rows left `HalcyonChecksTests`' error table (6 cases: the table feeds three theories). On the old
 code 52 of the 79 new and changed tests fail; the 27 that pass pin unchanged behaviour or cases the old code already
 got right.
+
+## PHLOX-66 - dataserver answers go to every script in the prim (D8 (a)) (fixed)
+
+Run-time only: no bytecode change, no cache bump, no new setting. Sources and quotes are in the work folder's STATE.md.
+
+1. **Every script in the prim.** SL wiki, dataserver: "Dataserver requests will trigger dataserver events in all scripts
+   within the same prim where the request was made." "dataserver events will not be triggered in scripts contained in
+   other prims in the same linked object." Halcyon posted each answer with `PostObjectEvent(m_localID, ...)`
+   (`LSLSystemAPI.cs:5649-5651`). Phlox posted it to the asking script only. Now `PostDataserverEvent` hands each
+   answer to `PhloxEngine.PostDataserverToPrim`: every Phlox script in the asking script's prim (running or loading)
+   gets it with the same key and data, in a stable order (item name, then item id), posted on the thread that has the
+   answer, so one script's answers still arrive in the order it asked. Scripts in other prims of the linkset do not.
+   Every Phlox call that answers through `dataserver` uses this one path: the notecard reads (`llGetNotecardLine`,
+   `llGetNumberOfNotecardLines`, `iwGetNotecardSegment` and the `iwGetLink*` variants), `llRequestInventoryData`,
+   `llRequestAgentData`, `llRequestSimulatorData`, `llRequestUserKey`, `llRequestUsername`, `llRequestDisplayName`,
+   `iwRequestAnimationData`, `llTransferLindenDollars` / `iwGiveMoney`, and the SL-form key-value calls.
+   `llRequestUsername` (and so `llRequestDisplayName`) did not: it posted with its own untracked key from a pool thread;
+   it is now on the tracked path (same key returned, same answer, no delay).
+2. **A reset, state change or removal before the answer.** The wiki says nothing of it. PHLOX-46's rule stays for the
+   asker: an answer it is no longer owed (asked before its reset, state change or removal) is not posted to it. The
+   other scripts in the prim still get it. A script other than the asker that changed state since gets it in its
+   current state. If the prim is gone, nobody gets it.
+3. **YEngine scripts in the same prim get it too,** through the region's other script engines (the `IScriptModule`s
+   that are `IScriptEngine`, as CORE-6's HTTP delivery): each is offered it once with `PostObjectEvent(localID, ...)`
+   and the values YEngine's own `dataserver` posts (LSLString key, LSLString data), and posts it to its own scripts in
+   that prim. No core change.
+   The other way round is not done: YEngine's own answers (core `Shared/Api/Plugins/Dataserver.cs:71` and `:208`) reach
+   every YEngine script in the prim but no Phlox script. That needs a core change (follow-up in the work folder).
+4. What each call returns, its delays and its error texts are unchanged. `osMessageObject` (a message to another prim,
+   not an answer) is unchanged.
+
+### What residents will notice
+
+- Objects with several scripts now see each other's `dataserver` answers, as in SL and Halcyon: a helper script in
+  the prim receives the answers to another script's notecard reads, agent data, key-value calls and so on.
+- Scripts that do not check the query key may now react to answers meant for another script in the same prim (the
+  wiki's advice: "If there are multiple scripts with dataserver events in the same prim, always use the queryid key to
+  determine which answer is being received.").
+
+### What operators will notice
+
+- No new setting, no database change, no cache bump.
+
+### Tests
+
+New `DataserverToPrimTests` (8, in parallel: each test has its own harness): three scripts in one prim and one in
+another prim; a notecard line, agent data, a username request and a key-value read (the `KeyValueSlFormTests` fake
+store, now `internal`) reach all three in the prim with the asker's key and data, once each, and never the other prim;
+an answer that lands after the asker was reset, or after it was removed, reaches the other two only; scripts that
+changed state get it in the new state; a lone script still gets its answer once. New
+`DataserverToPrimYEngineTests` (1, in "phlox-yengine"): a YEngine script in the asking Phlox script's prim gets the
+answer once, a YEngine script in another prim does not. On the old code 7 of the 9 fail; the 2 that pass are the lone
+script and the username request (it was already posted to the whole prim). Changed:
+`AntiAbuseSlowdownTests.CachedReadsAnswerTheSameTextWithoutAFetch` rezzes two notecard readers into one prim, and its
+reader script did not check the query key, so the finished first reader went on reacting to the second reader's
+answers (and asking again) - the change residents will notice. The reader now takes only answers to its own key; the
+assertions are unchanged.

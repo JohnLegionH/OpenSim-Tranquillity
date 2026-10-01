@@ -1516,6 +1516,53 @@ namespace Phlox.ScriptEngine
         /// <summary>PHLOX-46: is a load of this item in flight (so its early events are worth holding)?</summary>
         internal bool IsLoading(UUID itemID) => m_ScriptLoader?.IsLoading(itemID) ?? false;
 
+        /// <summary>
+        /// PHLOX-66 (HALCYON-DIFF D8, ruling (a)): a dataserver answer goes to every script in the asking script's prim, as
+        /// SL ("Dataserver requests will trigger dataserver events in all scripts within the same prim where the request
+        /// was made", wiki dataserver) and Halcyon (PostObjectEvent(m_localID, ...)). Never to another prim.
+        /// Phlox's scripts in the prim (running or loading) get it in a stable order, by item name then item id, posted on
+        /// this thread, so one script's answers still arrive in the order it asked (PostObjectEvent's pool hop would not
+        /// keep that). <paramref name="skip"/> is a script that must not get it: the asker, when it is no longer owed the
+        /// answer (PHLOX-46). Then each other script engine of the region is offered it once, with the values YEngine's own
+        /// dataserver posts (LSLString key, LSLString data); each posts only to its own scripts in that prim (CORE-6's
+        /// shape, AsyncCommand/Plugins/HttpRequest.cs). Returns how many Phlox scripts it was posted to.
+        /// </summary>
+        internal int PostDataserverToPrim(SceneObjectPart part, UUID skip, string queryId, string data)
+        {
+            if (part?.ParentGroup == null || part.ParentGroup.IsDeleted) return 0;
+
+            TaskInventoryDictionary inventory;
+            lock (part.TaskInventory)
+                inventory = (TaskInventoryDictionary)part.TaskInventory.Clone();
+            var scripts = new List<TaskInventoryItem>();
+            foreach (TaskInventoryItem item in inventory.Values)
+                if (item.Type == (int)AssetType.LSLText || item.Type == 10)
+                    scripts.Add(item);
+            scripts.Sort((a, b) =>
+            {
+                int byName = string.CompareOrdinal(a.Name, b.Name);
+                return byName != 0 ? byName : a.ItemID.CompareTo(b.ItemID);
+            });
+
+            int posted = 0;
+            foreach (TaskInventoryItem item in scripts)
+            {
+                if (item.ItemID == skip || !HasOrIsLoading(item.ItemID)) continue;
+                if (PostScriptEvent(item.ItemID, new EventParams("dataserver", new object[] { queryId, data }, new DetectParams[0])))
+                    posted++;
+            }
+
+            var seen = new List<IScriptEngine>();
+            foreach (IScriptModule m in World?.RequestModuleInterfaces<IScriptModule>() ?? Array.Empty<IScriptModule>())
+            {
+                if (ReferenceEquals(m, this) || m is not IScriptEngine e || seen.Contains(e)) continue;
+                seen.Add(e);
+                e.PostObjectEvent(part.LocalId, new EventParams("dataserver",
+                    new object[] { new LSL_Types.LSLString(queryId), new LSL_Types.LSLString(data) }, new DetectParams[0]));
+            }
+            return posted;
+        }
+
         public bool HasScript(UUID itemID, out bool running)
         {
             running = false;

@@ -545,17 +545,21 @@ public class AntiAbuseSlowdownTests
     /// taken out of the asset service after the first read and the cached answers still come.
     /// </summary>
     /// <summary>One read of each kind, each asked after the last answered, reported on channel 7 as one line.</summary>
+    // PHLOX-66: every reader in the prim gets every answer (D8, SL), so each takes only its own (the wiki's advice:
+    // "always use the queryid key"); before, a finished first reader went on asking on the second reader's answers.
     private const string Reader = @"
         list got;
         integer step = 0;
+        key q;
         ask() {
-            if (step == 0) llGetNumberOfNotecardLines(""card"");
-            else if (step <= 5) llGetNotecardLine(""card"", step - 1);
-            else iwGetNotecardSegment(""card"", 1, 5, 3);
+            if (step == 0) q = llGetNumberOfNotecardLines(""card"");
+            else if (step <= 5) q = llGetNotecardLine(""card"", step - 1);
+            else q = iwGetNotecardSegment(""card"", 1, 5, 3);
         }
         default {
             state_entry() { ask(); }
-            dataserver(key q, string d) {
+            dataserver(key id, string d) {
+                if (id != q) return;
                 got += [d];
                 ++step;
                 if (step == 7) llRegionSay(7, llDumpList2String(got, ""|""));

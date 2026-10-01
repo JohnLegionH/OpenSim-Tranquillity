@@ -3513,7 +3513,7 @@ namespace Phlox.ScriptEngine
         public void llRequestUsername(string id)
         {
             if (!UUID.TryParse(id, out UUID key)) { ReturnQueryKey(UUID.Zero); return; }
-            UUID requestID = UUID.Random();
+            UUID requestID = NewDataserverQuery();   // PHLOX-66: on the one dataserver path
             ReturnQueryKey(requestID);
 
             // Fire the dataserver event with the name (synchronous in Phlox)
@@ -3529,10 +3529,7 @@ namespace Phlox.ScriptEngine
                 if (acct != null) name = acct.FirstName + " " + acct.LastName;
             }
 
-            m_ScriptEngine.PostObjectEvent(m_host.LocalId,
-                new EventParams("dataserver",
-                    new object[] { requestID.ToString(), name },
-                    new DetectParams[0]));
+            PostDataserverEvent(requestID, name);
         }
         public string iwGetAgentData(string id, int data)
         {
@@ -16666,13 +16663,12 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         private void PostDataserverEvent(UUID queryID, string data)
         {
-            // PHLOX-46: only a reply this script is still owed - one asked for before a reset, state change or unload is
-            // dropped here, never queued (Halcyon Dataserver.RemoveEvents).
-            if (!m_PendingDataserver.TryRemove(queryID, out _)) return;
-            m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
-                "dataserver",
-                new object[] { queryID.ToString(), data },
-                new DetectParams[0]));
+            // PHLOX-46: the asking script gets only a reply it is still owed - one asked for before a reset, state change or
+            // unload is not posted to it (Halcyon Dataserver.RemoveEvents).
+            // PHLOX-66 (D8 (a)): every other script in the prim gets it all the same (SL: "all scripts within the same prim
+            // where the request was made"; the wiki says nothing of a reset, state change or removal in between).
+            bool owed = m_PendingDataserver.TryRemove(queryID, out _);
+            m_ScriptEngine?.PostDataserverToPrim(m_host, owed ? UUID.Zero : m_itemID, queryID.ToString(), data);
         }
 
         private static string StripNotecardHeader(string raw)
