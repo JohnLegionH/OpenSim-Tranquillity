@@ -90,7 +90,7 @@ public class ServiceCallDeferralTests
     {
         using var h = Harness(deferral);
         var slow = UUID.Random();
-        SchedulerHarness.CreateUser(h.Scene, "Slow", "Lookup", slow, "pw");
+        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Slow", "Lookup", slow, "pw");
         InstallAccountDelay(h, id => id == slow ? 3000 : 0);
 
         h.RezScript(@"default { state_entry() { llSetTimerEvent(0.1); } timer() { llSay(0, ""B tick""); } }");
@@ -150,8 +150,8 @@ default
     {
         using var h = Harness(timeoutMs: 1000);
         var first = UUID.Random(); var second = UUID.Random();
-        SchedulerHarness.CreateUser(h.Scene, "First", "User", first, "pw");
-        SchedulerHarness.CreateUser(h.Scene, "Second", "User", second, "pw");
+        UserAccountHelpers.CreateUserWithInventory(h.Scene, "First", "User", first, "pw");
+        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Second", "User", second, "pw");
         InstallAccountDelay(h, id => id == first ? 1500 : id == second ? 800 : 0);
 
         h.RezScript(@"
@@ -182,8 +182,8 @@ default
     {
         using var h = Harness();
         var first = UUID.Random(); var second = UUID.Random();
-        SchedulerHarness.CreateUser(h.Scene, "First", "User", first, "pw");
-        SchedulerHarness.CreateUser(h.Scene, "Second", "User", second, "pw");
+        UserAccountHelpers.CreateUserWithInventory(h.Scene, "First", "User", first, "pw");
+        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Second", "User", second, "pw");
         InstallAccountDelay(h, id => id == first ? 1500 : id == second ? 2500 : 0);
 
         h.Prim.Description = first.ToString();
@@ -212,7 +212,7 @@ default
     {
         using var h = new SchedulerHarness(cfg => cfg.Configs["InWorldz.Phlox"].Set("ServiceCallThreads", "3"));
         var ids = Enumerable.Range(0, 9).Select(_ => UUID.Random()).ToList();
-        for (int i = 0; i < ids.Count; i++) SchedulerHarness.CreateUser(h.Scene, "Storm", "User" + i, ids[i], "pw");
+        for (int i = 0; i < ids.Count; i++) UserAccountHelpers.CreateUserWithInventory(h.Scene, "Storm", "User" + i, ids[i], "pw");
         InstallAccountDelay(h, _ => 400);
         foreach (var id in ids)
             h.RezScript(@"default { state_entry() { llSay(0, ""storm "" + llGetUsername(""" + id + @""")); } }");

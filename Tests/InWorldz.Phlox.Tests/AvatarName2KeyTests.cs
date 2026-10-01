@@ -83,7 +83,7 @@ public class AvatarName2KeyTests
     {
         using var h = new SchedulerHarness();
         var id = UUID.Random();
-        SchedulerHarness.CreateUser(h.Scene, "Far", "Away", id, "pw");
+        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Far", "Away", id, "pw");
         Assert.Equal(id.ToString(), Ask(h, "\"Far\", \"Away\"").Single());
     }
 
@@ -109,7 +109,7 @@ public class AvatarName2KeyTests
     {
         using var h = new SchedulerHarness();
         var id = UUID.Random();
-        SchedulerHarness.CreateUser(h.Scene, "Off", "Thread", id, "pw");
+        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Off", "Thread", id, "pw");
         int lookupThread = -1;
         InstallNameLookupHook(h, "Off", () => lookupThread = Environment.CurrentManagedThreadId);
 
@@ -127,7 +127,7 @@ public class AvatarName2KeyTests
     {
         using var h = new SchedulerHarness();
         var id = UUID.Random();
-        SchedulerHarness.CreateUser(h.Scene, "Held", "Open", id, "pw");
+        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Held", "Open", id, "pw");
         using var gate = new ManualResetEventSlim(false);
         using var entered = new ManualResetEventSlim(false);
         InstallNameLookupHook(h, "Held", () => { entered.Set(); gate.Wait(TimeSpan.FromSeconds(30)); });

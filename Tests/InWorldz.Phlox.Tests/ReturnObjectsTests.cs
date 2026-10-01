@@ -48,9 +48,9 @@ public class ReturnObjectsTests
         if (inventoryAccess)
             SceneHelpers.SetupSceneModules(h.Scene, h.Config, new BasicInventoryAccessModule());
         var r = new Rig { H = h, ScriptOwner = h.Prim.OwnerID, Target = UUID.Random(), Other = UUID.Random() };
-        SchedulerHarness.CreateUser(h.Scene, "Script", "Owner", r.ScriptOwner, "pw");
-        SchedulerHarness.CreateUser(h.Scene, "Target", "Resident", r.Target, "pw");
-        SchedulerHarness.CreateUser(h.Scene, "Other", "Resident", r.Other, "pw");
+        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Script", "Owner", r.ScriptOwner, "pw");
+        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Target", "Resident", r.Target, "pw");
+        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Other", "Resident", r.Other, "pw");
         r.Land = new StripLand(h.Scene, (86, r.ScriptOwner), (172, r.ScriptOwner), (256, r.Other));
         h.Scene.LandChannel = r.Land;
         h.Prim.Name = "the scripted object";
@@ -347,8 +347,8 @@ public class ReturnObjectsTests
     {
         using var r = NewRig();
         UUID estateOwner = UUID.Random(), manager = UUID.Random();
-        SchedulerHarness.CreateUser(r.H.Scene, "Estate", "Owner", estateOwner, "pw");
-        SchedulerHarness.CreateUser(r.H.Scene, "Estate", "Manager", manager, "pw");
+        UserAccountHelpers.CreateUserWithInventory(r.H.Scene, "Estate", "Owner", estateOwner, "pw");
+        UserAccountHelpers.CreateUserWithInventory(r.H.Scene, "Estate", "Manager", manager, "pw");
         r.H.Scene.RegionInfo.EstateSettings.EstateOwner = estateOwner;
         r.H.Scene.RegionInfo.EstateSettings.AddEstateManager(manager);
         var scriptOwners = Obj(r, r.ScriptOwner, West + new Vector3(2, 0, 0), "parcel owner's box");
@@ -438,7 +438,7 @@ public class ReturnObjectsTests
     {
         using var r = NewRig();
         UUID manager = UUID.Random();
-        SchedulerHarness.CreateUser(r.H.Scene, "Estate", "Manager", manager, "pw");
+        UserAccountHelpers.CreateUserWithInventory(r.H.Scene, "Estate", "Manager", manager, "pw");
         r.H.Scene.RegionInfo.EstateSettings.AddEstateManager(manager);
         var a = Obj(r, r.Target, West + new Vector3(2, 0, 0), "west box");
         var linkset = Obj(r, r.Target, Middle, "middle linkset", prims: 3);

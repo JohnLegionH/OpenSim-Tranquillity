@@ -57,7 +57,7 @@ public sealed class SchedulerHarness : IDisposable
         configure?.Invoke(config);
         Config = config;
 
-        Scene = NewScene();
+        Scene = new SceneHelpers().SetupScene();
 
         if (withYEngine)
         {
@@ -121,29 +121,6 @@ public sealed class SchedulerHarness : IDisposable
 
         // The master scheduler owns a thread; this harness drives DoWork itself instead, so stop it.
         StopMasterThread();
-    }
-
-    /// <summary>
-    /// PHLOX-50: SceneHelpers' constructor sets the process-wide <c>NullPresenceData.Instance</c> to null and replaces it
-    /// (OpenSim.Tests.Common SceneHelpers.StartPresenceService: "some services share data via statics, so we need to
-    /// null every time"). With test classes in parallel that did two things: a presence call in another class while
-    /// Instance was null threw in NullPresenceData.Get, and every other scene's presence rows were dropped. Every
-    /// NullPresenceData method runs under its private static s_lock and delegates to Instance, so holding that lock
-    /// while the scene is built, and putting the previous Instance back, makes the swap invisible: no call sees null,
-    /// and every scene keeps using the one shared store its comment describes ("Test storage shared by every scene in
-    /// the process"). No production code is involved; the core is only read.
-    /// </summary>
-    private static TestScene NewScene()
-    {
-        var store = typeof(OpenSim.Data.Null.NullPresenceData);
-        object storeLock = store.GetField("s_lock", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
-        lock (storeLock)
-        {
-            var kept = OpenSim.Data.Null.NullPresenceData.Instance;
-            TestScene scene = new SceneHelpers().SetupScene();
-            if (kept != null) OpenSim.Data.Null.NullPresenceData.Instance = kept;
-            return scene;
-        }
     }
 
     /// <summary>PHLOX-54: the loader's own folder (PhloxScriptLoader.CACHE_DIR), relative to the working directory.</summary>
@@ -573,28 +550,6 @@ public sealed class SchedulerHarness : IDisposable
             System.Threading.Thread.Sleep(1);
         }
         return true;
-    }
-
-    /// <summary>
-    /// PHLOX-59: every test scene's authentication service stores passwords in NullAuthenticationData's static,
-    /// unlocked Dictionary (OpenSim.Data.Null/NullAuthenticationData.cs), which UserAccountHelpers.CreateUserWithInventory
-    /// writes through SetPassword. Two test classes creating users at once threw "Operations that change non-concurrent
-    /// collections must have exclusive access" in set-up (B6-PREP, ServiceCallDeferralTests). Every Phlox test creates
-    /// its users here, under one lock; nothing in a Phlox test reads that store. The core fix (a lock in the store) is
-    /// on the core list.
-    /// </summary>
-    public static readonly object SharedUserStoreLock = new();
-
-    /// <summary>PHLOX-59: <see cref="UserAccountHelpers.CreateUserWithInventory(Scene)"/> under <see cref="SharedUserStoreLock"/>.</summary>
-    public static OpenSim.Services.Interfaces.UserAccount CreateUser(Scene scene)
-    {
-        lock (SharedUserStoreLock) return UserAccountHelpers.CreateUserWithInventory(scene);
-    }
-
-    /// <summary>PHLOX-59: the named form, under <see cref="SharedUserStoreLock"/>.</summary>
-    public static OpenSim.Services.Interfaces.UserAccount CreateUser(Scene scene, string firstName, string lastName, UUID userId, string pw)
-    {
-        lock (SharedUserStoreLock) return UserAccountHelpers.CreateUserWithInventory(scene, firstName, lastName, userId, pw);
     }
 
     private static bool Pending(object workStatus)

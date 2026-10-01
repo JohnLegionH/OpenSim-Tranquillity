@@ -22,7 +22,7 @@ public class SyscallSingleReturnTests
     {
         using var h = new SchedulerHarness();
         var slow = UUID.Random();
-        SchedulerHarness.CreateUser(h.Scene, "Next", "Call", slow, "pw");
+        UserAccountHelpers.CreateUserWithInventory(h.Scene, "Next", "Call", slow, "pw");
         // The next call is parked for 800 ms: long enough for any stray second return to arrive in it.
         ServiceCallDeferralTests.InstallAccountDelay(h, id => id == slow ? 800 : 0);
 

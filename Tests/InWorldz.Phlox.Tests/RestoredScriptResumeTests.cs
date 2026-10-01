@@ -220,9 +220,9 @@ public class RestoredScriptResumeTests
 ///   parallel before PHLOX-50;
 /// - the core HttpRequestModule's statics are used by one class only (PhloxHttpHeaderTests), which runs its own tests
 ///   one at a time;
-/// - the one process-wide store scenes share, NullPresenceData, is swapped under its own lock by
-///   SchedulerHarness.NewScene, so a scene being built never disturbs another class's avatars (PHLOX-50's first
-///   parallel run threw in NullPresenceData.Get before that).
+/// - the one process-wide store scenes share, NullPresenceData, is locked on every access and no longer replaced
+///   when a scene is built (core #222), so a scene being built never disturbs another class's avatars (PHLOX-50's
+///   first parallel run threw in NullPresenceData.Get before that).
 /// </summary>
 [CollectionDefinition("phlox-state", DisableParallelization = true)]
 public class PhloxStateCollection { }
