@@ -49,7 +49,11 @@ namespace Phlox.ScriptEngine
         //   5 — one recompile for three changes: <<= and >>=, SL's Experience key-value form (610-616 return a
         //       request key; the answer arrives in dataserver), and exact float literals (more than 7 significant
         //       digits were rounded). State kept as in 4.
-        private const int CACHE_SCHEMA_VERSION = 5;
+        //   6 — no format change. Earlier versions could store one save's bytecode in the cache file of another save's
+        //       asset (a script saved again while its previous save was still loading), so a restart ran the wrong code.
+        //       The loader no longer does; this bump purges such entries once. Every script recompiles once from its own
+        //       source at the first start; saved state is kept as in 4.
+        private const int CACHE_SCHEMA_VERSION = 6;
         private const string VERSION_FILE_NAME = ".schema_version";
 
         // CACHE_DIR and its stamp, unless the engine was given another folder (a test seam; production never
