@@ -396,6 +396,12 @@ These are facts about Phlox's compiler. Where SL's rule is known, it is cited.
     here). A granter who has not arrived yet leaves it waiting; it is decided when that avatar
     arrives anywhere in the region, as such a grant needs no seat or attachment. Neither
     `run_time_permissions` nor `experience_permissions` is posted by a restore.
+  - A grant from an Experience ends when its granter enters a parcel where the Experience
+    cannot run: the estate blocks it, or neither allows nor trusts it. The script loses the
+    grant and the controls it took, and gets `experience_permissions_denied` with
+    `XP_ERROR_NOT_PERMITTED_LAND` (17), as SL lists under "The experience can no longer run":
+    "The agent has moved to a parcel where the experience cannot run"
+    ([experience_permissions_denied](https://wiki.secondlife.com/wiki/Experience_permissions_denied)).
   - States saved by an earlier Phlox build hold no grant and restore without one.
   - When a region starts, once the scripts it starts have loaded, one line in the log says
     how many came back with their saved state and how many of those got a grant back:
@@ -647,12 +653,19 @@ name) promises.
 and gives the error "llRefreshPrimURL - not yet supported", as Halcyon did; SL documents it as
 deprecated and doing nothing.
 
-`iwCheckRezError` answers from the region's rez checks: `IW_REZ_NO_LAND_PARCEL` where there is
+`iwCheckRezError` answers from the region's rez checks: `IW_REZ_NOT_PERMITTED` for an owner the
+region blocks from rezzing (asked first, as Halcyon did), `IW_REZ_NO_LAND_PARCEL` where there is
 no parcel, `IW_REZ_NOT_PERMITTED` where the owner may not rez, `IW_REZ_PARCEL_LAND_IMPACT`
 where the prims would go over the parcel's limits, otherwise `IW_REZ_OK`. It never returns
 `IW_REZ_REGION_SCENIC` or `IW_REZ_REGION_LAND_IMPACT`. `isTemp` is not used, as in Halcyon.
 When the prims would not fit, the region's prim-limit module may also send the owner the
 message it sends for a refused rez.
+
+A region can block an owner from rezzing (the console's `block owner`, or `[BlockedOwners]
+BlockEstateBanned`). A Phlox script whose object's owner is blocked rezzes nothing: `llRezObject`,
+`llRezAtRoot`, `llRezObjectWithParams`, `iwRezObject`, `iwRezAtRoot` and `iwRezAt` fail with no
+error and a 100 ms pause, before any other check, as Halcyon's bad-user check did. SL has no
+such list.
 
 ### Functions that act only in part
 - `llRezObjectWithParams`:
@@ -712,6 +725,11 @@ message it sends for a refused rez.
 - `PRIM_PHYSICS_MATERIAL` can be set, but reading it returns nothing.
 - `PRIM_SIT_FLAGS`: `SIT_FLAG_NO_COLLIDE` and `SIT_FLAG_NO_DAMAGE` are stored for read-back
   only.
+- `PRIM_SIT_TARGET` with a nonzero active value sets a target at `ZERO_VECTOR` with
+  `ZERO_ROTATION`, as SL documents, and it reads back exactly. The region database does not
+  save the target's on/off state, so after a region restart such a target is off (a take and
+  rez, a crossing or an archive keep it). YEngine keeps it across a restart by storing a
+  1e-5 m offset, which reads back.
 - For seated avatars, only position and rotation rules apply.
 - `PRIM_MATERIAL` with a value outside 0 to 7 is ignored (Halcyon refused the whole call).
 - `PRIM_FLEXIBLE` makes the whole object phantom when it turns a prim flexible, as YEngine does.
@@ -719,6 +737,12 @@ message it sends for a refused rez.
 
 ### Events
 - `game_control` compiles but is never raised.
+- When an avatar blocks an Experience from its profile, SL ends the Experience's grants and
+  posts `experience_permissions_denied` ("The agent has blocked the experience from the
+  experience profile"). The simulator does not tell Phlox, so a Phlox script keeps the grant
+  and calls that use it (controls, animations, the camera, `llTeleportAgent`) still work.
+  `llSitOnLink`, `llSetAgentEnvironment` and `llReplaceAgentEnvironment`, which ask the
+  Experience on every call, are refused.
 - `money` is raised only when the region has a money module.
 
 ### Engine
