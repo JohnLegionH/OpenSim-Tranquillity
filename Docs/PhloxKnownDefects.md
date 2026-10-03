@@ -572,6 +572,10 @@ pauses 15 ms after every chat call instead (`ChatThrottle`).
 - `llGetUsername` returns "First Last" where YEngine returns "first.last". Both answer only for
   an avatar the region holds (root or child agent), else `""`; `llRequestUsername` answers for
   anyone.
+- `llManageEstateAccess` never bans the estate owner's partner, the partner named on the estate
+  owner's profile, as Halcyon refused it: the call returns `FALSE`, nothing changes, and neither
+  an IM nor an error is sent, as for the estate owner. When the estate owner's profile cannot be
+  read, the ban goes ahead and the region's log says so. SL documents no partner rule.
 - Start-up events come in SL's order: `state_entry` (a new script), then `on_rez`, then
   `attach` (an attachment worn from inventory), then `changed(CHANGED_REGION_START)`, which every
   script started by the region's start gets, new or restored. YEngine posts them in the same order.
