@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using System.Diagnostics;
 using System.Numerics;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
@@ -7,7 +14,7 @@ using Xunit.Abstractions;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// JOLT-7 (audit S-8). Every region's Step runs PhysicsSystem::Update on a JobSystemThreadPool. A pool's job queue
+/// Every region's Step runs PhysicsSystem::Update on a JobSystemThreadPool. A pool's job queue
 /// is a fixed 1024-slot ring shared by every Update on it, and a worker whose running job queues into a full ring
 /// waits forever on its own head - so concurrent Updates on one pool wedge (4 regions x 300 boxes, every time,
 /// whatever maxJobs was). The fix: one Update at a time per pool, [Jolt] JobPools pools.

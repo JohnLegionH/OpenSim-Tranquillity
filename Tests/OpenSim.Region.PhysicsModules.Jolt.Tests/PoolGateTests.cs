@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using System.Diagnostics;
 using System.Numerics;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
@@ -7,9 +14,9 @@ using Xunit.Abstractions;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// JOLT-7d. The lock order is pool gate, then _simLock: a region waiting for its job pool must not be holding its
+/// The lock order is pool gate, then _simLock: a region waiting for its job pool must not be holding its
 /// own _simLock, or its scene-thread physics calls (body creation, raycasts) wait behind its heartbeat's wait for
-/// the pool. JOLT-7 took the gate inside _simLock; the teleport crossing harness went from under 5 s to ~2 min.
+/// the pool. With the gate taken inside _simLock, the teleport crossing harness went from under 5 s to ~2 min.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
 public class PoolGateTests

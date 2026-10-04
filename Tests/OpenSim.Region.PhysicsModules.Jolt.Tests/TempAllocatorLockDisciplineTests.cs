@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using Xunit;
@@ -5,7 +12,7 @@ using Xunit;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// PHYS-1. The patched joltc gives every <c>JPH_PhysicsSystem</c> its own
+/// The patched joltc gives every <c>JPH_PhysicsSystem</c> its own
 /// <c>TempAllocatorImplWithMallocFallback</c> (<c>joltc.cpp:956</c>) and passes it to exactly seven native
 /// entry points: <c>PhysicsSystem::Update</c> (<c>:1050</c>) and six <c>CharacterVirtual</c> scratch users
 /// (<c>:8107, :8135, :8151, :8182, :8198, :8223</c>). Two of those seven are reachable from this tree's managed
@@ -24,8 +31,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// <para>
 /// <b>Why this is a source test.</b> The failure is <c>std::abort()</c> inside native code: it does not throw,
 /// it terminates the process. A runtime reproduction cannot be a failing assertion — it takes the test host
-/// down with it — so the red state was verified by reverting the fix and running the region, and is recorded in
-/// the ledger rather than here. What can be asserted deterministically, and is exactly the thing that was wrong,
+/// down with it — so the red state can only be shown by reverting the fix and running a region. What can be
+/// asserted deterministically, and is exactly the thing that matters,
 /// is the lexical rule the backend file already states in its own header: every native call that touches a
 /// PhysicsSystem happens under <c>_simLock</c>, and character ops take <c>_characterGate</c> INSIDE it.
 /// </para>
@@ -73,9 +80,9 @@ public class TempAllocatorLockDisciplineTests
     // ------------------------------------------------------------------ the three allocator-touching sites
 
     /// <summary>
-    /// <c>CharacterVirtual::SetShape</c> — <c>joltc.cpp:8223</c>. This is the PHYS-1 defect: it held
-    /// <c>_characterGate</c> only, and <c>Step</c> releases that gate before <c>_system.Update</c>, so the two
-    /// ran concurrently on one allocator.
+    /// <c>CharacterVirtual::SetShape</c> — <c>joltc.cpp:8223</c>. Holding <c>_characterGate</c> alone is not
+    /// enough: <c>Step</c> releases that gate before <c>_system.Update</c>, so the two would run concurrently on
+    /// one allocator.
     /// </summary>
     [Fact]
     public void SetCharacterShape_takes_simLock_before_characterGate()
@@ -87,7 +94,7 @@ public class TempAllocatorLockDisciplineTests
         Assert.True(sim >= 0,
             "SetCharacterShape calls CharacterVirtual.SetShape, which allocates on the PhysicsSystem's "
             + "TempAllocator (joltc.cpp:8223). Without _simLock it races _system.Update on that same allocator "
-            + "and Jolt aborts the process (TempAllocator.h:83-84). This is PHYS-1.");
+            + "and Jolt aborts the process (TempAllocator.h:83-84).");
         Assert.True(chr >= 0, "the character record still needs _characterGate");
         Assert.True(sim < chr, "lock order is _simLock then _characterGate, as the file's own header states");
     }
@@ -105,7 +112,7 @@ public class TempAllocatorLockDisciplineTests
         Assert.Equal(1, Regex.Matches(source, @"\.ExtendedUpdate\(").Count);
         Assert.Equal(1, Regex.Matches(source, @"\bStepCharacter\(\s*\w+\s*,").Count);   // the one call, in Step
 
-        // JOLT-7d: Step takes the pool gate and calls StepLocked, which holds the locks.
+        // Step takes the pool gate and calls StepLocked, which holds the locks.
         var step = MethodBody(source, "StepResult StepLocked(");
         Assert.Contains("StepCharacter(", step);
         Assert.Contains("lock (_simLock)", step);
@@ -113,7 +120,7 @@ public class TempAllocatorLockDisciplineTests
     }
 
     /// <summary>
-    /// JOLT-7d lock order: pool gate, then _simLock. Step takes the gate and holds no _simLock of its own; the
+    /// Lock order: pool gate, then _simLock. Step takes the gate and holds no _simLock of its own; the
     /// locked body (StepLocked) has exactly one caller, Step, and takes no gate.
     /// </summary>
     [Fact]
@@ -140,7 +147,7 @@ public class TempAllocatorLockDisciplineTests
         var source = BackendSource();
         Assert.Equal(1, Regex.Matches(source, @"_system\.Update\(").Count);
 
-        var step = MethodBody(source, "StepResult StepLocked(");   // JOLT-7d: Step's locked body
+        var step = MethodBody(source, "StepResult StepLocked(");   // Step's locked body
         Assert.Contains("_system.Update(", step);
 
         var lockAt = step.IndexOf("lock (_simLock)", StringComparison.Ordinal);
@@ -154,7 +161,7 @@ public class TempAllocatorLockDisciplineTests
     /// Every remaining public character op takes <c>_characterGate</c>. Those that do not touch the allocator
     /// may hold it alone; this pins which ones those are, so that adding an allocator-touching native call to
     /// one of them is a decision someone has to make deliberately rather than by accident — which is precisely
-    /// how PHYS-1 happened.
+    /// how an unlocked allocator call slips in.
     /// </summary>
     [Theory]
     [InlineData("public void SetCharacterTransform(", false)]   // Position/Rotation setters, no scratch

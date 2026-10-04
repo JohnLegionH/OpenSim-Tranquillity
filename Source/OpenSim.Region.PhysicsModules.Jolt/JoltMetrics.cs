@@ -1,14 +1,20 @@
-// SLICE-4 INSTRUMENTATION — wired in as the module was ported, for the post-slice-4 scaling /
-// thread-pool MEASUREMENT GATE (see tranq-migration-plan.md, Jolt track). Kept in its own file so it
-// is additive and does not touch the ported physics logic beyond three one-line hooks
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+// INSTRUMENTATION for measuring how the module scales with region count and thread-pool size.
+// Kept in its own file so it is additive and does not touch the physics logic beyond three one-line hooks
 // (AddRegion init, StepOnce, and a `jolt metrics` console subcommand).
 //
-// Provides the gate metrics that are obtainable from managed code:
+// Provides the scaling metrics that are obtainable from managed code:
 //   - per-region RSS delta at backend init (8 MB TempAllocator + MaxBodies preallocation + job pool)
 //   - per-region step time (EMA + last) and active-body count
-//   - whole-process step-time sum and total process THREAD COUNT (design item #1: per-region
+//   - whole-process step-time sum and total process THREAD COUNT (a per-region
 //     JobSystemThreadPool of ProcessorCount-1 -> N*(cores-1) threads; this is how we watch it)
-//   - a throttled process-wide summary emitted to the LOG (~30 s) so the gate is captured without
+//   - a throttled process-wide summary emitted to the LOG (~30 s) so the metrics are captured without
 //     needing console interaction.
 //
 // NOT YET obtainable here: TempAllocator high-water / malloc-fallback rate. The native
@@ -60,7 +66,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             st.EmaMs = st.EmaMs <= 0 ? physicsMs : st.EmaMs * 0.98 + physicsMs * 0.02;
             st.ActiveBodies = activeBodies;
 
-            // Throttled process-wide summary to the log so the gate metrics are captured without
+            // Throttled process-wide summary to the log so the metrics are captured without
             // console interaction. Single-writer via CompareExchange so only one region logs per window.
             // TickCount64 (monotonic, non-wrapping) — plain Environment.TickCount goes negative past
             // ~24.9 days uptime, which silently disables the throttle.

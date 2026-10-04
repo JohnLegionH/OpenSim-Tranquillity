@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using System.Diagnostics;
 using System.Numerics;
 using System.Reflection;
@@ -8,7 +15,7 @@ using Xunit.Abstractions;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// PHYS-3. The load harness for the temp-array growth PHYS-2e pointed at.
+/// A load harness for temp-array growth in CharacterVirtual::MoveShape.
 ///
 /// <para><b>Detection is the abort itself.</b> An out-of-order free ends in <c>std::abort()</c>
 /// (<c>Jolt/Core/TempAllocator.h:83-84</c>), which terminates the process - it cannot be caught, and it takes
@@ -17,7 +24,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// and the console line Jolt prints just before it.</para>
 ///
 /// <para><b>The counts are printed and asserted.</b> A load harness that never reached the limit it is
-/// probing would be the PHYS-2 trap again, so the child prints the per-step contact count it actually achieved
+/// probing would prove nothing, so the child prints the per-step contact count it actually achieved
 /// and the parent requires it to have exceeded <c>mMaxNumHits</c>.</para>
 /// </summary>
 public class MoveShapeLoadTests
@@ -28,7 +35,7 @@ public class MoveShapeLoadTests
     /// <summary>Jolt's default, <c>CharacterVirtual.h:52</c>. The reserve for <c>contacts</c> is exactly this.</summary>
     private const int MaxNumHits = 256;
 
-    private const string ChildVar = "PHYS3_LOAD_BODIES";
+    private const string ChildVar = "MOVESHAPE_LOAD_BODIES";
     private const int FloorTopZ = 21;
 
     private static PhysicsBackendSettings Settings() => new()
@@ -138,10 +145,17 @@ public class MoveShapeLoadTests
             return;   // not the child; nothing to do
 
         var (max, steps) = RunLoad(int.Parse(v), steps: 200, log: Console.WriteLine);
-        Console.WriteLine($"PHYS3-RESULT bodies={v} maxContacts={max} steps={steps} survived=yes");
+        Console.WriteLine($"MOVESHAPE-RESULT bodies={v} maxContacts={max} steps={steps} survived=yes");
     }
 
     // ------------------------------------------------------------------ parent: run the child, read the corpse
+
+    // The child runs the build this test runs from, so it needs the same configuration.
+#if DEBUG
+    private const string Configuration = "Debug";
+#else
+    private const string Configuration = "Release";
+#endif
 
     private (int exit, string output) RunChild(int bodies)
     {
@@ -155,6 +169,8 @@ public class MoveShapeLoadTests
         psi.ArgumentList.Add("test");
         psi.ArgumentList.Add(Path.GetDirectoryName(asm)!.Split("bin")[0]);
         psi.ArgumentList.Add("--no-build");
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(Configuration);
         psi.ArgumentList.Add("--nologo");
         psi.ArgumentList.Add("--filter");
         psi.ArgumentList.Add("FullyQualifiedName~MoveShapeLoadTests.Child_load_run");
@@ -172,15 +188,15 @@ public class MoveShapeLoadTests
     private const int FastFail = unchecked((int)0xC0000409);
 
     /// <summary>
-    /// The sanity variant first: what an ordinary Legion arrival looks like. 14 attachment bodies, which is
-    /// what the 2026-09-05 crossing re-added. If this already sits near <c>mMaxNumHits</c> the whole picture
-    /// changes; if it sits at a handful, the live crash was nowhere near the contact cap.
+    /// The sanity variant first: what an ordinary arrival looks like. 14 attachment bodies, about what a
+    /// region crossing re-adds for a typical avatar. If this already sits near <c>mMaxNumHits</c> the whole
+    /// picture changes; if it sits at a handful, an ordinary arrival is nowhere near the contact cap.
     /// </summary>
     [Fact]
     public void Sanity_fourteen_attachments()
     {
         var (exit, output) = RunChild(14);
-        foreach (var line in output.Split('\n').Where(l => l.Contains("bodies packed") || l.Contains("PHYS3-RESULT") || l.Contains("max avatar contacts")))
+        foreach (var line in output.Split('\n').Where(l => l.Contains("bodies packed") || l.Contains("MOVESHAPE-RESULT") || l.Contains("max avatar contacts")))
             _out.WriteLine(line.Trim());
         _out.WriteLine($"child exit = 0x{exit:X8}");
         Assert.Equal(0, exit);
@@ -188,7 +204,7 @@ public class MoveShapeLoadTests
 
     /// <summary>
     /// The load variant: more overlapping bodies than <c>mMaxNumHits</c>, so the contact collector is driven
-    /// to its cap. Reported, not asserted red - PHYS-3 Part 1 concluded the three arrays in MoveShape cannot
+    /// to its cap. Reported, not asserted red - reading MoveShape shows its three arrays cannot
     /// exceed their reserves, so this is expected to survive; it is run to test that conclusion rather than to
     /// trust it.
     /// </summary>
@@ -196,7 +212,7 @@ public class MoveShapeLoadTests
     public void Load_beyond_max_num_hits()
     {
         var (exit, output) = RunChild(400);
-        foreach (var line in output.Split('\n').Where(l => l.Contains("bodies packed") || l.Contains("PHYS3-RESULT") || l.Contains("max avatar contacts") || l.Contains("TempAllocator")))
+        foreach (var line in output.Split('\n').Where(l => l.Contains("bodies packed") || l.Contains("MOVESHAPE-RESULT") || l.Contains("max avatar contacts") || l.Contains("TempAllocator")))
             _out.WriteLine(line.Trim());
         _out.WriteLine($"child exit = 0x{exit:X8}  (0x{FastFail:X8} would be the abort)");
 

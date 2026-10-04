@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using System.Numerics;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
 using Xunit;
@@ -6,7 +13,7 @@ using Xunit.Abstractions;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// JOLT-3 (audit S-4a, S-4b). Capacity failures are surfaced, not silent: CreateBody at MaxBodies returns
+/// Capacity failures are surfaced, not silent: CreateBody at MaxBodies returns
 /// BodyId.Invalid and counts it (it used to record Jolt's invalid id as a live body), and every non-None
 /// PhysicsUpdateError from the step is counted per flag and kept as the last value.
 /// </summary>
@@ -59,7 +66,7 @@ public class CapacityTests
     [Fact]
     public void Terrain_and_avatar_marker_past_MaxBodies_are_refused_and_counted()
     {
-        // JOLT-7c: CreateBody's invalid-id policy at the terrain body and the avatar query marker.
+        // CreateBody's invalid-id policy at the terrain body and the avatar query marker.
         using var t = new JoltTestBackend(JoltTestBackend.Settings(maxBodies: 16));
         var box = t.B.CreateBoxShape(new Vector3(0.5f));
         for (var i = 0; i < 16; i++)
@@ -129,15 +136,15 @@ public class CapacityTests
     public void Warning_names_the_flags_and_the_key_to_raise()
     {
         var prev = new PhysicsCapacityStats { MaxBodies = 16 };
-        Assert.Null(CapacityReport.Warning("Ebony", prev, prev, 10));
+        Assert.Null(CapacityReport.Warning("Test Region", prev, prev, 10));
 
         var cur = prev;
         cur.ContactConstraintsFullSteps = 37;
-        Assert.Equal("[JOLT SCENE] Ebony: collisions dropped (ContactConstraintsFull x37 in 10s) - raise [Jolt] MaxContactConstraints",
-            CapacityReport.Warning("Ebony", prev, cur, 10));
+        Assert.Equal("[JOLT SCENE] Test Region: collisions dropped (ContactConstraintsFull x37 in 10s) - raise [Jolt] MaxContactConstraints",
+            CapacityReport.Warning("Test Region", prev, cur, 10));
 
         cur.BodyCreateFailures = 4;
-        var both = CapacityReport.Warning("Ebony", prev, cur, 10)!;
+        var both = CapacityReport.Warning("Test Region", prev, cur, 10)!;
         Assert.Contains("bodies refused (MaxBodies 16 reached x4 in 10s", both);
         Assert.Contains("raise [Jolt] MaxBodies", both);
     }
@@ -145,9 +152,9 @@ public class CapacityTests
     [Fact]
     public void Gate_warning_fires_above_20_percent_of_frame_time()
     {
-        Assert.Null(CapacityReport.GateWarning("Ebony", 1000, 10000, 0, 1));   // 10%
-        Assert.Null(CapacityReport.GateWarning("Ebony", 2000, 10000, 0, 1));   // exactly 20%
-        var w = CapacityReport.GateWarning("Ebony", 2500, 10000, 1, 2)!;
+        Assert.Null(CapacityReport.GateWarning("Test Region", 1000, 10000, 0, 1));   // 10%
+        Assert.Null(CapacityReport.GateWarning("Test Region", 2000, 10000, 0, 1));   // exactly 20%
+        var w = CapacityReport.GateWarning("Test Region", 2500, 10000, 1, 2)!;
         Assert.Contains("raise [Jolt] JobPools", w);
         Assert.Contains("pool 1 of 2", w);
     }
@@ -166,7 +173,7 @@ public class CapacityTests
         Assert.True(s.JobThreadCount >= 1);
         Assert.Equal(0, s.DroppedContacts);
 
-        // JOLT-7: the default is one pool, holding every thread - exactly the old single pool.
+        // The default is one pool, holding every thread.
         Assert.Equal(1, s.JobPools);
         Assert.Equal(0, s.PoolIndex);
         Assert.Equal(s.JobThreadCount, s.JobThreadsPerPool);
@@ -174,7 +181,7 @@ public class CapacityTests
         s = t.B.GetCapacityStats();
         Assert.Equal(1, s.PoolPeakInside);
         Assert.Equal(0, s.UpdateGateWaits);
-        var text = CapacityReport.Render("Ebony", s, 1, 0, 1, 0, 1, 0);
+        var text = CapacityReport.Render("Test Region", s, 1, 0, 1, 0, 1, 0);
         Assert.Contains($"JobPools=1 threadsPerPool={s.JobThreadsPerPool}", text);
         Assert.Contains("pool=0 waits=0 waitMs", text);
         Assert.Contains("pool peakInside=1", text);

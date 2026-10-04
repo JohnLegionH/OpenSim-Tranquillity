@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using System.Numerics;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
 
@@ -5,7 +12,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
 /// A real <see cref="JoltPhysicsBackend"/> for a test, constructed the way <see cref="NativeSmokeTests"/> does it
-/// (new + Initialize) with the region defaults, plus the few scene-building helpers the JOLT-A tests share.
+/// (new + Initialize) with the region defaults, plus the few scene-building helpers the backend tests share.
 /// </summary>
 internal sealed class JoltTestBackend : IDisposable
 {
@@ -59,12 +66,11 @@ internal sealed class JoltTestBackend : IDisposable
 }
 
 /// <summary>
-/// Every JOLT-A test that steps a real backend runs in this collection, which xunit runs on its own after the
-/// parallel ones. Measured 2026-09-23: a JOLT-A test stepping while TeleportCrossingHarnessTests' two regions
-/// stepped put three PhysicsSystem::Update calls on the one shared JobSystemThreadPool at once, and all three
-/// spun inside native Update indefinitely (one core busy, no progress for 20 min; dump kept outside the repo).
-/// That is a pre-existing hazard of the shared pool, reported separately - not something these tests should
-/// trip over at random.
+/// Every backend test that steps a real backend runs in this collection, which xunit runs on its own after the
+/// parallel ones. A test stepping while TeleportCrossingHarnessTests' two regions stepped put three
+/// PhysicsSystem::Update calls on one shared JobSystemThreadPool at once, and all three spun inside native
+/// Update indefinitely (one core busy, no progress). That is a hazard of a shared pool (see
+/// ConcurrentUpdateTests) - not something these tests should trip over at random.
 /// </summary>
 [Xunit.CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class JoltNativeSerial

@@ -1,10 +1,7 @@
 /*
- * Legion Grid — Vehicle Dynamics Port from InWorldz Halcyon
+ * Vehicle dynamics ported from InWorldz Halcyon
  * Original Copyright (c) 2015, InWorldz Halcyon Developers
- * Adapted for BulletSim physics engine, April 2026.
- * Extracted VERBATIM into the backend-agnostic OpenSim.Region.PhysicsModules.Jolt.Vehicles assembly (M8) from
- * OpenSim/Region/PhysicsModules/BulletS/VehicleLimits.cs - only the namespace
- * and visibility (internal -> public) changed.
+ * Adapted 2026 by Legion Builds
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:

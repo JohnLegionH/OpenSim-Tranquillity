@@ -1,11 +1,18 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 /*
- * Legion Grid - backend-agnostic vehicle controller (M8).
+ * Backend-agnostic vehicle controller.
  *
  * The LSL vehicle parameter wire codes, copied from OpenSim's
  * OpenSim.Region.PhysicsModules.SharedBase.VehicleConstants so this assembly does not link
  * OpenSim. The values are the Second Life protocol constants and are frozen; keeping the enum
- * NAME "Vehicle" lets the extracted controller switches stay byte-identical to the BulletSim
- * reference (LegionVehicleDynamics.cs). Hosts cast their int params to this enum.
+ * NAME "Vehicle" lets the controller's switches read the same as the InWorldz Halcyon vehicle
+ * dynamics they follow. Hosts cast their int params to this enum.
  */
 
 namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles

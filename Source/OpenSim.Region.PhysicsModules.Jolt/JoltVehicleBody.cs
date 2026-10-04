@@ -1,4 +1,11 @@
-// Legion Grid - the Jolt implementation of the neutral vehicle seam (M8 Task 2).
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+// The Jolt implementation of the neutral vehicle seam.
 //
 // JoltVehicleBody adapts one JoltPrim's live backend body to OpenSim.Region.PhysicsModules.Jolt.Vehicles.IVehicleBody so the
 // extracted Halcyon controller (VehicleController) can drive it without knowing Jolt exists.

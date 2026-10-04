@@ -1,21 +1,28 @@
-// Legion Grid - Jolt physics as an OpenSim region module (PhysicsScene).
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+// Jolt physics as an OpenSim region module (PhysicsScene).
 //
 // ============================ READ THIS FIRST ============================
 // This is the seam between OpenSim's PhysicsScene contract and the engine-agnostic
-// IPhysicsBackend (whose Jolt implementation we proved across M1-M4.5 in a clean-room
-// harness). The module registers, boots under `physics = Jolt`, and drives real physics:
+// IPhysicsBackend (implemented for Jolt in JoltPhysicsBackend, which has its own standalone tests).
+// The module registers, boots under `physics = Jolt`, and drives real physics:
 //   - AddPrimShape cooks a shape (fixed-shape fast path, IMesher mesh/hull, or bbox fallback) and
 //     creates a JoltPrim - STATIC when non-physical, dynamic when physical - tracked in _prims.
 //   - AddAvatar has three overloads (no-localID, localID, feetOffset); the avatar gets a Jolt
-//     CharacterVirtual carrying its M4.5 query marker (M6.5).
-//   - SetTerrain cooks the real (N+1)-square heightfield and swaps it in (M6.2); SetWaterLevel
+//     CharacterVirtual carrying its kinematic query marker.
+//   - SetTerrain cooks the real (N+1)-square heightfield and swaps it in; SetWaterLevel
 //     pushes the water height to the backend.
-//   - Simulate rebuilds dirty linkset compounds (M7), activates bodies created inert, runs the
-//     Halcyon vehicle controllers (M8), steps the backend once per frame, then drains.
+//   - Simulate rebuilds dirty linkset compounds, activates bodies created inert, runs the
+//     Halcyon vehicle controllers, steps the backend once per frame, then drains.
 // The batched-buffer drain (StepResult -> per-actor RequestPhysicsterseUpdate / collision dispatch)
 // IS here, at the tail of Simulate.
 //
-// Registration mirrors BSScene: an RC region module (DotNetCorePlugins; see PluginRegistration.cs)
+// Registration mirrors BSScene: a region module (DotNetCorePlugins; see PluginRegistration.cs)
 // that self-selects when [Startup]
 // physics == Name. No [Startup] edit - the operator picks `physics = Jolt`; this module recognises
 // its own name.
@@ -55,30 +62,30 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // [Jolt] TestCommands: register the console test commands (JoltTestCommands.cs). Off by default.
         private bool m_testCommands;
 
-        // JOLT-5: the [Jolt] section, parsed once in Initialise. Defaults reproduce the pre-JOLT-5 constants.
+        // The [Jolt] section, parsed once in Initialise. The defaults reproduce the earlier hardcoded constants.
         private JoltConfig _joltConfig = new JoltConfig();
         internal float AvatarJumpSpeed => _joltConfig.AvatarJumpSpeed;
 
-        // J-9: the job pool is process-wide; log its size once, whichever region creates it.
+        // The job pool is process-wide; log its size once, whichever region creates it.
         private static readonly object s_poolLogGate = new object();
         private static bool s_poolLogged;
 
-        // The engine-agnostic backend (the deliverable proven in the clean-room harness).
+        // The engine-agnostic backend.
         private IPhysicsBackend _backend;
 
-        // The region's IMesher, driving the M6.3 cook path for cut/hollow/sculpt/mesh prims.
+        // The region's IMesher, driving the cook path for cut/hollow/sculpt/mesh prims.
         private IMesher m_mesher;
 
         public string RegionName { get; private set; }
 
-        // Terrain (M6.2): the current cooked heightfield ShapeId (released + replaced on each SetTerrain),
+        // Terrain: the current cooked heightfield ShapeId (released + replaced on each SetTerrain),
         // and the region dimensions needed to interpret the flat float[] heightmap OpenSim hands us.
         private ShapeId _terrainShape = ShapeId.Invalid;
         private int _regionSizeX;
         private int _regionSizeY;
         private Scene _scene;
 
-        // Vehicle-controller world inputs (M8): the region water plane, the last cooked terrain
+        // Vehicle-controller world inputs: the region water plane, the last cooked terrain
         // sample field (for height-at-XY without a per-frame raycast), the world gravity handed to
         // the backend, and the last Simulate dt (BulletSim's LastTimeStep, used by AddForce).
         internal float WaterLevel { get; private set; }
@@ -104,8 +111,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             return h00 * (1 - fx) * (1 - fy) + h10 * fx * (1 - fy) + h01 * (1 - fx) * fy + h11 * fx * fy;
         }
 
-        // M6.3: live prims by SceneObjectPart.LocalId. RemovePrim looks up here; also the future
-        // Step-drain target for physical (M6.4) actors. Guarded because Add/RemovePrim can arrive off
+        // Live prims by SceneObjectPart.LocalId. RemovePrim looks up here; also the
+        // Step-drain target for physical actors. Guarded because Add/RemovePrim can arrive off
         // the heartbeat thread (the backend permits concurrent Create/Remove with Step).
         private readonly Dictionary<uint, JoltPrim> _prims = new Dictionary<uint, JoltPrim>();
 
@@ -113,7 +120,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // physical prim's horizontal velocity on load (so a reloaded body doesn't inherit a stale coast).
         internal bool IsRegionLoading => _stepCount == 0;
 
-        // STRUCTURAL PORT of BulletSim's taint-deferred body creation: physical bodies are created INERT and
+        // Mirrors BulletSim's taint-deferred body creation: physical bodies are created INERT and
         // their activation is deferred to the top of the next Simulate (step thread), so a body is never
         // stepped by the engine before all its load-time state (incl. the vehicle's gravity-cancellation) is
         // applied - it cannot free-fall during the load or the reload stall. Drained in Simulate.
@@ -124,12 +131,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (!_pendingActivation.Contains(p)) _pendingActivation.Add(p);
         }
 
-        // M6.5: the logged-in avatars, keyed by their CharacterId handle (the value the character drain
+        // The logged-in avatars, keyed by their CharacterId handle (the value the character drain
         // echoes back). Keyed by handle rather than LocalID so the drain mapping is independent of when
         // ScenePresence assigns LocalID after AddAvatar returns.
         private readonly Dictionary<uint, JoltCharacter> _avatars = new Dictionary<uint, JoltCharacter>();
 
-        // M6.3 Task 2: collision-mesh LOD (matches BulletSim's BSParam.MeshLOD default), and the
+        // Collision-mesh LOD (matches BulletSim's BSParam.MeshLOD default), and the
         // characterization of the last RAW mesher output cooked (verts/tris/degenerate/duplicate/AABB).
         private const float MeshLod = 32f;
         private struct MeshStats
@@ -140,8 +147,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
         private MeshStats _lastMeshStats;
 
-        // M6.4 dynamics: per-frame step counter + latest active-body count (drop asserts read these), and
-        // the tracked physical drops for `jolt droptest`/`dropmesh`/`dropstatus`. _lastBoxRestZ/_lastMeshRestZ
+        // Dynamics: per-frame step counter + latest active-body count (drop asserts read these), and
+        // the tracked physical drops for the `jolt droptest`/`dropmesh`/`dropstatus` test commands
+        // (JoltTestCommands.cs). _lastBoxRestZ/_lastMeshRestZ
         // persist across drops so a re-run can report determinism (same rest height).
         private long _stepCount;
         private int _lastActiveBodyCount;
@@ -164,8 +172,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private long _logStepsUntil = -1;   // window: log per-frame dt/ActiveBodyCount/liveZ after a drop
         private long _charFrameUntil = -1;  // window: log per-frame avatar Z/support/vZ ([charframe] toggle)
 
-        // Caller-owned step buffers (M1 contract: nothing allocates per frame). Simulate drains all
-        // three every step. JOLT-4 (S-4f): they start at these sizes and DOUBLE on overflow, up to the caps below
+        // Caller-owned step buffers (backend contract: nothing allocates per frame). Simulate drains all
+        // three every step. They start at these sizes and DOUBLE on overflow, up to the caps below
         // (the backend drain is fair, so an overflowing frame loses nothing, it only delays), and allocate only
         // when they grow. The contact cap defaults to the backend's ring capacity - past that, growing is useless.
         private BodyState[] _bodyBuf = new BodyState[1024];
@@ -176,15 +184,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private int _contactBufMax = 2048;    // [Jolt] ContactBufferMax; 0 there = the ring capacity (set in AddRegion)
         private long _overflowLastWarnTicks;
 
-        // Collision dispatch (M7 Task 3, base; JOLT-4): per-frame accumulation of colliders per subscribed prim,
+        // Collision dispatch: per-frame accumulation of colliders per subscribed prim,
         // and the set of prims that reported collisions LAST frame - so a prim that stops touching gets one
         // empty CollisionEventUpdate this frame, which is how OpenSim's SOP.PhysicsCollision fires collision_end.
         private readonly CollisionFrameTracker _collisions = new CollisionFrameTracker();
-        // JOLT-4: this frame's prims, resolved under ONE lock(_prims) (was two or three locks per contact).
+        // This frame's prims, resolved under ONE lock(_prims) rather than a lock per contact.
         private readonly HashSet<uint> _frameIds = new HashSet<uint>();
         private readonly Dictionary<uint, JoltPrim> _framePrims = new Dictionary<uint, JoltPrim>();
 
-        // JOLT-3 (S-4a/S-4b): capacity surfacing. Step-thread only. The warning window starts at the last logged
+        // Capacity surfacing. Step-thread only. The warning window starts at the last logged
         // snapshot; a failure inside the quiet period accumulates into the next line instead of being lost.
         private long _capacityLogIntervalTicks = System.TimeSpan.FromSeconds(10).Ticks;   // [Jolt] CapacityLogIntervalSeconds
         private PhysicsCapacityStats _capBase;
@@ -252,9 +260,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _regionSizeX = (int)sizeX;
             _regionSizeY = (int)sizeY;
 
-            // JOLT-5: every knob comes from [Jolt] (JoltConfig). The defaults are exactly what this used to hardcode:
-            // the backend's default settings, MaxBodies = 65536 per 256 m scaled by area (decision #3), and
-            // CollisionSteps = 6 - the RIGID-BODY solver sub-stepped 6x inside _system.Update (M6.5 finding #3): at
+            // Every knob comes from [Jolt] (JoltConfig). The defaults are exactly what this used to hardcode:
+            // the backend's default settings, MaxBodies = 65536 per 256 m scaled by area, and
+            // CollisionSteps = 6 - the RIGID-BODY solver sub-stepped 6x inside _system.Update: at
             // OpenSim's ~11 fps a single integration lets a fast prim move ~1.5 m and tunnel through the terrain
             // heightfield. CollisionSteps slices the SOLVER only, NOT the character step (once per Step, before
             // Update), so dropped prims rest WITHOUT disturbing the avatar's known-good 1-step path.
@@ -263,8 +271,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _charBufMax = _joltConfig.CharacterUpdateBufferMax;
             _capacityLogIntervalTicks = System.TimeSpan.FromSeconds(_joltConfig.CapacityLogIntervalSeconds).Ticks;
 
-            // SLICE-4 instrumentation: per-region RSS delta across backend init (8MB TempAllocator +
-            // MaxBodies preallocation + JobSystemThreadPool) — feeds the scaling measurement gate.
+            // Instrumentation: per-region RSS delta across backend init (8MB TempAllocator +
+            // MaxBodies preallocation + JobSystemThreadPool), reported by `jolt metrics`.
             long rssBefore = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64;
             _backend = new JoltPhysicsBackend();
             _backend.Initialize(settings);
@@ -279,7 +287,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             EngineName = $"{_backend.Name} {_backend.Version}"; // osGetPhysicsEngineName
 
             // The base Initialise wires the request-asset delegate and calls our SetTerrain - which
-            // cooks the real M6.2 heightfield - and SetWaterLevel, which pushes the water height down
+            // cooks the real heightfield - and SetWaterLevel, which pushes the water height down
             // to the backend for vehicle hover.
             base.Initialise(scene.PhysicsRequestAsset,
                 (scene.Heightmap != null ? scene.Heightmap.GetFloatsSerialised() : new float[sizeX * sizeY]),
@@ -288,7 +296,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             m_log.LogInformation($"{LogHeader} region '{RegionName}' {sizeX}x{sizeY}m: backend initialised, MaxBodies={settings.MaxBodies}. {EngineName}");
         }
 
-        // J-9: the shared job pools are sized once, by the first region's request; every region reads the same
+        // The shared job pools are sized once, by the first region's request; every region reads the same
         // [Jolt] ThreadCount and JobPools, so they agree unless the pools predate this config (or a harness sized them).
         private void LogJobPool(in PhysicsCapacityStats pool)
         {
@@ -302,12 +310,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                                          $"(process-wide; [Jolt] ThreadCount={_joltConfig.ThreadCount} -> {poolThreads}, JobPools={_joltConfig.JobPools}).");
                 }
             }
-            // JOLT-7: which pool this region steps on, once per region.
+            // Which pool this region steps on, once per region.
             m_log.LogInformation($"{LogHeader} region '{RegionName}' steps on Jolt job pool {pool.PoolIndex} of {pool.JobPools}.");
             int requested = _joltConfig.RequestedThreadCount;
             if (requested != poolThreads)
                 m_log.LogWarning($"{LogHeader} region '{RegionName}' asked for {requested} job threads but the shared pools were sized for {poolThreads}; the first region's size wins.");
-            // JOLT-7: the pool count is process-wide too.
+            // The pool count is process-wide too.
             if (_joltConfig.JobPools != pool.JobPools)
                 m_log.LogWarning($"{LogHeader} region '{RegionName}' asked for JobPools={_joltConfig.JobPools} but {pool.JobPools} pools already exist; the first region's value wins.");
         }
@@ -331,18 +339,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (!m_Enabled)
                 return;
 
-            // The IMesher the M6.3 cook path needs; without one, prims fall back to bounding boxes.
+            // The IMesher the cook path needs; without one, prims fall back to bounding boxes.
             m_mesher = scene.RequestModuleInterface<IMesher>();
             if (m_mesher == null)
-                m_log.LogWarning($"{LogHeader} no IMesher available - shape cooking (M6.3) will need it.");
+                m_log.LogWarning($"{LogHeader} no IMesher available - shape cooking will need it.");
 
             scene.PhysicsEnabled = true;
 
-            // SLICE-4 test scaffolding (THROWAWAY ONLY, gated by [Startup] JoltAutoDropTest): auto-drop a
-            // few physical boxes so fall + settle-on-real-terrain is verifiable from the log ([dropframe]
-            // liveZ, or `jolt dropstatus`) with no viewer, and both regions carry bodies for the
-            // concurrent-step load test. Reuses the ported DropOne machinery verbatim (same code path as
-            // `jolt droptest`). NEVER runs unless the flag is set, so it cannot affect real regions.
+            // Test scaffolding (gated by [Startup] JoltAutoDropTest, and only when [Jolt] TestCommands is true;
+            // see AutoDropTestEnabled in JoltTestCommands.cs): auto-drop a few physical boxes so
+            // fall + settle-on-real-terrain is verifiable from the log ([dropframe] liveZ, or `jolt dropstatus`)
+            // with no viewer, and every region carries bodies for a concurrent-step load test. Uses the same
+            // DropOne code path as `jolt droptest`. NEVER runs unless the flags are set, so it cannot affect
+            // real regions.
             if (AutoDropTestEnabled(m_Config))
             {
                 ClearTestPrims();
@@ -352,16 +361,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 m_log.LogInformation($"{LogHeader} JoltAutoDropTest: dropped 3 physical boxes in '{RegionName}' (watch [dropframe] / `jolt dropstatus`).");
             }
 
-            // M6.2 proof hook: a console command that raycasts straight down onto the cooked terrain and
-            // reports the hit Z - the rigorous, viewer-free gate.
+            // The `jolt` console commands (read-only diagnostics such as a straight-down raycast onto the
+            // cooked terrain, plus the test commands when [Jolt] TestCommands is true).
             //
-            // REGISTERED PER REGION (was: once, behind a static _consoleRegistered gate).
-            // The old static gate meant the FIRST region to boot registered the command and the delegate
-            // captured ITS `this` forever - so on a multi-region sim every `jolt ...` command ran against
-            // that one region no matter what the console prompt said. On Legion (Ebony boots first, 256x256,
-            // flat terrain) `jolt heights 512 512` reported "no terrain" for Elm's 1024x1024 region because
-            // it was silently measuring EBONY. Registering per region + the WrongConsoleScene() check in
-            // HandleJoltConsole makes `change region <name>` actually select the target. (2026-08-01)
+            // REGISTERED PER REGION, not once behind a static gate. With a single registration the
+            // FIRST region to boot would own the delegate and capture ITS `this` forever, so on a
+            // multi-region simulator every `jolt ...` command would run against that one region no matter
+            // what the console prompt said (for example `jolt heights 512 512` reporting "no terrain" for a
+            // 1024x1024 var region because it was measuring a 256x256 region that booted first).
+            // Registering per region + the WrongConsoleScene() check in each handler makes
+            // `change region <name>` actually select the target.
             if (MainConsole.Instance != null)
             {
                 RegisterConsoleCommands(MainConsole.Instance.Commands, m_testCommands, HandleJoltConsole, HandleJoltTestConsole);
@@ -412,7 +421,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private void HandleJoltConsole(string module, string[] cmd)
         {
             // Region scoping. Every region registers this command, so without this check all of them
-            // would answer every invocation. `change region Elm` -> only Elm's handler proceeds.
+            // would answer every invocation. `change region <name>` -> only that region's handler proceeds.
             if (WrongConsoleScene())
                 return;
 
@@ -422,15 +431,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // three regions' results interleave with no way to tell them apart. When the console is scoped
             // to one region this is redundant, so it is skipped.
             //
-            // NOTE: a root-scoped `jolt ...` is a SIM-WIDE sweep. That is useful for read-only probes
-            // (heights / dropstatus / reloadcheck / vehiclestatus), but the world-mutating helpers
-            // (rezprims / rezmesh / droptest / clearprims / linktest / sittest ...) will then act in EVERY
-            // region. Use `change region <name>` before those.
+            // NOTE: a root-scoped `jolt ...` is a SIM-WIDE sweep. Every subcommand handled here is read-only
+            // (heights / reloadcheck / vehiclestatus ...), so that is safe. The world-mutating test commands
+            // (rezprims / droptest / clearprims / linktest / sittest ...) live in JoltTestCommands.cs, are
+            // registered only when [Jolt] TestCommands is true, and use the same region scoping - so at the
+            // root prompt they too act in EVERY region. Use `change region <name>` before those.
             if (MainConsole.Instance.ConsoleScene is null)
                 MainConsole.Instance.Output($"{LogHeader} --- region '{RegionName}' ---");
 
-            if (cmd.Length >= 2 && cmd[1] == "capacity") { JoltCapacity(); return; }   // JOLT-3: read-only
-            if (cmd.Length >= 2 && cmd[1] == "metrics") { MainConsole.Instance.Output(JoltMetrics.Report()); return; }   // slice-4 gate instrumentation
+            if (cmd.Length >= 2 && cmd[1] == "capacity") { JoltCapacity(); return; }   // read-only
+            if (cmd.Length >= 2 && cmd[1] == "metrics") { MainConsole.Instance.Output(JoltMetrics.Report()); return; }   // step-time / RSS instrumentation
 
             if (cmd.Length >= 2 && cmd[1] == "terraintest")
             {
@@ -468,18 +478,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return;
             }
 
-            // Console proof tool (`jolt reloadcheck`): snapshot every physical prim's
+            // Console diagnostic (`jolt reloadcheck`): snapshot every physical prim's
             // saved (birth) pos vs where it is NOW, plus terrain/water under it, and classify. Run a few
             // seconds after a region reload to SEE which physical objects were displaced (SANK/FLUNG) and
-            // by how much - the "before" evidence.
+            // by how much.
             if (cmd.Length >= 2 && cmd[1] == "reloadcheck")
             {
                 ReloadCheck();
                 return;
             }
 
-            // Console proof tool (`jolt vehiclestatus`): dump the LIVE vehicle state of every prim so you can CONFIRM a
-            // boat is actually TYPE_BOAT + buoyancy=1 + active BEFORE testing reload (the missing confirmation).
+            // Console diagnostic (`jolt vehiclestatus`): dump the LIVE vehicle state of every prim so you can CONFIRM a
+            // boat is actually TYPE_BOAT + buoyancy=1 + active BEFORE testing reload.
             if (cmd.Length >= 2 && cmd[1] == "vehiclestatus")
             {
                 VehicleStatus();
@@ -569,9 +579,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // Report each logged-in avatar's CharacterVirtual state - position, IsSupported, ground normal/body,
         // capsule dims - and assert it spawned ON the terrain (supported, not sinking, capsule centre ~
-        // terrainZ + StandHalf at the spawn XY), not at NaN or underground. The console gate behind John's
-        // walk: run it right after login, and again after he walks somewhere to confirm position tracks and
-        // IsSupported stays true on the flat.
+        // terrainZ + StandHalf at the spawn XY), not at NaN or underground. Run it right after login, and
+        // again after walking somewhere to confirm position tracks and IsSupported stays true on the flat.
         private void AvatarStatus()
         {
             System.Collections.Generic.List<JoltCharacter> avs;
@@ -609,11 +618,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // `jolt reloadcheck`: after a region reload, print each
         // PHYSICAL prim's DB-saved (birth) pos vs where it is NOW, the terrain/water under it, the drift,
-        // and a verdict (OK / SANK / SANK-BELOW-TERRAIN / FLUNG). This is the "before" evidence: a physical
+        // and a verdict (OK / SANK / SANK-BELOW-TERRAIN / FLUNG). A physical
         // object that reads e.g. saved z=25.0 -> now z=-40.2 SANK-BELOW-TERRAIN is the silent loss - that
         // now-position is what OpenSim persists back, so it is invisible on the next reload.
         // `jolt vehiclestatus`: live vehicle-state dump - confirms a
-        // boat is a working vehicle (TYPE_BOAT, buoyancy=1, active) LIVE, before we ever test reload.
+        // boat is a working vehicle (TYPE_BOAT, buoyancy=1, active) LIVE, before testing reload.
         private void VehicleStatus()
         {
             System.Collections.Generic.List<JoltPrim> ps;
@@ -661,13 +670,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // ---------------------------------------------------------------------
-        // M6.6 sit / unsit. The physics core is the CHARACTER LIFECYCLE: OpenSim SITS by REMOVING the
+        // Sit / unsit. The physics core is the CHARACTER LIFECYCLE: OpenSim SITS by REMOVING the
         // physics actor (ScenePresence.RemoveFromPhysicalScene -> RemoveAvatar -> the CharacterVirtual +
-        // its M4.5 marker are destroyed) and STANDS by re-adding it (AddToPhysicalScene -> AddAvatar -> a
+        // its query marker are destroyed) and STANDS by re-adding it (AddToPhysicalScene -> AddAvatar -> a
         // fresh character at the release position). So "suspend" == the character is GONE (no gravity, no
-        // ground-detection, no movement integration), and "re-engage" == the 6.5 walking model rebuilt.
+        // ground-detection, no movement integration), and "re-engage" == the walking model rebuilt.
         // A moving seat is ridden via OpenSim scene-graph parenting (the seated avatar's world position
-        // tracks the prim), independent of physics. These consoles OBSERVE and DRIVE that transition.
+        // tracks the prim), independent of physics. `jolt sitstatus` OBSERVES that transition; the
+        // sittest / unsit test commands (JoltTestCommands.cs) DRIVE it.
         // ---------------------------------------------------------------------
 
         private ScenePresence FirstRootAvatar()
@@ -701,7 +711,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 string verdict = seated
                     ? (hasChar ? "FAIL: SEATED but a physics character is still alive (suspend did not take)"
                                : "PASS: SEATED -> character removed (no gravity / ground-detection / movement)")
-                    : (hasChar ? "PASS: WALKING -> character present (6.5 model live)"
+                    : (hasChar ? "PASS: WALKING -> character present (walking model live)"
                                : "note: not seated and no character (not yet physical / mid-transition)");
 
                 MainConsole.Instance.Output($"  id={sp.LocalId,-6} '{sp.Name}' seated={(seated ? "Y" : "N")} parentId={sp.ParentID} pos=({p.X:0.00},{p.Y:0.00},{p.Z:0.000}) hasCharacter={(hasChar ? "Y" : "N")}");
@@ -715,20 +725,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 MainConsole.Instance.Output($"  SEATED avatars have no physics body, so they CANNOT fall/slide - position is driven by the prim (scene-graph). Stand -> character re-created at release pos.");
         }
 
-        // M6.7 Task 1 - the M4.5 marker payoff. IMPORTANT REFRAME: OpenSim's llSensor is SCENE-GRAPH, not
+        // Avatar query-marker check. NOTE: OpenSim's llSensor is SCENE-GRAPH, not
         // physics - SensorRepeat.doAgentSensor/doObjectSensor iterate the ScenePresence / Entities lists and
         // compute distance/arc directly (and explicitly handle SEATED avatars), so llSensor never touches the
-        // engine and finds avatars with or without a marker. The M4.5 kinematic query-marker matters for the
-        // PHYSICS query path (llCastRay / OverlapSphere with the Avatar filter). This console is the first
+        // engine and finds avatars with or without a marker. The kinematic query-marker matters for the
+        // PHYSICS query path (llCastRay / OverlapSphere with the Avatar filter). This console is a
         // LIVE test of that: a physics agent-overlap must find the logged-in avatar's marker, by UserData
-        // (#30: avatar presence carries UserData, not a solver BodyId), and be range-correct.
+        // (avatar presence carries UserData, not a solver BodyId), and be range-correct.
         private void SensorTest()
         {
             ScenePresence sp = FirstRootAvatar();
             if (sp == null) { MainConsole.Instance.Output($"{LogHeader} no logged-in avatar - log in first."); return; }
             Vector3 p = sp.AbsolutePosition;
 
-            MainConsole.Instance.Output($"{LogHeader} M4.5 marker payoff - physics agent-query vs the live avatar '{sp.Name}' (LocalId={sp.LocalId}):");
+            MainConsole.Instance.Output($"{LogHeader} avatar query marker - physics agent-query vs the live avatar '{sp.Name}' (LocalId={sp.LocalId}):");
             MainConsole.Instance.Output($"  (OpenSim llSensor is scene-graph and does NOT use this; the marker is what makes llCastRay/overlap agent-queries find an avatar.)");
 
             var hits = new BodyId[32];
@@ -745,18 +755,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             bool seated = sp.IsSatOnObject;
             MainConsole.Instance.Output($"  NEAR overlap (sphere r=5 at avatar): {nNear} agent-layer hit(s); avatar marker (UserData={sp.LocalId}) found = {(nearFound ? "Y" : "N")}{(nearFound ? $" (resolved id={nearUd})" : "")}");
             MainConsole.Instance.Output($"  FAR  overlap (sphere r=5, +100 m):   {nFar} agent-layer hit(s); avatar marker found = {(farFound ? "Y" : "N")}");
-            MainConsole.Instance.Output($"  avatar seated = {(seated ? "Y" : "N")}  (SEATED => the M4.5 marker is destroyed with the character, so a PHYSICS agent-query cannot find it; OpenSim's scene-graph llSensor still finds seated avatars.)");
+            MainConsole.Instance.Output($"  avatar seated = {(seated ? "Y" : "N")}  (SEATED => the query marker is destroyed with the character, so a PHYSICS agent-query cannot find it; OpenSim's scene-graph llSensor still finds seated avatars.)");
 
             string verdict = (nearFound && !farFound)
-                ? "PASS: M4.5 marker is query-visible LIVE via the physics Avatar filter - avatar found in range, identity by UserData, not found out of range."
+                ? "PASS: the query marker is query-visible LIVE via the physics Avatar filter - avatar found in range, identity by UserData, not found out of range."
                 : seated ? "note: avatar is SEATED -> no marker -> physics agent-query can't find it (expected). `jolt unsit` and re-run to see the marker."
-                : "FAIL: the physics agent-query did NOT find the avatar marker in range - the M4.5 marker is not query-visible live (regression from the clean-room proof).";
+                : "FAIL: the physics agent-query did NOT find the avatar marker in range - the query marker is not query-visible live.";
             MainConsole.Instance.Output($"  [{verdict}]");
-            MainConsole.Instance.Output($"  llSensor(AGENT) itself: works out-of-box (scene-graph) for WALKING and SEATED avatars - no physics wiring needed. This test validates the marker for the llCastRay/overlap path (Task 2).");
+            MainConsole.Instance.Output($"  llSensor(AGENT) itself: works out-of-box (scene-graph) for WALKING and SEATED avatars - no physics wiring needed. This test validates the marker for the llCastRay/overlap path (see `jolt raytest`).");
         }
 
-        // M6.7 Task 2 - llCastRay through the real ray path. Casts a ray straight DOWN through the logged-in
-        // avatar with the Avatar|Terrain filter and expects, in DISTANCE order: [0] the avatar's M4.5 marker
+        // llCastRay through the real ray path. Casts a ray straight DOWN through the logged-in
+        // avatar with the Avatar|Terrain filter and expects, in DISTANCE order: [0] the avatar's query marker
         // (near), [1] the terrain (far). Proves in one shot: llCastRay(AGENT) hits the avatar via the marker
         // (identity by UserData), a terrain hit, and multi-hit distance ordering. This is the SAME RayCastAll
         // path llCastRay takes (Scene.RayCastFiltered -> RaycastWorld -> backend.RayCastAll).
@@ -787,8 +797,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             bool seated = sp.IsSatOnObject;
             string verdict = (avatarHit && ordered)
-                ? "PASS: the physics ray HITS the walking avatar via the M4.5 marker (identity by UserData), terrain hit, multi-hit sorted by distance."
-                : seated ? "note: SEATED -> the M4.5 marker is gone, so this RAW physics ray misses the avatar. That is CORRECT and SL-exact: llCastRay itself STILL hits a seated avatar via OpenSim's AvatarIntersection(skipPhys) fallback (it handles agents WITHOUT a physics body). `jolt unsit` + re-run to see the marker hit."
+                ? "PASS: the physics ray HITS the walking avatar via the query marker (identity by UserData), terrain hit, multi-hit sorted by distance."
+                : seated ? "note: SEATED -> the query marker is gone, so this RAW physics ray misses the avatar. That is CORRECT and SL-exact: llCastRay itself STILL hits a seated avatar via OpenSim's AvatarIntersection(skipPhys) fallback (it handles agents WITHOUT a physics body). `jolt unsit` + re-run to see the marker hit."
                 : "FAIL: the agent ray did not hit the walking avatar marker.";
             MainConsole.Instance.Output($"  terrainHit={(terrainHit ? "Y" : "N")} avatarHit={(avatarHit ? "Y" : "N")} distanceOrdered={(ordered ? "Y" : "N")}");
             MainConsole.Instance.Output($"  [{verdict}]");
@@ -796,12 +806,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // ---------------------------------------------------------------------
-        // PhysicsScene - actor creation (avatars M6.5; prims M6.3 cook / M6.4 dynamics)
+        // PhysicsScene - actor creation (avatars; prim shape cooking and dynamics)
         // ---------------------------------------------------------------------
 
-        // M6.5: the avatar finally gets a physics body - a Jolt CharacterVirtual. ScenePresence calls the
+        // The avatar gets a physics body - a Jolt CharacterVirtual. ScenePresence calls the
         // localID overload (via the feetOffset one); overriding it here means we have the avatar's LocalID
-        // up front, so the CharacterVirtual + its M4.5 query marker carry the right identity. The abstract
+        // up front, so the CharacterVirtual + its query marker carry the right identity. The abstract
         // no-localID overload delegates so any caller of the base contract still works.
         public override PhysicsActor AddAvatar(string avName, Vector3 position, Vector3 velocity, Vector3 size, bool isFlying)
             => CreateAvatar(0, avName, position, velocity, size, 0f, isFlying);
@@ -820,20 +830,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (_backend == null)
                 return PhysicsActor.Null;
 
-            // Spawn ON the terrain. Raycast straight down at the login XY against the heightfield and seat
-            // the capsule so its FEET rest on the surface. This is the fix for the historical "avatar spawns
-            // underground" symptom on every prior boot: it happened because the avatar had NO physics body
-            // to place it; now it does. If the ray misses (e.g. login off-region), fall back to the incoming Z.
+            // Spawn ON the terrain. Read the terrain height at the login XY (see THREAD SAFETY below) and seat
+            // the capsule so its FEET rest on the surface, so the avatar does not spawn underground.
+            // If no terrain height is available (e.g. login off-region), fall back to the incoming Z.
             //
             // Seat Z (avatar root = capsule centre) = groundZ + StandHalf + feetOffset: OpenSim's avatar
             // root is the body centre, and the visual feet sit StandHalf + feetOffset below it. Omitting
-            // feetOffset (M6.5 Task 1) sank the avatar by exactly that gap, so the feet clipped INTO terrain.
+            // feetOffset would sink the avatar by exactly that gap, so the feet would clip INTO terrain.
             float standHalf = JoltCharacter.StandHalfFor(size);
             float groundZ = position.Z - standHalf - feetOffset;
-            // THREAD SAFETY (2026-08-01): this used to raycast the Jolt heightfield. CreateAvatar runs on
-            // the LOGIN/TELEPORT thread, so that native query could land inside a running _system.Update
-            // and corrupt Jolt's LIFO TempAllocator -> "Freeing in the wrong order" -> std::abort(). That
-            // killed the simulator when John teleported into Elm. TerrainHeightAt reads the SAME cooked
+            // THREAD SAFETY: do NOT raycast the Jolt heightfield here. CreateAvatar runs on the
+            // LOGIN/TELEPORT thread, so a native query could land inside a running _system.Update
+            // and corrupt Jolt's LIFO TempAllocator -> "Freeing in the wrong order" -> std::abort(), which
+            // kills the simulator when an avatar teleports into the region. TerrainHeightAt reads the SAME cooked
             // sample field the collision heightfield was built from, but it is a plain managed float[]
             // (bilinear interpolation, no native call), so it is safe from any thread and needs no lock.
             // Heights agree with the collision surface because both come from that one field.
@@ -861,7 +870,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return;
             lock (_avatars)
                 _avatars.Remove(jc.CharacterHandle.Value);
-            jc.Destroy();   // RemoveCharacter also tears down the M4.5 query marker
+            jc.Destroy();   // RemoveCharacter also tears down the query marker
             m_log.LogInformation($"{LogHeader} avatar '{jc.Name}' id={jc.LocalID} removed.");
         }
 
@@ -877,7 +886,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // The real OpenSim delivery boundary: SceneObjectPart.AddToPhysics -> (via the base
         // isPhantom/shapetype overloads) -> this. A non-physical, non-phantom prim becomes a STATIC
-        // Jolt body; a physical one becomes a dynamic body, created INERT and woken in Simulate (M6.4).
+        // Jolt body; a physical one becomes a dynamic body, created INERT and woken in Simulate.
         // (Pure phantoms never reach here - ApplyPhysics skips them.)
         public override PhysicsActor AddPrimShape(string primName, PrimitiveBaseShape pbs, Vector3 position,
                                                   Vector3 size, Quaternion rotation, bool isPhysical, uint localid)
@@ -903,15 +912,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             return prim;
         }
 
-        // Fixed-shape fast path (M6.3 Task 1): an UN-CUT box / sphere / cylinder cooks straight to a
+        // Fixed-shape fast path: an UN-CUT box / sphere / cylinder cooks straight to a
         // Jolt primitive with NO meshmerizer. Classification matches what a real viewer/OAR prim
         // carries (canonical ProfileShape+Extrusion), NOT PrimitiveBaseShape.CreateCylinder() - whose
         // factory emits Square+Curve1 (an SL "tube"), a known OpenSim quirk. Anything else (cut/hollow/
-        // twisted, sculpt/mesh, non-uniform sphere/cylinder) goes to the M6.3 Task 2 IMesher path - a
+        // twisted, sculpt/mesh, non-uniform sphere/cylinder) goes to the IMesher path - a
         // triangle mesh when static, a convex hull when physical - with a bounding box as the fallback
         // when there is no mesher or the geometry is unusable. `axisCorrection` (System.Numerics) is
         // folded into the body
-        // orientation by JoltPrim; `kind` is for the proof read-out.
+        // orientation by JoltPrim; `kind` is for the diagnostic read-out.
         internal ShapeId CookPrimShape(PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out SQuaternion axisCorrection, out string kind)
         {
             axisCorrection = SQuaternion.Identity;
@@ -930,7 +939,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 }
 
                 // SPHERE: half-circle profile, curve1 extrusion. Native sphere only when uniform - a
-                // non-uniform "sphere" is an ellipsoid and must go through the mesher (Task 2).
+                // non-uniform "sphere" is an ellipsoid and must go through the mesher.
                 if (profile == ProfileShape.HalfCircle && path == (byte)Extrusion.Curve1
                     && Approx(size.X, size.Y) && Approx(size.Y, size.Z))
                 {
@@ -951,10 +960,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
 
             // Not a basic fast-path shape (cut/hollow/twisted, prism, torus, sculpt, mesh): go through
-            // the meshmerizer (M6.3 Task 2). The convex-vs-mesh decision lives HERE - our equivalent of
+            // the meshmerizer. The convex-vs-mesh decision lives HERE - our equivalent of
             // BulletSim's BSShapeCollection.CreateGeomMeshOrHull (physical && ShouldUseHulls -> hull;
-            // else mesh). Contract (delta #31): a triangle MeshShape has Volume 0, so a PHYSICAL prim
-            // MUST use the convex hull or it would rez with mass 0 at M6.4 - hence physical -> hull here.
+            // else mesh). Contract: a triangle MeshShape has Volume 0, so a PHYSICAL prim
+            // MUST use the convex hull or it would rez with mass 0 - hence physical -> hull here.
             ShapeId cooked = CookMeshShape(pbs, size, isPhysical, out kind);
             if (cooked.IsValid)
                 return cooked;
@@ -967,7 +976,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // The IMesher path: PrimitiveBaseShape -> IMesher.CreateMesh -> getVertexListAsFloat /
         // getIndexListAsInt -> CreateMeshShape (non-physical triangle mesh) or CreateConvexHullShape
         // (physical hull). Returns ShapeId.Invalid on any failure so the caller can fall back. Also
-        // stashes a characterization of the RAW mesher output (_lastMeshStats) for the proof read-out.
+        // stashes a characterization of the RAW mesher output (_lastMeshStats) for the diagnostic read-out.
         private ShapeId CookMeshShape(PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out string kind)
         {
             kind = "bbox(fallback)";
@@ -985,7 +994,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // extraction throw. Both accessors already return FRESH COPIES, so we own the arrays and must
             // NOT mutate/release the shared mesh (ReleaseMesh is a no-op anyway; the mesher owns eviction).
             // Everything the mesher/extraction can throw is inside ONE guard -> a clean bbox fallback,
-            // never a propagating exception that could abort a prim rez or (at 6.5) a whole region load.
+            // never a propagating exception that could abort a prim rez or a whole region load.
             SVector3[] points;
             int[] indices;
             try
@@ -996,7 +1005,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (mesh == null)
                 {
                     // A sculpt whose asset (texture) has not been fetched meshes to null - it needs the
-                    // async asset path (M6 request-asset delegate) first. Bounding box for now.
+                    // async asset path (the request-asset delegate) first. Bounding box for now.
                     m_log.LogDebug($"{LogHeader} IMesher returned null (unfetched sculpt asset or empty geometry); bounding-box fallback.");
                     return ShapeId.Invalid;
                 }
@@ -1021,8 +1030,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             _lastMeshStats = CharacterizeMesh(points, indices);   // honest read-out of REAL mesher output
 
-            // JOLT-1 (S-7): an out-of-range index would be a native out-of-bounds read in Jolt's Sanitize (the
-            // backend now rejects it too). Name the counts once and take the bbox fallback.
+            // An out-of-range index would be a native out-of-bounds read in Jolt's Sanitize (the
+            // backend rejects it too). Name the counts once and take the bbox fallback.
             if (_lastMeshStats.OutOfRangeIndices > 0)
             {
                 m_log.LogWarning($"{LogHeader} mesher output has {_lastMeshStats.OutOfRangeIndices} out-of-range indices (verts={_lastMeshStats.Verts}, tris={_lastMeshStats.Tris}); bounding-box fallback.");
@@ -1034,7 +1043,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             try
             {
                 ShapeId shape = isPhysical
-                    ? _backend.CreateConvexHullShape(points)   // physical: hull (mesh Volume=0 -> mass 0; delta #31)
+                    ? _backend.CreateConvexHullShape(points)   // physical: hull (mesh Volume=0 -> mass 0)
                     : _backend.CreateMeshShape(points, indices); // non-physical: real triangle mesh
                 kind = isPhysical ? "hull(mesher)" : "mesh(mesher)";
                 return shape;
@@ -1046,8 +1055,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
         }
 
-        // Characterize RAW mesher output: what real geometry looks like vs the clean-room synthetic
-        // tetra. Duplicate-vertex count uses mm-quantized coords (O(n)); degenerate = topological
+        // Characterize RAW mesher output (counts, bounds, enclosed volume). Duplicate-vertex count uses mm-quantized coords (O(n)); degenerate = topological
         // (shared index) or near-zero area.
         private static MeshStats CharacterizeMesh(SVector3[] points, int[] indices)
         {
@@ -1090,30 +1098,29 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             Math.Abs(a - b) <= 1e-4f * Math.Max(1f, Math.Max(Math.Abs(a), Math.Abs(b)));
 
         // ---------------------------------------------------------------------
-        // Query wiring pulled forward for the M6.3 proof: this is the path a SCRIPT llCastRay takes.
+        // Query wiring: this is the path a SCRIPT llCastRay takes.
         // llCastRay -> Scene.RayCastFiltered -> PhysicsScene.RaycastWorld (here) -> backend.RayCast.
         // Returning true from SupportsRaycastWorldFiltered flips llCastRay onto the physics engine
         // instead of OpenSim's own geometry intersection, so a script ray genuinely tests Jolt's
-        // shapes. (Full query family - RaycastActor, Sphere/BoxProbe for llSensor - remains M6.7.)
+        // shapes. (The rest of the query family - RaycastActor, Sphere/BoxProbe - is not overridden here.)
         // ---------------------------------------------------------------------
 
         // llCastRay runs on SCRIPT threads, so routing it here issues a native Jolt NarrowPhaseQuery off
         // the heartbeat thread, concurrent with _system.Update. That is SAFE: the backend's RayCast/
         // RayCastAll take _simLock, the same gate that wraps the whole Step (Update + ExtendedUpdate), so a
         // script raycast and the physics step can never be inside Jolt's non-thread-safe LIFO TempAllocator
-        // at once. (This was briefly `=> false` on 2026-08-01 as a stopgap BEFORE the lock existed - that
-        // window is closed; the lock, not disabling the feature, is the fix.) Returning true keeps llCastRay
+        // at once. The lock, not disabling the feature, is what makes this safe. Returning true keeps llCastRay
         // testing Jolt's real cooked shapes rather than falling back to OpenSim's own geometry intersection.
         public override bool SupportsRaycastWorldFiltered() => true;
 
         // TWO llCastRay entry points route here, and BOTH must be overridden or llCastRay returns 0:
         //  - the 5-arg (RayFilterFlags) overload is what OpenSim's XEngine/YEngine LSL_Api.llCastRay calls
         //    (it maps RC_* -> RayFilterFlags, then we -> QueryFilter);
-        //  - the 4-arg (no filter) overload is what PHLOX's own llCastRay calls (Halcyon port) - it does the
+        //  - the 4-arg (no filter) overload is what a Halcyon-derived llCastRay calls - it does the
         //    reject-physical/agent/land TYPE filtering on the returned list itself, so we hand it ALL solid
         //    layers + avatars (QueryFilter.Default = Terrain|Static|Dynamic|Avatar; phantom/Sensor excluded,
-        //    which Phlox neither requests nor filters). M6.7 regression: only the 5-arg was overridden, so
-        //    under Phlox every cast fell through to the base (empty list) = 0 hits.
+        //    which that caller neither requests nor filters). Without this override every such cast falls
+        //    through to the base (empty list) = 0 hits.
         public override List<ContactResult> RaycastWorld(Vector3 position, Vector3 direction, float length, int Count)
             => CastAll(position, direction, length, Count, QueryFilter.Default);
 
@@ -1149,7 +1156,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // llCastRay's reject-type flags -> our layer filter. water has no body; phantom/volumedetect
-        // map to the Sensor layer (M6.6).
+        // map to the Sensor layer.
         private static QueryFilter ToQueryFilter(RayFilterFlags f)
         {
             QueryFilter q = QueryFilter.None;
@@ -1162,12 +1169,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
 
-        // M7 Task 2: linkset roots whose compound needs a (re)build, coalesced and applied once per frame in
-        // Simulate. link()/unlink() add to this instead of rebuilding inline (which hung the boot-load).
+        // Linkset roots whose compound needs a (re)build, coalesced and applied once per frame in
+        // Simulate. link()/unlink() add to this instead of rebuilding inline (which can hang a region load).
         private readonly HashSet<JoltPrim> _dirtyLinksets = new HashSet<JoltPrim>();
 
         // ---------------------------------------------------------------------
-        // Vehicles (M8): active vehicle prims, driven per-frame from Simulate BEFORE the physics
+        // Vehicles: active vehicle prims, driven per-frame from Simulate BEFORE the physics
         // step (the Jolt equivalent of BulletSim's BeforeStep event). JoltPrim registers itself when
         // its controller's type is set and unregisters on TYPE_NONE/destroy.
         // ---------------------------------------------------------------------
@@ -1251,13 +1258,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (_backend == null)
                 return 1f;
 
-            // M7 Task 2: (re)build changed linkset compounds ONCE per frame, here on the step thread before
-            // the step. link()/unlink() only mark the root dirty (they no longer rebuild inline); this
-            // coalesces a whole linkset's worth of child-links into a single rebuild - the boot-load of a
-            // persisted physical linkset used to hang because every child's link() churned the live root.
+            // (Re)build changed linkset compounds ONCE per frame, here on the step thread before
+            // the step. link()/unlink() only mark the root dirty (they do not rebuild inline); this
+            // coalesces a whole linkset's worth of child-links into a single rebuild - rebuilding on every
+            // child's link() churns the root and can hang the region load of a persisted physical linkset.
             DrainDirtyLinksets();
 
-            // STRUCTURAL PORT of BulletSim's taint-deferred creation: activate physical bodies that were
+            // Mirrors BulletSim's taint-deferred creation: activate physical bodies that were
             // created INERT (asleep) now, AFTER the linkset weld and any load-time property/vehicle setup have
             // completed, and BEFORE StepVehicles/StepOnce. So a body enters the engine step already fully
             // configured - a reloaded vehicle wakes with its gravity already cancelled (StepVehicles asserts it
@@ -1265,22 +1272,22 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // BulletSim draining ALL taints before PE.PhysicsStep().
             DrainPendingActivation();
 
-            // M8: run each active vehicle's Halcyon controller BEFORE the physics step, so its
+            // Run each active vehicle's Halcyon controller BEFORE the physics step, so its
             // velocity changes/forces/torques are consumed by THIS step (BulletSim's BeforeStep model).
             LastTimeStep = timeStep;
             StepVehicles(timeStep);
 
             // ONE backend Step per frame at OpenSim's ~11 fps cadence (Scene.FrameTime 0.0909 s). The
-            // character is stepped exactly once per frame - the known-good path (M6.5 Task 1: stood + ran
-            // smooth). Fast-body tunnelling through the terrain (M6.5 finding #3) is handled NOT by sub-
-            // stepping the whole Simulate (that 6x'd the character/drain/terse pipeline and was a live
-            // PERFORMANCE regression - bounce/jitter), but by CollisionSteps=6 set at Initialize: Jolt sub-
+            // character is stepped exactly once per frame, which keeps avatar motion smooth.
+            // Fast-body tunnelling through the terrain is handled NOT by sub-
+            // stepping the whole Simulate (that 6x's the character/drain/terse pipeline and shows up as
+            // avatar bounce/jitter and a performance cost), but by CollisionSteps=6 set at Initialize: Jolt sub-
             // steps the RIGID-BODY solver INSIDE _system.Update without re-running the character step, so a
             // dropped prim integrates in solver sub-slices and rests, while the avatar stays at 1 step/frame.
             StepOnce(timeStep);
 
             // [charframe] live trace (toggle: `jolt charframe`): per-frame avatar Z / support / vertical
-            // velocity so a re-walk PROVES the bounce is gone (or shows it in the numbers if it is not).
+            // velocity, so avatar bounce or sinking shows up in the numbers.
             if (_stepCount <= _charFrameUntil)
             {
                 List<JoltCharacter> avs;
@@ -1288,7 +1295,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 foreach (JoltCharacter a in avs)
                 {
                     // Identify the ground body by its UserData: 0 = TERRAIN (expected), == the avatar's own
-                    // LocalID = its M4.5 query marker (a bug), any other id = a prim/box. The terrain body
+                    // LocalID = its query marker (a bug), any other id = a prim/box. The terrain body
                     // IS a registered body, so "has a ground body" alone does NOT mean the marker.
                     string ground = "none";
                     if (a.GroundBody.IsValid && _backend.TryGetBodyState(a.GroundBody, out BodyState gb))
@@ -1330,11 +1337,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             StepResult r = _backend.Step(timeStep, _bodyBuf, _charBuf, _contactBuf);
             _stepCount++;
             _lastActiveBodyCount = r.ActiveBodyCount;
-            JoltMetrics.RecordStep(RegionName, r.PhysicsMilliseconds, r.ActiveBodyCount);   // slice-4 gate instrumentation
+            JoltMetrics.RecordStep(RegionName, r.PhysicsMilliseconds, r.ActiveBodyCount);   // step-time instrumentation (`jolt metrics`)
 
             // Windowed per-frame diagnostic (set by a drop): is Step advancing with a REAL dt, is the
-            // just-dropped body in our active set, and is its Z actually changing? This is the definitive
-            // read on the "1st drop works, 2nd hangs" pattern - dt=0 => idle-step stall; active=1 but
+            // just-dropped body in our active set, and is its Z actually changing? It tells apart why a
+            // drop might hang - dt=0 => idle-step stall; active=1 but
             // liveZ frozen => body active-but-not-integrated (deeper); active=0 => activation lost.
             if (_stepCount <= _logStepsUntil && _drops.Count > 0)
             {
@@ -1363,7 +1370,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     UpdateDropTelemetry(in bs);
             }
 
-            // Character drain (M6.5): the avatar equivalent of the body drain above. The backend stepped
+            // Character drain: the avatar equivalent of the body drain above. The backend stepped
             // every CharacterVirtual BEFORE _system.Update and filled _charBuf with each one's post-step
             // position + ground state; push it into the matching JoltCharacter (by CharacterId handle) so
             // ScenePresence sees the new transform and the viewer gets a smooth per-frame terse update.
@@ -1379,7 +1386,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             DispatchContacts(r.ContactCount, r.ContactBufferOverflowed);
 
-            // JOLT-4 (S-4f): grow any buffer this frame filled, now that it has been read. Overflow no longer loses
+            // Grow any buffer this frame filled, now that it has been read. Overflow does not lose
             // updates (the backend carries them over), so the warning is rate-limited like the capacity one.
             bool charFull = r.CharacterUpdateCount >= _charBuf.Length;
             if (r.BodyBufferOverflowed || charFull || r.ContactBufferOverflowed)
@@ -1407,7 +1414,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             return $" {what} buffer grown to {size};";
         }
 
-        // JOLT-3: after each Step, warn (at most once per [Jolt] CapacityLogIntervalSeconds per region) when the update
+        // After each Step, warn (at most once per [Jolt] CapacityLogIntervalSeconds per region) when the update
         // reported a capacity error or CreateBody was refused since the last warning, naming the [Jolt] key to raise.
         private void CheckCapacity(float timeStep)
         {
@@ -1443,7 +1450,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
         private long _capLastWarnTicks;
 
-        // JOLT-7: once per capacity-log interval, compare this region's time waiting at its job pool's gate with
+        // Once per capacity-log interval, compare this region's time waiting at its job pool's gate with
         // its frame time over that interval; more than 20% means too few pools for this many busy regions.
         private long _gateWindowStartTicks;
         private double _gateWindowStartWaitMs;
@@ -1475,7 +1482,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _bodyBuf.Length, _bodyOverflowFrames, _charBuf.Length, _charFullFrames, _contactBuf.Length, _contactOverflowFrames));
         }
 
-        // M7 Task 3 (base dispatch): turn this frame's ContactReports into OpenSim collision events. Each
+        // Collision dispatch: turn this frame's ContactReports into OpenSim collision events. Each
         // subscribed prim gets ONE CollisionEventUpdate listing the LocalIDs it is touching this frame
         // (terrain = 0); OpenSim's SceneObjectPart.PhysicsCollision diffs that against last frame to fire
         // collision_start / collision / collision_end, and llDetected* off the collider list. Runs on the
@@ -1485,7 +1492,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // body) + End (separation). The "currently touching" set OpenSim wants = Begin|Persist this frame;
         // End is implicit (a pair that drops out of the set). A prim that touched last frame but not now
         // still needs one (empty) update so collision_end can fire - _collidedLastFrame drives that flush.
-        // Per-child (landing 2): each contact names the STRUCK part on each side (ChildUserData - the
+        // Per-child: each contact names the STRUCK part on each side (ChildUserData - the
         // compound child hit, resolved from the contact sub-shape), so a linkset reports against the specific
         // child and llDetectedLinkNumber returns that child's link (see the AddCollider block below).
         private void DispatchContacts(int contactCount, bool contactsOverflowed)
@@ -1503,7 +1510,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
             foreach (uint id in _collisions.CollidedLastFrame)
                 _frameIds.Add(id);
-            foreach (uint id in _collisions.Scores.Keys)   // last frame's scored prims (JOLT-6: zeroed if gone)
+            foreach (uint id in _collisions.Scores.Keys)   // last frame's scored prims (zeroed if gone)
                 _frameIds.Add(id);
             _framePrims.Clear();
             lock (_prims)
@@ -1520,11 +1527,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (c.Phase == ContactPhase.End)
                     continue;   // OpenSim derives "ended" from absence in the current set
 
-                // JOLT-6 (C-4): every Begin/Persist report scores both struck parts, subscribed or not.
+                // Every Begin/Persist report scores both struck parts, subscribed or not.
                 _collisions.CountContact(c.ChildUserDataA);
                 _collisions.CountContact(c.ChildUserDataB);
 
-                // Per-child identity (M7 Task 3 landing 2): dispatch to the STRUCK part on each side
+                // Per-child identity: dispatch to the STRUCK part on each side
                 // (ChildUserData - the compound child hit, or the body itself for a single prim), and name
                 // the OTHER side's struck part as the collider. Delivering to child N's PhysicsActor makes
                 // OpenSim run child N's PhysicsCollision, so llDetectedLinkNumber == N (and it propagates to
@@ -1544,12 +1551,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     p.SendCollisionUpdate(kv.Value);
 
             // Flush an EMPTY update to prims that collided last frame but not now (fires collision_end). On a
-            // frame whose contact buffer overflowed the tracker ends nobody (JOLT-4, I-2): absence is not proof.
+            // frame whose contact buffer overflowed the tracker ends nobody: absence is not proof.
             foreach (uint id in _collisions.EndFrame(contactsOverflowed))
                 if (_framePrims.TryGetValue(id, out JoltPrim p) && p.SubscribedEvents())
                     p.SendCollisionUpdate(new CollisionEventUpdate());
 
-            // JOLT-6: publish this frame's scores; a prim scored last frame and not now drops back to 0.
+            // Publish this frame's scores; a prim scored last frame and not now drops back to 0.
             foreach (uint id in _collisions.PreviouslyScored)
                 if (!_collisions.Scores.ContainsKey(id) && _framePrims.TryGetValue(id, out JoltPrim p))
                     p.CollisionScore = 0f;
@@ -1558,8 +1565,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     p.CollisionScore = kv.Value;
         }
 
-        // A LocalID resolves (this frame) to a prim that currently has a collision-script subscription (M7 Task 3
-        // base is prim-scoped; avatar-as-subscriber ScenePresence collisions are a noted follow-up).
+        // A LocalID resolves (this frame) to a prim that currently has a collision-script subscription (dispatch
+        // is prim-scoped; ScenePresence collisions with an avatar as the subscriber are not dispatched here).
         private bool IsSubscribedPrim(uint localID)
             => _framePrims.TryGetValue(localID, out JoltPrim p) && p.SubscribedEvents();
 
@@ -1574,9 +1581,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return;
             }
 
-            // Build the (N+1)-square sample field (resolved varregion decision). A region of N metres ->
-            // N+1 samples at 1 m spacing spans exactly [0, N] metres, so the far EDGE is covered (the
-            // clean-room (N-1)*s finding: an N-sample field would fall 1 m short). The extra row/column
+            // Build the (N+1)-square sample field (also for var regions). A region of N metres ->
+            // N+1 samples at 1 m spacing spans exactly [0, N] metres, so the far EDGE is covered (a
+            // heightfield spans (samples - 1) * spacing, so an N-sample field would fall 1 m short). The extra row/column
             // duplicate the last real sample (fetching the neighbour region's row 0 is the later
             // refinement). Non-square regions pad to max(sx,sy) square by edge replication.
             // OpenSim serialises heightMap[y*sx + x] = height at (x,y) - the SAME convention as
@@ -1593,10 +1600,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
 
             // 1 m sample spacing, heights already in metres (unit height scale), origin at the region
-            // corner (physics runs in region-local coords - decision #2).
+            // corner (physics runs in region-local coords).
             ShapeId newShape = _backend.CreateHeightFieldShape(field, m, m, new SVector3(1f, 1f, 1f));
             _backend.SetTerrain(newShape, SVector3.Zero);
-            // JOLT-7c: at MaxBodies the engine refuses the terrain body - a region with no terrain collision is broken.
+            // At MaxBodies the engine refuses the terrain body - a region with no terrain collision is broken.
             if (_backend.GetCapacityStats().TerrainBodyMissing)
                 m_log.LogError($"{LogHeader} region '{RegionName}': the physics engine refused the terrain body (MaxBodies reached); " +
                                "this region has NO terrain collision - raise [Jolt] MaxBodies.");
@@ -1631,8 +1638,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private const float TerrainUnburyEps = 0.05f;
 
         /// <summary>
-        /// Pure un-bury decision (no physics state), isolated so it is unit-testable and shared by the
-        /// live pass and the `jolt terrain-unbury` console assert. Given a capsule centre Z, the new terrain
+        /// Pure un-bury decision (no physics state), isolated so it is unit-testable and used by the
+        /// live pass (ReGroundAvatarsOnTerrainChange). Given a capsule centre Z, the new terrain
         /// surface at its XY, and its seat geometry, returns true + the seat Z it should snap to when the
         /// avatar is below the new surface (buried); false (leave it) when it is at or above the surface -
         /// so a LOWERED terrain never triggers a snap (avatar settles by gravity), and a prim-stander high
@@ -1645,7 +1652,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         /// <summary>
-        /// Cause-A load-time position sanity (prim analog of <see cref="TryComputeUnbury"/>). A PHYSICAL prim
+        /// Load-time position sanity (prim analog of <see cref="TryComputeUnbury"/>). A PHYSICAL prim
         /// whose centre is BELOW where it would rest on the terrain surface (terrainZ + halfHeightZ) is buried;
         /// return true + the rest Z to snap it to. A prim resting on the surface, or FLOATING above it (a boat
         /// on water), is at/above restZ, so this returns false and leaves it exactly where it is - the land
@@ -1658,11 +1665,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         /// <summary>
-        /// Cause-A entry used by JoltPrim just before a physical body goes active: if <paramref name="pos"/> is
+        /// Load-time entry used by JoltPrim just before a physical body goes active: if <paramref name="pos"/> is
         /// below the terrain surface for a prim of <paramref name="size"/>, hand back the lifted position so the
         /// body is created RESTING on terrain instead of penetrating it. Applying this BEFORE the body is created
         /// stops (1) the bad position ever draining back to the SOP + persisting, and (2) the native solver
-        /// churning on a deep-penetration load (the ~5.8s reload watchdog stall). No terrain yet -> no lift.
+        /// churning on a deep-penetration load (a multi-second stall that can trip the watchdog on reload). No terrain yet -> no lift.
         /// </summary>
         internal bool TryUnburyPhysicalLoad(Vector3 pos, Vector3 size, out Vector3 lifted)
         {
@@ -1677,8 +1684,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // After a live terrain edit, lift any avatar now below the new surface onto it (see SetTerrain).
-        // Flying avatars are lifted too - a buried flyer can't rise through the solid heightfield above it
-        // (John's exact case). Uses the same seat formula as spawn (groundZ + StandHalf + FeetOffset) and
+        // Flying avatars are lifted too - a buried flyer can't rise through the solid heightfield above it.
+        // Uses the same seat formula as spawn (groundZ + StandHalf + FeetOffset) and
         // the just-cooked _terrainField (via TerrainHeightAt), so the avatar lands exactly on the contact
         // surface. The reposition is gated in the backend, so it cannot race the per-step character update.
         private void ReGroundAvatarsOnTerrainChange()
@@ -1713,7 +1720,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _terrainShape = ShapeId.Invalid;
         }
 
-        // JOLT-6 (C-4): up to 25 prims with a non-zero CollisionScore (this frame's contact count), highest first,
+        // Up to 25 prims with a non-zero CollisionScore (this frame's contact count), highest first,
         // keyed by LocalID - ubODE's model. Note: Persist contacts are only generated for subscribed pairs, so a
         // resting pile of unscripted objects scores only on its Begin frames.
         public override Dictionary<uint, float> GetTopColliders()

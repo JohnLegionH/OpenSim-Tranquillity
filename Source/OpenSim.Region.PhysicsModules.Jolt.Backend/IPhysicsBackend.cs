@@ -1,4 +1,11 @@
-// Legion Grid - Physics backend abstraction
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+// Physics backend abstraction for the Jolt physics module.
 //
 // This is the seam between OpenSim's PhysicsScene/PhysicsActor contract and a
 // concrete physics engine. Nothing above this interface knows what engine is
@@ -466,7 +473,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// <summary>Mutator calls dropped because an argument was NaN/Inf (or a zero-length quaternion).</summary>
         public long RejectedNonFinite;
 
-        // -- capacity (JOLT-3) --
+        // -- capacity --
         /// <summary>Steps whose update reported each flag, cumulative.</summary>
         public long ManifoldCacheFullSteps;
         public long BodyPairCacheFullSteps;
@@ -493,7 +500,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// <summary>The resolved ThreadCount the job pools were sized from: TOTAL workers asked for, all pools (process-wide).</summary>
         public int JobThreadCount;
 
-        // -- job pools (JOLT-7, S-8): one physics update at a time per pool --
+        // -- job pools: one physics update at a time per pool --
         /// <summary>How many job pools the process has (process-wide; the first region wins).</summary>
         public int JobPools;
         /// <summary>Worker threads in each pool: max(1, JobThreadCount / JobPools).</summary>
@@ -525,7 +532,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
     // ---------------------------------------------------------------------
 
     /// <summary>
-    /// A physics engine, as Legion needs one.
+    /// A physics engine, as the region physics module needs one.
     ///
     /// THREADING: implementations must permit Create/Remove/Set* calls from
     /// threads other than the one calling Step, and must permit queries to run

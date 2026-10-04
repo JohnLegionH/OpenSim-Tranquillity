@@ -1,9 +1,16 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
 using Xunit;
 
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
-/// <summary>PHYS-2 step 0: can a test host load the patched joltc and stand a PhysicsSystem up at all?</summary>
+/// <summary>Can a test host load the patched joltc and stand a PhysicsSystem up at all?</summary>
 public class NativeSmokeTests
 {
     [Fact]

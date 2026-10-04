@@ -1,4 +1,11 @@
-// Legion Grid - capacity surfacing for the Jolt module (JOLT-3, audit S-4a/S-4b).
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+// Capacity surfacing for the Jolt module.
 //
 // The backend now counts every PhysicsUpdateError flag and every CreateBody that MaxBodies refused. This turns two
 // snapshots of those counters into the one warning line an operator can act on (which [Jolt] key to raise), and
@@ -14,7 +21,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
     {
         /// <summary>
         /// The warning for what went wrong between <paramref name="prev"/> and <paramref name="cur"/>, or null when
-        /// nothing did. Example: "[JOLT SCENE] Ebony: collisions dropped (ContactConstraintsFull x37 in 10s) - raise
+        /// nothing did. Example: "[JOLT SCENE] Region A: collisions dropped (ContactConstraintsFull x37 in 10s) - raise
         /// [Jolt] MaxContactConstraints".
         /// </summary>
         internal static string Warning(string region, in PhysicsCapacityStats prev, in PhysicsCapacityStats cur, double seconds)
@@ -52,7 +59,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal const double GateWaitWarnFraction = 0.20;
 
         /// <summary>
-        /// JOLT-7: the warning when this region spent more than 20% of its frame time over the last interval waiting
+        /// The warning when this region spent more than 20% of its frame time over the last interval waiting
         /// for its job pool (which runs one region's physics update at a time), or null when it did not.
         /// </summary>
         internal static string GateWarning(string region, double waitMs, double frameMs, int poolIndex, int jobPools)

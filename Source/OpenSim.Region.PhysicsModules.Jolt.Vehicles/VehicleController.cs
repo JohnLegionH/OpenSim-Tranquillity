@@ -1,12 +1,11 @@
 /*
- * Legion Grid — Vehicle Dynamics Port from InWorldz Halcyon
+ * Vehicle dynamics ported from InWorldz Halcyon
  * Original Copyright (c) 2015, InWorldz Halcyon Developers
- * Adapted for BulletSim physics engine, April 2026.
+ * Adapted 2026 by Legion Builds
  *
- * EXTRACTED (M8 Task 2) into this backend-agnostic controller from
- * OpenSim/Region/PhysicsModules/BulletS/LegionVehicleDynamics.cs — which stays untouched as the
- * BulletSim A/B reference. The MATH IS MOVED VERBATIM (same computations, same order, same
- * constants); only the physics-engine seam is substituted, mechanically, per this table:
+ * A backend-agnostic vehicle controller. The vehicle math follows the Halcyon dynamics as
+ * OpenSim's BulletSim vehicle code expresses them (same computations, same order, same
+ * constants); the physics engine is reached only through IVehicleBody, per this table:
  *
  *   ControllingPrim.ForceOrientation            -> _body.Orientation
  *   ControllingPrim.ForceVelocity (get/set)     -> _body.LinearVelocity   (same read-back semantics)
@@ -27,17 +26,14 @@
  *   BSActor/scene-event plumbing                -> the HOST steps an active controller before each
  *                                                  physics step and applies/restores body params
  *
- * SCOPE (M8 Task 2, the BOAT slice): linear motor + timescale/decay, angular motor +
- * timescale/decay, linear friction, angular friction, hover, buoyancy, vertical attractor —
- * plus the shared frame infrastructure (timestep smoothing, velocity anti-jitter, motor reset,
- * stall detection, spike mitigation, ground-penetration fix, manual gravity, torque accumulator).
- * DEFERRED to later slices (calls removed from Step, everything else in place for them):
- * SimulateAngularDeflection, SimulateLinearDeflection, SimulateSledMovement, SimulateBankingToYaw
- * (the banking-turn motor block inside SimulateMotors is retained verbatim; it is inert while
- * BankingDirection stays 0), mouselook, wind.
+ * Simulated: linear and angular motors with their timescales and decay, linear and angular
+ * friction, hover, buoyancy, the vertical attractor, angular and linear deflection, sled
+ * movement and banking-to-yaw, plus the shared frame infrastructure (timestep smoothing, velocity
+ * anti-jitter, motor reset, stall detection, spike mitigation, ground-penetration fix, manual
+ * gravity, torque accumulator). Not simulated: mouselook steering and wind.
  *
  * One evaluation-order note: ApplyGravity's ground fudge test is written here as
- * `IsGroundVehicle && _body.HasCollision` (reference: `HasSomeCollision && IsGroundVehicle`) so
+ * `IsGroundVehicle && _body.HasCollision` (BulletSim: `HasSomeCollision && IsGroundVehicle`) so
  * the engine query short-circuits away for non-ground vehicles; the result is identical.
  *
  * THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND.
@@ -103,8 +99,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         }
 
         // =====================================================================
-        // Active state. (The reference also checks IsPhysicallyActive; here the HOST
-        // only steps the controller while the body is physical.)
+        // Active state. (IsPhysicallyActive is not checked here: the HOST only steps the
+        // controller while the body is physical.)
         // =====================================================================
         public bool IsActive
         {
@@ -148,8 +144,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _props.Dynamics.Reset();
             _props.Dynamics.LastAccessTOD = DateTime.Now;
 
-            // (Reference registers/unregisters BeforeStep scene events and taints a Refresh here;
-            // the host reacts to IsActive instead: per-frame Step drive + body physical params.)
+            // (No scene-event registration or Refresh here; the host reacts to IsActive instead:
+            // per-frame Step drive + body physical params.)
         }
 
         // =================================================================
@@ -157,7 +153,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // =================================================================
         public void ProcessFloatVehicleParam(Vehicle pParam, float pValue)
         {
-            // JOLT-2 (S-2): ClampF passes NaN through (Math.Max/Min propagate it), so a non-finite script value
+            // ClampF passes NaN through (Math.Max/Min propagate it), so a non-finite script value
             // would be stored and drive the motors. Ignore it; the stored param is unchanged.
             if (!float.IsFinite(pValue))
                 return;
@@ -252,7 +248,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public void ProcessVectorVehicleParam(Vehicle pParam, Vector3 pValue)
         {
             if (!float.IsFinite(pValue.X) || !float.IsFinite(pValue.Y) || !float.IsFinite(pValue.Z))
-                return;   // JOLT-2 (S-2): see ProcessFloatVehicleParam
+                return;   // non-finite: see ProcessFloatVehicleParam
             switch (pParam)
             {
                 case Vehicle.ANGULAR_FRICTION_TIMESCALE:
@@ -393,7 +389,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             }
 
             // -------------------------------------------------------
-            // Deflection + sled run in the reference order Angular -> Linear -> Sled, BEFORE hover.
+            // Deflection + sled run in the order Angular -> Linear -> Sled, BEFORE hover.
             // Angular deflection — swings the nose toward the velocity direction (weathervane).
             if (VehicleLimits.DoAngularDeflection)
             {
@@ -406,8 +402,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 SimulateLinearDeflection(timeStep);
             }
 
-            // Sled movement — gravity-assisted slope force, gated on Type == Sled (NEVER a boat). Wired
-            // for A/B parity completeness; inert for every non-sled vehicle.
+            // Sled movement — gravity-assisted slope force, gated on Type == Sled (NEVER a boat). Included
+            // for completeness; inert for every non-sled vehicle.
             if (_props.Type == VehicleType.Sled)
             {
                 SimulateSledMovement(timeStep);
@@ -715,8 +711,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 _body.AddTorque(_accumTorqueImpulse);
             }
 
-            // (Reference calls PE.PushUpdate here when changed - a Bullet activation nudge; the host
-            // keeps an active vehicle body from sleeping instead.)
+            // (No activation nudge here; the host keeps an active vehicle body from sleeping.)
         }
 
         #endregion // Torque Accumulator
@@ -729,9 +724,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private void ApplyLinearVelocityChange(Vector3 deltaV)
         {
-            // The reference branches on LinearMotorOffset here, routing the offset case through a
-            // CENTRAL impulse of deltaV * mass - the identical net velocity change (true off-center
-            // application is a later slice; every stock preset ships offset = zero).
+            // A non-zero LinearMotorOffset is applied as a CENTRAL velocity change too - the identical
+            // net velocity change (true off-center application is not implemented; every stock preset
+            // ships offset = zero).
             _body.LinearVelocity = _body.LinearVelocity + deltaV;
         }
 
@@ -781,10 +776,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <summary>
         /// Rotates vehicle toward direction of movement (weathervane: swings the NOSE toward the velocity,
         /// complementary to linear deflection which rotates the velocity toward the nose).
-        /// Ported VERBATIM from the BulletSim reference (LegionVehicleDynamics.SimulateAngularDeflection).
+        /// Follows the InWorldz Halcyon vehicle dynamics.
         /// Seam table: all symbols map 1:1 here - _worldLinearVel/_localLinearVel/_worldAngularVel/_rotation,
         /// the limits, the QuatToEuler/RotBetween/AngleBetween utilities, and AddTorqueVelocityChange (the
-        /// reference's torque-as-velocity-change seam) already exist on this controller.
+        /// torque-as-velocity-change seam) already exist on this controller.
         /// </summary>
         private void SimulateAngularDeflection(float timeStep)
         {
@@ -842,8 +837,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         /// <summary>
         /// Changes velocity toward forward axis.
-        /// Ported VERBATIM from the BulletSim reference (LegionVehicleDynamics.SimulateLinearDeflection),
-        /// itself the Halcyon port. Seam table: reference symbols map 1:1 here - _worldLinearVel, _rotation,
+        /// Follows the InWorldz Halcyon vehicle dynamics.
+        /// Seam table: symbols map 1:1 here - _worldLinearVel, _rotation,
         /// _props, the limits, and ApplyLinearVelocityChange are the same names on this controller, so no
         /// substitution is needed inside the body (ApplyLinearVelocityChange already writes _body.LinearVelocity).
         /// </summary>
@@ -895,8 +890,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         }
 
         /// <summary>
-        /// Gravity-assisted force on slopes for the SLED vehicle type. Ported VERBATIM from the BulletSim
-        /// reference (LegionVehicleDynamics.SimulateSledMovement). Wired here for A/B PARITY COMPLETENESS
+        /// Gravity-assisted force on slopes for the SLED vehicle type. Follows the InWorldz Halcyon
+        /// vehicle dynamics. Included for completeness
         /// only - it is gated Type==Sled in Step, so it NEVER runs for a boat (or any non-sled). Seam table:
         /// BSParam.Gravity -> _body.Gravity.Z, ApplyLinearForce(f) -> _body.AddForce(f); everything else
         /// (_rotation, the limits, IsLinearMotorStalled, m_vehicleMass) maps 1:1.
@@ -1123,8 +1118,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         #region Banking (roll -> yaw driver; the consumer is the banking-turn block in SimulateMotors)
 
         /// <summary>
-        /// Converts roll to yaw rotation. Ported VERBATIM from the BulletSim reference
-        /// (LegionVehicleDynamics.SimulateBankingToYaw). Runs AFTER the vertical attractor (whose angle/
+        /// Converts roll to yaw rotation. Follows the InWorldz Halcyon vehicle dynamics.
+        /// Runs AFTER the vertical attractor (whose angle/
         /// inverted it takes) and BEFORE SimulateMotors: it sets Dynamics.BankingDirection, which the
         /// already-present banking-turn block inside SimulateMotors consumes and blends into the angular-Z
         /// torque. Seam table: _localLinearVel/_rotation, the limits, Utils.Clamp and _props.Dynamics are
@@ -1992,7 +1987,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     _props.ParamsFloat[VehFloatParam.HoverHeight]                   = 0.5f;
                     _props.ParamsFloat[VehFloatParam.HoverEfficiency]               = 0.8f;
                     _props.ParamsFloat[VehFloatParam.HoverTimescale]                = 0.2f;
-                    // Cause-B: buoyancy 1.0 (matches BulletSim's TYPE_BOAT, BSDynamics buoyancy=1.0). Gravity
+                    // Buoyancy 1.0 (matches BulletSim's TYPE_BOAT, BSDynamics buoyancy=1.0). Gravity
                     // is fully cancelled (ApplyGravity = gravity*(1-buoyancy) = 0), so a boat CANNOT sink even
                     // on a frame where hover has not run yet - e.g. right after a region reload, before the
                     // controller re-activates. Hover still trims it to the water surface (HoverWaterOnly,

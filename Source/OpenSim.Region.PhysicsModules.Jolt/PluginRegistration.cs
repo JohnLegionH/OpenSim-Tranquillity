@@ -1,7 +1,14 @@
-/*
- * Legion Grid — Jolt physics region module.
+/* Copyright (c) 2026 Legion Builds
  *
- * RC plugin registration. Mirrors Source/OpenSim.Region.PhysicsModules.ubODE/PluginRegistration.cs:
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+/*
+ * Jolt physics region module.
+ *
+ * Plugin registration. Mirrors Source/OpenSim.Region.PhysicsModules.ubODE/PluginRegistration.cs:
  * the host's DotNetCorePlugins discovery (DotNetCorePluginsDiscovery.GetExtensionNodes) scans the
  * plugin directory for assemblies exporting IPluginRegistryProvider and calls RegisterPlugins. We
  * register the region-module type at /OpenSim/RegionModules so the RegionModulesController picks it

@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using System.Numerics;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
 using Xunit;
@@ -6,7 +13,7 @@ using Xunit.Abstractions;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// JOLT-4 (audit S-4d, S-4e, S-4f, I-3). The step drain is fair and loses nothing: settle (JustDeactivated) states
+/// The step drain is fair and loses nothing: settle (JustDeactivated) states
 /// go first and carry over when they do not fit, active bodies and characters rotate through a too-small buffer
 /// instead of starving the same tail every frame, and the contact impulse estimate is only paid for when someone
 /// is listening.
@@ -102,7 +109,7 @@ public class DrainFairnessTests
         Assert.Equal(n, seen.Count);
     }
 
-    // ------------------------------------------------------------------ I-3: impulse only when someone listens
+    // ------------------------------------------------------------------ impulse only when someone listens
 
     private static float FirstBeginImpulse(bool groundSubscribed, bool boxSubscribed)
     {

@@ -1,4 +1,11 @@
-// Legion Grid - the non-finite firewall for the Jolt actors (JOLT-2, audit S-2).
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+// The non-finite firewall for the Jolt actors.
 //
 // ubODE guards every PhysicsActor setter against NaN/Inf; Jolt used to guard only the drained position and
 // AddForce/AddAngularForce. SceneObjectPart velocity/impulse calls and Phlox llSetVelocity /
@@ -10,7 +17,7 @@ using System;
 using Microsoft.Extensions.Logging;
 using OpenMetaverse;
 
-// JOLT-A: the pure helpers (this guard, CollisionFrameTracker, JoltConfig) are tested without an OpenSim Scene.
+// The pure helpers (this guard, CollisionFrameTracker, JoltConfig) are tested without an OpenSim Scene.
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("OpenSim.Region.PhysicsModules.Jolt.Tests")]
 
 namespace OpenSim.Region.PhysicsModules.Jolt

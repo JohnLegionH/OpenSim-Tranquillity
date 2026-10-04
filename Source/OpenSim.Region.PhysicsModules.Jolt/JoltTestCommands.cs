@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using System;
 using System.Collections.Generic;
 using OpenSim.Framework;
@@ -85,7 +92,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             return true;
         }
 
-        // M6.2 Task 2: radial-cone hill parameters (set by `jolt terrainhill`) so `jolt hilltest` can
+        // Radial-cone hill parameters (set by `jolt terrainhill`) so `jolt hilltest` can
         // print hand-computable expected Z. z = base + amp*max(0, 1 - dist((x,y),(cx,cy))/R).
         private float _hillCx, _hillCy, _hillBase, _hillAmp, _hillR;
         private bool _hillSet;
@@ -97,9 +104,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             return _hillBase + _hillAmp * Math.Max(0f, 1f - d / _hillR);
         }
 
-        private uint _sitPrimId;   // M6.6: the prim `jolt sittest` rezzed to sit on, so `jolt unsit` can clean it up
+        private uint _sitPrimId;   // the prim `jolt sittest` rezzed to sit on, so `jolt unsit` can clean it up
 
-        // M6.3 Task 2 proof bookkeeping: the console-rezzed test prims (so `jolt rayprims` can state
+        // Bookkeeping for the console-rezzed test prims (so `jolt rayprims` can state
         // expected hits and `jolt clearprims` can delete them through the real scene-delete path).
         private struct TestPrim { public uint LocalId; public UUID Sog; public string Kind; public Vector3 Pos; public Vector3 Size; }
         private readonly List<TestPrim> _testPrims = new List<TestPrim>();
@@ -192,7 +199,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 ClearTestPrims();   // idempotent: re-rez from a clean slate
 
                 // Three basic shapes at z=100 (above any terrain/hill), spread 8 m in X so they don't
-                // overlap. Sizes chosen so the raycast proofs are unambiguous: the cylinder is tall+thin
+                // overlap. Sizes chosen so the raycast checks are unambiguous: the cylinder is tall+thin
                 // (halfHeight 2, radius 0.5) so a Z-axis (correct) top-cap hit at 102 is nowhere near a
                 // Y-axis (wrong) curved-side hit at 100.5.
                 RezTestPrim("box", new Vector3(120f, 128f, 100f), new Vector3(2f, 3f, 4f));
@@ -240,8 +247,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 MainConsole.Instance.Output($"  REAL mesher geometry: verts={s.Verts} tris={s.Tris} degenerate={s.DegenerateTris} duplicateVerts={s.DuplicateVerts} outOfRangeIdx={s.OutOfRangeIndices}");
                 MainConsole.Instance.Output($"    local AABB min=({s.Min.X:0.00},{s.Min.Y:0.00},{s.Min.Z:0.00}) max=({s.Max.X:0.00},{s.Max.Y:0.00},{s.Max.Z:0.00})");
 
-                // Decision-point check (physical -> convex hull, delta #31): cook the SAME prism physical,
-                // inline, purely to confirm routing (cook+release, no body - the proof is the shape choice).
+                // Decision-point check (physical -> convex hull): cook the SAME prism physical,
+                // inline, purely to confirm routing (cook+release, no body - the check is the shape choice).
                 ShapeId hull = CookPrimShape(GetPrismPbs(), size, true, out _, out string hullKind);
                 MainConsole.Instance.Output($"  decision-point: physical prism cooks to '{hullKind}' (expect 'hull(mesher)' - a mesh's Volume=0 would rez a physical prim mass-0; hull avoids it).");
                 if (hull.IsValid) _backend.ReleaseShape(hull);
@@ -316,7 +323,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         }
 
-        // M7 Task 1 proof: rez a root + 2 children at offsets, make the root physical, then run the OpenSim
+        // `jolt linktest`: rez a root + 2 children at offsets, make the root physical, then run the OpenSim
         // handoff (child.PhysActor.link(root.PhysActor)) so the children WELD into the root's compound body.
         // Assert the compound's mass jumps to ~3x a single prim (sum of parts) and the whole thing falls as
         // ONE body. (Children are separate SOGs here, so this proves the PHYSICS - the visual linkset is the
@@ -355,7 +362,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _scene.DeleteSceneObject(c2, false);
         }
 
-        // M7 Task 3 (base collision dispatch) proof: drop a SUBSCRIBED dynamic box onto a static platform +
+        // `jolt collidetest` (base collision dispatch): drop a SUBSCRIBED dynamic box onto a static platform +
         // terrain, hook its PhysicsActor.OnCollisionUpdate (exactly what a script's collision handler wires),
         // and confirm the module delivers CollisionEventUpdates - a non-empty collider set while touching
         // (start + ongoing), the struck OBJECT's LocalID in that set (-> llDetected* / link number), and an
@@ -409,13 +416,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _scene.DeleteSceneObject(plat, false);
         }
 
-        // M8 Task 2 boat proofs. `jolt boattest [linear|hover|attract|steer]` (default linear).
+        // Boat tests. `jolt boattest [linear|hover|attract|steer]` (default linear).
         // Each cooks a physics-only water basin if the region has no open water, rezzes a physical
         // VEHICLE_TYPE_BOAT, drives ONE aspect of the extracted Halcyon controller and asserts it.
-        //   linear  (slice a): held linear motor -> forward speed ramps to target
-        //   hover   (slice b): settle from above, rise from below, hold at rest
-        //   attract (slice c): tilt -> self-rights; yaw stays free
-        //   steer   (slice d): angular motor -> yaws, friction stops it, stays upright
+        //   linear : held linear motor -> forward speed ramps to target
+        //   hover  : settle from above, rise from below, hold at rest
+        //   attract: tilt -> self-rights; yaw stays free
+        //   steer  : angular motor -> yaws, friction stops it, stays upright
         private void JoltBoatTest(string scenario)
         {
             if (_scene == null) { MainConsole.Instance.Output($"{LogHeader} no scene."); return; }
@@ -428,7 +435,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
         }
 
-        // M8 CAR proofs. `jolt cartest [linear|steer|attract]` (default linear). Rezzes a physical
+        // Car tests. `jolt cartest [linear|steer|attract]` (default linear). Rezzes a physical
         // VEHICLE_TYPE_CAR on the terrain (no water needed - a car rides the ground) and drives ONE
         // aspect of the extracted controller, asserting it:
         //   linear  : held linear motor -> forward speed ramps; car stays on the ground (no sink, no hover)
@@ -587,7 +594,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _scene.DeleteSceneObject(car, false);
         }
 
-        // M8 SLED proofs. `jolt sledtest [slide|nosteer|grip]` (default slide). Rezzes a physical
+        // Sled tests. `jolt sledtest [slide|nosteer|grip]` (default slide). Rezzes a physical
         // VEHICLE_TYPE_SLED on the terrain and drives ONE aspect of the extracted controller:
         //   slide   : born nose-down -> glides forward down its nose (SimulateSledMovement gravity engine)
         //   nosteer : angular motor -> the sled does NOT turn (motor TS 1000 inert) - the car/sled contrast
@@ -716,7 +723,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _scene.DeleteSceneObject(sled, false);
         }
 
-        // M8 AIRPLANE proofs. `jolt planetest [thrust|bank|climb]` (default thrust). Rezzes a physical
+        // Airplane tests. `jolt planetest [thrust|bank|climb]` (default thrust). Rezzes a physical
         // VEHICLE_TYPE_AIRPLANE HIGH in the air and holds thrust each tick (a plane has buoyancy 0 - it
         // FALLS without continuous thrust, which is correct). Drives ONE aspect of the controller:
         //   thrust : held forward motor -> airspeed builds
@@ -796,8 +803,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (pa == null) { MainConsole.Instance.Output($"{LogHeader} planetest: plane has no PhysActor."); return; }
 
             // The body is created INERT (deferred activation); a velocity set BEFORE it wakes is dropped -
-            // Jolt keeps the creation-time velocity (0), so the earlier harness launched at ~0 airspeed
-            // (below stall) and sank (fwdSpeed ramped 0->29 instead of starting at 40). Let one Simulate wake
+            // Jolt keeps the creation-time velocity (0), so a plane given its airspeed then would launch at ~0
+            // airspeed (below stall) and sink (fwdSpeed ramping 0->29 instead of starting at 40). Let one Simulate wake
             // the body (DrainPendingActivation), THEN inject cruise airspeed on the now-ACTIVE body so it is
             // present at t=0. The linear motor keeps a body already moving faster than its ramping target (it
             // never drags it down, see the adjvel guard), so the injected 40 persists and lift beats gravity.
@@ -872,7 +879,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _scene.DeleteSceneObject(plane, false);
         }
 
-        // M8 BALLOON proofs. `jolt balloontest [hover|lift|drift]` (default hover). Rezzes a physical
+        // Balloon tests. `jolt balloontest [hover|lift|drift]` (default hover). Rezzes a physical
         // VEHICLE_TYPE_BALLOON in the air; buoyancy 1.0 cancels gravity so it HANGS (hover trims to ~5 m above
         // ground). The 5th and final SL type:
         //   hover : no input -> hangs in mid-air (doesn't fall to the ground like a car)
@@ -1064,7 +1071,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             return true;
         }
 
-        // ---- slice (a): linear motor ----------------------------------------------------------
+        // ---- boat: linear motor ----------------------------------------------------------------
         private void BoatLinearTest()
         {
             float[] restoreHm = EnsureBoatWater(out float bx, out float by, out float water);
@@ -1097,7 +1104,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (restoreHm != null) SetTerrain(restoreHm);
         }
 
-        // ---- slice (b): hover -----------------------------------------------------------------
+        // ---- boat: hover ----------------------------------------------------------------------
         // Boat preset: HOVER_HEIGHT 0.5, HOVER_EFFICIENCY 0.8, HOVER_TIMESCALE 0.2, HoverWaterOnly.
         // Target rest position Z = water + 0.5. Three sub-scenarios, fresh boat each: settle from
         // above, rise from below, hold at rest. No motor - pure Z-balance.
@@ -1140,7 +1147,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (restoreHm != null) SetTerrain(restoreHm);
         }
 
-        // ---- slice (c): vertical attractor ----------------------------------------------------
+        // ---- boat: vertical attractor ---------------------------------------------------------
         // Rez the boat rolled 40 deg; with the vertical attractor (eff 0.5, TS 0.2) it must roll back
         // upright over a couple of seconds (not instant-snap, not never). Then a YAW check: spin it in
         // yaw and confirm the attractor lets the heading change freely while still holding it level.
@@ -1216,7 +1223,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (restoreHm != null) SetTerrain(restoreHm);
         }
 
-        // ---- slice (d): angular motor (steering) ----------------------------------------------
+        // ---- boat: angular motor (steering) ---------------------------------------------------
         private void BoatSteerTest()
         {
             float[] restoreHm = EnsureBoatWater(out float bx, out float by, out float water);
@@ -1273,7 +1280,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             return d;
         }
 
-        // M7 Task 3 (landing 2) proof: per-child collision identity. Build a REAL scene linkset (root=link1 +
+        // `jolt collidelinktest`: per-child collision identity. Build a REAL scene linkset (root=link1 +
         // two children link2/link3), make it physical (-> Jolt compound), subscribe + hook each link's actor
         // (what a root collision script triggers via UpdatePhysicsSubscribedEvents), drop a box onto LINK 3,
         // and confirm the module delivers that collision to LINK 3's actor (not the root). Because OpenSim's
@@ -1318,7 +1325,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _scene.EventManager.OnScriptColliding += emHandler;
 
             // (b) REAL Phlox script on the ROOT: capture what llDetectedLinkNumber ACTUALLY returns (the full
-            //     Phlox VM path - the exact thing John's viewer script sees), via llSay -> OnChatFromWorld.
+            //     Phlox VM path - the exact thing an in-world script sees), via llSay -> OnChatFromWorld.
             var scriptLinks = new List<int>();
             EventManager.ChatFromWorldEvent chatHandler = (object sender, OSChatMessage m) =>
             {
@@ -1377,11 +1384,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _scene.DeleteSceneObject(ls, false);
         }
 
-        // M7 Task 2 proof: build a physical linkset (root + 2 children), then UNLINK the way OpenSim does
+        // `jolt unlinktest`: build a physical linkset (root + 2 children), then UNLINK the way OpenSim does
         // (PhysicsScene.RemovePrim(childPa) -> JoltPrim.Destroy -> detach + rebuild) and watch the compound
         // mass track membership: 3x -> 2x -> 1x (down-to-one reverts to a plain single body, NOT a degenerate
         // 1-child compound). Then repeated link/unlink cycles: mass must return to exactly `single` each time
-        // (a leaked/stale/double body would drift it up). Console proof of the live rebuild + no-leak.
+        // (a leaked/stale/double body would drift it up). Console check of the live rebuild + no-leak.
         private void JoltUnlinkTest()
         {
             float tz = 25f;
@@ -1455,7 +1462,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             sog.RootPart.Scale = size;   // AddPrimShape receives this as `size` (== SceneObjectPart.Scale)
 
             // attachToBackup:false -> ephemeral (no region-DB residue), but still physics-wired and
-            // viewer-visible this session. AttachToScene calls ApplyPhysics synchronously here.
+            // viewer-visible until the region restarts. AttachToScene calls ApplyPhysics synchronously here.
             _scene.AddNewSceneObject(sog, false);
 
             _testPrims.Add(new TestPrim
@@ -1488,7 +1495,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             return n;
         }
 
-        // Cast the proof rays through Scene.RayCastFiltered - the SAME call llCastRay makes - so this
+        // Cast the test rays through Scene.RayCastFiltered - the SAME call llCastRay makes - so this
         // is Jolt answering a real SL-facing raycast, just triggered from the console (no viewer/chat
         // dependency). Each row prints expected-vs-actual-vs-delta and which prim id was struck.
         private void RayPrims()
@@ -1560,11 +1567,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             return best;
         }
 
-        // PERMANENT REGRESSION GUARD for the mesher cache-poisoning bug (delta #38). Rezzes N SEPARATE
+        // PERMANENT REGRESSION GUARD for the mesher cache-poisoning bug. Rezzes N SEPARATE
         // identical prisms back-to-back: same size/lod -> same Meshmerizer cache key -> the exact
-        // repeated-content path that a region with N copies of one mesh asset hits at M6.5. Pre-fix,
+        // repeated-content path that a region with N copies of one mesh asset hits. Without the fix,
         // prim 2..N would get the poisoned shared Mesh and cook to bbox(fallback) (the NotSupportedException
-        // now caught by the guard); post-fix, every prim cooks to mesh(mesher). Each is also cast-verified
+        // now caught by the guard); with it, every prim cooks to mesh(mesher). Each is also cast-verified
         // as a real triangle (centre HIT, corner MISS) - not a bbox.
         private void RezMeshN(int count)
         {
@@ -1598,13 +1605,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             bool pass = clean == count && realMesh == count;
             MainConsole.Instance.Output($"  {clean}/{count} cooked clean (mesh(mesher), cache NOT poisoned); {realMesh}/{count} cast-verified real triangle (centre hit + corner miss).");
             MainConsole.Instance.Output(pass
-                ? $"  PASS: {count}/{count} repeated identical mesh cooks are clean - delta #38 (cache poisoning) stays fixed."
+                ? $"  PASS: {count}/{count} repeated identical mesh cooks are clean - cache poisoning stays fixed."
                 : $"  FAIL: a prim fell to bbox/failed - cache poisoning or cook regression. Investigate before shipping.");
             MainConsole.Instance.Output($"  (jolt clearprims then jolt raymesh -> all miss.)");
         }
 
-        // M6.4: rez a prim NON-physical via the real path, then flip it physical through OpenSim's own
-        // ScriptSetPhysicsStatus (-> the actor's IsPhysical setter -> recreate Dynamic, delta #15) so it
+        // Rez a prim NON-physical via the real path, then flip it physical through OpenSim's own
+        // ScriptSetPhysicsStatus (-> the actor's IsPhysical setter -> recreate Dynamic) so it
         // FALLS. Probes terrain at the drop XY to pick a modest drop height (no tunnelling) and the
         // expected rest Z. A physical MESH (prism) recreates to a convex HULL - the load-bearing case.
         private void DropOne(string kind, Vector3 size, float x, float y)
@@ -1647,14 +1654,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // Report each tracked drop: fell / rested / JustDeactivated-exactly-once / steps-to-rest / rest Z
-        // vs expected / mass / determinism vs the previous same-kind drop. This is the rigorous console gate
-        // behind the viewer watch.
+        // vs expected / mass / determinism vs the previous same-kind drop. This is the rigorous console check
+        // behind watching the drop in a viewer.
         private void DropStatus()
         {
             if (_drops.Count == 0) { MainConsole.Instance.Output($"{LogHeader} no active drops - run jolt droptest / jolt dropmesh first."); return; }
 
             // dropstatus is a SINGLE-INSTANT snapshot. Read once, right after `droptest`, it can catch the
-            // body still spawning/mid-air and (M6.4 delta) mislabel a healthy fall as a stall. The sim thread
+            // body still spawning/mid-air and mislabel a healthy fall as a stall. The sim thread
             // keeps stepping and updating each DropTrack while this console-thread handler blocks, so auto-wait
             // until every tracked drop has rested (JustDeactivated -> RestZ set) or a hard timeout elapses,
             // BEFORE printing PASS/FAIL. [dropframe] remains the honest continuous per-frame trace.
@@ -1769,7 +1776,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             MainConsole.Instance.Output($"  -> expect SEATED=N, hasCharacter=Y (re-engaged). `jolt avatarstatus` to confirm supported + not sliding.");
         }
 
-        // M6.6 Task 2 - llSitTarget offset/rotation. This is OpenSim's placement math (SendSitResponse/
+        // `jolt sittarget` - llSitTarget offset/rotation. This is OpenSim's placement math (SendSitResponse/
         // HandleAgentSit read the prim's SitTargetPosition/Orientation and seat the avatar at that offset in
         // the PRIM's frame); physics stays out of the way (the character is removed on sit). This console
         // proves it: rez a prim rotated 90deg yaw, set a sit-target offset, sit, and check the seated avatar
@@ -1832,7 +1839,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // The canonical triangular-prism PrimitiveBaseShape (EquilateralTriangle + Straight) used by the
-        // mesh proof - shared by the real rez and the inline decision-point check.
+        // mesh test - shared by the real rez and the inline decision-point check.
         private static PrimitiveBaseShape GetPrismPbs()
         {
             PrimitiveBaseShape pbs = PrimitiveBaseShape.CreateBox();
@@ -1885,13 +1892,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // ===================================================================================
-        // M6.8 A/B PARITY HARNESS - engine-agnostic. Registered under BOTH BulletSim and Jolt (see
+        // A/B PARITY HARNESS (`jolt parity`) - engine-agnostic. Registered under BOTH BulletSim and Jolt (see
         // RegionLoaded), drives ONLY the standard OpenSim Scene/SceneObjectGroup/PhysicsActor surface
         // (the SAME rez path as `jolt rezprims`: EstateOwner -> new SceneObjectGroup -> AddNewSceneObject
         // -> ScriptSetPhysicsStatus -> DeleteSceneObject). Identical code runs on either engine by only
-        // changing [Startup] physics=, which is what makes the A/B comparison valid. `parity core` writes
+        // changing [Startup] physics=, which is what makes the A/B comparison valid. `jolt parity core` writes
         // a capture file parity-<EngineType>.txt so the two boots can be diffed into a delta table.
-        // Hosted in this module (rather than a new assembly) to stay within the module+backend guardrail;
+        // Hosted in this module rather than a new assembly;
         // it uses no Jolt-specific state, so it is valid while BulletSim is the physics engine.
         // ===================================================================================
         private static bool s_parityRegistered;
@@ -1899,7 +1906,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         private void RegisterParityConsole(Scene scene)
         {
-            if (scene != null) s_parityScene = scene;   // one region in the scratch standalone; last-wins
+            if (scene != null) s_parityScene = scene;   // one region expected; last wins
             if (MainConsole.Instance == null || s_parityRegistered) return;
             s_parityRegistered = RegisterParityCommand(MainConsole.Instance.Commands, m_testCommands, HandleParityConsole);
         }
@@ -1916,20 +1923,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 case "drop": ParityRunCore(scene, false); break;
                 case "core": ParityRunCore(scene, true); break;
                 case "boat": ParityBoat(scene, true); break;
-                default: MainConsole.Instance.Output("Usage: jolt parity terrain (gradient proof) | ramp (steep-slope slide test) | drop | core (writes parity-<engine>.txt) | boat (M8 boat A/B, writes parity-boat-<engine>.txt)"); break;
+                default: MainConsole.Instance.Output("Usage: jolt parity terrain (gradient proof) | ramp (steep-slope slide test) | drop | core (writes parity-<engine>.txt) | boat (boat A/B, writes parity-boat-<engine>.txt)"); break;
             }
         }
 
         // Scenarios 1 + 2 (+ 8 mass): drop identical shapes from a controlled height (terrain + 15 m, so
         // the FALL is identical on both engines regardless of terrain). Dropped at BOTH the slope point
-        // (128,128 - the cone from avatar testing) AND the flattest terrain we can find, so a slope-friction
+        // (128,128 - the `jolt terrainhill` cone centre on a 256 m region) AND the flattest terrain we can find, so a slope-friction
         // divergence is separated from a general drop bug. Each row reports rest pos, settle frames/ms,
         // engine-assigned mass, the OpenSim-facing friction, and the local terrain slope at the drop XY.
         private void ParityRunCore(Scene scene, bool toFile)
         {
             string engine = scene.PhysicsScene != null ? scene.PhysicsScene.EngineType : "unknown";
             var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"# M6.8 parity CORE  engine={engine}  region={scene.RegionInfo.RegionName}");
+            sb.AppendLine($"# parity CORE  engine={engine}  region={scene.RegionInfo.RegionName}");
 
             // Data-driven drop points: SLOPE drop on the steepest flank found (NOT the cone apex, whose
             // centred gradient is ~0 - a peak, not a slope), FLAT drop on the genuinely flattest cell
@@ -2009,21 +2016,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // ===================================================================================
-        // M8 boat A/B parity. ENGINE-AGNOSTIC: drives the boat through the STANDARD PhysicsActor
+        // Boat A/B parity (`jolt parity boat`). ENGINE-AGNOSTIC: drives the boat through the STANDARD PhysicsActor
         // vehicle surface (VehicleType / VehicleVectorParam) and reads state through the standard
         // getters (Position / Orientation / Velocity / RotationalVelocity / Mass), so the SAME code
-        // runs under physics=BulletSim (-> LegionVehicleDynamics) and physics=Jolt (-> the extracted
-        // OpenSim.Region.PhysicsModules.Jolt.Vehicles controller). Both run the SAME Halcyon math, so the numbers should match;
-        // any difference localizes to force APPLICATION (Bullet vs Jolt), not the math. Writes
+        // runs under physics=BulletSim (-> BSDynamics) and physics=Jolt (-> the extracted
+        // OpenSim.Region.PhysicsModules.Jolt.Vehicles controller, the InWorldz Halcyon vehicle dynamics). The two
+        // engines use different vehicle math, so the capture compares boat behaviour end to end. Writes
         // parity-boat-<engine>.txt for a two-boot diff. Uses scene.PhysicsScene.SetTerrain to cook a
-        // PHYSICS-ONLY water basin (this region is a plateau above the water plane) - the scene
+        // PHYSICS-ONLY water basin (for a region whose terrain sits above the water plane) - the scene
         // heightmap is untouched, so nothing taints the viewer and the terrain tick won't re-push.
         // ===================================================================================
         private void ParityBoat(Scene scene, bool toFile)
         {
             string engine = scene.PhysicsScene != null ? scene.PhysicsScene.EngineType : "unknown";
             var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"# M8 boat parity  engine={engine}  region={scene.RegionInfo.RegionName}");
+            sb.AppendLine($"# boat parity  engine={engine}  region={scene.RegionInfo.RegionName}");
 
             float[] restoreHm = ParityEnsureBoatWater(scene, out float bx, out float by, out float water);
             sb.AppendLine($"# spot <{bx:0},{by:0}> water={water:0.00}  (all z are z-water; tilt/yaw in deg)");
@@ -2278,7 +2285,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 }
         }
 
-        // Gradient PROOF: log height / slope / maxNbDelta at fixed test points plus the scanned extremes,
+        // Gradient CHECK: log height / slope / maxNbDelta at fixed test points plus the scanned extremes,
         // so we can verify the slope calc reports non-zero angles on the flanks and ~0 at a genuinely flat
         // spot BEFORE trusting any drop data. The apex (128,128) is expected to read ~0 slope (it is a peak).
         private void ParityTerrainLog(Scene scene)
@@ -2294,11 +2301,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             MainConsole.Instance.Output(sb.ToString());
         }
 
-        // Steep-slope SANITY (finding 2): the region's steepest terrain is only ~11 deg, below the ~31 deg
-        // (atan 0.6) friction threshold, so we cannot test slide-when-it-should on terrain. Instead drop a
+        // Steep-slope SANITY: a region's terrain is often less steep than the ~31 deg (atan 0.6)
+        // friction threshold, so slide-when-it-should cannot be tested on terrain. Instead drop a
         // box onto a STATIC ramp prim tilted to several angles (no terrain modification). A friction-0.6 box
         // should STAY at <=30 deg and SLIDE above ~31 deg. If Jolt does that, it is friction-modelling
-        // correctly (not pinning boxes), which locks the "Jolt is more correct than BulletSim on slopes" call.
+        // correctly (not pinning boxes).
         private void ParityRampTest(Scene scene)
         {
             string engine = scene.PhysicsScene != null ? scene.PhysicsScene.EngineType : "unknown";

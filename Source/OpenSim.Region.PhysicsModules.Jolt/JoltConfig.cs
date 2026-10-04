@@ -1,7 +1,14 @@
-// Legion Grid - the [Jolt] config section (JOLT-5, audit J-8, J-9, S-4c).
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+// The [Jolt] config section.
 //
 // Every knob the module used to hardcode, read once in Initialise. The rule: every default reproduces the
-// pre-JOLT-5 behaviour exactly (PhysicsBackendSettings.Default + CollisionSteps 6 + the MaxBodies area rule +
+// module's built-in behaviour exactly (PhysicsBackendSettings.Default + CollisionSteps 6 + the MaxBodies area rule +
 // today's step-buffer caps). Scaling the pair/contact caps with region area is opt-in (ScaleCapsWithArea).
 // Invalid values (unparsable, non-finite, out of range) warn and fall back to the default - a typo in the INI
 // must never take a region down or silently change physics.
@@ -19,12 +26,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
     {
         internal const string Section = "Jolt";
 
-        // Decision #3: 65536 bodies per standard 256 x 256 m region, scaled by AREA for varregions.
+        // 65536 bodies per standard 256 x 256 m region, scaled by AREA for varregions.
         internal const int BaseMaxBodies = 65536;
         internal const long BaseArea = 256L * 256L;
 
         public float Gravity = -9.80665f;          // world Z gravity, m/s^2
-        public int CollisionSteps = 6;             // M6.5 finding #3: solver sub-steps inside Update
+        public int CollisionSteps = 6;             // solver sub-steps inside Update
         public int PositionIterations = 2;
         public int VelocityIterations = 10;
         public int ThreadCount = 0;                // 0 = ProcessorCount - 1 (the shared pool; first region wins)
@@ -38,7 +45,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public int ContactBufferMax = 0;           // 0 = the backend's contact ring capacity
         public float AvatarJumpSpeed = 4.0f;       // CharacterDesc.JumpSpeed, m/s
         public float CapacityLogIntervalSeconds = 10f;
-        public int JobPools = 1;                   // JOLT-7: job pools, one physics update at a time each; splits ThreadCount
+        public int JobPools = 1;                   // job pools, one physics update at a time each; splits ThreadCount
 
         /// <summary>Parse [Jolt]. Missing keys keep their defaults; each invalid one adds a line to <paramref name="warnings"/>.</summary>
         internal static JoltConfig FromConfig(IConfigSource source, List<string> warnings)
@@ -93,7 +100,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// <summary>How many worker threads these settings ask the shared pool for (the backend's own rule).</summary>
         internal int RequestedThreadCount => JoltPhysicsBackend.ResolveThreadCount(ThreadCount, DeterministicMode);
 
-        /// <summary>JOLT-7: the workers each job pool gets when RequestedThreadCount is split across JobPools.</summary>
+        /// <summary>The workers each job pool gets when RequestedThreadCount is split across JobPools.</summary>
         internal int RequestedThreadsPerPool => JoltPhysicsBackend.ResolveThreadsPerPool(RequestedThreadCount, JobPools);
 
         // ---------------------------------------------------------------- parsing (invariant culture, never throws)

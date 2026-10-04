@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
@@ -7,7 +14,7 @@ using Xunit;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// JOLT-5 (audit J-8, J-9, S-4c). The [Jolt] section: an empty config reproduces the pre-JOLT-5 constants and
+/// The [Jolt] section: an empty config reproduces the built-in constants and
 /// AddRegion settings exactly, every key parses, invalid values fall back with a warning, and area scaling of the
 /// pair/contact caps is opt-in.
 /// </summary>
@@ -22,7 +29,7 @@ public class JoltConfigTests
         return src;
     }
 
-    /// <summary>What AddRegion built before JOLT-5: Default, MaxBodies by the area rule, CollisionSteps 6.</summary>
+    /// <summary>What AddRegion builds with no [Jolt] settings: Default, MaxBodies by the area rule, CollisionSteps 6.</summary>
     private static PhysicsBackendSettings Today(uint sx, uint sy)
     {
         var s = PhysicsBackendSettings.Default;
@@ -155,7 +162,7 @@ public class JoltConfigTests
             Assert.Equal(1, b.JobPools);
         }
 
-        // The key it replaced never shipped and is not read.
+        // MaxConcurrentUpdates is not a [Jolt] key and is not read.
         w.Clear();
         Assert.Equal(1, JoltConfig.FromConfig(Source(("MaxConcurrentUpdates", "4")), w).JobPools);
         Assert.Empty(w);
@@ -180,7 +187,7 @@ public class JoltConfigTests
         Assert.Equal(Math.Max(1, cpus / pools), all.RequestedThreadsPerPool);
         Assert.True(all.RequestedThreadsPerPool * pools <= cpus || cpus < pools);
 
-        // One pool is exactly the old single pool.
+        // One pool holds every thread.
         if (pools == 1)
             Assert.Equal(all.RequestedThreadCount, all.RequestedThreadsPerPool);
 

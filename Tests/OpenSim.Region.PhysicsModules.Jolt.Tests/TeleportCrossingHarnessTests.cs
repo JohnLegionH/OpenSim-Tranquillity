@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using System.Collections.Concurrent;
 using System.Numerics;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
@@ -7,12 +14,12 @@ using Xunit.Abstractions;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// PHYS-2. The harness PHYS-1 could not have had.
+/// A harness for TempAllocator lock discipline during inter-region crossings.
 ///
 /// <para><b>Why it did not exist before.</b> The failure is <c>std::abort()</c> inside joltc when its LIFO
 /// TempAllocator is freed out of order (<c>Jolt/Core/TempAllocator.h:83-84</c>). An abort takes the process
-/// down: no managed exception, no stack, no failing assertion — PHYS-1 had to be diagnosed from a Windows
-/// event id and two console lines, and the fix could only be argued from source. This harness replaces the
+/// down: no managed exception, no stack, no failing assertion — only a Windows
+/// event id and two console lines, so a fix could only be argued from source. This harness replaces the
 /// abort with a catchable exception by asking, at every managed call site that reaches the allocator, whether
 /// the calling thread holds that backend's <c>_simLock</c>
 /// (<c>JoltPhysicsBackend.AllocatorOwnerCheck</c> / <c>RequireSimLock</c>).</para>
@@ -30,7 +37,7 @@ public class TeleportCrossingHarnessTests
     public TeleportCrossingHarnessTests(ITestOutputHelper output) { _out = output; }
 
     private const int StepHz = 11;
-    private const int AttachmentsPerArrival = 14;   // the 2026-09-05 crossing re-added ~14
+    private const int AttachmentsPerArrival = 14;   // about what a crossing re-adds for a typical avatar
 
     private static PhysicsBackendSettings Settings() => new()
     {
@@ -55,7 +62,7 @@ public class TeleportCrossingHarnessTests
         MaxSlopeAngle = 1.0f,
         StepHeight = 0.45f,
         PushStrength = 1f,
-        // PHYS-2c: without this the Persist gate suppresses the standing-on-the-floor contact that fires
+        // Without this the Persist gate suppresses the standing-on-the-floor contact that fires
         // every step, and OnContactPersisted - the callback most likely to be inside ExtendedUpdate when
         // something else happens - never runs.
         WantsContactEvents = true,
@@ -75,8 +82,8 @@ public class TeleportCrossingHarnessTests
         private volatile bool _run = true;
         public long Steps;
 
-        /// <summary>PHYS-2c: contacts drained from Step, counted by kind. A harness whose callbacks never
-        /// fire proves nothing - that was the PHYS-2 trap and this is how it stays closed.</summary>
+        /// <summary>Contacts drained from Step, counted by kind. A harness whose callbacks never
+        /// fire proves nothing - these counts are how the test checks that they did.</summary>
         public long BodyContactsBegin, BodyContactsPersist, CharacterContacts;
 
         public Region(string name)
@@ -85,7 +92,7 @@ public class TeleportCrossingHarnessTests
 
             // A floor, so the arriving character LANDS on something and keeps touching it. Without this the
             // characters fall through an empty world for ever and CharacterVirtual::OnContact* never fires -
-            // which is exactly why the PHYS-2 harness ran ExtendedUpdate millions of times for nothing.
+            // and ExtendedUpdate could run millions of times without exercising a single callback.
             var ground = Backend.CreateBoxShape(new Vector3(64f, 64f, 1f));
             Backend.CreateBody(new BodyDesc
             {
@@ -108,11 +115,11 @@ public class TeleportCrossingHarnessTests
             var chars = new CharacterState[16];
             var contacts = new ContactReport[256];
             // NOT a real 11 Hz heartbeat: this spins. A sleeping loop steps ~11 times a second and the
-            // crossings, which take microseconds, simply never land inside an Update - the first version of
-            // this harness ran 1000 crossings against ONE step per region and "passed" having overlapped
+            // crossings, which take microseconds, simply never land inside an Update - 1000 crossings can run
+            // against ONE step per region and "pass" having overlapped
             // nothing. Spinning keeps each backend inside _system.Update as much of the time as possible,
             // which is the only way a crossing call can contend with one. The step size stays 1/11 s so the
-            // simulation itself behaves like the live region.
+            // simulation itself behaves like a running region.
             while (_run)
             {
                 try
@@ -152,8 +159,8 @@ public class TeleportCrossingHarnessTests
         try
         {
             // Put the resident back where the arrival lands. Two capsules 0.35 apart with 0.30 radii overlap,
-            // so the controller shoves them apart within a step or two and avatar-vs-avatar contact stops; the
-            // first run of this harness got 22 such callbacks in a thousand crossings for exactly that reason.
+            // so the controller shoves them apart within a step or two and avatar-vs-avatar contact stops; without
+            // re-grounding a thousand crossings give only a couple of dozen such callbacks.
             // Re-grounding each crossing keeps the pair genuinely in contact.
             if (resident.Value != 0)
                 arriving.Backend.ReGroundCharacter(resident, Standing(128.35f, 128f));
@@ -162,12 +169,12 @@ public class TeleportCrossingHarnessTests
             arrived = arriving.Backend.CreateCharacter(Avatar(Standing(), 0x515A));
 
             // 2. ...and the scene thread sets its size immediately after, as JoltCharacter.Size does when the
-            //    avatar's appearance is applied on arrival. This is the PHYS-1 call.
+            //    avatar's appearance is applied on arrival. This is the call that must hold _simLock.
             arriving.Backend.SetCharacterShape(arrived, 0.48f, 0.31f);
 
             // 3. attachment rez: a handful of bodies into the arriving region's broadphase, then removed
             //    again so a thousand crossings do not exhaust MaxBodies. Both halves mutate the broadphase
-            //    that Update is walking, which is the other half of the live sequence.
+            //    that Update is walking, which is the other half of a real arrival's sequence.
             var shape = arriving.Backend.CreateBoxShape(new Vector3(0.1f, 0.1f, 0.1f));
             var rezzed = new List<BodyId>(AttachmentsPerArrival);
             for (var i = 0; i < AttachmentsPerArrival; i++)
@@ -191,7 +198,7 @@ public class TeleportCrossingHarnessTests
             foreach (var b in rezzed)
                 arriving.Backend.RemoveBody(b);
 
-            // 4. and the departing region drops its copy - "Making Truly Bazar a child agent".
+            // 4. and the departing region drops its copy - the avatar becomes a child agent there.
             if (leaving.Value != 0)
                 departing.Backend.RemoveCharacter(leaving);
 
@@ -204,15 +211,19 @@ public class TeleportCrossingHarnessTests
     /// The harness proper. Runs the crossing repeatedly with both regions stepping, and fails naming the API
     /// and the region if any allocator-touching call is made without that backend's <c>_simLock</c>.
     /// </summary>
+#if DEBUG
     [Theory]
+#else
+    [Theory(Skip = "Needs JoltPhysicsBackend.AllocatorOwnerCheck, which is on by default only in Debug builds")]
+#endif
     [InlineData(1000)]
     public void A_thousand_crossings_never_touch_a_TempAllocator_unlocked(int crossings)
     {
         Assert.True(JoltPhysicsBackend.AllocatorOwnerCheck,
             "the harness is meaningless without the owner check; tests build DEBUG, where it is on by default");
 
-        using var ebony = new Region("Ebony");
-        using var transylvania = new Region("Transylvania");
+        using var regionA = new Region("Region A");
+        using var regionB = new Region("Region B");
 
         // A resident avatar standing where the arrival lands, in each region. Two CharacterVirtuals inside one
         // backend's CharacterVsCharacterCollisionSimple, overlapping, is the only way OnCharacterContactAdded /
@@ -220,48 +231,48 @@ public class TeleportCrossingHarnessTests
         // inside ExtendedUpdate.
         var residents = new[]
         {
-            ebony.Backend.CreateCharacter(Avatar(Standing(128.35f, 128f), 0x9E51)),
-            transylvania.Backend.CreateCharacter(Avatar(Standing(128.35f, 128f), 0x9E52)),
+            regionA.Backend.CreateCharacter(Avatar(Standing(128.35f, 128f), 0x9E51)),
+            regionB.Backend.CreateCharacter(Avatar(Standing(128.35f, 128f), 0x9E52)),
         };
 
         var faults = new List<string>();
-        CharacterId inEbony = default, inTransylvania = default;
+        CharacterId inRegionA = default, inRegionB = default;
 
         for (var i = 0; i < crossings && faults.Count == 0; i++)
         {
             // alternate direction, as a resident hopping back and forth does
-            var toTrans = (i & 1) == 0;
-            var arriving = toTrans ? transylvania : ebony;
-            var departing = toTrans ? ebony : transylvania;
-            var leaving = toTrans ? inEbony : inTransylvania;
+            var toRegionB = (i & 1) == 0;
+            var arriving = toRegionB ? regionB : regionA;
+            var departing = toRegionB ? regionA : regionB;
+            var leaving = toRegionB ? inRegionA : inRegionB;
 
-            var ex = Cross(arriving, departing, leaving, toTrans ? residents[1] : residents[0], out var arrived);
+            var ex = Cross(arriving, departing, leaving, toRegionB ? residents[1] : residents[0], out var arrived);
             if (ex is not null) faults.Add($"crossing {i}: {ex.GetType().Name}: {ex.Message}");
 
-            if (toTrans) { inTransylvania = arrived; inEbony = default; }
-            else { inEbony = arrived; inTransylvania = default; }
+            if (toRegionB) { inRegionB = arrived; inRegionA = default; }
+            else { inRegionA = arrived; inRegionB = default; }
         }
 
-        foreach (var r in new[] { ebony, transylvania })
+        foreach (var r in new[] { regionA, regionB })
             while (r.Faults.TryDequeue(out var ex))
                 faults.Add($"step thread: {ex.GetType().Name}: {ex.Message}");
 
-        _out.WriteLine($"crossings={crossings} steps: Ebony={ebony.Steps} Transylvania={transylvania.Steps}");
-        foreach (var (n, r) in new[] { ("Ebony", ebony), ("Transylvania", transylvania) })
+        _out.WriteLine($"crossings={crossings} steps: Region A={regionA.Steps} Region B={regionB.Steps}");
+        foreach (var (n, r) in new[] { ("Region A", regionA), ("Region B", regionB) })
             _out.WriteLine($"  {n}: body-begin={r.BodyContactsBegin} body-persist={r.BodyContactsPersist} character-character={r.CharacterContacts}");
         Assert.True(faults.Count == 0, string.Join("\n", faults.Take(5)));
 
-        // The result is worthless unless both regions really were stepping throughout. The first version of
-        // this harness slept between steps and managed ONE step per region across a thousand crossings; it
-        // passed, and it had overlapped nothing. Demand at least one step per crossing on each side.
-        Assert.True(ebony.Steps >= crossings, $"Ebony stepped {ebony.Steps} times for {crossings} crossings - not contended");
-        Assert.True(transylvania.Steps >= crossings, $"Transylvania stepped {transylvania.Steps} times for {crossings} crossings - not contended");
+        // The result is worthless unless both regions really were stepping throughout. A harness that
+        // sleeps between steps can manage ONE step per region across a thousand crossings; it
+        // passes, and it has overlapped nothing. Demand at least one step per crossing on each side.
+        Assert.True(regionA.Steps >= crossings, $"Region A stepped {regionA.Steps} times for {crossings} crossings - not contended");
+        Assert.True(regionB.Steps >= crossings, $"Region B stepped {regionB.Steps} times for {crossings} crossings - not contended");
 
-        // PHYS-2c: and the callbacks must actually have run. ExtendedUpdate re-entering managed code is the
-        // whole hypothesis; a harness where OnContact* never fires is the PHYS-2 trap wearing a new hat.
-        var begin = ebony.BodyContactsBegin + transylvania.BodyContactsBegin;
-        var persist = ebony.BodyContactsPersist + transylvania.BodyContactsPersist;
-        var charChar = ebony.CharacterContacts + transylvania.CharacterContacts;
+        // And the callbacks must actually have run. ExtendedUpdate re-entering managed code is the
+        // whole hypothesis; a harness where OnContact* never fires tests nothing.
+        var begin = regionA.BodyContactsBegin + regionB.BodyContactsBegin;
+        var persist = regionA.BodyContactsPersist + regionB.BodyContactsPersist;
+        var charChar = regionA.CharacterContacts + regionB.CharacterContacts;
         Assert.True(begin > 0, "CharacterVirtual::OnContactAdded never fired - the avatars never touched anything");
         Assert.True(persist > 0, "CharacterVirtual::OnContactPersisted never fired - nothing stayed in contact");
         Assert.True(charChar > 0, "OnCharacterContactAdded/Persisted never fired - no avatar-vs-avatar contact");
@@ -271,7 +282,11 @@ public class TeleportCrossingHarnessTests
     /// The harness's own control: with the check on, a deliberate unlocked call into an allocator-touching API
     /// must be caught. Without this, a harness that reproduces nothing proves nothing.
     /// </summary>
+#if DEBUG
     [Fact]
+#else
+    [Fact(Skip = "Needs JoltPhysicsBackend.AllocatorOwnerCheck, which is on by default only in Debug builds")]
+#endif
     public void The_owner_check_catches_an_unlocked_allocator_call()
     {
         using var region = new Region("Control");
@@ -280,7 +295,7 @@ public class TeleportCrossingHarnessTests
         var ex = Record.Exception(() => region.Backend.SetCharacterShapeUnlockedForTest(id, 0.5f, 0.3f));
 
         Assert.IsType<InvalidOperationException>(ex);
-        Assert.Contains("PHYS-2", ex.Message);
+        Assert.Contains("does not hold _simLock", ex.Message);
         Assert.Contains("SetShape", ex.Message);
     }
 }

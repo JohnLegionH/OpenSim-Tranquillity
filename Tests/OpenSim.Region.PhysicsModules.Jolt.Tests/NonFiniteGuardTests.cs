@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
@@ -9,7 +16,7 @@ using OmvQuaternion = OpenMetaverse.Quaternion;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// JOLT-2 (audit S-2). The non-finite firewall at the physics seam: backend mutators drop a NaN/Inf call and count
+/// The non-finite firewall at the physics seam: backend mutators drop a NaN/Inf call and count
 /// it, creators throw, queries return nothing, and the OpenSim-facing actors keep their previous value.
 ///
 /// <para>Red-run exclusions (they put NaN into the broadphase or a native shape before the fix, which can take the

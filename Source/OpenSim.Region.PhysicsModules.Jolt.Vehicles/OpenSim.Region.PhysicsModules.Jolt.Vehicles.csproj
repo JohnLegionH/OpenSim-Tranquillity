@@ -1,27 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    OpenSim.Region.PhysicsModules.Jolt.Vehicles — the backend-agnostic Halcyon vehicle controller. SLICE 3 of the Jolt port.
-
-    Ported BYTE-FOR-BYTE from Legion's donor tree; only THIS csproj is rewritten to RC conventions.
-    The vehicle math is extracted VERBATIM from BulletSim's LegionVehicleDynamics.cs (itself the
-    faithful Halcyon port), so BulletSim and Jolt share ONE source of truth for vehicle FEEL. The
-    controller reads/writes physics ONLY through IVehicleBody — it links NEITHER OpenSim NOR any
-    physics engine.
-
-    Its only dependency is the OpenMetaverse math types (Vector3/Quaternion/Utils). The RC provides
-    those GLOBALLY via Directory.Build.props (vendored OpenMetaverse.Types); Legion referenced the
-    same library under its old name "OpenMetaverseTypes", so that HintPath simply drops away here.
-
-    DEPENDENCY GRAPH (no cycle): the Jolt MODULE consumes BOTH OpenSim.Region.PhysicsModules.Jolt.Vehicles and OpenSim.Region.PhysicsModules.Jolt.Backend;
-    Vehicles and Physics are INDEPENDENT siblings (Vehicles does NOT reference Physics; Physics does NOT
-    reference Vehicles). Slice 4's JoltVehicleBody (in the module) implements IVehicleBody to bridge the
-    controller onto the backend.
-
-    ImplicitUsings disabled to match the donor (files carry explicit usings).
+    The vehicle controller, the InWorldz Halcyon vehicle dynamics behind a small IVehicleBody seam. It
+    references neither OpenSim nor a physics engine, only the OpenMetaverse math types; the Jolt module
+    implements IVehicleBody (JoltVehicleBody) on top of the backend.
   -->
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
     <OutputType>Library</OutputType>
     <AssemblyName>OpenSim.Region.PhysicsModules.Jolt.Vehicles</AssemblyName>
     <RootNamespace>OpenSim.Region.PhysicsModules.Jolt.Vehicles</RootNamespace>

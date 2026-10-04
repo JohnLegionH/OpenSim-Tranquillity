@@ -1,4 +1,11 @@
-// Legion Grid - the per-frame collision set for the Jolt module (M7 Task 3; extracted by JOLT-4).
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+// The per-frame collision set for the Jolt module.
 //
 // OpenSim's SceneObjectPart.PhysicsCollision diffs each CollisionEventUpdate against the previous one to fire
 // collision_start / collision / collision_end. So a subscribed prim gets ONE update per frame listing what it
@@ -24,7 +31,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         internal bool IsTracked(uint localId) => _collidedLastFrame.Contains(localId);
 
-        // JOLT-6 (C-4): Top Colliders, ubODE's model - a prim's CollisionScore is the number of Begin/Persist
+        // Top Colliders, ubODE's model - a prim's CollisionScore is the number of Begin/Persist
         // contact reports that named it this frame, counted BEFORE the subscription filter, and reset every frame.
         // _prevScored is last frame's scored set, so the module can zero the prims that dropped out.
         private readonly Dictionary<uint, int> _scores = new Dictionary<uint, int>();
@@ -83,7 +90,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             _ended.Clear();
 
-            // JOLT-4 (I-2): the contact buffer overflowed, so absence this frame proves nothing - the contact may
+            // The contact buffer overflowed, so absence this frame proves nothing - the contact may
             // simply not have fit. End nobody (no false collision_end, and no false collision_start next frame
             // when the contact reappears); keep last frame's prims tracked alongside this frame's.
             if (contactsOverflowed)

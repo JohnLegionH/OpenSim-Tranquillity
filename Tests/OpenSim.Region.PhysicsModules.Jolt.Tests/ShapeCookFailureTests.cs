@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using System.Numerics;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
 using Xunit;
@@ -5,7 +12,7 @@ using Xunit;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// JOLT-1 (audit S-1, S-7). joltc returns nullptr when a hull or mesh cook fails and JoltPhysicsSharp wraps it in
+/// joltc returns nullptr when a hull or mesh cook fails and JoltPhysicsSharp wraps it in
 /// a Shape whose Handle is 0. Before the fix that shape was registered and reached native as null. A failed cook
 /// must now surface as a managed <see cref="ArgumentException"/> - the ShapeId never exists, so it can never reach
 /// CreateBody. None of the failing-cook tests below pass a ShapeId on to CreateBody, red or green.
@@ -14,8 +21,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 public class ShapeCookFailureTests
 {
     /// <summary>
-    /// Measured 2026-09-23: Jolt 5.4.0 does NOT fail this cook - 9 coplanar points build a flat hull. So the
-    /// assertion is the invariant JOLT-1 protects rather than a throw: the result is either an exception or a
+    /// Measured: Jolt 5.4.0 does NOT fail this cook - 9 coplanar points build a flat hull. So the
+    /// assertion is the invariant this guard protects rather than a throw: the result is either an exception or a
     /// shape CreateBody accepts, never a dead (Handle 0) shape.
     /// </summary>
     [Fact]

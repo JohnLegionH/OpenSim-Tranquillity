@@ -1,30 +1,29 @@
+# Copyright (c) 2026 Legion Builds
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 # =====================================================================================
-# assert-patched-joltc.ps1  -  POST-PUBLISH / PRE-BOOT guard for the Jolt physics module.
+# assert-patched-joltc.ps1 - checks that a build or publish output carries only the
+# patched joltc native the Jolt physics module needs.
 #
-# The per-instance _simLock in the Jolt backend REQUIRES the PATCHED joltc native
-# (per-system TempAllocator). Stock JoltPhysics.Native 1.0.4 shares ONE TempAllocator
-# across all physics systems, so with per-instance locks it aborts the moment two
-# regions step at once ("TempAllocator: Freeing in the wrong order" -> std::abort()).
+# The per-instance _simLock in the Jolt backend requires the patched joltc (one
+# TempAllocator per physics system). Stock JoltPhysics.Native 1.0.4 shares one
+# TempAllocator across all physics systems, so with per-instance locks it aborts the
+# moment two regions step at once ("TempAllocator: Freeing in the wrong order" ->
+# std::abort()).
 #
-# ------------------------------------------------------------------------------------
-# PHYS-4b, 2026-09-06: THIS GUARD PASSED WHILE THE GRID WAS CRASHING.
+# A joltc.dll in the application directory is loaded in preference to one under
+# runtimes\, so checking only the runtimes\ copy can pass while a stock copy at the root
+# is the one that loads. The script therefore checks EVERY joltc*.dll under the
+# directory, root first, and fails if ANY of them is not the patched build. Order
+# matters for the message, not the verdict.
 #
-# The previous version built a candidate list with runtimes\win-x64\native\joltc.dll
-# FIRST and the application-directory copy second, then took `Select-Object -First 1`.
-# So it hashed the patched file under runtimes\, printed green, and never looked at the
-# root - which is the file the LOADER PREFERS and the one that was actually stock. Five
-# process aborts (2x 2026-09-05, 3x 2026-09-06) happened with this guard reporting OK.
-#
-# The rule now: check EVERY joltc*.dll under the deploy root, ROOT FIRST, and fail if
-# ANY of them is not the patched build. Order matters for the message, not the verdict -
-# one bad copy anywhere fails the run, because which copy the loader picks depends on
-# paths this script does not control.
-# ------------------------------------------------------------------------------------
-#
-# Provenance + rebuild recipe: legion-grid-source/native/joltc/README.md.
+# Provenance and rebuild recipe: native/joltc/README.md.
 #
 # Usage:
-#     powershell -File assert-patched-joltc.ps1 -PublishDir "D:\legiongrid\regionserver"
+#     powershell -File assert-patched-joltc.ps1 -PublishDir "<output or publish directory>"
 #     powershell -File assert-patched-joltc.ps1 -JoltcPath  "path\to\joltc.dll"
 # Exit 0 = every copy is the patched build. Exit 1 = any copy is stock/unknown, or none found.
 # =====================================================================================
@@ -113,6 +112,6 @@ Write-Host ("JOLTC GUARD FAIL: {0} copy/copies are not the patched build." -f $b
 Write-Host "The per-instance _simLock requires the PATCHED native (per-system TempAllocator);" -ForegroundColor Red
 Write-Host "stock joltc shares ONE allocator across regions and aborts the process under load." -ForegroundColor Red
 Write-Host "A DLL in the application directory is loaded in preference to one under runtimes\," -ForegroundColor Yellow
-Write-Host "so a stock copy at the root defeats a patched copy beneath it - that is PHYS-4." -ForegroundColor Yellow
+Write-Host "so a stock copy at the root defeats a patched copy beneath it." -ForegroundColor Yellow
 Write-Host "Restore from runtimes/win-x64/native/joltc.dll (SHA 16AF7638...)." -ForegroundColor Yellow
 exit 1

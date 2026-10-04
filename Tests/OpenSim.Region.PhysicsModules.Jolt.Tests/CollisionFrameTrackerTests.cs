@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using OpenSim.Region.PhysicsModules.SharedBase;
 using Xunit;
 using OmvVector3 = OpenMetaverse.Vector3;
@@ -5,7 +12,7 @@ using OmvVector3 = OpenMetaverse.Vector3;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// JOLT-4 (audit I-2). The accumulate / hold / collision_end decision, without a Scene. On a frame whose contact
+/// The accumulate / hold / collision_end decision, without a Scene. On a frame whose contact
 /// buffer overflowed, absence proves nothing - the contact may simply not have fit - so a prim that collided last
 /// frame gets no empty update (no false collision_end) and stays tracked for the next frame.
 /// </summary>
@@ -59,7 +66,7 @@ public class CollisionFrameTrackerTests
 }
 
 /// <summary>
-/// JOLT-6 (audit C-4). Top Colliders, ubODE's model: CollisionScore = the Begin/Persist contact reports that named
+/// Top Colliders, ubODE's model: CollisionScore = the Begin/Persist contact reports that named
 /// the prim this frame (counted before the subscription filter), reset every frame; the top 25 by score.
 /// </summary>
 public class TopCollidersTests

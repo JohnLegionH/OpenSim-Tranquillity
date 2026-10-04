@@ -1,9 +1,16 @@
-// Legion Grid - an avatar as a Jolt CharacterVirtual (M6.5).
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+// An avatar as a Jolt CharacterVirtual.
 //
 // This is the PhysicsActor OpenSim hands back from AddAvatar. It is backed by a Jolt CharacterVirtual,
 // NOT a solver rigid body: the movement layer keeps control, so stair-stepping / slope handling /
-// moving-platform support come from the controller (M3), it collides against dynamic bodies (M3.5),
-// and it carries a kinematic query marker so llCastRay(agent) can find it (M4.5). The backend already
+// moving-platform support come from the controller, it collides against dynamic bodies,
+// and it carries a kinematic query marker so llCastRay(agent) can find it. The backend already
 // implements all of that; this class is the OpenSim-facing wiring.
 //
 // Drive (ScenePresence -> here): TargetVelocity / Velocity (walk/run intent), Flying (gravity on/off),
@@ -11,7 +18,7 @@
 // SetCharacterMovement / SetCharacterTransform.
 // Drain (here -> ScenePresence): ApplyCharacterState, called once per Step from the scene's character
 // drain, writes back Position/Velocity + ground state and fires the terse update so the viewer sees
-// smooth movement - the avatar equivalent of JoltPrim.ApplyStepState (the 6.4 body drain).
+// smooth movement - the avatar equivalent of JoltPrim.ApplyStepState (the body drain).
 //
 // Types: PhysicsActor speaks OpenMetaverse.Vector3/Quaternion (unqualified here); the backend speaks
 // System.Numerics (SVector3/SQuaternion).
@@ -49,14 +56,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         private readonly float _feetOffset;   // capsule-centre -> visual feet gap; seats the avatar ON ground
 
-        // Every M3 tuning knob is held here so feel is a knob-turning problem, not an architecture one.
+        // Every controller tuning knob is held here so feel is a knob-turning problem, not an architecture one.
         private float _capsuleHalfHeight;   // EXCLUDING the caps (Jolt convention)
         private float _capsuleRadius;
         private readonly float _mass = CharacterDesc.Default.Mass;
 
         private int _subscribedMs;
 
-        // JOLT-2: this avatar's last non-finite-rejection log line (NonFiniteGuard rate limit, one per 10 s).
+        // This avatar's last non-finite-rejection log line (NonFiniteGuard rate limit, one per 10 s).
         private long _nonFiniteLogTicks;
 
         // Cached ground state from the last drain, surfaced by `jolt avatarstatus`.
@@ -123,13 +130,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             desc.CapsuleHalfHeight = _capsuleHalfHeight;
             desc.CapsuleRadius = _capsuleRadius;
             desc.Mass = _mass;
-            desc.JumpSpeed = _module.AvatarJumpSpeed;   // JOLT-5: [Jolt] AvatarJumpSpeed (default 4.0 = CharacterDesc.Default)
+            desc.JumpSpeed = _module.AvatarJumpSpeed;   // [Jolt] AvatarJumpSpeed (default 4.0 = CharacterDesc.Default)
             desc.WantsContactEvents = _subscribedMs > 0;
-            desc.UserData = LocalID;   // echoed in every query hit / drain - the M4.5 query-marker identity
+            desc.UserData = LocalID;   // echoed in every query hit / drain - the query-marker identity
 
             _character = _backend.CreateCharacter(desc);
 
-            // No off-thread activation dance is needed here (unlike the physical prim of 6.4): CreateCharacter
+            // No off-thread activation dance is needed here (unlike a physical prim): CreateCharacter
             // adds the controller to _characterList UNDER _characterGate, and Step iterates that same list
             // under the same lock, so the avatar is stepped from the very next frame. The physical BODY needed
             // an explicit ActivateBody only because the step-thread-owned active-set is fed through a queue.
@@ -306,12 +313,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         public override bool SetAlwaysRun { get => _setAlwaysRun; set => _setAlwaysRun = value; }
 
-        // Collision-event subscription: gates Persist forwarding (M6.6); the window is stored now.
+        // Collision-event subscription: gates Persist forwarding; the window is stored.
         public override void SubscribeEvents(int ms) { _subscribedMs = ms; }
         public override void UnSubscribeEvents() { _subscribedMs = 0; }
         public override bool SubscribedEvents() => _subscribedMs > 0;
 
-        // ---- inert this slice (the controller owns velocity; forces/vehicles/PID are M6.6+) ----
+        // ---- inert for an avatar (the controller owns velocity; no forces / vehicles / PID) ----
         public override Vector3 RotationalVelocity { get => Vector3.Zero; set { } }
         public override Vector3 Torque { get => Vector3.Zero; set { } }
         public override Vector3 Force { get => Vector3.Zero; set { } }

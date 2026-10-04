@@ -1,52 +1,50 @@
-# Patched joltc.dll — per-system TempAllocator
+# Patched joltc - one TempAllocator per physics system
 
-Legion's Jolt physics REQUIRES this patched native. The stock NuGet
-`JoltPhysics.Native 1.0.4` joltc.dll supplies ONE process-global
-`TempAllocatorImpl` (a LIFO stack, not thread-safe) to every physics system.
-With multiple regions stepping in parallel that shared scratch produces
-`TempAllocator: Freeing in the wrong order` → `std::abort()` (proven on
-Legion, 2026-08-02). The managed backend (`JoltPhysicsBackend._simLock`,
-per-INSTANCE since 2026-08-03) relies on each `JPH_PhysicsSystem` owning its
-own allocator — **stock joltc.dll + instance locks = crashes return.**
+The Jolt physics module (`Source/OpenSim.Region.PhysicsModules.Jolt`) needs a patched build of
+joltc, the C API over Jolt Physics that JoltPhysicsSharp binds to.
 
-`deploy-jolt-legion.ps1` asserts the live bin's joltc.dll is this build and
-fails loudly otherwise. If a build/restore ever clobbers a bin copy with the
-stock NuGet DLL, restore from `win-x64/joltc.dll` in this directory.
+The stock `JoltPhysics.Native 1.0.4` joltc gives every physics system the same process-global
+`TempAllocatorImpl`. That allocator is a LIFO stack and is not thread-safe. With several regions
+stepping in parallel, their frames interleave on it and Jolt stops the process with
+`TempAllocator: Freeing in the wrong order` and `std::abort()`. The managed backend
+(`JoltPhysicsBackend._simLock`) locks per region, so it relies on each `JPH_PhysicsSystem` owning
+its own allocator. **Stock joltc with per-region locks aborts as soon as two regions step at once.**
 
-## Contents
+## Files
 
 | File | What |
 |---|---|
-| `per-system-tempallocator.patch` | The complete source patch (git diff, applies with `git apply`) |
-| `win-x64/joltc.dll` | The patched build, ready to deploy |
+| `native/joltc/per-system-tempallocator.patch` | The source patch against joltc (a git diff; applies with `git apply`) |
+| `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/win-x64/native/joltc.dll` | The patched build, win-x64 |
+| `Source/OpenSim.Region.PhysicsModules.Jolt/assert-patched-joltc.ps1` | Checks that every `joltc*.dll` in an output or publish directory is the patched build |
 
-Patched `win-x64/joltc.dll` SHA-256:
+The module copies the patched `joltc.dll` to the output root, which is the copy the region server
+loads, and under `runtimes/win-x64/native/`.
+
+Patched win-x64 `joltc.dll`, SHA-256:
 
     16AF76381387DADD7DFA5E10D6E3AD025AB624F22187D7442D1BDB88146743B5
 
-Stock 1.0.4 (the one that must NOT be deployed): `67BECFC7 0CFBDA64 3AB9B75A
-BA895042 900C3E33 9B001080 BA4107E4 929B0910`.
+Stock `JoltPhysics.Native 1.0.4` win-x64 `joltc.dll` (must not be used with this module), SHA-256 begins:
+
+    67BECFC70CFBDA64
+
+Only win-x64 is built at present. A Linux or macOS build of the same patch, placed under
+`runtimes/<rid>/native/`, is what those platforms need.
 
 ## Provenance
 
 - Upstream: https://github.com/amerkoleci/joltc
-- Commit: `1715c5aab834a5bb0c344dc4a11d573ad6f9736d`
-  (2025-10-10, "Improve and add more bindings for HeightFieldShapeSettings")
-  — the exact source of the shipped JoltPhysics.Native **1.0.4** win-x64
-  binary. Established from the packaging repo (amerkoleci/JoltPhysicsSharp @
-  `ba2f3068`, whose vendored `native/win-x64/joltc.dll` is byte-identical to
-  the nupkg's) plus the committed debug PDB (CI workspace `D:\a\joltc\joltc`,
-  Windows SDK 10.0.26100.0) and timestamp correlation; then CONFIRMED by an
-  unpatched rebuild exporting the identical 1086-symbol set.
-- Jolt Physics: **v5.4.0**, pulled automatically by CMake FetchContent
-  (`GIT_TAG v5.4.0` in joltc's CMakeLists.txt — no submodule to manage).
+- Commit: `1715c5aab834a5bb0c344dc4a11d573ad6f9736d` ("Improve and add more bindings for
+  HeightFieldShapeSettings"), the joltc source behind the `JoltPhysics.Native 1.0.4` package that
+  `JoltPhysicsSharp 2.19.1` depends on.
+- Jolt Physics **v5.4.0**, fetched by joltc's CMake (`FetchContent`, `GIT_TAG v5.4.0`).
 
-## What the patch changes (all 7 shared-scratch sites)
+## What the patch changes
 
-Replaces the process-global `s_TempAllocator` (removed entirely) with a
-`TempAllocatorImplWithMallocFallback(8MB)` owned by each `JPH_PhysicsSystem`
-(created in `JPH_PhysicsSystem_Create`, freed in `JPH_PhysicsSystem_Destroy`),
-wired through every consuming site:
+It removes the process-global `s_TempAllocator` and gives each `JPH_PhysicsSystem` its own
+`TempAllocatorImplWithMallocFallback(8 MB)`, created in `JPH_PhysicsSystem_Create` and freed in
+`JPH_PhysicsSystem_Destroy`. Every site that used the global allocator now uses the system's own:
 
 1. `JPH_PhysicsSystem_Update`
 2. `JPH_CharacterVirtual_Update`
@@ -56,39 +54,40 @@ wired through every consuming site:
 6. `JPH_CharacterVirtual_StickToFloor`
 7. `JPH_CharacterVirtual_SetShape`
 
-(Each CharacterVirtual entry point already takes the owning
-`JPH_PhysicsSystem*`, so no extra bookkeeping was needed.)
+Each CharacterVirtual entry point already takes the owning `JPH_PhysicsSystem*`, so no other
+bookkeeping is needed.
 
-**No ABI change**: export names/signatures are untouched — the patched DLL is
-a drop-in for the stock one under JoltPhysicsSharp 2.19.1. This matches
-BulletSim's per-world and InWorldz PhysX's per-PxScene scratch model.
+**No ABI change:** export names and signatures are untouched, so the patched DLL is a drop-in for
+the stock one under JoltPhysicsSharp 2.19.1. This is the same model as BulletSim's per-world
+scratch memory.
 
-## Rebuild from scratch
+Before moving to a newer joltc, check that all seven sites use a per-system allocator there.
 
-Toolchain: Visual Studio 2022 (MSVC v143, C++17), CMake ≥ 3.16, git,
-network access to github.com.
+## Rebuild
+
+Toolchain: Visual Studio 2022 (MSVC v143, C++17), CMake 3.16 or later, git, and network access to
+github.com. In PowerShell, from a working directory of your choice (`joltc-build` below):
 
 ```powershell
-git clone https://github.com/amerkoleci/joltc D:\joltc-build
-git -C D:\joltc-build checkout 1715c5aab834a5bb0c344dc4a11d573ad6f9736d
-git -C D:\joltc-build apply path\to\per-system-tempallocator.patch
+git clone https://github.com/amerkoleci/joltc joltc-build
+git -C joltc-build checkout 1715c5aab834a5bb0c344dc4a11d573ad6f9736d
+git -C joltc-build apply <path to this repository>\native\joltc\per-system-tempallocator.patch
 
-cmake -S "D:\joltc-build" -B "D:\joltc-build\build_win_64" `
+cmake -S joltc-build -B joltc-build\build_win_64 `
       -G "Visual Studio 17 2022" -A x64 `
       -DCMAKE_BUILD_TYPE:String=Distribution -DCMAKE_INSTALL_PREFIX:String="SDK"
-cmake --build "D:\joltc-build\build_win_64" --config Distribution
-# -> D:\joltc-build\build_win_64\bin\Distribution\joltc.dll
+cmake --build joltc-build\build_win_64 --config Distribution
+# -> joltc-build\build_win_64\bin\Distribution\joltc.dll
 ```
 
-(The recipe is exactly upstream CI's `.github/workflows/build.yml` win-x64
-step. Expect benign warnings only: C4530 in `__msvc_ostream.hpp`, LINK C4743
-vftable-size — both present in the unpatched CI build too.)
+These are the commands of upstream's own win-x64 CI step (`.github/workflows/build.yml` at that
+commit).
 
 ## Verify a rebuild
 
-The hash will differ across compiler versions; the ABI check is the export
-set. Dump exports and compare against stock — must be **1086 = 1086 with zero
-differences in either direction**:
+The hash changes with the compiler version, so the ABI check is the export set. Dump the exports
+of the rebuilt DLL and of the stock one and compare them; they must match exactly (1086 exports
+each, no difference in either direction):
 
 ```powershell
 $dumpbin = "${env:ProgramFiles}\Microsoft Visual Studio\2022\*\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe"
@@ -96,40 +95,26 @@ $dumpbin = "${env:ProgramFiles}\Microsoft Visual Studio\2022\*\VC\Tools\MSVC\*\b
 & (Resolve-Path $dumpbin)[0] /exports "$env:USERPROFILE\.nuget\packages\joltphysics.native\1.0.4\runtimes\win-x64\native\joltc.dll"
 ```
 
-Then boot a multi-region grid UNPATCHED-baseline-first if bisecting, or run
-the full stress sequence (multi-region + vehicle + llCastRay load test,
-`docs/jolt-llcastray-loadtest.lsl`) and grep the logs for
-`Freeing in the wrong order|AccessViolation` — expect 0.
+Then run the Jolt test suite (`Tests/OpenSim.Region.PhysicsModules.Jolt.Tests`) with the new DLL in
+place, and on a simulator with several regions check the log for
+`Freeing in the wrong order` or `AccessViolation`: there must be none.
 
-## History / related
+## Known gap: `s_PhysicsSystems` is not locked
 
-- 2026-08-02: shared-allocator crash root-caused; `_simLock` made static as
-  stopgap (serialised all regions).
-- 2026-08-02/03: this patch built + verified (exports 1086/1086, boot, stress
-  test); `_simLock` reverted to per-instance — regions step in parallel.
-- The full investigation trail (commit identification, PDB forensics,
-  verification runs) is in the comment block above `_simLock` in
-  `Source/OpenSim.Region.PhysicsModules.Jolt.Backend/JoltPhysicsBackend.cs`.
-- Upstream later added a TempAllocator C-API + `JPH_PhysicsSystem_Update2`
-  (joltc PR #74, first shipped in JoltPhysics.Native 1.1.0 / Jolt 5.6.0) —
-  but it does NOT cover the six CharacterVirtual sites. If Legion ever
-  upgrades packages, re-audit against this list of 7.
+joltc's global `s_PhysicsSystems` map (`UnorderedMap<PhysicsSystem*, JPH_PhysicsSystem*>`) is
+written in `JPH_PhysicsSystem_Create` and `JPH_PhysicsSystem_Destroy` with no lock. Regions start
+and stop concurrently (a region restart while others run, or several regions booting at once), so
+two threads can change the map at the same time. It is the same kind of fault as the shared
+TempAllocator: native state shared between regions without synchronisation.
 
-## ★ TODO — next time this native is patched: lock `s_PhysicsSystems`
+The fix, next time the native is patched: guard the insert, the erase and any lookup that can race
+them with a mutex (for example a `static std::mutex` taken in `JPH_PhysicsSystem_Create` and
+`JPH_PhysicsSystem_Destroy`), in this patch or a follow-on one. It needs no ABI change.
 
-`s_PhysicsSystems` (the global `UnorderedMap<PhysicsSystem*, JPH_PhysicsSystem*>`)
-is **inserted in `JPH_PhysicsSystem_Create` and erased in `JPH_PhysicsSystem_Destroy`
-with no lock.** In a real grid, region bring-up and teardown are **concurrent**
-(region restarts are routine, and multiple regions boot/stop in parallel), so two
-threads can mutate that map at once — the **same failure family** as the shared-
-TempAllocator bug this patch fixed (unsynchronised shared native state under
-concurrent regions). It has not bitten yet only because Legion ran few regions and
-rarely restarted them under load.
+## Licences
 
-**Fix when next touching the native:** guard the `s_PhysicsSystems` insert/erase
-(and any lookup that races them) with a mutex — e.g. a `static std::mutex` taken in
-`JPH_PhysicsSystem_Create`/`_Destroy`. Fold it into `per-system-tempallocator.patch`
-(or a follow-on patch) and bump the verify step. No ABI change. This is a **known,
-unfixed concurrency gap**, recorded here so it is actioned rather than rediscovered.
-(Managed note: the port's shared-thread-pool fix — see `tranq-migration-plan.md`
-Jolt track, design item #1 — is a separate managed change; this one is native.)
+- joltc: MIT, Copyright (c) Amer Koleci and Contributors. `ThirdPartyLicenses/joltc.txt`.
+- Jolt Physics (compiled into joltc.dll): MIT, Copyright 2021 Jorrit Rouwe.
+  `ThirdPartyLicenses/JoltPhysics.txt`.
+- JoltPhysicsSharp, the managed binding: MIT, Copyright (c) Amer Koleci and Contributors.
+  `ThirdPartyLicenses/JoltPhysicsSharp.txt`.

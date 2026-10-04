@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using System.Diagnostics;
 using System.Reflection;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
@@ -7,7 +14,7 @@ using Xunit.Abstractions;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// JOLT-7 part C. The last backend out disposes the job pools (Dispose -> s_pools[i].System.Dispose()), and a later
+/// The last backend out disposes the job pools (Dispose -> s_pools[i].System.Dispose()), and a later
 /// first region recreates them - so creating and disposing backends one after another must not accumulate Jolt
 /// worker threads (a test host was seen with 857).
 /// </summary>
@@ -48,9 +55,9 @@ public class PoolTeardownTests
     }
 
     // JoltPhysicsSharp 2.19.1: JobSystem never sets NativeObject.OwnsHandle, so JobSystemThreadPool.Dispose skips
-    // JPH_JobSystem_Destroy and the workers are never joined. Measured 2026-09-23 (JOLT-7): OwnsHandle=False on every
+    // JPH_JobSystem_Destroy and the workers are never joined. Measured: OwnsHandle=False on every
     // pool; threads 20 -> 39 -> 58 -> 77 -> 97 -> 116 across five cycles (19 workers each), still 116 after GC.
-    // JOLT-7e: the backend destroys the native job system itself at teardown.
+    // So the backend destroys the native job system itself at teardown.
     [Fact]
     public void Disposing_the_last_backend_joins_the_pool_threads()
     {

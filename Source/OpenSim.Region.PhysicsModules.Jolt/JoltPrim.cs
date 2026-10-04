@@ -1,10 +1,17 @@
-// Legion Grid - a prim as a Jolt rigid body (M6.3).
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+// A prim as a Jolt rigid body.
 //
-// This is the PhysicsActor OpenSim hands back from AddPrimShape. M6.3 Task 1 scope: NON-PHYSICAL
-// prims become STATIC Jolt bodies (collision citizens that never move) via the fixed-shape fast path
-// (box / sphere / cylinder cook straight to a Jolt primitive - no meshmerizer). Physical dynamics
-// (motion updates, forces, mass) are M6.4; collision-event dispatch is M6.6; the IMesher path is
-// M6.3 Task 2. Everything dynamics-related below is therefore deliberately inert.
+// This is the PhysicsActor OpenSim hands back from AddPrimShape. NON-PHYSICAL prims become STATIC
+// Jolt bodies (collision citizens that never move); physical prims become DYNAMIC bodies. Simple
+// box / sphere / cylinder shapes cook straight to a Jolt primitive via the fixed-shape fast path (no
+// meshmerizer); other shapes go through the region's IMesher. PhysicsActor members this class does not
+// support are deliberately inert.
 //
 // Types: PhysicsActor speaks OpenMetaverse.Vector3/Quaternion (unqualified here); the backend speaks
 // System.Numerics (SVector3/SQuaternion). Body orientation is composed in System.Numerics because the
@@ -48,7 +55,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         private ShapeId _shape = ShapeId.Invalid;   // one handle-ref held for the prim's life
         private BodyId _body = BodyId.Invalid;
-        // Assert-buoyancy-on-restart (Balpien): re-assert the vehicle's body params (gravity-cancellation,
+        // Assert buoyancy on restart: re-assert the vehicle's body params (gravity-cancellation,
         // no-sleep, ...) on this many upcoming LIVE StepVehicle frames. The load-path assertion in the
         // VehicleType restore can be lost because the body was created (GravityFactor=1) with its activation
         // DEFERRED to the step thread, which drains the creation settings AFTER the load-thread SetGravityFactor
@@ -63,12 +70,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private SQuaternion _axisCorrection = SQuaternion.Identity;
         private string _shapeKind = "?";
 
-        private int _subscribedMs;   // collision-event subscription window; stored for M6.6, inert now
+        private int _subscribedMs;   // collision-event subscription window; gates Persist forwarding
 
-        // JOLT-2: this prim's last non-finite-rejection log line (NonFiniteGuard rate limit, one per 10 s).
+        // This prim's last non-finite-rejection log line (NonFiniteGuard rate limit, one per 10 s).
         private long _nonFiniteLogTicks;
 
-        // Linksets (M7). OpenSim adds each prim as its own PhysicsActor then calls child.link(root) per
+        // Linksets. OpenSim adds each prim as its own PhysicsActor then calls child.link(root) per
         // child (SceneObjectGroup). We weld the children into the ROOT's body as a StaticCompoundShape:
         // one rigid body whose sub-shapes are the root + each child at its root-relative offset. The root
         // owns _linkChildren + _compoundShape; a welded child holds _linkRoot and has no body of its own.
@@ -93,7 +100,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                    $"hoverHeight={_vehicle.GetFloatParam(VehFloatParam.HoverHeight):0.00}";
         }
 
-        // Vehicles (M8): the backend-agnostic Halcyon controller + its Jolt seam. Created lazily on
+        // Vehicles: the backend-agnostic Halcyon controller + its Jolt seam. Created lazily on
         // the first Vehicle* call; ACTIVE (stepped per-frame, body params applied) only while the
         // controller's type != NONE and the prim is physical. Setting TYPE_NONE destroys it (spec).
         private VehicleController _vehicle;
@@ -137,16 +144,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // transform + velocity. Non-physical -> Static (no MotionProperties: the 65k-prim startup guard).
         // Physical -> Dynamic + StartActive (wakes so it falls); mass computed Volume*Density (Density
         // from BodyDesc.Default = 1000). A body that may go physical is created movable ONLY when it is
-        // physical (delta #15: Static-born can't be promoted - the toggle recreates instead).
+        // physical (a Static-born body can't be promoted - the toggle recreates instead).
         private void CreateBodyInternal()
         {
-            // Cause-A load-time position sanity: never bring a PHYSICAL body up penetrating the terrain. If
+            // Load-time position sanity: never bring a PHYSICAL body up penetrating the terrain. If
             // the saved/current centre is below where it rests on the surface, lift it there and zero its
             // velocity BEFORE the body goes active - so (1) the bad position never drains back + persists, and
-            // (2) the native solver doesn't churn resolving a deep penetration (the ~5.8s reload watchdog
+            // (2) the native solver doesn't churn resolving a deep penetration (a multi-second load
             // stall). Only lifts BELOW-terrain bodies: a resting box or a boat FLOATING on water (above the
-            // surface) is left exactly where it is. Zeroing velocity also stops the post-lift slide (the boat's
-            // 26.5 m horizontal drift). The compound root lifts its whole welded set uniformly (sub-shape
+            // surface) is left exactly where it is. Zeroing velocity also stops the post-lift slide (a boat's
+            // horizontal drift). The compound root lifts its whole welded set uniformly (sub-shape
             // offsets are relative to the body origin), so a linkset keeps its shape.
             if (_isPhysical && _module.TryUnburyPhysicalLoad(_position, _size, out Vector3 lifted))
             {
@@ -168,9 +175,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 desc.Layer = PhysicsLayer.Dynamic;
                 desc.MotionType = BodyMotionType.Dynamic;
                 desc.Mass = 0f;                        // <=0 -> backend computes Volume*Density
-                if (_simDensity > 0f)                  // honour the SOP density (BulletSim mass parity, M6.8)
+                if (_simDensity > 0f)                  // honour the SOP density (BulletSim mass parity)
                     desc.Density = _simDensity * DensityScaleFactor;
-                // STRUCTURAL PORT of BulletSim's taint-deferred creation: create the body INERT (asleep), never
+                // Same structure as BulletSim's taint-deferred creation: create the body INERT (asleep), never
                 // active-on-insert. BulletSim never lets a body be stepped by the engine until ALL taints
                 // (create + MakeDynamic + SetVehicle/SetPhysicalGravity) have drained (ProcessTaints runs
                 // BEFORE PE.PhysicsStep). Our equivalent barrier: create asleep, then ACTIVATE at the TOP of the
@@ -203,7 +210,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
                 // A recreate (reposition/reshape/weld/physical-toggle) makes a FRESH body with default
                 // params; an active vehicle must re-assert its no-friction/no-damping/manual-gravity/
-                // never-sleep setup on it (M8).
+                // never-sleep setup on it.
                 ApplyVehicleBodyParams();
             }
         }
@@ -232,7 +239,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // A loaded physical linkset can sit PENETRATING the terrain; the solver (CollisionSteps=6) then
             // flings a part to a NaN / far-out-of-region position. Pushing that into the SOP makes OpenSim's
             // terse-update path (PhysicsRequestingTerseUpdate) attempt a REGION CROSSING (there is no
-            // neighbour), which spins the heartbeat ~5 s per body - the "all water" boot stall. Drop the
+            // neighbour), which spins the heartbeat ~5 s per body - a boot stall. Drop the
             // glitch update (keep the last good transform) instead of propagating it into a crossing.
             if (!(float.IsFinite(newPos.X) && float.IsFinite(newPos.Y) && float.IsFinite(newPos.Z))
                 || MathF.Abs(newPos.X) > 1e5f || MathF.Abs(newPos.Y) > 1e5f || MathF.Abs(newPos.Z) > 1e5f)
@@ -288,7 +295,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // ---------------------------------------------------------------------
         // PhysicsActor contract. Real state: Position / Orientation / Size (pushed to the body).
-        // The rest is inert this slice (static body).
+        // Members not wired to the body below are inert.
         // ---------------------------------------------------------------------
 
         public override Vector3 Position
@@ -320,7 +327,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // contacts, and the BodyID - it does NOT destroy+recreate. That recreate was the root of the
         // every-frame rebuild loop: OpenSim's SOP->physics sync pushes the transform each frame for a
         // moving object, and the old remove+recreate zeroed a never-settling vehicle's velocity + re-inerted
-        // it every ~30 ms (the plane became uncontrollable / fell through). Only PURE position/orientation
+        // it every ~30 ms (an airplane vehicle became uncontrollable / fell through). Only PURE position/orientation
         // moves reach here (Size/Shape -> Rebuild, physical toggle -> RecreateBody still do full rebuilds).
         //
         // activate:false is deliberate. Jolt's DontActivate leaves an already-active body active (a moving/
@@ -332,12 +339,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (!_body.IsValid) { Build(); return; }
 
-            // Load-time un-bury (restores what the old remove+recreate path did for free). The pre-Fix#1
-            // RepositionBody re-ran CreateBodyInternal, so a load-time Position push carrying a saved
-            // BELOW-terrain position was lifted (TryUnburyPhysicalLoad) before the body went active. In-place
+            // Load-time un-bury. A remove+recreate reposition would re-run CreateBodyInternal, so a load-time
+            // Position push carrying a saved BELOW-terrain position would be lifted (TryUnburyPhysicalLoad)
+            // before the body went active. In-place
             // SetBodyTransform skips CreateBodyInternal, so without this a penetrating load position would be
             // pushed straight into the terrain -> the CollisionSteps=6 solver churns resolving the deep
-            // penetration -> the ~5.8s boot-stall. Re-apply the SAME un-bury here, reusing the shared helper.
+            // penetration -> a multi-second boot stall. Re-apply the SAME un-bury here, reusing the shared helper.
             //
             // GATED on IsRegionLoading ONLY: a LIVE vehicle repositioning (e.g. a car dipping below terrain on
             // a bump mid-drive) must NOT be snapped up - that is real runtime motion, not a bad load position.
@@ -384,7 +391,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 if (_isPhysical == value) return;
                 _isPhysical = value;
-                // Delta #15: a Static-born body has no MotionProperties and CANNOT be promoted
+                // A Static-born body has no MotionProperties and CANNOT be promoted
                 // (SetBodyMotionType throws), so the toggle RECREATES the body. It also re-cooks the shape:
                 // a physical MESH must become a convex hull (mesh Volume=0 -> mass 0), non-physical reverts
                 // to a triangle mesh. Transform + velocity carry over. No taint (Jolt is concurrent).
@@ -407,7 +414,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // The real dynamic mass lives in Jolt (computed Volume x Density at body creation). Read it back
-        // so OpenSim/llGetMass and the A/B parity harness see Jolt's assigned mass (M6.8, closes 6.4 gap).
+        // so OpenSim/llGetMass and the A/B parity harness see Jolt's assigned mass.
         public override float Mass => _body.IsValid ? _backend.GetBodyMass(_body) : 0f;
 
         // OpenSim sets pa.Density = SceneObjectPart.Density in AddToPhysics (default 1000). Store it and
@@ -437,10 +444,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Velocity", value.ToString()); return; }
                 Vector3 v = value;
-                // Fix-3 (slide): drop restored HORIZONTAL velocity on region LOAD. OpenSim's AddToPhysics
+                // Drop restored HORIZONTAL velocity on region LOAD. OpenSim's AddToPhysics
                 // replays the DB-saved velocity onto the actor; a vehicle body runs frictionless + never-
-                // sleep, so a small saved X/Y coast never bleeds off and drifts the boat metres (the 0.95 m/s
-                // slide) - and compounds, since that drift is persisted and replayed next reload. Zeroing it
+                // sleep, so a small saved X/Y coast never bleeds off and drifts the boat metres - and
+                // compounds, since that drift is persisted and replayed next reload. Zeroing it
                 // only while the region is LOADING (before the first Simulate) leaves a runtime llSetVelocity
                 // untouched. Vertical is left alone (a genuinely falling load body keeps its descent).
                 if (_isPhysical && _module.IsRegionLoading)
@@ -502,8 +509,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // Link/unlink only RECORD membership and mark the root dirty - the compound is (re)built ONCE per
         // frame in RebuildCompoundNow, drained from Simulate. Rebuilding inline per child HUNG the boot-load
         // of a persisted physical linkset: OpenSim fires child.link(root) for every child as the whole set
-        // loads at once, and each inline rebuild churned RemoveBody/CreateBody on the live/active root while
-        // the load + heartbeat ran concurrently (the repeated root id in the boot log). Deferring coalesces
+        // loads at once, and each inline rebuild churned RemoveBody/CreateBody on the active root body while
+        // the load + heartbeat ran concurrently. Deferring coalesces
         // N child-links into ONE rebuild at a controlled point - off the load path, O(N) not O(N^2).
         internal void LinkChild(JoltPrim child)
         {
@@ -524,10 +531,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // (Re)build the root's body from its own shape + all welded children at their root-relative offsets,
         // ONCE. Called from the module's per-frame dirty-linkset drain (step thread, before the step - safe
-        // body ops, no per-child churn). StaticCompoundShape (fast query + per-child UserData for M7 Task 3).
+        // body ops, no per-child churn). StaticCompoundShape (fast query + per-child UserData for per-child collision identity).
         // Sub-shape transforms are composed in the ROOT BODY frame (BodyOrientationOf carries any cylinder
         // axis-correction); mass/COM/inertia come out of Jolt's compound assembly (mass = sum of child
-        // Volume x density, harness [32b]). Re-entrancy- and destroyed-guarded so it can never loop or touch
+        // Volume x density). Re-entrancy- and destroyed-guarded so it can never loop or touch
         // a torn-down prim. No children -> revert to the plain single root shape (never a 1-child compound).
         internal void RebuildCompoundNow()
         {
@@ -580,7 +587,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
         public override void LockAngularMotion(byte axislocks) { }
 
-        // Forces (M8): wired to the backend's accumulate-until-next-Step Apply* (Jolt AddForce/AddTorque
+        // Forces: wired to the backend's accumulate-until-next-Step Apply* (Jolt AddForce/AddTorque
         // == Bullet ApplyCentralForce/ApplyTorque; both auto-activate a sleeping body). BulletSim treats
         // a NON-push AddForce as force-per-second and divides by the frame dt before applying - mirror
         // that so llApplyImpulse/llPushObject land with the same magnitude on both engines.
@@ -601,9 +608,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override void AvatarJump(float forceZ) { }
         public override void SetMomentum(Vector3 momentum) { }
 
-        public override void SetVolumeDetect(int param) { }   // VolumeDetect / phantom-events: M6.6
+        public override void SetVolumeDetect(int param) { }   // VolumeDetect / phantom-events: not implemented
 
-        // Collision-event subscription: stored so M6.6 can gate Persist forwarding; inert now.
+        // Collision-event subscription.
         // A script with a collision handler -> OpenSim calls SubscribeEvents(50). Flip the LIVE body's
         // Persist gate so the ongoing-touch stream (the script `collision` event) reaches the module drain.
         public override void SubscribeEvents(int ms)
@@ -618,7 +625,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
         public override bool SubscribedEvents() => _subscribedMs > 0;
 
-        // Vehicles (M8): forward the LSL wire params into the backend-agnostic controller. OpenSim's
+        // Vehicles: forward the LSL wire params into the backend-agnostic controller. OpenSim's
         // SOP hands us raw ints; the controller keeps the exact Halcyon routing/clamping. Setting a
         // type registers with the scene's per-frame drive + applies the vehicle body params; setting
         // TYPE_NONE unwinds both and destroys the controller.
@@ -633,7 +640,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 {
                     _module.RegisterVehicle(this);
                     ApplyVehicleBodyParams();
-                    // Assert-buoyancy-on-restart (Balpien): the assertion just above can be lost on the load
+                    // Assert buoyancy on restart: the assertion just above can be lost on the load
                     // path (body created GravityFactor=1 with deferred activation drained on the step thread
                     // AFTER this set) - so re-assert it on the next few LIVE step-thread frames, where it sticks.
                     _reassertVehicleFrames = 3;
@@ -688,7 +695,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (_vehicle == null || !_vehicle.IsActive || !_isPhysical || !_body.IsValid)
                 return;
-            // Assert-buoyancy-on-restart (Balpien): re-assert the vehicle body params on the first live
+            // Assert buoyancy on restart: re-assert the vehicle body params on the first live
             // step-thread frames after (re)activation, so the gravity-cancellation that the load-path restore
             // set (but that the deferred body activation clobbered back to GravityFactor=1) actually takes -
             // otherwise a restored boat steps under full engine gravity and sinks despite vehicle=True.
@@ -712,7 +719,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _vehicle.Step(timeStep);
         }
 
-        // The BulletSim vehicle body setup (LegionVehicleDynamics.SetPhysicalParameters), translated:
+        // The BulletSim vehicle body setup (BSDynamics.SetPhysicalParameters), translated:
         // the vehicle controls its own friction/damping (BSParam.VehicleFriction/Restitution/
         // AngularDamping all default 0; Jolt's default 0.05 damping would fight the motor math),
         // applies gravity MANUALLY (engine gravity off), and must never sleep (DISABLE_DEACTIVATION).
@@ -741,7 +748,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _backend.SetBodyAllowSleeping(_body, true);
         }
 
-        // PID / hover / RotLookAt - physical-motion features (M6.4+).
+        // PID / hover / RotLookAt - physical-motion features, not implemented (no-ops).
         public override Vector3 PIDTarget { set { } }
         public override bool PIDActive { get => false; set { } }
         public override float PIDTau { set { } }
