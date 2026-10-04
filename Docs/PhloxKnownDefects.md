@@ -590,6 +590,20 @@ pauses 15 ms after every chat call instead (`ChatThrottle`).
   experience_id is NULL_KEY, then information about the script's experience is returned. In
   this situation, if the script isn't associated with an experience, an empty list is returned"
   ([LlGetExperienceDetails](https://wiki.secondlife.com/wiki/LlGetExperienceDetails)).
+- An Experience its owner has disabled, or one that is suspended, cannot be joined:
+  `llRequestExperiencePermissions` answers `experience_permissions_denied` with
+  `XP_ERROR_EXPERIENCE_DISABLED` (8) or `XP_ERROR_EXPERIENCE_SUSPENDED` (9), and 8 when both
+  apply, before the land or the avatar is looked at. `llGetExperienceDetails` gives the same code
+  and its message as the state. The SL wiki gives the codes ("The experience owner has temporarily
+  disabled the experience.", "The experience has been suspended by Linden Lab customer support.",
+  [llGetExperienceErrorMessage](https://wiki.secondlife.com/wiki/LlGetExperienceErrorMessage)) but
+  not when they are raised; YEngine raises them in the same places and order. The state is read
+  from the Experience service at each call. When the service cannot answer, the request is refused
+  with `XP_ERROR_NOT_FOUND` (6), "The sim was unable to verify the validity of the experience."
+  - A grant the script already holds stays when its Experience is disabled or suspended. SL
+    documents nothing for this case; YEngine ends such a grant, with no event, at the script's
+    next permission call.
+  - `llAgentInExperience` and the key-value functions do not look at the state, as in YEngine.
 - Start-up events come in SL's order: `state_entry` (a new script), then `on_rez`, then
   `attach` (an attachment worn from inventory), then `changed(CHANGED_REGION_START)`, which every
   script started by the region's start gets, new or restored. YEngine posts them in the same order.
