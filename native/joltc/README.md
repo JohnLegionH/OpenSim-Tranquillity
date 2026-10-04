@@ -109,7 +109,7 @@ the full stress sequence (multi-region + vehicle + llCastRay load test,
   test); `_simLock` reverted to per-instance — regions step in parallel.
 - The full investigation trail (commit identification, PDB forensics,
   verification runs) is in the comment block above `_simLock` in
-  `OpenSim/Addons/LegionPhysics/Legion.Physics/JoltPhysicsBackend.cs`.
+  `Source/OpenSim.Region.PhysicsModules.Jolt.Backend/JoltPhysicsBackend.cs`.
 - Upstream later added a TempAllocator C-API + `JPH_PhysicsSystem_Update2`
   (joltc PR #74, first shipped in JoltPhysics.Native 1.1.0 / Jolt 5.6.0) —
   but it does NOT cover the six CharacterVirtual sites. If Legion ever

@@ -189,15 +189,13 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InWorldz.Phlox.Tests", "Tes
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PhloxCompileProbe", "Tests\PhloxCompileProbe\PhloxCompileProbe.csproj", "{1DC110CD-7D2E-4501-A5D0-46D12DE23E26}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Region.PhysicsModules.LegionJolt", "Source\OpenSim.Region.PhysicsModules.LegionJolt\OpenSim.Region.PhysicsModules.LegionJolt.csproj", "{318B8A26-DBE6-4837-92CB-6ED18BC21850}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Region.PhysicsModules.Jolt", "Source\OpenSim.Region.PhysicsModules.Jolt\OpenSim.Region.PhysicsModules.Jolt.csproj", "{318B8A26-DBE6-4837-92CB-6ED18BC21850}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "LegionPhysics", "LegionPhysics", "{D18AB23E-B955-F54D-9B48-FC6B44B73A20}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Region.PhysicsModules.Jolt.Backend", "Source\OpenSim.Region.PhysicsModules.Jolt.Backend\OpenSim.Region.PhysicsModules.Jolt.Backend.csproj", "{18F8EDBC-7929-42EB-B2F1-7A1A44674DFA}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Legion.Physics", "Addons\LegionPhysics\Legion.Physics\Legion.Physics.csproj", "{18F8EDBC-7929-42EB-B2F1-7A1A44674DFA}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Region.PhysicsModules.Jolt.Vehicles", "Source\OpenSim.Region.PhysicsModules.Jolt.Vehicles\OpenSim.Region.PhysicsModules.Jolt.Vehicles.csproj", "{5F302F80-F272-4EB8-B4F8-7B663C50BF5F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Legion.Vehicles", "Addons\LegionPhysics\Legion.Vehicles\Legion.Vehicles.csproj", "{5F302F80-F272-4EB8-B4F8-7B663C50BF5F}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Region.PhysicsModules.LegionJolt.Tests", "Tests\OpenSim.Region.PhysicsModules.LegionJolt.Tests\OpenSim.Region.PhysicsModules.LegionJolt.Tests.csproj", "{F23323BB-E221-42B7-98D4-D42E5ACFAD26}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenSim.Region.PhysicsModules.Jolt.Tests", "Tests\OpenSim.Region.PhysicsModules.Jolt.Tests\OpenSim.Region.PhysicsModules.Jolt.Tests.csproj", "{F23323BB-E221-42B7-98D4-D42E5ACFAD26}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -1433,9 +1431,8 @@ Global
 		{6BC011C0-41E2-4785-9BE1-5A19CF16ADA9} = {7F5EC7C6-FD99-4084-8530-5D3F28D6D7C0}
 		{1DC110CD-7D2E-4501-A5D0-46D12DE23E26} = {7F5EC7C6-FD99-4084-8530-5D3F28D6D7C0}
 		{318B8A26-DBE6-4837-92CB-6ED18BC21850} = {E886CEB5-B01D-411F-A7A0-72AA1B71761D}
-		{D18AB23E-B955-F54D-9B48-FC6B44B73A20} = {E1748B93-FA13-C50B-BD89-C3B777E73FCB}
-		{18F8EDBC-7929-42EB-B2F1-7A1A44674DFA} = {D18AB23E-B955-F54D-9B48-FC6B44B73A20}
-		{5F302F80-F272-4EB8-B4F8-7B663C50BF5F} = {D18AB23E-B955-F54D-9B48-FC6B44B73A20}
+		{18F8EDBC-7929-42EB-B2F1-7A1A44674DFA} = {E886CEB5-B01D-411F-A7A0-72AA1B71761D}
+		{5F302F80-F272-4EB8-B4F8-7B663C50BF5F} = {E886CEB5-B01D-411F-A7A0-72AA1B71761D}
 		{F23323BB-E221-42B7-98D4-D42E5ACFAD26} = {7F5EC7C6-FD99-4084-8530-5D3F28D6D7C0}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
