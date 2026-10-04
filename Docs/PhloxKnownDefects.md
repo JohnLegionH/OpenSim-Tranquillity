@@ -427,13 +427,12 @@ These are facts about Phlox's compiler. Where SL's rule is known, it is cited.
     `llGetPermissions` and `llGetPermissionsKey` answer them as in SL
     ([llRequestExperiencePermissions](https://wiki.secondlife.com/wiki/LlRequestExperiencePermissions)),
     and the grant is saved as that Experience's. From the region's own state database it
-    comes back whole, as any grant, unless the Experience is now disabled or suspended, or the
-    region no longer lets it run (the estate blocks it, or neither allows nor trusts it): then
-    it ends as the script starts, with the controls it took, and the script gets
-    `experience_permissions_denied` once, with `XP_ERROR_EXPERIENCE_DISABLED` (8) or
-    `XP_ERROR_EXPERIENCE_SUSPENDED` (9) (8 when both apply), or else with
-    `XP_ERROR_NOT_PERMITTED_LAND` (17) as below for a parcel. When the Experience service cannot
-    be asked at that moment, the grant comes back whole. From carried state it comes back only when
+    comes back whole, as any grant, unless the region no longer lets it run (the estate blocks
+    it, or neither allows nor trusts it): then it ends as the script starts, with the controls
+    it took, and the script gets `experience_permissions_denied` once with
+    `XP_ERROR_NOT_PERMITTED_LAND` (17), as below for a parcel. The start does not ask the
+    Experience service anything: an Experience that is now disabled or suspended is found by the
+    read of its state shortly after the start (below). From carried state it comes back only when
     `llRequestExperiencePermissions` would grant it at that moment with no dialog: the script
     is still in that Experience, the Experience is allowed in the region and not blocked, and
     the granter is in the region, has not blocked it, and has allowed it (or it is trusted
@@ -606,13 +605,23 @@ pauses 15 ms after every chat call instead (`ChatThrottle`).
   An Experience the service answers it does not know is refused with
   `XP_ERROR_INVALID_EXPERIENCE` (7), "The script is associated with an experience that no longer
   exists."
-  - A grant the script already holds stays, and its calls go on working, when its Experience is
-    disabled or suspended while the region runs. It ends at the next region start (above), or
-    when the land or the avatar's block ends it. SL documents nothing for this case; YEngine
-    ends such a grant, with no event, at the script's next permission call. Ending it at the
-    moment the state changes would need the region to be told of the change, and nothing tells
-    it today: the owner's edit is stored by the Experience service and cached only by the
-    simulator that handled it, and a suspension is set on the Experience service alone.
+  - A grant a script already holds ends when its Experience is disabled or suspended, whether or
+    not the script makes another call. Nothing tells a region of the change (the owner's edit is
+    stored by the Experience service, a suspension is set there alone), so the region reads the
+    state of every Experience a script in it holds a grant from: a minute after its last read,
+    and about two seconds after grants are given back at a region start or come in with an
+    object. The read runs on its own thread, one lookup at a time, and neither the scripts nor
+    the region's start wait for it. When it finds the Experience disabled or suspended, every
+    grant held from it in the region ends with the controls it took, and each script gets
+    `experience_permissions_denied` once, with 8 or 9 (8 when both apply). A call of
+    `llRequestExperiencePermissions` or `llGetExperienceDetails` that finds the same ends them
+    at once; a script refused with 8 or 9 when asking one avatar is then also told that the
+    grant it held from another has ended. The calls that use a grant do not look at the state.
+    While the Experience service answers, a grant outlives its Experience's suspension by at most
+    about a minute. A read the service does not answer changes nothing and is made again a
+    minute later; the region's log warns of it at most once every ten minutes. SL documents
+    nothing for this case; YEngine ends such a grant, with no event, at the script's next
+    permission call.
   - `llAgentInExperience` and the key-value functions do not look at the state, as in YEngine.
 - Start-up events come in SL's order: `state_entry` (a new script), then `on_rez`, then
   `attach` (an attachment worn from inventory), then `changed(CHANGED_REGION_START)`, which every
