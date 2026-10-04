@@ -582,6 +582,11 @@ pauses 15 ms after every chat call instead (`ChatThrottle`).
   owner's profile, as Halcyon refused it: the call returns `FALSE`, nothing changes, and neither
   an IM nor an error is sent, as for the estate owner. When the estate owner's profile cannot be
   read, the ban goes ahead and the region's log says so. SL documents no partner rule.
+- `llGetExperienceDetails(NULL_KEY)` gives the details of the script's own Experience, the one
+  its script item names, and an empty list for a script in no Experience, as SL documents: "If
+  experience_id is NULL_KEY, then information about the script's experience is returned. In
+  this situation, if the script isn't associated with an experience, an empty list is returned"
+  ([LlGetExperienceDetails](https://wiki.secondlife.com/wiki/LlGetExperienceDetails)).
 - Start-up events come in SL's order: `state_entry` (a new script), then `on_rez`, then
   `attach` (an attachment worn from inventory), then `changed(CHANGED_REGION_START)`, which every
   script started by the region's start gets, new or restored. YEngine posts them in the same order.
