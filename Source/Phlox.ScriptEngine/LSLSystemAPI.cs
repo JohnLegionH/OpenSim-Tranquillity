@@ -769,10 +769,10 @@ namespace Phlox.ScriptEngine
         /// </para>
         /// <para>
         /// A grant from an Experience (llRequestExperiencePermissions) is noted with that Experience. From a row it comes
-        /// back whole, as any grant, unless its Experience is now disabled or suspended (<see cref="RestoredExperienceStateDenial"/>)
-        /// or the land no longer lets it run: then it ends as the script starts, told once with experience_permissions_denied
-        /// and that code. From carried state it comes back only when llRequestExperiencePermissions would grant
-        /// it now with no dialog, by the same decision (<see cref="DecideExperienceRequest"/>): the script is still in
+        /// back whole, as any grant, unless the land no longer lets it run: then it ends as the script starts, told once with
+        /// experience_permissions_denied and XP_ERROR_NOT_PERMITTED_LAND. Whether its Experience is now disabled or suspended
+        /// is read shortly after, off the scheduler thread (<see cref="ExperienceCannotRun"/>). From carried state it comes
+        /// back only when llRequestExperiencePermissions would grant it now with no dialog, by the same decision (<see cref="DecideExperienceRequest"/>): the script is still in
         /// that Experience, the Experience is allowed here, and the granter, here, still allows it. Its granter need not
         /// wear or sit on the object, so a claim for it is decided when that avatar arrives anywhere in the region.
         /// Wherever it is restored from, it is honoured only while the script item names that same Experience; otherwise
@@ -805,17 +805,9 @@ namespace Phlox.ScriptEngine
             if (item == null || !noted || granter.IsZero() || mask == 0 || owner.IsZero() || owner != m_host.OwnerID) return;
             if (!carried && !unverified)
             {
-                int stateDenial = experience.IsZero() ? XP_ERROR_NONE : RestoredExperienceStateDenial(experience);
-                if (stateDenial != XP_ERROR_NONE)
-                {
-                    // The grant's Experience cannot run at all now (disabled by its owner, or suspended): it ends at the
-                    // restore as the land ends one here, told once with that state's code, as llRequestExperiencePermissions
-                    // is refused (ExperienceStateDenial).
-                    EndExperienceGrant();
-                    m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
-                        "experience_permissions_denied", new object[] { granter.ToString(), stateDenial }, new DetectParams[0]));
-                    return;
-                }
+                // The Experience's state is not looked up here: the start never waits on the Experience service. The
+                // region reads it shortly after (SetRestoredGrant), and a disabled or suspended Experience's grant ends
+                // then (ExperienceCannotRun).
                 if (!experience.IsZero() && ExperienceCannotRunOnThisLand(experience))
                 {
                     // The land no longer lets the grant's Experience run (the estate blocks it, or neither allows nor
@@ -837,29 +829,6 @@ namespace Phlox.ScriptEngine
                 return;
             }
             GrantSilently(item, granter, mask, experience);
-        }
-
-        /// <summary>
-        /// The state code a restored grant from <paramref name="experience"/> ends with: XP_ERROR_EXPERIENCE_DISABLED (8) or
-        /// XP_ERROR_EXPERIENCE_SUSPENDED (9), <see cref="ExperienceStateError"/>; XP_ERROR_NONE while it is enabled. The
-        /// restore runs on the scheduler thread as the script starts, so the state is read through the core module's
-        /// cache: the scripts of one Experience starting together make one service call between them. An Experience the
-        /// service does not know, or a lookup that fails (the service cannot be reached), ends nothing: the grant is
-        /// given back as it was before this check.
-        /// </summary>
-        private int RestoredExperienceStateDenial(UUID experience)
-        {
-            if (GetExperienceAdapter() is not PhloxExperienceAdapter expService) return XP_ERROR_NONE;
-            try
-            {
-                PhloxExperienceAdapter.PhloxExperienceInfo info = expService.GetExperience(experience, fresh: false);
-                return info == null ? XP_ERROR_NONE : ExperienceStateError(info.Properties);
-            }
-            catch (Exception ex)
-            {
-                m_log.LogWarning("[PhloxAPI]: could not look up experience {0} for a restored grant; the grant is kept: {1}", experience, ex.Message);
-                return XP_ERROR_NONE;
-            }
         }
 
         /// <summary>

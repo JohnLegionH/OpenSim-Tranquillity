@@ -7,6 +7,7 @@
 
 using System;
 using System.Linq;
+using System.Threading;
 using InWorldz.Phlox.Serialization;
 using Nini.Config;
 using OpenMetaverse;
@@ -22,14 +23,15 @@ namespace InWorldz.Phlox.Tests;
 
 /// <summary>
 /// A grant from an Experience saved by a real region stop (Scene.Close) and given back from the state database at the
-/// next start ends there when its Experience is now disabled or suspended, as the land ends one at the start: the grant
-/// and the controls it took go, the next save holds no grant, and the script is told once with
-/// experience_permissions_denied and the Experience's state, XP_ERROR_EXPERIENCE_DISABLED (8) or
-/// XP_ERROR_EXPERIENCE_SUSPENDED (9), 8 when both are set (SL wiki llGetExperienceErrorMessage). An enabled Experience,
-/// or one the Experience service cannot be asked about at that moment, gives the grant back whole with no event.
+/// next start comes back whole: the start asks the Experience service nothing. The region reads the Experience's state
+/// shortly after the restore, off the scheduler thread (<see cref="PhloxExecutionScheduler.ExperienceStateFirstReadDelayMs"/>),
+/// and when that read finds it disabled or suspended the grant ends there: the grant and the controls it took go, the
+/// next save holds no grant, and the script is told once with experience_permissions_denied and the Experience's state,
+/// XP_ERROR_EXPERIENCE_DISABLED (8) or XP_ERROR_EXPERIENCE_SUSPENDED (9), 8 when both are set (SL wiki
+/// llGetExperienceErrorMessage). A read the service does not answer changes nothing; a later one that it answers does.
 /// </summary>
-// Runs in parallel: each test has its own harnesses, avatar, Experience service stand-in and Experience module on its own
-// scenes, and rows under a random item id in the state database every harness shares; nothing process-wide is changed.
+// In the "phlox-state" collection: the tests set the engine clock (Clock.SetSourceForTesting), which is process-wide.
+[Collection("phlox-state")]
 public class ExperienceStateAtRestartTests
 {
     /// <summary>SL's list: TAKE_CONTROLS | TRIGGER_ANIMATION | ATTACH | TRACK_CAMERA | CONTROL_CAMERA | TELEPORT.</summary>
@@ -79,7 +81,7 @@ public class ExperienceStateAtRestartTests
     /// <summary>The visitor grants the script the Experience's list, and the region stops as the simulator stops it.</summary>
     private void GrantAndStopRegion()
     {
-        using var h1 = new SchedulerHarness();
+        using var h1 = ExperienceStateReadTimingTests.Harness();
         Region(h1, 0);
         SceneHelpers.AddScenePresence(h1.Scene, m_visitor);
         Assert.True(h1.Scene.RequestModuleInterface<OpenSim.Region.Framework.Interfaces.IExperienceModule>()
@@ -96,12 +98,15 @@ public class ExperienceStateAtRestartTests
         Assert.Equal(m_experience.ToString(), RowState().PermsExperience);
     }
 
-    /// <summary>The next start: a new region holding the same item, its Experience now with <paramref name="properties"/>.</summary>
-    private SchedulerHarness Restart(int properties, bool serviceUnreachable = false)
+    /// <summary>
+    /// The next start: a new region holding the same item, its Experience now with <paramref name="properties"/>.
+    /// <paramref name="prepare"/> sets the service up before the script starts.
+    /// </summary>
+    private SchedulerHarness Restart(int properties, Action<ExperienceStateTests.StateService> prepare, out ExperienceStateTests.StateService service)
     {
-        var h2 = new SchedulerHarness();
-        var service = Region(h2, properties);
-        service.LookupFails = serviceUnreachable;
+        var h2 = ExperienceStateReadTimingTests.Harness();
+        service = Region(h2, properties);
+        prepare?.Invoke(service);
         var inv = TaskInventoryHelpers.AddScript(h2.Scene.AssetService, h2.Prim, m_item, m_asset, "game", Game);
         inv.ExperienceID = m_experience;
         Assert.Equal(1, h2.Prim.ParentGroup.CreateScriptInstances(0, false, Phlox, RegionStart));
@@ -127,15 +132,32 @@ public class ExperienceStateAtRestartTests
 
     private static int Denials(SchedulerHarness h) => h.Said.Count(s => s.StartsWith("xpdenied=", StringComparison.Ordinal));
 
+    /// <summary>Move the engine clock on by <paramref name="ms"/> and pump until the read that brings has finished.</summary>
+    private static void ReadAfter(SchedulerHarness h, ExperienceStateReadTimingTests.FrozenClock clock, ExperienceStateTests.StateService service, int ms)
+    {
+        int before = service.Lookups;
+        clock.Now += (ulong)ms;
+        Assert.True(h.PumpUntil(() => service.Lookups > before && !SavedStateRig.Exe(h).ExperienceStateReadRunning),
+            "no read finished; lookups " + before + " -> " + service.Lookups);
+        h.PumpUntilIdle(TimeSpan.FromSeconds(2));
+    }
+
     [Theory]
     [InlineData(Suspended, 9)]
     [InlineData(Disabled, 8)]
     [InlineData(Disabled | Suspended, 8)]
-    public void AGrantRestoredWhileItsExperienceCannotRunEndsAtTheStartAndIsToldOnce(int properties, int code)
+    public void AGrantRestoredWhileItsExperienceCannotRunEndsAtTheFirstReadAndIsToldOnce(int properties, int code)
     {
+        using var clock = new ExperienceStateReadTimingTests.FrozenClock();
         GrantAndStopRegion();
 
-        using var h2 = Restart(properties);
+        using var h2 = Restart(properties, null, out var service);
+        // The start asked the service nothing: the grant is back as it was saved.
+        Assert.Equal(0, service.Lookups);
+        Assert.Equal(ExperiencePerms, h2.Prim.Inventory.GetInventoryItem(m_item).PermsMask);
+        Assert.Equal(0, Denials(h2));
+
+        ReadAfter(h2, clock, service, PhloxExecutionScheduler.ExperienceStateFirstReadDelayMs);
         Assert.True(h2.PumpUntil(() => h2.Said.Contains("xpdenied=" + m_visitor + " " + code)), SavedStateRig.SaidText(h2));
         Assert.Equal(0, h2.Prim.Inventory.GetInventoryItem(m_item).PermsMask);
         Assert.Equal(Perms(0, UUID.Zero), Report(h2));
@@ -151,11 +173,14 @@ public class ExperienceStateAtRestartTests
     }
 
     [Fact]
-    public void AGrantRestoredWhileItsExperienceIsEnabledComesBackWhole()
+    public void AGrantRestoredWhileItsExperienceIsEnabledComesBackWholeAndStaysAfterTheFirstRead()
     {
+        using var clock = new ExperienceStateReadTimingTests.FrozenClock();
         GrantAndStopRegion();
 
-        using var h2 = Restart(0);
+        using var h2 = Restart(0, null, out var service);
+        Assert.Equal(Perms(ExperiencePerms, m_visitor), Report(h2));
+        ReadAfter(h2, clock, service, PhloxExecutionScheduler.ExperienceStateFirstReadDelayMs);
         Assert.Equal(Perms(ExperiencePerms, m_visitor), Report(h2));
         Assert.Equal(0, Denials(h2));
         h2.SaveState(m_item);
@@ -164,12 +189,53 @@ public class ExperienceStateAtRestartTests
     }
 
     [Fact]
-    public void AGrantRestoredWhileTheExperienceServiceCannotBeReachedComesBackWhole()
+    public void AGrantRestoredWhileTheServiceCannotBeReachedIsKeptAndEndsAtALaterReadOnceTheServiceAnswers()
     {
+        using var clock = new ExperienceStateReadTimingTests.FrozenClock();
         GrantAndStopRegion();
 
-        using var h2 = Restart(Suspended, serviceUnreachable: true);
+        using var h2 = Restart(Suspended, s => s.LookupFails = true, out var service);
+        ReadAfter(h2, clock, service, PhloxExecutionScheduler.ExperienceStateFirstReadDelayMs);
         Assert.Equal(Perms(ExperiencePerms, m_visitor), Report(h2));
+        Assert.Equal(0, Denials(h2));
+
+        // The service answers again, and the Experience is still suspended: the next read ends the grant.
+        service.LookupFails = false;
+        ReadAfter(h2, clock, service, PhloxExecutionScheduler.ExperienceStateReadIntervalMs);
+        Assert.True(h2.PumpUntil(() => h2.Said.Contains("xpdenied=" + m_visitor + " 9")), SavedStateRig.SaidText(h2));
+        Assert.Equal(Perms(0, UUID.Zero), Report(h2));
+        h2.PumpUntilIdle(TimeSpan.FromSeconds(2));
+        Assert.Equal(1, Denials(h2));
+    }
+
+    [Fact]
+    public void ARegionStartDoesNotWaitForAServiceThatDoesNotAnswer()
+    {
+        using var clock = new ExperienceStateReadTimingTests.FrozenClock();
+        GrantAndStopRegion();
+
+        // The service takes every lookup and answers none until the gate opens (or 5 s pass, so a start that does wait
+        // ends this test instead of holding it).
+        var gate = new ManualResetEventSlim(false);
+        using var h2 = Restart(0, s => { s.Gate = gate; s.GateTimeout = TimeSpan.FromSeconds(5); }, out var service);
+        try
+        {
+            Assert.Equal(Perms(ExperiencePerms, m_visitor), Report(h2));
+
+            // The read starts and waits on the service; the scripts still run.
+            int before = service.Lookups;
+            clock.Now += (ulong)PhloxExecutionScheduler.ExperienceStateFirstReadDelayMs;
+            Assert.True(h2.PumpUntil(() => service.Lookups > before), "the read never asked");
+            Assert.True(SavedStateRig.Exe(h2).ExperienceStateReadRunning);
+            Assert.Equal(Perms(ExperiencePerms, m_visitor), Report(h2));
+
+            // Not one lookup was made on the scheduler's thread (here the test's own, which pumps it).
+            string pumping = Thread.CurrentThread.Name ?? "(unnamed " + Thread.CurrentThread.ManagedThreadId + ")";
+            Assert.All(service.LookupThreads, t => Assert.StartsWith("Phlox experience state ", t));
+            Assert.DoesNotContain(pumping, service.LookupThreads);
+        }
+        finally { gate.Set(); }
+        Assert.True(h2.PumpUntil(() => !SavedStateRig.Exe(h2).ExperienceStateReadRunning), "the read never finished");
         Assert.Equal(0, Denials(h2));
     }
 }

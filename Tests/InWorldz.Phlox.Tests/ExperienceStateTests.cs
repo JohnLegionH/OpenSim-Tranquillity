@@ -69,6 +69,10 @@ public class ExperienceStateTests
         private int m_lookups;
         /// <summary>When set, a lookup waits for it before it answers, as a service that is slow to answer.</summary>
         public volatile System.Threading.ManualResetEventSlim Gate;
+        /// <summary>How long a lookup waits for <see cref="Gate"/> before it answers anyway.</summary>
+        public TimeSpan GateTimeout = System.Threading.Timeout.InfiniteTimeSpan;
+        /// <summary>The thread each lookup was asked on, by name.</summary>
+        public readonly ConcurrentQueue<string> LookupThreads = new();
 
         public static StateService Create(ExperienceInfo info)
         {
@@ -84,8 +88,10 @@ public class ExperienceStateTests
             {
                 case nameof(IExperienceService.GetExperienceInfos):
                 {
+                    var thread = System.Threading.Thread.CurrentThread;
+                    LookupThreads.Enqueue(thread.Name ?? "(unnamed " + thread.ManagedThreadId + ")");
                     System.Threading.Interlocked.Increment(ref m_lookups);
-                    Gate?.Wait();
+                    Gate?.Wait(GateTimeout);
                     if (LookupFails) throw new InvalidOperationException("Experience service unreachable");
                     var ids = (UUID[])a[0];
                     // A copy, as the service hands out: a later change to the stored Experience is not seen through it.
