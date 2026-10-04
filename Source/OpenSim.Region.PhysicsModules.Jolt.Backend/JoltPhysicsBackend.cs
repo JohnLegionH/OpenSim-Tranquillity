@@ -101,6 +101,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// TEST-ONLY: hold this region's pool gate, as another region's Step would, until the returned
         /// object is disposed. Monitor-based: dispose it on the thread that called this.
         /// </summary>
+        /// <summary>
+        /// TEST-ONLY: run by Initialize right after the physics system is created and its events subscribed, so a
+        /// test can make Initialize fail part-way by throwing here.
+        /// </summary>
+        internal Action? AfterSystemCreatedForTest;
+
         internal IDisposable HoldPoolGateForTest()
         {
             JobPool pool = _pool ?? throw new InvalidOperationException("HoldPoolGateForTest: no pool assigned.");
@@ -611,7 +617,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 ObjectVsBroadPhaseLayerFilter = _objectVsBroadPhaseFilter,
             };
 
-            _system = new PhysicsSystem(systemSettings);
+            // JPH_PhysicsSystem_Create inserts into joltc's unlocked global map of systems; see s_systemMapGate.
+            lock (s_systemMapGate)
+                _system = new PhysicsSystem(systemSettings);
             _system.Gravity = settings.Gravity;
             _bodyInterface = _system.BodyInterface;
 
@@ -634,6 +642,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             _system.OnContactAdded += HandleContactAdded;
             _system.OnContactPersisted += HandleContactPersisted;
             _system.OnContactRemoved += HandleContactRemoved;
+
+            AfterSystemCreatedForTest?.Invoke();
 
             // Worker pool (Update takes a JobSystem; no TempAllocator): shared, process-capped
             // pools created once under s_foundationGate above, NOT one per region; Update()
@@ -669,14 +679,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // Foundation teardown is PROCESS-GLOBAL and ref-counted: only the LAST region out actually
             // shuts Jolt down. Done outside _simLock (different scope) but _disposed is already set, so this
             // instance's Step can't re-enter Jolt in the meantime. Other regions still up keep the count > 0.
+            // Only a backend that took a reference gives one back: _pool is set in the same s_foundationGate block
+            // as the increment, so a backend whose Initialize never ran, or failed before that block, must not
+            // lower the count other regions hold.
             lock (s_foundationGate)
             {
-                if (_pool != null)
-                {
-                    _pool.Regions--;
-                    _pool = null;
-                }
-                if (s_foundationRefCount > 0 && --s_foundationRefCount == 0)
+                if (_pool == null)
+                    return;
+                _pool.Regions--;
+                _pool = null;
+                if (--s_foundationRefCount == 0)
                 {
                     // Last region out: dispose the shared job pools BEFORE Foundation.
                     if (s_pools != null)
@@ -714,6 +726,78 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             if (!bindingDestroys && !pool.IsDisposed && pool.Handle != IntPtr.Zero)
                 JPH_JobSystem_Destroy(pool.Handle);   // ~JobSystemThreadPool joins the workers
             pool.Dispose();
+        }
+
+        // =====================================================================
+        // Each region's native physics system is destroyed by us too.
+        //
+        // The same OwnsHandle defect: the public PhysicsSystem(PhysicsSystemSettings) constructor assigns Handle through
+        // the parameterless NativeObject constructor, so PhysicsSystem.Dispose() never runs its DisposeNative, which is
+        // what calls JPH_PhysicsSystem_Destroy, destroys the contact and body-activation listeners it created, and frees
+        // the GCHandle behind their userData. Without this every region teardown leaks the native system, its temp
+        // allocator, the three layer-filter objects (JPH_PhysicsSystem_Destroy deletes those; joltc has no other
+        // destroy for them), both listeners, and the GCHandle, which also keeps the managed wrapper alive.
+        //
+        // joltc keeps every system in a global map, s_PhysicsSystems: JPH_PhysicsSystem_Create inserts and
+        // JPH_PhysicsSystem_Destroy erases, with no lock. Regions are created and torn down on different threads, so
+        // both calls are taken under s_systemMapGate. The only other access is a read in joltc's step-listener
+        // callback (ManagedPhysicsStepListener::OnStep), which runs inside Update only for a system that has a step
+        // listener; this module adds none. Adding one would put the map in that system's step and needs a joltc fix
+        // rather than this lock in every step.
+        // =====================================================================
+        private static readonly object s_systemMapGate = new object();
+
+        [System.Runtime.InteropServices.DllImport("joltc", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern void JPH_PhysicsSystem_Destroy(IntPtr system);
+
+        [System.Runtime.InteropServices.DllImport("joltc", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern void JPH_ContactListener_Destroy(IntPtr listener);
+
+        [System.Runtime.InteropServices.DllImport("joltc", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern void JPH_BodyActivationListener_Destroy(IntPtr listener);
+
+        // The binding's private fields that hold the listeners and their userData (JoltPhysicsSharp 2.19.1, PhysicsSystem.cs).
+        private static readonly System.Reflection.FieldInfo? s_contactListenerField = PhysicsSystemField("_contactListenerHandle");
+        private static readonly System.Reflection.FieldInfo? s_activationListenerField = PhysicsSystemField("_bodyActivationListenerHandle");
+        private static readonly System.Reflection.FieldInfo? s_listenerUserDataField = PhysicsSystemField("_listenerUserData");
+
+        private static System.Reflection.FieldInfo? PhysicsSystemField(string name) => typeof(PhysicsSystem).GetField(
+            name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+        /// <summary>True when the binding's PhysicsSystem has the fields <see cref="DestroyPhysicsSystem"/> reads.</summary>
+        internal static bool PhysicsSystemFieldsFound
+            => s_contactListenerField != null && s_activationListenerField != null && s_listenerUserDataField != null;
+
+        // Run with no Update of this system in flight (the caller holds _simLock with _disposed set). Safe on a
+        // wrapper that is already disposed: it then does nothing.
+        private static void DestroyPhysicsSystem(PhysicsSystem system)
+        {
+            bool bindingDestroys = s_ownsHandle?.GetValue(system) is true;
+            if (bindingDestroys)
+            {
+                lock (s_systemMapGate)
+                    system.Dispose();
+                return;
+            }
+            if (system.IsDisposed || system.Handle == IntPtr.Zero)
+                return;
+
+            IntPtr contactListener = s_contactListenerField?.GetValue(system) is nint c ? c : IntPtr.Zero;
+            IntPtr activationListener = s_activationListenerField?.GetValue(system) is nint a ? a : IntPtr.Zero;
+            IntPtr userData = s_listenerUserDataField?.GetValue(system) is nint u ? u : IntPtr.Zero;
+
+            // The system first: it points at both listeners, so they must outlive it.
+            lock (s_systemMapGate)
+                JPH_PhysicsSystem_Destroy(system.Handle);
+            if (contactListener != IntPtr.Zero)
+                JPH_ContactListener_Destroy(contactListener);
+            if (activationListener != IntPtr.Zero)
+                JPH_BodyActivationListener_Destroy(activationListener);
+            if (userData != IntPtr.Zero)
+                System.Runtime.InteropServices.GCHandle.FromIntPtr(userData).Free();
+
+            // OwnsHandle is false, so this frees nothing native a second time; it clears the handle and unregisters it.
+            system.Dispose();
         }
 
         // The native + managed teardown, run under _simLock (see Dispose). Everything that frees a native
@@ -765,8 +849,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             // Native teardown order: system -> jobs -> filters -> Foundation.
             // The PhysicsSystem holds the filter interfaces and steps on the job system,
-            // so it must go down first.
-            _system?.Dispose();
+            // so it must go down first. Destroying it also frees the three layer-filter objects natively; the filter
+            // wrappers below free nothing native.
+            if (_system != null)
+                DestroyPhysicsSystem(_system);
             _system = null;
 
             // Shared job pool is process-wide: disposed by the LAST region out in
