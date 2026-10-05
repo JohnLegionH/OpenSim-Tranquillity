@@ -24,6 +24,11 @@ public static class Program
   --duration S               seconds to simulate (default: the scenario's)
   --hold S                   seconds the drive key is held (default: the scenario's)
   --keyrepeat S              how often a held key re-sends the motor (default: 0.1)
+  --feed heartbeat|region    how a held key reaches a car: 'heartbeat' (default) lands each key event half a
+                             heartbeat before a step, the car resting on the ground at the start; 'region' feeds
+                             it as a seated driver's control events reach a script in a region (the car dropped
+                             from where a rez places it, events at their own times between heartbeats)
+  --keydelay S               region feed: seconds from physics on to the first key event (default: 0)
   --jolt KEY=VALUE           a [Jolt] config key, as in the region's ini (repeatable)
   --vparam NAME=V|X,Y,Z      a vehicle param applied after the scenario's own, by its LSL name,
                              e.g. LINEAR_FRICTION_TIMESCALE=1,1,1000 (repeatable)
@@ -86,6 +91,16 @@ The summary table always goes to standard output. Nothing is written anywhere el
                 case "--duration": o.Duration = (float)PositiveDouble(Next(), a); break;
                 case "--hold": o.Hold = (float)NonNegativeDouble(Next(), a); break;
                 case "--keyrepeat": o.KeyRepeat = (float)PositiveDouble(Next(), a); break;
+                case "--keydelay": o.KeyDelay = (float)NonNegativeDouble(Next(), a); break;
+                case "--feed":
+                    string feed = Next();
+                    o.Feed = feed switch
+                    {
+                        "heartbeat" => InputFeed.Heartbeat,
+                        "region" => InputFeed.Region,
+                        _ => throw new ArgumentException($"--feed '{feed}': expected heartbeat or region"),
+                    };
+                    break;
                 case "--jolt":
                     string kv = Next();
                     int eq = kv.IndexOf('=');
@@ -128,7 +143,7 @@ The summary table always goes to standard output. Nothing is written anywhere el
 
     private static HarnessOptions Copy(HarnessOptions o, double rate, float slope)
     {
-        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat };
+        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay };
         foreach (KeyValuePair<string, string> kv in o.Jolt) c.Jolt[kv.Key] = kv.Value;
         c.VehicleParams.AddRange(o.VehicleParams);
         return c;

@@ -42,6 +42,10 @@ public sealed class HarnessOptions
     public float? Hold;
     /// <summary>How often a held key re-sends the motor, as a script's control event does while a key is down.</summary>
     public float KeyRepeat = 0.1f;
+    /// <summary>Feed a driven vehicle the way a region does (see <see cref="InputFeed"/>).</summary>
+    public InputFeed Feed = InputFeed.Heartbeat;
+    /// <summary>Region feed: seconds from physics turning on to the first control event.</summary>
+    public float KeyDelay = Harness.RegionKeyDelay;
     /// <summary>[Jolt] keys, as an operator would set them in the region's config.</summary>
     public readonly Dictionary<string, string> Jolt = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Vehicle params applied after the scenario's own, as llSetVehicle*Param calls would be.</summary>
@@ -52,6 +56,22 @@ public sealed class HarnessOptions
         string v = Environment.GetEnvironmentVariable(PhysicsRateVariable);
         return v != null && double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out double r) && r >= 0 ? r : 0.0;
     }
+}
+
+/// <summary>How a held key reaches a driven vehicle.</summary>
+public enum InputFeed
+{
+    /// <summary>The car rests on the ground at the start; the key goes down at t = 0 and every key event lands
+    /// half a heartbeat before the step that follows it.</summary>
+    Heartbeat,
+
+    /// <summary>As a seated driver's control events reach the car's script in a region. The car starts where an
+    /// object rezzed on the ground is placed, its centre one box height above the ground, and drops onto it when
+    /// physics turns on (t = 0). The first control event comes <see cref="HarnessOptions.KeyDelay"/> later, then
+    /// one per agent update while the key is held, and one with the key up at the release. Each event lands at
+    /// its own time between heartbeats (a script runs on its own thread), and the controller's clock reads that
+    /// time when the event sets the motor.</summary>
+    Region,
 }
 
 /// <summary>One vehicle param: a float when <see cref="IsVector"/> is false (the value is X).</summary>
@@ -222,6 +242,8 @@ public sealed class Run
     public double StopAt = double.NaN;
     internal double NextKey;
     internal bool Released;
+    /// <summary>The simulated time the vehicle controller's clock reads.</summary>
+    internal double Clock;
 
     public static readonly Vector3 AvatarSize = new(0.45f, 0.6f, 1.9f);   // the default appearance's box
     private const uint ActorLocalId = 1000;
@@ -265,6 +287,11 @@ public sealed class Run
     /// <summary>The motor while a key is held: re-sent every KeyRepeat seconds until the hold ends, then zeroed once.</summary>
     public void HoldMotor(Vector3 motor)
     {
+        if (Options.Feed == InputFeed.Region)
+        {
+            HoldMotorAsRegion(motor);
+            return;
+        }
         if (Released)
             return;
         if (Now >= Hold)
@@ -277,6 +304,29 @@ public sealed class Run
         {
             SetVector(Vehicle.LINEAR_MOTOR_DIRECTION, motor);
             NextKey += Options.KeyRepeat;
+        }
+    }
+
+    // Region feed: every control event due before this heartbeat, each at its own time. The key goes down at
+    // KeyStart, repeats every KeyRepeat, and comes up at ReleaseAt (= KeyStart + Hold).
+    private void HoldMotorAsRegion(Vector3 motor)
+    {
+        while (!Released)
+        {
+            double next = Math.Min(NextKey, ReleaseAt);
+            if (next > Now + 1e-9)
+                break;
+            Clock = next;
+            if (next >= ReleaseAt - 1e-9)
+            {
+                SetVector(Vehicle.LINEAR_MOTOR_DIRECTION, Vector3.Zero);
+                Released = true;
+            }
+            else
+            {
+                SetVector(Vehicle.LINEAR_MOTOR_DIRECTION, motor);
+                NextKey += Options.KeyRepeat;
+            }
         }
     }
 
@@ -325,10 +375,13 @@ public static class Harness
 
     private static void SetupCar(Run r, bool testCar)
     {
-        if (r.Slope > 0f)
-            r.AddBoxOnGround(CarSize, 128f, 120f, South);   // top run-out, facing down the slope
+        bool region = r.Options.Feed == InputFeed.Region;
+        float x = r.Slope > 0f ? 128f : 165f, y = r.Slope > 0f ? 120f : 85f;   // top run-out facing down the slope, or level ground facing east
+        Quaternion facing = r.Slope > 0f ? South : Quaternion.Identity;
+        if (region)
+            r.AddBox(CarSize, new Vector3(x, y, r.GroundAt(x, y) + CarSize.Z), facing);
         else
-            r.AddBoxOnGround(CarSize, 165f, 85f, Quaternion.Identity);   // level ground, facing east
+            r.AddBoxOnGround(CarSize, x, y, facing);
         r.MakeVehicle(Vehicle.TYPE_CAR);
         if (testCar)
         {
@@ -337,9 +390,16 @@ public static class Harness
             r.SetFloat(Vehicle.LINEAR_MOTOR_DECAY_TIMESCALE, 0.5f);
         }
         r.ApplyVehicleOverrides();
-        r.ReleaseAt = r.Hold;
+        r.NextKey = region ? r.Options.KeyDelay : 0.0;
+        r.ReleaseAt = r.NextKey + r.Hold;
         r.StopAtRest = true;
     }
+
+    /// <summary>Region feed's default key delay. A script's llSetStatus(STATUS_PHYSICS, TRUE) makes the body
+    /// dynamic at once (JoltPrim.IsPhysical), so the drop starts at the next heartbeat's step; a driver who
+    /// presses the key as soon as the script says physics is on (about 20 ms later on a test course) lands the
+    /// first control event before that step, most of the time. So the key and the drop start together.</summary>
+    public const float RegionKeyDelay = 0f;
 
     // On a slope: the lower part of the ramp, a second after the release. On level ground: the last second of the hold.
     private static bool DriveSteady(Run r, Sample s)
@@ -564,15 +624,14 @@ public static class Harness
         var scene = new JoltScene();
         r.Scene = scene;
         scene.Initialise(config);
-        double clock = 0;
-        scene.VehicleClock = () => ClockEpoch.AddTicks((long)Math.Round(clock * TimeSpan.TicksPerSecond));
+        scene.VehicleClock = () => ClockEpoch.AddTicks((long)Math.Round(r.Clock * TimeSpan.TicksPerSecond));
         (float[] heights, float water) = sc.World(slope);
         scene.InitialiseWithoutScene("Harness", Course.Size, Course.Size, heights, water, (float)r.Dt);
 
         var result = new RunResult { Scenario = sc.Name, RateHz = o.RateHz, PhysicsRateHz = scene.Substepping ? scene.Substeps.RateHz : 0, SlopeDeg = slope };
         try
         {
-            clock = -r.Dt * 0.5;
+            r.Clock = -r.Dt * 0.5;
             sc.Setup(r);
             float dt = (float)r.Dt;
             int frames = (int)Math.Ceiling(r.Duration / r.Dt - 1e-9);
@@ -581,11 +640,12 @@ public static class Harness
             double leftAt = double.NaN;
             for (int k = 0; k < frames; k++)
             {
-                // Inputs land half a heartbeat before the step; the step runs at the heartbeat's time.
+                // Inputs land half a heartbeat before the step (a region feed sets its own event times); the step
+                // runs at the heartbeat's time.
                 r.Now = k * r.Dt;
-                clock = r.Now - r.Dt * 0.5;
+                r.Clock = r.Now - r.Dt * 0.5;
                 sc.Input(r);
-                clock = r.Now;
+                r.Clock = r.Now;
                 scene.Simulate(dt);
 
                 Sample s = Read(r, (k + 1) * r.Dt);

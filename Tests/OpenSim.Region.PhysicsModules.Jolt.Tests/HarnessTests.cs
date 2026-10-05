@@ -59,8 +59,8 @@ public class HarnessTests
     }
 
     // The tolerances below cover float noise and nothing more: today the output is bit-for-bit repeatable.
-    // "Expected to change" marks a value that a session running the vehicle controller or the character
-    // at a physics rate above the heartbeat (substeps) should move toward the 45 / 90 Hz rows of the baseline.
+    // "Expected to change" marks a value that should move toward the 45 / 90 Hz rows of the baseline once the
+    // vehicle controller or the character runs at a physics rate above the heartbeat (substeps).
 
     [Fact]
     public void Test_car_on_level_ground_at_11_hz()
@@ -70,6 +70,20 @@ public class HarnessTests
         Assert.InRange(m.DistanceBeforeRelease, 5.86f, 5.96f);    // 5.909; expected to change (45 Hz: 7.707)
         Assert.InRange(m.TimeToRest, 3.6, 3.85);                   // 3.727 s after release
         Assert.InRange(m.MaxTilt, 0f, 1f);
+    }
+
+    // The region feed against a test course's pad drive (3 s key, the course's test car), measured in a region at
+    // one step per heartbeat and at PhysicsStepRate 45: 5.59 m / 5.00 m/s and 8.43 m / 6.14 m/s under the key.
+    // The heartbeat feed starts the car at rest on the ground and gives 5.91 / 7.45 m: the start decides it.
+    [Theory]
+    [InlineData(0.0, 5.59f, 5.00f)]
+    [InlineData(45.0, 8.43f, 6.14f)]
+    public void Region_feed_matches_the_pad_drive_measured_in_a_region(double physicsRate, float distance, float releaseSpeed)
+    {
+        var o = new HarnessOptions { RateHz = 11.0, SlopeDeg = 0f, PhysicsRateHz = physicsRate, Feed = InputFeed.Region };
+        Summary m = Harness.Harness.Run(Harness.Harness.Find("testcar"), o).Summary;
+        Assert.InRange(m.DistanceBeforeRelease, distance * 0.97f, distance * 1.03f);
+        Assert.InRange(m.ReleaseSpeed, releaseSpeed * 0.97f, releaseSpeed * 1.03f);
     }
 
     [Theory]
