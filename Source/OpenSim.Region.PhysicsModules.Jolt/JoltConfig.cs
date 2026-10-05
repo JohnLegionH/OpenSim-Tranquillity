@@ -17,6 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
+using OpenSim.Region.PhysicsModules.Jolt.Vehicles;
 using Nini.Config;
 using SVector3 = System.Numerics.Vector3;
 
@@ -49,6 +50,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float PhysicsStepRate = 0f;         // Hz; 0 = one physics step per heartbeat
         public int PhysicsStepCollisionSteps = 2;  // solver sub-steps per physics step, used only when PhysicsStepRate is on
         public float VehicleGroundGravityFactor = 1f;   // gravity on a car or sled touching something; 1 = whole
+        public VehiclePresetSet VehiclePresets = VehiclePresetSet.Documented;   // the values llSetVehicleType gives each type
 
         // The highest PhysicsStepRate accepted. Each step costs a backend update, so a rate far above the heartbeat
         // mostly hits the per-heartbeat step cap (see SubstepAccumulator.MaxStepsPerFrame).
@@ -81,8 +83,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.PhysicsStepRate = F(cfg, "PhysicsStepRate", c.PhysicsStepRate, 0f, MaxPhysicsStepRate, warnings);
             c.PhysicsStepCollisionSteps = I(cfg, "PhysicsStepCollisionSteps", c.PhysicsStepCollisionSteps, 1, 64, warnings);
             c.VehicleGroundGravityFactor = F(cfg, "VehicleGroundGravityFactor", c.VehicleGroundGravityFactor, 0f, 1f, warnings);
+            c.VehiclePresets = E(cfg, "VehiclePresets", c.VehiclePresets, warnings);
             return c;
         }
+
+        /// <summary>The vehicle settings every vehicle controller in a region with this configuration shares.</summary>
+        internal VehicleSettings ToVehicleSettings() => new VehicleSettings
+        {
+            Presets = VehiclePresets,
+        };
 
         /// <summary>
         /// The physics step rate a region with this heartbeat runs at: <see cref="PhysicsStepRate"/>, or 0 (one step
@@ -156,6 +165,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (int.TryParse(raw.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) && v >= min && v <= max)
                 return v;
             warnings?.Add($"[{Section}] {key} = \"{raw}\" is invalid (expected an integer in [{min}, {max}]); using the default {def}.");
+            return def;
+        }
+
+        // An enum value by its name, case ignored (numbers are not accepted).
+        private static T E<T>(IConfig cfg, string key, T def, List<string> warnings) where T : struct, Enum
+        {
+            string raw = cfg.GetString(key, null);
+            if (raw == null) return def;
+            string name = raw.Trim();
+            if (name.Length > 0 && !char.IsDigit(name[0]) && name[0] != '-' && Enum.TryParse(name, true, out T v) && Enum.IsDefined(v))
+                return v;
+            warnings?.Add($"[{Section}] {key} = \"{raw}\" is invalid (expected one of {string.Join(", ", Enum.GetNames<T>())}); using the default {def}.");
             return def;
         }
 

@@ -692,6 +692,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _vehicleBody = new JoltVehicleBody(_module, _backend, this);
                 _vehicle = new VehicleController(_vehicleBody);
                 _vehicle.GroundGravityFactor = _module.VehicleGroundGravityFactor;
+                _vehicle.Settings = _module.VehicleSettings;
                 Func<DateTime> clock = _module.ControllerClock;
                 if (clock != null)
                     _vehicle.Clock = clock;

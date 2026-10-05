@@ -18,9 +18,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 [Collection(JoltNativeSerial.Name)]
 public class HarnessTests
 {
+    // The figures here were measured with the legacy presets ([Jolt] VehiclePresets = legacy); the documented set's
+    // are held by VehiclePresetDriveTests.
     private static RunResult Run(string scenario, double rate = 11.0, float? slope = null, float? duration = null, float? keyRepeat = null)
     {
-        var o = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = duration };
+        var o = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = duration, Jolt = { ["VehiclePresets"] = "legacy" } };
         if (keyRepeat.HasValue) o.KeyRepeat = keyRepeat.Value;
         return Harness.Harness.Run(Harness.Harness.Find(scenario), o);
     }

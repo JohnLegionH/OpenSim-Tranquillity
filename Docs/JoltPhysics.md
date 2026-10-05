@@ -105,6 +105,26 @@ factor: `f * g * sin(angle) * Tf`. In the harness the test car (linear friction 
 rolls 0.86 m/s down 5 degrees with 1, which is the formula's value, and about a fifth of that
 with 0.2.
 
+### Vehicle type presets
+
+`llSetVehicleType` gives each type its defaults. `[Jolt] VehiclePresets` chooses which:
+
+- `documented` (the default): Second Life's documented values, from the wiki page of each type
+  (`VEHICLE_TYPE_SLED`, `_CAR`, `_BOAT`, `_AIRPLANE`, `_BALLOON`). The sled page's hover efficiency
+  of 10 is held to 1, as `llSetVehicleFloatParam` holds any efficiency.
+- `legacy`: the InWorldz Halcyon values the module used before, for vehicles tuned against them.
+
+```ini
+[Jolt]
+    VehiclePresets = legacy
+```
+
+A script's own `llSetVehicleFloatParam`, `llSetVehicleVectorParam` and `llSetVehicleFlags` calls
+override either set; most scripted vehicles set their own values after the type, and differ only
+in what they leave at the preset. The module's own extension parameters (wind, mouselook,
+motor disabling) are not Second Life parameters and are the same in both sets. The legacy car,
+boat and airplane also carry the module's torque-about-world-z flag, which no documented type sets.
+
 ### Vehicle motors and friction
 
 The linear motor and linear friction act on each axis of the vehicle's frame as one equation, as the

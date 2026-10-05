@@ -16,10 +16,10 @@ public class VehicleMotorDriveTests
 {
     private const double ReferenceRate = 720.0;
 
-    private static List<Sample> Drive(string scenario, double rate)
+    private static List<Sample> Drive(string scenario, double rate, string presets)
     {
         // A 4 s hold lands on a heartbeat at every rate (a whole number of steps at 11, 22.5, 45 and 90 Hz).
-        var o = new HarnessOptions { RateHz = rate, SlopeDeg = 0f, Hold = 4f, Duration = 6f };
+        var o = new HarnessOptions { RateHz = rate, SlopeDeg = 0f, Hold = 4f, Duration = 6f, Jolt = { ["VehiclePresets"] = presets } };
         return Harness.Harness.Run(Harness.Harness.Find(scenario), o).Samples;
     }
 
@@ -37,14 +37,15 @@ public class VehicleMotorDriveTests
     // The car preset and the boat preset on level ground and water: the motor ramp under the key (1-4 s) and its
     // braking after the key is let go (5 s), each rate within 1% of a 720 Hz heartbeat.
     [Theory]
-    [InlineData("car")]
-    [InlineData("boat")]
-    public void The_same_drive_gives_the_same_speeds_at_every_rate(string scenario)
+    [InlineData("car", "documented")]
+    [InlineData("car", "legacy")]
+    [InlineData("boat", "legacy")]
+    public void The_same_drive_gives_the_same_speeds_at_every_rate(string scenario, string presets)
     {
-        List<Sample> reference = Drive(scenario, ReferenceRate);
+        List<Sample> reference = Drive(scenario, ReferenceRate, presets);
         foreach (double rate in Harness.Harness.Rates)
         {
-            List<Sample> run = Drive(scenario, rate);
+            List<Sample> run = Drive(scenario, rate, presets);
             foreach (double t in new[] { 1.0, 2.0, 3.0, 4.0, 5.0 })
             {
                 float v = SpeedAt(run, t), vr = SpeedAt(reference, t);

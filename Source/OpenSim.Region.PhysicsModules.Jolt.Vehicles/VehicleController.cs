@@ -79,6 +79,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // VehicleGroundGravityFudge, 0.2 there. 1 leaves gravity whole. Set by the host from its configuration.
         public float GroundGravityFactor { get; set; } = 1f;
 
+        // The region's vehicle settings (preset set and limits). Set by the host before the first vehicle type is set.
+        public VehicleSettings Settings { get; set; } = VehicleSettings.Default;
+
         // =====================================================================
         // Ephemeral per-frame computed values (not persisted)
         // =====================================================================
@@ -145,6 +148,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <summary>Read a current vector vehicle param (preset default + any llSetVehicleVectorParam override).
         /// Introspection for the host / tests - e.g. asserting the car preset's friction/motor timescales.</summary>
         public Vector3 GetVecParam(VehVectorParam key) => _props.GetVec(key);
+
+        /// <summary>The current vehicle flags (preset + any llSetVehicleFlags / llRemoveVehicleFlags). For tests.</summary>
+        internal ExtendedVehicleFlags Flags => _props.Flags;
 
         #region Vehicle Parameter Setting — routes from LSL Vehicle wire codes to internal enums
 
@@ -1410,10 +1416,129 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         #region Vehicle Type Defaults (ported from Halcyon SetVehicleDefaults)
 
         /// <summary>
-        /// Set all vehicle parameters to the defaults for the given type.
-        /// Faithfully ported from Halcyon VehicleDynamics.SetVehicleDefaults().
+        /// Set all vehicle parameters to the defaults for the given type: the legacy (InWorldz Halcyon) values, and with
+        /// the documented preset set (<see cref="VehicleSettings.Presets"/>) Second Life's documented values over them.
+        /// The module's own extension params (wind, mouselook, banking azimuth, motor disabling) are not Second Life
+        /// params and keep their legacy values in both sets; none of them is simulated.
         /// </summary>
         private void SetVehicleDefaults(VehicleType newType)
+        {
+            SetLegacyDefaults(newType);
+            if (Settings.Presets == VehiclePresetSet.Documented)
+                SetDocumentedDefaults(newType);
+        }
+
+        /// <summary>
+        /// Second Life's documented defaults for each vehicle type, as the wiki page of each type lists them
+        /// (https://wiki.secondlife.com/wiki/VEHICLE_TYPE_SLED, _CAR, _BOAT, _AIRPLANE and _BALLOON). A scalar on the
+        /// page sets all three axes of a vector param. The flags are the page's llSetVehicleFlags list; every other
+        /// flag is cleared. The pages set no motor offset, so it is zero.
+        /// </summary>
+        private void SetDocumentedDefaults(VehicleType type)
+        {
+            const ExtendedVehicleFlags noDeflectionUp = ExtendedVehicleFlags.NoDeflectionUp;
+            const ExtendedVehicleFlags rollOnly = ExtendedVehicleFlags.LimitRollOnly;
+            const ExtendedVehicleFlags upOnly = ExtendedVehicleFlags.HoverUpOnly;
+            const ExtendedVehicleFlags motorUp = ExtendedVehicleFlags.LimitMotorUp;
+            const ExtendedVehicleFlags waterOnly = ExtendedVehicleFlags.HoverWaterOnly;
+            switch (type)
+            {
+                case VehicleType.Sled:
+                    // The page gives HOVER_EFFICIENCY 10; llSetVehicleFloatParam holds an efficiency to 0..1, so 1.
+                    SetDocumented(linearFriction: new Vector3(30f, 1f, 1000f), angularFriction: new Vector3(1000f),
+                        linearMotorTimescale: 1000f, linearMotorDecay: 120f, angularMotorTimescale: 1000f, angularMotorDecay: 120f,
+                        hoverHeight: 0f, hoverEfficiency: 1f, hoverTimescale: 10f, buoyancy: 0f,
+                        linearDeflectionEfficiency: 1f, linearDeflectionTimescale: 1f,
+                        angularDeflectionEfficiency: 0f, angularDeflectionTimescale: 10f,
+                        attractionEfficiency: 1f, attractionTimescale: 1000f,
+                        bankingEfficiency: 0f, bankingMix: 1f, bankingTimescale: 10f,
+                        flags: noDeflectionUp | rollOnly | motorUp);
+                    break;
+                case VehicleType.Car:
+                    SetDocumented(linearFriction: new Vector3(100f, 2f, 1000f), angularFriction: new Vector3(1000f),
+                        linearMotorTimescale: 1f, linearMotorDecay: 60f, angularMotorTimescale: 1f, angularMotorDecay: 0.8f,
+                        hoverHeight: 0f, hoverEfficiency: 0f, hoverTimescale: 1000f, buoyancy: 0f,
+                        linearDeflectionEfficiency: 1f, linearDeflectionTimescale: 2f,
+                        angularDeflectionEfficiency: 0f, angularDeflectionTimescale: 10f,
+                        attractionEfficiency: 1f, attractionTimescale: 10f,
+                        bankingEfficiency: -0.2f, bankingMix: 1f, bankingTimescale: 1f,
+                        flags: noDeflectionUp | rollOnly | upOnly | motorUp);
+                    break;
+                case VehicleType.Boat:
+                    SetDocumented(linearFriction: new Vector3(10f, 3f, 2f), angularFriction: new Vector3(10f),
+                        linearMotorTimescale: 5f, linearMotorDecay: 60f, angularMotorTimescale: 4f, angularMotorDecay: 4f,
+                        hoverHeight: 0f, hoverEfficiency: 0.5f, hoverTimescale: 2f, buoyancy: 1f,
+                        linearDeflectionEfficiency: 0.5f, linearDeflectionTimescale: 3f,
+                        angularDeflectionEfficiency: 0.5f, angularDeflectionTimescale: 5f,
+                        attractionEfficiency: 0.5f, attractionTimescale: 5f,
+                        bankingEfficiency: -0.3f, bankingMix: 0.8f, bankingTimescale: 1f,
+                        flags: noDeflectionUp | waterOnly | upOnly | motorUp);
+                    break;
+                case VehicleType.Airplane:
+                    SetDocumented(linearFriction: new Vector3(200f, 10f, 5f), angularFriction: new Vector3(20f),
+                        linearMotorTimescale: 2f, linearMotorDecay: 60f, angularMotorTimescale: 4f, angularMotorDecay: 8f,
+                        hoverHeight: 0f, hoverEfficiency: 0.5f, hoverTimescale: 1000f, buoyancy: 0f,
+                        linearDeflectionEfficiency: 0.5f, linearDeflectionTimescale: 0.5f,
+                        angularDeflectionEfficiency: 1f, angularDeflectionTimescale: 2f,
+                        attractionEfficiency: 0.9f, attractionTimescale: 2f,
+                        bankingEfficiency: 1f, bankingMix: 0.7f, bankingTimescale: 2f,
+                        flags: rollOnly);
+                    break;
+                case VehicleType.Balloon:
+                    SetDocumented(linearFriction: new Vector3(5f), angularFriction: new Vector3(10f),
+                        linearMotorTimescale: 5f, linearMotorDecay: 60f, angularMotorTimescale: 6f, angularMotorDecay: 10f,
+                        hoverHeight: 5f, hoverEfficiency: 0.8f, hoverTimescale: 10f, buoyancy: 1f,
+                        linearDeflectionEfficiency: 0f, linearDeflectionTimescale: 5f,
+                        angularDeflectionEfficiency: 0f, angularDeflectionTimescale: 5f,
+                        attractionEfficiency: 1f, attractionTimescale: 1000f,
+                        bankingEfficiency: 0f, bankingMix: 0.7f, bankingTimescale: 5f,
+                        flags: ExtendedVehicleFlags.None);
+                    break;
+            }
+        }
+
+        private void SetDocumented(Vector3 linearFriction, Vector3 angularFriction,
+            float linearMotorTimescale, float linearMotorDecay, float angularMotorTimescale, float angularMotorDecay,
+            float hoverHeight, float hoverEfficiency, float hoverTimescale, float buoyancy,
+            float linearDeflectionEfficiency, float linearDeflectionTimescale,
+            float angularDeflectionEfficiency, float angularDeflectionTimescale,
+            float attractionEfficiency, float attractionTimescale,
+            float bankingEfficiency, float bankingMix, float bankingTimescale,
+            ExtendedVehicleFlags flags)
+        {
+            _props.ParamsVec[VehVectorParam.LinearFrictionTimescale]    = linearFriction;
+            _props.ParamsVec[VehVectorParam.AngularFrictionTimescale]   = angularFriction;
+            _props.ParamsVec[VehVectorParam.LinearMotorDirection]       = Vector3.Zero;
+            _props.ParamsVec[VehVectorParam.AngularMotorDirection]      = Vector3.Zero;
+            _props.ParamsVec[VehVectorParam.LinearMotorOffset]          = Vector3.Zero;
+            _props.ParamsVec[VehVectorParam.LinearMotorTimescale]       = new Vector3(linearMotorTimescale);
+            _props.ParamsVec[VehVectorParam.LinearMotorDecayTimescale]  = new Vector3(linearMotorDecay);
+            _props.ParamsVec[VehVectorParam.AngularMotorTimescale]      = new Vector3(angularMotorTimescale);
+            _props.ParamsVec[VehVectorParam.AngularMotorDecayTimescale] = new Vector3(angularMotorDecay);
+
+            _props.ParamsFloat[VehFloatParam.HoverHeight]                  = hoverHeight;
+            _props.ParamsFloat[VehFloatParam.HoverEfficiency]              = hoverEfficiency;
+            _props.ParamsFloat[VehFloatParam.HoverTimescale]               = hoverTimescale;
+            _props.ParamsFloat[VehFloatParam.Buoyancy]                     = buoyancy;
+            _props.ParamsFloat[VehFloatParam.LinearDeflectionEfficiency]   = linearDeflectionEfficiency;
+            _props.ParamsFloat[VehFloatParam.LinearDeflectionTimescale]    = linearDeflectionTimescale;
+            _props.ParamsFloat[VehFloatParam.AngularDeflectionEfficiency]  = angularDeflectionEfficiency;
+            _props.ParamsFloat[VehFloatParam.AngularDeflectionTimescale]   = angularDeflectionTimescale;
+            _props.ParamsFloat[VehFloatParam.VerticalAttractionEfficiency] = attractionEfficiency;
+            _props.ParamsFloat[VehFloatParam.VerticalAttractionTimescale]  = attractionTimescale;
+            _props.ParamsFloat[VehFloatParam.BankingEfficiency]            = bankingEfficiency;
+            _props.ParamsFloat[VehFloatParam.BankingMix]                   = bankingMix;
+            _props.ParamsFloat[VehFloatParam.BankingTimescale]             = bankingTimescale;
+
+            _props.ParamsRot[VehRotationParam.ReferenceFrame] = Quaternion.Identity;
+            _props.Flags = flags;
+        }
+
+        /// <summary>
+        /// The legacy defaults for the given type: the InWorldz Halcyon values.
+        /// Faithfully ported from Halcyon VehicleDynamics.SetVehicleDefaults().
+        /// </summary>
+        private void SetLegacyDefaults(VehicleType newType)
         {
             switch (newType)
             {

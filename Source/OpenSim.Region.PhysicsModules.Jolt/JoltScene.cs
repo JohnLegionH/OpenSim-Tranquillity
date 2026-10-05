@@ -41,6 +41,7 @@ using Microsoft.Extensions.Logging;
 using OpenMetaverse;
 
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
+using OpenSim.Region.PhysicsModules.Jolt.Vehicles;
 // The backend speaks System.Numerics.Vector3; OpenSim speaks OpenMetaverse.Vector3 (the unqualified
 // Vector3 here). Alias the numerics one so backend calls are unambiguous.
 using SVector3 = System.Numerics.Vector3;
@@ -67,6 +68,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private JoltConfig _joltConfig = new JoltConfig();
         internal float AvatarJumpSpeed => _joltConfig.AvatarJumpSpeed;
         internal float VehicleGroundGravityFactor => _joltConfig.VehicleGroundGravityFactor;
+
+        // The vehicle settings every vehicle controller in this region shares, built from [Jolt] in Initialise.
+        internal VehicleSettings VehicleSettings { get; private set; } = VehicleSettings.Default;
 
         // The job pool is process-wide; log its size once, whichever region creates it.
         private static readonly object s_poolLogGate = new object();
@@ -261,6 +265,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     m_Config = source;
                     var warnings = new List<string>();
                     _joltConfig = JoltConfig.FromConfig(source, warnings);
+                    VehicleSettings = _joltConfig.ToVehicleSettings();
                     foreach (string w in warnings)
                         m_log.LogWarning($"{LogHeader} {w}");
                     m_log.LogInformation($"{LogHeader} enabled (physics = {Name}).");

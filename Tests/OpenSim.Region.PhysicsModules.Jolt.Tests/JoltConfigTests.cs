@@ -154,6 +154,30 @@ public class JoltConfigTests
     }
 
     [Fact]
+    public void VehiclePresets_defaults_to_the_documented_set_parses_and_falls_back()
+    {
+        JoltConfig d = JoltConfig.FromConfig(new IniConfigSource(), null);
+        Assert.Equal(Vehicles.VehiclePresetSet.Documented, d.VehiclePresets);
+        Assert.Equal(Vehicles.VehiclePresetSet.Documented, d.ToVehicleSettings().Presets);
+
+        var warnings = new List<string>();
+        foreach ((string text, Vehicles.VehiclePresetSet set) in new[] { ("legacy", Vehicles.VehiclePresetSet.Legacy), ("Legacy", Vehicles.VehiclePresetSet.Legacy), ("documented", Vehicles.VehiclePresetSet.Documented) })
+        {
+            JoltConfig c = JoltConfig.FromConfig(Source(("VehiclePresets", text)), warnings);
+            Assert.Equal(set, c.VehiclePresets);
+            Assert.Equal(set, c.ToVehicleSettings().Presets);
+        }
+        Assert.Empty(warnings);
+
+        foreach (string bad in new[] { "1", "-1", "halcyon", "" })
+        {
+            warnings.Clear();
+            Assert.Equal(Vehicles.VehiclePresetSet.Documented, JoltConfig.FromConfig(Source(("VehiclePresets", bad)), warnings).VehiclePresets);
+            Assert.Single(warnings);
+        }
+    }
+
+    [Fact]
     public void JobPools_defaults_parses_and_falls_back()
     {
         var d = JoltConfig.FromConfig(new IniConfigSource(), null);

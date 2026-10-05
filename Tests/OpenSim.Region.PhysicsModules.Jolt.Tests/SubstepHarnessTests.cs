@@ -61,7 +61,8 @@ public class SubstepHarnessTests
     [InlineData("drop", 0f, "endz", 25.500f, 0.1f)]
     public void Steps_at_45_hz_inside_11_hz_heartbeats_match_a_45_hz_heartbeat(string scenario, float slope, string figure, float expected, float percent)
     {
-        float got = Figure(Run(scenario, slope, 11.0, 45.0), figure);
+        // The expected figures were measured with the legacy presets.
+        float got = Figure(Run(scenario, slope, 11.0, 45.0, ("VehiclePresets", "legacy")), figure);
         float tol = Math.Abs(expected) * percent / 100f;
         Assert.InRange(got, expected - tol, expected + tol);
     }

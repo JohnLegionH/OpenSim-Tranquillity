@@ -101,18 +101,24 @@ public class VehicleGravityTests
         return sum / n;
     }
 
-    // The test car (motor timescale 1, decay 0.5, friction 1 s along) and the car preset (0.5, 10, 100 s), key held
-    // down the ramp: the speed on the lower ramp is the equation's, within 1%, at every rate.
+    // The test car (motor timescale 1, decay 0.5, friction 1 s along) and the car preset (legacy 0.5, 10, 100 s;
+    // documented 1, 60, 100 s), key held down the ramp: the speed on the lower ramp is the equation's, within 1%, at
+    // every rate.
     [Theory]
-    [InlineData("testcar-down", 5f, 1.0, 0.5, 1.0)]
-    [InlineData("testcar-down", 15f, 1.0, 0.5, 1.0)]
-    [InlineData("car-down", 5f, 0.5, 10.0, 100.0)]
-    [InlineData("car-down", 15f, 0.5, 10.0, 100.0)]
-    public void A_car_driven_down_a_ramp_settles_at_the_equations_speed(string scenario, float slope, double tm, double td, double tf)
+    [InlineData("testcar-down", 5f, 1.0, 0.5, 1.0, "documented")]
+    [InlineData("testcar-down", 15f, 1.0, 0.5, 1.0, "documented")]
+    [InlineData("testcar-down", 5f, 1.0, 0.5, 1.0, "legacy")]
+    [InlineData("testcar-down", 15f, 1.0, 0.5, 1.0, "legacy")]
+    [InlineData("car-down", 5f, 1.0, 60.0, 100.0, "documented")]
+    [InlineData("car-down", 15f, 1.0, 60.0, 100.0, "documented")]
+    [InlineData("car-down", 5f, 0.5, 10.0, 100.0, "legacy")]
+    [InlineData("car-down", 15f, 0.5, 10.0, 100.0, "legacy")]
+    public void A_car_driven_down_a_ramp_settles_at_the_equations_speed(string scenario, float slope, double tm, double td, double tf, string presets)
     {
         foreach (double rate in Harness.Harness.Rates)
         {
-            Summary m = Harness.Harness.Run(Harness.Harness.Find(scenario), new HarnessOptions { RateHz = rate, SlopeDeg = slope }).Summary;
+            var o = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Jolt = { ["VehiclePresets"] = presets } };
+            Summary m = Harness.Harness.Run(Harness.Harness.Find(scenario), o).Summary;
             double expected = EquationSteady(rate, 8.0, tm, td, tf, slope, limitMotorUp: true);
             Assert.True(Math.Abs(m.SteadySpeed - expected) <= 0.01 * expected, $"{scenario} {slope} deg at {rate} Hz: {m.SteadySpeed:0.000} against {expected:0.000}");
         }

@@ -86,7 +86,8 @@ public class VehicleAttractorTests
         var landings = new List<float>();
         foreach (double rate in new[] { 11.0, 45.0 })
         {
-            RunResult r = Harness.Harness.Run(Harness.Harness.Find("testcar-down"), new HarnessOptions { RateHz = rate, SlopeDeg = 33f });
+            var o = new HarnessOptions { RateHz = rate, SlopeDeg = 33f, Jolt = { ["VehiclePresets"] = "legacy" } };
+            RunResult r = Harness.Harness.Run(Harness.Harness.Find("testcar-down"), o);
             int off = r.Samples.FindIndex(s => !s.Touching && s.Position.Y < Course.RampTopY + 1f);
             Assert.True(off > 0, $"{rate} Hz: the car never left the ground at the crest");
             Sample crest = r.Samples[off - 1];

@@ -17,23 +17,29 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 [Collection(JoltNativeSerial.Name)]
 public class VehicleRestAndCrashTests
 {
-    private static RunResult Run(string scenario, double rate)
-        => Harness.Harness.Run(Harness.Harness.Find(scenario), new HarnessOptions { RateHz = rate });
+    private static RunResult Run(string scenario, double rate, string presets = null)
+    {
+        var o = new HarnessOptions { RateHz = rate };
+        if (presets != null)
+            o.Jolt["VehiclePresets"] = presets;
+        return Harness.Harness.Run(Harness.Harness.Find(scenario), o);
+    }
 
     // A parked vehicle goes to sleep within this many seconds of its last motor input (park-new: of the start) and
     // stays asleep to the end of the run; the engine then has no body awake.
     [Theory]
-    [InlineData("park-new", 11.0, 6.0)]
-    [InlineData("park-new", 45.0, 6.0)]
-    [InlineData("park-faded", 11.0, 14.0)]
-    [InlineData("park-faded", 45.0, 14.0)]
-    [InlineData("park-drive", 11.0, 14.0)]
-    // At 45 Hz angular deflection pitches the slowing test car 0.2 degrees toward the jitter of its contact velocity,
-    // and it drifts at about 0.02 m/s (the ground's push along the tilt against no contact friction) before settling.
-    [InlineData("park-drive", 45.0, 20.0)]
-    public void A_parked_vehicle_goes_to_sleep_and_stays_asleep(string scenario, double rate, double within)
+    [InlineData("park-new", 11.0, 6.0, null)]
+    [InlineData("park-new", 45.0, 6.0, null)]
+    [InlineData("park-faded", 11.0, 14.0, null)]
+    [InlineData("park-faded", 45.0, 14.0, null)]
+    [InlineData("park-drive", 11.0, 14.0, null)]
+    // At 45 Hz angular deflection pitches the slowing legacy test car 0.2 degrees toward the jitter of its contact
+    // velocity, and it drifts at about 0.02 m/s (the ground's push along the tilt against no contact friction) before
+    // settling.
+    [InlineData("park-drive", 45.0, 20.0, "legacy")]
+    public void A_parked_vehicle_goes_to_sleep_and_stays_asleep(string scenario, double rate, double within, string presets)
     {
-        RunResult r = Run(scenario, rate);
+        RunResult r = Run(scenario, rate, presets);
         Summary m = r.Summary;
         Assert.Equal(0, m.NonFinite);
         Assert.False(double.IsNaN(m.SleepAfter), $"{r.Name}: still awake at the end");
