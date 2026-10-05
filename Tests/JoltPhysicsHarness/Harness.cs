@@ -201,6 +201,9 @@ public sealed class Summary
     public float PushRangeLate = float.NaN;
     /// <summary>The deepest overlap from 2 to 10 s after the impact (m).</summary>
     public float PushPenetration = float.NaN;
+    /// <summary>After the impact: how far the centre of either object rose above where it was at the impact (m). A
+    /// car thrown up by a contact, or riding over what it hit, rises; one stopped by it does not.</summary>
+    public float CrashRise = float.NaN;
 }
 
 public sealed class RunResult
@@ -244,7 +247,7 @@ public sealed class RunResult
 
     public const string SummaryHeader =
         "scenario,slope_deg,rate_hz,steps,top_speed,release_t,release_speed,steady_speed,steady_hspeed,dist_before_release,dist_after_release,time_to_rest,peak_height,peak_rise,z_range,max_tilt_deg,end_x,end_y,end_z,left_region_t,nonfinite," +
-        "sleep_after,active_at_end,impact_t,arrival_speed,leaving_speed,penetration,tunneled,push_range_early,push_range_late,push_penetration";
+        "sleep_after,active_at_end,impact_t,arrival_speed,leaving_speed,penetration,tunneled,push_range_early,push_range_late,push_penetration,crash_rise";
 
     public string SummaryLine()
     {
@@ -258,7 +261,7 @@ public sealed class RunResult
             Fmt(m.End.X, "0.000"), Fmt(m.End.Y, "0.000"), Fmt(m.End.Z, "0.000"), Fmt(m.LeftRegionT, "0.000"), m.NonFinite.ToString(CultureInfo.InvariantCulture),
             Fmt(m.SleepAfter, "0.000"), m.ActiveAtEnd.ToString(CultureInfo.InvariantCulture), Fmt(m.ImpactT, "0.000"),
             Fmt(m.ArrivalSpeed, "0.000"), Fmt(m.LeavingSpeed, "0.000"), Fmt(m.Penetration, "0.0000"), m.Tunneled.ToString(CultureInfo.InvariantCulture),
-            Fmt(m.PushRangeEarly, "0.0000"), Fmt(m.PushRangeLate, "0.0000"), Fmt(m.PushPenetration, "0.0000"));
+            Fmt(m.PushRangeEarly, "0.0000"), Fmt(m.PushRangeLate, "0.0000"), Fmt(m.PushPenetration, "0.0000"), Fmt(m.CrashRise, "0.0000"));
     }
 
     internal static string Fmt(double v, string format)
@@ -1141,23 +1144,41 @@ public static class Harness
         return 0.5f * (size.X * MathF.Abs(Vector3.Dot(x, axis)) + size.Y * MathF.Abs(Vector3.Dot(y, axis)) + size.Z * MathF.Abs(Vector3.Dot(z, axis)));
     }
 
-    // How far apart the two objects' bounding boxes are along a world axis (below zero: by how much they overlap).
+    // How far apart the two objects are along a unit axis (below zero: by how much their projections overlap).
     private static float Separation(Run r, Sample s, Vector3 axis)
         => MathF.Abs(Vector3.Dot(s.Other - s.Position, axis))
            - HalfExtent(s.Rotation, r.ActorSize, axis) - HalfExtent(s.OtherRotation, r.OtherSize, axis);
 
-    // The gap between the object and the second object: the widest separation of their bounding boxes on any world
-    // axis, or, when they overlap on all three, minus the shallowest overlap (the depth one has pushed into the other).
-    private static float GapToOther(Run r, Sample s)
-        => MathF.Max(Separation(r, s, Vector3.UnitX), MathF.Max(Separation(r, s, Vector3.UnitY), Separation(r, s, Vector3.UnitZ)));
+    // The gap between the object and the second object, two boxes: the widest separation over the axes that can
+    // separate two boxes (the three face normals of each and the nine cross products of their edges), or, when they
+    // overlap on all of them, minus the shallowest overlap: the depth one box has pushed into the other. (Separation
+    // along the world axes alone counts a box turned in a glancing hit as overlapping where its corners clear the other.)
+    public static float GapToOther(Run r, Sample s)
+    {
+        Vector3[] a = { Vector3.UnitX * s.Rotation, Vector3.UnitY * s.Rotation, Vector3.UnitZ * s.Rotation };
+        Vector3[] b = { Vector3.UnitX * s.OtherRotation, Vector3.UnitY * s.OtherRotation, Vector3.UnitZ * s.OtherRotation };
+        float gap = float.MinValue;
+        void Axis(Vector3 axis)
+        {
+            float length = axis.Length();
+            if (length > 1e-4f)
+                gap = MathF.Max(gap, Separation(r, s, axis / length));
+        }
+        foreach (Vector3 u in a) Axis(u);
+        foreach (Vector3 v in b) Axis(v);
+        foreach (Vector3 u in a)
+            foreach (Vector3 v in b)
+                Axis(Vector3.Cross(u, v));
+        return gap;
+    }
 
     // The object is going through the second one: their centres have crossed along x (the way it was driven) while
-    // the two still overlap on every axis, so it did not go round or over. (At the harness's speeds a step moves
-    // less than the two objects span together, so a pass through always leaves such a sample.)
+    // the two are still pushed into each other by more than ThroughOverlap, so it did not go round or over. (At the
+    // harness's speeds a step moves less than the two objects span together, so a pass through always leaves such a
+    // sample.)
     private const float ThroughOverlap = 0.1f;
     private static bool PassedThroughOther(Run r, Sample s)
-        => s.Position.X >= s.Other.X && Separation(r, s, Vector3.UnitX) < 0f
-           && Separation(r, s, Vector3.UnitY) < -ThroughOverlap && Separation(r, s, Vector3.UnitZ) < -ThroughOverlap;
+        => s.Position.X >= s.Other.X && GapToOther(r, s) < -ThroughOverlap;
 
     // The gap from the object's lowest point to the ground under it.
     private static float GapBelow(Run r, Sample s)
@@ -1262,6 +1283,8 @@ public static class Harness
             m.ArrivalSpeed = MathF.Max(m.ArrivalSpeed, MathF.Max(samples[i].Speed, samples[i].OtherSpeed));
         m.LeavingSpeed = 0f;
         m.Penetration = 0f;
+        m.CrashRise = 0f;
+        float z0 = samples[impact].Position.Z, otherZ0 = samples[impact].Other.Z;
         float pushPen = float.NaN, earlyMin = float.MaxValue, earlyMax = float.MinValue, lateMin = float.MaxValue, lateMax = float.MinValue;
         for (int i = impact; i < samples.Count; i++)
         {
@@ -1273,6 +1296,7 @@ public static class Harness
             if (after >= LeavingDelay - 1e-9 && after <= 1.0 + 1e-9)
                 m.LeavingSpeed = MathF.Max(m.LeavingSpeed, MathF.Max(s.Speed, s.OtherSpeed));
             m.Penetration = MathF.Max(m.Penetration, overlap);
+            m.CrashRise = MathF.Max(m.CrashRise, MathF.Max(s.Position.Z - z0, r.Other != null ? s.Other.Z - otherZ0 : 0f));
             if (sc.PassedThrough != null && sc.PassedThrough(r, s))
                 m.Tunneled = 1;
             if (after >= 2.0 - 1e-9 && after <= 10.0 + 1e-9)
