@@ -45,7 +45,44 @@ and what it does; copy a key into `OpenSim.ini` to change it. An invalid value l
 the default is used. The keys cover gravity, solver sub-steps and iterations, the worker threads
 and job pools shared by all regions in the process, body / pair / contact capacities (optionally
 scaled with region area for var regions), the per-frame update buffers, the avatar jump speed,
-how often capacity warnings are logged, and `TestCommands` (below).
+how often capacity warnings are logged, the physics step rate (below), and `TestCommands` (below).
+
+### Physics step rate
+
+By default the module runs one physics step per region heartbeat (`[Startup] FrameTime`, about 11
+per second). `[Jolt] PhysicsStepRate` runs physics at a set rate inside each heartbeat instead:
+
+```ini
+[Jolt]
+    PhysicsStepRate = 45
+    PhysicsStepCollisionSteps = 2
+```
+
+- Each step is exactly 1/45 s. An 11 Hz heartbeat runs 4 or 5 steps; the time left over carries
+  into the next heartbeat, so the long-run rate is exact.
+- In every step: the vehicle controllers, the avatar step, and forces and changes queued by
+  scripts. Once per heartbeat: positions and velocities sent to the scene (and from there to
+  viewers), the settle update of a body that came to rest, and collision events.
+- Collision events cover every step of the heartbeat. A touching pair counts once per heartbeat,
+  as before. A contact that begins and ends inside one heartbeat gives `collision_start` in that
+  heartbeat and `collision_end` in the next.
+- `llApplyImpulse` on a physical object gives the same velocity change as with one step per
+  heartbeat, and so does a force the scene marks as a push.
+- `PhysicsStepCollisionSteps` replaces `CollisionSteps` while the rate is on: the solver's
+  sub-steps per physics step. 2 at 45 steps per second slices the solver at 90 Hz.
+- A heartbeat runs at most 16 steps. A heartbeat that would need more runs 16 and drops the rest
+  of its time; `jolt capacity` shows how many heartbeats did ("physics steps").
+- A rate below the heartbeat's own rate is refused with one warning at region start, and the region
+  runs one step per heartbeat.
+- The keys are read once, when the region starts.
+
+What changes at 45: vehicles and avatars integrate in 1/45 s steps, so anything whose behaviour
+depends on the step changes. In the harness (below), the test car on level ground leaves the key at
+5.87 m/s instead of 5.13, an avatar jump rises 0.76 m instead of 0.64, and the sled on 15 degrees
+reaches about 31 m/s instead of 20; avatar walking speed does not change.
+Position updates to viewers, timers and sensors stay at the heartbeat rate. Physics costs more:
+in the harness the test car takes about 1.5 times the step time of one step per heartbeat
+(`jolt metrics` shows each region's step time).
 
 ## Console commands
 
@@ -104,12 +141,13 @@ dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --sce
 | `--list` | List the scenarios and the slopes each one uses |
 | `--scenario NAME[,NAME..]` or `all` | Scenarios to run (default: all) |
 | `--rate HZ[,HZ..]` or `all` | Heartbeat rates; `all` is 11, 22.5, 45 and 90 (default: 11) |
+| `--physics-rate HZ[,HZ..]` | `[Jolt] PhysicsStepRate`: physics steps per second inside each heartbeat; 0 is one step per heartbeat (default: 0, or the `JOLT_HARNESS_PHYSICS_RATE` environment variable) |
 | `--slope DEG[,DEG..]` | Ramp angles for the scenarios that use one (default: each scenario's own list) |
 | `--duration S`, `--hold S` | Seconds simulated, and seconds the drive key is held |
 | `--keyrepeat S` | How often a held key re-sends the motor, as a script's control event does (default 0.1) |
 | `--jolt KEY=VALUE` | A `[Jolt]` setting, as in the region's ini (repeatable) |
 | `--vparam NAME=V` or `NAME=X,Y,Z` | A vehicle parameter by its LSL name, applied after the scenario's own, e.g. `LINEAR_FRICTION_TIMESCALE=1,1,1000` (repeatable) |
-| `--out DIR` | Also write a CSV per run (`<scenario>-s<slope>-r<rate>.csv`) and `summary.csv` there |
+| `--out DIR` | Also write a CSV per run (`<scenario>-s<slope>-r<rate>.csv`, with `-p<rate>` added when the physics rate is on) and `summary.csv` there |
 
 Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, then released),
 `testcar` (the same with linear friction `<1,1,1000>`, motor timescale 1 and decay 0.5),
@@ -123,6 +161,9 @@ height above the ground, the largest tilt and the end position. The CSV has one 
 time, position, velocity, speed, tilt and height above the ground. Time is simulated, so a run takes
 a fraction of real time, and the same arguments always give the same output.
 
-A rate here means calling today's step at that interval: 11 Hz is a region's default heartbeat
-(`[Startup] FrameTime`). The harness writes nothing unless `--out` is given. The module's test
+`--rate` is the heartbeat: how often the module's step is called, as a region calls it every
+`[Startup] FrameTime` (11 Hz by default). `--physics-rate` runs the same scenario with physics steps
+inside each heartbeat, so the two can be compared, e.g.
+`--scenario testcar --slope 15 --rate 11 --physics-rate 0,45`; the summary marks those rows
+`<scenario>/p45`. The harness writes nothing unless `--out` is given. The module's test
 project runs the same scenarios as regression tests (`HarnessTests`).
