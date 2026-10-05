@@ -132,7 +132,9 @@ public class VehicleMotorModelTests
         public float Mass => 1000f;
         public Vector3 InertiaDiagonal => new(100f, 100f, 100f);
         public Vector3 Gravity => new(0f, 0f, -9.80665f);
-        public void SetGravityFactor(float factor) { }
+        // The share of gravity the engine would apply over the next step (the rig applies it, as the engine does).
+        public float GravityFactor;
+        public void SetGravityFactor(float factor) => GravityFactor = factor;
         public bool HasCollision { get; set; }
         public void AddForce(Vector3 force) { }
         public void AddTorque(Vector3 torque) { }
@@ -170,6 +172,8 @@ public class VehicleMotorModelTests
             for (int i = 0; i < n; i++)
             {
                 Car.Step((float)(1.0 / rate));
+                // The engine's step: the vehicle's share of gravity over it (there is nothing else to integrate).
+                Body.LinearVelocity += Body.Gravity * Body.GravityFactor * (float)(1.0 / rate);
                 _now += 1.0 / rate;
             }
         }
@@ -240,13 +244,14 @@ public class VehicleMotorModelTests
     [Fact]
     public void Friction_acts_on_the_vertical_axis_too_with_motor_up_limited()
     {
-        // The car preset has LIMIT_MOTOR_UP. A car falling at 5 m/s with vertical friction 1 s keeps e^(-dt) of its
-        // fall each step: the upward change friction makes is not dropped.
+        // The car preset has LIMIT_MOTOR_UP. A car falling at 5 m/s with vertical friction 1 s, under gravity:
+        // dv/dt = -v / 1 s - g, so v(t) = -5 e^(-t) - g (1 - e^(-t)), heading for -g * 1 s: the upward change friction
+        // makes is not dropped.
         var rig = new Rig(1f, 1000f, 1000f, false);
         rig.Car.ProcessVectorVehicleParam(Vehicle.LINEAR_FRICTION_TIMESCALE, new Vector3(1000f, 1000f, 1f));
         rig.Body.LinearVelocity = new Vector3(0f, 0f, -5f);
         rig.Run(45, 2);
-        Close(-5 * Math.Exp(-2), rig.Body.LinearVelocity.Z, "vertical friction");
+        Close(-5 * Math.Exp(-2) - 9.80665 * (1 - Math.Exp(-2)), rig.Body.LinearVelocity.Z, "vertical friction");
     }
 
     [Fact]

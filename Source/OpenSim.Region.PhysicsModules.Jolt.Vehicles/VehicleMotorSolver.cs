@@ -14,17 +14,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
     /// (wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial, "Moving the Vehicle", "Steering the Vehicle" and
     /// "Friction Timescales"; LlSetVehicleFloatParam and LlSetVehicleVectorParam):
     ///
-    ///   dv/dt = g(s) * (M - v) / Tm  -  v / Tf          g(s) = e^(-s / Td)
+    ///   dv/dt = g(s) * (M - v) / Tm  -  v / Tf  +  a          g(s) = e^(-s / Td)
     ///
     /// - v: the velocity on the axis (linear, or angular about it);
     /// - M: the motor direction on the axis, the velocity the motor tries to reach;
     /// - Tm: the motor timescale, the time constant for the velocity to approach M exponentially;
     /// - Td: the motor decay timescale; the motor's grip g starts at 1 when the motor is set and decays
     ///   exponentially toward nothing; s is the time since that set;
-    /// - Tf: the friction timescale, the time constant of an exponential decay of v that acts all the time.
+    /// - Tf: the friction timescale, the time constant of an exponential decay of v that acts all the time;
+    /// - a: a constant acceleration on the axis over the step: the vehicle's gravity along it (zero for the angular
+    ///   motor). Gravity acts inside the step with the motor and friction, so a vehicle on a slope settles where the
+    ///   three balance, whatever the step.
     ///
     /// <see cref="Step"/> is the exact solution over a step, so a span of time gives the same velocity however it
-    /// is cut into steps. With the grip full the velocity settles at M * Tf / (Tf + Tm).
+    /// is cut into steps. With the grip full the velocity settles at (M / Tm + a) / (1 / Tm + 1 / Tf), which is
+    /// M * Tf / (Tf + Tm) with no gravity on the axis.
     /// </summary>
     public static class VehicleMotorSolver
     {
@@ -32,8 +36,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // off is a large timescale, and this is the largest a script can set.
         public const double FrictionOffTimescale = VehicleLimits.MaxTimescale;
 
-        // The motor-and-friction integral is taken on panels no longer than this share of the shorter of the motor
-        // and friction timescales, each with a four-point Gauss-Legendre rule: the integrand is a smooth
+        // The motor-and-friction integral is taken on panels no longer than this share of the shortest of the motor,
+        // decay and friction timescales, each with a four-point Gauss-Legendre rule: the integrand is a smooth
         // exponential, so this is exact to well under a part in a million.
         private const double PanelShareOfTimescale = 0.5;
         private const int MaxPanels = 256;
@@ -52,11 +56,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             => frictionTimescale >= FrictionOffTimescale ? 0.0 : 1.0 / frictionTimescale;
 
         /// <summary>
-        /// The velocity on one axis after a step of h seconds of dv/dt = g(s) (M - v) / Tm - v / Tf, starting from
-        /// v0 with the motor set age seconds before the step (infinite: no motor).
+        /// The velocity on one axis after a step of h seconds of dv/dt = g(s) (M - v) / Tm - v / Tf + a, starting
+        /// from v0 with the motor set age seconds before the step (infinite: no motor).
         /// </summary>
         public static double Step(double v0, double motor, double motorTimescale, double decayTimescale, double age,
-                                  double frictionTimescale, double h)
+                                  double frictionTimescale, double h, double accel = 0.0)
         {
             // A timescale shorter than the shortest a script can set (only an unset preset has one) is taken as that.
             motorTimescale = Math.Max(motorTimescale, VehicleLimits.MinPhysicsTimestep);
@@ -67,22 +71,22 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             if (h <= 0)
                 return v0;
 
-            // No motor: friction alone, v = v0 e^(-h / Tf).
+            // No motor: friction and gravity, v = v0 e^(-h / Tf) + a Tf (1 - e^(-h / Tf)); with no friction, v0 + a h.
             if (grip0 <= 0)
-                return v0 * Math.Exp(-kf * h);
+                return FrictionStep(v0, frictionTimescale, h, accel);
 
             // The motor's pull integrated over the step: A(t) = integral of g / Tm = g0 (Td / Tm) (1 - e^(-t / Td)).
             double pull = grip0 * decayTimescale / motorTimescale;
             double A(double t) => pull * (1.0 - Math.Exp(-t / decayTimescale));
             double Ah = A(h);
 
-            // No friction: v = M + (v0 - M) e^(-A(h)).
-            if (kf == 0)
+            // No friction and no gravity: v = M + (v0 - M) e^(-A(h)).
+            if (kf == 0 && accel == 0)
                 return motor + (v0 - motor) * Math.Exp(-Ah);
 
-            // Both: v(h) = v0 e^(-A(h) - h / Tf) + M * integral_0^h a(t) e^(-(A(h) - A(t)) - (h - t) / Tf) dt,
-            // with a(t) = g0 e^(-t / Td) / Tm, the motor's rate at time t into the step.
-            double shortest = Math.Min(motorTimescale, frictionTimescale);
+            // Otherwise: v(h) = v0 e^(-A(h) - h / Tf) + integral_0^h (m(t) M + a) e^(-(A(h) - A(t)) - (h - t) / Tf) dt,
+            // with m(t) = g0 e^(-t / Td) / Tm, the motor's rate at time t into the step.
+            double shortest = Math.Min(Math.Min(motorTimescale, decayTimescale), kf > 0 ? frictionTimescale : double.MaxValue);
             int panels = (int)Math.Min(MaxPanels, Math.Max(1.0, Math.Ceiling(h / (shortest * PanelShareOfTimescale))));
             double width = h / panels;
             double integral = 0;
@@ -93,14 +97,23 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 {
                     double t = mid + 0.5 * width * GaussNodes[k];
                     double rate = grip0 * Math.Exp(-t / decayTimescale) / motorTimescale;
-                    integral += GaussWeights[k] * 0.5 * width * rate * Math.Exp(-(Ah - A(t)) - kf * (h - t));
+                    integral += GaussWeights[k] * 0.5 * width * (rate * motor + accel) * Math.Exp(-(Ah - A(t)) - kf * (h - t));
                 }
             }
-            return v0 * Math.Exp(-Ah - kf * h) + motor * integral;
+            return v0 * Math.Exp(-Ah - kf * h) + integral;
         }
 
-        /// <summary>The velocity on one axis after a step of friction alone: v0 e^(-h / Tf).</summary>
-        public static double FrictionStep(double v0, double frictionTimescale, double h)
-            => v0 * Math.Exp(-FrictionRate(Math.Max(frictionTimescale, VehicleLimits.MinPhysicsTimestep)) * h);
+        /// <summary>
+        /// The velocity on one axis after a step of friction and a constant acceleration a, no motor:
+        /// v0 e^(-h / Tf) + a Tf (1 - e^(-h / Tf)), or v0 + a h with no friction on the axis.
+        /// </summary>
+        public static double FrictionStep(double v0, double frictionTimescale, double h, double accel = 0.0)
+        {
+            double kf = FrictionRate(Math.Max(frictionTimescale, VehicleLimits.MinPhysicsTimestep));
+            if (kf == 0)
+                return v0 + accel * h;
+            double decay = Math.Exp(-kf * h);
+            return v0 * decay + accel * (1.0 - decay) / kf;
+        }
     }
 }

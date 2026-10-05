@@ -91,10 +91,10 @@ public class HarnessTests
     }
 
     [Theory]
-    [InlineData(5f, 0.896f)]     // in-world 0.90 (before 0.907)
-    [InlineData(15f, 2.655f)]    // in-world 2.85 (before 2.850): friction now acts along the car's axes, the
+    [InlineData(5f, 0.856f)]     // in-world 0.90; the equation g sin(5) * 1 s = 0.855 (0.896 with gravity outside it; before 0.907)
+    [InlineData(15f, 2.542f)]    // in-world 2.85; the equation 2.538 (2.655 with gravity outside it; before 2.850): friction acts along the car's axes, the
                                  // vertical part included
-    [InlineData(33f, 5.590f)]    // in-world 7.94 (released before the crest there); before 6.677, was 7.842.
+    [InlineData(33f, 5.345f)]    // in-world 7.94 (released before the crest there); 5.590 with gravity outside the equation, before 6.677, was 7.842.
     public void Test_car_rolls_down_a_slope_at_a_steady_speed_at_11_hz(float slope, float steady)
     {
         Summary m = Run("testcar", slope: slope).Summary;

@@ -689,8 +689,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         /// <summary>
         /// The vehicle's gravity: the engine applies its share over the step, spread over the step as for any body.
-        /// (Applied here as a force it was the same, but a force restarts the engine's sleep timer on every step, so
-        /// a parked vehicle could never sleep.)
+        /// The linear motor and friction step takes it into its equation and leaves the engine this g h. (Applied
+        /// here as a force it was the same, but a force restarts the engine's sleep timer on every step, so a parked
+        /// vehicle could never sleep.)
         /// </summary>
         private void ApplyGravity()
         {
@@ -1219,18 +1220,25 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         #region Motors and friction — Linear + Angular, and the Banking turn motor
 
         /// <summary>
-        /// The linear motor and linear friction over one step of h seconds. On each axis of the vehicle frame:
+        /// The linear motor, linear friction and the vehicle's gravity over one step of h seconds. On each axis of
+        /// the vehicle frame:
         ///
-        ///   dv/dt = g(s) * (M - v) / Tm  -  v / Tf          g(s) = e^(-s / Td)
+        ///   dv/dt = g(s) * (M - v) / Tm  -  v / Tf  +  a          g(s) = e^(-s / Td)
         ///
         /// M the motor direction, Tm the motor timescale, Td the motor decay timescale, s the time since the motor
-        /// was last set, Tf the friction timescale (see <see cref="VehicleMotorSolver"/>). The velocity after the step
-        /// is the exact solution of that equation over it, so the result does not depend on the step rate. Friction
-        /// acts on every axis all the time; the motor's pull fades with its decay and is never cut off.
+        /// was last set, Tf the friction timescale, a the vehicle's gravity along the axis (see
+        /// <see cref="VehicleMotorSolver"/>). The velocity after the step is the exact solution of that equation over
+        /// it, so the result does not depend on the step rate. Friction acts on every axis all the time; the motor's
+        /// pull fades with its decay and is never cut off.
+        ///
+        /// The engine applies the gravity itself over the step (<see cref="ApplyGravity"/>); the change written here
+        /// is the exact solution less that gravity, so the two together end the step on the exact velocity.
         /// </summary>
         private void SimulateLinearMotorAndFriction(float h, bool motorOn, bool frictionOn)
         {
             Vector3 v0 = _rawLocalLinearVel;
+            Vector3 gravityWorld = _body.Gravity * GravityShare();
+            Vector3 gravity = gravityWorld * Quaternion.Inverse(_rotation);
             Vector3 motor = _props.Dynamics.LinearDirection;
             Vector3 motorTs = _props.GetVec(VehVectorParam.LinearMotorTimescale);
             Vector3 decayTs = _props.GetVec(VehVectorParam.LinearMotorDecayTimescale);
@@ -1240,18 +1248,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 _props.Dynamics.LinearDecayIndex = float.PositiveInfinity;
             double age = _props.Dynamics.LinearDecayIndex;
 
-            // Friction alone over the step, and the motor and friction together.
-            Vector3 frictionOnly = FrictionStep(v0, frictionTs, h);
+            // Friction and gravity alone over the step, and the motor with them.
+            Vector3 frictionOnly = FrictionStep(v0, frictionTs, h, gravity);
             Vector3 v1 = new Vector3(
-                (float)VehicleMotorSolver.Step(v0.X, motor.X, motorTs.X, decayTs.X, age, frictionTs.X, h),
-                (float)VehicleMotorSolver.Step(v0.Y, motor.Y, motorTs.Y, decayTs.Y, age, frictionTs.Y, h),
-                (float)VehicleMotorSolver.Step(v0.Z, motor.Z, motorTs.Z, decayTs.Z, age, frictionTs.Z, h));
+                (float)VehicleMotorSolver.Step(v0.X, motor.X, motorTs.X, decayTs.X, age, frictionTs.X, h, gravity.X),
+                (float)VehicleMotorSolver.Step(v0.Y, motor.Y, motorTs.Y, decayTs.Y, age, frictionTs.Y, h, gravity.Y),
+                (float)VehicleMotorSolver.Step(v0.Z, motor.Z, motorTs.Z, decayTs.Z, age, frictionTs.Z, h, gravity.Z));
             v1.X = Utils.Clamp(v1.X, -VehicleLimits.MaxLinearVelocity, VehicleLimits.MaxLinearVelocity);
             v1.Y = Utils.Clamp(v1.Y, -VehicleLimits.MaxLinearVelocity, VehicleLimits.MaxLinearVelocity);
             v1.Z = Utils.Clamp(v1.Z, -VehicleLimits.MaxLinearVelocity, VehicleLimits.MaxLinearVelocity);
 
-            // The step's change in world coordinates: friction's share, and the motor's share on top of it.
-            Vector3 frictionChange = (frictionOnly - v0) * _rotation;
+            // The step's change in world coordinates: friction's share (with gravity's, less the g h the engine adds),
+            // and the motor's share on top of it.
+            Vector3 frictionChange = (frictionOnly - v0) * _rotation - gravityWorld * h;
             Vector3 motorChange = (v1 - frictionOnly) * _rotation;
 
             // VEHICLE_FLAG_LIMIT_MOTOR_UP / LIMIT_MOTOR_DOWN: the motor does not push up (down) in world terms.
@@ -1330,11 +1339,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // Friction timescales that turn friction off on every axis.
         private static readonly Vector3 FrictionOff = new Vector3((float)VehicleMotorSolver.FrictionOffTimescale);
 
-        private static Vector3 FrictionStep(Vector3 v0, Vector3 frictionTs, float h)
+        private static Vector3 FrictionStep(Vector3 v0, Vector3 frictionTs, float h, Vector3 accel)
             => new Vector3(
-                (float)VehicleMotorSolver.FrictionStep(v0.X, frictionTs.X, h),
-                (float)VehicleMotorSolver.FrictionStep(v0.Y, frictionTs.Y, h),
-                (float)VehicleMotorSolver.FrictionStep(v0.Z, frictionTs.Z, h));
+                (float)VehicleMotorSolver.FrictionStep(v0.X, frictionTs.X, h, accel.X),
+                (float)VehicleMotorSolver.FrictionStep(v0.Y, frictionTs.Y, h, accel.Y),
+                (float)VehicleMotorSolver.FrictionStep(v0.Z, frictionTs.Z, h, accel.Z));
 
         /// <summary>
         /// The banking turn motor (roll to yaw), and the angular motor's change about world Z with it.

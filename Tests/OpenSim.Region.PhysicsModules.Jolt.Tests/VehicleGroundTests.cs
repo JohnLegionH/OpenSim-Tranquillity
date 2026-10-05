@@ -67,13 +67,13 @@ public class VehicleGroundTests
     }
 
     // The test car's steady roll down a ramp, nose down the slope, with its friction timescale of 1 s along its own
-    // forward axis: f * g * sin(angle) * 1 s, with f the share of gravity on the ground. Gravity is the engine's,
-    // applied through the step after friction has taken its exact share from the step's starting speed, so the
-    // stepped roll settles at f g sin(angle) dt / (1 - e^(-dt / 1 s)): 4.5% above the formula at 11 Hz, 1.1% at 45.
+    // forward axis: f * g * sin(angle) * 1 s, with f the share of gravity on the ground. Gravity is inside the
+    // friction's equation, so the stepped roll settles there at every rate. (With gravity applied after friction's
+    // step it settled at f g sin(angle) dt / (1 - e^(-dt / 1 s)): 4.5% above at 11 Hz, 1.1% at 45.)
     private static float SteadyRoll(float factor, float slope, double rate)
     {
-        double a = slope * Math.PI / 180.0, dt = 1.0 / rate;
-        return (float)(factor * 9.80665 * Math.Sin(a) * dt / (1.0 - Math.Exp(-dt)));
+        double a = slope * Math.PI / 180.0;
+        return (float)(factor * 9.80665 * Math.Sin(a));
     }
 
     [Theory]
@@ -89,7 +89,7 @@ public class VehicleGroundTests
         float fifth = Run("testcar", slope, rate, groundGravity: "0.2", hold: 15f).Summary.SteadySpeed;
         // In proportion to the factor ...
         Assert.InRange(fifth / whole, 0.19f, 0.215f);
-        // ... and near the formula (the harness car rolls a few percent faster than it: it is a box, not a point).
+        // ... and near the formula (the harness car rolls up to a few percent faster than it: it is a box, not a point).
         Assert.InRange(fifth, SteadyRoll(0.2f, slope, rate) * 0.97f, SteadyRoll(0.2f, slope, rate) * 1.10f);
         Assert.InRange(whole, SteadyRoll(1f, slope, rate) * 0.97f, SteadyRoll(1f, slope, rate) * 1.10f);
     }

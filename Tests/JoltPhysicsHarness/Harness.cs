@@ -489,6 +489,9 @@ public static class Harness
 
     private static bool LastSeconds(Run r, Sample s, double seconds) => s.T > r.Duration - seconds;
 
+    /// <summary>The lower part of the ramp, where a car driven down it from the top has settled.</summary>
+    public static bool OnLowerRamp(Run r, Sample s) => s.Position.Y >= 45f && s.Position.Y <= 70f;
+
     // Walking speed from positions, as the course's walk runs measured it: on a slope the time from y 40 to
     // y 100 gives the horizontal speed, and along the slope is that over cos(angle); on level ground the
     // distance covered from t = 1 s to the end. The avatar's reported velocity is the walk it was asked for,
@@ -544,6 +547,26 @@ public static class Harness
             Setup = r => SetupCar(r, true),
             Input = r => r.HoldMotor(CarMotor),
             Steady = DriveSteady,
+        },
+        new()
+        {
+            Name = "testcar-down",
+            Description = "The test car from the top run-out down the ramp with its key held all the way; steady = the lower ramp (y 45 to 70).",
+            Slopes = new[] { 5f, 15f }, UsesSlope = true,
+            DefaultDuration = _ => 40f, DefaultHold = _ => 1000f,
+            Setup = r => SetupCar(r, true),
+            Input = r => r.HoldMotor(CarMotor),
+            Steady = OnLowerRamp,
+        },
+        new()
+        {
+            Name = "car-down",
+            Description = "As testcar-down, with the car preset only.",
+            Slopes = new[] { 5f, 15f }, UsesSlope = true,
+            DefaultDuration = _ => 40f, DefaultHold = _ => 1000f,
+            Setup = r => SetupCar(r, false),
+            Input = r => r.HoldMotor(CarMotor),
+            Steady = OnLowerRamp,
         },
         new()
         {
@@ -952,11 +975,13 @@ public static class Harness
     private static float GapToOther(Run r, Sample s)
         => MathF.Max(Separation(r, s, Vector3.UnitX), MathF.Max(Separation(r, s, Vector3.UnitY), Separation(r, s, Vector3.UnitZ)));
 
-    // The object has gone through the second one: their centres have crossed along x (the way it was driven) while
-    // the two still overlap across (in y and z), so it did not go round or over.
+    // The object is going through the second one: their centres have crossed along x (the way it was driven) while
+    // the two still overlap on every axis, so it did not go round or over. (At the harness's speeds a step moves
+    // less than the two objects span together, so a pass through always leaves such a sample.)
     private const float ThroughOverlap = 0.1f;
     private static bool PassedThroughOther(Run r, Sample s)
-        => s.Position.X >= s.Other.X && Separation(r, s, Vector3.UnitY) < -ThroughOverlap && Separation(r, s, Vector3.UnitZ) < -ThroughOverlap;
+        => s.Position.X >= s.Other.X && Separation(r, s, Vector3.UnitX) < 0f
+           && Separation(r, s, Vector3.UnitY) < -ThroughOverlap && Separation(r, s, Vector3.UnitZ) < -ThroughOverlap;
 
     // The gap from the object's lowest point to the ground under it.
     private static float GapBelow(Run r, Sample s)
