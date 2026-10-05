@@ -45,7 +45,8 @@ and what it does; copy a key into `OpenSim.ini` to change it. An invalid value l
 the default is used. The keys cover gravity, solver sub-steps and iterations, the worker threads
 and job pools shared by all regions in the process, body / pair / contact capacities (optionally
 scaled with region area for var regions), the per-frame update buffers, the avatar jump speed,
-how often capacity warnings are logged, the physics step rate (below), and `TestCommands` (below).
+how often capacity warnings are logged, the physics step rate (below), the share of gravity on a
+ground vehicle (below), and `TestCommands` (below).
 
 ### Physics step rate
 
@@ -83,6 +84,23 @@ reaches about 31 m/s instead of 20; avatar walking speed does not change.
 Position updates to viewers, timers and sensors stay at the heartbeat rate. Physics costs more:
 in the harness the test car takes about 1.5 times the step time of one step per heartbeat
 (`jolt metrics` shows each region's step time).
+
+### Ground vehicles and gravity
+
+`[Jolt] VehicleGroundGravityFactor` (0 to 1, default 1) is the share of gravity a car or sled
+(`VEHICLE_TYPE_CAR`, `VEHICLE_TYPE_SLED`) gets while it touches the terrain or another object.
+"Touching" is the physics engine's contact in the last step. The default 1 leaves gravity whole,
+as it was before the key existed. BulletSim's vehicle code uses 0.2 (`[BulletSim]
+VehicleGroundGravityFudge`).
+
+```ini
+[Jolt]
+    VehicleGroundGravityFactor = 0.2
+```
+
+A car that only its linear friction slows rolls down a slope at a steady speed in proportion to the
+factor. In the harness the test car (linear friction timescale 1 s) rolls 0.19 m/s down 5 degrees
+with 0.2, against 0.91 m/s with 1, and 0.59 m/s down 15 degrees, against 2.85.
 
 ## Console commands
 

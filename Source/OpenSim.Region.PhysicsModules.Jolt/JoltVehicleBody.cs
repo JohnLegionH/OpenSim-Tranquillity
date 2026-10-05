@@ -102,7 +102,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
         }
 
-        public bool HasCollision => _prim.IsColliding;
+        public bool HasCollision => _prim.IsColliding;   // set from the backend's contacts each step (JoltPrim.StepVehicle)
 
         public void AddForce(Vector3 force)
         {

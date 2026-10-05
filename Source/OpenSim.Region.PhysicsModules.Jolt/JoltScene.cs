@@ -66,6 +66,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // The [Jolt] section, parsed once in Initialise. The defaults reproduce the earlier hardcoded constants.
         private JoltConfig _joltConfig = new JoltConfig();
         internal float AvatarJumpSpeed => _joltConfig.AvatarJumpSpeed;
+        internal float VehicleGroundGravityFactor => _joltConfig.VehicleGroundGravityFactor;
 
         // The job pool is process-wide; log its size once, whichever region creates it.
         private static readonly object s_poolLogGate = new object();

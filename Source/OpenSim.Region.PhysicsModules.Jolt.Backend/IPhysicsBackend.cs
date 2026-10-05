@@ -634,6 +634,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// subscription flips this so the script `collision` event streams while touching.</summary>
         void SetBodyWantsContactEvents(BodyId body, bool wants);
 
+        /// <summary>Whether the solver had this body touching another body or the terrain in the last step,
+        /// whether or not anyone listens for its contact events. False for a sensor's or an avatar marker's touch.</summary>
+        bool BodyHadContact(BodyId body);
+
         bool TryGetBodyState(BodyId body, out BodyState state);
 
         // -- characters ---------------------------------------------------

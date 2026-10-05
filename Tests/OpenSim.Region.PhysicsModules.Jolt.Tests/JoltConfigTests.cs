@@ -137,6 +137,23 @@ public class JoltConfigTests
     }
 
     [Fact]
+    public void VehicleGroundGravityFactor_defaults_to_whole_gravity_parses_and_falls_back()
+    {
+        Assert.Equal(1f, JoltConfig.FromConfig(new IniConfigSource(), null).VehicleGroundGravityFactor);
+
+        var warnings = new List<string>();
+        Assert.Equal(0.2f, JoltConfig.FromConfig(Source(("VehicleGroundGravityFactor", "0.2")), warnings).VehicleGroundGravityFactor);
+        Assert.Empty(warnings);
+
+        foreach (string bad in new[] { "-0.1", "1.5", "NaN", "a fifth" })
+        {
+            warnings.Clear();
+            Assert.Equal(1f, JoltConfig.FromConfig(Source(("VehicleGroundGravityFactor", bad)), warnings).VehicleGroundGravityFactor);
+            Assert.Single(warnings);
+        }
+    }
+
+    [Fact]
     public void JobPools_defaults_parses_and_falls_back()
     {
         var d = JoltConfig.FromConfig(new IniConfigSource(), null);

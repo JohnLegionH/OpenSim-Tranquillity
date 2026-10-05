@@ -100,8 +100,9 @@ public readonly record struct VehicleParamSetting(Vehicle Code, Vector3 Value, b
     }
 }
 
-/// <summary>One heartbeat's state of the scenario's object, read after the step.</summary>
-public readonly record struct Sample(double T, Vector3 Position, Vector3 Velocity, float Tilt, float Height)
+/// <summary>One heartbeat's state of the scenario's object, read after the step. Touching is the actor's
+/// IsColliding (for a vehicle, its ground check: touching anything in the last step).</summary>
+public readonly record struct Sample(double T, Vector3 Position, Vector3 Velocity, float Tilt, float Height, bool Touching = false)
 {
     public float Speed => Velocity.Length();
     public float HorizontalSpeed => MathF.Sqrt(Velocity.X * Velocity.X + Velocity.Y * Velocity.Y);
@@ -150,7 +151,7 @@ public sealed class RunResult
     /// <summary>The scenario column of the summary: the name, plus "/p" and the physics rate when physics steps are on.</summary>
     public string Label => PhysicsRateHz > 0 ? $"{Scenario}/p{Fmt(PhysicsRateHz, "0.#")}" : Scenario;
 
-    public const string CsvHeader = "t,x,y,z,vx,vy,vz,speed,hspeed,tilt_deg,height";
+    public const string CsvHeader = "t,x,y,z,vx,vy,vz,speed,hspeed,tilt_deg,height,touching";
 
     /// <summary>The trace as CSV: one line per heartbeat, invariant culture, fixed decimals.</summary>
     public string ToCsv()
@@ -163,7 +164,8 @@ public sealed class RunResult
               .Append(Fmt(s.Position.X, "0.0000")).Append(',').Append(Fmt(s.Position.Y, "0.0000")).Append(',').Append(Fmt(s.Position.Z, "0.0000")).Append(',')
               .Append(Fmt(s.Velocity.X, "0.0000")).Append(',').Append(Fmt(s.Velocity.Y, "0.0000")).Append(',').Append(Fmt(s.Velocity.Z, "0.0000")).Append(',')
               .Append(Fmt(s.Speed, "0.0000")).Append(',').Append(Fmt(s.HorizontalSpeed, "0.0000")).Append(',')
-              .Append(Fmt(s.Tilt, "0.00")).Append(',').Append(Fmt(s.Height, "0.0000")).Append('\n');
+              .Append(Fmt(s.Tilt, "0.00")).Append(',').Append(Fmt(s.Height, "0.0000")).Append(',')
+              .Append(s.Touching ? '1' : '0').Append('\n');
         }
         return sb.ToString();
     }
@@ -689,7 +691,7 @@ public static class Harness
         Vector3 up = Vector3.UnitZ * a.Orientation;
         float tilt = MathF.Acos(Math.Clamp(up.Z, -1f, 1f)) * 180f / MathF.PI;
         float height = p.Z - r.GroundAt(p.X, p.Y);
-        return new Sample(t, p, v, tilt, height);
+        return new Sample(t, p, v, tilt, height, a.IsColliding);
     }
 
     private static bool InRegion(Vector3 p) => p.X >= 0f && p.Y >= 0f && p.X <= Course.Size && p.Y <= Course.Size;

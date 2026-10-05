@@ -924,6 +924,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             _joltToRecord.TryGetValue(body1.ID.ID, out JoltBodyRecord? ra);
             _joltToRecord.TryGetValue(body2.ID.ID, out JoltBodyRecord? rb);
 
+            // Stamp both bodies as touching in this step (BodyHadContact), before the Persist gate: Added or
+            // Persisted fires for every touching pair in every step while either body is awake. A sensor or an
+            // avatar's query marker touches nothing solid.
+            if (!body1.IsSensor && !body2.IsSensor && !(ra?.IsCharacterMarker ?? false) && !(rb?.IsCharacterMarker ?? false))
+            {
+                long step = Volatile.Read(ref _contactStep);
+                if (ra != null) Volatile.Write(ref ra.ContactStep, step);
+                if (rb != null) Volatile.Write(ref rb.ContactStep, step);
+            }
+
             // Persist gate. Persist fires every step for every touching pair; forward it
             // ONLY when a body in the pair wants contact events (has a collision handler). Begin/End are
             // cheap edge events and are never gated. Empirically Jolt STOPS firing Persist once a body
@@ -1839,6 +1849,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         {
             if (_bodies.TryGet(body.Value, out JoltBodyRecord rec))
                 rec.WantsContactEvents = wants;
+        }
+
+        // Step counter for BodyHadContact: advanced at the start of every step, stamped onto each body the
+        // contact callbacks report during it. Written under _simLock, read from the solver's worker threads.
+        private long _contactStep;
+
+        public bool BodyHadContact(BodyId body)
+        {
+            if (!_bodies.TryGet(body.Value, out JoltBodyRecord rec))
+                return false;
+            long step = Volatile.Read(ref _contactStep);
+            return step != 0 && Volatile.Read(ref rec.ContactStep) == step;
         }
 
         public bool TryGetBodyState(BodyId body, out BodyState state)
@@ -2869,6 +2891,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // AccessViolation). _system is also null after teardown, so this doubles as a null guard.
             if (_disposed)
                 return default;
+            Volatile.Write(ref _contactStep, _contactStep + 1);
 
             // 1. Step every CharacterVirtual BEFORE the physics update. They are not part of the
             //    solve, so they must see the world as it was at the start of the frame or avatars
@@ -3199,6 +3222,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public float Mass;                // explicit or Volume x Density; 0 where mass is unused (static)
         public bool AllowMotionChange;    // created movable (AllowDynamicOrKinematic) -> may flip motion type
         public bool IsCharacterMarker;    // a query-only avatar marker (owned by its character; not a real prim)
+        public long ContactStep;          // the last step in which the solver had this body touching another body (BodyHadContact)
     }
 
     internal sealed class JoltShapeRecord

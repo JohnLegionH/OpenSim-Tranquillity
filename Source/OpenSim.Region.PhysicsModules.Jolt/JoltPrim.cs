@@ -687,6 +687,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 _vehicleBody = new JoltVehicleBody(_module, _backend, this);
                 _vehicle = new VehicleController(_vehicleBody);
+                _vehicle.GroundGravityFactor = _module.VehicleGroundGravityFactor;
                 Func<DateTime> clock = _module.ControllerClock;
                 if (clock != null)
                     _vehicle.Clock = clock;
@@ -720,6 +721,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _velocity = Vector3.Zero;
                 _rotationalVelocity = Vector3.Zero;
             }
+            // The vehicle's ground check (BulletSim's HasSomeCollision): touching anything in the last step.
+            IsColliding = _backend.BodyHadContact(_body);
             if (_vehicleBody.BeginFrame())
                 _vehicle.Step(timeStep);
         }

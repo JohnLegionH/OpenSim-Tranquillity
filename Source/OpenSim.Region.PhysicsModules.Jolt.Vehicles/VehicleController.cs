@@ -18,7 +18,7 @@
  *   ControllingPrim.ActivateIfPhysical(false)   -> _body.KeepAwake()
  *   ControllingPrim.ComputeGravity(buoy)        -> _body.Gravity * (1 - buoy)   (GravModifier = 1)
  *   BSParam.Gravity                             -> _body.Gravity.Z
- *   BSParam.VehicleGroundGravityFudge           -> VehicleGroundGravityFudge const (same 0.2 default)
+ *   BSParam.VehicleGroundGravityFudge           -> GroundGravityFactor (the host's setting; 1 leaves gravity whole)
  *   GetTerrainHeight/GetWaterLevel              -> _body.GetTerrainHeight/_body.GetWaterLevel
  *   m_physicsScene.PE.PushUpdate                -> dropped (Bullet-only activation nudge; the host
  *                                                  disables sleeping on an active vehicle body)
@@ -73,8 +73,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // False until the first step after a type change: the timestep smoothing then starts from that step's length.
         private bool _timestepPrimed;
 
-        // BSParam.VehicleGroundGravityFudge default (ground vehicles only; boats never hit this)
-        private const float VehicleGroundGravityFudge = 0.2f;
+        // The share of gravity a ground vehicle (car or sled) gets while it touches something: BulletSim's
+        // VehicleGroundGravityFudge, 0.2 there. 1 leaves gravity whole. Set by the host from its configuration.
+        public float GroundGravityFactor { get; set; } = 1f;
 
         // =====================================================================
         // Ephemeral per-frame computed values (not persisted)
@@ -676,7 +677,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             // Reduce downward force if vehicle is sitting on ground
             if (IsGroundVehicle && _body.HasCollision)
-                appliedGravity *= VehicleGroundGravityFudge;
+                appliedGravity *= GroundGravityFactor;
 
             // Apply as a force
             _body.AddForce(appliedGravity);

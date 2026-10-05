@@ -48,6 +48,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public int JobPools = 1;                   // job pools, one physics update at a time each; splits ThreadCount
         public float PhysicsStepRate = 0f;         // Hz; 0 = one physics step per heartbeat
         public int PhysicsStepCollisionSteps = 2;  // solver sub-steps per physics step, used only when PhysicsStepRate is on
+        public float VehicleGroundGravityFactor = 1f;   // gravity on a car or sled touching something; 1 = whole
 
         // The highest PhysicsStepRate accepted. Each step costs a backend update, so a rate far above the heartbeat
         // mostly hits the per-heartbeat step cap (see SubstepAccumulator.MaxStepsPerFrame).
@@ -79,6 +80,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.JobPools = I(cfg, "JobPools", c.JobPools, 1, JoltPhysicsBackend.MaxJobPools, warnings);
             c.PhysicsStepRate = F(cfg, "PhysicsStepRate", c.PhysicsStepRate, 0f, MaxPhysicsStepRate, warnings);
             c.PhysicsStepCollisionSteps = I(cfg, "PhysicsStepCollisionSteps", c.PhysicsStepCollisionSteps, 1, 64, warnings);
+            c.VehicleGroundGravityFactor = F(cfg, "VehicleGroundGravityFactor", c.VehicleGroundGravityFactor, 0f, 1f, warnings);
             return c;
         }
 
