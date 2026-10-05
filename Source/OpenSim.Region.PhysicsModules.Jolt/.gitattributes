@@ -1,0 +1,4 @@
+# Compiled natives under runtimes/: never converted or diffed as text.
+runtimes/**/*.dll binary
+runtimes/**/*.so binary
+runtimes/**/*.dylib binary

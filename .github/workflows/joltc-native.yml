@@ -1,0 +1,157 @@
+# Builds the patched joltc native the Jolt physics module loads, from pinned sources plus the
+# patches in native/joltc, for every target in the matrix. Each job uploads the compiled file, its
+# SHA-256 and its list of exported names. The recipe and how to check a file: native/joltc/README.md.
+name: joltc native
+
+on:
+  push:
+    branches:
+      - lane/jolt
+    paths:
+      - 'native/joltc/**'
+      - '.github/workflows/joltc-native.yml'
+
+permissions:
+  contents: read
+
+env:
+  # joltc (amerkoleci/joltc), the source behind the JoltPhysics.Native 1.0.4 package that
+  # JoltPhysicsSharp 2.19.1 binds to.
+  JOLTC_REPO: https://github.com/amerkoleci/joltc
+  JOLTC_COMMIT: 1715c5aab834a5bb0c344dc4a11d573ad6f9736d
+  # Jolt Physics v5.4.0, the tag joltc's CMakeLists fetches at that commit, pinned here by commit.
+  JOLT_REPO: https://github.com/jrouwe/JoltPhysics
+  JOLT_COMMIT: 036ea7b1d717b3e713ac9d8cbd47118fb9cd5d60
+  # Applied in this order.
+  PATCHES: per-system-tempallocator.patch physics-systems-map-lock.patch
+
+jobs:
+  build:
+    name: joltc ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The configure lines are those of joltc's own CI at JOLTC_COMMIT
+          # (.github/workflows/build.yml), with the samples left out, the reproducibility flags added,
+          # and Jolt's CROSS_PLATFORM_DETERMINISTIC option on (see the Configure step). Later targets go
+          # here as further entries, for example
+          #   linux-arm64 on an arm64 Linux runner (same configure line as linux-x64), and
+          #   osx on a macOS runner with -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" (libjoltc.dylib).
+          - rid: win-x64
+            os: windows-2022
+            file: joltc.dll
+            built: build/bin/Distribution/joltc.dll
+            configure: -G "Visual Studio 17 2022" -A x64
+            # Dash form: the bash on Windows runners rewrites a leading slash into a path.
+            cxxflags: -Brepro
+            ldflags: -Brepro
+            python: python
+          - rid: linux-x64
+            os: ubuntu-22.04
+            file: libjoltc.so
+            built: build/lib/libjoltc.so
+            configure: -G "Unix Makefiles"
+            cxxflags: ""
+            ldflags: ""
+            python: python3
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+          persist-credentials: false
+
+      - name: Fetch joltc and Jolt Physics at the pinned commits
+        # The sources sit outside the workspace, at a path that does not depend on the repository's
+        # name, so paths compiled into the file are the same in every fork.
+        run: |
+          src="$RUNNER_TEMP/joltc"
+          git init -q "$src"
+          git -C "$src" fetch -q --depth 1 "$JOLTC_REPO" "$JOLTC_COMMIT"
+          git -C "$src" checkout -q FETCH_HEAD
+          test "$(git -C "$src" rev-parse HEAD)" = "$JOLTC_COMMIT"
+          # joltc's CMakeLists uses a JoltPhysics folder beside its own sources instead of fetching.
+          git init -q "$src/JoltPhysics"
+          git -C "$src/JoltPhysics" fetch -q --depth 1 "$JOLT_REPO" "$JOLT_COMMIT"
+          git -C "$src/JoltPhysics" checkout -q FETCH_HEAD
+          test "$(git -C "$src/JoltPhysics" rev-parse HEAD)" = "$JOLT_COMMIT"
+
+      - name: Apply the patches
+        run: |
+          for p in $PATCHES; do
+            echo "applying $p"
+            git -C "$RUNNER_TEMP/joltc" apply --verbose "$GITHUB_WORKSPACE/repo/native/joltc/$p"
+          done
+
+      # CROSS_PLATFORM_DETERMINISTIC: Jolt's option to compute the same results on every platform. With it the
+      # harness's traces on the Windows and Linux runners agree to the last printed digit over whole runs; without it
+      # they part within the first seconds of contact. On Linux (GCC) the file it gives is byte for byte the same as
+      # without it.
+      - name: Configure
+        env:
+          CXXFLAGS: ${{ matrix.cxxflags }}
+          LDFLAGS: ${{ matrix.ldflags }}
+        run: |
+          cmake --version
+          cmake -S "$RUNNER_TEMP/joltc" -B "$RUNNER_TEMP/joltc/build" ${{ matrix.configure }} \
+            -DCMAKE_BUILD_TYPE:String=Distribution -DCMAKE_INSTALL_PREFIX:String=SDK -DJPH_SAMPLES=OFF \
+            -DCROSS_PLATFORM_DETERMINISTIC=ON
+
+      - name: Build
+        run: cmake --build "$RUNNER_TEMP/joltc/build" --config Distribution --target joltc --parallel
+
+      - name: Strip
+        if: runner.os == 'Linux'
+        # As joltc's own CI does for its Linux package.
+        run: strip --strip-unneeded "$RUNNER_TEMP/joltc/${{ matrix.built }}"
+
+      - name: Collect the file
+        run: |
+          mkdir -p "out/${{ matrix.rid }}"
+          cp "$RUNNER_TEMP/joltc/${{ matrix.built }}" "out/${{ matrix.rid }}/${{ matrix.file }}"
+
+      - name: Hash, list exports and record the toolchain
+        working-directory: out/${{ matrix.rid }}
+        run: |
+          ${{ matrix.python }} "$GITHUB_WORKSPACE/repo/native/joltc/list-exports.py" "${{ matrix.file }}" > exports.txt
+          sha256sum "${{ matrix.file }}" > SHA256SUMS
+          {
+            echo "rid=${{ matrix.rid }}"
+            echo "repository_commit=$GITHUB_SHA"
+            echo "run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+            echo "joltc=$JOLTC_COMMIT"
+            echo "jolt=$JOLT_COMMIT"
+            echo "patches=$PATCHES"
+            echo "runner_image=$ImageOS $ImageVersion"
+            echo "cmake=$(cmake --version | head -n 1)"
+            grep -E '^CMAKE_CXX_COMPILER:|^CMAKE_CXX_COMPILER_VERSION' "$RUNNER_TEMP/joltc/build/CMakeCache.txt" || true
+            grep -h 'CMAKE_CXX_COMPILER_VERSION' "$RUNNER_TEMP"/joltc/build/CMakeFiles/*/CMakeCXXCompiler.cmake || true
+          } > build-info.txt
+          cat build-info.txt
+          echo "sha256: $(cat SHA256SUMS)"
+          echo "exports: $(wc -l < exports.txt)"
+          {
+            echo "### joltc ${{ matrix.rid }}"
+            echo '```'
+            cat SHA256SUMS
+            echo "exports: $(wc -l < exports.txt)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Exported names must equal the binding's
+        run: ${{ matrix.python }} repo/native/joltc/list-exports.py "out/${{ matrix.rid }}/${{ matrix.file }}" --expect repo/native/joltc/exports.txt
+
+      - name: Upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: joltc-${{ matrix.rid }}
+          path: out/${{ matrix.rid }}
+          if-no-files-found: error
