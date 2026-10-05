@@ -171,7 +171,8 @@ with 0.2.
 
 A script's own `llSetVehicleFloatParam`, `llSetVehicleVectorParam` and `llSetVehicleFlags` calls
 override either set; most scripted vehicles set their own values after the type, and differ only
-in what they leave at the preset. The module's own extension parameters (wind, mouselook,
+in what they leave at the preset. Choosing a type sets that type's flags and clears every other
+flag, also one a script set before `llSetVehicleType`. The module's own extension parameters (wind, mouselook,
 motor disabling) are not Second Life parameters and are the same in both sets. The legacy car,
 boat and airplane also carry the module's torque-about-world-z flag, which no documented type sets.
 
