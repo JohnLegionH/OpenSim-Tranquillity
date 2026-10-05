@@ -578,8 +578,8 @@ public static class Harness
         new()
         {
             Name = "testcar-down",
-            Description = "The test car from the top run-out down the ramp with its key held all the way; steady = the lower ramp (y 45 to 70).",
-            Slopes = new[] { 5f, 15f }, UsesSlope = true,
+            Description = "The test car from the top run-out down the ramp with its key held all the way; steady = the lower ramp (y 45 to 70). On 33 degrees it leaves the crest and flies.",
+            Slopes = new[] { 5f, 15f, 33f }, UsesSlope = true,
             DefaultDuration = _ => 40f, DefaultHold = _ => 1000f,
             Setup = r => SetupCar(r, true),
             Input = r => r.HoldMotor(CarMotor),
@@ -677,6 +677,22 @@ public static class Harness
                 r.ApplyVehicleOverrides();
             },
             Steady = (r, s) => LastSeconds(r, s, 2.0),
+        },
+        new()
+        {
+            Name = "attract-roll",
+            Description = "A 1 m box made VEHICLE_TYPE_BALLOON (buoyancy 1) 15 m up, with hover, banking and angular friction off, rolled 30 degrees at 2 s (the release): the vertical attractor alone rights it.",
+            DefaultDuration = _ => 30f,
+            Setup = SetupAttract,
+            Input = r => Tilt(r, Quaternion.CreateFromEulers(AttractTilt, 0f, 0f)),
+        },
+        new()
+        {
+            Name = "attract-pitch",
+            Description = "As attract-roll, pitched 30 degrees nose down instead.",
+            DefaultDuration = _ => 30f,
+            Setup = SetupAttract,
+            Input = r => Tilt(r, Quaternion.CreateFromEulers(0f, AttractTilt, 0f)),
         },
         new()
         {
@@ -860,6 +876,33 @@ public static class Harness
     public const float WakeKeyAt = 8f;
     private const float CrashStartX = 100f;
     private const float CrashTargetX = 130f;
+
+    /// <summary>The attractor scenarios' starting tilt (radians).</summary>
+    public const float AttractTilt = 30f * MathF.PI / 180f;
+
+    /// <summary>When the attractor scenarios tilt the box: after the host's first frames of a new vehicle, in which it
+    /// zeroes the body's velocity (the guard for a vehicle restored with a region), and on every rate's heartbeat.</summary>
+    public const double AttractStart = 2.0;
+
+    private static void Tilt(Run r, Quaternion tilt)
+    {
+        if (!r.Released && r.Now >= AttractStart - 1e-9)
+        {
+            r.Actor.Orientation = tilt;
+            r.Released = true;
+        }
+    }
+
+    private static void SetupAttract(Run r)
+    {
+        r.ReleaseAt = AttractStart;
+        r.AddBox(new Vector3(1f, 1f, 1f), new Vector3(128f, 128f, Course.Ground + 15f), Quaternion.Identity);
+        r.MakeVehicle(Vehicle.TYPE_BALLOON);
+        r.SetFloat(Vehicle.HOVER_TIMESCALE, 1000f);
+        r.SetVector(Vehicle.ANGULAR_FRICTION_TIMESCALE, new Vector3(1000f, 1000f, 1000f));
+        r.SetFloat(Vehicle.BANKING_EFFICIENCY, 0f);
+        r.ApplyVehicleOverrides();
+    }
 
     private static void SetupParked(Run r, bool testCar)
     {

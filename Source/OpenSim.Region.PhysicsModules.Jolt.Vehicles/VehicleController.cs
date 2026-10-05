@@ -450,13 +450,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             // -------------------------------------------------------
             // Vertical attractor and banking
-            Vector3 attractionForces = Vector3.Zero;
             if (VehicleLimits.DoVerticalAttractor)
             {
-                float angle;
-                bool inverted;
-
-                SimulateVerticalAttractor(timeStep, m_frameNum, out attractionForces, out angle, out inverted);
+                SimulateVerticalAttractor(pTimestep, out float angle, out bool inverted);
                 // Banking runs AFTER the attractor (uses its angle/inverted) and BEFORE the motors: it sets
                 // Dynamics.BankingDirection, which the banking-turn block inside SimulateMotors consumes.
                 SimulateBankingToYaw(timeStep, angle, inverted);
@@ -494,7 +490,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public bool IsIdle
             => MotorIdle(_props.Dynamics.LinearDirection, _props.GetVec(VehVectorParam.LinearMotorDecayTimescale), _props.Dynamics.LinearDecayIndex)
             && MotorIdle(_props.Dynamics.AngularDirection, _props.GetVec(VehVectorParam.AngularMotorDecayTimescale), _props.Dynamics.AngularDecayIndex)
-            && HoverIdle();
+            && HoverIdle()
+            && AttractorIdle();
+
+        // The attractor has nothing left to do when it is off, the vehicle is upright to within AttractorIdleAngle, or
+        // it rests on something that holds its tilt (a car parked on a slope).
+        private bool AttractorIdle()
+        {
+            if (_props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f) >= VehicleLimits.MaxAttractTimescale || _body.HasCollision)
+                return true;
+            Quaternion rotation = _body.Orientation * _props.GetRot(VehRotationParam.ReferenceFrame);
+            return (Vector3.UnitZ * rotation).Z >= Math.Cos(AttractorIdleAngle);
+        }
+
+        // Upright to within this (radians) the attractor is done.
+        internal const double AttractorIdleAngle = 0.002;
 
         private bool HoverIdle()
         {
@@ -528,6 +538,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _props.Dynamics.LinearDecayIndex += pTimestep;
             _props.Dynamics.AngularDecayIndex += pTimestep;
             _hoverCarry = null;
+            _attractorCarry = null;
         }
 
         #endregion // Step
@@ -1113,112 +1124,67 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         #region Vertical Attractor
 
         /// <summary>
-        /// Points local Z axis to sky with overturn recovery.
-        /// Ported from Halcyon VehicleDynamics.SimulateVerticalAttractor().
+        /// The vertical attractor, as Second Life documents it (Linden_Vehicle_Tutorial, "The Vertical Attractor";
+        /// LlSetVehicleFloatParam): a spring that brings the vehicle's local z axis to the world's up, with
+        /// VERTICAL_ATTRACTION_TIMESCALE setting its period and VERTICAL_ATTRACTION_EFFICIENCY its damping, from
+        /// wobbling around up (0) to reaching it with exponential decay (1). Off at a timescale of 500 s or more.
+        ///
+        /// It acts on the vehicle's roll (the angle about its x axis that would bring its y axis level) and its
+        /// pitch (the nose's angle above or below level), each a spring on the angle e and the angular velocity about
+        /// that axis:
+        ///
+        ///   e'' = -s e / T^2 - 2 eff e' / T          s = 1 for roll; for pitch 1, or with LIMIT_ROLL_ONLY 0 for an
+        ///                                             airplane or balloon and 0.1 for the other types
+        ///
+        /// stepped exactly (<see cref="VehicleSpring"/>) over the step the engine takes; the body is given the angular
+        /// velocity that turns it where the spring would at the step's end. Gives the tilt from up (angle), for
+        /// banking.
         /// </summary>
-        private void SimulateVerticalAttractor(float timeStep, uint frameNum, out Vector3 attractionForces, out float angle, out bool inverted)
+        private void SimulateVerticalAttractor(float h, out float angle, out bool inverted)
         {
-            float timescale = Math.Max(_props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f), timeStep);
+            float timescale = _props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f);
             float efficiency = _props.GetFloat(VehFloatParam.VerticalAttractionEfficiency, 0f);
+            Vector3 x = Vector3.UnitX * _rotation, y = Vector3.UnitY * _rotation, z = Vector3.UnitZ * _rotation;
+            angle = (float)Math.Acos(Utils.Clamp(z.Z, -1f, 1f));
             inverted = false;
-            angle = 0.0f;
-            attractionForces = Vector3.Zero;
-
-            if (timescale < VehicleLimits.MaxAttractTimescale)
+            if (timescale >= VehicleLimits.MaxAttractTimescale)
             {
-                // Compute the X and Y axis deflection from vertical
-                Vector3 xrot = new Vector3(1, 0, 0) * _rotation;
-                Vector3 yrot = new Vector3(0, 1, 0) * _rotation;
-                Vector3 xyrot = QuatToEuler(_rotation);
-
-                xyrot.Z = 0;
-                angle = Math.Abs(QuatToAngle(Quaternion.CreateFromEulers(xyrot)));
-
-                // Airplanes can fly inverted
-                if (_props.Type == VehicleType.Airplane)
-                {
-                    if (angle > Math.PI / 2)
-                    {
-                        angle = (float)Math.PI - angle;
-                        inverted = true;
-                    }
-                }
-
-                float apct = angle / (float)Math.PI;
-
-                // Go dormant if in the sweet spot or if no angular changes are happening.
-                // Do not go dormant if the vehicle is overturned.
-                if (Math.Abs(_props.Dynamics.LastVerticalAngle - angle) >= VehicleLimits.ThresholdAttractorAngle)
-                {
-                    _props.Dynamics.LastVerticalFrameNumber = frameNum;
-                }
-
-                if (angle >= VehicleLimits.ThresholdOverturnAngle ||
-                    (frameNum - _props.Dynamics.LastVerticalFrameNumber) < (VehicleLimits.MaxAttractDormancy / timeStep))
-                {
-                    // Compute restoration force in local coordinates
-                    Vector3 vtwix = new Vector3(-yrot.Z, xrot.Z, 0);
-
-                    // Different vehicles have different characteristics
-                    vtwix = vtwix * (float)Math.PI * (float)Math.Pow(Math.E, efficiency * 3.0);
-
-                    // Non-airplane vehicles have very strong restorative forces
-                    if (_props.Type != VehicleType.Airplane)
-                        vtwix *= (1.0f + (float)Math.Pow(1.0 + apct, 4.0));
-
-                    // Zero out y-axis rotation if the limit roll only flag is set
-                    if ((_props.Flags & ExtendedVehicleFlags.LimitRollOnly) != 0)
-                    {
-                        if (_props.Type == VehicleType.Airplane || _props.Type == VehicleType.Balloon)
-                            vtwix.Y = 0.0f;
-                        else
-                            vtwix.Y *= 0.1f;
-                    }
-
-                    // If overturned and no progress toward vertical, keep increasing force
-                    if (_props.Type != VehicleType.Airplane)
-                    {
-                        if (angle >= VehicleLimits.ThresholdOverturnAngle && angle >= _props.Dynamics.LastVerticalAngle)
-                        {
-                            _props.Dynamics.VerticalForceAdjust *= 1.3f;
-                            vtwix *= _props.Dynamics.VerticalForceAdjust;
-                        }
-                        else
-                        {
-                            _props.Dynamics.VerticalForceAdjust /= 1.1f;
-                            if (_props.Dynamics.VerticalForceAdjust < 1.0f)
-                                _props.Dynamics.VerticalForceAdjust = 1.0f;
-                            vtwix *= _props.Dynamics.VerticalForceAdjust;
-                        }
-                    }
-
-                    // Apply efficiency damping
-                    Vector3 remvel = Vector3.Zero;
-                    Vector3 wtensor = _body.InertiaDiagonal;
-                    remvel.X = _localAngularVel.X * MovementExpGrowth(efficiency, 1.0f);
-                    remvel.Y = _localAngularVel.Y * MovementExpGrowth(efficiency, 1.0f);
-
-                    // Remap tensor to object coordinates
-                    vtwix *= (wtensor * _vframe);
-
-                    // Convert local forces to world forces
-                    vtwix = vtwix * _rotation;
-
-                    if (vtwix != Vector3.Zero)
-                    {
-                        attractionForces = vtwix * timeStep / timescale;
-                        AddTorqueImpulse(attractionForces);
-                    }
-
-                    // Always apply the damping factor while not in the sweet spot
-                    if (Vector3.Mag(remvel) > 0)
-                    {
-                        remvel = remvel * _rotation;
-                        AddTorqueVelocityChange(-remvel);
-                    }
-                    _props.Dynamics.LastVerticalAngle = angle;
-                }
+                LetGoOfAttractor(x, y);
+                return;
             }
+
+            double roll = Math.Atan2(y.Z, z.Z);
+            double pitch = Math.Asin(Utils.Clamp(-x.Z, -1f, 1f));
+            double stiffness = 1.0 / ((double)timescale * timescale);
+            double damping = efficiency / (double)timescale;
+            double pitchShare = 1.0;
+            if ((_props.Flags & ExtendedVehicleFlags.LimitRollOnly) != 0)
+                pitchShare = _props.Type == VehicleType.Airplane || _props.Type == VehicleType.Balloon ? 0.0 : RollOnlyPitchShare;
+
+            // The spring's own rates: the body's, plus what the last step's turn left out of them.
+            double rollRate = Vector3.Dot(_rawWorldAngularVel, x);
+            double pitchRate = Vector3.Dot(_rawWorldAngularVel, y);
+            (double rollTurn, double rollCarry) = VehicleSpring.MoveOverGeneral(roll, rollRate + (_attractorCarry?.X ?? 0), stiffness, damping, h);
+            (double pitchTurn, double pitchCarry) = VehicleSpring.MoveOverGeneral(pitch, pitchRate + (_attractorCarry?.Y ?? 0), stiffness * pitchShare, damping, h);
+            _attractorCarry = new Vector3((float)rollCarry, (float)pitchCarry, 0f);
+
+            // Applied whole with the motors' change (TorqueFini's per-step clean-up would stop it short).
+            _motorTorqueVelChange += x * (float)(rollTurn - rollRate) + y * (float)(pitchTurn - pitchRate);
+        }
+
+        // With LIMIT_ROLL_ONLY, the share of the attractor's spring a vehicle other than an airplane or balloon keeps
+        // on its pitch.
+        private const double RollOnlyPitchShare = 0.1;
+
+        // What the last attractor step's turn left out of the spring's roll and pitch rates; null when it did not act.
+        private Vector3? _attractorCarry;
+
+        // The attractor hands the body back its true roll and pitch rates when it stops acting.
+        private void LetGoOfAttractor(Vector3 x, Vector3 y)
+        {
+            if (_attractorCarry is Vector3 c)
+                _motorTorqueVelChange += x * c.X + y * c.Y;
+            _attractorCarry = null;
         }
 
         #endregion

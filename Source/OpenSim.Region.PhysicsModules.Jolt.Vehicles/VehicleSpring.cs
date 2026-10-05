@@ -25,22 +25,39 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public static (double e, double v) Step(double e0, double v0, double timescale, double efficiency, double h)
         {
             double w = 1.0 / timescale;
-            double z = Math.Clamp(efficiency, 0.0, 1.0);
-            double decay = Math.Exp(-z * w * h);
+            return StepGeneral(e0, v0, w * w, Math.Clamp(efficiency, 0.0, 1.0) * w, h);
+        }
 
-            // Critically damped: e = e^(-w t) (e0 + (v0 + w e0) t).
-            if (1.0 - z < 1e-9)
+        /// <summary>
+        /// The general form, e'' = -k e - 2 b e': the error and its rate after h seconds. k = w^2 is the stiffness
+        /// (0 for no spring, damping alone), b = z w the damping; b above w is over-damped.
+        /// </summary>
+        public static (double e, double v) StepGeneral(double e0, double v0, double k, double b, double h)
+        {
+            double decay = Math.Exp(-b * h);
+            double d = b * b - k;
+
+            // Critically damped (d = 0): e = e^(-b t) (e0 + (v0 + b e0) t).
+            if (Math.Abs(d) < 1e-12 * Math.Max(k, 1e-12))
             {
-                double c = v0 + w * e0;
-                return (decay * (e0 + c * h), decay * (v0 - w * c * h));
+                double c = v0 + b * e0;
+                return (decay * (e0 + c * h), decay * (v0 - b * c * h));
             }
 
-            // Under-damped: e = e^(-z w t) (e0 cos(wd t) + (v0 + z w e0) / wd sin(wd t)), wd = w sqrt(1 - z^2).
-            double wd = w * Math.Sqrt(1.0 - z * z);
-            double cos = Math.Cos(wd * h), sin = Math.Sin(wd * h);
-            double e = decay * (e0 * cos + (v0 + z * w * e0) / wd * sin);
-            double v = decay * (v0 * cos - (w * w * e0 + z * w * v0) / wd * sin);
-            return (e, v);
+            if (d < 0)
+            {
+                // Under-damped: e = e^(-b t) (e0 cos(wd t) + (v0 + b e0) / wd sin(wd t)), wd = sqrt(k - b^2).
+                double wd = Math.Sqrt(-d);
+                double cos = Math.Cos(wd * h), sin = Math.Sin(wd * h);
+                return (decay * (e0 * cos + (v0 + b * e0) / wd * sin),
+                        decay * (v0 * cos - (k * e0 + b * v0) / wd * sin));
+            }
+
+            // Over-damped: e = e^(-b t) (e0 cosh(s t) + (v0 + b e0) / s sinh(s t)), s = sqrt(b^2 - k).
+            double sd = Math.Sqrt(d);
+            double cosh = Math.Cosh(sd * h), sinh = Math.Sinh(sd * h);
+            return (decay * (e0 * cosh + (v0 + b * e0) / sd * sinh),
+                    decay * (v0 * cosh - (k * e0 + b * v0) / sd * sinh));
         }
 
         /// <summary>
@@ -51,7 +68,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         public static (double move, double carry) MoveOver(double e0, double v0, double timescale, double efficiency, double h)
         {
-            (double e, double v) = Step(e0, v0, timescale, efficiency, h);
+            double w = 1.0 / timescale;
+            return MoveOverGeneral(e0, v0, w * w, Math.Clamp(efficiency, 0.0, 1.0) * w, h);
+        }
+
+        /// <summary><see cref="MoveOver"/> for the general form (<see cref="StepGeneral"/>).</summary>
+        public static (double move, double carry) MoveOverGeneral(double e0, double v0, double k, double b, double h)
+        {
+            (double e, double v) = StepGeneral(e0, v0, k, b, h);
             double move = (e - e0) / h;
             return (move, v - move);
         }

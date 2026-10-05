@@ -25,12 +25,10 @@ public class VehicleRestAndCrashTests
     [Theory]
     [InlineData("park-new", 11.0, 6.0)]
     [InlineData("park-new", 45.0, 6.0)]
-    [InlineData("park-faded", 11.0, 12.0)]
-    [InlineData("park-faded", 45.0, 12.0)]
+    [InlineData("park-faded", 11.0, 14.0)]
+    [InlineData("park-faded", 45.0, 14.0)]
     [InlineData("park-drive", 11.0, 14.0)]
-    // At 45 Hz the test car settles tilted 0.3 degrees after its drive and drifts at about 0.04 m/s (the ground's
-    // push along the tilt against no contact friction, balanced by the vehicle's friction) until the tilt clears.
-    [InlineData("park-drive", 45.0, 30.0)]
+    [InlineData("park-drive", 45.0, 14.0)]
     public void A_parked_vehicle_goes_to_sleep_and_stays_asleep(string scenario, double rate, double within)
     {
         RunResult r = Run(scenario, rate);
