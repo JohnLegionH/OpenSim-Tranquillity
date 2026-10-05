@@ -9,13 +9,46 @@ banking and deflection on Second Life's documented model (see "Vehicle motors an
 This guide is for operators. It covers selecting Jolt, its settings, its console commands, and
 the platforms it runs on today.
 
-## Platform
+## Platforms
 
-The native joltc library ships for **Windows x64 only** at present
-(`Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/win-x64/native/joltc.dll`). It is a patched
-build; the stock joltc from NuGet must not be used with this module. Why, and how to rebuild it,
-is in [native/joltc/README.md](../native/joltc/README.md). On other platforms keep the default
-physics engine.
+The module ships its native joltc library for:
+
+| Platform | File in the build output |
+|---|---|
+| Windows x64 | `runtimes/win-x64/native/joltc.dll` |
+| Linux x64 (glibc) | `runtimes/linux-x64/native/libjoltc.so` |
+
+Both are patched builds; the stock joltc from NuGet must not be used with this module. Why, and
+how they are built, is in [native/joltc/README.md](../native/joltc/README.md). Arm64 (Linux and
+Windows), macOS and musl-based Linux (Alpine) have no native yet: there, keep another physics
+engine.
+
+A build with no runtime identifier carries both files, so the same output runs on either
+platform. A `dotnet publish -r win-x64` or `-r linux-x64` carries only that platform's file.
+Nothing goes in the output root: copy the whole output, including its `runtimes` folder.
+
+### The native check at start
+
+When `physics = Jolt`, the module picks the file for the platform it runs on, computes its SHA-256
+and compares it with the builds it ships. With a good file it logs one line, once per process:
+
+```
+[JOLT SCENE] joltc for linux-x64: /opt/opensim/bin/runtimes/linux-x64/native/libjoltc.so sha256 EEAD7C1A... (the patched build this module ships)
+```
+
+In the cases below the module logs one error line and throws from its `Initialise`, before any
+region's physics exists, the same way as the meshing check under "Selecting Jolt"; the exception
+is not caught on the way up, so the simulator does not finish starting. The cases:
+
+- the platform has no native:
+  `Jolt physics has no native library for this platform (linux-arm64). Supported platforms: win-x64, linux-x64. Choose another physics engine in [Startup] physics.`
+- the file is missing: `Jolt physics: the native library for linux-x64 is missing: <path>. ...`
+- the file's hash is not one the module ships (a stock joltc, or another build):
+  `Jolt physics: <path> has sha256 <hash>, which is not the patched build this module ships for linux-x64 (...). ...`
+
+`[Jolt] AllowUnrecordedNative = true` (default `false`) loads a file whose hash the module does not
+know, with the start line logged as a warning instead. Use it only for a joltc built from the
+recipe in native/joltc/README.md; a stock joltc aborts the process when two regions step at once.
 
 ## Selecting Jolt
 
@@ -32,11 +65,18 @@ Jolt is chosen per simulator in `[Startup]`, and it needs the Meshmerizer mesher
   must be Meshmerizer and throws "Invalid physics meshing option for Jolt" when it initialises.
 - The shipped default stays `physics = ubODE`.
 
-`assert-patched-joltc.ps1` (next to the module's project file) checks that every `joltc*.dll` in
-a build or publish directory is the patched build:
+`assert-patched-joltc.ps1` (next to the module's project file) checks a build or publish directory
+before it is deployed: every `runtimes/<rid>/native/` file must be the patched build for its
+platform, and no other joltc file may be there (`-AllowStray` reports such files without failing,
+for an installation that still holds files from an older deploy). It runs in Windows PowerShell
+and in PowerShell 7 on Linux:
 
 ```powershell
 powershell -File assert-patched-joltc.ps1 -PublishDir "<publish directory>"
+```
+
+```
+pwsh -File assert-patched-joltc.ps1 -PublishDir "<publish directory>"
 ```
 
 ## Settings
@@ -47,7 +87,7 @@ the default is used. The keys cover gravity, solver sub-steps and iterations, th
 and job pools shared by all regions in the process, body / pair / contact capacities (optionally
 scaled with region area for var regions), the per-frame update buffers, the avatar jump speed,
 how often capacity warnings are logged, the physics step rate (below), the share of gravity on a
-ground vehicle (below), and `TestCommands` (below).
+ground vehicle (below), `AllowUnrecordedNative` (above), and `TestCommands` (below).
 
 ### Physics step rate
 
@@ -205,7 +245,7 @@ only when `TestCommands` is on.
 `Tests/JoltPhysicsHarness` is a console tool that runs physics scenarios through the module's own
 per-heartbeat step (`Simulate`: the vehicle controllers, the backend step with the avatar step
 inside it, and the drains) with no region and no viewer. It needs only a built tree and the native
-joltc, so it runs anywhere the Jolt tests run (win-x64 at present). Use it to see how a vehicle or
+joltc, so it runs anywhere the Jolt tests run (Windows x64 and Linux x64). Use it to see how a vehicle or
 an avatar behaves at a given heartbeat rate, or what a changed parameter does, before trying it in
 a region.
 
