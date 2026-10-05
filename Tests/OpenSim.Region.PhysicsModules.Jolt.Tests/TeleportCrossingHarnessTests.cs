@@ -245,12 +245,19 @@ public class TeleportCrossingHarnessTests
             var arriving = toRegionB ? regionB : regionA;
             var departing = toRegionB ? regionA : regionB;
             var leaving = toRegionB ? inRegionA : inRegionB;
+            long stepsA = Interlocked.Read(ref regionA.Steps), stepsB = Interlocked.Read(ref regionB.Steps);
 
             var ex = Cross(arriving, departing, leaving, toRegionB ? residents[1] : residents[0], out var arrived);
             if (ex is not null) faults.Add($"crossing {i}: {ex.GetType().Name}: {ex.Message}");
 
             if (toRegionB) { inRegionB = arrived; inRegionA = default; }
             else { inRegionA = arrived; inRegionB = default; }
+
+            // Both regions step while the crossings run. On a slow machine the crossings can outrun the step threads
+            // and leave fewer steps than crossings, overlapping less than the check below demands: before the next
+            // crossing, wait until each region has stepped once more since this one began.
+            WaitForSteps(regionA, stepsA);
+            WaitForSteps(regionB, stepsB);
         }
 
         foreach (var r in new[] { regionA, regionB })
@@ -276,6 +283,14 @@ public class TeleportCrossingHarnessTests
         Assert.True(begin > 0, "CharacterVirtual::OnContactAdded never fired - the avatars never touched anything");
         Assert.True(persist > 0, "CharacterVirtual::OnContactPersisted never fired - nothing stayed in contact");
         Assert.True(charChar > 0, "OnCharacterContactAdded/Persisted never fired - no avatar-vs-avatar contact");
+    }
+
+    // Until the region has stepped past `before`, or 5 s (then the step-count check below reports it).
+    private static void WaitForSteps(Region region, long before)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (Interlocked.Read(ref region.Steps) <= before && sw.ElapsedMilliseconds < 5000)
+            Thread.Yield();
     }
 
     /// <summary>
