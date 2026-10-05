@@ -76,7 +76,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public static bool DoLinearFriction      = true;
         public static bool DoVerticalAttractor   = true;
         public static bool DoBanking             = true;
-        public static bool DoSpikeDetection      = true;
 
         // Debugging switches — all should be false in production.
         public static bool DebugPrintParams      = false;

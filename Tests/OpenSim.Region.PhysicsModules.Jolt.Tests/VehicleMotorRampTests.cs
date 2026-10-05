@@ -12,8 +12,8 @@ using Xunit;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// The vehicle motor ramp does not depend on the step: the ramp math on its own (pure, parallel), and a car and a
-/// boat driven through the harness at the four heartbeat rates against a far finer step.
+/// The banking turn motor's ramp does not depend on the step (pure, parallel); and a car and a boat driven through
+/// the harness at the four heartbeat rates against a far finer step.
 /// </summary>
 public class VehicleMotorRampTests
 {
@@ -63,28 +63,6 @@ public class VehicleMotorRampTests
         float now = Ramp(start, target, timescale, FineStep, RunSeconds);
         float old = OldRamp(start, target, timescale, FineStep, RunSeconds);
         Assert.True(Math.Abs(now - old) <= 0.005f * Math.Max(Math.Abs(old), 0.05f), $"{now} against the old formula's {old}");
-    }
-
-    [Fact]
-    public void The_ramp_from_the_seed_takes_a_whole_step()
-    {
-        // The step that starts from the stiction seed ramps from it, as every later step does: two half steps from
-        // the seed give what one whole step gives.
-        float whole = VehicleController.RampFromSeed(0.04f, 8f, 1f, 0.1f);
-        float half = VehicleController.RampFromSeed(0.04f, 8f, 1f, 0.05f);
-        float twoHalves = VehicleController.MotorRampStep(half, 8f, 1f, 0.05f, VehicleController.MotorRampRate(half, 8f, 1f, 0.05f));
-        Assert.Equal(whole, twoHalves, 4);
-        Assert.True(whole > 0.04f);
-    }
-
-    [Fact]
-    public void The_friction_floor_is_a_rate()
-    {
-        // MinPhysicsForce per MinPhysicsTimestep: the same least deceleration whatever the step.
-        float perSecond11 = VehicleController.FrictionFloor(1 / 11f) * 11f;
-        float perSecond90 = VehicleController.FrictionFloor(1 / 90f) * 90f;
-        Assert.Equal(perSecond11, perSecond90, 4);
-        Assert.Equal(VehicleLimits.MinPhysicsForce, VehicleController.FrictionFloor(VehicleLimits.MinPhysicsTimestep), 6);
     }
 }
 

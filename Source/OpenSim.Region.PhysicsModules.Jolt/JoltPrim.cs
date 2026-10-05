@@ -716,10 +716,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // boat keeps plunging to the seabed despite vehicle=True. Zeroing (before BeginFrame/hover below)
                 // arrests the fall; hover then lifts it from rest to the water surface. A live boat re-activated
                 // at runtime is at rest anyway, so zeroing is a no-op for it.
-                _backend.SetBodyLinearVelocity(_body, SVector3.Zero);
-                _backend.SetBodyAngularVelocity(_body, SVector3.Zero);
-                _velocity = Vector3.Zero;
-                _rotationalVelocity = Vector3.Zero;
+                // Not once a script has set the linear motor: the vehicle is then being driven, and zeroing would
+                // throw away the motor's first frames, a span that is longer the slower the step rate.
+                if (!_vehicle.LinearMotorSet)
+                {
+                    _backend.SetBodyLinearVelocity(_body, SVector3.Zero);
+                    _backend.SetBodyAngularVelocity(_body, SVector3.Zero);
+                    _velocity = Vector3.Zero;
+                    _rotationalVelocity = Vector3.Zero;
+                }
             }
             // The vehicle's ground check (BulletSim's HasSomeCollision): touching anything in the last step.
             IsColliding = _backend.BodyHadContact(_body);

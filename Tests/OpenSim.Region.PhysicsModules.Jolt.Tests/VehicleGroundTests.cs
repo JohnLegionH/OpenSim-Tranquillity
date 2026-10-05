@@ -17,9 +17,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 [Collection(JoltNativeSerial.Name)]
 public class VehicleGroundTests
 {
-    private static RunResult Run(string scenario, float slope, double rate = 11.0, string groundGravity = null)
+    private static RunResult Run(string scenario, float slope, double rate = 11.0, string groundGravity = null, float? hold = null)
     {
-        var o = new HarnessOptions { RateHz = rate, SlopeDeg = slope };
+        var o = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Hold = hold };
         if (groundGravity != null)
             o.Jolt["VehicleGroundGravityFactor"] = groundGravity;
         return Harness.Harness.Run(Harness.Harness.Find(scenario), o);
@@ -44,10 +44,12 @@ public class VehicleGroundTests
     [Fact]
     public void A_car_off_the_ground_reports_no_contact()
     {
-        // The test car leaves the 33 degree ramp at its crest and flies: no contact while its centre is well clear
+        // The car preset leaves the 33 degree ramp at its crest and flies: no contact while its centre is well clear
         // of the ground, contact again once it is back on it.
-        RunResult r = Run("testcar", 33f);
-        List<Sample> flying = r.Samples.Where(s => s.Height > 1.5f).ToList();   // clear of the crest edge too
+        RunResult r = Run("car", 33f);
+        // Clear of the crest edge too: the check reports contact in the last step, and the car's centre is 1.5 m up
+        // one step after it leaves the edge.
+        List<Sample> flying = r.Samples.Where(s => s.Height > 1.6f).ToList();
         Assert.NotEmpty(flying);
         Assert.All(flying, s => Assert.False(s.Touching, $"at {s.T:0.000} s, {s.Height:0.000} m up"));
         Assert.Contains(r.Samples, s => s.Touching && s.T > flying[^1].T);
@@ -64,12 +66,14 @@ public class VehicleGroundTests
         Assert.Equal(byDefault.ToCsv(), whole.ToCsv());
     }
 
-    // The test car's steady roll down a ramp with its friction timescale of 1 s, which acts only on the horizontal
-    // part of the velocity: f * g * sin(angle) * 1 s / cos(angle)^2, with f the share of gravity on the ground.
-    private static float SteadyRoll(float factor, float slope)
+    // The test car's steady roll down a ramp, nose down the slope, with its friction timescale of 1 s along its own
+    // forward axis: f * g * sin(angle) * 1 s, with f the share of gravity on the ground. Gravity is the engine's,
+    // applied through the step after friction has taken its exact share from the step's starting speed, so the
+    // stepped roll settles at f g sin(angle) dt / (1 - e^(-dt / 1 s)): 4.5% above the formula at 11 Hz, 1.1% at 45.
+    private static float SteadyRoll(float factor, float slope, double rate)
     {
-        double a = slope * Math.PI / 180.0;
-        return (float)(factor * 9.80665 * Math.Sin(a) / (Math.Cos(a) * Math.Cos(a)));
+        double a = slope * Math.PI / 180.0, dt = 1.0 / rate;
+        return (float)(factor * 9.80665 * Math.Sin(a) * dt / (1.0 - Math.Exp(-dt)));
     }
 
     [Theory]
@@ -79,12 +83,14 @@ public class VehicleGroundTests
     [InlineData(15f, 45.0)]
     public void A_factor_of_a_fifth_cuts_the_steady_roll_as_the_formula_gives(float slope, double rate)
     {
-        float whole = Run("testcar", slope, rate).Summary.SteadySpeed;
-        float fifth = Run("testcar", slope, rate, groundGravity: "0.2").Summary.SteadySpeed;
+        // The key is held for 15 s, which brings the car under the motor's steady speed (about 3.7 m/s) down to the
+        // measured stretch of the ramp (y 45 to 70) before it is let go, so the slow roll gets there within the run.
+        float whole = Run("testcar", slope, rate, hold: 15f).Summary.SteadySpeed;
+        float fifth = Run("testcar", slope, rate, groundGravity: "0.2", hold: 15f).Summary.SteadySpeed;
         // In proportion to the factor ...
         Assert.InRange(fifth / whole, 0.19f, 0.215f);
         // ... and near the formula (the harness car rolls a few percent faster than it: it is a box, not a point).
-        Assert.InRange(fifth, SteadyRoll(0.2f, slope) * 0.97f, SteadyRoll(0.2f, slope) * 1.10f);
-        Assert.InRange(whole, SteadyRoll(1f, slope) * 0.97f, SteadyRoll(1f, slope) * 1.10f);
+        Assert.InRange(fifth, SteadyRoll(0.2f, slope, rate) * 0.97f, SteadyRoll(0.2f, slope, rate) * 1.10f);
+        Assert.InRange(whole, SteadyRoll(1f, slope, rate) * 0.97f, SteadyRoll(1f, slope, rate) * 1.10f);
     }
 }

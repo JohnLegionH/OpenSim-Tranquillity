@@ -60,15 +60,16 @@ public class HarnessTests
 
     // The tolerances below cover float noise and nothing more: today the output is bit-for-bit repeatable.
     // "Was" gives the figure before the vehicle motor ramp, linear deflection and the avatar's fall were made
-    // independent of the step.
+    // independent of the step; "before" the figure before the motors and friction followed the documented model
+    // (velocity approaching the motor's exponentially, friction acting on every axis all the time).
 
     [Fact]
     public void Test_car_on_level_ground_at_11_hz()
     {
         Summary m = Run("testcar", slope: 0f).Summary;
-        Assert.InRange(m.ReleaseSpeed, 6.10f, 6.20f);             // 6.150 (was 5.134; 45 Hz now 6.234)
-        Assert.InRange(m.DistanceBeforeRelease, 8.23f, 8.33f);    // 8.282 (was 5.909; 45 Hz now 8.415)
-        Assert.InRange(m.TimeToRest, 4.7, 4.95);                   // 4.818 s after release (was 3.727)
+        Assert.InRange(m.ReleaseSpeed, 3.74f, 3.84f);             // 3.792 (before 6.150, was 5.134; 45 Hz now 3.788)
+        Assert.InRange(m.DistanceBeforeRelease, 9.41f, 9.51f);    // 9.462 (before 8.282, was 5.909; 45 Hz now 9.453)
+        Assert.InRange(m.TimeToRest, 3.05, 3.3);                   // 3.182 s after release (before 4.818, was 3.727)
         Assert.InRange(m.MaxTilt, 0f, 1f);
     }
 
@@ -76,9 +77,11 @@ public class HarnessTests
     // motor ramp was made independent of the step: 5.59 m / 5.00 m/s under the key at one step per heartbeat and
     // 8.43 m / 6.14 m/s at PhysicsStepRate 45, which this feed then gave to within 1% (5.62 / 5.01 and 8.40 / 6.12;
     // the heartbeat feed gave 5.91 and 7.45 m). The figures below are this code's; a region proof should land on them.
+    // The car's drop from where it was rezzed no longer changes the drive (the motor's equation does not depend on
+    // the starting speed), so they equal the heartbeat feed's.
     [Theory]
-    [InlineData(0.0, 8.290f, 6.146f)]
-    [InlineData(45.0, 8.081f, 6.147f)]
+    [InlineData(0.0, 9.462f, 3.792f)]
+    [InlineData(45.0, 9.367f, 3.785f)]
     public void Region_feed_drives_the_pad_as_a_region_does(double physicsRate, float distance, float releaseSpeed)
     {
         var o = new HarnessOptions { RateHz = 11.0, SlopeDeg = 0f, PhysicsRateHz = physicsRate, Feed = InputFeed.Region };
@@ -88,10 +91,10 @@ public class HarnessTests
     }
 
     [Theory]
-    [InlineData(5f, 0.907f)]     // in-world 0.90
-    [InlineData(15f, 2.850f)]    // in-world 2.85
-    [InlineData(33f, 6.677f)]    // in-world 7.94 (released before the crest there); was 7.842. Held over the crest
-                                 // here, so this measures the flight's after-effects, which still depend on the rate.
+    [InlineData(5f, 0.896f)]     // in-world 0.90 (before 0.907)
+    [InlineData(15f, 2.655f)]    // in-world 2.85 (before 2.850): friction now acts along the car's axes, the
+                                 // vertical part included
+    [InlineData(33f, 5.590f)]    // in-world 7.94 (released before the crest there); before 6.677, was 7.842.
     public void Test_car_rolls_down_a_slope_at_a_steady_speed_at_11_hz(float slope, float steady)
     {
         Summary m = Run("testcar", slope: slope).Summary;
@@ -104,8 +107,8 @@ public class HarnessTests
     public void Preset_car_on_level_ground_at_11_hz()
     {
         Summary m = Run("car", slope: 0f).Summary;
-        Assert.InRange(m.SteadySpeed, 7.652f, 7.752f);   // 7.702 over the last second of the hold (was 7.455)
-        Assert.InRange(m.TimeToRest, 5.85, 6.15);          // 6.000 (was 6.182)
+        Assert.InRange(m.SteadySpeed, 7.853f, 7.953f);   // 7.903 over the last second of the hold (before 7.702, was 7.455)
+        Assert.InRange(m.TimeToRest, 2.5, 2.8);            // 2.636 (before 6.000, was 6.182)
     }
 
     [Theory]
@@ -151,12 +154,12 @@ public class HarnessTests
     public void Boat_balloon_and_airplane_at_11_hz()
     {
         Summary boat = Run("boat").Summary;
-        Assert.InRange(boat.SteadySpeed, 4.691f, 4.791f);  // 4.741 under the motor (was 4.636)
+        Assert.InRange(boat.SteadySpeed, 4.856f, 4.956f);  // 4.906 under the motor (before 4.741, was 4.636)
         Assert.InRange(boat.End.Z, 20.45f, 20.55f);         // hovers 0.5 m above the water
 
         Summary balloon = Run("balloon").Summary;
-        Assert.InRange(balloon.End.Z, 30.545f, 30.745f);    // 30.645 (was 30.339): hover 5 m over the ground, still
-                                                            // settling at 40 s; 30.000 at 90 Hz (the hover depends on the step)
+        Assert.InRange(balloon.End.Z, 29.95f, 30.05f);      // 29.998 (before 30.645, was 30.339): hover 5 m over the
+                                                            // ground; its vertical friction now damps the descent too
 
         // The airplane preset has no lift: with the motor held it flies level at 15 m/s and sinks to the ground.
         Summary plane = Run("airplane").Summary;
@@ -179,9 +182,7 @@ public class HarnessTests
     [Fact]
     public void Vehicle_param_overrides_reach_the_controller()
     {
-        // The same car with a slower motor covers less ground under the key: an override changes the run. (Linear
-        // friction does not act on an axis while the motor holds it, so a friction override shows only after the
-        // motor lets go.)
+        // The same car with a slower motor covers less ground under the key: an override changes the run.
         var o = new HarnessOptions { RateHz = 11.0, SlopeDeg = 0f };
         Summary plain = Harness.Harness.Run(Harness.Harness.Find("testcar"), o).Summary;
         o.VehicleParams.Add(VehicleParamSetting.Parse("LINEAR_MOTOR_TIMESCALE=3"));
