@@ -6,7 +6,7 @@ name: joltc native
 on:
   push:
     branches:
-      - lane/jolt-natives
+      - lane/jolt
     paths:
       - 'native/joltc/**'
       - '.github/workflows/joltc-native.yml'

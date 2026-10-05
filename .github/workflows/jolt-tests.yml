@@ -6,7 +6,7 @@ name: Jolt tests
 on:
   push:
     branches:
-      - lane/jolt-natives
+      - lane/jolt
 
 permissions:
   contents: read
