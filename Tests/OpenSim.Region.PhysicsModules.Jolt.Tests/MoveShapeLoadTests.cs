@@ -160,14 +160,18 @@ public class MoveShapeLoadTests
     private (int exit, string output) RunChild(int bodies)
     {
         var asm = Assembly.GetExecutingAssembly().Location;
+        // The project folder: the part of the output path before its bin folder.
+        string project = Path.GetDirectoryName(asm)!.Split(Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar)[0];
         var psi = new ProcessStartInfo("dotnet")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            // Run where the repository's global.json applies, not wherever the parent test host was started.
+            WorkingDirectory = project,
         };
         psi.ArgumentList.Add("test");
-        psi.ArgumentList.Add(Path.GetDirectoryName(asm)!.Split("bin")[0]);
+        psi.ArgumentList.Add(project);
         psi.ArgumentList.Add("--no-build");
         psi.ArgumentList.Add("-c");
         psi.ArgumentList.Add(Configuration);
