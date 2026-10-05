@@ -78,9 +78,11 @@ per second). `[Jolt] PhysicsStepRate` runs physics at a set rate inside each hea
 - The keys are read once, when the region starts.
 
 What changes at 45: vehicles and avatars integrate in 1/45 s steps, so anything whose behaviour
-depends on the step changes. In the harness (below), the test car on level ground leaves the key at
-5.87 m/s instead of 5.13, an avatar jump rises 0.76 m instead of 0.64, and the sled on 15 degrees
-reaches about 31 m/s instead of 20; avatar walking speed does not change.
+still depends on the step changes. The vehicle motors, a jump's rise and walking speed do not: in
+the harness (below) the test car on level ground leaves the key at 6.2 m/s either way and an avatar
+jump rises 0.82 m. The vehicle hover, the vertical attractor and the sled still depend on it: the
+sled on 15 degrees steadies at about 25 m/s instead of 16, and a balloon overshoots its hover
+height a little more.
 Position updates to viewers, timers and sensors stay at the heartbeat rate. Physics costs more:
 in the harness the test car takes about 1.5 times the step time of one step per heartbeat
 (`jolt metrics` shows each region's step time).

@@ -41,22 +41,23 @@ public class SubstepHarnessTests
     // Expected: the 45 Hz-heartbeat value (one step per heartbeat). The tolerance covers what differs on purpose:
     // inputs and samples arrive per 11 Hz heartbeat instead of per 45 Hz one, and the solver takes 2 collision steps
     // per physics step instead of 6. Figures this does not hold for are explained beside the module's notes; the
-    // ones on the 33 degree crest depend on how the car leaves the crest and are not compared.
+    // ones after the test car's hop off a ramp's crest (its release speed and steady roll on 15 and 33 degrees)
+    // depend on how the car leaves the crest and are not compared: its distance under the key is.
     [Theory]
-    [InlineData("testcar", 0f, "release", 5.949f, 3f)]
-    [InlineData("testcar", 0f, "before", 7.707f, 5f)]
-    [InlineData("testcar", 5f, "steady", 0.875f, 2f)]
-    [InlineData("testcar", 15f, "steady", 2.756f, 2f)]
-    [InlineData("testcar", 15f, "release", 8.465f, 2f)]
-    [InlineData("testcar", 33f, "steady", 10.186f, 3f)]
-    [InlineData("car", 0f, "release", 7.893f, 2f)]
-    [InlineData("car", 15f, "release", 9.316f, 3f)]
-    [InlineData("sled", 15f, "steady", 23.670f, 6f)]
-    [InlineData("boat", 0f, "steady", 4.718f, 1f)]
-    [InlineData("airplane", 0f, "steady", 15.044f, 1f)]
-    [InlineData("balloon", 0f, "peak", 6.704f, 1f)]
+    [InlineData("testcar", 0f, "release", 6.234f, 3f)]
+    [InlineData("testcar", 0f, "before", 8.415f, 5f)]
+    [InlineData("testcar", 5f, "steady", 0.873f, 2f)]
+    [InlineData("testcar", 15f, "steady", 2.768f, 2f)]
+    [InlineData("testcar", 15f, "before", 33.261f, 2f)]
+    [InlineData("testcar", 33f, "before", 35.564f, 3f)]
+    [InlineData("car", 0f, "release", 7.896f, 2f)]
+    [InlineData("car", 15f, "release", 9.459f, 3f)]
+    [InlineData("sled", 15f, "steady", 24.644f, 6f)]
+    [InlineData("boat", 0f, "steady", 4.732f, 1f)]
+    [InlineData("airplane", 0f, "steady", 15.052f, 1f)]
+    [InlineData("balloon", 0f, "peak", 6.898f, 1f)]
     [InlineData("avatar-walk", 33f, "steady", 3.436f, 1f)]
-    [InlineData("avatar-jump", 0f, "rise", 0.772f, 2f)]
+    [InlineData("avatar-jump", 0f, "rise", 0.815f, 2f)]
     [InlineData("drop", 0f, "endz", 25.500f, 0.1f)]
     public void Steps_at_45_hz_inside_11_hz_heartbeats_match_a_45_hz_heartbeat(string scenario, float slope, string figure, float expected, float percent)
     {

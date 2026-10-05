@@ -59,16 +59,16 @@ public class HarnessTests
     }
 
     // The tolerances below cover float noise and nothing more: today the output is bit-for-bit repeatable.
-    // "Expected to change" marks a value that should move toward the 45 / 90 Hz rows of the baseline once the
-    // vehicle controller or the character runs at a physics rate above the heartbeat (substeps).
+    // "Was" gives the figure before the vehicle motor ramp, linear deflection and the avatar's fall were made
+    // independent of the step.
 
     [Fact]
     public void Test_car_on_level_ground_at_11_hz()
     {
         Summary m = Run("testcar", slope: 0f).Summary;
-        Assert.InRange(m.ReleaseSpeed, 5.084f, 5.184f);           // 5.134; expected to change (45 Hz: 5.949)
-        Assert.InRange(m.DistanceBeforeRelease, 5.86f, 5.96f);    // 5.909; expected to change (45 Hz: 7.707)
-        Assert.InRange(m.TimeToRest, 3.6, 3.85);                   // 3.727 s after release
+        Assert.InRange(m.ReleaseSpeed, 6.10f, 6.20f);             // 6.150 (was 5.134; 45 Hz now 6.234)
+        Assert.InRange(m.DistanceBeforeRelease, 8.23f, 8.33f);    // 8.282 (was 5.909; 45 Hz now 8.415)
+        Assert.InRange(m.TimeToRest, 4.7, 4.95);                   // 4.818 s after release (was 3.727)
         Assert.InRange(m.MaxTilt, 0f, 1f);
     }
 
@@ -77,8 +77,8 @@ public class HarnessTests
     // 8.43 m / 6.14 m/s at PhysicsStepRate 45, which this feed then gave to within 1% (5.62 / 5.01 and 8.40 / 6.12;
     // the heartbeat feed gave 5.91 and 7.45 m). The figures below are this code's; a region proof should land on them.
     [Theory]
-    [InlineData(0.0, 8.715f, 6.265f)]
-    [InlineData(45.0, 9.223f, 6.427f)]
+    [InlineData(0.0, 8.290f, 6.146f)]
+    [InlineData(45.0, 8.081f, 6.147f)]
     public void Region_feed_drives_the_pad_as_a_region_does(double physicsRate, float distance, float releaseSpeed)
     {
         var o = new HarnessOptions { RateHz = 11.0, SlopeDeg = 0f, PhysicsRateHz = physicsRate, Feed = InputFeed.Region };
@@ -88,9 +88,10 @@ public class HarnessTests
     }
 
     [Theory]
-    [InlineData(5f, 0.904f)]     // in-world 0.90
-    [InlineData(15f, 2.852f)]    // in-world 2.85
-    [InlineData(33f, 7.842f)]    // in-world 7.94; expected to change a little (45 Hz: 10.19, see the baseline)
+    [InlineData(5f, 0.907f)]     // in-world 0.90
+    [InlineData(15f, 2.850f)]    // in-world 2.85
+    [InlineData(33f, 6.677f)]    // in-world 7.94 (released before the crest there); was 7.842. Held over the crest
+                                 // here, so this measures the flight's after-effects, which still depend on the rate.
     public void Test_car_rolls_down_a_slope_at_a_steady_speed_at_11_hz(float slope, float steady)
     {
         Summary m = Run("testcar", slope: slope).Summary;
@@ -103,8 +104,8 @@ public class HarnessTests
     public void Preset_car_on_level_ground_at_11_hz()
     {
         Summary m = Run("car", slope: 0f).Summary;
-        Assert.InRange(m.SteadySpeed, 7.405f, 7.505f);   // 7.455 over the last second of the hold
-        Assert.InRange(m.TimeToRest, 6.0, 6.35);           // 6.182
+        Assert.InRange(m.SteadySpeed, 7.652f, 7.752f);   // 7.702 over the last second of the hold (was 7.455)
+        Assert.InRange(m.TimeToRest, 5.85, 6.15);          // 6.000 (was 6.182)
     }
 
     [Theory]
@@ -134,8 +135,8 @@ public class HarnessTests
     public void Avatar_jump_at_11_hz()
     {
         Summary m = Run("avatar-jump").Summary;
-        Assert.InRange(m.PeakRise, 0.62f, 0.67f);         // 0.644 m; expected to change (90 Hz: 0.794)
-        Assert.InRange(m.TimeToRest, 0.7, 0.95);           // back on the ground 0.818 s after the jump
+        Assert.InRange(m.PeakRise, 0.80f, 0.817f);        // 0.806 m, the samples either side of 0.816 (was 0.644)
+        Assert.InRange(m.TimeToRest, 0.85, 0.95);          // back on the ground 0.909 s after the jump (was 0.818)
     }
 
     [Fact]
@@ -150,11 +151,12 @@ public class HarnessTests
     public void Boat_balloon_and_airplane_at_11_hz()
     {
         Summary boat = Run("boat").Summary;
-        Assert.InRange(boat.SteadySpeed, 4.586f, 4.686f);  // 4.636 under the motor
+        Assert.InRange(boat.SteadySpeed, 4.691f, 4.791f);  // 4.741 under the motor (was 4.636)
         Assert.InRange(boat.End.Z, 20.45f, 20.55f);         // hovers 0.5 m above the water
 
         Summary balloon = Run("balloon").Summary;
-        Assert.InRange(balloon.End.Z, 30.24f, 30.44f);      // 30.339: hover 5 m over the ground; 29.999 at 90 Hz
+        Assert.InRange(balloon.End.Z, 30.545f, 30.745f);    // 30.645 (was 30.339): hover 5 m over the ground, still
+                                                            // settling at 40 s; 30.000 at 90 Hz (the hover depends on the step)
 
         // The airplane preset has no lift: with the motor held it flies level at 15 m/s and sinks to the ground.
         Summary plane = Run("airplane").Summary;
@@ -177,13 +179,15 @@ public class HarnessTests
     [Fact]
     public void Vehicle_param_overrides_reach_the_controller()
     {
-        // The same car with a shorter linear friction timescale stops sooner: an override changes the run.
+        // The same car with a slower motor covers less ground under the key: an override changes the run. (Linear
+        // friction does not act on an axis while the motor holds it, so a friction override shows only after the
+        // motor lets go.)
         var o = new HarnessOptions { RateHz = 11.0, SlopeDeg = 0f };
         Summary plain = Harness.Harness.Run(Harness.Harness.Find("testcar"), o).Summary;
-        o.VehicleParams.Add(VehicleParamSetting.Parse("LINEAR_FRICTION_TIMESCALE=0.3,1,1000"));
-        Summary damped = Harness.Harness.Run(Harness.Harness.Find("testcar"), o).Summary;
-        Assert.True(damped.DistanceAfterRelease < plain.DistanceAfterRelease * 0.6f,
-            $"after release: {damped.DistanceAfterRelease} vs {plain.DistanceAfterRelease}");
+        o.VehicleParams.Add(VehicleParamSetting.Parse("LINEAR_MOTOR_TIMESCALE=3"));
+        Summary slower = Harness.Harness.Run(Harness.Harness.Find("testcar"), o).Summary;
+        Assert.True(slower.DistanceBeforeRelease < plain.DistanceBeforeRelease * 0.6f,
+            $"under the key: {slower.DistanceBeforeRelease} vs {plain.DistanceBeforeRelease}");
     }
 
     [Fact]
