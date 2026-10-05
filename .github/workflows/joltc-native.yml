@@ -34,8 +34,9 @@ jobs:
       matrix:
         include:
           # The configure lines are those of joltc's own CI at JOLTC_COMMIT
-          # (.github/workflows/build.yml), with the samples left out and the reproducibility
-          # flags added. Later targets go here as further entries, for example
+          # (.github/workflows/build.yml), with the samples left out, the reproducibility flags added,
+          # and Jolt's CROSS_PLATFORM_DETERMINISTIC option on (see the Configure step). Later targets go
+          # here as further entries, for example
           #   linux-arm64 on an arm64 Linux runner (same configure line as linux-x64), and
           #   osx on a macOS runner with -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" (libjoltc.dylib).
           - rid: win-x64
@@ -90,6 +91,10 @@ jobs:
             git -C "$RUNNER_TEMP/joltc" apply --verbose "$GITHUB_WORKSPACE/repo/native/joltc/$p"
           done
 
+      # CROSS_PLATFORM_DETERMINISTIC: Jolt's option to compute the same results on every platform. With it the
+      # harness's traces on the Windows and Linux runners agree to the last printed digit over whole runs; without it
+      # they part within the first seconds of contact. On Linux (GCC) the file it gives is byte for byte the same as
+      # without it.
       - name: Configure
         env:
           CXXFLAGS: ${{ matrix.cxxflags }}
@@ -97,7 +102,8 @@ jobs:
         run: |
           cmake --version
           cmake -S "$RUNNER_TEMP/joltc" -B "$RUNNER_TEMP/joltc/build" ${{ matrix.configure }} \
-            -DCMAKE_BUILD_TYPE:String=Distribution -DCMAKE_INSTALL_PREFIX:String=SDK -DJPH_SAMPLES=OFF
+            -DCMAKE_BUILD_TYPE:String=Distribution -DCMAKE_INSTALL_PREFIX:String=SDK -DJPH_SAMPLES=OFF \
+            -DCROSS_PLATFORM_DETERMINISTIC=ON
 
       - name: Build
         run: cmake --build "$RUNNER_TEMP/joltc/build" --config Distribution --target joltc --parallel

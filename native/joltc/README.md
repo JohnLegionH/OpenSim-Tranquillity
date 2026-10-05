@@ -62,7 +62,7 @@ Steps, per target (the workflow does exactly this):
 2. `git apply` `per-system-tempallocator.patch`, then `physics-systems-map-lock.patch`.
 3. Configure and build with the options of joltc's own CI at that commit
    (`.github/workflows/build.yml` there), plus `-DJPH_SAMPLES=OFF` and `--target joltc`, which
-   leave the library itself unchanged:
+   leave the library itself unchanged, and `-DCROSS_PLATFORM_DETERMINISTIC=ON` (below):
 
    | Target | Runner | Configure | Output |
    |---|---|---|---|
@@ -73,6 +73,13 @@ Steps, per target (the workflow does exactly this):
 4. Hash the file, list its exports, and fail unless they equal `exports.txt`.
 5. Upload the file, `SHA256SUMS`, `exports.txt` and `build-info.txt` (the commits, the runner
    image, the CMake and compiler versions) as the artifact `joltc-<rid>`.
+
+`CROSS_PLATFORM_DETERMINISTIC` is Jolt's option to compute the same results on every platform
+(on MSVC it builds with `/fp:precise` instead of `/fp:fast`). With it, the Jolt harness's traces on
+the Windows and Linux runners agree to the last printed digit over whole runs, crash sweeps
+included; without it they part within the first seconds of contact, and a crash could end
+differently on the two. The busiest harness scenario took no longer with it. On Linux (GCC) the
+library it gives is byte for byte the same as without it.
 
 `-Brepro` makes MSVC write content hashes instead of time stamps into the DLL. The sources are
 built under the runner's temporary folder rather than the checkout, so the paths compiled into the
