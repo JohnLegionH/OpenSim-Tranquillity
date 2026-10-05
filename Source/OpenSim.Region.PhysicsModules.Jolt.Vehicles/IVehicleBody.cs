@@ -57,9 +57,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// tensor remap (BulletSim: ControllingPrim.Inertia from CalculateLocalInertia).</summary>
         Vector3 InertiaDiagonal { get; }
 
-        /// <summary>World gravity vector, e.g. (0,0,-9.80665). The controller applies gravity
-        /// MANUALLY (the host zeroes engine gravity on an active vehicle body).</summary>
+        /// <summary>World gravity vector, e.g. (0,0,-9.80665). The controller decides how much of it the
+        /// vehicle feels (buoyancy, the ground factor) and sets that share with <see cref="SetGravityFactor"/>.</summary>
         Vector3 Gravity { get; }
+
+        /// <summary>The share of <see cref="Gravity"/> the engine applies to the body over its next step. The engine
+        /// spreads it over the step as it does any gravity, and it does not keep a resting body awake.</summary>
+        void SetGravityFactor(float factor);
 
         /// <summary>Body currently has a contact (ground-vehicle gravity fudge; unused by boats).</summary>
         bool HasCollision { get; }

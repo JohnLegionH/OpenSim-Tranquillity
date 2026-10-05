@@ -16,7 +16,8 @@
  *   ControllingPrim.AddForce(true, f)           -> _body.AddForce(f)      (central force, next step)
  *   ControllingPrim.AddAngularForce(true, t)    -> _body.AddTorque(t)     (torque, next step)
  *   ControllingPrim.ActivateIfPhysical(false)   -> _body.KeepAwake()
- *   ControllingPrim.ComputeGravity(buoy)        -> _body.Gravity * (1 - buoy)   (GravModifier = 1)
+ *   ControllingPrim.ComputeGravity(buoy)        -> _body.SetGravityFactor(1 - buoy): the engine applies it
+ *                                                  (GravModifier = 1)
  *   BSParam.Gravity                             -> _body.Gravity.Z
  *   BSParam.VehicleGroundGravityFudge           -> GroundGravityFactor (the host's setting; 1 leaves gravity whole)
  *   GetTerrainHeight/GetWaterLevel              -> _body.GetTerrainHeight/_body.GetWaterLevel
@@ -29,7 +30,7 @@
  * Simulated: linear and angular motors with their timescales and decay, linear and angular
  * friction, hover, buoyancy, the vertical attractor, angular and linear deflection, sled
  * movement and banking-to-yaw, plus the shared frame infrastructure (timestep smoothing, velocity
- * anti-jitter, motor reset, stall detection, ground-penetration fix, manual gravity, torque
+ * anti-jitter, motor reset, stall detection, ground-penetration fix, the vehicle's gravity share, torque
  * accumulator). Not simulated: mouselook steering and wind.
  *
  * The linear and angular motors and friction follow Second Life's documented model rather than the
@@ -468,7 +469,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             SimulateBankingTurn(timeStep, VehicleLimits.DoMotors, angularz);
 
             // Apply gravity manually (same pattern as BSDynamics)
-            ApplyGravity(timeStep);
+            ApplyGravity();
 
             // Apply the accumulated torque
             TorqueFini();
@@ -478,6 +479,52 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _props.Dynamics.Timestep = timeStep;
             _props.Dynamics.LocalLinearVelocity = _localLinearVel;
             _props.Dynamics.LocalAngularVelocity = _localAngularVel;
+        }
+
+        /// <summary>
+        /// True when nothing in the vehicle would move a vehicle at rest: on every axis the motor's pull toward its
+        /// direction, g(s) * |M|, is below <see cref="IdleMotorSpeed"/> (a motor never set, faded away, or set to
+        /// zero, which only brakes), and hover is off or the vehicle is at its hover height. Friction, the attractor
+        /// and deflection only slow or turn a vehicle that is already moving, and gravity is held by what it rests
+        /// on. A host may then let the body sleep and call <see cref="Rest"/> instead of <see cref="Step"/> while it
+        /// sleeps.
+        /// </summary>
+        public bool IsIdle
+            => MotorIdle(_props.Dynamics.LinearDirection, _props.GetVec(VehVectorParam.LinearMotorDecayTimescale), _props.Dynamics.LinearDecayIndex)
+            && MotorIdle(_props.Dynamics.AngularDirection, _props.GetVec(VehVectorParam.AngularMotorDecayTimescale), _props.Dynamics.AngularDecayIndex)
+            && HoverIdle();
+
+        private bool HoverIdle()
+        {
+            if (!HoverTarget(out float targetZ, out bool upOnly))
+                return true;
+            float error = targetZ - _body.Position.Z;
+            return Math.Abs(error) < HoverIdleHeight || (upOnly && error <= 0f);
+        }
+
+        // A vehicle this close to its hover height (m) has nothing left for hover to do.
+        internal const float HoverIdleHeight = 0.01f;
+
+        // A motor pull below this (m/s, or rad/s for the angular motor) cannot move a vehicle at rest; it is under
+        // the engine's own sleep threshold (Jolt's point-velocity sleep threshold is 0.03 m/s).
+        internal const float IdleMotorSpeed = 0.01f;
+
+        private static bool MotorIdle(Vector3 direction, Vector3 decayTs, float age)
+            => VehicleMotorSolver.Grip(age, Math.Max(decayTs.X, VehicleLimits.MinPhysicsTimestep)) * Math.Abs(direction.X) < IdleMotorSpeed
+            && VehicleMotorSolver.Grip(age, Math.Max(decayTs.Y, VehicleLimits.MinPhysicsTimestep)) * Math.Abs(direction.Y) < IdleMotorSpeed
+            && VehicleMotorSolver.Grip(age, Math.Max(decayTs.Z, VehicleLimits.MinPhysicsTimestep)) * Math.Abs(direction.Z) < IdleMotorSpeed;
+
+        /// <summary>
+        /// A step in which the body is asleep and the vehicle idle (<see cref="IsIdle"/>): time passes for the motors'
+        /// decay, and the body is left alone. At rest every term of the step is zero (the motors pull toward nothing,
+        /// friction has no velocity to slow, gravity is held by the ground), so this is the same as stepping it.
+        /// </summary>
+        public void Rest(float pTimestep)
+        {
+            if (!IsActive) return;
+            _props.Dynamics.LastAccessTOD = Clock();
+            _props.Dynamics.LinearDecayIndex += pTimestep;
+            _props.Dynamics.AngularDecayIndex += pTimestep;
         }
 
         #endregion // Step
@@ -625,18 +672,29 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         #region Gravity
 
-        private void ApplyGravity(float timeStep)
+        /// <summary>
+        /// The share of the world's gravity the vehicle feels: 1 - buoyancy, times the ground factor for a ground
+        /// vehicle touching something.
+        /// </summary>
+        private float GravityShare()
         {
             float buoyancy = _props.GetFloat(VehFloatParam.Buoyancy, 0f);
-            Vector3 gravity = _body.Gravity * (1f - buoyancy);   // ComputeGravity(buoyancy), GravModifier = 1
-            Vector3 appliedGravity = gravity * m_vehicleMass;
+            float share = 1f - buoyancy;   // ComputeGravity(buoyancy), GravModifier = 1
 
             // Reduce downward force if vehicle is sitting on ground
             if (IsGroundVehicle && _body.HasCollision)
-                appliedGravity *= GroundGravityFactor;
+                share *= GroundGravityFactor;
+            return share;
+        }
 
-            // Apply as a force
-            _body.AddForce(appliedGravity);
+        /// <summary>
+        /// The vehicle's gravity: the engine applies its share over the step, spread over the step as for any body.
+        /// (Applied here as a force it was the same, but a force restarts the engine's sleep timer on every step, so
+        /// a parked vehicle could never sleep.)
+        /// </summary>
+        private void ApplyGravity()
+        {
+            _body.SetGravityFactor(GravityShare());
         }
 
         #endregion
@@ -913,16 +971,52 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private void SimulateHover(float timeStep)
         {
-            float hoverHeight = _props.GetFloat(VehFloatParam.HoverHeight, 0f);
             float hoverEfficiency = _props.GetFloat(VehFloatParam.HoverEfficiency, 0f);
             float hoverTimescale = _props.GetFloat(VehFloatParam.HoverTimescale, 1000f);
+            if (!HoverTarget(out float targetZ, out bool upOnly))
+                return;
+            float currentZ = _body.Position.Z;
+
+            // HoverUpOnly — only push up, never pull down
+            if (upOnly && currentZ >= targetZ)
+                return;
+
+            float error = targetZ - currentZ;
+
+            // If we're close enough, don't bother
+            if (Math.Abs(error) < 0.01f)
+                return;
+
+            // Compute correction velocity
+            // Higher efficiency = snappier response, lower = smoother
+            float correctionVel = (error / hoverTimescale) * (1f + hoverEfficiency * 2f);
+
+            // Dampen current vertical velocity to prevent oscillation
+            float currentVertVel = _worldLinearVel.Z;
+            float dampingFactor = 1f - (hoverEfficiency * 0.5f);
+            float dampedVel = correctionVel - (currentVertVel * dampingFactor);
+
+            // Apply as a velocity change in world Z
+            Vector3 hoverForce = new Vector3(0f, 0f, dampedVel);
+            ApplyLinearVelocityChange(hoverForce);
+        }
+
+        /// <summary>
+        /// The height hover holds the vehicle at, and whether it only pushes up. False when hover is off (its timescale
+        /// at the "off" value).
+        /// </summary>
+        private bool HoverTarget(out float targetZ, out bool upOnly)
+        {
+            float hoverHeight = _props.GetFloat(VehFloatParam.HoverHeight, 0f);
+            float hoverTimescale = _props.GetFloat(VehFloatParam.HoverTimescale, 1000f);
+            targetZ = 0f;
+            upOnly = (_props.Flags & ExtendedVehicleFlags.HoverUpOnly) != 0;
 
             // If timescale is effectively disabled, skip
             if (hoverTimescale >= VehicleLimits.MaxHoverTimescale)
-                return;
+                return false;
 
             Vector3 pos = _body.Position;
-            float currentZ = pos.Z;
             float targetBase;
 
             // Determine the base height based on hover flags
@@ -944,33 +1038,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 targetBase = Math.Max(_body.GetTerrainHeight(pos), _body.GetWaterLevel(pos));
             }
 
-            float targetZ = targetBase + hoverHeight;
-
-            // HoverUpOnly — only push up, never pull down
-            if ((_props.Flags & ExtendedVehicleFlags.HoverUpOnly) != 0)
-            {
-                if (currentZ >= targetZ)
-                    return;
-            }
-
-            float error = targetZ - currentZ;
-
-            // If we're close enough, don't bother
-            if (Math.Abs(error) < 0.01f)
-                return;
-
-            // Compute correction velocity
-            // Higher efficiency = snappier response, lower = smoother
-            float correctionVel = (error / hoverTimescale) * (1f + hoverEfficiency * 2f);
-
-            // Dampen current vertical velocity to prevent oscillation
-            float currentVertVel = _worldLinearVel.Z;
-            float dampingFactor = 1f - (hoverEfficiency * 0.5f);
-            float dampedVel = correctionVel - (currentVertVel * dampingFactor);
-
-            // Apply as a velocity change in world Z
-            Vector3 hoverForce = new Vector3(0f, 0f, dampedVel);
-            ApplyLinearVelocityChange(hoverForce);
+            targetZ = targetBase + hoverHeight;
+            return true;
         }
 
         #endregion

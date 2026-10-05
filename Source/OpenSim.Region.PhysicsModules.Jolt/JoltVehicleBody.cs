@@ -52,8 +52,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _orientation = _prim.PrimOrientationOf(s.Orientation);
             _linVel = new Vector3(s.LinearVelocity.X, s.LinearVelocity.Y, s.LinearVelocity.Z);
             _angVel = new Vector3(s.AngularVelocity.X, s.AngularVelocity.Y, s.AngularVelocity.Z);
+            IsAwake = (s.Flags & BodyStateFlags.Active) != 0;
             return true;
         }
+
+        /// <summary>Whether the engine had the body awake at the snapshot.</summary>
+        internal bool IsAwake { get; private set; }
 
         public Vector3 Position => _position;
         public Quaternion Orientation => _orientation;
@@ -100,6 +104,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 SVector3 g = _module.DefaultGravity;
                 return new Vector3(g.X, g.Y, g.Z);
             }
+        }
+
+        public void SetGravityFactor(float factor)
+        {
+            if (_prim.BodyHandle.IsValid)
+                _backend.SetBodyGravityFactor(_prim.BodyHandle, factor);
         }
 
         public bool HasCollision => _prim.IsColliding;   // set from the backend's contacts each step (JoltPrim.StepVehicle)

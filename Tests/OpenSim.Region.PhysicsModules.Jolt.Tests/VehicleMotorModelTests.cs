@@ -132,6 +132,7 @@ public class VehicleMotorModelTests
         public float Mass => 1000f;
         public Vector3 InertiaDiagonal => new(100f, 100f, 100f);
         public Vector3 Gravity => new(0f, 0f, -9.80665f);
+        public void SetGravityFactor(float factor) { }
         public bool HasCollision { get; set; }
         public void AddForce(Vector3 force) { }
         public void AddTorque(Vector3 torque) { }

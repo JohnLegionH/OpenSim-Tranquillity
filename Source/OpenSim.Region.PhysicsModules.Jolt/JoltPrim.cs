@@ -661,24 +661,28 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             EnsureVehicle();
             _vehicle.ProcessFloatVehicleParam((VehicleCode)param, value);
+            WakeVehicle();
         }
 
         public override void VehicleVectorParam(int param, Vector3 value)
         {
             EnsureVehicle();
             _vehicle.ProcessVectorVehicleParam((VehicleCode)param, value);
+            WakeVehicle();
         }
 
         public override void VehicleRotationParam(int param, Quaternion rotation)
         {
             EnsureVehicle();
             _vehicle.ProcessRotationVehicleParam((VehicleCode)param, rotation);
+            WakeVehicle();
         }
 
         public override void VehicleFlags(int param, bool remove)
         {
             EnsureVehicle();
             _vehicle.ProcessVehicleFlags(param, remove);
+            WakeVehicle();
         }
 
         private void EnsureVehicle()
@@ -728,14 +732,30 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
             // The vehicle's ground check (BulletSim's HasSomeCollision): touching anything in the last step.
             IsColliding = _backend.BodyHadContact(_body);
-            if (_vehicleBody.BeginFrame())
+            if (!_vehicleBody.BeginFrame())
+                return;
+            // A parked vehicle sleeps like any other body: once the engine has put it to sleep, and while nothing in
+            // the vehicle would move it, the controller only lets time pass for it (forces or velocity writes would
+            // wake it). A script setting a motor or any vehicle param wakes it (WakeVehicle), as does a collision.
+            if (!_vehicleBody.IsAwake && _vehicle.IsIdle)
+                _vehicle.Rest(timeStep);
+            else
                 _vehicle.Step(timeStep);
+        }
+
+        // A vehicle param, flag or type set by a script: the body wakes so the controller steps with it.
+        private void WakeVehicle()
+        {
+            if (_isPhysical && _body.IsValid)
+                _backend.ActivateBody(_body);
         }
 
         // The BulletSim vehicle body setup (BSDynamics.SetPhysicalParameters), translated:
         // the vehicle controls its own friction/damping (BSParam.VehicleFriction/Restitution/
         // AngularDamping all default 0; Jolt's default 0.05 damping would fight the motor math),
-        // applies gravity MANUALLY (engine gravity off), and must never sleep (DISABLE_DEACTIVATION).
+        // decides the vehicle's gravity itself (engine gravity off until its first step sets the vehicle's share).
+        // Unlike BulletSim's (DISABLE_DEACTIVATION) it may sleep:
+        // StepVehicle leaves a sleeping vehicle alone while nothing in it would move it.
         // Re-applied after every body recreate (reposition/reshape/weld) while the vehicle is active.
         private void ApplyVehicleBodyParams()
         {
@@ -745,7 +765,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _backend.SetBodyRestitution(_body, 0f);
             _backend.SetBodyDamping(_body, 0f, 0f);
             _backend.SetBodyGravityFactor(_body, 0f);
-            _backend.SetBodyAllowSleeping(_body, false);
+            _backend.SetBodyAllowSleeping(_body, true);
             _backend.ActivateBody(_body);
         }
 

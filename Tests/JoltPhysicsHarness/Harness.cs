@@ -105,11 +105,16 @@ public readonly record struct VehicleParamSetting(Vehicle Code, Vector3 Value, b
 }
 
 /// <summary>One heartbeat's state of the scenario's object, read after the step. Touching is the actor's
-/// IsColliding (for a vehicle, its ground check: touching anything in the last step).</summary>
-public readonly record struct Sample(double T, Vector3 Position, Vector3 Velocity, float Tilt, float Height, bool Touching = false)
+/// IsColliding (for a vehicle, its ground check: touching anything in the last step). Active is the number of
+/// bodies the engine has awake after the step. Other and OtherVelocity are the scenario's second object, if any
+/// (a wall, a box, a second car).</summary>
+public readonly record struct Sample(double T, Vector3 Position, Vector3 Velocity, float Tilt, float Height, bool Touching = false,
+                                     Quaternion Rotation = default, int Active = 0, Vector3 Other = default, Vector3 OtherVelocity = default,
+                                     Quaternion OtherRotation = default, Vector3 AngularVelocity = default)
 {
     public float Speed => Velocity.Length();
     public float HorizontalSpeed => MathF.Sqrt(Velocity.X * Velocity.X + Velocity.Y * Velocity.Y);
+    public float OtherSpeed => OtherVelocity.Length();
 }
 
 /// <summary>The figures a run is judged by. NaN means "does not apply" or "did not happen".</summary>
@@ -139,6 +144,30 @@ public sealed class Summary
     public double LeftRegionT = double.NaN;
     public int Steps;
     public int NonFinite;
+
+    /// <summary>Seconds after the release from which the engine has no body awake to the end of the run; NaN if a
+    /// body is still awake at the end.</summary>
+    public double SleepAfter = double.NaN;
+    /// <summary>Bodies awake after the last step.</summary>
+    public int ActiveAtEnd;
+
+    // Collision scenarios (those with a Scenario.Gap).
+    /// <summary>When the gap between the surfaces that meet first closed; NaN if they never met.</summary>
+    public double ImpactT = double.NaN;
+    /// <summary>The fastest either object moved up to the impact.</summary>
+    public float ArrivalSpeed = float.NaN;
+    /// <summary>The fastest either object moved in the second after the impact.</summary>
+    public float LeavingSpeed = float.NaN;
+    /// <summary>The deepest the surfaces overlapped after the impact (m).</summary>
+    public float Penetration = float.NaN;
+    /// <summary>1 if the object passed through what it hit, else 0.</summary>
+    public int Tunneled;
+    /// <summary>A vehicle held against what it hit: how far its centre moved along x (range, m) from 2 to 6 s after
+    /// the impact, and from 6 to 10 s.</summary>
+    public float PushRangeEarly = float.NaN;
+    public float PushRangeLate = float.NaN;
+    /// <summary>The deepest overlap from 2 to 10 s after the impact (m).</summary>
+    public float PushPenetration = float.NaN;
 }
 
 public sealed class RunResult
@@ -155,7 +184,7 @@ public sealed class RunResult
     /// <summary>The scenario column of the summary: the name, plus "/p" and the physics rate when physics steps are on.</summary>
     public string Label => PhysicsRateHz > 0 ? $"{Scenario}/p{Fmt(PhysicsRateHz, "0.#")}" : Scenario;
 
-    public const string CsvHeader = "t,x,y,z,vx,vy,vz,speed,hspeed,tilt_deg,height,touching";
+    public const string CsvHeader = "t,x,y,z,vx,vy,vz,speed,hspeed,tilt_deg,height,touching,active,ox,oy,oz,ospeed,wx,wy,wz";
 
     /// <summary>The trace as CSV: one line per heartbeat, invariant culture, fixed decimals.</summary>
     public string ToCsv()
@@ -169,13 +198,17 @@ public sealed class RunResult
               .Append(Fmt(s.Velocity.X, "0.0000")).Append(',').Append(Fmt(s.Velocity.Y, "0.0000")).Append(',').Append(Fmt(s.Velocity.Z, "0.0000")).Append(',')
               .Append(Fmt(s.Speed, "0.0000")).Append(',').Append(Fmt(s.HorizontalSpeed, "0.0000")).Append(',')
               .Append(Fmt(s.Tilt, "0.00")).Append(',').Append(Fmt(s.Height, "0.0000")).Append(',')
-              .Append(s.Touching ? '1' : '0').Append('\n');
+              .Append(s.Touching ? '1' : '0').Append(',').Append(s.Active.ToString(CultureInfo.InvariantCulture)).Append(',')
+              .Append(Fmt(s.Other.X, "0.0000")).Append(',').Append(Fmt(s.Other.Y, "0.0000")).Append(',').Append(Fmt(s.Other.Z, "0.0000")).Append(',')
+              .Append(Fmt(s.OtherSpeed, "0.0000")).Append(',')
+              .Append(Fmt(s.AngularVelocity.X, "0.0000")).Append(',').Append(Fmt(s.AngularVelocity.Y, "0.0000")).Append(',').Append(Fmt(s.AngularVelocity.Z, "0.0000")).Append('\n');
         }
         return sb.ToString();
     }
 
     public const string SummaryHeader =
-        "scenario,slope_deg,rate_hz,steps,top_speed,release_t,release_speed,steady_speed,steady_hspeed,dist_before_release,dist_after_release,time_to_rest,peak_height,peak_rise,z_range,max_tilt_deg,end_x,end_y,end_z,left_region_t,nonfinite";
+        "scenario,slope_deg,rate_hz,steps,top_speed,release_t,release_speed,steady_speed,steady_hspeed,dist_before_release,dist_after_release,time_to_rest,peak_height,peak_rise,z_range,max_tilt_deg,end_x,end_y,end_z,left_region_t,nonfinite," +
+        "sleep_after,active_at_end,impact_t,arrival_speed,leaving_speed,penetration,tunneled,push_range_early,push_range_late,push_penetration";
 
     public string SummaryLine()
     {
@@ -186,7 +219,10 @@ public sealed class RunResult
             Fmt(m.SteadySpeed, "0.000"), Fmt(m.SteadyHorizontalSpeed, "0.000"),
             Fmt(m.DistanceBeforeRelease, "0.000"), Fmt(m.DistanceAfterRelease, "0.000"), Fmt(m.TimeToRest, "0.000"),
             Fmt(m.PeakHeight, "0.000"), Fmt(m.PeakRise, "0.000"), Fmt(m.ZRange, "0.000"), Fmt(m.MaxTilt, "0.0"),
-            Fmt(m.End.X, "0.000"), Fmt(m.End.Y, "0.000"), Fmt(m.End.Z, "0.000"), Fmt(m.LeftRegionT, "0.000"), m.NonFinite.ToString(CultureInfo.InvariantCulture));
+            Fmt(m.End.X, "0.000"), Fmt(m.End.Y, "0.000"), Fmt(m.End.Z, "0.000"), Fmt(m.LeftRegionT, "0.000"), m.NonFinite.ToString(CultureInfo.InvariantCulture),
+            Fmt(m.SleepAfter, "0.000"), m.ActiveAtEnd.ToString(CultureInfo.InvariantCulture), Fmt(m.ImpactT, "0.000"),
+            Fmt(m.ArrivalSpeed, "0.000"), Fmt(m.LeavingSpeed, "0.000"), Fmt(m.Penetration, "0.0000"), m.Tunneled.ToString(CultureInfo.InvariantCulture),
+            Fmt(m.PushRangeEarly, "0.0000"), Fmt(m.PushRangeLate, "0.0000"), Fmt(m.PushPenetration, "0.0000"));
     }
 
     internal static string Fmt(double v, string format)
@@ -251,8 +287,27 @@ public sealed class Run
     /// <summary>The simulated time the vehicle controller's clock reads.</summary>
     internal double Clock;
 
+    /// <summary>The scenario's second object (a wall, a box, a second car), if any.</summary>
+    public PhysicsActor Other;
+    public Vector3 OtherSize;
+    /// <summary>Further vehicles that get the same key input as <see cref="Actor"/>. The motor is in each vehicle's
+    /// own frame, so two cars facing each other drive at each other.</summary>
+    public readonly List<PhysicsActor> AlsoDriven = new();
+
     public static readonly Vector3 AvatarSize = new(0.45f, 0.6f, 1.9f);   // the default appearance's box
     private const uint ActorLocalId = 1000;
+    private const uint OtherLocalId = 1001;
+
+    /// <summary>The second object: a box prim, physical (density 1000) or not (a fixed wall).</summary>
+    public PhysicsActor AddOtherBox(Vector3 size, Vector3 position, Quaternion rotation, bool physical)
+    {
+        PhysicsActor pa = Scene.AddPrimShape("harness other", PrimitiveBaseShape.CreateBox(), position, size, rotation, physical, OtherLocalId);
+        if (physical)
+            pa.Density = 1000f;
+        Other = pa;
+        OtherSize = size;
+        return pa;
+    }
 
     public float GroundAt(float x, float y) => Scene.TerrainHeightAt(x, y);
 
@@ -319,6 +374,12 @@ public sealed class Run
         SetVector(Vehicle.LINEAR_MOTOR_DIRECTION, motor);
         if (angular.HasValue)
             SetVector(Vehicle.ANGULAR_MOTOR_DIRECTION, angular.Value);
+        foreach (PhysicsActor a in AlsoDriven)
+        {
+            a.VehicleVectorParam((int)Vehicle.LINEAR_MOTOR_DIRECTION, motor);
+            if (angular.HasValue)
+                a.VehicleVectorParam((int)Vehicle.ANGULAR_MOTOR_DIRECTION, angular.Value);
+        }
     }
 
     // Region feed: every control event due before this heartbeat, each at its own time. The key goes down at
@@ -373,6 +434,10 @@ public sealed class Scenario
     public Func<Run, Sample, bool> Steady;
     /// <summary>Instead of <see cref="Steady"/>: the steady speeds (along the path, horizontal) from positions.</summary>
     public Func<Run, List<Sample>, (float along, float horizontal)?> SteadyFromPath;
+    /// <summary>A collision scenario: the gap between the surfaces that meet (m; below zero they overlap).</summary>
+    public Func<Run, Sample, float> Gap;
+    /// <summary>A collision scenario: true once the object has passed through what it hit.</summary>
+    public Func<Run, Sample, bool> PassedThrough;
 }
 
 public static class Harness
@@ -612,7 +677,148 @@ public static class Harness
                 r.StopAtRest = true;
             },
         },
+
+        // Parked vehicles: does the engine let them sleep (the summary's sleep_after and active_at_end)?
+        new()
+        {
+            Name = "park-new",
+            Description = "VEHICLE_TYPE_CAR with its presets, at rest on level ground; no motor is ever set.",
+            DefaultDuration = _ => 20f,
+            Setup = r => SetupParked(r, false),
+        },
+        new()
+        {
+            Name = "park-faded",
+            Description = "The test car on level ground; its motor is set to <8,0,0> once at the start and never again, so it fades.",
+            DefaultDuration = _ => 20f,
+            Setup = r => SetupParked(r, true),
+            Input = r =>
+            {
+                if (!r.Released)
+                {
+                    r.SetVector(Vehicle.LINEAR_MOTOR_DIRECTION, CarMotor);
+                    r.Released = true;
+                }
+            },
+        },
+        new()
+        {
+            Name = "park-drive",
+            Description = "The test car driven on level ground as testcar (3 s key), then left parked to the end of the run.",
+            DefaultDuration = _ => 40f, DefaultHold = _ => 3f,
+            Setup = r =>
+            {
+                SetupCar(r, true);
+                r.StopAtRest = false;
+            },
+            Input = r => r.HoldMotor(CarMotor),
+        },
+
+        new()
+        {
+            Name = "park-wake",
+            Description = "VEHICLE_TYPE_CAR with its presets, parked on level ground; at 8 s (asleep by then) the key goes down for 2 s with motor <8,0,0>.",
+            // The heartbeat feed lets the key up at Hold, counted from the start.
+            DefaultDuration = _ => 14f, DefaultHold = _ => WakeKeyAt + 2f,
+            Setup = r =>
+            {
+                SetupParked(r, false);
+                r.NextKey = WakeKeyAt;
+                r.ReleaseAt = r.Hold;
+            },
+            Input = r => r.HoldMotor(CarMotor),
+        },
+
+        // Collisions: the car preset with its key held (motor <20,0,0>) from rest 28 m away from what it hits.
+        new()
+        {
+            Name = "crash-wall",
+            Description = "VEHICLE_TYPE_CAR with its presets, motor <20,0,0> held, into a fixed wall (1 m thick), then held against it.",
+            DefaultDuration = _ => 15f, DefaultHold = _ => 1000f,
+            Setup = r =>
+            {
+                SetupCrashCar(r);
+                r.AddOtherBox(new Vector3(1f, 20f, 3f), new Vector3(CrashTargetX, 85f, Course.Ground + 1.5f), Quaternion.Identity, false);
+            },
+            Input = r => r.HoldMotor(CrashMotor),
+            Gap = GapToOther,
+            PassedThrough = PassedThroughOther,
+        },
+        new()
+        {
+            Name = "crash-box",
+            Description = "As crash-wall, into a 1 m box at rest on the ground, of about the car's mass (1000 kg each).",
+            DefaultDuration = _ => 8f, DefaultHold = _ => 1000f,
+            Setup = r =>
+            {
+                SetupCrashCar(r);
+                r.AddOtherBox(new Vector3(1f, 1f, 1f), new Vector3(CrashTargetX, 85f, Course.Ground + 0.5f + 0.02f), Quaternion.Identity, true);
+            },
+            Input = r => r.HoldMotor(CrashMotor),
+            Gap = GapToOther,
+            PassedThrough = PassedThroughOther,
+        },
+        new()
+        {
+            Name = "crash-headon",
+            Description = "Two VEHICLE_TYPE_CAR presets 60 m apart facing each other, both with motor <20,0,0> held.",
+            DefaultDuration = _ => 8f, DefaultHold = _ => 1000f,
+            Setup = r =>
+            {
+                SetupCrashCar(r);
+                r.AddOtherBox(CarSize, new Vector3(CrashStartX + 60f, 85f, Course.Ground + CarSize.Z * 0.5f + 0.02f), West, true);
+                r.Other.VehicleType = (int)Vehicle.TYPE_CAR;
+                r.AlsoDriven.Add(r.Other);
+            },
+            Input = r => r.HoldMotor(CrashMotor),
+            Gap = GapToOther,
+            PassedThrough = PassedThroughOther,
+        },
+        new()
+        {
+            Name = "crash-drop",
+            Description = "VEHICLE_TYPE_CAR with its presets let fall level from 2 m above level ground; no motor.",
+            DefaultDuration = _ => 5f,
+            Setup = r =>
+            {
+                r.AddBox(CarSize, new Vector3(128f, 128f, Course.Ground + CarSize.Z * 0.5f + 2f), Quaternion.Identity);
+                r.MakeVehicle(Vehicle.TYPE_CAR);
+                r.ApplyVehicleOverrides();
+                r.ReleaseAt = 0;
+            },
+            Gap = GapBelow,
+            PassedThrough = (r, s) => s.Position.Z < r.GroundAt(s.Position.X, s.Position.Y),
+        },
     };
+
+    private static readonly Quaternion West = Quaternion.CreateFromEulers(0f, 0f, MathF.PI);
+    private static readonly Vector3 CrashMotor = new(20f, 0f, 0f);
+    public const float WakeKeyAt = 8f;
+    private const float CrashStartX = 100f;
+    private const float CrashTargetX = 130f;
+
+    private static void SetupParked(Run r, bool testCar)
+    {
+        r.AddBoxOnGround(CarSize, 165f, 85f, Quaternion.Identity);
+        r.MakeVehicle(Vehicle.TYPE_CAR);
+        if (testCar)
+        {
+            r.SetVector(Vehicle.LINEAR_FRICTION_TIMESCALE, new Vector3(1f, 1f, 1000f));
+            r.SetFloat(Vehicle.LINEAR_MOTOR_TIMESCALE, 1f);
+            r.SetFloat(Vehicle.LINEAR_MOTOR_DECAY_TIMESCALE, 0.5f);
+        }
+        r.ApplyVehicleOverrides();
+        r.ReleaseAt = 0;
+    }
+
+    private static void SetupCrashCar(Run r)
+    {
+        r.AddBoxOnGround(CarSize, CrashStartX, 85f, Quaternion.Identity);
+        r.MakeVehicle(Vehicle.TYPE_CAR);
+        r.ApplyVehicleOverrides();
+        r.NextKey = 0.0;
+        r.ReleaseAt = r.Hold;
+    }
 
     public static Scenario Find(string name)
         => Scenarios.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase))
@@ -715,8 +921,49 @@ public static class Harness
         Vector3 up = Vector3.UnitZ * a.Orientation;
         float tilt = MathF.Acos(Math.Clamp(up.Z, -1f, 1f)) * 180f / MathF.PI;
         float height = p.Z - r.GroundAt(p.X, p.Y);
-        return new Sample(t, p, v, tilt, height, a.IsColliding);
+        PhysicsActor o = r.Other;
+        return new Sample(t, p, v, tilt, height, a.IsColliding, a.Orientation, ActiveBodies(r.Scene),
+                          o?.Position ?? Vector3.Zero, o?.Velocity ?? Vector3.Zero, o?.Orientation ?? Quaternion.Identity, a.RotationalVelocity);
     }
+
+    // The engine's count of awake bodies. The scene keeps its backend private; the harness reads it the way the
+    // `jolt capacity` console command does, through the backend's capacity stats.
+    private static readonly System.Reflection.FieldInfo BackendField =
+        typeof(JoltScene).GetField("_backend", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+    private static int ActiveBodies(JoltScene scene)
+        => BackendField?.GetValue(scene) is OpenSim.Region.PhysicsModules.Jolt.Backend.IPhysicsBackend b ? b.GetCapacityStats().ActiveBodyCount : -1;
+
+    /// <summary>Half the size of a box with this rotation along a world axis: how far its surface reaches from its
+    /// centre that way.</summary>
+    public static float HalfExtent(Quaternion rotation, Vector3 size, Vector3 axis)
+    {
+        Vector3 x = Vector3.UnitX * rotation, y = Vector3.UnitY * rotation, z = Vector3.UnitZ * rotation;
+        return 0.5f * (size.X * MathF.Abs(Vector3.Dot(x, axis)) + size.Y * MathF.Abs(Vector3.Dot(y, axis)) + size.Z * MathF.Abs(Vector3.Dot(z, axis)));
+    }
+
+    // How far apart the two objects' bounding boxes are along a world axis (below zero: by how much they overlap).
+    private static float Separation(Run r, Sample s, Vector3 axis)
+        => MathF.Abs(Vector3.Dot(s.Other - s.Position, axis))
+           - HalfExtent(s.Rotation, r.ActorSize, axis) - HalfExtent(s.OtherRotation, r.OtherSize, axis);
+
+    // The gap between the object and the second object: the widest separation of their bounding boxes on any world
+    // axis, or, when they overlap on all three, minus the shallowest overlap (the depth one has pushed into the other).
+    private static float GapToOther(Run r, Sample s)
+        => MathF.Max(Separation(r, s, Vector3.UnitX), MathF.Max(Separation(r, s, Vector3.UnitY), Separation(r, s, Vector3.UnitZ)));
+
+    // The object has gone through the second one: their centres have crossed along x (the way it was driven) while
+    // the two still overlap across (in y and z), so it did not go round or over.
+    private const float ThroughOverlap = 0.1f;
+    private static bool PassedThroughOther(Run r, Sample s)
+        => s.Position.X >= s.Other.X && Separation(r, s, Vector3.UnitY) < -ThroughOverlap && Separation(r, s, Vector3.UnitZ) < -ThroughOverlap;
+
+    // The gap from the object's lowest point to the ground under it.
+    private static float GapBelow(Run r, Sample s)
+        => s.Position.Z - HalfExtent(s.Rotation, r.ActorSize, Vector3.UnitZ) - r.GroundAt(s.Position.X, s.Position.Y);
+
+    /// <summary>A gap under this counts as the surfaces meeting.</summary>
+    public const float ContactGap = 0.02f;
 
     private static bool InRegion(Vector3 p) => p.X >= 0f && p.Y >= 0f && p.X <= Course.Size && p.Y <= Course.Size;
 
@@ -784,6 +1031,54 @@ public static class Harness
             m.SteadyHorizontalSpeed = horizontal;
         }
         m.ZRange = maxZ >= minZ ? maxZ - minZ : 0f;
+
+        // Sleeping: from which sample on nothing is awake.
+        m.ActiveAtEnd = last.Active;
+        int asleepFrom = samples.Count;
+        while (asleepFrom > 0 && samples[asleepFrom - 1].Active == 0)
+            asleepFrom--;
+        if (asleepFrom < samples.Count)
+            m.SleepAfter = samples[asleepFrom].T - (haveRelease ? rel : 0.0);
+
+        if (sc.Gap != null)
+            SummariseCollision(r, sc, samples, m);
         return m;
+    }
+
+    private static void SummariseCollision(Run r, Scenario sc, List<Sample> samples, Summary m)
+    {
+        int impact = samples.FindIndex(s => sc.Gap(r, s) < ContactGap);
+        if (impact < 0)
+            return;
+        double t0 = samples[impact].T;
+        m.ImpactT = t0;
+        // A sample is read after its step, so the impact sample's velocities are already the collision's result.
+        m.ArrivalSpeed = 0f;
+        for (int i = 0; i < impact; i++)
+            m.ArrivalSpeed = MathF.Max(m.ArrivalSpeed, MathF.Max(samples[i].Speed, samples[i].OtherSpeed));
+        m.LeavingSpeed = 0f;
+        m.Penetration = 0f;
+        float pushPen = float.NaN, earlyMin = float.MaxValue, earlyMax = float.MinValue, lateMin = float.MaxValue, lateMax = float.MinValue;
+        for (int i = impact; i < samples.Count; i++)
+        {
+            Sample s = samples[i];
+            double after = s.T - t0;
+            float overlap = -sc.Gap(r, s);
+            // The impact sample's speed is the step that ended in the contact, part arriving and part stopped.
+            if (i > impact && after <= 1.0 + 1e-9)
+                m.LeavingSpeed = MathF.Max(m.LeavingSpeed, MathF.Max(s.Speed, s.OtherSpeed));
+            m.Penetration = MathF.Max(m.Penetration, overlap);
+            if (sc.PassedThrough != null && sc.PassedThrough(r, s))
+                m.Tunneled = 1;
+            if (after >= 2.0 - 1e-9 && after <= 10.0 + 1e-9)
+            {
+                pushPen = float.IsNaN(pushPen) ? overlap : MathF.Max(pushPen, overlap);
+                if (after < 6.0) { earlyMin = MathF.Min(earlyMin, s.Position.X); earlyMax = MathF.Max(earlyMax, s.Position.X); }
+                else { lateMin = MathF.Min(lateMin, s.Position.X); lateMax = MathF.Max(lateMax, s.Position.X); }
+            }
+        }
+        m.PushPenetration = pushPen;
+        if (earlyMax >= earlyMin) m.PushRangeEarly = earlyMax - earlyMin;
+        if (lateMax >= lateMin) m.PushRangeLate = lateMax - lateMin;
     }
 }
