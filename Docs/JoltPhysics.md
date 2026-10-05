@@ -3,8 +3,8 @@
 The Jolt module is an optional physics engine for the region server, built on
 [Jolt Physics](https://github.com/jrouwe/JoltPhysics) through the joltc native library and the
 JoltPhysicsSharp binding. Each region gets its own Jolt physics system, and LSL vehicles run on the
-InWorldz Halcyon vehicle dynamics, with the linear and angular motors and friction on Second Life's
-documented model (see "Vehicle motors and friction" below).
+InWorldz Halcyon vehicle dynamics, with the motors, friction, gravity, hover, the vertical attractor,
+banking and deflection on Second Life's documented model (see "Vehicle motors and friction" below).
 
 This guide is for operators. It covers selecting Jolt, its settings, its console commands, and
 the platforms it runs on today.
@@ -79,10 +79,10 @@ per second). `[Jolt] PhysicsStepRate` runs physics at a set rate inside each hea
 - The keys are read once, when the region starts.
 
 What changes at 45: vehicles and avatars integrate in 1/45 s steps, so anything whose behaviour
-still depends on the step changes. The vehicle motors, a jump's rise and walking speed do not: in
-the harness (below) the test car on level ground leaves the key at 3.79 m/s either way and an avatar
-jump rises 0.82 m. The vehicle hover, the vertical attractor and the sled's slope assist still depend
-on it: the sled on 15 degrees steadies at about 13.6 m/s instead of 15.8.
+still depends on the step changes. The vehicle motors, friction, gravity, hover, the vertical
+attractor, banking and deflection, a jump's rise and walking speed do not: each is stepped exactly
+(see "Vehicle motors and friction" and the sections after it), so in the harness the test car on level ground leaves the key at 3.79 m/s
+either way and an avatar jump rises 0.82 m. The sled's slope assist still depends on it.
 Position updates to viewers, timers and sensors stay at the heartbeat rate. Physics costs more:
 in the harness the test car takes about 1.5 times the step time of one step per heartbeat
 (`jolt metrics` shows each region's step time).
@@ -101,19 +101,22 @@ VehicleGroundGravityFudge`).
 ```
 
 A car that only its linear friction slows rolls down a slope at a steady speed in proportion to the
-factor. In the harness the test car (linear friction timescale 1 s) rolls 0.19 m/s down 5 degrees
-with 0.2, against 0.93 m/s with 1, and 0.56 m/s down 15 degrees, against 2.67.
+factor: `f * g * sin(angle) * Tf`. In the harness the test car (linear friction timescale 1 s)
+rolls 0.86 m/s down 5 degrees with 1, which is the formula's value, and about a fifth of that
+with 0.2.
 
 ### Vehicle motors and friction
 
 The linear motor and linear friction act on each axis of the vehicle's frame as one equation, as the
 Second Life wiki's vehicle tutorial describes them:
 
-    dv/dt = g * (M - v) / Tm  -  v / Tf          g = e^(-s / Td)
+    dv/dt = g * (M - v) / Tm  -  v / Tf  +  a          g = e^(-s / Td)
 
 `M` is `VEHICLE_LINEAR_MOTOR_DIRECTION`, `Tm` the motor timescale, `Td` the motor decay timescale,
-`s` the time since the script last set the motor, and `Tf` the friction timescale. The angular motor
-and angular friction follow the same equation on the angular velocity. What follows from it:
+`s` the time since the script last set the motor, `Tf` the friction timescale, and `a` the vehicle's
+gravity along the axis (its share: 1 - buoyancy, times the ground factor above). The angular motor
+and angular friction follow the same equation on the angular velocity, with no gravity term. What
+follows from it:
 
 - Each step is the exact solution of the equation over that step, so a vehicle drives the same
   at any heartbeat or physics step rate.
@@ -127,7 +130,39 @@ and angular friction follow the same equation on the angular velocity. What foll
   brakes toward zero; a motor left to decay stops acting.
 - A friction timescale of 1000 s (the largest a script can set) is no friction on that axis.
 - `VEHICLE_FLAG_LIMIT_MOTOR_UP` keeps the motor from pushing up; friction's own upward share
-  (slowing a fall) stays.
+  (slowing a fall) stays. A car running down a slope faster than its motor is braked by its motor,
+  and that push back up the slope loses its upward part.
+- Gravity is inside the equation, so on a slope a vehicle settles where motor, friction and gravity
+  balance, `(M / Tm + a) / (1 / Tm + 1 / Tf)` at full grip, at any rate.
+
+### Hover, the vertical attractor, banking and deflection
+
+Each follows the Second Life wiki's vehicle tutorial and `llSetVehicleFloatParam`, and each is the
+exact solution over the step the engine takes:
+
+- Hover is a damped spring on the height error `e`: `e'' = -e / T^2 - 2 eff e' / T`, with
+  `VEHICLE_HOVER_TIMESCALE` `T` and `VEHICLE_HOVER_EFFICIENCY` `eff` from bouncy (0) to critically
+  damped (1). The hover flags choose terrain, water or the global height as before. With
+  `VEHICLE_FLAG_HOVER_UP_ONLY` hover never pushes down, and buoyancy vanishes above the hover height.
+  A vehicle without full buoyancy hovers below its height, where the spring holds its weight.
+- The vertical attractor is the same spring on the vehicle's roll and pitch, with
+  `VEHICLE_VERTICAL_ATTRACTION_TIMESCALE` and `_EFFICIENCY` (from wobbling, 0, to exponential decay,
+  1); off at 500 s. `VEHICLE_FLAG_LIMIT_ROLL_ONLY` leaves an airplane or balloon no pitch spring and
+  other types a tenth of it.
+- Banking turns the yaw rate about world z toward a target in proportion to the roll and
+  `VEHICLE_BANKING_EFFICIENCY` (and, with `VEHICLE_BANKING_MIX` toward 1, the forward speed over
+  30 m/s), with `VEHICLE_BANKING_TIMESCALE` as its time constant. It needs the attractor on.
+- Linear deflection turns the velocity toward the vehicle's nose, keeping its speed, the angle between
+  them decaying as `e^(-eff t / T)`; with `VEHICLE_FLAG_NO_DEFLECTION_UP` only the horizontal part
+  turns. Angular deflection turns the nose toward the velocity the same way, scaled by the speed over
+  30 m/s.
+
+### Parked vehicles sleep
+
+A vehicle's body may sleep, as any other body does, while nothing in the vehicle would move it: no
+motor pulling (never set, faded, or set to zero), hover off or at its height, and the attractor done
+or the vehicle resting on something. A script setting a motor or any vehicle parameter wakes it, as
+does a collision. In the harness a parked car sleeps within 14 s of its last key at 11 Hz.
 
 ## Console commands
 
@@ -193,13 +228,19 @@ dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --sce
 | `--startspeed V` | A car's forward speed (m/s) just before its key goes down, which then goes down one heartbeat later |
 | `--jolt KEY=VALUE` | A `[Jolt]` setting, as in the region's ini (repeatable) |
 | `--vparam NAME=V` or `NAME=X,Y,Z` | A vehicle parameter by its LSL name, applied after the scenario's own, e.g. `LINEAR_FRICTION_TIMESCALE=1,1,1000` (repeatable) |
+| `--vflag NAME` or `-NAME` | A vehicle flag set (or removed) after the scenario's own, e.g. `HOVER_UP_ONLY` (repeatable) |
 | `--out DIR` | Also write a CSV per run (`<scenario>-s<slope>-r<rate>.csv`, with `-p<rate>` added when the physics rate is on) and `summary.csv` there |
 
 Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, then released),
 `testcar` (the same with linear friction `<1,1,1000>`, motor timescale 1 and decay 0.5),
 `carturn` (the car with angular motor `<0,0,1>` held with the forward key),
 `sled`, `boat`, `airplane` and `balloon` (each type's presets in one basic motion),
-`avatar-stand`, `avatar-walk` and `avatar-jump`, and `drop` (a 1 m box from 5 m). The ground is
+`avatar-stand`, `avatar-walk` and `avatar-jump`, and `drop` (a 1 m box from 5 m);
+`testcar-down` and `car-down` (key held down the ramp), `hover`, `attract-roll` and `attract-pitch`
+(one behaviour alone), `park-new`, `park-faded`, `park-drive` and `park-wake` (sleeping), and
+`crash-wall`, `crash-box`, `crash-headon` and `crash-drop`. The summary's extra columns give when
+the engine last had a body awake and, for the crashes, the impact, arrival and leaving speeds,
+overlap and a pass-through check. The ground is
 level at 25 m with water at 20 m; with a slope it rises northward at that angle from y 40 to y 100.
 
 Each run prints one summary line: top speed, the release time and speed, the steady speed, the
