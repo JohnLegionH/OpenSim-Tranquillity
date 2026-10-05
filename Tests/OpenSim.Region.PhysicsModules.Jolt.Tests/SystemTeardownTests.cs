@@ -16,7 +16,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
 /// Backend teardown destroys the region's native physics system (JoltPhysicsSharp 2.19.1's PhysicsSystem.Dispose
-/// does not), and creating and destroying systems from several threads is safe against joltc's unlocked global map
+/// does not), and creating and destroying systems from several threads is safe around joltc's global map
 /// of systems. Serial collection: these tests measure the process's private memory and read the process-wide
 /// Foundation reference count, and other tests' backends would disturb both.
 /// </summary>

@@ -25,7 +25,9 @@
   <ItemGroup>
     <!-- The native joltc, under runtimes/<rid>/native/ as ubODE and BulletS ship theirs. It is a patched
          build that gives every PhysicsSystem its own TempAllocator (see native/joltc/README.md); the
-         backend's per-instance _simLock depends on that. Only win-x64 is built at present. -->
+         backend's per-instance _simLock depends on that. The files are built by the joltc native workflow
+         (.github/workflows/joltc-native.yml). win-x64 is the one loaded today; linux-x64 is shipped and not
+         yet loaded. -->
     <Content Include="runtimes\**\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>

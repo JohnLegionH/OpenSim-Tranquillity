@@ -35,7 +35,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$patchedHash = "16AF76381387DADD7DFA5E10D6E3AD025AB624F22187D7442D1BDB88146743B5"
+$patchedHash = "1F855744227482146708AB9AF683F4975CFC4C262030E22DAACE855F9D7479B6"
 $stockHash   = "67BECFC70CFBDA643AB9B75ABA895042900C3E339B001080BA4107E4929B0910"
 
 # joltc_double.dll is NOT a failure: the patched build produces no double-precision variant
@@ -113,5 +113,5 @@ Write-Host "The per-instance _simLock requires the PATCHED native (per-system Te
 Write-Host "stock joltc shares ONE allocator across regions and aborts the process under load." -ForegroundColor Red
 Write-Host "A DLL in the application directory is loaded in preference to one under runtimes\," -ForegroundColor Yellow
 Write-Host "so a stock copy at the root defeats a patched copy beneath it." -ForegroundColor Yellow
-Write-Host "Restore from runtimes/win-x64/native/joltc.dll (SHA 16AF7638...)." -ForegroundColor Yellow
+Write-Host "Restore from runtimes/win-x64/native/joltc.dll (SHA 1F855744...)." -ForegroundColor Yellow
 exit 1

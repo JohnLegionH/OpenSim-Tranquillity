@@ -617,7 +617,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 ObjectVsBroadPhaseLayerFilter = _objectVsBroadPhaseFilter,
             };
 
-            // JPH_PhysicsSystem_Create inserts into joltc's unlocked global map of systems; see s_systemMapGate.
+            // JPH_PhysicsSystem_Create inserts into joltc's global map of systems; see s_systemMapGate.
             lock (s_systemMapGate)
                 _system = new PhysicsSystem(systemSettings);
             _system.Gravity = settings.Gravity;
@@ -739,11 +739,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // destroy for them), both listeners, and the GCHandle, which also keeps the managed wrapper alive.
         //
         // joltc keeps every system in a global map, s_PhysicsSystems: JPH_PhysicsSystem_Create inserts and
-        // JPH_PhysicsSystem_Destroy erases, with no lock. Regions are created and torn down on different threads, so
-        // both calls are taken under s_systemMapGate. The only other access is a read in joltc's step-listener
-        // callback (ManagedPhysicsStepListener::OnStep), which runs inside Update only for a system that has a step
-        // listener; this module adds none. Adding one would put the map in that system's step and needs a joltc fix
-        // rather than this lock in every step.
+        // JPH_PhysicsSystem_Destroy erases. Regions are created and torn down on different threads. The native this
+        // module ships now locks the map itself (native/joltc/physics-systems-map-lock.patch), around the insert, the
+        // erase and the read in joltc's step-listener callback (ManagedPhysicsStepListener::OnStep). Both calls are
+        // still taken under s_systemMapGate as well, so a stock joltc, which has no such lock, stays safe here.
         // =====================================================================
         private static readonly object s_systemMapGate = new object();
 

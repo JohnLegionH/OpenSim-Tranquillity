@@ -2,7 +2,7 @@
 
   <!--
     Tests for the Jolt module and its backend. Most drive real JoltPhysicsBackend instances and so need
-    the native joltc, which is built for win-x64 only at present. Some read the source instead: a broken
+    the native joltc, which the module loads on win-x64 only at present. Some read the source instead: a broken
     TempAllocator lock discipline ends in std::abort() inside joltc, which kills the test host rather than
     failing an assertion, so those invariants are checked on the code's structure.
   -->
