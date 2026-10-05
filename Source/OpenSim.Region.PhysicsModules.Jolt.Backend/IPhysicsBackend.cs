@@ -473,6 +473,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// <summary>Mutator calls dropped because an argument was NaN/Inf (or a zero-length quaternion).</summary>
         public long RejectedNonFinite;
 
+        // -- script ray casts (RayCastLimited) --
+        /// <summary>Casts made, cumulative; of them, refused (budget spent) and cut short.</summary>
+        public long RayCasts;
+        public long RayCastsRefused;
+        public long RayCastsCutShort;
+        /// <summary>Time spent in them, cumulative, and the most one heartbeat has spent (ms).</summary>
+        public double RayCastMsTotal;
+        public double RayCastMsMaxHeartbeat;
+
         // -- capacity --
         /// <summary>Steps whose update reported each flag, cumulative.</summary>
         public long ManifoldCacheFullSteps;
@@ -514,6 +523,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public double UpdateGateWaitMsMax;
         /// <summary>The most updates ever inside this region's pool at once since the pool was created. Must be 1.</summary>
         public int PoolPeakInside;
+    }
+
+    /// <summary>How a script ray cast (<see cref="IPhysicsBackend.RayCastLimited"/>) ended.</summary>
+    public enum RayCastStatus
+    {
+        /// <summary>The cast ran; its hits are returned.</summary>
+        Ok,
+        /// <summary>Not cast: the region had spent its ray cast time for this heartbeat.</summary>
+        Refused,
+        /// <summary>Stopped part way: it ran past the time left, or past the hits one cast may test.</summary>
+        CutShort,
     }
 
     public struct RayHit
@@ -668,6 +688,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// per step from the movement layer. The backend resolves stepping, slopes
         /// and moving platforms; it does not know about avatar animation state.
         /// </summary>
+        /// <summary>
+        /// A push on an avatar (llPushObject, or an attachment's impulse on its wearer): a change of velocity, applied at
+        /// the avatar's next step. It is limited by the avatar's push allowance (<see cref="PhysicsBackendSettings.AvatarPushMaxSpeed"/>,
+        /// refilled at <see cref="PhysicsBackendSettings.AvatarPushRecovery"/>), and pushes never raise the avatar's speed
+        /// above AvatarPushMaxSpeed, or above the speed it already had.
+        /// </summary>
+        void AddCharacterImpulse(CharacterId character, Vector3 velocityChange);
+
         void SetCharacterMovement(
             CharacterId character, Vector3 desiredVelocity, bool jump, bool flying);
 
@@ -698,6 +726,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         int RayCastAll(
             Vector3 origin, Vector3 direction, float maxDistance,
             QueryFilter filter, Span<RayHit> hits);
+
+        /// <summary>
+        /// A script's ray cast: the closest <c>hits.Length</c> hits in distance order, as <see cref="RayCastAll"/> gives
+        /// them, at a bounded cost. The engine stops looking past the furthest hit kept once the buffer is full. The
+        /// cast is refused when this region has spent its ray cast time for the heartbeat
+        /// (<see cref="PhysicsBackendSettings.RayCastBudgetMs"/>), and cut short when it runs past what is left of that
+        /// time or the engine reports more than <see cref="PhysicsBackendSettings.RayCastMaxTestedHits"/> hits; both
+        /// return 0 hits and say so in <paramref name="status"/>.
+        /// </summary>
+        int RayCastLimited(
+            Vector3 origin, Vector3 direction, float maxDistance,
+            QueryFilter filter, Span<RayHit> hits, out RayCastStatus status);
+
+        /// <summary>A new heartbeat: this region's ray cast time starts again from zero.</summary>
+        void BeginRayCastBudget();
 
         int OverlapSphere(Vector3 center, float radius, QueryFilter filter, Span<BodyId> results);
 
@@ -778,6 +821,39 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// </summary>
         public bool AllowUnrecordedNative;
 
+        /// <summary>
+        /// Script ray casts (<see cref="IPhysicsBackend.RayCastLimited"/>): the time one region may spend on them in one
+        /// heartbeat, in milliseconds. A cast holds the region's physics lock, and the region's physics step waits for
+        /// it while holding its job pool, so this also bounds how long ray casts can delay the other regions on that
+        /// pool. 0 (an unset struct) means <see cref="DefaultRayCastBudgetMs"/>.
+        /// </summary>
+        public float RayCastBudgetMs;
+        public const float DefaultRayCastBudgetMs = 5f;
+
+        /// <summary>
+        /// The hits the engine may report to one script ray cast before it is cut short: each is a shape the ray
+        /// crossed nearer than the furthest hit kept so far (a mesh reports each triangle). 0 (an unset struct) means
+        /// <see cref="DefaultRayCastMaxTestedHits"/>.
+        /// </summary>
+        public int RayCastMaxTestedHits;
+        public const int DefaultRayCastMaxTestedHits = 1024;
+
+        /// <summary>
+        /// Pushes on avatars (<see cref="IPhysicsBackend.AddCharacterImpulse"/>): the most speed, in m/s, pushes can
+        /// give an avatar. It is also the avatar's push allowance: each push spends the speed it adds, and the
+        /// allowance refills at <see cref="AvatarPushRecovery"/> m/s every second. 0 (an unset struct): pushes do not
+        /// move avatars.
+        /// </summary>
+        public float AvatarPushMaxSpeed;
+        public const float DefaultAvatarPushMaxSpeed = 10f;
+
+        /// <summary>
+        /// How fast an avatar's push allowance refills, in m/s per second. Below gravity (9.8), repeated pushes cannot
+        /// hold an avatar in the air.
+        /// </summary>
+        public float AvatarPushRecovery;
+        public const float DefaultAvatarPushRecovery = 5f;
+
         public static PhysicsBackendSettings Default => new PhysicsBackendSettings
         {
             Gravity = new Vector3(0f, 0f, -9.80665f),
@@ -792,6 +868,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             JobPools = 1,
             MaxBodyLinearSpeed = JoltMaxLinearSpeed,
             MaxBodyAngularSpeed = JoltMaxAngularSpeed,
+            RayCastBudgetMs = DefaultRayCastBudgetMs,
+            RayCastMaxTestedHits = DefaultRayCastMaxTestedHits,
+            AvatarPushMaxSpeed = DefaultAvatarPushMaxSpeed,
+            AvatarPushRecovery = DefaultAvatarPushRecovery,
         };
     }
 }

@@ -604,7 +604,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (!_body.IsValid || !_isPhysical || !force.IsFinite())
                 return;
             Vector3 f = pushforce ? force * _module.PushForceScale : force / _module.LastTimeStep;
-            _backend.ApplyForce(_body, ToS(f));
+            _backend.ApplyForce(_body, ToS(f));   // wakes a sleeping body
+            _pushedSinceVehicleStep = true;
         }
 
         public override void AddAngularForce(Vector3 force, bool pushforce)
@@ -752,6 +753,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // (forces or velocity writes would wake it). A script setting a motor or any vehicle param wakes it
             // (WakeVehicle), as does a collision.
             bool idle = _vehicle.IsIdle;
+            // A push or impulse since the last step (AddForce) is not yet in the body's velocity: the rest rule must not
+            // hold the vehicle still against it, or put it to sleep with the force still waiting.
+            bool pushed = _pushedSinceVehicleStep;
+            _pushedSinceVehicleStep = false;
             if (idle != _vehicleMaySleep)
             {
                 _backend.SetBodyAllowSleeping(_body, idle);
@@ -762,7 +767,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _vehicleHeldTime = 0f;
                 _vehicle.Rest(timeStep);
             }
-            else if (idle && _vehicle.HoldsAtRest)
+            else if (idle && !pushed && _vehicle.HoldsAtRest)
             {
                 // The rest rule ([Jolt] VehicleRestSpeed): nothing in the vehicle would move it and the equation would
                 // not start it moving from where it is, so it is held still. Without this, a vehicle with no contact
@@ -790,6 +795,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // Whether the vehicle body is allowed to sleep: only while its controller is idle (StepVehicle).
         private bool _vehicleMaySleep;
+
+        // AddForce since the last StepVehicle (set on a script thread, read on the heartbeat).
+        private volatile bool _pushedSinceVehicleStep;
 
         // A vehicle param, flag or type set by a script: the body wakes so the controller steps with it.
         private void WakeVehicle()

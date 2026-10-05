@@ -34,7 +34,7 @@ using JoltPhysicsSharp;
 
 namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 {
-    public sealed class JoltPhysicsBackend : IPhysicsBackend
+    public sealed partial class JoltPhysicsBackend : IPhysicsBackend
     {
         public string Name => "Jolt";
         public string Version => "5.x";
@@ -1962,6 +1962,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     StepHeight = desc.StepHeight,
                     PushStrength = desc.PushStrength,
                     JumpSpeed = desc.JumpSpeed,
+                    PushAllowance = MathF.Max(0f, _settings.AvatarPushMaxSpeed),
                 };
                 uint handle = _characters.Add(rec);
                 rec.Handle = handle;
@@ -2254,6 +2255,69 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             }
         }
 
+        public void AddCharacterImpulse(CharacterId character, Vector3 velocityChange)
+        {
+            if (!IsFinite(velocityChange)) { CountRejectedNonFinite(); return; }
+            lock (_characterGate)
+            {
+                if (!_characters.TryGet(character.Value, out JoltCharacterRecord rec))
+                    return;
+                // Direction and size, without overflow for a push whose length is beyond a float.
+                float largest = MathF.Max(MathF.Abs(velocityChange.X), MathF.Max(MathF.Abs(velocityChange.Y), MathF.Abs(velocityChange.Z)));
+                if (!(largest > 0f))
+                    return;
+                Vector3 scaled = velocityChange / largest;
+                float size = scaled.Length() * largest;   // may be infinite: then the whole allowance is spent
+                float allowed = MathF.Min(size, rec.PushAllowance);
+                if (!(allowed > 0f))
+                    return;
+                rec.PushAllowance -= allowed;
+                rec.PendingPush += Vector3.Normalize(scaled) * allowed;
+            }
+        }
+
+        // How fast an avatar's push speed fades: on ground it can walk on (s), and flying. In the air it keeps it.
+        internal const float PushFadeOnGroundSeconds = 0.25f;
+        internal const float PushFadeFlyingSeconds = 1f;
+
+        // The pushes an avatar received since its last step, folded into the velocity this step moves it with.
+        // `push` is the push speed it still carries: horizontal (its vertical speed is the controller's own, which
+        // gravity acts on), or all three axes when flying. Pushes may add speed up to AvatarPushMaxSpeed, never past it,
+        // and never past the speed the avatar already had: an avatar already faster than that (falling) can be slowed
+        // by a push, not sped up. Returns the velocity with the pushes in it.
+        private Vector3 ApplyPushes(JoltCharacterRecord rec, Vector3 vel, float dt)
+        {
+            float cap = _settings.AvatarPushMaxSpeed;
+            if (!(cap > 0f))
+            {
+                rec.Push = Vector3.Zero;
+                rec.PendingPush = Vector3.Zero;
+                return vel;
+            }
+            rec.PushAllowance = MathF.Min(cap, rec.PushAllowance + MathF.Max(0f, _settings.AvatarPushRecovery) * dt);
+
+            Vector3 before = rec.Flying ? rec.Push : new Vector3(rec.Push.X, rec.Push.Y, vel.Z);
+            Vector3 add = rec.PendingPush;
+            rec.PendingPush = Vector3.Zero;
+            Vector3 after = before + add;
+            float limit = MathF.Max(before.Length(), cap);
+            if (after.LengthSquared() > limit * limit)
+            {
+                // The part of this step's pushes that takes the speed to the limit: |before + t add| = limit.
+                float a = add.LengthSquared(), b = 2f * Vector3.Dot(before, add), c = before.LengthSquared() - limit * limit;
+                float t = a > 0f ? (-b + MathF.Sqrt(MathF.Max(0f, b * b - 4f * a * c))) / (2f * a) : 0f;
+                after = before + add * Math.Clamp(t, 0f, 1f);
+            }
+
+            if (rec.Flying)
+            {
+                rec.Push = after;
+                return vel + after;
+            }
+            rec.Push = new Vector3(after.X, after.Y, 0f);
+            return new Vector3(vel.X + after.X, vel.Y + after.Y, after.Z);
+        }
+
         public bool TryGetCharacterState(CharacterId character, out CharacterState state)
         {
             lock (_characterGate)
@@ -2352,6 +2416,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 newVel = new Vector3(horiz.X, horiz.Y, vz);
             }
 
+            bool pushed = rec.Push != Vector3.Zero || rec.PendingPush != Vector3.Zero;
+            newVel = ApplyPushes(rec, newVel, dt);
+            if (!rec.Flying && !falling && newVel.Z > 0f)
+            {
+                // Pushed up off the ground: from now it flies as a jump does, half a step of gravity before the move.
+                newVel.Z += gz * dt * 0.5f;
+                falling = true;
+            }
+            Vector3 startPos = ch.Position;
+
             ch.LinearVelocity = newVel;
             rec.JumpRequested = false;
 
@@ -2369,6 +2443,27 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // landing the ground takes over its vertical velocity next step).
             if (falling && ch.GroundState == GroundState.InAir)
                 ch.LinearVelocity += new Vector3(0f, 0f, gz * dt * 0.5f);
+
+            if (pushed)
+                FadePush(rec, ch, newVel, startPos, dt);
+        }
+
+        // After the move: what blocked the avatar takes the push speed it blocked (a wall stops it), then the push
+        // speed fades on walkable ground and when flying.
+        private static void FadePush(JoltCharacterRecord rec, CharacterVirtual ch, Vector3 commanded, Vector3 startPos, float dt)
+        {
+            Vector3 moved = (ch.Position - startPos) / dt;
+            float wanted = new Vector2(commanded.X, commanded.Y).Length();
+            float made = new Vector2(moved.X, moved.Y).Length();
+            if (wanted > 0.01f && made < wanted)
+                rec.Push = new Vector3(rec.Push.X * made / wanted, rec.Push.Y * made / wanted, rec.Push.Z);
+
+            float fade = rec.Flying ? PushFadeFlyingSeconds
+                       : ch.GroundState == GroundState.OnGround ? PushFadeOnGroundSeconds : 0f;
+            if (fade > 0f)
+                rec.Push *= MathF.Exp(-dt / fade);
+            if (rec.Push.LengthSquared() < 1e-6f)
+                rec.Push = Vector3.Zero;
         }
 
         // =====================================================================
@@ -2797,6 +2892,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 UpdateGateWaitMsTotal = TicksToMs(Interlocked.Read(ref _gateWaitTicksTotal)),
                 UpdateGateWaitMsMax = TicksToMs(Interlocked.Read(ref _gateWaitTicksMax)),
             };
+            FillRayCastStats(ref s);
             JobPool? pool = Volatile.Read(ref _pool);
             if (pool != null)
             {
@@ -3275,6 +3371,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public Vector3 DesiredVelocity;
         public bool JumpRequested;
         public bool Flying;
+
+        // Pushes (AddCharacterImpulse): received since the last step; the push speed still carried; and what is left
+        // of the push allowance (starts full).
+        public Vector3 PendingPush;
+        public Vector3 Push;
+        public float PushAllowance;
     }
 
     internal sealed class JoltConstraintRecord

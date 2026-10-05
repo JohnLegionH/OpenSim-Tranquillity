@@ -85,6 +85,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             sb.AppendLine($"  job pools         JobPools={s.JobPools} threadsPerPool={s.JobThreadsPerPool} (ThreadCount {s.JobThreadCount}; process-wide)");
             sb.AppendLine($"  this region       pool={s.PoolIndex} waits={s.UpdateGateWaits} waitMs total={s.UpdateGateWaitMsTotal:0.0} max={s.UpdateGateWaitMsMax:0.0}; pool peakInside={s.PoolPeakInside}");
             sb.AppendLine($"  rejected non-finite  {s.RejectedNonFinite}");
+            sb.AppendLine($"  script ray casts  made={s.RayCasts} refused={s.RayCastsRefused} cutShort={s.RayCastsCutShort} ms total={s.RayCastMsTotal:0.0} most in one heartbeat={s.RayCastMsMaxHeartbeat:0.00}");
             sb.Append($"  scene buffers     bodies={bodyBuf} (overflowed {bodyOverflowFrames} steps) characters={charBuf} (full {charFullFrames} steps) contacts={contactBuf} (overflowed {contactOverflowFrames} steps)");
             sb.AppendLine();
             if (substeps == null)

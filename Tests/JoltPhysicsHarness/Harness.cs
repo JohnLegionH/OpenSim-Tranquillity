@@ -204,6 +204,13 @@ public sealed class Summary
     /// <summary>In the second after the impact: how far the centre of either object rose above where it was at the
     /// impact (m). A car thrown up by a contact, or riding over what it hit, rises; one stopped by it does not.</summary>
     public float CrashRise = float.NaN;
+
+    /// <summary>Script ray casts the run made (ray_casts), what one cost on average (microseconds), and how many the
+    /// region refused or cut short (its [Jolt] RayCastBudgetMs, RayCastMaxTestedHits).</summary>
+    public long RayCasts;
+    public double RayCastMicrosPerCast = double.NaN;
+    public long RayCastsRefused;
+    public long RayCastsCutShort;
 }
 
 public sealed class RunResult
@@ -247,7 +254,8 @@ public sealed class RunResult
 
     public const string SummaryHeader =
         "scenario,slope_deg,rate_hz,steps,top_speed,release_t,release_speed,steady_speed,steady_hspeed,dist_before_release,dist_after_release,time_to_rest,peak_height,peak_rise,z_range,max_tilt_deg,end_x,end_y,end_z,left_region_t,nonfinite," +
-        "sleep_after,active_at_end,impact_t,arrival_speed,leaving_speed,penetration,tunneled,push_range_early,push_range_late,push_penetration,crash_rise";
+        "sleep_after,active_at_end,impact_t,arrival_speed,leaving_speed,penetration,tunneled,push_range_early,push_range_late,push_penetration,crash_rise," +
+        "ray_casts,ray_us_per_cast,ray_refused,ray_cut_short";
 
     public string SummaryLine()
     {
@@ -261,7 +269,9 @@ public sealed class RunResult
             Fmt(m.End.X, "0.000"), Fmt(m.End.Y, "0.000"), Fmt(m.End.Z, "0.000"), Fmt(m.LeftRegionT, "0.000"), m.NonFinite.ToString(CultureInfo.InvariantCulture),
             Fmt(m.SleepAfter, "0.000"), m.ActiveAtEnd.ToString(CultureInfo.InvariantCulture), Fmt(m.ImpactT, "0.000"),
             Fmt(m.ArrivalSpeed, "0.000"), Fmt(m.LeavingSpeed, "0.000"), Fmt(m.Penetration, "0.0000"), m.Tunneled.ToString(CultureInfo.InvariantCulture),
-            Fmt(m.PushRangeEarly, "0.0000"), Fmt(m.PushRangeLate, "0.0000"), Fmt(m.PushPenetration, "0.0000"), Fmt(m.CrashRise, "0.0000"));
+            Fmt(m.PushRangeEarly, "0.0000"), Fmt(m.PushRangeLate, "0.0000"), Fmt(m.PushPenetration, "0.0000"), Fmt(m.CrashRise, "0.0000"),
+            m.RayCasts.ToString(CultureInfo.InvariantCulture), Fmt(m.RayCastMicrosPerCast, "0.0"),
+            m.RayCastsRefused.ToString(CultureInfo.InvariantCulture), m.RayCastsCutShort.ToString(CultureInfo.InvariantCulture));
     }
 
     internal static string Fmt(double v, string format)
@@ -328,6 +338,10 @@ public sealed class Run
 
     /// <summary>The scenario's second object (a wall, a box, a second car), if any.</summary>
     public PhysicsActor Other;
+
+    /// <summary>Ray casts a scenario timed itself (raycast-cost-all), and their time in Stopwatch ticks.</summary>
+    public long TimedRayCasts;
+    public long TimedRayTicks;
     public Vector3 OtherSize;
     /// <summary>Further vehicles that get the same key input as <see cref="Actor"/>. The motor is in each vehicle's
     /// own frame, so two cars facing each other drive at each other.</summary>
@@ -488,11 +502,26 @@ public static class Harness
     private static readonly Quaternion South = Quaternion.CreateFromEulers(0f, 0f, -MathF.PI / 2f);
     private static readonly Quaternion North = Quaternion.CreateFromEulers(0f, 0f, MathF.PI / 2f);
     private const float AvatarWalk = 4.096f;   // ScenePresence.AgentControlNormalVel at speed modifier 1
+    public const float PushAvatarSpeed = 6f;     // push-avatar: the speed its one push gives
+    public const int RayRowBoxes = 400;          // raycast-cost
+    public const int RayCastsPerHeartbeat = 50;
 
     // The test car: VEHICLE_TYPE_CAR with a test-drive script's three params, motor <8,0,0> while the key is held.
     private static readonly Vector3 CarSize = new(2f, 1f, 0.5f);
     private static readonly Vector3 CarMotor = new(8f, 0f, 0f);
     private static readonly Vector3 CarTurn = new(0f, 0f, 1f);
+
+    // raycast-cost: the row, and a physical box beside it so the region has a body awake.
+    private static void SetupRayRow(Run r)
+    {
+        for (int i = 0; i < RayRowBoxes; i++)
+            r.Scene.AddPrimShape("harness row", PrimitiveBaseShape.CreateBox(), new Vector3(20f + i * 0.5f, 128f, Course.Ground + 1f),
+                                 new Vector3(0.25f, 0.5f, 0.5f), Quaternion.Identity, false, 2000u + (uint)i);
+        r.AddBox(new Vector3(1f, 1f, 1f), new Vector3(128f, 100f, Course.Ground + 0.52f), Quaternion.Identity);
+    }
+
+    // raycast-cost: cast i of a heartbeat is 50 m long for the first and 300 m for the last.
+    private static float RayLength(int i) => 50f + 250f * i / (RayCastsPerHeartbeat - 1);
 
     private static void SetupCar(Run r, bool testCar)
     {
@@ -793,6 +822,114 @@ public static class Harness
                 {
                     r.Actor.AvatarJump(0f);
                     r.Released = true;
+                }
+            },
+        },
+        // Pushes (llPushObject reaches an avatar's or a prim's actor as AddForce with an impulse).
+        new()
+        {
+            Name = "push-avatar",
+            Description = "An avatar standing on level ground is pushed straight up once at t = 1 s, with the impulse that gives its 80 kg 6 m/s.",
+            DefaultDuration = _ => 4f,
+            Setup = r =>
+            {
+                r.AddAvatar(170f, 60f);
+                r.ReleaseAt = 1.0;
+            },
+            Input = r =>
+            {
+                if (!r.Released && r.Now >= r.ReleaseAt)
+                {
+                    r.Actor.AddForce(new Vector3(0f, 0f, PushAvatarSpeed * r.Actor.Mass), true);
+                    r.Released = true;
+                }
+            },
+        },
+        new()
+        {
+            Name = "push-flood",
+            Description = "An avatar standing on level ground is pushed up and east with an impulse of 1e9 every heartbeat from t = 1 s to t = 7 s.",
+            DefaultDuration = _ => 10f,
+            Setup = r =>
+            {
+                r.AddAvatar(60f, 128f);
+                r.ReleaseAt = 1.0;
+            },
+            Input = r =>
+            {
+                if (r.Now >= r.ReleaseAt && r.Now < 7.0)
+                    r.Actor.AddForce(new Vector3(1e9f, 0f, 1e9f), true);
+            },
+        },
+        new()
+        {
+            Name = "push-car",
+            Description = "VEHICLE_TYPE_CAR with its presets parks on level ground (it sleeps); at t = 5 s it is pushed east with the impulse that gives it 2 m/s.",
+            DefaultDuration = _ => 10f,
+            Setup = r =>
+            {
+                SetupParked(r, false);
+                r.ReleaseAt = 5.0;
+            },
+            Input = r =>
+            {
+                if (!r.Released && r.Now >= r.ReleaseAt)
+                {
+                    r.Actor.AddForce(new Vector3(2f * r.Actor.Mass, 0f, 0f), false);   // llPushObject on an object: SOP.ApplyImpulse
+                    r.Released = true;
+                }
+            },
+        },
+        new()
+        {
+            Name = "push-box",
+            Description = "A 1 m physical box let fall 1 m onto level ground (it settles and sleeps); at t = 5 s it is pushed east with the impulse that gives it 2 m/s.",
+            DefaultDuration = _ => 10f,
+            Setup = r =>
+            {
+                r.AddBox(new Vector3(1f, 1f, 1f), new Vector3(128f, 128f, Course.Ground + 1f + 0.5f), Quaternion.Identity);
+                r.ReleaseAt = 5.0;
+            },
+            Input = r =>
+            {
+                if (!r.Released && r.Now >= r.ReleaseAt)
+                {
+                    r.Actor.AddForce(new Vector3(2f * r.Actor.Mass, 0f, 0f), false);
+                    r.Released = true;
+                }
+            },
+        },
+
+        // Script ray casts: what one costs (the summary's ray_casts, ray_us_per_cast, ray_refused, ray_cut_short).
+        new()
+        {
+            Name = "raycast-cost",
+            Description = "A row of 400 non-physical 0.5 m boxes along y 128 (x 20 to 220); every heartbeat 50 casts along the row the way llCastRay makes them (the filtered RaycastWorld, up to 16 hits, all types), from x 10 to x 10 + 50 .. 300 m.",
+            DefaultDuration = _ => 5f,
+            Setup = SetupRayRow,
+            Input = r =>
+            {
+                for (int i = 0; i < RayCastsPerHeartbeat; i++)
+                    r.Scene.RaycastWorld(new Vector3(10f, 128f, Course.Ground + 1f), Vector3.UnitX, RayLength(i), 16,
+                        RayFilterFlags.land | RayFilterFlags.agent | RayFilterFlags.physical | RayFilterFlags.nonphysical | RayFilterFlags.BackFaceCull);
+            },
+        },
+        new()
+        {
+            Name = "raycast-cost-all",
+            Description = "raycast-cost's row and casts, made the way llCastRay's casts were made before their cost was bounded (every hit along the ray, then the closest 16), timed here.",
+            DefaultDuration = _ => 5f,
+            Setup = SetupRayRow,
+            Input = r =>
+            {
+                var hits = new Backend.RayHit[16];
+                for (int i = 0; i < RayCastsPerHeartbeat; i++)
+                {
+                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    r.Scene.Backend.RayCastAll(new System.Numerics.Vector3(10f, 128f, Course.Ground + 1f), System.Numerics.Vector3.UnitX, RayLength(i),
+                        Backend.QueryFilter.Default, hits);
+                    r.TimedRayTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                    r.TimedRayCasts++;
                 }
             },
         },
@@ -1107,6 +1244,17 @@ public static class Harness
             }
             result.Summary = Summarise(r, sc, result.Samples);
             result.Summary.LeftRegionT = leftAt;
+            Backend.PhysicsCapacityStats stats = scene.CapacityStats();
+            result.Summary.RayCasts = stats.RayCasts;
+            result.Summary.RayCastsRefused = stats.RayCastsRefused;
+            result.Summary.RayCastsCutShort = stats.RayCastsCutShort;
+            if (stats.RayCasts > 0)
+                result.Summary.RayCastMicrosPerCast = stats.RayCastMsTotal * 1000.0 / stats.RayCasts;
+            else if (r.TimedRayCasts > 0)
+            {
+                result.Summary.RayCasts = r.TimedRayCasts;
+                result.Summary.RayCastMicrosPerCast = r.TimedRayTicks * 1e6 / System.Diagnostics.Stopwatch.Frequency / r.TimedRayCasts;
+            }
         }
         finally
         {

@@ -318,7 +318,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override void UnSubscribeEvents() { _subscribedMs = 0; }
         public override bool SubscribedEvents() => _subscribedMs > 0;
 
-        // ---- inert for an avatar (the controller owns velocity; no forces / vehicles / PID) ----
+        // ---- inert for an avatar (the controller owns velocity; no vehicles / PID; pushes are AddForce above) ----
         public override Vector3 RotationalVelocity { get => Vector3.Zero; set { } }
         public override Vector3 Torque { get => Vector3.Zero; set { } }
         public override Vector3 Force { get => Vector3.Zero; set { } }
@@ -339,7 +339,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override void delink() { }
         public override void LockAngularMotion(byte axislocks) { }
 
-        public override void AddForce(Vector3 force, bool pushforce) { }
+        // A push: llPushObject on this avatar, or an attachment's llApplyImpulse on its wearer (both reach here as an
+        // impulse). The avatar's velocity changes by impulse / mass, within the push limits the backend holds it to
+        // ([Jolt] AvatarPushMaxSpeed, AvatarPushRecovery). Second Life ignores the angular part on an avatar
+        // ("ang_impulse is ignored when applying to agents or their attachments", llPushObject), so AddAngularForce
+        // stays inert.
+        public override void AddForce(Vector3 force, bool pushforce)
+        {
+            if (!NonFiniteGuard.Ok(force)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "AddForce", force.ToString()); return; }
+            if (_character.IsValid && _mass > 0f)
+                _backend.AddCharacterImpulse(_character, ToS(force / _mass));
+        }
         public override void AddAngularForce(Vector3 force, bool pushforce) { }
         public override void SetVolumeDetect(int param) { }
 

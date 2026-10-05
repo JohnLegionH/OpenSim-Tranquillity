@@ -74,6 +74,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         public bool AllowUnrecordedNative = false; // true: load a joltc whose hash the module has no record of
 
+        // Script ray casts (llCastRay) and pushes on avatars (llPushObject): limits on what scripts can make one region
+        // do. They guard against abuse, so each defaults to its safe value.
+        public float RayCastBudgetMs = PhysicsBackendSettings.DefaultRayCastBudgetMs;         // per region per heartbeat
+        public int RayCastMaxTestedHits = PhysicsBackendSettings.DefaultRayCastMaxTestedHits; // per cast
+        public int RayCastMaxHits = MaxRayCastHits;                                          // hits one cast returns
+        public float AvatarPushMaxSpeed = PhysicsBackendSettings.DefaultAvatarPushMaxSpeed;   // m/s; 0 = pushes do not move avatars
+        public float AvatarPushRecovery = PhysicsBackendSettings.DefaultAvatarPushRecovery;   // m/s per second
+
+        // Second Life's documented maximum for llCastRay's RC_MAX_HITS ("Maximum value is 256").
+        internal const int MaxRayCastHits = 256;
+
         // The highest PhysicsStepRate accepted. Each step costs a backend update, so a rate far above the heartbeat
         // mostly hits the per-heartbeat step cap (see SubstepAccumulator.MaxStepsPerFrame).
         internal const float MaxPhysicsStepRate = 1000f;
@@ -129,6 +140,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.VehicleRestSpeed = F(cfg, "VehicleRestSpeed", c.VehicleRestSpeed, 0f, 1f, warnings);
             c.BodyMaxLinearSpeed = F(cfg, "BodyMaxLinearSpeed", c.BodyMaxLinearSpeed, 1f, 100000f, warnings);
             c.BodyMaxAngularSpeed = F(cfg, "BodyMaxAngularSpeed", c.BodyMaxAngularSpeed, 0.1f, 10000f, warnings);
+            c.RayCastBudgetMs = F(cfg, "RayCastBudgetMs", c.RayCastBudgetMs, 0.1f, 1000f, warnings);
+            c.RayCastMaxTestedHits = I(cfg, "RayCastMaxTestedHits", c.RayCastMaxTestedHits, 1, 1_000_000, warnings);
+            c.RayCastMaxHits = I(cfg, "RayCastMaxHits", c.RayCastMaxHits, 1, MaxRayCastHits, warnings);
+            c.AvatarPushMaxSpeed = F(cfg, "AvatarPushMaxSpeed", c.AvatarPushMaxSpeed, 0f, 1000f, warnings);
+            c.AvatarPushRecovery = F(cfg, "AvatarPushRecovery", c.AvatarPushRecovery, 0f, 1000f, warnings);
             return c;
         }
 
@@ -198,6 +214,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             s.JobPools = JobPools;
             s.MaxBodyLinearSpeed = BodyMaxLinearSpeed;
             s.MaxBodyAngularSpeed = BodyMaxAngularSpeed;
+            s.RayCastBudgetMs = RayCastBudgetMs;
+            s.RayCastMaxTestedHits = RayCastMaxTestedHits;
+            s.AvatarPushMaxSpeed = AvatarPushMaxSpeed;
+            s.AvatarPushRecovery = AvatarPushRecovery;
             return s;
         }
 

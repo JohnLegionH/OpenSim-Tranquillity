@@ -1208,26 +1208,53 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         //    layers + avatars (QueryFilter.Default = Terrain|Static|Dynamic|Avatar; phantom/Sensor excluded,
         //    which that caller neither requests nor filters). Without this override every such cast falls
         //    through to the base (empty list) = 0 hits.
+        //
+        // What a cast costs is bounded (the backend's RayCastLimited, [Jolt] RayCastBudgetMs / RayCastMaxTestedHits /
+        // RayCastMaxHits). A cast the region has no time left for, or that ran out of it, fails as Second Life documents:
+        // "RCERR_CAST_TIME_EXCEEDED -3: The raycast failed because the parcel or agent has exceeded the maximum time
+        // allowed for raycasting. This resource pool is continually replenished, so waiting a few frames and retrying is
+        // likely to succeed." (llCastRay, wiki.secondlife.com). The 4-argument caller (Phlox) turns an exception from
+        // this call into that status code, so this overload throws RayCastTimeExceededException. The 5-argument caller
+        // (OpenSim's LSL_Api.llCastRay, and the simulator's own placement and camera casts) has no way to be told,
+        // so it gets no hits.
         public override List<ContactResult> RaycastWorld(Vector3 position, Vector3 direction, float length, int Count)
-            => CastAll(position, direction, length, Count, QueryFilter.Default);
+        {
+            List<ContactResult> results = CastAll(position, direction, length, Count, QueryFilter.Default, out RayCastStatus status);
+            if (status != RayCastStatus.Ok)
+                throw new RayCastTimeExceededException(status);
+            return results;
+        }
 
         public override object RaycastWorld(Vector3 position, Vector3 direction, float length, int Count, RayFilterFlags filter)
-            => CastAll(position, direction, length, Count, ToQueryFilter(filter));
+            => CastAll(position, direction, length, Count, ToQueryFilter(filter), out _);
 
-        private List<ContactResult> CastAll(Vector3 position, Vector3 direction, float length, int Count, QueryFilter qf)
+        // Second Life: "The random failures seem to happen if the ray begins or ends more than 8 meters outside of
+        // current region bounds" (llCastRay). A ray is cut to the region widened by this much on each side, and to the
+        // heights a region holds objects at, so a script cannot hand the engine a ray kilometres long.
+        internal const float RayClipMargin = 8f;
+        internal const float RayClipMinZ = -128f;
+        internal const float RayClipMaxZ = 10000f;
+
+        internal List<ContactResult> CastAll(Vector3 position, Vector3 direction, float length, int Count, QueryFilter qf, out RayCastStatus status)
         {
+            status = RayCastStatus.Ok;
             var results = new List<ContactResult>();
-            if (_backend == null || qf == QueryFilter.None || length <= 0f)
+            if (_backend == null || qf == QueryFilter.None || !(length > 0f) || !float.IsFinite(length) || !position.IsFinite() || !direction.IsFinite())
                 return results;
 
             Vector3 dn = direction;
             dn.Normalize();
-            var origin = new SVector3(position.X, position.Y, position.Z);
+            if (!dn.IsFinite() || dn == Vector3.Zero)
+                return results;
+            if (!ClipRay(position, dn, length, out float from, out float to))
+                return results;
+            Vector3 start = position + dn * from;
+            var origin = new SVector3(start.X, start.Y, start.Z);
             var dir = new SVector3(dn.X, dn.Y, dn.Z);
 
-            int want = Count > 0 ? Count : 1;
+            int want = Math.Clamp(Count, 1, _joltConfig.RayCastMaxHits);
             var hits = new RayHit[want];
-            int n = _backend.RayCastAll(origin, dir, length, qf, hits);
+            int n = _backend.RayCastLimited(origin, dir, to - from, qf, hits, out status);
             for (int i = 0; i < n; i++)
             {
                 var cr = new ContactResult
@@ -1235,11 +1262,39 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     ConsumerID = hits[i].UserData,           // SceneObjectPart.LocalId (0 = terrain)
                     Pos = new Vector3(hits[i].Point.X, hits[i].Point.Y, hits[i].Point.Z),
                     Normal = new Vector3(hits[i].Normal.X, hits[i].Normal.Y, hits[i].Normal.Z),
-                    Depth = hits[i].Distance,
+                    Depth = from + hits[i].Distance,         // from the caller's start, not the clipped one
                 };
                 results.Add(cr);
             }
             return results;
+        }
+
+        /// <summary>The backend's counters (default when the region has no backend): the harness and tests read them.</summary>
+        internal PhysicsCapacityStats CapacityStats() => _backend?.GetCapacityStats() ?? default;
+
+        /// <summary>The region's backend (null before it is initialised or after teardown): tests compare against it.</summary>
+        internal IPhysicsBackend Backend => _backend;
+
+        // The part [from, to] of the ray (start p, unit direction d, length len) inside the region's box widened by
+        // RayClipMargin, between RayClipMinZ and RayClipMaxZ. False when no part of it is.
+        internal bool ClipRay(Vector3 p, Vector3 d, float len, out float from, out float to)
+        {
+            from = 0f;
+            to = len;
+            return Slab(p.X, d.X, -RayClipMargin, _regionSizeX + RayClipMargin, ref from, ref to)
+                && Slab(p.Y, d.Y, -RayClipMargin, _regionSizeY + RayClipMargin, ref from, ref to)
+                && Slab(p.Z, d.Z, RayClipMinZ, RayClipMaxZ, ref from, ref to);
+        }
+
+        private static bool Slab(float p, float d, float min, float max, ref float from, ref float to)
+        {
+            if (MathF.Abs(d) < 1e-9f)
+                return p >= min && p <= max;
+            float a = (min - p) / d, b = (max - p) / d;
+            if (a > b) (a, b) = (b, a);
+            from = MathF.Max(from, a);
+            to = MathF.Min(to, b);
+            return from < to;
         }
 
         // llCastRay's reject-type flags -> our layer filter. water has no body; phantom/volumedetect
@@ -1344,6 +1399,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (_backend == null)
                 return 1f;
+            _backend.BeginRayCastBudget();   // [Jolt] RayCastBudgetMs is per heartbeat, at every PhysicsStepRate
             if (_substeps != null)
                 return SimulateSubsteps(timeStep);
 

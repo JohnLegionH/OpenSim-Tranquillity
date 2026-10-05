@@ -88,8 +88,8 @@ and job pools shared by all regions in the process, body / pair / contact capaci
 scaled with region area for var regions), the per-frame update buffers, the avatar jump speed,
 how often capacity warnings are logged, the physics step rate (below), the vehicle settings (the
 share of gravity on a ground vehicle, the type presets, the limits and the sled's assist; see
-"Vehicles"), the engine's body speed caps, `AllowUnrecordedNative` (above), and `TestCommands`
-(below).
+"Vehicles"), the engine's body speed caps, the limits on script ray casts and pushes (below),
+`AllowUnrecordedNative` (above), and `TestCommands` (below).
 
 ### Physics step rate
 
@@ -128,6 +128,66 @@ either way and an avatar jump rises 0.82 m. So does the sled's slope assist.
 Position updates to viewers, timers and sensors stay at the heartbeat rate. Physics costs more:
 in the harness the test car takes about 1.5 times the step time of one step per heartbeat
 (`jolt metrics` shows each region's step time).
+
+### Script ray casts and pushes
+
+Scripts written by anyone can cast rays and push avatars. These keys bound what they can make one
+region do. Each guards against abuse, so each defaults to its safe value; all are read once, when
+the region starts.
+
+| Key | Default | What it limits |
+|---|---|---|
+| `RayCastBudgetMs` | 5 | Time (ms) one region's script ray casts may take in one heartbeat, at any `PhysicsStepRate`. |
+| `RayCastMaxTestedHits` | 1024 | Hits the engine may report to one cast before it is cut short (a mesh reports each triangle the ray crosses). |
+| `RayCastMaxHits` | 256 | Hits one cast returns, Second Life's documented maximum for `RC_MAX_HITS`. |
+| `AvatarPushMaxSpeed` | 10 | Speed (m/s) pushes can give an avatar. 0: pushes do not move avatars. |
+| `AvatarPushRecovery` | 5 | How fast (m/s per second) an avatar's push allowance refills. |
+
+**Ray casts.** A cast holds the region's physics lock, and the region's physics step waits for it
+while holding its job pool, so a slow cast delays that region and every region sharing its pool.
+The module bounds a script cast three ways:
+
+- It keeps only the closest hits the script asked for, and once it has them the engine skips
+  everything further along the ray. A long ray through a pile of prims costs about what the
+  part of it up to those hits costs.
+- A ray is cut to the region widened by 8 m on each side (Second Life: "The random failures seem
+  to happen if the ray begins or ends more than 8 meters outside of current region bounds"), and
+  between heights -128 and 10000 m. A ray with a non-finite start, direction or length hits nothing.
+- A cast that runs past the region's time left in the heartbeat, or past `RayCastMaxTestedHits`, is
+  cut short; once the region has spent `RayCastBudgetMs` in a heartbeat, further casts are refused
+  until the next one. Either way the script gets `RCERR_CAST_TIME_EXCEEDED` (-3), which Second
+  Life documents as "the parcel or agent has exceeded the maximum time allowed for raycasting. This
+  resource pool is continually replenished, so waiting a few frames and retrying is likely to
+  succeed." That holds for Phlox's `llCastRay`, which reports an error from the physics query as
+  that code (it logs each one as a warning). OpenSim's `llCastRay` (LSL_Api, used by YEngine) cannot
+  be told: it gets no hits from the physics engine, and returns only what it tests itself (avatars,
+  phantoms and, for long rays, the ground) with a status of that many hits.
+
+What the script engines already limit before a cast reaches the module: both cap `RC_MAX_HITS`
+at 16 (OpenSim's asks the physics engine for twice that), and Phlox refuses fewer than 1. Neither
+limits the ray's length or how often a script casts.
+
+`jolt capacity` and the harness's `raycast-cost` scenario show the casts made, refused and cut
+short, and their time.
+
+**Pushes.** `llPushObject` on an avatar, and an attachment's `llApplyImpulse` on its wearer, change
+the avatar's velocity by the impulse divided by its mass (80 kg). The script engine checks the
+region's and parcel's push restrictions and weakens a push from more than 17 m away before it
+reaches the module ("The push impact is diminished with distance", llPushObject). Second Life also
+limits a push by the pushing object's script energy, which depends on its mass; the physics module
+is not told which object pushed, so it bounds the avatar's side instead:
+
+- Each push spends the speed it adds from the avatar's allowance, `AvatarPushMaxSpeed`, which
+  refills at `AvatarPushRecovery` per second.
+- Pushes never take the avatar's speed past `AvatarPushMaxSpeed`, or past the speed it already had
+  (a falling avatar can be slowed by a push, not sped up).
+- With the refill below gravity, repeated pushes cannot hold an avatar in the air: with the defaults
+  it rises at most 10^2 / (2 (9.8 - 5)) = 10.4 m, however many pushes it gets.
+- The angular part is ignored, as Second Life does for avatars. Push speed fades on the ground
+  (0.25 s) and when flying (1 s), is kept in the air, and is taken away by what the avatar runs into.
+
+A push on an object goes to the physics engine as an impulse and wakes the object if it sleeps;
+a parked vehicle is not held still against it. It is limited by `BodyMaxLinearSpeed`.
 
 ## Vehicles
 
