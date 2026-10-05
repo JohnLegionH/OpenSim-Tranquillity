@@ -590,12 +590,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // Forces: wired to the backend's accumulate-until-next-Step Apply* (Jolt AddForce/AddTorque
         // == Bullet ApplyCentralForce/ApplyTorque; both auto-activate a sleeping body). BulletSim treats
         // a NON-push AddForce as force-per-second and divides by the frame dt before applying - mirror
-        // that so llApplyImpulse/llPushObject land with the same magnitude on both engines.
+        // that so llApplyImpulse/llPushObject land with the same magnitude on both engines. The force acts for the
+        // next backend step only: with [Jolt] PhysicsStepRate on, LastTimeStep is that step's length and a push is
+        // scaled by heartbeat / step, so both impulses are the same as with one step per heartbeat.
         public override void AddForce(Vector3 force, bool pushforce)
         {
             if (!_body.IsValid || !_isPhysical || !force.IsFinite())
                 return;
-            Vector3 f = pushforce ? force : force / _module.LastTimeStep;
+            Vector3 f = pushforce ? force * _module.PushForceScale : force / _module.LastTimeStep;
             _backend.ApplyForce(_body, ToS(f));
         }
 
@@ -685,8 +687,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 _vehicleBody = new JoltVehicleBody(_module, _backend, this);
                 _vehicle = new VehicleController(_vehicleBody);
-                if (_module.VehicleClock != null)
-                    _vehicle.Clock = _module.VehicleClock;
+                Func<DateTime> clock = _module.ControllerClock;
+                if (clock != null)
+                    _vehicle.Clock = clock;
             }
         }
 

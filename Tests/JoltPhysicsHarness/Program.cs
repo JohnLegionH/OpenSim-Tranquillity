@@ -18,6 +18,8 @@ public static class Program
   --list                     list the scenarios and exit
   --scenario NAME[,NAME..]   scenarios to run, or 'all' (default: all)
   --rate HZ[,HZ..]           heartbeat rates, or 'all' = 11,22.5,45,90 (default: 11)
+  --physics-rate HZ[,HZ..]   physics steps per second inside each heartbeat ([Jolt] PhysicsStepRate);
+                             0 = one step per heartbeat (default: 0, or JOLT_HARNESS_PHYSICS_RATE)
   --slope DEG[,DEG..]        ramp angles for the scenarios that use one (default: each scenario's own list)
   --duration S               seconds to simulate (default: the scenario's)
   --hold S                   seconds the drive key is held (default: the scenario's)
@@ -49,6 +51,7 @@ The summary table always goes to standard output. Nothing is written anywhere el
         var o = new HarnessOptions();
         List<Scenario> scenarios = Harness.Scenarios.ToList();
         double[] rates = { 11.0 };
+        double[] physicsRates = { o.PhysicsRateHz };
         float[] slopes = null;
         string outDir = null;
 
@@ -72,6 +75,9 @@ The summary table always goes to standard output. Nothing is written anywhere el
                 case "--rate":
                     string r = Next();
                     rates = r == "all" ? Harness.Rates : r.Split(',').Select(x => PositiveDouble(x, a)).ToArray();
+                    break;
+                case "--physics-rate":
+                    physicsRates = Next().Split(',').Select(x => NonNegativeDouble(x, a)).ToArray();
                     break;
                 case "--slope":
                     slopes = Next().Split(',').Select(x => (float)NonNegativeDouble(x, a)).ToArray();
@@ -103,8 +109,10 @@ The summary table always goes to standard output. Nothing is written anywhere el
             float[] runSlopes = sc.UsesSlope ? (slopes ?? sc.Slopes) : new[] { 0f };
             foreach (float slope in runSlopes)
                 foreach (double rate in rates)
+                foreach (double physicsRate in physicsRates)
                 {
                     var opts = Copy(o, rate, slope);
+                    opts.PhysicsRateHz = physicsRate;
                     RunResult res = Harness.Run(sc, opts);
                     string line = res.SummaryLine();
                     output.WriteLine(line);

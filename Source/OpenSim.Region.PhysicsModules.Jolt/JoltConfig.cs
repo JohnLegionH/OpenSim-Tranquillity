@@ -46,6 +46,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float AvatarJumpSpeed = 4.0f;       // CharacterDesc.JumpSpeed, m/s
         public float CapacityLogIntervalSeconds = 10f;
         public int JobPools = 1;                   // job pools, one physics update at a time each; splits ThreadCount
+        public float PhysicsStepRate = 0f;         // Hz; 0 = one physics step per heartbeat
+        public int PhysicsStepCollisionSteps = 2;  // solver sub-steps per physics step, used only when PhysicsStepRate is on
+
+        // The highest PhysicsStepRate accepted. Each step costs a backend update, so a rate far above the heartbeat
+        // mostly hits the per-heartbeat step cap (see SubstepAccumulator.MaxStepsPerFrame).
+        internal const float MaxPhysicsStepRate = 1000f;
 
         /// <summary>Parse [Jolt]. Missing keys keep their defaults; each invalid one adds a line to <paramref name="warnings"/>.</summary>
         internal static JoltConfig FromConfig(IConfigSource source, List<string> warnings)
@@ -71,7 +77,29 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.AvatarJumpSpeed = F(cfg, "AvatarJumpSpeed", c.AvatarJumpSpeed, 0f, 100f, warnings);
             c.CapacityLogIntervalSeconds = F(cfg, "CapacityLogIntervalSeconds", c.CapacityLogIntervalSeconds, 0.1f, 86400f, warnings);
             c.JobPools = I(cfg, "JobPools", c.JobPools, 1, JoltPhysicsBackend.MaxJobPools, warnings);
+            c.PhysicsStepRate = F(cfg, "PhysicsStepRate", c.PhysicsStepRate, 0f, MaxPhysicsStepRate, warnings);
+            c.PhysicsStepCollisionSteps = I(cfg, "PhysicsStepCollisionSteps", c.PhysicsStepCollisionSteps, 1, 64, warnings);
             return c;
+        }
+
+        /// <summary>
+        /// The physics step rate a region with this heartbeat runs at: <see cref="PhysicsStepRate"/>, or 0 (one step
+        /// per heartbeat) when it is off or below the heartbeat's own rate, which it cannot honour. A refused rate
+        /// sets <paramref name="warning"/>.
+        /// </summary>
+        internal float EffectivePhysicsStepRate(float heartbeatSeconds, out string warning)
+        {
+            warning = null;
+            if (PhysicsStepRate <= 0f)
+                return 0f;
+            if (!(heartbeatSeconds > 0f) || PhysicsStepRate * heartbeatSeconds < 1f - 1e-3f)
+            {
+                float heartbeatHz = heartbeatSeconds > 0f ? 1f / heartbeatSeconds : 0f;
+                warning = $"[{Section}] PhysicsStepRate = {PhysicsStepRate.ToString(CultureInfo.InvariantCulture)} is below the heartbeat's own rate " +
+                          $"({heartbeatHz.ToString("0.##", CultureInfo.InvariantCulture)} Hz, [Startup] FrameTime); using 0, one physics step per heartbeat.";
+                return 0f;
+            }
+            return PhysicsStepRate;
         }
 
         /// <summary>Area multiplier against a standard region: 1 for 256 x 256 (and anything smaller), 16 for 1024 x 1024.</summary>
@@ -81,7 +109,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             => (int)Math.Min((long)value * AreaFactorNumerator(sizeX, sizeY) / BaseArea, int.MaxValue);
 
         /// <summary>The backend settings for a region of this size - what AddRegion hands Initialize.</summary>
-        internal PhysicsBackendSettings ToBackendSettings(uint sizeX, uint sizeY)
+        internal PhysicsBackendSettings ToBackendSettings(uint sizeX, uint sizeY) => ToBackendSettings(sizeX, sizeY, substepping: false);
+
+        /// <summary>As above; with <paramref name="substepping"/> the solver takes PhysicsStepCollisionSteps per step.</summary>
+        internal PhysicsBackendSettings ToBackendSettings(uint sizeX, uint sizeY, bool substepping)
         {
             PhysicsBackendSettings s = PhysicsBackendSettings.Default;
             s.Gravity = new SVector3(0f, 0f, Gravity);
@@ -91,7 +122,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             s.ThreadCount = ThreadCount;
             s.PositionIterations = PositionIterations;
             s.VelocityIterations = VelocityIterations;
-            s.CollisionSteps = CollisionSteps;
+            s.CollisionSteps = substepping ? PhysicsStepCollisionSteps : CollisionSteps;
             s.DeterministicMode = DeterministicMode;
             s.JobPools = JobPools;
             return s;

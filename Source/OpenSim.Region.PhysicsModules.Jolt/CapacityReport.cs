@@ -72,7 +72,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         /// <summary>The `jolt capacity` read-out: backend stats plus the scene's own buffers.</summary>
         internal static string Render(string region, in PhysicsCapacityStats s,
-            int bodyBuf, long bodyOverflowFrames, int charBuf, long charFullFrames, int contactBuf, long contactOverflowFrames)
+            int bodyBuf, long bodyOverflowFrames, int charBuf, long charFullFrames, int contactBuf, long contactOverflowFrames,
+            SubstepAccumulator substeps = null)
         {
             var sb = new StringBuilder();
             sb.AppendLine($"{JoltScene.LogHeader} capacity for '{region}':");
@@ -85,6 +86,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             sb.AppendLine($"  this region       pool={s.PoolIndex} waits={s.UpdateGateWaits} waitMs total={s.UpdateGateWaitMsTotal:0.0} max={s.UpdateGateWaitMsMax:0.0}; pool peakInside={s.PoolPeakInside}");
             sb.AppendLine($"  rejected non-finite  {s.RejectedNonFinite}");
             sb.Append($"  scene buffers     bodies={bodyBuf} (overflowed {bodyOverflowFrames} steps) characters={charBuf} (full {charFullFrames} steps) contacts={contactBuf} (overflowed {contactOverflowFrames} steps)");
+            sb.AppendLine();
+            if (substeps == null)
+                sb.Append("  physics steps     one per heartbeat ([Jolt] PhysicsStepRate = 0)");
+            else
+                sb.Append($"  physics steps     {substeps.RateHz:0.##} Hz, {substeps.Steps} taken; heartbeats capped at {SubstepAccumulator.MaxStepsPerFrame} steps: {substeps.CappedFrames}");
             return sb.ToString();
         }
     }

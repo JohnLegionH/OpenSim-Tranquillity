@@ -30,7 +30,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Harness;
 /// <summary>What to run. Unset values take the scenario's defaults.</summary>
 public sealed class HarnessOptions
 {
+    /// <summary>The environment variable that sets <see cref="PhysicsRateHz"/>'s default, so a whole test run can
+    /// be repeated with physics steps on.</summary>
+    public const string PhysicsRateVariable = "JOLT_HARNESS_PHYSICS_RATE";
+
     public double RateHz = 11.0;
+    /// <summary>[Jolt] PhysicsStepRate: physics steps per second inside each heartbeat; 0 = one step per heartbeat.</summary>
+    public double PhysicsRateHz = DefaultPhysicsRate();
     public float? SlopeDeg;
     public float? Duration;
     public float? Hold;
@@ -40,6 +46,12 @@ public sealed class HarnessOptions
     public readonly Dictionary<string, string> Jolt = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Vehicle params applied after the scenario's own, as llSetVehicle*Param calls would be.</summary>
     public readonly List<VehicleParamSetting> VehicleParams = new();
+
+    private static double DefaultPhysicsRate()
+    {
+        string v = Environment.GetEnvironmentVariable(PhysicsRateVariable);
+        return v != null && double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out double r) && r >= 0 ? r : 0.0;
+    }
 }
 
 /// <summary>One vehicle param: a float when <see cref="IsVector"/> is false (the value is X).</summary>
@@ -108,11 +120,15 @@ public sealed class RunResult
 {
     public string Scenario;
     public double RateHz;
+    public double PhysicsRateHz;
     public float SlopeDeg;
     public readonly List<Sample> Samples = new();
     public Summary Summary;
 
-    public string Name => $"{Scenario}-s{Fmt(SlopeDeg, "0.#")}-r{Fmt(RateHz, "0.#")}";
+    public string Name => $"{Scenario}-s{Fmt(SlopeDeg, "0.#")}-r{Fmt(RateHz, "0.#")}{(PhysicsRateHz > 0 ? "-p" + Fmt(PhysicsRateHz, "0.#") : "")}";
+
+    /// <summary>The scenario column of the summary: the name, plus "/p" and the physics rate when physics steps are on.</summary>
+    public string Label => PhysicsRateHz > 0 ? $"{Scenario}/p{Fmt(PhysicsRateHz, "0.#")}" : Scenario;
 
     public const string CsvHeader = "t,x,y,z,vx,vy,vz,speed,hspeed,tilt_deg,height";
 
@@ -139,7 +155,7 @@ public sealed class RunResult
     {
         Summary m = Summary;
         return string.Join(",",
-            Scenario, Fmt(SlopeDeg, "0.#"), Fmt(RateHz, "0.#"), m.Steps.ToString(CultureInfo.InvariantCulture),
+            Label, Fmt(SlopeDeg, "0.#"), Fmt(RateHz, "0.#"), m.Steps.ToString(CultureInfo.InvariantCulture),
             Fmt(m.TopSpeed, "0.000"), Fmt(m.ReleaseT, "0.000"), Fmt(m.ReleaseSpeed, "0.000"),
             Fmt(m.SteadySpeed, "0.000"), Fmt(m.SteadyHorizontalSpeed, "0.000"),
             Fmt(m.DistanceBeforeRelease, "0.000"), Fmt(m.DistanceAfterRelease, "0.000"), Fmt(m.TimeToRest, "0.000"),
@@ -542,6 +558,8 @@ public static class Harness
         IConfig jolt = config.AddConfig("Jolt");
         foreach (KeyValuePair<string, string> kv in o.Jolt)
             jolt.Set(kv.Key, kv.Value);
+        if (o.PhysicsRateHz > 0)
+            jolt.Set("PhysicsStepRate", o.PhysicsRateHz.ToString(CultureInfo.InvariantCulture));
 
         var scene = new JoltScene();
         r.Scene = scene;
@@ -549,9 +567,9 @@ public static class Harness
         double clock = 0;
         scene.VehicleClock = () => ClockEpoch.AddTicks((long)Math.Round(clock * TimeSpan.TicksPerSecond));
         (float[] heights, float water) = sc.World(slope);
-        scene.InitialiseWithoutScene("Harness", Course.Size, Course.Size, heights, water);
+        scene.InitialiseWithoutScene("Harness", Course.Size, Course.Size, heights, water, (float)r.Dt);
 
-        var result = new RunResult { Scenario = sc.Name, RateHz = o.RateHz, SlopeDeg = slope };
+        var result = new RunResult { Scenario = sc.Name, RateHz = o.RateHz, PhysicsRateHz = scene.Substepping ? scene.Substeps.RateHz : 0, SlopeDeg = slope };
         try
         {
             clock = -r.Dt * 0.5;

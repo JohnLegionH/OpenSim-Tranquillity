@@ -31,6 +31,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Threading;
 using OpenSim.Framework;
 using OpenSim.Region.Framework.Scenes;
 using OpenSim.Region.Framework.Interfaces;
@@ -94,6 +95,30 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // The clock new vehicle controllers read (motor reset and spike checks). Null in a region, where
         // they read the wall clock; the test harness sets a simulated one so it can step faster than real time.
         internal Func<DateTime> VehicleClock;
+
+        // [Jolt] PhysicsStepRate: null = one backend step per heartbeat (the default). Otherwise each heartbeat runs
+        // the steps this accumulator hands out, each 1 / rate seconds long. Set once, in InitialiseRegion.
+        private SubstepAccumulator _substeps;
+        internal bool Substepping => _substeps != null;
+        internal SubstepAccumulator Substeps => _substeps;
+
+        // A push force (AddForce with pushforce) acts for one backend step; this keeps its impulse at force x the
+        // heartbeat time when a step is shorter than the heartbeat. 1 when not substepping.
+        internal float PushForceScale = 1f;
+
+        // Physics time while substepping: advanced by exactly one step per backend step, so a vehicle controller
+        // sees the true interval between its steps. The wall clock does not move between the steps of one
+        // heartbeat, and the controller divides by that interval (spike checks). 0 until the first step.
+        private long _physicsClockTicks;
+        internal DateTime PhysicsClock()
+        {
+            long t = Interlocked.Read(ref _physicsClockTicks);
+            return t != 0 ? new DateTime(t) : (VehicleClock?.Invoke() ?? DateTime.Now);
+        }
+
+        // The clock a new vehicle controller gets: physics time while substepping, otherwise VehicleClock (null in a
+        // region: the controller keeps its wall clock).
+        internal Func<DateTime> ControllerClock => _substeps != null ? PhysicsClock : VehicleClock;
         private float[] _terrainField;   // the (N+1)-square field SetTerrain cooked (row = y * _terrainFieldM)
         private int _terrainFieldM;
 
@@ -257,7 +282,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _scene = scene;
             InitialiseRegion(scene.RegionInfo.RegionSizeX, scene.RegionInfo.RegionSizeY, scene.PhysicsRequestAsset,
                 () => scene.Heightmap != null ? scene.Heightmap.GetFloatsSerialised() : new float[scene.RegionInfo.RegionSizeX * scene.RegionInfo.RegionSizeY],
-                () => (float)scene.RegionInfo.RegionSettings.WaterHeight);
+                () => (float)scene.RegionInfo.RegionSettings.WaterHeight, scene.FrameTime);
         }
 
         /// <summary>
@@ -265,18 +290,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// <see cref="AddRegion"/>, for a scene with no OpenSim <see cref="Scene"/>. Call
         /// <see cref="Initialise"/> first with a config that selects this module.
         /// </summary>
-        internal void InitialiseWithoutScene(string regionName, uint sizeX, uint sizeY, float[] heightMap, float waterHeight)
+        internal void InitialiseWithoutScene(string regionName, uint sizeX, uint sizeY, float[] heightMap, float waterHeight, float heartbeatSeconds)
         {
             if (!m_Enabled)
                 throw new InvalidOperationException("Initialise with [Startup] physics = Jolt first.");
             RegionName = regionName;
             PhysicsSceneName = Name + "/" + RegionName;
-            InitialiseRegion(sizeX, sizeY, null, () => heightMap, () => waterHeight);
+            InitialiseRegion(sizeX, sizeY, null, () => heightMap, () => waterHeight, heartbeatSeconds);
         }
 
         // AddRegion's work once the scene is known. The heightmap and water height are read where AddRegion
         // always read them, after the backend exists.
-        private void InitialiseRegion(uint sizeX, uint sizeY, RequestAssetDelegate requestAsset, Func<float[]> heightMap, Func<float> waterHeight)
+        private void InitialiseRegion(uint sizeX, uint sizeY, RequestAssetDelegate requestAsset, Func<float[]> heightMap, Func<float> waterHeight, float heartbeatSeconds)
         {
             // Stored BEFORE base.Initialise, because that calls SetTerrain(heightMap) - which needs the
             // region dims to interpret the flat float[] and build the (N+1) field.
@@ -289,7 +314,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // OpenSim's ~11 fps a single integration lets a fast prim move ~1.5 m and tunnel through the terrain
             // heightfield. CollisionSteps slices the SOLVER only, NOT the character step (once per Step, before
             // Update), so dropped prims rest WITHOUT disturbing the avatar's known-good 1-step path.
-            PhysicsBackendSettings settings = _joltConfig.ToBackendSettings(sizeX, sizeY);
+            // [Jolt] PhysicsStepRate, checked against the heartbeat Simulate is called at ([Startup] FrameTime).
+            float stepRate = _joltConfig.EffectivePhysicsStepRate(heartbeatSeconds, out string rateWarning);
+            if (rateWarning != null)
+                m_log.LogWarning($"{LogHeader} region '{RegionName}': {rateWarning}");
+            _substeps = stepRate > 0f ? new SubstepAccumulator(stepRate) : null;
+
+            PhysicsBackendSettings settings = _joltConfig.ToBackendSettings(sizeX, sizeY, _substeps != null);
             _bodyBufMax = _joltConfig.BodyUpdateBufferMax;
             _charBufMax = _joltConfig.CharacterUpdateBufferMax;
             _capacityLogIntervalTicks = System.TimeSpan.FromSeconds(_joltConfig.CapacityLogIntervalSeconds).Ticks;
@@ -315,6 +346,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             base.Initialise(requestAsset, heightMap(), waterHeight());
 
             m_log.LogInformation($"{LogHeader} region '{RegionName}' {sizeX}x{sizeY}m: backend initialised, MaxBodies={settings.MaxBodies}. {EngineName}");
+            if (_substeps != null)
+                m_log.LogInformation($"{LogHeader} region '{RegionName}': physics steps at {_substeps.RateHz:0.##} Hz " +
+                                     $"({settings.CollisionSteps} collision steps each, at most {SubstepAccumulator.MaxStepsPerFrame} per heartbeat).");
         }
 
         // The shared job pools are sized once, by the first region's request; every region reads the same
@@ -1278,6 +1312,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (_backend == null)
                 return 1f;
+            if (_substeps != null)
+                return SimulateSubsteps(timeStep);
 
             // (Re)build changed linkset compounds ONCE per frame, here on the step thread before
             // the step. link()/unlink() only mark the root dirty (they do not rebuild inline); this
@@ -1307,8 +1343,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // dropped prim integrates in solver sub-slices and rests, while the avatar stays at 1 step/frame.
             StepOnce(timeStep);
 
-            // [charframe] live trace (toggle: `jolt charframe`): per-frame avatar Z / support / vertical
-            // velocity, so avatar bounce or sinking shows up in the numbers.
+            TraceCharFrame();
+            return 1f;
+        }
+
+        // [charframe] live trace (toggle: `jolt charframe`): per-frame avatar Z / support / vertical
+        // velocity, so avatar bounce or sinking shows up in the numbers.
+        private void TraceCharFrame()
+        {
             if (_stepCount <= _charFrameUntil)
             {
                 List<JoltCharacter> avs;
@@ -1344,7 +1386,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
             else if (CharJumpTrace)
                 CharJumpTrace = false;   // window elapsed -> stop the [charjump] trace too
-            return 1f;
         }
 
         // One backend Step + drain (bodies -> prims, characters -> avatars) + the [dropframe] diagnostic.
@@ -1355,10 +1396,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // transform/velocity into the matching actor (by UserData = LocalID) and fire its terse update
             // so the viewer sees motion; the JustDeactivated state is the settle update that stops a rested
             // object drifting. Sleeping bodies aren't reported, so idle prims cost nothing.
-            StepResult r = _backend.Step(timeStep, _bodyBuf, _charBuf, _contactBuf);
+            IPhysicsBackend backend = _backend;
+            StepResult r = backend.Step(timeStep, _bodyBuf, _charBuf, _contactBuf);
             _stepCount++;
+            ReportStep(backend, in r, timeStep, r.ContactCount, r.ContactBufferOverflowed, r.PhysicsMilliseconds, mergeSubsteps: false);
+        }
+
+        // Everything after the backend step: metrics, capacity, the body / character drains and the collision
+        // dispatch. `r` is the step whose body and character states are reported; the contact count, overflow and
+        // physics time cover every backend step of this heartbeat (one, unless substepping).
+        private void ReportStep(IPhysicsBackend backend, in StepResult r, float timeStep, int contactCount, bool contactsOverflowed, float physicsMs, bool mergeSubsteps)
+        {
             _lastActiveBodyCount = r.ActiveBodyCount;
-            JoltMetrics.RecordStep(RegionName, r.PhysicsMilliseconds, r.ActiveBodyCount);   // step-time instrumentation (`jolt metrics`)
+            JoltMetrics.RecordStep(RegionName, physicsMs, r.ActiveBodyCount);   // step-time instrumentation (`jolt metrics`)
 
             // Windowed per-frame diagnostic (set by a drop): is Step advancing with a REAL dt, is the
             // just-dropped body in our active set, and is its Z actually changing? It tells apart why a
@@ -1369,15 +1419,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 DropTrack td = _drops[_drops.Count - 1];
                 float lz = float.NaN, vz = float.NaN; bool ja = false;
                 lock (_prims)
-                    if (_prims.TryGetValue(td.LocalId, out JoltPrim jd) && _backend.TryGetBodyState(jd.BodyHandle, out BodyState sd))
+                    if (_prims.TryGetValue(td.LocalId, out JoltPrim jd) && backend.TryGetBodyState(jd.BodyHandle, out BodyState sd))
                     { lz = sd.Position.Z; vz = sd.LinearVelocity.Z; ja = (sd.Flags & BodyStateFlags.Active) != 0; }
                 m_log.LogDebug($"{LogHeader} [dropframe] step={_stepCount} dt={timeStep:0.0000} active={r.ActiveBodyCount} updates={r.BodyUpdateCount} box(id={td.LocalId}) liveZ={lz:0.000} vZ={vz:0.000} joltActive={ja}");
             }
 
             if (r.BodyBufferOverflowed) _bodyOverflowFrames++;
             if (r.CharacterUpdateCount >= _charBuf.Length) _charFullFrames++;
-            if (r.ContactBufferOverflowed) _contactOverflowFrames++;
-            CheckCapacity(timeStep);
+            if (contactsOverflowed) _contactOverflowFrames++;
+            CheckCapacity(backend, timeStep);
 
             int n = r.BodyUpdateCount;
             for (int i = 0; i < n; i++)
@@ -1405,24 +1455,78 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 a?.ApplyCharacterState(in cs);
             }
 
-            DispatchContacts(r.ContactCount, r.ContactBufferOverflowed);
+            DispatchContacts(_contactBuf, contactCount, contactsOverflowed, mergeSubsteps);
 
             // Grow any buffer this frame filled, now that it has been read. Overflow does not lose
             // updates (the backend carries them over), so the warning is rate-limited like the capacity one.
             bool charFull = r.CharacterUpdateCount >= _charBuf.Length;
-            if (r.BodyBufferOverflowed || charFull || r.ContactBufferOverflowed)
+            if (r.BodyBufferOverflowed || charFull || contactsOverflowed)
             {
                 string grew = "";
                 if (r.BodyBufferOverflowed) grew += GrowBuffer(ref _bodyBuf, _bodyBufMax, "body");
                 if (charFull) grew += GrowBuffer(ref _charBuf, _charBufMax, "character");
-                if (r.ContactBufferOverflowed) grew += GrowBuffer(ref _contactBuf, _contactBufMax, "contact");
+                if (contactsOverflowed) grew += GrowBuffer(ref _contactBuf, _contactBufMax, "contact");
                 long now = System.DateTime.UtcNow.Ticks;
                 if (_overflowLastWarnTicks == 0 || now - _overflowLastWarnTicks >= _capacityLogIntervalTicks)
                 {
                     _overflowLastWarnTicks = now;
-                    m_log.LogWarning($"{LogHeader} {RegionName}: step buffer overflow (bodies {r.BodyUpdateCount}/{r.ActiveBodyCount} active, contacts overflowed={r.ContactBufferOverflowed});{grew} updates carry over to the next step.");
+                    m_log.LogWarning($"{LogHeader} {RegionName}: step buffer overflow (bodies {r.BodyUpdateCount}/{r.ActiveBodyCount} active, contacts overflowed={contactsOverflowed});{grew} updates carry over to the next step.");
                 }
             }
+        }
+
+        // [Jolt] PhysicsStepRate on: one heartbeat runs several backend steps of exactly 1 / rate seconds (as many
+        // as SubstepAccumulator hands out) inside this call, on the heartbeat thread.
+        //   Once per heartbeat, first: the linkset and activation drains (as on the single-step path).
+        //   Every step: the vehicle controllers (with that step's dt), then the backend step, which steps every
+        //   avatar before the solver; queued body changes and forces from other threads land before the next step.
+        //   Once per heartbeat, last: the body and avatar reports (from the last step) and the collision dispatch.
+        // The steps before the last hand the backend empty body and avatar buffers, so it reports nothing for them:
+        // a body that sleeps in an earlier step keeps its settle state queued in the backend (it never drops one that
+        // does not fit) and the last step reports it, unless the body woke again. Contacts from every step of the
+        // heartbeat are drained into one buffer and dispatched once, a touching pair counted once (see
+        // DispatchContacts). Each step takes and releases the job pool's gate and _simLock itself, as one step does.
+        private float SimulateSubsteps(float timeStep)
+        {
+            DrainDirtyLinksets();
+            DrainPendingActivation();
+
+            int n = _substeps.Advance(timeStep);
+            float dt = _substeps.StepSeconds;
+            LastTimeStep = dt;   // AddForce: a non-push force acts for one step, so its impulse stays the force given
+            PushForceScale = timeStep / dt;
+            if (n == 0)
+                return 1f;   // nothing stepped: no reports, and no collision_end for contacts that were not re-checked
+
+            // Held for the whole heartbeat: a teardown that lands between two steps disposes the backend (whose steps
+            // then return nothing) but cannot null it out from under this loop.
+            IPhysicsBackend backend = _backend;
+            if (Interlocked.Read(ref _physicsClockTicks) == 0)
+                Interlocked.Exchange(ref _physicsClockTicks, (VehicleClock?.Invoke() ?? DateTime.Now).Ticks);
+            long stepTicks = (long)Math.Round(dt * (double)TimeSpan.TicksPerSecond);
+
+            StepResult r = default;
+            int contactCount = 0;
+            bool contactsOverflowed = false;
+            float physicsMs = 0f;
+            for (int k = 0; k < n; k++)
+            {
+                bool last = k == n - 1;
+                Interlocked.Add(ref _physicsClockTicks, stepTicks);
+                StepVehicles(dt);
+                r = backend.Step(dt,
+                    last ? _bodyBuf : Span<BodyState>.Empty,
+                    last ? _charBuf : Span<CharacterState>.Empty,
+                    _contactBuf.AsSpan(contactCount));
+                if (k == 0)
+                    _stepCount++;   // counts heartbeats, as on the single-step path
+                contactCount += r.ContactCount;
+                contactsOverflowed |= r.ContactBufferOverflowed;
+                physicsMs += r.PhysicsMilliseconds;
+            }
+            ReportStep(backend, in r, timeStep, contactCount, contactsOverflowed, physicsMs, mergeSubsteps: true);
+            TraceCharFrame();
+            return 1f;
         }
 
         // Double a step buffer up to its cap. Returns a note for the overflow warning.
@@ -1437,9 +1541,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // After each Step, warn (at most once per [Jolt] CapacityLogIntervalSeconds per region) when the update
         // reported a capacity error or CreateBody was refused since the last warning, naming the [Jolt] key to raise.
-        private void CheckCapacity(float timeStep)
+        private void CheckCapacity(IPhysicsBackend backend, float timeStep)
         {
-            PhysicsCapacityStats s = _backend.GetCapacityStats();
+            PhysicsCapacityStats s = backend.GetCapacityStats();
             long now = System.DateTime.UtcNow.Ticks;
             CheckGateWait(in s, now, timeStep);
             if (!_capBaseSet)
@@ -1500,7 +1604,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             PhysicsCapacityStats s = _backend.GetCapacityStats();
             MainConsole.Instance.Output(CapacityReport.Render(RegionName, s,
-                _bodyBuf.Length, _bodyOverflowFrames, _charBuf.Length, _charFullFrames, _contactBuf.Length, _contactOverflowFrames));
+                _bodyBuf.Length, _bodyOverflowFrames, _charBuf.Length, _charFullFrames, _contactBuf.Length, _contactOverflowFrames, _substeps));
         }
 
         // Collision dispatch: turn this frame's ContactReports into OpenSim collision events. Each
@@ -1516,14 +1620,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // Per-child: each contact names the STRUCK part on each side (ChildUserData - the
         // compound child hit, resolved from the contact sub-shape), so a linkset reports against the specific
         // child and llDetectedLinkNumber returns that child's link (see the AddCollider block below).
-        private void DispatchContacts(int contactCount, bool contactsOverflowed)
+        //
+        // With several backend steps in one heartbeat (mergeSubsteps), the buffer holds every step's reports. A
+        // touching pair reports in each step, so only its first Begin/Persist report of the heartbeat counts: the
+        // collision score and the collider set are what one step per heartbeat gives. A contact that begins and
+        // ends inside one heartbeat has a Begin report, so it is touching for that heartbeat (collision_start) and
+        // absent from the next (collision_end); one that spans heartbeats reports in each.
+        internal void DispatchContacts(ContactReport[] contacts, int contactCount, bool contactsOverflowed, bool mergeSubsteps)
         {
             // Resolve every prim this frame can touch - both sides of each contact, plus last frame's colliders
             // (the collision_end candidates) - under ONE lock(_prims), into a reused per-frame map.
             _frameIds.Clear();
             for (int i = 0; i < contactCount; i++)
             {
-                ref ContactReport c = ref _contactBuf[i];
+                ref ContactReport c = ref contacts[i];
                 if (c.Phase == ContactPhase.End)
                     continue;
                 _frameIds.Add(c.ChildUserDataA);
@@ -1542,11 +1652,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
 
             _collisions.BeginFrame();
+            if (mergeSubsteps)
+                _framePairs.Clear();
             for (int i = 0; i < contactCount; i++)
             {
-                ref ContactReport c = ref _contactBuf[i];
+                ref ContactReport c = ref contacts[i];
                 if (c.Phase == ContactPhase.End)
                     continue;   // OpenSim derives "ended" from absence in the current set
+                if (mergeSubsteps && !_framePairs.Add(PairKey(c.ChildUserDataA, c.ChildUserDataB)))
+                    continue;   // this pair already reported in an earlier step of this heartbeat
 
                 // Every Begin/Persist report scores both struck parts, subscribed or not.
                 _collisions.CountContact(c.ChildUserDataA);
@@ -1585,6 +1699,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (_framePrims.TryGetValue(kv.Key, out JoltPrim p))
                     p.CollisionScore = kv.Value;
         }
+
+        private readonly HashSet<ulong> _framePairs = new HashSet<ulong>();
+        private static ulong PairKey(uint a, uint b)
+            => a <= b ? ((ulong)a << 32) | b : ((ulong)b << 32) | a;
 
         // A LocalID resolves (this frame) to a prim that currently has a collision-script subscription (dispatch
         // is prim-scoped; ScenePresence collisions with an avatar as the subscriber are not dispatched here).
