@@ -780,9 +780,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private void ApplyLinearVelocityChange(Vector3 deltaV)
         {
-            // A non-zero LinearMotorOffset is applied as a CENTRAL velocity change too - the identical
-            // net velocity change (true off-center application is not implemented; every stock preset
-            // ships offset = zero).
+            // The linear motor's offset turn is applied separately (MotorOffsetTurn); the velocity change is central.
             _body.LinearVelocity = _body.LinearVelocity + deltaV;
         }
 
@@ -1098,12 +1096,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// pitch (the nose's angle above or below level), each a spring on the angle e and the angular velocity about
         /// that axis:
         ///
-        ///   e'' = -s e / T^2 - 2 eff e' / T          s = 1 for roll; for pitch 1, or with LIMIT_ROLL_ONLY 0 for an
-        ///                                             airplane or balloon and 0.1 for the other types
+        ///   e'' = -s e / T^2 - 2 eff e' / T          s = 1 for roll; for pitch 1, or 0 with LIMIT_ROLL_ONLY
         ///
         /// stepped exactly (<see cref="VehicleSpring"/>) over the step the engine takes; the body is given the angular
         /// velocity that turns it where the spring would at the step's end. Gives the tilt from up (angle), for
         /// banking.
+        ///
+        /// VEHICLE_FLAG_LIMIT_ROLL_ONLY unlocks the attractor about the pitch axis (Linden_Vehicle_Tutorial: "unlock
+        /// the attractor around the pitch axis by setting the VEHICLE_FLAG_LIMIT_ROLL_ONLY bit"; LlSetVehicleFlags:
+        /// "For vehicles with vertical attractor that want to be able to climb/dive"), for every vehicle type: the
+        /// attractor then corrects roll and leaves pitch alone.
         /// </summary>
         private void SimulateVerticalAttractor(float h, out float angle, out bool inverted)
         {
@@ -1122,24 +1124,22 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             double pitch = Math.Asin(Utils.Clamp(-x.Z, -1f, 1f));
             double stiffness = 1.0 / ((double)timescale * timescale);
             double damping = efficiency / (double)timescale;
-            double pitchShare = 1.0;
-            if ((_props.Flags & ExtendedVehicleFlags.LimitRollOnly) != 0)
-                pitchShare = _props.Type == VehicleType.Airplane || _props.Type == VehicleType.Balloon ? 0.0 : RollOnlyPitchShare;
+            bool rollOnly = (_props.Flags & ExtendedVehicleFlags.LimitRollOnly) != 0;
 
             // The spring's own rates: the body's, plus what the last step's turn left out of them.
             double rollRate = Vector3.Dot(_rawWorldAngularVel, x);
             double pitchRate = Vector3.Dot(_rawWorldAngularVel, y);
             (double rollTurn, double rollCarry) = VehicleSpring.MoveOverGeneral(roll, rollRate + (_attractorCarry?.X ?? 0), stiffness, damping, h);
-            (double pitchTurn, double pitchCarry) = VehicleSpring.MoveOverGeneral(pitch, pitchRate + (_attractorCarry?.Y ?? 0), stiffness * pitchShare, damping, h);
+            // With LIMIT_ROLL_ONLY the pitch is left alone: no spring and no damping on it (any rate the last step's
+            // pitch turn left out is handed back).
+            double pitchTurn = pitchRate + (_attractorCarry?.Y ?? 0), pitchCarry = 0;
+            if (!rollOnly)
+                (pitchTurn, pitchCarry) = VehicleSpring.MoveOverGeneral(pitch, pitchTurn, stiffness, damping, h);
             _attractorCarry = new Vector3((float)rollCarry, (float)pitchCarry, 0f);
 
             // Applied whole with the motors' change (TorqueFini's per-step clean-up would stop it short).
             _motorTorqueVelChange += x * (float)(rollTurn - rollRate) + y * (float)(pitchTurn - pitchRate);
         }
-
-        // With LIMIT_ROLL_ONLY, the share of the attractor's spring a vehicle other than an airplane or balloon keeps
-        // on its pitch.
-        private const double RollOnlyPitchShare = 0.1;
 
         // What the last attractor step's turn left out of the spring's roll and pitch rates; null when it did not act.
         private Vector3? _attractorCarry;
@@ -1263,6 +1263,39 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             _props.Dynamics.LinearDecayIndex += h;
             ApplyLinearVelocityChange(frictionChange + motorChange);
+            _motorTorqueVelChange += MotorOffsetTurn(motorChange);
+        }
+
+        /// <summary>
+        /// VEHICLE_LINEAR_MOTOR_OFFSET: "offset from the center of mass of the vehicle where the linear motor is
+        /// applied" (LlSetVehicleVectorParam), so the motor's push also turns the vehicle, as a force at that point
+        /// does ("In rockets using this offset gives that very distinctive spiraling out of control",
+        /// VEHICLE_LINEAR_MOTOR_OFFSET). The motor's change of velocity this step, dv, is an impulse m dv at the
+        /// offset point r (in the vehicle frame); its angular impulse about the centre of mass turns the body by
+        ///
+        ///   dw = I^-1 (r x m dv)
+        ///
+        /// with I the body's principal moments of inertia, taken along the body's own axes. dv is the exact motor
+        /// share over the step, so the turn over a span of time does not depend on the step either. Friction and
+        /// gravity act at the centre of mass and give no turn.
+        /// </summary>
+        private Vector3 MotorOffsetTurn(Vector3 motorChange)
+        {
+            Vector3 offset = _props.GetVec(VehVectorParam.LinearMotorOffset);
+            if (offset == Vector3.Zero || motorChange == Vector3.Zero)
+                return Vector3.Zero;
+            Vector3 r = offset * _rotation;
+            Vector3 angularImpulse = Vector3.Cross(r, motorChange * m_vehicleMass);
+
+            // To the body's axes, through the inverse of its principal moments, and back to the world.
+            Quaternion bodyRotation = _body.Orientation;
+            Vector3 local = angularImpulse * Quaternion.Inverse(bodyRotation);
+            Vector3 inertia = _body.InertiaDiagonal;
+            local = new Vector3(
+                inertia.X > 0f ? local.X / inertia.X : 0f,
+                inertia.Y > 0f ? local.Y / inertia.Y : 0f,
+                inertia.Z > 0f ? local.Z / inertia.Z : 0f);
+            return local * bodyRotation;
         }
 
         /// <summary>

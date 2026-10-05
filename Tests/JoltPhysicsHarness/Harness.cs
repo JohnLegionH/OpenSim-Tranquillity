@@ -696,6 +696,43 @@ public static class Harness
         },
         new()
         {
+            Name = "rollonly",
+            Description = "A car-sized box made VEHICLE_TYPE_CAR (buoyancy 1) 15 m up, with LIMIT_ROLL_ONLY, attractor 2 s / 1, everything else off, rolled 20 and pitched 30 degrees nose down at 2 s: the attractor rights the roll and leaves the pitch.",
+            DefaultDuration = _ => 20f,
+            Setup = r =>
+            {
+                r.ReleaseAt = AttractStart;
+                r.AddBox(CarSize, new Vector3(128f, 128f, Course.Ground + 15f), Quaternion.Identity);
+                r.MakeVehicle(Vehicle.TYPE_CAR);
+                SetFloatingAlone(r);
+                r.SetFloat(Vehicle.VERTICAL_ATTRACTION_TIMESCALE, 2f);
+                r.SetFloat(Vehicle.VERTICAL_ATTRACTION_EFFICIENCY, 1f);
+                r.Actor.VehicleFlags(LimitRollOnlyFlag, false);
+                r.ApplyVehicleOverrides();
+            },
+            // Rolled about its own x axis, then pitched about the world's y: the nose is 30 degrees down.
+            Input = r => Tilt(r, Quaternion.CreateFromAxisAngle(Vector3.UnitY, AttractTilt) * Quaternion.CreateFromAxisAngle(Vector3.UnitX, 20f * MathF.PI / 180f)),
+        },
+        new()
+        {
+            Name = "motor-offset",
+            Description = "A car-sized box made VEHICLE_TYPE_CAR (buoyancy 1) 30 m up, everything but the linear motor off (LIMIT_MOTOR_UP removed), motor <5,0,0> (timescale 1) pushing 5 cm below the centre of mass (LINEAR_MOTOR_OFFSET <0,0,-0.05>) for the whole run: it pitches its nose up.",
+            DefaultDuration = _ => 2f, DefaultHold = _ => 1000f,
+            Setup = r =>
+            {
+                r.AddBox(CarSize, new Vector3(100f, 128f, Course.Ground + 30f), Quaternion.Identity);
+                r.MakeVehicle(Vehicle.TYPE_CAR);
+                SetFloatingAlone(r);
+                r.SetVector(Vehicle.LINEAR_FRICTION_TIMESCALE, new Vector3(1000f, 1000f, 1000f));
+                r.SetFloat(Vehicle.LINEAR_MOTOR_TIMESCALE, 1f);
+                r.SetVector(Vehicle.LINEAR_MOTOR_OFFSET, new Vector3(0f, 0f, -0.05f));
+                r.Actor.VehicleFlags(LimitMotorUpFlag, true);
+                r.ApplyVehicleOverrides();
+            },
+            Input = r => r.HoldMotor(new Vector3(5f, 0f, 0f)),
+        },
+        new()
+        {
             Name = "avatar-stand",
             Description = "An avatar standing still for 10 s on the slope (y 70).",
             Slopes = new[] { 5f, 15f }, UsesSlope = true,
@@ -901,6 +938,22 @@ public static class Harness
             r.Actor.Orientation = tilt;
             r.Released = true;
         }
+    }
+
+    private const int LimitRollOnlyFlag = 0x2;
+    private const int LimitMotorUpFlag = 0x40;
+
+    // Buoyancy 1 and every behaviour off but the ones a scenario then sets: no hover, attractor, banking, deflection
+    // or angular friction.
+    private static void SetFloatingAlone(Run r)
+    {
+        r.SetFloat(Vehicle.BUOYANCY, 1f);
+        r.SetFloat(Vehicle.HOVER_TIMESCALE, 1000f);
+        r.SetFloat(Vehicle.VERTICAL_ATTRACTION_TIMESCALE, 1000f);
+        r.SetFloat(Vehicle.BANKING_EFFICIENCY, 0f);
+        r.SetFloat(Vehicle.LINEAR_DEFLECTION_TIMESCALE, 1000f);
+        r.SetFloat(Vehicle.ANGULAR_DEFLECTION_TIMESCALE, 1000f);
+        r.SetVector(Vehicle.ANGULAR_FRICTION_TIMESCALE, new Vector3(1000f, 1000f, 1000f));
     }
 
     private static void SetupAttract(Run r)

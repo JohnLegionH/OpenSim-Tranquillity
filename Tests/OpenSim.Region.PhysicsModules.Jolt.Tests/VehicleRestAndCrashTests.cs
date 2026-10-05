@@ -37,6 +37,10 @@ public class VehicleRestAndCrashTests
     // velocity, and it drifts at about 0.02 m/s (the ground's push along the tilt against no contact friction) before
     // settling.
     [InlineData("park-drive", 45.0, 20.0, "legacy")]
+    // The documented test car: as it slows at 45 Hz it comes to rest rolled 0.3 degrees, which nothing levels (no
+    // angular friction, a 10 s attractor), and slides sideways at about 0.035 m/s, held only by its velocity friction,
+    // until it settles about 26 s after the key.
+    [InlineData("park-drive", 45.0, 30.0, "documented")]
     public void A_parked_vehicle_goes_to_sleep_and_stays_asleep(string scenario, double rate, double within, string presets)
     {
         RunResult r = Run(scenario, rate, presets);

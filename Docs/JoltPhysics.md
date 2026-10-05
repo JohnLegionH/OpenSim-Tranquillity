@@ -187,8 +187,12 @@ exact solution over the step the engine takes:
   A vehicle without full buoyancy hovers below its height, where the spring holds its weight.
 - The vertical attractor is the same spring on the vehicle's roll and pitch, with
   `VEHICLE_VERTICAL_ATTRACTION_TIMESCALE` and `_EFFICIENCY` (from wobbling, 0, to exponential decay,
-  1); off at 500 s. `VEHICLE_FLAG_LIMIT_ROLL_ONLY` leaves an airplane or balloon no pitch spring and
-  other types a tenth of it.
+  1); off at 500 s. `VEHICLE_FLAG_LIMIT_ROLL_ONLY` unlocks pitch for every type: the attractor then
+  corrects roll only, so the vehicle can climb and dive.
+- `VEHICLE_LINEAR_MOTOR_OFFSET` moves the point the linear motor pushes at away from the centre of
+  mass, so the motor also turns the vehicle: each step's motor change `dv` is an impulse `m dv` at
+  the offset `r`, turning the body by `I^-1 (r x m dv)`. A thrust below the centre of mass pitches
+  the nose up, as a rocket's would.
 - Banking turns the yaw rate about world z toward a target in proportion to the roll and
   `VEHICLE_BANKING_EFFICIENCY` (and, with `VEHICLE_BANKING_MIX` toward 1, the forward speed over
   30 m/s), with `VEHICLE_BANKING_TIMESCALE` as its time constant. It needs the attractor on.
@@ -196,6 +200,18 @@ exact solution over the step the engine takes:
   them decaying as `e^(-eff t / T)`; with `VEHICLE_FLAG_NO_DEFLECTION_UP` only the horizontal part
   turns. Angular deflection turns the nose toward the velocity the same way, scaled by the speed over
   30 m/s.
+
+### Known gaps against Second Life
+
+These documented behaviours are not simulated:
+
+- `VEHICLE_FLAG_MOUSELOOK_STEER` and `VEHICLE_FLAG_MOUSELOOK_BANK` (steering or banking toward the
+  viewer's mouselook camera): the flags are stored and do nothing.
+- `VEHICLE_FLAG_BLOCK_INTERFERENCE` (passengers' attachments cannot push the vehicle): stored, no effect.
+- `VEHICLE_FLAG_LIMIT_MOTOR_UP`'s effect on banking ("the strength of the banking will decay when the
+  vehicle no longer experiences collisions"): the rate of that decay is not documented, so banking
+  keeps its strength in the air.
+- Wind (`VEHICLE_LINEAR_WIND_EFFICIENCY` and the angular one): no wind is simulated.
 
 ### Parked vehicles sleep
 

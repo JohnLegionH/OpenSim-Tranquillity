@@ -80,6 +80,9 @@ public class VehicleAttractorTests
 
     // The test car off the 33 degree crest with its key held: in flight it is never faster than its speed at the
     // crest and the height it has fallen since allow (v^2 <= v0^2 + 2 g drop), and 11 and 45 Hz land alike.
+    // LIMIT_ROLL_ONLY is removed so the attractor holds the pitch: with it the pitch is free, the car leaves the
+    // crest with the spin the crest contact gives it at each rate, and its linear friction along a nose pitched
+    // differently lands it 96.61 m at 11 Hz and 97.24 m at 45 Hz.
     [Fact]
     public void Over_the_crest_the_car_gains_no_speed_but_what_gravity_gives()
     {
@@ -87,6 +90,7 @@ public class VehicleAttractorTests
         foreach (double rate in new[] { 11.0, 45.0 })
         {
             var o = new HarnessOptions { RateHz = rate, SlopeDeg = 33f, Jolt = { ["VehiclePresets"] = "legacy" } };
+            o.VehicleFlags.Add(VehicleFlagSetting.Parse("-LIMIT_ROLL_ONLY"));
             RunResult r = Harness.Harness.Run(Harness.Harness.Find("testcar-down"), o);
             int off = r.Samples.FindIndex(s => !s.Touching && s.Position.Y < Course.RampTopY + 1f);
             Assert.True(off > 0, $"{rate} Hz: the car never left the ground at the crest");
