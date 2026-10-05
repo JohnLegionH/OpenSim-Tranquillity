@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The physics backend: the engine-agnostic IPhysicsBackend and its Jolt implementation,
+    JoltPhysicsBackend. It references no OpenSim assembly.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AssemblyName>OpenSim.Region.PhysicsModules.Jolt.Backend</AssemblyName>
+    <RootNamespace>OpenSim.Region.PhysicsModules.Jolt.Backend</RootNamespace>
+    <AssemblyTitle>OpenSim.Region.PhysicsModules.Jolt.Backend</AssemblyTitle>
+    <Company>http://opensimulator.org</Company>
+    <Product>OpenSim</Product>
+    <Copyright>OpenSimulator developers</Copyright>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks><!-- 2.19.x HeightFieldShapeSettings takes float* -->
+    <Deterministic>true</Deterministic>
+    <NoWarn>$(NoWarn);CS0168</NoWarn>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The managed Jolt binding. Pinned: the patched joltc is built from the joltc commit behind
+         JoltPhysics.Native 1.0.4, the native this version binds to. Changing it needs the native rebuilt
+         to match (native/joltc/README.md). -->
+    <PackageReference Include="JoltPhysicsSharp" Version="2.19.1" />
+    <!-- JoltPhysicsSharp depends on JoltPhysics.Native, the stock joltc. ExcludeAssets="all" keeps that
+         package's files out of this project's output; the patched joltc comes from the Jolt module and is
+         loaded by JoltNative. ExcludeAssets is not transitive: a project that reaches the package through
+         this one gets the stock natives unless it excludes them itself, so the module, the region server,
+         the Jolt tests and the harness each carry the same reference. -->
+    <PackageReference Include="JoltPhysics.Native" Version="1.0.4" ExcludeAssets="all" />
+  </ItemGroup>
+
+</Project>
