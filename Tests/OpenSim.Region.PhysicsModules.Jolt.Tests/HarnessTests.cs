@@ -72,18 +72,19 @@ public class HarnessTests
         Assert.InRange(m.MaxTilt, 0f, 1f);
     }
 
-    // The region feed against a test course's pad drive (3 s key, the course's test car), measured in a region at
-    // one step per heartbeat and at PhysicsStepRate 45: 5.59 m / 5.00 m/s and 8.43 m / 6.14 m/s under the key.
-    // The heartbeat feed starts the car at rest on the ground and gives 5.91 / 7.45 m: the start decides it.
+    // The region feed on a test course's pad drive (3 s key, the course's test car). Measured in a region before the
+    // motor ramp was made independent of the step: 5.59 m / 5.00 m/s under the key at one step per heartbeat and
+    // 8.43 m / 6.14 m/s at PhysicsStepRate 45, which this feed then gave to within 1% (5.62 / 5.01 and 8.40 / 6.12;
+    // the heartbeat feed gave 5.91 and 7.45 m). The figures below are this code's; a region proof should land on them.
     [Theory]
-    [InlineData(0.0, 5.59f, 5.00f)]
-    [InlineData(45.0, 8.43f, 6.14f)]
-    public void Region_feed_matches_the_pad_drive_measured_in_a_region(double physicsRate, float distance, float releaseSpeed)
+    [InlineData(0.0, 8.715f, 6.265f)]
+    [InlineData(45.0, 9.223f, 6.427f)]
+    public void Region_feed_drives_the_pad_as_a_region_does(double physicsRate, float distance, float releaseSpeed)
     {
         var o = new HarnessOptions { RateHz = 11.0, SlopeDeg = 0f, PhysicsRateHz = physicsRate, Feed = InputFeed.Region };
         Summary m = Harness.Harness.Run(Harness.Harness.Find("testcar"), o).Summary;
-        Assert.InRange(m.DistanceBeforeRelease, distance * 0.97f, distance * 1.03f);
-        Assert.InRange(m.ReleaseSpeed, releaseSpeed * 0.97f, releaseSpeed * 1.03f);
+        Assert.InRange(m.DistanceBeforeRelease, distance * 0.99f, distance * 1.01f);
+        Assert.InRange(m.ReleaseSpeed, releaseSpeed * 0.99f, releaseSpeed * 1.01f);
     }
 
     [Theory]

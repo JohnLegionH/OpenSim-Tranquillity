@@ -42,6 +42,8 @@
 using System;
 using OpenMetaverse;
 
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("OpenSim.Region.PhysicsModules.Jolt.Tests")]
+
 namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 {
     /// <summary>
@@ -68,6 +70,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // Frame counter for periodic operations
         private uint m_frameNum;
 
+        // False until the first step after a type change: the timestep smoothing then starts from that step's length.
+        private bool _timestepPrimed;
+
         // BSParam.VehicleGroundGravityFudge default (ground vehicles only; boats never hit this)
         private const float VehicleGroundGravityFudge = 0.2f;
 
@@ -92,6 +97,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // =====================================================================
         private Vector3 _accumTorqueVelChange;
         private Vector3 _accumTorqueImpulse;
+
+        // =====================================================================
+        // Motor-held axes (per step): 1 on each local axis whose velocity the linear or angular motor set this
+        // step, else 0. Friction leaves those axes alone (see SimulateMotors, "Apply the motor's grip").
+        // =====================================================================
+        private Vector3 _linearMotorHeld;
+        private Vector3 _angularMotorHeld;
 
         // =====================================================================
         // Constructor
@@ -147,6 +159,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _props.Type = newType;
             SetVehicleDefaults(newType);
             _props.Dynamics.Reset();
+            _timestepPrimed = false;
             _props.Dynamics.LastAccessTOD = Clock();
 
             // (No scene-event registration or Refresh here; the host reacts to IsActive instead:
@@ -342,7 +355,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             m_vehicleMass = _body.Mass;
 
             // -------------------------------------------------------
-            // Timestep smoothing (Halcyon pattern)
+            // Timestep smoothing (Halcyon pattern). It starts from the first step's own length: started from the
+            // reset value (MinPhysicsTimestep) it took a vehicle's first second or so to catch up with a longer
+            // step, and the motor under-drove meanwhile, the more the longer the step.
+            if (!_timestepPrimed)
+            {
+                _props.Dynamics.Timestep = pTimestep;
+                _timestepPrimed = true;
+            }
             float timeStep = _props.Dynamics.Timestep * 0.8f + pTimestep * 0.2f;
 
             // -------------------------------------------------------
@@ -670,6 +690,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         {
             _accumTorqueVelChange = Vector3.Zero;
             _accumTorqueImpulse = Vector3.Zero;
+            _linearMotorHeld = Vector3.Zero;
+            _angularMotorHeld = Vector3.Zero;
         }
 
         /// <summary>
@@ -1215,10 +1237,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             if (dirsign.Z * (_props.Dynamics.LinearTargetVelocity.Z - adjvel.Z) >= 0) adjvel.Z = _props.Dynamics.LinearTargetVelocity.Z;
 
             // Compute rampup factors
-            timescale = _props.GetVec(VehVectorParam.LinearMotorTimescale);
-            rfactor.X = GetGrowthRate(adjvel.X, _props.Dynamics.LinearDirection.X, timescale.X / timeStep);
-            rfactor.Y = GetGrowthRate(adjvel.Y, _props.Dynamics.LinearDirection.Y, timescale.Y / timeStep);
-            rfactor.Z = GetGrowthRate(adjvel.Z, _props.Dynamics.LinearDirection.Z, timescale.Z / timeStep);
+            Vector3 rampTimescale = _props.GetVec(VehVectorParam.LinearMotorTimescale);
+            rfactor.X = MotorRampRate(adjvel.X, _props.Dynamics.LinearDirection.X, rampTimescale.X, timeStep);
+            rfactor.Y = MotorRampRate(adjvel.Y, _props.Dynamics.LinearDirection.Y, rampTimescale.Y, timeStep);
+            rfactor.Z = MotorRampRate(adjvel.Z, _props.Dynamics.LinearDirection.Z, rampTimescale.Z, timeStep);
 
             // Compute decay factor then step to next index
             timescale = _props.GetVec(VehVectorParam.LinearMotorDecayTimescale);
@@ -1235,22 +1257,25 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             else
             {
                 // Stepwise iteration of a*b^(t*Tau)
-                newvel.X = (adjvel.X + adjvel.X * rfactor.X);
-                newvel.Y = (adjvel.Y + adjvel.Y * rfactor.Y);
-                newvel.Z = (adjvel.Z + adjvel.Z * rfactor.Z);
+                newvel.X = MotorRampStep(adjvel.X, _props.Dynamics.LinearDirection.X, rampTimescale.X, timeStep, rfactor.X);
+                newvel.Y = MotorRampStep(adjvel.Y, _props.Dynamics.LinearDirection.Y, rampTimescale.Y, timeStep, rfactor.Y);
+                newvel.Z = MotorRampStep(adjvel.Z, _props.Dynamics.LinearDirection.Z, rampTimescale.Z, timeStep, rfactor.Z);
 
                 // Crossover flip
                 if (rfactor.X == VehicleLimits.ThresholdInverseCrossover) rfactor.X = -rfactor.X;
                 if (rfactor.Y == VehicleLimits.ThresholdInverseCrossover) rfactor.Y = -rfactor.Y;
                 if (rfactor.Z == VehicleLimits.ThresholdInverseCrossover) rfactor.Z = -rfactor.Z;
 
-                // Avoid zero velocity stiction when increasing
-                if (rfactor.X > 0 && _props.Dynamics.LinearDirection.X != 0 && Math.Abs(newvel.X) < VehicleLimits.ThresholdLinearMotorDeltaV)
-                    newvel.X = dirsign.X * VehicleLimits.ThresholdLinearMotorDeltaV * 8;
-                if (rfactor.Y > 0 && _props.Dynamics.LinearDirection.Y != 0 && Math.Abs(newvel.Y) < VehicleLimits.ThresholdLinearMotorDeltaV)
-                    newvel.Y = dirsign.Y * VehicleLimits.ThresholdLinearMotorDeltaV * 8;
-                if (rfactor.Z > 0 && _props.Dynamics.LinearDirection.Z != 0 && Math.Abs(newvel.Z) < VehicleLimits.ThresholdLinearMotorDeltaV)
-                    newvel.Z = dirsign.Z * VehicleLimits.ThresholdLinearMotorDeltaV * 8;
+                // Avoid zero velocity stiction when increasing: the ramp starts from a seed speed and ramps from it
+                // for this step, as every later step does. Tested on the speed the step starts from: a test on the
+                // stepped speed let a longer step carry a start just under the threshold past it, so whether the
+                // ramp started from the seed or from a few mm/s depended on the step.
+                if (rfactor.X > 0 && _props.Dynamics.LinearDirection.X != 0 && Math.Abs(adjvel.X) < VehicleLimits.ThresholdLinearMotorDeltaV)
+                    newvel.X = RampFromSeed(dirsign.X * VehicleLimits.ThresholdLinearMotorDeltaV * 8, _props.Dynamics.LinearDirection.X, rampTimescale.X, timeStep);
+                if (rfactor.Y > 0 && _props.Dynamics.LinearDirection.Y != 0 && Math.Abs(adjvel.Y) < VehicleLimits.ThresholdLinearMotorDeltaV)
+                    newvel.Y = RampFromSeed(dirsign.Y * VehicleLimits.ThresholdLinearMotorDeltaV * 8, _props.Dynamics.LinearDirection.Y, rampTimescale.Y, timeStep);
+                if (rfactor.Z > 0 && _props.Dynamics.LinearDirection.Z != 0 && Math.Abs(adjvel.Z) < VehicleLimits.ThresholdLinearMotorDeltaV)
+                    newvel.Z = RampFromSeed(dirsign.Z * VehicleLimits.ThresholdLinearMotorDeltaV * 8, _props.Dynamics.LinearDirection.Z, rampTimescale.Z, timeStep);
 
                 // Compute new target velocities
                 if (_props.Dynamics.LinearDirection.X * newvel.X < 0 || rfactor.X < 0)
@@ -1291,10 +1316,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     _props.Dynamics.LinearTargetVelocity = Vector3.Zero;
                 }
 
-                // Apply decays to each axis
-                newvel.X = (newvel.X * dfactor.X) + lastvel.X * (1.0f - dfactor.X);
-                newvel.Y = (newvel.Y * dfactor.Y) + lastvel.Y * (1.0f - dfactor.Y);
-                newvel.Z = (newvel.Z * dfactor.Z) + lastvel.Z * (1.0f - dfactor.Z);
+                // Apply the motor's grip to each axis
+                Vector3 held = MotorHeldAxes(dfactor);
+                newvel = MotorGrip(newvel, lastvel, held);
 
                 // Switch back to world coords
                 worldvel = newvel * _rotation;
@@ -1333,6 +1357,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                         _props.Dynamics.LinearDecayIndex += 10.0f;
                     }
 
+                    _linearMotorHeld = held;
                     ApplyLinearVelocityChange(worldvel);
                 }
             }
@@ -1385,27 +1410,27 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
                 // Compute rampup factors
                 timescale = _props.GetVec(VehVectorParam.AngularMotorTimescale);
-                rfactor.X = GetGrowthRate(adjvel.X, _props.Dynamics.AngularDirection.X, timescale.X / timeStep);
-                rfactor.Y = GetGrowthRate(adjvel.Y, _props.Dynamics.AngularDirection.Y, timescale.Y / timeStep);
-                rfactor.Z = GetGrowthRate(adjvel.Z, _props.Dynamics.AngularDirection.Z, timescale.Z / timeStep);
+                rfactor.X = MotorRampRate(adjvel.X, _props.Dynamics.AngularDirection.X, timescale.X, timeStep);
+                rfactor.Y = MotorRampRate(adjvel.Y, _props.Dynamics.AngularDirection.Y, timescale.Y, timeStep);
+                rfactor.Z = MotorRampRate(adjvel.Z, _props.Dynamics.AngularDirection.Z, timescale.Z, timeStep);
 
                 // Stepwise iteration
-                newvel.X = (adjvel.X + adjvel.X * rfactor.X);
-                newvel.Y = (adjvel.Y + adjvel.Y * rfactor.Y);
-                newvel.Z = (adjvel.Z + adjvel.Z * rfactor.Z);
+                newvel.X = MotorRampStep(adjvel.X, _props.Dynamics.AngularDirection.X, timescale.X, timeStep, rfactor.X);
+                newvel.Y = MotorRampStep(adjvel.Y, _props.Dynamics.AngularDirection.Y, timescale.Y, timeStep, rfactor.Y);
+                newvel.Z = MotorRampStep(adjvel.Z, _props.Dynamics.AngularDirection.Z, timescale.Z, timeStep, rfactor.Z);
 
                 // Crossover flip
                 if (rfactor.X == VehicleLimits.ThresholdInverseCrossover) rfactor.X = -rfactor.X;
                 if (rfactor.Y == VehicleLimits.ThresholdInverseCrossover) rfactor.Y = -rfactor.Y;
                 if (rfactor.Z == VehicleLimits.ThresholdInverseCrossover) rfactor.Z = -rfactor.Z;
 
-                // Avoid zero velocity stiction
-                if (rfactor.X > 0 && _props.Dynamics.AngularDirection.X != 0 && Math.Abs(newvel.X) < VehicleLimits.ThresholdAngularMotorDeltaV)
-                    newvel.X = dirsign.X * VehicleLimits.ThresholdAngularMotorDeltaV * 8;
-                if (rfactor.Y > 0 && _props.Dynamics.AngularDirection.Y != 0 && Math.Abs(newvel.Y) < VehicleLimits.ThresholdAngularMotorDeltaV)
-                    newvel.Y = dirsign.Y * VehicleLimits.ThresholdAngularMotorDeltaV * 8;
-                if (rfactor.Z > 0 && _props.Dynamics.AngularDirection.Z != 0 && Math.Abs(newvel.Z) < VehicleLimits.ThresholdAngularMotorDeltaV)
-                    newvel.Z = dirsign.Z * VehicleLimits.ThresholdAngularMotorDeltaV * 8;
+                // Avoid zero velocity stiction (tested on the speed the step starts from, as for the linear motor)
+                if (rfactor.X > 0 && _props.Dynamics.AngularDirection.X != 0 && Math.Abs(adjvel.X) < VehicleLimits.ThresholdAngularMotorDeltaV)
+                    newvel.X = RampFromSeed(dirsign.X * VehicleLimits.ThresholdAngularMotorDeltaV * 8, _props.Dynamics.AngularDirection.X, timescale.X, timeStep);
+                if (rfactor.Y > 0 && _props.Dynamics.AngularDirection.Y != 0 && Math.Abs(adjvel.Y) < VehicleLimits.ThresholdAngularMotorDeltaV)
+                    newvel.Y = RampFromSeed(dirsign.Y * VehicleLimits.ThresholdAngularMotorDeltaV * 8, _props.Dynamics.AngularDirection.Y, timescale.Y, timeStep);
+                if (rfactor.Z > 0 && _props.Dynamics.AngularDirection.Z != 0 && Math.Abs(adjvel.Z) < VehicleLimits.ThresholdAngularMotorDeltaV)
+                    newvel.Z = RampFromSeed(dirsign.Z * VehicleLimits.ThresholdAngularMotorDeltaV * 8, _props.Dynamics.AngularDirection.Z, timescale.Z, timeStep);
 
                 // --- Vertical attractor interaction clamping ---
                 float vtimescale = Math.Max(_props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f), timeStep);
@@ -1478,10 +1503,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     _props.Dynamics.AngularTargetVelocity = Vector3.Zero;
                 }
 
-                // Apply decays to each axis
-                newvel.X = (newvel.X * dfactor.X) + lastvel.X * (1.0f - dfactor.X);
-                newvel.Y = (newvel.Y * dfactor.Y) + lastvel.Y * (1.0f - dfactor.Y);
-                newvel.Z = (newvel.Z * dfactor.Z) + lastvel.Z * (1.0f - dfactor.Z);
+                // Apply the motor's grip to each axis
+                _angularMotorHeld = MotorHeldAxes(dfactor);
+                newvel = MotorGrip(newvel, lastvel, _angularMotorHeld);
 
                 // Handle TorqueWorldZ split
                 if ((_props.Flags & ExtendedVehicleFlags.TorqueWorldZ) != 0)
@@ -1534,8 +1558,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 if (dirbsign * (_props.Dynamics.BankingTargetVelocity - badjvel) > 0) badjvel = _props.Dynamics.BankingTargetVelocity;
 
                 // Compute rampup factor
-                bfactor = GetGrowthRate(badjvel, _props.Dynamics.BankingDirection, btimescale / timeStep);
-                bnewvel = (badjvel + badjvel * bfactor);
+                bfactor = MotorRampRate(badjvel, _props.Dynamics.BankingDirection, btimescale, timeStep);
+                bnewvel = MotorRampStep(badjvel, _props.Dynamics.BankingDirection, btimescale, timeStep, bfactor);
 
                 // If angular motor is engaged, reduce max banking velocity
                 if (_props.Dynamics.AngularDecayIndex < VehicleLimits.ThresholdAngularMotorEngaged)
@@ -1626,10 +1650,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 newvel.Z = Utils.Clamp(newvel.Z, -VehicleLimits.MaxAngularVelocity, VehicleLimits.MaxAngularVelocity);
 
                 // Clean up when below minimum threshold
-                if (Math.Abs(newvel.X) < VehicleLimits.MinPhysicsForce) newvel.X = VehicleMath.PosNeg(newvel.X) * VehicleLimits.MinPhysicsForce;
-                if (Math.Abs(newvel.Y) < VehicleLimits.MinPhysicsForce) newvel.Y = VehicleMath.PosNeg(newvel.Y) * VehicleLimits.MinPhysicsForce;
-                if (Math.Abs(newvel.Z) < VehicleLimits.MinPhysicsForce) newvel.Z = VehicleMath.PosNeg(newvel.Z) * VehicleLimits.MinPhysicsForce;
+                float floor = FrictionFloor(timeStep);
+                if (Math.Abs(newvel.X) < floor) newvel.X = VehicleMath.PosNeg(newvel.X) * floor;
+                if (Math.Abs(newvel.Y) < floor) newvel.Y = VehicleMath.PosNeg(newvel.Y) * floor;
+                if (Math.Abs(newvel.Z) < floor) newvel.Z = VehicleMath.PosNeg(newvel.Z) * floor;
 
+                // Leave the axes the angular motor set this step
+                newvel = ExceptHeldAxes(newvel, _angularMotorHeld);
                 worldvel = newvel * _rotation;
 
                 // Apply only when above sleep threshold
@@ -1639,7 +1666,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 {
                     if (Vector3.Mag(_worldAngularVel) < VehicleLimits.ThresholdAngularFrictionDeltaV)
                     {
-                        worldvel = -_worldAngularVel;
+                        worldvel = ExceptHeldAxes(-_localAngularVel, _angularMotorHeld) * _rotation;
                     }
 
                     if (Vector3.Mag(worldvel) > 0)
@@ -1679,10 +1706,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 newvel.Z = -_localLinearVel.Z * frictionTS.Z;
 
                 // Clean up when below minimum threshold
-                if (Math.Abs(newvel.X) < VehicleLimits.MinPhysicsForce) newvel.X = VehicleMath.PosNeg(newvel.X) * VehicleLimits.MinPhysicsForce;
-                if (Math.Abs(newvel.Y) < VehicleLimits.MinPhysicsForce) newvel.Y = VehicleMath.PosNeg(newvel.Y) * VehicleLimits.MinPhysicsForce;
-                if (Math.Abs(newvel.Z) < VehicleLimits.MinPhysicsForce) newvel.Z = VehicleMath.PosNeg(newvel.Z) * VehicleLimits.MinPhysicsForce;
+                float floor = FrictionFloor(timeStep);
+                if (Math.Abs(newvel.X) < floor) newvel.X = VehicleMath.PosNeg(newvel.X) * floor;
+                if (Math.Abs(newvel.Y) < floor) newvel.Y = VehicleMath.PosNeg(newvel.Y) * floor;
+                if (Math.Abs(newvel.Z) < floor) newvel.Z = VehicleMath.PosNeg(newvel.Z) * floor;
 
+                // Leave the axes the linear motor set this step
+                newvel = ExceptHeldAxes(newvel, _linearMotorHeld);
                 worldvel = newvel * _rotation;
 
                 // Cheat: Do not fight gravity
@@ -1695,7 +1725,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 {
                     if (Vector3.Mag(_worldLinearVel) < VehicleLimits.ThresholdLinearFrictionDeltaV)
                     {
-                        worldvel = -_worldLinearVel;
+                        worldvel = ExceptHeldAxes(-_localLinearVel, _linearMotorHeld) * _rotation;
                     }
 
                     if (Vector3.Mag(worldvel) > 0)
@@ -1740,7 +1770,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <summary>
         /// Compute a growth/decay rate based on an exponential fit between two velocity points.
         /// </summary>
-        internal float GetGrowthRate(float svel, float evel, float timescale)
+        internal static float GetGrowthRate(float svel, float evel, float timescale)
         {
             float elog;
 
@@ -1759,7 +1789,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     elog = (float)Math.Log(1.0 + Math.Abs(evel));
                 else
                 {
-                    if (Math.Abs(svel) > 0.3f)
+                    if (Math.Abs(svel) > CrossoverSpeed)
                         elog = -(float)Math.Log(1.0f + Math.Abs(svel - evel));
                     else
                         return VehicleLimits.ThresholdInverseCrossover;
@@ -1768,6 +1798,109 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             return elog / timescale;
         }
+
+        /// <summary>
+        /// The motor ramp's rate for one step, applied by <see cref="MotorRampStep"/> as v * e^rate. The ramp is
+        /// dv/dt = v * ln(target / v) / timescale (GetGrowthRate gives the log). Its exact solution shrinks
+        /// ln(v / target) by e^(-dt / timescale) each step, which is v * (target / v)^(1 - e^(-dt / timescale)):
+        /// the same speed at the same time whatever the step. The old step, v + v * ln(target / v) * dt / timescale,
+        /// is its first-order form; it gives the same as the step goes to zero, but fell short on a long step.
+        /// The crossover marker is returned unchanged (a sign flip, which does not depend on the step).
+        /// </summary>
+        internal static float MotorRampRate(float svel, float evel, float timescale, float timeStep)
+        {
+            float elog = GetGrowthRate(svel, evel, 1f);
+            if (elog == VehicleLimits.ThresholdInverseCrossover)
+                return elog;
+            return elog * StepShare(timeStep, timescale);
+        }
+
+        /// <summary>
+        /// One step of the motor ramp from v toward evel, given the rate MotorRampRate returned for it. Toward a
+        /// target of the same sign the ramp is the exact solution above. Toward zero or the other way, the rate
+        /// depends on the speed itself (ln(1 + |v|)), which has no closed form, so the step is taken in sub-steps of
+        /// at most timescale / RampSubstepsPerTimescale, each with the exact form for its own starting speed.
+        /// </summary>
+        internal static float MotorRampStep(float v, float evel, float timescale, float timeStep, float rate)
+        {
+            if (rate == VehicleLimits.ThresholdInverseCrossover)
+                return v + v * rate;   // crossover: the velocity flips sign (the marker is -2.01)
+            if (v * evel > 0)
+                return v * (float)Math.Exp(rate);
+            int n = (int)Math.Min(MaxRampSubsteps, Math.Max(1.0, Math.Ceiling(timeStep * RampSubstepsPerTimescale / timescale)));
+            float h = timeStep / n;
+            for (int i = 0; i < n; i++)
+                v = RampSubstep(v, evel, timescale, h);
+            return v;
+        }
+
+        // One sub-step of a ramp toward zero or the other sign. Toward the other sign the motor brakes until the speed
+        // is down to CrossoverSpeed, then flips it (GetGrowthRate's crossover marker): the flip is made at that speed,
+        // inside the sub-step, and the rest of the sub-step ramps from there, so when it happens does not depend on
+        // where a step or sub-step happens to end.
+        private static float RampSubstep(float v, float evel, float timescale, float h)
+        {
+            float r = MotorRampRate(v, evel, timescale, h);
+            if (r == VehicleLimits.ThresholdInverseCrossover)
+                return v + v * r;
+            float next = v * (float)Math.Exp(r);
+            if (v * evel < 0 && Math.Abs(v) > CrossoverSpeed && Math.Abs(next) < CrossoverSpeed)
+            {
+                float share = (float)Math.Log(CrossoverSpeed / Math.Abs(v)) / r;   // of the sub-step, to the crossover
+                float atCrossover = Math.Sign(v) * CrossoverSpeed;
+                float flipped = atCrossover + atCrossover * VehicleLimits.ThresholdInverseCrossover;
+                float rest = h * (1f - share);
+                return MotorRampStep(flipped, evel, timescale, rest, MotorRampRate(flipped, evel, timescale, rest));
+            }
+            return next;
+        }
+
+        // Below this speed a motor driving the other way flips the velocity's sign instead of braking further.
+        private const float CrossoverSpeed = 0.3f;
+
+        /// <summary>A ramp that starts from the stiction seed: one step of the ramp from the seed speed.</summary>
+        internal static float RampFromSeed(float seed, float evel, float timescale, float timeStep)
+            => MotorRampStep(seed, evel, timescale, timeStep, MotorRampRate(seed, evel, timescale, timeStep));
+
+        // The motor ramp toward zero or across it is integrated in sub-steps no longer than a timescale over this
+        // (within 0.2% of a far finer integration), and at most this many per step.
+        private const float RampSubstepsPerTimescale = 128f;
+        private const int MaxRampSubsteps = 1024;
+
+        /// <summary>The share of the way to its end that an exponential with this timescale covers in one step.</summary>
+        internal static float StepShare(float timeStep, float timescale)
+            => 1f - (float)Math.Exp(-timeStep / timescale);
+
+        /// <summary>
+        /// The least velocity change friction makes in one step: MinPhysicsForce per MinPhysicsTimestep, the step
+        /// the limits were tuned at. A fixed MinPhysicsForce per step (as before) was a deceleration that grew with
+        /// the step rate, so a vehicle came to rest sooner the shorter its step.
+        /// </summary>
+        internal static float FrictionFloor(float timeStep)
+            => VehicleLimits.MinPhysicsForce * timeStep / VehicleLimits.MinPhysicsTimestep;
+
+        /// <summary>Which axes the motor holds this step: those whose grip (decay factor) has not run out.</summary>
+        internal static Vector3 MotorHeldAxes(Vector3 dfactor)
+            => new Vector3(dfactor.X > 0 ? 1f : 0f, dfactor.Y > 0 ? 1f : 0f, dfactor.Z > 0 ? 1f : 0f);
+
+        /// <summary>
+        /// The motor's grip: on a held axis the motor sets the velocity; elsewhere the velocity stays as it was.
+        /// The motor used to blend, motor * grip + last * (1 - grip), with the grip e^(-t / decay timescale). Each
+        /// step closed that share of the gap between the velocity and the motor's, so a shorter step closed it more
+        /// often: as the step goes to zero, any grip above the cut-off (ThresholdStictionFactor) holds the velocity
+        /// at the motor's, against friction. Setting it on every held axis gives that at every step. The decay
+        /// timescale still decides when the grip runs out and the motor lets go.
+        /// </summary>
+        internal static Vector3 MotorGrip(Vector3 motor, Vector3 last, Vector3 held)
+            => new Vector3(
+                held.X > 0 ? motor.X : last.X,
+                held.Y > 0 ? motor.Y : last.Y,
+                held.Z > 0 ? motor.Z : last.Z);
+
+        /// <summary>A local velocity change with the motor-held axes zeroed. Friction does not act where the motor
+        /// sets the velocity: as the step goes to zero the motor undoes it within the step.</summary>
+        internal static Vector3 ExceptHeldAxes(Vector3 v, Vector3 held)
+            => new Vector3(v.X * (1f - held.X), v.Y * (1f - held.Y), v.Z * (1f - held.Z));
 
         #endregion // Motor Math
 
