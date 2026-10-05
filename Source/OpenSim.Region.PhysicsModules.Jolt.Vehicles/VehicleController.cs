@@ -890,20 +890,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     float speed = Vector3.Mag(_worldLinearVel);
                     if (speed < VehicleLimits.ThresholdDeflectionSpeed) return;
 
-                    Vector3 currentDir = Vector3.Normalize(_worldLinearVel);
                     Vector3 forwardDir = new Vector3(1, 0, 0) * _rotation;
-
-                    // Blend current direction toward forward direction
                     float blend = Math.Min(timePct * efficiency, 1.0f);
-                    Vector3 newDir = Vector3.Normalize(currentDir * (1.0f - blend) + forwardDir * blend);
+                    Vector3 worldvel;
 
-                    // New velocity = same speed, redirected direction
-                    Vector3 worldvel = newDir * speed - _worldLinearVel;
-
-                    // Stop any upward deflection
                     if ((_props.Flags & ExtendedVehicleFlags.NoDeflectionUp) != 0)
                     {
-                        if (worldvel.Z > 0) worldvel.Z = 0;
+                        // No deflection upward: deflection turns only the horizontal part of the velocity toward the
+                        // nose's horizontal heading, keeping its size, and leaves the vertical part exactly as it was,
+                        // so it never adds speed. (Turning the whole velocity and then dropping the upward part of the
+                        // change, as before, added forward speed to a vehicle falling nose-level in every step.)
+                        worldvel = HorizontalDeflection(_worldLinearVel, forwardDir, blend);
+                    }
+                    else
+                    {
+                        // Blend current direction toward forward direction
+                        Vector3 currentDir = Vector3.Normalize(_worldLinearVel);
+                        Vector3 newDir = Vector3.Normalize(currentDir * (1.0f - blend) + forwardDir * blend);
+
+                        // New velocity = same speed, redirected direction
+                        worldvel = newDir * speed - _worldLinearVel;
                     }
 
                     if (Math.Abs(worldvel.X) > VehicleLimits.ThresholdLinearMotorDeltaV ||
@@ -956,6 +962,28 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 }
             }
         }
+
+        /// <summary>
+        /// The velocity change that turns the horizontal part of a velocity toward the horizontal heading of the nose
+        /// by the given blend, keeping the horizontal speed; the vertical part is untouched. Zero when the velocity
+        /// has too little horizontal speed or the nose points (nearly) straight up or down.
+        /// </summary>
+        internal static Vector3 HorizontalDeflection(Vector3 velocity, Vector3 forward, float blend)
+        {
+            Vector3 horizontal = new Vector3(velocity.X, velocity.Y, 0f);
+            Vector3 heading = new Vector3(forward.X, forward.Y, 0f);
+            float speed = horizontal.Length();
+            if (speed < VehicleLimits.ThresholdDeflectionSpeed || heading.Length() < MinDeflectionHeading)
+                return Vector3.Zero;
+            Vector3 mix = horizontal / speed * (1.0f - blend) + Vector3.Normalize(heading) * blend;
+            if (mix.Length() < 1e-6f)
+                return Vector3.Zero;   // exactly opposed halfway: no direction to turn to this step
+            return Vector3.Normalize(mix) * speed - horizontal;
+        }
+
+        // A nose whose horizontal heading is shorter than this (pointing within about 6 degrees of straight up or
+        // down) gives no horizontal direction to deflect toward.
+        private const float MinDeflectionHeading = 0.1f;
 
         #endregion
 
