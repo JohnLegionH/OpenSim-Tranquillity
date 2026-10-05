@@ -1,0 +1,60 @@
+diff --git a/src/joltc.cpp b/src/joltc.cpp
+index f0cb149..8ff0e64 100644
+--- a/src/joltc.cpp
++++ b/src/joltc.cpp
+@@ -12,6 +12,7 @@ JPH_SUPPRESS_WARNINGS
+ #include "Jolt/RegisterTypes.h"
+ #include "Jolt/Core/Factory.h"
+ #include "Jolt/Core/TempAllocator.h"
++#include "Jolt/Core/Mutex.h"
+ #include "Jolt/Core/JobSystemThreadPool.h"
+ #include "Jolt/Physics/PhysicsSettings.h"
+ #include "Jolt/Physics/PhysicsSystem.h"
+@@ -930,6 +931,9 @@ struct JPH_PhysicsSystem final
+ 	JPH::TempAllocator* tempAllocator = nullptr;
+ };
+ static JPH::UnorderedMap<JPH::PhysicsSystem*, JPH_PhysicsSystem*> s_PhysicsSystems;
++// Guards s_PhysicsSystems. Systems are created and destroyed on different threads while other
++// systems step, and the step listener reads the map from inside a step, so every access holds it.
++static JPH::Mutex s_PhysicsSystemsMutex;
+ 
+ JPH_PhysicsSystem* JPH_PhysicsSystem_Create(const JPH_PhysicsSystemSettings* settings)
+ {
+@@ -955,7 +959,10 @@ JPH_PhysicsSystem* JPH_PhysicsSystem_Create(const JPH_PhysicsSystemSettings* set
+ 	// Init temp allocator
+ 	system->tempAllocator = new TempAllocatorImplWithMallocFallback(8 * 1024 * 1024);
+ 
+-	s_PhysicsSystems[system->physicsSystem] = system;
++	{
++		std::lock_guard<JPH::Mutex> lock(s_PhysicsSystemsMutex);
++		s_PhysicsSystems[system->physicsSystem] = system;
++	}
+ 	return system;
+ }
+ 
+@@ -963,7 +970,10 @@ void JPH_PhysicsSystem_Destroy(JPH_PhysicsSystem* system)
+ {
+ 	if (system)
+ 	{
+-		s_PhysicsSystems.erase(system->physicsSystem);
++		{
++			std::lock_guard<JPH::Mutex> lock(s_PhysicsSystemsMutex);
++			s_PhysicsSystems.erase(system->physicsSystem);
++		}
+ 		delete system->tempAllocator;
+ 		delete system->physicsSystem;
+ 		delete system->broadPhaseLayerInterface;
+@@ -5393,7 +5403,12 @@ public:
+ 			context.deltaTime = inContext.mDeltaTime;
+ 			context.isFirstStep = inContext.mIsFirstStep;
+ 			context.isLastStep = inContext.mIsLastStep;
+-			context.physicsSystem = s_PhysicsSystems[inContext.mPhysicsSystem];
++			{
++				// find, not operator[]: a lookup must not insert into the shared map.
++				std::lock_guard<JPH::Mutex> lock(s_PhysicsSystemsMutex);
++				auto it = s_PhysicsSystems.find(inContext.mPhysicsSystem);
++				context.physicsSystem = it != s_PhysicsSystems.end() ? it->second : nullptr;
++			}
+ 			return s_Procs->OnStep(userData, &context);
+ 		}
+ 	}
