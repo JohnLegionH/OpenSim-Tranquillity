@@ -3,7 +3,8 @@
 The Jolt module is an optional physics engine for the region server, built on
 [Jolt Physics](https://github.com/jrouwe/JoltPhysics) through the joltc native library and the
 JoltPhysicsSharp binding. Each region gets its own Jolt physics system, and LSL vehicles run on the
-InWorldz Halcyon vehicle dynamics.
+InWorldz Halcyon vehicle dynamics, with the linear and angular motors and friction on Second Life's
+documented model (see "Vehicle motors and friction" below).
 
 This guide is for operators. It covers selecting Jolt, its settings, its console commands, and
 the platforms it runs on today.
@@ -79,10 +80,9 @@ per second). `[Jolt] PhysicsStepRate` runs physics at a set rate inside each hea
 
 What changes at 45: vehicles and avatars integrate in 1/45 s steps, so anything whose behaviour
 still depends on the step changes. The vehicle motors, a jump's rise and walking speed do not: in
-the harness (below) the test car on level ground leaves the key at 6.2 m/s either way and an avatar
-jump rises 0.82 m. The vehicle hover, the vertical attractor and the sled still depend on it: the
-sled on 15 degrees steadies at about 25 m/s instead of 16, and a balloon overshoots its hover
-height a little more.
+the harness (below) the test car on level ground leaves the key at 3.79 m/s either way and an avatar
+jump rises 0.82 m. The vehicle hover, the vertical attractor and the sled's slope assist still depend
+on it: the sled on 15 degrees steadies at about 13.6 m/s instead of 15.8.
 Position updates to viewers, timers and sensors stay at the heartbeat rate. Physics costs more:
 in the harness the test car takes about 1.5 times the step time of one step per heartbeat
 (`jolt metrics` shows each region's step time).
@@ -102,7 +102,32 @@ VehicleGroundGravityFudge`).
 
 A car that only its linear friction slows rolls down a slope at a steady speed in proportion to the
 factor. In the harness the test car (linear friction timescale 1 s) rolls 0.19 m/s down 5 degrees
-with 0.2, against 0.91 m/s with 1, and 0.59 m/s down 15 degrees, against 2.85.
+with 0.2, against 0.93 m/s with 1, and 0.56 m/s down 15 degrees, against 2.67.
+
+### Vehicle motors and friction
+
+The linear motor and linear friction act on each axis of the vehicle's frame as one equation, as the
+Second Life wiki's vehicle tutorial describes them:
+
+    dv/dt = g * (M - v) / Tm  -  v / Tf          g = e^(-s / Td)
+
+`M` is `VEHICLE_LINEAR_MOTOR_DIRECTION`, `Tm` the motor timescale, `Td` the motor decay timescale,
+`s` the time since the script last set the motor, and `Tf` the friction timescale. The angular motor
+and angular friction follow the same equation on the angular velocity. What follows from it:
+
+- Each step is the exact solution of the equation over that step, so a vehicle drives the same
+  at any heartbeat or physics step rate.
+- The velocity approaches the motor's exponentially from whatever it starts at; a few mm/s at the
+  start (a rezzed car settling) make no visible difference.
+- Friction acts on every axis all the time, the motor's axis included and the vertical axis
+  included. With the motor at full grip a vehicle settles at `M * Tf / (Tf + Tm)`: the test car
+  (motor 8 m/s, timescale 1 s, friction 1 s) at about 4 m/s, less the motor's decay between
+  key events.
+- The motor's grip fades exponentially from each set and is never cut off. A motor set to zero
+  brakes toward zero; a motor left to decay stops acting.
+- A friction timescale of 1000 s (the largest a script can set) is no friction on that axis.
+- `VEHICLE_FLAG_LIMIT_MOTOR_UP` keeps the motor from pushing up; friction's own upward share
+  (slowing a fall) stays.
 
 ## Console commands
 
@@ -165,12 +190,14 @@ dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --sce
 | `--slope DEG[,DEG..]` | Ramp angles for the scenarios that use one (default: each scenario's own list) |
 | `--duration S`, `--hold S` | Seconds simulated, and seconds the drive key is held |
 | `--keyrepeat S` | How often a held key re-sends the motor, as a script's control event does (default 0.1) |
+| `--startspeed V` | A car's forward speed (m/s) just before its key goes down, which then goes down one heartbeat later |
 | `--jolt KEY=VALUE` | A `[Jolt]` setting, as in the region's ini (repeatable) |
 | `--vparam NAME=V` or `NAME=X,Y,Z` | A vehicle parameter by its LSL name, applied after the scenario's own, e.g. `LINEAR_FRICTION_TIMESCALE=1,1,1000` (repeatable) |
 | `--out DIR` | Also write a CSV per run (`<scenario>-s<slope>-r<rate>.csv`, with `-p<rate>` added when the physics rate is on) and `summary.csv` there |
 
 Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, then released),
 `testcar` (the same with linear friction `<1,1,1000>`, motor timescale 1 and decay 0.5),
+`carturn` (the car with angular motor `<0,0,1>` held with the forward key),
 `sled`, `boat`, `airplane` and `balloon` (each type's presets in one basic motion),
 `avatar-stand`, `avatar-walk` and `avatar-jump`, and `drop` (a 1 m box from 5 m). The ground is
 level at 25 m with water at 20 m; with a slope it rises northward at that angle from y 40 to y 100.
