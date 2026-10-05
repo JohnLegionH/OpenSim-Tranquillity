@@ -2,7 +2,8 @@
 # One run per line: a name (letters, digits, - and _), a colon, then the harness arguments. Each run writes its
 # per-heartbeat traces and summary.csv under <name>/ in the uploaded artifact. Lines starting with # are skipped.
 
-# The scenarios of the tests that came out differently on Linux and Windows.
+# The scenarios of the tests that came out differently on Linux and Windows before the natives were built with
+# CROSS_PLATFORM_DETERMINISTIC.
 crash-headon-11: --scenario crash-headon --rate 11
 crash-box-11: --scenario crash-box --rate 11
 crash-all: --scenario crash-wall,crash-box,crash-headon,crash-drop --rate 11,45

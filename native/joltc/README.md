@@ -96,7 +96,7 @@ test checks all three against the files. Replacing a file means updating all thr
 
 | File | SHA-256 |
 |---|---|
-| `runtimes/win-x64/native/joltc.dll` | `1f855744227482146708ab9af683f4975cfc4c262030e22daace855f9d7479b6` |
+| `runtimes/win-x64/native/joltc.dll` | `961002617000c9f2da76b31b816b4185e04361114fb46a1ddc4c95d07fbef844` |
 | `runtimes/linux-x64/native/libjoltc.so` | `eead7c1aa7fdfac07132e26913e03b268dfd825ca72ffe6cec3a181da2ec95bb` |
 
 Stock `JoltPhysics.Native 1.0.4` win-x64 `joltc.dll` (must not be used with this module) has

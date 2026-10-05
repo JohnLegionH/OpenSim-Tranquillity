@@ -48,7 +48,7 @@ $ErrorActionPreference = "Stop"
 # The natives the module ships, by runtime identifier. Must equal JoltNative.Shipped in
 # OpenSim.Region.PhysicsModules.Jolt.Backend/JoltNative.cs (a unit test checks both against the files).
 $shipped = [ordered]@{
-    "win-x64"   = @{ File = "joltc.dll";   Sha256 = "1F855744227482146708AB9AF683F4975CFC4C262030E22DAACE855F9D7479B6" }
+    "win-x64"   = @{ File = "joltc.dll";   Sha256 = "961002617000C9F2DA76B31B816B4185E04361114FB46A1DDC4C95D07FBEF844" }
     "linux-x64" = @{ File = "libjoltc.so"; Sha256 = "EEAD7C1AA7FDFAC07132E26913E03B268DFD825CA72FFE6CEC3A181DA2EC95BB" }
 }
 # Stock JoltPhysics.Native 1.0.4 builds, named in the report when one is found.

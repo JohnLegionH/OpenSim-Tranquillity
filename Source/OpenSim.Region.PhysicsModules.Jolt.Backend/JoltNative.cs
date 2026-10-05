@@ -67,7 +67,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public static readonly IReadOnlyDictionary<string, (string File, string Sha256)> Shipped =
             new Dictionary<string, (string, string)>(StringComparer.Ordinal)
             {
-                ["win-x64"] = ("joltc.dll", "1F855744227482146708AB9AF683F4975CFC4C262030E22DAACE855F9D7479B6"),
+                ["win-x64"] = ("joltc.dll", "961002617000C9F2DA76B31B816B4185E04361114FB46A1DDC4C95D07FBEF844"),
                 ["linux-x64"] = ("libjoltc.so", "EEAD7C1AA7FDFAC07132E26913E03B268DFD825CA72FFE6CEC3A181DA2EC95BB"),
             };
 

@@ -1531,8 +1531,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return 1f;   // nothing stepped: no reports, and no collision_end for contacts that were not re-checked
 
             // Held for the whole heartbeat: a teardown that lands between two steps disposes the backend (whose steps
-            // then return nothing) but cannot null it out from under this loop.
+            // then return nothing) but cannot null it out from under this loop. A teardown that landed after Simulate
+            // checked it and before this line has already nulled it: nothing is stepped.
             IPhysicsBackend backend = _backend;
+            if (backend == null)
+                return 1f;
             if (Interlocked.Read(ref _physicsClockTicks) == 0)
                 Interlocked.Exchange(ref _physicsClockTicks, (VehicleClock?.Invoke() ?? DateTime.Now).Ticks);
             long stepTicks = (long)Math.Round(dt * (double)TimeSpan.TicksPerSecond);
