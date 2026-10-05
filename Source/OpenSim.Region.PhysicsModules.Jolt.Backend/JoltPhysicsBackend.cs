@@ -9,7 +9,7 @@
 //
 // ============================ READ THIS FIRST ============================
 // Jolt binding: JoltPhysicsSharp 2.18.6 (newest still shipping lib/net8.0/),
-// single precision (Foundation.Init(false) -> joltc.dll). The Jolt calls below
+// single precision (Foundation.Init(false); the native is loaded by JoltNative). The Jolt calls below
 // are the 2.18.6 surface, checked by reflection against the shipped assembly.
 //
 // The parts worth reading carefully are the ones that are easy to get wrong and
@@ -224,7 +224,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // calls. PER-INSTANCE: one lock per backend / region, so regions step in
         // parallel across cores.
         //
-        // !!! CRITICAL DEPENDENCY: this is only safe with the PATCHED joltc.dll !!!
+        // !!! CRITICAL DEPENDENCY: this is only safe with the PATCHED joltc !!!
         // Stock JoltPhysics.Native 1.0.4 joltc supplies ONE process-global
         // TempAllocatorImpl (a LIFO stack, NOT thread-safe) to every
         // JPH_PhysicsSystem_Update and all six JPH_CharacterVirtual_* scratch
@@ -232,11 +232,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // concurrently produce "TempAllocator: Freeing in the wrong order" ->
         // std::abort(). With the STOCK DLL a per-instance
         // lock CANNOT protect it - two regions each holding their own _simLock
-        // still hammer the one allocator. If the stock
-        // JoltPhysics.Native joltc.dll lands in bin (e.g. a NuGet restore /
-        // rebuild copying over the patched one), the shared allocator returns
-        // and the cross-region crashes come back. Check that the installed joltc.dll
-        // is the patched build before touching this lock's scope.
+        // still hammer the one allocator. JoltNative refuses to load a joltc
+        // whose hash is not a patched build the module ships, unless [Jolt]
+        // AllowUnrecordedNative is set; anyone setting it, or touching this
+        // lock's scope, must be sure the native has the per-system allocator.
         //
         // The patched joltc (amerkoleci/joltc @ 1715c5aab8 + a per-system
         // allocator patch; that commit is the exact source of the shipped
@@ -535,7 +534,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             int threads = ResolveThreadCount(settings.ThreadCount, settings.DeterministicMode);
 
-            // Native boot. false => single precision (joltc.dll).
+            // Native boot. false => single precision.
             // PROCESS-GLOBAL and REF-COUNTED: only the first region to come up actually calls
             // Foundation.Init; Dispose only calls Foundation.Shutdown when the last region goes down (see
             // s_foundationRefCount). This stops one region's shutdown from tearing down Jolt under the
@@ -544,8 +543,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             {
                 if (s_foundationRefCount == 0)
                 {
+                    // The patched joltc for this platform, from runtimes/<rid>/native/ (JoltNative). Throws a
+                    // JoltNativeException naming the platform when there is no usable native.
+                    JoltNative.EnsureLoaded(settings.AllowUnrecordedNative);
                     if (!Foundation.Init(false))
-                        throw new InvalidOperationException("Jolt Foundation.Init(false) failed (native joltc.dll not loaded).");
+                        throw new InvalidOperationException("Jolt Foundation.Init(false) failed.");
 
                     // Create the shared, process-capped job pools here (first region in),
                     // sized by THIS region's settings: [Jolt] JobPools pools splitting `threads`, each
@@ -617,7 +619,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 ObjectVsBroadPhaseLayerFilter = _objectVsBroadPhaseFilter,
             };
 
-            // JPH_PhysicsSystem_Create inserts into joltc's unlocked global map of systems; see s_systemMapGate.
+            // JPH_PhysicsSystem_Create inserts into joltc's global map of systems; see s_systemMapGate.
             lock (s_systemMapGate)
                 _system = new PhysicsSystem(systemSettings);
             _system.Gravity = settings.Gravity;
@@ -739,11 +741,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // destroy for them), both listeners, and the GCHandle, which also keeps the managed wrapper alive.
         //
         // joltc keeps every system in a global map, s_PhysicsSystems: JPH_PhysicsSystem_Create inserts and
-        // JPH_PhysicsSystem_Destroy erases, with no lock. Regions are created and torn down on different threads, so
-        // both calls are taken under s_systemMapGate. The only other access is a read in joltc's step-listener
-        // callback (ManagedPhysicsStepListener::OnStep), which runs inside Update only for a system that has a step
-        // listener; this module adds none. Adding one would put the map in that system's step and needs a joltc fix
-        // rather than this lock in every step.
+        // JPH_PhysicsSystem_Destroy erases. Regions are created and torn down on different threads. The native this
+        // module ships now locks the map itself (native/joltc/physics-systems-map-lock.patch), around the insert, the
+        // erase and the read in joltc's step-listener callback (ManagedPhysicsStepListener::OnStep). Both calls are
+        // still taken under s_systemMapGate as well, so a stock joltc, which has no such lock, stays safe here.
         // =====================================================================
         private static readonly object s_systemMapGate = new object();
 

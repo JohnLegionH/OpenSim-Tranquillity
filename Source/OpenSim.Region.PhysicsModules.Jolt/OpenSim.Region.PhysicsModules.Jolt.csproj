@@ -12,6 +12,9 @@
     <Product>OpenSim</Product>
     <Copyright>OpenSimulator developers</Copyright>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <!-- Lets a publish's runtime identifier reach this project, so a publish for one platform carries only that
+         platform's native (below). Without it the SDK builds a library without the identifier. -->
+    <IsRidAgnostic>false</IsRidAgnostic>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,24 +25,31 @@
     <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.Jolt.Vehicles/OpenSim.Region.PhysicsModules.Jolt.Vehicles.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- The native joltc, under runtimes/<rid>/native/ as ubODE and BulletS ship theirs. It is a patched
-         build that gives every PhysicsSystem its own TempAllocator (see native/joltc/README.md); the
-         backend's per-instance _simLock depends on that. Only win-x64 is built at present. -->
+  <!-- The native joltc, under runtimes/<rid>/native/ as BulletSim and ubODE ship theirs: joltc.dll for win-x64,
+       libjoltc.so for linux-x64. It is a patched build that gives every PhysicsSystem its own TempAllocator (see
+       native/joltc/README.md); the backend's per-instance _simLock depends on that. The files are built by
+       .github/workflows/joltc-native.yml. Nothing goes to the output root: JoltNative (in the backend) picks the
+       file for the running platform from these folders, checks its hash and loads it.
+       A build with no runtime identifier (a portable build) carries every platform's file. A build or publish for
+       one runtime identifier carries only that platform's folder, or none when the module has no native for it. -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == ''">
     <Content Include="runtimes\**\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
-
-    <!-- The same patched joltc.dll, also copied to the output root. That is the copy that loads: the
-         region server's deps.json lists no joltc asset, so the runtime finds joltc.dll in the application
-         directory. The region server build output holds exactly two joltc.dll files, this one at the root
-         and the one under runtimes/win-x64/native/, both the patched build. assert-patched-joltc.ps1
-         checks every joltc*.dll under an output or publish directory, root first. -->
-    <Content Include="runtimes\win-x64\native\joltc.dll" Link="joltc.dll">
+  </ItemGroup>
+  <ItemGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <Content Include="runtimes\$(RuntimeIdentifier)\native\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- JoltPhysicsSharp depends on JoltPhysics.Native, the stock joltc, whose files would otherwise land in this
+         output under runtimes/. ExcludeAssets is not transitive, so every project that reaches the binding
+         excludes the package itself: the backend, this module, the region server, the Jolt tests and the harness. -->
+    <PackageReference Include="JoltPhysics.Native" Version="1.0.4" ExcludeAssets="all" />
   </ItemGroup>
 
 </Project>

@@ -239,6 +239,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         public string Name => "Jolt";
 
+        // The native's path and hash are logged once per process, by the first region's module.
+        private static int s_nativeLogged;
+
         public System.Type ReplaceableInterface => null;
 
         public void Initialise(IConfigSource source)
@@ -261,13 +264,36 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                         throw new System.Exception("Invalid physics meshing option for Jolt");
                     }
 
-                    m_Enabled = true;
-                    m_Config = source;
                     var warnings = new List<string>();
-                    _joltConfig = JoltConfig.FromConfig(source, warnings);
-                    VehicleSettings = _joltConfig.ToVehicleSettings();
+                    JoltConfig joltConfig = JoltConfig.FromConfig(source, warnings);
                     foreach (string w in warnings)
                         m_log.LogWarning($"{LogHeader} {w}");
+
+                    // The native for this platform, checked and loaded before the module enables, so a platform
+                    // with no native, a missing file or an unrecorded build stops startup here with one clear line
+                    // instead of failing at the first physics call with a region half up.
+                    JoltNativeInfo native;
+                    try
+                    {
+                        native = JoltNative.EnsureLoaded(joltConfig.AllowUnrecordedNative);
+                    }
+                    catch (JoltNativeException e)
+                    {
+                        m_log.LogError($"{LogHeader} {e.Message}");
+                        throw;
+                    }
+                    if (System.Threading.Interlocked.Exchange(ref s_nativeLogged, 1) == 0)
+                    {
+                        if (native.Recorded)
+                            m_log.LogInformation($"{LogHeader} {native.Describe()}");
+                        else
+                            m_log.LogWarning($"{LogHeader} {native.Describe()}");
+                    }
+
+                    m_Enabled = true;
+                    m_Config = source;
+                    _joltConfig = joltConfig;
+                    VehicleSettings = joltConfig.ToVehicleSettings();
                     m_log.LogInformation($"{LogHeader} enabled (physics = {Name}).");
                 }
             }

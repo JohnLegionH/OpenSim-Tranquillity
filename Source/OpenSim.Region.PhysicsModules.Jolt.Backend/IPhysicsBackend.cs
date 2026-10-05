@@ -766,6 +766,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public const float JoltMaxLinearSpeed = 500f;
         public const float JoltMaxAngularSpeed = 0.25f * MathF.PI * 60f;
 
+        /// <summary>
+        /// Load a joltc whose SHA-256 is not one the module ships (see <see cref="JoltNative.Shipped"/>). Off by
+        /// default: an unrecorded native is refused. Process-wide, checked when the first region loads the native.
+        /// </summary>
+        public bool AllowUnrecordedNative;
+
         public static PhysicsBackendSettings Default => new PhysicsBackendSettings
         {
             Gravity = new Vector3(0f, 0f, -9.80665f),

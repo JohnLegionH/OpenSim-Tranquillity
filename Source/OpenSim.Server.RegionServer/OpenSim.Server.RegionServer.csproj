@@ -100,12 +100,12 @@
     <PackageReference Include="Autofac.Extensions.DependencyInjection" Version="11.0.2" />
 
     <!--
-      The Jolt physics module needs its own patched joltc (see native/joltc/README.md), which it copies
-      to the output root itself. JoltPhysicsSharp depends on JoltPhysics.Native, the stock joltc, and the
-      backend's ExcludeAssets on that package does not reach this project, so this reference exists only
-      to exclude the stock natives here. With it, the build output holds no joltc but the patched one.
+      The Jolt physics module ships its own patched joltc under runtimes/<rid>/native/ and loads it from
+      there (see native/joltc/README.md). JoltPhysicsSharp depends on JoltPhysics.Native, the stock joltc,
+      and the backend's ExcludeAssets on that package does not reach this project, so this reference exists
+      only to exclude the stock natives here. With it, the output holds no joltc but the patched ones.
     -->
-    <PackageReference Include="JoltPhysics.Native" Version="1.0.4" ExcludeAssets="native" />
+    <PackageReference Include="JoltPhysics.Native" Version="1.0.4" ExcludeAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

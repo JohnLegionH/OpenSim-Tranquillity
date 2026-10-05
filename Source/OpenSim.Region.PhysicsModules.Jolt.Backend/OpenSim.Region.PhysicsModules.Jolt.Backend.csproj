@@ -26,10 +26,10 @@
          to match (native/joltc/README.md). -->
     <PackageReference Include="JoltPhysicsSharp" Version="2.19.1" />
     <!-- JoltPhysicsSharp depends on JoltPhysics.Native, the stock joltc. ExcludeAssets="all" keeps that
-         package's files out of this project's output; the patched joltc comes from the Jolt module.
-         ExcludeAssets is not transitive: a project that reaches the package through this one gets the stock
-         natives unless it excludes them itself (the region server does; the test project does not, and its
-         output carries the stock win-arm64 joltc and the joltc_double builds beside the patched win-x64 one). -->
+         package's files out of this project's output; the patched joltc comes from the Jolt module and is
+         loaded by JoltNative. ExcludeAssets is not transitive: a project that reaches the package through
+         this one gets the stock natives unless it excludes them itself, so the module, the region server,
+         the Jolt tests and the harness each carry the same reference. -->
     <PackageReference Include="JoltPhysics.Native" Version="1.0.4" ExcludeAssets="all" />
   </ItemGroup>
 
