@@ -43,8 +43,9 @@ jobs:
             file: joltc.dll
             built: build/bin/Distribution/joltc.dll
             configure: -G "Visual Studio 17 2022" -A x64
-            cxxflags: /Brepro
-            ldflags: /Brepro
+            # Dash form: the bash on Windows runners rewrites a leading slash into a path.
+            cxxflags: -Brepro
+            ldflags: -Brepro
             python: python
           - rid: linux-x64
             os: ubuntu-22.04
