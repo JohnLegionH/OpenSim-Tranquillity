@@ -52,6 +52,23 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float VehicleGroundGravityFactor = 1f;   // gravity on a car or sled touching something; 1 = whole
         public VehiclePresetSet VehiclePresets = VehiclePresetSet.Documented;   // the values llSetVehicleType gives each type
 
+        // The limits a script's vehicle parameters are held to (VehicleSettings says what each one does).
+        public float VehicleMaxLinearSpeed = VehicleLimits.MaxLinearVelocity;       // m/s
+        public float VehicleReferenceSpeed = VehicleLimits.MaxLegacyLinearVelocity; // m/s
+        public float VehicleMaxAngularSpeed = VehicleLimits.MaxAngularVelocity;     // rad/s
+        public float VehicleMinTimescale = VehicleLimits.MinPhysicsTimestep;        // s
+        public float VehicleMaxTimescale = VehicleLimits.MaxTimescale;              // s
+        public float VehicleMaxDecayTimescale = VehicleLimits.MaxDecayTimescale;    // s
+        public float VehicleMaxHoverTimescale = VehicleLimits.MaxHoverTimescale;    // s
+        public float VehicleMaxAttractTimescale = VehicleLimits.MaxAttractTimescale;// s
+        public float VehicleMaxMotorOffset = VehicleLimits.MaxLinearOffset;         // m
+        public float VehicleMinHoverHeight = VehicleLimits.MinRegionHeight;         // m
+        public float VehicleMaxHoverHeight = VehicleLimits.MaxRegionHeight;         // m
+
+        // The engine's own speed caps on every moving body (Jolt's BodyCreationSettings defaults).
+        public float BodyMaxLinearSpeed = PhysicsBackendSettings.JoltMaxLinearSpeed;    // m/s
+        public float BodyMaxAngularSpeed = PhysicsBackendSettings.JoltMaxAngularSpeed;  // rad/s
+
         // The highest PhysicsStepRate accepted. Each step costs a backend update, so a rate far above the heartbeat
         // mostly hits the per-heartbeat step cap (see SubstepAccumulator.MaxStepsPerFrame).
         internal const float MaxPhysicsStepRate = 1000f;
@@ -84,6 +101,25 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.PhysicsStepCollisionSteps = I(cfg, "PhysicsStepCollisionSteps", c.PhysicsStepCollisionSteps, 1, 64, warnings);
             c.VehicleGroundGravityFactor = F(cfg, "VehicleGroundGravityFactor", c.VehicleGroundGravityFactor, 0f, 1f, warnings);
             c.VehiclePresets = E(cfg, "VehiclePresets", c.VehiclePresets, warnings);
+            c.VehicleMaxLinearSpeed = F(cfg, "VehicleMaxLinearSpeed", c.VehicleMaxLinearSpeed, 1f, 10000f, warnings);
+            c.VehicleReferenceSpeed = F(cfg, "VehicleReferenceSpeed", c.VehicleReferenceSpeed, 0.1f, 10000f, warnings);
+            c.VehicleMaxAngularSpeed = F(cfg, "VehicleMaxAngularSpeed", c.VehicleMaxAngularSpeed, 0.1f, 1000f, warnings);
+            c.VehicleMinTimescale = F(cfg, "VehicleMinTimescale", c.VehicleMinTimescale, (float)VehicleMotorSolver.MinTimescale, 1f, warnings);
+            c.VehicleMaxTimescale = F(cfg, "VehicleMaxTimescale", c.VehicleMaxTimescale, 1f, VehicleLimits.MaxTimescale, warnings);
+            c.VehicleMaxDecayTimescale = F(cfg, "VehicleMaxDecayTimescale", c.VehicleMaxDecayTimescale, 1f, VehicleLimits.MaxTimescale, warnings);
+            c.VehicleMaxHoverTimescale = F(cfg, "VehicleMaxHoverTimescale", c.VehicleMaxHoverTimescale, 1f, VehicleLimits.MaxTimescale, warnings);
+            c.VehicleMaxAttractTimescale = F(cfg, "VehicleMaxAttractTimescale", c.VehicleMaxAttractTimescale, 1f, VehicleLimits.MaxTimescale, warnings);
+            c.VehicleMaxMotorOffset = F(cfg, "VehicleMaxMotorOffset", c.VehicleMaxMotorOffset, 0f, 10000f, warnings);
+            c.VehicleMinHoverHeight = F(cfg, "VehicleMinHoverHeight", c.VehicleMinHoverHeight, -100000f, 100000f, warnings);
+            c.VehicleMaxHoverHeight = F(cfg, "VehicleMaxHoverHeight", c.VehicleMaxHoverHeight, -100000f, 100000f, warnings);
+            if (c.VehicleMinHoverHeight > c.VehicleMaxHoverHeight)
+            {
+                warnings?.Add($"[{Section}] VehicleMinHoverHeight ({c.VehicleMinHoverHeight}) is above VehicleMaxHoverHeight ({c.VehicleMaxHoverHeight}); using the defaults for both.");
+                c.VehicleMinHoverHeight = VehicleLimits.MinRegionHeight;
+                c.VehicleMaxHoverHeight = VehicleLimits.MaxRegionHeight;
+            }
+            c.BodyMaxLinearSpeed = F(cfg, "BodyMaxLinearSpeed", c.BodyMaxLinearSpeed, 1f, 100000f, warnings);
+            c.BodyMaxAngularSpeed = F(cfg, "BodyMaxAngularSpeed", c.BodyMaxAngularSpeed, 0.1f, 10000f, warnings);
             return c;
         }
 
@@ -91,6 +127,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal VehicleSettings ToVehicleSettings() => new VehicleSettings
         {
             Presets = VehiclePresets,
+            MaxLinearSpeed = VehicleMaxLinearSpeed,
+            ReferenceSpeed = VehicleReferenceSpeed,
+            MaxAngularSpeed = VehicleMaxAngularSpeed,
+            MinTimescale = VehicleMinTimescale,
+            MaxTimescale = VehicleMaxTimescale,
+            MaxDecayTimescale = VehicleMaxDecayTimescale,
+            MaxHoverTimescale = VehicleMaxHoverTimescale,
+            MaxAttractTimescale = VehicleMaxAttractTimescale,
+            MaxMotorOffset = VehicleMaxMotorOffset,
+            MinHoverHeight = VehicleMinHoverHeight,
+            MaxHoverHeight = VehicleMaxHoverHeight,
         };
 
         /// <summary>
@@ -136,6 +183,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             s.CollisionSteps = substepping ? PhysicsStepCollisionSteps : CollisionSteps;
             s.DeterministicMode = DeterministicMode;
             s.JobPools = JobPools;
+            s.MaxBodyLinearSpeed = BodyMaxLinearSpeed;
+            s.MaxBodyAngularSpeed = BodyMaxAngularSpeed;
             return s;
         }
 

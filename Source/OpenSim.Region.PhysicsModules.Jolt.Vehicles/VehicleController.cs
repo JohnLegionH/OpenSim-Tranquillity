@@ -81,6 +81,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         // The region's vehicle settings (preset set and limits). Set by the host before the first vehicle type is set.
         public VehicleSettings Settings { get; set; } = VehicleSettings.Default;
+        private VehicleSettings S => Settings;
 
         // =====================================================================
         // Ephemeral per-frame computed values (not persisted)
@@ -198,15 +199,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     _props.ParamsFloat[VehFloatParam.AngularDeflectionEfficiency] = ClampF(pValue, 0f, 1f);
                     break;
                 case Vehicle.ANGULAR_DEFLECTION_TIMESCALE:
-                    _props.ParamsFloat[VehFloatParam.AngularDeflectionTimescale] = ClampF(pValue, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxTimescale);
+                    _props.ParamsFloat[VehFloatParam.AngularDeflectionTimescale] = ClampF(pValue, S.MinTimescale, S.MaxTimescale);
                     break;
                 case Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE:
                     // Scalar set → apply to all 3 axes
-                    pValue = ClampF(pValue, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxTimescale);
+                    pValue = ClampF(pValue, S.MinTimescale, S.MaxDecayTimescale);
                     _props.ParamsVec[VehVectorParam.AngularMotorDecayTimescale] = new Vector3(pValue, pValue, pValue);
                     break;
                 case Vehicle.ANGULAR_MOTOR_TIMESCALE:
-                    pValue = ClampF(pValue, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxTimescale);
+                    pValue = ClampF(pValue, S.MinTimescale, S.MaxTimescale);
                     _props.ParamsVec[VehVectorParam.AngularMotorTimescale] = new Vector3(pValue, pValue, pValue);
                     break;
                 case Vehicle.BANKING_EFFICIENCY:
@@ -216,7 +217,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     _props.ParamsFloat[VehFloatParam.BankingMix] = ClampF(pValue, 0f, 1f);
                     break;
                 case Vehicle.BANKING_TIMESCALE:
-                    _props.ParamsFloat[VehFloatParam.BankingTimescale] = ClampF(pValue, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxTimescale);
+                    _props.ParamsFloat[VehFloatParam.BankingTimescale] = ClampF(pValue, S.MinTimescale, S.MaxTimescale);
                     break;
                 case Vehicle.BUOYANCY:
                     _props.ParamsFloat[VehFloatParam.Buoyancy] = ClampF(pValue, -1f, 1f);
@@ -225,53 +226,53 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     _props.ParamsFloat[VehFloatParam.HoverEfficiency] = ClampF(pValue, 0f, 1f);
                     break;
                 case Vehicle.HOVER_HEIGHT:
-                    _props.ParamsFloat[VehFloatParam.HoverHeight] = ClampF(pValue, VehicleLimits.MinRegionHeight, VehicleLimits.MaxRegionHeight);
+                    _props.ParamsFloat[VehFloatParam.HoverHeight] = ClampF(pValue, S.MinHoverHeight, S.MaxHoverHeight);
                     break;
                 case Vehicle.HOVER_TIMESCALE:
-                    _props.ParamsFloat[VehFloatParam.HoverTimescale] = ClampF(pValue, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxHoverTimescale);
+                    _props.ParamsFloat[VehFloatParam.HoverTimescale] = ClampF(pValue, S.MinTimescale, S.MaxHoverTimescale);
                     break;
                 case Vehicle.LINEAR_DEFLECTION_EFFICIENCY:
                     _props.ParamsFloat[VehFloatParam.LinearDeflectionEfficiency] = ClampF(pValue, 0f, 1f);
                     break;
                 case Vehicle.LINEAR_DEFLECTION_TIMESCALE:
-                    _props.ParamsFloat[VehFloatParam.LinearDeflectionTimescale] = ClampF(pValue, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxTimescale);
+                    _props.ParamsFloat[VehFloatParam.LinearDeflectionTimescale] = ClampF(pValue, S.MinTimescale, S.MaxTimescale);
                     break;
                 case Vehicle.LINEAR_MOTOR_DECAY_TIMESCALE:
-                    pValue = ClampF(pValue, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxTimescale);
+                    pValue = ClampF(pValue, S.MinTimescale, S.MaxDecayTimescale);
                     _props.ParamsVec[VehVectorParam.LinearMotorDecayTimescale] = new Vector3(pValue, pValue, pValue);
                     break;
                 case Vehicle.LINEAR_MOTOR_TIMESCALE:
-                    pValue = ClampF(pValue, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxTimescale);
+                    pValue = ClampF(pValue, S.MinTimescale, S.MaxTimescale);
                     _props.ParamsVec[VehVectorParam.LinearMotorTimescale] = new Vector3(pValue, pValue, pValue);
                     break;
                 case Vehicle.VERTICAL_ATTRACTION_EFFICIENCY:
                     _props.ParamsFloat[VehFloatParam.VerticalAttractionEfficiency] = ClampF(pValue, 0f, 1f);
                     break;
                 case Vehicle.VERTICAL_ATTRACTION_TIMESCALE:
-                    _props.ParamsFloat[VehFloatParam.VerticalAttractionTimescale] = ClampF(pValue, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxAttractTimescale);
+                    _props.ParamsFloat[VehFloatParam.VerticalAttractionTimescale] = ClampF(pValue, S.MinTimescale, S.MaxAttractTimescale);
                     break;
 
                 // These are vector properties but LSL allows setting them as a single float
                 case Vehicle.ANGULAR_FRICTION_TIMESCALE:
-                    pValue = ClampF(pValue, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxTimescale);
+                    pValue = ClampF(pValue, S.MinTimescale, S.MaxTimescale);
                     _props.ParamsVec[VehVectorParam.AngularFrictionTimescale] = new Vector3(pValue, pValue, pValue);
                     break;
                 case Vehicle.ANGULAR_MOTOR_DIRECTION:
-                    pValue = ClampF(pValue, -VehicleLimits.MaxAngularVelocity, VehicleLimits.MaxAngularVelocity);
+                    pValue = ClampF(pValue, -S.MaxAngularSpeed, S.MaxAngularSpeed);
                     _props.ParamsVec[VehVectorParam.AngularMotorDirection] = new Vector3(pValue, pValue, pValue);
                     MoveAngular(_props.ParamsVec[VehVectorParam.AngularMotorDirection]);
                     break;
                 case Vehicle.LINEAR_FRICTION_TIMESCALE:
-                    pValue = ClampF(pValue, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxTimescale);
+                    pValue = ClampF(pValue, S.MinTimescale, S.MaxTimescale);
                     _props.ParamsVec[VehVectorParam.LinearFrictionTimescale] = new Vector3(pValue, pValue, pValue);
                     break;
                 case Vehicle.LINEAR_MOTOR_DIRECTION:
-                    pValue = ClampF(pValue, -VehicleLimits.MaxLinearVelocity, VehicleLimits.MaxLinearVelocity);
+                    pValue = ClampF(pValue, -S.MaxLinearSpeed, S.MaxLinearSpeed);
                     _props.ParamsVec[VehVectorParam.LinearMotorDirection] = new Vector3(pValue, pValue, pValue);
                     MoveLinear(_props.ParamsVec[VehVectorParam.LinearMotorDirection]);
                     break;
                 case Vehicle.LINEAR_MOTOR_OFFSET:
-                    pValue = ClampF(pValue, -VehicleLimits.MaxLinearOffset, VehicleLimits.MaxLinearOffset);
+                    pValue = ClampF(pValue, -S.MaxMotorOffset, S.MaxMotorOffset);
                     _props.ParamsVec[VehVectorParam.LinearMotorOffset] = new Vector3(pValue, pValue, pValue);
                     break;
             }
@@ -287,35 +288,35 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             switch (pParam)
             {
                 case Vehicle.ANGULAR_FRICTION_TIMESCALE:
-                    pValue.X = ClampF(pValue.X, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxTimescale);
-                    pValue.Y = ClampF(pValue.Y, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxTimescale);
-                    pValue.Z = ClampF(pValue.Z, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxTimescale);
+                    pValue.X = ClampF(pValue.X, S.MinTimescale, S.MaxTimescale);
+                    pValue.Y = ClampF(pValue.Y, S.MinTimescale, S.MaxTimescale);
+                    pValue.Z = ClampF(pValue.Z, S.MinTimescale, S.MaxTimescale);
                     _props.ParamsVec[VehVectorParam.AngularFrictionTimescale] = pValue;
                     break;
                 case Vehicle.ANGULAR_MOTOR_DIRECTION:
-                    pValue.X = ClampF(pValue.X, -VehicleLimits.MaxAngularVelocity, VehicleLimits.MaxAngularVelocity);
-                    pValue.Y = ClampF(pValue.Y, -VehicleLimits.MaxAngularVelocity, VehicleLimits.MaxAngularVelocity);
-                    pValue.Z = ClampF(pValue.Z, -VehicleLimits.MaxAngularVelocity, VehicleLimits.MaxAngularVelocity);
+                    pValue.X = ClampF(pValue.X, -S.MaxAngularSpeed, S.MaxAngularSpeed);
+                    pValue.Y = ClampF(pValue.Y, -S.MaxAngularSpeed, S.MaxAngularSpeed);
+                    pValue.Z = ClampF(pValue.Z, -S.MaxAngularSpeed, S.MaxAngularSpeed);
                     _props.ParamsVec[VehVectorParam.AngularMotorDirection] = pValue;
                     MoveAngular(pValue);
                     break;
                 case Vehicle.LINEAR_FRICTION_TIMESCALE:
-                    pValue.X = ClampF(pValue.X, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxTimescale);
-                    pValue.Y = ClampF(pValue.Y, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxTimescale);
-                    pValue.Z = ClampF(pValue.Z, VehicleLimits.MinPhysicsTimestep, VehicleLimits.MaxTimescale);
+                    pValue.X = ClampF(pValue.X, S.MinTimescale, S.MaxTimescale);
+                    pValue.Y = ClampF(pValue.Y, S.MinTimescale, S.MaxTimescale);
+                    pValue.Z = ClampF(pValue.Z, S.MinTimescale, S.MaxTimescale);
                     _props.ParamsVec[VehVectorParam.LinearFrictionTimescale] = pValue;
                     break;
                 case Vehicle.LINEAR_MOTOR_DIRECTION:
-                    pValue.X = ClampF(pValue.X, -VehicleLimits.MaxLinearVelocity, VehicleLimits.MaxLinearVelocity);
-                    pValue.Y = ClampF(pValue.Y, -VehicleLimits.MaxLinearVelocity, VehicleLimits.MaxLinearVelocity);
-                    pValue.Z = ClampF(pValue.Z, -VehicleLimits.MaxLinearVelocity, VehicleLimits.MaxLinearVelocity);
+                    pValue.X = ClampF(pValue.X, -S.MaxLinearSpeed, S.MaxLinearSpeed);
+                    pValue.Y = ClampF(pValue.Y, -S.MaxLinearSpeed, S.MaxLinearSpeed);
+                    pValue.Z = ClampF(pValue.Z, -S.MaxLinearSpeed, S.MaxLinearSpeed);
                     _props.ParamsVec[VehVectorParam.LinearMotorDirection] = pValue;
                     MoveLinear(pValue);
                     break;
                 case Vehicle.LINEAR_MOTOR_OFFSET:
-                    pValue.X = ClampF(pValue.X, -VehicleLimits.MaxLinearOffset, VehicleLimits.MaxLinearOffset);
-                    pValue.Y = ClampF(pValue.Y, -VehicleLimits.MaxLinearOffset, VehicleLimits.MaxLinearOffset);
-                    pValue.Z = ClampF(pValue.Z, -VehicleLimits.MaxLinearOffset, VehicleLimits.MaxLinearOffset);
+                    pValue.X = ClampF(pValue.X, -S.MaxMotorOffset, S.MaxMotorOffset);
+                    pValue.Y = ClampF(pValue.Y, -S.MaxMotorOffset, S.MaxMotorOffset);
+                    pValue.Z = ClampF(pValue.Z, -S.MaxMotorOffset, S.MaxMotorOffset);
                     _props.ParamsVec[VehVectorParam.LinearMotorOffset] = pValue;
                     break;
                 case Vehicle.BLOCK_EXIT:
@@ -485,7 +486,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // it rests on something that holds its tilt (a car parked on a slope).
         private bool AttractorIdle()
         {
-            if (_props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f) >= VehicleLimits.MaxAttractTimescale || _body.HasCollision)
+            if (_props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f) >= S.MaxAttractTimescale || _body.HasCollision)
                 return true;
             Quaternion rotation = _body.Orientation * _props.GetRot(VehRotationParam.ReferenceFrame);
             return (Vector3.UnitZ * rotation).Z >= Math.Cos(AttractorIdleAngle);
@@ -797,7 +798,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         ///
         ///   a' = -eff s a / T,   so over a step h the nose turns a (1 - e^(-eff s h / T)) toward the velocity,
         ///
-        /// with s = speed / 30 m/s (MaxLegacyLinearVelocity, at most 1), the speed scaling the existing code had. The
+        /// with s = speed / the reference speed ([Jolt] VehicleReferenceSpeed, 30 m/s by default; at most 1), the speed
+        /// scaling the existing code had. The
         /// documentation gives no speed term; without it a car slowing to a stop turns its nose toward the jitter of
         /// its contact velocity and drifts, and a falling car noses down hard.
         ///
@@ -822,7 +824,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 if (sin > MinTurnSine)
                 {
                     double angle = Math.Atan2(sin, Vector3.Dot(forward, heading));
-                    double speedShare = Math.Min(speed, VehicleLimits.MaxLegacyLinearVelocity) / VehicleLimits.MaxLegacyLinearVelocity;
+                    double speedShare = Math.Min(speed, S.ReferenceSpeed) / S.ReferenceSpeed;
                     double turn = angle * (1.0 - Math.Exp(-efficiency * speedShare * h / timescale));
                     rate = axis / sin * (float)(turn / h);
                 }
@@ -1053,7 +1055,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             upOnly = (_props.Flags & ExtendedVehicleFlags.HoverUpOnly) != 0;
 
             // If timescale is effectively disabled, skip
-            if (hoverTimescale >= VehicleLimits.MaxHoverTimescale)
+            if (hoverTimescale >= S.MaxHoverTimescale)
                 return false;
 
             Vector3 pos = _body.Position;
@@ -1110,7 +1112,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             Vector3 x = Vector3.UnitX * _rotation, y = Vector3.UnitY * _rotation, z = Vector3.UnitZ * _rotation;
             angle = (float)Math.Acos(Utils.Clamp(z.Z, -1f, 1f));
             inverted = false;
-            if (timescale >= VehicleLimits.MaxAttractTimescale)
+            if (timescale >= S.MaxAttractTimescale)
             {
                 LetGoOfAttractor(x, y);
                 return;
@@ -1160,8 +1162,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// efficiency leans into the turn. The yaw rate it asks for is in proportion to the efficiency and the roll,
         /// and with BANKING_MIX toward 1 also to the speed along the roll axis:
         ///
-        ///   target = -roll * attitude * eff * pi * ((1 - mix) + mix * speed / 30 m/s)     (roll the y axis' rise,
-        ///            scaled to the banking range; attitude -1 when the vehicle is upside down)
+        ///   target = -roll * attitude * eff * pi * ((1 - mix) + mix * speed / Vref)       (roll the y axis' rise,
+        ///            scaled to the banking range; attitude -1 when the vehicle is upside down; Vref the
+        ///            reference speed, 30 m/s by default)
         ///
         /// and the yaw rate about world z approaches it with BANKING_TIMESCALE, the documented "time it takes for the
         /// banking behavior to defeat a preexisting angular velocity about the world z-axis":
@@ -1176,13 +1179,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         {
             float timescale = _props.GetFloat(VehFloatParam.BankingTimescale, 1000f);
             float efficiency = _props.GetFloat(VehFloatParam.BankingEfficiency, 0f);
-            if (!VehicleLimits.DoBanking || efficiency == 0f || timescale >= VehicleLimits.MaxAttractTimescale
-                || _props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f) >= VehicleLimits.MaxAttractTimescale)
+            if (!VehicleLimits.DoBanking || efficiency == 0f || timescale >= S.MaxAttractTimescale
+                || _props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f) >= S.MaxAttractTimescale)
                 return 0f;
 
             float mix = _props.GetFloat(VehFloatParam.BankingMix, 0.5f);
             float forwardSpeed = Math.Abs(_rawLocalLinearVel.X);
-            float speedShare = Utils.Clamp(forwardSpeed, 0, VehicleLimits.MaxLegacyLinearVelocity) / VehicleLimits.MaxLegacyLinearVelocity;
+            float speedShare = Utils.Clamp(forwardSpeed, 0, S.ReferenceSpeed) / S.ReferenceSpeed;
 
             // The roll: how far the y axis rises, scaled to the banking range.
             float rise = (Vector3.UnitY * _rotation).Z;
@@ -1196,7 +1199,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // With the angular motor engaged, banking turns no faster than the legacy angular speed.
             if (_props.Dynamics.AngularDecayIndex < VehicleLimits.ThresholdAngularMotorEngaged)
                 target = Utils.Clamp(target, -VehicleLimits.MaxLegacyAngularVelocity, VehicleLimits.MaxLegacyAngularVelocity);
-            target = Utils.Clamp(target, -VehicleLimits.MaxAngularVelocity, VehicleLimits.MaxAngularVelocity);
+            target = Utils.Clamp(target, -S.MaxAngularSpeed, S.MaxAngularSpeed);
 
             float w0 = _rawWorldAngularVel.Z;
             float w1 = target + (w0 - target) * (float)Math.Exp(-h / timescale);
@@ -1242,9 +1245,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 (float)VehicleMotorSolver.Step(v0.X, motor.X, motorTs.X, decayTs.X, age, frictionTs.X, h, gravity.X),
                 (float)VehicleMotorSolver.Step(v0.Y, motor.Y, motorTs.Y, decayTs.Y, age, frictionTs.Y, h, gravity.Y),
                 (float)VehicleMotorSolver.Step(v0.Z, motor.Z, motorTs.Z, decayTs.Z, age, frictionTs.Z, h, gravity.Z));
-            v1.X = Utils.Clamp(v1.X, -VehicleLimits.MaxLinearVelocity, VehicleLimits.MaxLinearVelocity);
-            v1.Y = Utils.Clamp(v1.Y, -VehicleLimits.MaxLinearVelocity, VehicleLimits.MaxLinearVelocity);
-            v1.Z = Utils.Clamp(v1.Z, -VehicleLimits.MaxLinearVelocity, VehicleLimits.MaxLinearVelocity);
+            v1.X = Utils.Clamp(v1.X, -S.MaxLinearSpeed, S.MaxLinearSpeed);
+            v1.Y = Utils.Clamp(v1.Y, -S.MaxLinearSpeed, S.MaxLinearSpeed);
+            v1.Z = Utils.Clamp(v1.Z, -S.MaxLinearSpeed, S.MaxLinearSpeed);
 
             // The step's change in world coordinates: friction's share (with gravity's, less the g h the engine adds),
             // and the motor's share on top of it.
@@ -1299,9 +1302,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 (float)VehicleMotorSolver.Step(v0.X, motor.X, motorTs.X, decayTs.X, age, frictionTs.X, h),
                 (float)VehicleMotorSolver.Step(v0.Y, motor.Y, motorTs.Y, decayTs.Y, age, frictionTs.Y, h),
                 (float)VehicleMotorSolver.Step(v0.Z, motor.Z, motorTs.Z, decayTs.Z, age, frictionTs.Z, h));
-            v1.X = Utils.Clamp(v1.X, -VehicleLimits.MaxAngularVelocity, VehicleLimits.MaxAngularVelocity);
-            v1.Y = Utils.Clamp(v1.Y, -VehicleLimits.MaxAngularVelocity, VehicleLimits.MaxAngularVelocity);
-            v1.Z = Utils.Clamp(v1.Z, -VehicleLimits.MaxAngularVelocity, VehicleLimits.MaxAngularVelocity);
+            v1.X = Utils.Clamp(v1.X, -S.MaxAngularSpeed, S.MaxAngularSpeed);
+            v1.Y = Utils.Clamp(v1.Y, -S.MaxAngularSpeed, S.MaxAngularSpeed);
+            v1.Z = Utils.Clamp(v1.Z, -S.MaxAngularSpeed, S.MaxAngularSpeed);
 
             Vector3 change;
             if (torqueWorldZ)

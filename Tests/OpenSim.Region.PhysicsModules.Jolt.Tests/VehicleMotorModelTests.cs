@@ -149,9 +149,13 @@ public class VehicleMotorModelTests
         public readonly VehicleController Car;
         private double _now;
 
+        // Some cases use a 1000 s motor decay to stand for a motor that does not fade: longer than the documented
+        // 120 s cap a script can set by default, so the rig's region allows it ([Jolt] VehicleMaxDecayTimescale).
+        private static readonly VehicleSettings LongDecay = new VehicleSettings { MaxDecayTimescale = 1000f };
+
         public Rig(float tm, float td, float tf, bool angular)
         {
-            Car = new VehicleController(Body);
+            Car = new VehicleController(Body) { Settings = LongDecay };
             DateTime t0 = new(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
             Car.Clock = () => t0.AddTicks((long)(_now * TimeSpan.TicksPerSecond));
             Car.ProcessTypeChange(Vehicle.TYPE_CAR);

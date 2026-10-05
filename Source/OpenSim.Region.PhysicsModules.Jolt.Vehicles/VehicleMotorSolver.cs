@@ -36,6 +36,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // off is a large timescale, and this is the largest a script can set.
         public const double FrictionOffTimescale = VehicleLimits.MaxTimescale;
 
+        // The shortest timescale the solver takes: the lowest a region may set the shortest script timescale to
+        // ([Jolt] VehicleMinTimescale). A timescale below it (only an unset preset has one) is taken as this.
+        public const double MinTimescale = 0.001;
+
         // The motor-and-friction integral is taken on panels no longer than this share of the shortest of the motor,
         // decay and friction timescales, each with a four-point Gauss-Legendre rule: the integrand is a smooth
         // exponential, so this is exact to well under a part in a million.
@@ -62,10 +66,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public static double Step(double v0, double motor, double motorTimescale, double decayTimescale, double age,
                                   double frictionTimescale, double h, double accel = 0.0)
         {
-            // A timescale shorter than the shortest a script can set (only an unset preset has one) is taken as that.
-            motorTimescale = Math.Max(motorTimescale, VehicleLimits.MinPhysicsTimestep);
-            decayTimescale = Math.Max(decayTimescale, VehicleLimits.MinPhysicsTimestep);
-            frictionTimescale = Math.Max(frictionTimescale, VehicleLimits.MinPhysicsTimestep);
+            motorTimescale = Math.Max(motorTimescale, MinTimescale);
+            decayTimescale = Math.Max(decayTimescale, MinTimescale);
+            frictionTimescale = Math.Max(frictionTimescale, MinTimescale);
             double kf = FrictionRate(frictionTimescale);
             double grip0 = Grip(age, decayTimescale);
             if (h <= 0)
@@ -109,7 +112,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         public static double FrictionStep(double v0, double frictionTimescale, double h, double accel = 0.0)
         {
-            double kf = FrictionRate(Math.Max(frictionTimescale, VehicleLimits.MinPhysicsTimestep));
+            double kf = FrictionRate(Math.Max(frictionTimescale, MinTimescale));
             if (kf == 0)
                 return v0 + accel * h;
             double decay = Math.Exp(-kf * h);

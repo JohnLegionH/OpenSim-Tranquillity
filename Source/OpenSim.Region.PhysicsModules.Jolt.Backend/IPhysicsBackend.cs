@@ -755,6 +755,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// </summary>
         public int JobPools;
 
+        /// <summary>
+        /// The engine's speed caps on every moving body (m/s and rad/s): Jolt clamps a body's velocity to them in every
+        /// step. 0 (an unset struct) leaves Jolt's own defaults, which are <see cref="JoltMaxLinearSpeed"/> and
+        /// <see cref="JoltMaxAngularSpeed"/> (BodyCreationSettings mMaxLinearVelocity, mMaxAngularVelocity).
+        /// </summary>
+        public float MaxBodyLinearSpeed;
+        public float MaxBodyAngularSpeed;
+
+        public const float JoltMaxLinearSpeed = 500f;
+        public const float JoltMaxAngularSpeed = 0.25f * MathF.PI * 60f;
+
         public static PhysicsBackendSettings Default => new PhysicsBackendSettings
         {
             Gravity = new Vector3(0f, 0f, -9.80665f),
@@ -767,6 +778,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             CollisionSteps = 1,
             DeterministicMode = false,
             JobPools = 1,
+            MaxBodyLinearSpeed = JoltMaxLinearSpeed,
+            MaxBodyAngularSpeed = JoltMaxAngularSpeed,
         };
     }
 }

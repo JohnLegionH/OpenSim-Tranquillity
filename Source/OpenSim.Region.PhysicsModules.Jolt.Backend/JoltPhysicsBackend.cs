@@ -1338,6 +1338,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     bcs.AngularDamping = MathF.Max(0f, desc.AngularDamping);
                     bcs.GravityFactor = desc.GravityFactor;
                     bcs.MotionQuality = desc.UseCcd ? MotionQuality.LinearCast : MotionQuality.Discrete;
+                    if (_settings.MaxBodyLinearSpeed > 0f)
+                        bcs.MaxLinearVelocity = _settings.MaxBodyLinearSpeed;
+                    if (_settings.MaxBodyAngularSpeed > 0f)
+                        bcs.MaxAngularVelocity = _settings.MaxBodyAngularSpeed;
 
                     // Let this body flip Dynamic<->Kinematic<->Static later (SetBodyMotionType). A body
                     // created Static deliberately does NOT get this: allocating MotionProperties for

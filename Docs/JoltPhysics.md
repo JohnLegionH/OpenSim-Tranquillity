@@ -125,6 +125,26 @@ in what they leave at the preset. The module's own extension parameters (wind, m
 motor disabling) are not Second Life parameters and are the same in both sets. The legacy car,
 boat and airplane also carry the module's torque-about-world-z flag, which no documented type sets.
 
+### Vehicle limits
+
+The limits a script's vehicle parameters are held to are `[Jolt]` keys, read once when the region
+starts, so a vehicle maker can tune them. Each default is the value the module always had, except
+the motor decay cap, which is Second Life's documented 120 s.
+
+| Key | Default | What it limits |
+|---|---|---|
+| `VehicleMaxLinearSpeed` | 200 | Linear motor speed a script can set (m/s, each axis) and the motor's result. Second Life documents about 30. |
+| `VehicleReferenceSpeed` | 30 | The forward speed (m/s) at which dynamic banking and angular deflection reach full strength. |
+| `VehicleMaxAngularSpeed` | 12.566371 (4 pi) | Angular motor speed a script can set (rad/s, each axis) and the angular result. |
+| `VehicleMinTimescale` | 0.0156 | Shortest timescale a script can set (s), 0.001 to 1. |
+| `VehicleMaxTimescale` | 1000 | Longest friction, motor or deflection timescale (s), at most 1000. 1000 s or more is "off" for friction and deflection. |
+| `VehicleMaxDecayTimescale` | 120 | Longest motor decay timescale (s). It was 1000 before this key. |
+| `VehicleMaxHoverTimescale` | 300 | Hover is off at or above this hover timescale (s). |
+| `VehicleMaxAttractTimescale` | 500 | The vertical attractor and banking are off at or above this timescale (s). |
+| `VehicleMaxMotorOffset` | 100 | Linear motor offset (m, each axis). |
+| `VehicleMinHoverHeight`, `VehicleMaxHoverHeight` | -128, 10000 | Hover height range (m). Second Life documents a maximum of 100. |
+| `BodyMaxLinearSpeed`, `BodyMaxAngularSpeed` | 500, 47.12389 | The physics engine's own cap on every moving body, vehicle or not (Jolt's defaults). Keep it above `VehicleMaxLinearSpeed`. |
+
 ### Vehicle motors and friction
 
 The linear motor and linear friction act on each axis of the vehicle's frame as one equation, as the
