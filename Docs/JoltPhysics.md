@@ -46,8 +46,9 @@ and what it does; copy a key into `OpenSim.ini` to change it. An invalid value l
 the default is used. The keys cover gravity, solver sub-steps and iterations, the worker threads
 and job pools shared by all regions in the process, body / pair / contact capacities (optionally
 scaled with region area for var regions), the per-frame update buffers, the avatar jump speed,
-how often capacity warnings are logged, the physics step rate (below), the share of gravity on a
-ground vehicle (below), and `TestCommands` (below).
+how often capacity warnings are logged, the physics step rate (below), the vehicle settings (the
+share of gravity on a ground vehicle, the type presets, the limits and the sled's assist; see
+"Vehicles"), the engine's body speed caps, and `TestCommands` (below).
 
 ### Physics step rate
 
@@ -86,6 +87,14 @@ either way and an avatar jump rises 0.82 m. So does the sled's slope assist.
 Position updates to viewers, timers and sensors stay at the heartbeat rate. Physics costs more:
 in the harness the test car takes about 1.5 times the step time of one step per heartbeat
 (`jolt metrics` shows each region's step time).
+
+## Vehicles
+
+LSL vehicles run on a controller ported from the InWorldz Halcyon vehicle code, with each behaviour
+on Second Life's documented model. Every behaviour is stepped as the exact solution over the step
+the engine takes, so a vehicle drives the same at the default heartbeat and at any
+`PhysicsStepRate`. The sections below give the model, the `[Jolt]` keys that govern vehicles, the
+known gaps against Second Life, and how to try a vehicle in the harness before a region.
 
 ### Ground vehicles and gravity
 
@@ -221,6 +230,30 @@ motor pulling (never set, faded, or set to zero), hover off or at its height, an
 or the vehicle resting on something. A script setting a motor or any vehicle parameter wakes it, as
 does a collision. In the harness a parked car sleeps within 14 s of its last key at 11 Hz.
 
+A vehicle body has no contact friction (as in BulletSim), and Second Life's vehicle friction is a
+velocity decay with no static part, so a car that comes to rest slightly tilted can slide slowly
+until it settles: in the harness the documented test car at a 45 Hz heartbeat comes to rest rolled
+0.3 degrees, slides sideways at about 0.035 m/s and sleeps 26 s after its key. A stronger attractor,
+some angular friction or a vertical friction timescale under 1000 s stops it.
+
+### Tuning a vehicle in the harness
+
+The harness (below) runs the module's own vehicle controller on the real engine with no region, so
+a vehicle's parameters can be tried in seconds:
+
+```
+dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --scenario testcar --rate all --vparam LINEAR_FRICTION_TIMESCALE=1,2,1000 --vparam LINEAR_MOTOR_TIMESCALE=0.5
+```
+
+- `--vparam` and `--vflag` apply a script's own parameters and flags after the scenario's, by their
+  LSL names, so a script's values can be pasted in.
+- `--jolt` sets any `[Jolt]` key for the run, e.g. `--jolt VehiclePresets=legacy` to compare the
+  preset sets, or `--jolt VehicleMaxLinearSpeed=400` to try a limit.
+- `--rate all` runs 11, 22.5, 45 and 90 Hz heartbeats: a figure that differs between them points to
+  something that still depends on the step.
+- Each run's summary line gives the speeds, distances, time to rest, peak height, tilt and the time
+  the engine let the body sleep; `--out` also writes a CSV per run with one line per heartbeat.
+
 ## Console commands
 
 `jolt` acts on the region selected with `change region`; at the root prompt every region answers in
@@ -295,7 +328,8 @@ Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, t
 `avatar-stand`, `avatar-walk` and `avatar-jump`, and `drop` (a 1 m box from 5 m);
 `testcar-down` and `car-down` (key held down the ramp), `hover`, `attract-roll` and `attract-pitch`
 (one behaviour alone), `park-new`, `park-faded`, `park-drive` and `park-wake` (sleeping), and
-`crash-wall`, `crash-box`, `crash-headon` and `crash-drop`. The summary's extra columns give when
+`crash-wall`, `crash-box`, `crash-headon` and `crash-drop`, `rollonly` (a car rolled and pitched with
+`VEHICLE_FLAG_LIMIT_ROLL_ONLY`) and `motor-offset` (a floating box pushed below its centre of mass). The summary's extra columns give when
 the engine last had a body awake and, for the crashes, the impact, arrival and leaving speeds,
 overlap and a pass-through check. The ground is
 level at 25 m with water at 20 m; with a slope it rises northward at that angle from y 40 to y 100.
