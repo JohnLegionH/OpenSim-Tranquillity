@@ -161,7 +161,9 @@ with 0.2.
 
 - `documented` (the default): Second Life's documented values, from the wiki page of each type
   (`VEHICLE_TYPE_SLED`, `_CAR`, `_BOAT`, `_AIRPLANE`, `_BALLOON`). The sled page's hover efficiency
-  of 10 is held to 1, as `llSetVehicleFloatParam` holds any efficiency.
+  of 10 is held to 1, as `llSetVehicleFloatParam` holds any efficiency, and the sled has hover off:
+  the page's hover timescale of 10 s would turn hover on, against the page's own "no hover", so the
+  sled's is 1000 s.
 - `legacy`: the InWorldz Halcyon values the module used before, for vehicles tuned against them.
 
 ```ini

@@ -54,7 +54,7 @@ public class VehicleSledAssistTests
         sled.Clock = () => t0.AddTicks((long)(now * TimeSpan.TicksPerSecond));
         sled.ProcessTypeChange(Vehicle.TYPE_SLED);
         sled.ProcessFloatVehicleParam(Vehicle.LINEAR_DEFLECTION_TIMESCALE, 1000f);
-        sled.ProcessFloatVehicleParam(Vehicle.HOVER_TIMESCALE, 1000f);   // the documented sled's hover (10 s) off
+        sled.ProcessFloatVehicleParam(Vehicle.HOVER_TIMESCALE, 1000f);   // hover off (the documented sled's already is)
         sled.ProcessVectorVehicleParam(Vehicle.LINEAR_FRICTION_TIMESCALE, new Vector3(30f, 1000f, 1000f));
         double h = 1.0 / rate;
         for (int i = 0; i < (int)Math.Round(2.0 * rate); i++)
@@ -100,6 +100,36 @@ public class VehicleSledAssistTests
     [Fact]
     public void Under_the_threshold_pitch_there_is_no_assist()
         => Assert.Equal(NoseSpeed(45.0, 2f, 0f), NoseSpeed(45.0, 2f, 0.045f), 9);
+
+    // The documented sled has hover off: 100 m over the terrain, level, nothing touching, it falls as gravity alone
+    // takes it (its vertical friction is 1000 s, off). With the page's hover timescale of 10 s the hover spring toward
+    // the terrain (height 0) would pull it down faster.
+    [Theory]
+    [InlineData(11.0)]
+    [InlineData(45.0)]
+    public void The_documented_sled_has_no_hover(double rate)
+    {
+        var body = new MovingBody();
+        var sled = new VehicleController(body);
+        double now = 0;
+        DateTime t0 = new(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        sled.Clock = () => t0.AddTicks((long)(now * TimeSpan.TicksPerSecond));
+        sled.ProcessTypeChange(Vehicle.TYPE_SLED);
+        Assert.Equal(1000f, sled.GetFloatParam(VehFloatParam.HoverTimescale));
+        sled.ProcessFloatVehicleParam(Vehicle.LINEAR_DEFLECTION_TIMESCALE, 1000f);   // nothing turns the fall forward
+        double h = 1.0 / rate;
+        int steps = (int)Math.Round(2.0 * rate);
+        for (int i = 0; i < steps; i++)
+        {
+            sled.Step((float)h);
+            body.LinearVelocity += body.Gravity * body.GravityFactor * (float)h;
+            body.Position += body.LinearVelocity * (float)h;
+            now += h;
+        }
+        double expected = -G * steps * h;
+        Assert.True(Math.Abs(body.LinearVelocity.Z - expected) <= 0.001 * Math.Abs(expected),
+            $"{rate} Hz: vz {body.LinearVelocity.Z:0.0000}, free fall {expected:0.0000}");
+    }
 }
 
 /// <summary>

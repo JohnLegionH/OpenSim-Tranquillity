@@ -41,11 +41,12 @@ public class VehiclePresetTests
     private const ExtendedVehicleFlags WaterOnly = ExtendedVehicleFlags.HoverWaterOnly;
     private const ExtendedVehicleFlags WorldZ = ExtendedVehicleFlags.TorqueWorldZ;
 
-    // Second Life's documented defaults (the wiki page of each type; the sled's HOVER_EFFICIENCY 10 held to 1).
+    // Second Life's documented defaults (the wiki page of each type; the sled's HOVER_EFFICIENCY 10 held to 1, and its
+    // hover off, HOVER_TIMESCALE 1000 for the page's 10, as the page's own comment says "no hover").
     private static readonly Dictionary<Vehicle, Preset> Documented = new()
     {
         [Vehicle.TYPE_SLED] = new(V(30, 1, 1000), V(1000), V(1000), V(120), V(1000), V(120), V(0),
-            0, 1, 10, 0, 1, 1, 0, 10, 1, 1000, 0, 1, 10, NoDeflectionUp | RollOnly | MotorUp),
+            0, 1, 1000, 0, 1, 1, 0, 10, 1, 1000, 0, 1, 10, NoDeflectionUp | RollOnly | MotorUp),
         [Vehicle.TYPE_CAR] = new(V(100, 2, 1000), V(1000), V(1), V(60), V(1), V(0.8f), V(0),
             0, 0, 1000, 0, 1, 2, 0, 10, 1, 10, -0.2f, 1, 1, NoDeflectionUp | RollOnly | UpOnly | MotorUp),
         [Vehicle.TYPE_BOAT] = new(V(10, 3, 2), V(10), V(5), V(60), V(4), V(4), V(0),

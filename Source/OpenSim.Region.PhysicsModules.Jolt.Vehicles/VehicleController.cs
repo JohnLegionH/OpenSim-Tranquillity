@@ -1520,9 +1520,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             {
                 case VehicleType.Sled:
                     // The page gives HOVER_EFFICIENCY 10; llSetVehicleFloatParam holds an efficiency to 0..1, so 1.
+                    // The page's HOVER_TIMESCALE 10 would turn hover on (any timescale under 300 s does), against its
+                    // own comment "no hover"; the sled has hover off (1000 s).
                     SetDocumented(linearFriction: new Vector3(30f, 1f, 1000f), angularFriction: new Vector3(1000f),
                         linearMotorTimescale: 1000f, linearMotorDecay: 120f, angularMotorTimescale: 1000f, angularMotorDecay: 120f,
-                        hoverHeight: 0f, hoverEfficiency: 1f, hoverTimescale: 10f, buoyancy: 0f,
+                        hoverHeight: 0f, hoverEfficiency: 1f, hoverTimescale: 1000f, buoyancy: 0f,
                         linearDeflectionEfficiency: 1f, linearDeflectionTimescale: 1f,
                         angularDeflectionEfficiency: 0f, angularDeflectionTimescale: 10f,
                         attractionEfficiency: 1f, attractionTimescale: 1000f,

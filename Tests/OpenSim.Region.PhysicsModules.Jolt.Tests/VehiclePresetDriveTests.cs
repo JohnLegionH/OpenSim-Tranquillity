@@ -33,7 +33,7 @@ public class VehiclePresetDriveTests
     [InlineData("car", 0f, "before", 16.569f, 2.5f)]
     [InlineData("carturn", 0f, "before", 14.125f, 2.5f)]
     [InlineData("car-down", 15f, "steady", 10.674f, 1.5f)]
-    [InlineData("sled", 15f, "steady", 12.350f, 1.5f)]  // forward friction 30 s, the slope assist
+    [InlineData("sled", 15f, "steady", 12.649f, 1.5f)]  // forward friction 30 s, the slope assist, no hover
     [InlineData("boat", 0f, "steady", 2.498f, 1f)]       // motor 5 m/s, timescale 5 s, forward friction 10 s
     [InlineData("airplane", 0f, "steady", 14.897f, 1f)]
     [InlineData("balloon", 0f, "endz", 28.522f, 0.1f)]
