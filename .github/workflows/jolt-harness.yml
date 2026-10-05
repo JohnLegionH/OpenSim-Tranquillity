@@ -1,0 +1,190 @@
+# Runs the Jolt physics harness on Windows x64 and Linux x64, the platforms the Jolt module ships its native for,
+# with the runs listed in Tests/JoltPhysicsHarness/ci/runs.txt, and uploads each runner's traces, so the two
+# platforms' results can be set side by side. Runs only when that list or this file changes.
+name: Jolt harness
+
+on:
+  push:
+    branches:
+      - lane/jolt
+    paths:
+      - 'Tests/JoltPhysicsHarness/ci/runs.txt'
+      - '.github/workflows/jolt-harness.yml'
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+
+jobs:
+  harness:
+    name: Jolt harness ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-22.04]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The version stamp (Nerdbank.GitVersioning) needs the history.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up .NET from global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Build the harness
+        run: dotnet build Tests/JoltPhysicsHarness -c Release --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false
+
+      - name: Check the natives in the harness output
+        shell: pwsh
+        run: ./Source/OpenSim.Region.PhysicsModules.Jolt/assert-patched-joltc.ps1 -PublishDir Tests/JoltPhysicsHarness/bin/Release/net10.0
+
+      - name: Run the listed harness runs
+        run: |
+          out="$RUNNER_TEMP/harness"
+          mkdir -p "$out"
+          dll=Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll
+          grep -v '^[[:space:]]*#' Tests/JoltPhysicsHarness/ci/runs.txt | grep ':' | while IFS= read -r line; do
+            name="${line%%:*}"
+            args="${line#*:}"
+            case "$name" in *[!A-Za-z0-9_-]*|'') echo "bad run name '$name'"; exit 1;; esac
+            echo "::group::$name:$args"
+            # shellcheck disable=SC2086
+            dotnet "$dll" $args --out "$out/$name" | tee "$out/$name.txt"
+            echo "::endgroup::"
+          done
+
+      - name: Upload the traces
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jolt-harness-${{ matrix.os }}
+          path: ${{ runner.temp }}/harness
+          if-no-files-found: ignore
+
+  # The same runs with joltc built with Jolt's CROSS_PLATFORM_DETERMINISTIC option, from the pinned sources and
+  # patches of joltc-native.yml, and the busiest harness scenario timed with the shipped native and with this one on
+  # the same runner. The module refuses an unrecorded native, so these runs set [Jolt] AllowUnrecordedNative.
+  deterministic:
+    name: Jolt harness deterministic native ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            os: windows-2022
+            file: joltc.dll
+            built: build/bin/Distribution/joltc.dll
+            configure: -G "Visual Studio 17 2022" -A x64
+            cxxflags: -Brepro
+            ldflags: -Brepro
+          - rid: linux-x64
+            os: ubuntu-22.04
+            file: libjoltc.so
+            built: build/lib/libjoltc.so
+            configure: -G "Unix Makefiles"
+            cxxflags: ""
+            ldflags: ""
+    env:
+      JOLTC_REPO: https://github.com/amerkoleci/joltc
+      JOLTC_COMMIT: 1715c5aab834a5bb0c344dc4a11d573ad6f9736d
+      JOLT_REPO: https://github.com/jrouwe/JoltPhysics
+      JOLT_COMMIT: 036ea7b1d717b3e713ac9d8cbd47118fb9cd5d60
+      PATCHES: per-system-tempallocator.patch physics-systems-map-lock.patch
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up .NET from global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Fetch joltc and Jolt Physics at the pinned commits
+        run: |
+          src="$RUNNER_TEMP/joltc"
+          git init -q "$src"
+          git -C "$src" fetch -q --depth 1 "$JOLTC_REPO" "$JOLTC_COMMIT"
+          git -C "$src" checkout -q FETCH_HEAD
+          test "$(git -C "$src" rev-parse HEAD)" = "$JOLTC_COMMIT"
+          git init -q "$src/JoltPhysics"
+          git -C "$src/JoltPhysics" fetch -q --depth 1 "$JOLT_REPO" "$JOLT_COMMIT"
+          git -C "$src/JoltPhysics" checkout -q FETCH_HEAD
+          test "$(git -C "$src/JoltPhysics" rev-parse HEAD)" = "$JOLT_COMMIT"
+          for p in $PATCHES; do git -C "$src" apply "$GITHUB_WORKSPACE/native/joltc/$p"; done
+
+      - name: Configure and build with CROSS_PLATFORM_DETERMINISTIC
+        env:
+          CXXFLAGS: ${{ matrix.cxxflags }}
+          LDFLAGS: ${{ matrix.ldflags }}
+        run: |
+          cmake -S "$RUNNER_TEMP/joltc" -B "$RUNNER_TEMP/joltc/build" ${{ matrix.configure }} \
+            -DCMAKE_BUILD_TYPE:String=Distribution -DCMAKE_INSTALL_PREFIX:String=SDK -DJPH_SAMPLES=OFF \
+            -DCROSS_PLATFORM_DETERMINISTIC=ON
+          cmake --build "$RUNNER_TEMP/joltc/build" --config Distribution --target joltc --parallel
+          if [ "$RUNNER_OS" = Linux ]; then strip --strip-unneeded "$RUNNER_TEMP/joltc/${{ matrix.built }}"; fi
+          mkdir -p "$RUNNER_TEMP/det"
+          cp "$RUNNER_TEMP/joltc/${{ matrix.built }}" "$RUNNER_TEMP/det/${{ matrix.file }}"
+          sha256sum "$RUNNER_TEMP/det/${{ matrix.file }}" | tee "$RUNNER_TEMP/det/SHA256SUMS"
+
+      - name: Build the harness
+        run: dotnet build Tests/JoltPhysicsHarness -c Release --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false
+
+      - name: Time the busiest scenario with the shipped native, then run the list and time it with this one
+        run: |
+          out="$RUNNER_TEMP/harness-det"
+          mkdir -p "$out"
+          bin=Tests/JoltPhysicsHarness/bin/Release/net10.0
+          native="$bin/runtimes/${{ matrix.rid }}/native/${{ matrix.file }}"
+          busy="--scenario testcar --rate 90"
+          time_runs() {
+            label="$1"; shift
+            for i in 1 2 3; do
+              s=$(date +%s.%N)
+              # shellcheck disable=SC2086
+              dotnet "$bin/JoltPhysicsHarness.dll" $busy "$@" > /dev/null
+              e=$(date +%s.%N)
+              echo "$label run $i: $(awk "BEGIN { print $e - $s }") s" | tee -a "$out/timing.txt"
+            done
+          }
+          time_runs shipped
+          cp "$RUNNER_TEMP/det/${{ matrix.file }}" "$native"
+          time_runs deterministic --jolt AllowUnrecordedNative=true
+          grep -v '^[[:space:]]*#' Tests/JoltPhysicsHarness/ci/runs.txt | grep ':' | while IFS= read -r line; do
+            name="${line%%:*}"
+            args="${line#*:}"
+            case "$name" in *[!A-Za-z0-9_-]*|'') echo "bad run name '$name'"; exit 1;; esac
+            # shellcheck disable=SC2086
+            dotnet "$bin/JoltPhysicsHarness.dll" $args --jolt AllowUnrecordedNative=true --out "$out/$name" > "$out/$name.txt"
+          done
+          cp "$RUNNER_TEMP/det/SHA256SUMS" "$out/"
+
+      - name: Upload the traces
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jolt-harness-deterministic-${{ matrix.rid }}
+          path: ${{ runner.temp }}/harness-det
+          if-no-files-found: ignore
