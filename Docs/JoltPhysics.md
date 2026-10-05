@@ -82,3 +82,47 @@ engines can be compared. `help Physics` lists each one with a line of help.
 They are meant for test regions. `TestCommands` is off by default, and then none of them exists.
 `[Startup] JoltAutoDropTest = true`, which drops three boxes in every region at load, is honoured
 only when `TestCommands` is on.
+
+## Physics harness
+
+`Tests/JoltPhysicsHarness` is a console tool that runs physics scenarios through the module's own
+per-heartbeat step (`Simulate`: the vehicle controllers, the backend step with the avatar step
+inside it, and the drains) with no region and no viewer. It needs only a built tree and the native
+joltc, so it runs anywhere the Jolt tests run (win-x64 at present). Use it to see how a vehicle or
+an avatar behaves at a given heartbeat rate, or what a changed parameter does, before trying it in
+a region.
+
+Build it, then run it from the repository root:
+
+```
+dotnet build Tests/JoltPhysicsHarness -c Release
+dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --scenario testcar --rate 11,45 --slope 15 --out harness-out
+```
+
+| Argument | Meaning |
+|---|---|
+| `--list` | List the scenarios and the slopes each one uses |
+| `--scenario NAME[,NAME..]` or `all` | Scenarios to run (default: all) |
+| `--rate HZ[,HZ..]` or `all` | Heartbeat rates; `all` is 11, 22.5, 45 and 90 (default: 11) |
+| `--slope DEG[,DEG..]` | Ramp angles for the scenarios that use one (default: each scenario's own list) |
+| `--duration S`, `--hold S` | Seconds simulated, and seconds the drive key is held |
+| `--keyrepeat S` | How often a held key re-sends the motor, as a script's control event does (default 0.1) |
+| `--jolt KEY=VALUE` | A `[Jolt]` setting, as in the region's ini (repeatable) |
+| `--vparam NAME=V` or `NAME=X,Y,Z` | A vehicle parameter by its LSL name, applied after the scenario's own, e.g. `LINEAR_FRICTION_TIMESCALE=1,1,1000` (repeatable) |
+| `--out DIR` | Also write a CSV per run (`<scenario>-s<slope>-r<rate>.csv`) and `summary.csv` there |
+
+Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, then released),
+`testcar` (the same with linear friction `<1,1,1000>`, motor timescale 1 and decay 0.5),
+`sled`, `boat`, `airplane` and `balloon` (each type's presets in one basic motion),
+`avatar-stand`, `avatar-walk` and `avatar-jump`, and `drop` (a 1 m box from 5 m). The ground is
+level at 25 m with water at 20 m; with a slope it rises northward at that angle from y 40 to y 100.
+
+Each run prints one summary line: top speed, the release time and speed, the steady speed, the
+distance before and after the release, the time to come to rest (under 0.1 m/s for 1 s), the peak
+height above the ground, the largest tilt and the end position. The CSV has one line per heartbeat:
+time, position, velocity, speed, tilt and height above the ground. Time is simulated, so a run takes
+a fraction of real time, and the same arguments always give the same output.
+
+A rate here means calling today's step at that interval: 11 Hz is a region's default heartbeat
+(`[Startup] FrameTime`). The harness writes nothing unless `--out` is given. The module's test
+project runs the same scenarios as regression tests (`HarnessTests`).

@@ -19,6 +19,8 @@ using OpenMetaverse;
 
 // The pure helpers (this guard, CollisionFrameTracker, JoltConfig) are tested without an OpenSim Scene.
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("OpenSim.Region.PhysicsModules.Jolt.Tests")]
+// The physics test harness (Tests/JoltPhysicsHarness) builds a scene without a region and steps it.
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("JoltPhysicsHarness")]
 
 namespace OpenSim.Region.PhysicsModules.Jolt
 {

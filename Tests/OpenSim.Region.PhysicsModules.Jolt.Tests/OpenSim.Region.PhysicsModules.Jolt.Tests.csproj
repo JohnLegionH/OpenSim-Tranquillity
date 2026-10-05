@@ -31,6 +31,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Source\OpenSim.Region.PhysicsModules.Jolt.Backend\OpenSim.Region.PhysicsModules.Jolt.Backend.csproj" />
     <ProjectReference Include="..\..\Source\OpenSim.Region.PhysicsModules.Jolt\OpenSim.Region.PhysicsModules.Jolt.csproj" />
+    <!-- The physics harness, whose scenarios run here as regression tests. -->
+    <ProjectReference Include="..\JoltPhysicsHarness\JoltPhysicsHarness.csproj" />
   </ItemGroup>
 
 </Project>

@@ -91,6 +91,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal float WaterLevel { get; private set; }
         internal SVector3 DefaultGravity { get; private set; } = new SVector3(0f, 0f, -9.80665f);
         internal float LastTimeStep = 0.0909f;
+        // The clock new vehicle controllers read (motor reset and spike checks). Null in a region, where
+        // they read the wall clock; the test harness sets a simulated one so it can step faster than real time.
+        internal Func<DateTime> VehicleClock;
         private float[] _terrainField;   // the (N+1)-square field SetTerrain cooked (row = y * _terrainFieldM)
         private int _terrainFieldM;
 
@@ -251,12 +254,32 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             scene.RegisterModuleInterface<PhysicsScene>(this);
 
-            uint sizeX = scene.RegionInfo.RegionSizeX;
-            uint sizeY = scene.RegionInfo.RegionSizeY;
+            _scene = scene;
+            InitialiseRegion(scene.RegionInfo.RegionSizeX, scene.RegionInfo.RegionSizeY, scene.PhysicsRequestAsset,
+                () => scene.Heightmap != null ? scene.Heightmap.GetFloatsSerialised() : new float[scene.RegionInfo.RegionSizeX * scene.RegionInfo.RegionSizeY],
+                () => (float)scene.RegionInfo.RegionSettings.WaterHeight);
+        }
 
+        /// <summary>
+        /// The physics test harness's way in: the same backend setup, terrain and water as
+        /// <see cref="AddRegion"/>, for a scene with no OpenSim <see cref="Scene"/>. Call
+        /// <see cref="Initialise"/> first with a config that selects this module.
+        /// </summary>
+        internal void InitialiseWithoutScene(string regionName, uint sizeX, uint sizeY, float[] heightMap, float waterHeight)
+        {
+            if (!m_Enabled)
+                throw new InvalidOperationException("Initialise with [Startup] physics = Jolt first.");
+            RegionName = regionName;
+            PhysicsSceneName = Name + "/" + RegionName;
+            InitialiseRegion(sizeX, sizeY, null, () => heightMap, () => waterHeight);
+        }
+
+        // AddRegion's work once the scene is known. The heightmap and water height are read where AddRegion
+        // always read them, after the backend exists.
+        private void InitialiseRegion(uint sizeX, uint sizeY, RequestAssetDelegate requestAsset, Func<float[]> heightMap, Func<float> waterHeight)
+        {
             // Stored BEFORE base.Initialise, because that calls SetTerrain(heightMap) - which needs the
             // region dims to interpret the flat float[] and build the (N+1) field.
-            _scene = scene;
             _regionSizeX = (int)sizeX;
             _regionSizeY = (int)sizeY;
 
@@ -289,9 +312,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // The base Initialise wires the request-asset delegate and calls our SetTerrain - which
             // cooks the real heightfield - and SetWaterLevel, which pushes the water height down
             // to the backend for vehicle hover.
-            base.Initialise(scene.PhysicsRequestAsset,
-                (scene.Heightmap != null ? scene.Heightmap.GetFloatsSerialised() : new float[sizeX * sizeY]),
-                (float)scene.RegionInfo.RegionSettings.WaterHeight);
+            base.Initialise(requestAsset, heightMap(), waterHeight());
 
             m_log.LogInformation($"{LogHeader} region '{RegionName}' {sizeX}x{sizeY}m: backend initialised, MaxBodies={settings.MaxBodies}. {EngineName}");
         }

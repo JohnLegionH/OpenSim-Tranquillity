@@ -685,6 +685,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 _vehicleBody = new JoltVehicleBody(_module, _backend, this);
                 _vehicle = new VehicleController(_vehicleBody);
+                if (_module.VehicleClock != null)
+                    _vehicle.Clock = _module.VehicleClock;
             }
         }
 

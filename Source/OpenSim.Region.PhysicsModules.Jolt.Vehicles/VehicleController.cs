@@ -60,6 +60,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // Cached mass
         private float m_vehicleMass;
 
+        // The clock the motor reset and the spike checks read: the time since the last step or motor set.
+        // The wall clock by default; a host that steps faster or slower than real time (a test harness)
+        // supplies a simulated one.
+        public Func<DateTime> Clock { get; set; } = () => DateTime.Now;
+
         // Frame counter for periodic operations
         private uint m_frameNum;
 
@@ -142,7 +147,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _props.Type = newType;
             SetVehicleDefaults(newType);
             _props.Dynamics.Reset();
-            _props.Dynamics.LastAccessTOD = DateTime.Now;
+            _props.Dynamics.LastAccessTOD = Clock();
 
             // (No scene-event registration or Refresh here; the host reacts to IsActive instead:
             // per-frame Step drive + body physical params.)
@@ -473,7 +478,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         {
             if (_props.Type == VehicleType.None) return;
 
-            _props.Dynamics.LastAccessTOD = DateTime.Now;
+            _props.Dynamics.LastAccessTOD = Clock();
 
             // Scale the target if the motor has been decaying.
             if (_props.Dynamics.LinearDecayIndex > VehicleLimits.ThresholdLinearMotorEngaged)
@@ -507,7 +512,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         {
             if (_props.Type == VehicleType.None) return;
 
-            _props.Dynamics.LastAccessTOD = DateTime.Now;
+            _props.Dynamics.LastAccessTOD = Clock();
 
             // Scale the target if the motor has been decaying.
             if (_props.Dynamics.AngularDecayIndex > VehicleLimits.ThresholdAngularMotorEngaged)
@@ -547,7 +552,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private float CheckResetMotors(float timeStep)
         {
-            DateTime now = DateTime.Now;
+            DateTime now = Clock();
             float elapsed = (float)(now - _props.Dynamics.LastAccessTOD).TotalSeconds;
             _props.Dynamics.LastAccessTOD = now;
 
@@ -567,7 +572,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private void ResetDynamics()
         {
-            _props.Dynamics.LastAccessTOD = DateTime.Now;
+            _props.Dynamics.LastAccessTOD = Clock();
             _props.Dynamics.LastPosition = _body.Position;
 
             _props.Dynamics.LocalLinearVelocity = _localLinearVel;
