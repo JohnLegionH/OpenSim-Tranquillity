@@ -2,7 +2,7 @@
 
   <!--
     Tests for the Jolt module and its backend. Most drive real JoltPhysicsBackend instances and so need
-    the native joltc, which the module loads on win-x64 only at present. Some read the source instead: a broken
+    the native joltc, which the module ships for win-x64 and linux-x64. Some read the source instead: a broken
     TempAllocator lock discipline ends in std::abort() inside joltc, which kills the test host rather than
     failing an assertion, so those invariants are checked on the code's structure.
   -->
@@ -24,10 +24,13 @@
     </PackageReference>
   </ItemGroup>
 
-  <!-- The patched joltc arrives through the Jolt module's Content items, at the output root and at
-       runtimes/win-x64/native/, where it replaces the stock copy JoltPhysics.Native puts at that path.
-       This project has no exclusion of its own, so the stock win-arm64 joltc and the joltc_double builds
-       land in its output too; the tests do not load them. -->
+  <!-- The patched joltc arrives through the Jolt module's Content items, under runtimes/<rid>/native/.
+       JoltPhysics.Native, the stock joltc that JoltPhysicsSharp depends on, is excluded here as in every
+       project that reaches the binding, so the output holds no stock native. -->
+  <ItemGroup>
+    <PackageReference Include="JoltPhysics.Native" Version="1.0.4" ExcludeAssets="all" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\Source\OpenSim.Region.PhysicsModules.Jolt.Backend\OpenSim.Region.PhysicsModules.Jolt.Backend.csproj" />
     <ProjectReference Include="..\..\Source\OpenSim.Region.PhysicsModules.Jolt\OpenSim.Region.PhysicsModules.Jolt.csproj" />

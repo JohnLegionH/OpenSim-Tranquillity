@@ -32,12 +32,17 @@ one under JoltPhysicsSharp 2.19.1.
 | `native/joltc/exports.txt` | The 1086 names the native must export, the same set as the stock natives of `JoltPhysics.Native 1.0.4` |
 | `native/joltc/list-exports.py` | Lists the exported names of a PE (`.dll`) or ELF (`.so`) file; with `--expect exports.txt` it checks them |
 | `.github/workflows/joltc-native.yml` | Builds the natives on GitHub's runners |
-| `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/win-x64/native/joltc.dll` | win-x64 build, loaded by the module |
-| `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/linux-x64/native/libjoltc.so` | linux-x64 build, shipped but not loaded yet |
-| `Source/OpenSim.Region.PhysicsModules.Jolt/assert-patched-joltc.ps1` | Checks that every `joltc*.dll` in an output or publish directory is the patched build |
+| `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/win-x64/native/joltc.dll` | win-x64 build |
+| `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/linux-x64/native/libjoltc.so` | linux-x64 build |
+| `Source/OpenSim.Region.PhysicsModules.Jolt.Backend/JoltNative.cs` | Picks the file for the running platform, checks its hash against the table below and loads it |
+| `Source/OpenSim.Region.PhysicsModules.Jolt/assert-patched-joltc.ps1` | Checks that an output or publish directory holds the patched builds under `runtimes/<rid>/native/` and no other joltc |
 
-The module copies the win-x64 `joltc.dll` to the output root, which is the copy the region server
-loads, and under `runtimes/win-x64/native/`.
+The module's project copies `runtimes/<rid>/native/` into every output: all platforms for a build
+with no runtime identifier, only the target's folder for a build or publish for one runtime
+identifier. Nothing is copied to the output root. At start the module loads the file for the
+platform it runs on from that folder (`JoltNative`), so a portable build works on each supported
+platform. The stock `JoltPhysics.Native` package is excluded in every project that reaches the
+binding, so its files appear in no output.
 
 ## The recipe
 
@@ -78,6 +83,9 @@ read-only, it uses no secrets, and each action it uses is pinned by commit. A ne
 example linux-arm64 or osx) is one more entry in its matrix.
 
 ## The files in the repository
+
+These hashes are also recorded in `JoltNative.Shipped` and in `assert-patched-joltc.ps1`; a unit
+test checks all three against the files. Replacing a file means updating all three.
 
 | File | SHA-256 |
 |---|---|

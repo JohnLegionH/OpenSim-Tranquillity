@@ -224,7 +224,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // calls. PER-INSTANCE: one lock per backend / region, so regions step in
         // parallel across cores.
         //
-        // !!! CRITICAL DEPENDENCY: this is only safe with the PATCHED joltc.dll !!!
+        // !!! CRITICAL DEPENDENCY: this is only safe with the PATCHED joltc !!!
         // Stock JoltPhysics.Native 1.0.4 joltc supplies ONE process-global
         // TempAllocatorImpl (a LIFO stack, NOT thread-safe) to every
         // JPH_PhysicsSystem_Update and all six JPH_CharacterVirtual_* scratch
@@ -232,11 +232,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // concurrently produce "TempAllocator: Freeing in the wrong order" ->
         // std::abort(). With the STOCK DLL a per-instance
         // lock CANNOT protect it - two regions each holding their own _simLock
-        // still hammer the one allocator. If the stock
-        // JoltPhysics.Native joltc.dll lands in bin (e.g. a NuGet restore /
-        // rebuild copying over the patched one), the shared allocator returns
-        // and the cross-region crashes come back. Check that the installed joltc.dll
-        // is the patched build before touching this lock's scope.
+        // still hammer the one allocator. JoltNative refuses to load a joltc
+        // whose hash is not a patched build the module ships, unless [Jolt]
+        // AllowUnrecordedNative is set; anyone setting it, or touching this
+        // lock's scope, must be sure the native has the per-system allocator.
         //
         // The patched joltc (amerkoleci/joltc @ 1715c5aab8 + a per-system
         // allocator patch; that commit is the exact source of the shipped
