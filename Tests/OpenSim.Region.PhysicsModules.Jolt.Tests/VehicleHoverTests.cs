@@ -98,7 +98,9 @@ public class VehicleHoverTests
             RunResult r = Run(rate, ts, 1f, 6f * ts + 4f);
             float band = 0.02f * (Height - StartHeight);
             Sample first = r.Samples.First(s => Math.Abs(s.Height - Height) < band);
-            double expected = 5.834 * ts;
+            // The host holds a new vehicle still for its first ReassertVehicleSeconds (0.27 s, the guard for a vehicle
+            // restored with its region), so the spring starts from there.
+            double expected = 5.834 * ts + JoltPrim.ReassertVehicleSeconds;
             Assert.True(Math.Abs(first.T - expected) <= 0.02 * expected + 1.0 / rate, $"timescale {ts} at {rate} Hz: settled at {first.T:0.000} s against {expected:0.000}");
         }
     }
@@ -137,13 +139,39 @@ public class VehicleHoverTests
         double crossing = (Height - StartHeight) / 2.0;
         double coast = crossing * crossing / (2 * 9.80665);
         // The first rise over the height (until it is back under it). Gravity comes back from the first whole step
-        // above the height: up to half a step of it late. (A bouncy up-only hover gains a little on each later bounce
-        // at coarse steps, the step that falls back through the height having no spring in it.)
+        // above the height: up to half a step of it late.
         double late = 0.5 * 9.80665 / (rate * rate);
         int over = r.Samples.FindIndex(s => s.Height > Height);
         int back = r.Samples.FindIndex(over, s => s.Height < Height);
         float firstPeak = r.Samples.Skip(over).Take(back - over).Max(s => s.Height);
         Assert.InRange(firstPeak, Height, Height + coast * 1.05 + late + 0.01);
         Assert.Contains(r.Samples, s => s.Height > Height + 0.5 * coast);   // it does go above: nothing pulls it down early
+    }
+
+    // A bouncy up-only hover (efficiency 0: an undamped spring below the height, a free coast above it) bounces back
+    // to the same height every time: no later bounce rises over the first (within 1 cm), at every rate. The step
+    // that falls back through the height lets the spring act from the moment it passes the height.
+    [Theory]
+    [InlineData(11.0)]
+    [InlineData(22.5)]
+    [InlineData(45.0)]
+    [InlineData(90.0)]
+    public void A_bouncy_up_only_hover_gains_no_height_on_later_bounces(double rate)
+    {
+        RunResult r = Run(rate, 2f, 0f, 40f, Height, "HOVER_UP_ONLY");
+        var peaks = new List<float>();
+        int i = 0;
+        while (true)
+        {
+            int over = r.Samples.FindIndex(i, s => s.Height > Height);
+            if (over < 0) break;
+            int back = r.Samples.FindIndex(over, s => s.Height < Height);
+            if (back < 0) break;
+            peaks.Add(r.Samples.Skip(over).Take(back - over).Max(s => s.Height));
+            i = back;
+        }
+        Assert.True(peaks.Count >= 4, $"{rate} Hz: {peaks.Count} bounces");
+        foreach (float p in peaks.Skip(1))
+            Assert.True(p <= peaks[0] + 0.01f, $"{rate} Hz: bounces {string.Join(", ", peaks.Select(x => x.ToString("0.000")))}");
     }
 }

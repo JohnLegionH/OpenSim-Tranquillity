@@ -63,5 +63,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <summary>The range a script's hover height is held to (m).</summary>
         public float MinHoverHeight { get; init; } = VehicleLimits.MinRegionHeight;
         public float MaxHoverHeight { get; init; } = VehicleLimits.MaxRegionHeight;
+        /// <summary>
+        /// The sled's slope assist at full declination, as a share of gravity: a sled whose nose points down is pushed
+        /// along its nose at this share of g times the square root of how far the nose points down (the sine of its
+        /// pitch). 0.045 is what the InWorldz code gave at the 15 ms step it was tuned at (3 g applied as a force
+        /// times the step, over that step).
+        /// </summary>
+        public float SledAssist { get; init; } = DefaultSledAssist;
+
+        public const float DefaultSledAssist = 0.045f;
     }
 }

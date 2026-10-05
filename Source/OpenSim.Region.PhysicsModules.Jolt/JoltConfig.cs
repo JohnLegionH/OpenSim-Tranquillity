@@ -64,6 +64,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float VehicleMaxMotorOffset = VehicleLimits.MaxLinearOffset;         // m
         public float VehicleMinHoverHeight = VehicleLimits.MinRegionHeight;         // m
         public float VehicleMaxHoverHeight = VehicleLimits.MaxRegionHeight;         // m
+        public float VehicleSledAssist = VehicleSettings.DefaultSledAssist;         // share of gravity
 
         // The engine's own speed caps on every moving body (Jolt's BodyCreationSettings defaults).
         public float BodyMaxLinearSpeed = PhysicsBackendSettings.JoltMaxLinearSpeed;    // m/s
@@ -118,6 +119,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 c.VehicleMinHoverHeight = VehicleLimits.MinRegionHeight;
                 c.VehicleMaxHoverHeight = VehicleLimits.MaxRegionHeight;
             }
+            c.VehicleSledAssist = F(cfg, "VehicleSledAssist", c.VehicleSledAssist, 0f, 10f, warnings);
             c.BodyMaxLinearSpeed = F(cfg, "BodyMaxLinearSpeed", c.BodyMaxLinearSpeed, 1f, 100000f, warnings);
             c.BodyMaxAngularSpeed = F(cfg, "BodyMaxAngularSpeed", c.BodyMaxAngularSpeed, 0.1f, 10000f, warnings);
             return c;
@@ -138,6 +140,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             MaxMotorOffset = VehicleMaxMotorOffset,
             MinHoverHeight = VehicleMinHoverHeight,
             MaxHoverHeight = VehicleMaxHoverHeight,
+            SledAssist = VehicleSledAssist,
         };
 
         /// <summary>

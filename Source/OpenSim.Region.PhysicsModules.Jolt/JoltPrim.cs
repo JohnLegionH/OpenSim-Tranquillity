@@ -56,13 +56,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private ShapeId _shape = ShapeId.Invalid;   // one handle-ref held for the prim's life
         private BodyId _body = BodyId.Invalid;
         // Assert buoyancy on restart: re-assert the vehicle's body params (gravity-cancellation,
-        // no-sleep, ...) on this many upcoming LIVE StepVehicle frames. The load-path assertion in the
+        // no-sleep, ...) on every LIVE StepVehicle step that starts within this many seconds (the time left of
+        // ReassertVehicleSeconds). The load-path assertion in the
         // VehicleType restore can be lost because the body was created (GravityFactor=1) with its activation
         // DEFERRED to the step thread, which drains the creation settings AFTER the load-thread SetGravityFactor
         // - so the body starts stepping under full gravity and sinks. Re-asserting from the step thread, on the
         // live body, makes it stick. Set when the vehicle becomes active; runtime llSetVehicleType sets it too
         // (harmless - the body is already live so it sticks first time).
-        private int _reassertVehicleFrames;
+        private float _reassertVehicleTime;
+
+        // How long after a vehicle becomes active its body params are re-asserted and, with no linear motor set, its
+        // velocity zeroed: the steps that start within this time, the same span at any step rate. 0.27 s is the three
+        // heartbeats it was at the default FrameTime (0.0909 s).
+        internal const float ReassertVehicleSeconds = 0.27f;
 
         // Maps the cooked shape's local axis onto SL's convention. Identity for box/sphere; a +90 deg
         // rotation about X for a cylinder (Jolt's CylinderShape axis is Y, SL cylinders are Z-height).
@@ -644,8 +650,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     ApplyVehicleBodyParams();
                     // Assert buoyancy on restart: the assertion just above can be lost on the load
                     // path (body created GravityFactor=1 with deferred activation drained on the step thread
-                    // AFTER this set) - so re-assert it on the next few LIVE step-thread frames, where it sticks.
-                    _reassertVehicleFrames = 3;
+                    // AFTER this set) - so re-assert it on the LIVE step-thread steps of the next
+                    // ReassertVehicleSeconds, where it sticks.
+                    _reassertVehicleTime = ReassertVehicleSeconds;
                 }
                 else
                 {
@@ -706,13 +713,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (_vehicle == null || !_vehicle.IsActive || !_isPhysical || !_body.IsValid)
                 return;
-            // Assert buoyancy on restart: re-assert the vehicle body params on the first live
-            // step-thread frames after (re)activation, so the gravity-cancellation that the load-path restore
+            // Assert buoyancy on restart: re-assert the vehicle body params on the live step-thread steps
+            // of the first ReassertVehicleSeconds after (re)activation, so the gravity-cancellation that the load-path restore
             // set (but that the deferred body activation clobbered back to GravityFactor=1) actually takes -
             // otherwise a restored boat steps under full engine gravity and sinks despite vehicle=True.
-            if (_reassertVehicleFrames > 0)
+            if (_reassertVehicleTime > 0f)
             {
-                _reassertVehicleFrames--;
+                _reassertVehicleTime -= timeStep;
                 ApplyVehicleBodyParams();
                 // ★ ZERO the accumulated velocity when buoyancy is (re)asserted. A boat reloaded into the
                 // region is born ACTIVE with gravity and can FREE-FALL for the whole load window (incl. the

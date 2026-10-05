@@ -429,12 +429,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 SimulateLinearDeflection(timeStep);
             }
 
-            // Sled movement — gravity-assisted slope force, gated on Type == Sled (NEVER a boat). Included
-            // for completeness; inert for every non-sled vehicle.
-            if (_props.Type == VehicleType.Sled)
-            {
-                SimulateSledMovement(timeStep);
-            }
+            // (The sled's slope assist is an acceleration inside the linear motor and friction step: SledAssist.)
 
             // -------------------------------------------------------
             // Hover — maintain target height above terrain/water/global
@@ -865,45 +860,32 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         }
 
         /// <summary>
-        /// Gravity-assisted force on slopes for the SLED vehicle type. Follows the InWorldz Halcyon
-        /// vehicle dynamics. Included for completeness
-        /// only - it is gated Type==Sled in Step, so it NEVER runs for a boat (or any non-sled). Seam table:
-        /// BSParam.Gravity -> _body.Gravity.Z, ApplyLinearForce(f) -> _body.AddForce(f); everything else
-        /// (_rotation, the limits, IsLinearMotorStalled, m_vehicleMass) maps 1:1.
+        /// The sled's slope assist (the InWorldz sled movement), as an acceleration along the sled's nose:
+        ///
+        ///   a = k g sqrt(|sin pitch|)            nose down; nose up, a tenth of it, still pushing down the slope
+        ///
+        /// k the region's sled assist (<see cref="VehicleSettings.SledAssist"/>, 0.045 by default) and g the world's
+        /// gravity. The InWorldz code applied a force of 3 g m sqrt(|sin pitch|) times the step for one step; at the
+        /// 15 ms step it was tuned at that is 0.045 g, and at any other step it scaled with the step. As an
+        /// acceleration it goes into the linear motor and friction equation (<see cref="SimulateLinearMotorAndFriction"/>),
+        /// which steps it exactly with the friction. No assist under ThresholdDeflectionAngle of pitch, or while the
+        /// sled is stalled against something (<see cref="IsLinearMotorStalled"/>). Zero for every other vehicle type.
         /// </summary>
-        private void SimulateSledMovement(float timeStep)
+        private Vector3 SledAssist()
         {
-            Vector3 force = Vector3.Zero;
-
-            // Compute the percentage of declination -1 (down) to +1 (up)
-            Vector3 probe = new Vector3(1f, 0f, 0f);
-            probe *= _rotation;
-
-            // If the nose (z-axis) points downward, add some force along the X-axis
-            if (Math.Abs(probe.Z) > VehicleLimits.ThresholdDeflectionAngle)
-            {
-                force = new Vector3(-_body.Gravity.Z * 3.0f, 0f, 0f);   // seam: BSParam.Gravity -> _body.Gravity.Z
-
-                // The sled has a lower force assist going backwards
-                if (probe.Z > 0)
-                    force *= -0.1f;
-
-                if (!IsLinearMotorStalled())
-                {
-                    // Modulate the force based on the amount of declination
-                    force = force * timeStep * (float)Math.Sqrt(Math.Abs(probe.Z));
-
-                    if (Math.Abs(force.X) >= VehicleLimits.ThresholdLinearMotorDeltaV ||
-                        Math.Abs(force.Y) >= VehicleLimits.ThresholdLinearMotorDeltaV ||
-                        Math.Abs(force.Z) >= VehicleLimits.ThresholdLinearMotorDeltaV)
-                    {
-                        force *= _rotation;
-                        force *= m_vehicleMass;
-                        _body.AddForce(force);   // seam: ApplyLinearForce(f) -> _body.AddForce(f)
-                    }
-                }
-            }
+            if (_props.Type != VehicleType.Sled)
+                return Vector3.Zero;
+            float noseDown = -(Vector3.UnitX * _rotation).Z;   // sin of the pitch, nose down positive
+            if (Math.Abs(noseDown) <= VehicleLimits.ThresholdDeflectionAngle || IsLinearMotorStalled())
+                return Vector3.Zero;
+            float accel = S.SledAssist * Math.Abs(_body.Gravity.Z) * (float)Math.Sqrt(Math.Abs(noseDown));
+            if (noseDown < 0f)
+                accel *= -SledUphillShare;
+            return new Vector3(accel, 0f, 0f);
         }
+
+        // Nose up, the assist is this share of the nose-down assist, pushing back down the slope.
+        private const float SledUphillShare = 0.1f;
 
         /// <summary>
         /// The velocity change that turns a velocity toward a direction by the given share of the angle between them,
@@ -973,7 +955,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             double e0 = _body.Position.Z - targetZ;
             if (upOnly && e0 >= 0)
             {
-                LetGoOfHover();
+                // Above the height with HOVER_UP_ONLY hover does nothing, unless the vehicle falls back through the
+                // height inside this step: then the spring takes it from there (HoverFromAbove).
+                if (!HoverFromAbove(e0, timescale, efficiency, h))
+                    LetGoOfHover();
                 return;
             }
 
@@ -1003,6 +988,58 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             }
             _hoverCarry = carry;
             ApplyLinearVelocityChange(new Vector3(0f, 0f, (float)change));
+        }
+
+        /// <summary>
+        /// HOVER_UP_ONLY, a step that starts above the height: the vehicle falls freely (with the gravity buoyancy no
+        /// longer cancels above the height) and, if it reaches the height inside the step, the spring acts from that
+        /// moment, with the gravity of below the height:
+        ///
+        ///   e(t) = e0 + v0 t + g_above t^2 / 2   until e(tc) = 0;   then the spring from (0, v0 + g_above tc) for h - tc
+        ///
+        /// The engine applies this step's gravity share (the one above the height) over the whole step, so the body is
+        /// given the velocity that, with it, ends the step where this does, and the rest is carried to the next step.
+        /// Returns false (nothing done) when the vehicle stays above the height for the whole step.
+        /// </summary>
+        private bool HoverFromAbove(double e0, float timescale, float efficiency, float h)
+        {
+            double read = _rawWorldLinearVel.Z;
+            double v0 = read + (_hoverCarry ?? 0.0);
+            double gAbove = _body.Gravity.Z * GravityShare();
+            if (e0 + v0 * h + 0.5 * gAbove * h * h >= 0)
+                return false;
+
+            // The fall reaches the height at tc (by bisection: the fall is past its top or falling, so e(t) crosses
+            // zero once in the step).
+            double lo = 0, hi = h;
+            for (int i = 0; i < UpOnlyCrossingIterations; i++)
+            {
+                double mid = 0.5 * (lo + hi);
+                if (e0 + v0 * mid + 0.5 * gAbove * mid * mid > 0) lo = mid; else hi = mid;
+            }
+            double tc = 0.5 * (lo + hi);
+            double rest = h - tc;
+
+            // From the height: the spring, with the gravity of below the height alongside it as in any step there.
+            (double e1, double v1) = VehicleSpring.Step(0.0, v0 + gAbove * tc, timescale, efficiency, rest);
+            double gBelow = _body.Gravity.Z * GravityShareBelow();
+            e1 += 0.5 * gBelow * rest * rest;
+            v1 += gBelow * rest;
+
+            // Less what the engine's gravity (this step's share) adds over the whole step.
+            double move = (e1 - 0.5 * gAbove * h * h - e0) / h;
+            _hoverCarry = v1 - gAbove * h - move;
+            ApplyLinearVelocityChange(new Vector3(0f, 0f, (float)(move - read)));
+            return true;
+        }
+
+        // The gravity share under the hover height: 1 - buoyancy, times the ground factor for a ground vehicle touching.
+        private float GravityShareBelow()
+        {
+            float share = 1f - _props.GetFloat(VehFloatParam.Buoyancy, 0f);
+            if (IsGroundVehicle && _body.HasCollision)
+                share *= GroundGravityFactor;
+            return share;
         }
 
         // Hover hands the body back its true vertical velocity (what the last move left out) when it stops acting.
@@ -1217,7 +1254,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         ///   dv/dt = g(s) * (M - v) / Tm  -  v / Tf  +  a          g(s) = e^(-s / Td)
         ///
         /// M the motor direction, Tm the motor timescale, Td the motor decay timescale, s the time since the motor
-        /// was last set, Tf the friction timescale, a the vehicle's gravity along the axis (see
+        /// was last set, Tf the friction timescale, a the vehicle's gravity along the axis plus a sled's slope
+        /// assist (<see cref="SledAssist"/>; see
         /// <see cref="VehicleMotorSolver"/>). The velocity after the step is the exact solution of that equation over
         /// it, so the result does not depend on the step rate. Friction acts on every axis all the time; the motor's
         /// pull fades with its decay and is never cut off.
@@ -1229,7 +1267,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         {
             Vector3 v0 = _rawLocalLinearVel;
             Vector3 gravityWorld = _body.Gravity * GravityShare();
-            Vector3 gravity = gravityWorld * Quaternion.Inverse(_rotation);
+            // The constant accelerations along the vehicle's axes: its gravity, and a sled's slope assist.
+            Vector3 gravity = gravityWorld * Quaternion.Inverse(_rotation) + SledAssist();
             Vector3 motor = _props.Dynamics.LinearDirection;
             Vector3 motorTs = _props.GetVec(VehVectorParam.LinearMotorTimescale);
             Vector3 decayTs = _props.GetVec(VehVectorParam.LinearMotorDecayTimescale);

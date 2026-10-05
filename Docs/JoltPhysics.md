@@ -82,7 +82,7 @@ What changes at 45: vehicles and avatars integrate in 1/45 s steps, so anything 
 still depends on the step changes. The vehicle motors, friction, gravity, hover, the vertical
 attractor, banking and deflection, a jump's rise and walking speed do not: each is stepped exactly
 (see "Vehicle motors and friction" and the sections after it), so in the harness the test car on level ground leaves the key at 3.79 m/s
-either way and an avatar jump rises 0.82 m. The sled's slope assist still depends on it.
+either way and an avatar jump rises 0.82 m. So does the sled's slope assist.
 Position updates to viewers, timers and sensors stay at the heartbeat rate. Physics costs more:
 in the harness the test car takes about 1.5 times the step time of one step per heartbeat
 (`jolt metrics` shows each region's step time).
@@ -143,6 +143,7 @@ the motor decay cap, which is Second Life's documented 120 s.
 | `VehicleMaxAttractTimescale` | 500 | The vertical attractor and banking are off at or above this timescale (s). |
 | `VehicleMaxMotorOffset` | 100 | Linear motor offset (m, each axis). |
 | `VehicleMinHoverHeight`, `VehicleMaxHoverHeight` | -128, 10000 | Hover height range (m). Second Life documents a maximum of 100. |
+| `VehicleSledAssist` | 0.045 | The sled's slope assist: a sled with its nose down is pushed along it at this share of g times the square root of the sine of its pitch (a tenth of it, back down the slope, nose up). 0.045 is what the InWorldz sled code gave at its 15 ms step; it is now the same at any step rate. 0 turns it off. |
 | `BodyMaxLinearSpeed`, `BodyMaxAngularSpeed` | 500, 47.12389 | The physics engine's own cap on every moving body, vehicle or not (Jolt's defaults). Keep it above `VehicleMaxLinearSpeed`. |
 
 ### Vehicle motors and friction

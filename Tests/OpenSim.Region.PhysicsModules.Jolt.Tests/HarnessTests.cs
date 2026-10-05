@@ -174,12 +174,14 @@ public class HarnessTests
     public void Sled_runs_at_11_hz()
     {
         // The sled preset has almost no forward friction (timescale 1000): let go on a 15 degree slope it slides
-        // down, leaves the ramp at about 20 m/s and runs off the region's south edge, which ends the run.
+        // down, leaves the ramp at about 16.5 m/s and runs off the region's south edge, which ends the run. Its slope
+        // assist is the same at every rate now (8.73 / 8.84 / 8.84 / 8.80 s at 11 / 22.5 / 45 / 90 Hz); it was a
+        // force times the step, six times stronger at 11 Hz than at the 15 ms step (before: 7.364 s and 19.85 m/s).
         RunResult r = Run("sled");
         Assert.Equal(0, r.Summary.NonFinite);
-        Assert.InRange(r.Summary.LeftRegionT, 7.0, 7.7);                        // 7.364 s; 4.578 s at 90 Hz
+        Assert.InRange(r.Summary.LeftRegionT, 8.4, 9.1);                        // 8.727 s
         Sample bottom = r.Samples.First(s => s.Position.Y <= Course.RampBottomY);
-        Assert.InRange(bottom.Speed, 19.5f, 20.2f);                             // 19.85 m/s; expected to change (rate-dependent, see the baseline)
+        Assert.InRange(bottom.Speed, 16.2f, 16.8f);                             // 16.52 m/s
     }
 
     [Fact]
