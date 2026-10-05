@@ -181,7 +181,7 @@ public sealed class Summary
     public double ImpactT = double.NaN;
     /// <summary>The fastest either object moved up to the impact.</summary>
     public float ArrivalSpeed = float.NaN;
-    /// <summary>The fastest either object moved in the second after the impact.</summary>
+    /// <summary>The fastest either object moved from 0.1 s to 1 s after the impact.</summary>
     public float LeavingSpeed = float.NaN;
     /// <summary>The deepest the surfaces overlapped after the impact (m).</summary>
     public float Penetration = float.NaN;
@@ -857,14 +857,24 @@ public static class Harness
         new()
         {
             Name = "crash-drop",
-            Description = "VEHICLE_TYPE_CAR with its presets let fall level from 2 m above level ground; no motor.",
-            DefaultDuration = _ => 5f,
+            Description = "VEHICLE_TYPE_CAR with its presets held level 2 m above level ground (buoyancy 1) and let fall at 2 s (buoyancy 0); no motor.",
+            DefaultDuration = _ => 7f,
             Setup = r =>
             {
                 r.AddBox(CarSize, new Vector3(128f, 128f, Course.Ground + CarSize.Z * 0.5f + 2f), Quaternion.Identity);
                 r.MakeVehicle(Vehicle.TYPE_CAR);
+                r.SetFloat(Vehicle.BUOYANCY, 1f);
                 r.ApplyVehicleOverrides();
-                r.ReleaseAt = 0;
+                r.ReleaseAt = AttractStart;
+            },
+            // Let go after the host's first frames of a new vehicle, in which it zeroes the body's velocity.
+            Input = r =>
+            {
+                if (!r.Released && r.Now >= AttractStart - 1e-9)
+                {
+                    r.SetFloat(Vehicle.BUOYANCY, 0f);
+                    r.Released = true;
+                }
             },
             Gap = GapBelow,
             PassedThrough = (r, s) => s.Position.Z < r.GroundAt(s.Position.X, s.Position.Y),
@@ -1071,6 +1081,9 @@ public static class Harness
     private static float GapBelow(Run r, Sample s)
         => s.Position.Z - HalfExtent(s.Rotation, r.ActorSize, Vector3.UnitZ) - r.GroundAt(s.Position.X, s.Position.Y);
 
+    /// <summary>The leaving speed is measured from this long after the impact (s).</summary>
+    public const double LeavingDelay = 0.1;
+
     /// <summary>A gap under this counts as the surfaces meeting.</summary>
     public const float ContactGap = 0.02f;
 
@@ -1173,8 +1186,9 @@ public static class Harness
             Sample s = samples[i];
             double after = s.T - t0;
             float overlap = -sc.Gap(r, s);
-            // The impact sample's speed is the step that ended in the contact, part arriving and part stopped.
-            if (i > impact && after <= 1.0 + 1e-9)
+            // From a tenth of a second after the impact: until then the impact is still going on (the step that met
+            // the contact, or a body still swinging onto it).
+            if (after >= LeavingDelay - 1e-9 && after <= 1.0 + 1e-9)
                 m.LeavingSpeed = MathF.Max(m.LeavingSpeed, MathF.Max(s.Speed, s.OtherSpeed));
             m.Penetration = MathF.Max(m.Penetration, overlap);
             if (sc.PassedThrough != null && sc.PassedThrough(r, s))

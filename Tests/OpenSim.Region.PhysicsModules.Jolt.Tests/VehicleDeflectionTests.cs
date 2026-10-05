@@ -87,49 +87,45 @@ public class VehicleDeflectionTests
         }
     }
 
-    [Fact]
-    public void On_the_ground_with_the_flag_it_turns_the_velocity_toward_the_nose_as_before()
-    {
-        // Level ground, velocity horizontal: the same turn as the old formula (whole velocity toward the nose,
-        // speed kept, upward part of the change dropped, which is none here).
-        foreach (double rate in Rates)
-        {
-            var (car, body, tick) = Car(new Vector3(4f, 3f, 0f), noDeflectionUp: true);
-            Vector3 expected = new(4f, 3f, 0f);
-            float dt = (float)(1.0 / rate);
-            Run(car, tick, rate, 1.0, () =>
-            {
-                expected = OldDeflection(expected, dt, clipUp: true);
-                Assert.True(Vector3.Distance(expected, body.LinearVelocity) < 1e-4f, $"{rate} Hz: {body.LinearVelocity} against {expected}");
-            });
-            Assert.True(body.LinearVelocity.Y < 3f);
-        }
-    }
+    // The angle between a velocity and +x (the nose), and the speed.
+    private static double AngleToNose(Vector3 v) => Math.Atan2(Math.Sqrt(v.Y * v.Y + v.Z * v.Z), v.X);
 
     [Fact]
-    public void Without_the_flag_nothing_changes()
+    public void On_the_ground_with_the_flag_the_angle_to_the_nose_decays_exactly()
     {
+        // Level ground, velocity horizontal: the angle to the nose decays as e^(-eff t / T) (the car: 1, 2 s), the
+        // speed kept, at every rate.
         foreach (double rate in Rates)
         {
-            var (car, body, tick) = Car(new Vector3(4f, 3f, -5f), noDeflectionUp: false);
-            Vector3 expected = new(4f, 3f, -5f);
-            float dt = (float)(1.0 / rate);
-            Run(car, tick, rate, 1.0, () =>
+            Vector3 start = new(4f, 3f, 0f);
+            var (car, body, tick) = Car(start, noDeflectionUp: true);
+            double a0 = AngleToNose(start), t = 0;
+            Run(car, tick, rate, 2.0, () =>
             {
-                expected = OldDeflection(expected, dt, clipUp: false);
-                Assert.True(Vector3.Distance(expected, body.LinearVelocity) < 1e-4f, $"{rate} Hz: {body.LinearVelocity} against {expected}");
+                t += 1.0 / rate;
+                double expected = a0 * Math.Exp(-t / 2.0);
+                Assert.True(Math.Abs(AngleToNose(body.LinearVelocity) - expected) < 1e-4, $"{rate} Hz at {t:0.000} s: {AngleToNose(body.LinearVelocity)} against {expected}");
+                Assert.Equal(5f, body.LinearVelocity.Length(), 3);
+                Assert.Equal(0f, body.LinearVelocity.Z, 5);
             });
         }
     }
 
-    // The deflection as it was: the whole velocity turned toward the nose (+x) by min(dt / 2 s, 1), speed kept; with
-    // the flag, the upward part of the change dropped.
-    private static Vector3 OldDeflection(Vector3 v, float dt, bool clipUp)
+    [Fact]
+    public void Without_the_flag_the_whole_velocity_turns_to_the_nose_exactly()
     {
-        float blend = Math.Min(dt / 2f, 1f);
-        Vector3 dir = Vector3.Normalize(Vector3.Normalize(v) * (1f - blend) + Vector3.UnitX * blend);
-        Vector3 change = dir * v.Length() - v;
-        if (clipUp && change.Z > 0) change.Z = 0;
-        return v + change;
+        foreach (double rate in Rates)
+        {
+            Vector3 start = new(4f, 3f, -5f);
+            var (car, body, tick) = Car(start, noDeflectionUp: false);
+            double a0 = AngleToNose(start), t = 0;
+            Run(car, tick, rate, 2.0, () =>
+            {
+                t += 1.0 / rate;
+                double expected = a0 * Math.Exp(-t / 2.0);
+                Assert.True(Math.Abs(AngleToNose(body.LinearVelocity) - expected) < 1e-4, $"{rate} Hz at {t:0.000} s: {AngleToNose(body.LinearVelocity)} against {expected}");
+                Assert.Equal(start.Length(), body.LinearVelocity.Length(), 3);
+            });
+        }
     }
 }

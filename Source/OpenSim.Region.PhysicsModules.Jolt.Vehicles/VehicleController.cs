@@ -74,8 +74,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // Frame counter for periodic operations
         private uint m_frameNum;
 
-        // False until the first step after a type change: the timestep smoothing then starts from that step's length.
-        private bool _timestepPrimed;
 
         // The share of gravity a ground vehicle (car or sled) gets while it touches something: BulletSim's
         // VehicleGroundGravityFudge, 0.2 there. 1 leaves gravity whole. Set by the host from its configuration.
@@ -173,7 +171,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // No motor until a script sets one.
             _props.Dynamics.LinearDecayIndex = float.PositiveInfinity;
             _props.Dynamics.AngularDecayIndex = float.PositiveInfinity;
-            _timestepPrimed = false;
             _props.Dynamics.LastAccessTOD = Clock();
 
             // (No scene-event registration or Refresh here; the host reacts to IsActive instead:
@@ -368,32 +365,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             m_frameNum++;
             m_vehicleMass = _body.Mass;
 
-            // -------------------------------------------------------
-            // Timestep smoothing (Halcyon pattern). It starts from the first step's own length: started from the
-            // reset value (MinPhysicsTimestep) it took a vehicle's first second or so to catch up with a longer
-            // step, and the motor under-drove meanwhile, the more the longer the step.
-            if (!_timestepPrimed)
-            {
-                _props.Dynamics.Timestep = pTimestep;
-                _timestepPrimed = true;
-            }
-            float timeStep = _props.Dynamics.Timestep * 0.8f + pTimestep * 0.2f;
+            // Every block steps over the step the engine is about to take. (The Halcyon code smoothed it 0.8/0.2 per
+            // step, and filtered a velocity whose sign flipped since the last step; both made the result depend on the
+            // step rate, and at a steady rate the smoothed step is the step.)
+            float timeStep = pTimestep;
 
             // -------------------------------------------------------
             // Read current state from physics engine
             _vframe = _props.GetRot(VehRotationParam.ReferenceFrame);
             _rotation = _body.Orientation * _vframe;
 
-            // Velocity anti-jitter: per-axis, when velocities are opposing, average to eliminate spike
             Vector3 physAngVel = _body.AngularVelocity;
-            _worldAngularVel.X = (_worldAngularVel.X * physAngVel.X >= 0) ? physAngVel.X : _worldAngularVel.X * 0.5f + physAngVel.X * 0.5f;
-            _worldAngularVel.Y = (_worldAngularVel.Y * physAngVel.Y >= 0) ? physAngVel.Y : _worldAngularVel.Y * 0.5f + physAngVel.Y * 0.5f;
-            _worldAngularVel.Z = (_worldAngularVel.Z * physAngVel.Z >= 0) ? physAngVel.Z : _worldAngularVel.Z * 0.5f + physAngVel.Z * 0.5f;
-
             Vector3 physLinVel = _body.LinearVelocity;
-            _worldLinearVel.X = (_worldLinearVel.X * physLinVel.X >= 0) ? physLinVel.X : _worldLinearVel.X * 0.5f + physLinVel.X * 0.5f;
-            _worldLinearVel.Y = (_worldLinearVel.Y * physLinVel.Y >= 0) ? physLinVel.Y : _worldLinearVel.Y * 0.5f + physLinVel.Y * 0.5f;
-            _worldLinearVel.Z = (_worldLinearVel.Z * physLinVel.Z >= 0) ? physLinVel.Z : _worldLinearVel.Z * 0.5f + physLinVel.Z * 0.5f;
+            _worldAngularVel = physAngVel;
+            _worldLinearVel = physLinVel;
 
             // Convert to local coordinates
             Quaternion invRotation = Quaternion.Inverse(_rotation);
@@ -450,13 +435,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             // -------------------------------------------------------
             // Vertical attractor and banking
+            float tilt = 0f;
             if (VehicleLimits.DoVerticalAttractor)
-            {
-                SimulateVerticalAttractor(pTimestep, out float angle, out bool inverted);
-                // Banking runs AFTER the attractor (uses its angle/inverted) and BEFORE the motors: it sets
-                // Dynamics.BankingDirection, which the banking-turn block inside SimulateMotors consumes.
-                SimulateBankingToYaw(timeStep, angle, inverted);
-            }
+                SimulateVerticalAttractor(pTimestep, out tilt, out _);
 
             // -------------------------------------------------------
             // Motors and friction, linear and angular, then the banking turn motor. They are stepped over the
@@ -464,7 +445,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // over that step.
             SimulateLinearMotorAndFriction(pTimestep, VehicleLimits.DoMotors, VehicleLimits.DoLinearFriction);
             float angularz = SimulateAngularMotorAndFriction(pTimestep, VehicleLimits.DoMotors, VehicleLimits.DoAngularFriction);
-            SimulateBankingTurn(timeStep, VehicleLimits.DoMotors, angularz);
+            float banking = VehicleLimits.DoVerticalAttractor ? SimulateBanking(pTimestep, tilt) : 0f;
+            _motorTorqueVelChange += new Vector3(0f, 0f, angularz + banking);
 
             // Apply gravity manually (same pattern as BSDynamics)
             ApplyGravity();
@@ -539,6 +521,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _props.Dynamics.AngularDecayIndex += pTimestep;
             _hoverCarry = null;
             _attractorCarry = null;
+            _angularDeflectionRate = Vector3.Zero;
         }
 
         #endregion // Step
@@ -658,16 +641,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             if (!_linearMotorStallChecked)
             {
-                // Smooth short term position delta
-                _props.Dynamics.ShortTermPositionDelta = _props.Dynamics.ShortTermPositionDelta * 0.8f + posdelta * 0.2f;
+                // The position's rate of change, smoothed with a time constant (StallSmoothing): the same smoothing
+                // over a span of time whatever the step. (It was 0.8 / 0.2 per step, which is this time constant at
+                // the 64 Hz step the code was tuned at.)
+                float share = 1f - (float)Math.Exp(-timeStep / StallSmoothing);
+                _props.Dynamics.ShortTermPositionDelta += (posdelta / timeStep - _props.Dynamics.ShortTermPositionDelta) * share;
                 _linearMotorStallChecked = true;
 
                 // If either motor is starting fresh, assume not stalled
                 if (_props.Dynamics.LinearDecayIndex > VehicleLimits.ThresholdLinearMotorEngaged &&
                     _props.Dynamics.AngularDecayIndex > VehicleLimits.ThresholdAngularMotorEngaged)
                 {
-                    float stposdelta = Vector3.Mag(_props.Dynamics.ShortTermPositionDelta);
-                    float stspeed = stposdelta / timeStep;
+                    float stspeed = Vector3.Mag(_props.Dynamics.ShortTermPositionDelta);
 
                     if (stspeed < currspeed * 0.5f)
                     {
@@ -681,6 +666,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             return _linearMotorStalled;
         }
+
+        // The stall check's smoothing time constant (s): -0.0156 / ln(0.8), the old per-step 0.8 / 0.2 at 64 Hz.
+        private const float StallSmoothing = 0.07f;
 
         #endregion
 
@@ -796,125 +784,78 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         #region Deflection (Angular + Linear) + Sled movement (gated Type==Sled)
 
         /// <summary>
-        /// Rotates vehicle toward direction of movement (weathervane: swings the NOSE toward the velocity,
-        /// complementary to linear deflection which rotates the velocity toward the nose).
-        /// Follows the InWorldz Halcyon vehicle dynamics.
-        /// Seam table: all symbols map 1:1 here - _worldLinearVel/_localLinearVel/_worldAngularVel/_rotation,
-        /// the limits, the QuatToEuler/RotBetween/AngleBetween utilities, and AddTorqueVelocityChange (the
-        /// torque-as-velocity-change seam) already exist on this controller.
+        /// Angular deflection, as Second Life documents it (Linden_Vehicle_Tutorial, "Linear and Angular Deflection";
+        /// LlSetVehicleFloatParam): it reorients the vehicle so that its x axis points the way it is moving, the
+        /// timescale being "the time coefficient for exponential decay toward full deflection" and the efficiency a
+        /// slider from no deflection (0) to the most (1). The angle a between the nose and the velocity decays as
+        ///
+        ///   a' = -eff s a / T,   so over a step h the nose turns a (1 - e^(-eff s h / T)) toward the velocity,
+        ///
+        /// with s = speed / 30 m/s (MaxLegacyLinearVelocity, at most 1), the speed scaling the existing code had. The
+        /// documentation gives no speed term; without it a car slowing to a stop turns its nose toward the jitter of
+        /// its contact velocity and drifts, and a falling car noses down hard.
+        ///
+        /// given to the body as a turning rate for the step (and the last step's taken back, so the deflection is a
+        /// rate, not a push that builds up). A vehicle moving backwards turns its tail, not its nose, toward its
+        /// velocity. Under ThresholdDeflectionSpeed the velocity has no direction to turn to.
         /// </summary>
-        private void SimulateAngularDeflection(float timeStep)
+        private void SimulateAngularDeflection(float h)
         {
-            if (Math.Abs(_worldLinearVel.X) >= VehicleLimits.ThresholdDeflectionSpeed ||
-                Math.Abs(_worldLinearVel.Y) >= VehicleLimits.ThresholdDeflectionSpeed ||
-                Math.Abs(_worldLinearVel.Z) >= VehicleLimits.ThresholdDeflectionSpeed)
+            Vector3 rate = Vector3.Zero;
+            float timescale = _props.GetFloat(VehFloatParam.AngularDeflectionTimescale, 1000f);
+            float efficiency = _props.GetFloat(VehFloatParam.AngularDeflectionEfficiency, 0f);
+            float speed = _rawWorldLinearVel.Length();
+            if (timescale < VehicleLimits.MaxTimescale && efficiency > 0f && speed >= VehicleLimits.ThresholdDeflectionSpeed)
             {
-                float timescale = Math.Max(_props.GetFloat(VehFloatParam.AngularDeflectionTimescale, 1000f), timeStep);
-
-                if (timescale < VehicleLimits.MaxTimescale)
+                Vector3 forward = Vector3.UnitX * _rotation;
+                Vector3 heading = _rawWorldLinearVel / speed;
+                if (Vector3.Dot(forward, heading) < 0f)
+                    heading = -heading;
+                Vector3 axis = Vector3.Cross(forward, heading);
+                float sin = axis.Length();
+                if (sin > MinTurnSine)
                 {
-                    float timepct = timeStep / timescale;
-                    float efficiency = _props.GetFloat(VehFloatParam.AngularDeflectionEfficiency, 0f);
-                    float speed = Utils.Clamp(Vector3.Mag(_localLinearVel), 0, VehicleLimits.MaxLegacyLinearVelocity);
-                    float speedpct = speed / VehicleLimits.MaxLegacyLinearVelocity;
-
-                    // Compute the rotation between the x axis pointing vector and the linear direction
-                    Vector3 ahead = new Vector3(1, 0, 0) * _rotation;
-                    Quaternion tween = RotBetween(ahead, Vector3.Normalize(_worldLinearVel));
-                    float angle = AngleBetween(tween, Quaternion.Identity);
-                    Vector3 vtwix = QuatToEuler(tween);
-
-                    // Cheat: if the local X movement is negative, flip the angle
-                    if (_localLinearVel.X < 0)
-                    {
-                        angle = (float)Math.PI - angle;
-                    }
-
-                    // Scale the force
-                    vtwix = Vector3.Normalize(vtwix) * speedpct * (float)Math.PI * timepct * efficiency * (float)Math.Log(1.0 + angle);
-
-                    // Compute damping
-                    Vector3 remvel = Vector3.Zero;
-                    if (angle < VehicleLimits.ThresholdDeflectionAngle)
-                    {
-                        remvel = _worldAngularVel * timepct * efficiency * (float)(Math.Log(1.0 + Math.PI - angle) / Math.Log(1.0 + Math.PI));
-                    }
-
-                    vtwix -= remvel;
-
-                    if (IsLinearMotorStalled())
-                    {
-                        vtwix = Vector3.Zero;
-                    }
-
-                    if (Math.Abs(vtwix.X) >= VehicleLimits.ThresholdAngularMotorDeltaV ||
-                        Math.Abs(vtwix.Y) >= VehicleLimits.ThresholdAngularMotorDeltaV ||
-                        Math.Abs(vtwix.Z) >= VehicleLimits.ThresholdAngularMotorDeltaV)
-                    {
-                        AddTorqueVelocityChange(vtwix);
-                    }
+                    double angle = Math.Atan2(sin, Vector3.Dot(forward, heading));
+                    double speedShare = Math.Min(speed, VehicleLimits.MaxLegacyLinearVelocity) / VehicleLimits.MaxLegacyLinearVelocity;
+                    double turn = angle * (1.0 - Math.Exp(-efficiency * speedShare * h / timescale));
+                    rate = axis / sin * (float)(turn / h);
                 }
             }
+            _motorTorqueVelChange += rate - _angularDeflectionRate;
+            _angularDeflectionRate = rate;
         }
 
+        // The turning rate angular deflection gave the body in the last step.
+        private Vector3 _angularDeflectionRate;
+
+        // Directions closer than this (the sine of the angle between them) are already aligned.
+        private const float MinTurnSine = 1e-6f;
+
         /// <summary>
-        /// Changes velocity toward forward axis.
-        /// Follows the InWorldz Halcyon vehicle dynamics.
-        /// Seam table: symbols map 1:1 here - _worldLinearVel, _rotation,
-        /// _props, the limits, and ApplyLinearVelocityChange are the same names on this controller, so no
-        /// substitution is needed inside the body (ApplyLinearVelocityChange already writes _body.LinearVelocity).
+        /// Linear deflection, as Second Life documents it (Linden_Vehicle_Tutorial, "Linear and Angular Deflection";
+        /// LlSetVehicleFloatParam): it rotates the velocity until it points along the vehicle's x axis, keeping its
+        /// speed, with the timescale "the time coefficient for exponential decay toward full deflection" and the
+        /// efficiency a slider from none (0) to the most (1). The angle a between the velocity and the nose decays as
+        ///
+        ///   a' = -eff a / T,   so over a step h the velocity turns a (1 - e^(-eff h / T)) toward the nose.
+        ///
+        /// With NO_DEFLECTION_UP ("prevents linear deflection parallel to world z-axis") only the horizontal part of
+        /// the velocity turns, toward the nose's horizontal heading, and the vertical part is left as it is, so
+        /// deflection never adds speed or climbs.
         /// </summary>
-        private void SimulateLinearDeflection(float timeStep)
+        private void SimulateLinearDeflection(float h)
         {
-            if (Math.Abs(_worldLinearVel.X) >= VehicleLimits.ThresholdLinearMotorDeltaV ||
-                Math.Abs(_worldLinearVel.Y) >= VehicleLimits.ThresholdLinearMotorDeltaV ||
-                Math.Abs(_worldLinearVel.Z) >= VehicleLimits.ThresholdLinearMotorDeltaV)
-            {
-                float timescale = Math.Max(_props.GetFloat(VehFloatParam.LinearDeflectionTimescale, 1000f), timeStep);
-
-                if (timescale < VehicleLimits.MaxTimescale)
-                {
-                    float timePct = timeStep / timescale;
-                    float efficiency = _props.GetFloat(VehFloatParam.LinearDeflectionEfficiency, 0f);
-
-                    // Determine the amount of velocity to shift
-                  // SL behavior: linear deflection rotates the velocity vector toward
-                    // the forward axis, preserving speed. This is what generates lift —
-                    // when pitched up, horizontal velocity is redirected upward along
-                    // the forward axis.
-                    float speed = Vector3.Mag(_worldLinearVel);
-                    if (speed < VehicleLimits.ThresholdDeflectionSpeed) return;
-
-                    Vector3 forwardDir = new Vector3(1, 0, 0) * _rotation;
-                    float blend = Math.Min(timePct * efficiency, 1.0f);
-                    Vector3 worldvel;
-
-                    if ((_props.Flags & ExtendedVehicleFlags.NoDeflectionUp) != 0)
-                    {
-                        // No deflection upward: deflection turns only the horizontal part of the velocity toward the
-                        // nose's horizontal heading, keeping its size, and leaves the vertical part exactly as it was,
-                        // so it never adds speed. (Turning the whole velocity and then dropping the upward part of the
-                        // change, as before, added forward speed to a vehicle falling nose-level in every step.)
-                        worldvel = HorizontalDeflection(_worldLinearVel, forwardDir, blend);
-                    }
-                    else
-                    {
-                        // Blend current direction toward forward direction
-                        Vector3 currentDir = Vector3.Normalize(_worldLinearVel);
-                        Vector3 newDir = Vector3.Normalize(currentDir * (1.0f - blend) + forwardDir * blend);
-
-                        // New velocity = same speed, redirected direction
-                        worldvel = newDir * speed - _worldLinearVel;
-                    }
-
-                    if (Math.Abs(worldvel.X) > VehicleLimits.ThresholdLinearMotorDeltaV ||
-                        Math.Abs(worldvel.Y) > VehicleLimits.ThresholdLinearMotorDeltaV ||
-                        Math.Abs(worldvel.Z) > VehicleLimits.ThresholdLinearMotorDeltaV)
-                    {
-                        ApplyLinearVelocityChange(worldvel);
-                    }
-                }
-            }
+            float timescale = _props.GetFloat(VehFloatParam.LinearDeflectionTimescale, 1000f);
+            float efficiency = _props.GetFloat(VehFloatParam.LinearDeflectionEfficiency, 0f);
+            if (timescale >= VehicleLimits.MaxTimescale || efficiency <= 0f)
+                return;
+            float share = 1f - (float)Math.Exp(-efficiency * h / timescale);
+            Vector3 forward = Vector3.UnitX * _rotation;
+            Vector3 change = (_props.Flags & ExtendedVehicleFlags.NoDeflectionUp) != 0
+                ? HorizontalDeflection(_rawWorldLinearVel, forward, share)
+                : Deflection(_rawWorldLinearVel, forward, share);
+            if (change != Vector3.Zero)
+                ApplyLinearVelocityChange(change);
         }
 
         /// <summary>
@@ -959,21 +900,37 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         }
 
         /// <summary>
-        /// The velocity change that turns the horizontal part of a velocity toward the horizontal heading of the nose
-        /// by the given blend, keeping the horizontal speed; the vertical part is untouched. Zero when the velocity
-        /// has too little horizontal speed or the nose points (nearly) straight up or down.
+        /// The velocity change that turns a velocity toward a direction by the given share of the angle between them,
+        /// keeping its speed. Zero when the velocity is under ThresholdDeflectionSpeed or already along the direction;
+        /// exactly opposed, there is no one way to turn, and it is left for this step.
         /// </summary>
-        internal static Vector3 HorizontalDeflection(Vector3 velocity, Vector3 forward, float blend)
+        internal static Vector3 Deflection(Vector3 velocity, Vector3 toward, float share)
+        {
+            float speed = velocity.Length();
+            if (speed < VehicleLimits.ThresholdDeflectionSpeed || toward.Length() < MinDeflectionHeading)
+                return Vector3.Zero;
+            Vector3 u = velocity / speed, d = Vector3.Normalize(toward);
+            Vector3 axis = Vector3.Cross(u, d);
+            float sin = axis.Length();
+            if (sin < MinTurnSine)
+                return Vector3.Zero;
+            axis /= sin;
+            double turn = Math.Atan2(sin, Vector3.Dot(u, d)) * share;
+            // Rodrigues' rotation of u about an axis perpendicular to it.
+            Vector3 turned = u * (float)Math.Cos(turn) + Vector3.Cross(axis, u) * (float)Math.Sin(turn);
+            return turned * speed - velocity;
+        }
+
+        /// <summary>
+        /// The velocity change that turns the horizontal part of a velocity toward the horizontal heading of the nose
+        /// by the given share of the angle between them, keeping the horizontal speed; the vertical part is untouched.
+        /// Zero when the velocity has too little horizontal speed or the nose points (nearly) straight up or down.
+        /// </summary>
+        internal static Vector3 HorizontalDeflection(Vector3 velocity, Vector3 forward, float share)
         {
             Vector3 horizontal = new Vector3(velocity.X, velocity.Y, 0f);
             Vector3 heading = new Vector3(forward.X, forward.Y, 0f);
-            float speed = horizontal.Length();
-            if (speed < VehicleLimits.ThresholdDeflectionSpeed || heading.Length() < MinDeflectionHeading)
-                return Vector3.Zero;
-            Vector3 mix = horizontal / speed * (1.0f - blend) + Vector3.Normalize(heading) * blend;
-            if (mix.Length() < 1e-6f)
-                return Vector3.Zero;   // exactly opposed halfway: no direction to turn to this step
-            return Vector3.Normalize(mix) * speed - horizontal;
+            return Deflection(horizontal, heading, share);
         }
 
         // A nose whose horizontal heading is shorter than this (pointing within about 6 degrees of straight up or
@@ -1189,61 +1146,55 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         #endregion
 
-        #region Banking (roll -> yaw driver; the consumer is the banking-turn block in SimulateMotors)
+        #region Banking
 
         /// <summary>
-        /// Converts roll to yaw rotation. Follows the InWorldz Halcyon vehicle dynamics.
-        /// Runs AFTER the vertical attractor (whose angle/
-        /// inverted it takes) and BEFORE SimulateMotors: it sets Dynamics.BankingDirection, which the
-        /// already-present banking-turn block inside SimulateMotors consumes and blends into the angular-Z
-        /// torque. Seam table: _localLinearVel/_rotation, the limits, Utils.Clamp and _props.Dynamics are
-        /// the same names here, so the body is unchanged.
+        /// Banking, as Second Life documents it (Linden_Vehicle_Tutorial, "Banking"; LlSetVehicleFloatParam): a roll
+        /// about the vehicle's roll axis gives it an angular velocity about the yaw axis, so it turns; positive
+        /// efficiency leans into the turn. The yaw rate it asks for is in proportion to the efficiency and the roll,
+        /// and with BANKING_MIX toward 1 also to the speed along the roll axis:
+        ///
+        ///   target = -roll * attitude * eff * pi * ((1 - mix) + mix * speed / 30 m/s)     (roll the y axis' rise,
+        ///            scaled to the banking range; attitude -1 when the vehicle is upside down)
+        ///
+        /// and the yaw rate about world z approaches it with BANKING_TIMESCALE, the documented "time it takes for the
+        /// banking behavior to defeat a preexisting angular velocity about the world z-axis":
+        ///
+        ///   w' = (target - w) / T,   stepped exactly: w(h) = target + (w0 - target) e^(-h / T).
+        ///
+        /// The vertical attractor must be on ("must be enabled in order for the banking behavior to function"); off
+        /// at a banking timescale of 500 s or more; under ThresholdBankAngle of roll banking leaves the yaw alone.
+        /// Returns the change to the angular velocity about world z.
         /// </summary>
-        private void SimulateBankingToYaw(float timeStep, float angle, bool inverted)
+        private float SimulateBanking(float h, float tilt)
         {
-            float timescale = Math.Max(_props.GetFloat(VehFloatParam.BankingTimescale, 1000f), timeStep);
+            float timescale = _props.GetFloat(VehFloatParam.BankingTimescale, 1000f);
+            float efficiency = _props.GetFloat(VehFloatParam.BankingEfficiency, 0f);
+            if (!VehicleLimits.DoBanking || efficiency == 0f || timescale >= VehicleLimits.MaxAttractTimescale
+                || _props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f) >= VehicleLimits.MaxAttractTimescale)
+                return 0f;
 
-            if (timescale < VehicleLimits.MaxAttractTimescale)
-            {
-                float efficiency = _props.GetFloat(VehFloatParam.BankingEfficiency, 0f);
-                float bmodifier = _props.GetFloat(VehFloatParam.InvertedBankingModifier, 1f);
+            float mix = _props.GetFloat(VehFloatParam.BankingMix, 0.5f);
+            float forwardSpeed = Math.Abs(_rawLocalLinearVel.X);
+            float speedShare = Utils.Clamp(forwardSpeed, 0, VehicleLimits.MaxLegacyLinearVelocity) / VehicleLimits.MaxLegacyLinearVelocity;
 
-                if (VehicleLimits.DoBanking && timescale < VehicleLimits.MaxTimescale)
-                {
-                    float bankingmix = _props.GetFloat(VehFloatParam.BankingMix, 0.5f);
-                    float xspeed = 0.0f;
+            // The roll: how far the y axis rises, scaled to the banking range.
+            float rise = (Vector3.UnitY * _rotation).Z;
+            float range = _props.GetFloat(VehFloatParam.BankingAzimuth, (float)Math.PI / 2f);
+            float roll = Utils.Clamp(rise * (float)Math.PI * 0.5f / range, -1, 1);
+            if (Math.Abs(roll) <= VehicleLimits.ThresholdBankAngle)
+                return 0f;
+            float attitude = tilt > Math.PI / 2.0 ? -1f : 1f;
 
-                    // Legacy support: use velocity as an on/off switch, proportional and capped
-                    if (Math.Abs(_localLinearVel.X) > VehicleLimits.ThresholdAngularMotorDeltaV)
-                        xspeed = Utils.Clamp(Math.Abs(_localLinearVel.X), 0, VehicleLimits.MaxLegacyLinearVelocity);
-                    float xspeedpct = xspeed / VehicleLimits.MaxLegacyLinearVelocity;
+            float target = -roll * attitude * efficiency * (float)Math.PI * ((1f - mix) + mix * speedShare);
+            // With the angular motor engaged, banking turns no faster than the legacy angular speed.
+            if (_props.Dynamics.AngularDecayIndex < VehicleLimits.ThresholdAngularMotorEngaged)
+                target = Utils.Clamp(target, -VehicleLimits.MaxLegacyAngularVelocity, VehicleLimits.MaxLegacyAngularVelocity);
+            target = Utils.Clamp(target, -VehicleLimits.MaxAngularVelocity, VehicleLimits.MaxAngularVelocity);
 
-                    // Compute percentage of roll
-                    Vector3 erot = new Vector3(0f, 1f, 0f);
-                    erot *= _rotation;
-                    float xangle = erot.Z;
-                    float attitude = (angle > Math.PI / 2.0) ? -1 : 1;
-
-                    // Clamp to current banking range
-                    float xmax = _props.GetFloat(VehFloatParam.BankingAzimuth, (float)Math.PI / 2f);
-                    xangle = Utils.Clamp(xangle * (float)Math.PI * 0.5f / xmax, -1, 1);
-
-                    // Apply inverted banking modifier
-                    if (inverted)
-                        efficiency = efficiency * bmodifier;
-
-                    // Apply torque only when above threshold
-                    if (Math.Abs(xangle) > VehicleLimits.ThresholdBankAngle)
-                    {
-                        _props.Dynamics.BankingDirection = -xangle * attitude * efficiency * (1.0f - bankingmix) * (float)Math.PI; // static
-                        _props.Dynamics.BankingDirection += -xangle * attitude * efficiency * bankingmix * xspeedpct * (float)Math.PI; // dynamic
-                    }
-                    else
-                    {
-                        _props.Dynamics.BankingDirection = 0;
-                    }
-                }
-            }
+            float w0 = _rawWorldAngularVel.Z;
+            float w1 = target + (w0 - target) * (float)Math.Exp(-h / timescale);
+            return w1 - w0;
         }
 
         #endregion
@@ -1360,7 +1311,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             _props.Dynamics.AngularDecayIndex += h;
 
-            // The change about world Z is applied with the banking turn motor's (SimulateBankingTurn).
+            // The change about world Z is applied in Step, with banking's.
             float aboutWorldZ = change.Z;
             change.Z = 0;
             _motorTorqueVelChange += change;
@@ -1376,203 +1327,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 (float)VehicleMotorSolver.FrictionStep(v0.Y, frictionTs.Y, h, accel.Y),
                 (float)VehicleMotorSolver.FrictionStep(v0.Z, frictionTs.Z, h, accel.Z));
 
-        /// <summary>
-        /// The banking turn motor (roll to yaw), and the angular motor's change about world Z with it.
-        /// Follows the InWorldz Halcyon vehicle dynamics.
-        /// </summary>
-        private void SimulateBankingTurn(float timeStep, bool motorOn, float angularz)
-        {
-            // ================================================================
-            // Banking Turn Motor Simulation
-            // ================================================================
-            float btimescale = _props.GetFloat(VehFloatParam.BankingTimescale, 1000f);
-            float bnewvel = 0;
-            Vector3 worldvel;
-
-            if (motorOn && _props.Dynamics.BankingDirection != 0 && btimescale < VehicleLimits.MaxTimescale)
-            {
-                float blastvel = _worldAngularVel.Z;
-                float badjvel;
-                float bfactor;
-                float dirbsign;
-
-                badjvel = blastvel;
-                dirbsign = VehicleMath.PosNeg(_props.Dynamics.BankingDirection);
-
-                // Target velocity ensures forward progress
-                if (dirbsign * (_props.Dynamics.BankingTargetVelocity - badjvel) > 0) badjvel = _props.Dynamics.BankingTargetVelocity;
-
-                // Compute rampup factor
-                bfactor = MotorRampRate(badjvel, _props.Dynamics.BankingDirection, btimescale, timeStep);
-                bnewvel = MotorRampStep(badjvel, _props.Dynamics.BankingDirection, btimescale, timeStep, bfactor);
-
-                // If angular motor is engaged, reduce max banking velocity
-                if (_props.Dynamics.AngularDecayIndex < VehicleLimits.ThresholdAngularMotorEngaged)
-                {
-                    if (Math.Abs(bnewvel) > VehicleLimits.MaxLegacyAngularVelocity)
-                        bnewvel = VehicleLimits.MaxLegacyAngularVelocity * VehicleMath.PosNeg(bnewvel);
-                }
-
-                // Crossover flip
-                if (bfactor == VehicleLimits.ThresholdInverseCrossover) bfactor = -bfactor;
-
-                // Avoid zero velocity stiction
-                if (bfactor > 0 && Math.Abs(bnewvel) < VehicleLimits.ThresholdAngularMotorDeltaV)
-                    bnewvel = dirbsign * VehicleLimits.ThresholdAngularMotorDeltaV * 8;
-
-                // Compute new target banking velocity
-                if (_props.Dynamics.BankingDirection * bnewvel < 0 || bfactor < 0)
-                    _props.Dynamics.BankingTargetVelocity = bnewvel;
-                else
-                    _props.Dynamics.BankingTargetVelocity = Utils.Clamp(bnewvel, -Math.Abs(_props.Dynamics.BankingDirection), Math.Abs(_props.Dynamics.BankingDirection));
-
-                // Limit max velocities
-                bnewvel = Utils.Clamp(bnewvel, -VehicleLimits.MaxAngularVelocity, VehicleLimits.MaxAngularVelocity);
-
-                // If local velocity exceeds motor speed, motor is not adding power
-                if (bfactor >= 0 && (dirbsign * (blastvel - bnewvel) > 0)) bnewvel = blastvel;
-
-                // Kill banking motor when linear motor stalled
-                if (IsLinearMotorStalled())
-                {
-                    _props.Dynamics.BankingTargetVelocity = 0.0f;
-                    bnewvel = blastvel;
-                }
-
-                // Convert to deltaV
-                bnewvel -= blastvel;
-            }
-            else
-            {
-                _props.Dynamics.BankingTargetVelocity = 0.0f;
-                bnewvel = 0;
-            }
-
-            // Blend angular Z and banking forces. The angular motor's and friction's change about world Z is applied
-            // whole; the banking motor's only above its threshold, as before.
-            worldvel = Vector3.Zero;
-            if (Math.Abs(bnewvel) >= VehicleLimits.ThresholdAngularMotorDeltaV)
-                worldvel.Z = bnewvel;
-            worldvel.Z += angularz;
-            _motorTorqueVelChange += worldvel;
-        }
-
         #endregion
-
-        #region Exponential Motor Math (ported from Halcyon VehicleMotor)
-
-        // The ramp below is the banking turn motor's. The linear and angular motors follow VehicleMotorSolver.
-
-        /// <summary>
-        /// Soft exponential growth: returns value between 0 and 1.0.
-        /// </summary>
-        internal float MovementExpGrowth(float timeindex, float timescale)
-        {
-            return Utils.Clamp((float)Math.Pow(Math.E, (timeindex / timescale) / Math.E) - 1.0f, 0.0f, 1.0f);
-        }
-
-        /// <summary>
-        /// Compute a growth/decay rate based on an exponential fit between two velocity points.
-        /// </summary>
-        internal static float GetGrowthRate(float svel, float evel, float timescale)
-        {
-            float elog;
-
-            if (svel * evel > 0)
-            {
-                evel = Math.Abs(evel);
-                svel = Math.Abs(svel);
-                elog = (float)Math.Log(evel / svel);
-            }
-            else
-            {
-                if (evel == 0 && svel == 0) return 0;
-                if (evel == 0)
-                    elog = -(float)Math.Log(1.0 + Math.Abs(svel));
-                else if (svel == 0)
-                    elog = (float)Math.Log(1.0 + Math.Abs(evel));
-                else
-                {
-                    if (Math.Abs(svel) > CrossoverSpeed)
-                        elog = -(float)Math.Log(1.0f + Math.Abs(svel - evel));
-                    else
-                        return VehicleLimits.ThresholdInverseCrossover;
-                }
-            }
-
-            return elog / timescale;
-        }
-
-        /// <summary>
-        /// The motor ramp's rate for one step, applied by <see cref="MotorRampStep"/> as v * e^rate. The ramp is
-        /// dv/dt = v * ln(target / v) / timescale (GetGrowthRate gives the log). Its exact solution shrinks
-        /// ln(v / target) by e^(-dt / timescale) each step, which is v * (target / v)^(1 - e^(-dt / timescale)):
-        /// the same speed at the same time whatever the step. The old step, v + v * ln(target / v) * dt / timescale,
-        /// is its first-order form; it gives the same as the step goes to zero, but fell short on a long step.
-        /// The crossover marker is returned unchanged (a sign flip, which does not depend on the step).
-        /// </summary>
-        internal static float MotorRampRate(float svel, float evel, float timescale, float timeStep)
-        {
-            float elog = GetGrowthRate(svel, evel, 1f);
-            if (elog == VehicleLimits.ThresholdInverseCrossover)
-                return elog;
-            return elog * StepShare(timeStep, timescale);
-        }
-
-        /// <summary>
-        /// One step of the motor ramp from v toward evel, given the rate MotorRampRate returned for it. Toward a
-        /// target of the same sign the ramp is the exact solution above. Toward zero or the other way, the rate
-        /// depends on the speed itself (ln(1 + |v|)), which has no closed form, so the step is taken in sub-steps of
-        /// at most timescale / RampSubstepsPerTimescale, each with the exact form for its own starting speed.
-        /// </summary>
-        internal static float MotorRampStep(float v, float evel, float timescale, float timeStep, float rate)
-        {
-            if (rate == VehicleLimits.ThresholdInverseCrossover)
-                return v + v * rate;   // crossover: the velocity flips sign (the marker is -2.01)
-            if (v * evel > 0)
-                return v * (float)Math.Exp(rate);
-            int n = (int)Math.Min(MaxRampSubsteps, Math.Max(1.0, Math.Ceiling(timeStep * RampSubstepsPerTimescale / timescale)));
-            float h = timeStep / n;
-            for (int i = 0; i < n; i++)
-                v = RampSubstep(v, evel, timescale, h);
-            return v;
-        }
-
-        // One sub-step of a ramp toward zero or the other sign. Toward the other sign the motor brakes until the speed
-        // is down to CrossoverSpeed, then flips it (GetGrowthRate's crossover marker): the flip is made at that speed,
-        // inside the sub-step, and the rest of the sub-step ramps from there, so when it happens does not depend on
-        // where a step or sub-step happens to end.
-        private static float RampSubstep(float v, float evel, float timescale, float h)
-        {
-            float r = MotorRampRate(v, evel, timescale, h);
-            if (r == VehicleLimits.ThresholdInverseCrossover)
-                return v + v * r;
-            float next = v * (float)Math.Exp(r);
-            if (v * evel < 0 && Math.Abs(v) > CrossoverSpeed && Math.Abs(next) < CrossoverSpeed)
-            {
-                float share = (float)Math.Log(CrossoverSpeed / Math.Abs(v)) / r;   // of the sub-step, to the crossover
-                float atCrossover = Math.Sign(v) * CrossoverSpeed;
-                float flipped = atCrossover + atCrossover * VehicleLimits.ThresholdInverseCrossover;
-                float rest = h * (1f - share);
-                return MotorRampStep(flipped, evel, timescale, rest, MotorRampRate(flipped, evel, timescale, rest));
-            }
-            return next;
-        }
-
-        // Below this speed a motor driving the other way flips the velocity's sign instead of braking further.
-        private const float CrossoverSpeed = 0.3f;
-
-
-        // The motor ramp toward zero or across it is integrated in sub-steps no longer than a timescale over this
-        // (within 0.2% of a far finer integration), and at most this many per step.
-        private const float RampSubstepsPerTimescale = 128f;
-        private const int MaxRampSubsteps = 1024;
-
-        /// <summary>The share of the way to its end that an exponential with this timescale covers in one step.</summary>
-        internal static float StepShare(float timeStep, float timescale)
-            => 1f - (float)Math.Exp(-timeStep / timescale);
-
-        #endregion // Motor Math
 
         #region Quaternion Math Utilities (replaces Halcyon PhysUtil)
 

@@ -6,65 +6,9 @@
  */
 
 using OpenSim.Region.PhysicsModules.Jolt.Harness;
-using OpenSim.Region.PhysicsModules.Jolt.Vehicles;
 using Xunit;
 
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
-
-/// <summary>
-/// The banking turn motor's ramp does not depend on the step (pure, parallel); and a car and a boat driven through
-/// the harness at the four heartbeat rates against a far finer step.
-/// </summary>
-public class VehicleMotorRampTests
-{
-    private static readonly double[] Steps = { 1 / 11.0, 1 / 22.5, 1 / 45.0, 1 / 90.0 };
-    private const double FineStep = 1 / 20000.0;
-    private const double RunSeconds = 2.0;   // a whole number of steps at every rate above
-
-    private static float Ramp(float v, float target, float timescale, double dt, double seconds)
-    {
-        int n = (int)Math.Round(seconds / dt);
-        for (int i = 0; i < n; i++)
-            v = VehicleController.MotorRampStep(v, target, timescale, (float)dt, VehicleController.MotorRampRate(v, target, timescale, (float)dt));
-        return v;
-    }
-
-    // The ramp as it was stepped before: v + v * ln(target / v) * dt / timescale (GetGrowthRate with timescale / dt).
-    private static float OldRamp(float v, float target, float timescale, double dt, double seconds)
-    {
-        int n = (int)Math.Round(seconds / dt);
-        for (int i = 0; i < n; i++)
-            v += v * VehicleController.GetGrowthRate(v, target, (float)(timescale / dt));
-        return v;
-    }
-
-    [Theory]
-    [InlineData(0.04f, 8f, 1f)]     // from the stiction seed up to the motor's speed
-    [InlineData(0.04f, 8f, 0.5f)]
-    [InlineData(6f, 0f, 1f)]        // a motor set to zero brakes
-    [InlineData(6f, 0f, 0.5f)]
-    [InlineData(5f, -8f, 0.5f)]     // reversed: brakes, flips at the crossover, ramps the other way
-    public void The_ramp_reaches_the_same_speed_at_any_step(float start, float target, float timescale)
-    {
-        float fine = Ramp(start, target, timescale, FineStep, RunSeconds);
-        foreach (double dt in Steps)
-        {
-            float v = Ramp(start, target, timescale, dt, RunSeconds);
-            Assert.True(Math.Abs(v - fine) <= 0.01f * Math.Max(Math.Abs(fine), 0.05f), $"dt {dt:0.0000}: {v} against {fine}");
-        }
-    }
-
-    [Theory]
-    [InlineData(0.04f, 8f, 1f)]
-    [InlineData(6f, 0f, 1f)]
-    [InlineData(5f, -8f, 0.5f)]
-    public void As_the_step_goes_to_zero_the_ramp_is_the_old_formula(float start, float target, float timescale)
-    {
-        float now = Ramp(start, target, timescale, FineStep, RunSeconds);
-        float old = OldRamp(start, target, timescale, FineStep, RunSeconds);
-        Assert.True(Math.Abs(now - old) <= 0.005f * Math.Max(Math.Abs(old), 0.05f), $"{now} against the old formula's {old}");
-    }
-}
 
 /// <summary>Driven vehicles through the harness at the four heartbeat rates (serial: real backends on the shared pool).</summary>
 [Collection(JoltNativeSerial.Name)]
