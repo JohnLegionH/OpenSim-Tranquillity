@@ -2263,6 +2263,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             float gz = _settings.Gravity.Z;
             Vector3 desired = rec.DesiredVelocity;
             Vector3 newVel;
+            bool falling = false;
 
             if (rec.Flying)
             {
@@ -2294,8 +2295,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 // still slide (IsSliding). A frictionless "gravity every frame" lets a no-input avatar
                 // creep down a walkable slope; flat-ground tests never show that downslope component.
                 bool heldByGround = onWalkable && !rec.JumpRequested;
+                // Gravity off the ground. The move below uses the velocity it sets, so it gets half a step of
+                // gravity now (the step's average vertical velocity, which moves the character exactly as constant
+                // gravity does over the step) and the other half after the move. A whole step before the move, as
+                // before, lost v0 * dt / 2 of a jump's rise: 0.644 m instead of 0.816 at 11 Hz for 4 m/s.
                 if (!heldByGround)
-                    vz += gz * dt;
+                {
+                    vz += gz * dt * 0.5f;
+                    falling = true;
+                }
 
                 // Horizontal = intent, plus the ground's horizontal velocity so we ride a platform that
                 // is being pushed sideways. With no input this is zero on static ground - no residual
@@ -2319,6 +2327,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             };
             using (Enter("CharacterVirtual::ExtendedUpdate (joltc.cpp:8135)"))
                 ch.ExtendedUpdate(dt, ext, new ObjectLayer((uint)PhysicsLayer.Avatar), _system, null, null);
+
+            // The second half of the step's gravity, while the character is still in the air after the move (on
+            // landing the ground takes over its vertical velocity next step).
+            if (falling && ch.GroundState == GroundState.InAir)
+                ch.LinearVelocity += new Vector3(0f, 0f, gz * dt * 0.5f);
         }
 
         // =====================================================================
