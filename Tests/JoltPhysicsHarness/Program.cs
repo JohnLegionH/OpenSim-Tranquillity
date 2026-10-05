@@ -29,6 +29,8 @@ public static class Program
                              it as a seated driver's control events reach a script in a region (the car dropped
                              from where a rez places it, events at their own times between heartbeats)
   --keydelay S               region feed: seconds from physics on to the first key event (default: 0)
+  --startspeed V             heartbeat feed: a car's forward speed (m/s) just before its key goes down,
+                             which then goes down one heartbeat later
   --jolt KEY=VALUE           a [Jolt] config key, as in the region's ini (repeatable)
   --vparam NAME=V|X,Y,Z      a vehicle param applied after the scenario's own, by its LSL name,
                              e.g. LINEAR_FRICTION_TIMESCALE=1,1,1000 (repeatable)
@@ -92,6 +94,7 @@ The summary table always goes to standard output. Nothing is written anywhere el
                 case "--hold": o.Hold = (float)NonNegativeDouble(Next(), a); break;
                 case "--keyrepeat": o.KeyRepeat = (float)PositiveDouble(Next(), a); break;
                 case "--keydelay": o.KeyDelay = (float)NonNegativeDouble(Next(), a); break;
+                case "--startspeed": o.StartSpeed = (float)NonNegativeDouble(Next(), a); break;
                 case "--feed":
                     string feed = Next();
                     o.Feed = feed switch
@@ -143,7 +146,7 @@ The summary table always goes to standard output. Nothing is written anywhere el
 
     private static HarnessOptions Copy(HarnessOptions o, double rate, float slope)
     {
-        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay };
+        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay, StartSpeed = o.StartSpeed };
         foreach (KeyValuePair<string, string> kv in o.Jolt) c.Jolt[kv.Key] = kv.Value;
         c.VehicleParams.AddRange(o.VehicleParams);
         return c;

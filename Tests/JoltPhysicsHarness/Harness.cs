@@ -46,6 +46,10 @@ public sealed class HarnessOptions
     public InputFeed Feed = InputFeed.Heartbeat;
     /// <summary>Region feed: seconds from physics turning on to the first control event.</summary>
     public float KeyDelay = Harness.RegionKeyDelay;
+    /// <summary>Heartbeat feed: give a car this forward speed (m/s) just before its key goes down, as the few mm/s a
+    /// rez leaves it with. When set, the key goes down one heartbeat later (the first heartbeat is the region's
+    /// load, which keeps no horizontal velocity), so runs with and without a start speed are fed alike.</summary>
+    public float? StartSpeed;
     /// <summary>[Jolt] keys, as an operator would set them in the region's config.</summary>
     public readonly Dictionary<string, string> Jolt = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Vehicle params applied after the scenario's own, as llSetVehicle*Param calls would be.</summary>
@@ -286,32 +290,40 @@ public sealed class Run
     public void SetFloat(Vehicle code, float v) => Actor.VehicleFloatParam((int)code, v);
     public void SetVector(Vehicle code, Vector3 v) => Actor.VehicleVectorParam((int)code, v);
 
-    /// <summary>The motor while a key is held: re-sent every KeyRepeat seconds until the hold ends, then zeroed once.</summary>
-    public void HoldMotor(Vector3 motor)
+    /// <summary>The motor while a key is held: re-sent every KeyRepeat seconds until the hold ends, then zeroed once.
+    /// With an angular motor (a steering key held with it), that is sent with the linear one and zeroed with it.</summary>
+    public void HoldMotor(Vector3 motor, Vector3? angular = null)
     {
         if (Options.Feed == InputFeed.Region)
         {
-            HoldMotorAsRegion(motor);
+            HoldMotorAsRegion(motor, angular);
             return;
         }
         if (Released)
             return;
         if (Now >= Hold)
         {
-            SetVector(Vehicle.LINEAR_MOTOR_DIRECTION, Vector3.Zero);
+            SetMotors(Vector3.Zero, angular.HasValue ? Vector3.Zero : null);
             Released = true;
             return;
         }
         if (Now >= NextKey)
         {
-            SetVector(Vehicle.LINEAR_MOTOR_DIRECTION, motor);
+            SetMotors(motor, angular);
             NextKey += Options.KeyRepeat;
         }
     }
 
+    private void SetMotors(Vector3 motor, Vector3? angular)
+    {
+        SetVector(Vehicle.LINEAR_MOTOR_DIRECTION, motor);
+        if (angular.HasValue)
+            SetVector(Vehicle.ANGULAR_MOTOR_DIRECTION, angular.Value);
+    }
+
     // Region feed: every control event due before this heartbeat, each at its own time. The key goes down at
     // KeyStart, repeats every KeyRepeat, and comes up at ReleaseAt (= KeyStart + Hold).
-    private void HoldMotorAsRegion(Vector3 motor)
+    private void HoldMotorAsRegion(Vector3 motor, Vector3? angular)
     {
         while (!Released)
         {
@@ -321,12 +333,12 @@ public sealed class Run
             Clock = next;
             if (next >= ReleaseAt - 1e-9)
             {
-                SetVector(Vehicle.LINEAR_MOTOR_DIRECTION, Vector3.Zero);
+                SetMotors(Vector3.Zero, angular.HasValue ? Vector3.Zero : null);
                 Released = true;
             }
             else
             {
-                SetVector(Vehicle.LINEAR_MOTOR_DIRECTION, motor);
+                SetMotors(motor, angular);
                 NextKey += Options.KeyRepeat;
             }
         }
@@ -374,6 +386,7 @@ public static class Harness
     // The test car: VEHICLE_TYPE_CAR with a test-drive script's three params, motor <8,0,0> while the key is held.
     private static readonly Vector3 CarSize = new(2f, 1f, 0.5f);
     private static readonly Vector3 CarMotor = new(8f, 0f, 0f);
+    private static readonly Vector3 CarTurn = new(0f, 0f, 1f);
 
     private static void SetupCar(Run r, bool testCar)
     {
@@ -392,7 +405,7 @@ public static class Harness
             r.SetFloat(Vehicle.LINEAR_MOTOR_DECAY_TIMESCALE, 0.5f);
         }
         r.ApplyVehicleOverrides();
-        r.NextKey = region ? r.Options.KeyDelay : 0.0;
+        r.NextKey = region ? r.Options.KeyDelay : r.Options.StartSpeed.HasValue ? r.Dt : 0.0;
         r.ReleaseAt = r.NextKey + r.Hold;
         r.StopAtRest = true;
     }
@@ -465,6 +478,15 @@ public static class Harness
             DefaultDuration = s => s > 0f ? 90f : 20f, DefaultHold = s => s > 0f ? 6f : 3f,
             Setup = r => SetupCar(r, true),
             Input = r => r.HoldMotor(CarMotor),
+            Steady = DriveSteady,
+        },
+        new()
+        {
+            Name = "carturn",
+            Description = "VEHICLE_TYPE_CAR with its presets on level ground facing east: motor <8,0,0> and angular motor <0,0,1> (a forward and a turn key) held for 3 s, then both released.",
+            DefaultDuration = _ => 20f, DefaultHold = _ => 3f,
+            Setup = r => SetupCar(r, false),
+            Input = r => r.HoldMotor(CarMotor, CarTurn),
             Steady = DriveSteady,
         },
         new()
@@ -646,6 +668,8 @@ public static class Harness
                 // runs at the heartbeat's time.
                 r.Now = k * r.Dt;
                 r.Clock = r.Now - r.Dt * 0.5;
+                if (k == 1 && o.StartSpeed is float startSpeed)
+                    r.Actor.Velocity = Vector3.UnitX * r.Actor.Orientation * startSpeed;
                 sc.Input(r);
                 r.Clock = r.Now;
                 scene.Simulate(dt);
