@@ -49,6 +49,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float PhysicsStepRate = 0f;         // Hz; 0 = one physics step per heartbeat
         public int PhysicsStepCollisionSteps = 2;  // solver sub-steps per physics step, used only when PhysicsStepRate is on
         public float VehicleGroundGravityFactor = 1f;   // gravity on a car or sled touching something; 1 = whole
+        public bool AllowUnrecordedNative = false; // true: load a joltc whose hash the module has no record of
 
         // The highest PhysicsStepRate accepted. Each step costs a backend update, so a rate far above the heartbeat
         // mostly hits the per-heartbeat step cap (see SubstepAccumulator.MaxStepsPerFrame).
@@ -72,6 +73,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.MaxBodyPairs = I(cfg, "MaxBodyPairs", c.MaxBodyPairs, 1, 8_388_607, warnings);
             c.MaxContactConstraints = I(cfg, "MaxContactConstraints", c.MaxContactConstraints, 1, 8_388_607, warnings);
             c.ScaleCapsWithArea = B(cfg, "ScaleCapsWithArea", c.ScaleCapsWithArea, warnings);
+            c.AllowUnrecordedNative = B(cfg, "AllowUnrecordedNative", c.AllowUnrecordedNative, warnings);
             c.BodyUpdateBufferMax = I(cfg, "BodyUpdateBufferMax", c.BodyUpdateBufferMax, 1, 8_388_607, warnings);
             c.CharacterUpdateBufferMax = I(cfg, "CharacterUpdateBufferMax", c.CharacterUpdateBufferMax, 1, 65536, warnings);
             c.ContactBufferMax = I(cfg, "ContactBufferMax", c.ContactBufferMax, 0, 16_777_216, warnings);
@@ -126,6 +128,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             s.VelocityIterations = VelocityIterations;
             s.CollisionSteps = substepping ? PhysicsStepCollisionSteps : CollisionSteps;
             s.DeterministicMode = DeterministicMode;
+            s.AllowUnrecordedNative = AllowUnrecordedNative;
             s.JobPools = JobPools;
             return s;
         }

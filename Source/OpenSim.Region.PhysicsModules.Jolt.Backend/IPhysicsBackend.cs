@@ -755,6 +755,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// </summary>
         public int JobPools;
 
+        /// <summary>
+        /// Load a joltc whose SHA-256 is not one the module ships (see <see cref="JoltNative.Shipped"/>). Off by
+        /// default: an unrecorded native is refused. Process-wide, checked when the first region loads the native.
+        /// </summary>
+        public bool AllowUnrecordedNative;
+
         public static PhysicsBackendSettings Default => new PhysicsBackendSettings
         {
             Gravity = new Vector3(0f, 0f, -9.80665f),

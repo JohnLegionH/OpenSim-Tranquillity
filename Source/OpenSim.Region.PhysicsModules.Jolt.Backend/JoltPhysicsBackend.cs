@@ -9,7 +9,7 @@
 //
 // ============================ READ THIS FIRST ============================
 // Jolt binding: JoltPhysicsSharp 2.18.6 (newest still shipping lib/net8.0/),
-// single precision (Foundation.Init(false) -> joltc.dll). The Jolt calls below
+// single precision (Foundation.Init(false); the native is loaded by JoltNative). The Jolt calls below
 // are the 2.18.6 surface, checked by reflection against the shipped assembly.
 //
 // The parts worth reading carefully are the ones that are easy to get wrong and
@@ -535,7 +535,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             int threads = ResolveThreadCount(settings.ThreadCount, settings.DeterministicMode);
 
-            // Native boot. false => single precision (joltc.dll).
+            // Native boot. false => single precision.
             // PROCESS-GLOBAL and REF-COUNTED: only the first region to come up actually calls
             // Foundation.Init; Dispose only calls Foundation.Shutdown when the last region goes down (see
             // s_foundationRefCount). This stops one region's shutdown from tearing down Jolt under the
@@ -544,8 +544,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             {
                 if (s_foundationRefCount == 0)
                 {
+                    // The patched joltc for this platform, from runtimes/<rid>/native/ (JoltNative). Throws a
+                    // JoltNativeException naming the platform when there is no usable native.
+                    JoltNative.EnsureLoaded(settings.AllowUnrecordedNative);
                     if (!Foundation.Init(false))
-                        throw new InvalidOperationException("Jolt Foundation.Init(false) failed (native joltc.dll not loaded).");
+                        throw new InvalidOperationException("Jolt Foundation.Init(false) failed.");
 
                     // Create the shared, process-capped job pools here (first region in),
                     // sized by THIS region's settings: [Jolt] JobPools pools splitting `threads`, each
