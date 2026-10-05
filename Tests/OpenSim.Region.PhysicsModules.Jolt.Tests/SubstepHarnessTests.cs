@@ -55,7 +55,7 @@ public class SubstepHarnessTests
     [InlineData("sled", 15f, "steady", 13.647f, 6f)]
     [InlineData("boat", 0f, "steady", 4.905f, 1f)]
     [InlineData("airplane", 0f, "steady", 14.967f, 1f)]
-    [InlineData("balloon", 0f, "peak", 5.010f, 1f)]
+    [InlineData("balloon", 0f, "peak", 3.531f, 1f)]
     [InlineData("avatar-walk", 33f, "steady", 3.436f, 1f)]
     [InlineData("avatar-jump", 0f, "rise", 0.815f, 2f)]
     [InlineData("drop", 0f, "endz", 25.500f, 0.1f)]

@@ -158,8 +158,9 @@ public class HarnessTests
         Assert.InRange(boat.End.Z, 20.45f, 20.55f);         // hovers 0.5 m above the water
 
         Summary balloon = Run("balloon").Summary;
-        Assert.InRange(balloon.End.Z, 29.95f, 30.05f);      // 29.998 (before 30.645, was 30.339): hover 5 m over the
-                                                            // ground; its vertical friction now damps the descent too
+        Assert.InRange(balloon.End.Z, 28.47f, 28.57f);      // 28.522 at 40 s (before 29.998, then 30.645, was 30.339):
+                                                            // hover is a spring with the preset's 10 s timescale, which
+                                                            // with the 5 s vertical friction rises slowly toward 5 m
 
         // The airplane preset has no lift: with the motor held it flies level at 15 m/s and sinks to the ground.
         Summary plane = Run("airplane").Summary;

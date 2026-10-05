@@ -34,6 +34,8 @@ public static class Program
   --jolt KEY=VALUE           a [Jolt] config key, as in the region's ini (repeatable)
   --vparam NAME=V|X,Y,Z      a vehicle param applied after the scenario's own, by its LSL name,
                              e.g. LINEAR_FRICTION_TIMESCALE=1,1,1000 (repeatable)
+  --vflag NAME|-NAME         a vehicle flag set (or, with -, removed) after the scenario's own, e.g.
+                             HOVER_UP_ONLY (repeatable)
   --out DIR                  write <scenario>-s<slope>-r<rate>.csv per run and summary.csv to DIR
 
 The summary table always goes to standard output. Nothing is written anywhere else.";
@@ -111,6 +113,7 @@ The summary table always goes to standard output. Nothing is written anywhere el
                     o.Jolt[kv[..eq].Trim()] = kv[(eq + 1)..].Trim();
                     break;
                 case "--vparam": o.VehicleParams.Add(VehicleParamSetting.Parse(Next())); break;
+                case "--vflag": o.VehicleFlags.Add(VehicleFlagSetting.Parse(Next())); break;
                 case "--out": outDir = Next(); break;
                 default: throw new ArgumentException($"unknown argument '{a}'");
             }
@@ -149,6 +152,7 @@ The summary table always goes to standard output. Nothing is written anywhere el
         var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay, StartSpeed = o.StartSpeed };
         foreach (KeyValuePair<string, string> kv in o.Jolt) c.Jolt[kv.Key] = kv.Value;
         c.VehicleParams.AddRange(o.VehicleParams);
+        c.VehicleFlags.AddRange(o.VehicleFlags);
         return c;
     }
 

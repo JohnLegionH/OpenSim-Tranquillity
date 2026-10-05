@@ -93,6 +93,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         // The body's velocities as read at the start of the step, before the anti-jitter filter.
         private Vector3 _rawWorldAngularVel;
+        private Vector3 _rawWorldLinearVel;
         private Vector3 _rawLocalLinearVel;
 
         // =====================================================================
@@ -399,6 +400,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _localAngularVel = _worldAngularVel * invRotation;
             _localLinearVel = _worldLinearVel * invRotation;
             _rawWorldAngularVel = physAngVel;
+            _rawWorldLinearVel = physLinVel;
             _rawLocalLinearVel = physLinVel * invRotation;
 
             // -------------------------------------------------------
@@ -444,7 +446,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             // -------------------------------------------------------
             // Hover — maintain target height above terrain/water/global
-            SimulateHover(timeStep);
+            SimulateHover(pTimestep);
 
             // -------------------------------------------------------
             // Vertical attractor and banking
@@ -525,6 +527,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _props.Dynamics.LastAccessTOD = Clock();
             _props.Dynamics.LinearDecayIndex += pTimestep;
             _props.Dynamics.AngularDecayIndex += pTimestep;
+            _hoverCarry = null;
         }
 
         #endregion // Step
@@ -674,11 +677,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         /// <summary>
         /// The share of the world's gravity the vehicle feels: 1 - buoyancy, times the ground factor for a ground
-        /// vehicle touching something.
+        /// vehicle touching something. With hover on and HOVER_UP_ONLY, buoyancy vanishes above the hover height
+        /// (Linden_Vehicle_Tutorial, "Buoyancy": "the buoyancy effect vanishes when the vehicle is above its hover
+        /// height").
         /// </summary>
         private float GravityShare()
         {
             float buoyancy = _props.GetFloat(VehFloatParam.Buoyancy, 0f);
+            if (HoverTarget(out float targetZ, out bool upOnly) && upOnly && _body.Position.Z > targetZ)
+                buoyancy = 0f;
             float share = 1f - buoyancy;   // ComputeGravity(buoyancy), GravModifier = 1
 
             // Reduce downward force if vehicle is sitting on ground
@@ -967,40 +974,98 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         #region Hover
 
         /// <summary>
-        /// Hover simulation — maintains vehicle at a target height above terrain, water, or global.
-        /// Modeled after Halcyon hover behavior and SL vehicle spec.
+        /// Hover, as Second Life documents it (Linden_Vehicle_Tutorial, "Hover"; LlSetVehicleFloatParam): the vehicle
+        /// springs toward its hover height over terrain, water or the global height, with HOVER_TIMESCALE the period
+        /// to achieve it and HOVER_EFFICIENCY a slider from bouncy (0) to critically damped (1). On the height error
+        /// e = z - target:
+        ///
+        ///   e'' = -e / T^2 - 2 eff e' / T
+        ///
+        /// stepped exactly (<see cref="VehicleSpring"/>) over the step the engine takes. Gravity, buoyancy, friction
+        /// and the motors act alongside it in their own blocks; a vehicle without full buoyancy hovers below its
+        /// height, where the spring holds its weight, as the tutorial describes.
+        /// HOVER_UP_ONLY: hover does not push down; above its height it does nothing (and buoyancy vanishes there,
+        /// see <see cref="GravityShare"/>).
         /// </summary>
-        private void SimulateHover(float timeStep)
+        private void SimulateHover(float h)
         {
-            float hoverEfficiency = _props.GetFloat(VehFloatParam.HoverEfficiency, 0f);
-            float hoverTimescale = _props.GetFloat(VehFloatParam.HoverTimescale, 1000f);
             if (!HoverTarget(out float targetZ, out bool upOnly))
+            {
+                LetGoOfHover();
                 return;
-            float currentZ = _body.Position.Z;
-
-            // HoverUpOnly — only push up, never pull down
-            if (upOnly && currentZ >= targetZ)
+            }
+            float timescale = _props.GetFloat(VehFloatParam.HoverTimescale, 1000f);
+            float efficiency = _props.GetFloat(VehFloatParam.HoverEfficiency, 0f);
+            double e0 = _body.Position.Z - targetZ;
+            if (upOnly && e0 >= 0)
+            {
+                LetGoOfHover();
                 return;
+            }
 
-            float error = targetZ - currentZ;
-
-            // If we're close enough, don't bother
-            if (Math.Abs(error) < 0.01f)
-                return;
-
-            // Compute correction velocity
-            // Higher efficiency = snappier response, lower = smoother
-            float correctionVel = (error / hoverTimescale) * (1f + hoverEfficiency * 2f);
-
-            // Dampen current vertical velocity to prevent oscillation
-            float currentVertVel = _worldLinearVel.Z;
-            float dampingFactor = 1f - (hoverEfficiency * 0.5f);
-            float dampedVel = correctionVel - (currentVertVel * dampingFactor);
-
-            // Apply as a velocity change in world Z
-            Vector3 hoverForce = new Vector3(0f, 0f, dampedVel);
-            ApplyLinearVelocityChange(hoverForce);
+            // The spring's own vertical velocity: the body's, plus what the last step's move left out of it.
+            double read = _rawWorldLinearVel.Z;
+            double v0 = read + (_hoverCarry ?? 0.0);
+            (double move, double carry) = VehicleSpring.MoveOver(e0, v0, timescale, efficiency, h);
+            bool crosses = upOnly && VehicleSpring.Step(e0, v0, timescale, efficiency, h).e > 0;
+            if (crosses)
+            {
+                // Up only: the spring lets go where the vehicle passes its height inside the step, and it coasts on
+                // from there at the speed it had, with the gravity that buoyancy no longer cancels above the height
+                // (the gravity block applies this step's share, set below the height).
+                double at = UpOnlyCrossing(e0, v0, timescale, efficiency, h);
+                double through = VehicleSpring.Step(e0, v0, timescale, efficiency, at).v;
+                double coast = h - at;
+                double extraFall = _body.Gravity.Z * (GravityShareAbove() - GravityShare());
+                move = (through * coast + 0.5 * extraFall * coast * coast - e0) / h;
+                carry = through + extraFall * coast - move;
+            }
+            double change = move - read;
+            // Up only: the spring itself never pushes down (the fall after a crossing is gravity's, not hover's).
+            if (upOnly && !crosses && change < 0)
+            {
+                change = 0;
+                carry = 0;
+            }
+            _hoverCarry = carry;
+            ApplyLinearVelocityChange(new Vector3(0f, 0f, (float)change));
         }
+
+        // Hover hands the body back its true vertical velocity (what the last move left out) when it stops acting.
+        private void LetGoOfHover()
+        {
+            if (_hoverCarry is double carry && carry != 0)
+                ApplyLinearVelocityChange(new Vector3(0f, 0f, (float)carry));
+            _hoverCarry = null;
+        }
+
+        // The gravity share over the hover height with HOVER_UP_ONLY, where buoyancy vanishes.
+        private float GravityShareAbove()
+        {
+            float share = 1f;
+            if (IsGroundVehicle && _body.HasCollision)
+                share *= GroundGravityFactor;
+            return share;
+        }
+
+        // When, within a step of h, a spring from e0 < 0 that ends above zero first reaches zero (by bisection: the
+        // spring is monotonic up to its first crossing).
+        private static double UpOnlyCrossing(double e0, double v0, double timescale, double efficiency, double h)
+        {
+            double lo = 0, hi = h;
+            for (int i = 0; i < UpOnlyCrossingIterations; i++)
+            {
+                double mid = 0.5 * (lo + hi);
+                if (VehicleSpring.Step(e0, v0, timescale, efficiency, mid).e < 0) lo = mid; else hi = mid;
+            }
+            return 0.5 * (lo + hi);
+        }
+
+        private const int UpOnlyCrossingIterations = 40;
+
+        // What the last hover step's move left out of the spring's velocity (VehicleSpring.MoveOver); null when hover
+        // did not act in the last step.
+        private double? _hoverCarry;
 
         /// <summary>
         /// The height hover holds the vehicle at, and whether it only pushes up. False when hover is off (its timescale

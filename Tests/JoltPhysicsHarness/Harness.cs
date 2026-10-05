@@ -54,6 +54,8 @@ public sealed class HarnessOptions
     public readonly Dictionary<string, string> Jolt = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Vehicle params applied after the scenario's own, as llSetVehicle*Param calls would be.</summary>
     public readonly List<VehicleParamSetting> VehicleParams = new();
+    /// <summary>Vehicle flags set (or removed) after the scenario's own, as llSetVehicleFlags / llRemoveVehicleFlags.</summary>
+    public readonly List<VehicleFlagSetting> VehicleFlags = new();
 
     private static double DefaultPhysicsRate()
     {
@@ -101,6 +103,29 @@ public readonly record struct VehicleParamSetting(Vehicle Code, Vector3 Value, b
         if (parts.Length == 3)
             return new VehicleParamSetting(code, new Vector3(f[0], f[1], f[2]), true);
         throw new ArgumentException($"vehicle param '{text}': expected one value or three");
+    }
+}
+
+/// <summary>One vehicle flag set or removed.</summary>
+public readonly record struct VehicleFlagSetting(int Flag, bool Remove)
+{
+    // The documented VEHICLE_FLAG_* values.
+    private static readonly Dictionary<string, int> Names = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["NO_DEFLECTION_UP"] = 0x1, ["LIMIT_ROLL_ONLY"] = 0x2, ["HOVER_WATER_ONLY"] = 0x4, ["HOVER_TERRAIN_ONLY"] = 0x8,
+        ["HOVER_GLOBAL_HEIGHT"] = 0x10, ["HOVER_UP_ONLY"] = 0x20, ["LIMIT_MOTOR_UP"] = 0x40,
+    };
+
+    /// <summary>Parses NAME (set) or -NAME (remove); NAME is an LSL VEHICLE_FLAG_* name with or without the prefix.</summary>
+    public static VehicleFlagSetting Parse(string text)
+    {
+        bool remove = text.StartsWith('-');
+        string name = (remove ? text[1..] : text).Trim();
+        if (name.StartsWith("VEHICLE_FLAG_", StringComparison.OrdinalIgnoreCase))
+            name = name["VEHICLE_FLAG_".Length..];
+        if (!Names.TryGetValue(name, out int flag))
+            throw new ArgumentException($"vehicle flag '{text}': unknown flag name");
+        return new VehicleFlagSetting(flag, remove);
     }
 }
 
@@ -412,6 +437,8 @@ public sealed class Run
             if (p.IsVector) Actor.VehicleVectorParam((int)p.Code, p.Value);
             else Actor.VehicleFloatParam((int)p.Code, p.Value.X);
         }
+        foreach (VehicleFlagSetting f in Options.VehicleFlags)
+            Actor.VehicleFlags(f.Flag, f.Remove);
     }
 }
 
@@ -633,6 +660,20 @@ public static class Harness
             {
                 r.AddBoxOnGround(new Vector3(1f, 1f, 1f), 128f, 128f, Quaternion.Identity);
                 r.MakeVehicle(Vehicle.TYPE_BALLOON);
+                r.ApplyVehicleOverrides();
+            },
+            Steady = (r, s) => LastSeconds(r, s, 2.0),
+        },
+        new()
+        {
+            Name = "hover",
+            Description = "VEHICLE_TYPE_BALLOON (buoyancy 1, hover 5 m, timescale 10 s, efficiency 0.8) from rest on level ground, with no friction on its vertical axis, so hover alone lifts it; no motor.",
+            DefaultDuration = _ => 40f,
+            Setup = r =>
+            {
+                r.AddBoxOnGround(new Vector3(1f, 1f, 1f), 128f, 128f, Quaternion.Identity);
+                r.MakeVehicle(Vehicle.TYPE_BALLOON);
+                r.SetVector(Vehicle.LINEAR_FRICTION_TIMESCALE, new Vector3(1f, 1f, 1000f));
                 r.ApplyVehicleOverrides();
             },
             Steady = (r, s) => LastSeconds(r, s, 2.0),
