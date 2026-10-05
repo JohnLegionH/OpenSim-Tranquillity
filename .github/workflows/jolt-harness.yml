@@ -1,0 +1,74 @@
+# Runs the Jolt physics harness on Windows x64 and Linux x64, the platforms the Jolt module ships its native for,
+# with the runs listed in Tests/JoltPhysicsHarness/ci/runs.txt, and uploads each runner's traces, so the two
+# platforms' results can be set side by side. Runs only when that list or this file changes.
+name: Jolt harness
+
+on:
+  push:
+    branches:
+      - lane/jolt
+    paths:
+      - 'Tests/JoltPhysicsHarness/ci/runs.txt'
+      - '.github/workflows/jolt-harness.yml'
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+
+jobs:
+  harness:
+    name: Jolt harness ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-22.04]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The version stamp (Nerdbank.GitVersioning) needs the history.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up .NET from global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Build the harness
+        run: dotnet build Tests/JoltPhysicsHarness -c Release --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false
+
+      - name: Check the natives in the harness output
+        shell: pwsh
+        run: ./Source/OpenSim.Region.PhysicsModules.Jolt/assert-patched-joltc.ps1 -PublishDir Tests/JoltPhysicsHarness/bin/Release/net10.0
+
+      - name: Run the listed harness runs
+        run: |
+          out="$RUNNER_TEMP/harness"
+          mkdir -p "$out"
+          dll=Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll
+          grep -v '^[[:space:]]*#' Tests/JoltPhysicsHarness/ci/runs.txt | grep ':' | while IFS= read -r line; do
+            name="${line%%:*}"
+            args="${line#*:}"
+            case "$name" in *[!A-Za-z0-9_-]*|'') echo "bad run name '$name'"; exit 1;; esac
+            echo "::group::$name:$args"
+            # shellcheck disable=SC2086
+            dotnet "$dll" $args --out "$out/$name" | tee "$out/$name.txt"
+            echo "::endgroup::"
+          done
+
+      - name: Upload the traces
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jolt-harness-${{ matrix.os }}
+          path: ${{ runner.temp }}/harness
+          if-no-files-found: ignore

@@ -36,6 +36,10 @@ public static class Program
                              e.g. LINEAR_FRICTION_TIMESCALE=1,1,1000 (repeatable)
   --vflag NAME|-NAME         a vehicle flag set (or, with -, removed) after the scenario's own, e.g.
                              HOVER_UP_ONLY (repeatable)
+  --crash-speed F[,F..]      crash scenarios: arrival speed as a share of the scenario's (default 1)
+  --crash-offset M[,M..]     crash scenarios: the car's sideways offset (m, default 0)
+  --crash-angle DEG[,DEG..]  crash scenarios: the car turned about the vertical (crash-drop: rolled) (default 0)
+                             Lists run every combination (a sweep).
   --out DIR                  write <scenario>-s<slope>-r<rate>.csv per run and summary.csv to DIR
 
 The summary table always goes to standard output. Nothing is written anywhere else.";
@@ -63,6 +67,7 @@ The summary table always goes to standard output. Nothing is written anywhere el
         double[] physicsRates = { o.PhysicsRateHz };
         float[] slopes = null;
         string outDir = null;
+        float[] crashSpeeds = { 1f }, crashOffsets = { 0f }, crashAngles = { 0f };
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -114,6 +119,9 @@ The summary table always goes to standard output. Nothing is written anywhere el
                     break;
                 case "--vparam": o.VehicleParams.Add(VehicleParamSetting.Parse(Next())); break;
                 case "--vflag": o.VehicleFlags.Add(VehicleFlagSetting.Parse(Next())); break;
+                case "--crash-speed": crashSpeeds = Next().Split(',').Select(x => (float)PositiveDouble(x, a)).ToArray(); break;
+                case "--crash-offset": crashOffsets = Next().Split(',').Select(x => (float)SignedDouble(x, a)).ToArray(); break;
+                case "--crash-angle": crashAngles = Next().Split(',').Select(x => (float)SignedDouble(x, a)).ToArray(); break;
                 case "--out": outDir = Next(); break;
                 default: throw new ArgumentException($"unknown argument '{a}'");
             }
@@ -131,9 +139,15 @@ The summary table always goes to standard output. Nothing is written anywhere el
             foreach (float slope in runSlopes)
                 foreach (double rate in rates)
                 foreach (double physicsRate in physicsRates)
+                foreach (float crashSpeed in crashSpeeds)
+                foreach (float crashOffset in crashOffsets)
+                foreach (float crashAngle in crashAngles)
                 {
                     var opts = Copy(o, rate, slope);
                     opts.PhysicsRateHz = physicsRate;
+                    opts.CrashSpeed = crashSpeed;
+                    opts.CrashOffset = crashOffset;
+                    opts.CrashAngle = crashAngle;
                     RunResult res = Harness.Run(sc, opts);
                     string line = res.SummaryLine();
                     output.WriteLine(line);
@@ -160,6 +174,13 @@ The summary table always goes to standard output. Nothing is written anywhere el
     {
         double v = NonNegativeDouble(s, arg);
         if (v <= 0) throw new ArgumentException($"{arg} must be above 0");
+        return v;
+    }
+
+    private static double SignedDouble(string s, string arg)
+    {
+        if (!double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out double v) || !double.IsFinite(v))
+            throw new ArgumentException($"{arg}: '{s}' is not a number");
         return v;
     }
 

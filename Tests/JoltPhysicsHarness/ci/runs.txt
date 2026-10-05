@@ -1,0 +1,13 @@
+# Harness runs for the Jolt harness workflow (.github/workflows/jolt-harness.yml), on every runner in its matrix.
+# One run per line: a name (letters, digits, - and _), a colon, then the harness arguments. Each run writes its
+# per-heartbeat traces and summary.csv under <name>/ in the uploaded artifact. Lines starting with # are skipped.
+
+# The scenarios of the tests that came out differently on Linux and Windows.
+crash-headon-11: --scenario crash-headon --rate 11
+crash-box-11: --scenario crash-box --rate 11
+crash-all: --scenario crash-wall,crash-box,crash-headon,crash-drop --rate 11,45
+park-drive-45-legacy: --scenario park-drive --rate 45 --jolt VehiclePresets=legacy
+testcar-down-5: --scenario testcar-down --slope 5 --rate all
+
+# Crash sweep: small changes in the arrival speed, sideways offset and angle, at 11 and 45 Hz.
+crash-sweep: --scenario crash-wall,crash-box,crash-headon,crash-drop --rate 11,45 --crash-speed 0.9,0.95,1,1.05,1.1 --crash-offset -0.2,0,0.2 --crash-angle -1,0,1

@@ -56,6 +56,14 @@ public sealed class HarnessOptions
     public readonly List<VehicleParamSetting> VehicleParams = new();
     /// <summary>Vehicle flags set (or removed) after the scenario's own, as llSetVehicleFlags / llRemoveVehicleFlags.</summary>
     public readonly List<VehicleFlagSetting> VehicleFlags = new();
+    /// <summary>Crash scenarios: the arrival speed as a share of the scenario's own (the motor for a driven crash; the
+    /// square root of the drop height for crash-drop).</summary>
+    public float CrashSpeed = 1f;
+    /// <summary>Crash scenarios: the car's sideways offset from the scenario's line (m; for crash-drop, along x).</summary>
+    public float CrashOffset;
+    /// <summary>Crash scenarios: the car turned this many degrees about the vertical from the scenario's heading (for
+    /// crash-drop: rolled about its nose).</summary>
+    public float CrashAngle;
 
     private static double DefaultPhysicsRate()
     {
@@ -201,13 +209,16 @@ public sealed class RunResult
     public double RateHz;
     public double PhysicsRateHz;
     public float SlopeDeg;
+    /// <summary>A crash run's changes from its scenario ("v" speed share, "o" offset, "a" angle), or empty.</summary>
+    public string Variant = "";
     public readonly List<Sample> Samples = new();
     public Summary Summary;
 
-    public string Name => $"{Scenario}-s{Fmt(SlopeDeg, "0.#")}-r{Fmt(RateHz, "0.#")}{(PhysicsRateHz > 0 ? "-p" + Fmt(PhysicsRateHz, "0.#") : "")}";
+    public string Name => $"{Scenario}{Variant}-s{Fmt(SlopeDeg, "0.#")}-r{Fmt(RateHz, "0.#")}{(PhysicsRateHz > 0 ? "-p" + Fmt(PhysicsRateHz, "0.#") : "")}";
 
-    /// <summary>The scenario column of the summary: the name, plus "/p" and the physics rate when physics steps are on.</summary>
-    public string Label => PhysicsRateHz > 0 ? $"{Scenario}/p{Fmt(PhysicsRateHz, "0.#")}" : Scenario;
+    /// <summary>The scenario column of the summary: the name and any crash variant, plus "/p" and the physics rate when
+    /// physics steps are on.</summary>
+    public string Label => PhysicsRateHz > 0 ? $"{Scenario}{Variant}/p{Fmt(PhysicsRateHz, "0.#")}" : Scenario + Variant;
 
     public const string CsvHeader = "t,x,y,z,vx,vy,vz,speed,hspeed,tilt_deg,height,touching,active,ox,oy,oz,ospeed,wx,wy,wz";
 
@@ -869,7 +880,7 @@ public static class Harness
                 SetupCrashCar(r);
                 r.AddOtherBox(new Vector3(1f, 20f, 3f), new Vector3(CrashTargetX, 85f, Course.Ground + 1.5f), Quaternion.Identity, false);
             },
-            Input = r => r.HoldMotor(CrashMotor),
+            Input = r => r.HoldMotor(CrashMotorOf(r)),
             Gap = GapToOther,
             PassedThrough = PassedThroughOther,
         },
@@ -883,7 +894,7 @@ public static class Harness
                 SetupCrashCar(r);
                 r.AddOtherBox(new Vector3(1f, 1f, 1f), new Vector3(CrashTargetX, 85f, Course.Ground + 0.5f + 0.02f), Quaternion.Identity, true);
             },
-            Input = r => r.HoldMotor(CrashMotor),
+            Input = r => r.HoldMotor(CrashMotorOf(r)),
             Gap = GapToOther,
             PassedThrough = PassedThroughOther,
         },
@@ -899,7 +910,7 @@ public static class Harness
                 r.Other.VehicleType = (int)Vehicle.TYPE_CAR;
                 r.AlsoDriven.Add(r.Other);
             },
-            Input = r => r.HoldMotor(CrashMotor),
+            Input = r => r.HoldMotor(CrashMotorOf(r)),
             Gap = GapToOther,
             PassedThrough = PassedThroughOther,
         },
@@ -910,7 +921,9 @@ public static class Harness
             DefaultDuration = _ => 7f,
             Setup = r =>
             {
-                r.AddBox(CarSize, new Vector3(128f, 128f, Course.Ground + CarSize.Z * 0.5f + 2f), Quaternion.Identity);
+                float drop = 2f * r.Options.CrashSpeed * r.Options.CrashSpeed;
+                r.AddBox(CarSize, new Vector3(128f + r.Options.CrashOffset, 128f, Course.Ground + CarSize.Z * 0.5f + drop),
+                    Quaternion.CreateFromEulers(r.Options.CrashAngle * MathF.PI / 180f, 0f, 0f));
                 r.MakeVehicle(Vehicle.TYPE_CAR);
                 r.SetFloat(Vehicle.BUOYANCY, 1f);
                 r.ApplyVehicleOverrides();
@@ -932,6 +945,8 @@ public static class Harness
 
     private static readonly Quaternion West = Quaternion.CreateFromEulers(0f, 0f, MathF.PI);
     private static readonly Vector3 CrashMotor = new(20f, 0f, 0f);
+    private static Vector3 CrashMotorOf(Run r) => CrashMotor * r.Options.CrashSpeed;
+    private static Quaternion CrashYaw(Run r) => Quaternion.CreateFromEulers(0f, 0f, r.Options.CrashAngle * MathF.PI / 180f);
     public const float WakeKeyAt = 8f;
     private const float CrashStartX = 100f;
     private const float CrashTargetX = 130f;
@@ -995,7 +1010,7 @@ public static class Harness
 
     private static void SetupCrashCar(Run r)
     {
-        r.AddBoxOnGround(CarSize, CrashStartX, 85f, Quaternion.Identity);
+        r.AddBoxOnGround(CarSize, CrashStartX, 85f + r.Options.CrashOffset, CrashYaw(r));
         r.MakeVehicle(Vehicle.TYPE_CAR);
         r.ApplyVehicleOverrides();
         r.NextKey = 0.0;
@@ -1041,6 +1056,8 @@ public static class Harness
         scene.InitialiseWithoutScene("Harness", Course.Size, Course.Size, heights, water, (float)r.Dt);
 
         var result = new RunResult { Scenario = sc.Name, RateHz = o.RateHz, PhysicsRateHz = scene.Substepping ? scene.Substeps.RateHz : 0, SlopeDeg = slope };
+        if (o.CrashSpeed != 1f || o.CrashOffset != 0f || o.CrashAngle != 0f)
+            result.Variant = $"~v{RunResult.Fmt(o.CrashSpeed, "0.###")}~o{RunResult.Fmt(o.CrashOffset, "0.###")}~a{RunResult.Fmt(o.CrashAngle, "0.###")}";
         try
         {
             r.Clock = -r.Dt * 0.5;
