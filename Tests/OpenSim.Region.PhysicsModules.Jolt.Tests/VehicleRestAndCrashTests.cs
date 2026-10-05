@@ -33,14 +33,12 @@ public class VehicleRestAndCrashTests
     [InlineData("park-faded", 11.0, 14.0, null)]
     [InlineData("park-faded", 45.0, 14.0, null)]
     [InlineData("park-drive", 11.0, 14.0, null)]
-    // At 45 Hz angular deflection pitches the slowing legacy test car 0.2 degrees toward the jitter of its contact
-    // velocity, and it drifts at about 0.02 m/s (the ground's push along the tilt against no contact friction) before
-    // settling.
-    [InlineData("park-drive", 45.0, 20.0, "legacy")]
-    // The documented test car: as it slows at 45 Hz it comes to rest rolled 0.3 degrees, which nothing levels (no
-    // angular friction, a 10 s attractor), and slides sideways at about 0.035 m/s, held only by its velocity friction,
-    // until it settles about 26 s after the key.
-    [InlineData("park-drive", 45.0, 30.0, "documented")]
+    // At 45 Hz the test car comes to rest tilted 0.2 to 0.3 degrees (legacy: angular deflection pitches it toward the
+    // jitter of its contact velocity; documented: rolled, with nothing to level it). With no contact friction the
+    // ground's push along that tilt slid it at 0.02 to 0.035 m/s until 20 to 26 s after the key; the rest rule
+    // ([Jolt] VehicleRestSpeed) now holds it, its steady speed there being about 0.05 m/s.
+    [InlineData("park-drive", 45.0, 10.0, "legacy")]
+    [InlineData("park-drive", 45.0, 10.0, "documented")]
     public void A_parked_vehicle_goes_to_sleep_and_stays_asleep(string scenario, double rate, double within, string presets)
     {
         RunResult r = Run(scenario, rate, presets);

@@ -830,6 +830,18 @@ public static class Harness
             },
             Input = r => r.HoldMotor(CarMotor),
         },
+        new()
+        {
+            Name = "park-car",
+            Description = "VEHICLE_TYPE_CAR with its presets driven on level ground as car (3 s key), then left parked to the end of the run.",
+            DefaultDuration = _ => 20f, DefaultHold = _ => 3f,
+            Setup = r =>
+            {
+                SetupCar(r, false);
+                r.StopAtRest = false;
+            },
+            Input = r => r.HoldMotor(CarMotor),
+        },
 
         new()
         {

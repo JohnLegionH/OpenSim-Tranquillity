@@ -197,6 +197,8 @@ the motor decay cap, which is Second Life's documented 120 s.
 | `VehicleMaxMotorOffset` | 100 | Linear motor offset (m, each axis). |
 | `VehicleMinHoverHeight`, `VehicleMaxHoverHeight` | -128, 10000 | Hover height range (m). Second Life documents a maximum of 100. |
 | `VehicleSledAssist` | 0.045 | The sled's slope assist: a sled with its nose down is pushed along it at this share of g times the square root of the sine of its pitch (a tenth of it, back down the slope, nose up). 0.045 is what the InWorldz sled code gave at its 15 ms step; it is now the same at any step rate. 0 turns it off. |
+| `VehicleContactFriction` | 0 | The contact friction of a vehicle body (BulletSim's `VehicleFriction`, also 0 by default): 0 leaves the vehicle's friction timescales as the only friction on it. |
+| `VehicleRestSpeed` | 0.1 | The rest rule (m/s), see "Parked vehicles sleep" below. 0 turns it off. |
 | `BodyMaxLinearSpeed`, `BodyMaxAngularSpeed` | 500, 47.12389 | The physics engine's own cap on every moving body, vehicle or not (Jolt's defaults). Keep it above `VehicleMaxLinearSpeed`. |
 
 ### Vehicle motors and friction
@@ -272,13 +274,24 @@ These documented behaviours are not simulated:
 A vehicle's body may sleep, as any other body does, while nothing in the vehicle would move it: no
 motor pulling (never set, faded, or set to zero), hover off or at its height, and the attractor done
 or the vehicle resting on something. A script setting a motor or any vehicle parameter wakes it, as
-does a collision. In the harness a parked car sleeps within 14 s of its last key at 11 Hz.
+does a collision.
 
-A vehicle body has no contact friction (as in BulletSim), and Second Life's vehicle friction is a
-velocity decay with no static part, so a car that comes to rest slightly tilted can slide slowly
-until it settles: in the harness the documented test car at a 45 Hz heartbeat comes to rest rolled
-0.3 degrees, slides sideways at about 0.035 m/s and sleeps 26 s after its key. A stronger attractor,
-some angular friction or a vertical friction timescale under 1000 s stops it.
+A vehicle body has no contact friction by default (`VehicleContactFriction` 0, as BulletSim), and
+Second Life's vehicle friction is a velocity decay with no static part, so without more a car that
+comes to rest a fraction of a degree tilted (inside the engine's 2 cm contact allowance) slides along
+the tilt at a few centimetres a second. The rest rule holds such a vehicle still: when no motor is
+pulling (and hover and the attractor are done), the vehicle moves slower than `VehicleRestSpeed`
+(0.1 m/s; turning slower than 0.1 rad/s), and the steady speed the motor-and-friction equation above
+gives on each of its axes from its present pose is also slower than that, its velocity is set to zero
+each step, and after half a second (the engine's own time before sleep) it is put to sleep. Gravity
+along the axis nearest the vertical is taken by what the vehicle rests on. The steady speed is
+(g M / Tm + a) / (g / Tm + 1 / Tf): with no motor grip, a Tf. So a sled let go on a slope (forward
+friction 30 s) starts, and a car whose forward friction lets it roll down a slope rolls, at the same
+speed as without the rule; a car let go with its motor set to zero is braked by the motor's grip and
+held on a tilt where the equation gives it under 0.1 m/s. In the harness a car parked after a drive
+sleeps 3.6 to 5.1 s after its key at 11, 22.5, 45 and 90 Hz and does not move after coming to rest.
+A documented car (forward friction 100 s) with no motor grip is held only within about 0.006 degrees
+of level along its nose: on any real slope it rolls, as the equation says it should.
 
 ### Tuning a vehicle in the harness
 
@@ -371,7 +384,7 @@ Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, t
 `sled`, `boat`, `airplane` and `balloon` (each type's presets in one basic motion),
 `avatar-stand`, `avatar-walk` and `avatar-jump`, and `drop` (a 1 m box from 5 m);
 `testcar-down` and `car-down` (key held down the ramp), `hover`, `attract-roll` and `attract-pitch`
-(one behaviour alone), `park-new`, `park-faded`, `park-drive` and `park-wake` (sleeping), and
+(one behaviour alone), `park-new`, `park-faded`, `park-drive`, `park-car` and `park-wake` (sleeping), and
 `crash-wall`, `crash-box`, `crash-headon` and `crash-drop`, `rollonly` (a car rolled and pitched with
 `VEHICLE_FLAG_LIMIT_ROLL_ONLY`) and `motor-offset` (a floating box pushed below its centre of mass). The summary's extra columns give when
 the engine last had a body awake and, for the crashes, the impact, arrival and leaving speeds,

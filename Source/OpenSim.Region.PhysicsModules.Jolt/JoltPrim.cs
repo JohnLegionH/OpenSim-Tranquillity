@@ -650,7 +650,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     ApplyVehicleBodyParams();
                     // Assert buoyancy on restart: the assertion just above can be lost on the load
                     // path (body created GravityFactor=1 with deferred activation drained on the step thread
-                    // AFTER this set) - so re-assert it on the LIVE step-thread steps of the next
+                    // AFTER this set) - so re-assert it on the step-thread steps of the next
                     // ReassertVehicleSeconds, where it sticks.
                     _reassertVehicleTime = ReassertVehicleSeconds;
                 }
@@ -713,7 +713,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (_vehicle == null || !_vehicle.IsActive || !_isPhysical || !_body.IsValid)
                 return;
-            // Assert buoyancy on restart: re-assert the vehicle body params on the live step-thread steps
+            // Assert buoyancy on restart: re-assert the vehicle body params on the step-thread steps
             // of the first ReassertVehicleSeconds after (re)activation, so the gravity-cancellation that the load-path restore
             // set (but that the deferred body activation clobbered back to GravityFactor=1) actually takes -
             // otherwise a restored boat steps under full engine gravity and sinks despite vehicle=True.
@@ -738,10 +738,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     _rotationalVelocity = Vector3.Zero;
                 }
             }
-            // The vehicle's ground check (BulletSim's HasSomeCollision): touching anything in the last step.
-            IsColliding = _backend.BodyHadContact(_body);
             if (!_vehicleBody.BeginFrame())
                 return;
+            // The vehicle's ground check (BulletSim's HasSomeCollision): touching anything in the last step. The engine
+            // reports no contacts for a sleeping body, which has not moved since it last touched what it rests on, so
+            // asleep it keeps the state it went to sleep with (otherwise a car parked slightly tilted would stop being
+            // idle, its attractor no longer held by the ground, and wake on the next step).
+            if (_vehicleBody.IsAwake)
+                IsColliding = _backend.BodyHadContact(_body);
             // A parked vehicle sleeps like any other body. The engine may put it to sleep only while nothing in the
             // vehicle would move it (a vehicle drifting slowly toward its hover height must not be stopped: the engine
             // zeroes a body's velocity when it sleeps). Asleep and idle, the controller only lets time pass for it
@@ -754,10 +758,35 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _vehicleMaySleep = idle;
             }
             if (!_vehicleBody.IsAwake && idle)
+            {
+                _vehicleHeldTime = 0f;
                 _vehicle.Rest(timeStep);
+            }
+            else if (idle && _vehicle.HoldsAtRest)
+            {
+                // The rest rule ([Jolt] VehicleRestSpeed): nothing in the vehicle would move it and the equation would
+                // not start it moving from where it is, so it is held still. Without this, a vehicle with no contact
+                // friction resting a fraction of a degree tilted inside the engine's penetration allowance creeps
+                // along the tilt at a few centimetres a second and never sleeps.
+                // Held for the engine's time before sleep, it is put to sleep. Held still, there is nothing left for the
+                // engine's own sleep test to wait for (in the harness it took about 2.5 s longer), and the time is then
+                // the same at every step rate and on every platform.
+                _vehicle.Hold(timeStep);
+                _vehicleHeldTime += timeStep;
+                if (_vehicleHeldTime >= HeldBeforeSleep)
+                    _backend.DeactivateBody(_body);
+            }
             else
+            {
+                _vehicleHeldTime = 0f;
                 _vehicle.Step(timeStep);
+            }
         }
+
+        // How long the rest rule has held the vehicle still (s), and how long it holds it before putting it to sleep:
+        // Jolt's own time before sleep (PhysicsSettings.mTimeBeforeSleep, 0.5 s).
+        private float _vehicleHeldTime;
+        private const float HeldBeforeSleep = 0.5f;
 
         // Whether the vehicle body is allowed to sleep: only while its controller is idle (StepVehicle).
         private bool _vehicleMaySleep;
@@ -780,7 +809,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (_vehicle == null || !_vehicle.IsActive || !_isPhysical || !_body.IsValid)
                 return;
-            _backend.SetBodyFriction(_body, 0f);
+            _backend.SetBodyFriction(_body, _vehicle.Settings.ContactFriction);
             _backend.SetBodyRestitution(_body, 0f);
             _backend.SetBodyDamping(_body, 0f, 0f);
             _backend.SetBodyGravityFactor(_body, 0f);

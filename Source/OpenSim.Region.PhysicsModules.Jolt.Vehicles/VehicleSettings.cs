@@ -72,5 +72,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public float SledAssist { get; init; } = DefaultSledAssist;
 
         public const float DefaultSledAssist = 0.045f;
+
+        /// <summary>
+        /// The contact friction of a vehicle body. 0, BulletSim's VehicleFriction default, leaves the vehicle's own
+        /// friction timescales as the only friction on it.
+        /// </summary>
+        public float ContactFriction { get; init; } = 0f;
+
+        /// <summary>
+        /// The rest speed (m/s) of the rest rule (<see cref="VehicleController.HoldsAtRest"/>): a vehicle with no motor
+        /// pulling, moving slower than this, whose steady speed on every axis from its present pose is also slower
+        /// than this, is held still so that its body can sleep. 0 turns the rule off.
+        /// </summary>
+        public float RestSpeed { get; init; } = DefaultRestSpeed;
+
+        public const float DefaultRestSpeed = 0.1f;
     }
 }

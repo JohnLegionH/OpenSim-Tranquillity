@@ -477,6 +477,75 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             && HoverIdle()
             && AttractorIdle();
 
+        /// <summary>
+        /// The rest rule: true when the vehicle is idle (<see cref="IsIdle"/>: no motor pulling, hover and the attractor
+        /// done), moves slower than the rest speed ([Jolt] VehicleRestSpeed; turning slower than that many radians a
+        /// second), and the steady speed the motor-and-friction equation gives on each axis from its present pose is
+        /// also below the rest speed:
+        ///
+        ///   v_steady = (g M / Tm + a) / (g / Tm + 1 / Tf)       (g the motor's grip, a the vehicle's gravity along the axis)
+        ///
+        /// With no motor grip and no friction on an axis, any acceleration along it gives an unbounded steady speed. A
+        /// vehicle touching something rests on it: of its three axes, the one nearest the vertical is the one the
+        /// support pushes along, so gravity along that axis is held and left out. A host may then hold the vehicle
+        /// still (zero its velocity) instead of stepping it, so the engine can let it sleep. The rule does not hold a
+        /// vehicle that the equation would start moving: a sled let go on a slope, or a car whose friction lets it roll
+        /// down one.
+        /// </summary>
+        public bool HoldsAtRest
+        {
+            get
+            {
+                float rest = S.RestSpeed;
+                if (rest <= 0f || !IsActive || !IsIdle)
+                    return false;
+                if (_body.LinearVelocity.Length() >= rest || _body.AngularVelocity.Length() >= rest)
+                    return false;
+                return SteadySpeed().Length() < rest;
+            }
+        }
+
+        /// <summary>
+        /// The steady velocity, on each vehicle axis, that the linear motor-and-friction equation settles at from the
+        /// vehicle's present pose and motor grip, with gravity along the axis the vehicle rests on taken by the support
+        /// (<see cref="HoldsAtRest"/>). Infinite on an axis with an acceleration and neither grip nor friction.
+        /// </summary>
+        internal Vector3 SteadySpeed()
+        {
+            _rotation = _body.Orientation * _props.GetRot(VehRotationParam.ReferenceFrame);
+            Vector3 accel = _body.Gravity * GravityShare() * Quaternion.Inverse(_rotation) + SledAssist();
+            if (_body.HasCollision)
+            {
+                // The axis nearest the vertical: the largest share of world up along it.
+                Vector3 up = Vector3.UnitZ * Quaternion.Inverse(_rotation);
+                float ax = Math.Abs(up.X), ay = Math.Abs(up.Y), az = Math.Abs(up.Z);
+                if (az >= ax && az >= ay) accel.Z = 0f;
+                else if (ay >= ax) accel.Y = 0f;
+                else accel.X = 0f;
+            }
+            Vector3 motor = _props.Dynamics.LinearDirection;
+            Vector3 motorTs = _props.GetVec(VehVectorParam.LinearMotorTimescale);
+            Vector3 decayTs = _props.GetVec(VehVectorParam.LinearMotorDecayTimescale);
+            Vector3 frictionTs = VehicleLimits.DoLinearFriction ? _props.GetVec(VehVectorParam.LinearFrictionTimescale) : FrictionOff;
+            double age = _props.Dynamics.LinearDecayIndex;
+            return new Vector3(
+                (float)SteadyOnAxis(accel.X, motor.X, motorTs.X, decayTs.X, age, frictionTs.X),
+                (float)SteadyOnAxis(accel.Y, motor.Y, motorTs.Y, decayTs.Y, age, frictionTs.Y),
+                (float)SteadyOnAxis(accel.Z, motor.Z, motorTs.Z, decayTs.Z, age, frictionTs.Z));
+        }
+
+        /// <summary>The size of the steady speed of the motor-and-friction equation on one axis (see <see cref="HoldsAtRest"/>).</summary>
+        internal static double SteadyOnAxis(double accel, double motor, double motorTs, double decayTs, double age, double frictionTs)
+        {
+            double grip = VehicleMotorSolver.Grip(age, Math.Max(decayTs, VehicleMotorSolver.MinTimescale));
+            double pull = grip / Math.Max(motorTs, VehicleMotorSolver.MinTimescale);
+            double rate = pull + VehicleMotorSolver.FrictionRate(Math.Max(frictionTs, VehicleMotorSolver.MinTimescale));
+            double drive = pull * motor + accel;
+            if (rate <= 0)
+                return drive == 0 ? 0 : double.PositiveInfinity;
+            return Math.Abs(drive / rate);
+        }
+
         // The attractor has nothing left to do when it is off, the vehicle is upright to within AttractorIdleAngle, or
         // it rests on something that holds its tilt (a car parked on a slope).
         private bool AttractorIdle()
@@ -524,6 +593,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _hoverCarry = null;
             _attractorCarry = null;
             _angularDeflectionRate = Vector3.Zero;
+        }
+
+        /// <summary>
+        /// A step in which the rest rule holds (<see cref="HoldsAtRest"/>): time passes as in <see cref="Rest"/>, the
+        /// vehicle's gravity stays on the body, and its velocity is set to zero, so the engine can let it sleep. Whatever
+        /// the engine's step then does to it (a body resting on an edge tips) is read on the next step, which steps the
+        /// vehicle again if it is no longer at rest.
+        /// </summary>
+        public void Hold(float pTimestep)
+        {
+            if (!IsActive) return;
+            Rest(pTimestep);
+            ApplyGravity();
+            _body.LinearVelocity = Vector3.Zero;
+            _body.AngularVelocity = Vector3.Zero;
         }
 
         #endregion // Step
