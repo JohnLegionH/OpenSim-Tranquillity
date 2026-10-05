@@ -125,6 +125,13 @@ public class VehicleRestRuleTests
         var (falling, fb) = Make(Vehicle.TYPE_CAR);
         fb.HasCollision = false;
         Assert.False(falling.HoldsAtRest);
+
+        // Floating (buoyancy 1, so no gravity to hold) and turning slowly through upright: not resting on anything.
+        var (floating, flb) = Make(Vehicle.TYPE_BALLOON);
+        floating.ProcessFloatVehicleParam(Vehicle.BUOYANCY, 1f);
+        flb.HasCollision = false;
+        flb.AngularVelocity = new Vector3(0.05f, 0f, 0f);
+        Assert.False(floating.HoldsAtRest);
     }
 
     [Fact]
@@ -154,11 +161,11 @@ public class VehicleRestRuleTests
 [Collection(JoltNativeSerial.Name)]
 public class VehicleRestRuleHarnessTests
 {
-    private static RunResult Run(string scenario, double rate, float? slope = null, float? duration = null)
+    private static RunResult Run(string scenario, double rate, float? slope = null, bool rule = true)
     {
         var o = new HarnessOptions { RateHz = rate };
         if (slope.HasValue) o.SlopeDeg = slope.Value;
-        if (duration.HasValue) o.Duration = duration.Value;
+        if (!rule) o.Jolt["VehicleRestSpeed"] = "0";
         return Harness.Harness.Run(Harness.Harness.Find(scenario), o);
     }
 
@@ -184,43 +191,49 @@ public class VehicleRestRuleHarnessTests
         Assert.All(r.Samples.Where(s => s.T >= r.Samples[^1].T - 5.0), s => Assert.Equal(0, s.Active));
     }
 
-    // A documented sled let go at rest on 15 degrees starts and reaches the steady speed it had before the rule
-    // (12.649 / 12.669 m/s at 11 / 45 Hz, the lane's recorded figures).
+    // What the rule must leave alone is compared with the same run with the rule off ([Jolt] VehicleRestSpeed 0), on
+    // the same platform, so the figures do not depend on the platform's last digits.
+
+    // A documented sled let go at rest on 15 degrees starts and reaches the steady speed it reaches without the rule
+    // (12.65 m/s here), within 1%.
     [Theory]
-    [InlineData(11.0, 12.649f)]
-    [InlineData(45.0, 12.669f)]
-    public void A_sled_let_go_on_a_slope_starts_and_reaches_its_steady_speed(double rate, float steady)
+    [InlineData(11.0)]
+    [InlineData(45.0)]
+    public void A_sled_let_go_on_a_slope_starts_and_reaches_its_steady_speed(double rate)
     {
-        RunResult r = Run("sled", rate, 15f);
+        RunResult r = Run("sled", rate, 15f), off = Run("sled", rate, 15f, rule: false);
         Sample at2 = r.Samples.First(s => s.T >= 2.0);
         Assert.True((at2.Position - r.Samples[0].Position).Length() > 1f, "the sled started");
-        Assert.InRange(r.Summary.SteadySpeed, steady * 0.99f, steady * 1.01f);
+        Assert.InRange(r.Summary.SteadySpeed, off.Summary.SteadySpeed * 0.99f, off.Summary.SteadySpeed * 1.01f);
+        Assert.True(r.Summary.SteadySpeed > 10f, $"steady {r.Summary.SteadySpeed:0.000}");
     }
 
-    // The test car let go on 5 and 15 degrees rolls at the speed it rolled at before the rule (the harness at the
-    // commit before it: 0.844 / 0.851 m/s on 5 degrees, 2.541 / 2.542 on 15, at 11 / 45 Hz; the equation's
-    // g sin(angle) * Tf with its 1 s forward friction is 0.855 / 2.538), within 1%.
+    // The test car let go on 5 and 15 degrees rolls at the speed it rolls at without the rule (about the equation's
+    // g sin(angle) * Tf with its 1 s forward friction: 0.855 / 2.538 m/s), within 1%.
     [Theory]
-    [InlineData(11.0, 5f, 0.844f)]
-    [InlineData(45.0, 5f, 0.851f)]
-    [InlineData(11.0, 15f, 2.541f)]
-    [InlineData(45.0, 15f, 2.542f)]
-    public void The_test_car_let_go_on_a_slope_rolls(double rate, float slope, float before)
+    [InlineData(11.0, 5f)]
+    [InlineData(45.0, 5f)]
+    [InlineData(11.0, 15f)]
+    [InlineData(45.0, 15f)]
+    public void The_test_car_let_go_on_a_slope_rolls(double rate, float slope)
     {
-        RunResult r = Run("testcar", rate, slope);
-        Assert.InRange(r.Summary.SteadySpeed, before * 0.99f, before * 1.01f);
+        RunResult r = Run("testcar", rate, slope), off = Run("testcar", rate, slope, rule: false);
+        Assert.InRange(r.Summary.SteadySpeed, off.Summary.SteadySpeed * 0.99f, off.Summary.SteadySpeed * 1.01f);
+        float equation = 9.80665f * MathF.Sin(slope * MathF.PI / 180f);
+        Assert.InRange(r.Summary.SteadySpeed, equation * 0.95f, equation * 1.05f);
     }
 
-    // After its key a car coasts to rest in the time it took before the rule (the lane's recorded figures: car preset
-    // 4.455 / 4.444 s, test car 3.182 / 3.267 s at 11 / 45 Hz), within 3%: the rule only acts below 0.1 m/s.
+    // After its key a car coasts to rest (under 0.1 m/s for 1 s) in the time it takes without the rule, within 3%:
+    // the rule only acts below its 0.1 m/s.
     [Theory]
-    [InlineData("car", 11.0, 4.455)]
-    [InlineData("car", 45.0, 4.444)]
-    [InlineData("testcar", 11.0, 3.182)]
-    [InlineData("testcar", 45.0, 3.267)]
-    public void A_car_coasting_after_its_key_comes_to_rest_in_the_time_it_took_before(string scenario, double rate, double before)
+    [InlineData("car", 11.0)]
+    [InlineData("car", 45.0)]
+    [InlineData("testcar", 11.0)]
+    [InlineData("testcar", 45.0)]
+    public void A_car_coasting_after_its_key_comes_to_rest_in_the_time_it_takes_without_the_rule(string scenario, double rate)
     {
-        RunResult r = Run(scenario, rate, 0f);
-        Assert.InRange(r.Summary.TimeToRest, before * 0.97, before * 1.03);
+        RunResult r = Run(scenario, rate, 0f), off = Run(scenario, rate, 0f, rule: false);
+        Assert.False(double.IsNaN(off.Summary.TimeToRest));
+        Assert.InRange(r.Summary.TimeToRest, off.Summary.TimeToRest * 0.97, off.Summary.TimeToRest * 1.03);
     }
 }

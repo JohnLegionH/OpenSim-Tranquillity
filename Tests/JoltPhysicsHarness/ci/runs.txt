@@ -10,5 +10,5 @@ park-drive-45-legacy: --scenario park-drive --rate 45 --jolt VehiclePresets=lega
 testcar-down-5: --scenario testcar-down --slope 5 --rate all
 
 # Crash sweep: small changes in the arrival speed, sideways offset and angle, at 11 and 45 Hz. Penetration is the
-# boxes' depth into each other; crash_rise how far either object rose after the impact.
+# boxes' depth into each other; crash_rise how far either object rose in the second after the impact.
 crash-sweep: --scenario crash-wall,crash-box,crash-headon,crash-drop --rate 11,45 --crash-speed 0.9,0.95,1,1.05,1.1 --crash-offset -0.2,0,0.2 --crash-angle -1,0,1

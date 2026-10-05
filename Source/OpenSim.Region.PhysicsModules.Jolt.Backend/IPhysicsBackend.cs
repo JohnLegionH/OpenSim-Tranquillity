@@ -630,6 +630,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// the body is momentarily at rest. No-op on static bodies.</summary>
         void SetBodyAllowSleeping(BodyId body, bool allow);
 
+        /// <summary>Continuous collision detection on or off for a moving body (Jolt's motion quality: LinearCast or
+        /// Discrete). With it, a body that moves further in a step than a share of its own size is cast along its
+        /// motion, so it stops at what it would hit inside the step instead of ending the step overlapping it.
+        /// No-op on static bodies.</summary>
+        void SetBodyContinuousCollision(BodyId body, bool on);
+
         /// <summary>Toggle the Persist (ongoing-contact) gate for a live body - a prim's collision-script
         /// subscription flips this so the script `collision` event streams while touching.</summary>
         void SetBodyWantsContactEvents(BodyId body, bool wants);

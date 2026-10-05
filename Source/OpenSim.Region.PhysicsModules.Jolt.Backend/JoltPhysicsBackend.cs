@@ -1825,6 +1825,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             }
         }
 
+        public void SetBodyContinuousCollision(BodyId body, bool on)
+        {
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolve(body, out JoltBodyRecord rec, out BodyID jid) && rec.MotionType != BodyMotionType.Static)
+                    _bodyInterface.SetMotionQuality(jid, on ? MotionQuality.LinearCast : MotionQuality.Discrete);
+            }
+        }
+
         // Allow/forbid sleeping (vehicles forbid it while active - Bullet's DISABLE_DEACTIVATION).
         // Needs a body write-lock: AllowSleeping lives on the Body, not the BodyInterface.
         public void SetBodyAllowSleeping(BodyId body, bool allow)

@@ -118,10 +118,18 @@ public class VehicleGravityTests
         foreach (double rate in Harness.Harness.Rates)
         {
             var o = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Jolt = { ["VehiclePresets"] = presets } };
+            // This checks the vehicle's equation, so the engine's contact solving is kept the same at every rate: at
+            // 90 Hz the engine takes 3 collision steps per step, the 3.7 ms collision step it takes at 45 Hz with its
+            // default 6. With 6 at 90 Hz (1.85 ms) the documented test car on 5 degrees runs 1.1% (Windows) to 1.7%
+            // (Linux) under the equation, in whichever pose the contact leaves it, and on the equation with 1, 3 or 12;
+            // turning off its deflection, its attractor or LIMIT_ROLL_ONLY, or giving it angular friction, does not
+            // change that, so it is in the contact solving, not in the vehicle model.
+            if (rate > 45.0)
+                o.Jolt["CollisionSteps"] = "3";
             Summary m = Harness.Harness.Run(Harness.Harness.Find(scenario), o).Summary;
             double expected = EquationSteady(rate, 8.0, tm, td, tf, slope, limitMotorUp: true);
             // The documented test car (LIMIT_ROLL_ONLY with no angular friction, so its pitch rests on the contact
-            // alone) rides 0.07 degrees steeper on the 5 degree ramp at 90 Hz and runs 1.1% under: 1.5% for it.
+            // alone): 1.5% for it.
             double tolerance = presets == "documented" ? 0.015 : 0.01;
             Assert.True(Math.Abs(m.SteadySpeed - expected) <= tolerance * expected, $"{scenario} {slope} deg at {rate} Hz: {m.SteadySpeed:0.000} against {expected:0.000}");
         }

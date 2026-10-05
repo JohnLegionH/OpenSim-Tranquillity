@@ -88,6 +88,41 @@ public class VehicleRestAndCrashTests
         Assert.InRange(m.LeavingSpeed, 0f, m.ArrivalSpeed * (1f + LeavingMargin));
     }
 
+    // Small changes to each crash (arrival speed 0.9 and 1.1 of the scenario's, the car 0.2 m to either side, turned
+    // 1 degree either way) at 11 and 45 Hz: no outcome is violent. Each stays finite, nothing passes through what it
+    // hit, nothing is pushed into the other deeper than a quarter of a metre (half the car's height: deeper, the
+    // shortest way out can be through the other side), and nothing leaves faster than both the fastest arrival and
+    // what the held key's motor drives the car to on its own (20 m/s x the speed share x Tf / (Tf + Tm), the car
+    // preset's 100 s forward friction and 1 s motor timescale), by more than LeavingMargin: a car that glances off and
+    // still has its key down speeds up again, a contact that throws it does not count on that.
+    public static IEnumerable<object[]> CrashVariants()
+    {
+        foreach (string scenario in new[] { "crash-wall", "crash-box", "crash-headon", "crash-drop" })
+            foreach (double rate in new[] { 11.0, 45.0 })
+                yield return new object[] { scenario, rate };
+    }
+
+    [Theory]
+    [MemberData(nameof(CrashVariants))]
+    public void Small_changes_to_a_crash_give_no_violent_outcome(string scenario, double rate)
+    {
+        foreach (float speed in new[] { 0.9f, 1.1f })
+            foreach (float offset in new[] { -0.2f, 0.2f })
+                foreach (float angle in new[] { -1f, 1f })
+                {
+                    var o = new HarnessOptions { RateHz = rate, CrashSpeed = speed, CrashOffset = offset, CrashAngle = angle };
+                    RunResult r = Harness.Harness.Run(Harness.Harness.Find(scenario), o);
+                    Summary m = r.Summary;
+                    Assert.Equal(0, m.NonFinite);
+                    Assert.False(double.IsNaN(m.ImpactT), $"{r.Name}: no impact");
+                    Assert.Equal(0, m.Tunneled);
+                    Assert.True(m.Penetration <= 0.25f, $"{r.Name}: {m.Penetration:0.000} m into the other");
+                    float motor = scenario == "crash-drop" ? 0f : 20f * speed * 100f / 101f;
+                    float limit = MathF.Max(m.ArrivalSpeed, motor) * (1f + LeavingMargin);
+                    Assert.True(m.LeavingSpeed <= limit, $"{r.Name}: left at {m.LeavingSpeed:0.000} m/s, arrived at {m.ArrivalSpeed:0.000}");
+                }
+    }
+
     // The two rates tell the same story: the impact at the same time (within one and a half 11 Hz samples, the
     // impact being seen in the first sample after it), the same speed leaving it (within 2 m/s or a
     // tenth of the arrival), and the objects in the same place 3 s later (within 2 m, or a tenth of the way the

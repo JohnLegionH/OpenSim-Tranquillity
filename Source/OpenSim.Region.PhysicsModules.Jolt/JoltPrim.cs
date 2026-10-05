@@ -804,6 +804,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // decides the vehicle's gravity itself (engine gravity off until its first step sets the vehicle's share).
         // It starts unable to sleep (BulletSim's DISABLE_DEACTIVATION); StepVehicle lets it sleep while nothing in the
         // vehicle would move it.
+        // It has continuous collision detection: a car at 18 m/s moves 1.6 m in an 11 Hz step, more than its own height,
+        // and two cars closing head on 3.2 m. Without it the engine can miss the contact before the step by a few
+        // millimetres, end the step with the bodies deeply overlapped and push them apart along the shortest way out,
+        // which is up: one car rode over the other and drove on at its motor's speed.
         // Re-applied after every body recreate (reposition/reshape/weld) while the vehicle is active.
         private void ApplyVehicleBodyParams()
         {
@@ -814,6 +818,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _backend.SetBodyDamping(_body, 0f, 0f);
             _backend.SetBodyGravityFactor(_body, 0f);
             _backend.SetBodyAllowSleeping(_body, false);
+            _backend.SetBodyContinuousCollision(_body, true);
             _vehicleMaySleep = false;
             _backend.ActivateBody(_body);
         }
@@ -828,6 +833,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _backend.SetBodyDamping(_body, d.LinearDamping, d.AngularDamping);
             _backend.SetBodyGravityFactor(_body, 1f);
             _backend.SetBodyAllowSleeping(_body, true);
+            _backend.SetBodyContinuousCollision(_body, d.UseCcd);
         }
 
         // PID / hover / RotLookAt - physical-motion features, not implemented (no-ops).

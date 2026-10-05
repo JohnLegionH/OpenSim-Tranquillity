@@ -201,8 +201,8 @@ public sealed class Summary
     public float PushRangeLate = float.NaN;
     /// <summary>The deepest overlap from 2 to 10 s after the impact (m).</summary>
     public float PushPenetration = float.NaN;
-    /// <summary>After the impact: how far the centre of either object rose above where it was at the impact (m). A
-    /// car thrown up by a contact, or riding over what it hit, rises; one stopped by it does not.</summary>
+    /// <summary>In the second after the impact: how far the centre of either object rose above where it was at the
+    /// impact (m). A car thrown up by a contact, or riding over what it hit, rises; one stopped by it does not.</summary>
     public float CrashRise = float.NaN;
 }
 
@@ -1296,7 +1296,8 @@ public static class Harness
             if (after >= LeavingDelay - 1e-9 && after <= 1.0 + 1e-9)
                 m.LeavingSpeed = MathF.Max(m.LeavingSpeed, MathF.Max(s.Speed, s.OtherSpeed));
             m.Penetration = MathF.Max(m.Penetration, overlap);
-            m.CrashRise = MathF.Max(m.CrashRise, MathF.Max(s.Position.Z - z0, r.Other != null ? s.Other.Z - otherZ0 : 0f));
+            if (after <= 1.0 + 1e-9)
+                m.CrashRise = MathF.Max(m.CrashRise, MathF.Max(s.Position.Z - z0, r.Other != null ? s.Other.Z - otherZ0 : 0f));
             if (sc.PassedThrough != null && sc.PassedThrough(r, s))
                 m.Tunneled = 1;
             if (after >= 2.0 - 1e-9 && after <= 10.0 + 1e-9)

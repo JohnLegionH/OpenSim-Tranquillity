@@ -478,15 +478,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             && AttractorIdle();
 
         /// <summary>
-        /// The rest rule: true when the vehicle is idle (<see cref="IsIdle"/>: no motor pulling, hover and the attractor
-        /// done), moves slower than the rest speed ([Jolt] VehicleRestSpeed; turning slower than that many radians a
+        /// The rest rule: true when the vehicle rests on something (it touched something in the last step), is idle
+        /// (<see cref="IsIdle"/>: no motor pulling, hover and the attractor done), moves slower than the rest speed ([Jolt] VehicleRestSpeed; turning slower than that many radians a
         /// second), and the steady speed the motor-and-friction equation gives on each axis from its present pose is
         /// also below the rest speed:
         ///
         ///   v_steady = (g M / Tm + a) / (g / Tm + 1 / Tf)       (g the motor's grip, a the vehicle's gravity along the axis)
         ///
-        /// With no motor grip and no friction on an axis, any acceleration along it gives an unbounded steady speed. A
-        /// vehicle touching something rests on it: of its three axes, the one nearest the vertical is the one the
+        /// With no motor grip and no friction on an axis, any acceleration along it gives an unbounded steady speed. Of
+        /// its three axes, the one nearest the vertical is the one the
         /// support pushes along, so gravity along that axis is held and left out. A host may then hold the vehicle
         /// still (zero its velocity) instead of stepping it, so the engine can let it sleep. The rule does not hold a
         /// vehicle that the equation would start moving: a sled let go on a slope, or a car whose friction lets it roll
@@ -497,7 +497,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             get
             {
                 float rest = S.RestSpeed;
-                if (rest <= 0f || !IsActive || !IsIdle)
+                // A vehicle in the air is not at rest: one swinging through upright under its attractor is idle for a
+                // moment and turning slowly, and holding it would stop the swing.
+                if (rest <= 0f || !IsActive || !_body.HasCollision || !IsIdle)
                     return false;
                 if (_body.LinearVelocity.Length() >= rest || _body.AngularVelocity.Length() >= rest)
                     return false;
@@ -516,7 +518,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             Vector3 accel = _body.Gravity * GravityShare() * Quaternion.Inverse(_rotation) + SledAssist();
             if (_body.HasCollision)
             {
-                // The axis nearest the vertical: the largest share of world up along it.
+                // What it rests on takes the gravity along the axis nearest the vertical: the largest share of world up
+                // along it.
                 Vector3 up = Vector3.UnitZ * Quaternion.Inverse(_rotation);
                 float ax = Math.Abs(up.X), ay = Math.Abs(up.Y), az = Math.Abs(up.Z);
                 if (az >= ax && az >= ay) accel.Z = 0f;
