@@ -69,7 +69,7 @@ public class VehicleDeflectionTests
     public void In_the_air_deflection_never_adds_speed_at_any_rate()
     {
         // Falling nose-level, moving partly sideways: deflection turns the horizontal part toward the nose and
-        // leaves the fall alone. Before the ruling the fall's turned part was dropped and only "more forward" kept.
+        // leaves the fall alone. (It used to drop the upward part of a whole-velocity turn, which kept "more forward".)
         Vector3 start = new(4f, 3f, -5f);
         foreach (double rate in Rates)
         {
