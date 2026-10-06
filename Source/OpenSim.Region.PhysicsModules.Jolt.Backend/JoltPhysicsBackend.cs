@@ -68,10 +68,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // job queues a follow-on job into a full ring waits on its own head. Concurrent Updates add their queue
         // traffic together - four regions x 300 boxes wedged every time, whatever maxJobs was. One Update at a
         // time is the configuration Jolt is built and tested for, so each pool admits ONE Update through its gate
-        // and the process scales by running [Jolt] JobPools pools. The gate is taken INSIDE _simLock around
-        // _system.Update only and released in a finally; nothing takes _simLock while holding a gate (Update
-        // never calls back into one of our locks). Pools, their count and their size are the first region's, like
-        // ThreadCount; each region is assigned the pool with the fewest regions at Initialize.
+        // and the process scales by running [Jolt] JobPools pools. Step takes the gate BEFORE this region's
+        // _simLock, holds it for the whole step and releases it in a finally; nothing takes a gate while holding
+        // any _simLock, so the order (gate, then _simLock) cannot invert; see Step. Pools, their count and their
+        // size are the first region's, like ThreadCount; each region is assigned the pool with the fewest regions
+        // at Initialize.
         private sealed class JobPool
         {
             public readonly int Index;
