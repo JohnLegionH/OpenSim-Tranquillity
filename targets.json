@@ -95,6 +95,22 @@
       "restore_paths": "",
       "overlay_paths": "Tests/OpenSim.Region.Framework.Tests/Scenes/Tests/EstateStoreListsRoundTripTests.cs Source/OpenSim.Data.PGSQL/PGSQLEstateData.cs",
       "tests_project": "Tests/OpenSim.Region.Framework.Tests/OpenSim.Region.Framework.Tests.csproj",
+      "tests": "FullyQualifiedName~EstateStoreListsRoundTripTests",
+      "skip": true
+    },
+    {
+      "name": "pgsql-ban-final",
+      "repo": "JohnLegionH/OpenSim-Tranquillity",
+      "ref": "09a92dc6b2ec11272ca519650f37011eade3d0a3",
+      "baseline_repo": "",
+      "baseline_ref": "",
+      "checks": "general",
+      "expect": [],
+      "restore_repo": "",
+      "restore_ref": "",
+      "restore_paths": "",
+      "overlay_paths": "",
+      "tests_project": "Tests/OpenSim.Region.Framework.Tests/OpenSim.Region.Framework.Tests.csproj",
       "tests": "FullyQualifiedName~EstateStoreListsRoundTripTests"
     }
   ],
