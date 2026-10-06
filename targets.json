@@ -10,9 +10,9 @@
       "expect": []
     },
     {
-      "name": "sit-target-active",
+      "name": "sit-target-state",
       "repo": "JohnLegionH/OpenSim-Tranquillity",
-      "ref": "fix/region-store-sit-target-active",
+      "ref": "fix/region-store-sit-target-state",
       "baseline_repo": "OpenSim-NGC/OpenSim-Tranquillity",
       "baseline_ref": "86b1824cc5fb2c7ec64219c24c391379496dcfb5",
       "checks": "general,sit",
