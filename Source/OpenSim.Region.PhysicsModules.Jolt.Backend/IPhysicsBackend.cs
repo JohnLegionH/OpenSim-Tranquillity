@@ -440,6 +440,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             bool contactOverflow,
             int activeBodyCount,
             float physicsMs)
+            : this(bodyUpdateCount, characterUpdateCount, contactCount, bodyOverflow, contactOverflow, activeBodyCount, physicsMs,
+                   in StepWaits.None)
+        {
+        }
+
+        public StepResult(
+            int bodyUpdateCount,
+            int characterUpdateCount,
+            int contactCount,
+            bool bodyOverflow,
+            bool contactOverflow,
+            int activeBodyCount,
+            float physicsMs,
+            in StepWaits waits)
         {
             BodyUpdateCount = bodyUpdateCount;
             CharacterUpdateCount = characterUpdateCount;
@@ -448,6 +462,35 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             ContactBufferOverflowed = contactOverflow;
             ActiveBodyCount = activeBodyCount;
             PhysicsMilliseconds = physicsMs;
+            Waits = waits;
+        }
+
+        /// <summary>What this step waited for before it could run. <see cref="PhysicsMilliseconds"/> includes the region
+        /// lock wait (as it always has) but not the job pool wait.</summary>
+        public readonly StepWaits Waits;
+    }
+
+    /// <summary>What one Step waited for: its job pool (another region's step), and its own region's lock (a body
+    /// change or query on another thread). A wait is counted only when the lock was taken when the step arrived.</summary>
+    public readonly struct StepWaits
+    {
+        public static readonly StepWaits None = default;
+
+        public readonly bool PoolWaited;
+        public readonly double PoolWaitMs;
+        /// <summary>The region that last took the pool before this step started waiting for it: the holder at that
+        /// moment (null if not known).</summary>
+        public readonly string? PoolHeldBy;
+        public readonly bool RegionLockWaited;
+        public readonly double RegionLockWaitMs;
+
+        public StepWaits(bool poolWaited, double poolWaitMs, string? poolHeldBy, bool regionLockWaited, double regionLockWaitMs)
+        {
+            PoolWaited = poolWaited;
+            PoolWaitMs = poolWaitMs;
+            PoolHeldBy = poolHeldBy;
+            RegionLockWaited = regionLockWaited;
+            RegionLockWaitMs = regionLockWaitMs;
         }
     }
 
@@ -523,6 +566,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public double UpdateGateWaitMsMax;
         /// <summary>The most updates ever inside this region's pool at once since the pool was created. Must be 1.</summary>
         public int PoolPeakInside;
+        /// <summary>Whether the job pools hand over first come, first served ([Jolt] JobPoolFairHandoff; process-wide).</summary>
+        public bool JobPoolFairHandoff;
+        /// <summary>This region's steps that had to wait for the region's own lock, cumulative; and the total and
+        /// longest of those waits, milliseconds.</summary>
+        public long RegionLockWaits;
+        public double RegionLockWaitMsTotal;
+        public double RegionLockWaitMsMax;
     }
 
     /// <summary>How a script ray cast (<see cref="IPhysicsBackend.RayCastLimited"/>) ended.</summary>
@@ -803,6 +853,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// value wins. 0 (an unset struct) means 1; otherwise clamped to [1, 64].
         /// </summary>
         public int JobPools;
+
+        /// <summary>
+        /// How a job pool is handed over when regions wait for it. false (the default): the pool's lock is a Monitor,
+        /// which does not queue its waiters, so the region holding the pool usually takes it straight back for its next
+        /// physics step and a waiting region can sit through the rest of that region's heartbeat. true: the pool is
+        /// granted first come, first served, so a waiting region gets it when the holder's current physics step ends.
+        /// Process-wide, like <see cref="JobPools"/>; the first region's value wins.
+        /// </summary>
+        public bool JobPoolFairHandoff;
+
+        /// <summary>The region's name, used only to say which region held a job pool while another waited for it.</summary>
+        public string? RegionName;
 
         /// <summary>
         /// The engine's speed caps on every moving body (m/s and rad/s): Jolt clamps a body's velocity to them in every

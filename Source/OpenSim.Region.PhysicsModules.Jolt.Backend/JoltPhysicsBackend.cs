@@ -70,18 +70,108 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // time is the configuration Jolt is built and tested for, so each pool admits ONE Update through its gate
         // and the process scales by running [Jolt] JobPools pools. Step takes the gate BEFORE this region's
         // _simLock, holds it for the whole step and releases it in a finally; nothing takes a gate while holding
-        // any _simLock, so the order (gate, then _simLock) cannot invert; see Step. Pools, their count and their
-        // size are the first region's, like ThreadCount; each region is assigned the pool with the fewest regions
-        // at Initialize.
+        // any _simLock, so the order (gate, then _simLock) cannot invert; see Step. Pools, their count, their
+        // size and how they hand over ([Jolt] JobPoolFairHandoff) are the first region's, like ThreadCount; each
+        // region is assigned the pool with the fewest regions at Initialize.
+        //
+        // HANDOFF. By default the gate is a Monitor. A Monitor does not queue its waiters in order, and a region
+        // running several physics steps in one heartbeat takes the gate again right after releasing it, usually
+        // before a woken waiter runs; so a waiting region can sit through the rest of the holder's heartbeat. With
+        // fair handoff the gate is a ticket lock: each Step takes the next ticket and runs when its number is served,
+        // so a region that started waiting during the holder's step runs before the holder's next step.
         private sealed class JobPool
         {
             public readonly int Index;
             public readonly JobSystemThreadPool System;
-            public readonly object Gate = new object();   // admits ONE Update; Monitor, so owner-checked
+            public readonly bool Fair;
+            public readonly object Gate = new object();   // admits ONE Update; Monitor, so owner-checked (Fair = false)
             public int Regions;       // assigned regions; under s_foundationGate
             public int Inside;        // Updates inside the gate now; Interlocked
             public int PeakInside;    // the most ever inside at once; must stay 1
-            public JobPool(int index, JobSystemThreadPool system) { Index = index; System = system; }
+            public string? Holder;    // the region that last took the gate (metrics only); Volatile
+
+            // Fair = true: a ticket lock. _nextTicket is the next ticket to hand out, _serving the ticket that may run.
+            // A waiter blocks on _turn; Exit wakes waiters only when some are registered in _waiters. Waiter: under
+            // _turn, Interlocked-increment _waiters, then read _serving. Exit: Interlocked-increment _serving, then read
+            // _waiters. Both are full fences, so either the waiter sees its turn or Exit sees the waiter and takes _turn
+            // to pulse it, which it can only do once the waiter is inside Monitor.Wait.
+            private long _nextTicket;
+            private long _serving;
+            private int _waiters;
+            private readonly object _turn = new object();
+
+            public JobPool(int index, JobSystemThreadPool system, bool fair) { Index = index; System = system; Fair = fair; }
+
+            /// <summary>Takes the gate. True when it had to wait (the gate was held when we arrived), with the Stopwatch
+            /// ticks waited and the region that had last taken the gate.</summary>
+            public bool Enter(out long waitTicks, out string? heldBy)
+            {
+                waitTicks = 0;
+                heldBy = null;
+                if (!Fair)
+                {
+                    if (Monitor.TryEnter(Gate))
+                        return false;
+                    heldBy = Volatile.Read(ref Holder);
+                    long start = Stopwatch.GetTimestamp();
+                    Monitor.Enter(Gate);
+                    waitTicks = Stopwatch.GetTimestamp() - start;
+                    return true;
+                }
+
+                long ticket = Interlocked.Increment(ref _nextTicket) - 1;
+                if (Interlocked.Read(ref _serving) == ticket)
+                    return false;
+                heldBy = Volatile.Read(ref Holder);
+                long waitStart = Stopwatch.GetTimestamp();
+                WaitForTurn(ticket);
+                waitTicks = Stopwatch.GetTimestamp() - waitStart;
+                return true;
+            }
+
+            // Blocks until `ticket` is served. A ticket is never abandoned: an interrupted waiter keeps waiting for its
+            // turn, then passes the gate on and rethrows, so the steps queued behind it are not stranded.
+            private void WaitForTurn(long ticket)
+            {
+                bool interrupted = false;
+                lock (_turn)
+                {
+                    Interlocked.Increment(ref _waiters);
+                    try
+                    {
+                        while (Interlocked.Read(ref _serving) != ticket)
+                        {
+                            try { Monitor.Wait(_turn); }
+                            catch (ThreadInterruptedException) { interrupted = true; }
+                        }
+                    }
+                    finally
+                    {
+                        Interlocked.Decrement(ref _waiters);
+                    }
+                }
+                if (interrupted)
+                {
+                    Exit();
+                    throw new ThreadInterruptedException();
+                }
+            }
+
+            public void Exit()
+            {
+                if (!Fair)
+                {
+                    Monitor.Exit(Gate);
+                    return;
+                }
+                Interlocked.Increment(ref _serving);
+                if (Volatile.Read(ref _waiters) > 0)
+                    lock (_turn)
+                        Monitor.PulseAll(_turn);
+            }
+
+            /// <summary>Fair pools: steps holding or queued for the gate now (tickets handed out and not yet passed on).</summary>
+            public long Queued => Interlocked.Read(ref _nextTicket) - Interlocked.Read(ref _serving);
         }
 
         public const int MaxJobPools = 64;
@@ -97,33 +187,44 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         private long _gateWaits;
         private long _gateWaitTicksTotal;
         private long _gateWaitTicksMax;
+        // Step's waits for this region's own _simLock (held by a body change or query on another thread): written by
+        // Step, read through Interlocked.
+        private long _simLockWaits;
+        private long _simLockWaitTicksTotal;
+        private long _simLockWaitTicksMax;
 
-        /// <summary>
-        /// TEST-ONLY: hold this region's pool gate, as another region's Step would, until the returned
-        /// object is disposed. Monitor-based: dispose it on the thread that called this.
-        /// </summary>
         /// <summary>
         /// TEST-ONLY: run by Initialize right after the physics system is created and its events subscribed, so a
         /// test can make Initialize fail part-way by throwing here.
         /// </summary>
         internal Action? AfterSystemCreatedForTest;
 
+        /// <summary>
+        /// TEST-ONLY: hold this region's pool gate, as another region's Step would, until the returned
+        /// object is disposed. With the default (Monitor) gate, dispose it on the thread that called this.
+        /// </summary>
         internal IDisposable HoldPoolGateForTest()
         {
             JobPool pool = _pool ?? throw new InvalidOperationException("HoldPoolGateForTest: no pool assigned.");
-            Monitor.Enter(pool.Gate);
-            return new GateHold(pool.Gate);
+            pool.Enter(out _, out _);
+            Volatile.Write(ref pool.Holder, _settings.RegionName);
+            return new GateHold(pool);
         }
+
+        /// <summary>TEST-ONLY: run by Step right after it has taken the pool's gate, before the step itself.</summary>
+        internal Action<JoltPhysicsBackend>? GateTakenForTest;
+
+        /// <summary>TEST-ONLY: with fair handoff, the steps holding or queued for this region's pool now; -1 otherwise.</summary>
+        internal long PoolQueuedForTest => _pool is { Fair: true } p ? p.Queued : -1;
 
         private sealed class GateHold : IDisposable
         {
-            private object? _gate;
-            public GateHold(object gate) { _gate = gate; }
+            private JobPool? _pool;
+            public GateHold(JobPool pool) { _pool = pool; }
             public void Dispose()
             {
-                object? g = Interlocked.Exchange(ref _gate, null);
-                if (g != null)
-                    Monitor.Exit(g);
+                JobPool? p = Interlocked.Exchange(ref _pool, null);
+                p?.Exit();
             }
         }
 
@@ -563,7 +664,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                             maxJobs = JoltMaxJobs,
                             maxBarriers = JoltMaxBarriers,
                             numThreads = perPool,
-                        }));
+                        }), settings.JobPoolFairHandoff);
                     s_pools = created;
                     s_jobThreads = threads;
                     s_jobThreadsPerPool = perPool;
@@ -2892,6 +2993,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 UpdateGateWaits = Interlocked.Read(ref _gateWaits),
                 UpdateGateWaitMsTotal = TicksToMs(Interlocked.Read(ref _gateWaitTicksTotal)),
                 UpdateGateWaitMsMax = TicksToMs(Interlocked.Read(ref _gateWaitTicksMax)),
+                RegionLockWaits = Interlocked.Read(ref _simLockWaits),
+                RegionLockWaitMsTotal = TicksToMs(Interlocked.Read(ref _simLockWaitTicksTotal)),
+                RegionLockWaitMsMax = TicksToMs(Interlocked.Read(ref _simLockWaitTicksMax)),
             };
             FillRayCastStats(ref s);
             JobPool? pool = Volatile.Read(ref _pool);
@@ -2899,6 +3003,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             {
                 s.PoolIndex = pool.Index;
                 s.PoolPeakInside = Volatile.Read(ref pool.PeakInside);
+                s.JobPoolFairHandoff = pool.Fair;
             }
 
             // The live counts are native reads; take the locks every other native read takes, in order.
@@ -2922,6 +3027,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             long max;
             while (ticks > (max = Interlocked.Read(ref _gateWaitTicksMax))
                    && Interlocked.CompareExchange(ref _gateWaitTicksMax, ticks, max) != max) { }
+        }
+
+        // A step waited `ticks` (Stopwatch ticks) for this region's _simLock.
+        private void RecordSimLockWait(long ticks)
+        {
+            Interlocked.Increment(ref _simLockWaits);
+            Interlocked.Add(ref _simLockWaitTicksTotal, ticks);
+            long max;
+            while (ticks > (max = Interlocked.Read(ref _simLockWaitTicksMax))
+                   && Interlocked.CompareExchange(ref _simLockWaitTicksMax, ticks, max) != max) { }
         }
 
         // `inside` callers are in this pool's Update right now; keep the pool's high-water mark.
@@ -2962,30 +3077,39 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // and nothing takes a gate while holding any _simLock, so the order cannot invert. If Dispose runs
             // while we wait, StepLocked's _disposed check returns once we have the gate and _simLock.
             JobPool? pool = _pool;
-            if (pool != null && !Monitor.TryEnter(pool.Gate))
+            bool poolWaited = false;
+            long poolWaitTicks = 0;
+            string? poolHeldBy = null;
+            if (pool != null)
             {
-                long waitStart = Stopwatch.GetTimestamp();
-                Monitor.Enter(pool.Gate);
-                RecordGateWait(Stopwatch.GetTimestamp() - waitStart);
+                poolWaited = pool.Enter(out poolWaitTicks, out poolHeldBy);
+                if (poolWaited)
+                    RecordGateWait(poolWaitTicks);
             }
             try
             {
-                return StepLocked(pool, deltaTime, bodyUpdates, characterUpdates, contacts);
+                if (pool != null)
+                    Volatile.Write(ref pool.Holder, _settings.RegionName);
+                GateTakenForTest?.Invoke(this);
+                return StepLocked(pool, deltaTime, bodyUpdates, characterUpdates, contacts, poolWaited, poolWaitTicks, poolHeldBy);
             }
             finally
             {
-                if (pool != null)
-                    Monitor.Exit(pool.Gate);
+                pool?.Exit();
             }
         }
 
-        // Step's body, under _simLock. `pool` is the pool whose gate the caller holds (null: none assigned).
+        // Step's body, under _simLock. `pool` is the pool whose gate the caller holds (null: none assigned); the
+        // caller's wait for it is reported in the result.
         private StepResult StepLocked(
             JobPool? pool,
             float deltaTime,
             Span<BodyState> bodyUpdates,
             Span<CharacterState> characterUpdates,
-            Span<ContactReport> contacts)
+            Span<ContactReport> contacts,
+            bool poolWaited,
+            long poolWaitTicks,
+            string? poolHeldBy)
         {
             _stepTimer.Restart();
 
@@ -2994,7 +3118,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // between the two would corrupt it just as surely. Held here, released on exit - every
             // off-thread query blocks for the step duration (single-digit ms) and then proceeds.
             // Order is _simLock -> _characterGate, matching the rule at the top of this file.
-            lock (_simLock)
+            // Taken as `lock` takes it, with any wait for it (a body change or query on another thread holding it) timed
+            // on its own. That wait is still inside the step's physics time, as before, and the job pool is held through it.
+            bool simLockWaited = false;
+            long simLockWaitTicks = 0;
+            if (!Monitor.TryEnter(_simLock))
+            {
+                long lockWaitStart = Stopwatch.GetTimestamp();
+                Monitor.Enter(_simLock);
+                simLockWaitTicks = Stopwatch.GetTimestamp() - lockWaitStart;
+                simLockWaited = true;
+                RecordSimLockWait(simLockWaitTicks);
+            }
+            try
             {
             // Shutdown guard: if Dispose has run (or is mid-teardown having already set _disposed under
             // this same lock), do NOTHing - the PhysicsSystem / CharacterVirtuals are freed or about to be.
@@ -3173,8 +3309,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 bodyOverflow,
                 contactOverflow,
                 activeBodyCount: _activeBodies.Count,
-                physicsMs: (float)_stepTimer.Elapsed.TotalMilliseconds);
-            }   // _simLock
+                physicsMs: (float)_stepTimer.Elapsed.TotalMilliseconds,
+                new StepWaits(poolWaited, TicksToMs(poolWaitTicks), poolHeldBy, simLockWaited, TicksToMs(simLockWaitTicks)));
+            }
+            finally
+            {
+                Monitor.Exit(_simLock);
+            }
         }
     }
 

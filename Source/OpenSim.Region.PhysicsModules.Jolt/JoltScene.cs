@@ -353,6 +353,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _substeps = stepRate > 0f ? new SubstepAccumulator(stepRate) : null;
 
             PhysicsBackendSettings settings = _joltConfig.ToBackendSettings(sizeX, sizeY, _substeps != null);
+            settings.RegionName = RegionName;   // names this region when another waits for its job pool (metrics)
             _bodyBufMax = _joltConfig.BodyUpdateBufferMax;
             _charBufMax = _joltConfig.CharacterUpdateBufferMax;
             _capacityLogIntervalTicks = System.TimeSpan.FromSeconds(_joltConfig.CapacityLogIntervalSeconds).Ticks;
@@ -405,6 +406,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // The pool count is process-wide too.
             if (_joltConfig.JobPools != pool.JobPools)
                 m_log.LogWarning($"{LogHeader} region '{RegionName}' asked for JobPools={_joltConfig.JobPools} but {pool.JobPools} pools already exist; the first region's value wins.");
+            if (_joltConfig.JobPoolFairHandoff != pool.JobPoolFairHandoff)
+                m_log.LogWarning($"{LogHeader} region '{RegionName}' asked for JobPoolFairHandoff={_joltConfig.JobPoolFairHandoff} but the pools already exist with " +
+                                 $"{pool.JobPoolFairHandoff}; the first region's value wins.");
+            else if (pool.JobPoolFairHandoff)
+                m_log.LogInformation($"{LogHeader} region '{RegionName}': Jolt job pools hand over first come, first served ([Jolt] JobPoolFairHandoff).");
         }
 
         public void RemoveRegion(Scene scene)
@@ -527,7 +533,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 MainConsole.Instance.Output($"{LogHeader} --- region '{RegionName}' ---");
 
             if (cmd.Length >= 2 && cmd[1] == "capacity") { JoltCapacity(); return; }   // read-only
-            if (cmd.Length >= 2 && cmd[1] == "metrics") { MainConsole.Instance.Output(JoltMetrics.Report()); return; }   // step-time / RSS instrumentation
+            if (cmd.Length >= 2 && cmd[1] == "metrics")   // step-time / RSS instrumentation, and the last interval's timing
+            {
+                MainConsole.Instance.Output(JoltMetrics.Report());
+                MainConsole.Instance.Output(JoltMetrics.LastIntervalLine() ?? "[JOLT METRICS] no interval has finished yet (the log closes one about every 30 s)");
+                return;
+            }
 
             if (cmd.Length >= 2 && cmd[1] == "terraintest")
             {
@@ -1399,6 +1410,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (_backend == null)
                 return 1f;
+            NoteHeartbeatGap();
             _backend.BeginRayCastBudget();   // [Jolt] RayCastBudgetMs is per heartbeat, at every PhysicsStepRate
             if (_substeps != null)
                 return SimulateSubsteps(timeStep);
@@ -1487,16 +1499,33 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             IPhysicsBackend backend = _backend;
             StepResult r = backend.Step(timeStep, _bodyBuf, _charBuf, _contactBuf);
             _stepCount++;
-            ReportStep(backend, in r, timeStep, r.ContactCount, r.ContactBufferOverflowed, r.PhysicsMilliseconds, mergeSubsteps: false);
+            var timing = new HeartbeatTiming();
+            timing.Add(in r);
+            ReportStep(backend, in r, timeStep, r.ContactCount, r.ContactBufferOverflowed, r.PhysicsMilliseconds, mergeSubsteps: false, in timing);
+        }
+
+        // The time between two heartbeats' physics calls (Simulate), for the metrics' longest gap. A heartbeat that runs
+        // no physics step leaves its gap pending; the next heartbeat that reports keeps the longer one.
+        private long _lastSimulateTimestamp;
+        private long _pendingGapTicks;
+        private void NoteHeartbeatGap()
+        {
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_lastSimulateTimestamp != 0 && now - _lastSimulateTimestamp > _pendingGapTicks)
+                _pendingGapTicks = now - _lastSimulateTimestamp;
+            _lastSimulateTimestamp = now;
         }
 
         // Everything after the backend step: metrics, capacity, the body / character drains and the collision
-        // dispatch. `r` is the step whose body and character states are reported; the contact count, overflow and
-        // physics time cover every backend step of this heartbeat (one, unless substepping).
-        private void ReportStep(IPhysicsBackend backend, in StepResult r, float timeStep, int contactCount, bool contactsOverflowed, float physicsMs, bool mergeSubsteps)
+        // dispatch. `r` is the step whose body and character states are reported; the contact count, overflow,
+        // physics time and timing cover every backend step of this heartbeat (one, unless substepping).
+        private void ReportStep(IPhysicsBackend backend, in StepResult r, float timeStep, int contactCount, bool contactsOverflowed, float physicsMs, bool mergeSubsteps,
+                                in HeartbeatTiming timing)
         {
             _lastActiveBodyCount = r.ActiveBodyCount;
-            JoltMetrics.RecordStep(RegionName, physicsMs, r.ActiveBodyCount);   // step-time instrumentation (`jolt metrics`)
+            double gapMs = _pendingGapTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            _pendingGapTicks = 0;
+            JoltMetrics.RecordStep(RegionName, physicsMs, r.ActiveBodyCount, in timing, gapMs, timeStep * 1000.0);   // step-time instrumentation (`jolt metrics`)
 
             // Windowed per-frame diagnostic (set by a drop): is Step advancing with a REAL dt, is the
             // just-dropped body in our active set, and is its Z actually changing? It tells apart why a
@@ -1600,6 +1629,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             int contactCount = 0;
             bool contactsOverflowed = false;
             float physicsMs = 0f;
+            var timing = new HeartbeatTiming();
             for (int k = 0; k < n; k++)
             {
                 bool last = k == n - 1;
@@ -1614,8 +1644,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 contactCount += r.ContactCount;
                 contactsOverflowed |= r.ContactBufferOverflowed;
                 physicsMs += r.PhysicsMilliseconds;
+                timing.Add(in r);
             }
-            ReportStep(backend, in r, timeStep, contactCount, contactsOverflowed, physicsMs, mergeSubsteps: true);
+            ReportStep(backend, in r, timeStep, contactCount, contactsOverflowed, physicsMs, mergeSubsteps: true, in timing);
             TraceCharFrame();
             return 1f;
         }
@@ -1695,7 +1726,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             PhysicsCapacityStats s = _backend.GetCapacityStats();
             MainConsole.Instance.Output(CapacityReport.Render(RegionName, s,
-                _bodyBuf.Length, _bodyOverflowFrames, _charBuf.Length, _charFullFrames, _contactBuf.Length, _contactOverflowFrames, _substeps));
+                _bodyBuf.Length, _bodyOverflowFrames, _charBuf.Length, _charFullFrames, _contactBuf.Length, _contactOverflowFrames, _substeps,
+                JoltMetrics.LastIntervalOf(RegionName)));
         }
 
         // Collision dispatch: turn this frame's ContactReports into OpenSim collision events. Each

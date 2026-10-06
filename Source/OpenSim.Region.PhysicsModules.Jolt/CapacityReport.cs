@@ -73,7 +73,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// <summary>The `jolt capacity` read-out: backend stats plus the scene's own buffers.</summary>
         internal static string Render(string region, in PhysicsCapacityStats s,
             int bodyBuf, long bodyOverflowFrames, int charBuf, long charFullFrames, int contactBuf, long contactOverflowFrames,
-            SubstepAccumulator substeps = null)
+            SubstepAccumulator substeps = null, string lastInterval = null)
         {
             var sb = new StringBuilder();
             sb.AppendLine($"{JoltScene.LogHeader} capacity for '{region}':");
@@ -84,6 +84,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             sb.AppendLine($"  contact ring      capacity={s.ContactRingCapacity} dropped={s.DroppedContacts} (cumulative)");
             sb.AppendLine($"  job pools         JobPools={s.JobPools} threadsPerPool={s.JobThreadsPerPool} (ThreadCount {s.JobThreadCount}; process-wide)");
             sb.AppendLine($"  this region       pool={s.PoolIndex} waits={s.UpdateGateWaits} waitMs total={s.UpdateGateWaitMsTotal:0.0} max={s.UpdateGateWaitMsMax:0.0}; pool peakInside={s.PoolPeakInside}");
+            sb.AppendLine($"  pool handoff      {(s.JobPoolFairHandoff ? "first come, first served ([Jolt] JobPoolFairHandoff = true)" : "default lock ([Jolt] JobPoolFairHandoff = false)")}");
+            sb.AppendLine($"  region lock       waits={s.RegionLockWaits} waitMs total={s.RegionLockWaitMsTotal:0.0} max={s.RegionLockWaitMsMax:0.0} (steps that waited for this region's own lock, cumulative)");
+            sb.AppendLine($"  last interval     {lastInterval ?? "none finished yet (the metrics log closes one about every 30 s)"}");
             sb.AppendLine($"  rejected non-finite  {s.RejectedNonFinite}");
             sb.AppendLine($"  script ray casts  made={s.RayCasts} refused={s.RayCastsRefused} cutShort={s.RayCastsCutShort} ms total={s.RayCastMsTotal:0.0} most in one heartbeat={s.RayCastMsMaxHeartbeat:0.00}");
             sb.Append($"  scene buffers     bodies={bodyBuf} (overflowed {bodyOverflowFrames} steps) characters={charBuf} (full {charFullFrames} steps) contacts={contactBuf} (overflowed {contactOverflowFrames} steps)");

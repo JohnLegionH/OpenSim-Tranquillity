@@ -47,6 +47,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float AvatarJumpSpeed = 4.0f;       // CharacterDesc.JumpSpeed, m/s
         public float CapacityLogIntervalSeconds = 10f;
         public int JobPools = 1;                   // job pools, one physics update at a time each; splits ThreadCount
+        public bool JobPoolFairHandoff = false;    // true: a job pool is granted first come, first served (per physics step)
         public float PhysicsStepRate = 0f;         // Hz; 0 = one physics step per heartbeat
         public int PhysicsStepCollisionSteps = 2;  // solver sub-steps per physics step, used only when PhysicsStepRate is on
         public float VehicleGroundGravityFactor = 1f;   // gravity on a car or sled touching something; 1 = whole
@@ -114,6 +115,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.AvatarJumpSpeed = F(cfg, "AvatarJumpSpeed", c.AvatarJumpSpeed, 0f, 100f, warnings);
             c.CapacityLogIntervalSeconds = F(cfg, "CapacityLogIntervalSeconds", c.CapacityLogIntervalSeconds, 0.1f, 86400f, warnings);
             c.JobPools = I(cfg, "JobPools", c.JobPools, 1, JoltPhysicsBackend.MaxJobPools, warnings);
+            c.JobPoolFairHandoff = B(cfg, "JobPoolFairHandoff", c.JobPoolFairHandoff, warnings);
             c.PhysicsStepRate = F(cfg, "PhysicsStepRate", c.PhysicsStepRate, 0f, MaxPhysicsStepRate, warnings);
             c.PhysicsStepCollisionSteps = I(cfg, "PhysicsStepCollisionSteps", c.PhysicsStepCollisionSteps, 1, 64, warnings);
             c.VehicleGroundGravityFactor = F(cfg, "VehicleGroundGravityFactor", c.VehicleGroundGravityFactor, 0f, 1f, warnings);
@@ -212,6 +214,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             s.DeterministicMode = DeterministicMode;
             s.AllowUnrecordedNative = AllowUnrecordedNative;
             s.JobPools = JobPools;
+            s.JobPoolFairHandoff = JobPoolFairHandoff;
             s.MaxBodyLinearSpeed = BodyMaxLinearSpeed;
             s.MaxBodyAngularSpeed = BodyMaxAngularSpeed;
             s.RayCastBudgetMs = RayCastBudgetMs;
