@@ -358,6 +358,13 @@ public class AttachmentsModule : IAttachmentsModule, INonSharedRegionModule
             }
 
             List<SceneObjectGroup> attachments = new(ad.AttachmentObjects.Count);
+
+            // An avatar arriving from another grid (through the Hypergrid gatekeeper) brings attachments that
+            // grid's simulator serialized: their scripts' Experience links are cleared.
+            AgentCircuitData circuit = m_scene.AuthenticateHandler?.GetAgentCircuitData(sp.UUID);
+            bool fromAnotherGrid = circuit is not null &&
+                (circuit.teleportFlags & (uint)Constants.TeleportFlags.ViaHGLogin) != 0;
+
             int i = 0;
             for (int indx = 0; indx < ad.AttachmentObjects.Count; ++indx)
             {
@@ -366,7 +373,13 @@ public class AttachmentsModule : IAttachmentsModule, INonSharedRegionModule
                     sog.LocalId = 0;
                     sog.RootPart.ClearUpdateSchedule();
 
-                    sog.SetState(ad.AttachmentObjectStates[i++], m_scene);
+                    string state = ad.AttachmentObjectStates[i++];
+                    if (fromAnotherGrid)
+                    {
+                        ForeignExperienceLinks.ClearInObject(sog);
+                        state = ForeignExperienceLinks.ClearInScriptState(state);
+                    }
+                    sog.SetState(state, m_scene);
                     attachments.Add(sog);
                 }
             }
@@ -883,10 +896,21 @@ public class AttachmentsModule : IAttachmentsModule, INonSharedRegionModule
 
         // Attach (NULL) stops scripts. We don't want that. Resume them.
         so.RemoveScriptsPermissions(4 | 2048); // take controls and camera control
+        ClearScriptedCamera(sp, so);
         so.ResumeScripts();
         so.HasGroupChanged = true;
         so.RootPart.ScheduleFullUpdate();
         so.ScheduleGroupForTerseUpdate();
+    }
+
+    /// <summary>
+    /// SL llSetCameraParams: "The PERMISSION_CONTROL_CAMERA permission is automatically revoked when the avatar stands
+    /// up from or detaches the object, and any scripted camera parameters are automatically cleared." The id is the
+    /// one llSetCameraParams sends, the object's root prim.
+    /// </summary>
+    private static void ClearScriptedCamera(IScenePresence sp, SceneObjectGroup so)
+    {
+        sp.ControllingClient?.SendClearFollowCamProperties(so.UUID);
     }
 
     public void DetachSingleAttachmentToInv(IScenePresence sp, SceneObjectGroup so)
@@ -901,6 +925,7 @@ public class AttachmentsModule : IAttachmentsModule, INonSharedRegionModule
         }
 
         so.RemoveScriptsPermissions(4 | 2048); // take controls and camera control
+        ClearScriptedCamera(sp, so);
 
         // If this didn't come from inventory, it also shouldn't go there
         // on detach. It's likely a temp attachment.

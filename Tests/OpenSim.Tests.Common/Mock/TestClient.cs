@@ -45,6 +45,7 @@ public class TestClient : IClientAPI, IClientCore
 
     // Properties so that we can get at received data for test purposes
     public List<uint> ReceivedKills { get; private set; }
+    public List<UUID> ReceivedClearFollowCams { get; private set; }
     public List<UUID> ReceivedOfflineNotifications { get; private set; }
     public List<UUID> ReceivedOnlineNotifications { get; private set; }
     public List<UUID> ReceivedFriendshipTerminations { get; private set; }
@@ -64,6 +65,10 @@ public class TestClient : IClientAPI, IClientCore
     public event Action<GridInstantMessage> OnReceivedInstantMessage;
 
     public event Action<UUID> OnReceivedSendRebakeAvatarTextures;
+
+    public event Action<string> OnReceivedAlertMessage;
+    public event Action<UUID, int, UUID[], uint> OnReceivedEstateList;
+    public event Action<UUID, EstateBan[], uint> OnReceivedBannedUserList;
 
     public delegate void TestClientOnSendRegionTeleportDelegate(
         ulong regionHandle, byte simAccess, IPEndPoint regionExternalEndPoint,
@@ -492,6 +497,7 @@ public class TestClient : IClientAPI, IClientCore
         CapsSeedUrl = agentData.CapsPath;
 
         ReceivedKills = new List<uint>();
+        ReceivedClearFollowCams = new List<UUID>();
         ReceivedOfflineNotifications = new List<UUID>();
         ReceivedOnlineNotifications = new List<UUID>();
         ReceivedFriendshipTerminations = new List<UUID>();
@@ -864,6 +870,15 @@ public class TestClient : IClientAPI, IClientCore
         OnAvatarNowWearing?.Invoke(this, e);
     }
 
+    /// <summary>
+    /// Test seam: raise <see cref="OnUpdateEstateAccessDeltaRequest"/> as if an EstateOwnerMessage
+    /// "estateaccessdelta" had arrived.
+    /// </summary>
+    public void TriggerEstateAccessDelta(UUID invoice, int estateAccessType, UUID user)
+    {
+        OnUpdateEstateAccessDeltaRequest?.Invoke(this, invoice, estateAccessType, user);
+    }
+
     public void SendTriggeredSound(UUID soundID, UUID ownerID, UUID objectID, UUID parentID, ulong handle, Vector3 position, float gain)
     {
     }
@@ -875,6 +890,7 @@ public class TestClient : IClientAPI, IClientCore
 
     public void SendAlertMessage(string message)
     {
+        OnReceivedAlertMessage?.Invoke(message);
     }
 
     public void SendAgentAlertMessage(string message, bool modal)
@@ -1101,10 +1117,12 @@ public class TestClient : IClientAPI, IClientCore
 
     public void SendEstateList(UUID invoice, int code, UUID[] Data, uint estateID)
     {
+        OnReceivedEstateList?.Invoke(invoice, code, Data, estateID);
     }
 
     public void SendBannedUserList(UUID invoice, EstateBan[] banlist, uint estateID)
     {
+        OnReceivedBannedUserList?.Invoke(invoice, banlist, estateID);
     }
 
     public void SendRegionInfoToEstateMenu(RegionInfoForEstateMenuArgs args)
@@ -1179,6 +1197,7 @@ public class TestClient : IClientAPI, IClientCore
 
     public void SendClearFollowCamProperties (UUID objectID)
     {
+        ReceivedClearFollowCams.Add(objectID);
     }
 
     public void SendRegionHandle (UUID regoinID, ulong handle)
@@ -1444,9 +1463,12 @@ public class TestClient : IClientAPI, IClientCore
     public void FireScriptAnswer(UUID taskID, UUID itemID, int answer)
         => OnScriptAnswer?.Invoke(this, taskID, itemID, answer);
 
-    public void SendEstateExperiences(UUID invoice, UUID[] allowed, UUID[] key, uint estateID)
+    /// <summary>Every estate Experience lists reply sent to this client.</summary>
+    public List<(UUID Invoice, UUID[] Allowed, UUID[] Key, UUID[] Blocked, uint EstateID)> EstateExperienceReplies { get; } = new();
+
+    public void SendEstateExperiences(UUID invoice, UUID[] allowed, UUID[] key, UUID[] blocked, uint estateID)
     {
-        throw new NotImplementedException();
+        lock (EstateExperienceReplies) EstateExperienceReplies.Add((invoice, allowed, key, blocked, estateID));
     }
 
     public void SendPickInfoReply(UUID pickID, UUID creatorID, bool topPick, UUID parcelID, string name, string desc, UUID snapshotID, string user, string originalName, string simName, Vector3d posGlobal, int sortOrder, bool enabled)

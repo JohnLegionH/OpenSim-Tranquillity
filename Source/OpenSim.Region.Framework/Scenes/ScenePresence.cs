@@ -907,6 +907,14 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
 
         set
         {
+            // The value comes from the viewer's agent update, from agent data sent by another
+            // simulator and from scripts. One that is not finite or too short to be a rotation is
+            // ignored and the previous rotation kept, because the stored value is sent to other
+            // viewers, to neighbouring regions and to the physics engine. Not logged: a client
+            // could send one in every agent update.
+            if (!IsUsableRotation(value))
+                return;
+
             m_bodyRot = value;
 
             if (PhysicsActor != null)
@@ -922,6 +930,14 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
             }
 //                m_log.LogDebug("[SCENE PRESENCE]: Body rot for {0} set to {1}", Name, m_bodyRot);
         }
+    }
+
+    // 1e-6 is the squared-length bound LLClientView's avatar update serialiser already uses
+    // for a rotation too short to normalise.
+    private static bool IsUsableRotation(Quaternion q)
+    {
+        return float.IsFinite(q.X) && float.IsFinite(q.Y) && float.IsFinite(q.Z) && float.IsFinite(q.W)
+            && q.X * q.X + q.Y * q.Y + q.Z * q.Z + q.W * q.W >= 1e-6f;
     }
 
     // Used for limited viewer 'fake' user rotations.
@@ -3165,20 +3181,12 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
             PrevSitOffset = m_pos; // Save sit offset
             UnRegisterSeatControls(part.ParentGroup.UUID);
 
-            TaskInventoryDictionary taskIDict = part.TaskInventory;
-            if (taskIDict != null)
-            {
-                lock (taskIDict)
-                {
-                    foreach (UUID taskID in taskIDict.Keys)
-                    {
-                        UnRegisterControlEventsToScript(LocalId, taskID);
-                        taskIDict[taskID].PermsMask &= ~(
-                            2048 | //PERMISSION_CONTROL_CAMERA
-                            4); // PERMISSION_TAKE_CONTROLS
-                    }
-                }
-            }
+            // SL llSetCameraParams: "The PERMISSION_CONTROL_CAMERA permission is automatically revoked when the
+            // avatar stands up from or detaches the object". Every prim of the object, and only grants this avatar
+            // made: a script holds permissions "for only one agent at a time" (llRequestPermissions).
+            part.ParentGroup.RemoveScriptsPermissions(this,
+                    2048 | //PERMISSION_CONTROL_CAMERA
+                    4); // PERMISSION_TAKE_CONTROLS
 
             ControllingClient.SendClearFollowCamProperties(part.ParentUUID);
 
@@ -3482,7 +3490,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
 
         if (ParentID != 0)
         {
-            if (agent_id.Equals(ParentPart.UUID))
+            if (part.UUID.Equals(ParentPart.UUID))
                 return; // already sitting here, ignore
             StandUp();
         }
@@ -4412,7 +4420,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         if (cofVersion >= 0)
             visualParams = AvatarAppearance.WithAppearanceVersion(Appearance.VisualParams, 1);
         else if (IsNPC)
-            // SSB-NPC-1: an NPC's appearance is a clone of its owner's, parameter 11000 included, and an owner on a
+            // An NPC's appearance is a clone of its owner's, parameter 11000 included, and an owner on a
             // server-bake region sends that parameter as 1. Nothing ever bakes an NPC, so its message has no
             // AppearanceData block - and a parameter of 1 beside no block puts the viewer on the server-bake path
             // for this avatar (resolve_appearance_version prefers the parameter), which fetches every baked face
@@ -5359,7 +5367,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         if (Invulnerable || IsViewerUIGod)
             return;
 
-        // PHLOX-10: the physics frame's collisions become ONE damage batch through the one door,
+        // The physics frame's collisions become ONE damage batch through the one door,
         // ApplyDamage. The amounts are the ones this block always computed; the Health arithmetic
         // and the kill live in ApplyDamage now. A Damage-bearing prim still dies on contact.
         if (coldata.Count > 0)
@@ -5414,10 +5422,10 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
     }
 
     /// <summary>
-    /// PHLOX-10. The one door for damage to this avatar. Every door that used to do its own Health
+    /// The one door for damage to this avatar. Every door that used to do its own Health
     /// arithmetic - the physics frame's collisions, llAdjustDamage, llSetHealth, llDamage - builds a
     /// <see cref="DamageEntry"/> and comes through here, so the SL damage events have one place to
-    /// hang off. Gods and the invulnerable take nothing (as the collision path always ruled).
+    /// hang off. Gods and the invulnerable take nothing (as the collision path always had it).
     /// Health is clamped to 0..100; at 0 the client is told and <see cref="EventManager.TriggerAvatarKill"/>
     /// fires with the last entry's local id, exactly once.
     /// </summary>
@@ -6003,12 +6011,17 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
     public void HandleForceReleaseControls(IClientAPI remoteClient, UUID agentID)
     {
         UUID[] released;
+        List<SceneObjectGroup> holders = new();
         lock (scriptedcontrols)
         {
             foreach (ScriptControllers c in scriptedcontrols.Values)
             {
                 SceneObjectGroup sog = m_scene.GetSceneObjectGroup(c.objectID);
-                if(sog != null && !sog.IsDeleted && sog.RootPart.PhysActor != null)
+                if (sog == null || sog.IsDeleted)
+                    continue;
+                if (!holders.Contains(sog))
+                    holders.Add(sog);
+                if(sog.RootPart.PhysActor != null)
                     sog.RootPart.PhysActor.OnPhysicsRequestingCameraData -= physActor_OnPhysicsRequestingCameraData;
             }
 
@@ -6017,8 +6030,18 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         }
         ControllingClient.SendTakeControls(int.MaxValue, false, false);
 
+        // SL llTakeControls: PERMISSION_TAKE_CONTROLS "can be revoked ... if the user chooses Release Keys from the
+        // viewer".
+        foreach (SceneObjectGroup sog in holders)
+            sog.RemoveScriptsPermissions(this, 4); // PERMISSION_TAKE_CONTROLS
+
         if (released != null)
             m_scene.EventManager.TriggerScriptControlsReleased(UUID, released);
+
+        // A forced release also stands the avatar up, as SL does (Halcyon ScenePresence.HandleForceReleaseControls:
+        // "SL stands up the user on a forced controls release"), unless PRIM_ALLOW_UNSIT holds it in its seat.
+        if (IsSatOnObject && !ExperienceHoldsSeat())
+            StandUp();
     }
 
     public void HandleRevokePermissions(UUID objectID, uint permissions )

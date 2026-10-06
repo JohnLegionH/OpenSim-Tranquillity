@@ -156,6 +156,9 @@ public class SQLiteEstateStore : IEstateDataStore
         es.EstateManagers = LoadUUIDList(es.EstateID, "estate_managers");
         es.EstateAccess = LoadUUIDList(es.EstateID, "estate_users");
         es.EstateGroups = LoadUUIDList(es.EstateID, "estate_groups");
+        es.AllowedExperiences = LoadUUIDList(es.EstateID, "estate_allowed_experiences");
+        es.KeyExperiences = LoadUUIDList(es.EstateID, "estate_key_experiences");
+        es.BlockedExperiences = LoadUUIDList(es.EstateID, "estate_blocked_experiences");
         return es;
     }
 
@@ -173,6 +176,9 @@ public class SQLiteEstateStore : IEstateDataStore
         es.EstateManagers = LoadUUIDList(es.EstateID, "estate_managers");
         es.EstateAccess = LoadUUIDList(es.EstateID, "estate_users");
         es.EstateGroups = LoadUUIDList(es.EstateID, "estate_groups");
+        es.AllowedExperiences = LoadUUIDList(es.EstateID, "estate_allowed_experiences");
+        es.KeyExperiences = LoadUUIDList(es.EstateID, "estate_key_experiences");
+        es.BlockedExperiences = LoadUUIDList(es.EstateID, "estate_blocked_experiences");
 
         return es;
     }
@@ -258,6 +264,9 @@ public class SQLiteEstateStore : IEstateDataStore
         SaveUUIDList(es.EstateID, "estate_managers", es.EstateManagers);
         SaveUUIDList(es.EstateID, "estate_users", es.EstateAccess);
         SaveUUIDList(es.EstateID, "estate_groups", es.EstateGroups);
+        SaveUUIDList(es.EstateID, "estate_allowed_experiences", es.AllowedExperiences);
+        SaveUUIDList(es.EstateID, "estate_key_experiences", es.KeyExperiences);
+        SaveUUIDList(es.EstateID, "estate_blocked_experiences", es.BlockedExperiences);
     }
 
     private void LoadBanList(EstateSettings es)
@@ -288,10 +297,15 @@ public class SQLiteEstateStore : IEstateDataStore
         r.Close();
     }
 
+    // The delete and the inserts of one list run in one transaction: a failed insert leaves the old list
+    // in place (the transaction is rolled back when it is disposed without Commit), and SQLite commits
+    // once per list instead of once per row.
     private void SaveBanList(EstateSettings es)
     {
+        using (SQLiteTransaction transaction = m_connection.BeginTransaction())
         using (SQLiteCommand cmd = (SQLiteCommand)m_connection.CreateCommand())
         {
+            cmd.Transaction = transaction;
             cmd.CommandText = "delete from estateban where EstateID = :EstateID";
             cmd.Parameters.AddWithValue(":EstateID", es.EstateID.ToString());
 
@@ -311,13 +325,18 @@ public class SQLiteEstateStore : IEstateDataStore
                 cmd.ExecuteNonQuery();
                 cmd.Parameters.Clear();
             }
+
+            transaction.Commit();
         }
     }
 
+    // One transaction per list, as in SaveBanList.
     void SaveUUIDList(uint EstateID, string table, UUID[] data)
     {
+        using (SQLiteTransaction transaction = m_connection.BeginTransaction())
         using (SQLiteCommand cmd = (SQLiteCommand)m_connection.CreateCommand())
         {
+            cmd.Transaction = transaction;
             cmd.CommandText = "delete from "+table+" where EstateID = :EstateID";
             cmd.Parameters.AddWithValue(":EstateID", EstateID.ToString());
 
@@ -335,6 +354,8 @@ public class SQLiteEstateStore : IEstateDataStore
                 cmd.ExecuteNonQuery();
                 cmd.Parameters.Clear();
             }
+
+            transaction.Commit();
         }
     }
 
