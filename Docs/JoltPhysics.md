@@ -191,6 +191,47 @@ is not told which object pushed, so it bounds the avatar's side instead:
 A push on an object goes to the physics engine as an impulse and wakes the object if it sleeps;
 a parked vehicle is not held still against it. It is limited by `BodyMaxLinearSpeed`.
 
+### Job pools
+
+All regions in a simulator share Jolt's worker threads through `JobPools` job pools (default 1).
+`ThreadCount` threads (default: processor count - 1) are split evenly across the pools, and each
+region is given the pool with the fewest regions when it starts. A pool runs one region's physics
+step at a time, so a region whose pool is busy waits for it. The wait is in the heartbeat: the
+region's physics still advances by the frame time, and no step is skipped.
+
+Choosing `JobPools`:
+
+- Set it to about the number of regions that carry physics load at the same time (moving vehicles,
+  piles of physical prims), not to the total number of regions. A region with nothing moving holds
+  its pool only briefly.
+- Keep at least 4 worker threads per pool, so `JobPools` at most `ThreadCount / 4`: a pool's threads
+  are all that one busy region's physics gets.
+- The log warns when a region spent more than 20% of its frame time waiting for its pool over a
+  `CapacityLogIntervalSeconds` interval, naming the key to raise.
+
+`JobPoolFairHandoff` (default false) sets how a pool passes from one region to the next. With
+`PhysicsStepRate` on, a region runs several physics steps per heartbeat and takes the pool once per
+step. With the default, a plain lock that does not queue its waiters, the holder usually takes the
+pool straight back for its next step, so a waiting region can wait through the rest of the holder's
+heartbeat. With `true` the pool is granted first come, first served: a region that starts waiting
+during another's step runs as soon as that step ends. While regions wait, each step then costs a
+thread handoff, and the busy region's heartbeat takes longer by the waiting regions' steps. Like
+`JobPools`, the first region to start sets it for the process.
+
+Watching the pools:
+
+- `jolt capacity` shows the pools, the handoff, the region's waits for its pool since start (count,
+  total and longest), its steps' waits for its own region lock (held by a body change or a query on
+  another thread; the step holds its pool while it waits), and the last metrics interval.
+- Every 30 s the log prints a `[JOLT METRICS]` summary line and, after it, a `[JOLT METRICS] last
+  <seconds>s` line with each region's figures for that interval: heartbeats, the longest heartbeat's
+  physics time and the longest single physics step (both include region lock waits and leave out
+  pool waits), the pool waits (count, total, longest, and which region had last taken the pool when
+  the longest began), the region lock waits (count, total, longest), and the longest gap between two
+  heartbeats' physics calls against the frame time. `jolt metrics` shows both lines.
+- The harness's `--pool-bench` (see "Physics harness") measures waits and step times for a heavy
+  region sharing pools with light ones, for any `JobPools` and handoff.
+
 ## Vehicles
 
 LSL vehicles run on a controller that steps each behaviour Second Life documents on that documented
@@ -384,8 +425,8 @@ These read and report only, and are always available:
 
 | Command | What it shows |
 |---|---|
-| `jolt capacity` | Bodies, characters, the pair and contact caps, solver errors, dropped contacts, job pools and buffers |
-| `jolt metrics` | Process memory and threads, and each region's step time and active bodies |
+| `jolt capacity` | Bodies, characters, the pair and contact caps, solver errors, dropped contacts, job pools, the region's waits for its pool and its own lock, the last metrics interval, and buffers |
+| `jolt metrics` | Process memory and threads, each region's step time and active bodies, and the last metrics interval's timing (see "Job pools") |
 | `jolt terraintest` | Raycasts at points across the region, to check the terrain collision surface |
 | `jolt probe <x> <y>` | The terrain collision height at one point |
 | `jolt heights <x> <y>` | The collision height, the scene heightmap and the water height at one point |
@@ -467,3 +508,15 @@ inside each heartbeat, so the two can be compared, e.g.
 `--scenario testcar --slope 15 --rate 11 --physics-rate 0,45`; the summary marks those rows
 `<scenario>/p45`. The harness writes nothing unless `--out` is given. The module's test
 project runs the same scenarios as regression tests (`HarnessTests`).
+
+`--pool-bench` runs the job pool benchmark instead of the scenarios: a heavy scene (a pile of
+`--heavy-boxes` boxes, default 300, kept moving) and `--light` light scenes (bare ground, default 2)
+in one process, each heartbeat on its own thread in real time at the first `--rate`, with
+`--physics-rate` physics steps per second (default 45 here). It runs each combination of
+`--pools N[,N..]` (`JobPools`, default 1) and `--handoff off|on[,..]` (`JobPoolFairHandoff`,
+default off) for `--seconds` (default 20, after a 2 s warm-up) and prints one line each: the light
+scenes' pool waits (count, average, longest, and per heartbeat), the heavy scene's heartbeat time
+(average and longest, its own pool waits included) and pool wait per heartbeat, physics steps per
+second over all scenes, and heartbeats that started more than a heartbeat late. `--unpaced` runs the
+heartbeats back to back. Unlike the scenarios its figures are timings, so they depend on the machine
+and its load; with `--out` it writes `pool-bench.csv`.
