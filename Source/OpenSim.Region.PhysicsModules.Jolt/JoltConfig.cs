@@ -77,7 +77,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // Script ray casts (llCastRay) and pushes on avatars (llPushObject): limits on what scripts can make one region
         // do. They guard against abuse, so each defaults to its safe value.
-        public float RayCastBudgetMs = PhysicsBackendSettings.DefaultRayCastBudgetMs;         // per region per heartbeat
+        public float RayCastBudgetMs = PhysicsBackendSettings.DefaultRayCastBudgetMs;         // script casts, per region per heartbeat
+        public float RayCastSimulatorBudgetMs = PhysicsBackendSettings.DefaultRayCastSimulatorBudgetMs; // every other cast, the same
         public int RayCastMaxTestedHits = PhysicsBackendSettings.DefaultRayCastMaxTestedHits; // per cast
         public int RayCastMaxHits = MaxRayCastHits;                                          // hits one cast returns
         public float AvatarPushMaxSpeed = PhysicsBackendSettings.DefaultAvatarPushMaxSpeed;   // m/s; 0 = pushes do not move avatars
@@ -143,6 +144,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.BodyMaxLinearSpeed = F(cfg, "BodyMaxLinearSpeed", c.BodyMaxLinearSpeed, 1f, 100000f, warnings);
             c.BodyMaxAngularSpeed = F(cfg, "BodyMaxAngularSpeed", c.BodyMaxAngularSpeed, 0.1f, 10000f, warnings);
             c.RayCastBudgetMs = F(cfg, "RayCastBudgetMs", c.RayCastBudgetMs, 0.1f, 1000f, warnings);
+            c.RayCastSimulatorBudgetMs = F(cfg, "RayCastSimulatorBudgetMs", c.RayCastSimulatorBudgetMs, 0.1f, 1000f, warnings);
             c.RayCastMaxTestedHits = I(cfg, "RayCastMaxTestedHits", c.RayCastMaxTestedHits, 1, 1_000_000, warnings);
             c.RayCastMaxHits = I(cfg, "RayCastMaxHits", c.RayCastMaxHits, 1, MaxRayCastHits, warnings);
             c.AvatarPushMaxSpeed = F(cfg, "AvatarPushMaxSpeed", c.AvatarPushMaxSpeed, 0f, 1000f, warnings);
@@ -218,6 +220,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             s.MaxBodyLinearSpeed = BodyMaxLinearSpeed;
             s.MaxBodyAngularSpeed = BodyMaxAngularSpeed;
             s.RayCastBudgetMs = RayCastBudgetMs;
+            s.RayCastSimulatorBudgetMs = RayCastSimulatorBudgetMs;
             s.RayCastMaxTestedHits = RayCastMaxTestedHits;
             s.AvatarPushMaxSpeed = AvatarPushMaxSpeed;
             s.AvatarPushRecovery = AvatarPushRecovery;

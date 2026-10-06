@@ -139,7 +139,8 @@ the region starts.
 
 | Key | Default | What it limits |
 |---|---|---|
-| `RayCastBudgetMs` | 5 | Time (ms) one region's script ray casts may take in one heartbeat, at any `PhysicsStepRate`. |
+| `RayCastBudgetMs` | 5 | Time (ms) one region's script ray casts may take in one heartbeat, at any `PhysicsStepRate`: the casts the module can tell are a script's (Phlox's `llCastRay`). |
+| `RayCastSimulatorBudgetMs` | 5 | Time (ms) every other ray cast may take in one heartbeat: the simulator's own (rez placement, landing after login or teleport) and YEngine's `llCastRay`. |
 | `RayCastMaxTestedHits` | 1024 | Hits the engine may report to one cast before it is cut short (a mesh reports each triangle the ray crosses). |
 | `RayCastMaxHits` | 256 | Hits one cast returns, Second Life's documented maximum for `RC_MAX_HITS`. |
 | `AvatarPushMaxSpeed` | 10 | Speed (m/s) pushes can give an avatar. 0: pushes do not move avatars. |
@@ -155,9 +156,9 @@ The module bounds a script cast three ways:
 - A ray is cut to the region widened by 8 m on each side (Second Life: "The random failures seem
   to happen if the ray begins or ends more than 8 meters outside of current region bounds"), and
   between heights -128 and 10000 m. A ray with a non-finite start, direction or length hits nothing.
-- A cast that runs past the region's time left in the heartbeat, or past `RayCastMaxTestedHits`, is
-  cut short; once the region has spent `RayCastBudgetMs` in a heartbeat, further casts are refused
-  until the next one. Either way the script gets `RCERR_CAST_TIME_EXCEEDED` (-3), which Second
+- A cast that runs past what is left of its budget in the heartbeat, or past `RayCastMaxTestedHits`,
+  is cut short; once the region has spent a budget in a heartbeat, further casts charged to it are
+  refused until the next one. Either way the script gets `RCERR_CAST_TIME_EXCEEDED` (-3), which Second
   Life documents as "the parcel or agent has exceeded the maximum time allowed for raycasting. This
   resource pool is continually replenished, so waiting a few frames and retrying is likely to
   succeed." That holds for Phlox's `llCastRay`, which reports an error from the physics query as
@@ -165,12 +166,33 @@ The module bounds a script cast three ways:
   be told: it gets no hits from the physics engine, and returns only what it tests itself (avatars,
   phantoms and, for long rays, the ground) with a status of that many hits.
 
+The two budgets are drawn separately each heartbeat, and running out of one never refuses a cast
+charged to the other. `RayCastMaxTestedHits` and `RayCastMaxHits` apply to every cast in both.
+
+- `RayCastBudgetMs` covers the casts the module can tell are a script's. Today that is Phlox's
+  `llCastRay`, the only caller of the physics scene's 4-argument `RaycastWorld`. Under Phlox, a
+  script flood cannot affect rezzing or landing.
+- `RayCastSimulatorBudgetMs` covers every cast on the 5-argument `RaycastWorld`: where the simulator
+  places a rezzed object (`Scene.GetNewRezLocation`), where an avatar lands after login or teleport
+  (`ScenePresence.MakeRootAgent`), and YEngine's `llCastRay` (`LSL_Api.llCastRay` through
+  `Scene.RayCastFiltered`). The module cannot tell these apart: a script can ask for exactly the
+  filter flags and hit count the simulator's own casts use. So under YEngine, script casts share
+  this allowance with rezzing and landing, and a script flood there can still make a rez or a
+  landing miss its surface, until the script engine marks its casts as a script's.
+- The viewer camera's collision ray and the sit ray do not reach the module, which leaves those
+  queries to the base physics scene.
+
+The two budgets together bound how long ray casts can hold the region's physics lock in one
+heartbeat: with the defaults, 10 ms plus the overrun of the casts in flight when each ran out.
+
 What the script engines already limit before a cast reaches the module: both cap `RC_MAX_HITS`
 at 16 (OpenSim's asks the physics engine for twice that), and Phlox refuses fewer than 1. Neither
 limits the ray's length or how often a script casts.
 
-`jolt capacity` and the harness's `raycast-cost` scenario show the casts made, refused and cut
-short, and their time.
+`jolt capacity` shows the casts made, refused and cut short, and their time, for each budget and
+for both together; the harness's `raycast-cost` scenario shows them for its casts. The metrics log's
+interval line (see "Job pools") gives each interval's refused casts for each budget. The module
+writes no log line for a refused cast.
 
 **Pushes.** `llPushObject` on an avatar, and an attachment's `llApplyImpulse` on its wearer, change
 the avatar's velocity by the impulse divided by its mass (80 kg). The script engine checks the
@@ -242,8 +264,9 @@ Watching the pools:
   <seconds>s` line with each region's figures for that interval: heartbeats, the longest heartbeat's
   physics time and the longest single physics step (both include region lock waits and leave out
   pool waits), the pool waits (count, total, longest, and which region had last taken the pool when
-  the longest began), the region lock waits (count, total, longest), and the longest gap between two
-  heartbeats' physics calls against the frame time. `jolt metrics` shows both lines.
+  the longest began), the region lock waits (count, total, longest), the longest gap between two
+  heartbeats' physics calls against the frame time, and the ray casts refused in the interval in
+  each budget (`ray casts refused script=<n> simulator=<n>`). `jolt metrics` shows both lines.
 - The harness's `--pool-bench` (see "Physics harness") measures waits and step times for a heavy
   region sharing pools with light ones, for any `JobPools` and handoff.
 

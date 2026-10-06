@@ -18,8 +18,9 @@ using SVector3 = System.Numerics.Vector3;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// The limits on what scripts can make a region's physics do: the cost of a script ray cast ([Jolt] RayCastBudgetMs,
-/// RayCastMaxTestedHits, RayCastMaxHits) and pushes on avatars ([Jolt] AvatarPushMaxSpeed, AvatarPushRecovery).
+/// The limits on what scripts can make a region's physics do: the cost of a ray cast ([Jolt] RayCastBudgetMs,
+/// RayCastSimulatorBudgetMs, RayCastMaxTestedHits, RayCastMaxHits) and pushes on avatars ([Jolt] AvatarPushMaxSpeed,
+/// AvatarPushRecovery).
 /// Serial with the other native tests: every scene steps a real backend on the shared job pool.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
@@ -77,21 +78,25 @@ public class RayCastAndPushLimitTests
     {
         var d = JoltConfig.FromConfig(new IniConfigSource(), null);
         Assert.Equal(5f, d.RayCastBudgetMs);
+        Assert.Equal(5f, d.RayCastSimulatorBudgetMs);
         Assert.Equal(1024, d.RayCastMaxTestedHits);
         Assert.Equal(256, d.RayCastMaxHits);
         Assert.Equal(10f, d.AvatarPushMaxSpeed);
         Assert.Equal(5f, d.AvatarPushRecovery);
         PhysicsBackendSettings ds = d.ToBackendSettings(256, 256);
         Assert.Equal(5f, ds.RayCastBudgetMs);
+        Assert.Equal(5f, ds.RayCastSimulatorBudgetMs);
         Assert.Equal(1024, ds.RayCastMaxTestedHits);
         Assert.Equal(10f, ds.AvatarPushMaxSpeed);
         Assert.Equal(5f, ds.AvatarPushRecovery);
         Assert.Equal(PhysicsBackendSettings.Default.RayCastBudgetMs, ds.RayCastBudgetMs);
+        Assert.Equal(PhysicsBackendSettings.Default.RayCastSimulatorBudgetMs, ds.RayCastSimulatorBudgetMs);
         Assert.Equal(PhysicsBackendSettings.Default.AvatarPushMaxSpeed, ds.AvatarPushMaxSpeed);
 
         var src = new IniConfigSource();
         IConfig j = src.AddConfig("Jolt");
         j.Set("RayCastBudgetMs", "2.5");
+        j.Set("RayCastSimulatorBudgetMs", "7.5");
         j.Set("RayCastMaxTestedHits", "300");
         j.Set("RayCastMaxHits", "32");
         j.Set("AvatarPushMaxSpeed", "0");
@@ -101,6 +106,7 @@ public class RayCastAndPushLimitTests
         Assert.Empty(warnings);
         PhysicsBackendSettings cs = c.ToBackendSettings(256, 256);
         Assert.Equal(2.5f, cs.RayCastBudgetMs);
+        Assert.Equal(7.5f, cs.RayCastSimulatorBudgetMs);
         Assert.Equal(300, cs.RayCastMaxTestedHits);
         Assert.Equal(32, c.RayCastMaxHits);
         Assert.Equal(0f, cs.AvatarPushMaxSpeed);
@@ -108,7 +114,8 @@ public class RayCastAndPushLimitTests
 
         foreach ((string key, string value) in new[]
                  {
-                     ("RayCastBudgetMs", "0"), ("RayCastBudgetMs", "NaN"), ("RayCastMaxTestedHits", "0"), ("RayCastMaxHits", "257"),
+                     ("RayCastBudgetMs", "0"), ("RayCastBudgetMs", "NaN"), ("RayCastSimulatorBudgetMs", "0"), ("RayCastSimulatorBudgetMs", "-1"),
+                     ("RayCastMaxTestedHits", "0"), ("RayCastMaxHits", "257"),
                      ("RayCastMaxHits", "0"), ("AvatarPushMaxSpeed", "-1"), ("AvatarPushRecovery", "Infinity"),
                  })
         {
@@ -245,23 +252,18 @@ public class RayCastAndPushLimitTests
     [Fact]
     public void A_refused_or_cut_short_cast_is_reported_as_cast_time_exceeded_and_the_next_heartbeat_casts_again()
     {
-        JoltScene scene = NewScene(0f, ("RayCastBudgetMs", "1"));
+        JoltScene scene = NewScene(0f, ("RayCastBudgetMs", "1"), ("RayCastSimulatorBudgetMs", "1"));
         try
         {
             Row(scene, 400);
             scene.Simulate(Heartbeat);
             var from = new Vector3(10f, 128f, Ground + 1f);
 
-            // Spend this heartbeat's 1 ms; the casts after that are refused.
-            var sw = Stopwatch.StartNew();
-            RayCastTimeExceededException refused = null;
-            while (refused == null && sw.Elapsed < TimeSpan.FromSeconds(10))
-            {
-                // The cast that runs out of the time is cut short; the ones after it are refused.
-                try { scene.RaycastWorld(from, Vector3.UnitX, 300f, 16); }
-                catch (RayCastTimeExceededException e) { if (e.Status == RayCastStatus.Refused) refused = e; }
-            }
+            // Spend this heartbeat's 1 ms of script time; the casts after that are refused.
+            RayCastTimeExceededException refused = SpendScriptBudget(scene, from);
             Assert.NotNull(refused);
+            // Spend the other budget's 1 ms through the 5-argument caller; it then gets no hits.
+            Assert.True(SpendSimulatorBudget(scene, from), "the 5-argument casts never ran out of time");
             Assert.Empty(Cast(scene, from, Vector3.UnitX, 300f, 16));   // the 5-argument caller: no hits
             Assert.True(scene.CapacityStats().RayCastsRefused >= 2);
 
@@ -284,6 +286,162 @@ public class RayCastAndPushLimitTests
             Assert.Equal(3, scene.RaycastWorld(from, Vector3.UnitX, 11f, 16).Count);   // a ray crossing three boxes: fine
         }
         finally { scene.Dispose(); }
+    }
+
+    // The 4-argument caller's casts until one is refused (cast after cast through the row spends the script budget).
+    private static RayCastTimeExceededException SpendScriptBudget(JoltScene scene, Vector3 from)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            // The cast that runs out of the time is cut short; the ones after it are refused.
+            try { scene.RaycastWorld(from, Vector3.UnitX, 300f, 16); }
+            catch (RayCastTimeExceededException e) { if (e.Status == RayCastStatus.Refused) return e; }
+        }
+        return null;
+    }
+
+    // The 5-argument caller's casts until the region refuses one (it gets no status, so read the counter).
+    private static bool SpendSimulatorBudget(JoltScene scene, Vector3 from)
+    {
+        long before = scene.CapacityStats().SimulatorRayCasts.Refused;
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            Cast(scene, from, Vector3.UnitX, 300f, 16);
+            if (scene.CapacityStats().SimulatorRayCasts.Refused > before)
+                return true;
+        }
+        return false;
+    }
+
+    // The two budgets are drawn separately: a script flood that spends RayCastBudgetMs leaves the 5-argument entry
+    // (rez placement, landing, YEngine's llCastRay) its own time in the same heartbeat.
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(45f)]
+    public void With_the_script_budget_spent_a_five_argument_cast_in_the_same_heartbeat_still_hits(float physicsRate)
+    {
+        JoltScene scene = NewScene(physicsRate, ("RayCastBudgetMs", "0.1"));
+        try
+        {
+            Row(scene, 400);
+            Box(scene, 7000u, new Vector3(200f, 200f, Ground + 5f), new Vector3(4f, 4f, 0.5f), false);   // a platform
+            scene.Simulate(Heartbeat);
+            var from = new Vector3(10f, 128f, Ground + 1f);
+
+            Assert.NotNull(SpendScriptBudget(scene, from));
+            Assert.Throws<RayCastTimeExceededException>(() => scene.RaycastWorld(from, Vector3.UnitX, 300f, 16));   // still spent
+
+            List<ContactResult> hits = Cast(scene, from, Vector3.UnitX, 300f, 16);
+            Assert.Equal(16, hits.Count);
+            Assert.Equal(5000u, hits[0].ConsumerID);
+            // The landing ray after a teleport (ScenePresence.MakeRootAgent: from 300 m down, prims and avatars, 30 hits)
+            // finds the platform's top.
+            var down = (List<ContactResult>)scene.RaycastWorld(new Vector3(200f, 200f, 300f), -Vector3.UnitZ, 300f, 30,
+                RayFilterFlags.BackFaceCull | RayFilterFlags.PrimsNonPhantomAgents);
+            Assert.Single(down);
+            Assert.Equal(7000u, down[0].ConsumerID);
+            Assert.True(MathF.Abs(down[0].Pos.Z - (Ground + 5.25f)) < 0.01f, $"landed at {down[0].Pos.Z}");
+
+            PhysicsCapacityStats s = scene.CapacityStats();
+            Assert.True(s.ScriptRayCasts.Refused >= 2);
+            Assert.Equal(0, s.SimulatorRayCasts.Refused);
+            Assert.Equal(0, s.SimulatorRayCasts.CutShort);
+            Assert.Equal(2, s.SimulatorRayCasts.Casts);
+        }
+        finally { scene.Dispose(); }
+    }
+
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(45f)]
+    public void With_the_simulator_budget_spent_a_script_cast_in_the_same_heartbeat_still_hits(float physicsRate)
+    {
+        JoltScene scene = NewScene(physicsRate, ("RayCastSimulatorBudgetMs", "0.1"));
+        try
+        {
+            Row(scene, 400);
+            scene.Simulate(Heartbeat);
+            var from = new Vector3(10f, 128f, Ground + 1f);
+
+            Assert.True(SpendSimulatorBudget(scene, from), "the 5-argument casts never ran out of time");
+            Assert.Empty(Cast(scene, from, Vector3.UnitX, 300f, 16));   // still spent
+
+            List<ContactResult> hits = scene.RaycastWorld(from, Vector3.UnitX, 300f, 16);   // no exception: not refused
+            Assert.Equal(16, hits.Count);
+            Assert.Equal(5000u, hits[0].ConsumerID);
+
+            PhysicsCapacityStats s = scene.CapacityStats();
+            Assert.True(s.SimulatorRayCasts.Refused >= 2);
+            Assert.Equal(0, s.ScriptRayCasts.Refused);
+            Assert.Equal(0, s.ScriptRayCasts.CutShort);
+            Assert.Equal(1, s.ScriptRayCasts.Casts);
+        }
+        finally { scene.Dispose(); }
+    }
+
+    [Fact]
+    public void Both_budgets_spent_in_one_heartbeat_are_there_again_in_the_next()
+    {
+        JoltScene scene = NewScene(0f, ("RayCastBudgetMs", "0.1"), ("RayCastSimulatorBudgetMs", "0.1"));
+        try
+        {
+            Row(scene, 400);
+            scene.Simulate(Heartbeat);
+            var from = new Vector3(10f, 128f, Ground + 1f);
+
+            Assert.NotNull(SpendScriptBudget(scene, from));
+            Assert.True(SpendSimulatorBudget(scene, from), "the 5-argument casts never ran out of time");
+            Assert.Throws<RayCastTimeExceededException>(() => scene.RaycastWorld(from, Vector3.UnitX, 300f, 4));
+            Assert.Empty(Cast(scene, from, Vector3.UnitX, 300f, 4));
+
+            scene.Simulate(Heartbeat);
+            Assert.Equal(4, scene.RaycastWorld(from, Vector3.UnitX, 300f, 4).Count);
+            Assert.Equal(4, Cast(scene, from, Vector3.UnitX, 300f, 4).Count);
+        }
+        finally { scene.Dispose(); }
+    }
+
+    // RayCastMaxTestedHits and RayCastMaxHits bound one cast, whichever budget it is charged to.
+    [Fact]
+    public void The_per_cast_limits_apply_to_both_budgets()
+    {
+        JoltScene scene = NewScene(0f);
+        try
+        {
+            Row(scene, 400);
+            scene.Simulate(Heartbeat);
+            var from = new Vector3(10f, 128f, Ground + 1f);
+            Assert.Equal(256, scene.RaycastWorld(from, Vector3.UnitX, 300f, 100000).Count);
+            Assert.Equal(256, Cast(scene, from, Vector3.UnitX, 300f, 100000).Count);
+        }
+        finally { scene.Dispose(); }
+
+        scene = NewScene(0f, ("RayCastMaxTestedHits", "10"));
+        try
+        {
+            Row(scene, 400);
+            scene.Simulate(Heartbeat);
+            var from = new Vector3(10f, 128f, Ground + 1f);
+            var e = Assert.Throws<RayCastTimeExceededException>(() => scene.RaycastWorld(from, Vector3.UnitX, 300f, 16));
+            Assert.Equal(RayCastStatus.CutShort, e.Status);
+            Assert.Empty(Cast(scene, from, Vector3.UnitX, 300f, 16));
+            PhysicsCapacityStats s = scene.CapacityStats();
+            Assert.Equal(1, s.ScriptRayCasts.CutShort);
+            Assert.Equal(1, s.SimulatorRayCasts.CutShort);
+        }
+        finally { scene.Dispose(); }
+    }
+
+    // Nothing in RayFilterFlags marks a script's cast yet, so every 5-argument cast goes to the simulator's budget,
+    // whatever its flags.
+    [Fact]
+    public void Every_five_argument_cast_is_charged_to_the_simulator_budget()
+    {
+        foreach (RayFilterFlags f in Enum.GetValues<RayFilterFlags>())
+            Assert.Equal(RayCastBudget.Simulator, JoltScene.BudgetFor(f));
+        Assert.Equal(RayCastBudget.Simulator, JoltScene.BudgetFor((RayFilterFlags)0xFFFF));
     }
 
     // Script threads casting as fast as they can, long rays through a row of 2000 boxes asking for 256 hits each: a

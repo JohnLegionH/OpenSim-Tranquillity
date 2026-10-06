@@ -58,12 +58,35 @@ public class PoolTimingMetricsTests
 
         string text = iv.Take();
         Assert.Equal("heartbeats=3, heartbeat max=5.00ms, step max=3.00ms, pool waits=2 total=10.0ms max=9.90ms held by Heavy Region, " +
-                     "lock waits=1 total=0.4ms max=0.40ms, heartbeat gap max=191.0ms (frame 90.9ms)", text);
+                     "lock waits=1 total=0.4ms max=0.40ms, heartbeat gap max=191.0ms (frame 90.9ms), ray casts refused script=0 simulator=0", text);
         Assert.Equal(text, iv.Last);
 
         // The next interval starts from zero; the frame time carries over.
         Assert.Equal("heartbeats=0, heartbeat max=0.00ms, step max=0.00ms, pool waits=0 total=0.0ms max=0.00ms, " +
-                     "lock waits=0 total=0.0ms max=0.00ms, heartbeat gap max=0.0ms (frame 90.9ms)", iv.Take());
+                     "lock waits=0 total=0.0ms max=0.00ms, heartbeat gap max=0.0ms (frame 90.9ms), ray casts refused script=0 simulator=0", iv.Take());
+    }
+
+    // The interval line gives the ray casts each budget refused during that interval, from the backend's cumulative
+    // counts as the heartbeats saw them.
+    [Fact]
+    public void An_interval_gives_the_ray_casts_each_budget_refused_in_it()
+    {
+        var iv = new RegionInterval();
+        var t = new HeartbeatTiming();
+        t.Add(Step(1.0f));
+
+        iv.Record(1.0, in t, 90.9, 90.9);
+        iv.NoteRayCastsRefused(script: 120, simulator: 0);
+        iv.Record(1.0, in t, 90.9, 90.9);
+        iv.NoteRayCastsRefused(script: 8206, simulator: 3);
+        Assert.EndsWith(", ray casts refused script=8206 simulator=3", iv.Take());
+
+        iv.Record(1.0, in t, 90.9, 90.9);
+        iv.NoteRayCastsRefused(script: 8300, simulator: 3);
+        Assert.EndsWith(", ray casts refused script=94 simulator=0", iv.Take());
+
+        // No heartbeat in an interval: nothing new to count.
+        Assert.EndsWith(", ray casts refused script=0 simulator=0", iv.Take());
     }
 
     [Fact]
@@ -77,6 +100,7 @@ public class PoolTimingMetricsTests
             t.Add(in r);
             t.Add(in r);
             iv.Record(4.0, in t, 90.9, 90.9);
+            iv.NoteRayCastsRefused(10, 20);
         }
         Heartbeat();   // JIT
         long before = GC.GetAllocatedBytesForCurrentThread();
@@ -100,6 +124,8 @@ public class PoolTimingMetricsTests
         Assert.Contains("  pool handoff      default lock ([Jolt] JobPoolFairHandoff = false)", before);
         Assert.Contains("  region lock       waits=3 waitMs total=0.6 max=0.3", before);
         Assert.Contains("  last interval     none finished yet", before);
+        Assert.Contains("  script ray casts  made=0 refused=0 cutShort=0 ms total=0.0 ([Jolt] RayCastBudgetMs)", before);
+        Assert.Contains("  other ray casts   made=0 refused=0 cutShort=0 ms total=0.0 ([Jolt] RayCastSimulatorBudgetMs: rez placement, landing, YEngine llCastRay)", before);
 
         s.JobPoolFairHandoff = true;
         string after = CapacityReport.Render("Test Region", s, 1, 0, 1, 0, 1, 0, null, "heartbeats=330, heartbeat max=4.21ms");

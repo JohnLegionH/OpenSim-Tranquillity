@@ -527,14 +527,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// <summary>Mutator calls dropped because an argument was NaN/Inf (or a zero-length quaternion).</summary>
         public long RejectedNonFinite;
 
-        // -- script ray casts (RayCastLimited) --
-        /// <summary>Casts made, cumulative; of them, refused (budget spent) and cut short.</summary>
+        // -- ray casts (RayCastLimited) --
+        /// <summary>Casts made, cumulative; of them, refused (their budget spent) and cut short. Both budgets together.</summary>
         public long RayCasts;
         public long RayCastsRefused;
         public long RayCastsCutShort;
-        /// <summary>Time spent in them, cumulative, and the most one heartbeat has spent (ms).</summary>
+        /// <summary>Time spent in them, cumulative, and the most one heartbeat has spent on both budgets together (ms).</summary>
         public double RayCastMsTotal;
         public double RayCastMsMaxHeartbeat;
+        /// <summary>The same counts for each budget (<see cref="RayCastBudget"/>).</summary>
+        public RayCastBudgetStats ScriptRayCasts;
+        public RayCastBudgetStats SimulatorRayCasts;
 
         // -- capacity --
         /// <summary>Steps whose update reported each flag, cumulative.</summary>
@@ -588,12 +591,36 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public double RegionLockWaitMsMax;
     }
 
-    /// <summary>How a script ray cast (<see cref="IPhysicsBackend.RayCastLimited"/>) ended.</summary>
+    /// <summary>
+    /// Which per-heartbeat allowance a ray cast (<see cref="IPhysicsBackend.RayCastLimited"/>) is charged to. Each has
+    /// its own time per heartbeat, and running out of one never refuses a cast charged to the other.
+    /// </summary>
+    public enum RayCastBudget
+    {
+        /// <summary>Casts known to come from a script (<see cref="PhysicsBackendSettings.RayCastBudgetMs"/>).</summary>
+        Script,
+        /// <summary>Every other cast: the simulator's own (rez placement, landing after login or teleport) and script
+        /// casts that arrive without anything saying they are a script's
+        /// (<see cref="PhysicsBackendSettings.RayCastSimulatorBudgetMs"/>).</summary>
+        Simulator,
+    }
+
+    /// <summary>One <see cref="RayCastBudget"/>'s counters, cumulative: casts made, refused and cut short, and the time
+    /// they took (ms).</summary>
+    public struct RayCastBudgetStats
+    {
+        public long Casts;
+        public long Refused;
+        public long CutShort;
+        public double MsTotal;
+    }
+
+    /// <summary>How a ray cast (<see cref="IPhysicsBackend.RayCastLimited"/>) ended.</summary>
     public enum RayCastStatus
     {
         /// <summary>The cast ran; its hits are returned.</summary>
         Ok,
-        /// <summary>Not cast: the region had spent its ray cast time for this heartbeat.</summary>
+        /// <summary>Not cast: the region had spent the cast's budget for this heartbeat.</summary>
         Refused,
         /// <summary>Stopped part way: it ran past the time left, or past the hits one cast may test.</summary>
         CutShort,
@@ -791,19 +818,25 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             QueryFilter filter, Span<RayHit> hits);
 
         /// <summary>
-        /// A script's ray cast: the closest <c>hits.Length</c> hits in distance order, as <see cref="RayCastAll"/> gives
-        /// them, at a bounded cost. The engine stops looking past the furthest hit kept once the buffer is full. The
-        /// cast is refused when this region has spent its ray cast time for the heartbeat
-        /// (<see cref="PhysicsBackendSettings.RayCastBudgetMs"/>), and cut short when it runs past what is left of that
-        /// time or the engine reports more than <see cref="PhysicsBackendSettings.RayCastMaxTestedHits"/> hits; both
-        /// return 0 hits and say so in <paramref name="status"/>.
+        /// A ray cast from outside the physics step (a script's, or the simulator's own): the closest
+        /// <c>hits.Length</c> hits in distance order, as <see cref="RayCastAll"/> gives them, at a bounded cost. The
+        /// engine stops looking past the furthest hit kept once the buffer is full. The cast is charged to
+        /// <paramref name="budget"/>: it is refused when this region has spent that budget's time for the heartbeat
+        /// (<see cref="PhysicsBackendSettings.RayCastBudgetMs"/> or
+        /// <see cref="PhysicsBackendSettings.RayCastSimulatorBudgetMs"/>), and cut short when it runs past what is left
+        /// of that time or the engine reports more than <see cref="PhysicsBackendSettings.RayCastMaxTestedHits"/> hits;
+        /// both return 0 hits and say so in <paramref name="status"/>.
         /// </summary>
         int RayCastLimited(
             Vector3 origin, Vector3 direction, float maxDistance,
-            QueryFilter filter, Span<RayHit> hits, out RayCastStatus status);
+            QueryFilter filter, RayCastBudget budget, Span<RayHit> hits, out RayCastStatus status);
 
-        /// <summary>A new heartbeat: this region's ray cast time starts again from zero.</summary>
+        /// <summary>A new heartbeat: this region's ray cast time, in both budgets, starts again from zero.</summary>
         void BeginRayCastBudget();
+
+        /// <summary>Casts refused so far, cumulative, by the budget they were charged to. Cheap; safe from any
+        /// thread.</summary>
+        long RayCastsRefused(RayCastBudget budget);
 
         int OverlapSphere(Vector3 center, float radius, QueryFilter filter, Span<BodyId> results);
 
@@ -898,13 +931,23 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public bool AllowUnrecordedNative;
 
         /// <summary>
-        /// Script ray casts (<see cref="IPhysicsBackend.RayCastLimited"/>): the time one region may spend on them in one
-        /// heartbeat, in milliseconds. A cast holds the region's physics lock, and the region's physics step waits for
-        /// it while holding its job pool, so this also bounds how long ray casts can delay the other regions on that
-        /// pool. 0 (an unset struct) means <see cref="DefaultRayCastBudgetMs"/>.
+        /// Script ray casts (<see cref="IPhysicsBackend.RayCastLimited"/> with <see cref="RayCastBudget.Script"/>): the
+        /// time one region may spend on them in one heartbeat, in milliseconds. A cast holds the region's physics lock,
+        /// and the region's physics step waits for it while holding its job pool, so this also bounds how long ray casts
+        /// can delay the other regions on that pool. 0 (an unset struct) means <see cref="DefaultRayCastBudgetMs"/>.
         /// </summary>
         public float RayCastBudgetMs;
         public const float DefaultRayCastBudgetMs = 5f;
+
+        /// <summary>
+        /// The other ray casts (<see cref="RayCastBudget.Simulator"/>): the simulator's own, such as rez placement and
+        /// landing after login or teleport, and script casts that arrive without anything saying they are a script's.
+        /// The time one region may spend on them in one heartbeat, in milliseconds, apart from
+        /// <see cref="RayCastBudgetMs"/>; the two together bound how long ray casts can delay a heartbeat.
+        /// 0 (an unset struct) means <see cref="DefaultRayCastSimulatorBudgetMs"/>.
+        /// </summary>
+        public float RayCastSimulatorBudgetMs;
+        public const float DefaultRayCastSimulatorBudgetMs = 5f;
 
         /// <summary>
         /// The hits the engine may report to one script ray cast before it is cut short: each is a shape the ray
@@ -945,6 +988,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             MaxBodyLinearSpeed = JoltMaxLinearSpeed,
             MaxBodyAngularSpeed = JoltMaxAngularSpeed,
             RayCastBudgetMs = DefaultRayCastBudgetMs,
+            RayCastSimulatorBudgetMs = DefaultRayCastSimulatorBudgetMs,
             RayCastMaxTestedHits = DefaultRayCastMaxTestedHits,
             AvatarPushMaxSpeed = DefaultAvatarPushMaxSpeed,
             AvatarPushRecovery = DefaultAvatarPushRecovery,

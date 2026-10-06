@@ -101,7 +101,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             sb.AppendLine($"  region lock       waits={s.RegionLockWaits} waitMs total={s.RegionLockWaitMsTotal:0.0} max={s.RegionLockWaitMsMax:0.0} (steps that waited for this region's own lock, cumulative)");
             sb.AppendLine($"  last interval     {lastInterval ?? "none finished yet (the metrics log closes one about every 30 s)"}");
             sb.AppendLine($"  rejected non-finite  {s.RejectedNonFinite}");
-            sb.AppendLine($"  script ray casts  made={s.RayCasts} refused={s.RayCastsRefused} cutShort={s.RayCastsCutShort} ms total={s.RayCastMsTotal:0.0} most in one heartbeat={s.RayCastMsMaxHeartbeat:0.00}");
+            sb.AppendLine($"  script ray casts  {RayBudget(in s.ScriptRayCasts)} ([Jolt] RayCastBudgetMs)");
+            sb.AppendLine($"  other ray casts   {RayBudget(in s.SimulatorRayCasts)} ([Jolt] RayCastSimulatorBudgetMs: rez placement, landing, YEngine llCastRay)");
+            sb.AppendLine($"  ray casts, both   made={s.RayCasts} refused={s.RayCastsRefused} cutShort={s.RayCastsCutShort} ms total={s.RayCastMsTotal:0.0} most in one heartbeat={s.RayCastMsMaxHeartbeat:0.00}");
             sb.Append($"  scene buffers     bodies={bodyBuf} (overflowed {bodyOverflowFrames} steps) characters={charBuf} (full {charFullFrames} steps) contacts={contactBuf} (overflowed {contactOverflowFrames} steps)");
             sb.AppendLine();
             if (substeps == null)
@@ -110,5 +112,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 sb.Append($"  physics steps     {substeps.RateHz:0.##} Hz, {substeps.Steps} taken; heartbeats capped at {SubstepAccumulator.MaxStepsPerFrame} steps: {substeps.CappedFrames}");
             return sb.ToString();
         }
+
+        private static string RayBudget(in RayCastBudgetStats b)
+            => $"made={b.Casts} refused={b.Refused} cutShort={b.CutShort} ms total={b.MsTotal:0.0}";
     }
 }

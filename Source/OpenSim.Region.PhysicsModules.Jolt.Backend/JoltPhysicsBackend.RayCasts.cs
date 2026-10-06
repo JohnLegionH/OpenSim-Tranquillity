@@ -5,19 +5,21 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-// Script ray casts at a bounded cost (IPhysicsBackend.RayCastLimited).
+// Ray casts from outside the physics step at a bounded cost (IPhysicsBackend.RayCastLimited).
 //
 // RayCastAll asks Jolt for every hit along the ray (AllHitSorted) and keeps the closest few. Its cost grows with
 // everything the ray crosses: a long ray through a pile of prims or a dense mesh collects every triangle it passes,
 // and all of it runs under _simLock, which the region's physics step also takes, while holding its job pool. Script
-// casts come from strangers' scripts at script rate, so the script path bounds three things:
+// casts come from strangers' scripts at script rate, so this path bounds three things:
 //   - the hits looked at: a collector that keeps only the closest N (N = the hits the caller asked for) and tells
 //     Jolt, once it has N, to stop looking past the furthest of them (the early-out fraction), so the engine skips
 //     whatever lies beyond;
 //   - one cast: it is cut short when the engine has reported RayCastMaxTestedHits hits to it, or when it runs past
 //     what is left of the region's ray cast time;
-//   - the region: the time its casts may take in one heartbeat (RayCastBudgetMs); past it, casts are refused until
-//     the next heartbeat (BeginRayCastBudget).
+//   - the region: the time its casts may take in one heartbeat, in two budgets drawn separately: casts known to be a
+//     script's (RayCastBudgetMs) and every other cast (RayCastSimulatorBudgetMs), so a script flood that spends the
+//     first cannot refuse the simulator's own casts (rez placement, landing). Past a budget, the casts charged to it
+//     are refused until the next heartbeat (BeginRayCastBudget).
 // What a script gets for a refused or cut-short cast is the caller's to say (JoltScene: Second Life's
 // RCERR_CAST_TIME_EXCEEDED).
 //
@@ -153,28 +155,46 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             }
         }
 
-        // Ray cast time spent this heartbeat, and the counters GetCapacityStats reports.
-        private long _rayUsedTicks;
-        private long _rayCasts;
-        private long _rayCastsRefused;
-        private long _rayCastsCutShort;
-        private long _rayTicksTotal;
+        // One budget's time spent this heartbeat, and its counters GetCapacityStats reports. Interlocked throughout.
+        private sealed class RayBudgetState
+        {
+            public long UsedTicks;
+            public long Casts;
+            public long Refused;
+            public long CutShort;
+            public long TicksTotal;
+        }
+
+        // Indexed by RayCastBudget.
+        private readonly RayBudgetState[] _rayBudgets = { new RayBudgetState(), new RayBudgetState() };
+        // Both budgets' time this heartbeat together, and the most one heartbeat has spent.
+        private long _rayUsedTicksAll;
         private long _rayTicksMaxHeartbeat;
 
-        private long RayBudgetTicks
+        private long RayBudgetTicks(RayCastBudget budget)
         {
-            get
-            {
-                float ms = _settings.RayCastBudgetMs > 0f ? _settings.RayCastBudgetMs : PhysicsBackendSettings.DefaultRayCastBudgetMs;
-                return (long)(ms * Stopwatch.Frequency / 1000.0);
-            }
+            float ms = budget == RayCastBudget.Script
+                ? (_settings.RayCastBudgetMs > 0f ? _settings.RayCastBudgetMs : PhysicsBackendSettings.DefaultRayCastBudgetMs)
+                : (_settings.RayCastSimulatorBudgetMs > 0f ? _settings.RayCastSimulatorBudgetMs : PhysicsBackendSettings.DefaultRayCastSimulatorBudgetMs);
+            return (long)(ms * Stopwatch.Frequency / 1000.0);
         }
 
         private int RayMaxTested => _settings.RayCastMaxTestedHits > 0 ? _settings.RayCastMaxTestedHits : PhysicsBackendSettings.DefaultRayCastMaxTestedHits;
 
-        public void BeginRayCastBudget() => Interlocked.Exchange(ref _rayUsedTicks, 0);
+        public void BeginRayCastBudget()
+        {
+            foreach (RayBudgetState b in _rayBudgets)
+                Interlocked.Exchange(ref b.UsedTicks, 0);
+            Interlocked.Exchange(ref _rayUsedTicksAll, 0);
+        }
 
-        public unsafe int RayCastLimited(Vector3 origin, Vector3 direction, float maxDistance, QueryFilter filter, Span<RayHit> hits, out RayCastStatus status)
+        public long RayCastsRefused(RayCastBudget budget) => Interlocked.Read(ref BudgetState(budget).Refused);
+
+        private RayBudgetState BudgetState(RayCastBudget budget)
+            => _rayBudgets[budget == RayCastBudget.Script ? 0 : 1];
+
+        public unsafe int RayCastLimited(Vector3 origin, Vector3 direction, float maxDistance, QueryFilter filter, RayCastBudget budget,
+                                         Span<RayHit> hits, out RayCastStatus status)
         {
             status = RayCastStatus.Ok;
             if (_system == null || hits.Length == 0)
@@ -189,20 +209,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             lock (_simLock)
             {
                 if (_disposed) return 0;   // backend torn down (shutdown race) - no native call
-                Interlocked.Increment(ref _rayCasts);
+                RayBudgetState b = BudgetState(budget);
+                Interlocked.Increment(ref b.Casts);
 
-                long budget = RayBudgetTicks;
-                long used = Interlocked.Read(ref _rayUsedTicks);
-                if (used >= budget)
+                long allowed = RayBudgetTicks(budget);
+                long used = Interlocked.Read(ref b.UsedTicks);
+                if (used >= allowed)
                 {
-                    Interlocked.Increment(ref _rayCastsRefused);
+                    Interlocked.Increment(ref b.Refused);
                     status = RayCastStatus.Refused;
                     return 0;
                 }
 
                 long start = Stopwatch.GetTimestamp();
                 ClosestHits c = t_closest ??= new ClosestHits();
-                c.Reset(hits.Length, RayMaxTested, start + (budget - used), origin, rayDir);
+                c.Reset(hits.Length, RayMaxTested, start + (allowed - used), origin, rayDir);
 
                 var settings = new RayCastSettings();   // what RayCastAll passes: the same faces are tested
                 Vector3 o = origin, d = rayDir;
@@ -213,7 +234,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 int n = 0;
                 if (c.CutShort)
                 {
-                    Interlocked.Increment(ref _rayCastsCutShort);
+                    Interlocked.Increment(ref b.CutShort);
                     status = RayCastStatus.CutShort;
                 }
                 else
@@ -239,8 +260,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 }
 
                 long spent = Stopwatch.GetTimestamp() - start;
-                long nowUsed = Interlocked.Add(ref _rayUsedTicks, spent);
-                Interlocked.Add(ref _rayTicksTotal, spent);
+                Interlocked.Add(ref b.UsedTicks, spent);
+                Interlocked.Add(ref b.TicksTotal, spent);
+                long nowUsed = Interlocked.Add(ref _rayUsedTicksAll, spent);
                 long max;
                 while (nowUsed > (max = Interlocked.Read(ref _rayTicksMaxHeartbeat))
                        && Interlocked.CompareExchange(ref _rayTicksMaxHeartbeat, nowUsed, max) != max) { }
@@ -250,11 +272,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
         private void FillRayCastStats(ref PhysicsCapacityStats s)
         {
-            s.RayCasts = Interlocked.Read(ref _rayCasts);
-            s.RayCastsRefused = Interlocked.Read(ref _rayCastsRefused);
-            s.RayCastsCutShort = Interlocked.Read(ref _rayCastsCutShort);
-            s.RayCastMsTotal = Interlocked.Read(ref _rayTicksTotal) * 1000.0 / Stopwatch.Frequency;
+            s.ScriptRayCasts = BudgetStats(BudgetState(RayCastBudget.Script));
+            s.SimulatorRayCasts = BudgetStats(BudgetState(RayCastBudget.Simulator));
+            s.RayCasts = s.ScriptRayCasts.Casts + s.SimulatorRayCasts.Casts;
+            s.RayCastsRefused = s.ScriptRayCasts.Refused + s.SimulatorRayCasts.Refused;
+            s.RayCastsCutShort = s.ScriptRayCasts.CutShort + s.SimulatorRayCasts.CutShort;
+            s.RayCastMsTotal = s.ScriptRayCasts.MsTotal + s.SimulatorRayCasts.MsTotal;
             s.RayCastMsMaxHeartbeat = Interlocked.Read(ref _rayTicksMaxHeartbeat) * 1000.0 / Stopwatch.Frequency;
         }
+
+        private static RayCastBudgetStats BudgetStats(RayBudgetState b) => new RayCastBudgetStats
+        {
+            Casts = Interlocked.Read(ref b.Casts),
+            Refused = Interlocked.Read(ref b.Refused),
+            CutShort = Interlocked.Read(ref b.CutShort),
+            MsTotal = Interlocked.Read(ref b.TicksTotal) * 1000.0 / Stopwatch.Frequency,
+        };
     }
 }

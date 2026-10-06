@@ -17,7 +17,8 @@
 //   - a throttled process-wide summary emitted to the LOG (~30 s) so the metrics are captured without
 //     needing console interaction, followed by a second line with each region's figures for that interval: its
 //     longest heartbeat and longest physics step, its waits for its job pool (and which region held the pool at
-//     the longest) and for its own region lock, and the longest gap between heartbeats against the frame time.
+//     the longest) and for its own region lock, the longest gap between heartbeats against the frame time, and the
+//     ray casts refused in each ray cast budget (script, simulator).
 //
 // NOT YET obtainable here: TempAllocator high-water / malloc-fallback rate. The native
 // TempAllocatorImplWithMallocFallback tracks that internally but the joltc C API does not export it.
@@ -68,9 +69,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         /// <summary>
         /// One heartbeat's physics: its time (all its steps, without pool waits), what its steps waited for, the time
-        /// since the previous heartbeat's physics call (0: not known) and the configured frame time.
+        /// since the previous heartbeat's physics call (0: not known), the configured frame time, and the region's ray
+        /// casts refused so far in each budget (cumulative).
         /// </summary>
-        public static void RecordStep(string region, float physicsMs, int activeBodies, in HeartbeatTiming timing, double gapMs, double frameMs)
+        public static void RecordStep(string region, float physicsMs, int activeBodies, in HeartbeatTiming timing, double gapMs, double frameMs,
+                                      long scriptRaysRefused = 0, long simulatorRaysRefused = 0)
         {
             RegionStat st = s_regions.GetOrAdd(region, _ => new RegionStat());
             st.Steps++;
@@ -78,6 +81,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             st.EmaMs = st.EmaMs <= 0 ? physicsMs : st.EmaMs * 0.98 + physicsMs * 0.02;
             st.ActiveBodies = activeBodies;
             st.Interval.Record(physicsMs, in timing, gapMs, frameMs);
+            st.Interval.NoteRayCastsRefused(scriptRaysRefused, simulatorRaysRefused);
 
             // Throttled process-wide summary to the log so the metrics are captured without
             // console interaction. Single-writer via CompareExchange so only one region logs per window.
@@ -205,6 +209,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private double _gapMaxMs;
         private double _frameMs;
         private string _last;
+        // Ray casts refused, cumulative: the latest count the heartbeat saw, and the count when the last interval closed.
+        private long _scriptRaysRefused;
+        private long _simulatorRaysRefused;
+        private long _scriptRaysRefusedAtTake;
+        private long _simulatorRaysRefusedAtTake;
 
         /// <summary>The last interval <see cref="Take"/> closed; null before the first.</summary>
         public string Last => Volatile.Read(ref _last);
@@ -232,12 +241,25 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 Volatile.Write(ref _frameMs, frameMs);
         }
 
+        /// <summary>The region's ray casts refused so far in each budget, cumulative (the backend's counters). The
+        /// interval reports how many of them came after the last interval closed.</summary>
+        public void NoteRayCastsRefused(long script, long simulator)
+        {
+            Volatile.Write(ref _scriptRaysRefused, script);
+            Volatile.Write(ref _simulatorRaysRefused, simulator);
+        }
+
         /// <summary>Close the interval: return its figures as text (also kept as <see cref="Last"/>) and start the next
-        /// from zero. The frame time carries over.</summary>
+        /// from zero. The frame time carries over. One thread at a time (the metrics log's throttle picks it).</summary>
         public string Take()
         {
             long poolWaits = Interlocked.Exchange(ref _poolWaits, 0);
             string heldBy = Interlocked.Exchange(ref _poolHeldBy, null);
+            long scriptRefused = Volatile.Read(ref _scriptRaysRefused), simulatorRefused = Volatile.Read(ref _simulatorRaysRefused);
+            long scriptRefusedHere = scriptRefused - _scriptRaysRefusedAtTake;
+            long simulatorRefusedHere = simulatorRefused - _simulatorRaysRefusedAtTake;
+            _scriptRaysRefusedAtTake = scriptRefused;
+            _simulatorRaysRefusedAtTake = simulatorRefused;
             string text =
                 $"heartbeats={Interlocked.Exchange(ref _heartbeats, 0)}, " +
                 $"heartbeat max={Interlocked.Exchange(ref _heartbeatMaxMs, 0):0.00}ms, " +
@@ -246,7 +268,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 $"max={Interlocked.Exchange(ref _poolWaitMaxMs, 0):0.00}ms" + (poolWaits > 0 ? $" held by {heldBy ?? "?"}" : "") + ", " +
                 $"lock waits={Interlocked.Exchange(ref _lockWaits, 0)} total={Interlocked.Exchange(ref _lockWaitMs, 0):0.0}ms " +
                 $"max={Interlocked.Exchange(ref _lockWaitMaxMs, 0):0.00}ms, " +
-                $"heartbeat gap max={Interlocked.Exchange(ref _gapMaxMs, 0):0.0}ms (frame {Volatile.Read(ref _frameMs):0.0}ms)";
+                $"heartbeat gap max={Interlocked.Exchange(ref _gapMaxMs, 0):0.0}ms (frame {Volatile.Read(ref _frameMs):0.0}ms), " +
+                $"ray casts refused script={scriptRefusedHere} simulator={simulatorRefusedHere}";
             Volatile.Write(ref _last, text);
             return text;
         }
