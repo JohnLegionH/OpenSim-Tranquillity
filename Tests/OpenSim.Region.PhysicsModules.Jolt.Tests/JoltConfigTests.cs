@@ -215,11 +215,11 @@ public class JoltConfigTests
     [InlineData(3)]
     public void ThreadCount_is_split_across_the_pools(int pools)
     {
-        // ThreadCount 0 = ProcessorCount - 1 in total, split evenly; the remainder is not started.
-        int total = Math.Max(1, Environment.ProcessorCount - 1);
+        // ThreadCount 0 = automatic: each pool's share of ProcessorCount - 1, at most 4, at least 1.
+        int perPool = Math.Clamp(Math.Max(1, Environment.ProcessorCount - 1) / pools, 1, 4);
         var zero = JoltConfig.FromConfig(Source(("ThreadCount", "0"), ("JobPools", pools.ToString())), null);
-        Assert.Equal(total, zero.RequestedThreadCount);
-        Assert.Equal(Math.Max(1, total / pools), zero.RequestedThreadsPerPool);
+        Assert.Equal(perPool * pools, zero.RequestedThreadCount);
+        Assert.Equal(perPool, zero.RequestedThreadsPerPool);
 
         // An explicit ThreadCount = ProcessorCount.
         int cpus = Math.Min(Environment.ProcessorCount, 256);
@@ -234,6 +234,53 @@ public class JoltConfigTests
 
         Assert.Equal(12 / pools, JoltPhysicsBackend.ResolveThreadsPerPool(12, pools));
         Assert.Equal(pools == 2 ? 3 : pools == 3 ? 2 : 7, JoltPhysicsBackend.ResolveThreadsPerPool(7, pools));
+    }
+
+    // The automatic count for a given processor count and JobPools: threads per pool, then the total.
+    [Theory]
+    [InlineData(2, 1, 1)] [InlineData(2, 2, 1)] [InlineData(2, 3, 1)] [InlineData(2, 4, 1)]
+    [InlineData(4, 1, 3)] [InlineData(4, 2, 1)] [InlineData(4, 3, 1)] [InlineData(4, 4, 1)]
+    [InlineData(8, 1, 4)] [InlineData(8, 2, 3)] [InlineData(8, 3, 2)] [InlineData(8, 4, 1)]
+    [InlineData(20, 1, 4)] [InlineData(20, 2, 4)] [InlineData(20, 3, 4)] [InlineData(20, 4, 4)]
+    [InlineData(64, 1, 4)] [InlineData(64, 2, 4)] [InlineData(64, 3, 4)] [InlineData(64, 4, 4)]
+    public void Automatic_ThreadCount_gives_each_pool_its_share_of_the_cores_at_most_4(int cores, int pools, int perPool)
+    {
+        Assert.Equal(perPool, JoltPhysicsBackend.ResolveAutoThreadsPerPool(pools, cores));
+        int total = JoltPhysicsBackend.ResolveThreadCount(0, false, pools, cores);
+        Assert.Equal(perPool * pools, total);
+        Assert.Equal(perPool, JoltPhysicsBackend.ResolveThreadsPerPool(total, pools));   // the pools are built from the total
+        Assert.Equal(JobThreadSource.Automatic, JoltPhysicsBackend.ResolveThreadSource(0, false));
+    }
+
+    // A positive ThreadCount keeps its meaning: the total for all pools, split evenly, whatever the processor count.
+    [Theory]
+    [InlineData(2, 1)] [InlineData(4, 2)] [InlineData(8, 3)] [InlineData(20, 4)] [InlineData(64, 1)] [InlineData(64, 4)]
+    public void An_explicit_ThreadCount_is_used_as_given(int cores, int pools)
+    {
+        foreach (int set in new[] { 1, 3, 7, 12, 19, 32 })
+        {
+            Assert.Equal(set, JoltPhysicsBackend.ResolveThreadCount(set, false, pools, cores));
+            Assert.Equal(Math.Max(1, set / pools), JoltPhysicsBackend.ResolveThreadsPerPool(set, pools));
+        }
+        Assert.Equal(JobThreadSource.Set, JoltPhysicsBackend.ResolveThreadSource(19, false));
+        Assert.Equal(1, JoltPhysicsBackend.ResolveThreadCount(0, true, pools, cores));      // DeterministicMode: one
+        Assert.Equal(1, JoltPhysicsBackend.ResolveThreadCount(19, true, pools, cores));
+        Assert.Equal(JobThreadSource.Deterministic, JoltPhysicsBackend.ResolveThreadSource(19, true));
+    }
+
+    [Fact]
+    public void The_pool_lines_say_whether_the_count_is_automatic_or_set()
+    {
+        var s = new PhysicsCapacityStats { JobPools = 2, JobThreadsPerPool = 4, JobThreadCount = 8, JobThreadSource = JobThreadSource.Automatic };
+        Assert.Equal("2 pools x 4 worker threads (automatic: each pool's share of the processors less one, at most 4 per pool); " +
+                     "one physics update at a time per pool (process-wide).", CapacityReport.JobPoolsStartup(in s));
+        Assert.Contains("JobPools=2 threadsPerPool=4 (ThreadCount 8; process-wide); automatic:", CapacityReport.Render("Test Region", s, 1, 0, 1, 0, 1, 0));
+        s = new PhysicsCapacityStats { JobPools = 1, JobThreadsPerPool = 19, JobThreadCount = 19, JobThreadSource = JobThreadSource.Set };
+        Assert.Equal("1 pool x 19 worker threads (set by [Jolt] ThreadCount = 19, all pools together); " +
+                     "one physics update at a time per pool (process-wide).", CapacityReport.JobPoolsStartup(in s));
+        Assert.Contains("JobPools=1 threadsPerPool=19 (ThreadCount 19; process-wide); set by [Jolt] ThreadCount = 19", CapacityReport.Render("Test Region", s, 1, 0, 1, 0, 1, 0));
+        s = new PhysicsCapacityStats { JobPools = 1, JobThreadsPerPool = 1, JobThreadCount = 1, JobThreadSource = JobThreadSource.Deterministic };
+        Assert.StartsWith("1 pool x 1 worker thread (one thread, [Jolt] DeterministicMode)", CapacityReport.JobPoolsStartup(in s));
     }
 
     [Fact]

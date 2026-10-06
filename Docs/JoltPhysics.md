@@ -194,8 +194,22 @@ a parked vehicle is not held still against it. It is limited by `BodyMaxLinearSp
 ### Job pools
 
 All regions in a simulator share Jolt's worker threads through `JobPools` job pools (default 1).
-`ThreadCount` threads (default: processor count - 1) are split evenly across the pools, and each
-region is given the pool with the fewest regions when it starts. A pool runs one region's physics
+`ThreadCount` is the total number of worker threads, split evenly across the pools, and each
+region is given the pool with the fewest regions when it starts.
+
+`ThreadCount = 0` (the default) is automatic: each pool gets its share of the processor count
+less one, at most 4 threads and at least 1. On a 20-thread machine with one pool that is 4 threads;
+with 2 pools, 4 each; on a 4-thread machine with one pool, 3. A positive `ThreadCount` is the total,
+used as given. To get the behaviour from before the cap, every processor but one in the pools, set
+`ThreadCount` to the processor count less one. The startup log and `jolt capacity` give the pools,
+the threads per pool, and whether the count is automatic or set.
+
+Why at most 4: a region's physics step is spread over its pool's threads, and past a few threads
+handing the work out and waking the threads costs more than they save. In the harness's pool
+benchmark on a 20-thread desktop processor, one step per heartbeat: a pile of 1000 moving boxes
+took 13 ms a heartbeat on 4 threads and 34 ms on 19; 300 boxes 8 ms against 19 ms; one moving body
+1.0 ms against 2.1 ms (0.5 ms on 1 or 2 threads). With 300 boxes sharing the process with two idle
+regions, 4 pools of 4 threads stepped the busy region in 10 ms against 25 ms for one pool of 19. A pool runs one region's physics
 step at a time, so a region whose pool is busy waits for it. The wait is in the heartbeat: the
 region's physics still advances by the frame time, and no step is skipped.
 
@@ -204,8 +218,9 @@ Choosing `JobPools`:
 - Set it to about the number of regions that carry physics load at the same time (moving vehicles,
   piles of physical prims), not to the total number of regions. A region with nothing moving holds
   its pool only briefly.
-- Keep at least 4 worker threads per pool, so `JobPools` at most `ThreadCount / 4`: a pool's threads
-  are all that one busy region's physics gets.
+- With `ThreadCount` set, give each pool about 4 threads, so `JobPools` about `ThreadCount / 4`: a
+  pool's threads are all that one busy region's physics gets, and more than about 4 made it slower.
+  With the automatic count each pool gets at most 4 already, so more pools use more of the cores.
 - The log warns when a region spent more than 20% of its frame time waiting for its pool over a
   `CapacityLogIntervalSeconds` interval, naming the key to raise.
 

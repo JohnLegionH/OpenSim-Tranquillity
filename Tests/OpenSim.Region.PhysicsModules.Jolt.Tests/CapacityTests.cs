@@ -173,10 +173,12 @@ public class CapacityTests
         Assert.True(s.JobThreadCount >= 1);
         Assert.Equal(0, s.DroppedContacts);
 
-        // The default is one pool, holding every thread.
+        // The default is one pool, holding every thread: automatic, at most 4.
         Assert.Equal(1, s.JobPools);
         Assert.Equal(0, s.PoolIndex);
         Assert.Equal(s.JobThreadCount, s.JobThreadsPerPool);
+        Assert.Equal(JobThreadSource.Automatic, s.JobThreadSource);
+        Assert.Equal(JoltPhysicsBackend.ResolveAutoThreadsPerPool(1, Environment.ProcessorCount), s.JobThreadsPerPool);
         t.Step();
         s = t.B.GetCapacityStats();
         Assert.Equal(1, s.PoolPeakInside);

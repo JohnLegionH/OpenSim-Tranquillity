@@ -35,7 +35,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public int CollisionSteps = 6;             // solver sub-steps inside Update
         public int PositionIterations = 2;
         public int VelocityIterations = 10;
-        public int ThreadCount = 0;                // 0 = ProcessorCount - 1 (the shared pool; first region wins)
+        public int ThreadCount = 0;                // all pools together; 0 = automatic: each pool's share of ProcessorCount - 1, at most 4 (first region wins)
         public bool DeterministicMode = false;
         public int MaxBodies = 0;                  // 0 = BaseMaxBodies scaled by area
         public int MaxBodyPairs = 65536;
@@ -225,7 +225,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         /// <summary>How many worker threads these settings ask the shared pool for (the backend's own rule).</summary>
-        internal int RequestedThreadCount => JoltPhysicsBackend.ResolveThreadCount(ThreadCount, DeterministicMode);
+        internal int RequestedThreadCount => JoltPhysicsBackend.ResolveThreadCount(ThreadCount, DeterministicMode, JobPools);
 
         /// <summary>The workers each job pool gets when RequestedThreadCount is split across JobPools.</summary>
         internal int RequestedThreadsPerPool => JoltPhysicsBackend.ResolveThreadsPerPool(RequestedThreadCount, JobPools);

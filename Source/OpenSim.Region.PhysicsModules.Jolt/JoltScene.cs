@@ -394,8 +394,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (!s_poolLogged)
                 {
                     s_poolLogged = true;
-                    m_log.LogInformation($"{LogHeader} shared Jolt job pools: {pool.JobPools} x {pool.JobThreadsPerPool} worker threads, one physics update at a time each " +
-                                         $"(process-wide; [Jolt] ThreadCount={_joltConfig.ThreadCount} -> {poolThreads}, JobPools={_joltConfig.JobPools}).");
+                    m_log.LogInformation($"{LogHeader} shared Jolt job pools: {CapacityReport.JobPoolsStartup(in pool)}");
                 }
             }
             // Which pool this region steps on, once per region.

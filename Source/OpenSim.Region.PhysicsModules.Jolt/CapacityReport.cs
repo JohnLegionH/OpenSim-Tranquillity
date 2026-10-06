@@ -70,6 +70,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                    $"for Jolt job pool {poolIndex} of {jobPools} (one physics update at a time per pool) - raise [Jolt] JobPools";
         }
 
+        /// <summary>How the job thread count was chosen, for the startup log and `jolt capacity`.</summary>
+        internal static string JobThreadsHow(in PhysicsCapacityStats s) => s.JobThreadSource switch
+        {
+            JobThreadSource.Set => $"set by [Jolt] ThreadCount = {s.JobThreadCount}, all pools together",
+            JobThreadSource.Deterministic => "one thread, [Jolt] DeterministicMode",
+            _ => $"automatic: each pool's share of the processors less one, at most {JoltPhysicsBackend.AutoMaxThreadsPerPool} per pool",
+        };
+
+        /// <summary>The startup log's job pool line: pools, threads per pool, and whether the count is automatic or set.</summary>
+        internal static string JobPoolsStartup(in PhysicsCapacityStats s)
+            => $"{s.JobPools} pool{(s.JobPools == 1 ? "" : "s")} x {s.JobThreadsPerPool} worker thread{(s.JobThreadsPerPool == 1 ? "" : "s")} " +
+               $"({JobThreadsHow(in s)}); one physics update at a time per pool (process-wide).";
+
         /// <summary>The `jolt capacity` read-out: backend stats plus the scene's own buffers.</summary>
         internal static string Render(string region, in PhysicsCapacityStats s,
             int bodyBuf, long bodyOverflowFrames, int charBuf, long charFullFrames, int contactBuf, long contactOverflowFrames,
@@ -82,7 +95,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             sb.AppendLine($"  update errors     last={s.LastUpdateError} steps: BodyPairCacheFull={s.BodyPairCacheFullSteps} ManifoldCacheFull={s.ManifoldCacheFullSteps} ContactConstraintsFull={s.ContactConstraintsFullSteps}");
             sb.AppendLine($"  characters        {s.CharacterCount}");
             sb.AppendLine($"  contact ring      capacity={s.ContactRingCapacity} dropped={s.DroppedContacts} (cumulative)");
-            sb.AppendLine($"  job pools         JobPools={s.JobPools} threadsPerPool={s.JobThreadsPerPool} (ThreadCount {s.JobThreadCount}; process-wide)");
+            sb.AppendLine($"  job pools         JobPools={s.JobPools} threadsPerPool={s.JobThreadsPerPool} (ThreadCount {s.JobThreadCount}; process-wide); {JobThreadsHow(in s)}");
             sb.AppendLine($"  this region       pool={s.PoolIndex} waits={s.UpdateGateWaits} waitMs total={s.UpdateGateWaitMsTotal:0.0} max={s.UpdateGateWaitMsMax:0.0}; pool peakInside={s.PoolPeakInside}");
             sb.AppendLine($"  pool handoff      {(s.JobPoolFairHandoff ? "first come, first served ([Jolt] JobPoolFairHandoff = true)" : "default lock ([Jolt] JobPoolFairHandoff = false)")}");
             sb.AppendLine($"  region lock       waits={s.RegionLockWaits} waitMs total={s.RegionLockWaitMsTotal:0.0} max={s.RegionLockWaitMsMax:0.0} (steps that waited for this region's own lock, cumulative)");

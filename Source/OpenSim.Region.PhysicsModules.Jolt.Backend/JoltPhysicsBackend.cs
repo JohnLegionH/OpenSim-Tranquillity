@@ -180,6 +180,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         private static JobPool[]? s_pools;
         private static int s_jobThreads;            // the resolved total the pools were sized from (capacity stat)
         private static int s_jobThreadsPerPool;
+        private static int s_jobThreadSource;       // how that total was chosen (JobThreadSource)
 
         // This region's pool (assigned at Initialize, under s_foundationGate) and its waits at the pool's gate:
         // written by Step under _simLock, read through Interlocked.
@@ -618,23 +619,47 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // Lifecycle
         // =====================================================================
 
+        /// <summary>The most worker threads an automatic ThreadCount (0) gives one pool.</summary>
+        public const int AutoMaxThreadsPerPool = 4;
+
         /// <summary>
-        /// The worker count a region's settings ask the shared job pool for: ThreadCount, or ProcessorCount - 1 when
-        /// 0, or 1 in DeterministicMode. Only the FIRST region's request sizes the process-wide pool; the
-        /// module compares its own request against <see cref="PhysicsCapacityStats.JobThreadCount"/> and warns.
+        /// Workers per pool when ThreadCount is automatic (0): the pool's share of ProcessorCount - 1, at most
+        /// <see cref="AutoMaxThreadsPerPool"/> and at least 1. One region's step is spread over its pool's workers, and
+        /// past a few workers the hand-out and wake-up of each job costs more than the work it spreads: in the pool
+        /// benchmark a pile of 1000 boxes stepped fastest on 4 workers, and a single moving body slowest on the most.
         /// </summary>
-        public static int ResolveThreadCount(int threadCount, bool deterministicMode)
+        public static int ResolveAutoThreadsPerPool(int jobPools, int processorCount)
+            => Math.Clamp(Math.Max(1, processorCount - 1) / ResolveJobPools(jobPools), 1, AutoMaxThreadsPerPool);
+
+        /// <summary>
+        /// The total worker count a region's settings ask the shared job pools for, all pools together: a positive
+        /// ThreadCount as given (split across the pools by <see cref="ResolveThreadsPerPool"/>); 0 (automatic) gives
+        /// each pool <see cref="ResolveAutoThreadsPerPool"/> workers; DeterministicMode asks for 1. Only the FIRST
+        /// region's request sizes the process-wide pools; the module compares its own request against
+        /// <see cref="PhysicsCapacityStats.JobThreadCount"/> and warns.
+        /// </summary>
+        public static int ResolveThreadCount(int threadCount, bool deterministicMode, int jobPools)
+            => ResolveThreadCount(threadCount, deterministicMode, jobPools, Environment.ProcessorCount);
+
+        /// <summary>As <see cref="ResolveThreadCount(int, bool, int)"/>, for a given processor count.</summary>
+        public static int ResolveThreadCount(int threadCount, bool deterministicMode, int jobPools, int processorCount)
         {
             if (deterministicMode)
                 return 1;
-            return threadCount > 0 ? threadCount : Math.Max(1, Environment.ProcessorCount - 1);
+            if (threadCount > 0)
+                return threadCount;
+            return ResolveJobPools(jobPools) * ResolveAutoThreadsPerPool(jobPools, processorCount);
         }
+
+        /// <summary>How a region's settings choose the job thread count.</summary>
+        public static JobThreadSource ResolveThreadSource(int threadCount, bool deterministicMode)
+            => deterministicMode ? JobThreadSource.Deterministic : threadCount > 0 ? JobThreadSource.Set : JobThreadSource.Automatic;
 
         public void Initialize(in PhysicsBackendSettings settings)
         {
             _settings = settings;
 
-            int threads = ResolveThreadCount(settings.ThreadCount, settings.DeterministicMode);
+            int threads = ResolveThreadCount(settings.ThreadCount, settings.DeterministicMode, settings.JobPools);
 
             // Native boot. false => single precision.
             // PROCESS-GLOBAL and REF-COUNTED: only the first region to come up actually calls
@@ -668,6 +693,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     s_pools = created;
                     s_jobThreads = threads;
                     s_jobThreadsPerPool = perPool;
+                    s_jobThreadSource = (int)ResolveThreadSource(settings.ThreadCount, settings.DeterministicMode);
                 }
                 s_foundationRefCount++;
 
@@ -2990,6 +3016,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 JobThreadCount = Volatile.Read(ref s_jobThreads),
                 JobPools = Volatile.Read(ref s_pools)?.Length ?? 0,
                 JobThreadsPerPool = Volatile.Read(ref s_jobThreadsPerPool),
+                JobThreadSource = (JobThreadSource)Volatile.Read(ref s_jobThreadSource),
                 UpdateGateWaits = Interlocked.Read(ref _gateWaits),
                 UpdateGateWaitMsTotal = TicksToMs(Interlocked.Read(ref _gateWaitTicksTotal)),
                 UpdateGateWaitMsMax = TicksToMs(Interlocked.Read(ref _gateWaitTicksMax)),

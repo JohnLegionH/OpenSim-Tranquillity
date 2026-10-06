@@ -27,6 +27,17 @@ using System.Numerics;
 
 namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 {
+    /// <summary>How the job pools' thread count was chosen.</summary>
+    public enum JobThreadSource
+    {
+        /// <summary>[Jolt] ThreadCount 0: each pool's share of the cores, at most 4.</summary>
+        Automatic = 0,
+        /// <summary>A positive [Jolt] ThreadCount, all pools together.</summary>
+        Set = 1,
+        /// <summary>[Jolt] DeterministicMode: one thread.</summary>
+        Deterministic = 2,
+    }
+
     // ---------------------------------------------------------------------
     // Handles
     // ---------------------------------------------------------------------
@@ -557,6 +568,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public int JobPools;
         /// <summary>Worker threads in each pool: max(1, JobThreadCount / JobPools).</summary>
         public int JobThreadsPerPool;
+        /// <summary>How JobThreadCount was chosen: automatic ([Jolt] ThreadCount 0), set, or DeterministicMode.</summary>
+        public JobThreadSource JobThreadSource;
         /// <summary>The pool this region was assigned at Initialize (0-based).</summary>
         public int PoolIndex;
         /// <summary>This region's updates that had to wait for its pool's gate, cumulative.</summary>
@@ -830,7 +843,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public int MaxBodyPairs;
         public int MaxContactConstraints;
 
-        /// <summary>Worker threads. 0 = auto (Environment.ProcessorCount - 1).</summary>
+        /// <summary>Worker threads, all job pools together. 0 = automatic: each pool's share of
+        /// Environment.ProcessorCount - 1, at most 4 per pool (JoltPhysicsBackend.ResolveThreadCount).</summary>
         public int ThreadCount;
 
         /// <summary>Solver position iterations. Higher = stiffer joints, slower.</summary>
