@@ -9,5 +9,8 @@ if [ "$KIND" = pgsql ]; then export OPENSIM_TEST_PGSQL="$ADMIN"; fi
 if [ "$KIND" = mysql ]; then export OPENSIM_TEST_MYSQL="$ADMIN"; fi
 echo "target tree: $(git -C "$ws/target" rev-parse HEAD)"
 # Shallow checkout: Nerdbank.GitVersioning cannot walk history, so it is told not to read git.
+# A malformed line in the step's GITHUB_ENV file once failed this step after its tests had passed (likely the
+# build's version tasks writing to it from parallel project builds). The build gets scratch files instead.
+GITHUB_ENV="$RUNNER_TEMP/tests-env" GITHUB_OUTPUT="$RUNNER_TEMP/tests-output" \
 NBGV_GitEngine=Disabled dotnet test "$ws/target/$TESTS_PROJECT" -c Release -nodeReuse:false \
   --filter "$TESTS" --logger "console;verbosity=normal"
