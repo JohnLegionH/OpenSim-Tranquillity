@@ -142,7 +142,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         private void Build()
         {
-            _shape = _module.CookPrimShape(_pbs, _size, _isPhysical, out _axisCorrection, out _shapeKind);
+            _shape = _module.CookPrimShape(_backend, _pbs, _size, _isPhysical, out _axisCorrection, out _shapeKind);
             CreateBodyInternal();
         }
 
@@ -267,7 +267,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (!_body.IsValid) { Build(); return; }
             ShapeId old = _shape;
-            _shape = _module.CookPrimShape(_pbs, _size, _isPhysical, out _axisCorrection, out _shapeKind);
+            _shape = _module.CookPrimShape(_backend, _pbs, _size, _isPhysical, out _axisCorrection, out _shapeKind);
             _backend.SetBodyShape(_body, _shape, recomputeMass: false);   // keeps the body at its current transform
             if (old.IsValid)
                 _backend.ReleaseShape(old);
@@ -411,7 +411,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private void RecreateBody()
         {
             ShapeId old = _shape;
-            _shape = _module.CookPrimShape(_pbs, _size, _isPhysical, out _axisCorrection, out _shapeKind);
+            _shape = _module.CookPrimShape(_backend, _pbs, _size, _isPhysical, out _axisCorrection, out _shapeKind);
             if (_body.IsValid)
                 _backend.RemoveBody(_body);
             CreateBodyInternal();

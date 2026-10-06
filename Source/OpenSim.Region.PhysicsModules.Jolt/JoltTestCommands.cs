@@ -249,7 +249,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
                 // Decision-point check (physical -> convex hull): cook the SAME prism physical,
                 // inline, purely to confirm routing (cook+release, no body - the check is the shape choice).
-                ShapeId hull = CookPrimShape(GetPrismPbs(), size, true, out _, out string hullKind);
+                ShapeId hull = CookPrimShape(_backend, GetPrismPbs(), size, true, out _, out string hullKind);
                 MainConsole.Instance.Output($"  decision-point: physical prism cooks to '{hullKind}' (expect 'hull(mesher)' - a mesh's Volume=0 would rez a physical prim mass-0; hull avoids it).");
                 if (hull.IsValid) _backend.ReleaseShape(hull);
 

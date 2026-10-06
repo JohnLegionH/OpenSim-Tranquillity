@@ -925,7 +925,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         private PhysicsActor CreateAvatar(uint localID, string avName, Vector3 position, Vector3 velocity, Vector3 size, float feetOffset, bool isFlying)
         {
-            if (_backend == null)
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (backend == null)
                 return PhysicsActor.Null;
 
             // Spawn ON the terrain. Read the terrain height at the login XY (see THREAD SAFETY below) and seat
@@ -951,7 +952,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // resolve as a shove on frame 1).
             var spawn = new Vector3(position.X, position.Y, groundZ + standHalf + feetOffset + 0.01f);
 
-            var jc = new JoltCharacter(this, _backend, localID, avName, spawn, size, feetOffset, isFlying);
+            var jc = new JoltCharacter(this, backend, localID, avName, spawn, size, feetOffset, isFlying);
             if (velocity != Vector3.Zero)
                 jc.SetMomentum(velocity);
 
@@ -989,7 +990,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override PhysicsActor AddPrimShape(string primName, PrimitiveBaseShape pbs, Vector3 position,
                                                   Vector3 size, Quaternion rotation, bool isPhysical, uint localid)
         {
-            if (_backend == null || pbs == null)
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (backend == null || pbs == null)
                 return PhysicsActor.Null;
 
             // Defence in depth: the cook path is throw-free (CookPrimShape always returns a valid shape -
@@ -998,7 +1000,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             JoltPrim prim;
             try
             {
-                prim = new JoltPrim(this, _backend, localid, primName, pbs, position, size, rotation, isPhysical);
+                prim = new JoltPrim(this, backend, localid, primName, pbs, position, size, rotation, isPhysical);
             }
             catch (Exception e)
             {
@@ -1019,7 +1021,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // when there is no mesher or the geometry is unusable. `axisCorrection` (System.Numerics) is
         // folded into the body
         // orientation by JoltPrim; `kind` is for the diagnostic read-out.
-        internal ShapeId CookPrimShape(PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out SQuaternion axisCorrection, out string kind)
+        internal ShapeId CookPrimShape(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out SQuaternion axisCorrection, out string kind)
         {
             axisCorrection = SQuaternion.Identity;
             float hx = size.X * 0.5f, hy = size.Y * 0.5f, hz = size.Z * 0.5f;
@@ -1033,7 +1035,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (profile == ProfileShape.Square && path == (byte)Extrusion.Straight)
                 {
                     kind = "box";
-                    return _backend.CreateBoxShape(new SVector3(hx, hy, hz));
+                    return backend.CreateBoxShape(new SVector3(hx, hy, hz));
                 }
 
                 // SPHERE: half-circle profile, curve1 extrusion. Native sphere only when uniform - a
@@ -1042,7 +1044,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     && Approx(size.X, size.Y) && Approx(size.Y, size.Z))
                 {
                     kind = "sphere";
-                    return _backend.CreateSphereShape(hx);
+                    return backend.CreateSphereShape(hx);
                 }
 
                 // CYLINDER: circle profile, straight extrusion. SL cylinders are Z-height; Jolt's
@@ -1053,7 +1055,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 {
                     kind = "cylinder";
                     axisCorrection = SQuaternion.CreateFromAxisAngle(SVector3.UnitX, MathF.PI * 0.5f);
-                    return _backend.CreateCylinderShape(hz, hx);   // halfHeight=Z/2, radius=X/2
+                    return backend.CreateCylinderShape(hz, hx);   // halfHeight=Z/2, radius=X/2
                 }
             }
 
@@ -1062,20 +1064,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // BulletSim's BSShapeCollection.CreateGeomMeshOrHull (physical && ShouldUseHulls -> hull;
             // else mesh). Contract: a triangle MeshShape has Volume 0, so a PHYSICAL prim
             // MUST use the convex hull or it would rez with mass 0 - hence physical -> hull here.
-            ShapeId cooked = CookMeshShape(pbs, size, isPhysical, out kind);
+            ShapeId cooked = CookMeshShape(backend, pbs, size, isPhysical, out kind);
             if (cooked.IsValid)
                 return cooked;
 
             // Mesher unavailable / returned nothing usable / cook threw: conservative solid bounding box.
             kind = "bbox(fallback)";
-            return _backend.CreateBoxShape(new SVector3(hx, hy, hz));
+            return backend.CreateBoxShape(new SVector3(hx, hy, hz));
         }
 
         // The IMesher path: PrimitiveBaseShape -> IMesher.CreateMesh -> getVertexListAsFloat /
         // getIndexListAsInt -> CreateMeshShape (non-physical triangle mesh) or CreateConvexHullShape
         // (physical hull). Returns ShapeId.Invalid on any failure so the caller can fall back. Also
         // stashes a characterization of the RAW mesher output (_lastMeshStats) for the diagnostic read-out.
-        private ShapeId CookMeshShape(PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out string kind)
+        private ShapeId CookMeshShape(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out string kind)
         {
             kind = "bbox(fallback)";
             if (m_mesher == null)
@@ -1141,8 +1143,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             try
             {
                 ShapeId shape = isPhysical
-                    ? _backend.CreateConvexHullShape(points)   // physical: hull (mesh Volume=0 -> mass 0)
-                    : _backend.CreateMeshShape(points, indices); // non-physical: real triangle mesh
+                    ? backend.CreateConvexHullShape(points)   // physical: hull (mesh Volume=0 -> mass 0)
+                    : backend.CreateMeshShape(points, indices); // non-physical: real triangle mesh
                 kind = isPhysical ? "hull(mesher)" : "mesh(mesher)";
                 return shape;
             }
@@ -1250,7 +1252,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             status = RayCastStatus.Ok;
             var results = new List<ContactResult>();
-            if (_backend == null || qf == QueryFilter.None || !(length > 0f) || !float.IsFinite(length) || !position.IsFinite() || !direction.IsFinite())
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (backend == null || qf == QueryFilter.None || !(length > 0f) || !float.IsFinite(length) || !position.IsFinite() || !direction.IsFinite())
                 return results;
 
             Vector3 dn = direction;
@@ -1265,7 +1268,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             int want = Math.Clamp(Count, 1, _joltConfig.RayCastMaxHits);
             var hits = new RayHit[want];
-            int n = _backend.RayCastLimited(origin, dir, to - from, qf, hits, out status);
+            int n = backend.RayCastLimited(origin, dir, to - from, qf, hits, out status);
             for (int i = 0; i < n; i++)
             {
                 var cr = new ContactResult
@@ -1443,15 +1446,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // avatar bounce/jitter and a performance cost), but by CollisionSteps=6 set at Initialize: Jolt sub-
             // steps the RIGID-BODY solver INSIDE _system.Update without re-running the character step, so a
             // dropped prim integrates in solver sub-slices and rests, while the avatar stays at 1 step/frame.
-            StepOnce(timeStep);
+            StepOnce(timeStep, backend);
 
-            TraceCharFrame();
+            TraceCharFrame(backend);
             return 1f;
         }
 
         // [charframe] live trace (toggle: `jolt charframe`): per-frame avatar Z / support / vertical
         // velocity, so avatar bounce or sinking shows up in the numbers.
-        private void TraceCharFrame()
+        private void TraceCharFrame(IPhysicsBackend backend)
         {
             if (_stepCount <= _charFrameUntil)
             {
@@ -1463,7 +1466,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     // LocalID = its query marker (a bug), any other id = a prim/box. The terrain body
                     // IS a registered body, so "has a ground body" alone does NOT mean the marker.
                     string ground = "none";
-                    if (a.GroundBody.IsValid && _backend.TryGetBodyState(a.GroundBody, out BodyState gb))
+                    if (a.GroundBody.IsValid && backend.TryGetBodyState(a.GroundBody, out BodyState gb))
                         ground = gb.UserData == 0 ? "TERRAIN"
                                : gb.UserData == a.LocalID ? $"OWN-MARKER({gb.UserData})"
                                : $"prim({gb.UserData})";
@@ -1471,7 +1474,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     // negative & shrinking feetAboveTerrain = sinking THROUGH the collision surface.
                     Vector3 p = a.Position;
                     float terrZ = float.NaN;
-                    if (_backend.RayCast(new SVector3(p.X, p.Y, p.Z + 50f), new SVector3(0f, 0f, -1f), 300f, QueryFilter.Terrain, out RayHit th))
+                    if (backend.RayCast(new SVector3(p.X, p.Y, p.Z + 50f), new SVector3(0f, 0f, -1f), 300f, QueryFilter.Terrain, out RayHit th))
                         terrZ = th.Point.Z;
                     // FIXED-POINT terrain probe at the region centre - INDEPENDENT of the avatar's position.
                     // If this descends while the avatar stands still, the terrain surface is genuinely moving
@@ -1479,7 +1482,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     // drifting horizontally onto lower ground (a slide, not a sinking terrain).
                     float fixZ = float.NaN;
                     float cx = _regionSizeX * 0.5f, cy = _regionSizeY * 0.5f;
-                    if (_backend.RayCast(new SVector3(cx, cy, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.Terrain, out RayHit fh))
+                    if (backend.RayCast(new SVector3(cx, cy, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.Terrain, out RayHit fh))
                         fixZ = fh.Point.Z;
                     m_log.LogDebug($"{LogHeader} [charframe] step={_stepCount} id={a.LocalID} XY=({p.X:0.00},{p.Y:0.00}) Z={p.Z:0.000} " +
                                    $"sup={(a.IsSupported ? "Y" : "N")} sliding={(a.IsSliding ? "Y" : "N")} vZ={a.Velocity.Z:0.000} flying={(a.Flying ? "Y" : "N")} ground={ground} " +
@@ -1490,15 +1493,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 CharJumpTrace = false;   // window elapsed -> stop the [charjump] trace too
         }
 
-        // One backend Step + drain (bodies -> prims, characters -> avatars) + the [dropframe] diagnostic.
-        private void StepOnce(float timeStep)
+        // One backend Step + drain (bodies -> prims, characters -> avatars) + the [dropframe] diagnostic. `backend` is the
+        // one Simulate read: a teardown on another thread may have nulled _backend since, and it disposes the backend,
+        // whose Step then returns nothing.
+        private void StepOnce(float timeStep, IPhysicsBackend backend)
         {
             // Step, then DRAIN: the backend fills _bodyBuf with a BodyState per ACTIVE body (moving prims)
             // plus one final JustDeactivated state per body that slept this step. For each, push the new
             // transform/velocity into the matching actor (by UserData = LocalID) and fire its terse update
             // so the viewer sees motion; the JustDeactivated state is the settle update that stops a rested
             // object drifting. Sleeping bodies aren't reported, so idle prims cost nothing.
-            IPhysicsBackend backend = _backend;
             StepResult r = backend.Step(timeStep, _bodyBuf, _charBuf, _contactBuf);
             _stepCount++;
             var timing = new HeartbeatTiming();
@@ -1649,7 +1653,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 timing.Add(in r);
             }
             ReportStep(backend, in r, timeStep, contactCount, contactsOverflowed, physicsMs, mergeSubsteps: true, in timing);
-            TraceCharFrame();
+            TraceCharFrame(backend);
             return 1f;
         }
 
@@ -1726,7 +1730,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         private void JoltCapacity()
         {
-            PhysicsCapacityStats s = _backend.GetCapacityStats();
+            PhysicsCapacityStats s = CapacityStats();   // default after teardown
             MainConsole.Instance.Output(CapacityReport.Render(RegionName, s,
                 _bodyBuf.Length, _bodyOverflowFrames, _charBuf.Length, _charFullFrames, _contactBuf.Length, _contactOverflowFrames, _substeps,
                 JoltMetrics.LastIntervalOf(RegionName)));
@@ -1836,7 +1840,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         public override void SetTerrain(float[] heightMap)
         {
-            if (_backend == null || heightMap == null)
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (backend == null || heightMap == null)
                 return;
             int sx = _regionSizeX, sy = _regionSizeY;
             if (sx <= 0 || sy <= 0 || heightMap.Length < sx * sy)
@@ -1865,10 +1870,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             // 1 m sample spacing, heights already in metres (unit height scale), origin at the region
             // corner (physics runs in region-local coords).
-            ShapeId newShape = _backend.CreateHeightFieldShape(field, m, m, new SVector3(1f, 1f, 1f));
-            _backend.SetTerrain(newShape, SVector3.Zero);
+            ShapeId newShape = backend.CreateHeightFieldShape(field, m, m, new SVector3(1f, 1f, 1f));
+            backend.SetTerrain(newShape, SVector3.Zero);
             // At MaxBodies the engine refuses the terrain body - a region with no terrain collision is broken.
-            if (_backend.GetCapacityStats().TerrainBodyMissing)
+            if (backend.GetCapacityStats().TerrainBodyMissing)
                 m_log.LogError($"{LogHeader} region '{RegionName}': the physics engine refused the terrain body (MaxBodies reached); " +
                                "this region has NO terrain collision - raise [Jolt] MaxBodies.");
 
@@ -1880,7 +1885,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // Release the previous terrain shape: SetTerrain already replaced its body (dropping that
             // native ref), so releasing our handle frees it.
             if (_terrainShape.IsValid)
-                _backend.ReleaseShape(_terrainShape);
+                backend.ReleaseShape(_terrainShape);
             _terrainShape = newShape;
 
             // Un-bury any avatar the raise left below the new surface (the terrain body was swapped out
@@ -1979,8 +1984,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         public override void DeleteTerrain()
         {
-            if (_backend != null && _terrainShape.IsValid)
-                _backend.ReleaseShape(_terrainShape);
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (backend != null && _terrainShape.IsValid)
+                backend.ReleaseShape(_terrainShape);
             _terrainShape = ShapeId.Invalid;
         }
 

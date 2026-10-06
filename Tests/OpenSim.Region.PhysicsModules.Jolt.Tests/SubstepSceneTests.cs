@@ -297,4 +297,47 @@ public class SubstepSceneTests
             Assert.Null(failure);
         }
     }
+
+    // One step a heartbeat: the heartbeat keeps running until it has seen the scene's backend gone, so the teardown's
+    // null lands somewhere inside a heartbeat. Once the backend is disposed its steps return at once, so heartbeats are
+    // short and the vehicle controllers between Simulate's backend read and the step take a good share of each one; a
+    // second read of the field there would see it null in some of these cycles.
+    [Fact]
+    public void Teardown_during_a_heartbeat_with_one_step_a_heartbeat_is_safe()
+    {
+        const int Cycles = 40;
+        for (int cycle = 0; cycle < Cycles; cycle++)
+        {
+            JoltScene s = NewScene(0f);
+            Assert.False(s.Substepping);
+            Populate(s);
+            for (uint id = 0; id < 30; id++)
+            {
+                PhysicsActor car = AddBox(s, 2000 + id, new Vector3(20f + id * 6f, 60f, Ground + 0.6f), physical: true);
+                car.VehicleType = (int)Vehicle.TYPE_CAR;
+                car.VehicleVectorParam((int)Vehicle.LINEAR_MOTOR_DIRECTION, new Vector3(4f, 0f, 0f));
+            }
+            s.Simulate(Heartbeat);
+            Exception failure = null;
+            using var started = new ManualResetEventSlim();
+            var heartbeat = new Thread(() =>
+            {
+                try
+                {
+                    started.Set();
+                    var limit = System.Diagnostics.Stopwatch.StartNew();
+                    while (s.Backend != null && limit.Elapsed < TimeSpan.FromSeconds(20))
+                        s.Simulate(Heartbeat);
+                    s.Simulate(Heartbeat);   // and one after it is gone
+                }
+                catch (Exception e) { failure = e; }
+            });
+            heartbeat.Start();
+            started.Wait();
+            Thread.Sleep(cycle % 5);
+            s.Dispose();
+            Assert.True(heartbeat.Join(TimeSpan.FromSeconds(30)), "the heartbeat did not finish after teardown");
+            Assert.True(failure == null, $"cycle {cycle}: {failure}");
+        }
+    }
 }
