@@ -6,10 +6,18 @@ name: joltc native
 on:
   push:
     branches:
+      - develop
       - lane/jolt
     paths:
       - 'native/joltc/**'
       - '.github/workflows/joltc-native.yml'
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - 'native/joltc/**'
+      - '.github/workflows/joltc-native.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read

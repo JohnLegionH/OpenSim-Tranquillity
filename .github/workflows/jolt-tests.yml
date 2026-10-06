@@ -6,7 +6,12 @@ name: Jolt tests
 on:
   push:
     branches:
+      - develop
       - lane/jolt
+  pull_request:
+    branches:
+      - develop
+  workflow_dispatch:
 
 permissions:
   contents: read
