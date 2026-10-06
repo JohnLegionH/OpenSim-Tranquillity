@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Jolt physics region module. It is found through IPluginRegistryProvider (PluginRegistration.cs),
+    like the other physics modules, and enables itself only when [Startup] physics = Jolt.
+  -->
+  <PropertyGroup>
+    <AssemblyName>OpenSim.Region.PhysicsModules.Jolt</AssemblyName>
+    <RootNamespace>OpenSim.Region.PhysicsModules.Jolt</RootNamespace>
+    <AssemblyTitle>OpenSim.Region.PhysicsModules.Jolt</AssemblyTitle>
+    <Company>http://opensimulator.org</Company>
+    <Product>OpenSim</Product>
+    <Copyright>OpenSimulator developers</Copyright>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <!-- Lets a publish's runtime identifier reach this project, so a publish for one platform carries only that
+         platform's native (below). Without it the SDK builds a library without the identifier. -->
+    <IsRidAgnostic>false</IsRidAgnostic>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../Source/OpenSim.Framework/OpenSim.Framework.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Region.Framework/OpenSim.Region.Framework.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.SharedBase/OpenSim.Region.PhysicsModules.SharedBase.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.Jolt.Backend/OpenSim.Region.PhysicsModules.Jolt.Backend.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.Jolt.Vehicles/OpenSim.Region.PhysicsModules.Jolt.Vehicles.csproj" />
+  </ItemGroup>
+
+  <!-- The native joltc, under runtimes/<rid>/native/ as BulletSim and ubODE ship theirs: joltc.dll for win-x64,
+       libjoltc.so for linux-x64. It is a patched build that gives every PhysicsSystem its own TempAllocator (see
+       native/joltc/README.md); the backend's per-instance _simLock depends on that. The files are built by
+       .github/workflows/joltc-native.yml. Nothing goes to the output root: JoltNative (in the backend) picks the
+       file for the running platform from these folders, checks its hash and loads it.
+       A build with no runtime identifier (a portable build) carries every platform's file. A build or publish for
+       one runtime identifier carries only that platform's folder, or none when the module has no native for it. -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == ''">
+    <Content Include="runtimes\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+  <ItemGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <Content Include="runtimes\$(RuntimeIdentifier)\native\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- JoltPhysicsSharp depends on JoltPhysics.Native, the stock joltc, whose files would otherwise land in this
+         output under runtimes/. ExcludeAssets is not transitive, so every project that reaches the binding
+         excludes the package itself: the backend, this module, the region server, the Jolt tests and the harness. -->
+    <PackageReference Include="JoltPhysics.Native" Version="1.0.4" ExcludeAssets="all" />
+  </ItemGroup>
+
+</Project>
