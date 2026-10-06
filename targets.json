@@ -18,5 +18,32 @@
       "checks": "general,sit",
       "expect": ["RegionStore:prims.SitTargetActive"]
     }
+  ],
+  "known_develop_faults": [
+    {
+      "db": "sqlite",
+      "contains": "no such table: old.inventoryfolders",
+      "note": "SQLite XInventoryStore step 2 copies from an attached legacy database and fails on every database without one; the version still advances (XInventoryStore.migrations:42-49)"
+    },
+    {
+      "db": "sqlite",
+      "contains": "extra rt-key: expected rt-value, got NULL",
+      "note": "SQLite region store SaveExtra and GetExtra are empty stubs (SQLiteSimulationData.cs:2980-2993 on 86b1824cc5)"
+    },
+    {
+      "db": "sqlite",
+      "contains": "regions of the estate: expected",
+      "note": "SQLite estate store GetRegions always returns an empty list (SQLiteEstateData.cs:498-501 on 86b1824cc5)"
+    },
+    {
+      "db": "pgsql",
+      "contains": "PGSQLEstateStore.SaveBanList",
+      "note": "PostgreSQL estate store SaveBanList sets parameters banningUUID and banTime it never added (PGSQLEstateData.cs:351-357 on 86b1824cc5): saving an estate with a ban throws, and the manager, access and group lists saved after it are lost"
+    },
+    {
+      "db": "pgsql",
+      "contains": "PGSQLItemHandler.MoveItem",
+      "note": "PostgreSQL inventory MoveItem names parentFolderID and inventoryID unquoted (PGSQLXInventoryData.cs:147 on 86b1824cc5); PostgreSQL folds them to lower case and the update fails: column inventoryid does not exist"
+    }
   ]
 }

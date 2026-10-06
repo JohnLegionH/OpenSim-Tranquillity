@@ -95,6 +95,7 @@ public static class Program
 public sealed class Options
 {
     public string Mode, Db, Admin, Database, SqliteDir, Snap, Label;
+    public List<KnownFault> Known = new();
     public HashSet<string> Checks = new(StringComparer.OrdinalIgnoreCase);
     public List<(string store, string table, string column)> ExpectColumns = new();
 
@@ -114,6 +115,15 @@ public sealed class Options
                 case "--sqlite-dir": o.SqliteDir = v; i++; break;
                 case "--snap": o.Snap = v; i++; break;
                 case "--label": o.Label = v; i++; break;
+                case "--known":
+                    // targets.json: "known_develop_faults": [{ "db": "pgsql", "contains": "...", "note": "..." }]
+                    using (var doc = JsonDocument.Parse(File.ReadAllText(v)))
+                    {
+                        if (doc.RootElement.TryGetProperty("known_develop_faults", out var arr))
+                            foreach (var k in arr.EnumerateArray())
+                                o.Known.Add(new KnownFault(k.GetProperty("db").GetString(), k.GetProperty("contains").GetString(), k.GetProperty("note").GetString()));
+                    }
+                    i++; break;
                 case "--checks":
                     foreach (var c in v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                         o.Checks.Add(c);
@@ -131,24 +141,51 @@ public sealed class Options
     }
 }
 
+/// <summary>
+/// A fault already present on develop (recorded as a finding). A failure whose text contains Contains, on a
+/// database of kind Db ("*" for any), is reported as KNOWN instead of failing the target.
+/// </summary>
+public sealed record KnownFault(string Db, string Contains, string Note);
+
 public sealed class Report
 {
     private readonly Options m_opts;
     private readonly List<string> m_failures = new();
     private readonly List<string> m_passes = new();
+    private readonly List<string> m_known = new();
 
     public Report(Options opts) { m_opts = opts; }
 
     public void Section(string title) => Console.WriteLine($"\n===== {title} =====");
     public void Info(string s) => Console.WriteLine("  " + s);
     public void Pass(string check, string what) { m_passes.Add($"{check}: {what}"); Console.WriteLine($"  PASS {check}: {what}"); }
-    public void Fail(string check, string what) { m_failures.Add($"{check}: {what}"); Console.WriteLine($"  FAIL {check}: {what}"); }
+    public void Fail(string check, string what)
+    {
+        KnownFault k = KnownFor(what);
+        if (k is not null)
+        {
+            m_known.Add($"{check}: {k.Note} | {what.Split('\n')[0]}");
+            Console.WriteLine($"  KNOWN {check}: {what}\n      (known develop fault: {k.Note})");
+            return;
+        }
+        m_failures.Add($"{check}: {what}");
+        Console.WriteLine($"  FAIL {check}: {what}");
+    }
+
+    private KnownFault KnownFor(string what) =>
+        m_opts.Known.FirstOrDefault(k => (k.Db == "*" || k.Db == m_opts.Db) && what.Contains(k.Contains, StringComparison.Ordinal));
 
     /// <summary>Fails the check if the stores logged a failed migration command or any Error since the mark.</summary>
     public bool CheckLog(string check, int mark)
     {
         var lines = Capture.Since(mark);
         var bad = lines.Where(l => l.Level >= LogLevel.Error || l.Message.Contains("[MIGRATIONS]: Cmd was")).ToList();
+        // A known develop fault is reported line by line, so it never hides another line logged with it.
+        foreach (var l in bad.Where(l => KnownFor(l.ToString()) is not null).ToList())
+        {
+            Fail(check, "log line: " + l);
+            bad.Remove(l);
+        }
         if (bad.Count == 0)
             return true;
         var sb = new StringBuilder();
@@ -163,17 +200,21 @@ public sealed class Report
     {
         string head = $"[{m_opts.Label}] mode={m_opts.Mode} db={m_opts.Db}";
         Console.WriteLine();
-        Console.WriteLine($"===== RESULT {head}: {(m_failures.Count == 0 ? "PASS" : "FAIL")} ({m_passes.Count} passed, {m_failures.Count} failed) =====");
+        Console.WriteLine($"===== RESULT {head}: {(m_failures.Count == 0 ? "PASS" : "FAIL")} ({m_passes.Count} passed, {m_failures.Count} failed, {m_known.Count} known develop faults) =====");
         foreach (var f in m_failures)
             Console.WriteLine("  FAIL " + f);
+        foreach (var f in m_known)
+            Console.WriteLine("  KNOWN " + f);
         string summary = Environment.GetEnvironmentVariable("GITHUB_STEP_SUMMARY");
         if (!string.IsNullOrEmpty(summary))
         {
             var sb = new StringBuilder();
             sb.AppendLine($"### {head}: {(m_failures.Count == 0 ? "PASS" : "FAIL")}");
-            sb.AppendLine($"{m_passes.Count} passed, {m_failures.Count} failed");
+            sb.AppendLine($"{m_passes.Count} passed, {m_failures.Count} failed, {m_known.Count} known develop faults");
             foreach (var f in m_failures)
                 sb.AppendLine("- FAIL " + f.Split('\n')[0]);
+            foreach (var f in m_known)
+                sb.AppendLine("- KNOWN " + f.Split('\n')[0]);
             File.AppendAllText(summary, sb.ToString());
         }
         return m_failures.Count == 0 ? 0 : 1;
@@ -625,10 +666,8 @@ public static class Modes
     {
         report.Section("baseline: create the schema and write the data set");
         MigrationText.OpenAll(ctx, report, "baseline");
+        BaselineData.Write(ctx, report);
         int mark = Capture.Mark;
-        BaselineData.Write(ctx);
-        report.CheckLog("baseline write", mark);
-        mark = Capture.Mark;
         var snap = new Snapshot { Raw = ctx.DumpAll(), Loaded = BaselineData.Load(ctx) };
         report.CheckLog("baseline load", mark);
         File.WriteAllText(ctx.Opts.Snap, JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = true }));
@@ -801,7 +840,29 @@ public static class BaselineData
         ParentID = part, ParentPartID = part, CreationDate = 1700000000
     };
 
-    public static void Write(Ctx ctx)
+    private static void Part(Report report, string check, Action a)
+    {
+        int mark = Capture.Mark;
+        try
+        {
+            a();
+            report.Pass(check, "written");
+        }
+        catch (Exception e)
+        {
+            report.Fail(check, "threw " + e);
+        }
+        report.CheckLog(check, mark);
+    }
+
+    public static void Write(Ctx ctx, Report report)
+    {
+        Part(report, "baseline write region", () => WriteRegion(ctx));
+        Part(report, "baseline write estate", () => WriteEstate(ctx));
+        Part(report, "baseline write inventory", () => WriteInventory(ctx));
+    }
+
+    private static void WriteRegion(Ctx ctx)
     {
         var rs = ctx.NewRegionStore();
         foreach (var (_, sog) in Objects())
@@ -820,8 +881,14 @@ public static class BaselineData
             for (int y = 0; y < 256; y++)
                 terrain[x, y] = 20f + (x * 7 + y * 3) % 50 / 10f;
         rs.StoreTerrain(terrain, Region);
+        // The MySQL store writes terrain on a pool thread (StoreTerrain uses Util.FireAndForget): wait for it.
+        if (RoundTrips.WaitForTerrain(rs, Region) is null)
+            throw new Exception("terrain not readable 30 s after StoreTerrain");
         Ctx.Close(rs);
+    }
 
+    private static void WriteEstate(Ctx ctx)
+    {
         var es = ctx.NewEstateStore();
         var estate = es.LoadEstateSettings(Region, true);
         estate.EstateName = "Example Estate";
@@ -834,7 +901,10 @@ public static class BaselineData
         es.StoreEstateSettings(estate);
         es.LinkRegion(Region, (int)estate.EstateID);
         Ctx.Close(es);
+    }
 
+    private static void WriteInventory(Ctx ctx)
+    {
         var inv = ctx.NewInventoryStore();
         inv.StoreFolder(new XInventoryFolder { folderID = Id(0x500), agentID = Agent, parentFolderID = UUID.Zero, folderName = "My Inventory", type = 8, version = 1 });
         inv.StoreFolder(new XInventoryFolder { folderID = Id(0x501), agentID = Agent, parentFolderID = Id(0x500), folderName = "Notecards", type = 7, version = 1 });
@@ -916,7 +986,9 @@ public static class RoundTrips
         {
             Guarded(report, phase + " region round trip", () => Region(ctx, report, phase + " region round trip"));
             Guarded(report, phase + " estate round trip", () => Estate(ctx, report, phase + " estate round trip"));
+            Guarded(report, phase + " estate ban list round trip", () => EstateBans(ctx, report, phase + " estate ban list round trip"));
             Guarded(report, phase + " inventory round trip", () => Inventory(ctx, report, phase + " inventory round trip"));
+            Guarded(report, phase + " inventory move round trip", () => InventoryMove(ctx, report, phase + " inventory move round trip"));
         }
         if (ctx.Opts.Checks.Contains("sit"))
             Guarded(report, phase + " sit target round trip", () => SitTargets(ctx, report, phase + " sit target round trip"));
@@ -956,6 +1028,22 @@ public static class RoundTrips
             Math.Abs(expected.Z - actual.Z) < 1e-5f && Math.Abs(expected.W - actual.W) < 1e-5f)
             report.Pass(check, $"{what} = {actual}");
         else report.Fail(check, $"{what}: expected {expected}, got {actual}");
+    }
+
+    /// <summary>
+    /// The MySQL store writes terrain on a pool thread, so a read straight after StoreTerrain can miss it. Poll
+    /// until it is there, for up to 30 s.
+    /// </summary>
+    public static TerrainData WaitForTerrain(ISimulationDataStore store, UUID region)
+    {
+        var until = DateTime.UtcNow.AddSeconds(30);
+        while (true)
+        {
+            var t = store.LoadTerrain(region, 256, 256, 256);
+            if (t is not null || DateTime.UtcNow > until)
+                return t;
+            Thread.Sleep(200);
+        }
     }
 
     private static SceneObjectPart Reload(ISimulationDataStore store, UUID region, UUID part)
@@ -1056,8 +1144,8 @@ public static class RoundTrips
         Expect(report, check, "settings TerrainLowerLimit", rs.TerrainLowerLimit, lrs.TerrainLowerLimit);
         Expect(report, check, "settings Covenant", rs.Covenant, lrs.Covenant);
         Expect(report, check, "settings CovenantChangedDateTime", rs.CovenantChangedDateTime, lrs.CovenantChangedDateTime);
-        var lt = b.LoadTerrain(region, 256, 256, 256);
-        if (lt is null) report.Fail(check, "terrain not loaded back");
+        var lt = WaitForTerrain(b, region);
+        if (lt is null) report.Fail(check, "terrain not loaded back within 30 s");
         else
         {
             float worst = 0;
@@ -1094,8 +1182,6 @@ public static class RoundTrips
         es.AddEstateManager(manager); es.AddEstateManager(manager2);
         es.AddEstateUser(user); es.AddEstateUser(user2);
         es.AddEstateGroup(group); es.AddEstateGroup(group2);
-        es.AddBan(new EstateBan { EstateID = es.EstateID, BannedUserID = banned, BanningUserID = owner, BanTime = 1700000789 });
-        es.AddBan(new EstateBan { EstateID = es.EstateID, BannedUserID = banned2, BanningUserID = owner, BanTime = 1700000790 });
         a.StoreEstateSettings(es);
         a.LinkRegion(region, (int)es.EstateID);
         Ctx.Close(a);
@@ -1113,8 +1199,6 @@ public static class RoundTrips
         Expect(report, check, "managers", Set(manager, manager2), Set(l.EstateManagers));
         Expect(report, check, "access list", Set(user, user2), Set(l.EstateAccess));
         Expect(report, check, "group list", Set(group, group2), Set(l.EstateGroups));
-        Expect(report, check, "ban list", Set(banned, banned2), Set(l.EstateBans.Select(x => x.BannedUserID).ToArray()));
-        Expect(report, check, "ban banning user", owner.ToString(), string.Join(",", l.EstateBans.Select(x => x.BanningUserID.ToString()).Distinct()));
         var byId = b.LoadEstateSettings((int)es.EstateID);
         Expect(report, check, "load by id: name", es.EstateName, byId?.EstateName);
         Expect(report, check, "regions of the estate", region.ToString(), string.Join(",", b.GetRegions((int)es.EstateID)));
@@ -1123,7 +1207,6 @@ public static class RoundTrips
         l.RemoveEstateManager(manager2);
         l.RemoveEstateUser(user2);
         l.RemoveEstateGroup(group2);
-        l.RemoveBan(banned2);
         b.StoreEstateSettings(l);
         Ctx.Close(b);
 
@@ -1132,6 +1215,34 @@ public static class RoundTrips
         Expect(report, check, "managers after a removal", Set(manager), Set(l2.EstateManagers));
         Expect(report, check, "access list after a removal", Set(user), Set(l2.EstateAccess));
         Expect(report, check, "group list after a removal", Set(group), Set(l2.EstateGroups));
+        Ctx.Close(c);
+    }
+
+    private static void EstateBans(Ctx ctx, Report report, string check)
+    {
+        UUID region = UUID.Random(), owner = UUID.Random(), banned = UUID.Random(), banned2 = UUID.Random();
+        var a = ctx.NewEstateStore();
+        var es = a.LoadEstateSettings(region, true);
+        es.EstateName = "Ban List Estate";
+        es.EstateOwner = owner;
+        es.AddBan(new EstateBan { EstateID = es.EstateID, BannedUserID = banned, BanningUserID = owner, BanTime = 1700000789 });
+        es.AddBan(new EstateBan { EstateID = es.EstateID, BannedUserID = banned2, BanningUserID = owner, BanTime = 1700000790 });
+        a.StoreEstateSettings(es);
+        a.LinkRegion(region, (int)es.EstateID);
+        Ctx.Close(a);
+
+        var b = ctx.NewEstateStore();
+        var l = b.LoadEstateSettings(region, false);
+        if (l is null) { report.Fail(check, "estate not loaded back for its region"); return; }
+        Expect(report, check, "ban list", Set(banned, banned2), Set(l.EstateBans.Select(x => x.BannedUserID).ToArray()));
+        Expect(report, check, "ban banning user", owner.ToString(), string.Join(",", l.EstateBans.Select(x => x.BanningUserID.ToString()).Distinct()));
+        Expect(report, check, "ban times", "1700000789,1700000790", string.Join(",", l.EstateBans.Select(x => x.BanTime.ToString(CultureInfo.InvariantCulture)).Order()));
+        l.RemoveBan(banned2);
+        b.StoreEstateSettings(l);
+        Ctx.Close(b);
+
+        var c = ctx.NewEstateStore();
+        var l2 = c.LoadEstateSettings(region, false);
         Expect(report, check, "ban list after a removal", Set(banned), Set(l2.EstateBans.Select(x => x.BannedUserID).ToArray()));
         Ctx.Close(c);
     }
@@ -1165,22 +1276,56 @@ public static class RoundTrips
         Ctx.Close(a);
 
         var b = ctx.NewInventoryStore();
-        var folders = b.GetFolders(new[] { "agentID" }, new[] { agent.ToString() }).OrderBy(f => f.folderID.ToString()).Select(BaselineData.FolderString);
-        Expect(report, check, "folders", string.Join(" | ", new[] { root, sub, other }.OrderBy(f => f.folderID.ToString()).Select(BaselineData.FolderString)), string.Join(" | ", folders));
+        // The stores raise a folder's version when something is stored in it, so the version is checked to be
+        // no lower than written and the other fields exactly.
+        var loadedFolders = b.GetFolders(new[] { "agentID" }, new[] { agent.ToString() }).OrderBy(f => f.folderID.ToString()).ToList();
+        var written = new[] { root, sub, other }.OrderBy(f => f.folderID.ToString()).ToList();
+        Expect(report, check, "folders", string.Join(" | ", written.Select(FolderNoVersion)), string.Join(" | ", loadedFolders.Select(FolderNoVersion)));
+        foreach (var f in loadedFolders)
+        {
+            var w = written.FirstOrDefault(x => x.folderID == f.folderID);
+            if (w is not null && f.version < w.version)
+                report.Fail(check, $"folder {f.folderName}: version {f.version} lower than written {w.version}");
+        }
         var items = b.GetItems(new[] { "avatarID" }, new[] { agent.ToString() }).OrderBy(i => i.inventoryID.ToString()).Select(BaselineData.ItemString);
         Expect(report, check, "items", string.Join(" | ", new[] { item, item2 }.OrderBy(i => i.inventoryID.ToString()).Select(BaselineData.ItemString)), string.Join(" | ", items));
 
-        Expect(report, check, "move item", true, b.MoveItem(item.inventoryID.ToString(), other.folderID.ToString()));
         item.inventoryName = "rt object renamed";
         item.parentFolderID = other.folderID;
-        Expect(report, check, "update item", true, b.StoreItem(item));
+        Expect(report, check, "update item (rename, new parent)", true, b.StoreItem(item));
         Expect(report, check, "delete item 2", true, b.DeleteItems("inventoryID", item2.inventoryID.ToString()));
         Ctx.Close(b);
 
         var c = ctx.NewInventoryStore();
         var after = c.GetItems(new[] { "avatarID" }, new[] { agent.ToString() }).Select(BaselineData.ItemString).ToList();
-        Expect(report, check, "items after move, rename and delete", BaselineData.ItemString(item), string.Join(" | ", after));
+        Expect(report, check, "items after update and delete", BaselineData.ItemString(item), string.Join(" | ", after));
         Ctx.Close(c);
+    }
+
+    private static string FolderNoVersion(XInventoryFolder f) =>
+        $"{f.folderID} agent={f.agentID} parent={f.parentFolderID} name={f.folderName} type={f.type}";
+
+    private static void InventoryMove(Ctx ctx, Report report, string check)
+    {
+        UUID agent = UUID.Random();
+        var from = new XInventoryFolder { folderID = UUID.Random(), agentID = agent, parentFolderID = UUID.Zero, folderName = "From", type = -1, version = 1 };
+        var to = new XInventoryFolder { folderID = UUID.Random(), agentID = agent, parentFolderID = UUID.Zero, folderName = "To", type = -1, version = 1 };
+        var item = new XInventoryItem
+        {
+            inventoryID = UUID.Random(), avatarID = agent, parentFolderID = from.folderID, assetID = UUID.Random(), assetType = 7, invType = 7,
+            inventoryName = "moved note", inventoryDescription = "", creatorID = agent.ToString(), creationDate = 1700002000
+        };
+        var a = ctx.NewInventoryStore();
+        a.StoreFolder(from);
+        a.StoreFolder(to);
+        a.StoreItem(item);
+        Expect(report, check, "move item", true, a.MoveItem(item.inventoryID.ToString(), to.folderID.ToString()));
+        Ctx.Close(a);
+
+        var b = ctx.NewInventoryStore();
+        var l = b.GetItems(new[] { "inventoryID" }, new[] { item.inventoryID.ToString() });
+        Expect(report, check, "parent after the move", to.folderID, l.Length == 1 ? l[0].parentFolderID : UUID.Zero);
+        Ctx.Close(b);
     }
 
     private static void SitTargets(Ctx ctx, Report report, string check)

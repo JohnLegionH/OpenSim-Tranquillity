@@ -3,7 +3,7 @@
 # string without a database), CHECKS, EXPECT (space separated Store:table.column), LABEL.
 set -uo pipefail
 ws=$GITHUB_WORKSPACE
-args=(--db "$KIND" --checks "$CHECKS" --label "$LABEL")
+args=(--db "$KIND" --checks "$CHECKS" --label "$LABEL" --known "$ws/ci/targets.json")
 for e in $EXPECT; do args+=(--expect-column "$e"); done
 if [ "$KIND" = sqlite ]; then
   fresh=(--sqlite-dir "$ws/work/db/fresh")
