@@ -517,7 +517,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (WrongConsoleScene())
                 return;
 
-            if (_backend == null) { MainConsole.Instance.Output($"{LogHeader} no backend."); return; }
+            // Read once: a teardown on another thread nulls backend. A torn-down backend answers every query with a
+            // miss, so a command typed during a teardown reports misses rather than throwing.
+            IPhysicsBackend backend = _backend;
+            if (backend == null) { MainConsole.Instance.Output($"{LogHeader} no backend."); return; }
 
             // At the ROOT prompt every region runs the command, so stamp whose output follows - otherwise
             // three regions' results interleave with no way to tell them apart. When the console is scoped
@@ -550,7 +553,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 MainConsole.Instance.Output($"{LogHeader} terrain raycast probes (region {n}x{_regionSizeY}; (N+1) field spans [0,{n}] m):");
                 foreach (var (px, py) in pts)
                 {
-                    bool hit = _backend.RayCast(new SVector3(px, py, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.All, out RayHit h);
+                    bool hit = backend.RayCast(new SVector3(px, py, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.All, out RayHit h);
                     MainConsole.Instance.Output(hit
                         ? $"  ({px,7:0.0},{py,7:0.0}) -> HIT  z={h.Point.Z:0.000}  n.z={h.Normal.Z:0.00}"
                         : $"  ({px,7:0.0},{py,7:0.0}) -> miss");
@@ -562,7 +565,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (cmd.Length >= 4 && cmd[1] == "probe"
                 && float.TryParse(cmd[2], out float x) && float.TryParse(cmd[3], out float y))
             {
-                bool hit = _backend.RayCast(new SVector3(x, y, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.All, out RayHit h);
+                bool hit = backend.RayCast(new SVector3(x, y, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.All, out RayHit h);
                 MainConsole.Instance.Output(hit
                     ? $"{LogHeader} ({x:0.0},{y:0.0}) -> HIT z={h.Point.Z:0.000} normal=({h.Normal.X:0.00},{h.Normal.Y:0.00},{h.Normal.Z:0.00})"
                     : $"{LogHeader} ({x:0.0},{y:0.0}) -> miss");
@@ -571,7 +574,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             if (cmd.Length >= 2 && cmd[1] == "avatarstatus")
             {
-                AvatarStatus();
+                AvatarStatus(backend);
                 return;
             }
 
@@ -612,13 +615,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             if (cmd.Length >= 2 && cmd[1] == "sensortest")
             {
-                SensorTest();
+                SensorTest(backend);
                 return;
             }
 
             if (cmd.Length >= 2 && cmd[1] == "raytest")
             {
-                RayTest();
+                RayTest(backend);
                 return;
             }
 
@@ -630,7 +633,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // heightmap says, (c) where the dropped box actually is, (d) the water plane. Water and
                 // buoyancy are non-colliding, so the box MUST rest on (a); if (a)!=(b) the cook is wrong,
                 // if (c)!=(a) the box isn't resting on terrain.
-                bool hit = _backend.RayCast(new SVector3(hx, hy, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.Terrain, out RayHit rh);
+                bool hit = backend.RayCast(new SVector3(hx, hy, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.Terrain, out RayHit rh);
                 float sceneH = float.NaN;
                 int gx = (int)Math.Round(hx), gy = (int)Math.Round(hy);
                 if (_scene?.Heightmap != null && gx >= 0 && gx < _regionSizeX && gy >= 0 && gy < _regionSizeY)
@@ -644,7 +647,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 foreach (DropTrack t in _drops)
                 {
                     lock (_prims)
-                        if (_prims.TryGetValue(t.LocalId, out JoltPrim jp) && _backend.TryGetBodyState(jp.BodyHandle, out BodyState st))
+                        if (_prims.TryGetValue(t.LocalId, out JoltPrim jp) && backend.TryGetBodyState(jp.BodyHandle, out BodyState st))
                             MainConsole.Instance.Output($"  (c) drop {t.Kind} id={t.LocalId} : liveZ={st.Position.Z:0.000} joltActive={(((st.Flags & BodyStateFlags.Active) != 0) ? "Y" : "N")} startZ={t.StartZ:0.00}");
                 }
                 MainConsole.Instance.Output($"  read: (a)==(b) => cook matches OpenSim; box rest (c) should ~= (a)+halfHeight. (c)~water while (a)!=water => box not on terrain.");
@@ -678,7 +681,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // capsule dims - and assert it spawned ON the terrain (supported, not sinking, capsule centre ~
         // terrainZ + StandHalf at the spawn XY), not at NaN or underground. Run it right after login, and
         // again after walking somewhere to confirm position tracks and IsSupported stays true on the flat.
-        private void AvatarStatus()
+        private void AvatarStatus(IPhysicsBackend backend)
         {
             System.Collections.Generic.List<JoltCharacter> avs;
             lock (_avatars)
@@ -693,7 +696,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 bool nan = float.IsNaN(p.X) || float.IsNaN(p.Y) || float.IsNaN(p.Z);
 
                 float terrainZ = float.NaN;
-                if (!nan && _backend.RayCast(new SVector3(p.X, p.Y, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.Terrain, out RayHit th))
+                if (!nan && backend.RayCast(new SVector3(p.X, p.Y, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.Terrain, out RayHit th))
                     terrainZ = th.Point.Z;
                 float expectedCentre = terrainZ + a.StandHalf + a.FeetOffset;
                 float dZ = p.Z - expectedCentre;
@@ -829,7 +832,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // PHYSICS query path (llCastRay / OverlapSphere with the Avatar filter). This console is a
         // LIVE test of that: a physics agent-overlap must find the logged-in avatar's marker, by UserData
         // (avatar presence carries UserData, not a solver BodyId), and be range-correct.
-        private void SensorTest()
+        private void SensorTest(IPhysicsBackend backend)
         {
             ScenePresence sp = FirstRootAvatar();
             if (sp == null) { MainConsole.Instance.Output($"{LogHeader} no logged-in avatar - log in first."); return; }
@@ -839,15 +842,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             MainConsole.Instance.Output($"  (OpenSim llSensor is scene-graph and does NOT use this; the marker is what makes llCastRay/overlap agent-queries find an avatar.)");
 
             var hits = new BodyId[32];
-            int nNear = _backend.OverlapSphere(new SVector3(p.X, p.Y, p.Z), 5f, QueryFilter.Avatar, hits);
+            int nNear = backend.OverlapSphere(new SVector3(p.X, p.Y, p.Z), 5f, QueryFilter.Avatar, hits);
             bool nearFound = false; uint nearUd = 0;
             for (int i = 0; i < nNear; i++)
-                if (_backend.TryGetBodyState(hits[i], out BodyState bs) && bs.UserData == sp.LocalId) { nearFound = true; nearUd = bs.UserData; }
+                if (backend.TryGetBodyState(hits[i], out BodyState bs) && bs.UserData == sp.LocalId) { nearFound = true; nearUd = bs.UserData; }
 
-            int nFar = _backend.OverlapSphere(new SVector3(p.X + 100f, p.Y + 100f, p.Z), 5f, QueryFilter.Avatar, hits);
+            int nFar = backend.OverlapSphere(new SVector3(p.X + 100f, p.Y + 100f, p.Z), 5f, QueryFilter.Avatar, hits);
             bool farFound = false;
             for (int i = 0; i < nFar; i++)
-                if (_backend.TryGetBodyState(hits[i], out BodyState bs) && bs.UserData == sp.LocalId) farFound = true;
+                if (backend.TryGetBodyState(hits[i], out BodyState bs) && bs.UserData == sp.LocalId) farFound = true;
 
             bool seated = sp.IsSatOnObject;
             MainConsole.Instance.Output($"  NEAR overlap (sphere r=5 at avatar): {nNear} agent-layer hit(s); avatar marker (UserData={sp.LocalId}) found = {(nearFound ? "Y" : "N")}{(nearFound ? $" (resolved id={nearUd})" : "")}");
@@ -867,7 +870,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // (near), [1] the terrain (far). Proves in one shot: llCastRay(AGENT) hits the avatar via the marker
         // (identity by UserData), a terrain hit, and multi-hit distance ordering. This is the SAME RayCastAll
         // path llCastRay takes (Scene.RayCastFiltered -> RaycastWorld -> backend.RayCastAll).
-        private void RayTest()
+        private void RayTest(IPhysicsBackend backend)
         {
             ScenePresence sp = FirstRootAvatar();
             if (sp == null) { MainConsole.Instance.Output($"{LogHeader} no logged-in avatar - log in first."); return; }
@@ -877,7 +880,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             var dir = new SVector3(0f, 0f, -1f);
             QueryFilter qf = QueryFilter.Avatar | QueryFilter.Terrain;
             var hits = new RayHit[8];
-            int n = _backend.RayCastAll(origin, dir, 200f, qf, hits);
+            int n = backend.RayCastAll(origin, dir, 200f, qf, hits);
 
             MainConsole.Instance.Output($"{LogHeader} llCastRay path test - ray DOWN through '{sp.Name}' (filter=Avatar|Terrain), {n} hit(s) in distance order:");
             bool avatarHit = false, terrainHit = false, ordered = true;
