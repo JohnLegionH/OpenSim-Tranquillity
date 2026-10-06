@@ -2020,7 +2020,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // vehicle surface (VehicleType / VehicleVectorParam) and reads state through the standard
         // getters (Position / Orientation / Velocity / RotationalVelocity / Mass), so the SAME code
         // runs under physics=BulletSim (-> BSDynamics) and physics=Jolt (-> the extracted
-        // OpenSim.Region.PhysicsModules.Jolt.Vehicles controller, Second Life's documented vehicle model). The two
+        // OpenSim.Region.PhysicsModules.Jolt.Vehicles controller). The two
         // engines use different vehicle math, so the capture compares boat behaviour end to end. Writes
         // parity-boat-<engine>.txt for a two-boot diff. Uses scene.PhysicsScene.SetTerrain to cook a
         // PHYSICS-ONLY water basin (for a region whose terrain sits above the water plane) - the scene

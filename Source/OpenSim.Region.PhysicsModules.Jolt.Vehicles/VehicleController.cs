@@ -3,11 +3,14 @@
  * Original Copyright (c) 2015, InWorldz Halcyon Developers
  * Adapted 2026 by Legion Builds
  *
- * A backend-agnostic vehicle controller. Each simulated behaviour follows Second Life's documented
+ * A backend-agnostic vehicle controller. The behaviours Second Life documents (the motors and
+ * friction, hover, buoyancy, the vertical attractor, banking and deflection) follow its documented
  * vehicle model (Linden_Vehicle_Tutorial and the llSetVehicle* pages of the SL wiki; each
- * Simulate method names its source). The frame structure, the parameter routing and the legacy
- * type presets come from the InWorldz Halcyon vehicle code, as OpenSim's BulletSim vehicle code
- * expresses it; the legacy values are kept behind VehiclePresets = legacy (VehicleSettings).
+ * Simulate method names its source). The sled's slope assist is not a documented Second Life
+ * behaviour: it is carried over from the InWorldz Halcyon sled movement (SledAssist). The frame
+ * structure, the parameter routing and the legacy type presets come from the InWorldz Halcyon
+ * vehicle code, as OpenSim's BulletSim vehicle code expresses it; the legacy values are kept
+ * behind VehiclePresets = legacy (VehicleSettings).
  * The physics engine is reached only through IVehicleBody, per this table (BulletSim's names
  * on the left):
  *
@@ -55,8 +58,8 @@ using OpenMetaverse;
 namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 {
     /// <summary>
-    /// The vehicle controller, backend-agnostic: Second Life's documented vehicle behaviours, on a frame
-    /// structure derived from the Halcyon vehicle code.
+    /// The vehicle controller, backend-agnostic: Second Life's documented vehicle behaviours and the sled's
+    /// slope assist from the Halcyon sled movement, on a frame structure derived from the Halcyon vehicle code.
     /// The host owns one instance per vehicle body and calls Step(dt) every frame BEFORE the
     /// physics step while the vehicle is active and physical.
     /// </summary>
