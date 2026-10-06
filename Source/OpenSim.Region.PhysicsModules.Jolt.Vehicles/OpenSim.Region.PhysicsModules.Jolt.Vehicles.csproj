@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The vehicle controller: Second Life's documented vehicle behaviours behind a small IVehicleBody seam,
+    on a frame structure derived from the InWorldz Halcyon vehicle code, whose type presets are kept behind
+    VehiclePresets = legacy. It references neither OpenSim nor a physics engine, only the OpenMetaverse
+    math types; the Jolt module
+    implements IVehicleBody (JoltVehicleBody) on top of the backend.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AssemblyName>OpenSim.Region.PhysicsModules.Jolt.Vehicles</AssemblyName>
+    <RootNamespace>OpenSim.Region.PhysicsModules.Jolt.Vehicles</RootNamespace>
+    <AssemblyTitle>OpenSim.Region.PhysicsModules.Jolt.Vehicles</AssemblyTitle>
+    <Company>http://opensimulator.org</Company>
+    <Product>OpenSim</Product>
+    <Copyright>OpenSimulator developers</Copyright>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+</Project>
