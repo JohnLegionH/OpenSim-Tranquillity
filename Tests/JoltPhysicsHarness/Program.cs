@@ -42,6 +42,17 @@ public static class Program
                              Lists run every combination (a sweep).
   --out DIR                  write <scenario>-s<slope>-r<rate>.csv per run and summary.csv to DIR
 
+  --pool-bench               run the job pool benchmark instead of the scenarios: a heavy scene and light scenes
+                             sharing the job pools, each heartbeat on its own thread (see PoolBench.cs). It uses the
+                             first --rate (default 11) and --physics-rate (default 45 here), and with --out writes
+                             pool-bench.csv
+  --pools N[,N..]            pool bench: [Jolt] JobPools values (default 1)
+  --handoff off|on[,..]      pool bench: [Jolt] JobPoolFairHandoff values (default off)
+  --heavy-boxes N            pool bench: boxes in the heavy scene, kept moving; 0 = no heavy scene (default 300)
+  --light N                  pool bench: light scenes, bare ground (default 2)
+  --seconds S                pool bench: seconds measured per combination, after a 2 s warm-up (default 20)
+  --unpaced                  pool bench: heartbeats back to back instead of in real time
+
 The summary table always goes to standard output. Nothing is written anywhere else.";
 
     public static int Main(string[] args)
@@ -68,6 +79,8 @@ The summary table always goes to standard output. Nothing is written anywhere el
         float[] slopes = null;
         string outDir = null;
         float[] crashSpeeds = { 1f }, crashOffsets = { 0f }, crashAngles = { 0f };
+        bool poolBench = false, physicsRateGiven = false;
+        var bench = new PoolBenchOptions();
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -92,7 +105,22 @@ The summary table always goes to standard output. Nothing is written anywhere el
                     break;
                 case "--physics-rate":
                     physicsRates = Next().Split(',').Select(x => NonNegativeDouble(x, a)).ToArray();
+                    physicsRateGiven = true;
                     break;
+                case "--pool-bench": poolBench = true; break;
+                case "--pools": bench.Pools = Next().Split(',').Select(x => (int)PositiveDouble(x, a)).ToArray(); break;
+                case "--handoff":
+                    bench.Handoff = Next().Split(',').Select(x => x switch
+                    {
+                        "off" => false,
+                        "on" => true,
+                        _ => throw new ArgumentException($"--handoff '{x}': expected off or on"),
+                    }).ToArray();
+                    break;
+                case "--heavy-boxes": bench.HeavyBoxes = (int)NonNegativeDouble(Next(), a); break;
+                case "--light": bench.LightScenes = (int)NonNegativeDouble(Next(), a); break;
+                case "--seconds": bench.Seconds = PositiveDouble(Next(), a); break;
+                case "--unpaced": bench.Unpaced = true; break;
                 case "--slope":
                     slopes = Next().Split(',').Select(x => (float)NonNegativeDouble(x, a)).ToArray();
                     if (slopes.Any(s => s >= 60f)) throw new ArgumentException("--slope must be under 60 degrees");
@@ -129,6 +157,19 @@ The summary table always goes to standard output. Nothing is written anywhere el
 
         if (outDir != null)
             Directory.CreateDirectory(outDir);
+
+        if (poolBench)
+        {
+            bench.RateHz = rates[0];
+            if (physicsRateGiven)
+                bench.PhysicsRateHz = physicsRates[0];
+            var lines = new StringBuilder().Append(PoolBenchResult.Header).Append('\n');
+            foreach (PoolBenchResult res in PoolBench.Run(bench, output))
+                lines.Append(res.Line()).Append('\n');
+            if (outDir != null)
+                File.WriteAllText(Path.Combine(outDir, "pool-bench.csv"), lines.ToString());
+            return 0;
+        }
 
         var summary = new StringBuilder();
         summary.Append(RunResult.SummaryHeader).Append('\n');
