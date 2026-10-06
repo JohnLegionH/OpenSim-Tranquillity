@@ -1,0 +1,2 @@
+# The patches apply with git apply against joltc sources checked out as committed (LF).
+*.patch text eol=lf
