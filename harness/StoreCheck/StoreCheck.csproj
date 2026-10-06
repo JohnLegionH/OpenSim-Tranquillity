@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Store checks against real database servers. Built on the CI runner against a checked-out
+    OpenSim-Tranquillity tree: pass -p:RepoRoot=<path to the checkout>. Nothing here is committed
+    as a binary.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);CS0618;CS8632</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(RepoRoot)/Source/OpenSim.Data/OpenSim.Data.csproj" />
+    <ProjectReference Include="$(RepoRoot)/Source/OpenSim.Data.MySQL/OpenSim.Data.MySQL.csproj" />
+    <ProjectReference Include="$(RepoRoot)/Source/OpenSim.Data.PGSQL/OpenSim.Data.PGSQL.csproj" />
+    <ProjectReference Include="$(RepoRoot)/Source/OpenSim.Data.SQLite/OpenSim.Data.SQLite.csproj" />
+    <ProjectReference Include="$(RepoRoot)/Source/OpenSim.Framework/OpenSim.Framework.csproj" />
+    <ProjectReference Include="$(RepoRoot)/Source/OpenSim.Region.Framework/OpenSim.Region.Framework.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,174 @@
+name: store checks
+
+# Runs the region, estate and inventory stores of each target in targets.json against real database
+# servers started as service containers on the runner. The passwords below are throwaway values for those
+# containers only; no secret is used.
+
+on:
+  push:
+    branches: [ci/store-checks]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.t.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: t
+        run: echo "targets=$(jq -c '.targets' targets.json)" >> "$GITHUB_OUTPUT"
+
+  server:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    name: ${{ matrix.target.name }} on ${{ matrix.server.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+        server:
+          - name: mysql-8.0
+            kind: mysql
+            image: mysql:8.0
+            port: 3306
+            options: --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci-throwaway-pw" --health-interval=5s --health-timeout=5s --health-retries=40
+          - name: mysql-8.4
+            kind: mysql
+            image: mysql:8.4
+            port: 3306
+            options: --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci-throwaway-pw" --health-interval=5s --health-timeout=5s --health-retries=40
+          - name: mariadb-10.11
+            kind: mysql
+            image: mariadb:10.11
+            port: 3306
+            options: --health-cmd="healthcheck.sh --connect --innodb_initialized" --health-interval=5s --health-timeout=5s --health-retries=40
+          - name: mariadb-11.4
+            kind: mysql
+            image: mariadb:11.4
+            port: 3306
+            options: --health-cmd="healthcheck.sh --connect --innodb_initialized" --health-interval=5s --health-timeout=5s --health-retries=40
+          - name: postgres-15
+            kind: pgsql
+            image: postgres:15
+            port: 5432
+            options: --health-cmd="pg_isready -U opensim" --health-interval=5s --health-timeout=5s --health-retries=40
+          - name: postgres-17
+            kind: pgsql
+            image: postgres:17
+            port: 5432
+            options: --health-cmd="pg_isready -U opensim" --health-interval=5s --health-timeout=5s --health-retries=40
+    services:
+      db:
+        image: ${{ matrix.server.image }}
+        env:
+          MYSQL_ROOT_PASSWORD: ci-throwaway-pw
+          MARIADB_ROOT_PASSWORD: ci-throwaway-pw
+          POSTGRES_USER: opensim
+          POSTGRES_PASSWORD: ci-throwaway-pw
+        ports:
+          - ${{ matrix.server.port }}:${{ matrix.server.port }}
+        options: ${{ matrix.server.options }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ci
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.target.repo }}
+          ref: ${{ matrix.target.ref }}
+          path: target
+          fetch-depth: 1
+      - if: matrix.target.baseline_ref != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.target.baseline_repo }}
+          ref: ${{ matrix.target.baseline_ref }}
+          path: baseline
+          fetch-depth: 1
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: target/global.json
+      - name: build harness against the target
+        run: bash ci/ci/build.sh target
+      - name: build harness against the baseline
+        if: matrix.target.baseline_ref != ''
+        run: bash ci/ci/build.sh baseline
+      - name: server version
+        run: |
+          if [ "${{ matrix.server.kind }}" = mysql ]; then
+            docker exec "${{ job.services.db.id }}" sh -c 'if command -v mariadb >/dev/null; then mariadb -uroot -pci-throwaway-pw -e "select version()"; else mysql -uroot -pci-throwaway-pw -e "select version()"; fi'
+          else
+            docker exec "${{ job.services.db.id }}" psql -U opensim -c "select version()"
+          fi
+      - name: checks
+        env:
+          KIND: ${{ matrix.server.kind }}
+          ADMIN: ${{ matrix.server.kind == 'mysql' && 'Server=127.0.0.1;Port=3306;User ID=root;Password=ci-throwaway-pw;AllowPublicKeyRetrieval=true;Old Guids=true;' || 'Host=127.0.0.1;Port=5432;Username=opensim;Password=ci-throwaway-pw;' }}
+          CHECKS: ${{ matrix.target.checks }}
+          EXPECT: ${{ join(matrix.target.expect, ' ') }}
+          LABEL: ${{ matrix.target.name }}/${{ matrix.server.name }}
+        run: bash ci/ci/run.sh
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-${{ matrix.target.name }}-${{ matrix.server.name }}
+          path: work/snap.json
+          if-no-files-found: ignore
+
+  sqlite:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    name: ${{ matrix.target.name }} on sqlite
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ci
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.target.repo }}
+          ref: ${{ matrix.target.ref }}
+          path: target
+          fetch-depth: 1
+      - if: matrix.target.baseline_ref != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.target.baseline_repo }}
+          ref: ${{ matrix.target.baseline_ref }}
+          path: baseline
+          fetch-depth: 1
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: target/global.json
+      - name: build harness against the target
+        run: bash ci/ci/build.sh target
+      - name: build harness against the baseline
+        if: matrix.target.baseline_ref != ''
+        run: bash ci/ci/build.sh baseline
+      - name: checks
+        env:
+          KIND: sqlite
+          ADMIN: ""
+          CHECKS: ${{ matrix.target.checks }}
+          EXPECT: ${{ join(matrix.target.expect, ' ') }}
+          LABEL: ${{ matrix.target.name }}/sqlite
+        run: bash ci/ci/run.sh
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-${{ matrix.target.name }}-sqlite
+          path: work/snap.json
+          if-no-files-found: ignore

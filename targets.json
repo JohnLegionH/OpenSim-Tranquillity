@@ -1,0 +1,22 @@
+{
+  "targets": [
+    {
+      "name": "develop",
+      "repo": "OpenSim-NGC/OpenSim-Tranquillity",
+      "ref": "86b1824cc5fb2c7ec64219c24c391379496dcfb5",
+      "baseline_repo": "",
+      "baseline_ref": "",
+      "checks": "general",
+      "expect": []
+    },
+    {
+      "name": "sit-target-active",
+      "repo": "JohnLegionH/OpenSim-Tranquillity",
+      "ref": "fix/region-store-sit-target-active",
+      "baseline_repo": "OpenSim-NGC/OpenSim-Tranquillity",
+      "baseline_ref": "86b1824cc5fb2c7ec64219c24c391379496dcfb5",
+      "checks": "general,sit",
+      "expect": ["RegionStore:prims.SitTargetActive"]
+    }
+  ]
+}
