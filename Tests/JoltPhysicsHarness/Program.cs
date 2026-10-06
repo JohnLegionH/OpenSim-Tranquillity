@@ -48,7 +48,9 @@ public static class Program
                              pool-bench.csv
   --pools N[,N..]            pool bench: [Jolt] JobPools values (default 1)
   --handoff off|on[,..]      pool bench: [Jolt] JobPoolFairHandoff values (default off)
+  --threads N[,N..]          pool bench: [Jolt] ThreadCount values; 0 = the module's default (default 0)
   --heavy-boxes N            pool bench: boxes in the heavy scene, kept moving; 0 = no heavy scene (default 300)
+  --heavy-car                pool bench: the heavy scene is the test car driving, its key held, instead of boxes
   --light N                  pool bench: light scenes, bare ground (default 2)
   --seconds S                pool bench: seconds measured per combination, after a 2 s warm-up (default 20)
   --unpaced                  pool bench: heartbeats back to back instead of in real time
@@ -117,7 +119,9 @@ The summary table always goes to standard output. Nothing is written anywhere el
                         _ => throw new ArgumentException($"--handoff '{x}': expected off or on"),
                     }).ToArray();
                     break;
+                case "--threads": bench.Threads = Next().Split(',').Select(x => (int)NonNegativeDouble(x, a)).ToArray(); break;
                 case "--heavy-boxes": bench.HeavyBoxes = (int)NonNegativeDouble(Next(), a); break;
+                case "--heavy-car": bench.HeavyCar = true; break;
                 case "--light": bench.LightScenes = (int)NonNegativeDouble(Next(), a); break;
                 case "--seconds": bench.Seconds = PositiveDouble(Next(), a); break;
                 case "--unpaced": bench.Unpaced = true; break;

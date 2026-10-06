@@ -510,13 +510,16 @@ inside each heartbeat, so the two can be compared, e.g.
 project runs the same scenarios as regression tests (`HarnessTests`).
 
 `--pool-bench` runs the job pool benchmark instead of the scenarios: a heavy scene (a pile of
-`--heavy-boxes` boxes, default 300, kept moving) and `--light` light scenes (bare ground, default 2)
-in one process, each heartbeat on its own thread in real time at the first `--rate`, with
-`--physics-rate` physics steps per second (default 45 here). It runs each combination of
-`--pools N[,N..]` (`JobPools`, default 1) and `--handoff off|on[,..]` (`JobPoolFairHandoff`,
-default off) for `--seconds` (default 20, after a 2 s warm-up) and prints one line each: the light
-scenes' pool waits (count, average, longest, and per heartbeat), the heavy scene's heartbeat time
-(average and longest, its own pool waits included) and pool wait per heartbeat, physics steps per
-second over all scenes, and heartbeats that started more than a heartbeat late. `--unpaced` runs the
+`--heavy-boxes` boxes, default 300, kept moving, or with `--heavy-car` the test car driving with its
+key held) and `--light` light scenes (bare ground, default 2) in one process, each heartbeat on its
+own thread in real time at the first `--rate`, with `--physics-rate` physics steps per second
+(default 45 here). It runs each combination of `--threads N[,N..]` (`ThreadCount`, default 0: the
+key left unset), `--pools N[,N..]` (`JobPools`, default 1) and `--handoff off|on[,..]`
+(`JobPoolFairHandoff`, default off) for `--seconds` (default 20, after a 2 s warm-up) and prints one
+line each: the light scenes' pool waits (count, average, longest, and per heartbeat), the heavy
+scene's heartbeat time (average and longest, its own pool waits included) and pool wait per
+heartbeat, physics steps per second over all scenes, heartbeats that started more than a heartbeat
+late, the job threads and threads per pool, and the heavy scene's average active bodies.
+`--heavy-boxes 0 --light 1` times one bare scene on its own. `--unpaced` runs the
 heartbeats back to back. Unlike the scenarios its figures are timings, so they depend on the machine
 and its load; with `--out` it writes `pool-bench.csv`.

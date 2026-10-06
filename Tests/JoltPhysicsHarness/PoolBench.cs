@@ -6,10 +6,11 @@
  */
 
 // The job pool benchmark: several Jolt scenes in one process sharing the job pools, as the regions of one simulator
-// do, one of them heavy (a pile of boxes kept moving) and the others light (bare ground). Each scene runs its own
-// heartbeat on its own thread, in real time at the heartbeat rate (or as fast as it can, unpaced), for each
-// combination of [Jolt] JobPools and JobPoolFairHandoff asked for. It reports what the light scenes waited for their
-// pool, what a heartbeat cost the heavy scene, and the physics steps all the scenes ran per second.
+// do, one of them heavy (a pile of boxes kept moving, or the test car driving) and the others light (bare ground).
+// Each scene runs its own heartbeat on its own thread, in real time at the heartbeat rate (or as fast as it can,
+// unpaced), for each combination of [Jolt] ThreadCount, JobPools and JobPoolFairHandoff asked for. It reports what the
+// light scenes waited for their pool, what a heartbeat cost the heavy scene, and the physics steps all the scenes ran
+// per second.
 //
 // Timing figures depend on the machine and on whatever else it is running; run it on a quiet machine.
 
@@ -27,7 +28,11 @@ public sealed class PoolBenchOptions
 {
     public int[] Pools = { 1 };
     public bool[] Handoff = { false };
+    /// <summary>[Jolt] ThreadCount values; 0 leaves the key unset (the module's default).</summary>
+    public int[] Threads = { 0 };
     public int HeavyBoxes = 300;
+    /// <summary>The heavy scene is the test car driving instead of a pile of boxes.</summary>
+    public bool HeavyCar;
     public int LightScenes = 2;
     public double RateHz = 11.0;
     public double PhysicsRateHz = 45.0;
@@ -53,10 +58,16 @@ public sealed class PoolBenchResult
     public long PhysicsSteps;
     public long LateHeartbeats;
     public long Heartbeats;
+    /// <summary>The job threads the pools were sized from, and each pool's share (the backend's capacity stats).</summary>
+    public int Threads;
+    public int ThreadsPerPool;
+    /// <summary>The heavy scene's (or, with none, the light scene's) active bodies after each measured heartbeat, averaged.</summary>
+    public double ActiveBodiesAvg;
 
     public const string Header =
         "handoff,pools,seconds,light_waits,light_wait_avg_ms,light_wait_max_ms,light_wait_ms_per_heartbeat," +
-        "heavy_heartbeat_avg_ms,heavy_heartbeat_max_ms,heavy_pool_wait_ms_per_heartbeat,steps_per_s,heartbeats,late_heartbeats";
+        "heavy_heartbeat_avg_ms,heavy_heartbeat_max_ms,heavy_pool_wait_ms_per_heartbeat,steps_per_s,heartbeats,late_heartbeats," +
+        "threads,threads_per_pool,heavy_active_bodies_avg";
 
     public string Line()
     {
@@ -69,7 +80,9 @@ public sealed class PoolBenchResult
             F(HeavyHeartbeatMsAvg, "0.000"), F(HeavyHeartbeatMsMax, "0.000"),
             F(HeavyHeartbeats > 0 ? HeavyPoolWaitMsTotal / HeavyHeartbeats : double.NaN, "0.000"),
             F(PhysicsSteps / Seconds, "0"), Heartbeats.ToString(CultureInfo.InvariantCulture),
-            LateHeartbeats.ToString(CultureInfo.InvariantCulture));
+            LateHeartbeats.ToString(CultureInfo.InvariantCulture),
+            Threads.ToString(CultureInfo.InvariantCulture), ThreadsPerPool.ToString(CultureInfo.InvariantCulture),
+            F(ActiveBodiesAvg, "0.0"));
     }
 }
 
@@ -81,10 +94,12 @@ public static class PoolBench
         public bool Heavy;
         public JoltScene Scene;
         public List<PhysicsActor> Boxes = new();
+        public PhysicsActor Car;
         // Measured after the warm-up, by the scene's own thread.
         public long Heartbeats;
         public double HeartbeatMsTotal;
         public double HeartbeatMsMax;
+        public long ActiveBodiesTotal;
         public long Late;
         public Backend.PhysicsCapacityStats Start;
         public Backend.PhysicsCapacityStats End;
@@ -96,15 +111,16 @@ public static class PoolBench
     {
         output.WriteLine(PoolBenchResult.Header);
         foreach (bool handoff in o.Handoff)
-            foreach (int pools in o.Pools)
-            {
-                PoolBenchResult r = RunOne(o, pools, handoff);
-                output.WriteLine(r.Line());
-                yield return r;
-            }
+            foreach (int threads in o.Threads)
+                foreach (int pools in o.Pools)
+                {
+                    PoolBenchResult r = RunOne(o, pools, handoff, threads);
+                    output.WriteLine(r.Line());
+                    yield return r;
+                }
     }
 
-    private static JoltScene NewScene(string name, PoolBenchOptions o, int pools, bool handoff)
+    private static JoltScene NewScene(string name, PoolBenchOptions o, int pools, bool handoff, int threads)
     {
         var config = new IniConfigSource();
         IConfig startup = config.AddConfig("Startup");
@@ -112,6 +128,9 @@ public static class PoolBench
         startup.Set("meshing", "Meshmerizer");
         IConfig jolt = config.AddConfig("Jolt");
         jolt.Set("JobPools", pools.ToString(CultureInfo.InvariantCulture));
+        // Set only when asked for, so 0 runs the module's own default.
+        if (threads > 0)
+            jolt.Set("ThreadCount", threads.ToString(CultureInfo.InvariantCulture));
         // Set only when on, so a build without the key runs the default handoff unchanged.
         if (handoff)
             jolt.Set("JobPoolFairHandoff", "true");
@@ -123,18 +142,25 @@ public static class PoolBench
         return scene;
     }
 
-    private static PoolBenchResult RunOne(PoolBenchOptions o, int pools, bool handoff)
+    private static bool HasHeavy(PoolBenchOptions o) => o.HeavyCar || o.HeavyBoxes > 0;
+
+    private static PoolBenchResult RunOne(PoolBenchOptions o, int pools, bool handoff, int threadCount)
     {
         var scenes = new List<BenchScene>();
         try
         {
             // The heavy scene first, so it is given pool 0 and the light scenes are spread over the others.
-            if (o.HeavyBoxes > 0)
-                scenes.Add(new BenchScene { Name = "Heavy", Heavy = true, Scene = NewScene("Heavy", o, pools, handoff) });
+            if (HasHeavy(o))
+                scenes.Add(new BenchScene { Name = "Heavy", Heavy = true, Scene = NewScene("Heavy", o, pools, handoff, threadCount) });
             for (int i = 0; i < o.LightScenes; i++)
-                scenes.Add(new BenchScene { Name = $"Light {i + 1}", Scene = NewScene($"Light {i + 1}", o, pools, handoff) });
+                scenes.Add(new BenchScene { Name = $"Light {i + 1}", Scene = NewScene($"Light {i + 1}", o, pools, handoff, threadCount) });
             foreach (BenchScene s in scenes.Where(s => s.Heavy))
-                AddPile(s, o.HeavyBoxes);
+            {
+                if (o.HeavyCar)
+                    AddCar(s);
+                else
+                    AddPile(s, o.HeavyBoxes);
+            }
 
             double period = 1.0 / o.RateHz;
             var clock = Stopwatch.StartNew();
@@ -158,6 +184,13 @@ public static class PoolBench
                     throw new InvalidOperationException("a benchmark scene did not finish; a job pool may have wedged");
 
             var r = new PoolBenchResult { Pools = pools, Handoff = handoff, Seconds = o.Seconds };
+            if (scenes.Count > 0)
+            {
+                r.Threads = scenes[0].End.JobThreadCount;
+                r.ThreadsPerPool = scenes[0].End.JobThreadsPerPool;
+                BenchScene counted = scenes[0];   // the heavy scene, or with none the first light one
+                r.ActiveBodiesAvg = counted.Heartbeats > 0 ? (double)counted.ActiveBodiesTotal / counted.Heartbeats : double.NaN;
+            }
             foreach (BenchScene s in scenes)
             {
                 r.Heartbeats += s.Heartbeats;
@@ -179,7 +212,7 @@ public static class PoolBench
                     r.LightWaitMsMax = Math.Max(r.LightWaitMsMax, s.End.UpdateGateWaitMsMax);   // reset when measuring began
                 }
             }
-            if (o.HeavyBoxes <= 0)
+            if (!HasHeavy(o))
             {
                 r.HeavyHeartbeatMsAvg = double.NaN;
                 r.HeavyHeartbeatMsMax = double.NaN;
@@ -216,6 +249,24 @@ public static class PoolBench
         }
     }
 
+    // The harness's test car (scenario testcar): VEHICLE_TYPE_CAR with a test-drive script's linear friction timescale
+    // <1,1,1000>, motor timescale 1 and motor decay 0.5, on level ground facing east, far enough west that it stays in
+    // the region for a run of a few tens of seconds. Its key is held for the whole run (see Heartbeats).
+    private static readonly Vector3 CarSize = new(2f, 1f, 0.5f);
+    private static readonly Vector3 CarMotor = new(8f, 0f, 0f);
+
+    private static void AddCar(BenchScene s)
+    {
+        var p = new Vector3(20f, 128f, Course.Ground + CarSize.Z * 0.5f + 0.02f);
+        PhysicsActor car = s.Scene.AddPrimShape("bench car", PrimitiveBaseShape.CreateBox(), p, CarSize, Quaternion.Identity, true, 2000u);
+        car.Density = 1000f;
+        car.VehicleType = (int)Vehicle.TYPE_CAR;
+        car.VehicleVectorParam((int)Vehicle.LINEAR_FRICTION_TIMESCALE, new Vector3(1f, 1f, 1000f));
+        car.VehicleFloatParam((int)Vehicle.LINEAR_MOTOR_TIMESCALE, 1f);
+        car.VehicleFloatParam((int)Vehicle.LINEAR_MOTOR_DECAY_TIMESCALE, 0.5f);
+        s.Car = car;
+    }
+
     private static void Heartbeats(BenchScene s, PoolBenchOptions o, Stopwatch clock, double period, double pace, double phase, double measureFrom, double stopAt)
     {
         float dt = (float)period;
@@ -244,7 +295,10 @@ public static class PoolBench
             }
 
             // Keep the pile moving: every box hops once a second, a share of them each heartbeat, so the load is steady.
-            if (s.Heavy)
+            // A held drive key: the motor re-sent every heartbeat, as a key's repeat (every 0.1 s) about does at 11 Hz.
+            if (s.Car != null)
+                s.Car.VehicleVectorParam((int)Vehicle.LINEAR_MOTOR_DIRECTION, CarMotor);
+            else if (s.Heavy)
             {
                 int beatsPerSecond = Math.Max(1, (int)Math.Round(o.RateHz));
                 for (int i = (int)(beat % beatsPerSecond); i < s.Boxes.Count; i += beatsPerSecond)
@@ -260,6 +314,7 @@ public static class PoolBench
                 s.Heartbeats++;
                 s.HeartbeatMsTotal += ms;
                 if (ms > s.HeartbeatMsMax) s.HeartbeatMsMax = ms;
+                s.ActiveBodiesTotal += ActiveBodies(s.Scene);
                 if (!o.Unpaced && now - next > period)
                     s.Late++;
             }
@@ -279,6 +334,12 @@ public static class PoolBench
         typeof(JoltScene).GetField("_stepCount", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
     private static long StepCount(JoltScene scene) => StepCountField?.GetValue(scene) is long n ? n : 0;
+
+    private static readonly System.Reflection.FieldInfo ActiveBodyCountField =
+        typeof(JoltScene).GetField("_lastActiveBodyCount", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+    // The active bodies the scene's last physics step reported.
+    private static int ActiveBodies(JoltScene scene) => ActiveBodyCountField?.GetValue(scene) is int n ? n : 0;
 
     // The backend keeps the longest pool wait since the region started; zero it when measuring begins, so the warm-up's
     // (the pile's first collapse) is left out. Run on the scene's own heartbeat thread, the only one that writes it.
