@@ -526,7 +526,7 @@ public class ExperienceGrantRestoreTests
     }
 
     /// <summary>
-    /// SL wiki experience_permissions_denied, "When experience can no longer run": the grant ends, and the script is told
+    /// SL wiki experience_permissions_denied, "The experience can no longer run": the grant ends, and the script is told
     /// once with XP_ERROR_NOT_PERMITTED_LAND (17), at the start, not when its granter next moves.
     /// </summary>
     [Theory]
@@ -627,6 +627,43 @@ public class ExperienceGrantRestoreTests
         Assert.Equal(0, MaskOf(copy, item));
         Assert.True(Api(h, item).HasGrantClaim);   // still waiting for a seat or a wearer, as before
         NoPermissionEvents(h);
+    }
+
+    /// <summary>
+    /// A grant the land ended (its avatar entered a parcel where the Experience can no longer run) stays ended across a
+    /// real region stop (Scene.Close) and start: the row holds no grant, and the restored script holds none.
+    /// </summary>
+    [Fact]
+    public void AGrantTheLandEndedStaysEndedAfterARegionStopAndStart()
+    {
+        UUID owner = UUID.Random(), experience = UUID.Random(), visitor = UUID.Random(), asset = UUID.Random(), item = UUID.Random();
+        using (var h1 = new SchedulerHarness())
+        {
+            SetOwner(h1.Prim.ParentGroup, owner);
+            var estate = ExperienceWithdrawnTests.ChangingEstate.Create(experience, visitor, out IExperienceModule module);
+            h1.Scene.RegisterModuleInterface(module);
+            ScenePresence sp = SceneHelpers.AddScenePresence(h1.Scene, visitor);
+            var inv = TaskInventoryHelpers.AddScript(h1.Scene.AssetService, h1.Prim, item, asset, "game", Game);
+            inv.ExperienceID = experience;
+            Assert.True(h1.Prim.Inventory.CreateScriptInstance(item, 0, false, Phlox, RegionStart));
+            h1.Prim.ParentGroup.ResumeScripts();
+            Assert.True(h1.PumpUntil(() => h1.Said.Contains("entry")), SavedStateRig.SaidText(h1));
+            Command(h1, "xp " + visitor, "xp=" + visitor);
+
+            lock (estate.Allowed) estate.Allowed.Clear();
+            h1.Scene.EventManager.TriggerAvatarEnteringNewParcel(sp, 1, h1.Scene.RegionInfo.RegionID);
+            Assert.True(h1.PumpUntil(() => h1.Said.Contains("xpdenied=17")), SavedStateRig.SaidText(h1));
+            h1.PumpUntilIdle(TimeSpan.FromSeconds(2));
+            h1.StopRegionAsTheSimulatorDoes();
+        }
+        SerializedRuntimeState row = RowState(item);
+        Assert.Equal(0, row.GrantedPermsMask);
+        Assert.True(string.IsNullOrEmpty(row.PermsGranter), "the row holds a granter");
+        Assert.True(string.IsNullOrEmpty(row.PermsExperience), "the row notes an Experience");
+
+        using var h2 = Restart(owner, asset, item, experience);
+        Assert.Equal(Perms(0, UUID.Zero), Report(h2, item));
+        NoPermissionEvents(h2);
     }
 
     /// <summary>The older contract (no tag 29) reads a state this build writes: protobuf skips the unknown field.</summary>
