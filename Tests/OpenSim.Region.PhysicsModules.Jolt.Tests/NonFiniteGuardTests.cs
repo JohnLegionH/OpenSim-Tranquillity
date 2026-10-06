@@ -336,17 +336,4 @@ public class NonFiniteGuardTests
         var firstUse = body.IndexOf("_backend.", StringComparison.Ordinal);
         Assert.True(firstUse < 0 || guard < firstUse, "the guard must come before any backend call");
     }
-
-    [Fact]
-    public void ScenePresence_ignores_a_non_finite_or_zero_BodyRotation()
-    {
-        var sp = Src("Source", "OpenSim.Region.Framework", "Scenes", "ScenePresence.cs");
-        Assert.DoesNotContain("            Rotation = agentData.BodyRotation;\n", sp.Replace("\r\n", "\n"));
-        var at = sp.IndexOf("Rotation = agentData.BodyRotation;", StringComparison.Ordinal);
-        Assert.True(at >= 0, "the AgentUpdate BodyRotation assignment moved; this test is stale");
-        var line = sp[sp.LastIndexOf('\n', at)..at];
-        Assert.Contains("if (", line);
-        Assert.Contains("IsFinite", line);
-        Assert.Contains("LengthSquared()", line);
-    }
 }

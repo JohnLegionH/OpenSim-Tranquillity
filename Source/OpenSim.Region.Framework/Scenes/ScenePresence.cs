@@ -2703,7 +2703,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
 
         if (AllowMovement)
         {
-            if (float.IsFinite(agentData.BodyRotation.X + agentData.BodyRotation.Y + agentData.BodyRotation.Z + agentData.BodyRotation.W) && agentData.BodyRotation.LengthSquared() > 1e-8f) Rotation = agentData.BodyRotation;   // ignore a non-finite / zero viewer rotation
+            Rotation = agentData.BodyRotation;
 
             //m_log.LogDebug("[SCENE PRESENCE]: Initial body rotation {0} for {1}", agentData.BodyRotation, Name);
             bool update_movementflag = false;
