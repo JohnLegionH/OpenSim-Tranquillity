@@ -1408,10 +1408,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         public override float Simulate(float timeStep)
         {
-            if (_backend == null)
+            // Read once: a teardown on another thread nulls _backend, and may do so between a check and a second read.
+            IPhysicsBackend backend = _backend;
+            if (backend == null)
                 return 1f;
             NoteHeartbeatGap();
-            _backend.BeginRayCastBudget();   // [Jolt] RayCastBudgetMs is per heartbeat, at every PhysicsStepRate
+            backend.BeginRayCastBudget();   // [Jolt] RayCastBudgetMs is per heartbeat, at every PhysicsStepRate
             if (_substeps != null)
                 return SimulateSubsteps(timeStep);
 
