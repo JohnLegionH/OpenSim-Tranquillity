@@ -106,7 +106,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                    $"hoverHeight={_vehicle.GetFloatParam(VehFloatParam.HoverHeight):0.00}";
         }
 
-        // Vehicles: the backend-agnostic Halcyon controller + its Jolt seam. Created lazily on
+        // Vehicles: the backend-agnostic vehicle controller + its Jolt seam. Created lazily on
         // the first Vehicle* call; ACTIVE (stepped per-frame, body params applied) only while the
         // controller's type != NONE and the prim is physical. Setting TYPE_NONE destroys it (spec).
         private VehicleController _vehicle;
@@ -635,7 +635,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override bool SubscribedEvents() => _subscribedMs > 0;
 
         // Vehicles: forward the LSL wire params into the backend-agnostic controller. OpenSim's
-        // SOP hands us raw ints; the controller keeps the exact Halcyon routing/clamping. Setting a
+        // SOP hands us raw ints; the controller routes them as Halcyon did and holds each value to the
+        // region's VehicleSettings limits. Setting a
         // type registers with the scene's per-frame drive + applies the vehicle body params; setting
         // TYPE_NONE unwinds both and destroys the controller.
         public override int VehicleType
@@ -708,7 +709,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // Per-frame drive, called by JoltScene.Simulate BEFORE the physics step (the Jolt
-        // equivalent of BulletSim's BeforeStep event): snapshot the live body, run the Halcyon math,
+        // equivalent of BulletSim's BeforeStep event): snapshot the live body, run the controller,
         // which pushes velocity changes/forces/torques back through the backend for this step.
         internal void StepVehicle(float timeStep)
         {

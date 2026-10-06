@@ -8,7 +8,7 @@
 // The Jolt implementation of the neutral vehicle seam.
 //
 // JoltVehicleBody adapts one JoltPrim's live backend body to OpenSim.Region.PhysicsModules.Jolt.Vehicles.IVehicleBody so the
-// extracted Halcyon controller (VehicleController) can drive it without knowing Jolt exists.
+// vehicle controller (VehicleController) can drive it without knowing Jolt exists.
 // The BulletSim reference reads Force* properties LIVE from the engine; here BeginFrame() snapshots
 // the body state once per frame (nothing moves between controller reads - the controller runs
 // BEFORE the step), and every velocity WRITE updates the snapshot AND pushes through, preserving

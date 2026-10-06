@@ -12,7 +12,7 @@
  * OpenSim.Region.PhysicsModules.SharedBase.VehicleConstants so this assembly does not link
  * OpenSim. The values are the Second Life protocol constants and are frozen; keeping the enum
  * NAME "Vehicle" lets the controller's switches read the same as the InWorldz Halcyon vehicle
- * dynamics they follow. Hosts cast their int params to this enum.
+ * code they came from. Hosts cast their int params to this enum.
  */
 
 namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles

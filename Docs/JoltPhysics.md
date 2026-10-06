@@ -2,9 +2,10 @@
 
 The Jolt module is an optional physics engine for the region server, built on
 [Jolt Physics](https://github.com/jrouwe/JoltPhysics) through the joltc native library and the
-JoltPhysicsSharp binding. Each region gets its own Jolt physics system, and LSL vehicles run on the
-InWorldz Halcyon vehicle dynamics, with the motors, friction, gravity, hover, the vertical attractor,
-banking and deflection on Second Life's documented model (see "Vehicle motors and friction" below).
+JoltPhysicsSharp binding. Each region gets its own Jolt physics system, and LSL vehicles run on
+Second Life's documented vehicle model: the motors, friction, hover, the vertical attractor, banking
+and deflection (see "Vehicles" below). The vehicle types' earlier defaults, from the InWorldz Halcyon
+vehicle code, are kept behind `VehiclePresets = legacy`.
 
 This guide is for operators. It covers selecting Jolt, its settings, its console commands, and
 the platforms it runs on today.
@@ -191,8 +192,9 @@ a parked vehicle is not held still against it. It is limited by `BodyMaxLinearSp
 
 ## Vehicles
 
-LSL vehicles run on a controller ported from the InWorldz Halcyon vehicle code, with each behaviour
-on Second Life's documented model. Every behaviour is stepped as the exact solution over the step
+LSL vehicles run on a controller that steps each behaviour on Second Life's documented model. Its
+frame structure and parameter handling come from the InWorldz Halcyon vehicle code, whose type
+defaults remain available as `VehiclePresets = legacy`. Every behaviour is stepped as the exact solution over the step
 the engine takes, so a vehicle drives the same at the default heartbeat and at any
 `PhysicsStepRate`. The sections below give the model, the `[Jolt]` keys that govern vehicles, the
 known gaps against Second Life, and how to try a vehicle in the harness before a region.

@@ -13,7 +13,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <summary>Second Life's documented defaults, from the wiki page of each type (VEHICLE_TYPE_CAR and the rest).</summary>
         Documented,
 
-        /// <summary>The InWorldz Halcyon values the module used before the documented set existed.</summary>
+        /// <summary>The InWorldz Halcyon values, which the module used before the documented set existed; for vehicles
+        /// tuned against them.</summary>
         Legacy,
     }
 

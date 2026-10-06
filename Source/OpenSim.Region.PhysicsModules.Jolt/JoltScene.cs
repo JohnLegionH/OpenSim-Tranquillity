@@ -18,7 +18,7 @@
 //   - SetTerrain cooks the real (N+1)-square heightfield and swaps it in; SetWaterLevel
 //     pushes the water height to the backend.
 //   - Simulate rebuilds dirty linkset compounds, activates bodies created inert, runs the
-//     Halcyon vehicle controllers, steps the backend once per frame, then drains.
+//     vehicle controllers, steps the backend once per frame, then drains.
 // The batched-buffer drain (StepResult -> per-actor RequestPhysicsterseUpdate / collision dispatch)
 // IS here, at the tail of Simulate.
 //
@@ -1417,7 +1417,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // BulletSim draining ALL taints before PE.PhysicsStep().
             DrainPendingActivation();
 
-            // Run each active vehicle's Halcyon controller BEFORE the physics step, so its
+            // Run each active vehicle's controller BEFORE the physics step, so its
             // velocity changes/forces/torques are consumed by THIS step (BulletSim's BeforeStep model).
             LastTimeStep = timeStep;
             StepVehicles(timeStep);

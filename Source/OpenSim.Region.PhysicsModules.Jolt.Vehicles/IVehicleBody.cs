@@ -8,7 +8,7 @@
 /*
  * Backend-agnostic vehicle controller.
  *
- * IVehicleBody is the NEUTRAL seam between the extracted Halcyon vehicle math
+ * IVehicleBody is the NEUTRAL seam between the vehicle controller
  * (VehicleController) and whatever physics engine hosts the body. No engine
  * types cross this line in either direction.
  *

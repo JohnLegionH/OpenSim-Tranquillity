@@ -15,8 +15,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
     // =====================================================================
     // Float parameter keys — maps to Halcyon FloatParams enum.
     // We use our own enum rather than the OpenSim Vehicle enum because
-    // the Halcyon motor model needs per-axis vector timescales and
-    // additional parameters not in standard LSL.
+    // the controller keeps per-axis vector timescales and the additional
+    // parameters Halcyon defined, which are not in standard LSL.
     // =====================================================================
     public enum VehFloatParam
     {
@@ -43,7 +43,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
     }
 
     // =====================================================================
-    // Vector parameter keys — the Halcyon motor model uses per-axis vectors
+    // Vector parameter keys — the controller keeps per-axis vectors
     // for timescales, which gives much better vehicle behavior than BSDynamics'
     // scalar timescales.
     // =====================================================================

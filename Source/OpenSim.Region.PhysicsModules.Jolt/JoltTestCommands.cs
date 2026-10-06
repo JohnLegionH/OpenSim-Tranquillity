@@ -418,7 +418,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // Boat tests. `jolt boattest [linear|hover|attract|steer]` (default linear).
         // Each cooks a physics-only water basin if the region has no open water, rezzes a physical
-        // VEHICLE_TYPE_BOAT, drives ONE aspect of the extracted Halcyon controller and asserts it.
+        // VEHICLE_TYPE_BOAT, drives ONE aspect of the vehicle controller and asserts it.
         //   linear : held linear motor -> forward speed ramps to target
         //   hover  : settle from above, rise from below, hold at rest
         //   attract: tilt -> self-rights; yaw stays free
@@ -2020,7 +2020,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // vehicle surface (VehicleType / VehicleVectorParam) and reads state through the standard
         // getters (Position / Orientation / Velocity / RotationalVelocity / Mass), so the SAME code
         // runs under physics=BulletSim (-> BSDynamics) and physics=Jolt (-> the extracted
-        // OpenSim.Region.PhysicsModules.Jolt.Vehicles controller, the InWorldz Halcyon vehicle dynamics). The two
+        // OpenSim.Region.PhysicsModules.Jolt.Vehicles controller, Second Life's documented vehicle model). The two
         // engines use different vehicle math, so the capture compares boat behaviour end to end. Writes
         // parity-boat-<engine>.txt for a two-boot diff. Uses scene.PhysicsScene.SetTerrain to cook a
         // PHYSICS-ONLY water basin (for a region whose terrain sits above the water plane) - the scene

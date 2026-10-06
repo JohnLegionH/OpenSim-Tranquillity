@@ -3,9 +3,13 @@
  * Original Copyright (c) 2015, InWorldz Halcyon Developers
  * Adapted 2026 by Legion Builds
  *
- * A backend-agnostic vehicle controller. The vehicle math follows the Halcyon dynamics as
- * OpenSim's BulletSim vehicle code expresses them (same computations, same order, same
- * constants); the physics engine is reached only through IVehicleBody, per this table:
+ * A backend-agnostic vehicle controller. Each simulated behaviour follows Second Life's documented
+ * vehicle model (Linden_Vehicle_Tutorial and the llSetVehicle* pages of the SL wiki; each
+ * Simulate method names its source). The frame structure, the parameter routing and the legacy
+ * type presets come from the InWorldz Halcyon vehicle code, as OpenSim's BulletSim vehicle code
+ * expresses it; the legacy values are kept behind VehiclePresets = legacy (VehicleSettings).
+ * The physics engine is reached only through IVehicleBody, per this table (BulletSim's names
+ * on the left):
  *
  *   ControllingPrim.ForceOrientation            -> _body.Orientation
  *   ControllingPrim.ForceVelocity (get/set)     -> _body.LinearVelocity   (same read-back semantics)
@@ -33,8 +37,8 @@
  * anti-jitter, motor reset, stall detection, ground-penetration fix, the vehicle's gravity share, torque
  * accumulator). Not simulated: mouselook steering and wind.
  *
- * The linear and angular motors and friction follow Second Life's documented model rather than the
- * Halcyon formulas: see VehicleMotorSolver and SimulateLinearMotorAndFriction.
+ * The motors and friction are solved by VehicleMotorSolver, hover and the vertical attractor by
+ * VehicleSpring, each as the exact solution over the step the engine takes.
  *
  * One evaluation-order note: ApplyGravity's ground fudge test is written here as
  * `IsGroundVehicle && _body.HasCollision` (BulletSim: `HasSomeCollision && IsGroundVehicle`) so
@@ -51,7 +55,8 @@ using OpenMetaverse;
 namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 {
     /// <summary>
-    /// Halcyon-derived vehicle dynamics engine, backend-agnostic.
+    /// The vehicle controller, backend-agnostic: Second Life's documented vehicle behaviours, on a frame
+    /// structure derived from the Halcyon vehicle code.
     /// The host owns one instance per vehicle body and calls Step(dt) every frame BEFORE the
     /// physics step while the vehicle is active and physical.
     /// </summary>
@@ -320,7 +325,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     _props.ParamsVec[VehVectorParam.LinearMotorOffset] = pValue;
                     break;
                 case Vehicle.BLOCK_EXIT:
-                    // Not implemented in Halcyon — ignore
+                    // Not simulated; ignored, as Halcyon did
                     break;
             }
         }
@@ -337,7 +342,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     _props.ParamsRot[VehRotationParam.ReferenceFrame] = pValue;
                     break;
                 case Vehicle.ROLL_FRAME:
-                    // Not used in Halcyon — ignore
+                    // Not simulated; ignored, as Halcyon did
                     break;
             }
         }
@@ -363,7 +368,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         /// <summary>
         /// Called every physics frame by the host, BEFORE the engine step.
-        /// This is the main simulation entry point, equivalent to Halcyon VehicleDynamics.Simulate().
+        /// This is the main simulation entry point, in the place of Halcyon's VehicleDynamics.Simulate().
         /// </summary>
         public void Step(float pTimestep)
         {
@@ -619,7 +624,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         /// <summary>
         /// Called when VehicleLinearMotorDirection is set.
-        /// Faithfully ported from Halcyon VehicleMotor.MoveLinear().
+        /// Derived from Halcyon VehicleMotor.MoveLinear(); the decay restarts as Second Life documents it.
         /// </summary>
         private void MoveLinear(Vector3 direction)
         {
@@ -637,7 +642,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         /// <summary>
         /// Called when VehicleAngularMotorDirection is set.
-        /// Faithfully ported from Halcyon VehicleMotor.MoveAngular().
+        /// Derived from Halcyon VehicleMotor.MoveAngular(); the decay restarts as Second Life documents it.
         /// </summary>
         private void MoveAngular(Vector3 direction)
         {
@@ -678,7 +683,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         }
 
         /// <summary>
-        /// Reset all dynamics state. Ported from Halcyon VehicleMotor.ResetDynamics().
+        /// Reset all dynamics state. Derived from Halcyon VehicleMotor.ResetDynamics().
         /// </summary>
         private void ResetDynamics()
         {
@@ -1575,7 +1580,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         #endregion
 
-        #region Vehicle Type Defaults (ported from Halcyon SetVehicleDefaults)
+        #region Vehicle Type Defaults (documented, and legacy ported from Halcyon SetVehicleDefaults)
 
         /// <summary>
         /// Set all vehicle parameters to the defaults for the given type: the legacy (InWorldz Halcyon) values, and with

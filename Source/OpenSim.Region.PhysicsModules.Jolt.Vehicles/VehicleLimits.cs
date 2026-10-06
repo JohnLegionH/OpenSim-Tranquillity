@@ -19,8 +19,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 {
     /// <summary>
     /// Internal limits to various vehicle parameters.
-    /// Ported from Halcyon VehicleLimits. These constants were tuned for PhysX
-    /// and may need adjustment for BulletSim.
+    /// Ported from Halcyon VehicleLimits, where they were tuned for PhysX. The limits a
+    /// script's vehicle parameters are held to are per-region settings (VehicleSettings),
+    /// with these constants as their defaults.
     /// </summary>
     public static class VehicleLimits
     {
