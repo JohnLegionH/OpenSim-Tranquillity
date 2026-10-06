@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: t
-        run: echo "targets=$(jq -c '.targets' targets.json)" >> "$GITHUB_OUTPUT"
+        run: echo "targets=$(jq -c '[.targets[] | select(.skip != true)]' targets.json)" >> "$GITHUB_OUTPUT"
 
   server:
     needs: plan
@@ -94,6 +94,25 @@ jobs:
           ref: ${{ matrix.target.baseline_ref }}
           path: baseline
           fetch-depth: 1
+      - if: matrix.target.restore_ref != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.target.restore_repo }}
+          ref: ${{ matrix.target.restore_ref }}
+          path: restore
+          fetch-depth: 1
+      - name: put files of the restore tree back into the target
+        if: matrix.target.restore_ref != ''
+        env:
+          PATHS: ${{ matrix.target.restore_paths }}
+        run: |
+          for p in $PATHS; do cp "restore/$p" "target/$p"; echo "restored $p from $(git -C restore rev-parse HEAD): $(sha1sum < "target/$p")"; done
+      - name: lay files of the ci branch's overlay folder over the target
+        if: matrix.target.overlay_paths != ''
+        env:
+          PATHS: ${{ matrix.target.overlay_paths }}
+        run: |
+          for p in $PATHS; do cp "ci/overlay/$p" "target/$p"; echo "overlaid $p: $(sha1sum < "target/$p")"; done
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: target/global.json
@@ -117,6 +136,14 @@ jobs:
           EXPECT: ${{ join(matrix.target.expect, ' ') }}
           LABEL: ${{ matrix.target.name }}/${{ matrix.server.name }}
         run: bash ci/ci/run.sh
+      - name: repo tests
+        if: ${{ !cancelled() && matrix.target.tests != '' }}
+        env:
+          KIND: ${{ matrix.server.kind }}
+          ADMIN: ${{ matrix.server.kind == 'mysql' && 'Server=127.0.0.1;Port=3306;User ID=root;Password=ci-throwaway-pw;AllowPublicKeyRetrieval=true;Old Guids=true;' || 'Host=127.0.0.1;Port=5432;Username=opensim;Password=ci-throwaway-pw;' }}
+          TESTS_PROJECT: ${{ matrix.target.tests_project }}
+          TESTS: ${{ matrix.target.tests }}
+        run: bash ci/ci/tests.sh
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -150,6 +177,25 @@ jobs:
           ref: ${{ matrix.target.baseline_ref }}
           path: baseline
           fetch-depth: 1
+      - if: matrix.target.restore_ref != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.target.restore_repo }}
+          ref: ${{ matrix.target.restore_ref }}
+          path: restore
+          fetch-depth: 1
+      - name: put files of the restore tree back into the target
+        if: matrix.target.restore_ref != ''
+        env:
+          PATHS: ${{ matrix.target.restore_paths }}
+        run: |
+          for p in $PATHS; do cp "restore/$p" "target/$p"; echo "restored $p from $(git -C restore rev-parse HEAD): $(sha1sum < "target/$p")"; done
+      - name: lay files of the ci branch's overlay folder over the target
+        if: matrix.target.overlay_paths != ''
+        env:
+          PATHS: ${{ matrix.target.overlay_paths }}
+        run: |
+          for p in $PATHS; do cp "ci/overlay/$p" "target/$p"; echo "overlaid $p: $(sha1sum < "target/$p")"; done
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: target/global.json
@@ -166,6 +212,14 @@ jobs:
           EXPECT: ${{ join(matrix.target.expect, ' ') }}
           LABEL: ${{ matrix.target.name }}/sqlite
         run: bash ci/ci/run.sh
+      - name: repo tests
+        if: ${{ !cancelled() && matrix.target.tests != '' }}
+        env:
+          KIND: sqlite
+          ADMIN: ""
+          TESTS_PROJECT: ${{ matrix.target.tests_project }}
+          TESTS: ${{ matrix.target.tests }}
+        run: bash ci/ci/tests.sh
       - if: always()
         uses: actions/upload-artifact@v4
         with:

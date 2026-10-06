@@ -7,7 +7,14 @@
       "baseline_repo": "",
       "baseline_ref": "",
       "checks": "general",
-      "expect": []
+      "expect": [],
+      "restore_repo": "",
+      "restore_ref": "",
+      "restore_paths": "",
+      "tests_project": "",
+      "tests": "",
+      "overlay_paths": "",
+      "skip": true
     },
     {
       "name": "sit-target-state",
@@ -16,7 +23,61 @@
       "baseline_repo": "OpenSim-NGC/OpenSim-Tranquillity",
       "baseline_ref": "86b1824cc5fb2c7ec64219c24c391379496dcfb5",
       "checks": "general,sit",
-      "expect": ["RegionStore:prims.SitTargetActive"]
+      "expect": [
+        "RegionStore:prims.SitTargetActive"
+      ],
+      "restore_repo": "",
+      "restore_ref": "",
+      "restore_paths": "",
+      "tests_project": "",
+      "tests": "",
+      "overlay_paths": "",
+      "skip": true
+    },
+    {
+      "name": "pgsql-ban-red",
+      "repo": "JohnLegionH/OpenSim-Tranquillity",
+      "ref": "2e06c61871e76cb75bdccc144cf27bb737bd2b17",
+      "baseline_repo": "",
+      "baseline_ref": "",
+      "checks": "general",
+      "expect": [],
+      "restore_repo": "OpenSim-NGC/OpenSim-Tranquillity",
+      "restore_ref": "ecc858070a18d1242ab044b30fee0166149fc34c",
+      "restore_paths": "Source/OpenSim.Data.PGSQL/PGSQLEstateData.cs",
+      "tests_project": "Tests/OpenSim.Region.Framework.Tests/OpenSim.Region.Framework.Tests.csproj",
+      "tests": "FullyQualifiedName~EstateStoreListsRoundTripTests",
+      "overlay_paths": ""
+    },
+    {
+      "name": "pgsql-ban",
+      "repo": "JohnLegionH/OpenSim-Tranquillity",
+      "ref": "2e06c61871e76cb75bdccc144cf27bb737bd2b17",
+      "baseline_repo": "",
+      "baseline_ref": "",
+      "checks": "general",
+      "expect": [],
+      "restore_repo": "",
+      "restore_ref": "",
+      "restore_paths": "",
+      "tests_project": "Tests/OpenSim.Region.Framework.Tests/OpenSim.Region.Framework.Tests.csproj",
+      "tests": "FullyQualifiedName~EstateStoreListsRoundTripTests",
+      "overlay_paths": ""
+    },
+    {
+      "name": "pgsql-ban-resave",
+      "repo": "JohnLegionH/OpenSim-Tranquillity",
+      "ref": "2e06c61871e76cb75bdccc144cf27bb737bd2b17",
+      "baseline_repo": "",
+      "baseline_ref": "",
+      "checks": "general",
+      "expect": [],
+      "restore_repo": "",
+      "restore_ref": "",
+      "restore_paths": "",
+      "overlay_paths": "Tests/OpenSim.Region.Framework.Tests/Scenes/Tests/EstateStoreListsRoundTripTests.cs",
+      "tests_project": "Tests/OpenSim.Region.Framework.Tests/OpenSim.Region.Framework.Tests.csproj",
+      "tests": "FullyQualifiedName~EstateStoreListsRoundTripTests"
     }
   ],
   "known_develop_faults": [
