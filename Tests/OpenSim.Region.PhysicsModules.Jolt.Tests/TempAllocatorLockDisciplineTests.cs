@@ -115,8 +115,27 @@ public class TempAllocatorLockDisciplineTests
         // Step takes the pool gate and calls StepLocked, which holds the locks.
         var step = MethodBody(source, "StepResult StepLocked(");
         Assert.Contains("StepCharacter(", step);
-        Assert.Contains("lock (_simLock)", step);
+        AssertSimLockSpans(step, "StepCharacter(");
         Assert.Contains("lock (_characterGate)", step);
+    }
+
+    /// <summary>
+    /// StepLocked takes _simLock as `lock` does, but by hand so a wait for it can be timed: TryEnter, else Enter, then
+    /// a try whose finally exits it. <paramref name="call"/> must come after the lock is taken, inside that try, and
+    /// before the finally's Exit.
+    /// </summary>
+    private static void AssertSimLockSpans(string step, string call)
+    {
+        var tryEnterAt = step.IndexOf("Monitor.TryEnter(_simLock)", StringComparison.Ordinal);
+        var enterAt = step.IndexOf("Monitor.Enter(_simLock)", StringComparison.Ordinal);
+        var tryAt = step.IndexOf("try", Math.Max(tryEnterAt, enterAt), StringComparison.Ordinal);
+        var callAt = step.IndexOf(call, StringComparison.Ordinal);
+        var finallyAt = step.LastIndexOf("finally", StringComparison.Ordinal);
+        var exitAt = step.LastIndexOf("Monitor.Exit(_simLock)", StringComparison.Ordinal);
+        Assert.True(tryEnterAt >= 0 && enterAt > tryEnterAt, "StepLocked must take _simLock (TryEnter, else Enter)");
+        Assert.True(tryAt > enterAt && callAt > tryAt, $"{call} must be inside the try that holds _simLock");
+        Assert.True(finallyAt > callAt && exitAt > finallyAt, "_simLock must be released in a finally after " + call);
+        Assert.DoesNotContain("Monitor.Exit(_simLock)", step.Substring(0, finallyAt));   // not released early
     }
 
     /// <summary>
@@ -130,10 +149,16 @@ public class TempAllocatorLockDisciplineTests
         var step = MethodBody(source, "public StepResult Step(");
         var locked = MethodBody(source, "StepResult StepLocked(");
 
-        var gateAt = step.IndexOf("Monitor.Enter(pool.Gate)", StringComparison.Ordinal);
+        var gateAt = step.IndexOf("pool.Enter(", StringComparison.Ordinal);
         var callAt = step.IndexOf("StepLocked(", StringComparison.Ordinal);
         Assert.True(gateAt >= 0 && gateAt < callAt, "Step must take the pool gate before calling StepLocked");
+        Assert.Contains("pool?.Exit()", step.Substring(step.LastIndexOf("finally", StringComparison.Ordinal)));
+        // The pool's Enter blocks for the gate in both handoffs: the Monitor, or its ticket's turn.
+        var enter = MethodBody(source, "public bool Enter(out long waitTicks");
+        Assert.Contains("Monitor.Enter(Gate)", enter);
+        Assert.Contains("WaitForTurn(", enter);
         Assert.DoesNotContain("lock (_simLock)", step);
+        Assert.DoesNotContain("Enter(_simLock)", step);
         Assert.DoesNotContain(".Gate", locked);
         Assert.Equal(1, Regex.Matches(source, @"\bStepLocked\(pool,").Count);
     }
@@ -149,10 +174,7 @@ public class TempAllocatorLockDisciplineTests
 
         var step = MethodBody(source, "StepResult StepLocked(");   // Step's locked body
         Assert.Contains("_system.Update(", step);
-
-        var lockAt = step.IndexOf("lock (_simLock)", StringComparison.Ordinal);
-        var updateAt = step.IndexOf("_system.Update(", StringComparison.Ordinal);
-        Assert.True(lockAt >= 0 && lockAt < updateAt, "_system.Update must be inside the step's _simLock");
+        AssertSimLockSpans(step, "_system.Update(");
     }
 
     // ------------------------------------------------------------------ the rule that was already written down
