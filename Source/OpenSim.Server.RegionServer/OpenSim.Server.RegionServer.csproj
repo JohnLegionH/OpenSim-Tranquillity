@@ -75,6 +75,7 @@
     <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.POS/OpenSim.Region.PhysicsModules.POS.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.ubODE/OpenSim.Region.PhysicsModules.ubODE.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.ubODEMeshing/OpenSim.Region.PhysicsModules.ubODEMeshing.csproj" />
+    <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.Jolt/OpenSim.Region.PhysicsModules.Jolt.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Region.ScriptEngine.Shared/OpenSim.Region.ScriptEngine.Shared.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Region.ScriptEngine.YEngine/OpenSim.Region.ScriptEngine.YEngine.csproj" />
     <!-- Phlox flows to output like YEngine so its full dependency closure (InWorldz.Phlox,
@@ -97,6 +98,14 @@
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
     <PackageReference Include="Autofac" Version="9.3.2" />
     <PackageReference Include="Autofac.Extensions.DependencyInjection" Version="11.0.2" />
+
+    <!--
+      The Jolt physics module ships its own patched joltc under runtimes/<rid>/native/ and loads it from
+      there (see native/joltc/README.md). JoltPhysicsSharp depends on JoltPhysics.Native, the stock joltc,
+      and the backend's ExcludeAssets on that package does not reach this project, so this reference exists
+      only to exclude the stock natives here. With it, the output holds no joltc but the patched ones.
+    -->
+    <PackageReference Include="JoltPhysics.Native" Version="1.0.4" ExcludeAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
