@@ -123,6 +123,17 @@ public class JoltNativeTests
     }
 
     [Fact]
+    public void The_readme_hash_table_matches_the_record()
+    {
+        // The table under "The files in the repository" in native/joltc/README.md: one row per shipped file.
+        string readme = File.ReadAllText(Path.Combine(RepoRoot(), "native", "joltc", "README.md"));
+        var rows = Regex.Matches(readme, @"^\| `runtimes/([a-z0-9-]+)/native/([^`]+)` \| `([0-9a-f]{64})` \|", RegexOptions.Multiline)
+            .Select(m => (Rid: m.Groups[1].Value, File: m.Groups[2].Value, Sha256: m.Groups[3].Value.ToUpperInvariant()))
+            .OrderBy(x => x.Rid).ToArray();
+        Assert.Equal(JoltNative.Shipped.Select(kv => (kv.Key, kv.Value.File, kv.Value.Sha256)).OrderBy(x => x.Key).ToArray(), rows);
+    }
+
+    [Fact]
     public void An_unrecorded_native_is_refused_and_the_key_allows_it()
     {
         string dir = NewTempDir();

@@ -91,8 +91,9 @@ example linux-arm64 or osx) is one more entry in its matrix.
 
 ## The files in the repository
 
-These hashes are also recorded in `JoltNative.Shipped` and in `assert-patched-joltc.ps1`; a unit
-test checks all three against the files. Replacing a file means updating all three.
+These hashes are also recorded in `JoltNative.Shipped` and in `assert-patched-joltc.ps1`. Unit
+tests in `JoltNativeTests` check the files, this table and the script against `JoltNative.Shipped`.
+Replacing a file means updating all three.
 
 | File | SHA-256 |
 |---|---|
