@@ -51,6 +51,7 @@ public static class Program
   --threads N[,N..]          pool bench: [Jolt] ThreadCount values; 0 = the module's default (default 0)
   --heavy-boxes N            pool bench: boxes in the heavy scene, kept moving; 0 = no heavy scene (default 300)
   --heavy-car                pool bench: the heavy scene is the test car driving, its key held, instead of boxes
+  --heavy-scenes N           pool bench: heavy scenes, each its own (default 1)
   --light N                  pool bench: light scenes, bare ground (default 2)
   --seconds S                pool bench: seconds measured per combination, after a 2 s warm-up (default 20)
   --unpaced                  pool bench: heartbeats back to back instead of in real time
@@ -122,6 +123,7 @@ The summary table always goes to standard output. Nothing is written anywhere el
                 case "--threads": bench.Threads = Next().Split(',').Select(x => (int)NonNegativeDouble(x, a)).ToArray(); break;
                 case "--heavy-boxes": bench.HeavyBoxes = (int)NonNegativeDouble(Next(), a); break;
                 case "--heavy-car": bench.HeavyCar = true; break;
+                case "--heavy-scenes": bench.HeavyScenes = (int)PositiveDouble(Next(), a); break;
                 case "--light": bench.LightScenes = (int)NonNegativeDouble(Next(), a); break;
                 case "--seconds": bench.Seconds = PositiveDouble(Next(), a); break;
                 case "--unpaced": bench.Unpaced = true; break;
@@ -168,10 +170,18 @@ The summary table always goes to standard output. Nothing is written anywhere el
             if (physicsRateGiven)
                 bench.PhysicsRateHz = physicsRates[0];
             var lines = new StringBuilder().Append(PoolBenchResult.Header).Append('\n');
+            var sceneLines = new StringBuilder().Append(PoolBenchResult.SceneHeader).Append('\n');
             foreach (PoolBenchResult res in PoolBench.Run(bench, output))
+            {
                 lines.Append(res.Line()).Append('\n');
+                foreach (string l in res.SceneLines)
+                    sceneLines.Append(l).Append('\n');
+            }
             if (outDir != null)
+            {
                 File.WriteAllText(Path.Combine(outDir, "pool-bench.csv"), lines.ToString());
+                File.WriteAllText(Path.Combine(outDir, "pool-bench-scenes.csv"), sceneLines.ToString());
+            }
             return 0;
         }
 

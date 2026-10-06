@@ -33,6 +33,8 @@ public sealed class PoolBenchOptions
     public int HeavyBoxes = 300;
     /// <summary>The heavy scene is the test car driving instead of a pile of boxes.</summary>
     public bool HeavyCar;
+    /// <summary>How many heavy scenes, each its own pile (or car).</summary>
+    public int HeavyScenes = 1;
     public int LightScenes = 2;
     public double RateHz = 11.0;
     public double PhysicsRateHz = 45.0;
@@ -63,6 +65,11 @@ public sealed class PoolBenchResult
     public int ThreadsPerPool;
     /// <summary>The heavy scene's (or, with none, the light scene's) active bodies after each measured heartbeat, averaged.</summary>
     public double ActiveBodiesAvg;
+    /// <summary>One line per scene (<see cref="SceneHeader"/>).</summary>
+    public readonly List<string> SceneLines = new();
+
+    public const string SceneHeader =
+        "handoff,pools,threads,scene,pool,heartbeats,heartbeat_avg_ms,heartbeat_max_ms,pool_waits,pool_wait_ms_total,pool_wait_max_ms,pool_wait_ms_per_heartbeat,late_heartbeats";
 
     public const string Header =
         "handoff,pools,seconds,light_waits,light_wait_avg_ms,light_wait_max_ms,light_wait_ms_per_heartbeat," +
@@ -151,7 +158,11 @@ public static class PoolBench
         {
             // The heavy scene first, so it is given pool 0 and the light scenes are spread over the others.
             if (HasHeavy(o))
-                scenes.Add(new BenchScene { Name = "Heavy", Heavy = true, Scene = NewScene("Heavy", o, pools, handoff, threadCount) });
+                for (int i = 0; i < Math.Max(1, o.HeavyScenes); i++)
+                {
+                    string name = o.HeavyScenes > 1 ? $"Heavy {i + 1}" : "Heavy";
+                    scenes.Add(new BenchScene { Name = name, Heavy = true, Scene = NewScene(name, o, pools, handoff, threadCount) });
+                }
             for (int i = 0; i < o.LightScenes; i++)
                 scenes.Add(new BenchScene { Name = $"Light {i + 1}", Scene = NewScene($"Light {i + 1}", o, pools, handoff, threadCount) });
             foreach (BenchScene s in scenes.Where(s => s.Heavy))
@@ -191,18 +202,30 @@ public static class PoolBench
                 BenchScene counted = scenes[0];   // the heavy scene, or with none the first light one
                 r.ActiveBodiesAvg = counted.Heartbeats > 0 ? (double)counted.ActiveBodiesTotal / counted.Heartbeats : double.NaN;
             }
+            double heavyMsTotal = 0;
             foreach (BenchScene s in scenes)
             {
                 r.Heartbeats += s.Heartbeats;
                 r.LateHeartbeats += s.Late;
                 r.PhysicsSteps += s.StepsAtEnd - s.StepsAtStart;
                 double waitMs = s.End.UpdateGateWaitMsTotal - s.Start.UpdateGateWaitMsTotal;
+                long waits = s.End.UpdateGateWaits - s.Start.UpdateGateWaits;
+                r.SceneLines.Add(string.Join(",",
+                    handoff ? "on" : "off", pools.ToString(CultureInfo.InvariantCulture), s.End.JobThreadCount.ToString(CultureInfo.InvariantCulture),
+                    s.Name, s.End.PoolIndex.ToString(CultureInfo.InvariantCulture), s.Heartbeats.ToString(CultureInfo.InvariantCulture),
+                    (s.Heartbeats > 0 ? s.HeartbeatMsTotal / s.Heartbeats : 0).ToString("0.000", CultureInfo.InvariantCulture),
+                    s.HeartbeatMsMax.ToString("0.000", CultureInfo.InvariantCulture), waits.ToString(CultureInfo.InvariantCulture),
+                    waitMs.ToString("0.000", CultureInfo.InvariantCulture), s.End.UpdateGateWaitMsMax.ToString("0.000", CultureInfo.InvariantCulture),
+                    (s.Heartbeats > 0 ? waitMs / s.Heartbeats : 0).ToString("0.000", CultureInfo.InvariantCulture),
+                    s.Late.ToString(CultureInfo.InvariantCulture)));
                 if (s.Heavy)
                 {
-                    r.HeavyHeartbeats = s.Heartbeats;
-                    r.HeavyHeartbeatMsAvg = s.Heartbeats > 0 ? s.HeartbeatMsTotal / s.Heartbeats : double.NaN;
-                    r.HeavyHeartbeatMsMax = s.HeartbeatMsMax;
-                    r.HeavyPoolWaitMsTotal = waitMs;
+                    // Several heavy scenes: their heartbeats together.
+                    r.HeavyHeartbeats += s.Heartbeats;
+                    heavyMsTotal += s.HeartbeatMsTotal;
+                    r.HeavyHeartbeatMsAvg = r.HeavyHeartbeats > 0 ? heavyMsTotal / r.HeavyHeartbeats : double.NaN;
+                    r.HeavyHeartbeatMsMax = Math.Max(double.IsNaN(r.HeavyHeartbeatMsMax) ? 0 : r.HeavyHeartbeatMsMax, s.HeartbeatMsMax);
+                    r.HeavyPoolWaitMsTotal += waitMs;
                 }
                 else
                 {

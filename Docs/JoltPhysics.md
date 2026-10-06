@@ -535,6 +535,8 @@ line each: the light scenes' pool waits (count, average, longest, and per heartb
 scene's heartbeat time (average and longest, its own pool waits included) and pool wait per
 heartbeat, physics steps per second over all scenes, heartbeats that started more than a heartbeat
 late, the job threads and threads per pool, and the heavy scene's average active bodies.
-`--heavy-boxes 0 --light 1` times one bare scene on its own. `--unpaced` runs the
+`--heavy-boxes 0 --light 1` times one bare scene on its own. `--heavy-scenes N` runs N heavy scenes
+(default 1); the heavy columns then cover them together, and with `--out` the file
+`pool-bench-scenes.csv` gives each scene's pool, heartbeat time and pool waits. `--unpaced` runs the
 heartbeats back to back. Unlike the scenarios its figures are timings, so they depend on the machine
 and its load; with `--out` it writes `pool-bench.csv`.
