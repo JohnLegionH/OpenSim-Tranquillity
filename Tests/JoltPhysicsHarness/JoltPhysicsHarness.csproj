@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Offline physics harness for the Jolt module: builds a Jolt scene with no region, steps it through the
+       module's own Simulate at a chosen heartbeat rate, and writes a CSV trace and a summary per scenario.
+       Console tool, not an NUnit/xunit suite; not part of the grid runtime. The Jolt test project drives the
+       same scenarios as regression tests. Needs the native joltc, which the Jolt module's Content items copy
+       into the output under runtimes/<rid>/native/ (win-x64 and linux-x64). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>JoltPhysicsHarness</AssemblyName>
+    <RootNamespace>OpenSim.Region.PhysicsModules.Jolt.Harness</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Source\OpenSim.Region.PhysicsModules.Jolt.Backend\OpenSim.Region.PhysicsModules.Jolt.Backend.csproj" />
+    <ProjectReference Include="..\..\Source\OpenSim.Region.PhysicsModules.Jolt\OpenSim.Region.PhysicsModules.Jolt.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Keeps the stock joltc of JoltPhysics.Native out of this output; the module ships the patched one. -->
+    <PackageReference Include="JoltPhysics.Native" Version="1.0.4" ExcludeAssets="all" />
+  </ItemGroup>
+
+</Project>
