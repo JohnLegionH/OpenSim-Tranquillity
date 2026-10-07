@@ -62,6 +62,8 @@ The summary table always goes to standard output. Nothing is written anywhere el
     {
         try
         {
+            if (args.Length > 0 && args[0] == "--stress")
+                return Stress.Main(args[1..], Console.Out);
             return Run(args, Console.Out);
         }
         catch (ArgumentException e)

@@ -73,6 +73,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
         public static string SupportedList => string.Join(", ", Shipped.Keys);
 
+        /// <summary>
+        /// TEST-ONLY: accept an unrecorded native in every load, as if each caller passed allowUnrecorded = true. The
+        /// Jolt tests set it from JOLT_TEST_ACCEPT_UNRECORDED_NATIVE=1 (TestNativeOverride), so the whole suite can run
+        /// against another joltc build, such as the stock one of the JoltPhysics.Native package. Never set by the module.
+        /// </summary>
+        internal static bool AcceptUnrecordedForTest;
+
         private static readonly object s_gate = new object();
         private static JoltNativeInfo? s_loaded;
         private static IntPtr s_handle;
@@ -160,6 +167,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// </summary>
         public static JoltNativeInfo EnsureLoaded(bool allowUnrecorded)
         {
+            allowUnrecorded |= AcceptUnrecordedForTest;
             lock (s_gate)
             {
                 if (s_loaded != null)
