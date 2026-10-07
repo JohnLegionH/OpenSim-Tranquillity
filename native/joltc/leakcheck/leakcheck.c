@@ -14,6 +14,9 @@
  *   leakcheck novalidate <steps>  the same with the OnContactValidate slot empty
  *   leakcheck nolistener <steps>  no contact listener
  *   leakcheck restart <cycles>    whole systems (terrain + 100 boxes, 20 steps each) created and destroyed
+ *   leakcheck estimate <steps>    no validate callback; every added or persisted contact gets an impulse estimate
+ *                                 (JPH_EstimateCollisionResponse), freed at once, as the Jolt module does for a body
+ *                                 with a collision listener. Prints the resident set every 1000 steps.
  *
  * The scene: a pile of 100 dynamic boxes on a static floor (a height field in restart mode), a share of them
  * kicked upwards every step so they stay awake and keep colliding.
@@ -38,6 +41,33 @@ static void OnAdded(void* userData, const JPH_Body* body1, const JPH_Body* body2
 	const JPH_ContactManifold* manifold, JPH_ContactSettings* settings)
 {
 	(void)userData; (void)body1; (void)body2; (void)manifold; (void)settings;
+}
+
+static long s_estimates;
+
+static void OnAddedEstimate(void* userData, const JPH_Body* body1, const JPH_Body* body2,
+	const JPH_ContactManifold* manifold, JPH_ContactSettings* settings)
+{
+	(void)userData;
+	JPH_CollisionEstimationResult result;
+	memset(&result, 0, sizeof(result));
+	JPH_EstimateCollisionResponse(body1, body2, manifold, settings->combinedFriction, settings->combinedRestitution,
+		1.0f, 10, &result);
+	JPH_CollisionEstimationResult_FreeMembers(&result);
+	__atomic_add_fetch(&s_estimates, 1, __ATOMIC_RELAXED);
+}
+
+/* Resident set in KB, from /proc/self/statm (Linux). */
+static long ResidentKb(void)
+{
+	long pages = 0, resident = 0;
+	FILE* f = fopen("/proc/self/statm", "r");
+	if (f == NULL)
+		return -1;
+	if (fscanf(f, "%ld %ld", &pages, &resident) != 2)
+		resident = -1;
+	fclose(f);
+	return resident * 4;
 }
 
 static void OnRemoved(void* userData, const JPH_SubShapeIDPair* pair)
@@ -125,6 +155,8 @@ static void SceneCreate(Scene* s, int listener, int heightField)
 	}
 }
 
+static int s_traceResident;
+
 static void SceneStep(Scene* s, JPH_JobSystem* jobs, int steps)
 {
 	JPH_BodyInterface* bi = JPH_PhysicsSystem_GetBodyInterface(s->system);
@@ -134,6 +166,8 @@ static void SceneStep(Scene* s, JPH_JobSystem* jobs, int steps)
 		for (int i = k % 11; i < 100; i += 11)
 			JPH_BodyInterface_SetLinearVelocity(bi, s->ids[i], &kick);
 		JPH_PhysicsSystem_Update(s->system, 1.0f / 11.0f, 1, jobs);
+		if (s_traceResident && (k + 1) % 1000 == 0)
+			printf("RESIDENT step=%d kb=%ld estimates=%ld\n", k + 1, ResidentKb(), s_estimates);
 	}
 }
 
@@ -155,7 +189,7 @@ int main(int argc, char** argv)
 {
 	if (argc < 3)
 	{
-		fprintf(stderr, "usage: leakcheck validate|novalidate|nolistener|restart <count>\n");
+		fprintf(stderr, "usage: leakcheck validate|novalidate|nolistener|restart|estimate <count>\n");
 		return 2;
 	}
 	const char* mode = argv[1];
@@ -166,9 +200,11 @@ int main(int argc, char** argv)
 	JobSystemThreadPoolConfig config = { 2048, 8, 2 };
 	JPH_JobSystem* jobs = JPH_JobSystemThreadPool_Create(&config);
 
-	s_procs.OnContactValidate = strcmp(mode, "novalidate") == 0 || strcmp(mode, "restart") == 0 ? NULL : OnValidate;
-	s_procs.OnContactAdded = OnAdded;
-	s_procs.OnContactPersisted = OnAdded;
+	int estimate = strcmp(mode, "estimate") == 0;
+	s_traceResident = estimate;
+	s_procs.OnContactValidate = strcmp(mode, "validate") == 0 || strcmp(mode, "nolistener") == 0 ? OnValidate : NULL;
+	s_procs.OnContactAdded = estimate ? OnAddedEstimate : OnAdded;
+	s_procs.OnContactPersisted = estimate ? OnAddedEstimate : OnAdded;
 	s_procs.OnContactRemoved = OnRemoved;
 	JPH_ContactListener_SetProcs(&s_procs);
 
@@ -188,7 +224,7 @@ int main(int argc, char** argv)
 		SceneStep(&s, jobs, count);
 		SceneDestroy(&s);
 	}
-	printf("LEAKCHECK mode=%s count=%d validates=%ld\n", mode, count, s_validates);
+	printf("LEAKCHECK mode=%s count=%d validates=%ld estimates=%ld\n", mode, count, s_validates, s_estimates);
 
 	JPH_JobSystem_Destroy(jobs);
 	JPH_Shutdown();

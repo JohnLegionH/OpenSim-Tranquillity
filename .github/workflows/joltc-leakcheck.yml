@@ -81,7 +81,7 @@ jobs:
         run: |
           out="$RUNNER_TEMP/leakcheck-out"
           mkdir -p "$out"
-          for run in "validate 300" "novalidate 300" "nolistener 300" "restart 30"; do
+          for run in "validate 300" "novalidate 300" "nolistener 300" "restart 30" "estimate 300"; do
             set -- $run
             "$RUNNER_TEMP/leakcheck" "$1" "$2" > "$out/$1.txt" 2>&1
             echo "== $1 $2: $(grep -h '^LEAKCHECK' "$out/$1.txt")"
@@ -103,11 +103,25 @@ jobs:
           grep -q '^LEAKCHECK mode=validate' "$out/validate.txt"
           grep -q 'SUMMARY: AddressSanitizer' "$out/validate.txt"
           grep -q 'OnContactValidate' "$out/validate.txt"
-          for m in novalidate nolistener; do
+          for m in novalidate nolistener estimate; do
             grep -q "^LEAKCHECK mode=$m" "$out/$m.txt"
             if grep -q 'SUMMARY: AddressSanitizer' "$out/$m.txt"; then echo "$m leaked"; exit 1; fi
           done
-          echo "validate leaks in OnContactValidate; novalidate and nolistener leak nothing"
+          echo "validate leaks in OnContactValidate; novalidate, nolistener and estimate leak nothing"
+
+      # Without the sanitizer (its allocator keeps freed memory in quarantine): the resident set of a long run with an
+      # impulse estimate freed for every contact, every 1000 steps. A leak grows with the steps; glibc's per-thread
+      # arenas grow at first and then level off.
+      - name: Build joltc without the sanitizer and trace a long estimate run
+        run: |
+          cmake -S "$RUNNER_TEMP/joltc" -B "$RUNNER_TEMP/joltc/build-plain" -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE:String=Release -DJPH_SAMPLES=OFF -DCROSS_PLATFORM_DETERMINISTIC=ON
+          cmake --build "$RUNNER_TEMP/joltc/build-plain" --config Release --target joltc --parallel
+          lib=$(dirname "$(find "$RUNNER_TEMP/joltc/build-plain" -name 'libjoltc.so' -print -quit)")
+          gcc -O2 -g -I "$RUNNER_TEMP/joltc/include" -c "$GITHUB_WORKSPACE/repo/native/joltc/leakcheck/leakcheck.c" \
+            -o "$RUNNER_TEMP/leakcheck-plain.o"
+          g++ "$RUNNER_TEMP/leakcheck-plain.o" -L "$lib" -ljoltc -Wl,-rpath,"$lib" -o "$RUNNER_TEMP/leakcheck-plain"
+          "$RUNNER_TEMP/leakcheck-plain" estimate 12000 | tee "$RUNNER_TEMP/leakcheck-out/estimate-plain.txt"
 
       - name: Upload the reports
         if: always()
