@@ -50,6 +50,9 @@ public sealed class HarnessOptions
     /// rez leaves it with. When set, the key goes down one heartbeat later (the first heartbeat is the region's
     /// load, which keeps no horizontal velocity), so runs with and without a start speed are fed alike.</summary>
     public float? StartSpeed;
+    /// <summary>The clock the region's ray cast budgets are measured with; null is the wall clock. Tests pass one they
+    /// drive, so what the budgets refuse does not depend on the machine's load.</summary>
+    public TimeProvider RayCastClock;
     /// <summary>[Jolt] keys, as an operator would set them in the region's config.</summary>
     public readonly Dictionary<string, string> Jolt = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Vehicle params applied after the scenario's own, as llSetVehicle*Param calls would be.</summary>
@@ -1223,7 +1226,7 @@ public static class Harness
         if (o.PhysicsRateHz > 0)
             jolt.Set("PhysicsStepRate", o.PhysicsRateHz.ToString(CultureInfo.InvariantCulture));
 
-        var scene = new JoltScene();
+        var scene = new JoltScene { RayCastClock = o.RayCastClock };
         r.Scene = scene;
         scene.Initialise(config);
         scene.VehicleClock = () => ClockEpoch.AddTicks((long)Math.Round(r.Clock * TimeSpan.TicksPerSecond));

@@ -34,8 +34,11 @@ public class RayCastAndPushLimitTests
     private const RayFilterFlags AllTypes =
         RayFilterFlags.land | RayFilterFlags.agent | RayFilterFlags.physical | RayFilterFlags.nonphysical | RayFilterFlags.BackFaceCull;
 
+    // Every scene here measures its ray cast budgets on a clock the test drives, one microsecond a reading (a cast costs
+    // a few microseconds to a few hundred, as on a quiet machine), so no test depends on how fast the machine runs at
+    // the moment: a cast that is descheduled while it holds the region's lock would otherwise be charged that time.
     private static JoltScene NewScene(float physicsRate, params (string key, string value)[] keys)
-        => NewScene(physicsRate, (TimeProvider)null, keys);
+        => NewScene(physicsRate, new StepClock { Step = 1 }, keys);
 
     // rayClock: the clock the ray cast budgets are measured with (null: the wall clock).
     private static JoltScene NewScene(float physicsRate, TimeProvider rayClock, params (string key, string value)[] keys)
@@ -611,7 +614,8 @@ public class RayCastAndPushLimitTests
     [InlineData(45.0)]
     public void The_harness_measures_what_a_cast_costs(double physicsRate)
     {
-        RunResult r = Harness.Harness.Run(Harness.Harness.Find("raycast-cost"), new HarnessOptions { PhysicsRateHz = physicsRate });
+        RunResult r = Harness.Harness.Run(Harness.Harness.Find("raycast-cost"),
+            new HarnessOptions { PhysicsRateHz = physicsRate, RayCastClock = new StepClock { Step = 1 } });
         Summary m = r.Summary;
         Assert.Equal((long)Harness.Harness.RayCastsPerHeartbeat * m.Steps, m.RayCasts);
         Assert.Equal(0, m.RayCastsRefused);
