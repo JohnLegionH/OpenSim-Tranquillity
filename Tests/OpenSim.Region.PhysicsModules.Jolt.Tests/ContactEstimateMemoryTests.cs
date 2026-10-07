@@ -20,8 +20,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// EstimateCollisionResponse). joltc mallocs that estimate's per-point impulse array on every call, so the
 /// backend must free it. Memory is a process-wide figure, so the run happens in a child test process: a kicked pile
 /// of listening boxes, stepped for a long time. After a warm-up, private bytes are read (each after a forced
-/// collection) every few hundred steps, and the growth per step over the window must stay below a small limit.
-/// Unfreed, every listening contact report kept its array: about 34 KB per step for this pile.
+/// collection) every few hundred steps, and the median growth per step over those intervals must stay below a small
+/// limit. A leak grows every interval: unfreed, every listening contact report kept its array, about 34 KB per step
+/// for this pile. The median lets one interval hold a one-time rise: on Linux the C runtime's heap takes one step of a
+/// few MB part way through the run and then stays flat.
 /// </summary>
 public class ContactEstimateMemoryTests
 {
@@ -33,8 +35,8 @@ public class ContactEstimateMemoryTests
     private const int WindowSteps = 2000;
     private const int ReadEvery = 250;
 
-    // The limit on the growth per step over the window. Freed, the pile measures within a few hundred bytes of zero
-    // per step either way; unfreed, it grew about 34 KB per step.
+    // The limit on the median growth per step of the window's intervals. Freed, the pile measures within a few hundred
+    // bytes of zero per step either way; unfreed, it grew about 34 KB per step in every interval.
     private const long LimitBytesPerStep = 1024;
 
     private static PhysicsBackendSettings Settings() => new()
@@ -121,10 +123,12 @@ public class ContactEstimateMemoryTests
 
         RunPile(0, 200);   // warm the process: first-use growth lands here
         var (readings, reports) = RunPile(WarmUpSteps, WindowSteps);
-        long perStep = (readings[^1] - readings[0]) / WindowSteps;
+        long[] intervals = readings.Zip(readings.Skip(1), (a, b) => (b - a) / ReadEvery).Order().ToArray();
+        long median = (intervals[(intervals.Length - 1) / 2] + intervals[intervals.Length / 2]) / 2;
+        long overall = (readings[^1] - readings[0]) / WindowSteps;
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-            $"CONTACT-ESTIMATE-MEMORY bytes_per_step={perStep} reports={reports} window={WindowSteps} " +
-            $"readings_kb={string.Join(",", readings.Select(r => r / 1024))}"));
+            $"CONTACT-ESTIMATE-MEMORY median_bytes_per_step={median} overall_bytes_per_step={overall} reports={reports} " +
+            $"window={WindowSteps} readings_kb={string.Join(",", readings.Select(r => r / 1024))}"));
     }
 
 #if DEBUG
@@ -178,8 +182,8 @@ public class ContactEstimateMemoryTests
         // was taken.
         Assert.True(Value(line, "reports") > 10000, line);
 
-        long perStep = Value(line, "bytes_per_step");
-        Assert.True(perStep < LimitBytesPerStep,
-            $"private bytes grew {perStep} bytes per step over {WindowSteps} steps (limit {LimitBytesPerStep}): {line}");
+        long median = Value(line, "median_bytes_per_step");
+        Assert.True(median < LimitBytesPerStep,
+            $"private bytes grew a median {median} bytes per step over {WindowSteps / ReadEvery} intervals of {ReadEvery} steps (limit {LimitBytesPerStep}): {line}");
     }
 }
