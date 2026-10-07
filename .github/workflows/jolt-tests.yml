@@ -1,6 +1,6 @@
 # Builds the Jolt test project and runs the Jolt suite on Windows x64 and Linux x64, the platforms
-# the Jolt module ships its native for, in Debug and Release. Each job also checks the test output
-# with assert-patched-joltc.ps1: the patched natives under runtimes/<rid>/native/ and no other joltc.
+# this project tests the Jolt module's native on, in Debug and Release. Each job also checks the test
+# output with assert-patched-joltc.ps1: recorded natives under runtimes/<rid>/native/ and no other joltc.
 name: Jolt tests
 
 on:

@@ -587,6 +587,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public int PoolPeakInside;
         /// <summary>Whether the job pools hand over first come, first served ([Jolt] JobPoolFairHandoff; process-wide).</summary>
         public bool JobPoolFairHandoff;
+        /// <summary>The job pools the first region's settings asked for ([Jolt] JobPools, resolved); more than
+        /// <see cref="JobPools"/> when the loaded native allows only one pool.</summary>
+        public int JobPoolsRequested;
+        /// <summary>Why <see cref="JobPools"/> is below <see cref="JobPoolsRequested"/>, in words; null when it is not.</summary>
+        public string? JobPoolsLimitedBy;
         /// <summary>This region's steps that had to wait for the region's own lock, cumulative; and the total and
         /// longest of those waits, milliseconds.</summary>
         public long RegionLockWaits;
@@ -909,7 +914,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// <summary>
         /// How many Jolt job pools the process runs. Each pool runs ONE region's physics update at a time; regions
         /// are spread across the pools and ThreadCount is split between them. Process-wide; the first region's
-        /// value wins. 0 (an unset struct) means 1; otherwise clamped to [1, 64].
+        /// value wins. 0 (an unset struct) means 1; otherwise clamped to [1, 64]. A loaded native that is not safe for
+        /// more than one pool (<see cref="JoltNativeInfo.SafeForMultiplePools"/>) gets one pool whatever is asked.
         /// </summary>
         public int JobPools;
 
@@ -937,7 +943,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public const float JoltMaxAngularSpeed = 0.25f * MathF.PI * 60f;
 
         /// <summary>
-        /// Load a joltc whose SHA-256 is not one the module ships (see <see cref="JoltNative.Shipped"/>). Off by
+        /// Load a joltc whose SHA-256 is not one the module has a record of (see <see cref="JoltNative.Known"/>). Off by
         /// default: an unrecorded native is refused. Process-wide, checked when the first region loads the native.
         /// </summary>
         public bool AllowUnrecordedNative;

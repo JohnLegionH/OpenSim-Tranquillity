@@ -12,6 +12,7 @@
 // renders the `jolt capacity` read-out. Pure: no scene, no backend, no logger - so it is tested directly.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
 
@@ -83,6 +84,31 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             => $"{s.JobPools} pool{(s.JobPools == 1 ? "" : "s")} x {s.JobThreadsPerPool} worker thread{(s.JobThreadsPerPool == 1 ? "" : "s")} " +
                $"({JobThreadsHow(in s)}); one physics update at a time per pool (process-wide).";
 
+        /// <summary>The `jolt capacity` line on the pool count in use: as [Jolt] JobPools asked, or fewer and why.</summary>
+        internal static string PoolsInUse(in PhysicsCapacityStats s)
+            => s.JobPoolsLimitedBy == null
+                ? $"{s.JobPools}, as [Jolt] JobPools asks"
+                : $"{s.JobPools} of the {s.JobPoolsRequested} [Jolt] JobPools asks for: {s.JobPoolsLimitedBy}";
+
+        /// <summary>
+        /// The start-up warning when the loaded native runs fewer job pools than [Jolt] JobPools asks for: the setting,
+        /// the reason and the remedy. Null when it runs what is asked.
+        /// </summary>
+        internal static string JobPoolLimitWarning(int requested, JoltNativeInfo native)
+        {
+            string reason = JoltPhysicsBackend.JobPoolLimitReason(requested, native);
+            if (reason == null)
+                return null;
+            bool patchedKnown = JoltNative.Platforms.TryGetValue(native.Rid, out var platform) &&
+                JoltNative.Known.Any(b => b.Origin == JoltNativeOrigin.PatchedBuild && b.Folder == platform.Folder && b.File == platform.File);
+            string remedy = patchedKnown
+                ? $"To run more than one pool, replace runtimes/{platform.Folder}/native/{platform.File} with this project's patched build " +
+                  "(native/joltc/README.md); otherwise set [Jolt] JobPools = 1."
+                : $"This project has no patched build for {native.Rid}; set [Jolt] JobPools = 1.";
+            return $"[Jolt] JobPools = {JoltPhysicsBackend.ResolveJobPools(requested)}, but the module runs ONE job pool: {reason}. " +
+                   $"Regions take turns on that pool. {remedy}";
+        }
+
         /// <summary>The `jolt capacity` read-out: backend stats plus the scene's own buffers.</summary>
         internal static string Render(string region, in PhysicsCapacityStats s,
             int bodyBuf, long bodyOverflowFrames, int charBuf, long charFullFrames, int contactBuf, long contactOverflowFrames,
@@ -96,6 +122,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             sb.AppendLine($"  characters        {s.CharacterCount}");
             sb.AppendLine($"  contact ring      capacity={s.ContactRingCapacity} dropped={s.DroppedContacts} (cumulative)");
             sb.AppendLine($"  job pools         JobPools={s.JobPools} threadsPerPool={s.JobThreadsPerPool} (ThreadCount {s.JobThreadCount}; process-wide); {JobThreadsHow(in s)}");
+            sb.AppendLine($"  pools in use      {PoolsInUse(in s)}");
             sb.AppendLine($"  this region       pool={s.PoolIndex} waits={s.UpdateGateWaits} waitMs total={s.UpdateGateWaitMsTotal:0.0} max={s.UpdateGateWaitMsMax:0.0}; pool peakInside={s.PoolPeakInside}");
             sb.AppendLine($"  pool handoff      {(s.JobPoolFairHandoff ? "first come, first served ([Jolt] JobPoolFairHandoff = true)" : "default lock ([Jolt] JobPoolFairHandoff = false)")}");
             sb.AppendLine($"  region lock       waits={s.RegionLockWaits} waitMs total={s.RegionLockWaitMsTotal:0.0} max={s.RegionLockWaitMsMax:0.0} (steps that waited for this region's own lock, cumulative)");

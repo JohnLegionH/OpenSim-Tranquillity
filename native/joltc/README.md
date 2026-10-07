@@ -1,27 +1,58 @@
-# Patched joltc - how the Jolt module's native is made
+# joltc - the Jolt module's native, stock and patched
 
-The Jolt physics module (`Source/OpenSim.Region.PhysicsModules.Jolt`) needs a patched build of
-joltc, the C API over Jolt Physics that JoltPhysicsSharp binds to. The compiled files live in the
-module's `runtimes/<rid>/native/` folders. They are built by a GitHub Actions workflow,
-`.github/workflows/joltc-native.yml`, from pinned sources plus the patches in this folder, so
-anyone can rebuild them and check the result against the hashes below.
+The Jolt physics module (`Source/OpenSim.Region.PhysicsModules.Jolt`) runs on joltc, the C API over
+Jolt Physics that JoltPhysicsSharp binds to. By default it uses the stock joltc of the
+`JoltPhysics.Native` package that JoltPhysicsSharp 2.19.1 depends on: a build puts the package's
+files in the output under `runtimes/<rid>/native/`, and the module checks the file's hash against
+its record (`JoltNative.Known`) before loading it. On the stock joltc the module runs **one job
+pool** (`[Jolt] JobPools`), whatever the setting asks for.
 
-## Why the native is patched
+This folder also holds the recipe for a patched build of joltc, which is safe for more than one
+job pool. The compiled files are kept in the repository under the module's
+`runtimes/<rid>/native/` folders; no build copies them into an output. They are built by a GitHub
+Actions workflow, `.github/workflows/joltc-native.yml`, from pinned sources plus the patches in
+this folder, so anyone can rebuild them and check the result against the hashes below.
+
+## One job pool on the stock native, more on the patched one
+
+Every physics update runs on a job pool, and each pool admits one update at a time. Regions on one
+pool take turns; regions on different pools step at the same time.
 
 1. **One TempAllocator per physics system** (`per-system-tempallocator.patch`). Stock joltc gives
    every physics system the same process-global `TempAllocatorImpl`. That allocator is a LIFO
-   stack and is not thread-safe. With several regions stepping in parallel their frames interleave
-   on it and Jolt stops the process with `TempAllocator: Freeing in the wrong order` and
-   `std::abort()`. The managed backend (`JoltPhysicsBackend._simLock`) locks per region, so it
-   relies on each `JPH_PhysicsSystem` owning its own allocator. **Stock joltc with per-region locks
-   aborts as soon as two regions step at once.**
+   stack and is not thread-safe. With two regions stepping at the same time their frames
+   interleave on it and Jolt stops the process with `TempAllocator: Freeing in the wrong order`
+   and `std::abort()`. On one pool that cannot happen: every use of the allocator is inside a
+   physics update, under the pool's gate (`ShapeAndAllocatorRuleTests` checks this). With two or
+   more pools it can, so on the stock native the module runs one pool and logs a warning at start
+   when `[Jolt] JobPools` asks for more. The patched build gives each `JPH_PhysicsSystem` its own
+   allocator, so every pool may step at once.
 2. **A lock on the global map of systems** (`physics-systems-map-lock.patch`). joltc keeps every
    system in `s_PhysicsSystems`, a global map written by `JPH_PhysicsSystem_Create` and
-   `JPH_PhysicsSystem_Destroy` and read by the step-listener callback, with no lock. Regions start
-   and stop on different threads while others run, so two threads could change the map at once.
+   `JPH_PhysicsSystem_Destroy` and read by the step-listener callback, with no lock. The module
+   uses no step listener and serialises create and destroy itself
+   (`JoltPhysicsBackend.s_systemMapGate`), so this patch matters only to code that adds one.
 
 Neither patch changes an export name or signature: the patched native is a drop-in for the stock
 one under JoltPhysicsSharp 2.19.1.
+
+## Using the patched build
+
+An operator who wants more than one job pool replaces the stock file in the output with the
+patched build for the platform, under the same name:
+
+| Platform | Replace | With |
+|---|---|---|
+| win-x64 | `runtimes/win-x64/native/joltc.dll` | `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/win-x64/native/joltc.dll` |
+| linux-x64 | `runtimes/linux-x64/native/libjoltc.so` | `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/linux-x64/native/libjoltc.so` |
+
+(For a build or publish for one runtime identifier, the file sits beside the application's
+assemblies instead of under `runtimes/`; replace it there.) The module recognises the patched build
+by its hash: its start line says `patched build (native/joltc); safe for more than one job pool`,
+and `[Jolt] JobPools` takes effect. A rebuild of the output puts the stock file back, so replace
+the file again after each build. `assert-patched-joltc.ps1 -PublishDir <output> -RequirePatched`
+checks that the replacement is in place. There is no patched build for other platforms; they run
+one pool.
 
 ## Files
 
@@ -32,17 +63,19 @@ one under JoltPhysicsSharp 2.19.1.
 | `native/joltc/exports.txt` | The 1086 names the native must export, the same set as the stock natives of `JoltPhysics.Native 1.0.4` |
 | `native/joltc/list-exports.py` | Lists the exported names of a PE (`.dll`) or ELF (`.so`) file; with `--expect exports.txt` it checks them |
 | `.github/workflows/joltc-native.yml` | Builds the natives on GitHub's runners |
-| `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/win-x64/native/joltc.dll` | win-x64 build |
-| `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/linux-x64/native/libjoltc.so` | linux-x64 build |
-| `Source/OpenSim.Region.PhysicsModules.Jolt.Backend/JoltNative.cs` | Picks the file for the running platform, checks its hash against the table below and loads it |
-| `Source/OpenSim.Region.PhysicsModules.Jolt/assert-patched-joltc.ps1` | Checks that an output or publish directory holds the patched builds under `runtimes/<rid>/native/` and no other joltc |
+| `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/win-x64/native/joltc.dll` | win-x64 patched build (not copied by any build) |
+| `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/linux-x64/native/libjoltc.so` | linux-x64 patched build (not copied by any build) |
+| `Source/OpenSim.Region.PhysicsModules.Jolt.Backend/JoltNative.cs` | Picks the file for the running platform, checks its hash against the tables below and loads it |
+| `Source/OpenSim.Region.PhysicsModules.Jolt.Backend/JoltNative.targets` | Keeps the package's unused files (`joltc_double.dll`, Android) out of an application's output |
+| `Source/OpenSim.Region.PhysicsModules.Jolt/assert-patched-joltc.ps1` | Checks that an output or publish directory holds recorded joltc builds under `runtimes/<rid>/native/` and no other joltc; with `-RequirePatched`, the patched builds |
 
-The module's project copies `runtimes/<rid>/native/` into every output: all platforms for a build
-with no runtime identifier, only the target's folder for a build or publish for one runtime
-identifier. Nothing is copied to the output root. At start the module loads the file for the
-platform it runs on from that folder (`JoltNative`), so a portable build works on each supported
-platform. The stock `JoltPhysics.Native` package is excluded in every project that reaches the
-binding, so its files appear in no output.
+The `JoltPhysics.Native` package reaches every application that carries the module (the region
+server, the Jolt tests, the Jolt harness) through the backend's package reference. A build with
+no runtime identifier puts each platform's file under `runtimes/<rid>/native/` (macOS:
+`runtimes/osx/native/`, one file for both architectures); a build or publish for one runtime
+identifier puts that platform's file beside the application's assemblies. At start the module
+loads the file for the platform it runs on (`JoltNative`), from `runtimes/` first, so a portable
+build works on each supported platform.
 
 ## The recipe
 
@@ -91,17 +124,31 @@ example linux-arm64 or osx) is one more entry in its matrix.
 
 ## The files in the repository
 
-These hashes are also recorded in `JoltNative.Shipped` and in `assert-patched-joltc.ps1`. Unit
-tests in `JoltNativeTests` check the files, this table and the script against `JoltNative.Shipped`.
-Replacing a file means updating all three.
+These hashes are also recorded in `JoltNative.Known` (as patched builds, safe for more than one
+job pool) and in `assert-patched-joltc.ps1`. Unit tests in `JoltNativeTests` check the files, this
+table and the script against `JoltNative.Known`. Replacing a file means updating all three.
 
 | File | SHA-256 |
 |---|---|
 | `runtimes/win-x64/native/joltc.dll` | `961002617000c9f2da76b31b816b4185e04361114fb46a1ddc4c95d07fbef844` |
 | `runtimes/linux-x64/native/libjoltc.so` | `eead7c1aa7fdfac07132e26913e03b268dfd825ca72ffe6cec3a181da2ec95bb` |
 
-Stock `JoltPhysics.Native 1.0.4` win-x64 `joltc.dll` (must not be used with this module) has
-SHA-256 `67BECFC70CFBDA643AB9B75ABA895042900C3E339B001080BA4107E4929B0910`.
+## The stock files
+
+The files of the `JoltPhysics.Native` package the projects use, read from the package. All are
+recorded as not safe for more than one job pool. This project's tests and harness run on win-x64
+and linux-x64; the other platforms are recorded but not tested here, and the module logs a notice
+saying so when it starts on one. `JoltNativePackageTests` reads the restored package and fails
+when its files differ from this record, for example after a version bump, listing what to check
+before the new hashes are recorded.
+
+| Package | File | SHA-256 |
+|---|---|---|
+| `JoltPhysics.Native 1.0.4` | `win-x64/joltc.dll` | `67becfc70cfbda643ab9b75aba895042900c3e339b001080ba4107e4929b0910` |
+| `JoltPhysics.Native 1.0.4` | `linux-x64/libjoltc.so` | `5fc051708bdd05031a816796612a2f87e17ed32cc198f195a43b2305b3d990fd` |
+| `JoltPhysics.Native 1.0.4` | `win-arm64/joltc.dll` | `b0a7d05151a8e504765a39e23b2ec196b88b3bf2ce3e8b884161e6925e7578e4` |
+| `JoltPhysics.Native 1.0.4` | `linux-arm64/libjoltc.so` | `fde70508c826370b5cf6bb54c6ea9ceeab0c37c826bcd71579ebb9b4ac3e0d61` |
+| `JoltPhysics.Native 1.0.4` | `osx/libjoltc.dylib` | `39e4a8728307e48026d965d8ab661348a8808a9a2afddde6ce58272b37d83e91` |
 
 ## Check a file
 
@@ -124,7 +171,10 @@ It prints `1086 exported, 1086 expected, 0 missing, 0 extra` and exits 0 for a g
 A rebuild with a different compiler version gives a different hash. Then the export check, the Jolt
 test suite (`Tests/OpenSim.Region.PhysicsModules.Jolt.Tests`) with the new file in place, and a
 simulator with several regions whose log shows no `Freeing in the wrong order` or
-`AccessViolation` are the checks.
+`AccessViolation` are the checks. The module loads such a file only with
+`[Jolt] AllowUnrecordedNative = true`, and runs one job pool on it, since it cannot tell from the
+hash that the file has the per-system allocator; recording its hash in `JoltNative.Known` lifts
+both.
 
 ## What the patches change
 
