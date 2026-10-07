@@ -243,6 +243,11 @@ used as given. To get the behaviour from before the cap, every processor but one
 `ThreadCount` to the processor count less one. The startup log and `jolt capacity` give the pools,
 the threads per pool, and whether the count is automatic or set.
 
+The automatic count is per process: each region server process sizes its own pools, at most 4
+threads a pool, from the processor count. A host that runs many region server
+processes should set a lower `ThreadCount` in each, since small scenes run best on 1 or 2 threads
+(one moving body stepped in 0.5 ms on 1 or 2 threads, against 1.0 ms on 4; figures below).
+
 Why at most 4: a region's physics step is spread over its pool's threads, and past a few threads
 handing the work out and waking the threads costs more than they save. In the harness's pool
 benchmark on a 20-thread desktop processor, one step per heartbeat: a pile of 1000 moving boxes
