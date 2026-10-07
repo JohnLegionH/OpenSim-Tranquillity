@@ -188,7 +188,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             Interlocked.Exchange(ref _rayUsedTicksAll, 0);
         }
 
-        public long RayCastsRefused(RayCastBudget budget) => Interlocked.Read(ref BudgetState(budget).Refused);
+        public long RayCastsRefused(RayCastBudget budget)
+            => budget == RayCastBudget.None ? 0 : Interlocked.Read(ref BudgetState(budget).Refused);
 
         private RayBudgetState BudgetState(RayCastBudget budget)
             => _rayBudgets[budget == RayCastBudget.Script ? 0 : 1];
@@ -209,16 +210,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             lock (_simLock)
             {
                 if (_disposed) return 0;   // backend torn down (shutdown race) - no native call
-                RayBudgetState b = BudgetState(budget);
-                Interlocked.Increment(ref b.Casts);
-
-                long allowed = RayBudgetTicks(budget);
-                long used = Interlocked.Read(ref b.UsedTicks);
-                if (used >= allowed)
+                // RayCastBudget.None (the module's warm-up) is charged and counted nowhere.
+                RayBudgetState? b = budget == RayCastBudget.None ? null : BudgetState(budget);
+                long allowed = RayBudgetTicks(b == null ? RayCastBudget.Simulator : budget);
+                long used = 0;
+                if (b != null)
                 {
-                    Interlocked.Increment(ref b.Refused);
-                    status = RayCastStatus.Refused;
-                    return 0;
+                    Interlocked.Increment(ref b.Casts);
+                    used = Interlocked.Read(ref b.UsedTicks);
+                    if (used >= allowed)
+                    {
+                        Interlocked.Increment(ref b.Refused);
+                        status = RayCastStatus.Refused;
+                        return 0;
+                    }
                 }
 
                 long start = Stopwatch.GetTimestamp();
@@ -234,13 +239,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 int n = 0;
                 if (c.CutShort)
                 {
-                    Interlocked.Increment(ref b.CutShort);
+                    if (b != null)
+                        Interlocked.Increment(ref b.CutShort);
                     status = RayCastStatus.CutShort;
                 }
                 else
                 {
                     Span<NativeRayCastResult> kept = c.Kept.AsSpan(0, c.Count);
-                    kept.Sort(static (a, b) => a.Fraction.CompareTo(b.Fraction));
+                    SortByFraction(kept);
                     for (; n < kept.Length; n++)
                     {
                         NativeRayCastResult r = kept[n];
@@ -259,6 +265,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     }
                 }
 
+                if (b == null)
+                {
+                    // A sort of fewer than two hits never calls the comparer, so the warm-up sorts two of its own.
+                    Span<NativeRayCastResult> two = stackalloc NativeRayCastResult[2];
+                    two[0].Fraction = 1f;
+                    SortByFraction(two);
+                    return n;
+                }
+
                 long spent = Stopwatch.GetTimestamp() - start;
                 Interlocked.Add(ref b.UsedTicks, spent);
                 Interlocked.Add(ref b.TicksTotal, spent);
@@ -269,6 +284,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 return n;
             }
         }
+
+        private static void SortByFraction(Span<NativeRayCastResult> kept)
+            => kept.Sort(static (a, b) => a.Fraction.CompareTo(b.Fraction));
 
         private void FillRayCastStats(ref PhysicsCapacityStats s)
         {

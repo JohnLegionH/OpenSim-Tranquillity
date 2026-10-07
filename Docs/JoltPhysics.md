@@ -185,6 +185,14 @@ charged to the other. `RayCastMaxTestedHits` and `RayCastMaxHits` apply to every
 The two budgets together bound how long ray casts can hold the region's physics lock in one
 heartbeat: with the defaults, 10 ms plus the overrun of the casts in flight when each ran out.
 
+The first ray cast in a simulator process pays one-time costs (compiling the cast code, binding the
+native call, first use of the engine binding's filters): measured at 3-4 ms inside the module,
+against a few microseconds for a later cast. Charged to `RayCastSimulatorBudgetMs`, that would let
+the first landing casts after a start run the budget out. So when a region loads, the module makes
+a few casts of its own through the same code, charged to neither budget and not counted in
+`jolt capacity`, and logs `ray casts warmed up in N ms`: about 8 ms for the first region of a
+process, a few hundredths of a millisecond for each later one.
+
 What the script engines already limit before a cast reaches the module: both cap `RC_MAX_HITS`
 at 16 (OpenSim's asks the physics engine for twice that), and Phlox refuses fewer than 1. Neither
 limits the ray's length or how often a script casts.

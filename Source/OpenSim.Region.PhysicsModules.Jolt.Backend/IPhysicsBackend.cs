@@ -606,6 +606,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// casts that arrive without anything saying they are a script's
         /// (<see cref="PhysicsBackendSettings.RayCastSimulatorBudgetMs"/>).</summary>
         Simulator,
+        /// <summary>Charged to no budget and counted nowhere: the module's own warm-up casts when a region loads, which
+        /// pay the process's one-time costs of the cast path before the first real cast. Never refused; still cut
+        /// short at the simulator budget's time.</summary>
+        None,
     }
 
     /// <summary>One <see cref="RayCastBudget"/>'s counters, cumulative: casts made, refused and cut short, and the time

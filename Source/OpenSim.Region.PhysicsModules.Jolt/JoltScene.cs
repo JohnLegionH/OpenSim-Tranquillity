@@ -380,6 +380,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             base.Initialise(requestAsset, heightMap(), waterHeight());
 
             m_log.LogInformation($"{LogHeader} region '{RegionName}' {sizeX}x{sizeY}m: backend initialised, MaxBodies={settings.MaxBodies}. {EngineName}");
+
+            RayWarmUpMs = WarmUpRayCasts();
+            m_log.LogInformation($"{LogHeader} region '{RegionName}': ray casts warmed up in {RayWarmUpMs:0.00} ms.");
             if (_substeps != null)
                 m_log.LogInformation($"{LogHeader} region '{RegionName}': physics steps at {_substeps.RateHz:0.##} Hz " +
                                      $"({settings.CollisionSteps} collision steps each, at most {SubstepAccumulator.MaxStepsPerFrame} per heartbeat).");
@@ -1274,6 +1277,33 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // so every such cast goes to the simulator's budget. When the caller can mark a script cast (a flag set by
         // LSL_Api.llCastRay), this is the one place to send it to RayCastBudget.Script instead.
         internal static RayCastBudget BudgetFor(RayFilterFlags filter) => RayCastBudget.Simulator;
+
+        /// <summary>How long the warm-up casts took when this region loaded (ms).</summary>
+        internal double RayWarmUpMs { get; private set; }
+
+        // The first ray cast in a process pays one-time costs: the JIT of the cast path here and in the backend, the
+        // binding of the native cast call, and the first use of the binding's layer filter, surface normal and sort
+        // code. Measured on a Release build: about 3-4 ms inside the backend (4-8 ms in all) for the first cast and
+        // 0.2 ms for the second, against a few microseconds for every later one. The first casts after a start are the
+        // landing casts of the first login, charged to the simulator's budget ([Jolt] RayCastSimulatorBudgetMs), so
+        // they could run that budget out within one heartbeat. These casts pay the costs while the region loads,
+        // through the same path as a real cast (both entry points' filters, a hit on the terrain, a sort), charged to
+        // no budget and counted nowhere. The process pays them once: the first region's warm-up takes about 8 ms, a
+        // later region's about 0.02 ms.
+        private double WarmUpRayCasts()
+        {
+            long start = System.Diagnostics.Stopwatch.GetTimestamp();
+            var above = new Vector3(_regionSizeX * 0.5f, _regionSizeY * 0.5f, RayClipMaxZ - 1f);
+            var down = new Vector3(0f, 0f, -1f);
+            float length = RayClipMaxZ - RayClipMinZ;
+            for (int i = 0; i < 2; i++)
+            {
+                CastAll(above, down, length, 2, QueryFilter.Default, RayCastBudget.None, out _);
+                CastAll(above, down, length, 2, ToQueryFilter(RayFilterFlags.BackFaceCull | RayFilterFlags.PrimsNonPhantomAgents),
+                        RayCastBudget.None, out _);
+            }
+            return (System.Diagnostics.Stopwatch.GetTimestamp() - start) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        }
 
         // Second Life: "The random failures seem to happen if the ray begins or ends more than 8 meters outside of
         // current region bounds" (llCastRay). A ray is cut to the region widened by this much on each side, and to the
