@@ -16,7 +16,7 @@
  *
  * The registered type is JoltModule, which makes the JoltScene (the PhysicsScene) only when
  * [Startup] physics = Jolt, as ubODE splits ubODEModule from ODEScene. Under any other engine nothing
- * of Jolt runs or loads beyond this assembly (see JoltModule.cs).
+ * of Jolt runs (see JoltModule.cs).
  */
 
 using System.Reflection;

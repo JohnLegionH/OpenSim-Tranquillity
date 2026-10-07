@@ -62,15 +62,14 @@ Jolt is chosen per simulator in `[Startup]`, and it needs the Meshmerizer mesher
     meshing = Meshmerizer
 ```
 
-- With any other `physics` value, or none, the module does nothing for any region. Its assembly
-  is loaded (the host loads every plugin assembly to find its modules), and nothing more: the
-  native is not loaded or hashed, so a missing native, an unrecognised one or a platform with
-  none (Arm64, macOS) makes no difference; no `[Jolt]` key is read, so a missing or invalid
-  `[Jolt]` section is not reported; no job pool, thread or timer starts; no `jolt` console
-  command is registered, test commands included; the module logs nothing; and the backend,
-  vehicle and JoltPhysicsSharp assemblies are not loaded. The host's own debug lines still name
-  the module (`[REGIONMODULES]` finding it and adding each region to it); `[Modules]
-  Setup_JoltPhysicsScene = disabled` stops the host from making the module at all.
+- With any other `physics` value, or none, the module does nothing for any region: the native
+  is not loaded or hashed, so a missing native, an unrecognised one or a platform with none
+  (Arm64, macOS) makes no difference; no `[Jolt]` key is read, so a missing or invalid `[Jolt]`
+  section is not reported; no job pool, thread or timer starts; no `jolt` console command is
+  registered, test commands included; and the module logs nothing. The host itself still loads
+  the Jolt assemblies, as it loads every plugin assembly in its folder to look for modules, and
+  its own debug lines name the module (`[REGIONMODULES]` finding it and adding each region to
+  it).
 - `physics` is read from the simulator's configuration, as every engine reads it, so all the
   regions of one simulator run the same engine.
 - With `physics = Jolt` and any `meshing` other than `Meshmerizer`, the module logs that meshing

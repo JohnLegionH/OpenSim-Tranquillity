@@ -7,13 +7,16 @@
 
 // The region module the host loads for Jolt (see PluginRegistration.cs).
 //
-// The region module controller makes one instance of every registered non-shared module for every region and calls
-// Initialise, AddRegion, RegionLoaded, RemoveRegion and Close on it, whatever [Startup] physics names. This module
-// reads [Startup] physics and nothing else; unless it names Jolt, every call returns at once. It then never makes a
-// JoltScene, so the native is not loaded or hashed, no [Jolt] key is read, no job pool or thread starts, no console
-// command is registered and nothing is logged, and the backend, vehicle and binding assemblies are not loaded.
-// With physics = Jolt it makes the JoltScene and hands every call to it. ubODE splits its module the same way:
-// ubODEModule makes its ODEScene only when selected (Source/OpenSim.Region.PhysicsModules.ubODE/ODEModule.cs, AddRegion).
+// The host makes one instance of every non-shared region module for every region: its plugin discovery takes the
+// registered type and every other class that implements INonSharedRegionModule (IPluginDiscovery.cs,
+// GetExtensionNodes), and the region module controller calls Initialise, AddRegion, RegionLoaded, RemoveRegion and
+// Close on each, whatever [Startup] physics names. This module reads [Startup] physics and nothing else; unless it
+// names Jolt, every call returns at once. It then never makes a JoltScene, so the native is not loaded or hashed, no
+// [Jolt] key is read, no job pool or thread starts, no console command is registered and nothing is logged.
+// With physics = Jolt it makes the JoltScene and hands every call to it. JoltScene takes them through IJoltRegion
+// rather than INonSharedRegionModule, so discovery does not make a second Jolt module for each region.
+// ubODE splits its module the same way: ubODEModule makes its ODEScene only when selected
+// (Source/OpenSim.Region.PhysicsModules.ubODE/ODEModule.cs, AddRegion).
 
 using System.Runtime.CompilerServices;
 using Nini.Config;
@@ -29,7 +32,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // The scene, made in Initialise only when Jolt is selected. Typed as the interface so that this class does
         // not refer to JoltScene's fields, and loading it loads none of the assemblies JoltScene needs.
-        private INonSharedRegionModule m_scene;
+        private IJoltRegion m_scene;
 
         public string Name => EngineName;
 
@@ -43,14 +46,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (!Selected(source))
                 return;
-            INonSharedRegionModule scene = MakeScene();
+            IJoltRegion scene = MakeScene();
             scene.Initialise(source);   // throws, with its one clear error line, when the native or meshing is unusable
             m_scene = scene;
         }
 
         // Kept out of Initialise so that compiling Initialise does not load JoltScene.
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private static INonSharedRegionModule MakeScene() => new JoltScene();
+        private static IJoltRegion MakeScene() => new JoltScene();
 
         public void AddRegion(Scene scene) => m_scene?.AddRegion(scene);
 
@@ -59,5 +62,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public void RemoveRegion(Scene scene) => m_scene?.RemoveRegion(scene);
 
         public void Close() => m_scene?.Close();
+    }
+
+    /// <summary>The region module calls JoltModule hands to the JoltScene it made.</summary>
+    internal interface IJoltRegion
+    {
+        void Initialise(IConfigSource source);
+        void AddRegion(Scene scene);
+        void RegionLoaded(Scene scene);
+        void RemoveRegion(Scene scene);
+        void Close();
     }
 }

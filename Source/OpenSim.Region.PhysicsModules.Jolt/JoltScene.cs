@@ -48,7 +48,7 @@ using SQuaternion = System.Numerics.Quaternion;
 
 namespace OpenSim.Region.PhysicsModules.Jolt
 {
-    public sealed partial class JoltScene : PhysicsScene, INonSharedRegionModule
+    public sealed partial class JoltScene : PhysicsScene, IJoltRegion
     {
         internal static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
         internal const string LogHeader = "[JOLT SCENE]";
@@ -234,7 +234,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private long _bodyOverflowFrames, _charFullFrames, _contactOverflowFrames;
 
         // ---------------------------------------------------------------------
-        // INonSharedRegionModule
+        // The region module calls, made by JoltModule (IJoltRegion). JoltScene is not itself a region module: the
+        // host's plugin discovery makes every class that implements one, and it must make only JoltModule.
         // ---------------------------------------------------------------------
 
         public string Name => "Jolt";

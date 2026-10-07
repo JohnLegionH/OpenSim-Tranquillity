@@ -188,6 +188,28 @@ public class NotSelectedTests
         Assert.True(list.Count == 0, "logged: " + string.Join(" | ", list));
     }
 
+    // ------------------------------------------------------------------ what the host makes
+
+    [Fact]
+    public void The_hosts_discovery_finds_one_Jolt_region_module()
+    {
+        // The region module controller's own discovery, over this test's output folder: it takes the registered
+        // modules and every other class that implements a region module interface, and makes one of each per region.
+        // A second Jolt module would be a second Jolt scene in every region on Jolt.
+        string dir = Path.GetDirectoryName(typeof(JoltScene).Assembly.Location);
+        using var discovery = new DotNetCorePluginsDiscovery(Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+        discovery.Initialize(dir);
+        for (int call = 0; call < 2; call++)   // the first call reflects; later calls also take the registrations
+        {
+            var jolt = discovery.GetExtensionNodes("/OpenSim/RegionModules", typeof(IRegionModuleBase))
+                .Where(n => n.Type.Assembly.GetName().Name.StartsWith("OpenSim.Region.PhysicsModules.Jolt", StringComparison.Ordinal))
+                .ToList();
+            var node = Assert.Single(jolt);
+            Assert.Equal("OpenSim.Region.PhysicsModules.Jolt.JoltModule", node.TypeName);
+            Assert.True(typeof(INonSharedRegionModule).IsAssignableFrom(node.Type));
+        }
+    }
+
     // ------------------------------------------------------------------ A1: the native
 
     [Theory]
