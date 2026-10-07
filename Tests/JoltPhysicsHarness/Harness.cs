@@ -348,6 +348,8 @@ public sealed class Run
     public readonly List<PhysicsActor> AlsoDriven = new();
 
     public static readonly Vector3 AvatarSize = new(0.45f, 0.6f, 1.9f);   // the default appearance's box
+    /// <summary>How far an avatar's capsule centre stands above what it stands on.</summary>
+    public float AvatarStandHalf => JoltCharacter.StandHalfFor(AvatarSize);
     private const uint ActorLocalId = 1000;
     private const uint OtherLocalId = 1001;
 
@@ -381,10 +383,16 @@ public sealed class Run
         return AddBox(size, new Vector3(x, y, GroundAt(x, y) + size.Z * 0.5f + lift + 0.02f), rotation);
     }
 
+    /// <summary>An avatar arriving standing on the terrain at (x, y): the capsule centre the simulator asks for
+    /// at a login on open ground, the terrain's stand height plus 1 cm.</summary>
     public PhysicsActor AddAvatar(float x, float y)
+        => AddAvatarAt(new Vector3(x, y, GroundAt(x, y) + AvatarStandHalf + 0.01f), false);
+
+    /// <summary>An avatar arriving with its capsule centre at <paramref name="position"/>, as ScenePresence hands
+    /// it to AddAvatar at login, teleport, a region crossing or standing up.</summary>
+    public PhysicsActor AddAvatarAt(Vector3 position, bool flying)
     {
-        // CreateAvatar seats the capsule on the terrain at (x, y), as at login.
-        PhysicsActor pa = Scene.AddAvatar(ActorLocalId, "Test User", new Vector3(x, y, GroundAt(x, y) + 2f), AvatarSize, 0f, false);
+        PhysicsActor pa = Scene.AddAvatar(ActorLocalId, "Test User", position, AvatarSize, 0f, flying);
         Actor = pa;
         ActorSize = AvatarSize;
         return pa;
@@ -503,6 +511,17 @@ public static class Harness
     private static readonly Quaternion North = Quaternion.CreateFromEulers(0f, 0f, MathF.PI / 2f);
     private const float AvatarWalk = 4.096f;   // ScenePresence.AgentControlNormalVel at speed modifier 1
     public const float PushAvatarSpeed = 6f;     // push-avatar: the speed its one push gives
+    public const float PlatformHeight = 3f;      // avatar-platform: the platform's top above the ground
+    public const float PlatformDrop = 3f;        // avatar-platform-drop: the arrival's height above the platform
+
+    /// <summary>The avatar-platform platform: a fixed 4 x 4 x 0.5 m box centred on (170, 60), its top
+    /// <see cref="PlatformHeight"/> above the ground. Returns the top's height.</summary>
+    public static float AddPlatform(Run r)
+    {
+        float top = r.GroundAt(170f, 60f) + PlatformHeight;
+        r.AddOtherBox(new Vector3(4f, 4f, 0.5f), new Vector3(170f, 60f, top - 0.25f), Quaternion.Identity, false);
+        return top;
+    }
     public const int RayRowBoxes = 400;          // raycast-cost
     public const int RayCastsPerHeartbeat = 50;
 
@@ -782,6 +801,22 @@ public static class Harness
             DefaultDuration = _ => 10f,
             Setup = r => r.AddAvatar(128f, 70f),
             Steady = (r, s) => s.T >= 1.0,
+        },
+        new()
+        {
+            Name = "avatar-platform",
+            Description = "An avatar arrives standing on a fixed 4 x 4 x 0.5 m platform whose top is 3 m above level ground (170, 60), and stands 10 s.",
+            DefaultDuration = _ => 10f,
+            Setup = r => r.AddAvatarAt(new Vector3(170f, 60f, AddPlatform(r) + r.AvatarStandHalf), false),
+            Steady = (r, s) => s.T >= 1.0,
+        },
+        new()
+        {
+            Name = "avatar-platform-drop",
+            Description = "An avatar, not flying, arrives 3 m above the avatar-platform platform, falls and lands on it.",
+            DefaultDuration = _ => 10f,
+            Setup = r => r.AddAvatarAt(new Vector3(170f, 60f, AddPlatform(r) + PlatformDrop + r.AvatarStandHalf), false),
+            Steady = (r, s) => s.T >= 3.0,
         },
         new()
         {

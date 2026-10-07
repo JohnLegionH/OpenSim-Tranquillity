@@ -270,6 +270,15 @@ Watching the pools:
 - The harness's `--pool-bench` (see "Physics harness") measures waits and step times for a heavy
   region sharing pools with light ones, for any `JobPools` and handoff.
 
+## Arriving avatars
+
+An avatar's physics body is made at login, at a teleport, when it arrives from another region or
+crosses a border, and when it stands up from a seat or a vehicle. Jolt puts it at the position the
+simulator gives, as BulletS and ubODE do: on a prim platform it stands on the platform, in the air it
+falls (or stays, when flying) until it lands on what is below. Flying and velocity are kept as given.
+The one correction: a position that would put the body below the terrain is lifted to stand on the
+terrain. An arriving avatar is never moved down.
+
 ## Vehicles
 
 LSL vehicles run on a controller that steps each behaviour Second Life documents on that documented
@@ -525,7 +534,9 @@ Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, t
 `testcar` (the same with linear friction `<1,1,1000>`, motor timescale 1 and decay 0.5),
 `carturn` (the car with angular motor `<0,0,1>` held with the forward key),
 `sled`, `boat`, `airplane` and `balloon` (each type's presets in one basic motion),
-`avatar-stand`, `avatar-walk` and `avatar-jump`, and `drop` (a 1 m box from 5 m);
+`avatar-stand`, `avatar-walk`, `avatar-jump`, `avatar-platform` (an avatar arriving on a fixed platform
+3 m above the ground) and `avatar-platform-drop` (arriving 3 m above it, landing on it), and `drop`
+(a 1 m box from 5 m);
 `testcar-down` and `car-down` (key held down the ramp), `hover`, `attract-roll` and `attract-pitch`
 (one behaviour alone), `park-new`, `park-faded`, `park-drive`, `park-car` and `park-wake` (sleeping), and
 `crash-wall`, `crash-box`, `crash-headon` and `crash-drop`, `rollonly` (a car rolled and pitched with

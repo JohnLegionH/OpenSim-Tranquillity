@@ -678,9 +678,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // Report each logged-in avatar's CharacterVirtual state - position, IsSupported, ground normal/body,
-        // capsule dims - and assert it spawned ON the terrain (supported, not sinking, capsule centre ~
-        // terrainZ + StandHalf at the spawn XY), not at NaN or underground. Run it right after login, and
-        // again after walking somewhere to confirm position tracks and IsSupported stays true on the flat.
+        // capsule dims - and assert it stands on what is under it (supported, not sinking: on the terrain, capsule
+        // centre ~ terrainZ + StandHalf, or on a prim, the ground body), not at NaN or underground. Run it right
+        // after login, and again after walking somewhere to confirm position tracks and IsSupported stays true.
         private void AvatarStatus(IPhysicsBackend backend)
         {
             System.Collections.Generic.List<JoltCharacter> avs;
@@ -705,6 +705,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 string verdict = nan ? "FAIL: NaN position"
                     : a.Flying ? "flying (gravity off - ground checks N/A)"
                     : (a.IsSupported && !float.IsNaN(dZ) && MathF.Abs(dZ) < 0.5f) ? "PASS: supported, seated on terrain"
+                    : (a.IsSupported && a.GroundBody.IsValid && !float.IsNaN(dZ) && dZ > -0.5f) ? "PASS: supported, standing on a prim above the terrain"
                     : !a.IsSupported ? "off: not supported (in the air / falling)"
                     : "OFF: supported but not at terrain height (check dZ)";
 
@@ -713,7 +714,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 MainConsole.Instance.Output($"        capsule: halfHeight={a.CapsuleHalfHeight:0.000} radius={a.CapsuleRadius:0.000} standHalf={a.StandHalf:0.000} feetOffset={a.FeetOffset:0.000}");
                 MainConsole.Instance.Output($"        terrainZ={terrainZ:0.000} expectedCentreZ={expectedCentre:0.000} dZ={dZ:0.000}  [{verdict}]");
             }
-            MainConsole.Instance.Output($"  PASS = supported=Y, not NaN, |dZ|<0.5 (capsule centre ~ terrain + standHalf). After walking: pos tracks, supported stays Y on flat terrain.");
+            MainConsole.Instance.Output($"  PASS = supported=Y, not NaN, |dZ|<0.5 (capsule centre ~ terrain + standHalf), or supported=Y on a prim (groundBody=body(..)) above the terrain. After walking: pos tracks, supported stays Y on flat terrain.");
         }
 
         // `jolt reloadcheck`: after a region reload, print each
@@ -931,15 +932,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (backend == null)
                 return PhysicsActor.Null;
 
-            // Spawn ON the terrain. Read the terrain height at the login XY (see THREAD SAFETY below) and seat
-            // the capsule so its FEET rest on the surface, so the avatar does not spawn underground.
-            // If no terrain height is available (e.g. login off-region), fall back to the incoming Z.
+            // Put the avatar where the simulator asks. ScenePresence has already chosen the height: on the
+            // ground, on a prim its landing ray found (MakeRootAgent), on a seat's stand point (StandUp), or in
+            // the air for a teleport or crossing in the air. BulletS (BSCharacter) and ubODE (OdeCharacter) take
+            // that position as given, and so does this. Login, teleport, region crossing and standing up all
+            // arrive here, as ScenePresence.AddToPhysicalScene.
             //
-            // Seat Z (avatar root = capsule centre) = groundZ + StandHalf + feetOffset: OpenSim's avatar
-            // root is the body centre, and the visual feet sit StandHalf + feetOffset below it. Omitting
-            // feetOffset would sink the avatar by exactly that gap, so the feet would clip INTO terrain.
+            // The one correction: a position that would put the body below the terrain is lifted to stand on
+            // it, so an avatar never starts underground. It is never moved down.
             float standHalf = JoltCharacter.StandHalfFor(size);
-            float groundZ = position.Z - standHalf - feetOffset;
+            float terrainZ = float.NaN;
             // THREAD SAFETY: do NOT raycast the Jolt heightfield here. CreateAvatar runs on the
             // LOGIN/TELEPORT thread, so a native query could land inside a running _system.Update
             // and corrupt Jolt's LIFO TempAllocator -> "Freeing in the wrong order" -> std::abort(), which
@@ -947,12 +949,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // sample field the collision heightfield was built from, but it is a plain managed float[]
             // (bilinear interpolation, no native call), so it is safe from any thread and needs no lock.
             // Heights agree with the collision surface because both come from that one field.
-            float terrainZ = TerrainHeightAt(position.X, position.Y);
-            if (float.IsFinite(terrainZ))
-                groundZ = terrainZ;
-            // +1 cm so StickToFloor settles from just above rather than starting in penetration (which would
-            // resolve as a shove on frame 1).
-            var spawn = new Vector3(position.X, position.Y, groundZ + standHalf + feetOffset + 0.01f);
+            if (_terrainField != null && _terrainFieldM >= 2)
+                terrainZ = TerrainHeightAt(position.X, position.Y);
+            float centreZ = ArrivalCentreZ(position.Z, terrainZ, standHalf, feetOffset);
+            var spawn = new Vector3(position.X, position.Y, centreZ);
 
             var jc = new JoltCharacter(this, backend, localID, avName, spawn, size, feetOffset, isFlying);
             if (velocity != Vector3.Zero)
@@ -961,8 +961,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             lock (_avatars)
                 _avatars[jc.CharacterHandle.Value] = jc;
 
-            m_log.LogInformation($"{LogHeader} avatar '{avName}' id={localID} spawned at ({position.X:0},{position.Y:0}) terrainZ={groundZ:0.00} centreZ={spawn.Z:0.000} standHalf={standHalf:0.000} feetOffset={feetOffset:0.000} flying={isFlying}.");
+            string lifted = centreZ != position.Z ? " (lifted onto the terrain)" : "";
+            m_log.LogInformation($"{LogHeader} avatar '{avName}' id={localID} placed at ({position.X:0},{position.Y:0}) askedZ={position.Z:0.000} centreZ={spawn.Z:0.000}{lifted} terrainZ={terrainZ:0.00} standHalf={standHalf:0.000} feetOffset={feetOffset:0.000} flying={isFlying}.");
             return jc;
+        }
+
+        /// <summary>
+        /// The capsule centre Z an arriving avatar gets: the asked centre Z, unless that would put the body below
+        /// the terrain, when it is lifted to stand on the terrain (terrainZ + standHalf + feetOffset, the same seat
+        /// as <see cref="TryComputeUnbury"/>) plus 1 cm, so the character settles from just above rather than
+        /// starting in penetration (which would resolve as a shove on its first step). Never lower than asked. A
+        /// non-finite asked Z also gets the terrain seat, as every arrival did before. A NaN terrainZ (no terrain
+        /// yet) leaves the asked Z as it is.
+        /// </summary>
+        internal static float ArrivalCentreZ(float askedCentreZ, float terrainZ, float standHalf, float feetOffset)
+        {
+            if (!float.IsFinite(terrainZ))
+                return askedCentreZ;
+            if (!float.IsFinite(askedCentreZ) || TryComputeUnbury(askedCentreZ, terrainZ, standHalf, feetOffset, 0f, out _))
+                return terrainZ + standHalf + feetOffset + 0.01f;
+            return askedCentreZ;
         }
 
         public override void RemoveAvatar(PhysicsActor actor)

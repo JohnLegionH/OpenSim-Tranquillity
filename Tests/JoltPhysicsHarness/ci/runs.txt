@@ -18,3 +18,7 @@ crash-sweep: --scenario crash-wall,crash-box,crash-headon,crash-drop --rate 11,4
 # (raycast-cost-all); the summary's ray_us_per_cast. Pushes on an avatar, a parked car and a sleeping box.
 raycast-cost: --scenario raycast-cost,raycast-cost-all --rate 11 --physics-rate 0,45
 push: --scenario push-avatar,push-flood,push-car,push-box --rate 11 --physics-rate 0,45
+
+# Arriving avatars: one arriving on a fixed platform 3 m above the ground stays on it; one arriving 3 m above the
+# platform, not flying, falls and lands on it. end_z is where each stands.
+avatar-arrive: --scenario avatar-platform,avatar-platform-drop --rate 11,45 --physics-rate 0,45
