@@ -89,9 +89,18 @@ jobs:
               --logger "trx;LogFileName=$short.trx" --results-directory "$out" > "$out/$short.txt" 2>&1
             rc=$?
             set -e
-            line=$(grep -E '^(Passed|Failed)!|Test Run Aborted|crashed' "$out/$short.txt" | tr '\n' ' ' | cut -c1-200)
+            line=$(grep -E '^(Passed|Failed|Skipped)!|Test Run Aborted|crashed' "$out/$short.txt" | tr '\n' ' ' | cut -c1-200 || true)
             echo "$short rc=$rc $(( $(date +%s) - s ))s $line" | tee -a "$out/_summary.txt"
           done < "$out/_classes.txt"
+          # MoveShapeLoadTests starts its child from the project's own bin folder, which holds the patched native, so its
+          # child is run here directly against this copy, as the test runs it.
+          for n in 14 400; do
+            set +e
+            MOVESHAPE_LOAD_BODIES=$n dotnet test "$dll" --filter "FullyQualifiedName~MoveShapeLoadTests.Child_load_run" \
+              -l "console;verbosity=detailed" > "$out/moveshape-child-$n.txt" 2>&1
+            echo "moveshape child bodies=$n exit=$?" | tee -a "$out/_summary.txt"
+            set -e
+          done
 
       - name: Run the listed harness runs on the patched and on the stock native
         run: |
