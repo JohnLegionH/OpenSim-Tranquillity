@@ -18,9 +18,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// <summary>
 /// A contact whose bodies listen for collisions gets an impulse estimate (JoltPhysicsSharp's
 /// EstimateCollisionResponse). joltc mallocs that estimate's per-point impulse array on every call, so the
-/// backend must free it. Memory is a process-wide figure, so the runs happen in a child test process and the
-/// parent compares them: a kicked pile of listening boxes against the same pile not listening. Unfreed, each
-/// listening contact report kept its array: about 18 MB more over these steps.
+/// backend must free it. Memory is a process-wide figure, so the run happens in a child test process: a kicked pile
+/// of listening boxes, stepped for a long time. After a warm-up, private bytes are read (each after a forced
+/// collection) every few hundred steps, and the growth per step over the window must stay below a small limit.
+/// Unfreed, every listening contact report kept its array: about 34 KB per step for this pile.
 /// </summary>
 public class ContactEstimateMemoryTests
 {
@@ -28,7 +29,13 @@ public class ContactEstimateMemoryTests
     public ContactEstimateMemoryTests(ITestOutputHelper output) { _out = output; }
 
     private const string ChildVar = "JOLT_CONTACT_ESTIMATE_MEMORY_CHILD";
-    private const int Steps = 600;
+    private const int WarmUpSteps = 300;
+    private const int WindowSteps = 2000;
+    private const int ReadEvery = 250;
+
+    // The limit on the growth per step over the window. Freed, the pile measures within a few hundred bytes of zero
+    // per step either way; unfreed, it grew about 34 KB per step.
+    private const long LimitBytesPerStep = 1024;
 
     private static PhysicsBackendSettings Settings() => new()
     {
@@ -51,10 +58,13 @@ public class ContactEstimateMemoryTests
         return p.PrivateMemorySize64;
     }
 
-    // 100 boxes in a touching pile on a flat terrain, a share of them kicked up every step so contacts keep
-    // beginning and persisting. Returns the growth of private bytes over the steps (after the first 50).
-    private static long RunPile(bool listening, int steps)
+    // 100 listening boxes in a touching pile on a flat terrain, a share of them kicked up every step so contacts keep
+    // beginning and persisting. Reads private bytes every ReadEvery steps from the end of the warm-up on; returns the
+    // readings and the number of contact reports the steps delivered.
+    private static (List<long> readings, long reports) RunPile(int warmUp, int window)
     {
+        var readings = new List<long>();
+        long reports = 0;
         var b = new JoltPhysicsBackend();
         b.Initialize(Settings());
         try
@@ -78,22 +88,26 @@ public class ContactEstimateMemoryTests
                     Density = 1000f,
                     Friction = 0.5f,
                     GravityFactor = 1f,
-                    WantsContactEvents = listening,
+                    WantsContactEvents = true,
                 }));
             }
             var bs = new BodyState[256];
             var cs = new CharacterState[8];
             var cr = new ContactReport[4096];
-            long start = 0;
-            for (int k = 0; k < steps; k++)
+            for (int k = 0; k < warmUp + window; k++)
             {
-                if (k == 50)
-                    start = PrivateBytes();
+                // The run's first forced collection gives back several MB the warm-up left; that one is not a reading,
+                // or a drop at the window's start would hide growth after it.
+                if (k == warmUp)
+                    PrivateBytes();
+                if (k >= warmUp && (k - warmUp) % ReadEvery == 0)
+                    readings.Add(PrivateBytes());
                 for (int i = k % 11; i < bodies.Count; i += 11)
                     b.SetBodyLinearVelocity(bodies[i], new Vector3(0f, 0f, 3f));
-                b.Step(1f / 11f, bs, cs, cr);
+                reports += b.Step(1f / 11f, bs, cs, cr).ContactCount;
             }
-            return PrivateBytes() - start;
+            readings.Add(PrivateBytes());
+            return (readings, reports);
         }
         finally { b.Dispose(); }
     }
@@ -105,13 +119,12 @@ public class ContactEstimateMemoryTests
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(ChildVar)))
             return;   // not the child; nothing to do
 
-        RunPile(false, 200);   // warm the process: first-use growth lands here
-        long quiet = RunPile(false, Steps);
-        long freedBefore = JoltPhysicsBackend.EstimatesFreed;
-        long listening = RunPile(true, Steps);
-        long estimates = JoltPhysicsBackend.EstimatesFreed - freedBefore;
+        RunPile(0, 200);   // warm the process: first-use growth lands here
+        var (readings, reports) = RunPile(WarmUpSteps, WindowSteps);
+        long perStep = (readings[^1] - readings[0]) / WindowSteps;
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-            $"CONTACT-ESTIMATE-MEMORY quiet_kb={quiet / 1024} listening_kb={listening / 1024} estimates={estimates}"));
+            $"CONTACT-ESTIMATE-MEMORY bytes_per_step={perStep} reports={reports} window={WindowSteps} " +
+            $"readings_kb={string.Join(",", readings.Select(r => r / 1024))}"));
     }
 
 #if DEBUG
@@ -154,19 +167,19 @@ public class ContactEstimateMemoryTests
         => long.Parse(line.Split(' ').Single(f => f.StartsWith(key + "=", StringComparison.Ordinal)).Substring(key.Length + 1), CultureInfo.InvariantCulture);
 
     [Fact]
-    public void Listening_contacts_cost_no_more_memory_than_quiet_ones()
+    public void Listening_contacts_hold_memory_flat_over_a_long_run()
     {
         var (exit, output) = RunChild();
         string line = output.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.StartsWith("CONTACT-ESTIMATE-MEMORY ", StringComparison.Ordinal));
         Assert.True(exit == 0 && line != null, $"child exit {exit}:\n{output}");
         _out.WriteLine(line);
 
-        // The listening run made estimates (thousands of contact reports), so the path was taken.
-        Assert.True(Value(line, "estimates") > 10000, line);
+        // Every report of this pile is a listening contact, which gets an estimate: thousands of them, so the path
+        // was taken.
+        Assert.True(Value(line, "reports") > 10000, line);
 
-        // Unfreed, the listening run grew about 18 MB more than the quiet one; freed, the two grow alike. The
-        // allowance is for heap noise between two runs.
-        long extraKb = Value(line, "listening_kb") - Value(line, "quiet_kb");
-        Assert.True(extraKb < 6 * 1024, $"the listening run grew {extraKb} KB more than the quiet one: {line}");
+        long perStep = Value(line, "bytes_per_step");
+        Assert.True(perStep < LimitBytesPerStep,
+            $"private bytes grew {perStep} bytes per step over {WindowSteps} steps (limit {LimitBytesPerStep}): {line}");
     }
 }
