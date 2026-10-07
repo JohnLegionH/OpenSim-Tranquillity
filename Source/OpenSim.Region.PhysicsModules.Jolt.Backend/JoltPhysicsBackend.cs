@@ -416,13 +416,27 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // ---------------------------------------------------------------------
         [ThreadStatic] private static string t_allocatorSiteInFlight;
 
+        // ---------------------------------------------------------------------
+        // The pool gate rule.
+        //
+        // Several regions can share one job pool, and on a joltc without the per-system allocator patch (the stock
+        // JoltPhysics.Native) every PhysicsSystem draws on ONE process-wide TempAllocatorImpl. Two regions on one pool
+        // are then safe only because every use of that allocator happens inside the pool's gate, which admits one
+        // Step at a time: PhysicsSystem::Update and CharacterVirtual::ExtendedUpdate are called only from Step, under
+        // the gate. CharacterVirtual::SetShape is the one call outside it, and it never reaches the allocator (see
+        // SetShapeWithoutScratch). Nothing in the native checks this, so the allocator check does: Step records the
+        // pool whose gate this thread holds, and a site that needs the gate fails when this thread does not hold
+        // its region's. ShapeAndAllocatorRuleTests also lists every call into the seven allocator entry points.
+        // ---------------------------------------------------------------------
+        [ThreadStatic] private static JobPool? t_gateHeld;
+
         /// <summary>Marks one of the seven allocator entry points as open on this thread for its duration.</summary>
         private readonly struct AllocatorSite : IDisposable
         {
             private readonly string m_previous;
             private readonly bool m_on;
 
-            public AllocatorSite(JoltPhysicsBackend owner, string api)
+            public AllocatorSite(JoltPhysicsBackend owner, string api, bool needsGate)
             {
                 m_on = AllocatorOwnerCheck;
                 m_previous = null;
@@ -430,6 +444,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     return;
 
                 owner.RequireSimLock(api);
+                if (needsGate && (owner._pool == null || !ReferenceEquals(t_gateHeld, owner._pool)))
+                    throw new InvalidOperationException(
+                        $"TempAllocator use outside the job pool gate: {api} reaches a TempAllocator but the calling thread "
+                        + "does not hold this region's pool gate. On a joltc whose regions share one allocator, the gate is "
+                        + "what keeps two regions' calls apart (Jolt/Core/TempAllocator.h:83-84).");
 
                 string open = t_allocatorSiteInFlight;
                 if (open is not null)
@@ -449,8 +468,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             }
         }
 
-        /// <summary>Open an allocator site on this thread. Checks the lock and the re-entry rule together.</summary>
-        private AllocatorSite Enter(string api) => new AllocatorSite(this, api);
+        /// <summary>Open an allocator site on this thread. Checks the lock, the pool gate and the re-entry rule together.</summary>
+        private AllocatorSite Enter(string api) => new AllocatorSite(this, api, needsGate: true);
+
+        /// <summary>The one allocator site outside the pool gate; see <see cref="SetShapeWithoutScratch"/>.</summary>
+        private AllocatorSite EnterOutsideGate(string api) => new AllocatorSite(this, api, needsGate: false);
+
+        /// <summary>TEST-ONLY: open the allocator check of a site that needs the pool gate, as Step's sites do.</summary>
+        internal void EnterGatedAllocatorSiteForTest(string api)
+        {
+            lock (_simLock)
+                using (Enter(api)) { }
+        }
 
         private void RequireSimLock(string api)
         {
@@ -2441,6 +2470,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         //
         // The rule at the top of this file says character ops take _characterGate INSIDE _simLock. Taking both,
         // in that order, is the whole fix - no allocator change, no native change.
+        // The maximum penetration depth rule. CharacterVirtual::SetShape draws on the TempAllocator only to test the new
+        // shape for penetration, which it does only when inMaxPenetrationDepth is below FLT_MAX (Jolt
+        // CharacterVirtual.cpp:1504, v5.4.0); at FLT_MAX it swaps the shape and touches no allocator. That is what
+        // lets this call run outside the pool gate (see the pool gate rule) on a joltc whose regions share one
+        // allocator. Every SetShape goes through here, with the depth fixed: ShapeAndAllocatorRuleTests fails if
+        // another caller appears or the depth changes.
+        internal const float CharacterShapeMaxPenetrationDepth = float.MaxValue;
+
+        private static bool SetShapeWithoutScratch(CharacterVirtual character, Shape shape, PhysicsSystem system)
+            => character.SetShape(0f, shape, CharacterShapeMaxPenetrationDepth, new ObjectLayer((uint)PhysicsLayer.Avatar), system, null, null);
+
         public void SetCharacterShape(CharacterId character, float capsuleHalfHeight, float capsuleRadius)
         {
             if (!float.IsFinite(capsuleHalfHeight) || !float.IsFinite(capsuleRadius)) { CountRejectedNonFinite(); return; }
@@ -2454,9 +2494,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 // Force the swap (maxPenetrationDepth = MaxValue) - callers resize deliberately; we do not
                 // want a silent no-op if the new capsule momentarily overlaps the floor.
                 bool ok;
-                using (Enter("CharacterVirtual::SetShape (joltc.cpp:8223)"))
-                    ok = rec.Character.SetShape(
-                        0f, wrapper, float.MaxValue, new ObjectLayer((uint)PhysicsLayer.Avatar), _system, null, null);
+                using (EnterOutsideGate("CharacterVirtual::SetShape (joltc.cpp:8223)"))
+                    ok = SetShapeWithoutScratch(rec.Character, wrapper, _system);
                 if (ok)
                 {
                     rec.StandingShape?.Dispose();
@@ -2490,7 +2529,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     return;
                 RequireSimLock("CharacterVirtual::SetShape (joltc.cpp:8223)");
                 (Shape wrapper, Shape inner) = BuildStandingCapsule(capsuleHalfHeight, capsuleRadius);
-                rec.Character.SetShape(0f, wrapper, float.MaxValue, new ObjectLayer((uint)PhysicsLayer.Avatar), _system, null, null);
+                SetShapeWithoutScratch(rec.Character, wrapper, _system);
                 wrapper.Dispose();
                 inner.Dispose();
             }
@@ -2692,6 +2731,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 WalkStairsStepUp = new Vector3(0f, 0f, MathF.Max(0f, rec.StepHeight)),
                 StickToFloorStepDown = new Vector3(0f, 0f, -MathF.Max(0.05f, rec.StepHeight)),
             };
+            // Draws on the TempAllocator: only from Step, inside the pool gate (the pool gate rule).
             using (Enter("CharacterVirtual::ExtendedUpdate (joltc.cpp:8135)"))
                 ch.ExtendedUpdate(dt, ext, new ObjectLayer((uint)PhysicsLayer.Avatar), _system, null, null);
 
@@ -3241,15 +3281,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 if (poolWaited)
                     RecordGateWait(poolWaitTicks);
             }
+            JobPool? gateBefore = t_gateHeld;
             try
             {
                 if (pool != null)
                     Volatile.Write(ref pool.Holder, _settings.RegionName);
+                t_gateHeld = pool;   // the pool gate rule: this thread holds this pool's gate until the finally
                 GateTakenForTest?.Invoke(this);
                 return StepLocked(pool, deltaTime, bodyUpdates, characterUpdates, contacts, poolWaited, poolWaitTicks, poolHeldBy);
             }
             finally
             {
+                t_gateHeld = gateBefore;
                 pool?.Exit();
             }
         }
@@ -3325,6 +3368,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 try
                 {
                     RecordInside(pool, Interlocked.Increment(ref pool.Inside));
+                    // Draws on the TempAllocator: only here, inside the pool gate (the pool gate rule).
                     using (Enter("PhysicsSystem::Update (joltc.cpp:1050)"))
                         updateError = _system.Update(deltaTime, collisionSteps, pool.System);
                 }
