@@ -34,7 +34,14 @@ public class RayCastAndPushLimitTests
     private const RayFilterFlags AllTypes =
         RayFilterFlags.land | RayFilterFlags.agent | RayFilterFlags.physical | RayFilterFlags.nonphysical | RayFilterFlags.BackFaceCull;
 
+    // Every scene here measures its ray cast budgets on a clock the test drives, one microsecond a reading (a cast costs
+    // a few microseconds to a few hundred, as on a quiet machine), so no test depends on how fast the machine runs at
+    // the moment: a cast that is descheduled while it holds the region's lock would otherwise be charged that time.
     private static JoltScene NewScene(float physicsRate, params (string key, string value)[] keys)
+        => NewScene(physicsRate, new StepClock { Step = 1 }, keys);
+
+    // rayClock: the clock the ray cast budgets are measured with (null: the wall clock).
+    private static JoltScene NewScene(float physicsRate, TimeProvider rayClock, params (string key, string value)[] keys)
     {
         var config = new IniConfigSource();
         IConfig startup = config.AddConfig("Startup");
@@ -45,7 +52,7 @@ public class RayCastAndPushLimitTests
             jolt.Set("PhysicsStepRate", physicsRate.ToString(System.Globalization.CultureInfo.InvariantCulture));
         foreach ((string key, string value) in keys)
             jolt.Set(key, value);
-        var scene = new JoltScene();
+        var scene = new JoltScene { RayCastClock = rayClock };
         scene.Initialise(config);
         var heights = new float[Size * Size];
         Array.Fill(heights, Ground);
@@ -444,16 +451,112 @@ public class RayCastAndPushLimitTests
         Assert.Equal(RayCastBudget.Simulator, JoltScene.BudgetFor((RayFilterFlags)0xFFFF));
     }
 
-    // Script threads casting as fast as they can, long rays through a row of 2000 boxes asking for 256 hits each: a
-    // cast holds the region's physics lock, and the heartbeat's step waits for it. The region's ray cast time per
-    // heartbeat is bounded by RayCastBudgetMs (5 ms) plus the overrun of the one cast in flight when it ran out, so the
-    // heartbeat is delayed by at most that.
+    // A clock the test drives, for the ray cast budgets (PhysicsBackendSettings.RayCastClock). It counts microseconds
+    // and moves on by Step every time it is read, so what a cast costs is how often the module reads it: the same on
+    // every machine and under any load.
+    private sealed class StepClock : TimeProvider
+    {
+        private long _now;
+        public long Step;
+        public override long TimestampFrequency => 1_000_000;
+        public override long GetTimestamp() => Interlocked.Add(ref _now, Step) - Step;   // the reading, then the step
+        public long Now => Interlocked.Read(ref _now);
+    }
+
+    private const long ClockStep = 250;       // 0.25 ms a reading
+    private const long BudgetTicks = 5000;    // RayCastBudgetMs and RayCastSimulatorBudgetMs, 5 ms (the defaults)
+
+    private static long ToTicks(double ms) => (long)Math.Round(ms * 1000.0);
+
+    // What the script budget admits, refuses and charges, on a clock the test drives. A cast is admitted while the
+    // heartbeat has spent less than the budget, and charged the clock time from its first reading to its last. A cast
+    // in flight is cut short at the first hit that finds the time left gone, so it runs past it by at most one reading
+    // and the one at its end. Once the budget is spent every cast is refused without being charged, until the next
+    // heartbeat.
     [Theory]
     [InlineData(0f)]
     [InlineData(45f)]
-    public void A_flood_of_casts_keeps_the_heartbeat_under_its_bound(float physicsRate)
+    public void Casts_are_admitted_until_the_budget_is_spent_and_charged_the_time_they_took(float physicsRate)
     {
-        JoltScene scene = NewScene(physicsRate);
+        var clock = new StepClock();
+        JoltScene scene = NewScene(physicsRate, clock);
+        try
+        {
+            Row(scene, 2000);
+            scene.Simulate(Heartbeat);
+            var from = new Vector3(10f, 128f, Ground + 1f);
+            clock.Step = ClockStep;
+
+            long mostInOneHeartbeat = 0;
+            int cutShortSeen = 0;
+            for (int heartbeat = 0; heartbeat < 4; heartbeat++)
+            {
+                scene.Simulate(Heartbeat);
+                long used = 0;
+                int admitted = 0, refused = 0;
+                for (int i = 0; i < 40; i++)
+                {
+                    long chargedBefore = ToTicks(scene.CapacityStats().ScriptRayCasts.MsTotal);
+                    long readBefore = clock.Now;
+                    RayCastStatus status = RayCastStatus.Ok;
+                    int hits = -1;
+                    try { hits = scene.RaycastWorld(from, Vector3.UnitX, 300f, 4).Count; }
+                    catch (RayCastTimeExceededException e) { status = e.Status; }
+                    long moved = clock.Now - readBefore;
+                    long charged = ToTicks(scene.CapacityStats().ScriptRayCasts.MsTotal) - chargedBefore;
+
+                    if (used >= BudgetTicks)
+                    {
+                        Assert.Equal(RayCastStatus.Refused, status);
+                        Assert.Equal(0, moved);     // a refused cast does not even read the clock
+                        Assert.Equal(0, charged);
+                        refused++;
+                        continue;
+                    }
+
+                    admitted++;
+                    Assert.NotEqual(RayCastStatus.Refused, status);
+                    Assert.Equal(moved - ClockStep, charged);   // every reading but the last moved the clock inside the cast
+                    long left = BudgetTicks - used;
+                    if (status == RayCastStatus.CutShort)
+                    {
+                        cutShortSeen++;
+                        Assert.InRange(charged, left + ClockStep + 1, left + 2 * ClockStep);
+                    }
+                    else
+                    {
+                        Assert.Equal(4, hits);
+                        Assert.InRange(charged, ClockStep, left + ClockStep);
+                    }
+                    used += charged;
+                }
+
+                Assert.True(admitted >= 2, $"heartbeat {heartbeat}: {admitted} casts admitted");
+                Assert.True(refused > 0, $"heartbeat {heartbeat}: the budget was never spent");
+                Assert.InRange(used, BudgetTicks, BudgetTicks + 2 * ClockStep);
+                mostInOneHeartbeat = Math.Max(mostInOneHeartbeat, used);
+            }
+
+            PhysicsCapacityStats s = scene.CapacityStats();
+            Assert.Equal(mostInOneHeartbeat, ToTicks(s.RayCastMsMaxHeartbeat));
+            Assert.Equal(cutShortSeen, s.ScriptRayCasts.CutShort);
+            Assert.Equal(0, s.SimulatorRayCasts.Casts);
+        }
+        finally { scene.Dispose(); }
+    }
+
+    // Script threads casting as fast as they can, long rays through a row of 2000 boxes asking for 256 hits each, while
+    // the region's heartbeats run. A cast holds the region's physics lock, and the heartbeat's step waits for it, so the
+    // ray cast time in one heartbeat is what delays it: the casts must stop being admitted once the budget is spent,
+    // and no heartbeat may be charged more than the budget and the overrun of the one cast in flight when it ran out.
+    // On a clock the test drives, so the bound is checked exactly and the machine's load cannot stretch it.
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(45f)]
+    public void A_flood_of_casts_from_several_threads_is_held_to_the_budget_in_every_heartbeat(float physicsRate)
+    {
+        var clock = new StepClock();
+        JoltScene scene = NewScene(physicsRate, clock);
         try
         {
             Row(scene, 2000);
@@ -461,31 +564,33 @@ public class RayCastAndPushLimitTests
                 Box(scene, 9000u + (uint)i, new Vector3(60f + (i % 10) * 3f, 60f + (i / 10) * 3f, Ground + 3f), new Vector3(1f, 1f, 1f), true);
             for (int k = 0; k < 11; k++)
                 scene.Simulate(Heartbeat);
-
-            double baseline = MaxHeartbeatMs(scene, 33);
+            clock.Step = ClockStep;
 
             using var stop = new CancellationTokenSource();
-            long casts = 0;
             var threads = new Thread[4];
             for (int t = 0; t < threads.Length; t++)
             {
-                float y = 128f;
                 threads[t] = new Thread(() =>
                 {
                     while (!stop.IsCancellationRequested)
-                    {
-                        Cast(scene, new Vector3(10f, y, Ground + 1f), Vector3.UnitX, 1000f, 256);
-                        Interlocked.Increment(ref casts);
-                    }
+                        Cast(scene, new Vector3(10f, 128f, Ground + 1f), Vector3.UnitX, 1000f, 256);
                 }) { IsBackground = true };
                 threads[t].Start();
             }
-            double flooded;
+            int spentHeartbeats = 0;
             try
             {
-                while (Interlocked.Read(ref casts) < 20)
-                    Thread.Yield();
-                flooded = MaxHeartbeatMs(scene, 33);
+                for (int heartbeat = 0; heartbeat < 33; heartbeat++)
+                {
+                    long refusedBefore = scene.CapacityStats().SimulatorRayCasts.Refused;
+                    scene.Simulate(Heartbeat);
+                    // Wait for the flood to spend this heartbeat's budget (a refusal), not for a set time.
+                    var sw = Stopwatch.StartNew();
+                    while (scene.CapacityStats().SimulatorRayCasts.Refused == refusedBefore && sw.Elapsed < TimeSpan.FromSeconds(10))
+                        Thread.Yield();
+                    if (scene.CapacityStats().SimulatorRayCasts.Refused > refusedBefore)
+                        spentHeartbeats++;
+                }
             }
             finally
             {
@@ -495,29 +600,12 @@ public class RayCastAndPushLimitTests
             }
 
             PhysicsCapacityStats s = scene.CapacityStats();
-            Assert.True(s.RayCastsRefused > 0, "the flood never ran out of time: it was not a flood");
-            Assert.True(s.RayCastMsMaxHeartbeat <= 5.0 + 3.0, $"one heartbeat spent {s.RayCastMsMaxHeartbeat:0.00} ms on ray casts");
-            Assert.True(flooded <= baseline + 5.0 + 25.0, $"heartbeat {flooded:0.0} ms with the flood, {baseline:0.0} ms without");
+            Assert.True(spentHeartbeats >= 30, $"the flood spent the budget in only {spentHeartbeats} of 33 heartbeats");
+            Assert.True(s.SimulatorRayCasts.Casts > s.SimulatorRayCasts.Refused, "no cast was ever admitted");
+            Assert.InRange(ToTicks(s.RayCastMsMaxHeartbeat), BudgetTicks, BudgetTicks + 2 * ClockStep);
+            Assert.Equal(0, s.ScriptRayCasts.Casts);
         }
         finally { scene.Dispose(); }
-    }
-
-    // Heartbeats paced as a region runs them (one every 1/11 s; the budget is per heartbeat), the longest Simulate.
-    private static double MaxHeartbeatMs(JoltScene scene, int heartbeats)
-    {
-        double max = 0;
-        long period = (long)(Heartbeat * Stopwatch.Frequency), next = Stopwatch.GetTimestamp();
-        for (int k = 0; k < heartbeats; k++)
-        {
-            long t0 = Stopwatch.GetTimestamp();
-            scene.Simulate(Heartbeat);
-            max = Math.Max(max, (Stopwatch.GetTimestamp() - t0) * 1000.0 / Stopwatch.Frequency);
-            next += period;
-            int wait = (int)((next - Stopwatch.GetTimestamp()) * 1000 / Stopwatch.Frequency);
-            if (wait > 0)
-                Thread.Sleep(wait);
-        }
-        return max;
     }
 
     // The harness's raycast-cost scenario: what one cast through the row costs, read from the region's counters.
@@ -526,7 +614,8 @@ public class RayCastAndPushLimitTests
     [InlineData(45.0)]
     public void The_harness_measures_what_a_cast_costs(double physicsRate)
     {
-        RunResult r = Harness.Harness.Run(Harness.Harness.Find("raycast-cost"), new HarnessOptions { PhysicsRateHz = physicsRate });
+        RunResult r = Harness.Harness.Run(Harness.Harness.Find("raycast-cost"),
+            new HarnessOptions { PhysicsRateHz = physicsRate, RayCastClock = new StepClock { Step = 1 } });
         Summary m = r.Summary;
         Assert.Equal((long)Harness.Harness.RayCastsPerHeartbeat * m.Steps, m.RayCasts);
         Assert.Equal(0, m.RayCastsRefused);

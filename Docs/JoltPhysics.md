@@ -62,7 +62,16 @@ Jolt is chosen per simulator in `[Startup]`, and it needs the Meshmerizer mesher
     meshing = Meshmerizer
 ```
 
-- With any other `physics` value the module stays loaded but does nothing.
+- With any other `physics` value, or none, the module does nothing for any region: the native
+  is not loaded or hashed, so a missing native, an unrecognised one or a platform with none
+  (Arm64, macOS) makes no difference; no `[Jolt]` key is read, so a missing or invalid `[Jolt]`
+  section is not reported; no job pool, thread or timer starts; no `jolt` console command is
+  registered, test commands included; and the module logs nothing. The host itself still loads
+  the Jolt assemblies, as it loads every plugin assembly in its folder to look for modules, and
+  its own debug lines name the module (`[REGIONMODULES]` finding it and adding each region to
+  it).
+- `physics` is read from the simulator's configuration, as every engine reads it, so all the
+  regions of one simulator run the same engine.
 - With `physics = Jolt` and any `meshing` other than `Meshmerizer`, the module logs that meshing
   must be Meshmerizer and throws "Invalid physics meshing option for Jolt" when it initialises.
 - The shipped default stays `physics = ubODE`.
@@ -185,6 +194,14 @@ charged to the other. `RayCastMaxTestedHits` and `RayCastMaxHits` apply to every
 The two budgets together bound how long ray casts can hold the region's physics lock in one
 heartbeat: with the defaults, 10 ms plus the overrun of the casts in flight when each ran out.
 
+The first ray cast in a simulator process pays one-time costs (compiling the cast code, binding the
+native call, first use of the engine binding's filters): measured at 3-4 ms inside the module,
+against a few microseconds for a later cast. Charged to `RayCastSimulatorBudgetMs`, that would let
+the first landing casts after a start run the budget out. So when a region loads, the module makes
+a few casts of its own through the same code, charged to neither budget and not counted in
+`jolt capacity`, and logs `ray casts warmed up in N ms`: about 8 ms for the first region of a
+process, a few hundredths of a millisecond for each later one.
+
 What the script engines already limit before a cast reaches the module: both cap `RC_MAX_HITS`
 at 16 (OpenSim's asks the physics engine for twice that), and Phlox refuses fewer than 1. Neither
 limits the ray's length or how often a script casts.
@@ -225,6 +242,11 @@ with 2 pools, 4 each; on a 4-thread machine with one pool, 3. A positive `Thread
 used as given. To get the behaviour from before the cap, every processor but one in the pools, set
 `ThreadCount` to the processor count less one. The startup log and `jolt capacity` give the pools,
 the threads per pool, and whether the count is automatic or set.
+
+The automatic count is per process: each region server process sizes its own pools, at most 4
+threads a pool, from the processor count. A host that runs many region server
+processes should set a lower `ThreadCount` in each, since small scenes run best on 1 or 2 threads
+(one moving body stepped in 0.5 ms on 1 or 2 threads, against 1.0 ms on 4; figures below).
 
 Why at most 4: a region's physics step is spread over its pool's threads, and past a few threads
 handing the work out and waking the threads costs more than they save. In the harness's pool
@@ -278,6 +300,18 @@ simulator gives, as BulletS and ubODE do: on a prim platform it stands on the pl
 falls (or stays, when flying) until it lands on what is below. Flying and velocity are kept as given.
 The one correction: a position that would put the body below the terrain is lifted to stand on the
 terrain. An arriving avatar is never moved down.
+
+## What an avatar stands on
+
+An avatar standing on the terrain reports ground (`CollidingGround`), and one standing on a prim,
+including a prim lying on the terrain, reports an object (`CollidingObj`); in the air it reports
+neither. The avatar's collisions reach the simulator each heartbeat as they do with BulletS and
+ubODE: the terrain as land, so scripts in its attachments get `land_collision_start`,
+`land_collision` and `land_collision_end`, and a prim or another avatar as an object, giving
+`collision_start`, `collision` and `collision_end`. The floor contact also sets the collision plane
+under the avatar's feet. The contacts carry no relative speed, so they make no collision sound and no
+impact damage. Where damage is on, a prim with a damage value set damages the avatar it touches and
+is removed, as the simulator does with every physics engine.
 
 ## Vehicles
 
@@ -492,8 +526,10 @@ reshape the terrain, to exercise the engine: `jolt linktest`, `unlinktest`, `col
 `collidelinktest`, `boattest`, `cartest`, `sledtest`, `planetest`, `balloontest`,
 `terrainslope`, `terrainhill`, `hilltest`, `rezprims`, `rayprims`, `rezmesh`, `raymesh`,
 `rezmeshn`, `droptest`, `dropmesh`, `dropstatus`, `sittest`, `unsit`, `sittarget`, `clearprims`,
-and `jolt parity`, which runs the same drop and boat scenarios under any physics engine so two
-engines can be compared. `help Physics` lists each one with a line of help.
+and `jolt parity`, which runs drop and boat scenarios through the standard physics surface and
+writes their figures to `parity-Jolt.txt` (and `parity-boat-Jolt.txt`), to set beside another
+engine's figures for the same scenarios. Like every `jolt` command it exists only in a region on
+Jolt. `help Physics` lists each one with a line of help.
 
 They are meant for test regions. `TestCommands` is off by default, and then none of them exists.
 `[Startup] JoltAutoDropTest = true`, which drops three boxes in every region at load, is honoured

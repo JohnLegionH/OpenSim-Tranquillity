@@ -219,9 +219,10 @@ public class JoltNativeTests
         string scene = File.ReadAllText(Path.Combine(RepoRoot(), "Source", "OpenSim.Region.PhysicsModules.Jolt", "JoltScene.cs"));
         int at = scene.IndexOf("public void Initialise(IConfigSource source)", StringComparison.Ordinal);
         string body = scene[at..scene.IndexOf("public void Close()", at, StringComparison.Ordinal)];
-        int load = body.IndexOf("JoltNative.EnsureLoaded(", StringComparison.Ordinal);
+        int load = body.IndexOf("NativeLoader(", StringComparison.Ordinal);
         int enable = body.IndexOf("m_Enabled = true;", StringComparison.Ordinal);
         Assert.True(load > 0 && enable > load, "Initialise must load and check the native before it sets m_Enabled");
+        Assert.Contains("NativeLoader = JoltNative.EnsureLoaded;", scene);
         Assert.Contains("catch (JoltNativeException e)", body);
         Assert.Contains("m_log.LogError($\"{LogHeader} {e.Message}\");", body);
     }

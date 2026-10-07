@@ -404,6 +404,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public Vector3 LinearVelocity;
         public Vector3 GroundNormal;
         public BodyId GroundBody;
+        /// <summary>The ground body is the region's terrain. The terrain is a body like any other in the solve, so
+        /// <see cref="GroundBody"/> alone does not tell the terrain from a prim.</summary>
+        public bool GroundIsTerrain;
         public bool IsSupported;
         /// <summary>Standing on a slope too steep to hold. Drives the SL slide-off behaviour.</summary>
         public bool IsSliding;
@@ -603,6 +606,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// casts that arrive without anything saying they are a script's
         /// (<see cref="PhysicsBackendSettings.RayCastSimulatorBudgetMs"/>).</summary>
         Simulator,
+        /// <summary>Charged to no budget and counted nowhere: the module's own warm-up casts when a region loads, which
+        /// pay the process's one-time costs of the cast path before the first real cast. Never refused; still cut
+        /// short at the simulator budget's time.</summary>
+        None,
     }
 
     /// <summary>One <see cref="RayCastBudget"/>'s counters, cumulative: casts made, refused and cut short, and the time
@@ -772,6 +779,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// lurching it back down / re-penetrating on the next step.
         /// </summary>
         void ReGroundCharacter(CharacterId character, Vector3 position);
+
+        /// <summary>Toggle the Persist (ongoing-contact) gate for a live character. The simulator subscribes an
+        /// avatar to collision events after it is created, so the gate is set here rather than only at creation:
+        /// with it, a standing avatar's floor contact reports every step.</summary>
+        void SetCharacterWantsContactEvents(CharacterId character, bool wants);
 
         /// <summary>
         /// Desired horizontal velocity plus explicit vertical control. Called once
@@ -956,6 +968,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// </summary>
         public int RayCastMaxTestedHits;
         public const int DefaultRayCastMaxTestedHits = 1024;
+
+        /// <summary>
+        /// The clock the ray cast budgets are measured with: what a cast is charged, and when a cast in flight runs out
+        /// of time. Null (an unset struct) means <see cref="TimeProvider.System"/>, the wall clock. A test passes its
+        /// own, so what the budgets admit, refuse and charge can be checked without the machine's timing.
+        /// </summary>
+        public TimeProvider? RayCastClock;
 
         /// <summary>
         /// Pushes on avatars (<see cref="IPhysicsBackend.AddCharacterImpulse"/>): the most speed, in m/s, pushes can

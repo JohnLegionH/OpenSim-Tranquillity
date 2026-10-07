@@ -22,10 +22,9 @@
 // The batched-buffer drain (StepResult -> per-actor RequestPhysicsterseUpdate / collision dispatch)
 // IS here, at the tail of Simulate.
 //
-// Registration mirrors BSScene: a region module (DotNetCorePlugins; see PluginRegistration.cs)
-// that self-selects when [Startup]
-// physics == Name. No [Startup] edit - the operator picks `physics = Jolt`; this module recognises
-// its own name.
+// The host loads JoltModule (JoltModule.cs; registered in PluginRegistration.cs), which makes this scene only when
+// [Startup] physics == Name. No [Startup] edit - the operator picks `physics = Jolt`. Initialise checks the name
+// again, so a JoltScene made directly (the tests and the harness) also stays inert under another engine.
 // =========================================================================
 
 using System;
@@ -49,7 +48,7 @@ using SQuaternion = System.Numerics.Quaternion;
 
 namespace OpenSim.Region.PhysicsModules.Jolt
 {
-    public sealed partial class JoltScene : PhysicsScene, INonSharedRegionModule
+    public sealed partial class JoltScene : PhysicsScene, IJoltRegion
     {
         internal static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
         internal const string LogHeader = "[JOLT SCENE]";
@@ -224,6 +223,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // This frame's prims, resolved under ONE lock(_prims) rather than a lock per contact.
         private readonly HashSet<uint> _frameIds = new HashSet<uint>();
         private readonly Dictionary<uint, JoltPrim> _framePrims = new Dictionary<uint, JoltPrim>();
+        private readonly Dictionary<uint, JoltCharacter> _frameAvatars = new Dictionary<uint, JoltCharacter>();   // by LocalID
 
         // Capacity surfacing. Step-thread only. The warning window starts at the last logged
         // snapshot; a failure inside the quiet period accumulates into the next line instead of being lost.
@@ -234,7 +234,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private long _bodyOverflowFrames, _charFullFrames, _contactOverflowFrames;
 
         // ---------------------------------------------------------------------
-        // INonSharedRegionModule
+        // The region module calls, made by JoltModule (IJoltRegion). JoltScene is not itself a region module: the
+        // host's plugin discovery makes every class that implements one, and it must make only JoltModule.
         // ---------------------------------------------------------------------
 
         public string Name => "Jolt";
@@ -242,15 +243,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // The native's path and hash are logged once per process, by the first region's module.
         private static int s_nativeLogged;
 
+        // Finds, checks and loads the native (JoltNative.EnsureLoaded). A test replaces it to stand in for a missing
+        // file, an unrecorded hash or a platform with no native, without touching the real files.
+        internal static Func<bool, JoltNativeInfo> NativeLoader = JoltNative.EnsureLoaded;
+
         public System.Type ReplaceableInterface => null;
 
         public void Initialise(IConfigSource source)
         {
             // Self-selection: only enable when the operator chose us. Mirrors BSScene - we do NOT
-            // hard-enable, and we never touch [Startup] ourselves.
-            // Read before the physics check: `jolt parity` runs under any physics engine.
-            m_testCommands = TestCommandsEnabled(source);
-
+            // hard-enable, and we never touch [Startup] ourselves. Under another engine nothing below runs: no [Jolt]
+            // key is read, the native is not loaded and nothing is logged.
             IConfig config = source.Configs["Startup"];
             if (config != null)
             {
@@ -264,6 +267,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                         throw new System.Exception("Invalid physics meshing option for Jolt");
                     }
 
+                    m_testCommands = TestCommandsEnabled(source);
+
                     var warnings = new List<string>();
                     JoltConfig joltConfig = JoltConfig.FromConfig(source, warnings);
                     foreach (string w in warnings)
@@ -275,7 +280,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     JoltNativeInfo native;
                     try
                     {
-                        native = JoltNative.EnsureLoaded(joltConfig.AllowUnrecordedNative);
+                        native = NativeLoader(joltConfig.AllowUnrecordedNative);
                     }
                     catch (JoltNativeException e)
                     {
@@ -354,6 +359,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             PhysicsBackendSettings settings = _joltConfig.ToBackendSettings(sizeX, sizeY, _substeps != null);
             settings.RegionName = RegionName;   // names this region when another waits for its job pool (metrics)
+            settings.RayCastClock = RayCastClock;
             _bodyBufMax = _joltConfig.BodyUpdateBufferMax;
             _charBufMax = _joltConfig.CharacterUpdateBufferMax;
             _capacityLogIntervalTicks = System.TimeSpan.FromSeconds(_joltConfig.CapacityLogIntervalSeconds).Ticks;
@@ -379,6 +385,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             base.Initialise(requestAsset, heightMap(), waterHeight());
 
             m_log.LogInformation($"{LogHeader} region '{RegionName}' {sizeX}x{sizeY}m: backend initialised, MaxBodies={settings.MaxBodies}. {EngineName}");
+
+            RayWarmUpMs = WarmUpRayCasts();
+            m_log.LogInformation($"{LogHeader} region '{RegionName}': ray casts warmed up in {RayWarmUpMs:0.00} ms.");
             if (_substeps != null)
                 m_log.LogInformation($"{LogHeader} region '{RegionName}': physics steps at {_substeps.RateHz:0.##} Hz " +
                                      $"({settings.CollisionSteps} collision steps each, at most {SubstepAccumulator.MaxStepsPerFrame} per heartbeat).");
@@ -420,16 +429,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         public void RegionLoaded(Scene scene)
         {
-            // `jolt parity` is an engine-agnostic A/B driver registered under ANY physics engine, so
-            // the SAME console command runs under BulletSim and Jolt for a clean comparison. It MUST be set
-            // up BEFORE the m_Enabled gate (under physics = BulletSim this module is loaded/scanned but is
-            // NOT the physics engine, so m_Enabled is false and the rest of RegionLoaded early-returns). The
-            // harness drives ONLY the standard Scene/SceneObjectGroup/PhysicsActor surface - no Jolt backend.
-            // It is a test command, so it is registered only when [Jolt] TestCommands is true.
-            RegisterParityConsole(scene);
-
+            // Under another engine the module does nothing for the region: no console command, and no reference to
+            // its scene is kept.
             if (!m_Enabled)
                 return;
+
+            // `jolt parity` drives only the standard Scene/SceneObjectGroup/PhysicsActor surface, so its output can be
+            // compared with another engine's (parity-<engine>.txt). It is a test command, registered only when
+            // [Jolt] TestCommands is true, and only in a region on Jolt.
+            RegisterParityConsole(scene);
 
             // The IMesher the cook path needs; without one, prims fall back to bounding boxes.
             m_mesher = scene.RequestModuleInterface<IMesher>();
@@ -701,11 +709,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 float expectedCentre = terrainZ + a.StandHalf + a.FeetOffset;
                 float dZ = p.Z - expectedCentre;
 
-                string groundBody = a.GroundBody.IsValid ? $"body({a.GroundBody.Value})" : "terrain/none";
+                string groundBody = a.GroundIsTerrain ? $"terrain({a.GroundBody.Value})" : a.GroundBody.IsValid ? $"body({a.GroundBody.Value})" : "none";
                 string verdict = nan ? "FAIL: NaN position"
                     : a.Flying ? "flying (gravity off - ground checks N/A)"
                     : (a.IsSupported && !float.IsNaN(dZ) && MathF.Abs(dZ) < 0.5f) ? "PASS: supported, seated on terrain"
-                    : (a.IsSupported && a.GroundBody.IsValid && !float.IsNaN(dZ) && dZ > -0.5f) ? "PASS: supported, standing on a prim above the terrain"
+                    : (a.IsSupported && a.GroundBody.IsValid && !a.GroundIsTerrain && !float.IsNaN(dZ) && dZ > -0.5f) ? "PASS: supported, standing on a prim above the terrain"
                     : !a.IsSupported ? "off: not supported (in the air / falling)"
                     : "OFF: supported but not at terrain height (check dZ)";
 
@@ -1260,19 +1268,62 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // SupportsRayCast() or the sit query, so the base class answers them.
         public override List<ContactResult> RaycastWorld(Vector3 position, Vector3 direction, float length, int Count)
         {
-            List<ContactResult> results = CastAll(position, direction, length, Count, QueryFilter.Default, RayCastBudget.Script, out RayCastStatus status);
+            List<ContactResult> results = CastAll(position, direction, length, Count, QueryFilter.Default,
+                                                  _warmingUpRays ? RayCastBudget.None : RayCastBudget.Script, out RayCastStatus status);
             if (status != RayCastStatus.Ok)
                 throw new RayCastTimeExceededException(status);
             return results;
         }
 
         public override object RaycastWorld(Vector3 position, Vector3 direction, float length, int Count, RayFilterFlags filter)
-            => CastAll(position, direction, length, Count, ToQueryFilter(filter), BudgetFor(filter), out _);
+            => CastAll(position, direction, length, Count, ToQueryFilter(filter), _warmingUpRays ? RayCastBudget.None : BudgetFor(filter), out _);
 
         // The budget a cast on the 5-argument entry is charged to. Nothing in RayFilterFlags marks a script's cast today,
         // so every such cast goes to the simulator's budget. When the caller can mark a script cast (a flag set by
         // LSL_Api.llCastRay), this is the one place to send it to RayCastBudget.Script instead.
         internal static RayCastBudget BudgetFor(RayFilterFlags filter) => RayCastBudget.Simulator;
+
+        /// <summary>
+        /// The clock the ray cast budgets are measured with (PhysicsBackendSettings.RayCastClock); null is the wall
+        /// clock. Tests set it before the region is initialised.
+        /// </summary>
+        internal TimeProvider RayCastClock { get; set; }
+
+        /// <summary>How long the warm-up casts took when this region loaded (ms).</summary>
+        internal double RayWarmUpMs { get; private set; }
+
+        // The first ray cast in a process pays one-time costs: the JIT of the cast path here and in the backend, the
+        // binding of the native cast call, and the first use of the binding's layer filter, surface normal and sort
+        // code. Measured on a Release build: about 3-4 ms inside the backend (4-8 ms in all) for the first cast and
+        // 0.2 ms for the second, against a few microseconds for every later one. The first casts after a start are the
+        // landing casts of the first login, charged to the simulator's budget ([Jolt] RayCastSimulatorBudgetMs), so
+        // they could run that budget out within one heartbeat. These casts pay the costs while the region loads,
+        // through the same path as a real cast (both entry points, a hit on the terrain, a sort), charged to no budget
+        // and counted nowhere: while _warmingUpRays is set, both entry points charge RayCastBudget.None. The process pays them once: the first region's warm-up takes about 8 ms, a
+        // later region's about 0.02 ms.
+        private double WarmUpRayCasts()
+        {
+            long start = System.Diagnostics.Stopwatch.GetTimestamp();
+            var above = new Vector3(_regionSizeX * 0.5f, _regionSizeY * 0.5f, RayClipMaxZ - 1f);
+            var down = new Vector3(0f, 0f, -1f);
+            float length = RayClipMaxZ - RayClipMinZ;
+            _warmingUpRays = true;
+            try
+            {
+                for (int i = 0; i < 2; i++)
+                {
+                    try { RaycastWorld(above, down, length, 2); }
+                    catch (RayCastTimeExceededException) { }   // a warm-up cast cut short at the time limit: nothing to report
+                    RaycastWorld(above, down, length, 2, RayFilterFlags.BackFaceCull | RayFilterFlags.PrimsNonPhantomAgents);
+                    BudgetFor(RayFilterFlags.BackFaceCull);   // the 5-argument entry's budget choice, skipped above
+                }
+            }
+            finally { _warmingUpRays = false; }
+            return (System.Diagnostics.Stopwatch.GetTimestamp() - start) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        }
+
+        // Set only while WarmUpRayCasts runs, on the thread that loads the region, before any other cast can arrive.
+        private bool _warmingUpRays;
 
         // Second Life: "The random failures seem to happen if the ray begins or ends more than 8 meters outside of
         // current region bounds" (llCastRay). A ray is cut to the region widened by this much on each side, and to the
@@ -1814,6 +1865,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     if (_prims.TryGetValue(id, out JoltPrim p))
                         _framePrims[id] = p;
             }
+            // Avatars by LocalID (_avatars is keyed by the backend handle). Only subscribed ones get events;
+            // ScenePresence subscribes every root avatar.
+            _frameAvatars.Clear();
+            lock (_avatars)
+            {
+                foreach (JoltCharacter a in _avatars.Values)
+                    if (a.SubscribedEvents())
+                        _frameAvatars[a.LocalID] = a;
+            }
 
             _collisions.BeginFrame();
             if (mergeSubsteps)
@@ -1842,18 +1902,38 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     _collisions.AddCollider(c.ChildUserDataA, c.ChildUserDataB, new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f));
                 if (IsSubscribedPrim(c.ChildUserDataB))
                     _collisions.AddCollider(c.ChildUserDataB, c.ChildUserDataA, new ContactPoint(pt, new Vector3(-c.Normal.X, -c.Normal.Y, -c.Normal.Z), 0f));
+
+                // An avatar's own contacts: the backend reports them with the avatar as side A (no body) and the
+                // touched body, the terrain (0) or another avatar as side B; another avatar reports its own side.
+                // ScenePresence.PhysicsCollisionUpdate reads collider 0 as land (land_collision on its
+                // attachments) and any other id as an object (collision), as ubODE (ODECharacter) and BulletS
+                // (BSCharacter) report them. The contact normal points from the avatar into what it touches, the
+                // same way round as ubODE's avatar SurfaceNormal; ScenePresence turns it over to make the collision
+                // plane under the feet. A contact whose normal points down is at the feet.
+                if (!c.BodyA.IsValid && _frameAvatars.ContainsKey(c.ChildUserDataA))
+                    _collisions.AddCollider(c.ChildUserDataA, c.ChildUserDataB,
+                        new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f, c.Normal.Z < -AvatarFeetNormalZ));
             }
 
             // Deliver this frame's sets (outside the lock).
             foreach (KeyValuePair<uint, CollisionEventUpdate> kv in _collisions.Current)
+            {
                 if (_framePrims.TryGetValue(kv.Key, out JoltPrim p))
                     p.SendCollisionUpdate(kv.Value);
+                else if (_frameAvatars.TryGetValue(kv.Key, out JoltCharacter a))
+                    a.SendCollisionUpdate(kv.Value);
+            }
 
-            // Flush an EMPTY update to prims that collided last frame but not now (fires collision_end). On a
-            // frame whose contact buffer overflowed the tracker ends nobody: absence is not proof.
+            // Flush an EMPTY update to prims and avatars that collided last frame but not now (fires collision_end
+            // and land_collision_end). On a frame whose contact buffer overflowed the tracker ends nobody: absence
+            // is not proof.
             foreach (uint id in _collisions.EndFrame(contactsOverflowed))
+            {
                 if (_framePrims.TryGetValue(id, out JoltPrim p) && p.SubscribedEvents())
                     p.SendCollisionUpdate(new CollisionEventUpdate());
+                else if (_frameAvatars.TryGetValue(id, out JoltCharacter a))
+                    a.SendCollisionUpdate(new CollisionEventUpdate());
+            }
 
             // Publish this frame's scores; a prim scored last frame and not now drops back to 0.
             foreach (uint id in _collisions.PreviouslyScored)
@@ -1868,8 +1948,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private static ulong PairKey(uint a, uint b)
             => a <= b ? ((ulong)a << 32) | b : ((ulong)b << 32) | a;
 
-        // A LocalID resolves (this frame) to a prim that currently has a collision-script subscription (dispatch
-        // is prim-scoped; ScenePresence collisions with an avatar as the subscriber are not dispatched here).
+        // An avatar contact whose normal (from the avatar into the surface) points down by more than this is under
+        // the feet: a surface tilted less than 60 degrees from level. Walls and ceilings are not.
+        internal const float AvatarFeetNormalZ = 0.5f;
+
+        // A LocalID resolves (this frame) to a prim that currently has a collision-script subscription. Avatars
+        // are resolved separately (_frameAvatars).
         private bool IsSubscribedPrim(uint localID)
             => _framePrims.TryGetValue(localID, out JoltPrim p) && p.SubscribedEvents();
 

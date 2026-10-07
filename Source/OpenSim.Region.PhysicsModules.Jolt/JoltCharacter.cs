@@ -71,6 +71,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private bool _isSliding;
         private Vector3 _groundNormal;
         private BodyId _groundBody = BodyId.Invalid;
+        private bool _groundIsTerrain;
 
         private CharacterId _character = CharacterId.Invalid;
 
@@ -79,6 +80,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal bool IsSliding => _isSliding;
         internal Vector3 GroundNormal => _groundNormal;
         internal BodyId GroundBody => _groundBody;
+        internal bool GroundIsTerrain => _groundIsTerrain;
         internal float CapsuleHalfHeight => _capsuleHalfHeight;
         internal float CapsuleRadius => _capsuleRadius;
 
@@ -157,9 +159,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _groundNormal = new Vector3(s.GroundNormal.X, s.GroundNormal.Y, s.GroundNormal.Z);
             _groundBody = s.GroundBody;
 
+            _groundIsTerrain = s.GroundIsTerrain;
+
+            // The terrain is a body in the solve, so "has a ground body" does not mean "stands on a prim": the
+            // backend says which body is the terrain. Supported with no body at all is read as ground, as before.
             IsColliding = s.IsSupported;
-            CollidingGround = s.IsSupported && !s.GroundBody.IsValid;   // supported with no body => on terrain
-            CollidingObj = s.IsSupported && s.GroundBody.IsValid;       // supported by a body => standing on a prim
+            CollidingGround = s.IsSupported && (s.GroundIsTerrain || !s.GroundBody.IsValid);
+            CollidingObj = s.IsSupported && s.GroundBody.IsValid && !s.GroundIsTerrain;
 
             // Release the jump latch once the avatar has actually left the ground (rising, or no longer
             // supported). Until then the latch keeps re-asserting jump=true so a TargetVelocity push can't
@@ -313,9 +319,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         public override bool SetAlwaysRun { get => _setAlwaysRun; set => _setAlwaysRun = value; }
 
-        // Collision-event subscription: gates Persist forwarding; the window is stored.
-        public override void SubscribeEvents(int ms) { _subscribedMs = ms; }
-        public override void UnSubscribeEvents() { _subscribedMs = 0; }
+        // Collision-event subscription: gates Persist forwarding; the window is stored. ScenePresence subscribes
+        // right after AddAvatar, when the controller already exists, so the gate is set on that character too.
+        public override void SubscribeEvents(int ms)
+        {
+            _subscribedMs = ms;
+            if (_character.IsValid)
+                _backend.SetCharacterWantsContactEvents(_character, ms > 0);
+        }
+        public override void UnSubscribeEvents()
+        {
+            _subscribedMs = 0;
+            if (_character.IsValid)
+                _backend.SetCharacterWantsContactEvents(_character, false);
+        }
         public override bool SubscribedEvents() => _subscribedMs > 0;
 
         // ---- inert for an avatar (the controller owns velocity; no vehicles / PID; pushes are AddForce above) ----

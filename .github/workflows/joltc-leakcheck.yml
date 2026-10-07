@@ -1,0 +1,132 @@
+# Builds the patched joltc (same pinned sources and patches as joltc-native.yml) with AddressSanitizer on Linux and
+# runs native/joltc/leakcheck/leakcheck.c under its leak checker. The program destroys everything it creates, so a
+# leak reported at exit was lost inside joltc; the report names each allocation site with its call stack. Checks:
+# a contact listener with an OnContactValidate callback leaks (joltc's FromJolt(CollideShapeResult) mallocs the face
+# arrays, freed only from joltc bc8a8002a on); with that slot empty, or with no listener, nothing leaks.
+name: joltc leak check
+
+on:
+  push:
+    branches:
+      - lane/jolt
+    paths:
+      - 'native/joltc/leakcheck/**'
+      - '.github/workflows/joltc-leakcheck.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  JOLTC_REPO: https://github.com/amerkoleci/joltc
+  JOLTC_COMMIT: 1715c5aab834a5bb0c344dc4a11d573ad6f9736d
+  JOLT_REPO: https://github.com/jrouwe/JoltPhysics
+  JOLT_COMMIT: 036ea7b1d717b3e713ac9d8cbd47118fb9cd5d60
+  PATCHES: per-system-tempallocator.patch physics-systems-map-lock.patch
+
+jobs:
+  leakcheck:
+    name: joltc leak check (linux-x64, AddressSanitizer)
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+          persist-credentials: false
+
+      - name: Fetch joltc and Jolt Physics at the pinned commits
+        run: |
+          src="$RUNNER_TEMP/joltc"
+          git init -q "$src"
+          git -C "$src" fetch -q --depth 1 "$JOLTC_REPO" "$JOLTC_COMMIT"
+          git -C "$src" checkout -q FETCH_HEAD
+          test "$(git -C "$src" rev-parse HEAD)" = "$JOLTC_COMMIT"
+          git init -q "$src/JoltPhysics"
+          git -C "$src/JoltPhysics" fetch -q --depth 1 "$JOLT_REPO" "$JOLT_COMMIT"
+          git -C "$src/JoltPhysics" checkout -q FETCH_HEAD
+          test "$(git -C "$src/JoltPhysics" rev-parse HEAD)" = "$JOLT_COMMIT"
+
+      - name: Apply the patches
+        run: |
+          for p in $PATCHES; do
+            git -C "$RUNNER_TEMP/joltc" apply --verbose "$GITHUB_WORKSPACE/repo/native/joltc/$p"
+          done
+
+      - name: Configure and build joltc with AddressSanitizer
+        env:
+          CXXFLAGS: -fsanitize=address -fno-omit-frame-pointer -g
+          CFLAGS: -fsanitize=address -fno-omit-frame-pointer -g
+          LDFLAGS: -fsanitize=address
+        run: |
+          cmake -S "$RUNNER_TEMP/joltc" -B "$RUNNER_TEMP/joltc/build" -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE:String=Release -DJPH_SAMPLES=OFF -DCROSS_PLATFORM_DETERMINISTIC=ON
+          cmake --build "$RUNNER_TEMP/joltc/build" --config Release --target joltc --parallel
+          find "$RUNNER_TEMP/joltc/build" -name 'libjoltc.so*' -print
+
+      - name: Build the leak check program
+        run: |
+          lib=$(dirname "$(find "$RUNNER_TEMP/joltc/build" -name 'libjoltc.so' -print -quit)")
+          gcc -fsanitize=address -fno-omit-frame-pointer -g -I "$RUNNER_TEMP/joltc/include" \
+            -c "$GITHUB_WORKSPACE/repo/native/joltc/leakcheck/leakcheck.c" -o "$RUNNER_TEMP/leakcheck.o"
+          g++ -fsanitize=address "$RUNNER_TEMP/leakcheck.o" -L "$lib" -ljoltc -Wl,-rpath,"$lib" -o "$RUNNER_TEMP/leakcheck"
+
+      - name: Run under the leak checker
+        env:
+          ASAN_OPTIONS: detect_leaks=1:exitcode=0
+          LSAN_OPTIONS: fast_unwind_on_malloc=0:max_leaks=20
+        run: |
+          out="$RUNNER_TEMP/leakcheck-out"
+          mkdir -p "$out"
+          for run in "validate 300" "novalidate 300" "nolistener 300" "restart 30" "estimate 300"; do
+            set -- $run
+            "$RUNNER_TEMP/leakcheck" "$1" "$2" > "$out/$1.txt" 2>&1
+            echo "== $1 $2: $(grep -h '^LEAKCHECK' "$out/$1.txt")"
+            grep -h 'SUMMARY: AddressSanitizer' "$out/$1.txt" || echo "   no leak reported"
+          done
+
+      - name: Show the first leak stacks of each run
+        if: always()
+        run: |
+          for f in "$RUNNER_TEMP"/leakcheck-out/*.txt; do
+            echo "::group::$(basename "$f")"
+            head -n 120 "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Check the expected results
+        run: |
+          out="$RUNNER_TEMP/leakcheck-out"
+          grep -q '^LEAKCHECK mode=validate' "$out/validate.txt"
+          grep -q 'SUMMARY: AddressSanitizer' "$out/validate.txt"
+          grep -q 'OnContactValidate' "$out/validate.txt"
+          for m in novalidate nolistener estimate; do
+            grep -q "^LEAKCHECK mode=$m" "$out/$m.txt"
+            if grep -q 'SUMMARY: AddressSanitizer' "$out/$m.txt"; then echo "$m leaked"; exit 1; fi
+          done
+          echo "validate leaks in OnContactValidate; novalidate, nolistener and estimate leak nothing"
+
+      # Without the sanitizer (its allocator keeps freed memory in quarantine): the resident set of a long run with an
+      # impulse estimate freed for every contact, every 1000 steps. A leak grows with the steps; glibc's per-thread
+      # arenas grow at first and then level off.
+      - name: Build joltc without the sanitizer and trace a long estimate run
+        run: |
+          cmake -S "$RUNNER_TEMP/joltc" -B "$RUNNER_TEMP/joltc/build-plain" -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE:String=Release -DJPH_SAMPLES=OFF -DCROSS_PLATFORM_DETERMINISTIC=ON
+          cmake --build "$RUNNER_TEMP/joltc/build-plain" --config Release --target joltc --parallel
+          lib=$(dirname "$(find "$RUNNER_TEMP/joltc/build-plain" -name 'libjoltc.so' -print -quit)")
+          gcc -O2 -g -I "$RUNNER_TEMP/joltc/include" -c "$GITHUB_WORKSPACE/repo/native/joltc/leakcheck/leakcheck.c" \
+            -o "$RUNNER_TEMP/leakcheck-plain.o"
+          g++ "$RUNNER_TEMP/leakcheck-plain.o" -L "$lib" -ljoltc -Wl,-rpath,"$lib" -o "$RUNNER_TEMP/leakcheck-plain"
+          "$RUNNER_TEMP/leakcheck-plain" estimate 12000 | tee "$RUNNER_TEMP/leakcheck-out/estimate-plain.txt"
+
+      - name: Upload the reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: joltc-leakcheck
+          path: ${{ runner.temp }}/leakcheck-out
+          if-no-files-found: ignore
