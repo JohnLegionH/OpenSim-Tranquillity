@@ -852,6 +852,36 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         private static readonly System.Reflection.PropertyInfo? s_ownsHandle = typeof(NativeObject).GetProperty(
             "OwnsHandle", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
 
+        // =====================================================================
+        // Shape settings are freed by us too.
+        //
+        // The same OwnsHandle defect: JoltPhysicsSharp 2.19.1 builds ConvexHullShapeSettings, MeshShapeSettings,
+        // ScaledShapeSettings and RotatedTranslatedShapeSettings through the parameterless NativeObject constructor, so
+        // their Dispose() frees nothing native. The native settings then outlive the cook for good, holding their copy
+        // of the input (a mesh's triangles, a hull's points) and the shape Create() caches in them, which keeps that
+        // shape alive as well: measured, about 236 KB for each 257-sample terrain cooked (the heightfield under the
+        // Z-up wrapper) and 158 KB for each 3200-triangle mesh. joltc's create functions AddRef every settings object,
+        // so JPH_ShapeSettings_Destroy (a Release) is what frees one. Settings the binding does own are left to its
+        // Dispose; every settings object goes through here, so a binding that fixes the flag is handled the same way.
+        // =====================================================================
+        [System.Runtime.InteropServices.DllImport("joltc", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern void JPH_ShapeSettings_Destroy(IntPtr settings);
+
+        internal static void FreeShapeSettings(ShapeSettings settings)
+        {
+            bool bindingDestroys = s_ownsHandle?.GetValue(settings) is true;
+            if (!bindingDestroys && !settings.IsDisposed && settings.Handle != IntPtr.Zero)
+                JPH_ShapeSettings_Destroy(settings.Handle);
+            settings.Dispose();
+        }
+
+        private readonly struct ShapeSettingsScope : IDisposable
+        {
+            private readonly ShapeSettings _settings;
+            public ShapeSettingsScope(ShapeSettings settings) => _settings = settings;
+            public void Dispose() => FreeShapeSettings(_settings);
+        }
+
         private static void DestroyJobSystem(JobSystemThreadPool pool)
         {
             // Unknown binding shape (no such property): assume it does NOT own the handle, as 2.19.1 does not.
@@ -1236,7 +1266,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // Jolt's CylinderShape axis is Y (like the capsule); prim orientation is the layer's job.
             // Convex radius must be <= min(radius, halfHeight) or Jolt asserts - clamp like the box path.
             float cr = MathF.Max(0f, MathF.Min(DefaultConvexRadius, MathF.Min(r, hh) * 0.1f));
-            using var settings = new CylinderShapeSettings(hh, r, cr);
+            var settings = new CylinderShapeSettings(hh, r, cr);
+            using var free = new ShapeSettingsScope(settings);
             return RegisterShape(RequireCooked(settings.Create(), "CreateCylinderShape"));
         }
 
@@ -1248,7 +1279,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             for (int i = 0; i < points.Length; i++)
                 if (!IsFinite(points[i]))
                     throw new ArgumentException($"CreateConvexHullShape: point {i} is not finite ({points[i]}).");
-            using var settings = new ConvexHullShapeSettings(points, DefaultConvexRadius);
+            var settings = new ConvexHullShapeSettings(points, DefaultConvexRadius);
+            using var free = new ShapeSettingsScope(settings);
             // Jolt's hull builder fails (joltc returns nullptr) on too few, coplanar, collinear or coincident
             // points, or a point error above 4x tolerance.
             return RegisterShape(RequireCooked(settings.Create(), "CreateConvexHullShape"));
@@ -1276,7 +1308,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             for (int t = 0; t < triCount; t++)
                 tris[t] = new IndexedTriangle(indices[t * 3], indices[t * 3 + 1], indices[t * 3 + 2], 0u, 0u);
             var verts = vertices.ToArray();
-            using var settings = new MeshShapeSettings(verts.AsSpan(), tris.AsSpan());
+            var settings = new MeshShapeSettings(verts.AsSpan(), tris.AsSpan());
+            using var free = new ShapeSettingsScope(settings);
             // No triangles left after Sanitize -> joltc returns nullptr.
             return RegisterShape(RequireCooked(settings.Create(), "CreateMeshShape"));
         }
@@ -1297,7 +1330,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 throw new ArgumentException($"StaticCompoundShape requires >= 2 children (got {children.Length}); use the single member's shape directly.");
 
             var childUserData = new uint[children.Length];
-            using var settings = new StaticCompoundShapeSettings();
+            var settings = new StaticCompoundShapeSettings();
+            using var free = new ShapeSettingsScope(settings);
             for (int i = 0; i < children.Length; i++)
             {
                 CompoundChild c = children[i];
@@ -1379,7 +1413,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 {
                     var hfSettings = new HeightFieldShapeSettings(pSamples, offset, joltScale, (uint)n);
                     try { inner = RequireCooked(hfSettings.Create(), "CreateHeightFieldShape (inner)"); }
-                    finally { hfSettings.Dispose(); }
+                    finally { FreeShapeSettings(hfSettings); }
                 }
             }
 
@@ -1395,7 +1429,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 Quaternion rot = Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI / 2f);
 
                 Shape wrapper;
-                using (var wrapSettings = new RotatedTranslatedShapeSettings(posW, rot, inner))
+                var wrapSettings = new RotatedTranslatedShapeSettings(posW, rot, inner);
+                using (new ShapeSettingsScope(wrapSettings))
                     wrapper = RequireCooked(wrapSettings.Create(), "CreateHeightFieldShape (Z-up wrapper)");
 
                 // The wrapper OWNS the inner shape (private, not caller-visible): both are disposed
@@ -1429,7 +1464,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 throw new ArgumentException($"CreateScaledShape: {baseShape} is not a live shape.");
 
             Vector3 valid = baseRec.NativeShape!.MakeScaleValid(scale);
-            using var settings = new ScaledShapeSettings(baseRec.NativeShape, valid);
+            var settings = new ScaledShapeSettings(baseRec.NativeShape, valid);
+            using var free = new ShapeSettingsScope(settings);
             var rec = new JoltShapeRecord
             {
                 NativeShape = RequireCooked(settings.Create(), "CreateScaledShape"),  // AddRefs the base; base survives via its own handle
@@ -2303,7 +2339,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             Shape capsule = new CapsuleShape(MathF.Max(0.01f, halfHeight), MathF.Max(0.01f, radius));
             try
             {
-                using var rt = new RotatedTranslatedShapeSettings(Vector3.Zero, CapsuleYToZ, capsule);
+                var rt = new RotatedTranslatedShapeSettings(Vector3.Zero, CapsuleYToZ, capsule);
+                using var free = new ShapeSettingsScope(rt);
                 return (rt.Create(), capsule);
             }
             catch
