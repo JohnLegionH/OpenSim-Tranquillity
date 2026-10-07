@@ -62,7 +62,17 @@ Jolt is chosen per simulator in `[Startup]`, and it needs the Meshmerizer mesher
     meshing = Meshmerizer
 ```
 
-- With any other `physics` value the module stays loaded but does nothing.
+- With any other `physics` value, or none, the module does nothing for any region. Its assembly
+  is loaded (the host loads every plugin assembly to find its modules), and nothing more: the
+  native is not loaded or hashed, so a missing native, an unrecognised one or a platform with
+  none (Arm64, macOS) makes no difference; no `[Jolt]` key is read, so a missing or invalid
+  `[Jolt]` section is not reported; no job pool, thread or timer starts; no `jolt` console
+  command is registered, test commands included; the module logs nothing; and the backend,
+  vehicle and JoltPhysicsSharp assemblies are not loaded. The host's own debug lines still name
+  the module (`[REGIONMODULES]` finding it and adding each region to it); `[Modules]
+  Setup_JoltPhysicsScene = disabled` stops the host from making the module at all.
+- `physics` is read from the simulator's configuration, as every engine reads it, so all the
+  regions of one simulator run the same engine.
 - With `physics = Jolt` and any `meshing` other than `Meshmerizer`, the module logs that meshing
   must be Meshmerizer and throws "Invalid physics meshing option for Jolt" when it initialises.
 - The shipped default stays `physics = ubODE`.
@@ -512,8 +522,10 @@ reshape the terrain, to exercise the engine: `jolt linktest`, `unlinktest`, `col
 `collidelinktest`, `boattest`, `cartest`, `sledtest`, `planetest`, `balloontest`,
 `terrainslope`, `terrainhill`, `hilltest`, `rezprims`, `rayprims`, `rezmesh`, `raymesh`,
 `rezmeshn`, `droptest`, `dropmesh`, `dropstatus`, `sittest`, `unsit`, `sittarget`, `clearprims`,
-and `jolt parity`, which runs the same drop and boat scenarios under any physics engine so two
-engines can be compared. `help Physics` lists each one with a line of help.
+and `jolt parity`, which runs drop and boat scenarios through the standard physics surface and
+writes their figures to `parity-Jolt.txt` (and `parity-boat-Jolt.txt`), to set beside another
+engine's figures for the same scenarios. Like every `jolt` command it exists only in a region on
+Jolt. `help Physics` lists each one with a line of help.
 
 They are meant for test regions. `TestCommands` is off by default, and then none of them exists.
 `[Startup] JoltAutoDropTest = true`, which drops three boxes in every region at load, is honoured

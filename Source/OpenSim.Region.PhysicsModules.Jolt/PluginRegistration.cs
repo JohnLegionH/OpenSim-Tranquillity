@@ -14,9 +14,9 @@
  * register the region-module type at /OpenSim/RegionModules so the RegionModulesController picks it
  * up exactly like ubODE and BulletSim.
  *
- * Unlike ubODE (which splits ubODEModule : INonSharedRegionModule from ODEScene : PhysicsScene),
- * JoltScene is BOTH the region module AND the PhysicsScene (mirroring BulletSim's BSScene), so
- * that single type is what we register.
+ * The registered type is JoltModule, which makes the JoltScene (the PhysicsScene) only when
+ * [Startup] physics = Jolt, as ubODE splits ubODEModule from ODEScene. Under any other engine nothing
+ * of Jolt runs or loads beyond this assembly (see JoltModule.cs).
  */
 
 using System.Reflection;
@@ -28,7 +28,7 @@ public class PluginRegistration : IPluginRegistryProvider
 {
     public void RegisterPlugins(PluginRegistry registry)
     {
-        RegisterByName(registry, "/OpenSim/RegionModules", "JoltPhysicsScene", "OpenSim.Region.PhysicsModules.Jolt.JoltScene", "JoltPhysicsScene");
+        RegisterByName(registry, "/OpenSim/RegionModules", "JoltPhysicsScene", "OpenSim.Region.PhysicsModules.Jolt.JoltModule", "JoltPhysicsScene");
     }
 
     private static void RegisterByName(PluginRegistry registry, string extensionPath, string id, string typeName, string displayName)

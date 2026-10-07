@@ -22,10 +22,9 @@
 // The batched-buffer drain (StepResult -> per-actor RequestPhysicsterseUpdate / collision dispatch)
 // IS here, at the tail of Simulate.
 //
-// Registration mirrors BSScene: a region module (DotNetCorePlugins; see PluginRegistration.cs)
-// that self-selects when [Startup]
-// physics == Name. No [Startup] edit - the operator picks `physics = Jolt`; this module recognises
-// its own name.
+// The host loads JoltModule (JoltModule.cs; registered in PluginRegistration.cs), which makes this scene only when
+// [Startup] physics == Name. No [Startup] edit - the operator picks `physics = Jolt`. Initialise checks the name
+// again, so a JoltScene made directly (the tests and the harness) also stays inert under another engine.
 // =========================================================================
 
 using System;
@@ -243,15 +242,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // The native's path and hash are logged once per process, by the first region's module.
         private static int s_nativeLogged;
 
+        // Finds, checks and loads the native (JoltNative.EnsureLoaded). A test replaces it to stand in for a missing
+        // file, an unrecorded hash or a platform with no native, without touching the real files.
+        internal static Func<bool, JoltNativeInfo> NativeLoader = JoltNative.EnsureLoaded;
+
         public System.Type ReplaceableInterface => null;
 
         public void Initialise(IConfigSource source)
         {
             // Self-selection: only enable when the operator chose us. Mirrors BSScene - we do NOT
-            // hard-enable, and we never touch [Startup] ourselves.
-            // Read before the physics check: `jolt parity` runs under any physics engine.
-            m_testCommands = TestCommandsEnabled(source);
-
+            // hard-enable, and we never touch [Startup] ourselves. Under another engine nothing below runs: no [Jolt]
+            // key is read, the native is not loaded and nothing is logged.
             IConfig config = source.Configs["Startup"];
             if (config != null)
             {
@@ -265,6 +266,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                         throw new System.Exception("Invalid physics meshing option for Jolt");
                     }
 
+                    m_testCommands = TestCommandsEnabled(source);
+
                     var warnings = new List<string>();
                     JoltConfig joltConfig = JoltConfig.FromConfig(source, warnings);
                     foreach (string w in warnings)
@@ -276,7 +279,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     JoltNativeInfo native;
                     try
                     {
-                        native = JoltNative.EnsureLoaded(joltConfig.AllowUnrecordedNative);
+                        native = NativeLoader(joltConfig.AllowUnrecordedNative);
                     }
                     catch (JoltNativeException e)
                     {
@@ -424,16 +427,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         public void RegionLoaded(Scene scene)
         {
-            // `jolt parity` is an engine-agnostic A/B driver registered under ANY physics engine, so
-            // the SAME console command runs under BulletSim and Jolt for a clean comparison. It MUST be set
-            // up BEFORE the m_Enabled gate (under physics = BulletSim this module is loaded/scanned but is
-            // NOT the physics engine, so m_Enabled is false and the rest of RegionLoaded early-returns). The
-            // harness drives ONLY the standard Scene/SceneObjectGroup/PhysicsActor surface - no Jolt backend.
-            // It is a test command, so it is registered only when [Jolt] TestCommands is true.
-            RegisterParityConsole(scene);
-
+            // Under another engine the module does nothing for the region: no console command, and no reference to
+            // its scene is kept.
             if (!m_Enabled)
                 return;
+
+            // `jolt parity` drives only the standard Scene/SceneObjectGroup/PhysicsActor surface, so its output can be
+            // compared with another engine's (parity-<engine>.txt). It is a test command, registered only when
+            // [Jolt] TestCommands is true, and only in a region on Jolt.
+            RegisterParityConsole(scene);
 
             // The IMesher the cook path needs; without one, prims fall back to bounding boxes.
             m_mesher = scene.RequestModuleInterface<IMesher>();

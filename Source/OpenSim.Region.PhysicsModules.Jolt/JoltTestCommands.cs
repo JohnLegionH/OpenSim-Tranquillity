@@ -1892,14 +1892,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // ===================================================================================
-        // A/B PARITY HARNESS (`jolt parity`) - engine-agnostic. Registered under BOTH BulletSim and Jolt (see
-        // RegionLoaded), drives ONLY the standard OpenSim Scene/SceneObjectGroup/PhysicsActor surface
-        // (the SAME rez path as `jolt rezprims`: EstateOwner -> new SceneObjectGroup -> AddNewSceneObject
-        // -> ScriptSetPhysicsStatus -> DeleteSceneObject). Identical code runs on either engine by only
-        // changing [Startup] physics=, which is what makes the A/B comparison valid. `jolt parity core` writes
-        // a capture file parity-<EngineType>.txt so the two boots can be diffed into a delta table.
-        // Hosted in this module rather than a new assembly;
-        // it uses no Jolt-specific state, so it is valid while BulletSim is the physics engine.
+        // A/B PARITY HARNESS (`jolt parity`). Drives ONLY the standard OpenSim Scene/SceneObjectGroup/PhysicsActor
+        // surface (the SAME rez path as `jolt rezprims`: EstateOwner -> new SceneObjectGroup -> AddNewSceneObject
+        // -> ScriptSetPhysicsStatus -> DeleteSceneObject), so its figures can be set beside another engine's for the
+        // same scenarios. `jolt parity core` writes a capture file parity-<EngineType>.txt. Registered only in a
+        // region on Jolt (see RegionLoaded): under another engine the module registers no command at all.
         // ===================================================================================
         private static bool s_parityRegistered;
         private static Scene s_parityScene;
@@ -2016,13 +2013,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // ===================================================================================
-        // Boat A/B parity (`jolt parity boat`). ENGINE-AGNOSTIC: drives the boat through the STANDARD PhysicsActor
+        // Boat A/B parity (`jolt parity boat`). Drives the boat through the STANDARD PhysicsActor
         // vehicle surface (VehicleType / VehicleVectorParam) and reads state through the standard
-        // getters (Position / Orientation / Velocity / RotationalVelocity / Mass), so the SAME code
-        // runs under physics=BulletSim (-> BSDynamics) and physics=Jolt (-> the extracted
-        // OpenSim.Region.PhysicsModules.Jolt.Vehicles controller). The two
-        // engines use different vehicle math, so the capture compares boat behaviour end to end. Writes
-        // parity-boat-<engine>.txt for a two-boot diff. Uses scene.PhysicsScene.SetTerrain to cook a
+        // getters (Position / Orientation / Velocity / RotationalVelocity / Mass), the surface BulletSim's
+        // BSDynamics also sits behind, so the capture can be set beside another engine's boat figures. Writes
+        // parity-boat-<engine>.txt. Uses scene.PhysicsScene.SetTerrain to cook a
         // PHYSICS-ONLY water basin (for a region whose terrain sits above the water plane) - the scene
         // heightmap is untouched, so nothing taints the viewer and the terrain tick won't re-push.
         // ===================================================================================
