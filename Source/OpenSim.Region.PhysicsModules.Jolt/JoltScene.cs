@@ -224,6 +224,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // This frame's prims, resolved under ONE lock(_prims) rather than a lock per contact.
         private readonly HashSet<uint> _frameIds = new HashSet<uint>();
         private readonly Dictionary<uint, JoltPrim> _framePrims = new Dictionary<uint, JoltPrim>();
+        private readonly Dictionary<uint, JoltCharacter> _frameAvatars = new Dictionary<uint, JoltCharacter>();   // by LocalID
 
         // Capacity surfacing. Step-thread only. The warning window starts at the last logged
         // snapshot; a failure inside the quiet period accumulates into the next line instead of being lost.
@@ -701,11 +702,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 float expectedCentre = terrainZ + a.StandHalf + a.FeetOffset;
                 float dZ = p.Z - expectedCentre;
 
-                string groundBody = a.GroundBody.IsValid ? $"body({a.GroundBody.Value})" : "terrain/none";
+                string groundBody = a.GroundIsTerrain ? $"terrain({a.GroundBody.Value})" : a.GroundBody.IsValid ? $"body({a.GroundBody.Value})" : "none";
                 string verdict = nan ? "FAIL: NaN position"
                     : a.Flying ? "flying (gravity off - ground checks N/A)"
                     : (a.IsSupported && !float.IsNaN(dZ) && MathF.Abs(dZ) < 0.5f) ? "PASS: supported, seated on terrain"
-                    : (a.IsSupported && a.GroundBody.IsValid && !float.IsNaN(dZ) && dZ > -0.5f) ? "PASS: supported, standing on a prim above the terrain"
+                    : (a.IsSupported && a.GroundBody.IsValid && !a.GroundIsTerrain && !float.IsNaN(dZ) && dZ > -0.5f) ? "PASS: supported, standing on a prim above the terrain"
                     : !a.IsSupported ? "off: not supported (in the air / falling)"
                     : "OFF: supported but not at terrain height (check dZ)";
 
@@ -1814,6 +1815,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     if (_prims.TryGetValue(id, out JoltPrim p))
                         _framePrims[id] = p;
             }
+            // Avatars by LocalID (_avatars is keyed by the backend handle). Only subscribed ones get events;
+            // ScenePresence subscribes every root avatar.
+            _frameAvatars.Clear();
+            lock (_avatars)
+            {
+                foreach (JoltCharacter a in _avatars.Values)
+                    if (a.SubscribedEvents())
+                        _frameAvatars[a.LocalID] = a;
+            }
 
             _collisions.BeginFrame();
             if (mergeSubsteps)
@@ -1842,18 +1852,38 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     _collisions.AddCollider(c.ChildUserDataA, c.ChildUserDataB, new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f));
                 if (IsSubscribedPrim(c.ChildUserDataB))
                     _collisions.AddCollider(c.ChildUserDataB, c.ChildUserDataA, new ContactPoint(pt, new Vector3(-c.Normal.X, -c.Normal.Y, -c.Normal.Z), 0f));
+
+                // An avatar's own contacts: the backend reports them with the avatar as side A (no body) and the
+                // touched body, the terrain (0) or another avatar as side B; another avatar reports its own side.
+                // ScenePresence.PhysicsCollisionUpdate reads collider 0 as land (land_collision on its
+                // attachments) and any other id as an object (collision), as ubODE (ODECharacter) and BulletS
+                // (BSCharacter) report them. The contact normal points from the avatar into what it touches, the
+                // same way round as ubODE's avatar SurfaceNormal; ScenePresence turns it over to make the collision
+                // plane under the feet. A contact whose normal points down is at the feet.
+                if (!c.BodyA.IsValid && _frameAvatars.ContainsKey(c.ChildUserDataA))
+                    _collisions.AddCollider(c.ChildUserDataA, c.ChildUserDataB,
+                        new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f, c.Normal.Z < -AvatarFeetNormalZ));
             }
 
             // Deliver this frame's sets (outside the lock).
             foreach (KeyValuePair<uint, CollisionEventUpdate> kv in _collisions.Current)
+            {
                 if (_framePrims.TryGetValue(kv.Key, out JoltPrim p))
                     p.SendCollisionUpdate(kv.Value);
+                else if (_frameAvatars.TryGetValue(kv.Key, out JoltCharacter a))
+                    a.SendCollisionUpdate(kv.Value);
+            }
 
-            // Flush an EMPTY update to prims that collided last frame but not now (fires collision_end). On a
-            // frame whose contact buffer overflowed the tracker ends nobody: absence is not proof.
+            // Flush an EMPTY update to prims and avatars that collided last frame but not now (fires collision_end
+            // and land_collision_end). On a frame whose contact buffer overflowed the tracker ends nobody: absence
+            // is not proof.
             foreach (uint id in _collisions.EndFrame(contactsOverflowed))
+            {
                 if (_framePrims.TryGetValue(id, out JoltPrim p) && p.SubscribedEvents())
                     p.SendCollisionUpdate(new CollisionEventUpdate());
+                else if (_frameAvatars.TryGetValue(id, out JoltCharacter a))
+                    a.SendCollisionUpdate(new CollisionEventUpdate());
+            }
 
             // Publish this frame's scores; a prim scored last frame and not now drops back to 0.
             foreach (uint id in _collisions.PreviouslyScored)
@@ -1868,8 +1898,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private static ulong PairKey(uint a, uint b)
             => a <= b ? ((ulong)a << 32) | b : ((ulong)b << 32) | a;
 
-        // A LocalID resolves (this frame) to a prim that currently has a collision-script subscription (dispatch
-        // is prim-scoped; ScenePresence collisions with an avatar as the subscriber are not dispatched here).
+        // An avatar contact whose normal (from the avatar into the surface) points down by more than this is under
+        // the feet: a surface tilted less than 60 degrees from level. Walls and ceilings are not.
+        internal const float AvatarFeetNormalZ = 0.5f;
+
+        // A LocalID resolves (this frame) to a prim that currently has a collision-script subscription. Avatars
+        // are resolved separately (_frameAvatars).
         private bool IsSubscribedPrim(uint localID)
             => _framePrims.TryGetValue(localID, out JoltPrim p) && p.SubscribedEvents();
 

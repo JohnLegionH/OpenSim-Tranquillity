@@ -2188,7 +2188,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 ChildUserDataA = ch.UserData,           // the avatar has no sub-shapes; itself is the struck part
                 ChildUserDataB = ResolveStruckPart(other, otherSubShape),   // the linkset child the avatar touched
                 Point = point,
-                Normal = normal,                        // character-contact normal (points toward the character)
+                Normal = normal,                        // character-contact normal (points from the character into the body)
                 Impulse = 0f,                           // controller-resolved contact; no solver impulse available
                 Phase = phase,
             });
@@ -2278,6 +2278,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     rec.Character.Position = position;
                     rec.Character.Rotation = orientation;
                 }
+            }
+        }
+
+        // The avatar's Persist gate (see PushCharacterBodyContact). Read on the step thread under _characterGate.
+        public void SetCharacterWantsContactEvents(CharacterId character, bool wants)
+        {
+            lock (_characterGate)
+            {
+                if (_characters.TryGet(character.Value, out JoltCharacterRecord rec))
+                    rec.WantsContactEvents = wants;
             }
         }
 
@@ -2474,6 +2484,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 LinearVelocity = ch.LinearVelocity,
                 GroundNormal = ch.GroundNormal,
                 GroundBody = groundRec != null ? new BodyId(groundRec.Handle) : BodyId.Invalid,
+                GroundIsTerrain = groundRec != null && groundRec.Layer == PhysicsLayer.Terrain,
                 IsSupported = ch.IsSupported,
                 IsSliding = gs == GroundState.OnSteepGround,
             };

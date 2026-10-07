@@ -279,6 +279,18 @@ falls (or stays, when flying) until it lands on what is below. Flying and veloci
 The one correction: a position that would put the body below the terrain is lifted to stand on the
 terrain. An arriving avatar is never moved down.
 
+## What an avatar stands on
+
+An avatar standing on the terrain reports ground (`CollidingGround`), and one standing on a prim,
+including a prim lying on the terrain, reports an object (`CollidingObj`); in the air it reports
+neither. The avatar's collisions reach the simulator each heartbeat as they do with BulletS and
+ubODE: the terrain as land, so scripts in its attachments get `land_collision_start`,
+`land_collision` and `land_collision_end`, and a prim or another avatar as an object, giving
+`collision_start`, `collision` and `collision_end`. The floor contact also sets the collision plane
+under the avatar's feet. The contacts carry no relative speed, so they make no collision sound and no
+impact damage. Where damage is on, a prim with a damage value set damages the avatar it touches and
+is removed, as the simulator does with every physics engine.
+
 ## Vehicles
 
 LSL vehicles run on a controller that steps each behaviour Second Life documents on that documented

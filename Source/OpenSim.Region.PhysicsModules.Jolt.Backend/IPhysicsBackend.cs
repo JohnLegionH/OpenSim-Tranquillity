@@ -404,6 +404,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public Vector3 LinearVelocity;
         public Vector3 GroundNormal;
         public BodyId GroundBody;
+        /// <summary>The ground body is the region's terrain. The terrain is a body like any other in the solve, so
+        /// <see cref="GroundBody"/> alone does not tell the terrain from a prim.</summary>
+        public bool GroundIsTerrain;
         public bool IsSupported;
         /// <summary>Standing on a slope too steep to hold. Drives the SL slide-off behaviour.</summary>
         public bool IsSliding;
@@ -772,6 +775,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// lurching it back down / re-penetrating on the next step.
         /// </summary>
         void ReGroundCharacter(CharacterId character, Vector3 position);
+
+        /// <summary>Toggle the Persist (ongoing-contact) gate for a live character. The simulator subscribes an
+        /// avatar to collision events after it is created, so the gate is set here rather than only at creation:
+        /// with it, a standing avatar's floor contact reports every step.</summary>
+        void SetCharacterWantsContactEvents(CharacterId character, bool wants);
 
         /// <summary>
         /// Desired horizontal velocity plus explicit vertical control. Called once
