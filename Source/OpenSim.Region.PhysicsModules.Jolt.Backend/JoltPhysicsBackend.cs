@@ -749,7 +749,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             // JPH_PhysicsSystem_Create inserts into joltc's global map of systems; see s_systemMapGate.
             lock (s_systemMapGate)
+            {
                 _system = new PhysicsSystem(systemSettings);
+                ClearContactValidateProc();
+            }
             _system.Gravity = settings.Gravity;
             _bodyInterface = _system.BodyInterface;
 
@@ -927,6 +930,63 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             // OwnsHandle is false, so this frees nothing native a second time; it clears the handle and unregisters it.
             system.Dispose();
+        }
+
+        // =====================================================================
+        // No contact-validate callback.
+        //
+        // joltc's contact listener converts Jolt's CollideShapeResult for the OnContactValidate callback, and that
+        // conversion mallocs both supporting-face arrays (joltc.cpp FromJolt, used by ManagedContactListener::
+        // OnContactValidate at 1715c5a). joltc frees them only from joltc bc8a8002a on (upstream PR #76); the native
+        // this module ships, and the stock JoltPhysics.Native 1.0.4, both predate it. The physics step collects faces
+        // for every body pair it collides, and calls OnContactValidate once per colliding pair per step, so every
+        // awake body touching something leaked 12 bytes per face vertex, plus the allocation overhead, every step:
+        // about 17 KB per step for a kicked pile of 100 boxes.
+        //
+        // joltc calls a callback only when its slot in the process-wide procs table is set, and with the slot empty it
+        // accepts every contact (AcceptAllContactsForThisBodyPair). JoltPhysicsSharp sets all four slots in
+        // PhysicsSystem's static constructor, and its validate callback returns that same answer when no handler is
+        // subscribed. The module never subscribes OnContactValidate, so joltc gets a copy of the binding's table with
+        // the validate slot empty: the same answer for every contact, with no conversion and no allocation, on any
+        // joltc. The copy lives in native memory for the life of the process, since joltc keeps the pointer.
+        // =====================================================================
+        [System.Runtime.InteropServices.DllImport("joltc", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern void JPH_ContactListener_SetProcs(IntPtr procs);
+
+        // JPH_ContactListener_Procs (joltc.h): OnContactValidate, OnContactAdded, OnContactPersisted, OnContactRemoved.
+        private const int ContactProcCount = 4;
+        private static IntPtr s_contactProcs;
+
+        /// <summary>True once joltc's contact listener has no validate callback (see ClearContactValidateProc).</summary>
+        internal static bool ContactValidateProcCleared => s_contactProcs != IntPtr.Zero;
+
+        // Under s_systemMapGate, after a PhysicsSystem exists (so the binding's static constructor has set its table).
+        private static unsafe void ClearContactValidateProc()
+        {
+            if (s_contactProcs != IntPtr.Zero)
+                return;
+            System.Reflection.FieldInfo? field = typeof(PhysicsSystem).GetField(
+                "_contactListener_Procs", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            object? table = field?.GetValue(null);
+            if (table == null || table.GetType().GetFields(System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic).Length != ContactProcCount)
+                return;   // not the table this code knows: leave the binding's in place (ContactValidateProcCleared stays false)
+
+            var pinned = System.Runtime.InteropServices.GCHandle.Alloc(table, System.Runtime.InteropServices.GCHandleType.Pinned);
+            try
+            {
+                IntPtr* source = (IntPtr*)pinned.AddrOfPinnedObject();
+                for (int i = 0; i < ContactProcCount; i++)
+                    if (source[i] == IntPtr.Zero)
+                        return;
+                IntPtr* copy = (IntPtr*)System.Runtime.InteropServices.NativeMemory.Alloc((nuint)(ContactProcCount * IntPtr.Size));
+                copy[0] = IntPtr.Zero;   // OnContactValidate
+                for (int i = 1; i < ContactProcCount; i++)
+                    copy[i] = source[i];
+                JPH_ContactListener_SetProcs((IntPtr)copy);
+                s_contactProcs = (IntPtr)copy;
+            }
+            finally { pinned.Free(); }
         }
 
         // The native + managed teardown, run under _simLock (see Dispose). Everything that frees a native
