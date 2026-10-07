@@ -1084,8 +1084,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             // Impulse is a POST-solve quantity but Added/Persisted fire PRE-solve, so we use Jolt's own
             // in-callback estimator - the same helper its collision-sound sample uses. It reads only the
-            // two bodies Jolt already handed us (NOT a lock we take) plus the manifold, and is
-            // allocation-free (measured ~0 bytes/call). Sum the per-point NORMAL impulses -> newton-seconds.
+            // two bodies Jolt already handed us (NOT a lock we take) plus the manifold. It allocates no managed
+            // memory, but joltc mallocs the per-point impulse array on every call (JPH_EstimateCollisionResponse)
+            // and the binding never frees it, so it is freed here with joltc's own JPH_CollisionEstimationResult_FreeMembers
+            // (joltc links its C runtime statically: only its own free may release its malloc). Sum the per-point
+            // NORMAL impulses -> newton-seconds.
             float impulse = 0f;
             if (listening)
             {
@@ -1098,6 +1101,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 ReadOnlySpan<CollisionEstimationResult.Impulse> impulses = response.Impulses;
                 for (int i = 0; i < impulses.Length; i++)
                     impulse += impulses[i].ContactImpulse;
+                FreeEstimate(ref response);
             }
 
             // Name the struck part on each side from the contact sub-shape (child of a linkset, or the body
@@ -1106,6 +1110,22 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             uint childB = ResolveStruckPart(rb, manifold.SubShapeID2.Value);
             _contactListener.Push(BuildContact(ra, rb, point, normal, MathF.Max(0f, impulse), phase, childA, childB));
         }
+
+        [System.Runtime.InteropServices.DllImport("joltc", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern unsafe void JPH_CollisionEstimationResult_FreeMembers(CollisionEstimationResult* result);
+
+        // Free the impulse array joltc allocated for an estimate (nothing when it has none). Counted for the tests.
+        private static unsafe void FreeEstimate(ref CollisionEstimationResult result)
+        {
+            fixed (CollisionEstimationResult* r = &result)
+                JPH_CollisionEstimationResult_FreeMembers(r);
+            Interlocked.Increment(ref s_estimatesFreed);
+        }
+
+        private static long s_estimatesFreed;
+
+        /// <summary>Collision estimates whose native impulse array has been freed, process-wide (tests).</summary>
+        internal static long EstimatesFreed => Interlocked.Read(ref s_estimatesFreed);
 
         private static ContactReport BuildContact(
             JoltBodyRecord? ra, JoltBodyRecord? rb, Vector3 point, Vector3 normal, float impulse, ContactPhase phase,
