@@ -69,12 +69,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             public int Tested;
             public int MaxTested;
             public long Deadline;
+            public TimeProvider Clock = TimeProvider.System;
             public bool CutShort;
             public float EarlyOut;
             public Vector3 Origin;
             public Vector3 RayDir;
 
-            public void Reset(int want, int maxTested, long deadline, Vector3 origin, Vector3 rayDir)
+            public void Reset(int want, int maxTested, TimeProvider clock, long deadline, Vector3 origin, Vector3 rayDir)
             {
                 if (Kept.Length < want)
                     Kept = new NativeRayCastResult[want];
@@ -82,6 +83,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 Want = want;
                 Tested = 0;
                 MaxTested = maxTested;
+                Clock = clock;
                 Deadline = deadline;
                 CutShort = false;
                 EarlyOut = InitialEarlyOut;
@@ -89,10 +91,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 RayDir = rayDir;
             }
 
-            // Returns the new early-out fraction: never above the last one (Jolt requires it to only shrink).
+            // Returns the new early-out fraction: never above the last one (Jolt requires it to only shrink). The deadline
+            // is checked at every hit, so a cast runs past it by at most the engine's work up to the next hit and the
+            // hits it then hands back.
             public float Add(in NativeRayCastResult r)
             {
-                if (++Tested > MaxTested || Stopwatch.GetTimestamp() > Deadline)
+                if (++Tested > MaxTested || Clock.GetTimestamp() > Deadline)
                 {
                     CutShort = true;
                     return EarlyOut = -float.MaxValue;   // Jolt tests nothing more: no fraction is below this
@@ -171,21 +175,31 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         private long _rayUsedTicksAll;
         private long _rayTicksMaxHeartbeat;
 
+        // Every time the budgets read or charge is on this clock (PhysicsBackendSettings.RayCastClock).
+        private TimeProvider RayClock => _settings.RayCastClock ?? TimeProvider.System;
+
+        private double RayTicksToMs(long ticks) => ticks * 1000.0 / RayClock.TimestampFrequency;
+
         private long RayBudgetTicks(RayCastBudget budget)
         {
             float ms = budget == RayCastBudget.Script
                 ? (_settings.RayCastBudgetMs > 0f ? _settings.RayCastBudgetMs : PhysicsBackendSettings.DefaultRayCastBudgetMs)
                 : (_settings.RayCastSimulatorBudgetMs > 0f ? _settings.RayCastSimulatorBudgetMs : PhysicsBackendSettings.DefaultRayCastSimulatorBudgetMs);
-            return (long)(ms * Stopwatch.Frequency / 1000.0);
+            return (long)(ms * RayClock.TimestampFrequency / 1000.0);
         }
 
         private int RayMaxTested => _settings.RayCastMaxTestedHits > 0 ? _settings.RayCastMaxTestedHits : PhysicsBackendSettings.DefaultRayCastMaxTestedHits;
 
         public void BeginRayCastBudget()
         {
-            foreach (RayBudgetState b in _rayBudgets)
-                Interlocked.Exchange(ref b.UsedTicks, 0);
-            Interlocked.Exchange(ref _rayUsedTicksAll, 0);
+            // Under the lock every cast holds, so no cast is in flight across the new heartbeat's start: one that were
+            // could be counted in both heartbeats' total, or charge the old heartbeat's time to the new one.
+            lock (_simLock)
+            {
+                foreach (RayBudgetState b in _rayBudgets)
+                    Interlocked.Exchange(ref b.UsedTicks, 0);
+                Interlocked.Exchange(ref _rayUsedTicksAll, 0);
+            }
         }
 
         public long RayCastsRefused(RayCastBudget budget)
@@ -226,9 +240,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     }
                 }
 
-                long start = Stopwatch.GetTimestamp();
+                TimeProvider clock = RayClock;
+                long start = clock.GetTimestamp();
                 ClosestHits c = t_closest ??= new ClosestHits();
-                c.Reset(hits.Length, RayMaxTested, start + (allowed - used), origin, rayDir);
+                c.Reset(hits.Length, RayMaxTested, clock, start + (allowed - used), origin, rayDir);
 
                 var settings = new RayCastSettings();   // what RayCastAll passes: the same faces are tested
                 Vector3 o = origin, d = rayDir;
@@ -276,7 +291,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     return n;
                 }
 
-                long spent = Stopwatch.GetTimestamp() - start;
+                long spent = clock.GetTimestamp() - start;
                 Interlocked.Add(ref b.UsedTicks, spent);
                 Interlocked.Add(ref b.TicksTotal, spent);
                 long nowUsed = Interlocked.Add(ref _rayUsedTicksAll, spent);
@@ -298,15 +313,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             s.RayCastsRefused = s.ScriptRayCasts.Refused + s.SimulatorRayCasts.Refused;
             s.RayCastsCutShort = s.ScriptRayCasts.CutShort + s.SimulatorRayCasts.CutShort;
             s.RayCastMsTotal = s.ScriptRayCasts.MsTotal + s.SimulatorRayCasts.MsTotal;
-            s.RayCastMsMaxHeartbeat = Interlocked.Read(ref _rayTicksMaxHeartbeat) * 1000.0 / Stopwatch.Frequency;
+            s.RayCastMsMaxHeartbeat = RayTicksToMs(Interlocked.Read(ref _rayTicksMaxHeartbeat));
         }
 
-        private static RayCastBudgetStats BudgetStats(RayBudgetState b) => new RayCastBudgetStats
+        private RayCastBudgetStats BudgetStats(RayBudgetState b) => new RayCastBudgetStats
         {
             Casts = Interlocked.Read(ref b.Casts),
             Refused = Interlocked.Read(ref b.Refused),
             CutShort = Interlocked.Read(ref b.CutShort),
-            MsTotal = Interlocked.Read(ref b.TicksTotal) * 1000.0 / Stopwatch.Frequency,
+            MsTotal = RayTicksToMs(Interlocked.Read(ref b.TicksTotal)),
         };
     }
 }

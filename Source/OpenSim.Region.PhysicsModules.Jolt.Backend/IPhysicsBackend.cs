@@ -970,6 +970,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public const int DefaultRayCastMaxTestedHits = 1024;
 
         /// <summary>
+        /// The clock the ray cast budgets are measured with: what a cast is charged, and when a cast in flight runs out
+        /// of time. Null (an unset struct) means <see cref="TimeProvider.System"/>, the wall clock. A test passes its
+        /// own, so what the budgets admit, refuse and charge can be checked without the machine's timing.
+        /// </summary>
+        public TimeProvider? RayCastClock;
+
+        /// <summary>
         /// Pushes on avatars (<see cref="IPhysicsBackend.AddCharacterImpulse"/>): the most speed, in m/s, pushes can
         /// give an avatar. It is also the avatar's push allowance: each push spends the speed it adds, and the
         /// allowance refills at <see cref="AvatarPushRecovery"/> m/s every second. 0 (an unset struct): pushes do not

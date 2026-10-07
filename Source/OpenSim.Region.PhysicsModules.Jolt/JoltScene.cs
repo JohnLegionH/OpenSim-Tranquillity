@@ -359,6 +359,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             PhysicsBackendSettings settings = _joltConfig.ToBackendSettings(sizeX, sizeY, _substeps != null);
             settings.RegionName = RegionName;   // names this region when another waits for its job pool (metrics)
+            settings.RayCastClock = RayCastClock;
             _bodyBufMax = _joltConfig.BodyUpdateBufferMax;
             _charBufMax = _joltConfig.CharacterUpdateBufferMax;
             _capacityLogIntervalTicks = System.TimeSpan.FromSeconds(_joltConfig.CapacityLogIntervalSeconds).Ticks;
@@ -1281,6 +1282,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // so every such cast goes to the simulator's budget. When the caller can mark a script cast (a flag set by
         // LSL_Api.llCastRay), this is the one place to send it to RayCastBudget.Script instead.
         internal static RayCastBudget BudgetFor(RayFilterFlags filter) => RayCastBudget.Simulator;
+
+        /// <summary>
+        /// The clock the ray cast budgets are measured with (PhysicsBackendSettings.RayCastClock); null is the wall
+        /// clock. Tests set it before the region is initialised.
+        /// </summary>
+        internal TimeProvider RayCastClock { get; set; }
 
         /// <summary>How long the warm-up casts took when this region loaded (ms).</summary>
         internal double RayWarmUpMs { get; private set; }
