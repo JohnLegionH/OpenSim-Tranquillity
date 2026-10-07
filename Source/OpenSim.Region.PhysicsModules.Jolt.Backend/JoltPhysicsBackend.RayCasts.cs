@@ -267,7 +267,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
                 if (b == null)
                 {
-                    // A sort of fewer than two hits never calls the comparer, so the warm-up sorts two of its own.
+                    // The budget lookup a counted cast makes, and a sort: one of fewer than two hits never calls the
+                    // comparer, so the warm-up sorts two of its own.
+                    BudgetState(RayCastBudget.Simulator);
                     Span<NativeRayCastResult> two = stackalloc NativeRayCastResult[2];
                     two[0].Fraction = 1f;
                     SortByFraction(two);
