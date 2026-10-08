@@ -35,8 +35,10 @@ public class PhysicsStepRateTests
         Assert.Empty(warnings);
         Assert.Equal(45f, c.PhysicsStepRate);
         Assert.Equal(2, c.PhysicsStepCollisionSteps);
-        Assert.Equal(45f, c.EffectivePhysicsStepRate(Heartbeat, out string w));
+        Assert.Equal(45f, c.EffectivePhysicsStepRate(Heartbeat, out string w, out string note));
         Assert.Null(w);
+        Assert.Null(note);
+        Assert.False(c.PhysicsStepRateSet);
         Assert.Equal(2, c.ToBackendSettings(256, 256, substepping: true).CollisionSteps);
 
         // No [Jolt] section at all, and no configuration at all, give the same.
@@ -55,7 +57,7 @@ public class PhysicsStepRateTests
         JoltConfig c = Parse(warnings, ("PhysicsStepRate", zero));
         Assert.Empty(warnings);
         Assert.Equal(0f, c.PhysicsStepRate);
-        Assert.Equal(0f, c.EffectivePhysicsStepRate(Heartbeat, out string w));
+        Assert.Equal(0f, c.EffectivePhysicsStepRate(Heartbeat, out string w, out string note));
         Assert.Null(w);
         Assert.Equal(6, c.ToBackendSettings(256, 256).CollisionSteps);
         Assert.Equal(c.ToBackendSettings(256, 256), c.ToBackendSettings(256, 256, substepping: false));
@@ -68,13 +70,14 @@ public class PhysicsStepRateTests
         JoltConfig c = Parse(warnings, ("PhysicsStepRate", "45"), ("PhysicsStepCollisionSteps", "3"), ("CollisionSteps", "5"));
         Assert.Empty(warnings);
         Assert.Equal(45f, c.PhysicsStepRate);
-        Assert.Equal(45f, c.EffectivePhysicsStepRate(Heartbeat, out string w));
+        Assert.Equal(45f, c.EffectivePhysicsStepRate(Heartbeat, out string w, out string note));
         Assert.Null(w);
         Assert.Equal(3, c.ToBackendSettings(256, 256, substepping: true).CollisionSteps);
         Assert.Equal(5, c.ToBackendSettings(256, 256, substepping: false).CollisionSteps);
     }
 
-    // An invalid rate gives one physics step per heartbeat, with one warning: what it gave while that was the default.
+    // An invalid rate gives the default, with one warning that names the value given and the rate used, as an
+    // invalid value of every other key does.
     [Theory]
     [InlineData("-1")]
     [InlineData("1001")]
@@ -82,16 +85,18 @@ public class PhysicsStepRateTests
     [InlineData("NaN")]
     [InlineData("Infinity")]
     [InlineData("")]
-    public void An_invalid_rate_warns_and_gives_one_step_per_heartbeat(string value)
+    public void An_invalid_rate_warns_and_gives_the_default(string value)
     {
         var warnings = new List<string>();
         JoltConfig c = Parse(warnings, ("PhysicsStepRate", value));
         Assert.Single(warnings);
-        Assert.Contains("PhysicsStepRate", warnings[0]);
-        Assert.Contains("using 0.", warnings[0]);
-        Assert.Equal(0f, c.PhysicsStepRate);
-        Assert.Equal(0f, c.EffectivePhysicsStepRate(Heartbeat, out string w));
+        Assert.StartsWith($"[Jolt] PhysicsStepRate = \"{value}\" is invalid", warnings[0]);
+        Assert.EndsWith("using the default 45.", warnings[0]);
+        Assert.Equal(45f, c.PhysicsStepRate);
+        Assert.False(c.PhysicsStepRateSet);   // the default is in use, not a rate the operator set
+        Assert.Equal(45f, c.EffectivePhysicsStepRate(Heartbeat, out string w, out string note));
         Assert.Null(w);
+        Assert.Null(note);
         Assert.Equal(2, c.PhysicsStepCollisionSteps);
     }
 
@@ -115,10 +120,39 @@ public class PhysicsStepRateTests
     public void A_rate_below_the_heartbeat_is_refused_with_one_warning(float rate)
     {
         JoltConfig c = Parse(new List<string>(), ("PhysicsStepRate", rate.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-        Assert.Equal(0f, c.EffectivePhysicsStepRate(Heartbeat, out string w));
+        Assert.True(c.PhysicsStepRateSet);
+        Assert.Equal(0f, c.EffectivePhysicsStepRate(Heartbeat, out string w, out string note));
         Assert.NotNull(w);
         Assert.Contains("PhysicsStepRate", w);
         Assert.Contains("FrameTime", w);
+        Assert.Null(note);
+    }
+
+    // A heartbeat faster than the default rate (FrameTime 1/90 s here). With no rate set: one step per heartbeat and an
+    // information line, no warning. Set to the same 45 by the operator, or to an invalid value (which gives the
+    // default): the operator's 45 keeps the warning, the invalid value has had its own warning and gets the note.
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("45", true)]
+    [InlineData("fast", false)]
+    public void A_heartbeat_faster_than_the_default_warns_only_when_the_operator_set_the_rate(string value, bool warns)
+    {
+        const float FastHeartbeat = 1f / 90f;
+        JoltConfig c = value == null ? Parse(new List<string>()) : Parse(new List<string>(), ("PhysicsStepRate", value));
+        Assert.Equal(warns, c.PhysicsStepRateSet);
+        Assert.Equal(0f, c.EffectivePhysicsStepRate(FastHeartbeat, out string w, out string note));
+        if (warns)
+        {
+            Assert.Null(note);
+            Assert.Equal("[Jolt] PhysicsStepRate = 45 is below the heartbeat's own rate (90 Hz, [Startup] FrameTime); " +
+                         "using 0, one physics step per heartbeat.", w);
+        }
+        else
+        {
+            Assert.Null(w);
+            Assert.Equal("[Jolt] PhysicsStepRate is not set, and its default of 45 Hz is below the heartbeat's own rate " +
+                         "(90 Hz, [Startup] FrameTime); running one physics step per heartbeat.", note);
+        }
     }
 
     [Theory]
@@ -128,7 +162,7 @@ public class PhysicsStepRateTests
     public void A_rate_at_or_above_the_heartbeat_is_used(float rate)
     {
         JoltConfig c = Parse(new List<string>(), ("PhysicsStepRate", rate.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-        Assert.Equal(rate, c.EffectivePhysicsStepRate(Heartbeat, out string w));
+        Assert.Equal(rate, c.EffectivePhysicsStepRate(Heartbeat, out string w, out string note));
         Assert.Null(w);
     }
 

@@ -49,6 +49,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public int JobPools = 1;                   // job pools, one physics update at a time each; splits ThreadCount
         public bool JobPoolFairHandoff = false;    // true: a job pool is granted first come, first served (per physics step)
         public float PhysicsStepRate = DefaultPhysicsStepRate; // Hz; 0 = one physics step per heartbeat
+        public bool PhysicsStepRateSet = false;    // PhysicsStepRate came from a valid value in the configuration
         public int PhysicsStepCollisionSteps = 2;  // solver sub-steps per physics step, used only when PhysicsStepRate is on
         public float VehicleGroundGravityFactor = 1f;   // gravity on a car or sled touching something; 1 = whole
         public VehiclePresetSet VehiclePresets = VehiclePresetSet.Documented;   // the values llSetVehicleType gives each type
@@ -120,8 +121,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.CapacityLogIntervalSeconds = F(cfg, "CapacityLogIntervalSeconds", c.CapacityLogIntervalSeconds, 0.1f, 86400f, warnings);
             c.JobPools = I(cfg, "JobPools", c.JobPools, 1, JoltPhysicsBackend.MaxJobPools, warnings);
             c.JobPoolFairHandoff = B(cfg, "JobPoolFairHandoff", c.JobPoolFairHandoff, warnings);
-            // An invalid PhysicsStepRate gives one physics step per heartbeat, as it did while that was the default.
-            c.PhysicsStepRate = F(cfg, "PhysicsStepRate", c.PhysicsStepRate, 0f, MaxPhysicsStepRate, warnings, onInvalid: 0f);
+            // An invalid PhysicsStepRate warns and gives the default, as every other key does; it does not count as set.
+            c.PhysicsStepRate = F(cfg, "PhysicsStepRate", c.PhysicsStepRate, 0f, MaxPhysicsStepRate, warnings);
+            c.PhysicsStepRateSet = TryF(cfg.GetString("PhysicsStepRate", null), 0f, MaxPhysicsStepRate, out _);
             c.PhysicsStepCollisionSteps = I(cfg, "PhysicsStepCollisionSteps", c.PhysicsStepCollisionSteps, 1, 64, warnings);
             c.VehicleGroundGravityFactor = F(cfg, "VehicleGroundGravityFactor", c.VehicleGroundGravityFactor, 0f, 1f, warnings);
             c.VehiclePresets = E(cfg, "VehiclePresets", c.VehiclePresets, warnings);
@@ -178,19 +180,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         /// <summary>
         /// The physics step rate a region with this heartbeat runs at: <see cref="PhysicsStepRate"/>, or 0 (one step
-        /// per heartbeat) when it is off or below the heartbeat's own rate, which it cannot honour. A refused rate
-        /// sets <paramref name="warning"/>.
+        /// per heartbeat) when it is off or below the heartbeat's own rate, which it cannot honour. A rate the operator
+        /// set and that is refused sets <paramref name="warning"/>; the default refused (the operator set no rate) sets
+        /// <paramref name="note"/>, an information line, instead.
         /// </summary>
-        internal float EffectivePhysicsStepRate(float heartbeatSeconds, out string warning)
+        internal float EffectivePhysicsStepRate(float heartbeatSeconds, out string warning, out string note)
         {
             warning = null;
+            note = null;
             if (PhysicsStepRate <= 0f)
                 return 0f;
             if (!(heartbeatSeconds > 0f) || PhysicsStepRate * heartbeatSeconds < 1f - 1e-3f)
             {
-                float heartbeatHz = heartbeatSeconds > 0f ? 1f / heartbeatSeconds : 0f;
-                warning = $"[{Section}] PhysicsStepRate = {PhysicsStepRate.ToString(CultureInfo.InvariantCulture)} is below the heartbeat's own rate " +
-                          $"({heartbeatHz.ToString("0.##", CultureInfo.InvariantCulture)} Hz, [Startup] FrameTime); using 0, one physics step per heartbeat.";
+                string rate = PhysicsStepRate.ToString(CultureInfo.InvariantCulture);
+                string heartbeat = (heartbeatSeconds > 0f ? 1f / heartbeatSeconds : 0f).ToString("0.##", CultureInfo.InvariantCulture);
+                if (PhysicsStepRateSet)
+                    warning = $"[{Section}] PhysicsStepRate = {rate} is below the heartbeat's own rate " +
+                              $"({heartbeat} Hz, [Startup] FrameTime); using 0, one physics step per heartbeat.";
+                else
+                    note = $"[{Section}] PhysicsStepRate is not set, and its default of {rate} Hz is below the heartbeat's own rate " +
+                           $"({heartbeat} Hz, [Startup] FrameTime); running one physics step per heartbeat.";
                 return 0f;
             }
             return PhysicsStepRate;
@@ -239,19 +248,22 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // ---------------------------------------------------------------- parsing (invariant culture, never throws)
 
-        // onInvalid: the value an invalid entry gives, when that is not the default.
-        private static float F(IConfig cfg, string key, float def, float min, float max, List<string> warnings, float? onInvalid = null)
+        private static float F(IConfig cfg, string key, float def, float min, float max, List<string> warnings)
         {
             string raw = cfg.GetString(key, null);
             if (raw == null) return def;
-            if (float.TryParse(raw.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float v)
-                && float.IsFinite(v) && v >= min && v <= max)
+            if (TryF(raw, min, max, out float v))
                 return v;
-            string used = onInvalid is float fallback
-                ? fallback.ToString(CultureInfo.InvariantCulture)
-                : "the default " + def.ToString(CultureInfo.InvariantCulture);
-            warnings?.Add($"[{Section}] {key} = \"{raw}\" is invalid (expected a finite number in [{min}, {max}]); using {used}.");
-            return onInvalid ?? def;
+            warnings?.Add($"[{Section}] {key} = \"{raw}\" is invalid (expected a finite number in [{min}, {max}]); using the default {def.ToString(CultureInfo.InvariantCulture)}.");
+            return def;
+        }
+
+        // A finite number in [min, max]; false for null.
+        private static bool TryF(string raw, float min, float max, out float v)
+        {
+            v = 0f;
+            return raw != null && float.TryParse(raw.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out v)
+                   && float.IsFinite(v) && v >= min && v <= max;
         }
 
         private static int I(IConfig cfg, string key, int def, int min, int max, List<string> warnings)

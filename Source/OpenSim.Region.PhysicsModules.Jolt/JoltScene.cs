@@ -358,9 +358,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // heightfield. CollisionSteps slices the SOLVER only, NOT the character step (once per Step, before
             // Update), so dropped prims rest WITHOUT disturbing the avatar's known-good 1-step path.
             // [Jolt] PhysicsStepRate, checked against the heartbeat Simulate is called at ([Startup] FrameTime).
-            float stepRate = _joltConfig.EffectivePhysicsStepRate(heartbeatSeconds, out string rateWarning);
+            float stepRate = _joltConfig.EffectivePhysicsStepRate(heartbeatSeconds, out string rateWarning, out string rateNote);
             if (rateWarning != null)
                 m_log.LogWarning($"{LogHeader} region '{RegionName}': {rateWarning}");
+            if (rateNote != null)
+                m_log.LogInformation($"{LogHeader} region '{RegionName}': {rateNote}");
             _substeps = stepRate > 0f ? new SubstepAccumulator(stepRate) : null;
 
             PhysicsBackendSettings settings = _joltConfig.ToBackendSettings(sizeX, sizeY, _substeps != null);

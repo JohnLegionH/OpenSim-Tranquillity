@@ -5,6 +5,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+using Microsoft.Extensions.Logging;
 using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Framework;
@@ -47,7 +48,7 @@ public class SubstepSceneTests
     }
 
     // A scene whose [Jolt] PhysicsStepRate is the given text, or not set at all when it is null.
-    private static JoltScene NewSceneWithRateText(string rate)
+    private static JoltScene NewSceneWithRateText(string rate, float heartbeat = Heartbeat)
     {
         var config = new IniConfigSource();
         IConfig startup = config.AddConfig("Startup");
@@ -60,8 +61,41 @@ public class SubstepSceneTests
         scene.Initialise(config);
         var heights = new float[Size * Size];
         Array.Fill(heights, Ground);
-        scene.InitialiseWithoutScene("Test Region", Size, Size, heights, 20f, Heartbeat);
+        scene.InitialiseWithoutScene("Test Region", Size, Size, heights, 20f, heartbeat);
         return scene;
+    }
+
+    // The lines the module logs while `body` runs (LoggerProvider.LoggerFactory is process-wide; this class is serial).
+    private static List<(LogLevel Level, string Message)> Logged(Action body)
+    {
+        var capture = new CaptureFactory();
+        ILoggerFactory saved = LoggerProvider.LoggerFactory;
+        LoggerProvider.LoggerFactory = capture;
+        try { body(); }
+        finally { LoggerProvider.LoggerFactory = saved; }
+        lock (capture.Lines)
+            return capture.Lines.ToList();
+    }
+
+    private sealed class CaptureFactory : ILoggerFactory
+    {
+        public readonly List<(LogLevel Level, string Message)> Lines = new();
+        public ILogger CreateLogger(string categoryName) => new CaptureLogger(this);
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+
+        private sealed class CaptureLogger : ILogger
+        {
+            private readonly CaptureFactory _f;
+            public CaptureLogger(CaptureFactory f) { _f = f; }
+            public IDisposable BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => true;
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception exception, Func<TState, Exception, string> formatter)
+            {
+                lock (_f.Lines)
+                    _f.Lines.Add((logLevel, formatter(state, exception)));
+            }
+        }
     }
 
     private static PhysicsActor AddBox(JoltScene scene, uint localId, Vector3 position, bool physical)
@@ -104,13 +138,10 @@ public class SubstepSceneTests
         finally { s.Dispose(); }
     }
 
-    // 0, and an invalid value (as before the default was 45), give one step per heartbeat.
+    // 0 gives one step per heartbeat.
     [Theory]
     [InlineData("0")]
-    [InlineData("fast")]
-    [InlineData("-1")]
-    [InlineData("1001")]
-    public void A_scene_with_rate_0_or_an_invalid_rate_runs_one_step_per_heartbeat(string rate)
+    public void A_scene_with_rate_0_runs_one_step_per_heartbeat(string rate)
     {
         JoltScene s = NewSceneWithRateText(rate);
         try
@@ -119,6 +150,54 @@ public class SubstepSceneTests
             Assert.Null(s.Substeps);
         }
         finally { s.Dispose(); }
+    }
+
+    // An invalid value gives the default rate, with one warning naming the value and the rate used.
+    [Theory]
+    [InlineData("fast")]
+    [InlineData("-1")]
+    [InlineData("1001")]
+    public void A_scene_with_an_invalid_rate_steps_at_the_default_rate(string rate)
+    {
+        JoltScene s = null;
+        var lines = Logged(() => s = NewSceneWithRateText(rate));
+        try
+        {
+            Assert.True(s.Substepping);
+            Assert.Equal(1f / 45f, s.Substeps.StepSeconds);
+            var warning = Assert.Single(lines, l => l.Level == LogLevel.Warning && l.Message.Contains("PhysicsStepRate"));
+            Assert.Contains($"PhysicsStepRate = \"{rate}\" is invalid", warning.Message);
+            Assert.Contains("using the default 45.", warning.Message);
+        }
+        finally { s?.Dispose(); }
+    }
+
+    // A heartbeat faster than the default rate: with no rate set, one step per heartbeat and one information line, no
+    // warning; with the rate set by the operator, the warning as before.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("45")]
+    public void A_heartbeat_faster_than_the_rate_warns_only_about_a_rate_the_operator_set(string rate)
+    {
+        JoltScene s = null;
+        var lines = Logged(() => s = NewSceneWithRateText(rate, heartbeat: 1f / 90f));
+        try
+        {
+            Assert.False(s.Substepping);
+            var about = lines.Where(l => l.Message.Contains("PhysicsStepRate")).ToList();
+            var line = Assert.Single(about);
+            if (rate == null)
+            {
+                Assert.Equal(LogLevel.Information, line.Level);
+                Assert.Contains("PhysicsStepRate is not set, and its default of 45 Hz is below the heartbeat's own rate (90 Hz", line.Message);
+            }
+            else
+            {
+                Assert.Equal(LogLevel.Warning, line.Level);
+                Assert.Contains("PhysicsStepRate = 45 is below the heartbeat's own rate (90 Hz", line.Message);
+            }
+        }
+        finally { s?.Dispose(); }
     }
 
     [Fact]

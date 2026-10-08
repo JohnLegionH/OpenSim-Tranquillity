@@ -178,8 +178,8 @@ pwsh -File assert-joltc-native.ps1 -PublishDir "<publish directory>"
 ## Settings
 
 All settings are in the `[Jolt]` section. `OpenSimDefaults.ini` lists every key with its default
-and what it does; copy a key into `OpenSim.ini` to change it. An invalid value logs a warning and
-the default is used, except `PhysicsStepRate`, where it gives one physics step per heartbeat (below). The keys cover gravity, solver sub-steps and iterations, the worker threads
+and what it does; copy a key into `OpenSim.ini` to change it. An invalid value logs a warning that
+names the value and the default used instead. The keys cover gravity, solver sub-steps and iterations, the worker threads
 and job pools shared by all regions in the process, body / pair / contact capacities (optionally
 scaled with region area for var regions), the per-frame update buffers, the avatar jump speed,
 how often capacity warnings are logged, the physics step rate (below), the vehicle settings (the
@@ -199,6 +199,9 @@ fixed 45 Hz physics steps, whatever the heartbeat (`[Startup] FrameTime`, about 
     PhysicsStepCollisionSteps = 2
 ```
 
+`OpenSimDefaults.ini` leaves `PhysicsStepRate` commented out, so the key is set only where an
+operator sets it; that decides how a rate the heartbeat cannot honour is reported (below).
+
 - Each step is exactly 1/45 s. An 11 Hz heartbeat runs 4 or 5 steps; the time left over carries
   into the next heartbeat, so the long-run rate is exact.
 - In every step: the vehicle controllers, the avatar step, and forces and changes queued by
@@ -213,10 +216,12 @@ fixed 45 Hz physics steps, whatever the heartbeat (`[Startup] FrameTime`, about 
   sub-steps per physics step. 2 at 45 steps per second slices the solver at 90 Hz.
 - A heartbeat runs at most 16 steps. A heartbeat that would need more runs 16 and drops the rest
   of its time; `jolt capacity` shows how many heartbeats did ("physics steps").
-- A rate below the heartbeat's own rate is refused with one warning at region start, and the region
-  runs one step per heartbeat. So is a value that is not a number from 0 to 1000 (one warning; the
-  region runs one step per heartbeat, as it did while that was the default). A heartbeat faster than
-  45 Hz refuses the default the same way.
+- A rate set below the heartbeat's own rate is refused with one warning at region start, and the
+  region runs one step per heartbeat. With the key not set, a heartbeat faster than 45 Hz runs one
+  step per heartbeat too, and the region logs one information line saying so, not a warning.
+- A value that is not a number from 0 to 1000 (text, a negative number, above 1000) logs one
+  warning naming the value and the rate used, and the region steps at the default 45. It counts as
+  not set.
 - The keys are read once, when the region starts.
 
 What changes at 45: vehicles and avatars integrate in 1/45 s steps, so anything whose behaviour
@@ -377,8 +382,9 @@ Watching the pools:
 - Every 30 s the log prints a `[JOLT METRICS]` summary line and, after it, a `[JOLT METRICS] last
   <seconds>s` line with each region's figures for that interval: heartbeats, the longest heartbeat's
   physics time and the longest single physics step (both include region lock waits and leave out
-  pool waits), the pool waits (count, total, longest, and which region had last taken the pool when
-  the longest began), the region lock waits (count, total, longest), the longest gap between two
+  pool waits), the pool waits (count, total, longest, and which region held the pool when the
+  longest began, or, if the pool was changing hands at that moment, the region that had it just
+  before this one; never the region itself), the region lock waits (count, total, longest), the longest gap between two
   heartbeats' physics calls against the frame time, and the ray casts refused in the interval in
   each budget (`ray casts refused script=<n> simulator=<n>`). `jolt metrics` shows both lines.
 - The harness's `--pool-bench` (see "Physics harness") measures waits and step times for a heavy
