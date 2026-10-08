@@ -1221,6 +1221,8 @@ public static class Harness
         startup.Set("physics", "Jolt");
         startup.Set("meshing", "Meshmerizer");
         IConfig jolt = config.AddConfig("Jolt");
+        // 0 is one step per heartbeat, set as such: the module's own default is 45 Hz. A --jolt key overrides it.
+        jolt.Set("PhysicsStepRate", "0");
         foreach (KeyValuePair<string, string> kv in o.Jolt)
             jolt.Set(kv.Key, kv.Value);
         if (o.PhysicsRateHz > 0)

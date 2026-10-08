@@ -28,13 +28,33 @@ public class PhysicsStepRateTests
     }
 
     [Fact]
-    public void Rate_is_off_by_default_and_the_solver_keeps_its_collision_steps()
+    public void With_no_rate_set_physics_steps_at_45_Hz()
     {
         var warnings = new List<string>();
         JoltConfig c = Parse(warnings);
         Assert.Empty(warnings);
-        Assert.Equal(0f, c.PhysicsStepRate);
+        Assert.Equal(45f, c.PhysicsStepRate);
         Assert.Equal(2, c.PhysicsStepCollisionSteps);
+        Assert.Equal(45f, c.EffectivePhysicsStepRate(Heartbeat, out string w));
+        Assert.Null(w);
+        Assert.Equal(2, c.ToBackendSettings(256, 256, substepping: true).CollisionSteps);
+
+        // No [Jolt] section at all, and no configuration at all, give the same.
+        Assert.Equal(45f, JoltConfig.FromConfig(new IniConfigSource(), warnings).PhysicsStepRate);
+        Assert.Equal(45f, JoltConfig.FromConfig(null, warnings).PhysicsStepRate);
+        Assert.Empty(warnings);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData(" 0 ")]
+    [InlineData("0.0")]
+    public void Rate_0_is_one_step_per_heartbeat_and_the_solver_keeps_its_collision_steps(string zero)
+    {
+        var warnings = new List<string>();
+        JoltConfig c = Parse(warnings, ("PhysicsStepRate", zero));
+        Assert.Empty(warnings);
+        Assert.Equal(0f, c.PhysicsStepRate);
         Assert.Equal(0f, c.EffectivePhysicsStepRate(Heartbeat, out string w));
         Assert.Null(w);
         Assert.Equal(6, c.ToBackendSettings(256, 256).CollisionSteps);
@@ -54,20 +74,38 @@ public class PhysicsStepRateTests
         Assert.Equal(5, c.ToBackendSettings(256, 256, substepping: false).CollisionSteps);
     }
 
+    // An invalid rate gives one physics step per heartbeat, with one warning: what it gave while that was the default.
     [Theory]
-    [InlineData("PhysicsStepRate", "-1")]
-    [InlineData("PhysicsStepRate", "1001")]
-    [InlineData("PhysicsStepRate", "fast")]
-    [InlineData("PhysicsStepRate", "NaN")]
-    [InlineData("PhysicsStepCollisionSteps", "0")]
-    [InlineData("PhysicsStepCollisionSteps", "65")]
-    public void An_invalid_value_warns_and_keeps_the_default(string key, string value)
+    [InlineData("-1")]
+    [InlineData("1001")]
+    [InlineData("fast")]
+    [InlineData("NaN")]
+    [InlineData("Infinity")]
+    [InlineData("")]
+    public void An_invalid_rate_warns_and_gives_one_step_per_heartbeat(string value)
     {
         var warnings = new List<string>();
-        JoltConfig c = Parse(warnings, (key, value));
+        JoltConfig c = Parse(warnings, ("PhysicsStepRate", value));
         Assert.Single(warnings);
-        Assert.Contains(key, warnings[0]);
+        Assert.Contains("PhysicsStepRate", warnings[0]);
+        Assert.Contains("using 0.", warnings[0]);
         Assert.Equal(0f, c.PhysicsStepRate);
+        Assert.Equal(0f, c.EffectivePhysicsStepRate(Heartbeat, out string w));
+        Assert.Null(w);
+        Assert.Equal(2, c.PhysicsStepCollisionSteps);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("65")]
+    public void An_invalid_collision_step_count_warns_and_keeps_the_default(string value)
+    {
+        var warnings = new List<string>();
+        JoltConfig c = Parse(warnings, ("PhysicsStepCollisionSteps", value));
+        Assert.Single(warnings);
+        Assert.Contains("PhysicsStepCollisionSteps", warnings[0]);
+        Assert.Contains("using the default 2.", warnings[0]);
+        Assert.Equal(45f, c.PhysicsStepRate);
         Assert.Equal(2, c.PhysicsStepCollisionSteps);
     }
 

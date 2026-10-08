@@ -100,7 +100,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // they read the wall clock; the test harness sets a simulated one so it can step faster than real time.
         internal Func<DateTime> VehicleClock;
 
-        // [Jolt] PhysicsStepRate: null = one backend step per heartbeat (the default). Otherwise each heartbeat runs
+        // [Jolt] PhysicsStepRate: null = one backend step per heartbeat (PhysicsStepRate = 0). Otherwise each heartbeat runs
         // the steps this accumulator hands out, each 1 / rate seconds long. Set once, in InitialiseRegion.
         private SubstepAccumulator _substeps;
         internal bool Substepping => _substeps != null;
