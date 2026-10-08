@@ -251,7 +251,8 @@ public class BaselineCheckTests
     // ------------------------------------------------------------------ the committed baselines
 
     // Every committed baseline is a run of ci/runs.txt with today's summary columns, and its folder is the baseline of a
-    // build the module has a record of. The stock files this project does not test (ARM, macOS) have none.
+    // build the module has a record of. Every build this project tests has one holding every listed run; the stock files
+    // it does not test (Arm64, macOS) have none.
     [Fact]
     public void The_committed_baselines_match_the_run_list_and_the_record()
     {
@@ -275,8 +276,8 @@ public class BaselineCheckTests
         foreach (JoltNativeBuild untested in JoltNative.Known.Where(b => !b.TestedByProject))
             Assert.DoesNotContain(BaselineCheck.KeyFor(untested), folders);
 
-        // The patched build's baseline holds every listed run.
-        Assert.Equal(runs.OrderBy(r => r, StringComparer.Ordinal),
-                     Directory.GetFiles(Path.Combine(CommittedBaselines, "patched")).Select(Path.GetFileNameWithoutExtension).OrderBy(r => r, StringComparer.Ordinal));
+        foreach (string key in JoltNative.Known.Where(b => b.TestedByProject).Select(BaselineCheck.KeyFor).Distinct())
+            Assert.Equal(runs.OrderBy(r => r, StringComparer.Ordinal),
+                         Directory.GetFiles(Path.Combine(CommittedBaselines, key)).Select(Path.GetFileNameWithoutExtension).OrderBy(r => r, StringComparer.Ordinal));
     }
 }
