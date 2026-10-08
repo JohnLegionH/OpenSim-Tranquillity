@@ -1,7 +1,9 @@
-# Runs the Jolt suite and the listed harness runs against the STOCK joltc of the JoltPhysics.Native package (the file
-# the module refuses by default), on Windows x64 and Linux x64, and the same harness runs against the shipped patched
-# native on the same runner, so the two can be compared run by run. A native abort in one test class is recorded and the
-# other classes still run. A short multi-scene stress run on one, two and three job pools follows on each native.
+# The Jolt module loads the stock joltc of the JoltPhysics.Native package by default, and the Jolt tests and Jolt
+# harness workflows run on it. This workflow runs what they do not, on Windows x64 and Linux x64: the listed harness
+# runs on this project's patched joltc (native/joltc/README.md), checked against the patched baseline
+# (Tests/JoltPhysicsHarness/ci/baselines/patched), and a short multi-scene stress run on one, two and three job pools
+# on each native. On the patched native the stress run uses the pools asked for; on the stock native the module runs
+# one pool whatever is asked, so its runs show the fallback holds under load. Any run that does not exit 0 fails the job.
 name: Jolt stock native
 
 on:
@@ -13,7 +15,6 @@ on:
       - 'Source/OpenSim.Region.PhysicsModules.Jolt.Backend/**'
       - 'Source/OpenSim.Region.PhysicsModules.Jolt.Vehicles/**'
       - 'Tests/JoltPhysicsHarness/**'
-      - 'Tests/OpenSim.Region.PhysicsModules.Jolt.Tests/**'
       - '.github/workflows/jolt-stock-native.yml'
   workflow_dispatch:
 
@@ -25,10 +26,10 @@ env:
   DOTNET_NOLOGO: 1
 
 jobs:
-  stock:
-    name: Jolt stock native ${{ matrix.os }}
+  natives:
+    name: Jolt patched and stock native ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -54,93 +55,66 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Build the Jolt tests and the harness
-        run: |
-          dotnet build Tests/OpenSim.Region.PhysicsModules.Jolt.Tests -c Release --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false
-          dotnet build Tests/JoltPhysicsHarness -c Release --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false
+      - name: Build the harness
+        run: dotnet build Tests/JoltPhysicsHarness -c Release --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false
 
-      - name: Put the stock native in a copy of each output
+      - name: Put the patched natives in a copy of the harness output
         run: |
-          pkgs=$(dotnet nuget locals global-packages -l | sed 's/^global-packages: *//' | tr -d '\r')
-          stock="$pkgs/joltphysics.native/1.0.4/runtimes/${{ matrix.rid }}/native/${{ matrix.file }}"
-          tests=Tests/OpenSim.Region.PhysicsModules.Jolt.Tests/bin/Release/net10.0
           harness=Tests/JoltPhysicsHarness/bin/Release/net10.0
-          cp -r "$tests" "$RUNNER_TEMP/tests-stock"
-          cp -r "$harness" "$RUNNER_TEMP/harness-stock"
-          cp "$stock" "$RUNNER_TEMP/tests-stock/runtimes/${{ matrix.rid }}/native/${{ matrix.file }}"
-          cp "$stock" "$RUNNER_TEMP/harness-stock/runtimes/${{ matrix.rid }}/native/${{ matrix.file }}"
+          cp -r "$harness" "$RUNNER_TEMP/harness-patched"
+          # Both patched files, so the copy is what an operator who installs the patched build has.
+          for f in win-x64/native/joltc.dll linux-x64/native/libjoltc.so; do
+            cp "Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/$f" "$RUNNER_TEMP/harness-patched/runtimes/$f"
+          done
           mkdir -p "$RUNNER_TEMP/out"
-          sha256sum "$stock" "$harness/runtimes/${{ matrix.rid }}/native/${{ matrix.file }}" \
-            "$RUNNER_TEMP"/*-stock/runtimes/${{ matrix.rid }}/native/${{ matrix.file }} | tee "$RUNNER_TEMP/out/natives.txt"
+          sha256sum "$harness/runtimes/${{ matrix.rid }}/native/${{ matrix.file }}" \
+            "$RUNNER_TEMP/harness-patched/runtimes/${{ matrix.rid }}/native/${{ matrix.file }}" | tee "$RUNNER_TEMP/out/natives.txt"
 
-      - name: Run the Jolt suite on the stock native, one test class per test host
-        env:
-          JOLT_TEST_ACCEPT_UNRECORDED_NATIVE: '1'
+      - name: Check both harness outputs hold recorded natives, the copy the patched one
+        shell: pwsh
         run: |
-          out="$RUNNER_TEMP/out/suite-stock"
+          ./Source/OpenSim.Region.PhysicsModules.Jolt/assert-joltc-native.ps1 -PublishDir Tests/JoltPhysicsHarness/bin/Release/net10.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./Source/OpenSim.Region.PhysicsModules.Jolt/assert-joltc-native.ps1 -PublishDir "$env:RUNNER_TEMP/harness-patched" -RequirePatched
+          exit $LASTEXITCODE
+
+      - name: Run the listed harness runs on the patched native and check them against its baseline
+        run: |
+          out="$RUNNER_TEMP/out/harness-patched"
           mkdir -p "$out"
-          dll="$RUNNER_TEMP/tests-stock/OpenSim.Region.PhysicsModules.Jolt.Tests.dll"
-          dotnet test "$dll" --list-tests | grep '^    ' | sed 's/^ *//; s/(.*//' | sed -E 's/\.[^.]+$//' | sort -u > "$out/_classes.txt"
-          while read -r cls; do
-            short=${cls##*.}
-            s=$(date +%s)
-            set +e
-            dotnet test "$dll" --filter "FullyQualifiedName~$cls." --blame-hang-timeout 10m --blame-hang-dump-type none \
-              --logger "trx;LogFileName=$short.trx" --results-directory "$out" > "$out/$short.txt" 2>&1
-            rc=$?
-            set -e
-            line=$(grep -E '^(Passed|Failed|Skipped)!|Test Run Aborted|crashed' "$out/$short.txt" | tr '\n' ' ' | cut -c1-200 || true)
-            echo "$short rc=$rc $(( $(date +%s) - s ))s $line" | tee -a "$out/_summary.txt"
-          done < "$out/_classes.txt"
-          # MoveShapeLoadTests starts its child from the project's own bin folder, which holds the patched native, so its
-          # child is run here directly against this copy, as the test runs it.
-          for n in 14 400; do
-            set +e
-            MOVESHAPE_LOAD_BODIES=$n dotnet test "$dll" --filter "FullyQualifiedName~MoveShapeLoadTests.Child_load_run" \
-              -l "console;verbosity=detailed" > "$out/moveshape-child-$n.txt" 2>&1
-            echo "moveshape child bodies=$n exit=$?" | tee -a "$out/_summary.txt"
-            set -e
+          dll="$RUNNER_TEMP/harness-patched/JoltPhysicsHarness.dll"
+          grep -v '^[[:space:]]*#' Tests/JoltPhysicsHarness/ci/runs.txt | grep ':' | while IFS= read -r line; do
+            name="${line%%:*}"
+            args="${line#*:}"
+            case "$name" in *[!A-Za-z0-9_-]*|'') echo "bad run name '$name'"; exit 1;; esac
+            # shellcheck disable=SC2086
+            dotnet "$dll" $args --out "$out/$name" > "$out/$name.txt"
           done
+          dotnet "$dll" --check-baseline "$out" --baselines Tests/JoltPhysicsHarness/ci/baselines | tee "$out/baseline-check.txt"
 
-      - name: Run the listed harness runs on the patched and on the stock native
+      - name: Stress several scenes on one, two and three job pools, on each native
         run: |
-          for which in patched stock; do
-            out="$RUNNER_TEMP/out/harness-$which"
-            mkdir -p "$out"
-            if [ "$which" = patched ]; then dll=Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll; extra=""
-            else dll="$RUNNER_TEMP/harness-stock/JoltPhysicsHarness.dll"; extra="--jolt AllowUnrecordedNative=true"; fi
-            grep -v '^[[:space:]]*#' Tests/JoltPhysicsHarness/ci/runs.txt | grep ':' | while IFS= read -r line; do
-              name="${line%%:*}"
-              args="${line#*:}"
-              case "$name" in *[!A-Za-z0-9_-]*|'') echo "bad run name '$name'"; exit 1;; esac
-              set +e
-              # shellcheck disable=SC2086
-              dotnet "$dll" $args $extra --out "$out/$name" > "$out/$name.txt" 2>&1
-              echo "$which $name exit=$?" | tee -a "$out/_exits.txt"
-              set -e
-            done
-          done
-
-      - name: Stress several scenes on one, two and three job pools
-        run: |
+          failed=0
           for which in patched stock; do
             out="$RUNNER_TEMP/out/stress-$which"
             mkdir -p "$out"
-            if [ "$which" = patched ]; then dll=Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll; extra=""
-            else dll="$RUNNER_TEMP/harness-stock/JoltPhysicsHarness.dll"; extra="--jolt AllowUnrecordedNative=true"; fi
+            if [ "$which" = patched ]; then dll="$RUNNER_TEMP/harness-patched/JoltPhysicsHarness.dll"
+            else dll=Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll; fi
             for pools in 1 2 3; do
               set +e
-              # shellcheck disable=SC2086
-              timeout 600 dotnet "$dll" --stress --pools $pools --busy 2 --light 1 --rays 1 --churn 1 --seconds 60 $extra > "$out/pools$pools.txt" 2>&1
-              echo "$which pools=$pools exit=$?" | tee -a "$out/_exits.txt"
+              timeout 600 dotnet "$dll" --stress --pools $pools --busy 2 --light 1 --rays 1 --churn 1 --seconds 60 > "$out/pools$pools.txt" 2>&1
+              rc=$?
               set -e
+              echo "$which pools=$pools exit=$rc $(grep -m 1 '^stress:' "$out/pools$pools.txt" || true)" | tee -a "$out/_exits.txt"
+              [ "$rc" -eq 0 ] || failed=1
             done
           done
+          exit "$failed"
 
       - name: Upload the results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: jolt-stock-${{ matrix.rid }}
+          name: jolt-natives-${{ matrix.rid }}
           path: ${{ runner.temp }}/out
           if-no-files-found: ignore
