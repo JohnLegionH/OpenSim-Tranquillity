@@ -36,7 +36,8 @@ public class JoltNativePackageTests
         "depth (Jolt CharacterVirtual.cpp, the test of mMaxPenetrationDepth < FLT_MAX);\n" +
         "  3. no step listener is used: the map of physics systems is still read only by the step listener callback, and the " +
         "module adds no step listener (ShapeAndAllocatorRuleTests).\n" +
-        "Then run the whole Jolt suite and the harness on the new files.";
+        "Then run the whole Jolt suite and the harness on the new files, and record the harness baselines of the new version " +
+        "on win-x64 and linux-x64 (JoltPhysicsHarness --record-baseline; Docs/JoltPhysics.md, \"When the JoltPhysics.Native version changes\").";
 
     /// <summary>The restored package: its version and the folder its files are in.</summary>
     private static (string Version, string Folder) RestoredPackage()

@@ -37,6 +37,61 @@ A build with no runtime identifier carries every platform's file, so the same ou
 A `dotnet publish -r <rid>` puts that platform's file beside the assemblies instead, where the
 module also finds it. Copy the whole output, including its `runtimes` folder.
 
+### What is supported
+
+| Setup | On the stock joltc | On the patched joltc |
+|---|---|---|
+| One region per region server process | Tested and supported | Tested and supported |
+| Several regions in one process, on one job pool (`JobPools = 1`, the default) | Tested and working: the regions take turns on the pool | Tested and working |
+| More than one job pool (`JobPools` above 1) | Not available: the module runs one pool (below) | Tested and working; Windows x64 and Linux x64 only |
+
+When `JobPools` asks for more than one pool on the stock joltc, the region server still starts and
+every region runs. The module runs one pool, sized as `JobPools = 1` would size it, logs one warning
+at start with the setting, the reason and the remedy (shown below, under "The native check at start"), and
+`jolt capacity` shows the pools in use and why. All the process's regions then take turns on that
+pool, so a region whose physics is busy can make the others wait for their step; no step is skipped.
+
+### Selecting the patched build
+
+The patched joltc is this project's build of the same joltc source with two patches: each physics
+system gets its own scratch allocator, and the map of systems gets a lock. It is built on GitHub's
+runners by `.github/workflows/joltc-native.yml` from pinned joltc and Jolt Physics commits and the
+patches in `native/joltc/`, so anyone can rebuild it and compare the hashes.
+[native/joltc/README.md](../native/joltc/README.md) gives the recipe, the hashes and where the files
+are.
+
+To select it, replace the stock file in the build or publish output with the patched file for the
+platform, under the same name (`runtimes/win-x64/native/joltc.dll` or
+`runtimes/linux-x64/native/libjoltc.so`), then check the output:
+
+```
+pwsh -File assert-joltc-native.ps1 -PublishDir "<publish directory>" -RequirePatched
+```
+
+At start the module's line says `patched build (native/joltc); safe for more than one job pool`, and
+`JobPools` takes effect. A rebuild of the output puts the stock file back, so replace it again after
+each build. Other platforms have no patched build and run one pool.
+
+### When the JoltPhysics.Native version changes
+
+The module knows each native file by its SHA-256, so a new `JoltPhysics.Native` version (usually
+through a JoltPhysicsSharp update) is refused at start until its files are recorded, and
+`JoltNativePackageTests` fails on it with what to check. Before recording it:
+
+1. Re-check the rules that make one shared scratch allocator safe on one pool, against the joltc
+   and Jolt sources the new package is built from: the list in `JoltNativePackageTests`
+   (`ShapeAndAllocatorRuleTests` checks the module's side of each rule).
+2. Record the new files: `JoltNative.PackageVersion` and the stock entries of `JoltNative.Known`,
+   the stock table of `assert-joltc-native.ps1` and the stock table of `native/joltc/README.md`.
+3. Run the whole Jolt suite and the harness on the new files, and record the harness baselines of
+   the new version on Windows x64 and Linux x64 ("Physics harness", below). Until they are
+   recorded, the regression check reports the new files as having no baseline.
+
+The patched build is made from the joltc source behind `JoltPhysics.Native 1.0.4` and replaces the
+stock file only under JoltPhysicsSharp 2.19.1. With a newer package, rebuild it from the joltc
+source of that package (the recipe in native/joltc/README.md) and record its hashes before using
+it for more than one pool.
+
 ### The native check at start
 
 When `physics = Jolt`, the module picks the file for the platform it runs on, computes its SHA-256
@@ -623,6 +678,33 @@ inside each heartbeat, so the two can be compared, e.g.
 `--scenario testcar --slope 15 --rate 11 --physics-rate 0,45`; the summary marks those rows
 `<scenario>/p45`. The harness writes nothing unless `--out` is given. The module's test
 project runs the same scenarios as regression tests (`HarnessTests`).
+
+### The regression check
+
+The Jolt harness workflow runs the runs listed in `Tests/JoltPhysicsHarness/ci/runs.txt`, one
+`--out` folder each, and then compares each run's `summary.csv` with a recorded baseline:
+
+```
+dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --check-baseline <folder of the runs> --baselines Tests/JoltPhysicsHarness/ci/baselines
+```
+
+The baseline depends on the joltc build that was loaded, not on the operating system: the stock
+files are built without Jolt's `CROSS_PLATFORM_DETERMINISTIC` option, so the stock Windows x64 file
+gives different results from the stock Linux x64 file, while the patched build gives the same
+results on both. Each `--out` folder holds `native.txt`, naming the build the run loaded, and the
+check reads `ci/baselines/patched/` for the patched build or `ci/baselines/stock-<version>-<rid>/`
+for a stock file. It leaves out `ray_us_per_cast`, which is timed on the wall clock. A build with
+no baseline (the stock Arm64 and macOS files, a file the module has no record of, or a new package
+version not yet recorded) is reported as `SKIPPED: no baseline for this native` with exit code 3,
+neither passed nor failed. Exit 0 is passed and 1 is failed. To record a build's baseline from a set
+of runs:
+
+```
+dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --record-baseline <folder of the runs> --baselines Tests/JoltPhysicsHarness/ci/baselines
+```
+
+Record only runs that give the same output run after run on one machine; `--leave-out RUN[,RUN..]`
+skips the others, and the check then reports those runs as skipped.
 
 `--pool-bench` runs the job pool benchmark instead of the scenarios: a heavy scene (a pile of
 `--heavy-boxes` boxes, default 300, kept moving, or with `--heavy-car` the test car driving with its
