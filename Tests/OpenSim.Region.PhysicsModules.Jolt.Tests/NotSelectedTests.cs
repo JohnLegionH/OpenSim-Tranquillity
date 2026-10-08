@@ -480,12 +480,12 @@ public class NotSelectedTests
             foreach (string engine in EngineNames)
             {
                 using var w = new Watch(loader);
-                var clock = Stopwatch.StartNew();
-                RunRegionLife(RegisteredModule(), Config(engine));   // no exception
-                clock.Stop();
+                INonSharedRegionModule module = RegisteredModule();
+                RunRegionLife(module, Config(engine));   // no exception
                 Assert.Equal(0, w.NativeCalls);
                 AssertNoLines(w.JoltLines.Where(l => l.Level > LogLevel.Debug));
-                Assert.True(clock.Elapsed < TimeSpan.FromSeconds(2), $"{engine}: the region's module life took {clock.Elapsed}");
+                // The module made no scene, so the region's life did no Jolt work at all (no backend, no buffers).
+                Assert.Null(module.GetType().GetField("m_scene", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(module));
             }
         }
         finally

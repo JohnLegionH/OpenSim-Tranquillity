@@ -285,12 +285,14 @@ public class TeleportCrossingHarnessTests
         Assert.True(charChar > 0, "OnCharacterContactAdded/Persisted never fired - no avatar-vs-avatar contact");
     }
 
-    // Until the region has stepped past `before`, or 5 s (then the step-count check below reports it).
+    // Until the region has stepped past `before`. The cap is for a step thread that has stopped, generous so that a
+    // stalled machine cannot reach it; reaching it fails the test at once rather than at the step-count check below.
     private static void WaitForSteps(Region region, long before)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        while (Interlocked.Read(ref region.Steps) <= before && sw.ElapsedMilliseconds < 5000)
+        while (Interlocked.Read(ref region.Steps) <= before && sw.Elapsed < TimeSpan.FromSeconds(60))
             Thread.Yield();
+        Assert.True(Interlocked.Read(ref region.Steps) > before, $"a region did not step within 60 s (waiting for more than {before} steps)");
     }
 
     /// <summary>

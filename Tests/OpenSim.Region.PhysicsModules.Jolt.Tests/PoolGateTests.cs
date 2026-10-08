@@ -24,12 +24,16 @@ public class PoolGateTests
     private readonly ITestOutputHelper _out;
     public PoolGateTests(ITestOutputHelper output) { _out = output; }
 
-    private static readonly TimeSpan Quick = TimeSpan.FromSeconds(1);
+    // A call that waits for B's _simLock waits for as long as the pool's gate is held, and the test holds it until the
+    // calls have returned or this has run out: a cap on a call that should return, generous so that a stalled
+    // machine cannot reach it.
+    private static readonly TimeSpan Limit = TimeSpan.FromSeconds(60);
 
-    private static PhysicsBackendSettings OnePool()
+    private static PhysicsBackendSettings OnePool(string name)
     {
         var s = JoltTestBackend.Settings();
         s.JobPools = 1;
+        s.RegionName = name;
         return s;
     }
 
@@ -47,20 +51,22 @@ public class PoolGateTests
     [Fact]
     public void Waiting_for_the_pool_does_not_hold_the_region_lock()
     {
-        using var a = new JoltTestBackend(OnePool());
-        var b = new JoltTestBackend(OnePool());
+        using var a = new JoltTestBackend(OnePool("A"));
+        var b = new JoltTestBackend(OnePool("B"));
         Assert.Equal(1, b.B.GetCapacityStats().JobPools);
         Assert.Equal(0, b.B.GetCapacityStats().PoolIndex);
         b.Ground();
         var box = b.B.CreateBoxShape(new Vector3(0.5f));
 
-        // Hold the one pool's gate, as region A's Step would, then start B's Step: it now waits at the gate.
+        // Hold the one pool's gate, as region A's Step would, then start B's Step: it now waits at the gate. The pool
+        // reports when B's Step has found the gate held; from then on it waits until the hold ends.
+        var bWaits = new ManualResetEventSlim(false);
+        b.B.SetPoolHooksForTest((region, mustWait) => { if (mustWait && region == "B") bWaits.Set(); }, null);
         var hold = a.B.HoldPoolGateForTest();
         var stepped = new ManualResetEventSlim(false);
         var stepper = new Thread(() => { b.Step(); stepped.Set(); }) { IsBackground = true, Name = "region-B-step" };
         stepper.Start();
-        Thread.Sleep(200);
-        var waiting = !stepped.IsSet;
+        var waiting = bWaits.Wait(Limit) && !stepped.IsSet;
 
         bool created, cast;
         TimeSpan createTook, castTook;
@@ -72,8 +78,8 @@ public class PoolGateTests
             d.Shape = box;
             d.Position = new Vector3(128f, 128f, 5f);
             var id = BodyId.Invalid;
-            created = CompletesWithin(() => id = b.B.CreateBody(d), Quick, out createTook);
-            cast = CompletesWithin(() => b.B.RayCast(new Vector3(128f, 128f, 20f), -Vector3.UnitZ, 40f, QueryFilter.All, out _), Quick, out castTook);
+            created = CompletesWithin(() => id = b.B.CreateBody(d), Limit, out createTook);
+            cast = CompletesWithin(() => b.B.RayCast(new Vector3(128f, 128f, 20f), -Vector3.UnitZ, 40f, QueryFilter.All, out _), Limit, out castTook);
             _out.WriteLine($"while B waits for the pool: CreateBody {(created ? "returned" : "BLOCKED")} in {createTook.TotalMilliseconds:0} ms, " +
                            $"RayCast {(cast ? "returned" : "BLOCKED")} in {castTook.TotalMilliseconds:0} ms");
         }
@@ -82,7 +88,8 @@ public class PoolGateTests
             hold.Dispose();   // same thread that took it (Monitor)
         }
 
-        Assert.True(stepped.Wait(TimeSpan.FromSeconds(10)), "B's Step did not complete after the pool gate was released");
+        Assert.True(stepped.Wait(Limit), "B's Step did not complete after the pool gate was released");
+        b.B.SetPoolHooksForTest(null, null);
         Assert.True(created, "CreateBody blocked while B's Step waited for the pool - B's _simLock was held across the wait");
         Assert.True(cast, "RayCast blocked while B's Step waited for the pool - B's _simLock was held across the wait");
         Assert.True(b.B.GetCapacityStats().UpdateGateWaits >= 1);

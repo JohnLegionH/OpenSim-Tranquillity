@@ -26,6 +26,10 @@ public class PoolTeardownTests
 
     private const int Margin = 4;
 
+    // Threads end a little after they are joined, and the runtime's own threads come and go. A cap on waiting for the
+    // count to come back, generous so a stalled machine cannot reach it; a leak keeps its threads for good.
+    private static readonly TimeSpan Limit = TimeSpan.FromSeconds(60);
+
     private static int Threads()
     {
         using var p = Process.GetCurrentProcess();
@@ -40,7 +44,20 @@ public class PoolTeardownTests
             GC.Collect();
             GC.WaitForPendingFinalizers();
         }
-        Thread.Sleep(200);
+    }
+
+    // The thread count once it is within the margin of `start`, or the last count read when the limit runs out.
+    private static int ThreadsSettledNear(int start)
+    {
+        var clock = Stopwatch.StartNew();
+        while (true)
+        {
+            Collect();
+            var now = Threads();
+            if (Math.Abs(now - start) <= Margin || clock.Elapsed > Limit)
+                return now;
+            Thread.Sleep(100);
+        }
     }
 
     /// <summary>What the binding says about the live pool's handle, read by reflection (NativeObject.OwnsHandle).</summary>
@@ -62,6 +79,7 @@ public class PoolTeardownTests
     public void Disposing_the_last_backend_joins_the_pool_threads()
     {
         Collect();
+        Thread.Sleep(200);   // the starting count is read once, not waited for: let threads from earlier tests end
         var start = Threads();
         var perPool = 0;
         for (var i = 0; i < 5; i++)
@@ -74,8 +92,7 @@ public class PoolTeardownTests
             _out.WriteLine($"backend {i}: {PoolHandleState()} workers={perPool} threads now={Threads()}");
             t.Dispose();
         }
-        Collect();
-        var end = Threads();
+        var end = ThreadsSettledNear(start);
         _out.WriteLine($"threads: start={start} end={end} (5 backends x {perPool} workers; margin {Margin})");
         Assert.InRange(end, start - Margin, start + Margin);
     }

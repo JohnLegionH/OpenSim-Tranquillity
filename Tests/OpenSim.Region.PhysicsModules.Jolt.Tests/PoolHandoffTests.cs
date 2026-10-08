@@ -79,7 +79,17 @@ public class PoolHandoffTests
     private static void WaitUntil(Func<bool> condition, string what)
         => Assert.True(SpinWait.SpinUntil(condition, Limit), $"timed out waiting until {what}");
 
-    private static bool Blocked(Thread th) => (th.ThreadState & System.Threading.ThreadState.WaitSleepJoin) != 0;
+    /// <summary>
+    /// Set when region <paramref name="name"/>'s step reaches the pool's gate and finds it must wait. From then on that
+    /// step waits for the gate whatever the scheduler does, so the test can go on without guessing from thread states.
+    /// The hook is the pool's: <paramref name="onPool"/> is any region on it.
+    /// </summary>
+    private static ManualResetEventSlim WaitsAtGate(JoltTestBackend onPool, string name)
+    {
+        var waits = new ManualResetEventSlim(false);
+        onPool.B.SetPoolHooksForTest((region, mustWait) => { if (mustWait && region == name) waits.Set(); }, null);
+        return waits;
+    }
 
     private static StepResult Step(JoltTestBackend t) => t.Step(bodyBuf: 4096, contactBuf: 16384);
 
@@ -176,7 +186,9 @@ public class PoolHandoffTests
     /// A heavy region steps back to back, as it does through a heartbeat of several physics steps, while a light region
     /// steps now and then. With fair handoff the light region runs before the heavy region's next step: at most the step
     /// the heavy region had already queued for when the light one arrived goes first. The default lock gives no such
-    /// bound; its figure is printed, not asserted.
+    /// bound; its figure is printed, not asserted. The light region arrives when its step reaches the pool (with fair
+    /// handoff, when it has drawn its ticket), read by the pool's own hook: a stall of the test thread between deciding
+    /// to step and reaching the pool moves the arrival with it, so it cannot count the heavy steps taken meanwhile.
     /// </summary>
     [Theory]
     [InlineData(false)]
@@ -191,6 +203,7 @@ public class PoolHandoffTests
             heavy.B.GateTakenForTest = _ => Interlocked.Increment(ref heavySteps);
             var arrivedAt = 0;
             var worst = 0;
+            light.B.SetPoolHooksForTest((region, _) => { if (region == "Light") arrivedAt = Volatile.Read(ref heavySteps); }, null);
             light.B.GateTakenForTest = _ => worst = Math.Max(worst, Volatile.Read(ref heavySteps) - arrivedAt);
             var done = false;
             // Bounded, so that with the default lock, which promises no order, a light step kept waiting still ends.
@@ -207,7 +220,6 @@ public class PoolHandoffTests
                 // Arrive while the heavy region is mid-run.
                 var seen = Volatile.Read(ref heavySteps);
                 WaitUntil(() => Volatile.Read(ref heavySteps) > seen || !heavyThread.IsAlive, "the heavy region stepped");
-                arrivedAt = Volatile.Read(ref heavySteps);
                 Step(light);
                 lightTaken++;
             }
@@ -284,9 +296,10 @@ public class PoolHandoffTests
         try
         {
             StepResult waiterResult = default;
+            var waits = WaitsAtGate(holder, "Waiter");
             var hold = holder.B.HoldPoolGateForTest();
             var stepper = Start("waiter-step", () => waiterResult = Step(waiter));
-            WaitUntil(() => Blocked(stepper), "the waiter blocks on the pool");
+            Assert.True(waits.Wait(Limit), "the waiter did not reach the pool");
             // The waiter holds no region lock while it waits, so removing it does not wait for the pool.
             var remover = Start("waiter-remove", () => waiter.Dispose());
             Join(remover, "removing the waiting region");
@@ -327,8 +340,9 @@ public class PoolHandoffTests
             StepResult holderResult = default;
             var holding = Start("holder-step", () => holderResult = Step(holder));
             Assert.True(inside.Wait(Limit), "the holder did not take the pool");
+            var waits = WaitsAtGate(waiter, "Waiter");
             var waiting = Start("waiter-step", () => Step(waiter));
-            WaitUntil(() => Blocked(waiting), "the second region blocks on the pool");
+            Assert.True(waits.Wait(Limit), "the second region did not reach the pool");
 
             // The holder has the pool but not yet its region lock: removing it completes now, and its step then finds the
             // backend gone, runs nothing, and passes the pool on.
@@ -381,9 +395,10 @@ public class PoolHandoffTests
             Assert.Equal(0.0, first.Waits.PoolWaitMs);
 
             StepResult r = default;
+            var waits = WaitsAtGate(holder, "Waiter");
             var hold = holder.B.HoldPoolGateForTest();
             var stepper = Start("waiter-step", () => r = Step(waiter));
-            WaitUntil(() => Blocked(stepper), "the waiter blocks on the pool");
+            Assert.True(waits.Wait(Limit), "the waiter did not reach the pool");
             hold.Dispose();
             Join(stepper, "the waiting step");
             Assert.True(r.Waits.PoolWaited);
@@ -398,6 +413,53 @@ public class PoolHandoffTests
         {
             waiter.Dispose();
             holder.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// A region that steps again while the pool is passing to another region (taken, but its taker has not yet named
+    /// itself) waited behind that other region, and must say so. It had itself taken the pool last; the pool names the
+    /// region holding it, not the one that last took it, so a region is never reported as waiting on itself.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_step_that_waits_while_the_pool_changes_hands_names_the_new_holder_not_itself(bool fair)
+    {
+        var a = Region("Region A", fair);
+        var b = Region("Region B", fair);
+        try
+        {
+            Assert.False(Step(a).Waits.PoolWaited);   // Region A took the pool last
+            using var bTook = new ManualResetEventSlim(false);
+            using var release = new ManualResetEventSlim(false);
+            using var aWaits = new ManualResetEventSlim(false);
+            a.B.SetPoolHooksForTest(
+                (region, mustWait) => { if (mustWait && region == "Region A") aWaits.Set(); },
+                region =>
+                {
+                    if (region != "Region B")
+                        return;
+                    bTook.Set();
+                    release.Wait(Limit);   // Region B has the pool and has not named itself yet
+                });
+            var bStep = Start("region-b-step", () => Step(b));
+            Assert.True(bTook.Wait(Limit), "Region B did not take the pool");
+            StepResult r = default;
+            var aStep = Start("region-a-step", () => r = Step(a));
+            Assert.True(aWaits.Wait(Limit), "Region A did not reach the pool");
+            release.Set();
+            Join(bStep, "Region B's step");
+            Join(aStep, "Region A's step");
+            a.B.SetPoolHooksForTest(null, null);
+
+            Assert.True(r.Waits.PoolWaited);
+            Assert.Equal("Region B", r.Waits.PoolHeldBy);
+        }
+        finally
+        {
+            b.Dispose();
+            a.Dispose();
         }
     }
 
@@ -420,9 +482,12 @@ public class PoolHandoffTests
                 }
             });
             Assert.True(held.Wait(Limit));
+            // Set by the step itself when it finds the lock held, so the lock is released only once the step must wait.
+            var busy = new ManualResetEventSlim(false);
+            t.B.RegionLockBusyForTest = () => busy.Set();
             StepResult r = default;
             var stepper = Start("locked-step", () => r = Step(t));
-            WaitUntil(() => Blocked(stepper), "the step blocks on the region lock");
+            Assert.True(busy.Wait(Limit), "the step did not reach the region lock");
             release.Set();
             Join(stepper, "the step");
             Join(locker, "the lock holder");

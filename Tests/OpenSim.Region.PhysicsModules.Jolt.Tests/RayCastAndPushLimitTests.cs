@@ -580,16 +580,20 @@ public class RayCastAndPushLimitTests
             int spentHeartbeats = 0;
             try
             {
-                for (int heartbeat = 0; heartbeat < 33; heartbeat++)
+                for (int heartbeat = 0, missed = 0; heartbeat < 33 && missed <= 33 - 30; heartbeat++)
                 {
                     long refusedBefore = scene.CapacityStats().SimulatorRayCasts.Refused;
                     scene.Simulate(Heartbeat);
-                    // Wait for the flood to spend this heartbeat's budget (a refusal), not for a set time.
+                    // Wait for the flood to spend this heartbeat's budget (a refusal), not for a set time. The cap is
+                    // generous, so a stalled machine cannot reach it; once more heartbeats have missed it than the check
+                    // below allows, the rest are not waited for.
                     var sw = Stopwatch.StartNew();
-                    while (scene.CapacityStats().SimulatorRayCasts.Refused == refusedBefore && sw.Elapsed < TimeSpan.FromSeconds(10))
+                    while (scene.CapacityStats().SimulatorRayCasts.Refused == refusedBefore && sw.Elapsed < TimeSpan.FromSeconds(60))
                         Thread.Yield();
                     if (scene.CapacityStats().SimulatorRayCasts.Refused > refusedBefore)
                         spentHeartbeats++;
+                    else
+                        missed++;
                 }
             }
             finally

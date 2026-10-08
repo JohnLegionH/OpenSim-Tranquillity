@@ -88,7 +88,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             public int Regions;       // assigned regions; under s_foundationGate
             public int Inside;        // Updates inside the gate now; Interlocked
             public int PeakInside;    // the most ever inside at once; must stay 1
-            public string? Holder;    // the region that last took the gate (metrics only); Volatile
+
+            // Which region a waiting step waited behind (metrics only), both Volatile. Enter writes both as soon as it
+            // has the gate; Exit clears Holder before it lets the gate go. So a name read from Holder is the region
+            // holding the gate at that moment, never one that has already let it go, and never the reader itself.
+            // Holder is null for the instant between a step taking the gate and naming itself; a step that read null
+            // then reports LastHolder as it finds it on taking the gate: the region the gate passed from to it.
+            private string? _holder;
+            private string? _lastHolder;
+
+            // TEST-ONLY. ArrivedForTest runs when a step (or HoldPoolGateForTest) has found whether it must wait, with
+            // its region's name and that answer; TakenForTest runs once it has the gate, before it names itself.
+            public Action<string?, bool>? ArrivedForTest;
+            public Action<string?>? TakenForTest;
 
             // Fair = true: a ticket lock. _nextTicket is the next ticket to hand out, _serving the ticket that may run.
             // A waiter blocks on _turn; Exit wakes waiters only when some are registered in _waiters. Waiter: under
@@ -102,31 +114,46 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             public JobPool(int index, JobSystemThreadPool system, bool fair) { Index = index; System = system; Fair = fair; }
 
-            /// <summary>Takes the gate. True when it had to wait (the gate was held when we arrived), with the Stopwatch
-            /// ticks waited and the region that had last taken the gate.</summary>
-            public bool Enter(out long waitTicks, out string? heldBy)
+            /// <summary>Takes the gate for region <paramref name="name"/>. True when it had to wait (the gate was held
+            /// when it arrived), with the Stopwatch ticks waited and the region it waited behind: the one holding the gate
+            /// when it arrived, or, when that one had not named itself yet, the one the gate passed from to it.</summary>
+            public bool Enter(string? name, out long waitTicks, out string? heldBy)
             {
                 waitTicks = 0;
                 heldBy = null;
+                bool waited;
                 if (!Fair)
                 {
-                    if (Monitor.TryEnter(Gate))
-                        return false;
-                    heldBy = Volatile.Read(ref Holder);
-                    long start = Stopwatch.GetTimestamp();
-                    Monitor.Enter(Gate);
-                    waitTicks = Stopwatch.GetTimestamp() - start;
-                    return true;
+                    waited = !Monitor.TryEnter(Gate);
+                    ArrivedForTest?.Invoke(name, waited);
+                    if (waited)
+                    {
+                        heldBy = Volatile.Read(ref _holder);
+                        long start = Stopwatch.GetTimestamp();
+                        Monitor.Enter(Gate);
+                        waitTicks = Stopwatch.GetTimestamp() - start;
+                    }
+                }
+                else
+                {
+                    long ticket = Interlocked.Increment(ref _nextTicket) - 1;
+                    waited = Interlocked.Read(ref _serving) != ticket;
+                    ArrivedForTest?.Invoke(name, waited);
+                    if (waited)
+                    {
+                        heldBy = Volatile.Read(ref _holder);
+                        long waitStart = Stopwatch.GetTimestamp();
+                        WaitForTurn(ticket);
+                        waitTicks = Stopwatch.GetTimestamp() - waitStart;
+                    }
                 }
 
-                long ticket = Interlocked.Increment(ref _nextTicket) - 1;
-                if (Interlocked.Read(ref _serving) == ticket)
-                    return false;
-                heldBy = Volatile.Read(ref Holder);
-                long waitStart = Stopwatch.GetTimestamp();
-                WaitForTurn(ticket);
-                waitTicks = Stopwatch.GetTimestamp() - waitStart;
-                return true;
+                TakenForTest?.Invoke(name);
+                if (waited && heldBy == null)
+                    heldBy = Volatile.Read(ref _lastHolder);
+                Volatile.Write(ref _lastHolder, name);
+                Volatile.Write(ref _holder, name);
+                return waited;
             }
 
             // Blocks until `ticket` is served. A ticket is never abandoned: an interrupted waiter keeps waiting for its
@@ -159,6 +186,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             public void Exit()
             {
+                Volatile.Write(ref _holder, null);
                 if (!Fair)
                 {
                     Monitor.Exit(Gate);
@@ -209,13 +237,27 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         internal IDisposable HoldPoolGateForTest()
         {
             JobPool pool = _pool ?? throw new InvalidOperationException("HoldPoolGateForTest: no pool assigned.");
-            pool.Enter(out _, out _);
-            Volatile.Write(ref pool.Holder, _settings.RegionName);
+            pool.Enter(_settings.RegionName, out _, out _);
             return new GateHold(pool);
         }
 
         /// <summary>TEST-ONLY: run by Step right after it has taken the pool's gate, before the step itself.</summary>
         internal Action<JoltPhysicsBackend>? GateTakenForTest;
+
+        /// <summary>
+        /// TEST-ONLY: set the hooks of this region's pool, which every region on the pool shares. <paramref name="arrived"/>
+        /// runs when a step reaching the gate has found whether it must wait (the region's name, and true when it must);
+        /// <paramref name="taken"/> runs once it has the gate, before it names itself as the holder. Null clears a hook.
+        /// </summary>
+        internal void SetPoolHooksForTest(Action<string?, bool>? arrived, Action<string?>? taken)
+        {
+            JobPool pool = _pool ?? throw new InvalidOperationException("SetPoolHooksForTest: no pool assigned.");
+            pool.ArrivedForTest = arrived;
+            pool.TakenForTest = taken;
+        }
+
+        /// <summary>TEST-ONLY: run by Step when it finds its region's lock held by another thread, before it waits.</summary>
+        internal Action? RegionLockBusyForTest;
 
         /// <summary>TEST-ONLY: with fair handoff, the steps holding or queued for this region's pool now; -1 otherwise.</summary>
         internal long PoolQueuedForTest => _pool is { Fair: true } p ? p.Queued : -1;
@@ -3307,15 +3349,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             string? poolHeldBy = null;
             if (pool != null)
             {
-                poolWaited = pool.Enter(out poolWaitTicks, out poolHeldBy);
+                poolWaited = pool.Enter(_settings.RegionName, out poolWaitTicks, out poolHeldBy);
                 if (poolWaited)
                     RecordGateWait(poolWaitTicks);
             }
             JobPool? gateBefore = t_gateHeld;
             try
             {
-                if (pool != null)
-                    Volatile.Write(ref pool.Holder, _settings.RegionName);
                 t_gateHeld = pool;   // the pool gate rule: this thread holds this pool's gate until the finally
                 GateTakenForTest?.Invoke(this);
                 return StepLocked(pool, deltaTime, bodyUpdates, characterUpdates, contacts, poolWaited, poolWaitTicks, poolHeldBy);
@@ -3352,6 +3392,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             long simLockWaitTicks = 0;
             if (!Monitor.TryEnter(_simLock))
             {
+                RegionLockBusyForTest?.Invoke();
                 long lockWaitStart = Stopwatch.GetTimestamp();
                 Monitor.Enter(_simLock);
                 simLockWaitTicks = Stopwatch.GetTimestamp() - lockWaitStart;

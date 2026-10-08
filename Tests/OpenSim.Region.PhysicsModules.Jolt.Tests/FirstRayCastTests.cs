@@ -22,6 +22,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// costs (JIT, the native call's binding, the binding's first use of its filter and normal code); the scene pays
 /// them while it loads, with casts charged to no budget. That can only be seen in a process that has made no cast
 /// yet, so the casts run in a child test process and the parent reads its figures.
+/// What is asserted is what the warm-up does, not how long anything took, so a stalled machine cannot fail it: the
+/// warm-up ran, charged nothing to either budget, and left the first real cast nothing to compile (the methods the
+/// JIT compiled on the casting thread, System.Runtime.JitInfo). The times are printed, not asserted.
 /// </summary>
 public class FirstRayCastTests
 {
@@ -64,21 +67,26 @@ public class FirstRayCastTests
             scene.AddPrimShape("upper", PrimitiveBaseShape.CreateBox(), new Vector3(128f, 128f, Ground + 6f), new Vector3(4f, 4f, 0.5f), Quaternion.Identity, false, 500);
             scene.AddPrimShape("lower", PrimitiveBaseShape.CreateBox(), new Vector3(128f, 128f, Ground + 3f), new Vector3(4f, 4f, 0.5f), Quaternion.Identity, false, 501);
             scene.Simulate(1f / 11f);
+            var loaded = scene.CapacityStats();
 
+            var jit = new long[LaterCasts + 1];
             var backendMs = new double[LaterCasts + 1];
             var allMs = new double[LaterCasts + 1];
             int hits = int.MaxValue;
             for (int i = 0; i <= LaterCasts; i++)
             {
                 double before = scene.CapacityStats().SimulatorRayCasts.MsTotal;
+                long compiled = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: true);
                 long start = Stopwatch.GetTimestamp();
                 var r = (List<ContactResult>)scene.RaycastWorld(new Vector3(128f, 128f, Ground + 50f), new Vector3(0f, 0f, -1f), 51f, 5, Landing);
                 allMs[i] = (Stopwatch.GetTimestamp() - start) * 1000.0 / Stopwatch.Frequency;
+                jit[i] = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: true) - compiled;
                 backendMs[i] = scene.CapacityStats().SimulatorRayCasts.MsTotal - before;
                 hits = Math.Min(hits, r.Count);
             }
             Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
                 $"FIRST-RAY-CAST warmup={scene.RayWarmUpMs:0.0000} hits={hits} " +
+                $"counted={loaded.SimulatorRayCasts.Casts + loaded.ScriptRayCasts.Casts} jit={string.Join(",", jit)} " +
                 $"backend={string.Join(",", backendMs.Select(v => v.ToString("0.0000", CultureInfo.InvariantCulture)))} " +
                 $"all={string.Join(",", allMs.Select(v => v.ToString("0.0000", CultureInfo.InvariantCulture)))}"));
         }
@@ -139,19 +147,15 @@ public class FirstRayCastTests
         _out.WriteLine(line);
 
         Assert.Equal(2, (int)Values(line, "hits")[0]);
-        double[] backend = Values(line, "backend");
-        double[] all = Values(line, "all");
-        double laterBackend = backend.Skip(1).Max();
-        double laterAll = all.Skip(1).Max();
+
+        // Loading ran the warm-up (it reports the time it took) and charged its casts to no budget.
+        Assert.True(Values(line, "warmup")[0] > 0.0, line);
+        Assert.Equal(0, (int)Values(line, "counted")[0]);
 
         // Before the warm-up the first cast took 3-4 ms in the backend (what the simulator's budget is charged) and
-        // 4-8 ms in all, against a few microseconds for a later one. Now the first is within a small margin
-        // of the slowest later one: the margin is for timer and scheduling noise, a tenth of the old cost.
-        const double Margin = 0.3;
-        Assert.True(backend[0] <= laterBackend + Margin, $"first cast {backend[0]:0.000} ms in the backend, later ones at most {laterBackend:0.000} ms");
-        Assert.True(all[0] <= laterAll + Margin, $"first cast {all[0]:0.000} ms in all, later ones at most {laterAll:0.000} ms");
-
-        // Loading pays it instead, once per process: well under a heartbeat.
-        Assert.True(Values(line, "warmup")[0] < 50.0, line);
+        // 4-8 ms in all, against a few microseconds for a later one: most of it the JIT compiling the cast path. Now
+        // loading has compiled it, so the first cast, like every later one, compiles nothing.
+        double[] jit = Values(line, "jit");
+        Assert.True(jit.All(n => n == 0), $"methods compiled by each cast, first to last: {string.Join(",", jit)}");
     }
 }

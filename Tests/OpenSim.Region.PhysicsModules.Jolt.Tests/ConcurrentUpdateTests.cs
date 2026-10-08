@@ -43,9 +43,11 @@ public class ConcurrentUpdateTests
     /// <summary>
     /// <paramref name="regions"/> backends, each a ground box plus <paramref name="boxes"/> dynamic boxes dropped
     /// into a pile, each stepping <paramref name="frames"/> frames (CollisionSteps 6) on its own thread, all
-    /// released by one start gate so their Steps overlap. Returns the backends (disposed only on success).
+    /// released by one start gate so their Steps overlap. <paramref name="beforeStart"/> runs on the backends before the
+    /// gate opens. Returns the backends (disposed only on success).
     /// </summary>
-    private List<JoltTestBackend> RunRegions(int regions, int boxes, int frames, int jobPools, out TimeSpan elapsed)
+    private List<JoltTestBackend> RunRegions(int regions, int boxes, int frames, int jobPools, out TimeSpan elapsed,
+                                             Action<List<JoltTestBackend>> beforeStart = null)
     {
         var backends = new List<JoltTestBackend>();
         for (var r = 0; r < regions; r++)
@@ -84,6 +86,7 @@ public class ConcurrentUpdateTests
             threads.Add(th);
         }
 
+        beforeStart?.Invoke(backends);
         var sw = Stopwatch.StartNew();
         gate.Set();
         foreach (var th in threads)
@@ -207,7 +210,24 @@ public class ConcurrentUpdateTests
     [Fact]
     public void Gate_wait_is_counted()
     {
-        var regions = RunRegions(regions: 2, boxes: 200, frames: 60, jobPools: 1, out _);
+        // The first step to take the pool keeps it until the other region's step has reached the gate and found it held,
+        // so the two overlap however the threads are scheduled: on a stalled machine one region could otherwise run all
+        // its frames before the other starts.
+        using var otherWaits = new ManualResetEventSlim(false);
+        var first = 0;
+        var overlapped = false;
+        var regions = RunRegions(regions: 2, boxes: 200, frames: 60, jobPools: 1, out _, beforeStart: list =>
+        {
+            list[0].B.SetPoolHooksForTest((_, mustWait) => { if (mustWait) otherWaits.Set(); }, null);
+            foreach (var t in list)
+                t.B.GateTakenForTest = _ =>
+                {
+                    if (Interlocked.Exchange(ref first, 1) == 0)
+                        Volatile.Write(ref overlapped, otherWaits.Wait(Limit));
+                };
+        });
+        regions[0].B.SetPoolHooksForTest(null, null);
+        Assert.True(Volatile.Read(ref overlapped), "the other region's step never reached the pool while the first held it");
         Report(regions);
         var stats = regions.Select(r => r.B.GetCapacityStats()).ToList();
         Assert.All(stats, s => Assert.Equal(0, s.PoolIndex));

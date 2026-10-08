@@ -154,7 +154,7 @@ public class TempAllocatorLockDisciplineTests
         Assert.True(gateAt >= 0 && gateAt < callAt, "Step must take the pool gate before calling StepLocked");
         Assert.Contains("pool?.Exit()", step.Substring(step.LastIndexOf("finally", StringComparison.Ordinal)));
         // The pool's Enter blocks for the gate in both handoffs: the Monitor, or its ticket's turn.
-        var enter = MethodBody(source, "public bool Enter(out long waitTicks");
+        var enter = MethodBody(source, "public bool Enter(string? name, out long waitTicks");
         Assert.Contains("Monitor.Enter(Gate)", enter);
         Assert.Contains("WaitForTurn(", enter);
         Assert.DoesNotContain("lock (_simLock)", step);
