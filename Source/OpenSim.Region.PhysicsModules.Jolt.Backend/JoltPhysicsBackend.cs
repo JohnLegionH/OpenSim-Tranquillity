@@ -181,6 +181,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         private static int s_jobThreads;            // the resolved total the pools were sized from (capacity stat)
         private static int s_jobThreadsPerPool;
         private static int s_jobThreadSource;       // how that total was chosen (JobThreadSource)
+        private static int s_jobPoolsRequested;     // the pools the first region asked for (resolved)
+        private static string? s_jobPoolsLimitedBy; // why fewer pools run than were asked for; null when as asked
 
         // This region's pool (assigned at Initialize, under s_foundationGate) and its waits at the pool's gate:
         // written by Step under _simLock, read through Interlocked.
@@ -232,6 +234,28 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// <summary>JobPools for a settings struct: 0 (unset) = 1; otherwise clamped to [1, 64].</summary>
         public static int ResolveJobPools(int requested)
             => requested <= 0 ? 1 : Math.Clamp(requested, 1, MaxJobPools);
+
+        /// <summary>
+        /// The job pools that run on <paramref name="native"/>: <see cref="ResolveJobPools(int)"/>, or 1 when the native
+        /// is not safe for more than one pool. On such a native (the stock joltc) every physics system draws on one
+        /// process-wide TempAllocator, and two physics updates at once on two pools stop the process ("TempAllocator:
+        /// Freeing in the wrong order"); one pool admits one update at a time, so its regions take turns on it.
+        /// </summary>
+        public static int ResolveJobPools(int requested, JoltNativeInfo native)
+            => native.SafeForMultiplePools ? ResolveJobPools(requested) : 1;
+
+        /// <summary>
+        /// Why <paramref name="native"/> gets fewer pools than <paramref name="requested"/> asks for, in words; null when
+        /// it gets what is asked.
+        /// </summary>
+        public static string? JobPoolLimitReason(int requested, JoltNativeInfo native)
+        {
+            if (ResolveJobPools(requested, native) == ResolveJobPools(requested))
+                return null;
+            string what = native.Build?.Source ?? "a build this module has no record of";
+            return $"the loaded joltc ({what}) is not safe for more than one job pool: its physics systems share one " +
+                   "scratch allocator, and two physics updates at once would stop the process";
+        }
 
         /// <summary>
         /// Workers per pool when <paramref name="totalThreads"/> (the resolved ThreadCount) is split across
@@ -327,7 +351,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // calls. PER-INSTANCE: one lock per backend / region, so regions step in
         // parallel across cores.
         //
-        // !!! CRITICAL DEPENDENCY: this is only safe with the PATCHED joltc !!!
+        // !!! CRITICAL DEPENDENCY: the scratch allocator !!!
         // Stock JoltPhysics.Native 1.0.4 joltc supplies ONE process-global
         // TempAllocatorImpl (a LIFO stack, NOT thread-safe) to every
         // JPH_PhysicsSystem_Update and all six JPH_CharacterVirtual_* scratch
@@ -335,10 +359,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // concurrently produce "TempAllocator: Freeing in the wrong order" ->
         // std::abort(). With the STOCK DLL a per-instance
         // lock CANNOT protect it - two regions each holding their own _simLock
-        // still hammer the one allocator. JoltNative refuses to load a joltc
-        // whose hash is not a patched build the module ships, unless [Jolt]
-        // AllowUnrecordedNative is set; anyone setting it, or touching this
-        // lock's scope, must be sure the native has the per-system allocator.
+        // still hammer the one allocator. What protects it there is the job
+        // pool's gate (one Step at a time per pool; see "The pool gate rule")
+        // and ONE pool: ResolveJobPools(requested, native) gives one pool on a
+        // native that JoltNative's record does not mark safe for more. Anyone
+        // touching this lock's scope or the gate must keep every allocator use
+        // inside the gate (ShapeAndAllocatorRuleTests).
         //
         // The patched joltc (amerkoleci/joltc @ 1715c5aab8 + a per-system
         // allocator patch; that commit is the exact source of the shipped
@@ -688,8 +714,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         {
             _settings = settings;
 
-            int threads = ResolveThreadCount(settings.ThreadCount, settings.DeterministicMode, settings.JobPools);
-
             // Native boot. false => single precision.
             // PROCESS-GLOBAL and REF-COUNTED: only the first region to come up actually calls
             // Foundation.Init; Dispose only calls Foundation.Shutdown when the last region goes down (see
@@ -699,17 +723,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             {
                 if (s_foundationRefCount == 0)
                 {
-                    // The patched joltc for this platform, from runtimes/<rid>/native/ (JoltNative). Throws a
+                    // The joltc for this platform, from runtimes/<rid>/native/ (JoltNative). Throws a
                     // JoltNativeException naming the platform when there is no usable native.
-                    JoltNative.EnsureLoaded(settings.AllowUnrecordedNative);
+                    JoltNativeInfo native = JoltNative.EnsureLoaded(settings.AllowUnrecordedNative);
                     if (!Foundation.Init(false))
                         throw new InvalidOperationException("Jolt Foundation.Init(false) failed.");
 
                     // Create the shared, process-capped job pools here (first region in),
                     // sized by THIS region's settings: [Jolt] JobPools pools splitting `threads`, each
                     // with Jolt's single-system limits (2048 jobs, 8 barriers) - right because each pool runs
-                    // one Update at a time.
-                    int pools = ResolveJobPools(settings.JobPools);
+                    // one Update at a time. A native that is not safe for more than one pool gets one pool,
+                    // sized as [Jolt] JobPools = 1 would size it.
+                    int pools = ResolveJobPools(settings.JobPools, native);
+                    int threads = ResolveThreadCount(settings.ThreadCount, settings.DeterministicMode, pools);
                     int perPool = ResolveThreadsPerPool(threads, pools);
                     var created = new JobPool[pools];
                     for (int i = 0; i < pools; i++)
@@ -723,6 +749,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     s_jobThreads = threads;
                     s_jobThreadsPerPool = perPool;
                     s_jobThreadSource = (int)ResolveThreadSource(settings.ThreadCount, settings.DeterministicMode);
+                    s_jobPoolsRequested = ResolveJobPools(settings.JobPools);
+                    s_jobPoolsLimitedBy = JobPoolLimitReason(settings.JobPools, native);
                 }
                 s_foundationRefCount++;
 
@@ -3185,6 +3213,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 JobPools = Volatile.Read(ref s_pools)?.Length ?? 0,
                 JobThreadsPerPool = Volatile.Read(ref s_jobThreadsPerPool),
                 JobThreadSource = (JobThreadSource)Volatile.Read(ref s_jobThreadSource),
+                JobPoolsRequested = Volatile.Read(ref s_jobPoolsRequested),
+                JobPoolsLimitedBy = Volatile.Read(ref s_jobPoolsLimitedBy),
                 UpdateGateWaits = Interlocked.Read(ref _gateWaits),
                 UpdateGateWaitMsTotal = TicksToMs(Interlocked.Read(ref _gateWaitTicksTotal)),
                 UpdateGateWaitMsMax = TicksToMs(Interlocked.Read(ref _gateWaitTicksMax)),

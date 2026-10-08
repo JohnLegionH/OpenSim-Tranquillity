@@ -41,7 +41,10 @@ public static class Program
   --crash-offset M[,M..]     crash scenarios: the car's sideways offset (m, default 0)
   --crash-angle DEG[,DEG..]  crash scenarios: the car turned about the vertical (crash-drop: rolled) (default 0)
                              Lists run every combination (a sweep).
-  --out DIR                  write <scenario>-s<slope>-r<rate>.csv per run and summary.csv to DIR
+  --start-offset DX,DY       move the scenario's own body (car, box or prim) DX and DY metres from its start;
+                             nothing else moves (default: 0,0)
+  --out DIR                  write <scenario>-s<slope>-r<rate>.csv per run and summary.csv to DIR, and
+                             native.txt, the joltc build loaded (for --check-baseline)
 
   --pool-bench               run the job pool benchmark instead of the scenarios: a heavy scene and light scenes
                              sharing the job pools, each heartbeat on its own thread (see PoolBench.cs). It uses the
@@ -57,12 +60,23 @@ public static class Program
   --seconds S                pool bench: seconds measured per combination, after a 2 s warm-up (default 20)
   --unpaced                  pool bench: heartbeats back to back instead of in real time
 
+  --check-baseline OUTROOT --baselines DIR
+                             the regression check: compare each run folder under OUTROOT (one --out each) with
+                             the rows recorded in DIR for the joltc build the runs loaded (see BaselineCheck.cs).
+                             Exit 0 passed, 1 failed, 3 skipped: no baseline for this native
+  --record-baseline OUTROOT --baselines DIR [--leave-out RUN[,RUN..]]
+                             record each run's summary.csv as the baseline of the build the runs loaded
+
 The summary table always goes to standard output. Nothing is written anywhere else.";
 
     public static int Main(string[] args)
     {
         try
         {
+            if (args.Length > 0 && args[0] == "--stress")
+                return Stress.Main(args[1..], Console.Out);
+            if (args.Length > 0 && args[0] is "--check-baseline" or "--record-baseline")
+                return BaselineCheck.Main(args, Console.Out);
             return Run(args, Console.Out);
         }
         catch (ArgumentException e)
@@ -157,6 +171,11 @@ The summary table always goes to standard output. Nothing is written anywhere el
                 case "--crash-speed": crashSpeeds = Next().Split(',').Select(x => (float)PositiveDouble(x, a)).ToArray(); break;
                 case "--crash-offset": crashOffsets = Next().Split(',').Select(x => (float)SignedDouble(x, a)).ToArray(); break;
                 case "--crash-angle": crashAngles = Next().Split(',').Select(x => (float)SignedDouble(x, a)).ToArray(); break;
+                case "--start-offset":
+                    float[] d = Next().Split(',').Select(x => (float)SignedDouble(x, a)).ToArray();
+                    if (d.Length != 2) throw new ArgumentException("--start-offset needs two numbers: DX,DY");
+                    (o.StartOffsetX, o.StartOffsetY) = (d[0], d[1]);
+                    break;
                 case "--out": outDir = Next(); break;
                 default: throw new ArgumentException($"unknown argument '{a}'");
             }
@@ -213,13 +232,17 @@ The summary table always goes to standard output. Nothing is written anywhere el
                 }
         }
         if (outDir != null)
+        {
             File.WriteAllText(Path.Combine(outDir, "summary.csv"), summary.ToString());
+            // The runs above loaded the native; this returns that load, and names the build for the regression check.
+            BaselineCheck.WriteNativeFile(outDir, Backend.JoltNative.EnsureLoaded(allowUnrecorded: true));
+        }
         return 0;
     }
 
     private static HarnessOptions Copy(HarnessOptions o, double rate, float slope)
     {
-        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay, StartSpeed = o.StartSpeed };
+        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay, StartSpeed = o.StartSpeed, StartOffsetX = o.StartOffsetX, StartOffsetY = o.StartOffsetY };
         foreach (KeyValuePair<string, string> kv in o.Jolt) c.Jolt[kv.Key] = kv.Value;
         c.VehicleParams.AddRange(o.VehicleParams);
         c.VehicleFlags.AddRange(o.VehicleFlags);

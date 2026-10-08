@@ -3,8 +3,8 @@
   <!-- Offline physics harness for the Jolt module: builds a Jolt scene with no region, steps it through the
        module's own Simulate at a chosen heartbeat rate, and writes a CSV trace and a summary per scenario.
        Console tool, not an NUnit/xunit suite; not part of the grid runtime. The Jolt test project drives the
-       same scenarios as regression tests. Needs the native joltc, which the Jolt module's Content items copy
-       into the output under runtimes/<rid>/native/ (win-x64 and linux-x64). -->
+       same scenarios as regression tests. Needs the native joltc, which the JoltPhysics.Native package puts
+       into the output under runtimes/<rid>/native/. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <Nullable>disable</Nullable>
@@ -21,9 +21,6 @@
     <ProjectReference Include="..\..\Source\OpenSim.Region.PhysicsModules.Jolt\OpenSim.Region.PhysicsModules.Jolt.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- Keeps the stock joltc of JoltPhysics.Native out of this output; the module ships the patched one. -->
-    <PackageReference Include="JoltPhysics.Native" Version="1.0.4" ExcludeAssets="all" />
-  </ItemGroup>
+  <Import Project="..\..\Source\OpenSim.Region.PhysicsModules.Jolt.Backend\JoltNative.targets" />
 
 </Project>

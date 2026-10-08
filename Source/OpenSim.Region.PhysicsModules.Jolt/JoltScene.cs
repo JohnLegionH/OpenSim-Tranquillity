@@ -293,6 +293,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                             m_log.LogInformation($"{LogHeader} {native.Describe()}");
                         else
                             m_log.LogWarning($"{LogHeader} {native.Describe()}");
+                        if (native.UntestedNotice != null)
+                            m_log.LogWarning($"{LogHeader} {native.UntestedNotice}");
+                        // More than one job pool asked for on a native that is not safe for it: the backend runs one.
+                        string poolLimit = CapacityReport.JobPoolLimitWarning(joltConfig.JobPools, native);
+                        if (poolLimit != null)
+                            m_log.LogWarning($"{LogHeader} {poolLimit}");
                     }
 
                     m_Enabled = true;
@@ -408,12 +414,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
             // Which pool this region steps on, once per region.
             m_log.LogInformation($"{LogHeader} region '{RegionName}' steps on Jolt job pool {pool.PoolIndex} of {pool.JobPools}.");
-            int requested = _joltConfig.RequestedThreadCount;
+            // When the native runs one pool whatever JobPools asks (warned at start), the threads are sized for one pool.
+            int requested = pool.JobPoolsLimitedBy == null
+                ? _joltConfig.RequestedThreadCount
+                : JoltPhysicsBackend.ResolveThreadCount(_joltConfig.ThreadCount, _joltConfig.DeterministicMode, pool.JobPools);
             if (requested != poolThreads)
                 m_log.LogWarning($"{LogHeader} region '{RegionName}' asked for {requested} job threads but the shared pools were sized for {poolThreads}; the first region's size wins.");
             // The pool count is process-wide too.
-            if (_joltConfig.JobPools != pool.JobPools)
-                m_log.LogWarning($"{LogHeader} region '{RegionName}' asked for JobPools={_joltConfig.JobPools} but {pool.JobPools} pools already exist; the first region's value wins.");
+            if (_joltConfig.JobPools != pool.JobPoolsRequested)
+                m_log.LogWarning($"{LogHeader} region '{RegionName}' asked for JobPools={_joltConfig.JobPools} but the pools were made for JobPools={pool.JobPoolsRequested} " +
+                                 $"({pool.JobPools} in use); the first region's value wins.");
             if (_joltConfig.JobPoolFairHandoff != pool.JobPoolFairHandoff)
                 m_log.LogWarning($"{LogHeader} region '{RegionName}' asked for JobPoolFairHandoff={_joltConfig.JobPoolFairHandoff} but the pools already exist with " +
                                  $"{pool.JobPoolFairHandoff}; the first region's value wins.");

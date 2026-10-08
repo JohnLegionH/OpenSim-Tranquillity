@@ -447,8 +447,8 @@ public class NotSelectedTests
     private static string NewTempDir() => Path.Combine(Path.GetTempPath(), "jolt-not-selected-" + Guid.NewGuid().ToString("N"));
 
     // Each case stands in for the module's native loader: the real check against a folder with no file, a folder whose
-    // file has the wrong hash, and a platform the module ships no native for.
-    public static readonly TheoryData<string> Unusable = new() { "missing", "hash", "osx-arm64", "linux-arm64" };
+    // file has the wrong hash, and a platform the module has no native for.
+    public static readonly TheoryData<string> Unusable = new() { "missing", "hash", "linux-musl-x64", "freebsd-x64" };
 
     private static Func<bool, JoltNativeInfo> UnusableLoader(string kind, string dir)
     {
@@ -460,7 +460,7 @@ public class NotSelectedTests
             case "hash":
                 string file = JoltNative.PathFor(dir, rid);
                 Directory.CreateDirectory(Path.GetDirectoryName(file));
-                File.WriteAllText(file, "not the patched build");
+                File.WriteAllText(file, "not a recorded build");
                 return allow => JoltNative.Check(dir, rid, allow);
             default:
                 return allow => JoltNative.Check(JoltNative.DefaultBaseDirectory(), kind, allow);

@@ -62,7 +62,10 @@ public class ConcurrentUpdateTests
             }
             backends.Add(t);
         }
-        Assert.Equal(jobPools, backends[0].B.GetCapacityStats().JobPools);   // no earlier backend sized the pools
+        // No earlier backend sized the pools: they are what this run asked for, or one on a native not safe for more.
+        var first = backends[0].B.GetCapacityStats();
+        Assert.Equal(jobPools, first.JobPoolsRequested);
+        Assert.Equal(PoolsOnThisNative(jobPools), first.JobPools);
 
         using var gate = new ManualResetEventSlim(false);
         var threads = new List<Thread>();
@@ -123,15 +126,39 @@ public class ConcurrentUpdateTests
         DisposeAll(regions);
     }
 
+    private static bool NativeAllowsPools => JoltNative.EnsureLoaded(allowUnrecorded: false).SafeForMultiplePools;
+
+    // The pools a run asking for `jobPools` must get on the native this process loaded: all of them on one the record
+    // marks safe for more than one pool (the patched build), else one (the stock package native). Worked out here, not
+    // with the backend's own resolver, so a backend that skipped the fallback fails this check before it steps.
+    private static int PoolsOnThisNative(int jobPools) => NativeAllowsPools ? jobPools : 1;
+
+    // On a native that runs one pool, a run that asked for more: one pool, the count asked for, and the reason.
+    private static void AssertOnePoolFallback(List<JoltTestBackend> regions, int asked)
+    {
+        Assert.All(regions.Select(t => t.B.GetCapacityStats()), s =>
+        {
+            Assert.Equal(1, s.JobPools);
+            Assert.Equal(asked, s.JobPoolsRequested);
+            Assert.Equal(0, s.PoolIndex);
+            Assert.Contains("is not safe for more than one job pool", s.JobPoolsLimitedBy);
+        });
+    }
+
+    // Multi-pool halves run on the patched native: in this process when it loaded that build, else in a child test
+    // host on a supplied patched build (the *_on_the_patched_native tests below); the one-pool fallback is checked here.
     [Fact]
     public void Heavy_regions_one_update_per_pool()
     {
+        PatchedNativeChild.AssertPatchedWhenChild();
         foreach (var pools in new[] { 1, 2 })
         {
             var regions = RunRegions(regions: 4, boxes: 1000, frames: 100, jobPools: pools, out var took);
             Report(regions);
             _out.WriteLine($"HEAVY JobPools={pools}: {took.TotalSeconds:0.00}s");
             Assert.All(regions, t => Assert.Equal(1, t.B.GetCapacityStats().PoolPeakInside));
+            if (pools > 1 && !NativeAllowsPools)
+                AssertOnePoolFallback(regions, pools);
             DisposeAll(regions);
         }
     }
@@ -139,19 +166,42 @@ public class ConcurrentUpdateTests
     [Fact]
     public void Ten_regions_complete()
     {
+        PatchedNativeChild.AssertPatchedWhenChild();
         foreach (var pools in new[] { 1, 3 })
         {
             var regions = RunRegions(regions: 10, boxes: 100, frames: 100, jobPools: pools, out _);
             Report(regions);
             var stats = regions.Select(t => t.B.GetCapacityStats()).ToList();
-            Assert.All(stats, s => Assert.Equal(pools, s.JobPools));
+            int inUse = PoolsOnThisNative(pools);
+            Assert.All(stats, s => Assert.Equal(inUse, s.JobPools));
             Assert.All(stats, s => Assert.Equal(1, s.PoolPeakInside));
             // Fewest regions first, ties to the lowest index: 10 over 3 pools is 4/3/3; over 1 pool, all 10.
-            var spread = Enumerable.Range(0, pools).Select(p => stats.Count(s => s.PoolIndex == p)).ToArray();
-            _out.WriteLine($"JobPools={pools} spread: {string.Join("/", spread)}");
-            Assert.Equal(pools == 3 ? new[] { 4, 3, 3 } : new[] { 10 }, spread);
+            var spread = Enumerable.Range(0, inUse).Select(p => stats.Count(s => s.PoolIndex == p)).ToArray();
+            _out.WriteLine($"JobPools={pools} ({inUse} in use) spread: {string.Join("/", spread)}");
+            Assert.Equal(inUse == 3 ? new[] { 4, 3, 3 } : new[] { 10 }, spread);
+            if (pools > 1 && !NativeAllowsPools)
+                AssertOnePoolFallback(regions, pools);
             DisposeAll(regions);
         }
+    }
+
+    // The two tests above in a child test host on the patched native (PatchedNativeChild), so their multi-pool halves
+    // run; skipped, with the reason, when no patched build is supplied.
+    [PatchedNativeFact]
+    public void Heavy_regions_one_update_per_pool_on_the_patched_native() => RunOnPatched(nameof(Heavy_regions_one_update_per_pool));
+
+    [PatchedNativeFact]
+    public void Ten_regions_complete_on_the_patched_native() => RunOnPatched(nameof(Ten_regions_complete));
+
+    private void RunOnPatched(string method)
+    {
+        if (NativeAllowsPools)
+        {
+            // This process loaded a build that runs more than one pool, so the test itself ran its multi-pool half.
+            _out.WriteLine($"{method} ran its multi-pool half in this process");
+            return;
+        }
+        _out.WriteLine(PatchedNativeChild.RunAndAssertPassed(GetType(), method));
     }
 
     [Fact]

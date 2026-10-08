@@ -201,6 +201,42 @@ public class ShapeAndAllocatorRuleTests
         Assert.DoesNotContain(il, x => x.Op == OpCodes.Ldsfld || x.Op == OpCodes.Ldfld);   // no field can supply a depth
     }
 
+    // No step listener: the stock joltc keeps its map of physics systems (s_PhysicsSystems) without a lock, and only its
+    // step listener callback reads that map during a step. With no listener, nothing reads the map while another
+    // region's system is created or destroyed. So no Jolt assembly adds a step listener, implements one, or takes a
+    // binding object's step listener view (a vehicle constraint's AsPhysicsStepListener).
+    [Fact]
+    public void No_step_listener_is_used()
+    {
+        Assembly[] assemblies =
+        {
+            typeof(JoltPhysicsBackend).Assembly,
+            typeof(JoltScene).Assembly,
+            Assembly.Load("OpenSim.Region.PhysicsModules.Jolt.Vehicles"),
+        };
+        // The names this looks for are the binding's own: a scan for a name the binding lacks would pass vacuously.
+        Assert.Contains(typeof(JoltPhysicsSharp.PhysicsSystem).GetMethods(), m => m.Name.Contains("StepListener", StringComparison.Ordinal));
+        Assert.NotNull(typeof(JoltPhysicsSharp.PhysicsSystem).Assembly.GetType("JoltPhysicsSharp.IPhysicsStepListener"));
+
+        var listenerTypes = assemblies.SelectMany(a => a.GetTypes())
+            .Where(t => t.GetInterfaces().Any(i => i.FullName == "JoltPhysicsSharp.IPhysicsStepListener"))
+            .Select(t => t.FullName).ToArray();
+        Assert.Empty(listenerTypes);
+
+        var calls = new SortedSet<string>();
+        foreach (Assembly assembly in assemblies)
+            foreach (MethodBase caller in AllMethods(assembly))
+                foreach (Instruction ins in Decode(caller))
+                {
+                    if (ins.Op != OpCodes.Call && ins.Op != OpCodes.Callvirt && ins.Op != OpCodes.Newobj && ins.Op != OpCodes.Ldftn)
+                        continue;
+                    MethodBase? callee = Resolve(caller, ins.Token);
+                    if (callee?.DeclaringType?.Namespace == "JoltPhysicsSharp" && callee.Name.Contains("StepListener", StringComparison.Ordinal))
+                        calls.Add($"{caller.DeclaringType!.Name}.{caller.Name} -> {callee.DeclaringType.Name}.{callee.Name}");
+                }
+        Assert.Empty(calls);
+    }
+
     // ------------------------------------------------------------------ the backend's own gate check
 
     private static CharacterDesc Avatar(Vector3 at) => new()

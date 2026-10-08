@@ -25,12 +25,11 @@
          JoltPhysics.Native 1.0.4, the native this version binds to. Changing it needs the native rebuilt
          to match (native/joltc/README.md). -->
     <PackageReference Include="JoltPhysicsSharp" Version="2.19.1" />
-    <!-- JoltPhysicsSharp depends on JoltPhysics.Native, the stock joltc. ExcludeAssets="all" keeps that
-         package's files out of this project's output; the patched joltc comes from the Jolt module and is
-         loaded by JoltNative. ExcludeAssets is not transitive: a project that reaches the package through
-         this one gets the stock natives unless it excludes them itself, so the module, the region server,
-         the Jolt tests and the harness each carry the same reference. -->
-    <PackageReference Include="JoltPhysics.Native" Version="1.0.4" ExcludeAssets="all" />
+    <!-- The native joltc, the one JoltPhysicsSharp 2.19.1 depends on, named here so its version is pinned in one
+         place. Its files flow to every application that reaches this project, under runtimes/<rid>/native/.
+         JoltNative.Known records the hash of each; a new version fails JoltNativePackageTests until the record is
+         checked again. -->
+    <PackageReference Include="JoltPhysics.Native" Version="1.0.4" />
   </ItemGroup>
 
 </Project>

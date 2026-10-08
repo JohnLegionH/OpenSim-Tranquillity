@@ -1,0 +1,157 @@
+# The Jolt module loads the stock joltc of the JoltPhysics.Native package by default, and the Jolt tests and Jolt
+# harness workflows run on it. This workflow runs what they do not, on Windows x64 and Linux x64: the Jolt tests that
+# need the patched joltc (native/joltc/README.md), the listed harness runs on it, checked against the patched baseline
+# (Tests/JoltPhysicsHarness/ci/baselines/patched), and a short multi-scene stress run on one, two and three job pools
+# on each native. On the patched native the stress run uses the pools asked for; on the stock native the module runs
+# one pool whatever is asked, so its runs show the fallback holds under load. Any run that does not exit 0 fails the job.
+#
+# The repository does not keep the patched joltc. The first job builds it in this run, through the joltc-native
+# workflow, and the natives job takes its joltc-<rid> artifacts. A build whose hash is not the recorded one fails the
+# guard step.
+name: Jolt stock native
+
+on:
+  push:
+    branches:
+      - lane/jolt-stock
+    paths:
+      - 'Source/OpenSim.Region.PhysicsModules.Jolt/**'
+      - 'Source/OpenSim.Region.PhysicsModules.Jolt.Backend/**'
+      - 'Source/OpenSim.Region.PhysicsModules.Jolt.Vehicles/**'
+      - 'Tests/JoltPhysicsHarness/**'
+      - 'Tests/OpenSim.Region.PhysicsModules.Jolt.Tests/**'
+      - 'native/joltc/**'
+      - '.github/workflows/jolt-stock-native.yml'
+      - '.github/workflows/joltc-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+
+jobs:
+  patched:
+    name: Build the patched joltc
+    uses: ./.github/workflows/joltc-native.yml
+
+  natives:
+    name: Jolt patched and stock native ${{ matrix.os }}
+    needs: patched
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            rid: win-x64
+            file: joltc.dll
+          - os: ubuntu-22.04
+            rid: linux-x64
+            file: libjoltc.so
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up .NET from global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      # One folder per runtime identifier, each holding that platform's patched file: the layout
+      # JOLT_TEST_PATCHED_NATIVE_DIR expects.
+      - name: Take the patched win-x64 joltc built in this run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: joltc-win-x64
+          path: ${{ runner.temp }}/joltc-patched/win-x64
+
+      - name: Take the patched linux-x64 joltc built in this run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: joltc-linux-x64
+          path: ${{ runner.temp }}/joltc-patched/linux-x64
+
+      - name: Build the harness and the Jolt tests
+        run: |
+          dotnet build Tests/JoltPhysicsHarness -c Release --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false
+          dotnet build Tests/OpenSim.Region.PhysicsModules.Jolt.Tests -c Release --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false
+
+      - name: Run the Jolt tests that need the patched native
+        env:
+          JOLT_TEST_PATCHED_NATIVE_DIR: ${{ runner.temp }}/joltc-patched
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          dotnet test Tests/OpenSim.Region.PhysicsModules.Jolt.Tests -c Release --no-build \
+            --filter "FullyQualifiedName~JoltNativeTests|FullyQualifiedName~_on_the_patched_native" \
+            -l "console;verbosity=normal" | tee "$RUNNER_TEMP/out/patched-tests.txt"
+          # With the patched native supplied, none of them may be skipped.
+          if grep -E '^\s+Skipped ' "$RUNNER_TEMP/out/patched-tests.txt"; then echo "tests were skipped"; exit 1; fi
+
+      - name: Put the patched natives in a copy of the harness output
+        run: |
+          harness=Tests/JoltPhysicsHarness/bin/Release/net10.0
+          cp -r "$harness" "$RUNNER_TEMP/harness-patched"
+          # Both patched files, so the copy is what an operator who installs the patched build has.
+          cp "$RUNNER_TEMP/joltc-patched/win-x64/joltc.dll" "$RUNNER_TEMP/harness-patched/runtimes/win-x64/native/joltc.dll"
+          cp "$RUNNER_TEMP/joltc-patched/linux-x64/libjoltc.so" "$RUNNER_TEMP/harness-patched/runtimes/linux-x64/native/libjoltc.so"
+          sha256sum "$harness/runtimes/${{ matrix.rid }}/native/${{ matrix.file }}" \
+            "$RUNNER_TEMP/harness-patched/runtimes/${{ matrix.rid }}/native/${{ matrix.file }}" | tee "$RUNNER_TEMP/out/natives.txt"
+
+      - name: Check both harness outputs hold recorded natives, the copy the patched one
+        shell: pwsh
+        run: |
+          ./Source/OpenSim.Region.PhysicsModules.Jolt/assert-joltc-native.ps1 -PublishDir Tests/JoltPhysicsHarness/bin/Release/net10.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./Source/OpenSim.Region.PhysicsModules.Jolt/assert-joltc-native.ps1 -PublishDir "$env:RUNNER_TEMP/harness-patched" -RequirePatched
+          exit $LASTEXITCODE
+
+      - name: Run the listed harness runs on the patched native and check them against its baseline
+        run: |
+          out="$RUNNER_TEMP/out/harness-patched"
+          mkdir -p "$out"
+          dll="$RUNNER_TEMP/harness-patched/JoltPhysicsHarness.dll"
+          grep -v '^[[:space:]]*#' Tests/JoltPhysicsHarness/ci/runs.txt | grep ':' | while IFS= read -r line; do
+            name="${line%%:*}"
+            args="${line#*:}"
+            case "$name" in *[!A-Za-z0-9_-]*|'') echo "bad run name '$name'"; exit 1;; esac
+            # shellcheck disable=SC2086
+            dotnet "$dll" $args --out "$out/$name" > "$out/$name.txt"
+          done
+          dotnet "$dll" --check-baseline "$out" --baselines Tests/JoltPhysicsHarness/ci/baselines | tee "$out/baseline-check.txt"
+
+      - name: Stress several scenes on one, two and three job pools, on each native
+        run: |
+          failed=0
+          for which in patched stock; do
+            out="$RUNNER_TEMP/out/stress-$which"
+            mkdir -p "$out"
+            if [ "$which" = patched ]; then dll="$RUNNER_TEMP/harness-patched/JoltPhysicsHarness.dll"
+            else dll=Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll; fi
+            for pools in 1 2 3; do
+              set +e
+              timeout 600 dotnet "$dll" --stress --pools $pools --busy 2 --light 1 --rays 1 --churn 1 --seconds 60 > "$out/pools$pools.txt" 2>&1
+              rc=$?
+              set -e
+              echo "$which pools=$pools exit=$rc $(grep -m 1 '^stress:' "$out/pools$pools.txt" || true)" | tee -a "$out/_exits.txt"
+              [ "$rc" -eq 0 ] || failed=1
+            done
+          done
+          exit "$failed"
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jolt-natives-${{ matrix.rid }}
+          path: ${{ runner.temp }}/out
+          if-no-files-found: ignore

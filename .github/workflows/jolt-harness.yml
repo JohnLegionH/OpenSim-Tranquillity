@@ -1,7 +1,9 @@
 # Runs the Jolt physics harness on Windows x64 and Linux x64, the platforms the Jolt module ships its native for,
-# with the runs listed in Tests/JoltPhysicsHarness/ci/runs.txt, and uploads each runner's traces, so the two
-# platforms' results can be set side by side. Runs when the Jolt module, its backend or vehicles, the harness, that
-# list or this file changes, or by hand. Run by hand with pool_sweep set, it runs only the pool sweep job instead.
+# with the runs listed in Tests/JoltPhysicsHarness/ci/runs.txt, checks their summaries against the baseline recorded
+# for the joltc build they loaded (Tests/JoltPhysicsHarness/ci/baselines; a build with none is reported as skipped),
+# and uploads each runner's traces, so the two platforms' results can be set side by side. Runs when the Jolt module,
+# its backend or vehicles, the harness, that list or this file changes, or by hand. Run by hand with pool_sweep set,
+# it runs only the pool sweep job instead.
 name: Jolt harness
 
 on:
@@ -69,7 +71,7 @@ jobs:
 
       - name: Check the natives in the harness output
         shell: pwsh
-        run: ./Source/OpenSim.Region.PhysicsModules.Jolt/assert-patched-joltc.ps1 -PublishDir Tests/JoltPhysicsHarness/bin/Release/net10.0
+        run: ./Source/OpenSim.Region.PhysicsModules.Jolt/assert-joltc-native.ps1 -PublishDir Tests/JoltPhysicsHarness/bin/Release/net10.0
 
       - name: Run the listed harness runs
         run: |
@@ -85,6 +87,20 @@ jobs:
             dotnet "$dll" $args --out "$out/$name" | tee "$out/$name.txt"
             echo "::endgroup::"
           done
+
+      - name: Check the runs against the baseline for the loaded native
+        run: |
+          out="$RUNNER_TEMP/harness"
+          set +e
+          dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --check-baseline "$out"             --baselines Tests/JoltPhysicsHarness/ci/baselines > "$out/baseline-check.txt"
+          rc=$?
+          set -e
+          cat "$out/baseline-check.txt"
+          case "$rc" in
+            0) ;;
+            3) echo "::notice title=Harness baseline skipped::$(head -n 1 "$out/baseline-check.txt")" ;;
+            *) exit "$rc" ;;
+          esac
 
       - name: Upload the traces
         if: always()
