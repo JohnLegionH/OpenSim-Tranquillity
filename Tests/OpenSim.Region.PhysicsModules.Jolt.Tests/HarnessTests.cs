@@ -206,7 +206,9 @@ public class HarnessTests
             int rc = Program.Run(new[] { "--scenario", "drop", "--rate", "11,45", "--out", dir }, output);
             Assert.Equal(0, rc);
             string[] files = Directory.GetFiles(dir).Select(Path.GetFileName).OrderBy(f => f, StringComparer.Ordinal).ToArray();
-            Assert.Equal(new[] { "drop-s0-r11.csv", "drop-s0-r45.csv", "summary.csv" }, files);
+            Assert.Equal(new[] { "drop-s0-r11.csv", "drop-s0-r45.csv", "native.txt", "summary.csv" }, files);
+            // native.txt names the joltc build the runs loaded, for the regression check (BaselineCheck).
+            Assert.Equal(BaselineCheck.Describe(Backend.JoltNative.EnsureLoaded(false)), File.ReadAllText(Path.Combine(dir, "native.txt")));
             Assert.StartsWith(RunResult.SummaryHeader, output.ToString());
             Assert.StartsWith(RunResult.CsvHeader, File.ReadAllText(Path.Combine(dir, "drop-s0-r11.csv")));
         }
