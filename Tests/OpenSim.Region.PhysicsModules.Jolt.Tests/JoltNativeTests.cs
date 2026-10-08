@@ -219,7 +219,7 @@ public class JoltNativeTests
     [Fact]
     public void The_record_matches_the_patched_files_in_the_repository_and_the_guard_script()
     {
-        string guard = File.ReadAllText(Path.Combine(RepoRoot(), "Source", "OpenSim.Region.PhysicsModules.Jolt", "assert-patched-joltc.ps1"));
+        string guard = File.ReadAllText(Path.Combine(RepoRoot(), "Source", "OpenSim.Region.PhysicsModules.Jolt", "assert-joltc-native.ps1"));
         var guardEntries = Regex.Matches(guard, "\"([a-z0-9-]+)\"\\s*=\\s*@\\{\\s*File\\s*=\\s*\"([^\"]+)\";\\s*Sha256\\s*=\\s*\"([0-9A-F]{64})\"")
             .ToDictionary(m => m.Groups[1].Value, m => (m.Groups[2].Value, m.Groups[3].Value));
         Assert.Equal(Patched.Select(b => b.Folder).OrderBy(k => k), guardEntries.Keys.OrderBy(k => k));

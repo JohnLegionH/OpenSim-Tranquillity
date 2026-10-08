@@ -1,6 +1,6 @@
 # Builds the Jolt test project and runs the Jolt suite on Windows x64 and Linux x64, the platforms
 # this project tests the Jolt module's native on, in Debug and Release. Each job also checks the test
-# output with assert-patched-joltc.ps1: recorded natives under runtimes/<rid>/native/ and no other joltc.
+# output with assert-joltc-native.ps1: recorded natives under runtimes/<rid>/native/ and no other joltc.
 name: Jolt tests
 
 on:
@@ -51,7 +51,7 @@ jobs:
 
       - name: Check the natives in the test output
         shell: pwsh
-        run: ./Source/OpenSim.Region.PhysicsModules.Jolt/assert-patched-joltc.ps1 -PublishDir Tests/OpenSim.Region.PhysicsModules.Jolt.Tests/bin/${{ matrix.configuration }}/net10.0
+        run: ./Source/OpenSim.Region.PhysicsModules.Jolt/assert-joltc-native.ps1 -PublishDir Tests/OpenSim.Region.PhysicsModules.Jolt.Tests/bin/${{ matrix.configuration }}/net10.0
 
       - name: Run the Jolt suite
         run: >

@@ -5,7 +5,7 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 # =====================================================================================
-# assert-patched-joltc.ps1 - checks the joltc natives in a build or publish output: each
+# assert-joltc-native.ps1 - checks the joltc natives in a build or publish output: each
 # is a build the Jolt physics module has a record of, and (with -RequirePatched) it is
 # this project's patched build.
 #
@@ -28,9 +28,9 @@
 # Provenance and rebuild recipe: native/joltc/README.md.
 #
 # Usage:
-#     powershell -File assert-patched-joltc.ps1 -PublishDir "<output or publish directory>" [-AllowStray] [-RequirePatched]
-#     pwsh -File assert-patched-joltc.ps1 -PublishDir "<output or publish directory>"
-#     powershell -File assert-patched-joltc.ps1 -NativePath "<path to a joltc.dll or libjoltc.so>" [-RequirePatched]
+#     powershell -File assert-joltc-native.ps1 -PublishDir "<output or publish directory>" [-AllowStray] [-RequirePatched]
+#     pwsh -File assert-joltc-native.ps1 -PublishDir "<output or publish directory>"
+#     powershell -File assert-joltc-native.ps1 -NativePath "<path to a joltc.dll or libjoltc.so>" [-RequirePatched]
 # Exit 0 = every joltc under runtimes/ is recorded (patched, with -RequirePatched) and (without
 #          -AllowStray) nothing else is there.
 # Exit 1 = a file is unknown (or stock, with -RequirePatched), none was found, or a stray file is present.

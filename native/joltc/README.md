@@ -50,7 +50,7 @@ patched build for the platform, under the same name:
 assemblies instead of under `runtimes/`; replace it there.) The module recognises the patched build
 by its hash: its start line says `patched build (native/joltc); safe for more than one job pool`,
 and `[Jolt] JobPools` takes effect. A rebuild of the output puts the stock file back, so replace
-the file again after each build. `assert-patched-joltc.ps1 -PublishDir <output> -RequirePatched`
+the file again after each build. `assert-joltc-native.ps1 -PublishDir <output> -RequirePatched`
 checks that the replacement is in place. There is no patched build for other platforms; they run
 one pool.
 
@@ -67,7 +67,7 @@ one pool.
 | `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/linux-x64/native/libjoltc.so` | linux-x64 patched build (not copied by any build) |
 | `Source/OpenSim.Region.PhysicsModules.Jolt.Backend/JoltNative.cs` | Picks the file for the running platform, checks its hash against the tables below and loads it |
 | `Source/OpenSim.Region.PhysicsModules.Jolt.Backend/JoltNative.targets` | Keeps the package's unused files (`joltc_double.dll`, Android) out of an application's output |
-| `Source/OpenSim.Region.PhysicsModules.Jolt/assert-patched-joltc.ps1` | Checks that an output or publish directory holds recorded joltc builds under `runtimes/<rid>/native/` and no other joltc; with `-RequirePatched`, the patched builds |
+| `Source/OpenSim.Region.PhysicsModules.Jolt/assert-joltc-native.ps1` | Checks that an output or publish directory holds recorded joltc builds under `runtimes/<rid>/native/` and no other joltc; with `-RequirePatched`, the patched builds |
 
 The `JoltPhysics.Native` package reaches every application that carries the module (the region
 server, the Jolt tests, the Jolt harness) through the backend's package reference. A build with
@@ -125,7 +125,7 @@ example linux-arm64 or osx) is one more entry in its matrix.
 ## The files in the repository
 
 These hashes are also recorded in `JoltNative.Known` (as patched builds, safe for more than one
-job pool) and in `assert-patched-joltc.ps1`. Unit tests in `JoltNativeTests` check the files, this
+job pool) and in `assert-joltc-native.ps1`. Unit tests in `JoltNativeTests` check the files, this
 table and the script against `JoltNative.Known`. Replacing a file means updating all three.
 
 | File | SHA-256 |

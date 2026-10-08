@@ -98,7 +98,7 @@ Jolt is chosen per simulator in `[Startup]`, and it needs the Meshmerizer mesher
   must be Meshmerizer and throws "Invalid physics meshing option for Jolt" when it initialises.
 - The shipped default stays `physics = ubODE`.
 
-`assert-patched-joltc.ps1` (next to the module's project file) checks a build or publish directory
+`assert-joltc-native.ps1` (next to the module's project file) checks a build or publish directory
 before it is deployed: every `runtimes/<rid>/native/` joltc must be a build the module has a
 record of for its platform (with `-RequirePatched`, the patched build where there is one), and no
 other joltc file may be there (`-AllowStray` reports such files without failing, for an
@@ -106,11 +106,11 @@ installation that still holds files from an older deploy). It runs in Windows Po
 PowerShell 7 on Linux:
 
 ```powershell
-powershell -File assert-patched-joltc.ps1 -PublishDir "<publish directory>"
+powershell -File assert-joltc-native.ps1 -PublishDir "<publish directory>"
 ```
 
 ```
-pwsh -File assert-patched-joltc.ps1 -PublishDir "<publish directory>"
+pwsh -File assert-joltc-native.ps1 -PublishDir "<publish directory>"
 ```
 
 ## Settings
