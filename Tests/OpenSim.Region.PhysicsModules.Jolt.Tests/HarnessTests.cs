@@ -197,6 +197,18 @@ public class HarnessTests
     }
 
     [Fact]
+    public void Start_offset_moves_the_scenario_body_by_that_much()
+    {
+        RunResult plain = Run("drop");
+        var o = new HarnessOptions { StartOffsetX = 0.001f, StartOffsetY = -0.002f, Jolt = { ["VehiclePresets"] = "legacy" } };
+        RunResult moved = Harness.Harness.Run(Harness.Harness.Find("drop"), o);
+        // The box falls straight down, so its first sample is still off by the offset on x and y.
+        Assert.Equal(plain.Samples[0].Position.X + 0.001f, moved.Samples[0].Position.X, 0.0002f);
+        Assert.Equal(plain.Samples[0].Position.Y - 0.002f, moved.Samples[0].Position.Y, 0.0002f);
+        Assert.Throws<ArgumentException>(() => Program.Run(new[] { "--scenario", "drop", "--start-offset", "0.001" }, new StringWriter()));
+    }
+
+    [Fact]
     public void Command_line_writes_only_to_its_out_folder()
     {
         string dir = Path.Combine(Path.GetTempPath(), "jolt-harness-test-" + Guid.NewGuid().ToString("N"));

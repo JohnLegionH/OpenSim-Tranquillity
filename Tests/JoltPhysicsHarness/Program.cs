@@ -41,6 +41,8 @@ public static class Program
   --crash-offset M[,M..]     crash scenarios: the car's sideways offset (m, default 0)
   --crash-angle DEG[,DEG..]  crash scenarios: the car turned about the vertical (crash-drop: rolled) (default 0)
                              Lists run every combination (a sweep).
+  --start-offset DX,DY       move the scenario's own body (car, box or prim) DX and DY metres from its start;
+                             nothing else moves (default: 0,0)
   --out DIR                  write <scenario>-s<slope>-r<rate>.csv per run and summary.csv to DIR, and
                              native.txt, the joltc build loaded (for --check-baseline)
 
@@ -169,6 +171,11 @@ The summary table always goes to standard output. Nothing is written anywhere el
                 case "--crash-speed": crashSpeeds = Next().Split(',').Select(x => (float)PositiveDouble(x, a)).ToArray(); break;
                 case "--crash-offset": crashOffsets = Next().Split(',').Select(x => (float)SignedDouble(x, a)).ToArray(); break;
                 case "--crash-angle": crashAngles = Next().Split(',').Select(x => (float)SignedDouble(x, a)).ToArray(); break;
+                case "--start-offset":
+                    float[] d = Next().Split(',').Select(x => (float)SignedDouble(x, a)).ToArray();
+                    if (d.Length != 2) throw new ArgumentException("--start-offset needs two numbers: DX,DY");
+                    (o.StartOffsetX, o.StartOffsetY) = (d[0], d[1]);
+                    break;
                 case "--out": outDir = Next(); break;
                 default: throw new ArgumentException($"unknown argument '{a}'");
             }
@@ -235,7 +242,7 @@ The summary table always goes to standard output. Nothing is written anywhere el
 
     private static HarnessOptions Copy(HarnessOptions o, double rate, float slope)
     {
-        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay, StartSpeed = o.StartSpeed };
+        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay, StartSpeed = o.StartSpeed, StartOffsetX = o.StartOffsetX, StartOffsetY = o.StartOffsetY };
         foreach (KeyValuePair<string, string> kv in o.Jolt) c.Jolt[kv.Key] = kv.Value;
         c.VehicleParams.AddRange(o.VehicleParams);
         c.VehicleFlags.AddRange(o.VehicleFlags);

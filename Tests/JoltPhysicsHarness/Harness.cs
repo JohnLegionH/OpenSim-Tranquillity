@@ -67,6 +67,10 @@ public sealed class HarnessOptions
     /// <summary>Crash scenarios: the car turned this many degrees about the vertical from the scenario's heading (for
     /// crash-drop: rolled about its nose).</summary>
     public float CrashAngle;
+    /// <summary>Moves the scenario's own body (the car, box or prim it drives or drops) this far on x and y (m) from
+    /// where the scenario places it; nothing else moves. A start a millimetre away shows how far a run's results
+    /// move under a difference that small.</summary>
+    public float StartOffsetX, StartOffsetY;
 
     private static double DefaultPhysicsRate()
     {
@@ -372,6 +376,7 @@ public sealed class Run
     /// <summary>A physical box prim, as a SceneObjectPart adds one (density 1000).</summary>
     public PhysicsActor AddBox(Vector3 size, Vector3 position, Quaternion rotation)
     {
+        position += new Vector3(Options.StartOffsetX, Options.StartOffsetY, 0f);
         PhysicsActor pa = Scene.AddPrimShape("harness box", PrimitiveBaseShape.CreateBox(), position, size, rotation, true, ActorLocalId);
         pa.Density = 1000f;
         Actor = pa;
