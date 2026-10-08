@@ -127,12 +127,13 @@ share of gravity on a ground vehicle, the type presets, the limits and the sled'
 
 ### Physics step rate
 
-By default the module runs one physics step per region heartbeat (`[Startup] FrameTime`, about 11
-per second). `[Jolt] PhysicsStepRate` runs physics at a set rate inside each heartbeat instead:
+`[Jolt] PhysicsStepRate` runs physics at a set rate inside each region heartbeat. The default is 45:
+fixed 45 Hz physics steps, whatever the heartbeat (`[Startup] FrameTime`, about 11 per second).
+`PhysicsStepRate = 0` runs one physics step per heartbeat instead, as earlier versions did by default:
 
 ```ini
 [Jolt]
-    PhysicsStepRate = 45
+    PhysicsStepRate = 45            ; the default; 0 = one physics step per heartbeat
     PhysicsStepCollisionSteps = 2
 ```
 
@@ -151,7 +152,9 @@ per second). `[Jolt] PhysicsStepRate` runs physics at a set rate inside each hea
 - A heartbeat runs at most 16 steps. A heartbeat that would need more runs 16 and drops the rest
   of its time; `jolt capacity` shows how many heartbeats did ("physics steps").
 - A rate below the heartbeat's own rate is refused with one warning at region start, and the region
-  runs one step per heartbeat.
+  runs one step per heartbeat. So is a value that is not a number from 0 to 1000 (one warning; the
+  region runs one step per heartbeat, as it did while that was the default). A heartbeat faster than
+  45 Hz refuses the default the same way.
 - The keys are read once, when the region starts.
 
 What changes at 45: vehicles and avatars integrate in 1/45 s steps, so anything whose behaviour
@@ -346,7 +349,7 @@ LSL vehicles run on a controller that steps each behaviour Second Life documents
 model. The sled's slope assist (`VehicleSledAssist` below) is not a documented Second Life behaviour;
 it is carried over from the InWorldz Halcyon sled code. The controller's frame structure and parameter handling come from the InWorldz Halcyon vehicle code, whose type
 defaults remain available as `VehiclePresets = legacy`. Every behaviour is stepped as the exact solution over the step
-the engine takes, so a vehicle drives the same at the default heartbeat and at any
+the engine takes, so a vehicle drives the same at one step per heartbeat and at any
 `PhysicsStepRate`. The sections below give the model, the `[Jolt]` keys that govern vehicles, the
 known gaps against Second Life, and how to try a vehicle in the harness before a region.
 
@@ -583,7 +586,7 @@ dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --sce
 | `--list` | List the scenarios and the slopes each one uses |
 | `--scenario NAME[,NAME..]` or `all` | Scenarios to run (default: all) |
 | `--rate HZ[,HZ..]` or `all` | Heartbeat rates; `all` is 11, 22.5, 45 and 90 (default: 11) |
-| `--physics-rate HZ[,HZ..]` | `[Jolt] PhysicsStepRate`: physics steps per second inside each heartbeat; 0 is one step per heartbeat (default: 0, or the `JOLT_HARNESS_PHYSICS_RATE` environment variable) |
+| `--physics-rate HZ[,HZ..]` | `[Jolt] PhysicsStepRate`: physics steps per second inside each heartbeat; 0 is one step per heartbeat and is set as `PhysicsStepRate = 0`, not left to the module's default of 45 (default: 0, or the `JOLT_HARNESS_PHYSICS_RATE` environment variable) |
 | `--slope DEG[,DEG..]` | Ramp angles for the scenarios that use one (default: each scenario's own list) |
 | `--duration S`, `--hold S` | Seconds simulated, and seconds the drive key is held |
 | `--keyrepeat S` | How often a held key re-sends the motor, as a script's control event does (default 0.1) |

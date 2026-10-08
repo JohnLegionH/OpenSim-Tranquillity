@@ -19,7 +19,8 @@ public static class Program
   --scenario NAME[,NAME..]   scenarios to run, or 'all' (default: all)
   --rate HZ[,HZ..]           heartbeat rates, or 'all' = 11,22.5,45,90 (default: 11)
   --physics-rate HZ[,HZ..]   physics steps per second inside each heartbeat ([Jolt] PhysicsStepRate);
-                             0 = one step per heartbeat (default: 0, or JOLT_HARNESS_PHYSICS_RATE)
+                             0 = one step per heartbeat, set as PhysicsStepRate = 0 (the module's
+                             own default is 45) (default: 0, or JOLT_HARNESS_PHYSICS_RATE)
   --slope DEG[,DEG..]        ramp angles for the scenarios that use one (default: each scenario's own list)
   --duration S               seconds to simulate (default: the scenario's)
   --hold S                   seconds the drive key is held (default: the scenario's)

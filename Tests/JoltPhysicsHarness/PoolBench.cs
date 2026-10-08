@@ -141,8 +141,8 @@ public static class PoolBench
         // Set only when on, so a build without the key runs the default handoff unchanged.
         if (handoff)
             jolt.Set("JobPoolFairHandoff", "true");
-        if (o.PhysicsRateHz > 0)
-            jolt.Set("PhysicsStepRate", o.PhysicsRateHz.ToString(CultureInfo.InvariantCulture));
+        // Always set: 0 is one step per heartbeat, and the module's own default is 45 Hz.
+        jolt.Set("PhysicsStepRate", Math.Max(o.PhysicsRateHz, 0).ToString(CultureInfo.InvariantCulture));
         var scene = new JoltScene();
         scene.Initialise(config);
         scene.InitialiseWithoutScene(name, Course.Size, Course.Size, Course.Heightmap(0f), Course.Water, (float)(1.0 / o.RateHz));

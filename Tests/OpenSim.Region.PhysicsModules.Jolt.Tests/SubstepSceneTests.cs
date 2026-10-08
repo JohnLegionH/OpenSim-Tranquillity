@@ -36,13 +36,31 @@ public class SubstepSceneTests
         startup.Set("physics", "Jolt");
         startup.Set("meshing", "Meshmerizer");
         IConfig jolt = config.AddConfig("Jolt");
-        if (physicsRate > 0f)
-            jolt.Set("PhysicsStepRate", physicsRate.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        // Always set: 0 is one step per heartbeat, and the module's own default is 45 Hz.
+        jolt.Set("PhysicsStepRate", physicsRate.ToString(System.Globalization.CultureInfo.InvariantCulture));
         var scene = new JoltScene();
         scene.Initialise(config);
         var heights = new float[Size * Size];
         Array.Fill(heights, Ground);
         scene.InitialiseWithoutScene("Test Region", Size, Size, heights, 20f, heartbeat);
+        return scene;
+    }
+
+    // A scene whose [Jolt] PhysicsStepRate is the given text, or not set at all when it is null.
+    private static JoltScene NewSceneWithRateText(string rate)
+    {
+        var config = new IniConfigSource();
+        IConfig startup = config.AddConfig("Startup");
+        startup.Set("physics", "Jolt");
+        startup.Set("meshing", "Meshmerizer");
+        IConfig jolt = config.AddConfig("Jolt");
+        if (rate != null)
+            jolt.Set("PhysicsStepRate", rate);
+        var scene = new JoltScene();
+        scene.Initialise(config);
+        var heights = new float[Size * Size];
+        Array.Fill(heights, Ground);
+        scene.InitialiseWithoutScene("Test Region", Size, Size, heights, 20f, Heartbeat);
         return scene;
     }
 
@@ -67,6 +85,40 @@ public class SubstepSceneTests
             Assert.Equal(1f / 45f, t.Substeps.StepSeconds);
         }
         finally { t.Dispose(); }
+    }
+
+    [Fact]
+    public void A_scene_with_no_rate_set_steps_at_45_Hz()
+    {
+        JoltScene s = NewSceneWithRateText(null);
+        try
+        {
+            Assert.True(s.Substepping);
+            Assert.Equal(1f / 45f, s.Substeps.StepSeconds);
+            AddBox(s, 1000, new Vector3(128f, 128f, Ground + 3f), physical: true);
+            for (int i = 0; i < 100; i++)
+                s.Simulate(Heartbeat);
+            double expected = 100 * Heartbeat * 45.0;
+            Assert.InRange((double)s.Substeps.Steps, expected - 1.0, expected + 1.0);
+        }
+        finally { s.Dispose(); }
+    }
+
+    // 0, and an invalid value (as before the default was 45), give one step per heartbeat.
+    [Theory]
+    [InlineData("0")]
+    [InlineData("fast")]
+    [InlineData("-1")]
+    [InlineData("1001")]
+    public void A_scene_with_rate_0_or_an_invalid_rate_runs_one_step_per_heartbeat(string rate)
+    {
+        JoltScene s = NewSceneWithRateText(rate);
+        try
+        {
+            Assert.False(s.Substepping);
+            Assert.Null(s.Substeps);
+        }
+        finally { s.Dispose(); }
     }
 
     [Fact]

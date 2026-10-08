@@ -48,8 +48,8 @@ public class RayCastAndPushLimitTests
         startup.Set("physics", "Jolt");
         startup.Set("meshing", "Meshmerizer");
         IConfig jolt = config.AddConfig("Jolt");
-        if (physicsRate > 0f)
-            jolt.Set("PhysicsStepRate", physicsRate.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        // Always set: 0 is one step per heartbeat, and the module's own default is 45 Hz.
+        jolt.Set("PhysicsStepRate", physicsRate.ToString(System.Globalization.CultureInfo.InvariantCulture));
         foreach ((string key, string value) in keys)
             jolt.Set(key, value);
         var scene = new JoltScene { RayCastClock = rayClock };
