@@ -94,7 +94,7 @@ pwsh -File assert-patched-joltc.ps1 -PublishDir "<publish directory>"
 
 All settings are in the `[Jolt]` section. `OpenSimDefaults.ini` lists every key with its default
 and what it does; copy a key into `OpenSim.ini` to change it. An invalid value logs a warning and
-the default is used. The keys cover gravity, solver sub-steps and iterations, the worker threads
+the default is used, except `PhysicsStepRate`, where it gives one physics step per heartbeat (below). The keys cover gravity, solver sub-steps and iterations, the worker threads
 and job pools shared by all regions in the process, body / pair / contact capacities (optionally
 scaled with region area for var regions), the per-frame update buffers, the avatar jump speed,
 how often capacity warnings are logged, the physics step rate (below), the vehicle settings (the
