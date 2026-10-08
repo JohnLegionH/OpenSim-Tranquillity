@@ -8,10 +8,10 @@ its record (`JoltNative.Known`) before loading it. On the stock joltc the module
 pool** (`[Jolt] JobPools`), whatever the setting asks for.
 
 This folder also holds the recipe for a patched build of joltc, which is safe for more than one
-job pool. The compiled files are kept in the repository under the module's
-`runtimes/<rid>/native/` folders; no build copies them into an output. They are built by a GitHub
-Actions workflow, `.github/workflows/joltc-native.yml`, from pinned sources plus the patches in
-this folder, so anyone can rebuild them and check the result against the hashes below.
+job pool. The compiled files are not kept in the repository, and no build puts them into an
+output. They are built by a GitHub Actions workflow, `.github/workflows/joltc-native.yml`, from
+pinned sources plus the patches in this folder, so anyone can rebuild them and check the result
+against the hashes below.
 
 ## One job pool on the stock native, more on the patched one
 
@@ -38,13 +38,20 @@ one under JoltPhysicsSharp 2.19.1.
 
 ## Using the patched build
 
+Get the file from a run of the workflow: run `joltc native` (`workflow_dispatch`, on a fork or a
+branch that has it) and download the artifact for the platform, `joltc-win-x64` or
+`joltc-linux-x64`. Each holds the file, `SHA256SUMS`, `exports.txt` and `build-info.txt`. Check
+the hash against "The patched builds" below before using it. Artifacts expire, so keep the file
+you install.
+
 An operator who wants more than one job pool replaces the stock file in the output with the
-patched build for the platform, under the same name:
+patched build for the platform, under the same name. The module has no setting for the file's
+path; it loads the file it finds in the output:
 
 | Platform | Replace | With |
 |---|---|---|
-| win-x64 | `runtimes/win-x64/native/joltc.dll` | `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/win-x64/native/joltc.dll` |
-| linux-x64 | `runtimes/linux-x64/native/libjoltc.so` | `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/linux-x64/native/libjoltc.so` |
+| win-x64 | `runtimes/win-x64/native/joltc.dll` | `joltc.dll` from the `joltc-win-x64` artifact |
+| linux-x64 | `runtimes/linux-x64/native/libjoltc.so` | `libjoltc.so` from the `joltc-linux-x64` artifact |
 
 (For a build or publish for one runtime identifier, the file sits beside the application's
 assemblies instead of under `runtimes/`; replace it there.) The module recognises the patched build
@@ -63,8 +70,6 @@ one pool.
 | `native/joltc/exports.txt` | The 1086 names the native must export, the same set as the stock natives of `JoltPhysics.Native 1.0.4` |
 | `native/joltc/list-exports.py` | Lists the exported names of a PE (`.dll`) or ELF (`.so`) file; with `--expect exports.txt` it checks them |
 | `.github/workflows/joltc-native.yml` | Builds the natives on GitHub's runners |
-| `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/win-x64/native/joltc.dll` | win-x64 patched build (not copied by any build) |
-| `Source/OpenSim.Region.PhysicsModules.Jolt/runtimes/linux-x64/native/libjoltc.so` | linux-x64 patched build (not copied by any build) |
 | `Source/OpenSim.Region.PhysicsModules.Jolt.Backend/JoltNative.cs` | Picks the file for the running platform, checks its hash against the tables below and loads it |
 | `Source/OpenSim.Region.PhysicsModules.Jolt.Backend/JoltNative.targets` | Keeps the package's unused files (`joltc_double.dll`, Android) out of an application's output |
 | `Source/OpenSim.Region.PhysicsModules.Jolt/assert-joltc-native.ps1` | Checks that an output or publish directory holds recorded joltc builds under `runtimes/<rid>/native/` and no other joltc; with `-RequirePatched`, the patched builds |
@@ -118,20 +123,39 @@ library it gives is byte for byte the same as without it.
 built under the runner's temporary folder rather than the checkout, so the paths compiled into the
 file do not depend on the repository's name.
 
-The workflow runs on pushes that touch `native/joltc/` or the workflow itself. Its permissions are
-read-only, it uses no secrets, and each action it uses is pinned by commit. A new target (for
-example linux-arm64 or osx) is one more entry in its matrix.
+The workflow runs on pushes that touch `native/joltc/` or the workflow itself, on
+`workflow_dispatch`, and when another workflow calls it (`workflow_call`):
+`.github/workflows/jolt-stock-native.yml` builds the patched natives this way in its own run and
+takes the artifacts from there. Its permissions are read-only, it uses no secrets, and each action
+it uses is pinned by commit. A new target (for example linux-arm64 or osx) is one more entry in its
+matrix.
 
-## The files in the repository
+## The patched builds
 
 These hashes are also recorded in `JoltNative.Known` (as patched builds, safe for more than one
-job pool) and in `assert-joltc-native.ps1`. Unit tests in `JoltNativeTests` check the files, this
-table and the script against `JoltNative.Known`. Replacing a file means updating all three.
+job pool) and in `assert-joltc-native.ps1`. Unit tests in `JoltNativeTests` check this table and
+the script against `JoltNative.Known`. A new build with another hash means updating all three.
 
 | File | SHA-256 |
 |---|---|
 | `runtimes/win-x64/native/joltc.dll` | `961002617000c9f2da76b31b816b4185e04361114fb46a1ddc4c95d07fbef844` |
 | `runtimes/linux-x64/native/libjoltc.so` | `eead7c1aa7fdfac07132e26913e03b268dfd825ca72ffe6cec3a181da2ec95bb` |
+
+### The tests that need the patched build
+
+The Jolt tests run on the stock native. The tests that need the patched build (the multi-pool
+halves of `ConcurrentUpdateTests`, run in a child test host, and the checks of the patched files in
+`JoltNativeTests`) take it from the folder `JOLT_TEST_PATCHED_NATIVE_DIR` names, which holds one
+folder per platform with that platform's file, as the artifacts give them:
+
+```
+<folder>/win-x64/joltc.dll
+<folder>/linux-x64/libjoltc.so
+```
+
+The running platform's file must be there and have its recorded hash. Without the setting those
+tests are reported as skipped, with the reason. `jolt-stock-native.yml` runs them with the setting
+pointing at the natives it built.
 
 ## The stock files
 

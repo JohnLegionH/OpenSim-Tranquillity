@@ -150,8 +150,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// <summary>
         /// Every joltc build the module knows, with its SHA-256 (upper-case hex). The package entries are read from the
         /// JoltPhysics.Native package of <see cref="PackageVersion"/>; the patched entries are the files the
-        /// joltc-native workflow builds, kept in the repository under the module's runtimes/ folder and listed in
-        /// native/joltc/README.md.
+        /// joltc-native workflow builds (its joltc-&lt;rid&gt; artifacts), listed in native/joltc/README.md.
         /// </summary>
         public static readonly IReadOnlyList<JoltNativeBuild> Known = new[]
         {
@@ -190,8 +189,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
         /// <summary>
         /// TEST-ONLY: the folder the runtimes/ tree is read from instead of the assembly's folder. The Jolt tests set it
-        /// from JOLT_TEST_NATIVE_BASE (TestNativeOverride) to run a child test host on the patched files kept in the
-        /// repository. Never set by the module.
+        /// from JOLT_TEST_NATIVE_BASE (TestNativeOverride) to run a child test host on a patched build supplied to the
+        /// tests. Never set by the module.
         /// </summary>
         internal static string? BaseDirectoryForTest;
 

@@ -217,7 +217,7 @@ public class JoltNativeTests
     private static IEnumerable<JoltNativeBuild> Patched => JoltNative.Known.Where(b => b.Origin == JoltNativeOrigin.PatchedBuild);
 
     [Fact]
-    public void The_record_matches_the_patched_files_in_the_repository_and_the_guard_script()
+    public void The_record_matches_the_guard_script_and_the_repository_keeps_no_native()
     {
         string guard = File.ReadAllText(Path.Combine(RepoRoot(), "Source", "OpenSim.Region.PhysicsModules.Jolt", "assert-joltc-native.ps1"));
         var guardEntries = Regex.Matches(guard, "\"([a-z0-9-]+)\"\\s*=\\s*@\\{\\s*File\\s*=\\s*\"([^\"]+)\";\\s*Sha256\\s*=\\s*\"([0-9A-F]{64})\"")
@@ -232,25 +232,40 @@ public class JoltNativeTests
         foreach (JoltNativeBuild b in Patched)
         {
             Assert.Equal((b.File, b.Sha256), guardEntries[b.Folder]);
-            string inRepo = Path.Combine(ModuleRuntimes, b.Folder, "native", b.File);
-            Assert.Equal(b.Sha256, JoltNative.Sha256Of(inRepo));
-            // No build copies the patched file any more: the output holds the package's.
+            // No build copies the patched file: the output holds the package's.
             string inOutput = JoltNative.PathFor(JoltNative.DefaultBaseDirectory(), b.Folder);
             Assert.NotEqual(b.Sha256, JoltNative.Sha256Of(inOutput));
         }
 
-        // Every native in the module's runtimes folder has a patched record.
-        var files = Directory.GetDirectories(ModuleRuntimes)
-            .SelectMany(d => Directory.GetFiles(Path.Combine(d, "native")).Select(f => (Rid: Path.GetFileName(d), File: Path.GetFileName(f))))
-            .OrderBy(x => x.Rid).ToArray();
-        Assert.Equal(Patched.Select(b => (b.Folder, b.File)).OrderBy(x => x.Folder).ToArray(), files);
+        // The patched builds come from the joltc-native workflow, not from the repository: the module's project holds
+        // no compiled native.
+        string[] kept = Directory.Exists(ModuleRuntimes) ? Directory.GetFiles(ModuleRuntimes, "*", SearchOption.AllDirectories) : [];
+        Assert.Empty(kept);
+    }
+
+    [PatchedNativeFact]
+    public void The_supplied_patched_files_match_the_record()
+    {
+        // The running platform's file must be there; another platform's is checked when it is there too.
+        string supplied = PatchedNativeChild.SuppliedFolder!;
+        PatchedNativeChild.Require();
+        int checkedFiles = 0;
+        foreach (JoltNativeBuild b in Patched)
+        {
+            string path = PatchedNativeChild.PathIn(supplied, b.Folder);
+            if (!File.Exists(path))
+                continue;
+            Assert.Equal(b.Sha256, JoltNative.Sha256Of(path));
+            checkedFiles++;
+        }
+        Assert.True(checkedFiles >= 1);
     }
 
     [Fact]
     public void The_readme_hash_tables_match_the_record()
     {
         string readme = File.ReadAllText(Path.Combine(RepoRoot(), "native", "joltc", "README.md"));
-        // The patched files kept in the repository: `runtimes/<rid>/native/<file>` | `<sha256>`.
+        // The patched builds: `runtimes/<rid>/native/<file>` | `<sha256>`.
         var patched = Regex.Matches(readme, @"^\| `runtimes/([a-z0-9-]+)/native/([^`]+)` \| `([0-9a-f]{64})` \|", RegexOptions.Multiline)
             .Select(m => (Folder: m.Groups[1].Value, File: m.Groups[2].Value, Sha256: m.Groups[3].Value.ToUpperInvariant()))
             .OrderBy(x => x.Folder).ToArray();
@@ -293,13 +308,16 @@ public class JoltNativeTests
         }
     }
 
-    [Fact]
+    [PatchedNativeFact]
     public void The_patched_file_passes_the_check_without_the_key()
     {
-        // An operator who replaces the package's file with the patched build gets it recognised by its hash.
-        foreach (JoltNativeBuild b in Patched)
+        // An operator who replaces the package's file with the patched build gets it recognised by its hash. The
+        // supplied folder holds each file flat in its platform's folder, as a build for one runtime identifier does.
+        string supplied = PatchedNativeChild.SuppliedFolder!;
+        PatchedNativeChild.Require();
+        foreach (JoltNativeBuild b in Patched.Where(b => File.Exists(PatchedNativeChild.PathIn(supplied, b.Folder))))
         {
-            JoltNativeInfo info = JoltNative.Check(PatchedNativeChild.ModuleFolder, b.Folder, allowUnrecorded: false);
+            JoltNativeInfo info = JoltNative.Check(Path.Combine(supplied, b.Folder), b.Folder, allowUnrecorded: false);
             Assert.Same(b, info.Build);
             Assert.True(info.SafeForMultiplePools);
         }

@@ -14,19 +14,24 @@ using Xunit;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// Runs one test in a child test host on the patched joltc the repository keeps under the Jolt module's runtimes/
-/// folder. The suite's own process loads the stock native from the package, which runs one job pool; a test that needs
-/// more than one pool checks the one-pool fallback in-process and runs its multi-pool half here, on the build that
-/// allows it. The child is the same test build (dotnet test --no-build, same configuration) with JOLT_TEST_NATIVE_BASE
-/// pointing at the module's folder (TestNativeOverride).
+/// Runs one test in a child test host on a patched joltc supplied to the tests. The suite's own process loads the
+/// stock native from the package, which runs one job pool; a test that needs more than one pool checks the one-pool
+/// fallback in-process and runs its multi-pool half here, on the build that allows it. The child is the same test
+/// build (dotnet test --no-build, same configuration) with JOLT_TEST_NATIVE_BASE pointing at the supplied file's
+/// folder (TestNativeOverride).
+///
+/// <para>The repository does not keep the patched build. To supply it, set JOLT_TEST_PATCHED_NATIVE_DIR to a folder
+/// with one subfolder per runtime identifier, each holding that platform's file: win-x64/joltc.dll,
+/// linux-x64/libjoltc.so. Those are the contents of the joltc-win-x64 and joltc-linux-x64 artifacts of the
+/// joltc-native workflow (native/joltc/README.md). Without it, the tests marked <see cref="PatchedNativeFactAttribute"/>
+/// are reported as skipped, with that instruction as the reason.</para>
 /// </summary>
 internal static class PatchedNativeChild
 {
+    public const string DirVariable = "JOLT_TEST_PATCHED_NATIVE_DIR";
+
     private static string RepoRoot([CallerFilePath] string here = "")
         => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(here)!, "..", ".."));
-
-    /// <summary>The Jolt module's project folder: the base of the runtimes/ tree that holds the patched builds.</summary>
-    public static string ModuleFolder => Path.Combine(RepoRoot(), "Source", "OpenSim.Region.PhysicsModules.Jolt");
 
     private static string TestProject => Path.Combine(RepoRoot(), "Tests", "OpenSim.Region.PhysicsModules.Jolt.Tests");
 
@@ -36,21 +41,53 @@ internal static class PatchedNativeChild
     private const string Configuration = "Release";
 #endif
 
+    /// <summary>The folder JOLT_TEST_PATCHED_NATIVE_DIR names, or null when it is not set.</summary>
+    public static string? SuppliedFolder
+    {
+        get
+        {
+            string? dir = Environment.GetEnvironmentVariable(DirVariable);
+            return string.IsNullOrEmpty(dir) ? null : Path.GetFullPath(dir);
+        }
+    }
+
+    /// <summary>The patched builds the module has a record of.</summary>
+    public static IEnumerable<JoltNativeBuild> Recorded => JoltNative.Known.Where(b => b.Origin == JoltNativeOrigin.PatchedBuild);
+
     /// <summary>
-    /// The record has a patched build for the running platform. Then the repository must hold it, unchanged: a missing
-    /// or altered file fails here rather than quietly skipping the multi-pool runs.
+    /// Why a test that needs the patched build cannot run here, or null when it can: the record has a patched build
+    /// for the running platform and JOLT_TEST_PATCHED_NATIVE_DIR is set.
     /// </summary>
-    public static bool Available()
+    public static string? SkipReason()
     {
         string rid = JoltNative.CurrentRid();
-        if (!JoltNative.Platforms.TryGetValue(rid, out var platform) ||
-            !JoltNative.Known.Any(b => b.Origin == JoltNativeOrigin.PatchedBuild && b.Folder == platform.Folder))
-            return false;
-        string path = JoltNative.PathFor(ModuleFolder, rid);
-        Assert.True(File.Exists(path), $"the patched joltc for {rid} is recorded but missing from the repository: {path}");
+        if (!JoltNative.Platforms.TryGetValue(rid, out var platform) || !Recorded.Any(b => b.Folder == platform.Folder))
+            return $"there is no patched joltc build for {rid}";
+        if (SuppliedFolder == null)
+            return $"needs the patched joltc, which the repository does not keep: set {DirVariable} to a folder holding " +
+                   $"{platform.Folder}/{platform.File}, the joltc-{platform.Folder} artifact of the joltc-native workflow " +
+                   "(native/joltc/README.md)";
+        return null;
+    }
+
+    /// <summary>Where the supplied folder holds the patched file of the platform folder <paramref name="folder"/>.</summary>
+    public static string PathIn(string supplied, string folder)
+        => Path.Combine(supplied, folder, Recorded.First(b => b.Folder == folder).File);
+
+    /// <summary>
+    /// The supplied patched file for the running platform. A setting that names a folder without it, or with a file
+    /// that is not the recorded patched build, fails here rather than quietly skipping the multi-pool runs.
+    /// </summary>
+    public static string Require()
+    {
+        string? supplied = SuppliedFolder;
+        Assert.True(supplied != null, $"{DirVariable} is not set");
+        string rid = JoltNative.CurrentRid();
+        string path = PathIn(supplied!, JoltNative.Platforms[rid].Folder);
+        Assert.True(File.Exists(path), $"{DirVariable} is {supplied}, but the patched joltc for {rid} is not there: {path}");
         Assert.True(JoltNative.Find(rid, JoltNative.Sha256Of(path)) is { SafeForMultiplePools: true },
             $"{path} is not the recorded patched build");
-        return true;
+        return path;
     }
 
     /// <summary>In a child test host started by <see cref="RunAndAssertPassed"/>: the native loaded is the patched build.</summary>
@@ -64,11 +101,12 @@ internal static class PatchedNativeChild
     }
 
     /// <summary>
-    /// Runs the test <paramref name="method"/> of <paramref name="testClass"/> in a child test host on the patched native
-    /// and asserts that it ran and passed. Returns the child's output.
+    /// Runs the test <paramref name="method"/> of <paramref name="testClass"/> in a child test host on the supplied
+    /// patched native and asserts that it ran and passed. Returns the child's output.
     /// </summary>
     public static string RunAndAssertPassed(Type testClass, string method)
     {
+        string native = Require();
         string name = $"{testClass.FullName}.{method}";
         var psi = new ProcessStartInfo("dotnet")
         {
@@ -81,7 +119,9 @@ internal static class PatchedNativeChild
         foreach (string a in new[] { "test", TestProject, "--no-build", "-c", Configuration, "--nologo",
                                      "--filter", $"FullyQualifiedName={name}", "-l", "console;verbosity=normal" })
             psi.ArgumentList.Add(a);
-        psi.Environment[TestNativeOverride.BaseVariable] = ModuleFolder;
+        // The module takes the file from this folder itself, as it takes the package's file from beside the
+        // assemblies of a build for one runtime identifier (JoltNative.Locate).
+        psi.Environment[TestNativeOverride.BaseVariable] = Path.GetDirectoryName(native)!;
 
         using var p = Process.Start(psi)!;
         // Both streams are read at once, so a full stderr pipe cannot stall the child.
@@ -93,5 +133,19 @@ internal static class PatchedNativeChild
         Assert.Contains($"  Passed {name} [", output);
         Assert.Matches(new Regex(@"Total tests: 1\r?\n\s+Passed: 1\r?\n"), output);
         return output;
+    }
+}
+
+/// <summary>
+/// A test that needs the patched joltc. It is reported as skipped, with the reason from
+/// <see cref="PatchedNativeChild.SkipReason"/>, when the build is not supplied or the platform has none.
+/// </summary>
+public sealed class PatchedNativeFactAttribute : FactAttribute
+{
+    public PatchedNativeFactAttribute()
+    {
+        string? reason = PatchedNativeChild.SkipReason();
+        if (reason != null)
+            Skip = reason;
     }
 }

@@ -25,8 +25,8 @@
   </ItemGroup>
 
   <!-- The joltc arrives from the JoltPhysics.Native package, under runtimes/<rid>/native/, as in the region server.
-       The tests that need more than one job pool run in a child test host on the patched build kept in the
-       repository (JOLT_TEST_NATIVE_BASE, TestNativeOverride). -->
+       The tests that need more than one job pool run in a child test host on a patched build supplied through
+       JOLT_TEST_PATCHED_NATIVE_DIR (PatchedNativeChild), and are skipped without one. -->
   <Import Project="..\..\Source\OpenSim.Region.PhysicsModules.Jolt.Backend\JoltNative.targets" />
 
   <ItemGroup>

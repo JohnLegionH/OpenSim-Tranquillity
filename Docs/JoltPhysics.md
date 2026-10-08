@@ -57,12 +57,19 @@ The patched joltc is this project's build of the same joltc source with two patc
 system gets its own scratch allocator, and the map of systems gets a lock. It is built on GitHub's
 runners by `.github/workflows/joltc-native.yml` from pinned joltc and Jolt Physics commits and the
 patches in `native/joltc/`, so anyone can rebuild it and compare the hashes.
-[native/joltc/README.md](../native/joltc/README.md) gives the recipe, the hashes and where the files
-are.
+[native/joltc/README.md](../native/joltc/README.md) gives the recipe and the hashes.
 
-To select it, replace the stock file in the build or publish output with the patched file for the
-platform, under the same name (`runtimes/win-x64/native/joltc.dll` or
-`runtimes/linux-x64/native/libjoltc.so`), then check the output:
+The repository does not keep the compiled file. To get it, run the `joltc native` workflow
+(`workflow_dispatch`, on a fork or a branch that has it) and download its `joltc-win-x64` or
+`joltc-linux-x64` artifact: the file, its `SHA256SUMS`, its exports and the toolchain it was built
+with. Check its hash against the table in the README; a file with another hash is refused at start
+(see "The native check at start").
+
+The module has no setting for the file's path: it loads the file it finds in the output. To select
+the patched build, replace the stock file in the build or publish output with the patched file for
+the platform, under the same name (`runtimes/win-x64/native/joltc.dll` or
+`runtimes/linux-x64/native/libjoltc.so`; for a build or publish for one runtime identifier, the
+file beside the application's assemblies), then check the output:
 
 ```
 pwsh -File assert-joltc-native.ps1 -PublishDir "<publish directory>" -RequirePatched

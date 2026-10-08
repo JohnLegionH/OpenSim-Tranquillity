@@ -146,7 +146,7 @@ public class ConcurrentUpdateTests
     }
 
     // Multi-pool halves run on the patched native: in this process when it loaded that build, else in a child test
-    // host on the patched build the repository keeps (PatchedNativeChild), after the one-pool fallback is checked here.
+    // host on a supplied patched build (the *_on_the_patched_native tests below); the one-pool fallback is checked here.
     [Fact]
     public void Heavy_regions_one_update_per_pool()
     {
@@ -161,8 +161,6 @@ public class ConcurrentUpdateTests
                 AssertOnePoolFallback(regions, pools);
             DisposeAll(regions);
         }
-        if (!NativeAllowsPools && PatchedNativeChild.Available())
-            _out.WriteLine(PatchedNativeChild.RunAndAssertPassed(GetType(), nameof(Heavy_regions_one_update_per_pool)));
     }
 
     [Fact]
@@ -185,8 +183,25 @@ public class ConcurrentUpdateTests
                 AssertOnePoolFallback(regions, pools);
             DisposeAll(regions);
         }
-        if (!NativeAllowsPools && PatchedNativeChild.Available())
-            _out.WriteLine(PatchedNativeChild.RunAndAssertPassed(GetType(), nameof(Ten_regions_complete)));
+    }
+
+    // The two tests above in a child test host on the patched native (PatchedNativeChild), so their multi-pool halves
+    // run; skipped, with the reason, when no patched build is supplied.
+    [PatchedNativeFact]
+    public void Heavy_regions_one_update_per_pool_on_the_patched_native() => RunOnPatched(nameof(Heavy_regions_one_update_per_pool));
+
+    [PatchedNativeFact]
+    public void Ten_regions_complete_on_the_patched_native() => RunOnPatched(nameof(Ten_regions_complete));
+
+    private void RunOnPatched(string method)
+    {
+        if (NativeAllowsPools)
+        {
+            // This process loaded a build that runs more than one pool, so the test itself ran its multi-pool half.
+            _out.WriteLine($"{method} ran its multi-pool half in this process");
+            return;
+        }
+        _out.WriteLine(PatchedNativeChild.RunAndAssertPassed(GetType(), method));
     }
 
     [Fact]

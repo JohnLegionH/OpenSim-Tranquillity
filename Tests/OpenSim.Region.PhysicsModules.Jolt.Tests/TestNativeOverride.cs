@@ -15,9 +15,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// runtimes/&lt;rid&gt;/native/, recorded or not, so it can be run against another build of the native (put there by
 /// hand). The tests that check the file in the output against the module's record still fail then, as they should.
 ///
-/// <para>With JOLT_TEST_NATIVE_BASE set to a folder, the native is read from that folder's runtimes/ tree instead of
-/// the test output's. <see cref="PatchedNativeChild"/> sets it to the Jolt module's project folder, where the repository
-/// keeps the patched builds, to run the tests that need more than one job pool in a child test host.</para>
+/// <para>With JOLT_TEST_NATIVE_BASE set to a folder, the native is read from that folder (its runtimes/ tree, else the
+/// file in the folder itself) instead of the test output. <see cref="PatchedNativeChild"/> sets it to the folder of
+/// the patched build supplied through JOLT_TEST_PATCHED_NATIVE_DIR, to run the tests that need more than one job pool
+/// in a child test host.</para>
 /// </summary>
 internal static class TestNativeOverride
 {

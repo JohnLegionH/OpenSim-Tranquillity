@@ -1,6 +1,8 @@
 # Builds the patched joltc native the Jolt physics module loads, from pinned sources plus the
 # patches in native/joltc, for every target in the matrix. Each job uploads the compiled file, its
 # SHA-256 and its list of exported names. The recipe and how to check a file: native/joltc/README.md.
+# The repository does not keep the compiled files; a workflow that needs them calls this one
+# (workflow_call) and takes the joltc-<rid> artifacts of the same run.
 name: joltc native
 
 on:
@@ -17,6 +19,7 @@ on:
     paths:
       - 'native/joltc/**'
       - '.github/workflows/joltc-native.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
