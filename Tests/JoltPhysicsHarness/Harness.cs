@@ -71,6 +71,8 @@ public sealed class HarnessOptions
     /// where the scenario places it; nothing else moves. A start a millimetre away shows how far a run's results
     /// move under a difference that small.</summary>
     public float StartOffsetX, StartOffsetY;
+    /// <summary>Avatar scenarios: the request times this, as ScenePresence.SpeedModifier scales it (osSetSpeed).</summary>
+    public float AvatarSpeedModifier = 1f;
 
     private static double DefaultPhysicsRate()
     {
@@ -518,6 +520,8 @@ public static class Harness
     private static readonly Quaternion South = Quaternion.CreateFromEulers(0f, 0f, -MathF.PI / 2f);
     private static readonly Quaternion North = Quaternion.CreateFromEulers(0f, 0f, MathF.PI / 2f);
     private const float AvatarWalk = 4.096f;   // ScenePresence.AgentControlNormalVel at speed modifier 1
+    // What ScenePresence.AddNewMovement asks for while flying: the walk request times 4.
+    private const float AvatarFly = AvatarWalk * 4f;
     public const float PushAvatarSpeed = 6f;     // push-avatar: the speed its one push gives
     public const float PlatformHeight = 3f;      // avatar-platform: the platform's top above the ground
     public const float PlatformDrop = 3f;        // avatar-platform-drop: the arrival's height above the platform
@@ -836,7 +840,8 @@ public static class Harness
             {
                 if (r.Slope > 0f) r.AddAvatar(128f, 24f);
                 else r.AddAvatar(170f, 60f);
-                r.Actor.TargetVelocity = r.Slope > 0f ? new Vector3(0f, AvatarWalk, 0f) : new Vector3(AvatarWalk, 0f, 0f);
+                float walk = AvatarWalk * r.Options.AvatarSpeedModifier;
+                r.Actor.TargetVelocity = r.Slope > 0f ? new Vector3(0f, walk, 0f) : new Vector3(walk, 0f, 0f);
             },
             Input = r =>
             {
@@ -846,6 +851,31 @@ public static class Harness
                     r.ReleaseAt = r.Now;
                     r.StopAt = r.Now + 1.0;
                 }
+            },
+            SteadyFromPath = WalkSpeed,
+        },
+        new()
+        {
+            Name = "avatar-run",
+            Description = "An avatar running east on level ground for 5 s: always run on, and the walk request (4.096 m/s asked), as ScenePresence sends both.",
+            DefaultDuration = _ => 5f,
+            Setup = r =>
+            {
+                r.AddAvatar(170f, 60f);
+                r.Actor.SetAlwaysRun = true;
+                r.Actor.TargetVelocity = new Vector3(AvatarWalk * r.Options.AvatarSpeedModifier, 0f, 0f);
+            },
+            SteadyFromPath = WalkSpeed,
+        },
+        new()
+        {
+            Name = "avatar-fly",
+            Description = "An avatar flying east, straight and level, 30 m above level ground for 5 s (16.384 m/s asked).",
+            DefaultDuration = _ => 5f,
+            Setup = r =>
+            {
+                r.AddAvatarAt(new Vector3(60f, 60f, Course.Ground + 30f), true);
+                r.Actor.TargetVelocity = new Vector3(AvatarFly * r.Options.AvatarSpeedModifier, 0f, 0f);
             },
             SteadyFromPath = WalkSpeed,
         },
