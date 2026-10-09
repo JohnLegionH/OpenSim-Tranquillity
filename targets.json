@@ -127,7 +127,8 @@
       "restore_paths": "Source/OpenSim.Data.PGSQL/PGSQLXInventoryData.cs",
       "overlay_paths": "",
       "tests_project": "Tests/OpenSim.Region.Framework.Tests/OpenSim.Region.Framework.Tests.csproj",
-      "tests": "FullyQualifiedName~PGSQLInventoryMoveItemTests"
+      "tests": "FullyQualifiedName~PGSQLInventoryMoveItemTests",
+      "skip": true
     },
     {
       "name": "pgsql-moveitem",
@@ -142,7 +143,8 @@
       "restore_paths": "",
       "overlay_paths": "",
       "tests_project": "Tests/OpenSim.Region.Framework.Tests/OpenSim.Region.Framework.Tests.csproj",
-      "tests": "FullyQualifiedName~PGSQLInventoryMoveItemTests"
+      "tests": "FullyQualifiedName~PGSQLInventoryMoveItemTests",
+      "skip": true
     },
     {
       "name": "pgsql-setdataitem-red",
@@ -157,7 +159,8 @@
       "restore_paths": "",
       "overlay_paths": "Tests/OpenSim.Region.Framework.Tests/Scenes/Tests/PGSQLAuthenticationSetDataItemTests.cs",
       "tests_project": "Tests/OpenSim.Region.Framework.Tests/OpenSim.Region.Framework.Tests.csproj",
-      "tests": "FullyQualifiedName~PGSQLAuthenticationSetDataItemTests"
+      "tests": "FullyQualifiedName~PGSQLAuthenticationSetDataItemTests",
+      "skip": true
     },
     {
       "name": "pgsql-setdataitem-uuid-only",
@@ -172,7 +175,23 @@
       "restore_paths": "",
       "overlay_paths": "Tests/OpenSim.Region.Framework.Tests/Scenes/Tests/PGSQLAuthenticationSetDataItemTests.cs Source/OpenSim.Data.PGSQL/PGSQLAuthenticationData.cs",
       "tests_project": "Tests/OpenSim.Region.Framework.Tests/OpenSim.Region.Framework.Tests.csproj",
-      "tests": "FullyQualifiedName~PGSQLAuthenticationSetDataItemTests"
+      "tests": "FullyQualifiedName~PGSQLAuthenticationSetDataItemTests",
+      "skip": true
+    },
+    {
+      "name": "pgsql-store-fixes",
+      "repo": "JohnLegionH/OpenSim-Tranquillity",
+      "ref": "1636f79d1c654ee323e2c6e40cb58a30975c653f",
+      "baseline_repo": "",
+      "baseline_ref": "",
+      "checks": "general",
+      "expect": [],
+      "restore_repo": "",
+      "restore_ref": "",
+      "restore_paths": "",
+      "overlay_paths": "",
+      "tests_project": "Tests/OpenSim.Region.Framework.Tests/OpenSim.Region.Framework.Tests.csproj",
+      "tests": "FullyQualifiedName~PGSQLInventoryMoveItemTests|FullyQualifiedName~PGSQLAuthenticationSetDataItemTests"
     }
   ],
   "known_develop_faults": [
