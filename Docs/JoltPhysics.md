@@ -182,6 +182,7 @@ and what it does; copy a key into `OpenSim.ini` to change it. An invalid value l
 names the value and the default used instead. The keys cover gravity, solver sub-steps and iterations, the worker threads
 and job pools shared by all regions in the process, body / pair / contact capacities (optionally
 scaled with region area for var regions), the per-frame update buffers, the avatar jump speed,
+the avatar walk, run and fly speeds (see "Avatar speeds"),
 how often capacity warnings are logged, the physics step rate (below), the vehicle settings (the
 share of gravity on a ground vehicle, the type presets, the limits and the sled's assist; see
 "Vehicles"), the engine's body speed caps, the limits on script ray casts and pushes (below),
@@ -389,6 +390,37 @@ Watching the pools:
   each budget (`ray casts refused script=<n> simulator=<n>`). `jolt metrics` shows both lines.
 - The harness's `--pool-bench` (see "Physics harness") measures waits and step times for a heavy
   region sharing pools with light ones, for any `JobPools` and handoff.
+
+## Avatar speeds
+
+For a held forward or back key the simulator asks every physics engine for the same speed, 4.096 m/s, walking
+or running: the viewer sends running as a separate flag (its SetAlwaysRun message), and each
+engine decides what running does. Flying, it asks for four times that, 16.384 m/s. Each engine turns
+the request into a speed of its own: ubODE divides it by `av_movement_divisor_walk` (1.3) or `av_movement_divisor_run` (0.8);
+BulletSim multiplies it by `AvatarWalkVelocityFactor` (1) or `AvatarAlwaysRunFactor` (1.3) and does not
+scale a flight. Jolt multiplies it by one of three `[Jolt]` factors, whose defaults give Second Life's
+documented speeds on level ground ([Default Avatar Movement Speeds](https://wiki.secondlife.com/wiki/Default_Avatar_Movement_Speeds)):
+
+| Key | Default | Applies to | Level-ground speed at the default |
+|---|---|---|---|
+| `AvatarWalkSpeedFactor` | 0.78125 | walking (horizontal part) | 3.20 m/s |
+| `AvatarRunSpeedFactor` | 1.2524414 | always run on (horizontal part) | 5.13 m/s |
+| `AvatarFlySpeedFactor` | 0.9765625 | flying (all three axes, so up and level match) | 16.00 m/s |
+
+Each takes a number from 0.1 to 10; an invalid value logs a warning and the default is used. The
+factor multiplies what the simulator asks, so a script's or region's speed change on the avatar
+(`osSetSpeed`) still scales the speed. A velocity handed over at a region crossing or teleport is
+kept as it is. Jump height is set by `AvatarJumpSpeed`, not by these.
+
+What each engine gives for the same request on level ground (Jolt measured in the harness at
+`PhysicsStepRate` 45 and at one step per heartbeat; ubODE's walk measured in a region, its run and
+fly worked out from its code; BulletSim from its code):
+
+| | Asked | Jolt before these keys | Jolt now | ubODE | BulletSim | Second Life |
+|---|---|---|---|---|---|---|
+| Walk | 4.096 | 4.096 | 3.200 | 3.15 (3.13 measured) | 4.10 | 3.20 |
+| Run | 4.096, always run on | 4.096 | 5.130 | 5.12 | 5.32 | 5.13 |
+| Fly, level | 16.384 | 16.384 | 16.000 | 12.60 (20.48 with always run on) | 16.38 | 16.00 |
 
 ## Arriving avatars
 
@@ -668,7 +700,7 @@ Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, t
 `testcar` (the same with linear friction `<1,1,1000>`, motor timescale 1 and decay 0.5),
 `carturn` (the car with angular motor `<0,0,1>` held with the forward key),
 `sled`, `boat`, `airplane` and `balloon` (each type's presets in one basic motion),
-`avatar-stand`, `avatar-walk`, `avatar-jump`, `avatar-platform` (an avatar arriving on a fixed platform
+`avatar-stand`, `avatar-walk`, `avatar-run`, `avatar-fly` (level, 30 m up), `avatar-jump`, `avatar-platform` (an avatar arriving on a fixed platform
 3 m above the ground) and `avatar-platform-drop` (arriving 3 m above it, landing on it), and `drop`
 (a 1 m box from 5 m);
 `testcar-down` and `car-down` (key held down the ramp), `hover`, `attract-roll` and `attract-pitch`

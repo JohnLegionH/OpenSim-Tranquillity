@@ -20,9 +20,11 @@ public class HarnessTests
 {
     // The figures here were measured with the legacy presets ([Jolt] VehiclePresets = legacy); the documented set's
     // are held by VehiclePresetDriveTests.
-    private static RunResult Run(string scenario, double rate = 11.0, float? slope = null, float? duration = null, float? keyRepeat = null)
+    private static RunResult Run(string scenario, double rate = 11.0, float? slope = null, float? duration = null, float? keyRepeat = null,
+                                 float? walkFactor = null)
     {
         var o = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = duration, Jolt = { ["VehiclePresets"] = "legacy" } };
+        if (walkFactor.HasValue) o.Jolt["AvatarWalkSpeedFactor"] = walkFactor.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
         if (keyRepeat.HasValue) o.KeyRepeat = keyRepeat.Value;
         return Harness.Harness.Run(Harness.Harness.Find(scenario), o);
     }
@@ -120,7 +122,9 @@ public class HarnessTests
     [InlineData(33f, 3.431f)]    // in-world 3.45
     public void Avatar_walks_at_11_hz(float slope, float along)
     {
-        Summary m = Run("avatar-walk", slope: slope).Summary;
+        // The in-world figures were measured when the avatar walked at the speed asked (4.096 m/s), which
+        // AvatarWalkSpeedFactor 1 gives; AvatarSpeedTests holds the default walk.
+        Summary m = Run("avatar-walk", slope: slope, walkFactor: 1f).Summary;
         Assert.InRange(m.SteadySpeed, along - 0.03f, along + 0.03f);
     }
 

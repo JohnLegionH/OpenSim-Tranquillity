@@ -13,7 +13,8 @@
 // and it carries a kinematic query marker so llCastRay(agent) can find it. The backend already
 // implements all of that; this class is the OpenSim-facing wiring.
 //
-// Drive (ScenePresence -> here): TargetVelocity / Velocity (walk/run intent), Flying (gravity on/off),
+// Drive (ScenePresence -> here): TargetVelocity / Velocity (walk/run intent, scaled by the [Jolt] avatar speed
+// factors; see DesiredVelocity), SetAlwaysRun (running), Flying (gravity on/off),
 // AvatarJump (one-shot jump), Position (teleport), Size (appearance). All fold into one push through
 // SetCharacterMovement / SetCharacterTransform.
 // Drain (here -> ScenePresence): ApplyCharacterState, called once per Step from the scene's character
@@ -46,6 +47,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private Quaternion _orientation = Quaternion.Identity;
         private bool _flying;
         private bool _setAlwaysRun;
+        private bool _targetIsMomentum;     // _targetVelocity came from SetMomentum: a velocity, not a request to scale
 
         // Jump is a LATCH, not a one-shot. The animator calls AvatarJump ONCE, but ScenePresence writes
         // TargetVelocity every movement update (and zeroes its Z - the vertical only ever comes through
@@ -189,9 +191,23 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return;
             // Send the current latch state. StepCharacter jumps from solid ground when it sees jump=true and
             // clears its own request every step; the drain releases our latch on takeoff.
-            _backend.SetCharacterMovement(_character, ToS(_targetVelocity), _jumpLatched, _flying);
+            _backend.SetCharacterMovement(_character, ToS(DesiredVelocity()), _jumpLatched, _flying);
             if (_jumpLatched && JoltScene.CharJumpTrace)
                 JoltScene.m_log.LogDebug($"{JoltScene.LogHeader} [charjump] id={LocalID} sent jump=true to backend (target={_targetVelocity} flying={_flying})");
+        }
+
+        // The velocity the controller is driven at: ScenePresence's request times the [Jolt] avatar speed factor for
+        // flying, running (always run on) or walking. A walk or run scales the horizontal part only (the controller
+        // takes no vertical intent off a flight); a flight scales all three, so straight up goes as fast as level.
+        // A momentum handed over by SetMomentum is a velocity the avatar already had, so it goes through as it is.
+        internal Vector3 DesiredVelocity()
+        {
+            if (_targetIsMomentum)
+                return _targetVelocity;
+            if (_flying)
+                return _targetVelocity * _module.AvatarFlySpeedFactor;
+            float f = _setAlwaysRun ? _module.AvatarRunSpeedFactor : _module.AvatarWalkSpeedFactor;
+            return new Vector3(_targetVelocity.X * f, _targetVelocity.Y * f, _targetVelocity.Z);
         }
 
         internal void Destroy()
@@ -232,6 +248,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _position = pos;
             _velocity = Vector3.Zero;
             _targetVelocity = Vector3.Zero;
+            _targetIsMomentum = false;
             if (_character.IsValid)
                 _backend.ReGroundCharacter(_character, ToS(pos));
         }
@@ -257,6 +274,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "Velocity", value.ToString()); return; }
                 _targetVelocity = value;
+                _targetIsMomentum = false;
                 PushMovement();
             }
         }
@@ -269,6 +287,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "TargetVelocity", value.ToString()); return; }
                 _targetVelocity = value;
+                _targetIsMomentum = false;
                 PushMovement();
             }
         }
@@ -292,6 +311,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (!NonFiniteGuard.Ok(momentum)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "Momentum", momentum.ToString()); return; }
             _velocity = momentum;
             _targetVelocity = momentum;
+            _targetIsMomentum = true;
             PushMovement();
         }
 
@@ -317,7 +337,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override Vector3 GeometricCenter => _position;
         public override Vector3 CenterOfMass => _position;
 
-        public override bool SetAlwaysRun { get => _setAlwaysRun; set => _setAlwaysRun = value; }
+        // Running is this flag (the viewer's SetAlwaysRun), not a faster request: ScenePresence asks for the same speed.
+        public override bool SetAlwaysRun
+        {
+            get => _setAlwaysRun;
+            set { if (_setAlwaysRun == value) return; _setAlwaysRun = value; PushMovement(); }
+        }
 
         // Collision-event subscription: gates Persist forwarding; the window is stored. ScenePresence subscribes
         // right after AddAvatar, when the controller already exists, so the gate is set on that character too.

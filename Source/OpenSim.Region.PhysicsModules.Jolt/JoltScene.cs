@@ -66,6 +66,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // The [Jolt] section, parsed once in Initialise. The defaults reproduce the earlier hardcoded constants.
         private JoltConfig _joltConfig = new JoltConfig();
         internal float AvatarJumpSpeed => _joltConfig.AvatarJumpSpeed;
+        internal float AvatarWalkSpeedFactor => _joltConfig.AvatarWalkSpeedFactor;
+        internal float AvatarRunSpeedFactor => _joltConfig.AvatarRunSpeedFactor;
+        internal float AvatarFlySpeedFactor => _joltConfig.AvatarFlySpeedFactor;
         internal float VehicleGroundGravityFactor => _joltConfig.VehicleGroundGravityFactor;
 
         // The vehicle settings every vehicle controller in this region shares, built from [Jolt] in Initialise.
