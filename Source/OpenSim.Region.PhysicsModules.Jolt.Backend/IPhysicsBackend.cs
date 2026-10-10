@@ -895,6 +895,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// </summary>
         void SetCharacterHover(CharacterId character, Func<float, float, float>? heightAt, float tau);
 
+        /// <summary>
+        /// An avatar's constant force (an attachment's llSetForce on its wearer), as the acceleration it gives the avatar:
+        /// force / mass, in region axes (m/s2). It acts on every step until the next call, on top of walking, flying,
+        /// gravity and pushes: up and down while walking or in the air it adds to gravity; across, and in all three axes
+        /// while flying, it adds a velocity kept from step to step, which what blocks the avatar takes and which fades as a
+        /// push's speed does on walkable ground and while flying. While hovering it moves the height hover settles at by
+        /// acceleration x tau^2. The avatar is never taken past <see cref="PhysicsBackendSettings.MaxBodyLinearSpeed"/>
+        /// by it. Zero ends it; the velocity it gave stays, and fades or is kept as above.
+        /// </summary>
+        void SetCharacterConstantForce(CharacterId character, Vector3 acceleration);
+
         bool TryGetCharacterState(CharacterId character, out CharacterState state);
 
         // -- constraints --------------------------------------------------

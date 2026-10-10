@@ -3507,15 +3507,37 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             bool falling = false;
             bool hovering = rec.HoverAt != null;
 
+            // A constant force (an attachment's llSetForce): its acceleration, and the velocity it has given. Up and down while
+            // walking or in the air it adds to gravity, which the controller's own vertical velocity carries; across, and in
+            // all three axes while flying, its velocity is carried here (ForceCarry). While hovering, the spring takes the
+            // vertical part. The velocity fades as a push's does: on walkable ground, and while flying.
+            Vector3 force = rec.ForceAcceleration;
+            bool forced = force != Vector3.Zero || rec.ForceCarry != Vector3.Zero;
+            Vector3 forceStep = Vector3.Zero;   // the acceleration ForceCarry takes this step
+            float forceTau = 0f;
+            if (forced && !hovering && !rec.Flying && force.Z != 0f)
+                gz += force.Z;
+
             if (hovering)
             {
                 // Hover from an attachment: the walk or flight across, the spring up and down; no gravity, no jump.
-                newVel = HoverVelocity(rec, ch, desired, dt);
+                newVel = HoverVelocity(rec, ch, desired, dt, forced ? force.Z : 0f);
+                if (forced)
+                {
+                    forceStep = new Vector3(force.X, force.Y, 0f);
+                    forceTau = ch.GroundState == GroundState.OnGround ? PushFadeOnGroundSeconds : 0f;
+                    rec.ForceCarry.Z = 0f;
+                }
             }
             else if (rec.Flying)
             {
                 // Flying: full 3D control, ground gravity disabled.
                 newVel = desired;
+                if (forced)
+                {
+                    forceStep = force;
+                    forceTau = PushFadeFlyingSeconds;
+                }
             }
             else
             {
@@ -3523,6 +3545,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 GroundState gs = ch.GroundState;
                 bool onWalkable = gs == GroundState.OnGround;   // OnGround = slope within MaxSlopeAngle
                 float vz = ch.LinearVelocity.Z;
+                if (forced)
+                {
+                    // A vertical velocity the force gave while flying goes to the controller's own when the avatar stops.
+                    vz += rec.ForceCarry.Z;
+                    rec.ForceCarry.Z = 0f;
+                    forceStep = new Vector3(force.X, force.Y, 0f);
+                    forceTau = onWalkable ? PushFadeOnGroundSeconds : 0f;
+                }
 
                 // On walkable ground and not moving up: adopt the ground's vertical velocity (moving
                 // platform) rather than the accumulated fall speed.
@@ -3563,8 +3593,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 newVel = new Vector3(horiz.X, horiz.Y, vz);
             }
 
+            // The force's velocity half way through the step, which is how far it moves the avatar over the step.
+            if (forced)
+                newVel += AdvanceForceCarry(rec.ForceCarry, forceStep, forceTau, dt * 0.5f);
+
             bool pushed = rec.Push != Vector3.Zero || rec.PendingPush != Vector3.Zero;
             newVel = ApplyPushes(rec, newVel, dt);
+            if (forced)
+                newVel = CapLength(newVel, ForceSpeedCap);
             if (!rec.Flying && !hovering && !falling && newVel.Z > 0f)
             {
                 // Pushed up off the ground: from now it flies as a jump does, half a step of gravity before the move.
@@ -3638,6 +3674,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             if (pushed)
                 FadePush(rec, ch, newVel, startPos, dt);
+            if (forced)
+                FinishForceCarry(rec, ch, forceStep, forceTau, newVel, startPos, dt);
 
             FinishCharacterContacts(rec, ch, dt);
         }
@@ -3695,7 +3733,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // hover uses (JoltPrim.StepHover), with tau as its timescale. On the error e from the height,
         //   e'' = -e / tau^2 - 2 e' / tau        so from rest   e(t) = e0 (1 + t / tau) e^(-t / tau)
         // The height follows the ground along the avatar's path, so it rises with the ground as the avatar moves on.
-        private static Vector3 HoverVelocity(JoltCharacterRecord rec, CharacterVirtual ch, Vector3 desired, float dt)
+        // A constant force's vertical acceleration a acts on the spring too: e'' = -e / tau^2 - 2 e' / tau + a settles at
+        // e = a tau^2, so the spring is solved about the height moved by that much.
+        private static Vector3 HoverVelocity(JoltCharacterRecord rec, CharacterVirtual ch, Vector3 desired, float dt, float forceZ)
         {
             Vector3 across = new Vector3(desired.X, desired.Y, 0f);
             ch.UpdateGroundVelocity();
@@ -3708,6 +3748,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             float rise = (heightAt(pos.X + across.X * dt, pos.Y + across.Y * dt) - now) / dt;
             double w = 1.0 / MathF.Max(rec.HoverTau, MinHoverTau);
             double e0 = pos.Z - now;
+            if (forceZ != 0f)
+                e0 -= forceZ / (w * w);
             // The error's rate is how the avatar moved less the ground's rise it moved with then: a change of slope under
             // the avatar is followed at once, as its walk is, and is not an error for the spring to take up.
             double v0 = rec.MovedVelocity.Z + rec.HoverCarry - rec.HoverRise;
@@ -3748,6 +3790,59 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 rec.HoverAt = heightAt;
                 rec.HoverTau = tau;
             }
+        }
+
+        public void SetCharacterConstantForce(CharacterId character, Vector3 acceleration)
+        {
+            if (!IsFinite(acceleration)) { CountRejectedNonFinite(); return; }
+            lock (_characterGate)
+                if (_characters.TryGet(character.Value, out JoltCharacterRecord rec))
+                    rec.ForceAcceleration = acceleration;
+        }
+
+        // The velocity a constant force has given, h seconds on: v' = a - v / tau, solved exactly, so it is the same at any
+        // step rate. With no fade (tau 0) it is v + a h; with one it settles at a x tau.
+        private static Vector3 AdvanceForceCarry(Vector3 v, Vector3 a, float tau, float h)
+        {
+            if (!(tau > 0f))
+                return v + a * h;
+            Vector3 steady = a * tau;
+            return steady + (v - steady) * MathF.Exp(-h / tau);
+        }
+
+        // The most speed a constant force may give an avatar: the engine's body speed cap, which a prim under llSetForce meets.
+        private float ForceSpeedCap => _settings.MaxBodyLinearSpeed > 0f ? _settings.MaxBodyLinearSpeed : PhysicsBackendSettings.JoltMaxLinearSpeed;
+
+        private static Vector3 CapLength(Vector3 v, float cap)
+        {
+            float len = v.Length();
+            return len > cap ? v * (cap / len) : v;
+        }
+
+        // After the move: the force's velocity on to the end of the step, less what blocked the avatar took, as a push's is
+        // (FadePush): across by the share of its level speed the move made, and while flying up or down likewise.
+        private void FinishForceCarry(JoltCharacterRecord rec, CharacterVirtual ch, Vector3 accel, float tau, Vector3 commanded, Vector3 startPos, float dt)
+        {
+            Vector3 carry = AdvanceForceCarry(rec.ForceCarry, accel, tau, dt);
+            Vector3 moved = (ch.Position - startPos) / dt;
+            float wanted = new Vector2(commanded.X, commanded.Y).Length();
+            float made = new Vector2(moved.X, moved.Y).Length();
+            if (wanted > 0.01f && made < wanted)
+            {
+                carry.X *= made / wanted;
+                carry.Y *= made / wanted;
+            }
+            if (MathF.Abs(commanded.Z) > 0.01f && carry.Z != 0f)
+            {
+                float share = moved.Z / commanded.Z;
+                if (share < 1f)
+                    carry.Z *= MathF.Max(0f, share);
+            }
+            carry = CapLength(carry, ForceSpeedCap);
+            // With the force ended, a velocity faded to nothing is none (as a push's is), and the avatar is as one never pushed.
+            if (accel == Vector3.Zero && carry.LengthSquared() < 1e-6f)
+                carry = Vector3.Zero;
+            rec.ForceCarry = carry;
         }
 
         // After the move: what blocked the avatar takes the push speed it blocked (a wall stops it), then the push
@@ -4768,6 +4863,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public float HoverTau;
         public float HoverCarry;               // the spring's velocity this step's move did not use, for the next step
         public float HoverRise;                // the ground's rise under the avatar's path in its last hovering step (m/s)
+        // An attachment's llSetForce on the wearer (SetCharacterConstantForce): the acceleration it gives (region axes), and
+        // the velocity it has given that the controller does not keep itself (across, or all three axes while flying).
+        public Vector3 ForceAcceleration;
+        public Vector3 ForceCarry;
         public bool LooseAtSide;              // its last step touched a loose object from the side (no stepping up onto it)
         // The contacts its last update noted, reported after the move (FinishCharacterContacts). Step thread only.
         public readonly List<CharacterBodyContact> Contacts = new();

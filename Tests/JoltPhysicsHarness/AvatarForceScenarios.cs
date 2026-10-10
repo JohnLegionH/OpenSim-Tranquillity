@@ -5,7 +5,10 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-// An attachment's buoyancy and hover height acting on its wearer, and the velocity an avatar reports.
+// An attachment's buoyancy, hover height and constant force acting on its wearer, and the velocity an avatar reports.
+//
+// Core hands an attachment's llSetForce to the wearer's actor as SetConstantForce (ScenePresence.SetConstantForce): "Used
+// on an attachment, it will apply the force to the avatar" (SL wiki llSetForce).
 //
 // Core hands an attachment's llSetBuoyancy to the wearer's actor as Buoyancy (SceneObjectGroup.SetBuoyancy), and its
 // llSetHoverHeight and llStopHover as PIDHoverHeight, PIDHoverType, PIDHoverTau and PIDHoverActive, in that order
@@ -104,8 +107,36 @@ public static class AvatarForceScenarios
         },
     };
 
+    /// <summary>Where the constant force scenarios put the avatar: over level ground, this far above it (m), not flying.</summary>
+    public const float ForceX = 60f, ForceY = 60f, ForceWeightHeight = 20f, ForceAcrossHeight = 100f;
+
+    /// <summary>The level acceleration (m/s2) the horizontal constant force gives the avatar.</summary>
+    public const float ForceAcross = 2f;
+
+    // An avatar put in the air over level ground, not flying, wearing an attachment whose llSetForce sets the constant
+    // force: core hands it to the wearer's actor as SetConstantForce (ScenePresence.SetConstantForce), in newtons, here in
+    // region axes. The force is the avatar's mass times an acceleration, so it reads the actor's own mass.
+    private static Scenario ConstantForce(string name, string description, float height, float duration, Func<float, Vector3> forceForMass) => new()
+    {
+        Name = name,
+        Description = description,
+        DefaultDuration = _ => duration,
+        Setup = r =>
+        {
+            r.AddAvatarAt(new Vector3(ForceX, ForceY, r.GroundAt(ForceX, ForceY) + height + r.AvatarStandHalf), false);
+            r.Actor.SetConstantForce(forceForMass(r.Actor.Mass), false);
+        },
+        Input = _ => { },
+    };
+
     public static readonly IReadOnlyList<Scenario> All = new List<Scenario>
     {
+        ConstantForce("avatar-force-weight",
+            $"An avatar, not flying, is put {ForceWeightHeight} m above level ground wearing an attachment whose llSetForce pushes it up with its own weight (mass x 9.80665 N, region axes), for 12 s.",
+            ForceWeightHeight, 12f, m => new Vector3(0f, 0f, m * 9.80665f)),
+        ConstantForce("avatar-force-across",
+            $"An avatar, not flying, is put {ForceAcrossHeight} m above level ground wearing an attachment whose llSetForce pushes it east with mass x {ForceAcross} N (region axes), and falls for 4 s.",
+            ForceAcrossHeight, 4f, m => new Vector3(m * ForceAcross, 0f, 0f)),
         Ledge("avatar-buoyancy-1", 1f, true),
         Ledge("avatar-buoyancy-half", 0.5f, true),
         Ledge("avatar-buoyancy-0", 0f, true),

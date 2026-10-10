@@ -745,6 +745,35 @@ returns from `llSetHoverHeight` and `llStopHover` when the script's own prim has
 an attachment never has, so under Phlox they do nothing on an avatar; its `llSetBuoyancy` reaches the
 wearer. `llGroundRepel` from an attachment does nothing on either engine.
 
+## A constant force on an avatar
+
+`llSetForce` in an attachment sets a constant force on its wearer ("Used on an attachment, it will apply
+the force to the avatar", `llSetForce`). Core keeps it on the avatar and hands it to the avatar's physics
+body (`PhysicsActor.SetConstantForce`), and again to every new body the avatar gets (standing up, a
+teleport). Second Life documents nothing more, so Jolt applies plain mechanics: the avatar accelerates by
+force / mass (80 kg) on every step, on top of whatever else moves it, until the next call.
+
+- A local force is in the avatar's own axes and turns with the avatar; a region force does not.
+- Up and down, it adds to gravity (and to buoyancy's share of it). An upward force equal to the weight
+  (784.5 N) holds an avatar in the air at its height; twice that lifts it at g. On the ground, a downward
+  force, or an upward one less than the weight, changes nothing.
+- Across, and in all three axes while flying, it adds a speed kept from step to step. What blocks the
+  avatar takes it, as it takes a push's speed, and it fades as a push's speed does: on walkable ground
+  with a 0.25 s timescale and while flying with 1 s, so under a steady force a standing or walking avatar
+  drifts at force / mass x 0.25 s on top of its walk (2 m/s2 gives 0.5 m/s) and a flying one at force /
+  mass x 1 s. In the air it does not fade: the avatar accelerates at force / mass.
+- While hovering, the vertical part moves the height the hover settles at by force / mass x tau^2.
+- A new call replaces the force and a zero force ends it. The speed it gave is kept, and fades as above.
+  A force that is not a number is refused and logged.
+- It never takes an avatar past the engine's body speed cap (500 m/s, the cap a prim under `llSetForce`
+  meets). Pushes keep their own cap, and hover its 50 m/s.
+- A seated avatar has no physics body, so the force does nothing while it sits; it acts again when the
+  avatar stands.
+
+It has an effect only under a script engine that calls `SetConstantForce` for an attachment. Phlox does
+(`llSetForce` from an attachment); YEngine does not, so under YEngine an attachment's `llSetForce` does
+nothing on its wearer.
+
 ## The velocity an avatar reports
 
 An avatar reports the velocity it really moved at in its last physics step, with the gravity it gained
@@ -1227,7 +1256,8 @@ standing or flying avatar), and the attachment
 scenarios: `avatar-buoyancy-1`, `avatar-buoyancy-half`, `avatar-buoyancy-0` and `avatar-ledge` (an avatar
 walking off a 3 m platform with that buoyancy, or none set), `avatar-hover` (hover 3 m set, walked across
 level ground or up the ramp, then stopped), `avatar-wall` (walking into a fixed wall) and
-`avatar-moving-platform` (standing on a platform kept moving at 2 m/s). These print each
+`avatar-moving-platform` (standing on a platform kept moving at 2 m/s), and `avatar-force-weight` and
+`avatar-force-across` (an avatar in the air under an upward force of its weight, or 2 m/s2 east). These print each
 watched part's collision events under their summary line.
 The shot scenarios fire a physical ball (`--ball`, `--shot-speed`) at something: `tunnel-wall-1cm` and
 `tunnel-wall-10cm` (a fixed wall), `tunnel-box` (a 0.5 m box resting on the ground), `tunnel-ground`
