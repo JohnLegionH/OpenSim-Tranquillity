@@ -59,6 +59,49 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private const float DensityScaleFactor = 0.01f;
         private float _simDensity;
 
+        // The physics material: llSetPhysicsMaterial and PRIM_MATERIAL. Ranges from the SL wiki (llSetPhysicsMaterial):
+        // gravity_multiplier "range [-1.0, +28.0], default: 1.0", restitution "range [0.0, 1.0]", friction "range [0.0,
+        // 255.0]", density "range [1.0, 22587.0] kg/m^3, default: 1000.0". A value outside its range is clamped to it; a
+        // non-finite one is refused. Core sets all four on every new actor (SceneObjectPart.AddToPhysics); until then a
+        // prim has BodyDesc's friction and restitution.
+        private float _friction = BodyDesc.Default.Friction;
+        private float _restitution = BodyDesc.Default.Restitution;
+        private float _gravityModifier = 1f;
+        internal const float MaxFriction = 255f;
+        internal const float MinGravityModifier = -1f;
+        internal const float MaxGravityModifier = 28f;
+        internal const float MinDensity = 1f;
+        internal const float MaxDensity = 22587f;
+
+        // PRIM_MATERIAL_STONE (0) to PRIM_MATERIAL_LIGHT (7): friction and restitution as the SL wiki lists them
+        // (llSetPhysicsMaterial's notes and PRIM_MATERIAL's constants table). "Using PRIM_MATERIAL to set the material type
+        // will reset the values for friction and restitution to that material's defaults."
+        internal static readonly (float Friction, float Restitution)[] MaterialTable =
+        {
+            (0.8f, 0.4f),   // stone
+            (0.3f, 0.4f),   // metal
+            (0.2f, 0.7f),   // glass
+            (0.6f, 0.5f),   // wood
+            (0.9f, 0.3f),   // flesh
+            (0.4f, 0.7f),   // plastic
+            (0.9f, 0.9f),   // rubber
+            (0.6f, 0.5f),   // light
+        };
+
+        // The linear and angular damping of a physical prim that is not a vehicle, per second: [Jolt] PrimLinearDamping and
+        // PrimAngularDamping, 0.05 by default (Jolt's own). The SL wiki gives no figure (llSetPhysicsMaterial: a collision of
+        // two objects with restitution 1.0 "will still not be perfectly elastic due to damping in the physics engine";
+        // llSetAngularVelocity: a spun cube with gravity 0 "slows down over time"). ubODE's, as a rate, are 0.1001 and 0.0250
+        // (ODEPrim: dBodySetDamping(Body, .002f, .0005f), which ODE applies as v x (1 - scale) every 0.020 s step). Jolt
+        // applies v x (1 - rate x step) each step, the same decay per second at any step rate. A vehicle has none (its
+        // controller does its own friction).
+        private float PrimLinearDamping => _module.PrimLinearDamping;
+        private float PrimAngularDamping => _module.PrimAngularDamping;
+
+        // Set while a new physical body waits for its first activation (RegisterPendingActivation): a property set before
+        // then must not wake it, or it would step before everything about it is set up.
+        private bool _activationPending;
+
         private ShapeId _shape = ShapeId.Invalid;   // one handle-ref held for the prim's life
         private BodyId _body = BodyId.Invalid;
         // Assert buoyancy on restart: re-assert the vehicle's body params (gravity-cancellation,
@@ -202,12 +245,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             desc.WantsContactEvents = _subscribedMs > 0;   // keep the Persist gate across a body recreate (weld/reshape)
             desc.Layer = BodyLayer;
             desc.IsSensor = _isVolumeDetect;
+            desc.Friction = _friction;                 // a compound's children get their own just below
+            desc.Restitution = _restitution;
             if (_isPhysical)
             {
                 desc.MotionType = BodyMotionType.Dynamic;
                 desc.Mass = 0f;                        // <=0 -> backend computes Volume*Density
-                if (_simDensity > 0f)                  // honour the SOP density (BulletSim mass parity)
-                    desc.Density = _simDensity * DensityScaleFactor;
+                desc.Density = PhysicalDensity;        // honour the SOP density (BulletSim mass parity)
+                desc.LinearDamping = PrimLinearDamping;
+                desc.AngularDamping = PrimAngularDamping;
                 desc.GravityFactor = ScriptGravityFactor;   // llSetBuoyancy (a vehicle sets its own just below)
                 // Same structure as BulletSim's taint-deferred creation: create the body INERT (asleep), never
                 // active-on-insert. BulletSim never lets a body be stepped by the engine until ALL taints
@@ -227,8 +273,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
             _body = _backend.CreateBody(desc);
 
+            // A linkset: each child's own friction and restitution, and a mass that sums each part's volume x its own
+            // density ("Can individual prims in a linked set have different Physics settings? Yes.", SL wiki, Physics
+            // Material Settings test).
+            if (_body.IsValid && _compoundShape.IsValid && _linkChildren != null)
+            {
+                foreach (JoltPrim c in _linkChildren)
+                    _backend.SetBodyPartMaterial(_body, c.LocalID, c._friction, c._restitution);
+                if (_isPhysical)
+                    _backend.SetBodyMass(_body, LinksetMass());
+            }
+
             if (_isPhysical)
             {
+                _activationPending = true;
                 // Defer activation to the top of the next Simulate (step thread). ActivateBody on a NON-step
                 // thread does not reliably reach the step-thread active-set; enqueuing it via the pending set
                 // (drained in Simulate before StepVehicles/StepOnce) both fixes that AND gives us BulletSim's
@@ -256,6 +314,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // free-falls. No-op for a non-physical/destroyed body or one already awake.
         internal void ActivatePending()
         {
+            _activationPending = false;
             if (_body.IsValid && _isPhysical)
                 _backend.ActivateBody(_body);
         }
@@ -460,14 +519,116 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // OpenSim sets pa.Density = SceneObjectPart.Density in AddToPhysics (default 1000). Store it and
         // forward the PHYSICAL density (x DensityScaleFactor) so Jolt's mass matches BulletSim. A live
         // physical body recomputes immediately; a not-yet-physical prim applies it at CreateBodyInternal.
+        // The SL wiki: "mass = density * volume. That volume is the true volume of the shape." (Physics Material Settings
+        // test), and llGetMass is in lindograms, kg / 100. A welded child's density counts in its root's mass.
         public override float Density
         {
             get => _simDensity > 0f ? _simDensity : BodyDesc.Default.Density;
             set
             {
+                if (!float.IsFinite(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Density", value.ToString()); return; }
+                value = Math.Clamp(value, MinDensity, MaxDensity);
+                if (_simDensity == value) return;
                 _simDensity = value;
-                if (_body.IsValid && _isPhysical)
-                    _backend.SetBodyDensity(_body, value * DensityScaleFactor);
+                (_linkRoot ?? this).ApplyMass();
+            }
+        }
+
+        // The density the backend works in (kg/m^3): the SOP density x DensityScaleFactor.
+        private float PhysicalDensity => _simDensity > 0f ? _simDensity * DensityScaleFactor : BodyDesc.Default.Density;
+
+        // A welded linkset's mass: each part's shape volume x its own density.
+        private float LinksetMass()
+        {
+            float mass = _backend.GetShapeVolume(_shape) * PhysicalDensity;
+            foreach (JoltPrim c in _linkChildren)
+                mass += _backend.GetShapeVolume(c._shape) * c.PhysicalDensity;
+            return MathF.Max(mass, 1e-3f);
+        }
+
+        // The body's mass from its density (its parts' densities for a welded linkset), and the body woken: a heavier or
+        // lighter body moves differently under the same forces.
+        private void ApplyMass()
+        {
+            if (!_body.IsValid || !_isPhysical)
+                return;
+            if (_compoundShape.IsValid && _linkChildren != null && _linkChildren.Count > 0)
+                _backend.SetBodyMass(_body, LinksetMass());
+            else
+                _backend.SetBodyDensity(_body, PhysicalDensity);
+            WakeBody();
+        }
+
+        // Wakes the body after a script changed how it moves. Not while the region loads, nor before a new body's first
+        // activation: it is woken then, once everything about it is set up (CreateBodyInternal).
+        private void WakeBody()
+        {
+            if (_isPhysical && _body.IsValid && !_activationPending && !_module.IsRegionLoading)
+                _backend.ActivateBody(_body);
+        }
+
+        // llSetPhysicsMaterial FRICTION and RESTITUTION, and PRIM_MATERIAL (SetMaterial). Each prim of a linkset has its own
+        // (SL wiki, Physics Material Settings test: "Can individual prims in a linked set have different Physics settings?
+        // Yes."); a contact uses the struck prim's. Two touching surfaces combine as ubODE combines them, friction
+        // sqrt(f1 x f2) and restitution r1 x r2 (JoltPhysicsBackend.CombineMaterials); the SL wiki gives no rule.
+        public override float Friction
+        {
+            get => _friction;
+            set
+            {
+                if (!float.IsFinite(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Friction", value.ToString()); return; }
+                SetContactMaterial(Math.Clamp(value, 0f, MaxFriction), _restitution);
+            }
+        }
+
+        public override float Restitution
+        {
+            get => _restitution;
+            set
+            {
+                if (!float.IsFinite(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Restitution", value.ToString()); return; }
+                SetContactMaterial(_friction, Math.Clamp(value, 0f, 1f));
+            }
+        }
+
+        // PRIM_MATERIAL: the material's friction and restitution (MaterialTable). Core calls this when the material changes,
+        // and on every new actor before it sets Friction and Restitution (SceneObjectPart.AddToPhysics). Any other value is
+        // ignored.
+        public override void SetMaterial(int material)
+        {
+            if (material < 0 || material >= MaterialTable.Length)
+                return;
+            SetContactMaterial(MaterialTable[material].Friction, MaterialTable[material].Restitution);
+        }
+
+        private void SetContactMaterial(float friction, float restitution)
+        {
+            if (_friction == friction && _restitution == restitution)
+                return;
+            _friction = friction;
+            _restitution = restitution;
+            // A vehicle sets its own contact friction and restitution (ApplyVehicleBodyParams); these come back when it
+            // stops being one.
+            JoltPrim root = _linkRoot ?? this;
+            if (!root._body.IsValid || (root._vehicle != null && root._vehicle.IsActive))
+                return;
+            _backend.SetBodyPartMaterial(root._body, LocalID, friction, restitution);
+            root.WakeBody();
+        }
+
+        // llSetPhysicsMaterial GRAVITY_MULTIPLIER: the body's gravity is (1 - buoyancy) x the multiplier x the region's, as
+        // ubODE computes it (ODEPrim.Move). The root prim's applies to the whole linkset, as in ubODE; a child's is kept.
+        public override float GravModifier
+        {
+            get => _gravityModifier;
+            set
+            {
+                if (!float.IsFinite(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "GravModifier", value.ToString()); return; }
+                value = Math.Clamp(value, MinGravityModifier, MaxGravityModifier);
+                if (_gravityModifier == value) return;
+                _gravityModifier = value;
+                if (_linkRoot == null)
+                    ApplyScriptGravity();
             }
         }
         public override bool Stopped => true;
@@ -606,25 +767,29 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (_linkRoot != null) { _linkRoot.Buoyancy = value; return; }
                 if (_buoyancy == value) return;
                 _buoyancy = value;
-                if (!_isPhysical || !_body.IsValid || (_vehicle != null && _vehicle.IsActive))
-                    return;
-                _backend.SetBodyGravityFactor(_body, ScriptGravityFactor);
-                // A changed gravity wakes the body, as ubODE's changeBuoyancy does. Not while the region loads: the body is
-                // then created asleep and woken by the scene once everything about it is set up (CreateBodyInternal).
-                if (!_module.IsRegionLoading)
-                    _backend.ActivateBody(_body);
+                ApplyScriptGravity();
             }
         }
 
-        // The body's gravity factor for the script's buoyancy. Its size is cut to what takes a body from rest to the
-        // engine's speed cap in one 1 ms step: no larger value gives a different motion, and the engine's arithmetic
-        // stays finite for any finite buoyancy.
+        // The script's gravity (buoyancy and gravity multiplier) on the body. A changed gravity wakes the body, as ubODE's
+        // changeBuoyancy does.
+        private void ApplyScriptGravity()
+        {
+            if (!_isPhysical || !_body.IsValid || (_vehicle != null && _vehicle.IsActive))
+                return;
+            _backend.SetBodyGravityFactor(_body, ScriptGravityFactor);
+            WakeBody();
+        }
+
+        // The body's gravity factor for the script's buoyancy and gravity multiplier. Its size is cut to what takes a body
+        // from rest to the engine's speed cap in one 1 ms step: no larger value gives a different motion, and the engine's
+        // arithmetic stays finite for any finite buoyancy.
         private float ScriptGravityFactor
         {
             get
             {
                 float max = _module.BodyMaxLinearSpeed * JoltConfig.MaxPhysicsStepRate / MathF.Max(_module.DefaultGravity.Length(), 1f);
-                return Math.Clamp(1f - _buoyancy, -max, max);
+                return Math.Clamp((1f - _buoyancy) * _gravityModifier, -max, max);
             }
         }
         public override bool Flying { get => false; set { } }
@@ -1080,10 +1245,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (!_body.IsValid)
                 return;
             BodyDesc d = BodyDesc.Default;
-            _backend.SetBodyFriction(_body, d.Friction);
-            _backend.SetBodyRestitution(_body, d.Restitution);
-            _backend.SetBodyDamping(_body, d.LinearDamping, d.AngularDamping);
-            _backend.SetBodyGravityFactor(_body, ScriptGravityFactor);   // back to the script's buoyancy (1 with none)
+            // Back to the prims' own physics material, and a prim's damping.
+            _backend.SetBodyFriction(_body, _friction);
+            _backend.SetBodyRestitution(_body, _restitution);
+            if (_compoundShape.IsValid && _linkChildren != null)
+                foreach (JoltPrim c in _linkChildren)
+                    _backend.SetBodyPartMaterial(_body, c.LocalID, c._friction, c._restitution);
+            _backend.SetBodyDamping(_body, PrimLinearDamping, PrimAngularDamping);
+            _backend.SetBodyGravityFactor(_body, ScriptGravityFactor);   // back to the script's buoyancy and gravity multiplier
             _backend.SetBodyAllowSleeping(_body, true);
             _backend.SetBodyContinuousCollision(_body, d.UseCcd);
         }
