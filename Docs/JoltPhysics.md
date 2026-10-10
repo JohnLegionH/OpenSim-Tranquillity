@@ -441,6 +441,8 @@ What a script does to a physical prim or linkset (avatars are not covered here):
 - Moved or turned while it sleeps (by the build tool, `llSetPos`, `PRIM_POSITION`, or a rotation
   the script engine lets through for a physical object), a physical object wakes and carries on
   from where it was put: lifted, it falls back; turned, it settles. Not while the region is loading.
+- Given a velocity while it sleeps (`llSetVelocity`, `llSetAngularVelocity`), a physical object wakes
+  and moves at once, as in ubODE.
 
 ## Physics material on objects
 

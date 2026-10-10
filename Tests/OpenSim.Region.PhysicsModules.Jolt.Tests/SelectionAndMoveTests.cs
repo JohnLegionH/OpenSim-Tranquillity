@@ -328,4 +328,51 @@ public class SelectionAndMoveTests
         Assert.InRange(heldAt.Z - at.Position.Z, 4.0f, 5.2f);
         Assert.True(at.Velocity.Z < -8f, $"not falling a second after being let go (velocity {at.Velocity})");
     }
+
+    // ---- a velocity set on a sleeping body ---------------------------------------------------------------------------
+
+    public enum VelocityCall { Linear, Angular }
+
+    // A box asleep on the ground is given a velocity: llSetVelocity (SceneObjectPart.SetVelocity, then the root actor's
+    // Velocity) or llSetAngularVelocity (the root actor's RotationalVelocity). It wakes and moves at once, as ubODE's
+    // changevelocity and changeangvelocity enable a disabled body, and settles and sleeps again.
+    [Theory]
+    [InlineData(45.0, VelocityCall.Linear)]
+    [InlineData(45.0, VelocityCall.Angular)]
+    [InlineData(0.0, VelocityCall.Linear)]
+    [InlineData(0.0, VelocityCall.Angular)]
+    public void A_sleeping_box_given_a_velocity_wakes_and_moves(double physicsHz, VelocityCall call)
+    {
+        int setAt = -1;
+        Vector3 rest = Vector3.Zero;
+        List<Point> trace = Run(physicsHz, 8f,
+            r => r.AddBoxOnGround(Unit, 128f, 128f, Quaternion.Identity),
+            (r, now) =>
+            {
+                if (setAt >= 0 || r.Heartbeats < 5 || r.AwakeBodies != 0)
+                    return;
+                setAt = r.Heartbeats;
+                rest = r.Actor.Position;
+                if (call == VelocityCall.Linear)
+                    r.Actor.Velocity = new Vector3(3f, 0f, 0f);
+                else
+                    r.Actor.RotationalVelocity = new Vector3(0f, 0f, 3f);
+            });
+
+        Assert.True(setAt > 0, "the box never went to sleep");
+        Assert.Equal(0, trace[setAt].Awake);
+        Point next = trace[setAt + 1];
+        Assert.True(next.Awake > 0, "the velocity did not wake it");
+        if (call == VelocityCall.Linear)
+            Assert.True(next.Position.X - rest.X > 0.1f, $"it did not move along x in the heartbeat after the set ({next.Position}, rest {rest})");
+        else
+        {
+            // A turn about z: its x axis has swung away from where it rested.
+            float turned = MathF.Acos(Math.Clamp(Vector3.Dot(Vector3.UnitX * next.Rotation, Vector3.UnitX), -1f, 1f));
+            Assert.True(turned > 0.1f, $"it did not turn in the heartbeat after the set ({turned:0.000} rad)");
+        }
+        Point end = trace[^1];
+        Assert.Equal(0, end.Awake);   // friction stopped it, and the engine put it to sleep again
+        Assert.True(MathF.Abs(end.Position.Z - rest.Z) < 0.02f, $"not resting on the ground (z {end.Position.Z}, rest {rest.Z})");
+    }
 }
