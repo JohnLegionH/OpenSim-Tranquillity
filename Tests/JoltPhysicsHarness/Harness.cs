@@ -1567,7 +1567,7 @@ public static class Harness
                 VehicleRestore.PhysicsOn(r.Actor);
                 return;
             case VehicleRoute.PhantomPhysicsOffOn:
-                throw new NotSupportedException("--vehicle-restore: a phantom vehicle does not stand on the course");
+                throw new NotSupportedException("--vehicle-restore: the scenarios build a solid vehicle; this route is for a phantom one");
         }
         PhysicsActor old = r.Actor;
         SOPVehicle saved = VehicleRestore.Saved(r.VehiclePart, route);
