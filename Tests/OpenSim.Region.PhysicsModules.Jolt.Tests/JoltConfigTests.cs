@@ -29,12 +29,14 @@ public class JoltConfigTests
         return src;
     }
 
-    /// <summary>What AddRegion builds with no [Jolt] settings: Default, MaxBodies by the area rule, CollisionSteps 6.</summary>
+    /// <summary>What AddRegion builds with no [Jolt] settings: Default, MaxBodies by the area rule, CollisionSteps 6,
+    /// VelocityIterations 20.</summary>
     private static PhysicsBackendSettings Today(uint sx, uint sy)
     {
         var s = PhysicsBackendSettings.Default;
         s.MaxBodies = (int)(65536L * Math.Max((long)sx * sy, 256L * 256L) / (256L * 256L));
         s.CollisionSteps = 6;
+        s.VelocityIterations = 20;
         return s;
     }
 

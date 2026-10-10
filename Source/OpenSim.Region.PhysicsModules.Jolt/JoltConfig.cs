@@ -8,8 +8,8 @@
 // The [Jolt] config section.
 //
 // Every knob the module used to hardcode, read once in Initialise. The rule: every default reproduces the
-// module's built-in behaviour exactly (PhysicsBackendSettings.Default + CollisionSteps 6 + the MaxBodies area rule +
-// today's step-buffer caps). Scaling the pair/contact caps with region area is opt-in (ScaleCapsWithArea). The
+// module's built-in behaviour exactly (PhysicsBackendSettings.Default + CollisionSteps 6 + VelocityIterations 20 + the
+// MaxBodies area rule + today's step-buffer caps). Scaling the pair/contact caps with region area is opt-in (ScaleCapsWithArea). The
 // avatar speed factors are the exception: their defaults give Second Life's documented speeds (see below).
 // Invalid values (unparsable, non-finite, out of range) warn and fall back to the default - a typo in the INI
 // must never take a region down or silently change physics.
@@ -35,7 +35,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float Gravity = -9.80665f;          // world Z gravity, m/s^2
         public int CollisionSteps = 6;             // solver sub-steps inside Update
         public int PositionIterations = 2;
-        public int VelocityIterations = 10;
+        public int VelocityIterations = 20;        // Jolt's own is 10, at which ten stacked boxes do not fall asleep at 45 Hz
         public int ThreadCount = 0;                // all pools together; 0 = automatic: each pool's share of ProcessorCount - 1, at most 4 (first region wins)
         public bool DeterministicMode = false;
         public int MaxBodies = 0;                  // 0 = BaseMaxBodies scaled by area
