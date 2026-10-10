@@ -490,8 +490,9 @@ and no prim of it has a body of its own. These keep it one body, with the mass o
   engines look the prim up from what the physics engine reports.
 - A linkset meets an avatar as one object with the mass of all its prims, by the rule for a single
   object (see "Avatars and physical objects"): thrown at an avatar it stops against it or carries it
-  along by their masses, and an avatar walking into it pushes it along whole. The prim that touches
-  the avatar is the one named on each side.
+  along by their masses, and an avatar walking into it pushes it along whole. The prim the avatar
+  touches names the avatar in its collision events; the avatar names the linkset by its root prim,
+  as ubODE names whatever it touches (see "Avatars and physical objects").
 - A linkset asleep on something keeps touching it when one of its prims is resized: it stays one body
   at rest, and what it rests on gets no end event. The engine reports a linkset's resting contact with
   a flat surface as one contact naming one of the prims on it, so a script in that surface gets one
@@ -672,6 +673,40 @@ ubODE, where an avatar is a body that meets an object with no bounce:
   (`ContactPoint.RelativeSpeed`, below zero while they close), for prims, avatars and the land. The
   simulator plays a prim's collision sound above 0.2 m/s, and an avatar takes impact damage where
   damage is on below -5 m/s, from the land (a fall from about 1.3 m or more) or from a prim.
+- An avatar names an object it touches by the object's root prim, as ubODE names every collider: an
+  attachment's `llDetectedKey` and `llDetectedName` in its collision events are the object's, a
+  collision filter set by name matches the object's name, and an avatar touching two prims of one
+  linkset has one collision with it, carrying the harder strike. The prim it touched names the avatar,
+  so a script in that prim gets its own link number from `llDetectedLinkNumber`.
+
+A flying avatar meets objects by the same rule. Second Life documents nothing on a flying avatar that
+is hit; Jolt follows ubODE, where it stays flying:
+
+- An object thrown at a flying avatar moves it along the line of the hit at their common speed by
+  mass, within the push limits; it keeps its height and stays flying, and the push fades over about a
+  second, as any push on a flying avatar does. A 100 kg box thrown at 5 m/s carries a flying avatar
+  along at up to 2.8 m/s, about 3 m in all; a 1 kg box moves it about 6 cm at 5 m/s and up to 25 cm
+  at 20 m/s.
+- A flying avatar flying into a fixed prim or a heavy object stops at it. Flying into a light object
+  pushes it along ahead at about the avatar's own speed. A flying avatar does not press what it
+  touches with its weight: an object it brushes or passes over is not driven into the ground.
+
+The simulator takes a seated avatar out of physics (`ScenePresence.RemoveFromPhysicalScene`, on every
+engine), and the physics engine is not told who sits where. So on Jolt:
+
+- A seated avatar adds no mass or shape to what it sits on, as on ubODE: a physical seat or vehicle
+  keeps its own mass, and objects pass through where the avatar sits. Second Life documents "Sitting avatars add
+  their mass to the object" (wiki, llGetObjectMass) and a seated avatar's collision volume
+  (`SIT_FLAG_NO_COLLIDE`, wiki, llSetLinkSitFlags); neither can be done in the physics engine alone.
+- The seat's prims get a `collision_end` for the avatar when it sits, and the seated avatar's
+  attachments get no collision events until it stands.
+- Standing up, the simulator puts the avatar back where `ScenePresence.StandUp` places it, without
+  looking at what is there. Next to an object or on top of one, it stands where it is put. Inside a
+  fixed object it is set out at the nearest side, at once, on the ground beside it, and stays there:
+  it is not thrown out (ubODE's contacts correct an overlap at up to 60 m/s). The velocity it reports
+  for that one step is the distance it was set out over the step (13.7 m/s for 1.2 m at one step per
+  11 Hz heartbeat). Inside a light physical object both give way: the avatar is set out and the object
+  nudged aside (0.4 m for a 1 kg cube).
 
 ## Buoyancy and hover on an avatar
 
@@ -738,6 +773,10 @@ is moved to that touch and strikes the avatar there, by the rule in "Avatars and
 both go on at their common speed by mass, the avatar's share held to its push limits, and both are told
 of the contact with the speed at which they met. A 0.2 m ball shot at 50 m/s at a standing avatar
 stops against it and barely moves it. A slower prim reaches the avatar in its own update, as before.
+A physical linkset is checked the same way, as one object: a three-prim linkset of 100 kg thrown at
+20 m/s at a standing, walking or flying avatar stops against it or carries it along within the push
+limit, at either physics step rate. A flying avatar it has struck can show one physics step's velocity
+above the limit (14 m/s at a 45 Hz step rate) when the linkset catches it up again as its push fades.
 
 Phantom and volume-detect prims still let a fast prim through: Jolt does not cast against sensors,
 and a phantom prim touches only the terrain. A volume-detect prim finds what is inside it at the
@@ -750,7 +789,10 @@ box and down at the ground, at each heartbeat rate of the harness and at 11 Hz w
 `PhysicsStepRate` 45, and none passes through. `FastObjectsLinksetsAndAvatarsTests` covers where fast
 prims, linksets, resting contacts and avatars meet: a fast ball at an avatar, a fast ball's bounce, a
 fast ball on a sleeping box, a linkset thrown at or walked into by an avatar, a sleeping linkset with a
-resized prim, and a ray at a sleeping linkset.
+resized prim, and a ray at a sleeping linkset. `FlyingSeatedAndFastLinksetAvatarTests` covers a flying
+avatar hit by a box and flying into a wall, a light post and a heavy one, a seated avatar, an avatar
+standing up next to, on and inside an object, and a fast linkset at a standing, walking and flying
+avatar.
 
 ## Phantom and volume-detect prims
 
@@ -1126,7 +1168,12 @@ rest on a platform, on the ground or inside a volume-detect box, falls asleep an
 `tower-10` (ten stacked boxes) and `rest-no-bounce` (a box of restitution 0 dropped 2 m), and the avatar
 scenarios: `avatar-hit-1kg`, `avatar-hit-100kg` and `avatar-hit-10ms` (a box thrown at a standing
 avatar), `avatar-walk-1kg` and `avatar-walk-1000kg` (an avatar walking into a box), `avatar-on-box`,
-`avatar-box-drop` (a box dropped 5 m onto an avatar's head) and `avatar-fall-20m`, and the attachment
+`avatar-box-drop` (a box dropped 5 m onto an avatar's head), `avatar-fall-20m`, `avatar-fly-hit-1kg`,
+`avatar-fly-hit-100kg` and `avatar-fly-hit-20ms` (a box thrown at a flying avatar), `avatar-fly-wall` and
+`avatar-fly-post` (flying into a fixed wall or a 1 kg post), `avatar-stand-up-inside` (an avatar put at the
+middle of a fixed cube), `avatar-sit` (an avatar leaves physics on a physical seat and a box is dropped
+where it was), `avatar-linkset-20ms` and `avatar-fly-linkset-20ms` (a 100 kg linkset thrown at 20 m/s at a
+standing or flying avatar), and the attachment
 scenarios: `avatar-buoyancy-1`, `avatar-buoyancy-half`, `avatar-buoyancy-0` and `avatar-ledge` (an avatar
 walking off a 3 m platform with that buoyancy, or none set), `avatar-hover` (hover 3 m set, walked across
 level ground or up the ramp, then stopped), `avatar-wall` (walking into a fixed wall) and

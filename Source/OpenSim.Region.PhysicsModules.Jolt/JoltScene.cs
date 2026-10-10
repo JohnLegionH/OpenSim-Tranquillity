@@ -2035,8 +2035,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // (BSCharacter) report them. The contact normal points from the avatar into what it touches, the
                 // same way round as ubODE's avatar SurfaceNormal; ScenePresence turns it over to make the collision
                 // plane under the feet. A contact whose normal points down is at the feet.
+                // The avatar names an object by its root (UserData, the body's own id), not the part it touched: ubODE names
+                // every collider by its root (ParentActor.m_baseLocalID), so an attachment's llDetectedKey and llDetectedName
+                // are the object's, its collision filter matches the object's name, and an avatar touching two parts of one
+                // object has one collision with it, carrying the harder strike. The touched part still names the avatar.
                 if (!detectorB && !c.BodyA.IsValid && _frameAvatars.ContainsKey(c.ChildUserDataA))
-                    _collisions.AddCollider(c.ChildUserDataA, c.ChildUserDataB,
+                    _collisions.AddCollider(c.ChildUserDataA, c.UserDataB,
                         new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f, c.Normal.Z < -AvatarFeetNormalZ)
                         { RelativeSpeed = c.RelativeSpeed });
             }
