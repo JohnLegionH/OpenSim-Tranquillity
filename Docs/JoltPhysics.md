@@ -771,6 +771,11 @@ force / mass (80 kg) on every step, on top of whatever else moves it, until the 
   drifts at force / mass x 0.25 s on top of its walk (2 m/s2 gives 0.5 m/s) and a flying one at force /
   mass x 1 s. In the air it does not fade: the avatar accelerates at force / mass.
 - While hovering, the vertical part moves the height the hover settles at by force / mass x tau^2.
+- A flying avatar has no gravity for the force to cancel, so an upward force equal to the weight lifts it
+  (9.8 m/s2 up, settling at 9.8 m/s with the 1 s fade) instead of holding it. A wearer an autopilot has put
+  into flight (`ScenePresence.MoveToTarget` flies any walker sent to a point higher than the ground plus the
+  avatar's height) is such an avatar. When its flight ends it keeps the speed the force gave and carries on at
+  that speed, since the weight up and gravity cancel.
 - A new call replaces the force and a zero force ends it. The speed it gave is kept, and fades as above.
   A force that is not a number is refused and logged.
 - It never takes an avatar past the engine's body speed cap (500 m/s, the cap a prim under `llSetForce`

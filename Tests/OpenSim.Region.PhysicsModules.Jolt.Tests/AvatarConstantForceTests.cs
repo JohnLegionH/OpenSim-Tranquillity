@@ -500,4 +500,69 @@ public class AvatarConstantForceTests
         _out.WriteLine($"{r.Name} p{physicsRate}: buoyancy 0.5 and half the weight up, height moved at most {most * 1000f:0.000} mm in 5 s");
         Assert.True(most <= 0.01f, $"{r.Name}: the avatar moved {most:0.0000} m up or down");
     }
+
+    // ------------------------------------------------------------------ what an attachment script asks for
+
+    // An attachment's script that holds its wearer up asks for llGetMass() x 9.8 newtons, and llGetMass() in an attachment is
+    // the wearer's actor's Mass, the mass the backend divides the force by. That force holds a walking avatar's height,
+    // whatever the avatar's size (the actor's mass does not change with the box): over 8 s it sinks by no more than the
+    // 9.8 against 9.80665 leaves (0.5 x 0.00665 x 64 = 0.21 m), and it never rises.
+    [Theory]
+    [InlineData(0.0, 1.4f)]
+    [InlineData(45.0, 1.4f)]
+    [InlineData(0.0, 1.9f)]
+    [InlineData(45.0, 1.9f)]
+    [InlineData(0.0, 2.6f)]
+    [InlineData(45.0, 2.6f)]
+    public void The_mass_the_actor_reports_times_gravity_holds_a_walking_avatar_of_any_size(double physicsRate, float height)
+    {
+        var box = new Vector3(0.45f, 0.6f, height);
+        float mass = 0f;
+        var sc = new Scenario
+        {
+            Name = $"force-reported-mass-{height:0.0}",
+            Description = "an avatar of one size, not flying, 20 m up, with the force its attachment's script reads off its own mass",
+            DefaultDuration = _ => 8f,
+            Setup = r =>
+            {
+                PhysicsActor pa = r.PhysicsScene.AddAvatar(OpenSim.Region.PhysicsModules.Jolt.Harness.Run.ActorLocalId, "Test User", new Vector3(X, Y, r.GroundAt(X, Y) + 20f), box, 0f, false);
+                r.Actor = pa;
+                r.ActorSize = box;
+                mass = pa.Mass;
+                pa.SetConstantForce(new Vector3(0f, 0f, mass * 9.8f), false);
+            },
+            Input = _ => { },
+        };
+        (RunResult r, List<Point> trace) = Run(sc, physicsRate);
+        float z0 = trace[0].Position.Z;
+        float rose = trace.Max(p => p.Position.Z - z0), sank = trace.Max(p => z0 - p.Position.Z);
+        _out.WriteLine($"{r.Name} p{physicsRate}: mass {mass}, rose at most {rose * 1000f:0.000} mm, sank at most {sank * 1000f:0.000} mm in {trace[^1].PhysicsT:0.0} s");
+        Assert.True(rose <= 0.001f, $"{r.Name}: the avatar rose {rose:0.0000} m");
+        Assert.True(sank <= 0.25f, $"{r.Name}: the avatar sank {sank:0.0000} m");
+    }
+
+    // The same force on an avatar that is flying lifts it, as designed (gravity is off, so the force is all there is), and
+    // when the flight ends it goes on rising at the speed it had: 9.8 N per kg against gravity leaves nothing to speed it up
+    // or slow it. This is the sequence a script saw when the simulator's autopilot (a walk to a point higher than the ground
+    // plus an avatar's height puts the walker into flight, ScenePresence.MoveToTarget) flew the wearer for a short while
+    // and then handed it back to walking.
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(45.0)]
+    public void The_weight_up_lifts_a_flying_avatar_and_it_keeps_its_speed_when_the_flight_ends(double physicsRate)
+    {
+        (RunResult r, List<Point> trace) = Run(At("force-weight-flight-then-walk", 20f, true, 7f, r => r.Actor.SetConstantForce(Force(r, 0f, 0f, 9.8f), false), r =>
+        {
+            if (r.Stage == 0 && r.PhysicsTime >= FlightEnds - 1e-9) { r.Actor.Flying = false; r.Stage = 1; }
+        }), physicsRate);
+        float z0 = trace[0].Position.Z;
+        Point Near(double t) => trace.First(p => p.PhysicsT >= t - 1e-9);
+        float before = Near(FlightEnds).Velocity.Z, after = Near(FlightEnds + 1.0).Velocity.Z;
+        float rise = trace.Max(p => p.Position.Z) - z0;
+        _out.WriteLine($"{r.Name} p{physicsRate}: rising at {before:0.000} m/s when the flight ends (after {FlightEnds} s), {after:0.000} m/s a second after; {rise:0.00} m in {trace[^1].PhysicsT:0.0} s");
+        Assert.True(before > 2f, $"{r.Name}: it flew up at only {before:0.000} m/s");
+        Within(after, before, 0.1, $"{r.Name} speed after the flight ends");
+    }
+
+    private const double FlightEnds = 0.5;               // when the autopilot's flight ended in that run (s)
 }

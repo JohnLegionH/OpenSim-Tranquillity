@@ -3549,8 +3549,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 float vz = ch.LinearVelocity.Z;
                 if (forced)
                 {
-                    // A vertical velocity the force gave while flying goes to the controller's own when the avatar stops.
-                    vz += rec.ForceCarry.Z;
+                    // A vertical velocity the force gave while flying is already in the controller's own (the flying step
+                    // set the controller's velocity to it), so when the avatar stops flying it is not added again.
                     rec.ForceCarry.Z = 0f;
                     forceStep = new Vector3(force.X, force.Y, 0f);
                     forceTau = onWalkable ? PushFadeOnGroundSeconds : 0f;
