@@ -366,14 +366,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
         public override bool SubscribedEvents() => _subscribedMs > 0;
 
-        // ---- inert for an avatar (the controller owns velocity; no vehicles / PID; pushes are AddForce above) ----
+        // ---- inert for an avatar (the controller owns velocity; no vehicles, no move-to-target PID: core moves an avatar to
+        // a target through TargetVelocity; pushes are AddForce below) ----
         public override Vector3 RotationalVelocity { get => Vector3.Zero; set { } }
         public override Vector3 Torque { get => Vector3.Zero; set { } }
         public override Vector3 Force { get => Vector3.Zero; set { } }
         public override Vector3 Acceleration { get => Vector3.Zero; set { } }
         public override float CollisionScore { get; set; }
         public override bool Kinematic { get => false; set { } }
-        public override float Buoyancy { get => 0f; set { } }   // gravity is governed by Flying, not buoyancy
         public override bool ThrottleUpdates { get => false; set { } }
         public override bool IsColliding { get; set; }
         public override bool CollidingGround { get; set; }
@@ -399,6 +399,90 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _backend.AddCharacterImpulse(_character, ToS(force / _mass));
         }
         public override void AddAngularForce(Vector3 force, bool pushforce) { }
+
+        // ---- an attachment's llSetBuoyancy and llSetHoverHeight, which core hands to the wearer's actor ----
+
+        private float _buoyancy;
+        private float _hoverHeight;
+        private float _hoverTau;
+        private PIDHoverType _hoverType;
+        private bool _hoverActive;
+
+        // The SL wiki, llSetBuoyancy: "when buoyancy is < 1.0, the object sinks", "when buoyancy equals 1.0 it floats",
+        // "when buoyancy is > 1.0 the object rises". On the avatar it scales gravity by 1 - buoyancy while it neither flies
+        // nor hovers, as ubODE's avatar does (ODECharacter.MoveCharacter).
+        public override float Buoyancy
+        {
+            get => _buoyancy;
+            set
+            {
+                if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "Buoyancy", value.ToString()); return; }
+                _buoyancy = value;
+                if (_character.IsValid)
+                    _backend.SetCharacterBuoyancy(_character, value);
+            }
+        }
+
+        public override float PIDHoverHeight
+        {
+            set
+            {
+                if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "PIDHoverHeight", value.ToString()); return; }
+                _hoverHeight = Math.Clamp(value, -JoltPrim.MaxHoverHeight, JoltPrim.MaxHoverHeight);
+                PushHover();
+            }
+        }
+
+        public override PIDHoverType PIDHoverType
+        {
+            set { _hoverType = value; PushHover(); }
+        }
+
+        public override float PIDHoverTau
+        {
+            set
+            {
+                if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "PIDHoverTau", value.ToString()); return; }
+                _hoverTau = value;
+                PushHover();
+            }
+        }
+
+        public override bool PIDHoverActive
+        {
+            get => _hoverActive;
+            set { _hoverActive = value; PushHover(); }
+        }
+
+        // Hover acts while it is asked for with a height other than 0 ("Assigning height a value of zero will have the
+        // same effect as llStopHover", llSetHoverHeight) and a tau above 0, as ubODE's avatar requires
+        // (m_PIDHoverTau != 0 && m_PIDHoverHeight != 0). llStopHover ends it and the avatar falls from where it was held.
+        private void PushHover()
+        {
+            if (!_character.IsValid)
+                return;
+            bool on = _hoverActive && _hoverHeight != 0f && _hoverTau > 0f;
+            _backend.SetCharacterHover(_character, on ? HoverHeightAt(_hoverHeight, _hoverType) : null, _hoverTau);
+        }
+
+        // Where hover holds the capsule centre over (x, y), as a prim's hover reads its base (JoltPrim.HoverTargetAt):
+        // the ground, the higher of ground and water (water TRUE, "hover above water too"), the water, or the region's
+        // zero, plus the height. Never lower than standing on the ground: "negative height values when water is FALSE
+        // will not move the object below the ground level". The height is the avatar's position above that base, as in
+        // ubODE (its _position.Z against terrain + height).
+        private Func<float, float, float> HoverHeightAt(float height, PIDHoverType type) => (x, y) =>
+        {
+            float ground = _module.TerrainHeightAt(x, y);
+            float water = _module.WaterLevel;
+            float baseZ = type switch
+            {
+                PIDHoverType.GroundAndWater => MathF.Max(ground, water),
+                PIDHoverType.Water => water,
+                PIDHoverType.Absolute => 0f,
+                _ => ground,
+            };
+            return MathF.Max(baseZ + height, ground + StandHalf);
+        };
         public override void SetVolumeDetect(int param) { }
 
         public override int VehicleType { get => 0; set { } }
@@ -410,10 +494,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override Vector3 PIDTarget { set { } }
         public override bool PIDActive { get => false; set { } }
         public override float PIDTau { set { } }
-        public override bool PIDHoverActive { get => false; set { } }
-        public override float PIDHoverHeight { set { } }
-        public override PIDHoverType PIDHoverType { set { } }
-        public override float PIDHoverTau { set { } }
         public override Quaternion APIDTarget { set { } }
         public override bool APIDActive { set { } }
         public override float APIDStrength { set { } }

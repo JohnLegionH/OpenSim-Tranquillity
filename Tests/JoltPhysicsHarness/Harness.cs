@@ -1353,7 +1353,7 @@ public static class Harness
             Gap = GapBelow,
             PassedThrough = (r, s) => s.Position.Z < r.GroundAt(s.Position.X, s.Position.Y),
         },
-    }.Concat(PhantomScenarios.All).Concat(ContactScenarios.All).Concat(AvatarHitScenarios.All).Concat(TunnelScenarios.All).ToList();
+    }.Concat(PhantomScenarios.All).Concat(ContactScenarios.All).Concat(AvatarHitScenarios.All).Concat(TunnelScenarios.All).Concat(AvatarForceScenarios.All).ToList();
 
     private static readonly Quaternion West = Quaternion.CreateFromEulers(0f, 0f, MathF.PI);
     private static readonly Vector3 CrashMotor = new(20f, 0f, 0f);
