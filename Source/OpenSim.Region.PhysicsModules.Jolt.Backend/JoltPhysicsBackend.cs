@@ -2748,6 +2748,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     JumpSpeed = desc.JumpSpeed,
                     PushAllowance = MathF.Max(0f, _settings.AvatarPushMaxSpeed),
                     Mass = desc.Mass,
+                    Placed = true,
                 };
                 uint handle = _characters.Add(rec);
                 rec.Handle = handle;
@@ -3257,6 +3258,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 {
                     rec.Character.Position = position;
                     rec.Character.Rotation = orientation;
+                    rec.Placed = true;
                 }
             }
         }
@@ -3287,6 +3289,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     rec.MovedVelocity = Vector3.Zero;
                     rec.HoverCarry = 0f;
                     rec.HoverRise = 0f;
+                    rec.Placed = true;
                 }
             }
         }
@@ -3610,6 +3613,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // of it. ubODE reports its body's velocity, which the wall stops likewise.
             Vector3 moved = (ch.Position - startPos) / dt;
             rec.MovedVelocity = new Vector3(moved.X, moved.Y, moved.Z + late);
+            CharacterStepped?.Invoke(new CharacterStepTrace(rec.UserData, ch.Position - startPos, newVel, rec.MovedVelocity, dt, rec.Placed));
+            rec.Placed = false;
             if (hovering && MathF.Abs(moved.Z - newVel.Z) > 0.01f + 0.1f * MathF.Abs(newVel.Z))
             {
                 rec.HoverCarry = 0f;   // held up or down by something: the spring starts again from how it moved
@@ -3621,6 +3626,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             FinishCharacterContacts(rec, ch, dt);
         }
+
+        /// <summary>
+        /// Test control ONLY: called on the step thread after each avatar's update, with how far the update moved it and the
+        /// velocity it reports for it. Never set by the simulator.
+        /// </summary>
+        internal Action<CharacterStepTrace>? CharacterStepped;
 
         /// <summary>The mass (kg) Jolt's character is given while the avatar flies: next to none, so it presses nothing it
         /// touches with its weight (StepCharacter).</summary>
@@ -4719,7 +4730,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // Bodies (Jolt ids) that struck it since its last update giving it a push (Strike), and so have been slowed to the
         // speed it takes from them: these may push it on first touch. Step thread only.
         public readonly HashSet<uint> StruckBy = new();
+        // Put where it is by the caller (added, or its position set) since its last update. Step thread clears it.
+        public bool Placed;
     }
+
+    /// <summary>One avatar update, for <see cref="JoltPhysicsBackend.CharacterStepped"/>: the avatar's id, how far the update
+    /// moved it, the velocity it was moved with, the velocity it reports for the update, the update's length (s), and whether
+    /// it had been put where it was by the caller since its last update.</summary>
+    internal readonly record struct CharacterStepTrace(uint UserData, Vector3 Displacement, Vector3 Asked, Vector3 Reported, float Seconds, bool Placed);
 
     internal readonly record struct CharacterBodyContact(uint BodyJoltId, uint SubShape, Vector3 Point, Vector3 Normal, ContactPhase Phase, bool Loose);
 
