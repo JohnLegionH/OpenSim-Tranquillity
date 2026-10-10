@@ -1256,6 +1256,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // _simLock before the Update, read by the contact callbacks inside it.
         private float _collisionStepSeconds;
 
+        /// <summary>The length of one solver step of the last Update (tests).</summary>
+        internal float CollisionStepSecondsForTest => Volatile.Read(ref _collisionStepSeconds);
+
         // Jolt applies restitution in the solver step in which it first finds a closing contact, at the speed the body had
         // at the start of that step, and the body bounces "from its current position rather than from a position where it
         // is touching the other object" (Jolt, ContactConstraintManager.cpp, CalculateNonPenetrationConstraintProperties).

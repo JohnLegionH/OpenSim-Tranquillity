@@ -55,7 +55,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public bool JobPoolFairHandoff = false;    // true: a job pool is granted first come, first served (per physics step)
         public float PhysicsStepRate = DefaultPhysicsStepRate; // Hz; 0 = one physics step per heartbeat
         public bool PhysicsStepRateSet = false;    // PhysicsStepRate came from a valid value in the configuration
-        public int PhysicsStepCollisionSteps = 2;  // solver sub-steps per physics step, used only when PhysicsStepRate is on
+        public int PhysicsStepCollisionSteps = 2;  // solver sub-steps per physics step, used only when PhysicsStepRate is on; at least 60 Hz (CollisionStepsAt)
         public float VehicleGroundGravityFactor = 1f;   // gravity on a car or sled touching something; 1 = whole
         public VehiclePresetSet VehiclePresets = VehiclePresetSet.Documented;   // the values llSetVehicleType gives each type
 
@@ -248,8 +248,32 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// <summary>The backend settings for a region of this size - what AddRegion hands Initialize.</summary>
         internal PhysicsBackendSettings ToBackendSettings(uint sizeX, uint sizeY) => ToBackendSettings(sizeX, sizeY, substepping: false);
 
-        /// <summary>As above; with <paramref name="substepping"/> the solver takes PhysicsStepCollisionSteps per step.</summary>
+        /// <summary>As above; with <paramref name="substepping"/> the solver takes CollisionStepsAt(PhysicsStepRate) per step.</summary>
         internal PhysicsBackendSettings ToBackendSettings(uint sizeX, uint sizeY, bool substepping)
+            => ToBackendSettings(sizeX, sizeY, substepping ? PhysicsStepRate : 0f);
+
+        /// <summary>
+        /// The slowest solver step rate the module gives Jolt. Jolt is built around a 1/60 s step: "In general, the
+        /// system is stable when running at 60 Hz with 1 collision step" (JoltPhysics Docs/Architecture.md, "The
+        /// Simulation Step"). A longer step leaves a tall stack swaying: ten stacked 0.5 m boxes stepped at 22.5 Hz with
+        /// 2 collision steps (1/45 s) only just fall asleep at 40 velocity steps on one platform's native and never on the
+        /// other's, while with 3 (1/67.5 s) both put them to sleep at the same time.
+        /// </summary>
+        internal const float MinCollisionStepRate = 60f;
+
+        /// <summary>
+        /// The solver's steps in each physics step at <paramref name="stepRate"/> physics steps a second:
+        /// PhysicsStepCollisionSteps, or as many more as keep each solver step to 1/MinCollisionStepRate s (3 at 22.5 Hz,
+        /// where 2 would be 1/45 s). With <paramref name="stepRate"/> 0, one physics step per heartbeat: CollisionSteps.
+        /// </summary>
+        internal int CollisionStepsAt(float stepRate)
+            => stepRate > 0f
+                ? Math.Max(PhysicsStepCollisionSteps, (int)Math.Ceiling(MinCollisionStepRate / stepRate - 1e-3f))
+                : CollisionSteps;
+
+        /// <summary>As above, for a region whose physics steps at <paramref name="stepRate"/> a second (0: one step per
+        /// heartbeat).</summary>
+        internal PhysicsBackendSettings ToBackendSettings(uint sizeX, uint sizeY, float stepRate)
         {
             PhysicsBackendSettings s = PhysicsBackendSettings.Default;
             s.Gravity = new SVector3(0f, 0f, Gravity);
@@ -259,7 +283,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             s.ThreadCount = ThreadCount;
             s.PositionIterations = PositionIterations;
             s.VelocityIterations = VelocityIterations;
-            s.CollisionSteps = substepping ? PhysicsStepCollisionSteps : CollisionSteps;
+            s.CollisionSteps = CollisionStepsAt(stepRate);
             s.DeterministicMode = DeterministicMode;
             s.AllowUnrecordedNative = AllowUnrecordedNative;
             s.JobPools = JobPools;

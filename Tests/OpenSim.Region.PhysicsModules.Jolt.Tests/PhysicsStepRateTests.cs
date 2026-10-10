@@ -76,6 +76,36 @@ public class PhysicsStepRateTests
         Assert.Equal(5, c.ToBackendSettings(256, 256, substepping: false).CollisionSteps);
     }
 
+    // The solver never steps slower than 60 Hz, the step Jolt is built around: PhysicsStepCollisionSteps, or more where
+    // that would be slower. A larger value set by the operator is kept.
+    [Theory]
+    [InlineData(90f, 2, 2)]
+    [InlineData(60f, 2, 2)]
+    [InlineData(45f, 2, 2)]
+    [InlineData(30f, 2, 2)]
+    [InlineData(22.5f, 2, 3)]
+    [InlineData(20f, 2, 3)]
+    [InlineData(15f, 2, 4)]
+    [InlineData(11f, 2, 6)]
+    [InlineData(45f, 1, 2)]
+    [InlineData(45f, 4, 4)]
+    [InlineData(22.5f, 6, 6)]
+    public void The_solver_steps_at_60_Hz_or_faster(float rate, int set, int used)
+    {
+        var warnings = new List<string>();
+        JoltConfig c = Parse(warnings, ("PhysicsStepRate", rate.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                             ("PhysicsStepCollisionSteps", set.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        Assert.Empty(warnings);
+        Assert.Equal(set, c.PhysicsStepCollisionSteps);
+        Assert.Equal(used, c.CollisionStepsAt(rate));
+        Assert.Equal(used, c.ToBackendSettings(256, 256, rate).CollisionSteps);
+        Assert.Equal(used, c.ToBackendSettings(256, 256, substepping: true).CollisionSteps);
+        Assert.True(rate * used >= JoltConfig.MinCollisionStepRate - 1e-3f);
+        // One step per heartbeat keeps CollisionSteps.
+        Assert.Equal(c.CollisionSteps, c.CollisionStepsAt(0f));
+        Assert.Equal(c.CollisionSteps, c.ToBackendSettings(256, 256, 0f).CollisionSteps);
+    }
+
     // An invalid rate gives the default, with one warning that names the value given and the rate used, as an
     // invalid value of every other key does.
     [Theory]

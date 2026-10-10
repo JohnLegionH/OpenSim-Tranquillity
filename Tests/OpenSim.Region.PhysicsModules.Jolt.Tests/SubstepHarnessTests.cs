@@ -96,6 +96,40 @@ public class SubstepHarnessTests
         Assert.Equal(single.ToCsv(), r.ToCsv());
     }
 
+    // The region gives Jolt solver steps of 1/60 s or shorter: 2 collision steps at 45 and 90 Hz, 3 at 22.5 Hz, and the
+    // bounce correction reads that step's length.
+    [Theory]
+    [InlineData(22.5, 3)]
+    [InlineData(45.0, 2)]
+    [InlineData(90.0, 2)]
+    [InlineData(0.0, 6)]
+    public void The_region_steps_the_solver_at_60_Hz_or_faster(double physicsHz, int collisionSteps)
+    {
+        int seen = 0;
+        float stepSeconds = 0f;
+        var sc = new Scenario
+        {
+            Name = "solver-steps",
+            DefaultDuration = _ => 0.5f,
+            Input = r =>
+            {
+                var scene = (JoltScene)r.PhysicsScene;
+                seen = scene.CollisionSteps;
+                stepSeconds = ((Backend.JoltPhysicsBackend)scene.Backend).CollisionStepSecondsForTest;
+            },
+        };
+        sc.Setup = r =>
+        {
+            HarnessPart box = PhantomScenarios.AddPart(r, "box", ContactScenarios.BoxSize, new OpenMetaverse.Vector3(128f, 128f, r.GroundAt(128f, 128f) + 2f), true, false, false, false);
+            r.Actor = box.Actor;
+            r.ActorSize = ContactScenarios.BoxSize;
+        };
+        Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz });
+        Assert.Equal(collisionSteps, seen);
+        double physicsStep = physicsHz > 0 ? 1.0 / physicsHz : 1.0 / 11.0;
+        Assert.Equal(physicsStep / collisionSteps, stepSeconds, 1e-6);
+    }
+
     [Fact]
     public void The_summary_names_the_physics_rate()
     {

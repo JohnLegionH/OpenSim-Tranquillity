@@ -137,8 +137,10 @@ public class RestingContactAndBounceTests
     [InlineData(90.0)]
     public void A_tower_of_ten_boxes_stands_and_falls_asleep(double physicsRate)
     {
-        // With 40 velocity steps. At the default 10 ([Jolt] VelocityIterations), as before this change, ten stacked boxes
-        // never fall asleep at 11 or 45 Hz (the top one creeps a few centimetres in 12 s) and fall over at 22.5 Hz.
+        // With 40 velocity steps. At the default 10 ([Jolt] VelocityIterations) ten stacked boxes sway and never fall
+        // asleep at 11, 22.5 or 45 Hz: Jolt puts the stack to sleep only when every box in it is still, and the top one
+        // sways a few centimetres. At 22.5 Hz the solver takes 3 steps of 1/67.5 s (JoltConfig.MinCollisionStepRate);
+        // with 2 of 1/45 s the tower only just fell asleep at 40 on one platform's native and never on the other's.
         RunResult r = Run("tower-10", physicsRate, ("VelocityIterations", "40"));
         foreach (HarnessPart p in r.Parts)
         {
@@ -237,7 +239,7 @@ public class RestingContactAndBounceTests
         Harness.Harness.Run(sc, new HarnessOptions { RateHz = physicsRate > 0 ? physicsRate : 11.0, PhysicsRateHz = physicsRate });
 
         var config = new JoltConfig();
-        double step = physicsRate > 0 ? 1.0 / (physicsRate * config.PhysicsStepCollisionSteps) : 1.0 / (11.0 * config.CollisionSteps);
+        double step = physicsRate > 0 ? 1.0 / (physicsRate * config.CollisionStepsAt((float)physicsRate)) : 1.0 / (11.0 * config.CollisionSteps);
         int bounce = -1;
         for (int i = 1; i < trace.Count; i++)
             if (trace[i - 1].V.Z < -0.5f && trace[i].V.Z > -0.5f) { bounce = i; break; }

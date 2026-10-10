@@ -192,7 +192,7 @@ public class FastObjectsLinksetsAndAvatarsTests
 
         Assert.True(cast, "the ball was never cast: it did not get the fast object's check");
         var config = new JoltConfig();
-        double step = physicsHz > 0 ? 1.0 / (physicsHz * config.PhysicsStepCollisionSteps) : 1.0 / (11.0 * config.CollisionSteps);
+        double step = physicsHz > 0 ? 1.0 / (physicsHz * config.CollisionStepsAt((float)physicsHz)) : 1.0 / (11.0 * config.CollisionSteps);
         int bounce = -1;
         for (int i = 1; i < trace.Count; i++)
             if (trace[i - 1].V.Z < -0.5f && trace[i].V.Z > -0.5f) { bounce = i; break; }

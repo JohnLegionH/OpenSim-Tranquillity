@@ -215,7 +215,11 @@ operator sets it; that decides how a rate the heartbeat cannot honour is reporte
   change as with one step per heartbeat, and so does a force the scene marks as a push. A force or
   torque set with `llSetForce` or `llSetTorque` acts in every step.
 - `PhysicsStepCollisionSteps` replaces `CollisionSteps` while the rate is on: the solver's
-  sub-steps per physics step. 2 at 45 steps per second slices the solver at 90 Hz.
+  sub-steps per physics step. 2 at 45 steps per second slices the solver at 90 Hz. The module
+  takes more where that would slice it slower than 60 Hz, the step Jolt is built around ("In
+  general, the system is stable when running at 60 Hz with 1 collision step", Jolt's
+  Docs/Architecture.md): 3 at 22.5 steps per second. Ten stacked boxes stepped in 1/45 s solver
+  steps can sway and never fall asleep.
 - A heartbeat runs at most 16 steps. A heartbeat that would need more runs 16 and drops the rest
   of its time; `jolt capacity` shows how many heartbeats did ("physics steps").
 - A rate set below the heartbeat's own rate is refused with one warning at region start, and the

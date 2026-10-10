@@ -375,7 +375,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 m_log.LogInformation($"{LogHeader} region '{RegionName}': {rateNote}");
             _substeps = stepRate > 0f ? new SubstepAccumulator(stepRate) : null;
 
-            PhysicsBackendSettings settings = _joltConfig.ToBackendSettings(sizeX, sizeY, _substeps != null);
+            PhysicsBackendSettings settings = _joltConfig.ToBackendSettings(sizeX, sizeY, _substeps != null ? stepRate : 0f);
             CollisionSteps = Math.Max(1, settings.CollisionSteps);
             settings.RegionName = RegionName;   // names this region when another waits for its job pool (metrics)
             settings.RayCastClock = RayCastClock;
