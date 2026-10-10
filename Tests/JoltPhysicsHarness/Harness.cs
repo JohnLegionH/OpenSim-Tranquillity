@@ -232,6 +232,9 @@ public sealed class RunResult
     public string Variant = "";
     public readonly List<Sample> Samples = new();
     public Summary Summary;
+    /// <summary>The phantom and volume-detect scenarios' prims and collision events (not in the CSV or summary).</summary>
+    public readonly List<HarnessPart> Parts = new();
+    public readonly List<CollisionWatch> Watches = new();
 
     public string Name => $"{Scenario}{Variant}-s{Fmt(SlopeDeg, "0.#")}-r{Fmt(RateHz, "0.#")}{(PhysicsRateHz > 0 ? "-p" + Fmt(PhysicsRateHz, "0.#") : "")}";
 
@@ -355,6 +358,12 @@ public sealed class Run
     /// <summary>Further vehicles that get the same key input as <see cref="Actor"/>. The motor is in each vehicle's
     /// own frame, so two cars facing each other drive at each other.</summary>
     public readonly List<PhysicsActor> AlsoDriven = new();
+
+    /// <summary>The prims a phantom or volume-detect scenario added, and the collision events watched.</summary>
+    public readonly List<HarnessPart> Parts = new();
+    public readonly List<CollisionWatch> Watches = new();
+    /// <summary>A scenario's own step counter for inputs that come one after another.</summary>
+    public int Stage;
 
     public static readonly Vector3 AvatarSize = new(0.45f, 0.6f, 1.9f);   // the default appearance's box
     /// <summary>How far an avatar's capsule centre stands above what it stands on.</summary>
@@ -1191,7 +1200,7 @@ public static class Harness
             Gap = GapBelow,
             PassedThrough = (r, s) => s.Position.Z < r.GroundAt(s.Position.X, s.Position.Y),
         },
-    };
+    }.Concat(PhantomScenarios.All).ToList();
 
     private static readonly Quaternion West = Quaternion.CreateFromEulers(0f, 0f, MathF.PI);
     private static readonly Vector3 CrashMotor = new(20f, 0f, 0f);
@@ -1355,6 +1364,10 @@ public static class Harness
                 }
             }
             result.Summary = Summarise(r, sc, result.Samples);
+            foreach (HarnessPart p in r.Parts)
+                p.EndPosition = p.Actor?.Position ?? p.Position;
+            result.Parts.AddRange(r.Parts);
+            result.Watches.AddRange(r.Watches);
             result.Summary.LeftRegionT = leftAt;
             Backend.PhysicsCapacityStats stats = scene.CapacityStats();
             result.Summary.RayCasts = stats.RayCasts;

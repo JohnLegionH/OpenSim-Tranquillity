@@ -1027,12 +1027,22 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
         }
 
-        // The real OpenSim delivery boundary: SceneObjectPart.AddToPhysics -> (via the base
-        // isPhantom/shapetype overloads) -> this. A non-physical, non-phantom prim becomes a STATIC
-        // Jolt body; a physical one becomes a dynamic body, created INERT and woken in Simulate.
-        // (Pure phantoms never reach here - ApplyPhysics skips them.)
+        // The real OpenSim delivery boundary: SceneObjectPart.AddToPhysics calls the 9-argument overload with the
+        // prim's phantom flag and PRIM_PHYSICS_SHAPE_TYPE. A non-physical, non-phantom prim becomes a STATIC Jolt
+        // body; a physical one becomes a dynamic body, created INERT and woken in Simulate. A phantom one goes on
+        // the Phantom layer (it touches only the terrain); a volume detector, which the scene adds as phantom and
+        // then calls SetVolumeDetect(1) on, ends up a sensor. A non-physical phantom that is not a volume detector
+        // never reaches here: SceneObjectPart.ApplyPhysics and UpdatePrimFlags leave it out of physics.
         public override PhysicsActor AddPrimShape(string primName, PrimitiveBaseShape pbs, Vector3 position,
                                                   Vector3 size, Quaternion rotation, bool isPhysical, uint localid)
+            => AddPrimShape(primName, pbs, position, size, rotation, isPhysical, false, (byte)PhysShapeType.prim, localid);
+
+        public override PhysicsActor AddPrimShape(string primName, PrimitiveBaseShape pbs, Vector3 position,
+                                                  Vector3 size, Quaternion rotation, bool isPhysical, bool isPhantom, uint localid)
+            => AddPrimShape(primName, pbs, position, size, rotation, isPhysical, isPhantom, (byte)PhysShapeType.prim, localid);
+
+        public override PhysicsActor AddPrimShape(string primName, PrimitiveBaseShape pbs, Vector3 position,
+                                                  Vector3 size, Quaternion rotation, bool isPhysical, bool isPhantom, byte shapetype, uint localid)
         {
             IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
             if (backend == null || pbs == null)
@@ -1044,7 +1054,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             JoltPrim prim;
             try
             {
-                prim = new JoltPrim(this, backend, localid, primName, pbs, position, size, rotation, isPhysical);
+                prim = new JoltPrim(this, backend, localid, primName, pbs, position, size, rotation, isPhysical, isPhantom, shapetype);
             }
             catch (Exception e)
             {
@@ -1913,10 +1923,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // the root script - every linkset part is subscribed via the root's aggregated events).
                 // Jolt's normal points A -> B; give each side the surface normal pointing back at it.
                 // ContactReport carries System.Numerics vectors (SVector3); OpenSim's ContactPoint is OMV.
+                // A volume detector's contacts go to the detector alone: what passes through it is not told, as ubODE
+                // does (ODEScene.Collision_accounting_events) and as Second Life documents for attachments ("Attachments
+                // do not receive collision events for avatar collisions with VolumeDetect objects", llVolumeDetect).
+                bool detectorA = IsVolumeDetectPrim(c.ChildUserDataA);
+                bool detectorB = IsVolumeDetectPrim(c.ChildUserDataB);
                 Vector3 pt = new Vector3(c.Point.X, c.Point.Y, c.Point.Z);
-                if (IsSubscribedPrim(c.ChildUserDataA))
+                if (!detectorB && IsSubscribedPrim(c.ChildUserDataA))
                     _collisions.AddCollider(c.ChildUserDataA, c.ChildUserDataB, new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f));
-                if (IsSubscribedPrim(c.ChildUserDataB))
+                if (!detectorA && IsSubscribedPrim(c.ChildUserDataB))
                     _collisions.AddCollider(c.ChildUserDataB, c.ChildUserDataA, new ContactPoint(pt, new Vector3(-c.Normal.X, -c.Normal.Y, -c.Normal.Z), 0f));
 
                 // An avatar's own contacts: the backend reports them with the avatar as side A (no body) and the
@@ -1926,7 +1941,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // (BSCharacter) report them. The contact normal points from the avatar into what it touches, the
                 // same way round as ubODE's avatar SurfaceNormal; ScenePresence turns it over to make the collision
                 // plane under the feet. A contact whose normal points down is at the feet.
-                if (!c.BodyA.IsValid && _frameAvatars.ContainsKey(c.ChildUserDataA))
+                if (!detectorB && !c.BodyA.IsValid && _frameAvatars.ContainsKey(c.ChildUserDataA))
                     _collisions.AddCollider(c.ChildUserDataA, c.ChildUserDataB,
                         new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f, c.Normal.Z < -AvatarFeetNormalZ));
             }
@@ -1972,6 +1987,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // are resolved separately (_frameAvatars).
         private bool IsSubscribedPrim(uint localID)
             => _framePrims.TryGetValue(localID, out JoltPrim p) && p.SubscribedEvents();
+
+        private bool IsVolumeDetectPrim(uint localID)
+            => _framePrims.TryGetValue(localID, out JoltPrim p) && p.IsVolumeDetectPart;
 
         public override void SetTerrain(float[] heightMap)
         {
