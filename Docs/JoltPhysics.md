@@ -465,6 +465,14 @@ and no prim of it has a body of its own. These keep it one body, with the mass o
   with `RC_GET_LINK_NUM`, its link number, and the root's key only with `RC_GET_ROOT_KEY` ("The hit
   uuid will be replaced by the object's root instead of any child.", wiki, llCastRay). Both script
   engines look the prim up from what the physics engine reports.
+- A linkset meets an avatar as one object with the mass of all its prims, by the rule for a single
+  object (see "Avatars and physical objects"): thrown at an avatar it stops against it or carries it
+  along by their masses, and an avatar walking into it pushes it along whole. The prim that touches
+  the avatar is the one named on each side.
+- A linkset asleep on something keeps touching it when one of its prims is resized: it stays one body
+  at rest, and what it rests on gets no end event. The engine reports a linkset's resting contact with
+  a flat surface as one contact naming one of the prims on it, so a script in that surface gets one
+  `collision_start`, naming that prim, rather than one for each prim that rests on it.
 - The simulator does not pass a sculpt or mesh change made through the viewer's extra parameters to
   the physics engine (`SceneObjectPart.UpdateExtraParam`), on any engine; a prim keeps its old shape
   in physics until something else rebuilds it.
@@ -662,6 +670,14 @@ a straight line: it does not cover what the prim's turning sweeps through in a s
 A vehicle is cast in every collision step in which it is fast enough, whatever its speed was at the
 start of the step, as before.
 
+Jolt's cast does not see avatars: an avatar meets objects in its own update, once per physics step,
+before the simulation's update. So before each update, a physical prim that would go on more than an
+avatar's radius past where it first touches the avatar in that update, with nothing nearer in its way,
+is moved to that touch and strikes the avatar there, by the rule in "Avatars and physical objects":
+both go on at their common speed by mass, the avatar's share held to its push limits, and both are told
+of the contact with the speed at which they met. A 0.2 m ball shot at 50 m/s at a standing avatar
+stops against it and barely moves it. A slower prim reaches the avatar in its own update, as before.
+
 Phantom and volume-detect prims still let a fast prim through: Jolt does not cast against sensors,
 and a phantom prim touches only the terrain. A volume-detect prim finds what is inside it at the
 start of each collision step, so a fast prim that is never inside it at such a start, which can
@@ -670,7 +686,10 @@ happen when it crosses it in less than a collision step, raises no `collision_st
 `FastObjectTests` shoots 0.05, 0.2 and 1 m balls at 10 to 500 m/s (`[Jolt] BodyMaxLinearSpeed`, 500 m/s
 by default, is the most a prim can move) at a fixed wall 0.01 m and 0.1 m thick, at a resting 0.5 m
 box and down at the ground, at each heartbeat rate of the harness and at 11 Hz with
-`PhysicsStepRate` 45, and none passes through.
+`PhysicsStepRate` 45, and none passes through. `FastObjectsLinksetsAndAvatarsTests` covers where fast
+prims, linksets, resting contacts and avatars meet: a fast ball at an avatar, a fast ball's bounce, a
+fast ball on a sleeping box, a linkset thrown at or walked into by an avatar, a sleeping linkset with a
+resized prim, and a ray at a sleeping linkset.
 
 ## Phantom and volume-detect prims
 

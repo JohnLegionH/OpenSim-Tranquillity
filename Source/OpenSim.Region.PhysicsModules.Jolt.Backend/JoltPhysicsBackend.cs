@@ -2998,28 +2998,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     float a = Vector3.Dot(vChar, n), b = Vector3.Dot(vBody, n);
                     // An avatar on the ground does not give under an object on it or coming down on it.
                     held = supported && n.Z > CharacterFeetNormalZ;
-                    if ((b < -StrikeSpeed && a > b) || (held && b < 0f))
+                    if (Strikes(a, b, held))
                     {
-                        // Struck by it.
                         struck = true;
-                        float common = held ? a : (rec.Mass * a + other.Mass * b) / (rec.Mass + other.Mass);
-                        if (!held)
-                        {
-                            // The avatar's share is held to its push allowance; what it cannot take, the object loses, so it
-                            // goes on no faster than the avatar does and never into it.
-                            Vector3 give = n * (common - a);
-                            if (supported && give.Z < 0f)
-                                give.Z = 0f;
-                            float wanted = give.Length();
-                            float taken = MathF.Min(wanted, MathF.Max(0f, rec.PushAllowance));
-                            if (taken > 0f)
-                                AddCharacterImpulse(new CharacterId(rec.Handle), give * (taken / wanted));
-                            common = a - (wanted > 0f ? taken / wanted : 0f) * (a - common);
-                        }
-                        _bodyInterface.AddLinearVelocity(jid, n * (common - b));
-                        // The avatar takes its share on its next step, so for this one the object is held back by what it
-                        // would gain on the avatar meanwhile: else it goes that far into it.
-                        lead = n * ((a - common) * dt);
+                        lead = Strike(rec, jid, other, n, a, b, held, supported, dt);
                         // Come to rest on an avatar standing still, it is let fall asleep there: held up each step against
                         // the step's gravity it would sink and be lifted again, never still.
                         letSleep = held && vChar.LengthSquared() < 0.0025f && b > -2f * MathF.Abs(_settings.Gravity.Z) * dt;
@@ -3051,6 +3033,131 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 PushCharacterBodyContact(rec, c.BodyJoltId, c.SubShape, c.Point, c.Normal, c.Phase, relativeSpeed);
             }
             contacts.Clear();
+        }
+
+        // Whether a loose object strikes the avatar: it comes at it faster than StrikeSpeed and faster than the avatar moves
+        // that way, or it comes down on an avatar that holds it up. `a` and `b` are the avatar's and the object's speeds
+        // along the contact normal (from the avatar into the object).
+        private static bool Strikes(float a, float b, bool held) => (b < -StrikeSpeed && a > b) || (held && b < 0f);
+
+        // A loose object striking the avatar, by the rule FinishCharacterContacts describes: both go on along `n` at their
+        // common speed by mass (or the object stops on an avatar that holds it up), the avatar's share held to its push
+        // allowance. Changes the object's velocity and gives the avatar its push. Returns how far the object is to be held
+        // back for this step, since the avatar takes its share only on its next one.
+        private Vector3 Strike(JoltCharacterRecord rec, BodyID jid, JoltBodyRecord other, Vector3 n, float a, float b, bool held, bool supported, float dt)
+        {
+            float common = held ? a : (rec.Mass * a + other.Mass * b) / (rec.Mass + other.Mass);
+            if (!held)
+            {
+                // The avatar's share is held to its push allowance; what it cannot take, the object loses, so it
+                // goes on no faster than the avatar does and never into it.
+                Vector3 give = n * (common - a);
+                if (supported && give.Z < 0f)
+                    give.Z = 0f;
+                float wanted = give.Length();
+                float taken = MathF.Min(wanted, MathF.Max(0f, rec.PushAllowance));
+                if (taken > 0f)
+                    AddCharacterImpulse(new CharacterId(rec.Handle), give * (taken / wanted));
+                common = a - (wanted > 0f ? taken / wanted : 0f) * (a - common);
+            }
+            _bodyInterface.AddLinearVelocity(jid, n * (common - b));
+            // The avatar takes its share on its next step, so for this one the object is held back by what it
+            // would gain on the avatar meanwhile: else it goes that far into it.
+            return n * ((a - common) * dt);
+        }
+
+        // An avatar meets bodies only in its own update, once per step before the simulation's update
+        // (NoteCharacterBodyContact), and Jolt's cast of a fast body does not see it: its query marker is on the AvatarQuery
+        // layer, which collides with nothing. So a body fast enough to cross an avatar within one update would go through
+        // it, or be found deep inside it and put out on the far side. Before the update, each awake body that would go on
+        // more than the avatar's radius past where it first touches an avatar in this update, with nothing nearer in its way,
+        // strikes the avatar now: it is moved to that touch and the avatar and it meet by the rule of Strike, and both are
+        // told of the contact with the speed they closed at. Slower bodies are left to the avatar's own update, as before.
+        private void StrikeAvatarsInTheWay(float deltaTime)
+        {
+            float thinnest = float.MaxValue;
+            for (int i = 0; i < _characterList.Count; i++)
+                if (_characterList[i].MarkerBodyId != 0 && _characterList[i].Character != null)
+                    thinnest = MathF.Min(thinnest, _characterList[i].CapsuleRadius);
+            if (thinnest == float.MaxValue)
+                return;
+            _sweptBodies.Clear();
+            _sweptBodies.UnionWith(_activeBodies);
+            if (!_activationQueue.IsEmpty)
+                foreach (ActivationDelta delta in _activationQueue)
+                    if (delta.Activated)
+                        _sweptBodies.Add(delta.BodyId);
+            foreach (uint joltId in _sweptBodies)
+                StrikeAvatarInTheWay(joltId, deltaTime, thinnest);
+        }
+
+        private readonly HashSet<uint> _sweptBodies = new HashSet<uint>();            // step-thread only
+        private readonly List<ShapeCastResult> _avatarCastHits = new List<ShapeCastResult>();
+        private readonly List<ShapeCastResult> _wayCastHits = new List<ShapeCastResult>();
+
+        private void StrikeAvatarInTheWay(uint joltId, float dt, float thinnest)
+        {
+            if (!_joltToRecord.TryGetValue(joltId, out JoltBodyRecord? rec) || rec.IsCharacterMarker
+                || rec.MotionType != BodyMotionType.Dynamic || rec.Layer != PhysicsLayer.Dynamic || rec.Mass <= 0f)
+                return;
+            var jid = new BodyID(joltId);
+            Vector3 v = _bodyInterface.GetLinearVelocity(jid);
+            float speed = v.Length();
+            float travel = speed * dt;
+            if (!(travel > thinnest) || !_shapes.TryGet(rec.Shape.Value, out JoltShapeRecord shapeRec) || shapeRec.NativeShape == null)
+                return;
+            Vector3 dir = v / speed;
+            Vector3 from = ToVec(_bodyInterface.GetPosition(jid));
+            Matrix4x4 at = Matrix4x4.CreateFromQuaternion(_bodyInterface.GetRotation(jid));
+            at.Translation = from;
+            Matrix4x4 cast = Matrix4x4.Transpose(at);   // the convention ShapeCast passes the transform in
+            _avatarCastHits.Clear();
+            _system!.NarrowPhaseQuery.CastShape(shapeRec.NativeShape, cast, v * dt, DefaultCastSettings(), Vector3.Zero,
+                CollisionCollectorType.ClosestHit, _avatarCastHits, null, FilterFor(QueryFilter.Avatar), null, null);
+            if (_avatarCastHits.Count == 0)
+                return;
+            ShapeCastResult hit = _avatarCastHits[0];
+            JoltCharacterRecord? ch = null;
+            for (int i = 0; i < _characterList.Count; i++)
+                if (_characterList[i].MarkerBodyId == hit.BodyID2.ID)
+                    ch = _characterList[i];
+            float reach = hit.Fraction * travel;
+            if (ch?.Character == null || ch.Mass <= 0f || !(travel - reach > ch.CapsuleRadius))
+                return;
+            // PenetrationAxis points from the cast body into the avatar; the normal from the avatar into the body is its negation.
+            float axisLength = hit.PenetrationAxis.Length();
+            if (!(axisLength > 1e-6f))
+                return;
+            Vector3 n = -hit.PenetrationAxis / axisLength;
+            Vector3 vChar = ch.StepVelocity;
+            float a = Vector3.Dot(vChar, n), b = Vector3.Dot(v, n);
+            bool supported = ch.Character.GroundState == GroundState.OnGround;
+            bool held = supported && n.Z > CharacterFeetNormalZ;
+            if (!Strikes(a, b, held) || SomethingNearer(shapeRec.NativeShape, cast, v * dt, joltId, dir, travel, reach))
+                return;
+
+            Vector3 lead = Strike(ch, jid, rec, n, a, b, held, supported, dt);
+            _bodyInterface.SetPosition(jid, from + dir * reach + lead, Activation.Activate);
+            PushCharacterBodyContact(ch, joltId, hit.SubShapeID1.Value, hit.ContactPointOn2, n, ContactPhase.Begin, b - a);
+        }
+
+        // Whether a surface facing the body's motion lies in its way nearer than `reach`: then Jolt meets that first. What
+        // the body only slides along (the ground under a ball rolling at an avatar) is not in its way.
+        private bool SomethingNearer(Shape shape, Matrix4x4 cast, Vector3 motion, uint self, Vector3 dir, float travel, float reach)
+        {
+            _wayCastHits.Clear();
+            _system!.NarrowPhaseQuery.CastShape(shape, cast, motion, DefaultCastSettings(), Vector3.Zero,
+                CollisionCollectorType.AllHit, _wayCastHits, null, FilterFor(QueryFilter.Terrain | QueryFilter.Static | QueryFilter.Dynamic), null, null);
+            for (int i = 0; i < _wayCastHits.Count; i++)
+            {
+                ShapeCastResult r = _wayCastHits[i];
+                if (r.BodyID2.ID == self || r.Fraction * travel >= reach)
+                    continue;
+                float len = r.PenetrationAxis.Length();
+                if (len > 1e-6f && Vector3.Dot(r.PenetrationAxis / len, dir) > 0.1f)
+                    return true;
+            }
+            return false;
         }
 
         // Push an avatar-vs-AVATAR contact. Both sides are avatars (no BodyId); UserData on each.
@@ -4093,6 +4200,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             {
                 int collisionSteps = Math.Max(1, _settings.CollisionSteps);
                 _collisionStepSeconds = deltaTime / collisionSteps;   // the length of one solver step, for the bounce correction
+                if (_characterList.Count > 0)
+                    lock (_characterGate)
+                        StrikeAvatarsInTheWay(deltaTime);
                 UpdateCastBySpeed(deltaTime / collisionSteps);
                 // The update's capacity error is counted, not discarded.
                 PhysicsUpdateError updateError;
