@@ -866,8 +866,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             _linearCastThreshold = _system.Settings.LinearCastThreshold;
             _bodyInterface = _system.BodyInterface;
             // [Jolt] VelocityIterations and PositionIterations: the solver's velocity and position steps per collision step.
-            // Their defaults (10 and 2) are Jolt's own. A tall stack needs more velocity steps to come to rest: ten 0.5 m boxes
-            // do not fall asleep at 10 and do at 20.
+            // PhysicsBackendSettings.Default keeps Jolt's own 10 and 2; the module's [Jolt] default is 20 velocity steps, since a
+            // tall stack needs more to come to rest: ten 0.5 m boxes do not fall asleep at 10 and do at 20.
             PhysicsSettings solver = _system.Settings;
             if (settings.VelocityIterations > 0)
                 solver.NumVelocitySteps = (uint)settings.VelocityIterations;

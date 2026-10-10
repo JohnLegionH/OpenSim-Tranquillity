@@ -5,6 +5,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+using System.Runtime.CompilerServices;
+using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Region.PhysicsModules.Jolt.Harness;
 using OpenSim.Region.PhysicsModules.SharedBase;
@@ -137,11 +139,38 @@ public class RestingContactAndBounceTests
     [InlineData(90.0)]
     public void A_tower_of_ten_boxes_stands_and_falls_asleep(double physicsRate)
     {
-        // With 40 velocity steps. At the default 10 ([Jolt] VelocityIterations) ten stacked boxes sway and never fall
-        // asleep at 11, 22.5 or 45 Hz: Jolt puts the stack to sleep only when every box in it is still, and the top one
-        // sways a few centimetres. At 22.5 Hz the solver takes 3 steps of 1/67.5 s (JoltConfig.MinCollisionStepRate);
-        // with 2 of 1/45 s the tower only just fell asleep at 40 on one platform's native and never on the other's.
-        RunResult r = Run("tower-10", physicsRate, ("VelocityIterations", "40"));
+        // At the module's default of 20 velocity steps ([Jolt] VelocityIterations). At Jolt's own 10 ten stacked boxes
+        // sway and never fall asleep at 11, 22.5 or 45 Hz: Jolt puts the stack to sleep only when every box in it is
+        // still, and the top one sways a few centimetres. At 22.5 Hz the solver takes 3 steps of 1/67.5 s
+        // (JoltConfig.MinCollisionStepRate); with 2 of 1/45 s the tower did not fall asleep at 20.
+        AssertTowerStandsAndSleeps(Run("tower-10", physicsRate));
+    }
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(22.5)]
+    [InlineData(45.0)]
+    [InlineData(90.0)]
+    public void A_tower_of_ten_boxes_stands_and_falls_asleep_at_the_shipped_solver_settings(double physicsRate)
+    {
+        // The solver settings OpenSimDefaults.ini sets in [Jolt], which every simulator reads before its own ini.
+        AssertTowerStandsAndSleeps(Run("tower-10", physicsRate, ShippedSolverSettings()));
+    }
+
+    private static (string Key, string Value)[] ShippedSolverSettings([CallerFilePath] string here = "")
+    {
+        string ini = Path.Combine(Path.GetDirectoryName(here)!, "..", "..", "Source", "OpenSim.Server.RegionServer", "AppData",
+            "OpenSimDefaults.ini");
+        IConfig jolt = new IniConfigSource(ini).Configs["Jolt"];
+        Assert.NotNull(jolt);
+        var keys = new[] { "VelocityIterations", "PositionIterations" };
+        foreach (string key in keys)
+            Assert.False(string.IsNullOrEmpty(jolt.Get(key)), $"OpenSimDefaults.ini [Jolt] sets no {key}");
+        return keys.Select(k => (k, jolt.Get(k))).ToArray();
+    }
+
+    private static void AssertTowerStandsAndSleeps(RunResult r)
+    {
         foreach (HarnessPart p in r.Parts)
         {
             Assert.True(p.SleptAt < 4.5, $"{r.Name} {p.Name}: asleep at {p.SleptAt:0.00} s");
