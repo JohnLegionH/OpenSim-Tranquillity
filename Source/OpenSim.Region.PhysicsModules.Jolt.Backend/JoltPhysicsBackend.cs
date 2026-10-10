@@ -860,6 +860,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             }
             _system.Gravity = settings.Gravity;
             _bodyInterface = _system.BodyInterface;
+            // [Jolt] VelocityIterations and PositionIterations: the solver's velocity and position steps per collision step.
+            // Their defaults (10 and 2) are Jolt's own. A tall stack needs more velocity steps to come to rest: ten 0.5 m boxes
+            // do not fall asleep at 10 and do at 20.
+            PhysicsSettings solver = _system.Settings;
+            if (settings.VelocityIterations > 0)
+                solver.NumVelocitySteps = (uint)settings.VelocityIterations;
+            if (settings.PositionIterations > 0)
+                solver.NumPositionSteps = (uint)settings.PositionIterations;
+            _system.Settings = solver;
+            _penetrationSlop = solver.PenetrationSlop;
+            _positionShare = 1f - MathF.Pow(1f - solver.Baumgarte, Math.Max(1, solver.NumPositionSteps));
 
             // Determinism (for A/B parity runs): single-threaded ALONE is not enough - Jolt
             // also needs its DeterministicSimulation flag on to guarantee bit-identical re-runs. It
@@ -1233,8 +1244,99 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             PartMaterial(ra, manifold.SubShapeID1.Value, out float f1, out float r1);
             PartMaterial(rb, manifold.SubShapeID2.Value, out float f2, out float r2);
             settings.CombinedFriction = MathF.Sqrt(f1 * f2);
-            settings.CombinedRestitution = r1 * r2;
+            settings.CombinedRestitution = BounceFromTheSurface(in body1, in body2, ra, rb, in manifold, r1 * r2);
         }
+
+        // The length of one solver step of the current Update (the step's time over its collision steps). Written under
+        // _simLock before the Update, read by the contact callbacks inside it.
+        private float _collisionStepSeconds;
+
+        // Jolt applies restitution in the solver step in which it first finds a closing contact, at the speed the body had
+        // at the start of that step, and the body bounces "from its current position rather than from a position where it
+        // is touching the other object" (Jolt, ContactConstraintManager.cpp, CalculateNonPenetrationConstraintProperties).
+        // A body moving v metres a second is found anywhere from one step's travel above the surface (a speculative
+        // contact) to one step's travel into it, so the bounce starts up to v x step from the surface and its height is off
+        // by about that much: at 45 Hz a 1 m box dropped 2 m with restitution 0.3 rebounds from 18 percent low to 11 percent
+        // high as the drop height changes by 7 cm. Where gravity pulls the two bodies together, this hands Jolt the
+        // restitution that gives the bounce the height it would have had from the surface: the body struck the surface at
+        // s (its speed now, less or more the gravity over the gap or the depth), left it at restitution x s, and so rises to
+        // (restitution x s)^2 / 2g above it; Jolt sends it off from here at e' x its speed and then moves it one step, so e'
+        // is solved from that. Bodies that gravity does not pull together (two falling bodies, or no gravity) keep the
+        // combined value, as do contacts that close too slowly for Jolt to apply restitution at all.
+        private float BounceFromTheSurface(in Body body1, in Body body2, JoltBodyRecord ra, JoltBodyRecord rb, in ContactManifold manifold,
+                                           float restitution)
+        {
+            float dt = _collisionStepSeconds;
+            if (restitution <= 0f || dt <= 0f || manifold.PointCount == 0)
+                return restitution;
+            // The normal points the way body 2 moves out of the contact. Gravity's pull of body 2 toward body 1 along it:
+            Vector3 n = manifold.WorldSpaceNormal;
+            float g1 = body1.IsDynamic ? ra.GravityFactor : 0f;
+            float g2 = body2.IsDynamic ? rb.GravityFactor : 0f;
+            float pull = -Vector3.Dot(_settings.Gravity * (g2 - g1), n);
+            if (pull <= 1e-3f)
+                return restitution;
+            float damping = MathF.Max(body1.IsDynamic ? body1.MotionProperties.LinearDamping : 0f,
+                                      body2.IsDynamic ? body2.MotionProperties.LinearDamping : 0f);
+
+            Vector3 p1 = manifold.GetWorldSpaceContactPointOn1(0);
+            Vector3 p2 = manifold.GetWorldSpaceContactPointOn2(0);
+            float closing = -Vector3.Dot(body2.GetPointVelocity(p2) - body1.GetPointVelocity(p1), n);   // this step's gravity included
+            float height = -manifold.PenetrationDepth;   // above the surface; below it when negative
+            // Jolt applies restitution only to a contact closing faster than MinVelocityForRestitution that will close this step.
+            if (closing <= MinVelocityForRestitution || closing * dt <= height)
+                return restitution;
+            float before = closing - pull * dt;          // the speed Jolt bounces: it takes this step's gravity back off
+            if (before <= 0f)
+                return restitution;
+            // The height above the surface its speed would have taken it from, had it fallen there: the stepped fall loses
+            // g dt^2 / 2 of it each step (a step adds dt x the new speed to the position), before x dt / 2 over a fall from rest.
+            float fell = before * before / (2f * pull) + height + before * dt / 2f;
+            if (fell <= 0f)
+                return restitution;
+            // It left the surface at restitution x the speed it struck it with, and its damping slows it on the way up
+            // (dv/dt = -g - c v rises v0/c - g/c^2 ln(1 + c v0/g)): the bounce's height above the surface.
+            float leave = restitution * MathF.Sqrt(2f * pull * fell);
+            float rise = damping > 1e-6f
+                ? leave / damping - pull / (damping * damping) * MathF.Log(1f + damping * leave / pull)
+                : leave * leave / (2f * pull);
+            if (rise <= height)
+            {
+                // Found above where the bounce should reach: no bounce from here is right. Not bouncing lands it on the
+                // surface; the least bounce leaves it at this height. Take whichever is nearer the right height.
+                return rise < height / 2f ? 0f : 1e-4f;
+            }
+            // The speed to leave at, found by halving: the highest point grows with it.
+            float lo = 0f, hi = MathF.Sqrt(2f * pull * (rise - height)) + pull * dt + 1f;
+            for (int i = 0; i < 24; i++)
+            {
+                float mid = (lo + hi) / 2f;
+                if (Apex(height, mid, pull, damping, dt) < rise) lo = mid; else hi = mid;
+            }
+            float v = (lo + hi) / 2f;
+            return MathF.Min(v / before, 2f);
+        }
+
+        // The highest point a body reaches leaving the surface region at v from `height` (below the surface when negative),
+        // as Jolt steps it: each step moves it by the new speed x dt, its position solver then takes PositionShare of what
+        // still lies deeper than the penetration slop off, and the next step takes g dt off the speed and then damps it.
+        private float Apex(float height, float v, float pull, float damping, float dt)
+        {
+            float y = height;
+            for (int i = 0; i < 1024 && v > 0f; i++)
+            {
+                y += v * dt;
+                if (y < -_penetrationSlop)
+                    y += _positionShare * (-_penetrationSlop - y);
+                v = (v - pull * dt) * MathF.Max(0f, 1f - damping * dt);
+            }
+            return y;
+        }
+
+        // Jolt's penetration slop and the share of the penetration beyond it that its position solver removes in one step
+        // (Baumgarte per position iteration, over NumPositionSteps iterations): read from the PhysicsSystem at creation.
+        private float _penetrationSlop = 0.02f;
+        private float _positionShare = 0.36f;
 
         // The struck part's friction and restitution: a compound child's own (SetBodyPartMaterial), or the body's.
         private void PartMaterial(JoltBodyRecord rec, uint subShapeId, out float friction, out float restitution)
@@ -1778,6 +1880,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     AllowMotionChange = movable,
                     Friction = desc.Friction,
                     Restitution = desc.Restitution,
+                    GravityFactor = desc.GravityFactor,
                 };
                 uint handle = _bodies.Add(rec);
                 rec.Handle = handle;
@@ -2280,6 +2383,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     rec.MotionType == BodyMotionType.Static)
                     return; // static bodies never feel gravity; SetGravityFactor would touch null motion props.
                 _bodyInterface.SetGravityFactor(jid, factor);
+                rec.GravityFactor = factor;
             }
         }
 
@@ -2437,6 +2541,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             long step = Volatile.Read(ref _contactStep);
             return step != 0 && Volatile.Read(ref rec.ContactStep) == step;
         }
+
+        public bool IsBodyAwake(BodyId body)
+            => _bodies.TryGet(body.Value, out JoltBodyRecord rec) && Volatile.Read(ref rec.Awake);
 
         public bool TryGetBodyState(BodyId body, out BodyState state)
         {
@@ -3654,6 +3761,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             if (_system != null && pool != null)
             {
                 int collisionSteps = Math.Max(1, _settings.CollisionSteps);
+                _collisionStepSeconds = deltaTime / collisionSteps;   // the length of one solver step, for the bounce correction
                 // The update's capacity error is counted, not discarded.
                 PhysicsUpdateError updateError;
                 // ONE Update at a time on this region's pool - Step holds the pool's gate.
@@ -3690,6 +3798,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     _justActivated.Remove(delta.BodyId);
                     _justDeactivated.Add(delta.BodyId);
                 }
+                if (_joltToRecord.TryGetValue(delta.BodyId, out JoltBodyRecord? woken))
+                    Volatile.Write(ref woken.Awake, delta.Activated);
             }
 
             int bodyCount = 0;
@@ -3972,6 +4082,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public float Restitution;
         public float[]? PartFriction;     // a compound's per-child values, in its child order (SetBodyPartMaterial); null = the body's
         public float[]? PartRestitution;
+        public float GravityFactor;       // the body's gravity factor as last set (SetBodyGravityFactor); the bounce correction reads it
+        public bool Awake;                // the engine had the body awake at the end of the last step (IsBodyAwake)
     }
 
     internal sealed class JoltShapeRecord

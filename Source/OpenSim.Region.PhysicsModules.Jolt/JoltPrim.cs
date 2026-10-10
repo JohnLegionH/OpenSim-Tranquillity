@@ -1027,6 +1027,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // For the contact dispatch: true when this part, or the linkset root its body belongs to, is a volume detector.
         internal bool IsVolumeDetectPart => (_linkRoot ?? this)._isVolumeDetect;
 
+        // For the contact dispatch: the body this part is in (the linkset root's) is awake; is physical and asleep.
+        internal bool BodyAwake
+        {
+            get { JoltPrim root = _linkRoot ?? this; return root._body.IsValid && _backend.IsBodyAwake(root._body); }
+        }
+        internal bool PhysicalAndAsleep
+        {
+            get { JoltPrim root = _linkRoot ?? this; return root._isPhysical && root._body.IsValid && !_backend.IsBodyAwake(root._body); }
+        }
+
         // Collision-event subscription.
         // A script with a collision handler -> OpenSim calls SubscribeEvents(50). Flip the LIVE body's
         // Persist gate so the ongoing-touch stream (the script `collision` event) reaches the module drain.

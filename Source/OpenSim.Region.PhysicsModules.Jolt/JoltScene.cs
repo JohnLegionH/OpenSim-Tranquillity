@@ -1933,7 +1933,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // heartbeat thread right after the drain (same thread SOP.PhysicsCollision expects).
         //
         // Contacts carry Begin (first touch) + Persist (each frame while touching, gated on a subscribed
-        // body) + End (separation). The "currently touching" set OpenSim wants = Begin|Persist this frame;
+        // body) + End (separation). The "currently touching" set OpenSim wants = Begin|Persist this frame, plus
+        // last frame's contacts between bodies that are now both at rest (held below: the engine reports none for them);
         // End is implicit (a pair that drops out of the set). A prim that touched last frame but not now
         // still needs one (empty) update so collision_end can fire - _collidedLastFrame drives that flush.
         // Per-child: each contact names the STRUCK part on each side (ChildUserData - the
@@ -1960,6 +1961,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
             foreach (uint id in _collisions.CollidedLastFrame)
                 _frameIds.Add(id);
+            foreach (CollisionEventUpdate set in _collisions.Current.Values)   // what last frame's prims touched (held if asleep)
+                foreach (uint id in set.m_objCollisionList.Keys)
+                    _frameIds.Add(id);
             foreach (uint id in _collisions.Scores.Keys)   // last frame's scored prims (zeroed if gone)
                 _frameIds.Add(id);
             _framePrims.Clear();
@@ -2024,9 +2028,30 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                         new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f, c.Normal.Z < -AvatarFeetNormalZ));
             }
 
+            // A contact of last frame that is missing now only because neither body is awake is still there: the engine
+            // looks for contacts only where a body is awake, so two bodies at rest on each other report nothing. Without
+            // this a resting object's collision and land_collision would end when it falls asleep, and a volume detector
+            // would lose a body that falls asleep inside it. ubODE keeps them too (ODEScene re-feeds each sleeping prim's
+            // last contacts, ODEPrim.SleeperAddCollisionEvents). Only subscribed prims have sets, so nothing else pays.
+            foreach (KeyValuePair<uint, CollisionEventUpdate> kv in _collisions.Previous)
+            {
+                if (!_framePrims.TryGetValue(kv.Key, out JoltPrim prim) || !prim.SubscribedEvents())
+                    continue;
+                if (!_collisions.Current.ContainsKey(kv.Key) && AllStillTouchingAsleep(prim, kv.Value))
+                {
+                    _collisions.HoldAll(kv.Key, kv.Value);   // at rest as it was: keep last frame's set itself
+                    continue;
+                }
+                foreach (KeyValuePair<uint, ContactPoint> c in kv.Value.m_objCollisionList)
+                    if (!_collisions.Touches(kv.Key, c.Key) && StillTouchingAsleep(prim, c.Key))
+                        _collisions.Hold(kv.Key, c.Key, c.Value);
+            }
+
             // Deliver this frame's sets (outside the lock).
             foreach (KeyValuePair<uint, CollisionEventUpdate> kv in _collisions.Current)
             {
+                if (!_collisions.ShouldDeliver(kv.Key, kv.Value))
+                    continue;
                 if (_framePrims.TryGetValue(kv.Key, out JoltPrim p))
                     p.SendCollisionUpdate(kv.Value);
                 else if (_frameAvatars.TryGetValue(kv.Key, out JoltCharacter a))
@@ -2068,6 +2093,28 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         private bool IsVolumeDetectPrim(uint localID)
             => _framePrims.TryGetValue(localID, out JoltPrim p) && p.IsVolumeDetectPart;
+
+        private bool AllStillTouchingAsleep(JoltPrim prim, CollisionEventUpdate set)
+        {
+            foreach (uint collider in set.m_objCollisionList.Keys)
+                if (!StillTouchingAsleep(prim, collider))
+                    return false;
+            return true;
+        }
+
+        // A prim's contact with `collider` (0 = the ground) that the engine did not report this frame still holds when
+        // neither side is awake and at least one is a physical body asleep: neither has moved since they last touched.
+        // An avatar, or a prim that has gone, ends it.
+        private bool StillTouchingAsleep(JoltPrim prim, uint collider)
+        {
+            if (prim.BodyAwake)
+                return false;
+            if (collider == 0)
+                return prim.PhysicalAndAsleep;
+            if (!_framePrims.TryGetValue(collider, out JoltPrim other) || other.BodyAwake)
+                return false;
+            return prim.PhysicalAndAsleep || other.PhysicalAndAsleep;
+        }
 
         public override void SetTerrain(float[] heightMap)
         {

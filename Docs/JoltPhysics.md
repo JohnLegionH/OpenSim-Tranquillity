@@ -440,9 +440,15 @@ Life wiki documents them:
   the product of the two, restitution the product. A box sliding on a surface of the same friction
   `f` therefore feels `f`. A bounce needs a closing speed of at least 1 m/s (Jolt's
   `MinVelocityForRestitution`). The terrain has friction 0.6 and restitution 0, so nothing bounces
-  off the ground. At some step rates a low restitution bounces short of its height: a 1 m box
-  dropped 2 m with restitution 0.4 rebounds 8.6 percent low at 45 Hz and 12 percent low at
-  22.5 Hz (within 3 percent at 11 and 90 Hz); from 0.5 up it is within 5 percent at 11 and 45 Hz.
+  off the ground.
+- A dropped object rebounds to its restitution squared times the height it fell (less its damping),
+  within 5 percent, for restitution 0.1 to 0.9, drops of 0.5 to 10 m and step rates of 11 to 90 Hz.
+  Jolt bounces a body from wherever its step finds it, up to one step's travel above or into the
+  surface, so on its own the height would be off by that much (a 1 m box dropped 2 m with restitution
+  0.3 came back 18 percent low to 11 percent high at 45 Hz, by where the step fell). The module hands
+  Jolt, for each impact, the restitution that sends the body as high as a bounce from the surface would.
+  A rebound lower than Jolt's speculative contact distance (2 cm) can still come out anywhere from
+  none to that distance, because the step may find the body already above the top of its bounce.
 - The gravity multiplier scales the object's gravity: the object falls at (1 - buoyancy) times the
   multiplier times the region's gravity, as in ubODE. 0 floats, 2 falls at twice the rate.
 - Density sets the mass: volume times density, in lindograms (kg / 100) for `llGetMass`.
@@ -587,6 +593,27 @@ raises `collision_start` and `collision_end` "when interpenetrating". Jolt does 
 
 The harness scenarios beginning `vd-` and `phantom-` show each of these, and print the collision events
 each part raised.
+
+## Resting contacts and collision events
+
+Second Life documents `collision_end` as "Triggered when task stops colliding with another task" and
+`land_collision_end` when it "stops colliding with land", and that "A collision with a physical object or
+avatar resting on object does not continuously trigger collisions but for a few times, unless there is
+movement" (wiki.secondlife.com, the collision events). Jolt does this as follows:
+
+- An object that comes to rest on another object, on the ground or inside a volume-detect prim and falls
+  asleep keeps touching it: no end event comes when it falls asleep, and one comes when it is moved off.
+  Jolt looks for contacts only where a body is awake, so the module keeps the contacts a body had when
+  neither side of them is awake, as ubODE does with its sleeping prims.
+- `collision` comes each heartbeat while the object settles and stops once it is asleep.
+  `land_collision` goes on while it sleeps, as in ubODE; the wiki says nothing about it at rest.
+- Only prims whose scripts have a collision event are tracked, so the rest cost nothing extra.
+- `VelocityIterations` and `PositionIterations` in `[Jolt]` set the engine's velocity and position
+  steps (defaults 10 and 2, Jolt's own). A tall stack needs more velocity steps to come to rest: ten
+  stacked 0.5 m boxes do not fall asleep at 10 at 11 or 45 Hz, and fall over at 22.5 Hz; at 40 they
+  stand and sleep at 11 to 90 Hz.
+- An object moved by setting its position while it sleeps is not woken, so it keeps its contacts until
+  something wakes it.
 
 ## Vehicles
 
@@ -856,7 +883,10 @@ the phantom and volume-detect scenarios: `vd-walk` and `phantom-walk` (an avatar
 volume-detect or phantom box), `vd-drop`, `phantom-drop` and `phantom-physical-drop` (a box falling through a
 slab), `phantom-physical-walk`, the `-on-walk` and `-off-walk` scenarios (the flag switched before the avatar
 arrives, on one box or a three-box linkset) and `phantom-physical-toggle` (a resting box or linkset made phantom
-and solid again). These print each watched part's collision events under their summary line. The summary's extra columns give when
+and solid again), and the resting-contact scenarios: `rest-platform`, `rest-ground` and `rest-vd` (a box comes to
+rest on a platform, on the ground or inside a volume-detect box, falls asleep and is thrown off at 5 s),
+`tower-10` (ten stacked boxes) and `rest-no-bounce` (a box of restitution 0 dropped 2 m). These print each
+watched part's collision events under their summary line. The summary's extra columns give when
 the engine last had a body awake and, for the crashes, the impact, arrival and leaving speeds,
 overlap and a pass-through check. The ground is
 level at 25 m with water at 20 m; with a slope it rises northward at that angle from y 40 to y 100.

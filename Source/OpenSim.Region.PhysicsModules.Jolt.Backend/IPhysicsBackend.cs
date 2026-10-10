@@ -791,6 +791,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// whether or not anyone listens for its contact events. False for a sensor's or an avatar marker's touch.</summary>
         bool BodyHadContact(BodyId body);
 
+        /// <summary>Whether the engine had this body awake at the end of the last step. False for a sleeping body, a body
+        /// created asleep that has not yet been woken, and a static body. The engine reports no contacts between two bodies
+        /// of which neither is awake, so a contact between them that was there when they fell asleep is still there.</summary>
+        bool IsBodyAwake(BodyId body);
+
         bool TryGetBodyState(BodyId body, out BodyState state);
 
         // -- characters ---------------------------------------------------
