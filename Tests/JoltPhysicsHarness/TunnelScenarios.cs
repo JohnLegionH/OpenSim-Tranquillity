@@ -109,8 +109,13 @@ public static class TunnelScenarios
     // Went through the box: the ball's centre got past the box's along the shot while the two still overlap across it
     // (in y and in z, taking the box at its largest reach, half its diagonal, however a hit has turned it). A ball that
     // overtakes the box clear of it, over, under or beside it after both were thrown by the hit, did not go through.
+    // Samples taken after either has left the region do not count: a fast hit can throw the box out ahead of the ball,
+    // and from then on the box waits just outside the edge (Harness.BothInRegion), so the ball, leaving after it,
+    // reaches and passes where the box waits without having gone through it.
     private static bool PastBox(Run r, Sample s)
     {
+        if (!Harness.BothInRegion(r, s))
+            return false;
         float reach = Ball(r) * 0.5f + BoxSize * 0.5f * MathF.Sqrt(3f);
         return s.Position.X > s.Other.X && MathF.Abs(s.Position.Y - s.Other.Y) < reach && MathF.Abs(s.Position.Z - s.Other.Z) < reach;
     }
