@@ -455,6 +455,34 @@ under the avatar's feet. The contacts carry no relative speed, so they make no c
 impact damage. Where damage is on, a prim with a damage value set damages the avatar it touches and
 is removed, as the simulator does with every physics engine.
 
+## Phantom and volume-detect prims
+
+Second Life documents both (wiki.secondlife.com): a phantom object lets "objects and avatars ... pass
+through it", and a physical one collides "with the ground but will not pass through" and queues land
+collision events; with llVolumeDetect "physical object and avatars can pass through the object", which
+raises `collision_start` and `collision_end` "when interpenetrating". Jolt does this as follows:
+
+- A volume-detect prim is a sensor. Avatars and physical objects pass through it without slowing, and
+  it reports what is inside it; the simulator turns that into one `collision_start` when each enters and
+  one `collision_end` when it leaves. What passes through is not told, so an avatar's attachments get
+  no event from it. A non-physical one detects avatars and physical objects; a physical one falls
+  through the ground.
+- A physical phantom prim collides with the terrain and nothing else: it rests on the ground, raises
+  land collision events, and passes through prims and avatars. A non-physical phantom prim is kept out
+  of physics by the simulator, with every engine.
+- Switching phantom or volume detect on or off on a prim, or on a linkset, changes the prim's body in
+  place: it keeps its position and its physics body, and a physical one that was resting on something
+  it can now pass through falls.
+- A ray cast finds phantom and volume-detect prims only when it asks for them: YEngine's `llCastRay`
+  with `RC_DETECT_PHANTOM`. Phlox's `llCastRay` does not pass that option to the physics engine, so its
+  casts do not find them.
+- `PRIM_PHYSICS_SHAPE_CONVEX` on a non-physical prim that is not a mesh makes it collide as its convex
+  hull. A non-physical mesh prim still collides as its triangle mesh whatever its shape type, because
+  Jolt does not read a mesh's own hull list yet.
+
+The harness scenarios beginning `vd-` and `phantom-` show each of these, and print the collision events
+each part raised.
+
 ## Vehicles
 
 LSL vehicles run on a controller that steps each behaviour Second Life documents on that documented
@@ -718,7 +746,12 @@ Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, t
 `testcar-down` and `car-down` (key held down the ramp), `hover`, `attract-roll` and `attract-pitch`
 (one behaviour alone), `park-new`, `park-faded`, `park-drive`, `park-car` and `park-wake` (sleeping), and
 `crash-wall`, `crash-box`, `crash-headon` and `crash-drop`, `rollonly` (a car rolled and pitched with
-`VEHICLE_FLAG_LIMIT_ROLL_ONLY`) and `motor-offset` (a floating box pushed below its centre of mass). The summary's extra columns give when
+`VEHICLE_FLAG_LIMIT_ROLL_ONLY`) and `motor-offset` (a floating box pushed below its centre of mass), and
+the phantom and volume-detect scenarios: `vd-walk` and `phantom-walk` (an avatar walking through a fixed
+volume-detect or phantom box), `vd-drop`, `phantom-drop` and `phantom-physical-drop` (a box falling through a
+slab), `phantom-physical-walk`, the `-on-walk` and `-off-walk` scenarios (the flag switched before the avatar
+arrives, on one box or a three-box linkset) and `phantom-physical-toggle` (a resting box or linkset made phantom
+and solid again). These print each watched part's collision events under their summary line. The summary's extra columns give when
 the engine last had a body awake and, for the crashes, the impact, arrival and leaving speeds,
 overlap and a pass-through check. The ground is
 level at 25 m with water at 20 m; with a slope it rises northward at that angle from y 40 to y 100.

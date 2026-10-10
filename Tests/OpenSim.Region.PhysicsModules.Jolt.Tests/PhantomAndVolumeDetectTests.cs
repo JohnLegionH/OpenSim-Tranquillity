@@ -267,6 +267,54 @@ public class PhantomAndVolumeDetectTests
         Assert.True(root.Watch.StartsOf(OtherId) >= 1);
     }
 
+    // ------------------------------------------------------------------ a scene of its own
+
+    private const float Heartbeat = 1f / 11f;
+
+    private static JoltScene NewScene()
+    {
+        var config = new IniConfigSource();
+        IConfig startup = config.AddConfig("Startup");
+        startup.Set("physics", "Jolt");
+        startup.Set("meshing", "Meshmerizer");
+        config.AddConfig("Jolt").Set("PhysicsStepRate", "0");
+        var scene = new JoltScene();
+        scene.Initialise(config);
+        var heights = new float[256 * 256];
+        Array.Fill(heights, Ground);
+        scene.InitialiseWithoutScene("Test Region", 256, 256, heights, 20f, Heartbeat);
+        return scene;
+    }
+
+    // A 2 x 2 x 0.5 m prim 3 m up at the region's centre, added as SceneObjectPart.AddToPhysics adds it.
+    private static PhysicsActor Target(JoltScene scene, bool physical, bool volumeDetect)
+    {
+        PhysicsActor pa = scene.AddPrimShape("target", PrimitiveBaseShape.CreateBox(), new Vector3(128f, 128f, Ground + 3f),
+                                             new Vector3(2f, 2f, 0.5f), Quaternion.Identity, physical, true, (byte)PhysShapeType.prim, 77);
+        pa.Density = 1000f;
+        if (volumeDetect)
+            pa.SetVolumeDetect(1);
+        return pa;
+    }
+
+    // "When physical they fall through the ground with the risk of going off-world." (llVolumeDetect)
+    [Fact]
+    public void A_physical_volume_detect_prim_falls_through_the_ground()
+    {
+        JoltScene scene = NewScene();
+        try
+        {
+            PhysicsActor pa = Target(scene, true, true);
+            for (int i = 0; i < 33; i++)                          // 3 s
+                scene.Simulate(Heartbeat);
+            Assert.True(pa.Position.Z < Ground - 5f, $"at z {pa.Position.Z:0.00}");
+        }
+        finally
+        {
+            scene.Dispose();
+        }
+    }
+
     // ------------------------------------------------------------------ ray casts
 
     // llCastRay finds phantom and volume-detect prims only with RC_DETECT_PHANTOM (RayFilterFlags.phantom or volumedtc
@@ -277,24 +325,10 @@ public class PhantomAndVolumeDetectTests
     [InlineData(true, true)]
     public void A_ray_finds_phantom_and_volume_detect_prims_only_when_it_asks_for_them(bool physical, bool volumeDetect)
     {
-        var config = new IniConfigSource();
-        IConfig startup = config.AddConfig("Startup");
-        startup.Set("physics", "Jolt");
-        startup.Set("meshing", "Meshmerizer");
-        config.AddConfig("Jolt").Set("PhysicsStepRate", "0");
-        var scene = new JoltScene();
+        JoltScene scene = NewScene();
         try
         {
-            scene.Initialise(config);
-            var heights = new float[256 * 256];
-            Array.Fill(heights, Ground);
-            scene.InitialiseWithoutScene("Test Region", 256, 256, heights, 20f, 1f / 11f);
-            PhysicsActor pa = scene.AddPrimShape("target", PrimitiveBaseShape.CreateBox(), new Vector3(128f, 128f, Ground + 3f),
-                                                 new Vector3(2f, 2f, 0.5f), Quaternion.Identity, physical, true, (byte)PhysShapeType.prim, 77);
-            if (volumeDetect)
-                pa.SetVolumeDetect(1);
-            pa.Density = 1000f;
-
+            Target(scene, physical, volumeDetect);
             const RayFilterFlags solid = RayFilterFlags.land | RayFilterFlags.agent | RayFilterFlags.physical | RayFilterFlags.nonphysical;
             var from = new Vector3(128f, 128f, Ground + 10f);
             var plain = (List<ContactResult>)scene.RaycastWorld(from, -Vector3.UnitZ, 20f, 4, solid);
@@ -303,6 +337,11 @@ public class PhantomAndVolumeDetectTests
             var asked = (List<ContactResult>)scene.RaycastWorld(from, -Vector3.UnitZ, 20f, 4,
                                                                 solid | (volumeDetect ? RayFilterFlags.volumedtc : RayFilterFlags.phantom));
             Assert.Contains(asked, h => h.ConsumerID == 77);
+
+            // The 4-argument entry (Phlox's llCastRay) has no way to ask for them.
+            List<ContactResult> unfiltered = scene.RaycastWorld(from, -Vector3.UnitZ, 20f, 4);
+            Assert.DoesNotContain(unfiltered, h => h.ConsumerID == 77);
+            Assert.Contains(unfiltered, h => h.ConsumerID == 0);
         }
         finally
         {
