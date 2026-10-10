@@ -153,7 +153,7 @@ public class ShapeAndAllocatorRuleTests
             ["JoltPhysicsSharp.CharacterVirtual.ExtendedUpdate"] = new[] { "JoltPhysicsBackend.StepCharacter" },       // gate
             ["JoltPhysicsSharp.CharacterVirtual.SetShape"] = new[] { "JoltPhysicsBackend.SetShapeWithoutScratch" },    // depth
             ["JoltPhysicsSharp.CharacterVirtual.Update"] = Array.Empty<string>(),
-            ["JoltPhysicsSharp.CharacterVirtual.RefreshContacts"] = Array.Empty<string>(),
+            ["JoltPhysicsSharp.CharacterVirtual.RefreshContacts"] = new[] { "JoltPhysicsBackend.StepCharacter" },   // gate
             ["JoltPhysicsSharp.CharacterVirtual.WalkStairs"] = Array.Empty<string>(),
             ["JoltPhysicsSharp.CharacterVirtual.StickToFloor"] = Array.Empty<string>(),
         };

@@ -2883,8 +2883,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 // the avatar where it was, the push was lost as blocked, and a fast body struck before this update went on
                 // into the avatar and out past it. Never for an object on top of the avatar: with the ground below, Jolt's
                 // character took the two for opposing walls and could not move at all, so an avatar with a box on its head
-                // could not walk out from under it.
-                settings.CanPushCharacter = (phase != ContactPhase.Begin || ch.StruckBy.Contains(otherJoltId))
+                // could not walk out from under it. An avatar the caller has just put in place is set out of the object in
+                // that update, as out of a fixed one (StepCharacter): held back a step, it was set out in the next, at
+                // once, reported as speed (38 m/s), while Jolt took the object for what it stood on and pushed it aside.
+                settings.CanPushCharacter = (phase != ContactPhase.Begin || ch.StruckBy.Contains(otherJoltId) || ch.Placed)
                                             && normal.Z <= CharacterFeetNormalZ;
                 settings.CanReceiveImpulses = false;
             }
@@ -3659,8 +3661,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // than the speed such bodies carry it at.
             Vector3 displacement = ch.Position - startPos;
             Vector3 moved = displacement / dt;
+            bool setClear = false;
             if (rec.Placed && displacement.Length() > newVel.Length() * dt + PlacedSetOutSlack)
+            {
                 moved = Vector3.Zero;
+                setClear = SetClear(ch, displacement - newVel * dt);
+            }
             else if (CarriedVelocity(rec, newVel) is Vector3 carried && moved.Length() > carried.Length() + CarriedSpeedSlack)
                 moved *= carried.Length() / moved.Length();
             rec.MovedVelocity = new Vector3(moved.X, moved.Y, moved.Z + late);
@@ -3678,11 +3684,39 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 FinishForceCarry(rec, ch, forceStep, forceTau, newVel, startPos, dt);
 
             FinishCharacterContacts(rec, ch, dt);
+
+            // Where it stands and what it touches are found again where it was left, after this update's contacts were
+            // reported: Jolt's "after a character has teleported" (CharacterVirtual::RefreshContacts). Else the next
+            // update began from this one's ground, the face, and an avatar left in the air off it was snapped down to
+            // the floor by stick-to-floor (4.75 cm in 1/45 s, 2.14 m/s) instead of falling to it.
+            if (setClear)
+                using (Enter("CharacterVirtual::RefreshContacts (joltc.cpp:8151)"))
+                    ch.RefreshContacts(new ObjectLayer((uint)PhysicsLayer.Avatar), _system, null, null);
         }
 
         // How much further than its velocity takes it (m) an avatar may move in the update after it was put in place before
         // it counts as set out of something it was put inside: the snap of stick-to-floor and rounding stay well below.
         private const float PlacedSetOutSlack = 0.01f;
+
+        // How far (m) past Jolt's character padding an avatar set out sideways is left from what it was set out of.
+        private const float SetOutClearance = 0.01f;
+
+        // Jolt sets an avatar out to its character padding from what it overlapped, where the contact still counts as
+        // touching (within Jolt's collision tolerance, 1 mm; CharacterVirtual::UpdateSupportingContact). Set out of the
+        // side of an object with its feet a few millimetres above the ground, it then had that side face for its ground:
+        // touching only a steep face, Jolt counts it as standing when a move down at 0.6 m/s over the update would be
+        // stopped short, and names that face its ground. It hung there, its gravity held off, and took up the object's
+        // velocity, so a light object it had been set out of carried it up as it tipped (1.15 m/s). Out sideways, it is
+        // left SetOutClearance further on, clear of the face. Returns whether it was moved.
+        private static bool SetClear(CharacterVirtual ch, Vector3 setOut)
+        {
+            var level = new Vector3(setOut.X, setOut.Y, 0f);
+            float across = level.Length();
+            if (!(across > PlacedSetOutSlack))
+                return false;
+            ch.Position += level * (SetOutClearance / across);
+            return true;
+        }
 
         // How much faster (m/s) than the bodies pushing it carry it an avatar may move before the rest counts as set out.
         private const float CarriedSpeedSlack = 0.01f;
