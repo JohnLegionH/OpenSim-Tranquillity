@@ -145,6 +145,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal Vector3 CurrentPos => _position;
         internal bool IsPhysicalBody => _isPhysical;
         internal bool IsVehicle => _vehicle != null;
+        // The mass of this prim's body, the one the engine moves (a welded linkset's root: the whole linkset's); 0 without
+        // a body. Read by the console test commands.
+        internal float BodyMass => _body.IsValid ? _backend.GetBodyMass(_body) : 0f;
 
         // Live vehicle state for the `jolt vehiclestatus` console command (type / buoyancy / active).
         internal string VehicleInfo()
@@ -210,6 +213,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private void Build()
         {
             _shape = _module.CookPrimShape(_backend, _pbs, _size, CookAsHull, out _axisCorrection, out _shapeKind);
+            _ownMass = null;
             CreateBodyInternal();
         }
 
@@ -304,6 +308,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // A new body starts free to turn about every axis: re-apply the script's STATUS_ROTATE locks.
                 if (_rotationLocks != 0)
                     ApplyRotationLocks();
+                // A new body of an object that is selected (a relink, resize, physics toggle or unlink while it is being
+                // edited) starts held, as the old one was.
+                if (_selected && _linkRoot == null)
+                    HoldSelected();
             }
         }
 
@@ -315,7 +323,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal void ActivatePending()
         {
             _activationPending = false;
-            if (_body.IsValid && _isPhysical)
+            if (_body.IsValid && _isPhysical && !_selected)
                 _backend.ActivateBody(_body);
         }
 
@@ -355,6 +363,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (!_body.IsValid) { Build(); return; }
             ShapeId old = _shape;
             _shape = _module.CookPrimShape(_backend, _pbs, _size, CookAsHull, out _axisCorrection, out _shapeKind);
+            _ownMass = null;
             _backend.SetBodyShape(_body, _shape, recomputeMass: false);   // keeps the body at its current transform
             // The new shape's mass (and inertia, keeping any rotation locks): volume x density, as at creation. Without
             // this a resized physical prim kept the mass of its old size, and llGetMass with it.
@@ -373,6 +382,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _module.SetScriptForced(this, false);
             _module.SetTargeted(this, false);
             // If welded into a parent compound, detach first (parent rebuilds without us).
+            _welded = false;
             if (_linkRoot != null) { JoltPrim r = _linkRoot; _linkRoot = null; r.UnlinkChild(this); }
             // If we are a compound root, orphan our welded children (group teardown removes them anyway).
             if (_linkChildren != null)
@@ -429,11 +439,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // it every ~30 ms (an airplane vehicle became uncontrollable / fell through). Only PURE position/orientation
         // moves reach here (Size/Shape -> Rebuild, physical toggle -> RecreateBody still do full rebuilds).
         //
-        // activate:false is deliberate. Jolt's DontActivate leaves an already-active body active (a moving/
-        // vehicle body keeps stepping) but does NOT wake an inert one - so a load-time body created inert
-        // (deferred activation) stays inert until DrainPendingActivation, preserving the configure-before-
-        // step barrier (a reloaded vehicle never free-falls before its gravity-cancel is asserted). Orientation
-        // goes through BodyOrientationOf (axis-correction applied), matching CreateBodyInternal.
+        // A move or turn wakes a sleeping physical body, as ubODE's does (ODEPrim changePosition and changeOrientation
+        // enable a disabled body), so it carries on from where it was put and is never left hanging asleep in the air.
+        // Not while the region loads or before the body's first activation: a load-time body created inert (deferred
+        // activation) stays inert until DrainPendingActivation, preserving the configure-before-step barrier (a reloaded
+        // vehicle never free-falls before its gravity-cancel is asserted). Not while the object is selected either: it is
+        // held where the build tool puts it. Orientation goes through BodyOrientationOf (axis-correction applied),
+        // matching CreateBodyInternal.
         private void RepositionBody()
         {
             if (!_body.IsValid) { Build(); return; }
@@ -457,7 +469,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _backend.SetBodyAngularVelocity(_body, ToS(_rotationalVelocity));
             }
 
-            _backend.SetBodyTransform(_body, ToS(_position), BodyOrientationOf(_orientation), activate: false);
+            _backend.SetBodyTransform(_body, ToS(_position), BodyOrientationOf(_orientation), activate: MayWake);
         }
 
         public override Vector3 Size
@@ -505,6 +517,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             ShapeId old = _shape;
             _shape = _module.CookPrimShape(_backend, _pbs, _size, CookAsHull, out _axisCorrection, out _shapeKind);
+            _ownMass = null;
             if (_body.IsValid)
                 _backend.RemoveBody(_body);
             CreateBodyInternal();
@@ -512,9 +525,65 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _backend.ReleaseShape(old);
         }
 
-        // The real dynamic mass lives in Jolt (computed Volume x Density at body creation). Read it back
-        // so OpenSim/llGetMass and the A/B parity harness see Jolt's assigned mass.
-        public override float Mass => _body.IsValid ? _backend.GetBodyMass(_body) : 0f;
+        // This prim's own mass: core adds up every part's (SceneObjectGroup.GetMass) for llGetMass and llGetObjectMass, as
+        // ubODE's per-part mass (ODEPrim.Mass, density x volume for every prim) is added up. A lone physical prim reads its
+        // body's mass, the one the engine moves; any other prim (non-physical, a linkset's root or a welded child) its own
+        // volume x density. The SL wiki gives a non-physical object a mass like any other ("Returns a float that is the
+        // mass of object", llGetMass), and "mass = density * volume" (Physics Material Settings test).
+        public override float Mass
+        {
+            get
+            {
+                if (_isPhysical && _body.IsValid && !_compoundShape.IsValid && _linkRoot == null)
+                    return _backend.GetBodyMass(_body);
+                OwnMassData own = OwnMass();
+                return own == null ? 0f : MathF.Max(own.Volume * PhysicalDensity, 1e-3f);
+            }
+        }
+
+        // The volume and centre of mass of this prim's shape as it is when physical, so neither reading changes when
+        // physics is switched on or off. A non-physical prim that is not a box, sphere or cylinder collides as its triangle
+        // mesh, which has no volume; its physical shape (the convex hull) is cooked once to read them, then released.
+        private sealed class OwnMassData
+        {
+            public float Volume;
+            public SVector3 CenterOfMass;          // in the shape's frame
+            public SQuaternion AxisCorrection;     // that shape's axis correction
+        }
+        private OwnMassData _ownMass;              // null until read; cleared whenever the shape is cooked again
+
+        private OwnMassData OwnMass()
+        {
+            OwnMassData own = _ownMass;
+            if (own != null)
+                return own;
+            ShapeId shape = _shape;
+            if (!shape.IsValid)
+                return null;
+            own = new OwnMassData { AxisCorrection = _axisCorrection };
+            if (_isPhysical || _backend.GetShapeVolume(shape) > 0f)
+            {
+                own.Volume = _backend.GetShapeVolume(shape);
+                own.CenterOfMass = _backend.GetShapeCenterOfMass(shape);
+            }
+            else
+            {
+                ShapeId hull = _module.CookPrimShape(_backend, _pbs, _size, true, out SQuaternion correction, out _);
+                try
+                {
+                    own.Volume = _backend.GetShapeVolume(hull);
+                    own.CenterOfMass = _backend.GetShapeCenterOfMass(hull);
+                    own.AxisCorrection = correction;
+                }
+                finally
+                {
+                    if (hull.IsValid)
+                        _backend.ReleaseShape(hull);
+                }
+            }
+            _ownMass = own;
+            return own;
+        }
 
         // OpenSim sets pa.Density = SceneObjectPart.Density in AddToPhysics (default 1000). Store it and
         // forward the PHYSICAL density (x DensityScaleFactor) so Jolt's mass matches BulletSim. A live
@@ -560,12 +629,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // Wakes the body after a script changed how it moves. Not while the region loads, nor before a new body's first
-        // activation: it is woken then, once everything about it is set up (CreateBodyInternal).
+        // activation: it is woken then, once everything about it is set up (CreateBodyInternal). Not while the object is
+        // selected: it wakes when it is let go.
         private void WakeBody()
         {
-            if (_isPhysical && _body.IsValid && !_activationPending && !_module.IsRegionLoading)
+            if (MayWake && _body.IsValid)
                 _backend.ActivateBody(_body);
         }
+
+        private bool MayWake => _isPhysical && !_selected && !_activationPending && !_module.IsRegionLoading;
 
         // llSetPhysicsMaterial FRICTION and RESTITUTION, and PRIM_MATERIAL (SetMaterial). Each prim of a linkset has its own
         // (SL wiki, Physics Material Settings test: "Can individual prims in a linked set have different Physics settings?
@@ -634,7 +706,68 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override bool Stopped => true;
 
         public override Vector3 GeometricCenter => _position;
-        public override Vector3 CenterOfMass => _position;
+
+        // llGetCenterOfMass, in region coordinates. The SL wiki: "Returns the vector position of the object's center of
+        // mass in region coordinates." and "If called from a child prim, the child's center of mass is returned instead".
+        // Core reads a physical object's from its root's actor and a child's from the child's actor; for a non-physical
+        // object it takes the mass-weighted mean of every part's (SceneObjectGroup.GetCenterOfMass). So a physical
+        // linkset's root reports the whole linkset's, each part's weighted by its own volume x density, and every other
+        // prim its own part's, as ubODE does (ODEPrim.CenterOfMass: the body's position, or the prim's own centre).
+        public override Vector3 CenterOfMass
+        {
+            get
+            {
+                if (_isPhysical && _linkRoot == null && _compoundShape.IsValid && _linkChildren != null && _linkChildren.Count > 0)
+                    return LinksetCenterOfMass();
+                return OwnCenterOfMass(out _);
+            }
+        }
+
+        private Vector3 LinksetCenterOfMass()
+        {
+            Vector3 sum = OwnCenterOfMass(out float total);
+            sum *= total;
+            JoltPrim[] children = _linkChildren.ToArray();
+            foreach (JoltPrim c in children)
+            {
+                Vector3 com = c.OwnCenterOfMass(out float m);
+                sum += com * m;
+                total += m;
+            }
+            return total > 0f ? sum / total : _position;
+        }
+
+        // This prim's own centre of mass in region coordinates, and its own mass. A welded child is placed by its root's
+        // body, which is all the engine moves: the child sits where it was welded (WeldOffset) in the root's frame.
+        private Vector3 OwnCenterOfMass(out float mass)
+        {
+            OwnMassData own = OwnMass();
+            mass = own == null ? 0f : MathF.Max(own.Volume * PhysicalDensity, 1e-3f);
+            SVector3 bodyPos;
+            SQuaternion primRot;
+            JoltPrim root = _linkRoot;
+            if (root != null && _welded)
+            {
+                SQuaternion rootBody = root.BodyOrientationOf(root._orientation);
+                bodyPos = ToS(root._position) + SVector3.Transform(_weldPosition, rootBody);
+                // The inverse of BodyOrientationOf: body = correction x prim.
+                primRot = SQuaternion.Multiply(SQuaternion.Conjugate(_axisCorrection), SQuaternion.Multiply(rootBody, _weldOrientation));
+            }
+            else
+            {
+                bodyPos = ToS(_position);
+                primRot = ToS(_orientation);
+            }
+            if (own == null)
+                return new Vector3(bodyPos.X, bodyPos.Y, bodyPos.Z);
+            SVector3 com = bodyPos + SVector3.Transform(own.CenterOfMass, SQuaternion.Multiply(own.AxisCorrection, primRot));
+            return new Vector3(com.X, com.Y, com.Z);
+        }
+
+        // Where a welded child sits in its root's body: the offset and body orientation its compound sub-shape was given.
+        private bool _welded;
+        private SVector3 _weldPosition;
+        private SQuaternion _weldOrientation = SQuaternion.Identity;
 
         // Linear/angular velocity: cached from the drain (SOP reads these for terse updates); a set on a
         // live physical body pushes through so a script llSetVelocity takes effect.
@@ -656,6 +789,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     v.X = 0f;
                     v.Y = 0f;
                 }
+                if (_selected) return;   // held still while selected, as ubODE's changevelocity
                 _velocity = v;
                 if (_body.IsValid && _isPhysical) _backend.SetBodyLinearVelocity(_body, ToS(v));
             }
@@ -666,6 +800,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             set
             {
                 if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "RotationalVelocity", value.ToString()); return; }
+                if (_selected) return;
                 _rotationalVelocity = value;
                 if (_body.IsValid && _isPhysical) _backend.SetBodyAngularVelocity(_body, ToS(value));
             }
@@ -714,7 +849,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // vehicle when it sets its physics up (SceneObjectPart.ApplyPhysics).
         internal void StepScriptForces(float timeStep)
         {
-            if (!_isPhysical || !_body.IsValid || (_vehicle != null && _vehicle.IsActive))
+            if (!_isPhysical || !_body.IsValid || _selected || (_vehicle != null && _vehicle.IsActive))
                 return;
             Vector3 force, torque;
             lock (_scriptForceLock) { force = _force; torque = _torque; }
@@ -799,7 +934,55 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override bool CollidingGround { get; set; }
         public override bool CollidingObj { get; set; }
         public override bool Grabbed { set { } }
-        public override bool Selected { set { } }
+
+        // Selection in the build tool. Core hands the same value to the root's actor and every part's
+        // (SceneObjectGroup.IsSelected). A selected physical object stops where it is and stays: no gravity, no drift, no
+        // script force, impulse, velocity or vehicle step, and nothing that hits it moves it. Let go, it carries on from
+        // rest. That is ubODE's (ODEPrim.DoSelectedStatus stops and disables the body; Move skips a selected prim). ubODE
+        // also stops a selected object colliding; here it stays solid, as BulletSim's selected object (BSPrim.IsStatic).
+        // The root holds the whole welded linkset; a welded child's flag is kept for when it is unlinked.
+        private volatile bool _selected;
+
+        public override bool Selected
+        {
+            set
+            {
+                if (_selected == value)
+                    return;
+                _selected = value;
+                if (_linkRoot != null || !_isPhysical || !_body.IsValid)
+                    return;
+                if (value)
+                    HoldSelected();
+                else
+                    ReleaseSelected();
+            }
+        }
+
+        // Held: the body is made kinematic (it keeps its place, nothing it touches moves it, gravity does not act) and
+        // stopped, and the simulator is told it stopped.
+        private void HoldSelected()
+        {
+            _backend.SetBodyLinearVelocity(_body, SVector3.Zero);
+            _backend.SetBodyAngularVelocity(_body, SVector3.Zero);
+            _backend.SetBodyMotionType(_body, BodyMotionType.Kinematic, activate: false);
+            _backend.DeactivateBody(_body);
+            _velocity = Vector3.Zero;
+            _rotationalVelocity = Vector3.Zero;
+            RequestPhysicsterseUpdate();
+        }
+
+        // Let go: dynamic again with its mass (and rotation locks) as before, at rest, and awake so it falls or settles
+        // from where it was left. A vehicle gets its body setup back.
+        private void ReleaseSelected()
+        {
+            _backend.SetBodyMotionType(_body, BodyMotionType.Dynamic, activate: false);
+            _backend.SetBodyLinearVelocity(_body, SVector3.Zero);
+            _backend.SetBodyAngularVelocity(_body, SVector3.Zero);
+            ApplyMass();
+            ApplyVehicleBodyParams();
+            WakeBody();
+        }
 
         public override void CrossingFailure() { }
         // OpenSim calls child.link(root) per child when a physical linkset is formed. Weld this child into
@@ -813,6 +996,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // Detach from the compound and become an independent body again.
         public override void delink()
         {
+            _welded = false;
             if (_linkRoot != null)
             {
                 JoltPrim root = _linkRoot;
@@ -886,6 +1070,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                             Orientation = SQuaternion.Multiply(invRoot, c.BodyOrientationOf(c._orientation)),
                             UserData = c.LocalID,
                         };
+                        c._weldPosition = kids[i + 1].Position;
+                        c._weldOrientation = kids[i + 1].Orientation;
+                        c._welded = true;
                     }
                     _compoundShape = _backend.CreateCompoundShape(kids);
                 }
@@ -945,7 +1132,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override void AddForce(Vector3 force, bool pushforce)
         {
             if (_linkRoot != null) { _linkRoot.AddForce(force, pushforce); return; }
-            if (!_body.IsValid || !_isPhysical || !force.IsFinite())
+            if (!_body.IsValid || !_isPhysical || _selected || !force.IsFinite())
                 return;
             Vector3 f = pushforce ? force * _module.PushForceScale : force / _module.LastTimeStep;
             _backend.ApplyForce(_body, ToS(f));   // wakes a sleeping body
@@ -959,7 +1146,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override void AddAngularForce(Vector3 force, bool pushforce)
         {
             if (_linkRoot != null) { _linkRoot.AddAngularForce(force, pushforce); return; }
-            if (!_body.IsValid || !_isPhysical || !force.IsFinite())
+            if (!_body.IsValid || !_isPhysical || _selected || !force.IsFinite())
                 return;
             if (pushforce)
                 _backend.ApplyTorque(_body, ToS(force));
@@ -1131,7 +1318,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // which pushes velocity changes/forces/torques back through the backend for this step.
         internal void StepVehicle(float timeStep)
         {
-            if (_vehicle == null || !_vehicle.IsActive || !_isPhysical || !_body.IsValid)
+            if (_vehicle == null || !_vehicle.IsActive || !_isPhysical || !_body.IsValid || _selected)
                 return;
             // Assert buoyancy on restart: re-assert the vehicle body params on the step-thread steps
             // of the first ReassertVehicleSeconds after (re)activation, so the gravity-cancellation that the load-path restore

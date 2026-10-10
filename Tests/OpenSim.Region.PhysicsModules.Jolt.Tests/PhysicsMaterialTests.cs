@@ -632,4 +632,106 @@ public class PhysicsMaterialTests
             Assert.Equal(plain.Samples[i].Velocity, changedRun.Samples[i].Velocity);
         }
     }
+
+    // ---- phantom and volume-detect prims ---------------------------------------------------------------------------
+
+    public enum Flag { Phantom, VolumeDetect }
+
+    // As core's DoPhysicsPropertyUpdate sets the flags on an actor the part already has: a volume detector is also phantom.
+    private static void SetFlag(PhysicsActor a, Flag flag, bool on)
+    {
+        a.Phantom = on;
+        a.SetVolumeDetect(on && flag == Flag.VolumeDetect ? 1 : 0);
+    }
+
+    // A phantom or volume-detect prim keeps the friction, restitution and density set on it: set while the flag is on,
+    // they read back unchanged, its mass is its volume x density, and once it is solid again it bounces by its
+    // restitution as a prim that was never phantom does.
+    [Theory]
+    [InlineData(45.0, Flag.Phantom)]
+    [InlineData(45.0, Flag.VolumeDetect)]
+    [InlineData(0.0, Flag.Phantom)]
+    [InlineData(0.0, Flag.VolumeDetect)]
+    public void A_phantom_or_volume_detect_prim_keeps_its_bounce_and_density(double physicsHz, Flag flag)
+    {
+        const float plateTop = 60f, restitution = 0.7f;
+        float c = JoltConfig.DefaultPrimLinearDamping;
+        float friction = float.NaN, readRestitution = float.NaN, density = float.NaN, mass = float.NaN;
+        List<Point> trace = Run(physicsHz, 3f, r =>
+        {
+            r.AddOtherBox(new Vector3(10f, 10f, 2f), new Vector3(128f, 128f, plateTop - 1f), Quaternion.Identity, false).Restitution = 1f;
+            PhysicsActor box = r.AddBox(Unit, new Vector3(128f, 128f, plateTop + 2f + 0.5f), Quaternion.Identity);
+            SetFlag(box, flag, true);
+            box.Friction = 0.25f;
+            box.Restitution = restitution;
+            box.Density = 3000f;
+        }, (r, _) =>
+        {
+            // Two heartbeats of falling with the flag on (0.16 m, far above the plate), then solid again.
+            if (r.Heartbeats != 2)
+                return;
+            friction = r.Actor.Friction;
+            readRestitution = r.Actor.Restitution;
+            density = r.Actor.Density;
+            mass = r.Actor.Mass;
+            SetFlag(r.Actor, flag, false);
+        });
+
+        Assert.Equal(0.25f, friction);
+        Assert.Equal(restitution, readRestitution);
+        Assert.Equal(3000f, density);
+        Assert.Equal(30f, mass, 2);   // a 1 m cube at 3000 kg/m3, in lindograms (1000 kg/m3 is 10)
+        double expected = RiseHeight(restitution * FallSpeed(2.0, c), c);
+        Within((float)expected, 5f, ReboundPeak(trace, plateTop, 0.5f));
+    }
+
+    // Density acts on the body while it is phantom or volume detect: an impulse of 40 on a 1 m cube at density 4000
+    // (mass 40) gives it 1 m/s.
+    [Theory]
+    [InlineData(45.0, Flag.Phantom)]
+    [InlineData(45.0, Flag.VolumeDetect)]
+    [InlineData(0.0, Flag.Phantom)]
+    [InlineData(0.0, Flag.VolumeDetect)]
+    public void Density_moves_a_phantom_or_volume_detect_body_as_a_solid_one(double physicsHz, Flag flag)
+    {
+        Vector3 before = Vector3.Zero, after = Vector3.Zero;
+        Run(physicsHz, 1f, r =>
+        {
+            r.AddBox(Unit, High, Quaternion.Identity);
+            SetFlag(r.Actor, flag, true);
+            r.Actor.GravModifier = 0f;
+            r.Actor.Density = 4000f;
+        }, (r, _) =>
+        {
+            if (r.Heartbeats == 3) { before = r.Actor.Velocity; r.Actor.AddForce(new Vector3(40f, 0f, 0f), false); }
+            if (r.Heartbeats == 5) after = r.Actor.Velocity;
+        });
+        Within(1f, 2f, after.X - before.X);
+    }
+
+    // Friction set on a phantom or volume-detect prim is the friction it slides with once it is solid: on a 40 degree
+    // slope the box slides at g (sin 40 - mu cos 40), less its damping, as a prim that was never phantom does.
+    [Theory]
+    [InlineData(45.0, Flag.Phantom)]
+    [InlineData(45.0, Flag.VolumeDetect)]
+    [InlineData(0.0, Flag.Phantom)]
+    [InlineData(0.0, Flag.VolumeDetect)]
+    public void A_phantom_or_volume_detect_prim_keeps_its_friction(double physicsHz, Flag flag)
+    {
+        // The flag goes off before the first step: a phantom box on the plate would fall through it.
+        float mu = MathF.Sqrt(0.25f * 1.0f);
+        float th = 40f * MathF.PI / 180f;
+        float a = G * (MathF.Sin(th) - mu * MathF.Cos(th));
+        (List<Point> trace, Vector3 down) = Slope(physicsHz, 40f, b =>
+        {
+            SetFlag(b, flag, true);
+            SetFriction(b, 0.25f);
+            SetFlag(b, flag, false);
+        }, p => SetFriction(p, 1.0f));
+        Point p0 = At(trace, 0.5), p1 = At(trace, 1.5);
+        float v0 = Vector3.Dot(p0.Velocity, down), v1 = Vector3.Dot(p1.Velocity, down);
+        float measured = (v1 - v0) / (float)(p1.T - p0.T);
+        float expected = a - JoltConfig.DefaultPrimLinearDamping * (v0 + v1) / 2f;
+        Within(expected, 5f, measured);
+    }
 }

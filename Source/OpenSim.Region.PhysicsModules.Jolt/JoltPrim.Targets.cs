@@ -179,6 +179,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return move || hover;
             }
 
+            // Selected in the build tool, the object is held still (HoldSelected) and neither controller acts, as ubODE's
+            // Move skips a selected prim. The request is kept; let go, the spring starts again from rest where it was held.
+            // A change made meanwhile is kept for then, and a body still held here stays stepped so that, if both were
+            // stopped meanwhile, it gets its gravity back once it is let go.
+            if (_selected)
+            {
+                _moveCarry = Vector3.Zero;
+                _hoverCarry = 0f;
+                if (changed)
+                    lock (_targetLock) _targetsChanged = true;
+                return move || hover || _heldByTarget;
+            }
+
             Vector3 pos = new Vector3(s.Position.X, s.Position.Y, s.Position.Z);
             Vector3 vel = new Vector3(s.LinearVelocity.X, s.LinearVelocity.Y, s.LinearVelocity.Z);
             bool awake = (s.Flags & BodyStateFlags.Active) != 0;

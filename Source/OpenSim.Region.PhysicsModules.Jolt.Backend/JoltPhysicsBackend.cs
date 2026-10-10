@@ -2057,9 +2057,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public void SetBodyLinearVelocity(BodyId body, Vector3 velocity)
         {
             if (!IsFinite(velocity)) { CountRejectedNonFinite(); return; }
-            // Thin seam: this does NOT wake a sleeping body (Jolt-native behaviour - only Apply*
-            // impulses activate). A velocity set on a sleeping body takes effect only once something
-            // else activates it; that activation policy belongs to the layer above, not here.
+            // Jolt's BodyInterface.SetLinearVelocity wakes a sleeping body when the velocity is not near zero, so a
+            // script's llSetVelocity moves a sleeping object at once (SelectionAndMoveTests checks it through the
+            // prim actor at both step modes).
             lock (_simLock)
             {
                 if (_disposed) return;
@@ -2345,6 +2345,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 if (_disposed || !_shapes.TryGet(shape.Value, out JoltShapeRecord rec) || !IsLive(rec))
                     return 0f;
                 return rec.NativeShape!.Volume;
+            }
+        }
+
+        public Vector3 GetShapeCenterOfMass(ShapeId shape)
+        {
+            lock (_simLock)
+            {
+                if (_disposed || !_shapes.TryGet(shape.Value, out JoltShapeRecord rec) || !IsLive(rec))
+                    return Vector3.Zero;
+                return rec.NativeShape!.CenterOfMass;
             }
         }
 
