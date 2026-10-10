@@ -153,7 +153,7 @@ public class VehicleRestAndCrashTests
     // until it settles: on Windows in one steady movement over about 9 s, on Linux in bursts over about 30 s.
     // Measured (stock native, at velocity steps 20; deepest / net movement / last third's range):
     //   11 Hz: Windows 19.9 / 9.4 / 0.0 mm, Linux 20.0 / 17.6 / 1.7 mm;
-    //   45 Hz: Windows 11.6 / 0.0 / 0.0 mm.
+    //   45 Hz: Windows 11.6 / 0.0 / 0.0 mm, Linux 11.5 / 0.0 / 0.0 mm.
     private const float PushSeconds = 45f;
 
     [Theory]
