@@ -209,9 +209,8 @@ public class PhysicsMaterialTests
     public void A_box_dropped_2_m_rebounds_to_the_height_its_restitution_gives(double physicsHz, float restitution)
     {
         // A 1 m box dropped with its base 2 m above a fixed plate of restitution 1: the combined restitution is the box's
-        // (r1 x r2), and it leaves at restitution x its arrival speed. Below 0.5 the engine's discrete contact falls short
-        // at some step rates (measured at 45 Hz: 0.4 rebounds 8.6 percent low, 0.3 18 percent; at 22.5 Hz 0.4 12 percent;
-        // at 11 and 90 Hz within 3 percent), so the values tested here are 0.5 and above, where it holds at both rates.
+        // (r1 x r2), and it leaves at restitution x its arrival speed. RestingContactAndBounceTests covers 0.1 to 0.9 at
+        // every step rate and drop height, sampling every step.
         const float plateTop = 60f;
         float c = JoltConfig.DefaultPrimLinearDamping;
         List<Point> trace = Run(physicsHz, 3f, r =>

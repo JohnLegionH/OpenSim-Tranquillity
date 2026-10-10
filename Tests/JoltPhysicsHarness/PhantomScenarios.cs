@@ -37,6 +37,17 @@ public sealed class CollisionWatch
     public int LandEnds;
     /// <summary>Every collider id this actor ever reported touching (0 = land).</summary>
     public readonly HashSet<uint> Touched = new();
+    /// <summary>The updates that named an object (each is a collision event in the scene), and those that named the land
+    /// (each a land_collision event).</summary>
+    public int Collisions;
+    public int LandCollisions;
+    /// <summary>For each collider (0 = land), the lowest ContactPoint.RelativeSpeed it was reported with: how fast the two
+    /// closed (below zero) at the hardest strike. Collision sounds and an avatar's impact damage read it.</summary>
+    public readonly Dictionary<uint, float> Strikes = new();
+    /// <summary>Each start and end, and each update, with the time of the heartbeat that sent it (when attached with a
+    /// run): "start" / "end" with the collider's id, "land start" / "land end" with 0, "update" with the number of ids.</summary>
+    public readonly List<(double T, string Event, uint Id)> Log = new();
+    private Run _run;
 
     private readonly HashSet<uint> _last = new();
     private bool _lastLand;
@@ -56,26 +67,56 @@ public sealed class CollisionWatch
         pa.SubscribeEvents(50);
     }
 
+    /// <summary>As <see cref="Attach(PhysicsActor)"/>, and times each event by the run's heartbeat.</summary>
+    public void Attach(PhysicsActor pa, Run run)
+    {
+        _run = run;
+        Attach(pa);
+    }
+
+    private double Now => _run != null ? _run.Now + _run.Dt : double.NaN;
+
+    /// <summary>The times of the logged events of one kind (and collider, when given).</summary>
+    public List<double> TimesOf(string ev, uint? id = null)
+        => Log.Where(l => l.Event == ev && (id == null || l.Id == id)).Select(l => l.T).ToList();
+
     private void OnUpdate(EventArgs e)
     {
-        var now = new HashSet<uint>(((CollisionEventUpdate)e).m_objCollisionList.Keys);
+        var update = (CollisionEventUpdate)e;
+        foreach (KeyValuePair<uint, ContactPoint> kv in update.m_objCollisionList)
+            if (!Strikes.TryGetValue(kv.Key, out float least) || kv.Value.RelativeSpeed < least)
+                Strikes[kv.Key] = kv.Value.RelativeSpeed;
+        var now = new HashSet<uint>(update.m_objCollisionList.Keys);
+        double t = Now;
+        Log.Add((t, "update", (uint)now.Count));
         bool land = now.Remove(0);
+        if (now.Count > 0) Collisions++;
+        if (land) LandCollisions++;
         foreach (uint id in now)
         {
             Touched.Add(id);
             if (!_last.Contains(id))
+            {
                 Starts[id] = StartsOf(id) + 1;
+                Log.Add((t, "start", id));
+            }
         }
         foreach (uint id in _last)
             if (!now.Contains(id))
+            {
                 Ends[id] = EndsOf(id) + 1;
+                Log.Add((t, "end", id));
+            }
         if (land)
         {
             Touched.Add(0);
-            if (!_lastLand) LandStarts++;
+            if (!_lastLand) { LandStarts++; Log.Add((t, "land start", 0)); }
         }
         else if (_lastLand)
+        {
             LandEnds++;
+            Log.Add((t, "land end", 0));
+        }
         _last.Clear();
         _last.UnionWith(now);
         _lastLand = land;
@@ -100,11 +141,19 @@ public sealed class HarnessPart
     public bool VolumeDetect;
     public PhysicsActor Actor;
     public CollisionWatch Watch;
+    internal Run Run;
     /// <summary>The engine body and position just before and just after the last flag change.</summary>
     public BodyId BodyBeforeChange = BodyId.Invalid, BodyAfterChange = BodyId.Invalid;
     public Vector3 PositionBeforeChange, PositionAfterChange;
     /// <summary>Where the part was when the run ended.</summary>
     public Vector3 EndPosition;
+    /// <summary>The first heartbeat time at which the engine had the part's body asleep (NaN: never), and whether it was
+    /// asleep when the run ended (both set by scenarios that watch for sleep).</summary>
+    public double SleptAt = double.NaN;
+    public bool AsleepAtEnd;
+    /// <summary>Where the part was and how fast it went before each heartbeat, when a scenario keeps a trace of it.</summary>
+    public List<(double T, Vector3 Position, Vector3 Velocity)> Trace;
+    internal bool WasAwake;
 
     internal BodyId Body => Actor is JoltPrim jp ? jp.BodyHandle : BodyId.Invalid;
 }
@@ -132,6 +181,7 @@ public static class PhantomScenarios
             p.Watch = new CollisionWatch(name);
             r.Watches.Add(p.Watch);
         }
+        p.Run = r;
         r.Parts.Add(p);
         if (InPhysics(p))
             AddToPhysics(r, p);
@@ -149,7 +199,7 @@ public static class PhantomScenarios
             p.Actor.Density = 1000f;
         if (p.VolumeDetect)
             p.Actor.SetVolumeDetect(1);
-        p.Watch?.Attach(p.Actor);
+        p.Watch?.Attach(p.Actor, p.Run);
     }
 
     /// <summary>Changes a part's phantom and volume-detect flags as SceneObjectPart.UpdatePrimFlags does.</summary>

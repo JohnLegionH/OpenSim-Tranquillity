@@ -460,6 +460,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public Vector3 Normal;
         /// <summary>Newton-seconds. Feeds collision sound volume and damage models.</summary>
         public float Impulse;
+        /// <summary>How fast B moves away from A along <see cref="Normal"/> where they touch (m/s), from their velocities
+        /// before the contact acts on them: below zero while they close. The same number for either side, since both its
+        /// velocity difference and its normal turn round. The simulator's collision sounds and impact damage read it as
+        /// ContactPoint.RelativeSpeed. Zero on an End report.</summary>
+        public float RelativeSpeed;
         public ContactPhase Phase;
     }
 
@@ -825,6 +830,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// <summary>Whether the solver had this body touching another body or the terrain in the last step,
         /// whether or not anyone listens for its contact events. False for a sensor's or an avatar marker's touch.</summary>
         bool BodyHadContact(BodyId body);
+
+        /// <summary>Whether the engine had this body awake at the end of the last step. False for a sleeping body, a body
+        /// created asleep that has not yet been woken, and a static body. The engine reports no contacts between two bodies
+        /// of which neither is awake, so a contact between them that was there when they fell asleep is still there.</summary>
+        bool IsBodyAwake(BodyId body);
+
+        /// <summary>The UserData the body was created with (its owner's LocalID); false for a body that is gone.</summary>
+        bool TryGetBodyUserData(BodyId body, out uint userData);
 
         bool TryGetBodyState(BodyId body, out BodyState state);
 

@@ -63,6 +63,58 @@ public class CollisionFrameTrackerTests
         Assert.True(t.Current.ContainsKey(9));
         Assert.True(t.IsTracked(9));
     }
+
+    // A frame in which the module holds last frame's contacts of sleeping bodies (Hold) for prim 7.
+    private static List<uint> HeldFrame(CollisionFrameTracker t, uint prim, params uint[] colliders)
+    {
+        t.BeginFrame();
+        foreach (uint c in colliders)
+            t.Hold(prim, c, Cp);
+        return new List<uint>(t.EndFrame(false));
+    }
+
+    [Fact]
+    public void A_held_contact_keeps_the_prim_tracked_and_ends_nothing()
+    {
+        var t = new CollisionFrameTracker();
+        Frame(t, false, (7, 3));
+        Assert.Empty(HeldFrame(t, 7, 3));
+        Assert.True(t.IsTracked(7));
+        Assert.True(t.Touches(7, 3));
+        Assert.Equal(new uint[] { 3 }, t.Previous[7].m_objCollisionList.Keys);   // last frame's set, read by the next hold
+        Assert.Equal(new uint[] { 7 }, Frame(t, false));   // once it is no longer held it ends
+    }
+
+    [Fact]
+    public void Only_held_contacts_that_are_unchanged_are_not_sent_again()
+    {
+        var t = new CollisionFrameTracker();
+        Frame(t, false, (7, 3), (7, 4));
+        HeldFrame(t, 7, 3, 4);
+        Assert.False(t.ShouldDeliver(7, t.Current[7]));   // at rest: no more collision events
+        HeldFrame(t, 7, 3);
+        Assert.True(t.ShouldDeliver(7, t.Current[7]));    // 4 went away: the scene must end it
+    }
+
+    [Fact]
+    public void Held_contact_with_the_ground_alone_is_sent_every_frame()
+    {
+        var t = new CollisionFrameTracker();
+        Frame(t, false, (7, 0));
+        HeldFrame(t, 7, 0);
+        Assert.True(t.ShouldDeliver(7, t.Current[7]));    // land_collision goes on, as ubODE sends it
+    }
+
+    [Fact]
+    public void A_set_with_a_reported_contact_is_always_sent()
+    {
+        var t = new CollisionFrameTracker();
+        Frame(t, false, (7, 3));
+        t.BeginFrame();
+        t.AddCollider(7, 3, Cp);
+        Assert.True(t.ShouldDeliver(7, t.Current[7]));
+        t.EndFrame(false);
+    }
 }
 
 /// <summary>

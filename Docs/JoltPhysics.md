@@ -465,6 +465,14 @@ and no prim of it has a body of its own. These keep it one body, with the mass o
   with `RC_GET_LINK_NUM`, its link number, and the root's key only with `RC_GET_ROOT_KEY` ("The hit
   uuid will be replaced by the object's root instead of any child.", wiki, llCastRay). Both script
   engines look the prim up from what the physics engine reports.
+- A linkset meets an avatar as one object with the mass of all its prims, by the rule for a single
+  object (see "Avatars and physical objects"): thrown at an avatar it stops against it or carries it
+  along by their masses, and an avatar walking into it pushes it along whole. The prim that touches
+  the avatar is the one named on each side.
+- A linkset asleep on something keeps touching it when one of its prims is resized: it stays one body
+  at rest, and what it rests on gets no end event. The engine reports a linkset's resting contact with
+  a flat surface as one contact naming one of the prims on it, so a script in that surface gets one
+  `collision_start`, naming that prim, rather than one for each prim that rests on it.
 - The simulator does not pass a sculpt or mesh change made through the viewer's extra parameters to
   the physics engine (`SceneObjectPart.UpdateExtraParam`), on any engine; a prim keeps its old shape
   in physics until something else rebuilds it.
@@ -486,9 +494,15 @@ Life wiki documents them:
   the product of the two, restitution the product. A box sliding on a surface of the same friction
   `f` therefore feels `f`. A bounce needs a closing speed of at least 1 m/s (Jolt's
   `MinVelocityForRestitution`). The terrain has friction 0.6 and restitution 0, so nothing bounces
-  off the ground. At some step rates a low restitution bounces short of its height: a 1 m box
-  dropped 2 m with restitution 0.4 rebounds 8.6 percent low at 45 Hz and 12 percent low at
-  22.5 Hz (within 3 percent at 11 and 90 Hz); from 0.5 up it is within 5 percent at 11 and 45 Hz.
+  off the ground.
+- A dropped object rebounds to its restitution squared times the height it fell (less its damping),
+  within 5 percent, for restitution 0.1 to 0.9, drops of 0.5 to 10 m and step rates of 11 to 90 Hz.
+  Jolt bounces a body from wherever its step finds it, up to one step's travel above or into the
+  surface, so on its own the height would be off by that much (a 1 m box dropped 2 m with restitution
+  0.3 came back 18 percent low to 11 percent high at 45 Hz, by where the step fell). The module hands
+  Jolt, for each impact, the restitution that sends the body as high as a bounce from the surface would.
+  A rebound lower than Jolt's speculative contact distance (2 cm) can still come out anywhere from
+  none to that distance, because the step may find the body already above the top of its bounce.
 - The gravity multiplier scales the object's gravity: the object falls at (1 - buoyancy) times the
   multiplier times the region's gravity, as in ubODE. 0 floats, 2 falls at twice the rate.
 - Density sets the mass: volume times density, in lindograms (kg / 100) for `llGetMass`.
@@ -606,9 +620,35 @@ neither. The avatar's collisions reach the simulator each heartbeat as they do w
 ubODE: the terrain as land, so scripts in its attachments get `land_collision_start`,
 `land_collision` and `land_collision_end`, and a prim or another avatar as an object, giving
 `collision_start`, `collision` and `collision_end`. The floor contact also sets the collision plane
-under the avatar's feet. The contacts carry no relative speed, so they make no collision sound and no
-impact damage. Where damage is on, a prim with a damage value set damages the avatar it touches and
-is removed, as the simulator does with every physics engine.
+under the avatar's feet. Each contact carries the speed at which the two met (see "Avatars and physical
+objects"), from which the simulator plays collision sounds and works out impact damage. Where damage is
+on, a prim with a damage value set damages the avatar it touches and is removed, as the simulator does
+with every physics engine.
+
+## Avatars and physical objects
+
+Second Life documents that "You can push physical object by walking or flying your avatar into them",
+that an object dragged into an avatar should move it, and that "Residents take damage from collisions
+with physical objects" (wiki.secondlife.com, Push and Damage). It gives no figures, so Jolt follows
+ubODE, where an avatar is a body that meets an object with no bounce:
+
+- An object that strikes an avatar never goes into or through it. The two go on along the line of the
+  hit at their common speed, weighted by mass, with the avatar's mass of 80 kg: a 1 kg box thrown at
+  5 m/s stops against it and barely moves it, and a 100 kg box carries it along at up to 2.8 m/s. The
+  avatar's share is a push, held to `AvatarPushMaxSpeed` and the push allowance like any other; what
+  it cannot take the object loses. An avatar standing on the ground is not pushed down into it: an
+  object that lands on its head stops there and comes to rest on it, and falls once they part.
+- An avatar walking or running into an object pushes it along, level, with at most its push force
+  (`PushStrength` x 100 N) and never faster than the avatar moves that way. A light box goes along ahead
+  of it at its pace; a heavy one, held by its friction, barely moves and stops the avatar. The avatar
+  does not step up onto an object it is pushing.
+- What an avatar stands on carries it as before: it can stand on a physical object without sinking or
+  sliding it away.
+- Two avatars still push each other as before, as in ubODE.
+- Every contact report carries the speed at which the two sides met along the contact normal
+  (`ContactPoint.RelativeSpeed`, below zero while they close), for prims, avatars and the land. The
+  simulator plays a prim's collision sound above 0.2 m/s, and an avatar takes impact damage where
+  damage is on below -5 m/s, from the land (a fall from about 1.3 m or more) or from a prim.
 
 ## Fast objects
 
@@ -630,6 +670,14 @@ a straight line: it does not cover what the prim's turning sweeps through in a s
 A vehicle is cast in every collision step in which it is fast enough, whatever its speed was at the
 start of the step, as before.
 
+Jolt's cast does not see avatars: an avatar meets objects in its own update, once per physics step,
+before the simulation's update. So before each update, a physical prim that would go on more than an
+avatar's radius past where it first touches the avatar in that update, with nothing nearer in its way,
+is moved to that touch and strikes the avatar there, by the rule in "Avatars and physical objects":
+both go on at their common speed by mass, the avatar's share held to its push limits, and both are told
+of the contact with the speed at which they met. A 0.2 m ball shot at 50 m/s at a standing avatar
+stops against it and barely moves it. A slower prim reaches the avatar in its own update, as before.
+
 Phantom and volume-detect prims still let a fast prim through: Jolt does not cast against sensors,
 and a phantom prim touches only the terrain. A volume-detect prim finds what is inside it at the
 start of each collision step, so a fast prim that is never inside it at such a start, which can
@@ -638,7 +686,10 @@ happen when it crosses it in less than a collision step, raises no `collision_st
 `FastObjectTests` shoots 0.05, 0.2 and 1 m balls at 10 to 500 m/s (`[Jolt] BodyMaxLinearSpeed`, 500 m/s
 by default, is the most a prim can move) at a fixed wall 0.01 m and 0.1 m thick, at a resting 0.5 m
 box and down at the ground, at each heartbeat rate of the harness and at 11 Hz with
-`PhysicsStepRate` 45, and none passes through.
+`PhysicsStepRate` 45, and none passes through. `FastObjectsLinksetsAndAvatarsTests` covers where fast
+prims, linksets, resting contacts and avatars meet: a fast ball at an avatar, a fast ball's bounce, a
+fast ball on a sleeping box, a linkset thrown at or walked into by an avatar, a sleeping linkset with a
+resized prim, and a ray at a sleeping linkset.
 
 ## Phantom and volume-detect prims
 
@@ -667,6 +718,29 @@ raises `collision_start` and `collision_end` "when interpenetrating". Jolt does 
 
 The harness scenarios beginning `vd-` and `phantom-` show each of these, and print the collision events
 each part raised.
+
+## Resting contacts and collision events
+
+Second Life documents `collision_end` as "Triggered when task stops colliding with another task" and
+`land_collision_end` when it "stops colliding with land", and that "A collision with a physical object or
+avatar resting on object does not continuously trigger collisions but for a few times, unless there is
+movement" (wiki.secondlife.com, the collision events). Jolt does this as follows:
+
+- An object that comes to rest on another object, on the ground or inside a volume-detect prim and falls
+  asleep keeps touching it: no end event comes when it falls asleep, and one comes when it is moved off.
+  Jolt looks for contacts only where a body is awake, so the module keeps the contacts a body had when
+  neither side of them is awake, as ubODE does with its sleeping prims.
+- `collision` comes each heartbeat while the object settles and stops once it is asleep.
+  `land_collision` goes on while it sleeps, as in ubODE; the wiki says nothing about it at rest.
+- Only prims whose scripts have a collision event are tracked, so the rest cost nothing extra.
+- `VelocityIterations` and `PositionIterations` in `[Jolt]` set the engine's velocity and position
+  steps (defaults 10 and 2, Jolt's own). A tall stack needs more velocity steps to come to rest: ten
+  stacked 0.5 m boxes do not fall asleep at 10 at 11 or 45 Hz, and fall over at 22.5 Hz; at 40 they
+  stand and sleep at 11 to 90 Hz.
+- A sleeping object moved by setting its position wakes (see "Editing and moving physical objects"), and
+  an object asleep on a fixed prim wakes when that prim is moved or turned, so it falls instead of
+  hanging in the air. Either way the contact ends once they part: one end event on each side.
+- A selected object keeps its contacts while it is held, and gets no end event for them.
 
 ## Vehicles
 
@@ -937,7 +1011,13 @@ the phantom and volume-detect scenarios: `vd-walk` and `phantom-walk` (an avatar
 volume-detect or phantom box), `vd-drop`, `phantom-drop` and `phantom-physical-drop` (a box falling through a
 slab), `phantom-physical-walk`, the `-on-walk` and `-off-walk` scenarios (the flag switched before the avatar
 arrives, on one box or a three-box linkset) and `phantom-physical-toggle` (a resting box or linkset made phantom
-and solid again). These print each watched part's collision events under their summary line.
+and solid again), and the resting-contact scenarios: `rest-platform`, `rest-ground` and `rest-vd` (a box comes to
+rest on a platform, on the ground or inside a volume-detect box, falls asleep and is thrown off at 5 s),
+`tower-10` (ten stacked boxes) and `rest-no-bounce` (a box of restitution 0 dropped 2 m), and the avatar
+scenarios: `avatar-hit-1kg`, `avatar-hit-100kg` and `avatar-hit-10ms` (a box thrown at a standing
+avatar), `avatar-walk-1kg` and `avatar-walk-1000kg` (an avatar walking into a box), `avatar-on-box`,
+`avatar-box-drop` (a box dropped 5 m onto an avatar's head) and `avatar-fall-20m`. These print each
+watched part's collision events under their summary line.
 The shot scenarios fire a physical ball (`--ball`, `--shot-speed`) at something: `tunnel-wall-1cm` and
 `tunnel-wall-10cm` (a fixed wall), `tunnel-box` (a 0.5 m box resting on the ground), `tunnel-ground`
 (straight down from 3 m), `tunnel-vd-wall` (through a 1 m volume-detect slab, then at a wall),
