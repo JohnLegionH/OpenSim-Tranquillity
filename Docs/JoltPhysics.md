@@ -486,13 +486,19 @@ and no prim of it has a body of its own. These keep it one body, with the mass o
   engines look the prim up from what the physics engine reports.
 - A linkset meets an avatar as one object with the mass of all its prims, by the rule for a single
   object (see "Avatars and physical objects"): thrown at an avatar it stops against it or carries it
-  along by their masses, and an avatar walking into it pushes it along whole. The prim the avatar
-  touches names the avatar in its collision events; the avatar names the linkset by its root prim,
-  as ubODE names whatever it touches (see "Avatars and physical objects").
+  along by their masses, and an avatar walking into it pushes it along whole.
+- Collision events: the prim of the linkset that was touched gets the event, so a script in it gets its
+  own link number from `llDetectedLinkNumber`, and the simulator passes the event to the root's script
+  by `llPassCollisions`. Whatever touches the linkset, a prim, another linkset or an avatar, names it by
+  its root prim: `llDetectedKey` and `llDetectedName` are the object's, and a collision filter set by
+  name matches the object's name. Second Life documents no rule for this; its `llCollisionFilter`
+  example has a filter on an object named "Post" detect "A child prim named "Object"" of it (wiki,
+  llCollisionFilter). ubODE names every collider by its root likewise. A non-physical linkset is not
+  one body (the simulator links only a physical one), so each of its prims is named as itself, as in
+  ubODE.
 - A linkset asleep on something keeps touching it when one of its prims is resized: it stays one body
-  at rest, and what it rests on gets no end event. The engine reports a linkset's resting contact with
-  a flat surface as one contact naming one of the prims on it, so a script in that surface gets one
-  `collision_start`, naming that prim, rather than one for each prim that rests on it.
+  at rest, and what it rests on gets no end event. A script in that surface gets one
+  `collision_start` for the linkset, naming its root, rather than one for each prim that rests on it.
 - The simulator does not pass a sculpt or mesh change made through the viewer's extra parameters to
   the physics engine (`SceneObjectPart.UpdateExtraParam`), on any engine; a prim keeps its old shape
   in physics until something else rebuilds it.
@@ -669,11 +675,15 @@ ubODE, where an avatar is a body that meets an object with no bounce:
   (`ContactPoint.RelativeSpeed`, below zero while they close), for prims, avatars and the land. The
   simulator plays a prim's collision sound above 0.2 m/s, and an avatar takes impact damage where
   damage is on below -5 m/s, from the land (a fall from about 1.3 m or more) or from a prim.
-- An avatar names an object it touches by the object's root prim, as ubODE names every collider: an
-  attachment's `llDetectedKey` and `llDetectedName` in its collision events are the object's, a
-  collision filter set by name matches the object's name, and an avatar touching two prims of one
-  linkset has one collision with it, carrying the harder strike. The prim it touched names the avatar,
-  so a script in that prim gets its own link number from `llDetectedLinkNumber`.
+- An avatar names an object it touches by the object's root prim, as a prim does (see "Physical
+  linksets") and as ubODE names every collider: an attachment's `llDetectedKey` and `llDetectedName` in
+  its collision events are the object's, a collision filter set by name matches the object's name, and
+  an avatar touching two prims of one linkset has one collision with it, carrying the harder strike. The
+  prim it touched names the avatar, so a script in that prim gets its own link number from
+  `llDetectedLinkNumber`.
+- Two avatars that meet are both told, each naming the other, as in ubODE. Jolt finds the contact in
+  the update of the avatar that meets the other; before, at one step per heartbeat, an avatar walking
+  into another could push it along and never get a collision event for it.
 
 A flying avatar meets objects by the same rule. Second Life documents nothing on a flying avatar that
 is hit; Jolt follows ubODE, where it stays flying:
@@ -699,9 +709,9 @@ engine), and the physics engine is not told who sits where. So on Jolt:
 - Standing up, the simulator puts the avatar back where `ScenePresence.StandUp` places it, without
   looking at what is there. Next to an object or on top of one, it stands where it is put. Inside a
   fixed object it is set out at the nearest side, at once, on the ground beside it, and stays there:
-  it is not thrown out (ubODE's contacts correct an overlap at up to 60 m/s). The velocity it reports
-  for that one step is the distance it was set out over the step (13.7 m/s for 1.2 m at one step per
-  11 Hz heartbeat). Inside a light physical object both give way: the avatar is set out and the object
+  it is not thrown out (ubODE's contacts correct an overlap at up to 60 m/s). Being set out is not
+  moving: it reports no speed for that step (before, 13.7 m/s for 1.2 m at one step per 11 Hz
+  heartbeat). Inside a light physical object both give way: the avatar is set out and the object
   nudged aside (0.4 m for a 1 kg cube).
 
 ## Buoyancy and hover on an avatar
@@ -741,6 +751,18 @@ reported the velocity the avatar was asked to move with, so an avatar held at a 
 walk speed. Core sends this velocity to viewers to move the avatar between updates, returns it to
 scripts (`llGetVel` in an attachment, `llDetectedVel`, sensors' ACTIVE flag), carries it into a teleport
 or a region crossing, and the animator reads its vertical part to choose falling.
+
+Jolt's character also moves an avatar out of anything it overlaps, all at once in one step. That is
+not speed, and is not reported as such:
+- In the step after the simulator puts the avatar somewhere (it arrives, stands up, or its position is
+  set), an avatar moved further than its own velocity takes it was set out of what it was put inside,
+  and reports no speed for that step.
+- An object coming at the avatar that may push it carries it at the object's speed; what the avatar is
+  moved beyond that in the same step was the object's overlap, and is not reported. A heavy linkset
+  catching up a flying avatar as its push fades went a little into it before it could push it, and
+  the avatar reported 14.05 m/s for one step at PhysicsStepRate 45 while carried at 8.7; it now reports
+  the 8.7.
+Where the avatar moves is unchanged by this, and so is everything an avatar hit by nothing reports.
 
 ## Fast objects
 
