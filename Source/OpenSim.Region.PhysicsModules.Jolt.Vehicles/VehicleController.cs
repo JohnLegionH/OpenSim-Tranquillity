@@ -38,7 +38,8 @@
  * friction, hover, buoyancy, the vertical attractor, angular and linear deflection, sled
  * movement and banking-to-yaw, plus the shared frame infrastructure (timestep smoothing, velocity
  * anti-jitter, motor reset, stall detection, ground-penetration fix, the vehicle's gravity share, torque
- * accumulator). Not simulated: mouselook steering and wind.
+ * accumulator), and mouselook steering and banking (VEHICLE_FLAG_MOUSELOOK_STEER, _BANK) toward the driver's camera
+ * the host supplies (DriverCamera). Not simulated: wind.
  *
  * The motors and friction are solved by VehicleMotorSolver, hover and the vertical attractor by
  * VehicleSpring, each as the exact solution over the step the engine takes.
@@ -86,6 +87,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // The share of gravity a ground vehicle (car or sled) gets while it touches something: BulletSim's
         // VehicleGroundGravityFudge, 0.2 there. 1 leaves gravity whole. Set by the host from its configuration.
         public float GroundGravityFactor { get; set; } = 1f;
+
+        // The world direction the driver's camera looks along (the simulator's CameraData.CameraAtAxis), for
+        // VEHICLE_FLAG_MOUSELOOK_STEER and VEHICLE_FLAG_MOUSELOOK_BANK; null, or no function, when no driver's camera is
+        // known. Read on the physics step. Set by the host.
+        public Func<Vector3?> DriverCamera { get; set; }
 
         // The region's vehicle settings (preset set and limits). Set by the host before the first vehicle type is set.
         public VehicleSettings Settings { get; set; } = VehicleSettings.Default;
@@ -193,6 +199,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _props.Dynamics.LinearDecayIndex = float.PositiveInfinity;
             _props.Dynamics.AngularDecayIndex = float.PositiveInfinity;
             _props.Dynamics.LastAccessTOD = Clock();
+            _bankingAirTime = 0;
 
             // (No scene-event registration or Refresh here; the host reacts to IsActive instead:
             // per-frame Step drive + body physical params.)
@@ -1337,17 +1344,24 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <summary>
         /// Banking, as Second Life documents it (Linden_Vehicle_Tutorial, "Banking"; LlSetVehicleFloatParam): a roll
         /// about the vehicle's roll axis gives it an angular velocity about the yaw axis, so it turns; positive
-        /// efficiency leans into the turn. The yaw rate it asks for is in proportion to the efficiency and the roll,
-        /// and with BANKING_MIX toward 1 also to the speed along the roll axis:
+        /// efficiency leans into the turn, negative leans out of it. "The magnitude of the yaw effect will be
+        /// proportional to the VEHICLE_BANKING_EFFICIENCY, the angle of the roll rotation, and sometimes the vehicle's
+        /// velocity along its preferred axis of motion", the last with BANKING_MIX toward 1:
         ///
-        ///   target = -roll * attitude * eff * pi * ((1 - mix) + mix * speed / Vref)       (roll the y axis' rise,
-        ///            scaled to the banking range; attitude -1 when the vehicle is upside down; Vref the
-        ///            reference speed, 30 m/s by default)
+        ///   target = -roll * attitude * eff * pi * ((1 - mix) + mix * speed / Vref)       (roll the angle about the
+        ///            vehicle's x axis, as the vertical attractor measures it, whatever the pitch; upside down, measured
+        ///            from the nearer side, with attitude -1; Vref the reference speed, 30 m/s by default)
         ///
         /// and the yaw rate about world z approaches it with BANKING_TIMESCALE, the documented "time it takes for the
         /// banking behavior to defeat a preexisting angular velocity about the world z-axis":
         ///
-        ///   w' = (target - w) / T,   stepped exactly: w(h) = target + (w0 - target) e^(-h / T).
+        ///   w' = (s target - w) / T,   stepped exactly: w(h) = s target + (w0 - s target) e^(-h / T).
+        ///
+        /// s is the banking's strength: 1, but with VEHICLE_FLAG_LIMIT_MOTOR_UP in the air (LlSetVehicleFlags: "the
+        /// strength of the banking will decay when the vehicle no longer experiences collisions. The decay timescale is
+        /// the same as VEHICLE_BANKING_TIMESCALE") s = e^(-t_air / T), t_air the time since it last touched something.
+        /// It is whole again on the step after the vehicle touches something. With s fading over the step the
+        /// equation's exact step is w(h) = (w0 + s0 target h / T) e^(-h / T), s0 its strength at the step's start.
         ///
         /// The vertical attractor must be on ("must be enabled in order for the banking behavior to function"); off
         /// at a banking timescale of 500 s or more; under ThresholdBankAngle of roll banking leaves the yaw alone.
@@ -1355,6 +1369,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private float SimulateBanking(float h, float tilt)
         {
+            // The time in the air at the start of this step, for LIMIT_MOTOR_UP's fade; kept whether banking acts or not.
+            double airTime = _bankingAirTime;
+            _bankingAirTime = _body.HasCollision ? 0 : _bankingAirTime + h;
+
             float timescale = _props.GetFloat(VehFloatParam.BankingTimescale, 1000f);
             float efficiency = _props.GetFloat(VehFloatParam.BankingEfficiency, 0f);
             if (!VehicleLimits.DoBanking || efficiency == 0f || timescale >= S.MaxAttractTimescale
@@ -1365,10 +1383,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             float forwardSpeed = Math.Abs(_rawLocalLinearVel.X);
             float speedShare = Utils.Clamp(forwardSpeed, 0, S.ReferenceSpeed) / S.ReferenceSpeed;
 
-            // The roll: how far the y axis rises, scaled to the banking range.
-            float rise = (Vector3.UnitY * _rotation).Z;
-            float range = _props.GetFloat(VehFloatParam.BankingAzimuth, (float)Math.PI / 2f);
-            float roll = Utils.Clamp(rise * (float)Math.PI * 0.5f / range, -1, 1);
+            // The roll: the angle about the x axis that would bring the y axis level (the attractor's roll), upside down
+            // measured from the nearer side (so that it turns the way the y axis' rise did), scaled to the banking range.
+            const float HalfPi = (float)(Math.PI / 2.0);
+            float angle = (float)Math.Atan2((Vector3.UnitY * _rotation).Z, (Vector3.UnitZ * _rotation).Z);
+            if (angle > HalfPi)
+                angle = (float)Math.PI - angle;
+            else if (angle < -HalfPi)
+                angle = -(float)Math.PI - angle;
+            float range = _props.GetFloat(VehFloatParam.BankingAzimuth, HalfPi);
+            float roll = Utils.Clamp(angle * HalfPi / range, -HalfPi, HalfPi);
             if (Math.Abs(roll) <= VehicleLimits.ThresholdBankAngle)
                 return 0f;
             float attitude = tilt > Math.PI / 2.0 ? -1f : 1f;
@@ -1380,9 +1404,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             target = Utils.Clamp(target, -S.MaxAngularSpeed, S.MaxAngularSpeed);
 
             float w0 = _rawWorldAngularVel.Z;
-            float w1 = target + (w0 - target) * (float)Math.Exp(-h / timescale);
+            float w1;
+            if ((_props.Flags & ExtendedVehicleFlags.LimitMotorUp) != 0 && !_body.HasCollision)
+                w1 = (float)((w0 + target * Math.Exp(-airTime / timescale) * h / timescale) * Math.Exp(-h / timescale));
+            else
+                w1 = target + (w0 - target) * (float)Math.Exp(-h / timescale);
             return w1 - w0;
         }
+
+        // How long the vehicle has been out of touch with anything (s), for LIMIT_MOTOR_UP's banking fade.
+        private double _bankingAirTime;
 
         #endregion
 
@@ -1487,8 +1518,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         private float SimulateAngularMotorAndFriction(float h, bool motorOn, bool frictionOn)
         {
             Vector3 worldVel = _rawWorldAngularVel;
-            Vector3 motor = _props.Dynamics.AngularDirection;
             Vector3 motorTs = _props.GetVec(VehVectorParam.AngularMotorTimescale);
+            Vector3 motor = MouselookMotor(_props.Dynamics.AngularDirection, motorTs);
             Vector3 decayTs = _props.GetVec(VehVectorParam.AngularMotorDecayTimescale);
             Vector3 frictionTs = frictionOn ? _props.GetVec(VehVectorParam.AngularFrictionTimescale) : FrictionOff;
             bool torqueWorldZ = (_props.Flags & ExtendedVehicleFlags.TorqueWorldZ) != 0;
@@ -1539,6 +1570,57 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _motorTorqueVelChange += change;
             return aboutWorldZ;
         }
+
+        /// <summary>
+        /// The angular motor's direction with VEHICLE_FLAG_MOUSELOOK_STEER or VEHICLE_FLAG_MOUSELOOK_BANK set and a
+        /// driver's camera known (llSetVehicleFlags):
+        ///
+        /// - STEER: "make the angular motor try to make the vehicle turn such that its local x-axis points in the same
+        ///   direction as the client-side camera". The yaw (z) and pitch (y) axes aim at the camera.
+        /// - BANK: "Same as above, but relies on banking. It remaps left-right motions of the client camera (also known
+        ///   as "yaw") to rotations about the vehicle's local x-axis". The pitch axis aims as with STEER; the camera's yaw
+        ///   aims the roll (x) axis instead, leaning into the turn (a camera to the left rolls the vehicle left), and
+        ///   banking turns the vehicle. With both flags set, BANK's remap is used.
+        ///
+        /// Each aimed axis asks for the turning rate that would close its angle a to the camera in one motor timescale,
+        /// held to that axis of the script's motor direction, as the flags "only turn the vehicle up to the current
+        /// VEHICLE_ANGULAR_MOTOR_DIRECTION; If VEHICLE_ANGULAR_MOTOR_DIRECTION is set to ZERO_VECTOR, then the vehicle
+        /// will not turn":
+        ///
+        ///   M = clamp(a / Tm, -|M_script|, |M_script|)
+        ///
+        /// The motor equation then acts on it as on any motor direction, with its timescale and decay. An axis not aimed
+        /// keeps the script's direction. Without a driver's camera the flags change nothing.
+        /// </summary>
+        private Vector3 MouselookMotor(Vector3 motor, Vector3 motorTs)
+        {
+            const ExtendedVehicleFlags mouselook = ExtendedVehicleFlags.MouselookSteer | ExtendedVehicleFlags.MouselookBank;
+            if ((_props.Flags & mouselook) == 0 || DriverCamera?.Invoke() is not Vector3 camera
+                || !float.IsFinite(camera.X) || !float.IsFinite(camera.Y) || !float.IsFinite(camera.Z)
+                || camera.LengthSquared() < MinCameraAxis)
+                return motor;
+
+            // Where the camera looks in the vehicle's frame: its yaw from the x axis (about +z, positive to the left) and
+            // its pitch (about +y, positive nose down).
+            Vector3 d = Vector3.Normalize(camera) * Quaternion.Inverse(_rotation);
+            double yaw = Math.Atan2(d.Y, d.X);
+            double pitch = -Math.Atan2(d.Z, Math.Sqrt(d.X * d.X + d.Y * d.Y));
+            motor.Y = Aim(pitch, motor.Y, motorTs.Y);
+            if ((_props.Flags & ExtendedVehicleFlags.MouselookBank) != 0)
+                motor.X = Aim(-yaw, motor.X, motorTs.X);
+            else
+                motor.Z = Aim(yaw, motor.Z, motorTs.Z);
+            return motor;
+        }
+
+        private static float Aim(double angle, float most, float timescale)
+        {
+            double limit = Math.Abs(most);
+            return (float)Math.Clamp(angle / Math.Max(timescale, VehicleMotorSolver.MinTimescale), -limit, limit);
+        }
+
+        // A camera axis shorter than this (squared) gives no direction.
+        private const float MinCameraAxis = 1e-6f;
 
         // Friction timescales that turn friction off on every axis.
         private static readonly Vector3 FrictionOff = new Vector3((float)VehicleMotorSolver.FrictionOffTimescale);

@@ -22,3 +22,10 @@ guard-park-drive-v20: --scenario park-drive --rate 11 --physics-rate 0,45 --jolt
 wallpush-11: --scenario crash-wall --rate 11
 wallpush-11-long: --scenario crash-wall --rate 11 --duration 45
 wallpush-45-long: --scenario crash-wall --rate 45 --duration 45
+
+# Banking and mouselook steering, at one physics step per heartbeat and at 45 Hz: the airplane banking into a right turn
+# (its heading in the trace), the car steered by a camera looking north, and the airplane banking toward a camera 60
+# degrees to its right.
+bank-turn: --scenario bank-turn --rate 11 --physics-rate 0,45
+mouselook-turn: --scenario mouselook-turn --rate 11 --physics-rate 0,45
+mouselook-bank: --scenario mouselook-bank --rate 11 --physics-rate 0,45
