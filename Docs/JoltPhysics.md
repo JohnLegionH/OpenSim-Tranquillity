@@ -1127,7 +1127,9 @@ What the option leaves as the harness has it:
 ### The regression check
 
 The Jolt harness workflow runs the runs listed in `Tests/JoltPhysicsHarness/ci/runs.txt`, one
-`--out` folder each, and then compares each run's `summary.csv` with a recorded baseline:
+`--out` folder each, and then compares each run's `summary.csv` with a recorded baseline. It also
+runs those in `ci/traced-runs.txt` (the ten-box tower at three solver settings) and uploads their
+traces with the others, under `traced/`, without comparing them:
 
 ```
 dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --check-baseline <folder of the runs> --baselines Tests/JoltPhysicsHarness/ci/baselines

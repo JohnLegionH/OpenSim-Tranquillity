@@ -22,11 +22,3 @@ push: --scenario push-avatar,push-flood,push-car,push-box --rate 11 --physics-ra
 # Arriving avatars: one arriving on a fixed platform 3 m above the ground stays on it; one arriving 3 m above the
 # platform, not flying, falls and lands on it. end_z is where each stands.
 avatar-arrive: --scenario avatar-platform,avatar-platform-drop --rate 11,45 --physics-rate 0,45
-
-# Ten 0.5 m boxes stacked on the ground at [Jolt] VelocityIterations 10, 20 and 40: does the tower stand and fall
-# asleep, and when (the console's "part" lines; every box's trace in tower-10-*-parts.csv).
-tower-10-v10: --scenario tower-10 --rate 11 --physics-rate 0,22.5,45,90 --jolt VelocityIterations=10
-tower-10-v20: --scenario tower-10 --rate 11 --physics-rate 0,22.5,45,90 --jolt VelocityIterations=20
-tower-10-v40: --scenario tower-10 --rate 11 --physics-rate 0,22.5,45,90 --jolt VelocityIterations=40
-tower-10-v40-cs3: --scenario tower-10 --rate 11 --physics-rate 22.5 --jolt VelocityIterations=40 --jolt PhysicsStepCollisionSteps=3
-tower-10-v20-cs3: --scenario tower-10 --rate 11 --physics-rate 22.5 --jolt VelocityIterations=20 --jolt PhysicsStepCollisionSteps=3
