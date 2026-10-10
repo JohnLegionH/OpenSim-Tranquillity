@@ -1646,8 +1646,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 Func<DateTime> clock = _module.ControllerClock;
                 if (clock != null)
                     _vehicle.Clock = clock;
+                _vehicle.DriverCamera = DriverCameraAxis;
             }
         }
+
+        // The driver's camera for the mouselook vehicle flags: where it looks (world), as the simulator hands it to the
+        // vehicle's root actor (ScenePresence answers OnPhysicsRequestingCameraData once a script takes the seated
+        // driver's controls); null when no driver's camera is hooked up.
+        private Vector3? DriverCameraAxis() => TryGetCameraData() is CameraData c ? c.CameraAtAxis : null;
 
         // Per-frame drive, called by JoltScene.Simulate BEFORE the physics step (the Jolt
         // equivalent of BulletSim's BeforeStep event): snapshot the live body, run the controller,

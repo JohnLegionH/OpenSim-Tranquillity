@@ -154,6 +154,7 @@ public readonly record struct VehicleFlagSetting(int Flag, bool Remove)
     {
         ["NO_DEFLECTION_UP"] = 0x1, ["LIMIT_ROLL_ONLY"] = 0x2, ["HOVER_WATER_ONLY"] = 0x4, ["HOVER_TERRAIN_ONLY"] = 0x8,
         ["HOVER_GLOBAL_HEIGHT"] = 0x10, ["HOVER_UP_ONLY"] = 0x20, ["LIMIT_MOTOR_UP"] = 0x40,
+        ["MOUSELOOK_STEER"] = 0x80, ["MOUSELOOK_BANK"] = 0x100, ["CAMERA_DECOUPLED"] = 0x200, ["BLOCK_INTERFERENCE"] = 0x400,
     };
 
     /// <summary>Parses NAME (set) or -NAME (remove); NAME is an LSL VEHICLE_FLAG_* name with or without the prefix.</summary>
@@ -741,7 +742,7 @@ public static class Harness
     // raycast-cost: cast i of a heartbeat is 50 m long for the first and 300 m for the last.
     private static float RayLength(int i) => 50f + 250f * i / (RayCastsPerHeartbeat - 1);
 
-    private static void SetupCar(Run r, bool testCar)
+    private static void SetupCar(Run r, bool testCar, int flags = 0)
     {
         bool region = r.Options.Feed == InputFeed.Region;
         float x = r.Slope > 0f ? 128f : 165f, y = r.Slope > 0f ? 120f : 85f;   // top run-out facing down the slope, or level ground facing east
@@ -757,6 +758,8 @@ public static class Harness
             r.SetFloat(Vehicle.LINEAR_MOTOR_TIMESCALE, 1f);
             r.SetFloat(Vehicle.LINEAR_MOTOR_DECAY_TIMESCALE, 0.5f);
         }
+        if (flags != 0)
+            r.SetFlags(flags, false);
         r.ApplyVehicleOverrides();
         r.NextKey = region ? r.Options.KeyDelay : r.Options.StartSpeed.HasValue ? r.Dt : 0.0;
         r.ReleaseAt = r.NextKey + r.Hold;
@@ -1004,6 +1007,54 @@ public static class Harness
                 r.ApplyVehicleOverrides();
             },
             Input = r => r.HoldMotor(new Vector3(5f, 0f, 0f)),
+        },
+        new()
+        {
+            Name = "bank-turn",
+            Description = "VEHICLE_TYPE_AIRPLANE with its presets (banking efficiency 1, mix 0.7, timescale 2 s), held up by buoyancy 1, 60 m up facing east, motor <15,0,0> held for the whole run; at 2 s (the release) rolled 20 degrees right and pitched 30 degrees nose up: banking turns it right while the attractor rights the roll (LIMIT_ROLL_ONLY keeps the pitch).",
+            DefaultDuration = _ => 8f, DefaultHold = _ => 1000f,
+            Setup = r =>
+            {
+                SetupBankingAirplane(r, 0);
+                r.ReleaseAt = AttractStart;
+            },
+            Input = r =>
+            {
+                r.HoldMotor(new Vector3(15f, 0f, 0f));
+                if (r.Stage == 0 && r.Now >= AttractStart - 1e-9)
+                {
+                    // Rolled about its own x axis, then pitched about the world's y (negative: nose up).
+                    r.Actor.Orientation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, -BankTurnPitch) * Quaternion.CreateFromAxisAngle(Vector3.UnitX, BankTurnRoll);
+                    r.Stage = 1;
+                }
+            },
+            Steady = (r, s) => LastSeconds(r, s, 2.0),
+        },
+        new()
+        {
+            Name = "mouselook-turn",
+            Description = "VEHICLE_TYPE_CAR with its presets on level ground facing east, VEHICLE_FLAG_MOUSELOOK_STEER, the driver's camera looking north (90 degrees left): motor <8,0,0> and angular motor <0,0,1.5> (the fastest it may turn) held for 6 s, then both released. The car turns left until it faces the camera, and drives on north.",
+            DefaultDuration = _ => 15f, DefaultHold = _ => 6f,
+            Setup = r =>
+            {
+                SetupCar(r, false, MouselookSteerFlag);
+                DriverCamera(r, Vector3.UnitY);
+            },
+            Input = r => r.HoldMotor(CarMotor, new Vector3(0f, 0f, 1.5f)),
+            Steady = DriveSteady,
+        },
+        new()
+        {
+            Name = "mouselook-bank",
+            Description = "VEHICLE_TYPE_AIRPLANE with its presets, held up by buoyancy 1, 60 m up facing east, VEHICLE_FLAG_MOUSELOOK_BANK, the driver's camera looking 60 degrees right of east: motor <15,0,0> and angular motor <0.5,0,0> (the fastest it may roll) held for the whole run. The camera's yaw becomes a roll to the right, and banking turns the airplane right toward the camera.",
+            DefaultDuration = _ => 15f, DefaultHold = _ => 1000f,
+            Setup = r =>
+            {
+                SetupBankingAirplane(r, MouselookBankFlag);
+                DriverCamera(r, new Vector3(MathF.Cos(-MathF.PI / 3f), MathF.Sin(-MathF.PI / 3f), 0f));
+            },
+            Input = r => r.HoldMotor(new Vector3(15f, 0f, 0f), new Vector3(0.5f, 0f, 0f)),
+            Steady = (r, s) => LastSeconds(r, s, 2.0),
         },
         new()
         {
@@ -1406,6 +1457,46 @@ public static class Harness
 
     private const int LimitRollOnlyFlag = 0x2;
     private const int LimitMotorUpFlag = 0x40;
+    public const int MouselookSteerFlag = 0x80;
+    public const int MouselookBankFlag = 0x100;
+
+    /// <summary>The bank-turn tilt at <see cref="AttractStart"/>: rolled this far right (radians), about its own x axis,
+    /// then pitched <see cref="BankTurnPitch"/> nose up about the world's y.</summary>
+    public const float BankTurnRoll = 20f * MathF.PI / 180f;
+    public const float BankTurnPitch = 30f * MathF.PI / 180f;
+
+    /// <summary>The airplane the banking and mouselook-bank scenarios fly: VEHICLE_TYPE_AIRPLANE with its presets, held up
+    /// by buoyancy 1 so that its turn is the banking's, 60 m above level ground facing east, in the north of the region
+    /// (they turn right, to the south).</summary>
+    private static void SetupBankingAirplane(Run r, int flags)
+    {
+        r.AddBox(new Vector3(3f, 3f, 0.5f), new Vector3(60f, 200f, Course.Ground + 60f), Quaternion.Identity);
+        r.MakeVehicle(Vehicle.TYPE_AIRPLANE);
+        r.SetFloat(Vehicle.BUOYANCY, 1f);
+        if (flags != 0)
+            r.SetFlags(flags, false);
+        r.ApplyVehicleOverrides();
+    }
+
+    /// <summary>The camera of a driver in mouselook looking along <paramref name="at"/> (world, level), as the simulator's
+    /// ScenePresence hands it to the vehicle's root actor once the driver's controls are taken.</summary>
+    private static void DriverCamera(Run r, Vector3 at)
+    {
+        var camera = new CameraData
+        {
+            CameraAtAxis = Vector3.Normalize(at),
+            CameraRotation = Quaternion.CreateFromEulers(0f, 0f, MathF.Atan2(at.Y, at.X)),
+            MouseLook = true,
+        };
+        r.Actor.OnPhysicsRequestingCameraData += () => camera;
+    }
+
+    /// <summary>The world heading of an orientation's x axis (radians, counter-clockwise from east).</summary>
+    public static float Heading(Quaternion q)
+    {
+        Vector3 x = Vector3.UnitX * q;
+        return MathF.Atan2(x.Y, x.X);
+    }
 
     // Buoyancy 1 and every behaviour off but the ones a scenario then sets: no hover, attractor, banking, deflection
     // or angular friction.
