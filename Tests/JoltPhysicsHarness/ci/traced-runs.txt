@@ -7,3 +7,11 @@
 tower-10-v10: --scenario tower-10 --rate 11 --physics-rate 0,22.5,45,90 --jolt VelocityIterations=10
 tower-10-v20: --scenario tower-10 --rate 11 --physics-rate 0,22.5,45,90 --jolt VelocityIterations=20
 tower-10-v40: --scenario tower-10 --rate 11 --physics-rate 0,22.5,45,90 --jolt VelocityIterations=40
+
+# The vehicle guard figures at [Jolt] VelocityIterations 10 and 20, at one physics step per heartbeat and at 45 Hz:
+# the test car on flat ground and up the 5, 15 and 33 degree ramps, and the parked car (its drift after it comes to
+# rest is read from the per-heartbeat trace).
+guard-testcar-v10: --scenario testcar --rate 11 --physics-rate 0,45 --jolt VelocityIterations=10
+guard-testcar-v20: --scenario testcar --rate 11 --physics-rate 0,45 --jolt VelocityIterations=20
+guard-park-drive-v10: --scenario park-drive --rate 11 --physics-rate 0,45 --jolt VelocityIterations=10
+guard-park-drive-v20: --scenario park-drive --rate 11 --physics-rate 0,45 --jolt VelocityIterations=20
