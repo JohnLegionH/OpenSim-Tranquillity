@@ -246,6 +246,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // Physical -> Dynamic + StartActive (wakes so it falls); mass computed Volume*Density (Density
         // from BodyDesc.Default = 1000). A body that may go physical is created movable ONLY when it is
         // physical (a Static-born body can't be promoted - the toggle recreates instead).
+        //
+        // Every physical prim has continuous collision detection when it is fast (ContinuousCollision.WhenFast), so a
+        // small fast object does not pass through a thin wall, another object or the ground between two collision
+        // steps. It is cast along its motion in the collision steps in which it would move further than Jolt's cast
+        // threshold: PhysicsSettings.mLinearCastThreshold (0.75) times its shape's inner radius, the radius of the
+        // largest sphere that fits inside it (PhysicsSystem::JobIntegrateVelocity). A 0.2 m ball is cast from 5 m/s at
+        // one physics step per 11 Hz heartbeat (6 collision steps), a 1 m box from 25 m/s. In every other step it is a
+        // Discrete body, so an object that is never that fast moves exactly as before. A cast that meets nothing it is
+        // moving into (a box sliding along the ground) ends as a Discrete step would; one that does is stopped at the
+        // hit and given the contact's impulse, from the two bodies' combined friction and restitution
+        // (JobResolveCCDContacts). Jolt does not cast against sensors, so a volume-detect prim still lets a fast object
+        // through, and the object layers keep a phantom one passing everything but the ground. A vehicle is cast all
+        // the time (ApplyVehicleBodyParams).
+        private const ContinuousCollision PhysicalPrimCcd = ContinuousCollision.WhenFast;
+
         private void CreateBodyInternal()
         {
             // Load-time position sanity: never bring a PHYSICAL body up penetrating the terrain. If
@@ -283,6 +298,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 desc.LinearDamping = PrimLinearDamping;
                 desc.AngularDamping = PrimAngularDamping;
                 desc.GravityFactor = ScriptGravityFactor;   // llSetBuoyancy (a vehicle sets its own just below)
+                desc.Ccd = PhysicalPrimCcd;
                 // Same structure as BulletSim's taint-deferred creation: create the body INERT (asleep), never
                 // active-on-insert. BulletSim never lets a body be stepped by the engine until ALL taints
                 // (create + MakeDynamic + SetVehicle/SetPhysicalGravity) have drained (ProcessTaints runs
@@ -1543,7 +1559,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _backend.SetBodyDamping(_body, 0f, 0f);
             _backend.SetBodyGravityFactor(_body, 0f);
             _backend.SetBodyAllowSleeping(_body, false);
-            _backend.SetBodyContinuousCollision(_body, true);
+            _backend.SetBodyContinuousCollision(_body, ContinuousCollision.On);
             _vehicleMaySleep = false;
             _backend.ActivateBody(_body);
         }
@@ -1552,7 +1568,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (!_body.IsValid)
                 return;
-            BodyDesc d = BodyDesc.Default;
             // Back to the prims' own physics material, and a prim's damping.
             _backend.SetBodyFriction(_body, _friction);
             _backend.SetBodyRestitution(_body, _restitution);
@@ -1562,7 +1577,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _backend.SetBodyDamping(_body, PrimLinearDamping, PrimAngularDamping);
             _backend.SetBodyGravityFactor(_body, ScriptGravityFactor);   // back to the script's buoyancy and gravity multiplier
             _backend.SetBodyAllowSleeping(_body, true);
-            _backend.SetBodyContinuousCollision(_body, d.UseCcd);
+            _backend.SetBodyContinuousCollision(_body, PhysicalPrimCcd);
         }
 
         // Move to target and hover are in JoltPrim.Targets.cs. The angular PID is not used: core turns a physical

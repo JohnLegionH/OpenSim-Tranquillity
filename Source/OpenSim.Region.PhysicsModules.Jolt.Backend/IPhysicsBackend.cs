@@ -155,6 +155,30 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         Phantom = 7,
     }
 
+    /// <summary>
+    /// Continuous collision detection for a moving body: whether the engine casts it along its motion in a collision
+    /// step, so it stops at what it would hit inside the step instead of ending the step past it or overlapping it.
+    /// </summary>
+    public enum ContinuousCollision : byte
+    {
+        /// <summary>Never cast: collisions are found where the body is at the start of each collision step.</summary>
+        Off = 0,
+
+        /// <summary>Jolt's LinearCast motion quality all the time: Jolt casts the body in every collision step in which
+        /// it would move further than its cast threshold (PhysicsSettings.mLinearCastThreshold times the shape's inner
+        /// radius).</summary>
+        On = 1,
+
+        /// <summary>
+        /// LinearCast only for the collision steps in which the body moves fast enough for Jolt to cast it (the test of
+        /// <see cref="On"/>, made with the body's velocity before each update), Discrete in every other. A body that
+        /// is never that fast moves exactly as an <see cref="Off"/> one. (A LinearCast body that Jolt does not cast is
+        /// not quite Discrete: when another body's cast meets it, Jolt takes it as not yet moved in that step, so the
+        /// two bodies' relative motion differs from a Discrete body's.)
+        /// </summary>
+        WhenFast = 2,
+    }
+
     public enum BodyMotionType : byte
     {
         /// <summary>Immovable. Infinite mass. Non-physical prims and terrain.</summary>
@@ -284,8 +308,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// </summary>
         public bool StartActive;
 
-        /// <summary>Continuous collision detection. Expensive - reserve for fast movers.</summary>
-        public bool UseCcd;
+        /// <summary>Continuous collision detection (see <see cref="ContinuousCollision"/>). Only a movable body has it.</summary>
+        public ContinuousCollision Ccd;
 
         /// <summary>SceneObjectPart.LocalId. Echoed back in every report to avoid a lookup.</summary>
         public uint UserData;
@@ -789,11 +813,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// the body is momentarily at rest. No-op on static bodies.</summary>
         void SetBodyAllowSleeping(BodyId body, bool allow);
 
-        /// <summary>Continuous collision detection on or off for a moving body (Jolt's motion quality: LinearCast or
-        /// Discrete). With it, a body that moves further in a step than a share of its own size is cast along its
-        /// motion, so it stops at what it would hit inside the step instead of ending the step overlapping it.
-        /// No-op on static bodies.</summary>
-        void SetBodyContinuousCollision(BodyId body, bool on);
+        /// <summary>Continuous collision detection for a moving body (see <see cref="ContinuousCollision"/>). With it, a
+        /// body that moves further in a step than a share of its own size is cast along its motion, so it stops at what
+        /// it would hit inside the step instead of ending the step overlapping it. No-op on static bodies.</summary>
+        void SetBodyContinuousCollision(BodyId body, ContinuousCollision mode);
 
         /// <summary>Toggle the Persist (ongoing-contact) gate for a live body - a prim's collision-script
         /// subscription flips this so the script `collision` event streams while touching.</summary>
