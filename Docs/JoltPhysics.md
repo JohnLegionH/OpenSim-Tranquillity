@@ -654,6 +654,44 @@ ubODE, where an avatar is a body that meets an object with no bounce:
   simulator plays a prim's collision sound above 0.2 m/s, and an avatar takes impact damage where
   damage is on below -5 m/s, from the land (a fall from about 1.3 m or more) or from a prim.
 
+## Buoyancy and hover on an avatar
+
+A script in an attachment reaches its wearer: core hands `llSetBuoyancy` to the avatar's physics body
+as its buoyancy, and `llSetHoverHeight` and `llStopHover` as its hover (SceneObjectGroup.SetBuoyancy,
+SetHoverHeight). Jolt acts on both, following ubODE where Second Life documents nothing:
+
+- Buoyancy scales the gravity on the avatar by (1 - buoyancy), as on a prim (`llSetBuoyancy`: "when
+  buoyancy equals 1.0 it floats", "when buoyancy is > 1.0 the object rises"). At 1 an avatar that walks
+  off a ledge goes on level in the air; at 0.5 it falls at half gravity; above 1 it rises off the ground.
+  As in ubODE it does nothing while the avatar flies or hovers. A floating avatar (buoyancy 1 or more) is
+  not drawn down onto the floor as it walks off an edge.
+- Hover holds the avatar's position at the height above the ground, the higher of ground and water, the
+  water, or the region's zero, as the call asks (core's hover type), with the critically damped spring a
+  prim's hover uses and tau as its timescale ("Critically damps to a height above the ground (or water)
+  in tau seconds", `llSetHoverHeight`). The height follows the ground along the avatar's path, so it
+  holds over a slope while the avatar walks. Gravity is off and a jump does nothing while it hovers, as
+  in ubODE; walking and flying across still work. It never holds the avatar lower than standing on the
+  ground. A height of 0 or `llStopHover` ends it and the avatar falls. Hover moves the avatar up or down
+  at no more than 50 m/s (ubODE's limit).
+- Neither is kept when the avatar's physics body is made again (a teleport, a region crossing, standing
+  up); core does not hand them over again, with any engine.
+
+Script engines differ (no change made to either): YEngine reaches the wearer for both calls. Phlox
+returns from `llSetHoverHeight` and `llStopHover` when the script's own prim has no physics body, which
+an attachment never has, so under Phlox they do nothing on an avatar; its `llSetBuoyancy` reaches the
+wearer. `llGroundRepel` from an attachment does nothing on either engine.
+
+## The velocity an avatar reports
+
+An avatar reports the velocity it really moved at in its last physics step, with the gravity it gained
+after the move: what a wall or the ground stopped is not in it. Walking into a wall it reports about 0;
+walking freely, its walk speed; standing on a moving object, the object's speed; pushed, the speed the
+push gives it. ubODE reports its avatar body's velocity, which a wall stops likewise. Before, Jolt
+reported the velocity the avatar was asked to move with, so an avatar held at a wall reported its full
+walk speed. Core sends this velocity to viewers to move the avatar between updates, returns it to
+scripts (`llGetVel` in an attachment, `llDetectedVel`, sensors' ACTIVE flag), carries it into a teleport
+or a region crossing, and the animator reads its vertical part to choose falling.
+
 ## Fast objects
 
 A physical prim that moves fast is checked along its path, so it does not pass through a thin wall,
@@ -1069,7 +1107,11 @@ rest on a platform, on the ground or inside a volume-detect box, falls asleep an
 `tower-10` (ten stacked boxes) and `rest-no-bounce` (a box of restitution 0 dropped 2 m), and the avatar
 scenarios: `avatar-hit-1kg`, `avatar-hit-100kg` and `avatar-hit-10ms` (a box thrown at a standing
 avatar), `avatar-walk-1kg` and `avatar-walk-1000kg` (an avatar walking into a box), `avatar-on-box`,
-`avatar-box-drop` (a box dropped 5 m onto an avatar's head) and `avatar-fall-20m`. These print each
+`avatar-box-drop` (a box dropped 5 m onto an avatar's head) and `avatar-fall-20m`, and the attachment
+scenarios: `avatar-buoyancy-1`, `avatar-buoyancy-half`, `avatar-buoyancy-0` and `avatar-ledge` (an avatar
+walking off a 3 m platform with that buoyancy, or none set), `avatar-hover` (hover 3 m set, walked across
+level ground or up the ramp, then stopped), `avatar-wall` (walking into a fixed wall) and
+`avatar-moving-platform` (standing on a platform kept moving at 2 m/s). These print each
 watched part's collision events under their summary line.
 The shot scenarios fire a physical ball (`--ball`, `--shot-speed`) at something: `tunnel-wall-1cm` and
 `tunnel-wall-10cm` (a fixed wall), `tunnel-box` (a 0.5 m box resting on the ground), `tunnel-ground`

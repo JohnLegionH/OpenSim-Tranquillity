@@ -433,6 +433,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public CharacterId Character;
         public uint UserData;
         public Vector3 Position;
+        /// <summary>The velocity the character really moved at in its last step (what a wall stopped is not in it),
+        /// with the gravity it gained after the move.</summary>
         public Vector3 LinearVelocity;
         public Vector3 GroundNormal;
         public BodyId GroundBody;
@@ -878,6 +880,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
         void SetCharacterMovement(
             CharacterId character, Vector3 desiredVelocity, bool jump, bool flying);
+
+        /// <summary>
+        /// An avatar's buoyancy (an attachment's llSetBuoyancy): gravity on it is scaled by 1 - buoyancy, so 1 floats,
+        /// 0.5 falls at half gravity and above 1 rises. It does nothing while the avatar flies or hovers. 0 is none.
+        /// </summary>
+        void SetCharacterBuoyancy(CharacterId character, float buoyancy);
+
+        /// <summary>
+        /// An avatar's hover (an attachment's llSetHoverHeight): <paramref name="heightAt"/> gives the height its capsule
+        /// centre is held at over a point (x, y) of the region, and the avatar is brought there by a critically damped
+        /// spring of timescale <paramref name="tau"/>, gravity off, while it walks or flies across. Called on the step
+        /// thread. Null ends the hover, and the avatar falls from where it was held.
+        /// </summary>
+        void SetCharacterHover(CharacterId character, Func<float, float, float>? heightAt, float tau);
 
         bool TryGetCharacterState(CharacterId character, out CharacterState state);
 

@@ -3277,6 +3277,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 {
                     rec.Character.Position = position;
                     rec.Character.LinearVelocity = Vector3.Zero;
+                    rec.MovedVelocity = Vector3.Zero;
+                    rec.HoverCarry = 0f;
+                    rec.HoverRise = 0f;
                 }
             }
         }
@@ -3464,7 +3467,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 Character = new CharacterId(rec.Handle),
                 UserData = rec.UserData,
                 Position = ch.Position,
-                LinearVelocity = ch.LinearVelocity,
+                LinearVelocity = rec.MovedVelocity,
                 GroundNormal = ch.GroundNormal,
                 GroundBody = groundRec != null ? new BodyId(groundRec.Handle) : BodyId.Invalid,
                 GroundIsTerrain = groundRec != null && groundRec.Layer == PhysicsLayer.Terrain,
@@ -3483,12 +3486,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             if (ch == null || _system == null)
                 return;
 
-            float gz = _settings.Gravity.Z;
+            // Buoyancy scales gravity as it does on a prim: 1 floats, 0.5 falls at half gravity, above 1 rises. As in ubODE
+            // (ODECharacter.MoveCharacter), it does nothing while the avatar flies or hovers. With none set, gz * 1 is gz.
+            float gz = _settings.Gravity.Z * (1f - rec.Buoyancy);
             Vector3 desired = rec.DesiredVelocity;
             Vector3 newVel;
             bool falling = false;
+            bool hovering = rec.HoverAt != null;
 
-            if (rec.Flying)
+            if (hovering)
+            {
+                // Hover from an attachment: the walk or flight across, the spring up and down; no gravity, no jump.
+                newVel = HoverVelocity(rec, ch, desired, dt);
+            }
+            else if (rec.Flying)
             {
                 // Flying: full 3D control, ground gravity disabled.
                 newVel = desired;
@@ -3517,7 +3528,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 // ground too steep to hold (OnSteepGround) - so ledges still drop and over-steep slopes
                 // still slide (IsSliding). A frictionless "gravity every frame" lets a no-input avatar
                 // creep down a walkable slope; flat-ground tests never show that downslope component.
-                bool heldByGround = onWalkable && !rec.JumpRequested;
+                // A buoyancy above 1 lifts the avatar off the ground it stands on.
+                bool heldByGround = onWalkable && !rec.JumpRequested && gz <= 0f;
                 // Gravity off the ground. The move below uses the velocity it sets, so it gets half a step of
                 // gravity now (the step's average vertical velocity, which moves the character exactly as constant
                 // gravity does over the step) and the other half after the move. A whole step before the move, as
@@ -3540,7 +3552,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             bool pushed = rec.Push != Vector3.Zero || rec.PendingPush != Vector3.Zero;
             newVel = ApplyPushes(rec, newVel, dt);
-            if (!rec.Flying && !falling && newVel.Z > 0f)
+            if (!rec.Flying && !hovering && !falling && newVel.Z > 0f)
             {
                 // Pushed up off the ground: from now it flies as a jump does, half a step of gravity before the move.
                 newVel.Z += gz * dt * 0.5f;
@@ -3558,10 +3570,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // No step up onto a loose object in the avatar's way: it pushes it instead. Stepping up onto a light box sent the
             // avatar up and over it at three times its walking speed.
             bool stepUp = !rec.LooseAtSide && !LooseObjectInStep(rec, ch, newVel, dt);
+            // Nothing pulls a floating or hovering avatar down to the floor: buoyancy 1 holds it level as it walks off an
+            // edge, where sticking would draw it down round the corner, and hover holds its own height.
+            bool stick = !hovering && (rec.Flying || gz < 0f);
             var ext = new ExtendedUpdateSettings
             {
                 WalkStairsStepUp = new Vector3(0f, 0f, stepUp ? MathF.Max(0f, rec.StepHeight) : 0f),
-                StickToFloorStepDown = new Vector3(0f, 0f, -MathF.Max(0.05f, rec.StepHeight)),
+                StickToFloorStepDown = stick ? new Vector3(0f, 0f, -MathF.Max(0.05f, rec.StepHeight)) : Vector3.Zero,
             };
             // Draws on the TempAllocator: only from Step, inside the pool gate (the pool gate rule).
             using (Enter("CharacterVirtual::ExtendedUpdate (joltc.cpp:8135)"))
@@ -3569,13 +3584,96 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             // The second half of the step's gravity, while the character is still in the air after the move (on
             // landing the ground takes over its vertical velocity next step).
+            float late = 0f;
             if (falling && ch.GroundState == GroundState.InAir)
-                ch.LinearVelocity += new Vector3(0f, 0f, gz * dt * 0.5f);
+            {
+                late = gz * dt * 0.5f;
+                ch.LinearVelocity += new Vector3(0f, 0f, late);
+            }
+
+            // What the avatar reports is how it really moved this step, plus the gravity it gained after the move, not
+            // the velocity it was asked to move with: walking into a wall it was asked for its walk speed and moved none
+            // of it. ubODE reports its body's velocity, which the wall stops likewise.
+            Vector3 moved = (ch.Position - startPos) / dt;
+            rec.MovedVelocity = new Vector3(moved.X, moved.Y, moved.Z + late);
+            if (hovering && MathF.Abs(moved.Z - newVel.Z) > 0.01f + 0.1f * MathF.Abs(newVel.Z))
+            {
+                rec.HoverCarry = 0f;   // held up or down by something: the spring starts again from how it moved
+                rec.HoverRise = 0f;
+            }
 
             if (pushed)
                 FadePush(rec, ch, newVel, startPos, dt);
 
             FinishCharacterContacts(rec, ch, dt);
+        }
+
+        /// <summary>The SL wiki, llMoveToTarget: "The smallest functional tau is 0.044444444 (two physics frames, 2/45)". A
+        /// smaller hover tau acts as this one, as on a prim (JoltPrim.MinTau).</summary>
+        internal const float MinHoverTau = 2f / 45f;
+
+        /// <summary>The most vertical speed hover gives an avatar (m/s): ubODE's limit (ODECharacter.MoveCharacter).</summary>
+        internal const float MaxHoverSpeed = 50f;
+
+        // The velocity a hovering avatar moves with this step. Across: what it is asked for, walking or flying, plus the
+        // ground's velocity on ground it can walk on. Up and down: the critically damped spring the SL wiki describes
+        // ("Critically damps to a height above the ground (or water) in tau seconds", llSetHoverHeight), the one a prim's
+        // hover uses (JoltPrim.StepHover), with tau as its timescale. On the error e from the height,
+        //   e'' = -e / tau^2 - 2 e' / tau        so from rest   e(t) = e0 (1 + t / tau) e^(-t / tau)
+        // The height follows the ground along the avatar's path, so it rises with the ground as the avatar moves on.
+        private static Vector3 HoverVelocity(JoltCharacterRecord rec, CharacterVirtual ch, Vector3 desired, float dt)
+        {
+            Vector3 across = new Vector3(desired.X, desired.Y, 0f);
+            ch.UpdateGroundVelocity();
+            if (ch.GroundState == GroundState.OnGround)
+                across += new Vector3(ch.GroundVelocity.X, ch.GroundVelocity.Y, 0f);
+
+            Vector3 pos = ch.Position;
+            Func<float, float, float> heightAt = rec.HoverAt!;
+            float now = heightAt(pos.X, pos.Y);
+            float rise = (heightAt(pos.X + across.X * dt, pos.Y + across.Y * dt) - now) / dt;
+            double w = 1.0 / MathF.Max(rec.HoverTau, MinHoverTau);
+            double e0 = pos.Z - now;
+            // The error's rate is how the avatar moved less the ground's rise it moved with then: a change of slope under
+            // the avatar is followed at once, as its walk is, and is not an error for the spring to take up.
+            double v0 = rec.MovedVelocity.Z + rec.HoverCarry - rec.HoverRise;
+            double c = v0 + w * e0, x = Math.Exp(-w * dt);
+            double e1 = (e0 + c * dt) * x, v1 = (v0 - w * c * dt) * x;
+            double move = (e1 - e0) / dt;
+            float vz = rise + (float)move;
+            rec.HoverCarry = (float)(v1 - move);
+            rec.HoverRise = rise;
+            if (MathF.Abs(vz) > MaxHoverSpeed)
+            {
+                vz = MathF.CopySign(MaxHoverSpeed, vz);
+                rec.HoverCarry = 0f;
+            }
+            return new Vector3(across.X, across.Y, vz);
+        }
+
+        public void SetCharacterBuoyancy(CharacterId character, float buoyancy)
+        {
+            if (!float.IsFinite(buoyancy)) { CountRejectedNonFinite(); return; }
+            lock (_characterGate)
+                if (_characters.TryGet(character.Value, out JoltCharacterRecord rec))
+                    rec.Buoyancy = buoyancy;
+        }
+
+        public void SetCharacterHover(CharacterId character, Func<float, float, float>? heightAt, float tau)
+        {
+            if (!float.IsFinite(tau)) { CountRejectedNonFinite(); return; }
+            lock (_characterGate)
+            {
+                if (!_characters.TryGet(character.Value, out JoltCharacterRecord rec))
+                    return;
+                if (rec.HoverAt == null || heightAt == null)
+                {
+                    rec.HoverCarry = 0f;
+                    rec.HoverRise = 0f;
+                }
+                rec.HoverAt = heightAt;
+                rec.HoverTau = tau;
+            }
         }
 
         // After the move: what blocked the avatar takes the push speed it blocked (a wall stops it), then the push
@@ -4588,7 +4686,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
         public float Mass;                     // CharacterDesc.Mass: what a loose object striking the avatar meets
         public Vector3 StepVelocity;           // the velocity the avatar moved with in its last step
-        public bool LooseAtSide;               // its last step touched a loose object from the side (no stepping up onto it)
+        public Vector3 MovedVelocity;          // the velocity it was seen to move at in its last step, what it reports
+
+        // An attachment's llSetBuoyancy and llSetHoverHeight on the wearer (SetCharacterBuoyancy, SetCharacterHover).
+        public float Buoyancy;
+        public Func<float, float, float>? HoverAt;   // where hover holds the capsule centre over (x, y); null = off
+        public float HoverTau;
+        public float HoverCarry;               // the spring's velocity this step's move did not use, for the next step
+        public float HoverRise;                // the ground's rise under the avatar's path in its last hovering step (m/s)
+        public bool LooseAtSide;              // its last step touched a loose object from the side (no stepping up onto it)
         // The contacts its last update noted, reported after the move (FinishCharacterContacts). Step thread only.
         public readonly List<CharacterBodyContact> Contacts = new();
         public readonly HashSet<uint> Resting = new();   // bodies (Jolt ids) let fall asleep resting on it
