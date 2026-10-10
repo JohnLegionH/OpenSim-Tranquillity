@@ -1944,9 +1944,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // last frame's contacts between bodies that are now both at rest (held below: the engine reports none for them);
         // End is implicit (a pair that drops out of the set). A prim that touched last frame but not now
         // still needs one (empty) update so collision_end can fire - _collidedLastFrame drives that flush.
-        // Per-child: each contact names the STRUCK part on each side (ChildUserData - the
-        // compound child hit, resolved from the contact sub-shape), so a linkset reports against the specific
-        // child and llDetectedLinkNumber returns that child's link (see the AddCollider block below).
+        // Per-child: each contact is delivered to the STRUCK part on each side (ChildUserData - the compound child hit,
+        // resolved from the contact sub-shape), so llDetectedLinkNumber returns that child's link, and it names the other
+        // side by its body (UserData): a physical linkset by its root (see the AddCollider block below).
         //
         // With several backend steps in one heartbeat (mergeSubsteps), the buffer holds every step's reports. A
         // touching pair reports in each step, so only its first Begin/Persist report of the heartbeat counts: the
@@ -2005,11 +2005,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _collisions.CountContact(c.ChildUserDataA);
                 _collisions.CountContact(c.ChildUserDataB);
 
-                // Per-child identity: dispatch to the STRUCK part on each side
-                // (ChildUserData - the compound child hit, or the body itself for a single prim), and name
-                // the OTHER side's struck part as the collider. Delivering to child N's PhysicsActor makes
-                // OpenSim run child N's PhysicsCollision, so llDetectedLinkNumber == N (and it propagates to
-                // the root script - every linkset part is subscribed via the root's aggregated events).
+                // Dispatch to the STRUCK part on each side (ChildUserData - the compound child hit, or the body itself for a
+                // single prim), and name the OTHER side by its body (UserData): a physical linkset by its root, any other prim
+                // as itself. Delivering to child N's PhysicsActor makes OpenSim run child N's PhysicsCollision, so
+                // llDetectedLinkNumber == N (and core passes it to the root's script by its own rule,
+                // SceneObjectPart.SendCollisionEvent). Core names whatever id it is given, by part (CreateColliderArgs), so
+                // the name is the engine's to choose. ubODE names every collider by its root
+                // (ODEScene.Collision_accounting_events: ParentActor.m_baseLocalID), which is a part's own id unless core
+                // linked it, as it does a physical linkset alone; Second Life's llCollisionFilter example matches a child
+                // prim's collision by its object's name ("A child prim named "Object" hits ..., the collision will be
+                // detected" for a filter on the object "Post"). So a prim, a linkset and an avatar name an object alike.
                 // Jolt's normal points A -> B; give each side the surface normal pointing back at it.
                 // ContactReport carries System.Numerics vectors (SVector3); OpenSim's ContactPoint is OMV.
                 // A volume detector's contacts go to the detector alone: what passes through it is not told, as ubODE
@@ -2022,10 +2027,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // side. Core's collision sounds (above 0.2 m/s) and an avatar's impact damage (below -5 m/s) read it, as
                 // ubODE fills it (ODEScene.Collision_accounting_events, ODECharacter for the ground).
                 if (!detectorB && IsSubscribedPrim(c.ChildUserDataA))
-                    _collisions.AddCollider(c.ChildUserDataA, c.ChildUserDataB,
+                    _collisions.AddCollider(c.ChildUserDataA, c.UserDataB,
                         new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f) { RelativeSpeed = c.RelativeSpeed });
                 if (!detectorA && IsSubscribedPrim(c.ChildUserDataB))
-                    _collisions.AddCollider(c.ChildUserDataB, c.ChildUserDataA,
+                    _collisions.AddCollider(c.ChildUserDataB, c.UserDataA,
                         new ContactPoint(pt, new Vector3(-c.Normal.X, -c.Normal.Y, -c.Normal.Z), 0f) { RelativeSpeed = c.RelativeSpeed });
 
                 // An avatar's own contacts: the backend reports them with the avatar as side A (no body) and the
@@ -2042,6 +2047,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (!detectorB && !c.BodyA.IsValid && _frameAvatars.ContainsKey(c.ChildUserDataA))
                     _collisions.AddCollider(c.ChildUserDataA, c.UserDataB,
                         new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f, c.Normal.Z < -AvatarFeetNormalZ)
+                        { RelativeSpeed = c.RelativeSpeed });
+                // Two avatars meeting: the other is told too, as ubODE tells both (ODECollision: each side's
+                // AddCollisionEvent). Jolt finds the contact only in the update of the avatar that meets the other, and the
+                // first to update may move away ahead of the other, taking its velocity, so the other's own update can find
+                // nothing: at one step per heartbeat an avatar walking into another never heard of it.
+                if (!c.BodyA.IsValid && !c.BodyB.IsValid && _frameAvatars.ContainsKey(c.ChildUserDataA) && _frameAvatars.ContainsKey(c.ChildUserDataB))
+                    _collisions.AddCollider(c.ChildUserDataB, c.UserDataA,
+                        new ContactPoint(pt, new Vector3(-c.Normal.X, -c.Normal.Y, -c.Normal.Z), 0f, -c.Normal.Z < -AvatarFeetNormalZ)
                         { RelativeSpeed = c.RelativeSpeed });
             }
 
