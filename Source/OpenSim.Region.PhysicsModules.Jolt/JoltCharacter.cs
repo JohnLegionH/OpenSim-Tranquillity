@@ -198,14 +198,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // The velocity the controller is driven at: ScenePresence's request times the [Jolt] avatar speed factor for
         // flying, running (always run on) or walking. A walk or run scales the horizontal part only (the controller
-        // takes no vertical intent off a flight); a flight scales all three, so straight up goes as fast as level.
+        // takes no vertical intent off a flight); a flight scales all three, so straight up goes as fast as level, and
+        // its downward part by the fly-down factor, since Second Life documents a faster descent (22.87 m/s against 16.00).
         // A momentum handed over by SetMomentum is a velocity the avatar already had, so it goes through as it is.
         internal Vector3 DesiredVelocity()
         {
             if (_targetIsMomentum)
                 return _targetVelocity;
             if (_flying)
-                return _targetVelocity * _module.AvatarFlySpeedFactor;
+            {
+                Vector3 v = _targetVelocity * _module.AvatarFlySpeedFactor;
+                if (_targetVelocity.Z < 0f)
+                    v.Z = _targetVelocity.Z * _module.AvatarFlyDownSpeedFactor;
+                return v;
+            }
             float f = _setAlwaysRun ? _module.AvatarRunSpeedFactor : _module.AvatarWalkSpeedFactor;
             return new Vector3(_targetVelocity.X * f, _targetVelocity.Y * f, _targetVelocity.Z);
         }

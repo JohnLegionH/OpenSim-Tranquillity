@@ -49,6 +49,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float AvatarWalkSpeedFactor = DefaultAvatarWalkSpeedFactor;   // times the speed ScenePresence asks for
         public float AvatarRunSpeedFactor = DefaultAvatarRunSpeedFactor;     // the same, with always run on
         public float AvatarFlySpeedFactor = DefaultAvatarFlySpeedFactor;     // the same, flying
+        public float AvatarFlyDownSpeedFactor = DefaultAvatarFlyDownSpeedFactor;   // the same, the downward part of a flight
         public float CapacityLogIntervalSeconds = 10f;
         public int JobPools = 1;                   // job pools, one physics update at a time each; splits ThreadCount
         public bool JobPoolFairHandoff = false;    // true: a job pool is granted first come, first served (per physics step)
@@ -95,13 +96,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal const float CoreWalkRequest = 4.096f;
         internal const float CoreFlyRequest = CoreWalkRequest * 4f;
 
-        // Second Life's documented speeds on level ground: walk 3.20, run 5.13, fly 16.00 m/s
-        // (https://wiki.secondlife.com/wiki/Default_Avatar_Movement_Speeds). Each default factor turns ScenePresence's
+        // Second Life's documented speeds on level ground: walk 3.20, run 5.13, fly 16.00 m/s, and flying up 16.00 and
+        // down 22.87 m/s (https://wiki.secondlife.com/wiki/Default_Avatar_Movement_Speeds). Each default factor turns ScenePresence's
         // request into that speed; ubODE (av_movement_divisor_walk / _run) and BulletSim (AvatarWalkVelocityFactor,
         // AvatarAlwaysRunFactor) scale the same request with their own factors.
         internal const float DefaultAvatarWalkSpeedFactor = 3.20f / CoreWalkRequest;   // 0.78125
         internal const float DefaultAvatarRunSpeedFactor = 5.13f / CoreWalkRequest;    // 1.2524414
         internal const float DefaultAvatarFlySpeedFactor = 16.00f / CoreFlyRequest;    // 0.9765625
+        internal const float DefaultAvatarFlyDownSpeedFactor = 22.87f / CoreFlyRequest; // 1.3958740
         internal const float MinAvatarSpeedFactor = 0.1f;
         internal const float MaxAvatarSpeedFactor = 10f;
 
@@ -141,6 +143,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.AvatarWalkSpeedFactor = F(cfg, "AvatarWalkSpeedFactor", c.AvatarWalkSpeedFactor, MinAvatarSpeedFactor, MaxAvatarSpeedFactor, warnings);
             c.AvatarRunSpeedFactor = F(cfg, "AvatarRunSpeedFactor", c.AvatarRunSpeedFactor, MinAvatarSpeedFactor, MaxAvatarSpeedFactor, warnings);
             c.AvatarFlySpeedFactor = F(cfg, "AvatarFlySpeedFactor", c.AvatarFlySpeedFactor, MinAvatarSpeedFactor, MaxAvatarSpeedFactor, warnings);
+            c.AvatarFlyDownSpeedFactor = F(cfg, "AvatarFlyDownSpeedFactor", c.AvatarFlyDownSpeedFactor, MinAvatarSpeedFactor, MaxAvatarSpeedFactor, warnings);
             c.CapacityLogIntervalSeconds = F(cfg, "CapacityLogIntervalSeconds", c.CapacityLogIntervalSeconds, 0.1f, 86400f, warnings);
             c.JobPools = I(cfg, "JobPools", c.JobPools, 1, JoltPhysicsBackend.MaxJobPools, warnings);
             c.JobPoolFairHandoff = B(cfg, "JobPoolFairHandoff", c.JobPoolFairHandoff, warnings);

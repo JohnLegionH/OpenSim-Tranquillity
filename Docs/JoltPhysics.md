@@ -398,19 +398,29 @@ or running: the viewer sends running as a separate flag (its SetAlwaysRun messag
 engine decides what running does. Flying, it asks for four times that, 16.384 m/s. Each engine turns
 the request into a speed of its own: ubODE divides it by `av_movement_divisor_walk` (1.3) or `av_movement_divisor_run` (0.8);
 BulletSim multiplies it by `AvatarWalkVelocityFactor` (1) or `AvatarAlwaysRunFactor` (1.3) and does not
-scale a flight. Jolt multiplies it by one of three `[Jolt]` factors, whose defaults give Second Life's
-documented speeds on level ground ([Default Avatar Movement Speeds](https://wiki.secondlife.com/wiki/Default_Avatar_Movement_Speeds)):
+scale a flight. Jolt multiplies it by one of four `[Jolt]` factors, whose defaults give Second Life's
+documented speeds on level ground, and flying up and down ([Default Avatar Movement Speeds](https://wiki.secondlife.com/wiki/Default_Avatar_Movement_Speeds)).
+The viewer sends the same fast flag for flying up and for flying down, so the simulator asks 16.384 m/s for
+each, as for flying level:
 
 | Key | Default | Applies to | Level-ground speed at the default |
 |---|---|---|---|
 | `AvatarWalkSpeedFactor` | 0.78125 | walking (horizontal part) | 3.20 m/s |
 | `AvatarRunSpeedFactor` | 1.2524414 | always run on (horizontal part) | 5.13 m/s |
 | `AvatarFlySpeedFactor` | 0.9765625 | flying (all three axes, so up and level match) | 16.00 m/s |
+| `AvatarFlyDownSpeedFactor` | 1.395874 | the downward part of a flight, in place of `AvatarFlySpeedFactor` | 22.87 m/s straight down |
 
 Each takes a number from 0.1 to 10; an invalid value logs a warning and the default is used. The
 factor multiplies what the simulator asks, so a script's or region's speed change on the avatar
 (`osSetSpeed`) still scales the speed. A velocity handed over at a region crossing or teleport is
-kept as it is. Jump height is set by `AvatarJumpSpeed`, not by these.
+kept as it is. Jump height is set by `AvatarJumpSpeed`, not by these. All four are listed, commented
+out with their defaults, in the `[Jolt]` section of `OpenSimDefaults.ini`.
+
+A sideways step on its own asks less: the simulator's full speed needs the fast flag of the forward key
+or of the up key, and the viewer marks a sideways key with a fast flag of its own that the simulator does
+not test, so a sideways step asks 0.6 x 4.096 = 2.4576 m/s (with always run on, 4.096). Jolt applies the
+walk or run factor to that like any walk, giving 1.92 m/s walking and 5.13 running. The Second Life page
+above lists no sideways speed.
 
 What each engine gives for the same request on level ground (Jolt measured in the harness at
 `PhysicsStepRate` 45 and at one step per heartbeat; ubODE's walk measured in a region, its run and
@@ -421,6 +431,8 @@ fly worked out from its code; BulletSim from its code):
 | Walk | 4.096 | 4.096 | 3.200 | 3.15 (3.13 measured) | 4.10 | 3.20 |
 | Run | 4.096, always run on | 4.096 | 5.130 | 5.12 | 5.32 | 5.13 |
 | Fly, level | 16.384 | 16.384 | 16.000 | 12.60 (20.48 with always run on) | 16.38 | 16.00 |
+| Fly, straight up | 16.384 | 16.384 | 16.000 | not scaled | not scaled | 16.00 |
+| Fly, straight down | 16.384 | 16.384 | 22.870 | not scaled | not scaled | 22.87 |
 
 ## Arriving avatars
 

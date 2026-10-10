@@ -615,6 +615,19 @@ public static class Harness
         return (h / MathF.Cos(r.Slope * MathF.PI / 180f), h);
     }
 
+    // A straight-up or straight-down flight: the vertical speed from t = 1 s to the end (along), and the horizontal
+    // drift over the same time (horizontal), which should stay near zero.
+    private static (float along, float horizontal)? VerticalSpeed(Run r, List<Sample> samples)
+    {
+        int i = samples.FindIndex(s => s.T >= 1.0);
+        if (i < 0 || samples[^1].T <= samples[i].T)
+            return null;
+        double dt = samples[^1].T - samples[i].T;
+        float v = (float)(MathF.Abs(samples[^1].Position.Z - samples[i].Position.Z) / dt);
+        float h = (float)(Horizontal(samples[^1].Position, samples[i].Position) / dt);
+        return (v, h);
+    }
+
     /// <summary>Interpolated time at which y first reaches the given value going north; NaN if never.</summary>
     public static double CrossingY(List<Sample> samples, float y)
     {
@@ -878,6 +891,30 @@ public static class Harness
                 r.Actor.TargetVelocity = new Vector3(AvatarFly * r.Options.AvatarSpeedModifier, 0f, 0f);
             },
             SteadyFromPath = WalkSpeed,
+        },
+        new()
+        {
+            Name = "avatar-fly-up",
+            Description = "An avatar flying straight up for 5 s from 30 m above level ground (16.384 m/s asked, as for flying level).",
+            DefaultDuration = _ => 5f,
+            Setup = r =>
+            {
+                r.AddAvatarAt(new Vector3(60f, 60f, Course.Ground + 30f), true);
+                r.Actor.TargetVelocity = new Vector3(0f, 0f, AvatarFly * r.Options.AvatarSpeedModifier);
+            },
+            SteadyFromPath = VerticalSpeed,
+        },
+        new()
+        {
+            Name = "avatar-fly-down",
+            Description = "An avatar flying straight down for 5 s from 300 m above level ground, high enough for twice the speed (16.384 m/s asked; the viewer sends the same fast flag going down as going up).",
+            DefaultDuration = _ => 5f,
+            Setup = r =>
+            {
+                r.AddAvatarAt(new Vector3(60f, 60f, Course.Ground + 300f), true);
+                r.Actor.TargetVelocity = new Vector3(0f, 0f, -AvatarFly * r.Options.AvatarSpeedModifier);
+            },
+            SteadyFromPath = VerticalSpeed,
         },
         new()
         {

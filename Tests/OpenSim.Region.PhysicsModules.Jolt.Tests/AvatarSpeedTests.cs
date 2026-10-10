@@ -14,14 +14,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// <summary>
 /// Avatar walk, run and fly speeds on level ground, through the harness: ScenePresence's request (4.096 m/s for a walk
 /// or a run, 16.384 m/s flying) times the [Jolt] avatar speed factors, whose defaults give Second Life's documented
-/// 3.20, 5.13 and 16.00 m/s (https://wiki.secondlife.com/wiki/Default_Avatar_Movement_Speeds). Each speed is held at
+/// 3.20, 5.13 and 16.00 m/s, and 16.00 m/s flying up and 22.87 flying down
+/// (https://wiki.secondlife.com/wiki/Default_Avatar_Movement_Speeds). Each speed is held at
 /// [Jolt] PhysicsStepRate 45 and at one physics step per heartbeat, under the 11 Hz heartbeat. Serial with the other
 /// native tests: every run steps a real backend on the shared job pool.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
 public class AvatarSpeedTests
 {
-    private const float Walk = 3.20f, Run = 5.13f, Fly = 16.00f;
+    private const float Walk = 3.20f, Run = 5.13f, Fly = 16.00f, FlyUp = 16.00f, FlyDown = 22.87f;
     private const float RequestWalk = 4.096f, RequestFly = 4.096f * 4f;
 
     private static Summary RunScenario(string scenario, double physicsHz, float speedModifier = 1f, params (string key, string value)[] jolt)
@@ -52,7 +53,21 @@ public class AvatarSpeedTests
         Within(expected, 2f, m.SteadySpeed);
     }
 
-    // Each factor changes its own speed and leaves the other two at their defaults.
+    // Straight up and straight down: the viewer sends the same fast flag both ways, so core asks 16.384 m/s for each; the
+    // fly factor gives 16.00 up and the fly-down factor 22.87 down. The avatar does not drift sideways.
+    [Theory]
+    [InlineData("avatar-fly-up", 45.0, FlyUp)]
+    [InlineData("avatar-fly-up", 0.0, FlyUp)]
+    [InlineData("avatar-fly-down", 45.0, FlyDown)]
+    [InlineData("avatar-fly-down", 0.0, FlyDown)]
+    public void Flying_up_and_down_are_second_lifes(string scenario, double physicsHz, float expected)
+    {
+        Summary m = RunScenario(scenario, physicsHz);
+        Within(expected, 2f, m.SteadySpeed);
+        Assert.InRange(m.SteadyHorizontalSpeed, 0f, 0.05f);
+    }
+
+    // Each factor changes its own speed and leaves the others at their defaults. Flying up goes with the fly factor.
     [Theory]
     [InlineData("AvatarWalkSpeedFactor", 45.0)]
     [InlineData("AvatarWalkSpeedFactor", 0.0)]
@@ -60,6 +75,8 @@ public class AvatarSpeedTests
     [InlineData("AvatarRunSpeedFactor", 0.0)]
     [InlineData("AvatarFlySpeedFactor", 45.0)]
     [InlineData("AvatarFlySpeedFactor", 0.0)]
+    [InlineData("AvatarFlyDownSpeedFactor", 45.0)]
+    [InlineData("AvatarFlyDownSpeedFactor", 0.0)]
     public void Each_setting_changes_its_own_speed(string key, double physicsHz)
     {
         const float factor = 0.5f;
@@ -67,9 +84,13 @@ public class AvatarSpeedTests
         float walk = RunScenario("avatar-walk", physicsHz, 1f, setting).SteadyHorizontalSpeed;
         float run = RunScenario("avatar-run", physicsHz, 1f, setting).SteadyHorizontalSpeed;
         float fly = RunScenario("avatar-fly", physicsHz, 1f, setting).SteadyHorizontalSpeed;
+        float up = RunScenario("avatar-fly-up", physicsHz, 1f, setting).SteadySpeed;
+        float down = RunScenario("avatar-fly-down", physicsHz, 1f, setting).SteadySpeed;
         Within(key == "AvatarWalkSpeedFactor" ? RequestWalk * factor : Walk, 2f, walk);
         Within(key == "AvatarRunSpeedFactor" ? RequestWalk * factor : Run, 2f, run);
         Within(key == "AvatarFlySpeedFactor" ? RequestFly * factor : Fly, 2f, fly);
+        Within(key == "AvatarFlySpeedFactor" ? RequestFly * factor : FlyUp, 2f, up);
+        Within(key == "AvatarFlyDownSpeedFactor" ? RequestFly * factor : FlyDown, 2f, down);
     }
 
     // ScenePresence's SpeedModifier (osSetSpeed) scales the request; the factor applies on top of it.
@@ -77,10 +98,13 @@ public class AvatarSpeedTests
     [InlineData("avatar-walk", Walk)]
     [InlineData("avatar-run", Run)]
     [InlineData("avatar-fly", Fly)]
+    [InlineData("avatar-fly-up", FlyUp)]
+    [InlineData("avatar-fly-down", FlyDown)]
     public void Cores_speed_modifier_still_scales_the_speed(string scenario, float expected)
     {
-        Within(expected * 2f, 2f, RunScenario(scenario, 45.0, 2f).SteadyHorizontalSpeed);
-        Within(expected * 0.5f, 2f, RunScenario(scenario, 45.0, 0.5f).SteadyHorizontalSpeed);
+        // SteadySpeed is the horizontal speed on level ground and the vertical speed on a straight up or down flight.
+        Within(expected * 2f, 2f, RunScenario(scenario, 45.0, 2f).SteadySpeed);
+        Within(expected * 0.5f, 2f, RunScenario(scenario, 45.0, 0.5f).SteadySpeed);
     }
 
     // An invalid value warns (JoltConfigTests holds the warning) and the region walks, runs and flies at the default.
@@ -88,10 +112,11 @@ public class AvatarSpeedTests
     [InlineData("AvatarWalkSpeedFactor", "avatar-walk", Walk)]
     [InlineData("AvatarRunSpeedFactor", "avatar-run", Run)]
     [InlineData("AvatarFlySpeedFactor", "avatar-fly", Fly)]
+    [InlineData("AvatarFlyDownSpeedFactor", "avatar-fly-down", FlyDown)]
     public void An_invalid_setting_gives_the_default_speed(string key, string scenario, float expected)
     {
         foreach (string bad in new[] { "fast", "0", "-1", "NaN", "11" })
-            Within(expected, 2f, RunScenario(scenario, 45.0, 1f, (key, bad)).SteadyHorizontalSpeed);
+            Within(expected, 2f, RunScenario(scenario, 45.0, 1f, (key, bad)).SteadySpeed);
     }
 
     // Always run switched on mid-walk, with no new request: the avatar speeds up to a run from that heartbeat.

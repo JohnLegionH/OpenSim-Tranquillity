@@ -137,7 +137,8 @@ public class JoltConfigTests
     }
 
     // The defaults turn ScenePresence's request (4.096 m/s walking or running, 16.384 flying) into Second Life's
-    // documented 3.20, 5.13 and 16.00 m/s (https://wiki.secondlife.com/wiki/Default_Avatar_Movement_Speeds).
+    // documented 3.20, 5.13 and 16.00 m/s, and a downward flight into its 22.87 m/s
+    // (https://wiki.secondlife.com/wiki/Default_Avatar_Movement_Speeds).
     [Fact]
     public void Avatar_speed_factors_default_to_second_lifes_speeds_and_parse()
     {
@@ -145,19 +146,23 @@ public class JoltConfigTests
         Assert.Equal(3.20f, d.AvatarWalkSpeedFactor * 4.096f, 4);
         Assert.Equal(5.13f, d.AvatarRunSpeedFactor * 4.096f, 4);
         Assert.Equal(16.00f, d.AvatarFlySpeedFactor * 16.384f, 4);
+        Assert.Equal(22.87f, d.AvatarFlyDownSpeedFactor * 16.384f, 4);
 
         var warnings = new List<string>();
-        var c = JoltConfig.FromConfig(Source(("AvatarWalkSpeedFactor", "1"), ("AvatarRunSpeedFactor", "1.3"), ("AvatarFlySpeedFactor", "0.5")), warnings);
+        var c = JoltConfig.FromConfig(Source(("AvatarWalkSpeedFactor", "1"), ("AvatarRunSpeedFactor", "1.3"), ("AvatarFlySpeedFactor", "0.5"),
+            ("AvatarFlyDownSpeedFactor", "2")), warnings);
         Assert.Empty(warnings);
         Assert.Equal(1f, c.AvatarWalkSpeedFactor);
         Assert.Equal(1.3f, c.AvatarRunSpeedFactor);
         Assert.Equal(0.5f, c.AvatarFlySpeedFactor);
+        Assert.Equal(2f, c.AvatarFlyDownSpeedFactor);
     }
 
     [Theory]
     [InlineData("AvatarWalkSpeedFactor")]
     [InlineData("AvatarRunSpeedFactor")]
     [InlineData("AvatarFlySpeedFactor")]
+    [InlineData("AvatarFlyDownSpeedFactor")]
     public void An_invalid_avatar_speed_factor_falls_back_to_the_default_with_a_warning(string key)
     {
         var d = JoltConfig.FromConfig(Source(), null);
@@ -171,6 +176,7 @@ public class JoltConfigTests
             Assert.Equal(d.AvatarWalkSpeedFactor, c.AvatarWalkSpeedFactor);
             Assert.Equal(d.AvatarRunSpeedFactor, c.AvatarRunSpeedFactor);
             Assert.Equal(d.AvatarFlySpeedFactor, c.AvatarFlySpeedFactor);
+            Assert.Equal(d.AvatarFlyDownSpeedFactor, c.AvatarFlyDownSpeedFactor);
         }
     }
 
