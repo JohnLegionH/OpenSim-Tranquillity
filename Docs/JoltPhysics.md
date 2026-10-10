@@ -444,6 +444,31 @@ What a script does to a physical prim or linkset (avatars are not covered here):
 - Given a velocity while it sleeps (`llSetVelocity`, `llSetAngularVelocity`), a physical object wakes
   and moves at once, as in ubODE.
 
+## Physical linksets
+
+A physical linkset is one rigid body: the root prim's body carries every prim as part of one shape,
+and no prim of it has a body of its own. These keep it one body, with the mass of all its prims:
+
+- Linking a prim in, unlinking one, deleting one, or setting a prim's `PRIM_PHYSICS_SHAPE_TYPE` to
+  `PRIM_PHYSICS_SHAPE_NONE` and back: the linkset's shape is rebuilt with the prims it now has, once,
+  before the next physics step. An unlinked physical prim becomes a body of its own where it was.
+- Resizing a prim, changing its shape, or moving or turning it within the linkset (the build tool's
+  "Edit linked parts", `PRIM_SIZE`, `PRIM_TYPE`, `PRIM_POSITION` or `PRIM_ROTATION` on a child): the
+  same rebuild, with the prim at its new size, shape or place. A move or turn smaller than 1 mm or
+  1 milliradian rebuilds nothing.
+- Changing a prim's density: the same rebuild, which moves the centre of mass (see "Physics material
+  on objects").
+- Turning the whole object non-physical: each prim gets a fixed body of its own where it is on the
+  object now, wherever the linkset has moved since it was linked. Turning it physical again makes it
+  one body.
+- A ray cast reports the prim it hit, not the root: `llCastRay` then returns that prim's key and,
+  with `RC_GET_LINK_NUM`, its link number, and the root's key only with `RC_GET_ROOT_KEY` ("The hit
+  uuid will be replaced by the object's root instead of any child.", wiki, llCastRay). Both script
+  engines look the prim up from what the physics engine reports.
+- The simulator does not pass a sculpt or mesh change made through the viewer's extra parameters to
+  the physics engine (`SceneObjectPart.UpdateExtraParam`), on any engine; a prim keeps its old shape
+  in physics until something else rebuilds it.
+
 ## Physics material on objects
 
 `llSetPhysicsMaterial` (and `PRIM_PHYSICS_MATERIAL`) and `PRIM_MATERIAL` on a prim, as the Second
@@ -477,9 +502,9 @@ Life wiki documents them:
   a linked set have different Physics settings? Yes.", wiki, Physics Material Settings test): a
   contact uses the struck prim's friction and restitution, and the mass is the sum of each prim's
   volume times its own density. The centre of mass the engine turns the linkset about, and its
-  inertia, do not follow different densities: they are the linkset's shape at one density, scaled to
-  that mass. `llGetCenterOfMass` does weight each prim by its own density. The root prim's gravity
-  multiplier applies to the whole linkset, as in ubODE.
+  inertia, follow each prim's density too, so a heavy prim at one end pulls the centre of mass
+  toward it, and `llGetCenterOfMass` reports that same point. The root prim's gravity multiplier
+  applies to the whole linkset, as in ubODE.
 - A vehicle sets its own contact friction (`VehicleContactFriction`), restitution (0) and damping
   (0) and ignores the gravity multiplier; the prim's values come back when the vehicle type is
   removed.
@@ -616,6 +641,36 @@ ubODE, where an avatar is a body that meets an object with no bounce:
   (`ContactPoint.RelativeSpeed`, below zero while they close), for prims, avatars and the land. The
   simulator plays a prim's collision sound above 0.2 m/s, and an avatar takes impact damage where
   damage is on below -5 m/s, from the land (a fall from about 1.3 m or more) or from a prim.
+
+## Fast objects
+
+A physical prim that moves fast is checked along its path, so it does not pass through a thin wall,
+another object or the ground between two steps. In each of Jolt's collision steps (`[Jolt]
+CollisionSteps` per physics step), a physical prim that would move further than 0.75 times its shape's
+inner radius (the radius of the largest sphere that fits inside it; Jolt's `mLinearCastThreshold`) is
+cast along its motion, Jolt's `LinearCast` motion quality, and stops at the first thing it would hit.
+At one physics step per 11 Hz heartbeat (six collision steps) that is a 0.2 m ball from about 5 m/s
+and a 1 m box from about 25 m/s; the faster the steps, the higher the speed. A prim slower than that
+is not cast and moves exactly as it did before. The test is made with the prim's velocity at the
+start of each physics step, so a prim knocked to a high speed inside a step is cast from the next one.
+
+A cast prim that hits something gets one contact from it, with the same combined friction and
+restitution as any other contact (friction the square root of the two prims' product, restitution
+their product), so it bounces or slides as a slower prim would. The cast follows the prim's motion in
+a straight line: it does not cover what the prim's turning sweeps through in a step.
+
+A vehicle is cast in every collision step in which it is fast enough, whatever its speed was at the
+start of the step, as before.
+
+Phantom and volume-detect prims still let a fast prim through: Jolt does not cast against sensors,
+and a phantom prim touches only the terrain. A volume-detect prim finds what is inside it at the
+start of each collision step, so a fast prim that is never inside it at such a start, which can
+happen when it crosses it in less than a collision step, raises no `collision_start` from it.
+
+`FastObjectTests` shoots 0.05, 0.2 and 1 m balls at 10 to 500 m/s (`[Jolt] BodyMaxLinearSpeed`, 500 m/s
+by default, is the most a prim can move) at a fixed wall 0.01 m and 0.1 m thick, at a resting 0.5 m
+box and down at the ground, at each heartbeat rate of the harness and at 11 Hz with
+`PhysicsStepRate` 45, and none passes through.
 
 ## Phantom and volume-detect prims
 
@@ -919,6 +974,7 @@ dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --sce
 | `--jolt KEY=VALUE` | A `[Jolt]` setting, as in the region's ini (repeatable) |
 | `--vparam NAME=V` or `NAME=X,Y,Z` | A vehicle parameter by its LSL name, applied after the scenario's own, e.g. `LINEAR_FRICTION_TIMESCALE=1,1,1000` (repeatable) |
 | `--vflag NAME` or `-NAME` | A vehicle flag set (or removed) after the scenario's own, e.g. `HOVER_UP_ONLY` (repeatable) |
+| `--ball M[,M..]`, `--shot-speed V[,V..]` | The `tunnel-` scenarios: the ball's diameter (m, default 0.2) and the speed it is shot at (m/s, default 25); lists run every combination |
 | `--out DIR` | Also write a CSV per run (`<scenario>-s<slope>-r<rate>.csv`, with `-p<rate>` added when the physics rate is on) and `summary.csv` there |
 
 Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, then released),
@@ -942,7 +998,12 @@ rest on a platform, on the ground or inside a volume-detect box, falls asleep an
 scenarios: `avatar-hit-1kg`, `avatar-hit-100kg` and `avatar-hit-10ms` (a box thrown at a standing
 avatar), `avatar-walk-1kg` and `avatar-walk-1000kg` (an avatar walking into a box), `avatar-on-box`,
 `avatar-box-drop` (a box dropped 5 m onto an avatar's head) and `avatar-fall-20m`. These print each
-watched part's collision events under their summary line. The summary's extra columns give when
+watched part's collision events under their summary line.
+The shot scenarios fire a physical ball (`--ball`, `--shot-speed`) at something: `tunnel-wall-1cm` and
+`tunnel-wall-10cm` (a fixed wall), `tunnel-box` (a 0.5 m box resting on the ground), `tunnel-ground`
+(straight down from 3 m), `tunnel-vd-wall` (through a 1 m volume-detect slab, then at a wall),
+`tunnel-phantom-box` and `tunnel-phantom-ball` (a physical phantom box, or a phantom ball at a wall);
+`tunneled` is 1 when the ball went through. The summary's extra columns give when
 the engine last had a body awake and, for the crashes, the impact, arrival and leaving speeds,
 overlap and a pass-through check. The ground is
 level at 25 m with water at 20 m; with a slope it rises northward at that angle from y 40 to y 100.

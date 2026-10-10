@@ -345,6 +345,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // foreach over a concrete HashSet/List uses a struct enumerator).
         private readonly ConcurrentQueue<ActivationDelta> _activationQueue = new ConcurrentQueue<ActivationDelta>();
         private readonly HashSet<uint> _activeBodies = new HashSet<uint>();   // step-thread only
+
+        // Jolt's PhysicsSettings.mLinearCastThreshold (its default 0.75), read from the system once it exists: the share
+        // of a shape's inner radius a LinearCast body must move in a collision step to be cast (UpdateCastBySpeed).
+        private float _linearCastThreshold = 0.75f;
         private readonly HashSet<uint> _justActivated = new HashSet<uint>();  // scratch, per-step
         private readonly List<uint> _justDeactivated = new List<uint>();      // scratch, per-step
         private readonly List<uint> _staleActive = new List<uint>();          // scratch, per-step
@@ -859,6 +863,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 ClearContactValidateProc();
             }
             _system.Gravity = settings.Gravity;
+            _linearCastThreshold = _system.Settings.LinearCastThreshold;
             _bodyInterface = _system.BodyInterface;
             // [Jolt] VelocityIterations and PositionIterations: the solver's velocity and position steps per collision step.
             // Their defaults (10 and 2) are Jolt's own. A tall stack needs more velocity steps to come to rest: ten 0.5 m boxes
@@ -1828,13 +1833,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 if (movable)
                 {
                     // Velocities, damping, gravity factor and CCD only mean anything for a body that
-                    // actually moves; a Static body has no MotionProperties to hold them.
+                    // actually moves; a Static body has no MotionProperties to hold them. The motion quality (CCD) is
+                    // set on the body once it exists, below.
                     bcs.LinearVelocity = desc.LinearVelocity;
                     bcs.AngularVelocity = desc.AngularVelocity;
                     bcs.LinearDamping = MathF.Max(0f, desc.LinearDamping);
                     bcs.AngularDamping = MathF.Max(0f, desc.AngularDamping);
                     bcs.GravityFactor = desc.GravityFactor;
-                    bcs.MotionQuality = desc.UseCcd ? MotionQuality.LinearCast : MotionQuality.Discrete;
                     if (_settings.MaxBodyLinearSpeed > 0f)
                         bcs.MaxLinearVelocity = _settings.MaxBodyLinearSpeed;
                     if (_settings.MaxBodyAngularSpeed > 0f)
@@ -1875,6 +1880,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     return BodyId.Invalid;
                 }
 
+                // The motion quality goes through the body interface, not BodyCreationSettings: under JoltPhysicsSharp
+                // 2.19.1, BodyCreationSettings.MotionQuality's setter stores a value that is neither Discrete nor
+                // LinearCast whatever it is given (read back with its getter and BodyInterface.GetMotionQuality), so a
+                // body created with it is never cast. Jolt reads the quality only as "is it LinearCast", so such a body
+                // moved as a Discrete one. BodyInterface.SetMotionQuality stores the value it is given. A WhenFast body
+                // starts Discrete; the step casts it when it is fast (UpdateCastBySpeed).
+                ContinuousCollision ccd = movable ? desc.Ccd : ContinuousCollision.Off;
+                if (movable)
+                    _bodyInterface.SetMotionQuality(joltId, ccd == ContinuousCollision.On ? MotionQuality.LinearCast : MotionQuality.Discrete);
+
                 var rec = new JoltBodyRecord
                 {
                     NativeBodyId = joltId.ID,
@@ -1888,6 +1903,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     Friction = desc.Friction,
                     Restitution = desc.Restitution,
                     GravityFactor = desc.GravityFactor,
+                    Ccd = ccd,
+                    InnerRadius = shapeRec.NativeShape!.InnerRadius,
                 };
                 uint handle = _bodies.Add(rec);
                 rec.Handle = handle;
@@ -1982,6 +1999,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // Do not wake the body just because its shape changed (activation stays the caller's call).
             _bodyInterface.SetShape(jid, shapeRec.NativeShape!, recomputeMass, Activation.DontActivate);
             rec.Shape = shape;
+            rec.InnerRadius = shapeRec.NativeShape!.InnerRadius;
             }   // _simLock
         }
 
@@ -2365,6 +2383,40 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             }
         }
 
+        // joltc's ConvexShape density (ConvexShape::SetDensity / GetDensity), called on the shape's own handle: the binding's
+        // managed wrapper of a cooked shape need not be its ConvexShape subclass, so the shape's type is checked instead.
+        [System.Runtime.InteropServices.DllImport("joltc", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern void JPH_ConvexShape_SetDensity(IntPtr shape, float density);
+
+        [System.Runtime.InteropServices.DllImport("joltc", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern float JPH_ConvexShape_GetDensity(IntPtr shape);
+
+        public void SetShapeDensity(ShapeId shape, float density)
+        {
+            if (!float.IsFinite(density)) { CountRejectedNonFinite(); return; }
+            lock (_simLock)
+            {
+                if (_disposed || density <= 0f || !_shapes.TryGet(shape.Value, out JoltShapeRecord rec) || !IsLive(rec))
+                    return;
+                Shape native = rec.NativeShape!;
+                if (native.Type != ShapeType.Convex)
+                    return;
+                if (JPH_ConvexShape_GetDensity(native.Handle) != density)
+                    JPH_ConvexShape_SetDensity(native.Handle, density);
+            }
+        }
+
+        public float GetShapeDensity(ShapeId shape)
+        {
+            lock (_simLock)
+            {
+                if (_disposed || !_shapes.TryGet(shape.Value, out JoltShapeRecord rec) || !IsLive(rec))
+                    return 0f;
+                Shape native = rec.NativeShape!;
+                return native.Type == ShapeType.Convex ? JPH_ConvexShape_GetDensity(native.Handle) : 0f;
+            }
+        }
+
         public void SetBodyDamping(BodyId body, float linear, float angular)
         {
             if (!float.IsFinite(linear) || !float.IsFinite(angular)) { CountRejectedNonFinite(); return; }
@@ -2506,14 +2558,55 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             }
         }
 
-        public void SetBodyContinuousCollision(BodyId body, bool on)
+        public void SetBodyContinuousCollision(BodyId body, ContinuousCollision mode)
         {
             lock (_simLock)
             {
                 if (_disposed) return;
                 if (TryResolve(body, out JoltBodyRecord rec, out BodyID jid) && rec.MotionType != BodyMotionType.Static)
-                    _bodyInterface.SetMotionQuality(jid, on ? MotionQuality.LinearCast : MotionQuality.Discrete);
+                {
+                    rec.Ccd = mode;
+                    rec.CastingBySpeed = false;   // WhenFast: Discrete until a step finds the body fast
+                    _bodyInterface.SetMotionQuality(jid, mode == ContinuousCollision.On ? MotionQuality.LinearCast : MotionQuality.Discrete);
+                }
             }
+        }
+
+        // ContinuousCollision.WhenFast, before each update: a body is LinearCast for the update only if its velocity
+        // would carry it further in one collision step than Jolt's cast threshold for it, the test Jolt itself makes
+        // for a LinearCast body (PhysicsSystem::JobIntegrateVelocity: the step's travel against
+        // mLinearCastThreshold x the shape's inner radius); Discrete otherwise. The bodies looked at are the awake ones
+        // and those woken since the last step (still in the activation queue); a sleeping body does not move.
+        private void UpdateCastBySpeed(float collisionStepSeconds)
+        {
+            foreach (uint joltId in _activeBodies)
+                UpdateCastBySpeed(joltId, collisionStepSeconds);
+            if (!_activationQueue.IsEmpty)
+                foreach (ActivationDelta delta in _activationQueue)
+                    if (delta.Activated)
+                        UpdateCastBySpeed(delta.BodyId, collisionStepSeconds);
+        }
+
+        private void UpdateCastBySpeed(uint joltId, float collisionStepSeconds)
+        {
+            if (!_joltToRecord.TryGetValue(joltId, out JoltBodyRecord? rec) || rec.Ccd != ContinuousCollision.WhenFast)
+                return;
+            var jid = new BodyID(joltId);
+            float threshold = _linearCastThreshold * rec.InnerRadius;
+            float travel = _bodyInterface.GetLinearVelocity(jid).Length() * collisionStepSeconds;
+            bool cast = travel > threshold;
+            if (cast == rec.CastingBySpeed)
+                return;
+            _bodyInterface.SetMotionQuality(jid, cast ? MotionQuality.LinearCast : MotionQuality.Discrete);
+            rec.CastingBySpeed = cast;
+        }
+
+        /// <summary>Tests: the body's Jolt motion quality as Jolt holds it (0 Discrete, 1 LinearCast), or -1 for no such
+        /// body.</summary>
+        internal int BodyMotionQualityForTest(BodyId body)
+        {
+            lock (_simLock)
+                return !_disposed && TryResolve(body, out _, out BodyID jid) ? (int)_bodyInterface.GetMotionQuality(jid) : -1;
         }
 
         // Allow/forbid sleeping (vehicles forbid it while active - Bullet's DISABLE_DEACTIVATION).
@@ -3844,6 +3937,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 if (_disposed || _system == null)
                     return s;
                 s.LiveBodyCount = (int)_system.BodiesCount;
+                s.LiveShapeCount = _shapes.Count;
                 s.ActiveBodyCount = (int)_system.GetNumActiveBodies(BodyType.Rigid);
                 lock (_characterGate)
                     s.CharacterCount = _characterList.Count;
@@ -3999,6 +4093,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             {
                 int collisionSteps = Math.Max(1, _settings.CollisionSteps);
                 _collisionStepSeconds = deltaTime / collisionSteps;   // the length of one solver step, for the bounce correction
+                UpdateCastBySpeed(deltaTime / collisionSteps);
                 // The update's capacity error is counted, not discarded.
                 PhysicsUpdateError updateError;
                 // ONE Update at a time on this region's pool - Step holds the pool's gate.
@@ -4233,6 +4328,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         private byte[] _generations = new byte[1024];
         private readonly ConcurrentQueue<int> _free = new ConcurrentQueue<int>();
         private int _highWater;
+        private int _count;
 
         public uint Add(T item)
         {
@@ -4249,6 +4345,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 }
 
                 _slots[slot] = item;
+                _count++;
                 // Generation 0 is reserved so a zeroed handle is never valid.
                 if (_generations[slot] == 0) _generations[slot] = 1;
                 return ((uint)_generations[slot] << IndexBits) | (uint)slot;
@@ -4282,10 +4379,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
                 int slot = (int)(handle & IndexMask);
                 _slots[slot] = null;
+                _count--;
                 _generations[slot] = (byte)(_generations[slot] == 255 ? 1 : _generations[slot] + 1);
                 _free.Enqueue(slot);
                 return true;
             }
+        }
+
+        /// <summary>Live entries.</summary>
+        public int Count
+        {
+            get { lock (_gate) return _count; }
         }
 
         public void Clear()
@@ -4294,6 +4398,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             {
                 Array.Clear(_slots, 0, _slots.Length);
                 _highWater = 0;
+                _count = 0;
                 while (_free.TryDequeue(out _)) { }
             }
         }
@@ -4321,6 +4426,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public float[]? PartRestitution;
         public float GravityFactor;       // the body's gravity factor as last set (SetBodyGravityFactor); the bounce correction reads it
         public bool Awake;                // the engine had the body awake at the end of the last step (IsBodyAwake)
+        public ContinuousCollision Ccd;   // SetBodyContinuousCollision; Off for a static body
+        public bool CastingBySpeed;       // WhenFast: LinearCast for the coming update (UpdateCastBySpeed)
+        public float InnerRadius;         // the body's shape's inner radius, for Jolt's cast threshold
     }
 
     internal sealed class JoltShapeRecord

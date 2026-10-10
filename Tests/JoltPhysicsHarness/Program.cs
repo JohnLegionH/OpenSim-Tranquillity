@@ -41,6 +41,8 @@ public static class Program
   --crash-offset M[,M..]     crash scenarios: the car's sideways offset (m, default 0)
   --crash-angle DEG[,DEG..]  crash scenarios: the car turned about the vertical (crash-drop: rolled) (default 0)
                              Lists run every combination (a sweep).
+  --ball M[,M..]             shot scenarios (tunnel-*): the ball's diameter (m, default 0.2)
+  --shot-speed V[,V..]       shot scenarios: the speed the ball is shot at (m/s, default 25). Lists sweep, as above.
   --start-offset DX,DY       move the scenario's own body (car, box or prim) DX and DY metres from its start;
                              nothing else moves (default: 0,0)
   --out DIR                  write <scenario>-s<slope>-r<rate>.csv per run and summary.csv to DIR, and
@@ -97,6 +99,7 @@ The summary table always goes to standard output. Nothing is written anywhere el
         float[] slopes = null;
         string outDir = null;
         float[] crashSpeeds = { 1f }, crashOffsets = { 0f }, crashAngles = { 0f };
+        float[] shotBalls = { o.ShotBall }, shotSpeeds = { o.ShotSpeed };
         bool poolBench = false, physicsRateGiven = false;
         var bench = new PoolBenchOptions();
 
@@ -171,6 +174,8 @@ The summary table always goes to standard output. Nothing is written anywhere el
                 case "--crash-speed": crashSpeeds = Next().Split(',').Select(x => (float)PositiveDouble(x, a)).ToArray(); break;
                 case "--crash-offset": crashOffsets = Next().Split(',').Select(x => (float)SignedDouble(x, a)).ToArray(); break;
                 case "--crash-angle": crashAngles = Next().Split(',').Select(x => (float)SignedDouble(x, a)).ToArray(); break;
+                case "--ball": shotBalls = Next().Split(',').Select(x => (float)PositiveDouble(x, a)).ToArray(); break;
+                case "--shot-speed": shotSpeeds = Next().Split(',').Select(x => (float)PositiveDouble(x, a)).ToArray(); break;
                 case "--start-offset":
                     float[] d = Next().Split(',').Select(x => (float)SignedDouble(x, a)).ToArray();
                     if (d.Length != 2) throw new ArgumentException("--start-offset needs two numbers: DX,DY");
@@ -211,18 +216,24 @@ The summary table always goes to standard output. Nothing is written anywhere el
         foreach (Scenario sc in scenarios)
         {
             float[] runSlopes = sc.UsesSlope ? (slopes ?? sc.Slopes) : new[] { 0f };
+            float[] runBalls = sc.UsesShot ? shotBalls : new[] { o.ShotBall };
+            float[] runShotSpeeds = sc.UsesShot ? shotSpeeds : new[] { o.ShotSpeed };
             foreach (float slope in runSlopes)
                 foreach (double rate in rates)
                 foreach (double physicsRate in physicsRates)
                 foreach (float crashSpeed in crashSpeeds)
                 foreach (float crashOffset in crashOffsets)
                 foreach (float crashAngle in crashAngles)
+                foreach (float shotBall in runBalls)
+                foreach (float shotSpeed in runShotSpeeds)
                 {
                     var opts = Copy(o, rate, slope);
                     opts.PhysicsRateHz = physicsRate;
                     opts.CrashSpeed = crashSpeed;
                     opts.CrashOffset = crashOffset;
                     opts.CrashAngle = crashAngle;
+                    opts.ShotBall = shotBall;
+                    opts.ShotSpeed = shotSpeed;
                     RunResult res = Harness.Run(sc, opts);
                     string line = res.SummaryLine();
                     output.WriteLine(line);

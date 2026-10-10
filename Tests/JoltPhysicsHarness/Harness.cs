@@ -73,6 +73,9 @@ public sealed class HarnessOptions
     public float StartOffsetX, StartOffsetY;
     /// <summary>Avatar scenarios: the request times this, as ScenePresence.SpeedModifier scales it (osSetSpeed).</summary>
     public float AvatarSpeedModifier = 1f;
+    /// <summary>Shot scenarios (<see cref="TunnelScenarios"/>): the ball's diameter (m) and the speed it is shot at (m/s).</summary>
+    public float ShotBall = TunnelScenarios.DefaultBall;
+    public float ShotSpeed = TunnelScenarios.DefaultSpeed;
 
     private static double DefaultPhysicsRate()
     {
@@ -379,6 +382,10 @@ public sealed class Run
     public int Heartbeats;
     /// <summary>Bodies the engine has awake now.</summary>
     public int AwakeBodies => Harness.ActiveBodies(Scene);
+    /// <summary>The region's physics scene, as core sees it (RemovePrim, RaycastWorld).</summary>
+    public PhysicsScene PhysicsScene => Scene;
+    /// <summary>The backend's counters now: live bodies and shapes among them.</summary>
+    public OpenSim.Region.PhysicsModules.Jolt.Backend.PhysicsCapacityStats Capacity => Scene.CapacityStats();
 
     /// <summary>A physical sphere prim, as a SceneObjectPart adds one (density 1000).</summary>
     public PhysicsActor AddSphere(float diameter, Vector3 position)
@@ -571,6 +578,8 @@ public sealed class Scenario
     public Func<Run, Sample, float> Gap;
     /// <summary>A collision scenario: true once the object has passed through what it hit.</summary>
     public Func<Run, Sample, bool> PassedThrough;
+    /// <summary>A shot scenario: it takes the ball's diameter and speed from the options, and its run is named by them.</summary>
+    public bool UsesShot;
 }
 
 public static class Harness
@@ -1251,7 +1260,7 @@ public static class Harness
             Gap = GapBelow,
             PassedThrough = (r, s) => s.Position.Z < r.GroundAt(s.Position.X, s.Position.Y),
         },
-    }.Concat(PhantomScenarios.All).Concat(ContactScenarios.All).Concat(AvatarHitScenarios.All).ToList();
+    }.Concat(PhantomScenarios.All).Concat(ContactScenarios.All).Concat(AvatarHitScenarios.All).Concat(TunnelScenarios.All).ToList();
 
     private static readonly Quaternion West = Quaternion.CreateFromEulers(0f, 0f, MathF.PI);
     private static readonly Vector3 CrashMotor = new(20f, 0f, 0f);
@@ -1370,6 +1379,8 @@ public static class Harness
         var result = new RunResult { Scenario = sc.Name, RateHz = o.RateHz, PhysicsRateHz = scene.Substepping ? scene.Substeps.RateHz : 0, SlopeDeg = slope };
         if (o.CrashSpeed != 1f || o.CrashOffset != 0f || o.CrashAngle != 0f)
             result.Variant = $"~v{RunResult.Fmt(o.CrashSpeed, "0.###")}~o{RunResult.Fmt(o.CrashOffset, "0.###")}~a{RunResult.Fmt(o.CrashAngle, "0.###")}";
+        if (sc.UsesShot)
+            result.Variant += $"~b{RunResult.Fmt(o.ShotBall, "0.###")}~v{RunResult.Fmt(o.ShotSpeed, "0.###")}";
         try
         {
             r.Clock = -r.Dt * 0.5;
@@ -1592,6 +1603,8 @@ public static class Harness
 
         if (sc.Gap != null)
             SummariseCollision(r, sc, samples, m);
+        else if (sc.PassedThrough != null && samples.Any(s => sc.PassedThrough(r, s)))
+            m.Tunneled = 1;
         return m;
     }
 
