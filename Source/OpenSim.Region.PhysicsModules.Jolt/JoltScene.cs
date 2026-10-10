@@ -96,6 +96,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private ShapeId _terrainShape = ShapeId.Invalid;
         private int _regionSizeX;
         private int _regionSizeY;
+        internal int RegionSizeX => _regionSizeX;
+        internal int RegionSizeY => _regionSizeY;
         private Scene _scene;
 
         // Vehicle-controller world inputs: the region water plane, the last cooked terrain

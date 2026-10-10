@@ -387,6 +387,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _props.Flags = (ExtendedVehicleFlags)flags;
         }
 
+        /// <summary>Both motors and the banking turn off, their directions kept as settings: a failed region crossing, as
+        /// ubODE's ODEDynamics.Stop (motor effect 0), so a vehicle put back inside the edge does not drive out again until a
+        /// script sets a motor.</summary>
+        public void StopMotors()
+        {
+            _props.Dynamics.LinearDecayIndex = float.PositiveInfinity;
+            _props.Dynamics.AngularDecayIndex = float.PositiveInfinity;
+            _props.Dynamics.LinearTargetVelocity = Vector3.Zero;
+            _props.Dynamics.AngularTargetVelocity = Vector3.Zero;
+            _props.Dynamics.BankingDirection = 0;
+            _props.Dynamics.BankingTargetVelocity = 0;
+        }
+
         /// <summary>A saved vehicle's motor directions, held to the region's limits as a script's are, kept as its settings
         /// without starting either motor: the motors run once a script sets them again, as on ubODE, whose
         /// ODEDynamics.DoSetVehicle stores the directions with no motor effect.</summary>
