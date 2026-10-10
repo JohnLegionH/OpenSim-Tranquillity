@@ -269,6 +269,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         private void CreateBodyInternal()
         {
+            // Away from the region (crossing, or out of bounds) the prim has no body; a reshape or relink meanwhile keeps
+            // its shapes for when it comes back.
+            if (_away != Away.None)
+                return;
+
             // Load-time position sanity: never bring a PHYSICAL body up penetrating the terrain. If
             // the saved/current centre is below where it rests on the surface, lift it there and zero its
             // velocity BEFORE the body goes active - so (1) the bad position never drains back + persists, and
@@ -383,22 +388,139 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal void ApplyStepState(in BodyState s)
         {
             var newPos = new Vector3(s.Position.X, s.Position.Y, s.Position.Z);
-            // A loaded physical linkset can sit PENETRATING the terrain; the solver (CollisionSteps=6) then
-            // flings a part to a NaN / far-out-of-region position. Pushing that into the SOP makes OpenSim's
-            // terse-update path (PhysicsRequestingTerseUpdate) attempt a REGION CROSSING (there is no
-            // neighbour), which spins the heartbeat ~5 s per body - a boot stall. Drop the
-            // glitch update (keep the last good transform) instead of propagating it into a crossing.
-            if (!(float.IsFinite(newPos.X) && float.IsFinite(newPos.Y) && float.IsFinite(newPos.Z))
-                || MathF.Abs(newPos.X) > 1e5f || MathF.Abs(newPos.Y) > 1e5f || MathF.Abs(newPos.Z) > 1e5f)
+            // A position that is not a number is dropped (the last good transform is kept): handed to the simulator it
+            // would become the object's position.
+            if (!(float.IsFinite(newPos.X) && float.IsFinite(newPos.Y) && float.IsFinite(newPos.Z)))
             {
                 JoltScene.m_log.LogWarning($"{JoltScene.LogHeader} [physglitch] body {LocalID} implausible pos {newPos} vel {s.LinearVelocity} - update dropped (no crossing)");
                 return;
             }
-            _position = newPos;
             SQuaternion prim = SQuaternion.Multiply(SQuaternion.Conjugate(_axisCorrection), s.Orientation);
-            _orientation = new Quaternion(prim.X, prim.Y, prim.Z, prim.W);
-            _velocity = new Vector3(s.LinearVelocity.X, s.LinearVelocity.Y, s.LinearVelocity.Z);
-            _rotationalVelocity = new Vector3(s.AngularVelocity.X, s.AngularVelocity.Y, s.AngularVelocity.Z);
+            var newRot = new Quaternion(prim.X, prim.Y, prim.Z, prim.W);
+            var newVel = new Vector3(s.LinearVelocity.X, s.LinearVelocity.Y, s.LinearVelocity.Z);
+            var newAngVel = new Vector3(s.AngularVelocity.X, s.AngularVelocity.Y, s.AngularVelocity.Z);
+            bool outOfBounds = false;
+            lock (_awayLock)
+            {
+                // The body left the engine (CrossingStart on another thread) after this state was taken.
+                if (_away != Away.None || !_body.IsValid)
+                    return;
+                if (_isPhysical && (newPos.Z < MinBodyZ || newPos.Z > MaxBodyZ))
+                {
+                    LeaveOutOfBounds(newPos, newRot);
+                    outOfBounds = true;
+                }
+                else if (_isPhysical && !InRegion(newPos))
+                    LeaveAcrossEdge(newPos, newRot, newVel, newAngVel);
+                else
+                {
+                    _position = newPos;
+                    _orientation = newRot;
+                    _velocity = newVel;
+                    _rotationalVelocity = newAngVel;
+                }
+            }
+            RequestPhysicsterseUpdate();
+            if (outOfBounds)
+                RaiseOutOfBounds(_position);
+        }
+
+        // ---------------------------------------------------------------------
+        // Leaving the region. The SL wiki documents only what core does: an object with STATUS_DIE_AT_EDGE or
+        // STATUS_RETURN_AT_EDGE "goes off world" (llSetStatus), which core decides (SceneObjectGroup.CrossAsync). For
+        // the rest this is ubODE's (ODEPrim.UpdatePositionAndVelocity, CrossingStart, CrossingFailure):
+        //   - Past the region's edge in x or y, the object waits 0.1 to 2 m outside at the height it crossed, with the
+        //     velocity it left with, until core has crossed it (and removed the actor) or calls CrossingFailure. Core is
+        //     told by the terse update (SceneObjectPart.PhysicsRequestingTerseUpdate) and hands that velocity to the
+        //     neighbour (CrossPrimGroupIntoNewRegion).
+        //   - A failed crossing puts it back half a metre inside (core moves it), 0.2 m higher, at rest, its vehicle
+        //     motors off.
+        //   - Below -100 m or above 100 000 m it is stopped there and OutOfBounds is raised once; core makes the object
+        //     non-physical (SceneObjectPart.PhysicsOutOfBounds).
+        // While it waits, and after it went out of bounds until core makes it non-physical, it has no body: nothing steps
+        // it, nothing touches it and it sends no updates (ubODE disables its body and its collisions).
+        // ---------------------------------------------------------------------
+        internal const float MinBodyZ = -100f;      // ODEPrim.UpdatePositionAndVelocity
+        internal const float MaxBodyZ = 100000f;
+        private const float EdgeWaitMin = 0.1f, EdgeWaitMax = 2f;   // how far outside the edge it waits (ODEPrim)
+        private enum Away : byte { None, Crossing, OutOfBounds }
+        private volatile Away _away;
+        private readonly object _awayLock = new object();
+        internal bool HasLeftRegion => _away != Away.None;
+
+        private bool InRegion(Vector3 p)   // Scene.PositionIsInCurrentRegion
+            => p.X >= 0f && p.X < _module.RegionSizeX && p.Y >= 0f && p.Y < _module.RegionSizeY;
+
+        private void LeaveAcrossEdge(Vector3 pos, Quaternion rot, Vector3 velocity, Vector3 angularVelocity)
+        {
+            float sx = _module.RegionSizeX, sy = _module.RegionSizeY;
+            if (pos.X < 0f) pos.X = Math.Clamp(pos.X, -EdgeWaitMax, -EdgeWaitMin);
+            else if (pos.X >= sx) pos.X = Math.Clamp(pos.X, sx + EdgeWaitMin, sx + EdgeWaitMax);
+            if (pos.Y < 0f) pos.Y = Math.Clamp(pos.Y, -EdgeWaitMax, -EdgeWaitMin);
+            else if (pos.Y >= sy) pos.Y = Math.Clamp(pos.Y, sy + EdgeWaitMin, sy + EdgeWaitMax);
+            _position = pos;
+            _orientation = rot;
+            _velocity = velocity;
+            _rotationalVelocity = angularVelocity;
+            LeaveEngine(Away.Crossing);
+        }
+
+        private void LeaveOutOfBounds(Vector3 pos, Quaternion rot)
+        {
+            _position = new Vector3(pos.X, pos.Y, Math.Clamp(pos.Z, MinBodyZ, MaxBodyZ));
+            _orientation = rot;
+            _velocity = Vector3.Zero;
+            _rotationalVelocity = Vector3.Zero;
+            LeaveEngine(Away.OutOfBounds);
+        }
+
+        // Takes the body out of the engine. CreateBodyInternal makes none while the prim is away; CrossingFailure, or the
+        // object made non-physical after it went out of bounds, ends that and makes a new one.
+        private void LeaveEngine(Away why)
+        {
+            _away = why;
+            if (_body.IsValid)
+            {
+                _backend.RemoveBody(_body);
+                _body = BodyId.Invalid;
+            }
+        }
+
+        // Core calls this when it starts crossing the object (SceneObjectGroup.CrossAsync), which is also how an object
+        // moved or teleported out of the region by a script starts: the body leaves the engine with the velocity it had
+        // (ODEPrim.CrossingStart). A body already outside has left already.
+        public override void CrossingStart()
+        {
+            lock (_awayLock)
+            {
+                if (_away != Away.None || _linkRoot != null || !_isPhysical || !_body.IsValid)
+                    return;
+                if (_backend.TryGetBodyState(_body, out BodyState s))
+                {
+                    _velocity = new Vector3(s.LinearVelocity.X, s.LinearVelocity.Y, s.LinearVelocity.Z);
+                    _rotationalVelocity = new Vector3(s.AngularVelocity.X, s.AngularVelocity.Y, s.AngularVelocity.Z);
+                }
+                LeaveEngine(Away.Crossing);
+            }
+        }
+
+        // No neighbour took the object: core has put it back half a metre inside the edge and stopped it
+        // (SceneObjectGroup.CrossAsyncCompleted). It comes back 0.2 m higher, at rest, with its vehicle motors off, and is
+        // simulated again (ODEPrim.CrossingFailure, ODEDynamics.Stop).
+        public override void CrossingFailure()
+        {
+            lock (_awayLock)
+            {
+                if (_away != Away.Crossing)
+                    return;
+                _position.X = Math.Clamp(_position.X, 0.5f, _module.RegionSizeX - 0.5f);
+                _position.Y = Math.Clamp(_position.Y, 0.5f, _module.RegionSizeY - 0.5f);
+                _position.Z = Math.Clamp(_position.Z + 0.2f, Constants.MinSimulationHeight, Constants.MaxSimulationHeight);
+                _velocity = Vector3.Zero;
+                _vehicle?.StopMotors();
+                _away = Away.None;
+                CreateBodyInternal();
+            }
             RequestPhysicsterseUpdate();
         }
 
@@ -569,6 +691,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 if (_isPhysical == value) return;
                 _isPhysical = value;
+                // Out of bounds, core makes the object non-physical (SceneObjectPart.PhysicsOutOfBounds): it gets its
+                // fixed body where it stopped.
+                if (!value && _away == Away.OutOfBounds)
+                    lock (_awayLock) _away = Away.None;
                 // A Static-born body has no MotionProperties and CANNOT be promoted
                 // (SetBodyMotionType throws), so the toggle RECREATES the body. It also re-cooks the shape:
                 // a physical MESH must become a convex hull (mesh Volume=0 -> mass 0), non-physical reverts
@@ -1122,7 +1248,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             WakeBody();
         }
 
-        public override void CrossingFailure() { }
         // OpenSim calls child.link(root) per child when a physical linkset is formed. Weld this child into
         // the root's compound body.
         public override void link(PhysicsActor obj)

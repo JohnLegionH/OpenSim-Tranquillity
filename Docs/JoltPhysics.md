@@ -448,6 +448,25 @@ What a script does to a physical prim or linkset (avatars are not covered here):
 - Given a velocity while it sleeps (`llSetVelocity`, `llSetAngularVelocity`), a physical object wakes
   and moves at once, as in ubODE.
 
+## Physical objects that leave the region
+
+The simulator decides what happens to an object at the region's edge: `STATUS_DIE_AT_EDGE` deletes it
+and `STATUS_RETURN_AT_EDGE` returns it ("if it goes off world", `llSetStatus`), and otherwise it is
+handed to the neighbouring region if there is one. The physics module does what ubODE does:
+
+- Past the edge, the object waits 0.1 to 2 m outside it, at the height it crossed and with the
+  velocity it left with, while the simulator looks for a neighbour. Handed over, the neighbour gets
+  that velocity.
+- With no neighbour, the simulator puts it back half a metre inside the edge; it comes back 0.2 m
+  higher, at rest, and falls or settles from there. A vehicle comes back with its motors off, so it
+  does not drive out again until its script sets a motor.
+- Below -100 m or above 100 000 m it is stopped there and the simulator is told it went out of
+  bounds, which makes it non-physical (the simulator logs `went out of bounds`).
+- A linkset leaves as one object. An avatar seated on it has no physics body of its own while seated;
+  the simulator crosses it with the object.
+- While it waits outside, and from going out of bounds until it is made non-physical, the object has
+  no physics body: it costs no step time, touches nothing and sends no updates.
+
 ## Physical linksets
 
 A physical linkset is one rigid body: the root prim's body carries every prim as part of one shape,
