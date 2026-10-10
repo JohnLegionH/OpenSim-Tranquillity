@@ -411,6 +411,9 @@ public sealed class Run
     /// <summary>The prims a phantom or volume-detect scenario added, and the collision events watched.</summary>
     public readonly List<HarnessPart> Parts = new();
     public readonly List<CollisionWatch> Watches = new();
+    /// <summary>Calls the run makes when it ends, before the scene is disposed (a scenario that gave a SceneObjectPart an
+    /// actor takes it back here).</summary>
+    public readonly List<Action> Cleanups = new();
     /// <summary>A scenario's own step counter for inputs that come one after another.</summary>
     public int Stage;
 
@@ -1429,7 +1432,7 @@ public static class Harness
             Gap = GapBelow,
             PassedThrough = (r, s) => s.Position.Z < r.GroundAt(s.Position.X, s.Position.Y),
         },
-    }.Concat(PhantomScenarios.All).Concat(ContactScenarios.All).Concat(AvatarHitScenarios.All).Concat(TunnelScenarios.All).Concat(AvatarForceScenarios.All).ToList();
+    }.Concat(PhantomScenarios.All).Concat(ContactScenarios.All).Concat(AvatarHitScenarios.All).Concat(TunnelScenarios.All).Concat(AvatarForceScenarios.All).Concat(GrabScenarios.All).ToList();
 
     private static readonly Quaternion West = Quaternion.CreateFromEulers(0f, 0f, MathF.PI);
     private static readonly Vector3 CrashMotor = new(20f, 0f, 0f);
@@ -1664,6 +1667,8 @@ public static class Harness
         }
         finally
         {
+            foreach (Action cleanup in r.Cleanups)
+                cleanup();
             // A SceneObjectPart left holding an actor removes it from its scene when it is finalized, and it has none.
             if (r.VehiclePart != null)
             {
