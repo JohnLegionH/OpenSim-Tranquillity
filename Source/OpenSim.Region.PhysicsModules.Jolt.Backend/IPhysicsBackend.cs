@@ -566,6 +566,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public bool TerrainBodyMissing;
 
         public int LiveBodyCount;
+        /// <summary>Shape handles held (CreateBoxShape, CreateCompoundShape and the rest, until ReleaseShape drops the
+        /// last reference), each owning a native shape reference.</summary>
+        public int LiveShapeCount;
         public int ActiveBodyCount;
         public int MaxBodies;
         public int MaxBodyPairs;
@@ -747,6 +750,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// <summary>A live shape's centre of mass in the shape's own frame (m), as Jolt computes it from the geometry at a
         /// uniform density; zero for an unknown handle.</summary>
         Vector3 GetShapeCenterOfMass(ShapeId shape);
+        /// <summary>The density (kg/m^3) a convex shape gives its mass properties; Jolt's default is 1000. A compound
+        /// built from shapes afterwards weights each sub-shape's mass, centre of mass and inertia by it. A body made on the
+        /// shape alone is not affected: its mass is set from BodyDesc. No-op for a non-convex shape or an unknown handle.</summary>
+        void SetShapeDensity(ShapeId shape, float density);
+        /// <summary>A convex shape's density (kg/m^3); 0 for a non-convex shape or an unknown handle.</summary>
+        float GetShapeDensity(ShapeId shape);
         void SetBodyDamping(BodyId body, float linear, float angular);
         void SetBodyGravityFactor(BodyId body, float factor);
 

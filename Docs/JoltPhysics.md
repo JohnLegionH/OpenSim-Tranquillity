@@ -444,6 +444,31 @@ What a script does to a physical prim or linkset (avatars are not covered here):
 - Given a velocity while it sleeps (`llSetVelocity`, `llSetAngularVelocity`), a physical object wakes
   and moves at once, as in ubODE.
 
+## Physical linksets
+
+A physical linkset is one rigid body: the root prim's body carries every prim as part of one shape,
+and no prim of it has a body of its own. These keep it one body, with the mass of all its prims:
+
+- Linking a prim in, unlinking one, deleting one, or setting a prim's `PRIM_PHYSICS_SHAPE_TYPE` to
+  `PRIM_PHYSICS_SHAPE_NONE` and back: the linkset's shape is rebuilt with the prims it now has, once,
+  before the next physics step. An unlinked physical prim becomes a body of its own where it was.
+- Resizing a prim, changing its shape, or moving or turning it within the linkset (the build tool's
+  "Edit linked parts", `PRIM_SIZE`, `PRIM_TYPE`, `PRIM_POSITION` or `PRIM_ROTATION` on a child): the
+  same rebuild, with the prim at its new size, shape or place. A move or turn smaller than 1 mm or
+  1 milliradian rebuilds nothing.
+- Changing a prim's density: the same rebuild, which moves the centre of mass (see "Physics material
+  on objects").
+- Turning the whole object non-physical: each prim gets a fixed body of its own where it is on the
+  object now, wherever the linkset has moved since it was linked. Turning it physical again makes it
+  one body.
+- A ray cast reports the prim it hit, not the root: `llCastRay` then returns that prim's key and,
+  with `RC_GET_LINK_NUM`, its link number, and the root's key only with `RC_GET_ROOT_KEY` ("The hit
+  uuid will be replaced by the object's root instead of any child.", wiki, llCastRay). Both script
+  engines look the prim up from what the physics engine reports.
+- The simulator does not pass a sculpt or mesh change made through the viewer's extra parameters to
+  the physics engine (`SceneObjectPart.UpdateExtraParam`), on any engine; a prim keeps its old shape
+  in physics until something else rebuilds it.
+
 ## Physics material on objects
 
 `llSetPhysicsMaterial` (and `PRIM_PHYSICS_MATERIAL`) and `PRIM_MATERIAL` on a prim, as the Second
@@ -471,9 +496,9 @@ Life wiki documents them:
   a linked set have different Physics settings? Yes.", wiki, Physics Material Settings test): a
   contact uses the struck prim's friction and restitution, and the mass is the sum of each prim's
   volume times its own density. The centre of mass the engine turns the linkset about, and its
-  inertia, do not follow different densities: they are the linkset's shape at one density, scaled to
-  that mass. `llGetCenterOfMass` does weight each prim by its own density. The root prim's gravity
-  multiplier applies to the whole linkset, as in ubODE.
+  inertia, follow each prim's density too, so a heavy prim at one end pulls the centre of mass
+  toward it, and `llGetCenterOfMass` reports that same point. The root prim's gravity multiplier
+  applies to the whole linkset, as in ubODE.
 - A vehicle sets its own contact friction (`VehicleContactFriction`), restitution (0) and damping
   (0) and ignores the gravity multiplier; the prim's values come back when the vehicle type is
   removed.

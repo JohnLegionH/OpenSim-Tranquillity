@@ -379,6 +379,10 @@ public sealed class Run
     public int Heartbeats;
     /// <summary>Bodies the engine has awake now.</summary>
     public int AwakeBodies => Harness.ActiveBodies(Scene);
+    /// <summary>The region's physics scene, as core sees it (RemovePrim, RaycastWorld).</summary>
+    public PhysicsScene PhysicsScene => Scene;
+    /// <summary>The backend's counters now: live bodies and shapes among them.</summary>
+    public OpenSim.Region.PhysicsModules.Jolt.Backend.PhysicsCapacityStats Capacity => Scene.CapacityStats();
 
     /// <summary>A physical sphere prim, as a SceneObjectPart adds one (density 1000).</summary>
     public PhysicsActor AddSphere(float diameter, Vector3 position)

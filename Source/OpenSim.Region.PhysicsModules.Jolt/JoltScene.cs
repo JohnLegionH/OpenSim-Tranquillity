@@ -1391,7 +1391,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 var cr = new ContactResult
                 {
-                    ConsumerID = hits[i].UserData,           // SceneObjectPart.LocalId (0 = terrain)
+                    // The struck part's SceneObjectPart.LocalId (0 = terrain): a linkset's child where the ray hit it, not the
+                    // root whose body it is welded into. The script engines look the part up by it and replace it with the
+                    // root only when asked: "RC_GET_ROOT_KEY: The hit uuid will be replaced by the object's root instead of
+                    // any child." and "RC_GET_LINK_NUM: Stride includes the link number that was hit." (llCastRay,
+                    // wiki.secondlife.com).
+                    ConsumerID = hits[i].ChildUserData != 0 ? hits[i].ChildUserData : hits[i].UserData,
                     Pos = new Vector3(hits[i].Point.X, hits[i].Point.Y, hits[i].Point.Z),
                     Normal = new Vector3(hits[i].Normal.X, hits[i].Normal.Y, hits[i].Normal.Z),
                     Depth = from + hits[i].Distance,         // from the caller's start, not the clipped one

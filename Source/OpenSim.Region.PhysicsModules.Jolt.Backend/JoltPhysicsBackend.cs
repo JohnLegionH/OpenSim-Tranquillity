@@ -2255,6 +2255,40 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             }
         }
 
+        // joltc's ConvexShape density (ConvexShape::SetDensity / GetDensity), called on the shape's own handle: the binding's
+        // managed wrapper of a cooked shape need not be its ConvexShape subclass, so the shape's type is checked instead.
+        [System.Runtime.InteropServices.DllImport("joltc", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern void JPH_ConvexShape_SetDensity(IntPtr shape, float density);
+
+        [System.Runtime.InteropServices.DllImport("joltc", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern float JPH_ConvexShape_GetDensity(IntPtr shape);
+
+        public void SetShapeDensity(ShapeId shape, float density)
+        {
+            if (!float.IsFinite(density)) { CountRejectedNonFinite(); return; }
+            lock (_simLock)
+            {
+                if (_disposed || density <= 0f || !_shapes.TryGet(shape.Value, out JoltShapeRecord rec) || !IsLive(rec))
+                    return;
+                Shape native = rec.NativeShape!;
+                if (native.Type != ShapeType.Convex)
+                    return;
+                if (JPH_ConvexShape_GetDensity(native.Handle) != density)
+                    JPH_ConvexShape_SetDensity(native.Handle, density);
+            }
+        }
+
+        public float GetShapeDensity(ShapeId shape)
+        {
+            lock (_simLock)
+            {
+                if (_disposed || !_shapes.TryGet(shape.Value, out JoltShapeRecord rec) || !IsLive(rec))
+                    return 0f;
+                Shape native = rec.NativeShape!;
+                return native.Type == ShapeType.Convex ? JPH_ConvexShape_GetDensity(native.Handle) : 0f;
+            }
+        }
+
         public void SetBodyDamping(BodyId body, float linear, float angular)
         {
             if (!float.IsFinite(linear) || !float.IsFinite(angular)) { CountRejectedNonFinite(); return; }
@@ -3510,6 +3544,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 if (_disposed || _system == null)
                     return s;
                 s.LiveBodyCount = (int)_system.BodiesCount;
+                s.LiveShapeCount = _shapes.Count;
                 s.ActiveBodyCount = (int)_system.GetNumActiveBodies(BodyType.Rigid);
                 lock (_characterGate)
                     s.CharacterCount = _characterList.Count;
@@ -3896,6 +3931,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         private byte[] _generations = new byte[1024];
         private readonly ConcurrentQueue<int> _free = new ConcurrentQueue<int>();
         private int _highWater;
+        private int _count;
 
         public uint Add(T item)
         {
@@ -3912,6 +3948,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 }
 
                 _slots[slot] = item;
+                _count++;
                 // Generation 0 is reserved so a zeroed handle is never valid.
                 if (_generations[slot] == 0) _generations[slot] = 1;
                 return ((uint)_generations[slot] << IndexBits) | (uint)slot;
@@ -3945,10 +3982,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
                 int slot = (int)(handle & IndexMask);
                 _slots[slot] = null;
+                _count--;
                 _generations[slot] = (byte)(_generations[slot] == 255 ? 1 : _generations[slot] + 1);
                 _free.Enqueue(slot);
                 return true;
             }
+        }
+
+        /// <summary>Live entries.</summary>
+        public int Count
+        {
+            get { lock (_gate) return _count; }
         }
 
         public void Clear()
@@ -3957,6 +4001,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             {
                 Array.Clear(_slots, 0, _slots.Length);
                 _highWater = 0;
+                _count = 0;
                 while (_free.TryDequeue(out _)) { }
             }
         }

@@ -210,11 +210,35 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private bool CookAsHull
             => _isPhysical || (_shapeType == (byte)PhysShapeType.convex && _pbs?.SculptType != (byte)SculptType.Mesh);
 
+        // Cook the shape and create the body. Also reached when a prim has lost its body (the engine refused one at
+        // MaxBodies), so the shape it held is released once the new body is made.
         private void Build()
         {
+            ShapeId old = _shape;
             _shape = _module.CookPrimShape(_backend, _pbs, _size, CookAsHull, out _axisCorrection, out _shapeKind);
             _ownMass = null;
             CreateBodyInternal();
+            if (old.IsValid)
+                _backend.ReleaseShape(old);
+        }
+
+        // A part of a welded linkset: a child with no body of its own, or the root whose body is the compound. Such a part
+        // never gets a body of its own while it is one; a change to its size, shape or place in the linkset rebuilds the
+        // root's compound (RebuildCompoundNow), once, at the top of the next Simulate.
+        private bool IsWeldedChild => _linkRoot != null && _welded;
+        private bool IsCompoundRoot => _linkRoot == null && _compoundShape.IsValid;
+
+        // Re-cook a welded part's shape for its new size, shape or physics state, and have its root rebuild the compound
+        // with it. The compound holds its own reference to the old native shape until that rebuild releases it, so the
+        // old handle is released now.
+        private void RecookLinkedShape()
+        {
+            ShapeId old = _shape;
+            _shape = _module.CookPrimShape(_backend, _pbs, _size, CookAsHull, out _axisCorrection, out _shapeKind);
+            _ownMass = null;
+            if (old.IsValid)
+                _backend.ReleaseShape(old);
+            _module.MarkLinksetDirty(_linkRoot ?? this);
         }
 
         // Create the Jolt body for the CURRENT _isPhysical / _shape / _axisCorrection and cached
@@ -360,6 +384,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // terrain path: swap the body onto the new shape first, then release the old handle-ref.
         private void Rebuild()
         {
+            if (IsWeldedChild || IsCompoundRoot) { RecookLinkedShape(); return; }
             if (!_body.IsValid) { Build(); return; }
             ShapeId old = _shape;
             _shape = _module.CookPrimShape(_backend, _pbs, _size, CookAsHull, out _axisCorrection, out _shapeKind);
@@ -407,12 +432,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // Members not wired to the body below are inert.
         // ---------------------------------------------------------------------
 
+        // A welded child is wherever its root's body has carried it: its root's pose with its offset in the linkset.
         public override Vector3 Position
         {
-            get => _position;
+            get { if (IsWeldedChild) SyncFromLink(); return _position; }
             set
             {
                 if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Position", value.ToString()); return; }
+                if (IsWeldedChild) { MoveWithinLinkset(value, null); return; }
                 if (_position == value) return;   // the drain writes _position directly; only a real move recreates
                 _position = value;
                 if (_body.IsValid) RepositionBody();
@@ -421,10 +448,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         public override Quaternion Orientation
         {
-            get => _orientation;
+            get { if (IsWeldedChild) SyncFromLink(); return _orientation; }
             set
             {
                 if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Orientation", value.ToString()); return; }
+                if (IsWeldedChild) { MoveWithinLinkset(null, value); return; }
                 if (_orientation == value) return;
                 _orientation = value;
                 if (_body.IsValid) RepositionBody();
@@ -513,8 +541,23 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // Recreate the body for a changed _isPhysical (mesh<->hull, static<->dynamic), preserving
         // transform + velocity. Order mirrors Rebuild: cook new shape, drop old body, create new body,
         // release old shape handle - leak-free.
+        //
+        // A welded child stays in the compound while its root is physical and it is too (core turns a whole linkset
+        // physical root first, then each child, then links each child). Turned non-physical, it gets a static body of its
+        // own where it is now on the object (core turns the root non-physical first and delinks each child after).
         private void RecreateBody()
         {
+            if (IsWeldedChild)
+            {
+                SyncFromLink();
+                if (_isPhysical && _linkRoot._isPhysical)
+                {
+                    RecookLinkedShape();
+                    return;
+                }
+                _welded = false;
+                _module.MarkLinksetDirty(_linkRoot);
+            }
             ShapeId old = _shape;
             _shape = _module.CookPrimShape(_backend, _pbs, _size, CookAsHull, out _axisCorrection, out _shapeKind);
             _ownMass = null;
@@ -599,7 +642,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 value = Math.Clamp(value, MinDensity, MaxDensity);
                 if (_simDensity == value) return;
                 _simDensity = value;
-                (_linkRoot ?? this).ApplyMass();
+                // A part of a linkset changes where the linkset's mass is, so its compound is rebuilt with the new
+                // density (RebuildCompoundNow), which also wakes it.
+                if (_linkRoot != null || IsCompoundRoot)
+                    _module.MarkLinksetDirty(_linkRoot ?? this);
+                else
+                    ApplyMass();
             }
         }
 
@@ -745,14 +793,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             mass = own == null ? 0f : MathF.Max(own.Volume * PhysicalDensity, 1e-3f);
             SVector3 bodyPos;
             SQuaternion primRot;
-            JoltPrim root = _linkRoot;
-            if (root != null && _welded)
-            {
-                SQuaternion rootBody = root.BodyOrientationOf(root._orientation);
-                bodyPos = ToS(root._position) + SVector3.Transform(_weldPosition, rootBody);
-                // The inverse of BodyOrientationOf: body = correction x prim.
-                primRot = SQuaternion.Multiply(SQuaternion.Conjugate(_axisCorrection), SQuaternion.Multiply(rootBody, _weldOrientation));
-            }
+            if (IsWeldedChild)
+                LinkedPose(out bodyPos, out primRot);
             else
             {
                 bodyPos = ToS(_position);
@@ -764,10 +806,67 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             return new Vector3(com.X, com.Y, com.Z);
         }
 
-        // Where a welded child sits in its root's body: the offset and body orientation its compound sub-shape was given.
+        // A welded child: its place in the linkset, in its root prim's frame (position and prim rotation relative to the
+        // root prim's), as core last put it (SceneObjectPart.OffsetPosition and RotationOffset hand the child's actor its
+        // region position and rotation) or as it was when welded. The compound is built from these, so a rebuild after the
+        // linkset has moved keeps every part where it is on the object.
         private bool _welded;
-        private SVector3 _weldPosition;
-        private SQuaternion _weldOrientation = SQuaternion.Identity;
+        private SVector3 _linkOffset;
+        private SQuaternion _linkRotation = SQuaternion.Identity;
+
+        // How far a welded child must be moved or turned within its linkset before the compound is rebuilt: core hands the
+        // child its region position and rotation, worked out from the root's, whenever any part of the object is moved,
+        // and those carry float rounding.
+        internal const float LinkMoveTolerance = 1e-3f;          // m
+        internal const float LinkTurnTolerance = 1e-3f;          // rad
+
+        private static SQuaternion Unit(Quaternion q) => SQuaternion.Normalize(ToS(q));
+
+        // A welded child's region position and prim rotation now: its root's pose with its offset.
+        private void LinkedPose(out SVector3 position, out SQuaternion primRotation)
+        {
+            JoltPrim root = _linkRoot;
+            SQuaternion rootRot = Unit(root._orientation);
+            position = ToS(root._position) + SVector3.Transform(_linkOffset, rootRot);
+            primRotation = SQuaternion.Normalize(SQuaternion.Multiply(rootRot, _linkRotation));
+        }
+
+        // Brings a welded child's cached position and rotation up to where its root has carried it.
+        private void SyncFromLink()
+        {
+            if (!IsWeldedChild)
+                return;
+            LinkedPose(out SVector3 p, out SQuaternion q);
+            _position = new Vector3(p.X, p.Y, p.Z);
+            _orientation = new Quaternion(q.X, q.Y, q.Z, q.W);
+        }
+
+        // The offset of a child at region position `position` and prim rotation `rotation`, from its root's pose now.
+        private void LinkOffsetOf(Vector3 position, Quaternion rotation, out SVector3 offset, out SQuaternion relative)
+        {
+            JoltPrim root = _linkRoot;
+            SQuaternion inv = SQuaternion.Conjugate(Unit(root._orientation));
+            offset = SVector3.Transform(ToS(position) - ToS(root._position), inv);
+            relative = SQuaternion.Normalize(SQuaternion.Multiply(inv, Unit(rotation)));
+        }
+
+        // Core moved or turned a welded child within its linkset (the build tool's edit-linked-parts, PRIM_POSITION or
+        // PRIM_ROTATION on a child), or moved the whole object and handed every part its new region place. Only a change of
+        // the child's place on the object rebuilds the compound; the child never gets a body of its own.
+        private void MoveWithinLinkset(Vector3? position, Quaternion? rotation)
+        {
+            SyncFromLink();
+            LinkOffsetOf(position ?? _position, rotation ?? _orientation, out SVector3 offset, out SQuaternion relative);
+            bool moved = SVector3.Distance(offset, _linkOffset) > LinkMoveTolerance;
+            bool turned = 2f * MathF.Acos(MathF.Min(1f, MathF.Abs(SQuaternion.Dot(relative, _linkRotation)))) > LinkTurnTolerance;
+            if (position.HasValue) _position = position.Value;
+            if (rotation.HasValue) _orientation = rotation.Value;
+            if (!moved && !turned)
+                return;
+            if (moved) _linkOffset = offset;
+            if (turned) _linkRotation = relative;
+            _module.MarkLinksetDirty(_linkRoot);
+        }
 
         // Linear/angular velocity: cached from the drain (SOP reads these for terse updates); a set on a
         // live physical body pushes through so a script llSetVelocity takes effect.
@@ -994,15 +1093,23 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // Detach from the compound and become an independent body again.
+        // A welded child takes its own body where its root has carried it, moving as the root moved.
         public override void delink()
         {
-            _welded = false;
             if (_linkRoot != null)
             {
                 JoltPrim root = _linkRoot;
+                if (_welded)
+                {
+                    SyncFromLink();
+                    _velocity = root._velocity;
+                    _rotationalVelocity = root._rotationalVelocity;
+                }
+                _welded = false;
                 _linkRoot = null;
                 root.UnlinkChild(this);
             }
+            _welded = false;
             if (!_body.IsValid && _shape.IsValid)
                 CreateBodyInternal();   // restore our own body (we were welded into the root)
         }
@@ -1029,6 +1136,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         private bool _rebuilding;
+
+        // Jolt's default shape density (ConvexShapeSettings::mDensity), what every cooked shape starts with.
+        private const float JoltShapeDensity = 1000f;
 
         // (Re)build the root's body from its own shape + all welded children at their root-relative offsets,
         // ONCE. Called from the module's per-frame dirty-linkset drain (step thread, before the step - safe
@@ -1059,9 +1169,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     SQuaternion invRoot = SQuaternion.Conjugate(rootBody);
                     var kids = new CompoundChild[1 + _linkChildren.Count];
                     kids[0] = new CompoundChild { Shape = _shape, Position = SVector3.Zero, Orientation = SQuaternion.Identity, UserData = LocalID };
+                    // Each part's own density in the compound's mass properties, so its centre of mass and inertia follow
+                    // where the mass is ("Can individual prims in a linked set have different Physics settings? Yes.", SL
+                    // wiki, Physics Material Settings test), as ubODE adds each part's own mass at its own place
+                    // (ODEPrim.MakeBody). The densities are relative to the root's, which keeps Jolt's default: the body's
+                    // mass is set to the parts' sum just after (CreateBodyInternal), and a linkset of one density is built
+                    // exactly as before.
+                    _backend.SetShapeDensity(_shape, JoltShapeDensity);
                     for (int i = 0; i < _linkChildren.Count; i++)
                     {
                         JoltPrim c = _linkChildren[i];
+                        // A part already welded keeps its place on the object (its offset); a newly linked one is placed
+                        // where core put it, relative to the root now.
+                        c.SyncFromLink();
                         var dWorld = new SVector3(c._position.X - _position.X, c._position.Y - _position.Y, c._position.Z - _position.Z);
                         kids[i + 1] = new CompoundChild
                         {
@@ -1070,9 +1190,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                             Orientation = SQuaternion.Multiply(invRoot, c.BodyOrientationOf(c._orientation)),
                             UserData = c.LocalID,
                         };
-                        c._weldPosition = kids[i + 1].Position;
-                        c._weldOrientation = kids[i + 1].Orientation;
+                        if (!c._welded)
+                            c.LinkOffsetOf(c._position, c._orientation, out c._linkOffset, out c._linkRotation);
                         c._welded = true;
+                        _backend.SetShapeDensity(c._shape, JoltShapeDensity * c.PhysicalDensity / PhysicalDensity);
                     }
                     _compoundShape = _backend.CreateCompoundShape(kids);
                 }
