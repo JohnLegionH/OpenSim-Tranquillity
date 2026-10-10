@@ -116,7 +116,7 @@ namespace Phlox.ScriptEngine
 
         // Permission ends the scene reports (the core's release of controls on an avatar still here, a new
         // owner). Queued from region threads; EndPermissions runs here, on the scheduler thread, like every script call.
-        private struct PermsEndReq { public UUID ItemId; public UUID AgentId; public SceneObjectGroup Group; }
+        private struct PermsEndReq { public UUID ItemId; public UUID AgentId; public SceneObjectGroup Group; public bool ExperienceEnded; public UUID Experience; }
         private readonly Queue<PermsEndReq> m_PermsEnds = new();
 
         /// <summary>What the parcel checks have done, for tests and the cost report.</summary>
@@ -168,6 +168,19 @@ namespace Phlox.ScriptEngine
         private readonly System.Collections.Generic.Dictionary<UUID, DeferredEvents> m_DeferredEvents = new();
         private long m_DroppedForUnloaded;
         private ulong m_NextDeferredExpiry;
+
+        // Events a full queue dropped, per script and kind, in the order each kind was first dropped, since the run's last
+        // log line. A run writes a line when it ends (LogEndedQueueFullRuns, DoUnload), and while it lasts one each
+        // QueueFullLineIntervalMs of the engine's clock with the drops since the line before: a burst of hundreds of
+        // drops is one line, not hundreds, and a queue that never has room again still shows, once a minute.
+        // Scheduler thread only.
+        internal const ulong QueueFullLineIntervalMs = 60_000;
+        private sealed class QueueFullRun
+        {
+            public ulong LineDueOn;
+            public readonly List<KeyValuePair<SupportedEventList.Events, int>> Counts = new();
+        }
+        private readonly System.Collections.Generic.Dictionary<UUID, QueueFullRun> m_QueueFullDrops = new();
 
         private readonly System.Diagnostics.Stopwatch m_SliceWatch = new();
 
@@ -743,7 +756,6 @@ namespace Phlox.ScriptEngine
             if (!m_AllScripts.TryGetValue(itemId, out script)) return false;
 
             UnregisterFromNotifications(script);
-            DropPendingEvents(itemId);   // SL llResetScript "The event queue is cleared" - posted, not yet queued, too
             m_Engine.StateManager?.DeleteState(itemId);
             bool wasCrashed = script.ScriptState.TerminatedReason != null;
             lock (m_AllScriptsLock) m_HeldFresh.Remove(itemId);   // A reset of a held script owes it nothing more
@@ -757,11 +769,20 @@ namespace Phlox.ScriptEngine
             }
             script.SetScriptEventFlags();
 
-            PostEvent(itemId, new PostedEvent
+            // SL llResetScript: "The event queue is cleared", and with it what was posted to the script and not yet taken
+            // into the queue. Dropped only now: script.Reset() has released the listens and the sensor repeat
+            // (LSLSystemAPI.OnScriptReset), and that release waits for a listen delivery or a sensor sweep under way, so
+            // what they posted is here. Under one lock with the fresh state_entry, so nothing gets in between.
+            m_HeldArrivals.RemoveAll(held => held.ItemId == itemId);
+            lock (m_PendingEvents)
             {
-                EventType = SupportedEventList.Events.STATE_ENTRY,
-                Args = Array.Empty<object>()
-            });
+                DropPendingEventsLocked(itemId);
+                PostEvent(itemId, new PostedEvent
+                {
+                    EventType = SupportedEventList.Events.STATE_ENTRY,
+                    Args = Array.Empty<object>()
+                });
+            }
 
             if (!m_RunIndex.ContainsKey(itemId) && script.ScriptState.Enabled)
             {
@@ -776,23 +797,19 @@ namespace Phlox.ScriptEngine
             return true;
         }
 
-        /// <summary>Events posted to this item and not yet moved into its queue are dropped (reset).</summary>
-        private void DropPendingEvents(UUID itemId)
+        /// <summary>The events posted to this item and not yet moved into its queue are dropped. The caller holds m_PendingEvents.</summary>
+        private void DropPendingEventsLocked(UUID itemId)
         {
-            m_HeldArrivals.RemoveAll(held => held.ItemId == itemId);
-            lock (m_PendingEvents)
+            if (m_PendingEvents.Count == 0) return;
+            var keep = new List<PendingEvent>(m_PendingEvents.Count);
+            foreach (var pe in m_PendingEvents)
             {
-                if (m_PendingEvents.Count == 0) return;
-                var keep = new List<PendingEvent>(m_PendingEvents.Count);
-                foreach (var pe in m_PendingEvents)
-                {
-                    if (pe.ItemId == itemId) pe.Evt.SignalCompleted();   // No waiter waits for a dropped event
-                    else keep.Add(pe);
-                }
-                if (keep.Count == m_PendingEvents.Count) return;
-                m_PendingEvents.Clear();
-                foreach (var pe in keep) m_PendingEvents.Enqueue(pe);
+                if (pe.ItemId == itemId) pe.Evt.SignalCompleted();   // No waiter waits for a dropped event
+                else keep.Add(pe);
             }
+            if (keep.Count == m_PendingEvents.Count) return;
+            m_PendingEvents.Clear();
+            foreach (var pe in keep) m_PendingEvents.Enqueue(pe);
         }
 
         /// <summary>
@@ -1132,6 +1149,7 @@ namespace Phlox.ScriptEngine
             }
             m_Apis.Remove(itemId);
             m_ControlsExempt.Remove(itemId);
+            LogQueueFullRun(itemId);
         }
 
         /// <summary>
@@ -1198,9 +1216,11 @@ namespace Phlox.ScriptEngine
             ProcessObjectStateRequests();
             ProcessArrivedAvatars();
             ProcessExperienceLandChecks();
+            ProcessExperienceStates();
             ProcessHeldArrivals();   // After the arrivals, whose waiting grants it waits for
             CheckSleepingScripts();
             ProcessEventQueue();
+            LogEndedQueueFullRuns();
             ExpireDeferredEvents();
             ProcessPermsEnds();      // Before the parcel checks it may call for
             ProcessParcelChecks();
@@ -1218,7 +1238,7 @@ namespace Phlox.ScriptEngine
             {
                 WorkWasDone = hadRunnable,
                 WorkIsPending = HasWork(),
-                NextWakeUpTime = Math.Min(Math.Min(nextWake, EarliestServiceDeadline()), EarliestHeldArrival())
+                NextWakeUpTime = Math.Min(Math.Min(Math.Min(Math.Min(nextWake, EarliestServiceDeadline()), EarliestHeldArrival()), NextExperienceStateRead()), EarliestQueueFullLine())
             };
         }
 
@@ -1238,6 +1258,7 @@ namespace Phlox.ScriptEngine
             lock (m_ObjectStateRequests) if (m_ObjectStateRequests.Count > 0) return true;
             lock (m_ArrivedAvatars) if (m_ArrivedAvatars.Count > 0) return true;
             lock (m_ExperienceLandChecks) if (m_ExperienceLandChecks.Count > 0) return true;
+            lock (m_ExperienceStateAnswers) if (m_ExperienceStateAnswers.Count > 0) return true;
             lock (m_SuspendResumeQueue) if (m_SuspendResumeQueue.Count > 0) return true;
             lock (m_PendingResets) if (m_PendingResets.Count > 0) return true;
             lock (m_SyscallReturns) if (m_SyscallReturns.Count > 0) return true;
@@ -1583,8 +1604,7 @@ namespace Phlox.ScriptEngine
                 int queueDepth = script.ScriptState.EventQueue.Count;
                 if (queueDepth >= MAX_EVENT_QUEUE_DEPTH && !OverflowsQueueLimit(pe.Evt.EventType))
                 {
-                    m_log.LogWarning("[PhloxExe]: Event queue full ({0} events) for script {1}, dropping {2} event",
-                        queueDepth, pe.ItemId, pe.Evt.EventType);
+                    CountQueueFullDrop(pe.ItemId, pe.Evt.EventType);
                     pe.Evt.SignalCompleted();
                     continue;
                 }
@@ -1625,6 +1645,71 @@ namespace Phlox.ScriptEngine
                     script.ScriptState.QueueEvent(pe.Evt);
                 }
             }
+        }
+
+        private void CountQueueFullDrop(UUID itemId, SupportedEventList.Events type)
+        {
+            if (!m_QueueFullDrops.TryGetValue(itemId, out var run))
+                m_QueueFullDrops[itemId] = run = new QueueFullRun { LineDueOn = InWorldz.Phlox.Util.Clock.Now + QueueFullLineIntervalMs };
+            var counts = run.Counts;
+            int i = counts.FindIndex(c => c.Key == type);
+            if (i < 0) counts.Add(new KeyValuePair<SupportedEventList.Events, int>(type, 1));
+            else counts[i] = new KeyValuePair<SupportedEventList.Events, int>(type, counts[i].Value + 1);
+        }
+
+        /// <summary>
+        /// A run of drops ends when the script's queue has room after a pass of posted events, or when the script is gone:
+        /// its last line is written then. A run still full when its line is due writes the drops so far and goes on.
+        /// </summary>
+        private void LogEndedQueueFullRuns()
+        {
+            if (m_QueueFullDrops.Count == 0) return;
+            ulong now = InWorldz.Phlox.Util.Clock.Now;
+            List<UUID> ended = null;
+            foreach (var run in m_QueueFullDrops)
+            {
+                if (m_AllScripts.TryGetValue(run.Key, out Interpreter script) && script.ScriptState.EventQueue.Count >= MAX_EVENT_QUEUE_DEPTH)
+                {
+                    if (now >= run.Value.LineDueOn)
+                    {
+                        WriteQueueFullLine(run.Key, run.Value.Counts);
+                        run.Value.LineDueOn = now + QueueFullLineIntervalMs;
+                    }
+                    continue;
+                }
+                (ended ??= new List<UUID>()).Add(run.Key);
+            }
+            if (ended == null) return;
+            foreach (UUID itemId in ended) LogQueueFullRun(itemId);
+        }
+
+        /// <summary>The run's last line, if it dropped anything since the line before.</summary>
+        private void LogQueueFullRun(UUID itemId)
+        {
+            if (m_QueueFullDrops.Remove(itemId, out var run)) WriteQueueFullLine(itemId, run.Counts);
+        }
+
+        /// <summary>When the next line of a lasting run is due, so the scheduler wakes for it (ulong.MaxValue: none).</summary>
+        private ulong EarliestQueueFullLine()
+        {
+            ulong earliest = ulong.MaxValue;
+            foreach (var run in m_QueueFullDrops.Values)
+                if (run.LineDueOn < earliest) earliest = run.LineDueOn;
+            return earliest;
+        }
+
+        /// <summary>
+        /// "Event queue full (64 events) for script &lt;item&gt;: dropped 136 DATASERVER, 1 TOUCH_START events", then the
+        /// counts start again. Nothing is written when nothing was dropped since the line before.
+        /// </summary>
+        private void WriteQueueFullLine(UUID itemId, List<KeyValuePair<SupportedEventList.Events, int>> counts)
+        {
+            if (counts.Count == 0) return;
+            int total = 0;
+            foreach (var c in counts) total += c.Value;
+            m_log.LogWarning("[PhloxExe]: Event queue full ({0} events) for script {1}: dropped {2} event{3}",
+                MAX_EVENT_QUEUE_DEPTH, itemId, string.Join(", ", counts.ConvertAll(c => c.Value + " " + c.Key)), total == 1 ? "" : "s");
+            counts.Clear();
         }
 
         /// <summary>The kinds RuntimeState.QueueEvent keeps past the queue limit (its OVERFLOWABLE_EVENTS).</summary>
@@ -2038,10 +2123,213 @@ namespace Phlox.ScriptEngine
             }
         }
 
+        // ── The state of the Experiences scripts hold grants from ─────────────────
+
+        // Nothing tells a region that an Experience was disabled by its owner or suspended (the Disabled bit is written by
+        // the owner's viewer through any simulator, the Suspended bit by the grid's Experience service), and the calls that
+        // use a grant ask nothing. So the region reads the state of every Experience a script here holds a grant from, off
+        // this thread, at a fixed interval, and once shortly after grants are restored (a region start, an object carried
+        // in). A disabled or suspended answer ends every grant held from that Experience here (EndExperienceGrantsFrom).
+
+        /// <summary>How often the held Experiences' state is read, in milliseconds.</summary>
+        internal const int ExperienceStateReadIntervalMs = 60_000;
+        /// <summary>How long after a restored grant the next read starts, so the restores of one start share a read.</summary>
+        internal const int ExperienceStateFirstReadDelayMs = 2_000;
+        /// <summary>At most one warning per this many milliseconds for reads that fail, so a dead service cannot flood the log.</summary>
+        internal const int ExperienceStateWarningIntervalMs = 600_000;
+
+        private sealed class ExperienceStateAnswer
+        {
+            public UUID Experience;
+            public int Code;            // XP_ERROR_NONE, or the code a grant ends with
+            public string Failure;      // the lookup failed: nothing changes
+            public bool RoundDone;      // the read's last post
+        }
+
+        // Answers from the reader thread, and ends asked for by a script call's lookup (any thread).
+        private readonly Queue<ExperienceStateAnswer> m_ExperienceStateAnswers = new();
+        // Scheduler thread only, except where noted.
+        private ulong m_NextExperienceStateRead;              // 0 until the first pass
+        private ulong m_SoonExperienceStateRead = ulong.MaxValue;
+        private bool m_ExperienceStateReadRunning;
+        private int m_ExperienceStateReadAsked;               // any thread (ReadExperienceStatesNow)
+        private ulong m_LastExperienceStateWarning;
+        private int m_ExperienceStateFailuresUnreported;
+        private volatile bool m_ExperienceStateReadsStopped;   // any thread
+        private volatile Thread m_ExperienceStateReader;
+
+        /// <summary>A read is running (scheduler thread; tests).</summary>
+        internal bool ExperienceStateReadRunning => m_ExperienceStateReadRunning;
+
+        /// <summary>The reader thread is still alive (tests).</summary>
+        internal bool ExperienceStateReaderAlive => m_ExperienceStateReader?.IsAlive == true;
+
+        /// <summary>Start a read at the next pass, unless one is running (any thread; tests and diagnostics).</summary>
+        internal void ReadExperienceStatesNow()
+        {
+            Interlocked.Exchange(ref m_ExperienceStateReadAsked, 1);
+            m_WorkArrived?.Invoke();
+        }
+
+        /// <summary>A grant from an Experience was restored: read the held Experiences' state shortly. Scheduler thread.</summary>
+        internal void ExperienceGrantRestored()
+        {
+            ulong at = InWorldz.Phlox.Util.Clock.Now + ExperienceStateFirstReadDelayMs;
+            if (at < m_SoonExperienceStateRead) m_SoonExperienceStateRead = at;
+        }
+
+        /// <summary>
+        /// A lookup for a script call found <paramref name="experience"/> disabled or suspended (<paramref name="code"/>):
+        /// the grants held from it here end as a read's answer ends them. Any thread.
+        /// </summary>
+        internal void ExperienceCannotRun(UUID experience, int code)
+        {
+            if (m_ExperienceStateReadsStopped) return;
+            lock (m_ExperienceStateAnswers) m_ExperienceStateAnswers.Enqueue(new ExperienceStateAnswer { Experience = experience, Code = code });
+            m_WorkArrived?.Invoke();
+        }
+
+        /// <summary>
+        /// The region is stopping (called before the scheduler thread is stopped and the final save is made): no read
+        /// starts from here on, a read in flight makes no further lookup, and no answer ends a grant. The lookup in flight
+        /// cannot be cancelled (the core's lookup takes no cancellation); the reader thread ends as soon as it returns.
+        /// Any thread.
+        /// </summary>
+        internal void StopExperienceStateReads()
+        {
+            m_ExperienceStateReadsStopped = true;
+            lock (m_ExperienceStateAnswers) m_ExperienceStateAnswers.Clear();
+        }
+
+        /// <summary>When the next read is due, for DoWork's wake time; never while one runs or after the stop.</summary>
+        private ulong NextExperienceStateRead()
+            => m_ExperienceStateReadRunning || m_ExperienceStateReadsStopped || m_NextExperienceStateRead == 0
+                ? ulong.MaxValue
+                : Math.Min(m_NextExperienceStateRead, m_SoonExperienceStateRead);
+
+        private void ProcessExperienceStates()
+        {
+            if (m_ExperienceStateReadsStopped) return;
+            ApplyExperienceStateAnswers();
+            ulong now = InWorldz.Phlox.Util.Clock.Now;
+            if (m_NextExperienceStateRead == 0) m_NextExperienceStateRead = now + ExperienceStateReadIntervalMs;
+            if (m_ExperienceStateReadRunning) return;
+            bool asked = Interlocked.Exchange(ref m_ExperienceStateReadAsked, 0) != 0;
+            if (!asked && now < m_NextExperienceStateRead && now < m_SoonExperienceStateRead) return;
+
+            m_NextExperienceStateRead = now + ExperienceStateReadIntervalMs;
+            m_SoonExperienceStateRead = ulong.MaxValue;
+            var held = new HashSet<UUID>();
+            foreach (LSLSystemAPI api in m_Apis.Values)
+            {
+                UUID experience = api.HeldExperienceGrant();
+                if (!experience.IsZero()) held.Add(experience);
+            }
+            if (held.Count == 0) return;
+
+            var adapter = new PhloxExperienceAdapter(m_Engine?.World, null);
+            if (!adapter.IsAvailable) return;
+            UUID[] ids = new UUID[held.Count];
+            held.CopyTo(ids);
+            m_ExperienceStateReadRunning = true;
+            var reader = new Thread(() => ReadExperienceStates(adapter, ids))
+            {
+                IsBackground = true,
+                Name = "Phlox experience state " + (m_Engine?.World?.RegionInfo?.RegionName ?? "?"),
+            };
+            m_ExperienceStateReader = reader;
+            reader.Start();
+        }
+
+        /// <summary>
+        /// The reader thread: each Experience through the core's lookup, asked of the service each time (the module keeps
+        /// what it answers for its other callers). One at a time, so a slow service holds one lookup per region.
+        /// </summary>
+        private void ReadExperienceStates(PhloxExperienceAdapter adapter, UUID[] ids)
+        {
+            foreach (UUID id in ids)
+            {
+                if (m_ExperienceStateReadsStopped) return;
+                var answer = new ExperienceStateAnswer { Experience = id };
+                try
+                {
+                    PhloxExperienceAdapter.PhloxExperienceInfo info = adapter.GetExperience(id, fresh: true);
+                    answer.Code = info == null ? SlConst.XP_ERROR_NONE : LSLSystemAPI.ExperienceStateError(info.Properties);
+                }
+                catch (Exception e)
+                {
+                    answer.Failure = e.Message;
+                }
+                if (m_ExperienceStateReadsStopped) return;
+                lock (m_ExperienceStateAnswers) m_ExperienceStateAnswers.Enqueue(answer);
+                m_WorkArrived?.Invoke();
+            }
+            if (m_ExperienceStateReadsStopped) return;
+            lock (m_ExperienceStateAnswers) m_ExperienceStateAnswers.Enqueue(new ExperienceStateAnswer { RoundDone = true });
+            m_WorkArrived?.Invoke();
+        }
+
+        private void ApplyExperienceStateAnswers()
+        {
+            List<ExperienceStateAnswer> batch;
+            lock (m_ExperienceStateAnswers)
+            {
+                if (m_ExperienceStateAnswers.Count == 0) return;
+                batch = new List<ExperienceStateAnswer>(m_ExperienceStateAnswers);
+                m_ExperienceStateAnswers.Clear();
+            }
+            foreach (ExperienceStateAnswer answer in batch)
+            {
+                if (answer.RoundDone)
+                {
+                    m_ExperienceStateReadRunning = false;
+                    // A read that ran past its next time is not followed at once by another: the next one is an interval
+                    // after this one ended, so a service that answers slowly is not asked back to back.
+                    ulong now = InWorldz.Phlox.Util.Clock.Now;
+                    if (now >= m_NextExperienceStateRead) m_NextExperienceStateRead = now + ExperienceStateReadIntervalMs;
+                    continue;
+                }
+                if (answer.Failure != null)
+                {
+                    WarnExperienceStateReadFailed(answer.Experience, answer.Failure);
+                    continue;
+                }
+                if (answer.Code != SlConst.XP_ERROR_NONE) EndExperienceGrantsFrom(answer.Experience, answer.Code);
+            }
+        }
+
+        private void WarnExperienceStateReadFailed(UUID experience, string why)
+        {
+            ulong now = InWorldz.Phlox.Util.Clock.Now;
+            if (m_LastExperienceStateWarning != 0 && now - m_LastExperienceStateWarning < ExperienceStateWarningIntervalMs)
+            {
+                m_ExperienceStateFailuresUnreported++;
+                return;
+            }
+            m_log.LogWarning("[PhloxExe]: Could not read the state of experience {0}; the grants held from it are kept and it is read again in {1} s: {2}{3}",
+                experience, ExperienceStateReadIntervalMs / 1000, why,
+                m_ExperienceStateFailuresUnreported > 0 ? " (" + m_ExperienceStateFailuresUnreported + " more failed reads since the last warning)" : "");
+            m_LastExperienceStateWarning = now;
+            m_ExperienceStateFailuresUnreported = 0;
+        }
+
+        /// <summary>Every grant a script here holds from <paramref name="experience"/> ends, told with <paramref name="code"/>.</summary>
+        private void EndExperienceGrantsFrom(UUID experience, int code)
+        {
+            var holders = new List<LSLSystemAPI>();
+            foreach (LSLSystemAPI api in m_Apis.Values)
+                if (api.HeldExperienceGrant() == experience) holders.Add(api);
+            foreach (LSLSystemAPI api in holders) api.ExperienceCannotRun(experience, code);
+        }
+
         // ── Permission lifecycle ───────────────────────────────────────────────
 
         /// <summary>The core released this script's controls on an avatar still in the region (stand, Release Keys, detach, drop).</summary>
         internal void RequestControlsReleasedByCore(UUID itemId, UUID agentId) => EnqueuePermsEnd(new PermsEndReq { ItemId = itemId, AgentId = agentId });
+
+        /// <summary>The core ended the grant an avatar gave a script through an Experience (the avatar blocked it).</summary>
+        internal void RequestExperienceGrantEnded(UUID itemId, UUID agentId, UUID experience)
+            => EnqueuePermsEnd(new PermsEndReq { ItemId = itemId, AgentId = agentId, ExperienceEnded = true, Experience = experience });
 
         /// <summary>The object has a new owner.</summary>
         internal void RequestOwnerChanged(SceneObjectGroup group)
@@ -2068,7 +2356,9 @@ namespace Phlox.ScriptEngine
             {
                 if (req.Group == null)
                 {
-                    if (m_Apis.TryGetValue(req.ItemId, out LSLSystemAPI api)) api.ControlsReleasedByCore(req.AgentId);
+                    if (!m_Apis.TryGetValue(req.ItemId, out LSLSystemAPI api)) continue;
+                    if (req.ExperienceEnded) api.ExperienceGrantEndedByCore(req.AgentId, req.Experience);
+                    else api.ControlsReleasedByCore(req.AgentId);
                     continue;
                 }
                 if (req.Group.IsDeleted) continue;
@@ -2356,8 +2646,13 @@ namespace Phlox.ScriptEngine
             // with them, so a restore cannot bring back a listen of the state the script left.
             script.ScriptState.ActiveListens?.Clear();
 
+            // The queue is cleared, and with it what was posted to the script and not yet taken into the queue, which
+            // would otherwise run in the old state's handler after the state statement. The API has already released
+            // the listens and the sensor repeat (Interpreter.Op_StateChg runs it first), so what they posted is here.
+            // Under one lock with state_exit and state_entry, so nothing gets in between.
             lock (m_PendingEvents)
             {
+                DropPendingEventsLocked(script.ItemId);
                 PostEvent(script.ItemId, new PostedEvent
                 {
                     EventType = SupportedEventList.Events.STATE_EXIT,

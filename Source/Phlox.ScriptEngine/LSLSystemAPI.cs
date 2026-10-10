@@ -591,7 +591,7 @@ namespace Phlox.ScriptEngine
             {
                 // Halcyon ScriptLoader: AsyncCommandManager.RemoveScript(engine, localId, itemId) - sensor, HTTP, XML-RPC
                 if (m_ScriptEngine != null && async != null)
-                    OpenSim.Region.ScriptEngine.Shared.Api.AsyncCommandManager.RemoveScript(m_ScriptEngine, m_localID, m_itemID);
+                    Phlox.ScriptEngine.AsyncCommand.AsyncCommandManager.RemoveScript(m_ScriptEngine, m_localID, m_itemID);
             }
             else
             {
@@ -769,8 +769,10 @@ namespace Phlox.ScriptEngine
         /// </para>
         /// <para>
         /// A grant from an Experience (llRequestExperiencePermissions) is noted with that Experience. From a row it comes
-        /// back whole, as any grant. From carried state it comes back only when llRequestExperiencePermissions would grant
-        /// it now with no dialog, by the same decision (<see cref="DecideExperienceRequest"/>): the script is still in
+        /// back whole, as any grant, unless the land no longer lets it run: then it ends as the script starts, told once with
+        /// experience_permissions_denied and XP_ERROR_NOT_PERMITTED_LAND. Whether its Experience is now disabled or suspended
+        /// is read shortly after, off the scheduler thread (<see cref="ExperienceCannotRun"/>). From carried state it comes
+        /// back only when llRequestExperiencePermissions would grant it now with no dialog, by the same decision (<see cref="DecideExperienceRequest"/>): the script is still in
         /// that Experience, the Experience is allowed here, and the granter, here, still allows it. Its granter need not
         /// wear or sit on the object, so a claim for it is decided when that avatar arrives anywhere in the region.
         /// Wherever it is restored from, it is honoured only while the script item names that same Experience; otherwise
@@ -803,6 +805,9 @@ namespace Phlox.ScriptEngine
             if (item == null || !noted || granter.IsZero() || mask == 0 || owner.IsZero() || owner != m_host.OwnerID) return;
             if (!carried && !unverified)
             {
+                // The Experience's state is not looked up here: the start never waits on the Experience service. The
+                // region reads it shortly after (SetRestoredGrant), and a disabled or suspended Experience's grant ends
+                // then (ExperienceCannotRun).
                 if (!experience.IsZero() && ExperienceCannotRunOnThisLand(experience))
                 {
                     // The land no longer lets the grant's Experience run (the estate blocks it, or neither allows nor
@@ -875,7 +880,13 @@ namespace Phlox.ScriptEngine
                 item.PermsMask = mask;
             }
             if (experience.IsZero()) ForgetExperienceGrant();
-            else NoteExperienceGrant(experience, granter);
+            else
+            {
+                NoteExperienceGrant(experience, granter);
+                // The Experience may have been disabled or suspended since the grant was given: the region reads its state
+                // shortly, off the scheduler thread, and the grant ends then if it cannot run (ExperienceCannotRun).
+                m_ScriptEngine?.ExperienceGrantRestored();
+            }
             NoteGrant(m_thisScript.ScriptState, granter, mask, m_host.OwnerID, experience);
             GrantChanged();
         }
@@ -892,6 +903,42 @@ namespace Phlox.ScriptEngine
         internal bool HoldsExperienceGrantFrom(UUID agentId)
             => m_thisScript?.ScriptState is RuntimeState st && !string.IsNullOrEmpty(st.ExperienceGrant)
                && UUID.TryParse(st.ExperienceGranter, out UUID granter) && granter == agentId;
+
+        /// <summary>The Experience this script's grant is from, or zero when it holds none from an Experience. Scheduler thread.</summary>
+        internal UUID HeldExperienceGrant()
+            => m_thisScript?.ScriptState is RuntimeState st && !string.IsNullOrEmpty(st.ExperienceGrant)
+               && UUID.TryParse(st.ExperienceGrant, out UUID experience) ? experience : UUID.Zero;
+
+        /// <summary>
+        /// <paramref name="experience"/>, which this script's grant is from, cannot run at all now: its owner disabled it
+        /// (<paramref name="code"/> XP_ERROR_EXPERIENCE_DISABLED, 8) or it is suspended (XP_ERROR_EXPERIENCE_SUSPENDED, 9),
+        /// as a read of its state or a script call's lookup found. The grant ends with the controls it took, as when the land
+        /// ends it, and the script is told once with experience_permissions_denied and that code, the code
+        /// llRequestExperiencePermissions is refused with (<see cref="ExperienceStateDenial"/>). SL wiki
+        /// experience_permissions_denied lists XP_ERROR_EXPERIENCE_DISABLED and XP_ERROR_EXPERIENCE_SUSPENDED among its
+        /// reasons. The grant is not looked at again: a later read finds none from that Experience. Scheduler thread.
+        /// </summary>
+        internal void ExperienceCannotRun(UUID experience, int code)
+        {
+            if (HeldExperienceGrant() != experience || m_thisScript?.ScriptState is not RuntimeState st
+                || !UUID.TryParse(st.ExperienceGranter, out UUID granter)) return;
+            TaskInventoryItem item = GetInventorySelf();
+            if (item == null || item.PermsGranter != granter) return;
+            EndExperienceGrant();
+            m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
+                "experience_permissions_denied", new object[] { granter.ToString(), code }, new DetectParams[0]));
+        }
+
+        /// <summary>
+        /// A lookup this script made found <paramref name="experience"/> with <paramref name="properties"/>: when it cannot
+        /// run, every grant held from it in the region ends (<see cref="ExperienceCannotRun"/>), on the scheduler thread.
+        /// Any thread.
+        /// </summary>
+        private void NoteExperienceState(UUID experience, int properties)
+        {
+            int code = ExperienceStateError(properties);
+            if (code != XP_ERROR_NONE) m_ScriptEngine?.ExperienceCannotRun(experience, code);
+        }
 
         /// <summary>
         /// <paramref name="agentId"/>, who gave this script its grant from an Experience, entered a parcel. SL wiki
@@ -912,6 +959,24 @@ namespace Phlox.ScriptEngine
             EndExperienceGrant();
             m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
                 "experience_permissions_denied", new object[] { agentId.ToString(), XP_ERROR_NOT_PERMITTED_LAND }, new DetectParams[0]));
+        }
+
+        /// <summary>
+        /// The core ended the grant <paramref name="agentId"/> gave this script through <paramref name="experience"/>
+        /// (EventManager.OnExperiencePermissionsRevoked): the avatar blocked the Experience, SL wiki
+        /// experience_permissions_denied, "The agent has blocked the experience from the experience profile". The core
+        /// has already cleared the item's grant and posted experience_permissions_denied to the script, so the script is
+        /// told nothing more here: what the engine keeps for the grant ends as when the land ends it, and a request this
+        /// script is still waiting on from that avatar under that Experience ends unanswered, since the core's denial is
+        /// its answer. An item whose grant has since gone to another avatar is left alone. Scheduler thread.
+        /// </summary>
+        internal void ExperienceGrantEndedByCore(UUID agentId, UUID experience)
+        {
+            TaskInventoryItem item = GetInventorySelf();
+            if (item == null || World == null) return;
+            if (item.PermsGranter != UUID.Zero && item.PermsGranter != agentId) return;
+            CancelPendingExperiencePermFor(agentId, experience);
+            EndExperienceGrant();
         }
 
         /// <summary>
@@ -1076,7 +1141,7 @@ namespace Phlox.ScriptEngine
         public float llLog(float f) => (float)Math.Log(f);
 
         public float llVecMag(Vector3 v) => v.Length();
-        public Vector3 llVecNorm(Vector3 v) => Vector3.Normalize(v);
+        public Vector3 llVecNorm(Vector3 v) => Vector3.Normalize(in v);
         public float llVecDist(Vector3 a, Vector3 b) => Vector3.Distance(a, b);
 
         public Vector3 llRot2Euler(Quaternion r)
@@ -1098,9 +1163,10 @@ namespace Phlox.ScriptEngine
         {
             double c1 = Math.Cos(v.X/2), c2 = Math.Cos(v.Y/2), c3 = Math.Cos(v.Z/2);
             double s1 = Math.Sin(v.X/2), s2 = Math.Sin(v.Y/2), s3 = Math.Sin(v.Z/2);
-            return Quaternion.Normalize(new Quaternion(
+            Quaternion rotation = new Quaternion(
                 (float)(s1*c2*c3 + c1*s2*s3), (float)(c1*s2*c3 - s1*c2*s3),
-                (float)(s1*s2*c3 + c1*c2*s3), (float)(c1*c2*c3 - s1*s2*s3)));
+                (float)(s1*s2*c3 + c1*c2*s3), (float)(c1*c2*c3 - s1*s2*s3));
+            return Quaternion.Normalize(in rotation);
         }
 
         public Quaternion llAxes2Rot(Vector3 fwd, Vector3 left, Vector3 up)
@@ -1133,9 +1199,23 @@ namespace Phlox.ScriptEngine
             }
         }
 
-        public Vector3 llRot2Fwd(Quaternion r) => Vector3.Normalize(new Vector3(1f,0f,0f)*r);
-        public Vector3 llRot2Left(Quaternion r) => Vector3.Normalize(new Vector3(0f,1f,0f)*r);
-        public Vector3 llRot2Up(Quaternion r) => Vector3.Normalize(new Vector3(0f,0f,1f)*r);
+        public Vector3 llRot2Fwd(Quaternion r)
+        {
+            Vector3 direction = new Vector3(1f,0f,0f) * r;
+            return Vector3.Normalize(in direction);
+        }
+
+        public Vector3 llRot2Left(Quaternion r)
+        {
+            Vector3 direction = new Vector3(0f,1f,0f) * r;
+            return Vector3.Normalize(in direction);
+        }
+
+        public Vector3 llRot2Up(Quaternion r)
+        {
+            Vector3 direction = new Vector3(0f,0f,1f) * r;
+            return Vector3.Normalize(in direction);
+        }
 
         public Quaternion llRotBetween(Vector3 a, Vector3 b)
         {
@@ -1144,13 +1224,16 @@ namespace Phlox.ScriptEngine
             double magProduct = a.Length() * b.Length();
             if (magProduct == 0) return Quaternion.Identity;
             double angle = Math.Acos(Math.Max(-1.0, Math.Min(1.0, dotProduct / magProduct)));
-            Vector3 axis = Vector3.Normalize(crossProduct);
+            Vector3 axis = Vector3.Normalize(in crossProduct);
             if (float.IsNaN(axis.X)) return Quaternion.Identity;
             return Quaternion.CreateFromAxisAngle(axis, (float)angle);
         }
 
         public Quaternion llAxisAngle2Rot(Vector3 axis, float angle)
-            => Quaternion.CreateFromAxisAngle(Vector3.Normalize(axis), angle);
+        {
+            Vector3 normalizedAxis = Vector3.Normalize(in axis);
+            return Quaternion.CreateFromAxisAngle(normalizedAxis, angle);
+        }
 
         // llRot2Axis, llRot2Angle and llAngleBetween are YEngine's (LSL_Api.cs llRot2Axis / llRot2Angle /
         // llAngleBetween): the input's scale does not matter and there is no small-angle cut-off. OpenMetaverse's GetAxisAngle,
@@ -1918,7 +2001,7 @@ namespace Phlox.ScriptEngine
                 if (m_host?.ParentGroup == null || m_host.ParentGroup.IsDeleted) return;
                 if (!m_host.ParentGroup.IsAttachment && (m_host.ParentGroup.RootPart.Flags & PrimFlags.Physics) == 0) return;
                 if (force.LengthSquared() > 20000f * 20000f)
-                    force = Vector3.Normalize(force) * 20000f;
+                    force = Vector3.Normalize(in force) * 20000f;
                 m_host.ApplyImpulse(force, local != 0);
             }
             finally { PhySleep(); }   // Halcyon sleeps on every path
@@ -3215,7 +3298,7 @@ namespace Phlox.ScriptEngine
         /// silently. A change that is already so (AlreadySet), a NULL_KEY and an unknown action are FALSE. A ban never
         /// touches the estate owner or a manager ("never process EO"), the object's owner, or a god (YEngine, and NGC's
         /// estate tools: "Cannot ban a Administrator"); it takes the avatar off the allowed list and sends them away.
-        /// Halcyon's estate-owner's-partner rule is not ported: NGC has no partner lookup in the region.
+        /// Nor is the estate owner's partner banned (<see cref="IsEstateOwnersPartner"/>).
         /// </summary>
         private bool ManageEstateAccess(int action, UUID key)
         {
@@ -3259,7 +3342,8 @@ namespace Phlox.ScriptEngine
                     StoreEstate(es);
                     return true;
                 case EstateBannedAgentAdd:
-                    if (es.IsEstateManagerOrOwner(key) || key == m_host.OwnerID || World.Permissions.IsGod(key))
+                    if (es.IsEstateManagerOrOwner(key) || key == m_host.OwnerID || World.Permissions.IsGod(key)
+                        || IsEstateOwnersPartner(es, key))
                         return false;
                     // Halcyon clears the allowed entry even when the avatar is already banned.
                     if (allowed) es.RemoveEstateUser(key);
@@ -3285,6 +3369,24 @@ namespace Phlox.ScriptEngine
                 default:
                     return false;
             }
+        }
+
+        /// <summary>
+        /// <paramref name="key"/> is the partner on the estate owner's profile (Halcyon EstateBanUser refuses a ban of
+        /// the estate owner's partner, IsEstateOwnerPartner). A profile that cannot be read guards nobody, so a profiles
+        /// service that cannot be reached does not stop estate management; it is logged. This is a service call, made
+        /// here on the deferred call's thread, not the scheduler's.
+        /// </summary>
+        private bool IsEstateOwnersPartner(EstateSettings es, UUID key)
+        {
+            IProfileModule profiles = World.RequestModuleInterface<IProfileModule>();
+            if (profiles == null || es.EstateOwner.IsZero()) return false;
+            if (!profiles.TryGetUserPartner(es.EstateOwner, out UUID partner))
+            {
+                m_log.LogWarning("[PhloxAPI]: llManageEstateAccess could not read the estate owner's partner; the ban of {0} is not checked against it", key);
+                return false;
+            }
+            return partner.IsNotZero() && partner == key;
         }
 
         private void StoreEstate(EstateSettings es) => World.EstateDataServiceSafe?.StoreEstateSettings(es);
@@ -3503,22 +3605,18 @@ namespace Phlox.ScriptEngine
         /// outside this range are automatically rounded to the nearest limit"; Halcyon does not cap). An inactive one
         /// is removed: zero offset, identity rotation. The ll functions pass active only for a non-zero offset, as SL
         /// ("If offset == &lt;0.0, 0.0, 0.0&gt; then the sit target is removed"); Halcyon also keeps a zero offset with a
-        /// turned rotation. The scene holds no active flag apart from the offset and rotation (IsSitTargetSet), so an
-        /// active target at ZERO_VECTOR and ZERO_ROTATION reads back, and sits, as none (Docs/PhloxKnownDefects.md).
+        /// turned rotation. The state is set with the offset and rotation (SceneObjectPart.SetSitTarget), so PRIM_SIT_TARGET
+        /// can make a target at ZERO_VECTOR and ZERO_ROTATION active, as SL ("an offset of &lt;0.0, 0.0, 0.0&gt; may be
+        /// explicitly set"). The region stores do not save that state: after a region restart such a target is off.
         /// </summary>
         private static void PrimSetSitTarget(SceneObjectPart part, bool active, Vector3 offset, Quaternion rot)
         {
             if (active)
-            {
-                part.SitTargetPosition = new Vector3(Math.Clamp(offset.X, -300f, 300f),
-                    Math.Clamp(offset.Y, -300f, 300f), Math.Clamp(offset.Z, -300f, 300f));
-                part.SitTargetOrientation = NormalizedRot(rot);   // Halcyon Rot2Quaternion; core assumes a unit rotation
-            }
+                part.SetSitTarget(true, new Vector3(Math.Clamp(offset.X, -300f, 300f),
+                    Math.Clamp(offset.Y, -300f, 300f), Math.Clamp(offset.Z, -300f, 300f)),
+                    NormalizedRot(rot));   // Halcyon Rot2Quaternion; core assumes a unit rotation
             else
-            {
-                part.SitTargetPosition = Vector3.Zero;
-                part.SitTargetOrientation = Quaternion.Identity;
-            }
+                part.SetSitTarget(false, Vector3.Zero, Quaternion.Identity);
             if (part.ParentGroup != null) part.ParentGroup.HasGroupChanged = true;
             part.ScheduleFullUpdate();
         }
@@ -5878,7 +5976,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
-        /// The checks and errors of Halcyon's iwRezAt (LSLSystemAPI.cs:3155-3245), which every rez function shares. A NaN
+        /// The checks and errors of Halcyon's iwRezAt (LSLSystemAPI.cs:3155-3245), which every rez function shares. An
+        /// owner the region blocks from rezzing is refused first, silently, with 100 ms. A NaN
         /// rotation, a position over 10 m away, an item that is not an object and a refused rez each shout their own
         /// text and cost no delay; a missing item and a rez cost 100 ms (Halcyon's sleepTime). Halcyon was silent for a
         /// missing item; Phlox keeps its error for it (SL: an error is shouted). The scene does not say why a rez was
@@ -5886,6 +5985,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         /// </summary>
         private List<SceneObjectGroup> RezChecked(string inventory, Vector3 pos, Vector3 vel, Quaternion rot, int param, bool atRoot)
         {
+            if (OwnerBlockedFromRezzing())
+            {
+                ScriptSleep(100);
+                return null;
+            }
             if (RezRotationIsNaN(rot)) return null;
             if (m_host == null || World == null) return null;
 
@@ -5941,9 +6045,17 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         }
 
         /// <summary>
+        /// Halcyon's iwRezAt asked the region's bad-user list before any other check (LSLSystemAPI.cs:3160-3166) and, for
+        /// such an owner, failed silently with a 100 ms sleep. The region's list here is the core's blocked-owner hook
+        /// (IBlockedOwnerModule). The region would refuse the rez itself as well; asking first keeps the refusal silent,
+        /// so a blocked owner's rezzers do not shout an error on every attempt.
+        /// </summary>
+        private bool OwnerBlockedFromRezzing()
+            => m_host != null && World?.RequestModuleInterface<IBlockedOwnerModule>()?.IsBlocked(m_host.OwnerID) == true;
+
+        /// <summary>
         /// Halcyon iwRezAt (LSLSystemAPI.cs:3168-3173) refuses a NaN rotation with this error and no delay
         /// (sleepTime = 0), before its 10 m check. Its rez calls were long-running, so ShoutError: no pause.
-        /// Halcyon's other guard there, IsBadUser (:3160-3166), reads a nuke/blacklist-owner list NGC core does not have.
         /// </summary>
         private bool RezRotationIsNaN(Quaternion rot)
         {
@@ -6040,7 +6152,14 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
             if (pusheeIsAvatar)
             {
-                if (pushRestricted)
+                // SL wiki LlPushObject: "In no-push areas an object can only push its owner or itself." An object
+                // pushing its owner, which includes an attachment pushing its wearer, is allowed whether the region
+                // or the parcel restricts pushing; YEngine allows it in both too.
+                if (m_host.OwnerID == targetID)
+                {
+                    pushAllowed = true;
+                }
+                else if (pushRestricted)
                 {
                     ILandObject land = World.LandChannel.GetLandObject(pusheePos.X, pusheePos.Y);
                     if (land == null) return;
@@ -6088,8 +6207,11 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 PhysicsActor pa = pusheeAv.PhysicsActor;
                 if (pa != null)
                 {
+                    // SL wiki LlPushObject, local: "if TRUE uses the local axis of target, if FALSE uses the region
+                    // axis." The target here is the avatar, so its rotation turns the push, as YEngine does; an
+                    // object target is turned by its own rotation in ApplyImpulse below.
                     if (local != 0)
-                        appliedImpulse *= m_host.GetWorldRotation();
+                        appliedImpulse *= pusheeAv.GetWorldRotation();
                     pa.AddForce(appliedImpulse, true);
                 }
             }
@@ -6181,7 +6303,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
 
         /// <summary>
         /// Could the owner rez <paramref name="landImpact"/> prims at <paramref name="pos"/>? Halcyon's Scene.CheckRezError
-        /// (Scene.cs:2341-2367), answered by the checks a rez itself goes through: no parcel there; the region's rez
+        /// (Scene.cs:2341-2367), answered by the checks a rez itself goes through: an owner the region blocks from rezzing
+        /// (asked first, as Halcyon asked IsBadUser, Scene.cs:2343-2344); no parcel there; the region's rez
         /// permission (CanRezObject, asked with no prims as Halcyon asked it); the same permission asked with the prims the
         /// rez would add (the prim-limit checks hang off it). IW_REZ_REGION_SCENIC and IW_REZ_REGION_LAND_IMPACT are never
         /// returned: there are no scenic regions, and no region-wide total is checked apart from the parcels'. isTemp is
@@ -6189,6 +6312,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         /// </summary>
         public int iwCheckRezError(Vector3 pos, int isTemp, int landImpact)
         {
+            if (OwnerBlockedFromRezzing()) return IW_REZ_NOT_PERMITTED;
             if (World?.LandChannel?.GetLandObject(pos.X, pos.Y) == null) return IW_REZ_NO_LAND_PARCEL;
             UUID owner = m_host.OwnerID;
             if (!World.Permissions.CanRezObject(0, owner, pos)) return IW_REZ_NOT_PERMITTED;
@@ -10399,7 +10523,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (toTarget.LengthSquared() < 0.0001f)
                 return; // target is at same position, nothing to do
 
-            Vector3 up = Vector3.Normalize(toTarget);
+            Vector3 up = Vector3.Normalize(in toTarget);
             Quaternion current = m_host.ParentGroup.GroupRotation;
             Vector3 left = Vector3.Cross(Vector3.UnitZ, up);
             if (left.LengthSquared() < 1e-8f)
@@ -10410,7 +10534,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 if (left.LengthSquared() < 1e-8f) left = Vector3.UnitY;
                 if (up.Z < 0f) left = -left;
             }
-            left = Vector3.Normalize(left);
+            left = Vector3.Normalize(in left);
             Vector3 fwd = Vector3.Cross(left, up);
             Quaternion newRot = Quaternion.CreateFromRotationMatrix(new Matrix4(
                 fwd.X, fwd.Y, fwd.Z, 0f,
@@ -11329,6 +11453,77 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             mgr.SaveOutfitToDatabase(agentId, notecard, out string reason);
             if (reason != null) { ShoutError("osAgentSaveAppearance: " + reason); return UUID.Zero.ToString(); }
             return OpenSim.Region.OptionalModules.World.NPC.BotManager.OutfitKey(agentId, notecard).ToString();
+        }
+
+        /// <summary>OSSL_Api.cs:2174-2178 - High. The text and a newline.</summary>
+        public void osMakeNotecard(string notecardName, string contents)
+        {
+            OsslCheck(TlHigh, "osMakeNotecard");
+            OsslSaveNotecard(notecardName, "Script generated notecard", contents + "\n");
+        }
+
+        /// <summary>OSSL_Api.cs:2180-2190 - High. Each list item and a newline.</summary>
+        public void osMakeNotecard(string notecardName, LSLList contents)
+        {
+            OsslCheck(TlHigh, "osMakeNotecard");
+            StringBuilder notecardData = new StringBuilder();
+            for (int i = 0; i < contents.Length; i++)
+                notecardData.Append(contents.GetLSLStringItem(i)).Append('\n');
+            OsslSaveNotecard(notecardName, "Script generated notecard", notecardData.ToString());
+        }
+
+        /// <summary>
+        /// OSSL_Api.cs:2203-2253 SaveNotecard with forceSameName false: the asset (text cut at 65536 bytes by osUTF8, as
+        /// there), then a task item owned and created by the prim's owner. A name already in the prim is never replaced:
+        /// SceneObjectPartInventory.AddInventoryItem gives the new item the next free "name 1" ... "name 255", and adds
+        /// nothing past that.
+        /// </summary>
+        private void OsslSaveNotecard(string name, string description, string data)
+        {
+            if (m_host == null || World == null) return;
+
+            AssetBase asset = new AssetBase(UUID.Random(), name, (sbyte)AssetType.Notecard, m_host.OwnerID.ToString())
+            {
+                Description = description
+            };
+
+            osUTF8 contents = new osUTF8(data, 65536);
+            int len = contents.Length;
+            osUTF8Slice utf = new osUTF8Slice(len + 128);
+            utf.AppendASCII("Linden text version 2\n{\nLLEmbeddedItems version 1\n{\ncount 0\n}\nText length ");
+            utf.AppendASCII(len.ToString());
+            utf.AppendASCII("\n");
+            utf.Append(contents);
+            utf.AppendASCII("}");
+
+            asset.Data = utf.ToArray();
+            World.AssetService.Store(asset);
+
+            TaskInventoryItem taskItem = new TaskInventoryItem
+            {
+                ParentID = m_host.UUID,
+                CreationDate = (uint)Util.UnixTimeSinceEpoch(),
+                Name = name,
+                Description = description,
+                Type = (int)AssetType.Notecard,
+                InvType = (int)InventoryType.Notecard,
+                OwnerID = m_host.OwnerID,
+                CreatorID = m_host.OwnerID,
+                BasePermissions = (uint)OpenSim.Framework.PermissionMask.All | (uint)OpenSim.Framework.PermissionMask.Export,
+                CurrentPermissions = (uint)OpenSim.Framework.PermissionMask.All | (uint)OpenSim.Framework.PermissionMask.Export,
+                EveryonePermissions = 0,
+                NextPermissions = (uint)OpenSim.Framework.PermissionMask.All,
+                GroupID = m_host.GroupID,
+                GroupPermissions = 0,
+                Flags = 0,
+                PermsGranter = UUID.Zero,
+                PermsMask = 0,
+                AssetID = asset.FullID
+            };
+            taskItem.ResetIDs(m_host.UUID);
+
+            m_host.Inventory.AddInventoryItem(taskItem, false);
+            m_host.ParentGroup.InvalidateDeepEffectivePerms();
         }
 
         /// <summary>OSSL_Api.cs:5417 - ungated upstream.</summary>
@@ -16695,11 +16890,34 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             }
             catch (Exception e)
             {
-                m_log.LogWarning("[PhloxAPI]: llCastRay exception: {0}", e.Message);
+                CountRefusedCastRay(e.Message);
                 results.Clear();
                 results.Add(RCERR_CAST_TIME_EXCEEDED); // RCERR_CAST_TIME_EXCEEDED as generic error
             }
             return new LSLList(results);
+        }
+
+        // A cast the physics engine refuses (a time or hit budget it enforces, or any other failure) returns
+        // RCERR_CAST_TIME_EXCEEDED. A script casting in a tight loop can be refused thousands of times a second, so the
+        // log gets at most one line per script each CastRayRefusedLineIntervalMs of the engine's clock: the first
+        // refused cast writes one at once, and after that the first cast refused once the interval has passed writes
+        // the next, with the number refused since the line before. Each script has its own API object, so no lock.
+        internal const ulong CastRayRefusedLineIntervalMs = 60_000;
+        private bool m_castRayRefusedLineWritten;
+        private ulong m_castRayRefusedLineDueOn;
+        private int m_castRayRefusedSinceLine;
+
+        private void CountRefusedCastRay(string reason)
+        {
+            m_castRayRefusedSinceLine++;
+            ulong now = InWorldz.Phlox.Util.Clock.Now;
+            if (m_castRayRefusedLineWritten && now < m_castRayRefusedLineDueOn) return;
+            int refused = m_castRayRefusedSinceLine;
+            m_castRayRefusedSinceLine = 0;
+            m_castRayRefusedLineWritten = true;
+            m_castRayRefusedLineDueOn = now + CastRayRefusedLineIntervalMs;
+            m_log.LogWarning("[PhloxAPI]: llCastRay refused for script {0} in {1}; refused casts since its last warning: {2}; reason: {3}",
+                m_itemID, m_host?.Name, refused, reason);
         }
         // ── JSON ───────────────────────────────────────────────────────────────
         // The getters read the text with System.Text.Json. A leading byte-order mark is skipped, as Halcyon's
@@ -19406,6 +19624,20 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
         // Viewer experience-property bit PROPERTY_DISABLED (indra VP_DISABLED = 1<<6);
         // used to report the llGetExperienceDetails state field.
         private const int VP_DISABLED = 1 << 6;
+        // Viewer experience-property bit PROPERTY_SUSPENDED (indra VP_SUSPENDED = 1<<7; the core's ExperienceFlags.Suspended).
+        private const int VP_SUSPENDED = 1 << 7;
+
+        /// <summary>
+        /// The XP_ERROR an Experience's own state gives, from its viewer property bits. SL wiki llGetExperienceErrorMessage:
+        /// XP_ERROR_EXPERIENCE_DISABLED (8) "The experience owner has temporarily disabled the experience.";
+        /// XP_ERROR_EXPERIENCE_SUSPENDED (9) "The experience has been suspended by Linden Lab customer support." With both
+        /// bits set, disabled is the answer, as YEngine checks it first (LSL_Api llRequestExperiencePermissions and
+        /// llGetExperienceDetails).
+        /// </summary>
+        internal static int ExperienceStateError(int properties)
+            => (properties & VP_DISABLED) != 0 ? XP_ERROR_EXPERIENCE_DISABLED
+             : (properties & VP_SUSPENDED) != 0 ? XP_ERROR_EXPERIENCE_SUSPENDED
+             : XP_ERROR_NONE;
         // SL per-experience KV quota: 128 MiB (was NGC's 16 MiB).
         private const long MAX_DATA_QUOTA = 128L * 1024 * 1024;
 
@@ -19986,6 +20218,9 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
         // ── Tier 7b: Agent Environment + User Key (633–635) ──
 
+        /// <summary>YEngine's m_sleepMsOnRequestAgentData, which its llRequestUserKey sleeps (LSL_Api.cs:157).</summary>
+        private const int USER_KEY_REQUEST_DELAY = 100;
+
         public string llRequestUserKey(string username)
         {
             // Async lookup — fires dataserver event with the user's UUID
@@ -20020,6 +20255,17 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                     PostDataserverEvent(reqID, UUID.Zero.ToString());
                 }
             });
+
+            // YEngine (LSL_Api.cs llRequestUserKey) pauses 100 ms after a request that goes to the user-account lookup;
+            // an avatar in this region it answers at once, with no pause.
+            bool here = false;
+            World?.ForEachScenePresence(sp =>
+            {
+                if (!here && !sp.IsChildAgent
+                    && sp.Firstname.Equals(firstName, StringComparison.OrdinalIgnoreCase)
+                    && sp.Lastname.Equals(lastName, StringComparison.OrdinalIgnoreCase)) here = true;
+            });
+            if (!here) ScriptSleep(USER_KEY_REQUEST_DELAY);
 
             return reqID.ToString();
         }
@@ -20856,7 +21102,10 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
 
             var expService = GetExperienceAdapter();
             UUID experienceId = GetScriptExperienceId();
-            ExperienceAnswer answer = DecideExperienceRequest(expService, experienceId, agentId, out int denial);
+            int denial = expService == null || experienceId.IsZero() ? XP_ERROR_NONE : ExperienceStateDenial(expService, experienceId);
+            ExperienceAnswer answer = denial != XP_ERROR_NONE
+                ? ExperienceAnswer.Denied
+                : DecideExperienceRequest(expService, experienceId, agentId, out denial);
             if (answer == ExperienceAnswer.Denied)
             {
                 m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
@@ -20898,6 +21147,34 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             sp.ControllingClient.SendScriptQuestion(
                 m_host.UUID, m_host.ParentGroup.RootPart.Name, ownerName, m_itemID,
                 PERMISSION_EXPERIENCE, experienceId);
+        }
+
+        /// <summary>
+        /// llRequestExperiencePermissions is refused for an Experience that cannot run at all: disabled by its owner (8) or
+        /// suspended (9), <see cref="ExperienceStateError"/>. Checked before the land and the agent, as YEngine does. The
+        /// state is the Experience service's at this request (the adapter asks the service each time); the request runs on
+        /// the service lane, so a slow service delays only this script. A lookup that fails is XP_ERROR_NOT_FOUND (6), SL
+        /// wiki llGetExperienceErrorMessage: "The sim was unable to verify the validity of the experience. Retrying after a
+        /// short wait is advised." An Experience the service answers it does not know is XP_ERROR_INVALID_EXPERIENCE (7),
+        /// SL wiki llGetExperienceErrorMessage: "The script is associated with an experience that no longer exists."
+        /// A disabled or suspended answer also ends every grant held from that Experience in the region
+        /// (<see cref="NoteExperienceState"/>), this script's own among them.
+        /// </summary>
+        private int ExperienceStateDenial(PhloxExperienceAdapter expService, UUID experienceId)
+        {
+            PhloxExperienceAdapter.PhloxExperienceInfo info;
+            try
+            {
+                info = expService.GetExperience(experienceId);
+            }
+            catch (Exception ex)
+            {
+                m_log.LogWarning("[PhloxAPI]: llRequestExperiencePermissions could not look up experience {0}: {1}", experienceId, ex.Message);
+                return XP_ERROR_NOT_FOUND;
+            }
+            if (info == null) return XP_ERROR_INVALID_EXPERIENCE;
+            NoteExperienceState(experienceId, info.Properties);
+            return ExperienceStateError(info.Properties);
         }
 
         /// <summary>
@@ -20997,6 +21274,7 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             m_ScriptEngine.PostScriptEvent(m_itemID, new EventParams(
                 "experience_permissions", new object[] { agent }, new DetectParams[0]));
             var expInfo = expService.GetExperience(experienceId);
+            if (expInfo != null) NoteExperienceState(experienceId, expInfo.Properties);
             m_log.LogInformation("[PhloxAPI]: Experience permission granted: agent={0} experience={1}",
                 agentId, expInfo?.Name ?? experienceId.ToString());
         }
@@ -21058,6 +21336,29 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
                     pending.Timer?.Dispose();
                     m_pendingExpPerms.Remove(m_itemID);
                 }
+                clientToUnhook = m_expHookedClient;
+                m_expHookedClient = null;
+            }
+            if (clientToUnhook != null)
+            {
+                clientToUnhook.OnScriptAnswer -= HandleExperienceScriptAnswer;
+                clientToUnhook.OnConnectionClosed -= HandleExperienceConnectionClosed;
+            }
+        }
+
+        /// <summary>
+        /// The request still waiting ends with no answer when it asks <paramref name="agentId"/> for
+        /// <paramref name="experience"/>: its timeout is stopped, the client unhooked, nothing posted.
+        /// </summary>
+        private void CancelPendingExperiencePermFor(UUID agentId, UUID experience)
+        {
+            IClientAPI clientToUnhook = null;
+            lock (m_pendingExpLock)
+            {
+                if (!m_pendingExpPerms.TryGetValue(m_itemID, out PendingExperiencePerm pending)
+                    || pending.AgentId != agentId || pending.ExperienceId != experience) return;
+                pending.Timer?.Dispose();
+                m_pendingExpPerms.Remove(m_itemID);
                 clientToUnhook = m_expHookedClient;
                 m_expHookedClient = null;
             }
@@ -21189,11 +21490,12 @@ public int llSetLinkGLTFOverrides(int link, int face, LSLList overrides)
             // group key ] — NOT the old [name, owner, description, group, maturity, ""], which
             // silently returned wrong data at every index for SL-written scripts (High severity).
             // State uses the XP_ERROR vocabulary: NONE(0) for a valid enabled experience,
-            // EXPERIENCE_DISABLED(8) when the viewer PROPERTY_DISABLED bit is set. The message comes
-            // from llGetExperienceErrorMessage so the state and its text can never drift apart.
-            int state = (exp.Properties & VP_DISABLED) != 0
-                ? XP_ERROR_EXPERIENCE_DISABLED
-                : XP_ERROR_NONE;
+            // EXPERIENCE_DISABLED(8) when the viewer PROPERTY_DISABLED bit is set, EXPERIENCE_SUSPENDED(9)
+            // when PROPERTY_SUSPENDED is (ExperienceStateError; YEngine's llGetExperienceDetails reports the
+            // same two). The message comes from llGetExperienceErrorMessage so the state and its text can
+            // never drift apart.
+            int state = ExperienceStateError(exp.Properties);
+            NoteExperienceState(expId, exp.Properties);
             return new LSLList(new object[]
             {
                 exp.Name ?? string.Empty,
