@@ -872,6 +872,52 @@ exact solution over the step the engine takes:
   turns. Angular deflection turns the nose toward the velocity the same way, scaled by the speed over
   30 m/s.
 
+### Vehicles handed back from their saved settings
+
+The simulator keeps each vehicle's type, flags, parameters and reference frame (`SOPVehicle`): in the
+object's XML in inventory, in a region crossing and in an attachment, and in the region's database. It
+hands them back to the engine through `PhysicsActor.SetVehicle` when a vehicle is rezzed from inventory,
+loaded with the region, copied, arrives from another region, is dropped as an attachment, or is a phantom
+prim whose physics is switched back on (`SceneObjectPart.AddToPhysics`). The module overrides
+`SetVehicle`, as ubODE does, and the vehicle gets exactly what was saved:
+
+- the type, and the saved flags in place of the type's;
+- every saved parameter, held to the region's vehicle limits as the same value from a script is (a saved
+  hover timescale of 1000 s becomes 300 s, `VehicleMaxHoverTimescale`; both turn hover off);
+- the reference frame;
+- the saved motor directions, with neither motor running until a script sets it, as on ubODE. A car
+  saved while it was being driven does not drive off when it is rezzed.
+
+Its velocity is the one the simulator replays onto it, so a vehicle arriving from another region at speed
+keeps it. A vehicle loaded with the region has its velocity zeroed on each step of its first 0.27 s, until
+a script sets its linear motor, as one whose script sets the type has.
+
+Before this override, the base `SetVehicle` set every vehicle flag on (its first call,
+`VehicleFlags(-1, false)`, sets them all, as on ubODE) and started both motors toward the saved
+directions.
+
+Physics switched off and on by a script or the build tool keeps a solid prim's actor, and its vehicle
+keeps every setting, as on ubODE. A phantom prim's actor is removed when its physics goes off and built
+again from the saved settings when it comes back on.
+
+The flag calls act as on ubODE: `llSetVehicleFlags` sets the flags it names, `llRemoveVehicleFlags`
+removes them, and removing `-1` removes every flag.
+
+The simulator saves its own type presets, which differ from the documented ones in a few fields. A
+vehicle that is handed back has the simulator's value in these fields, where the same vehicle just set up
+by its script has the documented one; a script that sets these itself is not affected:
+
+| type | field | simulator's preset | documented preset |
+|---|---|---|---|
+| sled | hover timescale | 10 s (hover on) | 1000 s (off) |
+| sled | angular deflection timescale | 1000 s | 10 s (its efficiency is 0 in both) |
+| sled | vertical attraction efficiency | 0 | 1 (its timescale is 1000 s, off, in both) |
+| boat | `VEHICLE_FLAG_HOVER_UP_ONLY` | off | on |
+| balloon | vertical attraction efficiency | 0 | 1 (its timescale is 1000 s, off, in both) |
+| balloon | `VEHICLE_FLAG_LIMIT_ROLL_ONLY`, `VEHICLE_FLAG_HOVER_GLOBAL_HEIGHT` | on | off |
+
+The car and the airplane presets agree in every field.
+
 ### Known gaps against Second Life
 
 These documented behaviours are not simulated:
@@ -995,6 +1041,8 @@ dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --sce
 | `--vflag NAME` or `-NAME` | A vehicle flag set (or removed) after the scenario's own, e.g. `HOVER_UP_ONLY` (repeatable) |
 | `--ball M[,M..]`, `--shot-speed V[,V..]` | The `tunnel-` scenarios: the ball's diameter (m, default 0.2) and the speed it is shot at (m/s, default 25); lists run every combination |
 | `--sim-defaults` | Build every prim and avatar with the values the simulator hands the engine for a new one, instead of the harness's own (see "What the harness builds differently", below) |
+| `--vehicle-restore ROUTE` | Vehicle scenarios: when the setup is done, hand the vehicle back from its saved settings as the simulator does: `rez`, `region-start`, `copy`, `crossing`, `detach` or `physics-off-on` (see "Vehicles handed back from their saved settings", above) |
+| `--vehicle-script-again` | After `--vehicle-restore`, the scenario's script makes its vehicle calls again: the same vehicle set up by its script, on a body with the route's history |
 | `--out DIR` | Also write a CSV per run (`<scenario>-s<slope>-r<rate>.csv`, with `-p<rate>` added when the physics rate is on) and `summary.csv` there |
 
 Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, then released),
@@ -1062,9 +1110,13 @@ scenario changes. An avatar stands 0.1 m higher.
 
 What the option leaves as the harness has it:
 
-- A vehicle is made as a script makes one (`llSetVehicleType`, then its parameters). A vehicle rezzed
-  or loaded with its settings reaches the engine through `PhysicsActor.SetVehicle` instead, which the
-  harness does not use.
+- A vehicle is made as a script makes one (`llSetVehicleType`, then its parameters).
+  `--vehicle-restore` hands it back from its saved settings instead, through `PhysicsActor.SetVehicle`
+  as the simulator does. Every route but `physics-off-on` removes the actor and builds a new one, before
+  the first step, so a route compares with a vehicle set up by its script on a body with the same
+  history (`--vehicle-script-again`): the engine moves a body it is given after another was removed
+  slightly differently once it slows to rest, whatever the body is (the test car on 5 degrees is up to
+  0.14 m from where the first body is at the same time).
 - Every prim is added before the first step, as a region adds the prims it loads at start-up, not
   after it, as a prim rezzed later is.
 - There is no mesher, so a prim that is not a plain box, sphere or cylinder is a bounding box. Every

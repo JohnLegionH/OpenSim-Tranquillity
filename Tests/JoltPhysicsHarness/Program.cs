@@ -48,6 +48,11 @@ public static class Program
   --sim-defaults             build every prim and avatar with the values the simulator hands the engine for a new
                              one (a prim's wood material: friction 0.6, restitution 0.5; the default avatar box,
                              2.1 m tall) instead of the harness's own (friction 0.6, restitution 0; 1.9 m)
+  --vehicle-restore ROUTE    vehicle scenarios: when the setup is done, hand the vehicle back from its saved record
+                             as the simulator does by ROUTE: rez, region-start, copy, crossing, detach or
+                             physics-off-on (see VehicleRestore.cs)
+  --vehicle-script-again     after --vehicle-restore, the scenario's script makes its vehicle calls again (the same
+                             vehicle set up by its script, on a body with the route's history)
   --out DIR                  write <scenario>-s<slope>-r<rate>.csv per run and summary.csv to DIR, and
                              native.txt, the joltc build loaded (for --check-baseline)
 
@@ -185,6 +190,20 @@ The summary table always goes to standard output. Nothing is written anywhere el
                     (o.StartOffsetX, o.StartOffsetY) = (d[0], d[1]);
                     break;
                 case "--sim-defaults": o.SimulatorDefaults = true; break;
+                case "--vehicle-script-again": o.VehicleScriptAgain = true; break;
+                case "--vehicle-restore":
+                    string route = Next();
+                    o.VehicleRoute = route switch
+                    {
+                        "rez" => VehicleRoute.Rez,
+                        "region-start" => VehicleRoute.RegionStart,
+                        "copy" => VehicleRoute.Copy,
+                        "crossing" => VehicleRoute.Crossing,
+                        "detach" => VehicleRoute.Detach,
+                        "physics-off-on" => VehicleRoute.PhysicsOffOn,
+                        _ => throw new ArgumentException($"--vehicle-restore '{route}': expected rez, region-start, copy, crossing, detach or physics-off-on"),
+                    };
+                    break;
                 case "--out": outDir = Next(); break;
                 default: throw new ArgumentException($"unknown argument '{a}'");
             }
@@ -259,7 +278,7 @@ The summary table always goes to standard output. Nothing is written anywhere el
 
     private static HarnessOptions Copy(HarnessOptions o, double rate, float slope)
     {
-        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay, StartSpeed = o.StartSpeed, StartOffsetX = o.StartOffsetX, StartOffsetY = o.StartOffsetY, SimulatorDefaults = o.SimulatorDefaults };
+        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay, StartSpeed = o.StartSpeed, StartOffsetX = o.StartOffsetX, StartOffsetY = o.StartOffsetY, SimulatorDefaults = o.SimulatorDefaults, VehicleRoute = o.VehicleRoute, VehicleScriptAgain = o.VehicleScriptAgain };
         foreach (KeyValuePair<string, string> kv in o.Jolt) c.Jolt[kv.Key] = kv.Value;
         c.VehicleParams.AddRange(o.VehicleParams);
         c.VehicleFlags.AddRange(o.VehicleFlags);

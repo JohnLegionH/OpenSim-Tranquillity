@@ -24,6 +24,7 @@ using Nini.Config;
 using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Region.PhysicsModules.SharedBase;
+using SOPVehicle = OpenSim.Region.Framework.Scenes.SOPVehicle;
 
 namespace OpenSim.Region.PhysicsModules.Jolt.Harness;
 
@@ -84,6 +85,17 @@ public sealed class HarnessOptions
     /// than the appearance's size, AvatarAppearance.SetSize), then its rotation, a 100 ms collision subscription and
     /// always-run off. Without it a prim keeps the backend's friction 0.6 and restitution 0, and an avatar is 1.9 m.</summary>
     public bool SimulatorDefaults;
+    /// <summary>Restore the scenario's vehicle from its record by this route when its setup is done, before the first
+    /// heartbeat, instead of leaving it as its script set it up (<see cref="VehicleRestore"/>). Every route but the
+    /// physics switch removes the actor and builds a new one from the record at the same place, as the simulator's
+    /// SceneObjectPart.AddToPhysics does; the physics switch makes the actor non-physical and physical again.</summary>
+    public VehicleRoute VehicleRoute;
+    /// <summary>After <see cref="VehicleRoute"/>, the scenario's script makes its vehicle calls again on the vehicle's actor,
+    /// as a script that sets its vehicle up in on_rez does. A route compared with itself with this on compares the vehicle
+    /// it hands back with the same vehicle set up by its script on a body with the same history: the engine moves a body
+    /// it is given after another was removed (a route that builds a new actor, or physics switched off and on, which
+    /// rebuilds the body) slightly differently once it slows to rest, whatever the body is.</summary>
+    public bool VehicleScriptAgain;
 
     private static double DefaultPhysicsRate()
     {
@@ -520,13 +532,49 @@ public sealed class Run
         return pa;
     }
 
+    /// <summary>The vehicle's record, kept as the simulator's SceneObjectPart keeps it: from <see cref="MakeVehicle"/> on,
+    /// the vehicle calls below go through it, which updates its SOPVehicle and forwards the same call to
+    /// <see cref="Actor"/>. <see cref="HarnessOptions.VehicleRoute"/> restores the vehicle from it.</summary>
+    public OpenSim.Region.Framework.Scenes.SceneObjectPart VehiclePart;
+    /// <summary>The vehicle calls made through <see cref="VehiclePart"/>, as the actor got them, for
+    /// <see cref="HarnessOptions.VehicleScriptAgain"/>.</summary>
+    internal readonly List<Action<PhysicsActor>> VehicleCalls = new();
+
     public void MakeVehicle(Vehicle type)
     {
-        Actor.VehicleType = (int)type;
+        VehiclePart ??= VehicleRestore.NewRecord(Actor);
+        VehiclePart.SetVehicleType((int)type);
+        VehicleCalls.Add(a => a.VehicleType = (int)type);
     }
 
-    public void SetFloat(Vehicle code, float v) => Actor.VehicleFloatParam((int)code, v);
-    public void SetVector(Vehicle code, Vector3 v) => Actor.VehicleVectorParam((int)code, v);
+    public void SetFloat(Vehicle code, float v)
+    {
+        if (VehiclePart == null) { Actor.VehicleFloatParam((int)code, v); return; }
+        VehiclePart.SetVehicleFloatParam((int)code, v);
+        VehicleCalls.Add(a => a.VehicleFloatParam((int)code, v));
+    }
+
+    public void SetVector(Vehicle code, Vector3 v)
+    {
+        if (VehiclePart == null) { Actor.VehicleVectorParam((int)code, v); return; }
+        VehiclePart.SetVehicleVectorParam((int)code, v);
+        VehicleCalls.Add(a => a.VehicleVectorParam((int)code, v));
+    }
+
+    public void SetRotation(Vehicle code, Quaternion q)
+    {
+        if (VehiclePart == null) { Actor.VehicleRotationParam((int)code, q); return; }
+        VehiclePart.SetVehicleRotationParam((int)code, q);
+        VehicleCalls.Add(a => a.VehicleRotationParam((int)code, q));
+    }
+
+    /// <summary>llSetVehicleFlags (<paramref name="remove"/> false) or llRemoveVehicleFlags (true).</summary>
+    public void SetFlags(int flags, bool remove)
+    {
+        if (VehiclePart == null) { Actor.VehicleFlags(flags, remove); return; }
+        VehiclePart.SetVehicleFlags(flags, remove);
+        VehicleCalls.Add(a => a.VehicleFlags(flags, remove));
+    }
 
     /// <summary>The motor while a key is held: re-sent every KeyRepeat seconds until the hold ends, then zeroed once.
     /// With an angular motor (a steering key held with it), that is sent with the linear one and zeroed with it.</summary>
@@ -592,11 +640,11 @@ public sealed class Run
     {
         foreach (VehicleParamSetting p in Options.VehicleParams)
         {
-            if (p.IsVector) Actor.VehicleVectorParam((int)p.Code, p.Value);
-            else Actor.VehicleFloatParam((int)p.Code, p.Value.X);
+            if (p.IsVector) SetVector(p.Code, p.Value);
+            else SetFloat(p.Code, p.Value.X);
         }
         foreach (VehicleFlagSetting f in Options.VehicleFlags)
-            Actor.VehicleFlags(f.Flag, f.Remove);
+            SetFlags(f.Flag, f.Remove);
     }
 }
 
@@ -908,7 +956,7 @@ public static class Harness
                 SetFloatingAlone(r);
                 r.SetFloat(Vehicle.VERTICAL_ATTRACTION_TIMESCALE, 2f);
                 r.SetFloat(Vehicle.VERTICAL_ATTRACTION_EFFICIENCY, 1f);
-                r.Actor.VehicleFlags(LimitRollOnlyFlag, false);
+                r.SetFlags(LimitRollOnlyFlag, false);
                 r.ApplyVehicleOverrides();
             },
             // Rolled about its own x axis, then pitched about the world's y: the nose is 30 degrees down.
@@ -927,7 +975,7 @@ public static class Harness
                 r.SetVector(Vehicle.LINEAR_FRICTION_TIMESCALE, new Vector3(1000f, 1000f, 1000f));
                 r.SetFloat(Vehicle.LINEAR_MOTOR_TIMESCALE, 1f);
                 r.SetVector(Vehicle.LINEAR_MOTOR_OFFSET, new Vector3(0f, 0f, -0.05f));
-                r.Actor.VehicleFlags(LimitMotorUpFlag, true);
+                r.SetFlags(LimitMotorUpFlag, true);
                 r.ApplyVehicleOverrides();
             },
             Input = r => r.HoldMotor(new Vector3(5f, 0f, 0f)),
@@ -1430,6 +1478,11 @@ public static class Harness
         {
             r.Clock = -r.Dt * 0.5;
             sc.Setup(r);
+            if (o.VehicleRoute != VehicleRoute.None)
+                RestoreVehicle(r, o.VehicleRoute);
+            if (o.VehicleScriptAgain)
+                foreach (Action<PhysicsActor> call in r.VehicleCalls.ToArray())
+                    call(r.Actor);
             float dt = (float)r.Dt;
             int frames = (int)Math.Ceiling(r.Duration / r.Dt - 1e-9);
             double restCandidate = double.NaN;
@@ -1491,9 +1544,41 @@ public static class Harness
         }
         finally
         {
+            // A SceneObjectPart left holding an actor removes it from its scene when it is finalized, and it has none.
+            if (r.VehiclePart != null)
+            {
+                r.VehiclePart.PhysActor = null;
+                r.VehiclePart.Dispose();
+            }
             scene.Dispose();
         }
         return result;
+    }
+
+    // The scenario's vehicle handed back by the route from its record, where its setup left it.
+    private static void RestoreVehicle(Run r, VehicleRoute route)
+    {
+        if (r.VehiclePart == null)
+            throw new InvalidOperationException("--vehicle-restore: the scenario made no vehicle");
+        switch (route)
+        {
+            case VehicleRoute.PhysicsOffOn:
+                VehicleRestore.PhysicsOff(r.Actor);
+                VehicleRestore.PhysicsOn(r.Actor);
+                return;
+            case VehicleRoute.PhantomPhysicsOffOn:
+                throw new NotSupportedException("--vehicle-restore: a phantom vehicle does not stand on the course");
+        }
+        PhysicsActor old = r.Actor;
+        SOPVehicle saved = VehicleRestore.Saved(r.VehiclePart, route);
+        Vector3 position = old.Position, velocity = old.Velocity, angular = old.RotationalVelocity;
+        Quaternion rotation = old.Orientation;
+        r.Scene.RemovePrim(old);
+        // Built as the harness built the original (AddBox), then given the record.
+        PhysicsActor pa = VehicleRestore.AddToPhysics(r.Scene, saved, position, r.ActorSize, rotation, true, false, true, velocity, angular,
+                                                      old.LocalID, a => { r.AsSimulatorAdds(a); a.Density = 1000f; });
+        r.Actor = pa;
+        r.VehiclePart.PhysActor = pa;
     }
 
     private static Sample Read(Run r, double t)
