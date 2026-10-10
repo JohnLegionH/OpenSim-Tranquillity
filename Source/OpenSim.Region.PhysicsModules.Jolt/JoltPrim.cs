@@ -414,8 +414,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Position", value.ToString()); return; }
                 if (_position == value) return;   // the drain writes _position directly; only a real move recreates
+                Vector3 was = _position;
                 _position = value;
-                if (_body.IsValid) RepositionBody();
+                if (_body.IsValid) { RepositionBody(); WakeWhatRestsOn(was, _orientation); }
             }
         }
 
@@ -426,8 +427,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Orientation", value.ToString()); return; }
                 if (_orientation == value) return;
+                Quaternion was = _orientation;
                 _orientation = value;
-                if (_body.IsValid) RepositionBody();
+                if (_body.IsValid) { RepositionBody(); WakeWhatRestsOn(_position, was); }
             }
         }
 
@@ -471,6 +473,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             _backend.SetBodyTransform(_body, ToS(_position), BodyOrientationOf(_orientation), activate: MayWake);
         }
+
+        // A fixed prim moved or turned wakes the physical objects resting on or against it, where it was and where it is
+        // now. The engine wakes nothing when a static body moves, so without this an object left asleep on a platform that
+        // is moved away would hang in the air until something else woke it. Not while the region loads.
+        private void WakeWhatRestsOn(Vector3 wasAt, Quaternion wasTurned)
+        {
+            if (_isPhysical || !_body.IsValid || _module.IsRegionLoading)
+                return;
+            SVector3 half = ToS(_size * 0.5f);
+            _module.WakePrimsAround(ToS(wasAt), half, ToS(wasTurned), LocalID);
+            _module.WakePrimsAround(ToS(_position), half, ToS(_orientation), LocalID);
+        }
+
+        // Wakes this prim's body after something it rested on moved (see WakeWhatRestsOn).
+        internal void WakeAfterSupportMoved() => (_linkRoot ?? this).WakeBody();
 
         public override Vector3 Size
         {

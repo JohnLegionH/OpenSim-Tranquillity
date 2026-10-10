@@ -799,6 +799,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// of which neither is awake, so a contact between them that was there when they fell asleep is still there.</summary>
         bool IsBodyAwake(BodyId body);
 
+        /// <summary>The UserData the body was created with (its owner's LocalID); false for a body that is gone.</summary>
+        bool TryGetBodyUserData(BodyId body, out uint userData);
+
         bool TryGetBodyState(BodyId body, out BodyState state);
 
         // -- characters ---------------------------------------------------

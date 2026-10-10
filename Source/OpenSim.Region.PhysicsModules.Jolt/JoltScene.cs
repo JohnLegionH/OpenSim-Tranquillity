@@ -2094,6 +2094,30 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private bool IsVolumeDetectPrim(uint localID)
             => _framePrims.TryGetValue(localID, out JoltPrim p) && p.IsVolumeDetectPart;
 
+        // How far past a moved fixed prim's box a resting body is still woken: the engine's speculative contact distance
+        // (0.02 m) with room to spare.
+        private const float SupportWakeMargin = 0.05f;
+
+        // Wakes every physical prim whose body overlaps the box at `center` (half extents `half`, grown by
+        // SupportWakeMargin), except the prim `except`. Used when a fixed prim is moved: see JoltPrim.WakeWhatRestsOn.
+        internal void WakePrimsAround(SVector3 center, SVector3 half, SQuaternion orientation, uint except)
+        {
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (backend == null)
+                return;
+            Span<BodyId> found = stackalloc BodyId[64];
+            int n = backend.OverlapBox(center, half + new SVector3(SupportWakeMargin), orientation, QueryFilter.Dynamic, found);
+            for (int i = 0; i < n; i++)
+            {
+                if (!backend.TryGetBodyUserData(found[i], out uint id) || id == except)
+                    continue;
+                JoltPrim prim;
+                lock (_prims)
+                    _prims.TryGetValue(id, out prim);
+                prim?.WakeAfterSupportMoved();
+            }
+        }
+
         private bool AllStillTouchingAsleep(JoltPrim prim, CollisionEventUpdate set)
         {
             foreach (uint collider in set.m_objCollisionList.Keys)

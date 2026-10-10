@@ -2555,6 +2555,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public bool IsBodyAwake(BodyId body)
             => _bodies.TryGet(body.Value, out JoltBodyRecord rec) && Volatile.Read(ref rec.Awake);
 
+        public bool TryGetBodyUserData(BodyId body, out uint userData)
+        {
+            bool found = _bodies.TryGet(body.Value, out JoltBodyRecord rec);
+            userData = found ? rec.UserData : 0u;
+            return found;
+        }
+
         public bool TryGetBodyState(BodyId body, out BodyState state)
         {
             lock (_simLock)
