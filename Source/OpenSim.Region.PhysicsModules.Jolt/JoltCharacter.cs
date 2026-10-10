@@ -146,6 +146,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // an explicit ActivateBody only because the step-thread-owned active-set is fed through a queue.
             // Push the initial intent so frame 1 already has flying/desired set and reports a valid state.
             PushMovement();
+            if (_constantForce != Vector3.Zero)
+                PushConstantForce();
         }
 
         // The scene's per-step character drain hands back the CharacterVirtual's post-ExtendedUpdate state.
@@ -261,7 +263,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // Facing is radially symmetric for a vertical capsule, so orientation does not change collision.
         // Cache it (the viewer's display rotation comes from the client's body-rot, not physics) and avoid
-        // pushing a transform on every turn, which would re-seat position and fight the drain.
+        // pushing a transform on every turn, which would re-seat position and fight the drain. A local constant force
+        // turns with it.
         public override Quaternion Orientation
         {
             get => _orientation;
@@ -269,6 +272,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "Orientation", value.ToString()); return; }
                 _orientation = value;
+                if (_constantForceLocal && _constantForce != Vector3.Zero)
+                    PushConstantForce();
             }
         }
 
@@ -399,6 +404,31 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _backend.AddCharacterImpulse(_character, ToS(force / _mass));
         }
         public override void AddAngularForce(Vector3 force, bool pushforce) { }
+
+        // ---- an attachment's llSetForce, which core hands to the wearer's actor ----
+
+        private Vector3 _constantForce;
+        private bool _constantForceLocal;
+
+        // The SL wiki, llSetForce: "Used on an attachment, it will apply the force to the avatar". The force is in newtons and
+        // the avatar accelerates by force / its mass on every step until the next call; zero ends it. A local force is in the
+        // avatar's own axes: it is turned by the avatar's orientation now, and again whenever that changes, so it turns with
+        // the avatar. The actor keeps it and gives it to every backend character it makes; core hands it to a new actor.
+        public override void SetConstantForce(Vector3 force, bool local)
+        {
+            if (!NonFiniteGuard.Ok(force)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "avatar", LocalID, "ConstantForce", force.ToString()); return; }
+            _constantForce = force;
+            _constantForceLocal = local;
+            PushConstantForce();
+        }
+
+        private void PushConstantForce()
+        {
+            if (!_character.IsValid || !(_mass > 0f))
+                return;
+            Vector3 force = _constantForceLocal ? _constantForce * _orientation : _constantForce;
+            _backend.SetCharacterConstantForce(_character, ToS(force / _mass));
+        }
 
         // ---- an attachment's llSetBuoyancy and llSetHoverHeight, which core hands to the wearer's actor ----
 
