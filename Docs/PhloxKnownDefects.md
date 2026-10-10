@@ -345,8 +345,12 @@ These are facts about Phlox's compiler. Where SL's rule is known, it is cited.
   - State another engine wrote (YEngine, XEngine), state in a newer envelope version, and
     state that cannot be read are refused: the script starts fresh and the object always
     rezzes. YEngine refuses Phlox's state the same way.
-  - Events that arrive while an object is between regions are not held for it (no crossing
-    wait).
+  - An event that reaches a crossing object's script after its state was captured, and
+    before the object has left, reaches the copy left behind and is lost when the crossing
+    succeeds. Halcyon's crossing wait has the same gap.
+  - After a crossing that fails, a dataserver, HTTP or XML-RPC reply the script was waiting
+    for when the crossing started does not arrive: the hold drops the replies a script is
+    still owed, as Halcyon's crossing wait did.
   - A script that arrives on a parcel where scripts may not run is paused, and the arrival's
     `changed` event is dropped with whatever else reaches a paused script. SL queues it and
     posts it once the object is somewhere scripts run.
@@ -363,6 +367,32 @@ These are facts about Phlox's compiler. Where SL's rule is known, it is cited.
     same 10 seconds.
   - A script held stopped because its row could not be read carries no state.
   - Objects saved by an earlier Phlox build carry no Phlox state and start fresh as before.
+- **A crossing holds the object's scripts.** When an object starts to cross into another
+  region (a region crossing, or an object teleport to another region), the simulator
+  announces it (`EventManager.OnGroupBeginInTransit`) before the transfer starts, and Phlox
+  holds every script of the object until the crossing ends
+  (`EventManager.OnGroupEndInTransit`), as Halcyon's crossing wait did. While held:
+  - nothing runs: an event in progress stops where it is, and a sleep, the timer and the
+    touch repeat stop;
+  - every event that reaches the script waits on its queue, in order, up to the usual 64,
+    except chat on its listens, which is dropped (Halcyon took a held script's listens away);
+  - the sensor repeat stops, and replies still owed to it (dataserver, HTTP, XML-RPC) are
+    dropped, as Halcyon's crossing wait did; taken controls stay;
+  - the script's URLs stay. A crossing that succeeds releases them in the region the object
+    left, when its scripts are removed there; a crossing that fails leaves the object where
+    it was, so its URLs keep working. Halcyon released them when the hold started.
+
+  The state the crossing captures includes the held events: they run in the new region, in
+  the order they came, and not in the region the object left. When the crossing fails
+  (no region beyond, or the transfer is refused) the object is put back inside the region
+  and its scripts carry on there: the held events run in order, each once, the timer comes
+  back with the time it had left, and the sensor repeat starts again. Scripts of other
+  objects are not held. The SL wiki says nothing about events during a crossing; it says
+  events are "queued FIFO" and that when a script is paused "pending events are preserved"
+  ([LSL Events](https://wiki.secondlife.com/wiki/Category:LSL_Events)).
+
+  Before this hold, an event that reached the object during a crossing ran in the region it
+  was leaving, and could run a second time in the new one.
 - **Carried state is checked as input from outside.** It can come from anywhere: inventory
   from another grid, a Hypergrid visitor's attachments, an object another resident made.
   - It must fit the compiled script it is loaded for: its state index, its number of
@@ -705,15 +735,10 @@ pauses 15 ms after every chat call instead (`ChatThrottle`).
 `bot_update(string, integer, list)` is the only event beyond SL's set. The bot manager
 raises it for the `bot*` functions, as Halcyon did: `BOT_MOVE_COMPLETE` with `[bot position]` when
 a navigation path is done; `BOT_MOVE_UPDATE` with `[next node, bot position]` each time the bot
-moves on to another point (after a teleport point too, the last one included, and after a
-`botWanderWithin` point that has a wait after it); `BOT_MOVE_FAILED` with `[next node, bot position]`
-when the bot has not reached a point after `BOT_MOVEMENT_TELEPORT_AFTER` seconds (60 by default) and is
-teleported to it, followed by `BOT_MOVE_UPDATE` as the path goes on; `BOT_MOVE_AVATAR_LOST` with
+moves on to another point (after a teleport point too, the last one included); `BOT_MOVE_FAILED`
+with `[next node, bot position]` when a move times out; `BOT_MOVE_AVATAR_LOST` with
 `[avatar position, 0.0, bot position]`, once, when a followed avatar leaves the region (the
-position is then `ZERO_VECTOR`) or is farther than `BOT_LOST_AVATAR_DISTANCE` (default 1000 m), and with
-`[avatar position, distance, bot position]` when `BOT_REQUIRES_LINE_OF_SIGHT` is set and an object is
-in between. With `BOT_MOVEMENT_FLAG_FOLLOW_INDEFINITELY` a path starts again after its last point,
-reported as a move on to node (number of points), and never completes.
+position is then `ZERO_VECTOR`) or is farther than `BOT_LOST_AVATAR_DISTANCE` (default 1000 m).
 It goes to every script registered with `botRegisterForNavigationEvents`, and to the script that
 created the bot with `botCreateBot`.
 
@@ -899,8 +924,13 @@ such list.
   outside this repository, such as a Jolt module, shows no effect either until it implements `SetConstantForce`.
 - `llSetForce` in an unattached physical object: a local force (`local` TRUE) is turned once by the object's rotation
   when it is set, not kept in the object's frame as it turns.
-- `botFollowAvatar` goes straight for the avatar. Halcyon also steered around objects along the avatar's recent
-  positions.
+- `botSetNavigationPoints`: a move that times out (about 60 s) raises `BOT_MOVE_FAILED` and ends the path. Halcyon
+  teleported the bot to the point and went on, after `BOT_MOVEMENT_TELEPORT_AFTER` seconds (60 by default); that
+  option and `BOT_MOVEMENT_TYPE` (`BOT_MOVEMENT_FLAG_FOLLOW_INDEFINITELY` repeats the path) are not read.
+- `botWanderWithin` raises no `bot_update`. Halcyon raised `BOT_MOVE_UPDATE` as the bot reached each wander point (when
+  there was a wait between points) and `BOT_MOVE_FAILED` when it did not reach one.
+- `botFollowAvatar` walks once toward the avatar and does not keep following it; `BOT_REQUIRES_LINE_OF_SIGHT`, the
+  start and stop following distances and the allow-running, flying and jumping options are not read.
 
 ### Prim-params rules
 - `PRIM_HEALTH` and the damage type in `PRIM_DAMAGE` are accepted and dropped. Reading them
