@@ -478,14 +478,13 @@ public class FastObjectsLinksetsAndAvatarsTests
         Assert.True(endSpeed < 0.01f, $"{res.Name}: still moving at {endSpeed:0.###} m/s");
         Assert.False(double.IsNaN(sleptAgain), $"{res.Name}: never asleep again after the resize");
 
-        // The platform: one collision_start, from the landing, naming one part, and nothing after: no end and no new start
-        // across the resize. The engine reports the linkset's resting contact with the platform as one contact, naming one
-        // of the three parts that rest on it, so the platform hears of one part, not of each.
+        // The platform: one collision_start, from the landing, naming the linkset by its root, and nothing after: no end and
+        // no new start across the resize. Every part that rests on it names the same object (CollisionNamingTests), so the
+        // platform hears of one object, not of each part.
         CollisionWatch w = platform.Watch;
         Assert.True(w.ObjectStarts == 1 && w.TimesOf("start")[0] < resizedAt, $"{res.Name}: {w}");
         Assert.Equal(0, w.ObjectEnds);
-        Assert.Single(w.Touched);
-        Assert.Subset(new HashSet<uint> { RootId, WestId, EastId }, w.Touched);
+        Assert.Equal(new HashSet<uint> { RootId }, w.Touched);
     }
 
     // ------------------------------------------------------------------ 7. a ray at a sleeping linkset on another object
