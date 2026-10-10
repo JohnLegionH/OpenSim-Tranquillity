@@ -2083,6 +2083,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             }   // _simLock
         }
 
+        // The linear damping Jolt applies to the body each collision step, v *= 1 - c dt (MotionProperties).
+        public float GetBodyLinearDamping(BodyId body)
+        {
+            lock (_simLock)
+            {
+            if (_disposed) return 0f;
+            if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid) ||
+                rec.MotionType != BodyMotionType.Dynamic)
+                return 0f;
+
+            BodyLockInterface bli = _system!.BodyLockInterface;
+            bli.LockRead(jid, out BodyLockRead lockRead);
+            try
+            {
+                return lockRead.Succeeded ? lockRead.Body.MotionProperties.LinearDamping : 0f;
+            }
+            finally { bli.UnlockRead(lockRead); }
+            }   // _simLock
+        }
+
         // Recompute the dynamic mass from the shape's geometric volume and a PHYSICAL density (kg/m^3),
         // then apply it via the same mass-property scaling path as SetBodyMass. Used so the module can
         // honour SceneObjectPart.Density (x DensityScaleFactor) for BulletSim mass parity.

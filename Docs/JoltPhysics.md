@@ -422,6 +422,40 @@ What a script does to a physical prim or linkset (avatars are not covered here):
 - Prims carry the engine's linear and angular damping of 0.05 per second: a moving object loses
   about 5 percent of its speed each second on top of what forces do.
 
+## Move to target and hover on objects
+
+`llMoveToTarget` and `llSetHoverHeight` on a physical prim or linkset (avatars are not covered here).
+The Second Life wiki says each "critically damps" to its target "in tau seconds". In Jolt each is a
+critically damped spring with tau as its timescale: from rest, the distance left after t seconds is
+d0 (1 + t / tau) e^(-t / tau), so it is about a quarter of the way in after tau, 91 percent of the
+way after 4 tau, and it does not pass the target. The motion is the same at every
+`PhysicsStepRate`, the engine's damping included.
+
+- `llMoveToTarget(target, tau)`: the object goes to the target and holds there, until
+  `llStopMoveToTarget`, which lets it fall from where it was held. A target 65 m or more away does
+  nothing ("must be less than 65, or no movement will occur"). A tau of 0 or less moves nothing (the
+  simulator also stops an earlier target then); a tau under 2/45 s acts as 2/45 s, the wiki's
+  "smallest functional tau".
+- `llSetHoverHeight(height, water, tau)`: the object holds its centre `height` above the ground, or
+  with `water` TRUE above the ground or the water, whichever is higher. It follows the ground as it
+  moves, so it keeps its height over a slope, and it pulls the object down if it is above the height.
+  `llStopHover` or a height of 0 lets it go. Without volume detect it does not go under the ground;
+  a negative height leaves it on the ground. Heights are cut to 4096 m, the wiki's limit. A tau of 0
+  or less is refused.
+- While either acts, gravity does not, as in ubODE, so buoyancy changes nothing. A set force still
+  acts, and holds the object `F tau^2 / m` from its target, where the spring balances it. A set
+  torque still turns it. With both asked for, move to target acts and hover waits.
+- Each call wakes a sleeping object, and a call that reaches a linked child prim acts on the whole
+  linkset. The object may sleep once it has settled where it is held.
+- On a non-physical object neither acts, but the request is kept and acts once the object is
+  physical ("A llMoveToTarget call seems to persist even if physics is turned off").
+- A vehicle keeps its own hover and motion: neither acts while the object is a vehicle.
+- `llGroundRepel` reaches the physics engine as the same request as `llSetHoverHeight`, so in Jolt
+  it acts as `llSetHoverHeight` does: it also pulls an object down to the height, which Second Life's
+  `llGroundRepel` does not.
+- Under Phlox, `water` TRUE asks for a height above the water level alone, also over land that is
+  higher than the water.
+
 ## Avatar speeds
 
 For a held forward or back key the simulator asks every physics engine for the same speed, 4.096 m/s, walking

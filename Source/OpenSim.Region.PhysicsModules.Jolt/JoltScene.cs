@@ -100,6 +100,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // sample field (for height-at-XY without a per-frame raycast), the world gravity handed to
         // the backend, and the last Simulate dt (BulletSim's LastTimeStep, used by AddForce).
         internal float WaterLevel { get; private set; }
+        /// <summary>The solver's sub-steps in each backend step (PhysicsBackendSettings.CollisionSteps).</summary>
+        internal int CollisionSteps { get; private set; } = 1;
         internal SVector3 DefaultGravity { get; private set; } = new SVector3(0f, 0f, -9.80665f);
         internal float LastTimeStep = 0.0909f;
         // The clock new vehicle controllers read (motor reset and spike checks). Null in a region, where
@@ -372,6 +374,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _substeps = stepRate > 0f ? new SubstepAccumulator(stepRate) : null;
 
             PhysicsBackendSettings settings = _joltConfig.ToBackendSettings(sizeX, sizeY, _substeps != null);
+            CollisionSteps = Math.Max(1, settings.CollisionSteps);
             settings.RegionName = RegionName;   // names this region when another waits for its job pool (metrics)
             settings.RayCastClock = RayCastClock;
             _bodyBufMax = _joltConfig.BodyUpdateBufferMax;
@@ -1511,6 +1514,41 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
         }
 
+        // Prims with llMoveToTarget or llSetHoverHeight asked for: each controller acts before every backend step. A prim
+        // stays here while either is asked for (it acts again once the prim is physical) and leaves once it has let go.
+        private readonly HashSet<JoltPrim> _targeted = new HashSet<JoltPrim>();
+
+        internal void SetTargeted(JoltPrim prim, bool on)
+        {
+            lock (_targeted)
+            {
+                if (on) _targeted.Add(prim);
+                else _targeted.Remove(prim);
+            }
+        }
+
+        private void StepTargets(float timeStep)
+        {
+            JoltPrim[] prims;
+            lock (_targeted)
+            {
+                if (_targeted.Count == 0) return;
+                prims = new JoltPrim[_targeted.Count];
+                _targeted.CopyTo(prims);
+            }
+            foreach (JoltPrim p in prims)
+            {
+                bool keep = true;
+                try { keep = p.StepTargets(timeStep); }
+                catch (Exception e)
+                {
+                    m_log.LogError($"{LogHeader} move-to-target or hover EXCEPTION for prim {p.LocalID}: {e}");
+                }
+                if (!keep)
+                    lock (_targeted) _targeted.Remove(p);
+            }
+        }
+
         internal void MarkLinksetDirty(JoltPrim root)
         {
             lock (_dirtyLinksets) _dirtyLinksets.Add(root);
@@ -1584,6 +1622,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             LastTimeStep = timeStep;
             StepVehicles(timeStep);
             StepScriptForces(timeStep);
+            StepTargets(timeStep);
 
             // ONE backend Step per frame at OpenSim's ~11 fps cadence (Scene.FrameTime 0.0909 s). The
             // character is stepped exactly once per frame, which keeps avatar motion smooth.
@@ -1789,6 +1828,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 Interlocked.Add(ref _physicsClockTicks, stepTicks);
                 StepVehicles(dt);
                 StepScriptForces(dt);
+                StepTargets(dt);
                 r = backend.Step(dt,
                     last ? _bodyBuf : Span<BodyState>.Empty,
                     last ? _charBuf : Span<CharacterState>.Empty,

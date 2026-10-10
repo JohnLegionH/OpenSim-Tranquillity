@@ -392,10 +392,11 @@ public sealed class Run
     }
 
     /// <summary>A physical box prim linked to <see cref="Actor"/> as its child, as a SceneObjectPart adds a linked part
-    /// (density 1000, then link to the root's actor). Returns the child's actor.</summary>
-    public PhysicsActor AddChildBox(Vector3 size, Vector3 position, Quaternion rotation)
+    /// (density 1000, then link to the root's actor). Returns the child's actor. A second child needs its own
+    /// <paramref name="localId"/>.</summary>
+    public PhysicsActor AddChildBox(Vector3 size, Vector3 position, Quaternion rotation, uint localId = ChildLocalId)
     {
-        PhysicsActor pa = Scene.AddPrimShape("harness child", PrimitiveBaseShape.CreateBox(), position, size, rotation, true, ChildLocalId);
+        PhysicsActor pa = Scene.AddPrimShape("harness child", PrimitiveBaseShape.CreateBox(), position, size, rotation, true, localId);
         pa.Density = 1000f;
         pa.link(Actor);
         return pa;

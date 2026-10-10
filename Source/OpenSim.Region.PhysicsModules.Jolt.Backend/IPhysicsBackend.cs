@@ -730,6 +730,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// The vehicle controller's vertical attractor scales its restoring torque by this (the
         /// BulletSim equivalent is the prim's CalculateLocalInertia result).</summary>
         Vector3 GetBodyInertiaDiagonal(BodyId body);
+        /// <summary>The body's linear damping (1/s); 0 for a static or unknown body.</summary>
+        float GetBodyLinearDamping(BodyId body);
         /// <summary>Recompute + apply the dynamic mass as (shape geometric Volume x physicalDensity kg/m^3).
         /// Lets the module honour a prim's SceneObjectPart.Density instead of the BodyDesc default.</summary>
         void SetBodyDensity(BodyId body, float physicalDensity);

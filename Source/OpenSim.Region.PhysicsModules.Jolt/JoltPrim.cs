@@ -30,7 +30,7 @@ using VehicleCode = OpenSim.Region.PhysicsModules.Jolt.Vehicles.Vehicle;   // Op
 
 namespace OpenSim.Region.PhysicsModules.Jolt
 {
-    internal sealed class JoltPrim : PhysicsActor
+    internal sealed partial class JoltPrim : PhysicsActor
     {
         private readonly JoltScene _module;
         private readonly IPhysicsBackend _backend;
@@ -312,6 +312,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // Drop out of the scene's per-frame vehicle drive (no-op if never a vehicle).
             if (_vehicle != null) { _module.UnregisterVehicle(this); _vehicle = null; _vehicleBody = null; }
             _module.SetScriptForced(this, false);
+            _module.SetTargeted(this, false);
             // If welded into a parent compound, detach first (parent rebuilds without us).
             if (_linkRoot != null) { JoltPrim r = _linkRoot; _linkRoot = null; r.UnlinkChild(this); }
             // If we are a compound root, orphan our welded children (group teardown removes them anyway).
@@ -1087,14 +1088,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _backend.SetBodyContinuousCollision(_body, d.UseCcd);
         }
 
-        // PID / hover / RotLookAt - physical-motion features, not implemented (no-ops).
-        public override Vector3 PIDTarget { set { } }
-        public override bool PIDActive { get => false; set { } }
-        public override float PIDTau { set { } }
-        public override bool PIDHoverActive { get => false; set { } }
-        public override float PIDHoverHeight { set { } }
-        public override PIDHoverType PIDHoverType { set { } }
-        public override float PIDHoverTau { set { } }
+        // Move to target and hover are in JoltPrim.Targets.cs. The angular PID is not used: core turns a physical
+        // object toward llLookAt / llRotLookAt itself (SceneObjectPart.RotLookAt), as it does on ubODE.
         public override Quaternion APIDTarget { set { } }
         public override bool APIDActive { set { } }
         public override float APIDStrength { set { } }
