@@ -260,4 +260,72 @@ public class SelectionAndMoveTests
         float up = new[] { Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ }.Max(axis => MathF.Abs((axis * end.Rotation).Z));
         Assert.True(up > MathF.Cos(2f * MathF.PI / 180f), $"not flat on a face (rotation {end.Rotation})");
     }
+
+    // ---- a selected phantom or volume-detect object -------------------------------------------------------------------
+
+    public enum Flag { Phantom, VolumeDetect }
+
+    // As core's DoPhysicsPropertyUpdate sets the flags on an actor the part already has: a volume detector is also phantom.
+    private static void SetFlag(PhysicsActor a, Flag flag, bool on)
+    {
+        a.Phantom = on;
+        a.SetVolumeDetect(on && flag == Flag.VolumeDetect ? 1 : 0);
+    }
+
+    // A falling phantom or volume-detect box is selected: it stops where it is and stays there, also while the flag is
+    // switched off and on again (the body changes layer in place, and a physical body is woken for that). Let go, it falls
+    // again from rest.
+    [Theory]
+    [InlineData(45.0, Flag.Phantom)]
+    [InlineData(45.0, Flag.VolumeDetect)]
+    [InlineData(0.0, Flag.Phantom)]
+    [InlineData(0.0, Flag.VolumeDetect)]
+    public void A_selected_phantom_or_volume_detect_box_holds_still(double physicsHz, Flag flag)
+    {
+        const double SelectAt = 0.5, OffAt = 1.5, OnAt = 2.0, ReleaseAt = 3.5;
+        Vector3 heldAt = Vector3.Zero;
+        double selectedT = double.NaN, releasedT = double.NaN;
+        bool switchedOff = false, switchedOn = false;
+        var held = new List<Point>();
+        List<Point> trace = Run(physicsHz, 5f,
+            r => { r.AddBox(Unit, High, Quaternion.Identity); SetFlag(r.Actor, flag, true); },
+            (r, now) =>
+            {
+                PhysicsActor a = r.Actor;
+                if (double.IsNaN(selectedT))
+                {
+                    if (now >= SelectAt)
+                    {
+                        Select(true, a);
+                        selectedT = now;
+                        heldAt = a.Position;
+                    }
+                    return;
+                }
+                if (!double.IsNaN(releasedT))
+                    return;
+                held.Add(new Point(now, a.Position, a.Velocity, a.Orientation, r.AwakeBodies));
+                if (!switchedOff && now >= OffAt) { SetFlag(a, flag, false); switchedOff = true; }
+                if (!switchedOn && now >= OnAt) { SetFlag(a, flag, true); switchedOn = true; }
+                if (now >= ReleaseAt)
+                {
+                    Select(false, a);
+                    releasedT = now;
+                }
+            });
+
+        Assert.False(double.IsNaN(releasedT), "the run never let the box go");
+        Assert.True(switchedOff && switchedOn, "the flag was not switched while selected");
+        Assert.True(held[^1].T - held[0].T >= 2.9, "not held for 3 s");
+        foreach (Point p in held)
+        {
+            Assert.True(Vector3.Distance(p.Position, heldAt) < 0.001f, $"moved while selected at t={p.T:0.00}: {p.Position} (held at {heldAt})");
+            Assert.True(p.Velocity.Length() < 1e-4f, $"reported moving while selected at t={p.T:0.00}: {p.Velocity}");
+        }
+
+        // Let go: it falls again from rest, g t^2 / 2 = 4.9 m in the first second.
+        Point at = trace.First(p => p.T >= releasedT + 1.0 - 1e-9);
+        Assert.InRange(heldAt.Z - at.Position.Z, 4.0f, 5.2f);
+        Assert.True(at.Velocity.Z < -8f, $"not falling a second after being let go (velocity {at.Velocity})");
+    }
 }

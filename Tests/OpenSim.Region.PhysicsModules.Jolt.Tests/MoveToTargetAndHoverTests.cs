@@ -577,4 +577,181 @@ public class MoveToTargetAndHoverTests
         Assert.Equal(High, whileStatic);
         Assert.True((target - trace[^1].Position).Length() < 0.01f, $"ended at {trace[^1].Position}");
     }
+
+    // ---- in the build tool, and with the gravity multiplier ------------------------------------------------------------
+
+    // How far the controller still has to take the object at point p: to the target, or to the hover height over the
+    // ground under it.
+    private static float LeftAt(Call call, Point p, Vector3 target, float height)
+        => call == Call.MoveToTarget ? (target - p.Position).Length() : MathF.Abs(p.Position.Z - (p.Ground + height));
+
+    // An object selected while it is on its way stops where it is and stays there: the build tool's hold wins over both
+    // controllers, as ubODE's Move skips a selected prim. The request is kept, and let go, the object goes on to its
+    // target from rest where it was held, by the same rule.
+    [Theory]
+    [InlineData(45.0, Call.MoveToTarget)]
+    [InlineData(45.0, Call.Hover)]
+    [InlineData(0.0, Call.MoveToTarget)]
+    [InlineData(0.0, Call.Hover)]
+    public void A_selected_object_ignores_its_target_and_takes_it_up_again_when_let_go(double physicsHz, Call call)
+    {
+        const double SelectAt = 0.3, ReleaseAt = 2.3;
+        const float tau = 0.5f, height = 4f;
+        Vector3 start = call == Call.MoveToTarget ? High : new Vector3(128f, 128f, Course.Ground + 0.6f);
+        Vector3 target = High + new Vector3(6f, 0f, 0f);
+        double selectedT = double.NaN, releasedT = double.NaN;
+        Vector3 heldAt = Vector3.Zero;
+        var held = new List<Point>();
+        List<Point> trace = Run(physicsHz, 8f,
+            r =>
+            {
+                r.AddBox(Unit, start, Quaternion.Identity);
+                if (call == Call.MoveToTarget) MoveToTarget(r.Actor, target, tau);
+                else Hover(r.Actor, height, PIDHoverType.Ground, tau);
+            },
+            (r, now) =>
+            {
+                PhysicsActor a = r.Actor;
+                if (double.IsNaN(selectedT))
+                {
+                    if (now >= SelectAt)
+                    {
+                        a.Selected = true;
+                        selectedT = now;
+                        heldAt = a.Position;
+                    }
+                    return;
+                }
+                if (!double.IsNaN(releasedT))
+                    return;
+                held.Add(new Point(now, a.Position, a.Velocity, a.RotationalVelocity, r.GroundAt(a.Position.X, a.Position.Y), r.AwakeBodies));
+                if (now >= ReleaseAt)
+                {
+                    a.Selected = false;
+                    releasedT = now;
+                }
+            });
+
+        Assert.False(double.IsNaN(releasedT), "the run never let the object go");
+        Assert.True(Vector3.Distance(heldAt, start) > 0.5f, $"it had not started moving when selected ({heldAt})");
+        Assert.True(held.Count > 15, $"too few held samples ({held.Count})");
+        foreach (Point p in held)
+        {
+            Assert.True(Vector3.Distance(p.Position, heldAt) < 0.001f, $"moved while selected at t={p.T:0.00}: {p.Position} (held at {heldAt})");
+            Assert.True(p.Velocity.Length() < 1e-4f, $"reported moving while selected at t={p.T:0.00}: {p.Velocity}");
+        }
+
+        // Let go: from rest where it was held, the distance left at one and two tau is within 10 percent of the rule.
+        double d0 = LeftAt(call, At(trace, releasedT), target, height);
+        Assert.True(d0 > 0.5, $"held too close to the target to test ({d0:0.000} m)");
+        foreach (double x in new[] { 1.0, 2.0 })
+        {
+            Point p = At(trace, releasedT + x * tau);
+            double expected = Left(d0, tau, p.T - releasedT);
+            double left = LeftAt(call, p, target, height);
+            Assert.True(Math.Abs(left - expected) <= 0.1 * expected,
+                $"at {p.T - releasedT:0.000} s after release the distance left is {left:0.0000}, the rule says {expected:0.0000}");
+        }
+        Assert.True(LeftAt(call, trace[^1], target, height) < 0.02f, $"did not arrive: {trace[^1].Position}");
+    }
+
+    // A target or hover stopped while the object is selected: let go, it falls from where it was held.
+    [Theory]
+    [InlineData(45.0, Call.StopMoveToTarget)]
+    [InlineData(45.0, Call.StopHover)]
+    [InlineData(0.0, Call.StopMoveToTarget)]
+    [InlineData(0.0, Call.StopHover)]
+    public void A_target_stopped_while_selected_lets_it_fall_when_let_go(double physicsHz, Call call)
+    {
+        double releasedT = double.NaN;
+        Vector3 heldAt = Vector3.Zero, beforeRelease = Vector3.Zero;
+        List<Point> trace = Run(physicsHz, 4.5f,
+            r =>
+            {
+                r.AddBox(Unit, new Vector3(128f, 128f, Course.Ground + 3f), Quaternion.Identity);
+                if (call == Call.StopMoveToTarget)
+                    MoveToTarget(r.Actor, new Vector3(128f, 128f, Course.Ground + 3f), 0.3f);
+                else
+                    Hover(r.Actor, 3f, PIDHoverType.Ground, 0.3f);
+            },
+            (r, now) =>
+            {
+                PhysicsActor a = r.Actor;
+                if (r.Heartbeats == 22)
+                {
+                    a.Selected = true;
+                    heldAt = a.Position;
+                }
+                if (r.Heartbeats == 28)
+                {
+                    if (call == Call.StopMoveToTarget) a.PIDActive = false;
+                    else a.PIDHoverActive = false;
+                }
+                if (r.Heartbeats == 33)
+                {
+                    beforeRelease = a.Position;
+                    a.Selected = false;
+                    releasedT = now;
+                }
+            });
+
+        Assert.InRange(heldAt.Z, Course.Ground + 2.99f, Course.Ground + 3.01f);
+        Assert.True(Vector3.Distance(beforeRelease, heldAt) < 0.001f, $"moved while selected: {beforeRelease} (held at {heldAt})");
+        Point a = At(trace, releasedT + 0.1), b = At(trace, releasedT + 0.4);
+        float accel = (b.Velocity.Z - a.Velocity.Z) / (float)(b.T - a.T);
+        Assert.InRange(accel, -G * 1.03f, -G * 0.95f);
+    }
+
+    // llSetPhysicsMaterial GRAVITY_MULTIPLIER does not change either controller: gravity is off while one acts, so the
+    // object arrives by the rule and holds there; stopped, it falls (or rises) by the multiplier's gravity.
+    [Theory]
+    [InlineData(45.0, Call.MoveToTarget, 3f)]
+    [InlineData(45.0, Call.Hover, 3f)]
+    [InlineData(45.0, Call.MoveToTarget, -1f)]
+    [InlineData(45.0, Call.Hover, -1f)]
+    [InlineData(0.0, Call.MoveToTarget, 3f)]
+    [InlineData(0.0, Call.Hover, 3f)]
+    [InlineData(0.0, Call.MoveToTarget, -1f)]
+    [InlineData(0.0, Call.Hover, -1f)]
+    public void Move_to_target_and_hover_work_with_the_gravity_multiplier_set(double physicsHz, Call call, float multiplier)
+    {
+        const float tau = 0.3f, height = 8f;   // high enough that 0.4 s of falling at 3 g stays clear of the ground
+        const double StopAt = 4.0;
+        Vector3 start = call == Call.MoveToTarget ? High : new Vector3(128f, 128f, Course.Ground + 0.6f);
+        Vector3 target = High + new Vector3(2f, 0f, 1f);
+        double stoppedAt = double.NaN;
+        List<Point> trace = Run(physicsHz, 4.6f,
+            r =>
+            {
+                r.AddBox(Unit, start, Quaternion.Identity);
+                r.Actor.GravModifier = multiplier;
+                if (call == Call.MoveToTarget) MoveToTarget(r.Actor, target, tau);
+                else Hover(r.Actor, height, PIDHoverType.Ground, tau);
+            },
+            (r, now) =>
+            {
+                if (now >= StopAt && double.IsNaN(stoppedAt))
+                {
+                    if (call == Call.MoveToTarget) r.Actor.PIDActive = false;
+                    else r.Actor.PIDHoverActive = false;
+                    stoppedAt = now;
+                }
+            });
+
+        if (call == Call.MoveToTarget)
+        {
+            double d0 = (target - start).Length();
+            Point p = At(trace, 2 * tau);
+            double expected = Left(d0, tau, p.T);
+            double left = (target - p.Position).Length();
+            Assert.True(Math.Abs(left - expected) <= 0.1 * expected, $"at t {p.T:0.000} the distance left is {left:0.0000}, the rule says {expected:0.0000}");
+        }
+        foreach (Point p in trace.Where(p => p.T >= 2.5 && p.T < StopAt))
+            Assert.True(LeftAt(call, p, target, height) < 0.02f, $"not held at t {p.T:0.00}: {p.Position}");
+
+        Point a = At(trace, stoppedAt + 0.1), b = At(trace, stoppedAt + 0.4);
+        float accel = (b.Velocity.Z - a.Velocity.Z) / (float)(b.T - a.T);
+        float g = -G * multiplier;
+        Assert.InRange(accel, MathF.Min(g * 0.95f, g * 1.03f), MathF.Max(g * 0.95f, g * 1.03f));
+    }
 }

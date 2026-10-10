@@ -435,8 +435,9 @@ What a script does to a physical prim or linkset (avatars are not covered here):
 - Selected in the build tool, a physical object stops where it is and stays there: gravity, a set
   force, an impulse, a push, a set velocity and a vehicle's own motion do not move it, and an object
   that hits it or lands on it does not move it. Deselected, it carries on from rest. A selected
-  linkset holds as one object. ubODE also lets other objects pass through a selected one; in Jolt it
-  stays solid, as in BulletSim.
+  linkset holds as one object, and a phantom or volume-detect object holds the same way. ubODE also
+  lets other objects pass through a selected one; in Jolt a solid object stays solid, as in
+  BulletSim.
 - Moved or turned while it sleeps (by the build tool, `llSetPos`, `PRIM_POSITION`, or a rotation
   the script engine lets through for a physical object), a physical object wakes and carries on
   from where it was put: lifted, it falls back; turned, it settles. Not while the region is loading.
@@ -509,6 +510,9 @@ way after 4 tau, and it does not pass the target. The motion is the same at ever
 - On a non-physical object neither acts, but the request is kept and acts once the object is
   physical ("A llMoveToTarget call seems to persist even if physics is turned off").
 - A vehicle keeps its own hover and motion: neither acts while the object is a vehicle.
+- Selected in the build tool, the object is held still and neither acts. The request is kept:
+  deselected, the object goes on to its target from rest where it was held, or falls if the script
+  stopped it meanwhile.
 - `llGroundRepel` reaches the physics engine as the same request as `llSetHoverHeight`, so in Jolt
   it acts as `llSetHoverHeight` does: it also pulls an object down to the height, which Second Life's
   `llGroundRepel` does not.
