@@ -711,12 +711,20 @@ engine), and the physics engine is not told who sits where. So on Jolt:
 - The seat's prims get a `collision_end` for the avatar when it sits, and the seated avatar's
   attachments get no collision events until it stands.
 - Standing up, the simulator puts the avatar back where `ScenePresence.StandUp` places it, without
-  looking at what is there. Next to an object or on top of one, it stands where it is put. Inside a
-  fixed object it is set out at the nearest side, at once, on the ground beside it, and stays there:
-  it is not thrown out (ubODE's contacts correct an overlap at up to 60 m/s). Being set out is not
-  moving: it reports no speed for that step (before, 13.7 m/s for 1.2 m at one step per 11 Hz
-  heartbeat). Inside a light physical object both give way: the avatar is set out and the object
-  nudged aside (0.4 m for a 1 kg cube).
+  looking at what is there. Next to an object or on top of one, it stands where it is put. Inside an
+  object, fixed or physical, it is set out at the nearest side in the step it is put there, at once,
+  and stays on the ground beside it: it is not thrown out (ubODE's contacts correct an overlap at up
+  to 60 m/s). Being set out is not moving: it reports no speed for that step (before, 13.7 m/s for
+  1.2 m at one step per 11 Hz heartbeat). It is left 1 cm further than Jolt's character padding from
+  the side it was set out of, and what it stands on and touches is found again there, so that side
+  is not its ground afterwards: it falls to the ground beside it at the speed it really falls, and the
+  object does not carry it. Before, it could be left touching the side face with its feet a few
+  millimetres up, which Jolt can count as standing on that face: it hung there, or, at
+  PhysicsStepRate 45, slipped off and was snapped to the ground (4.75 cm in one step, 2.14 m/s), or
+  rode a light object up as it tipped (8 cm, at up to 1.04 m/s). Which of these happened turned on
+  rounding that differs between platforms. A physical object it is put inside is not pushed (before,
+  the avatar was set out of a 1 kg cube a step late, reported 38 m/s for that step, and pushed the
+  cube about 0.4 m aside).
 
 ## Buoyancy and hover on an avatar
 
