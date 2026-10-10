@@ -7,9 +7,11 @@
 
 using OpenMetaverse;
 using OpenSim.Framework;
+using OpenSim.Region.PhysicsModules.Jolt.Backend;
 using OpenSim.Region.PhysicsModules.Jolt.Harness;
 using OpenSim.Region.PhysicsModules.SharedBase;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
@@ -43,6 +45,10 @@ public class FlyingSeatedAndFastLinksetAvatarTests
     private const uint BoxId = 1500, RootId = 1501, WestId = 1502, EastId = 1503;
     private const float X = 170f, Y = 60f;
     private const double At = 1.0;
+
+    private readonly ITestOutputHelper _out;
+
+    public FlyingSeatedAndFastLinksetAvatarTests(ITestOutputHelper output) => _out = output;
 
     private static float Level(Vector3 v) => MathF.Sqrt(v.X * v.X + v.Y * v.Y);
 
@@ -311,12 +317,15 @@ public class FlyingSeatedAndFastLinksetAvatarTests
         float ground = 0f, half = 0f;
         var trace = new List<(double T, Vector3 P)>();
         var thingTrace = new List<Vector3>();
+        var steps = new List<CharacterStepTrace>();
         var sc = new Scenario
         {
             Name = "stand-up-" + where,
             DefaultDuration = _ => 4f,
             Setup = r =>
             {
+                // Each avatar update, through the backend's test trace (on the test's own thread in the harness).
+                ((JoltPhysicsBackend)((JoltScene)r.PhysicsScene).Backend).CharacterStepped += t => steps.Add(t);
                 ground = r.GroundAt(X, Y);
                 half = r.AvatarStandHalf;
                 thing = AddBox(r, cubeSize, new Vector3(X, Y, ground + cubeSize.Z * 0.5f + 0.01f), kg);
@@ -346,6 +355,19 @@ public class FlyingSeatedAndFastLinksetAvatarTests
             },
         };
         RunResult res = Run(sc, physicsHz);
+
+        // The avatar's height above where it was put and its vertical speed in each update, and the object's movement in
+        // each heartbeat, in the test output.
+        float rise = 0f;
+        for (int i = 0; i < steps.Count; i++)
+        {
+            rise += steps[i].Displacement.Z;
+            _out.WriteLine($"{res.Name} step {i}: dt {steps[i].Seconds:0.0000} s, placed {steps[i].Placed}, rise {rise:0.0000} m, " +
+                           $"moved z {steps[i].Displacement.Z / steps[i].Seconds:0.0000} m/s, asked z {steps[i].Asked.Z:0.0000}, reported z {steps[i].Reported.Z:0.0000}, " +
+                           $"moved across {MathF.Sqrt(steps[i].Displacement.X * steps[i].Displacement.X + steps[i].Displacement.Y * steps[i].Displacement.Y):0.0000} m");
+        }
+        for (int i = 0; i < thingTrace.Count; i++)
+            _out.WriteLine($"{res.Name} heartbeat {i}: t {trace[i].T:0.0000} s, avatar rise {trace[i].P.Z - placed.Z:0.0000} m, object moved {thingTrace[i] - thingStart}");
 
         Vector3 end = trace[^1].P;
         float radius = 0.3f;
