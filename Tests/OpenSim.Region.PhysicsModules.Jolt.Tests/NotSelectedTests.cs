@@ -210,7 +210,7 @@ public class NotSelectedTests
         }
     }
 
-    // ------------------------------------------------------------------ A1: the native
+    // ------------------------------------------------------------------ the native: loaded only for Jolt
 
     [Theory]
     [MemberData(nameof(OtherEngines))]
@@ -224,7 +224,8 @@ public class NotSelectedTests
     [Fact]
     public void A1_with_Jolt_selected_the_same_module_does_load_the_native()
     {
-        // The other half of A1: the loader the test watches is the one the module calls.
+        // The other half of the test above, which sees no native call with another engine: the loader the test
+        // watches is the one the module calls.
         using var w = new Watch(JoltNative.EnsureLoaded);
         RegisteredModule().Initialise(Config("Jolt", joltSection: false));
         Assert.Equal(1, w.NativeCalls);

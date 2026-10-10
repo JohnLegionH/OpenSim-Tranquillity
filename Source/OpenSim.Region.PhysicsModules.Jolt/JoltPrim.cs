@@ -208,6 +208,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 desc.Mass = 0f;                        // <=0 -> backend computes Volume*Density
                 if (_simDensity > 0f)                  // honour the SOP density (BulletSim mass parity)
                     desc.Density = _simDensity * DensityScaleFactor;
+                desc.GravityFactor = ScriptGravityFactor;   // llSetBuoyancy (a vehicle sets its own just below)
                 // Same structure as BulletSim's taint-deferred creation: create the body INERT (asleep), never
                 // active-on-insert. BulletSim never lets a body be stepped by the engine until ALL taints
                 // (create + MakeDynamic + SetVehicle/SetPhysicalGravity) have drained (ProcessTaints runs
@@ -242,6 +243,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // params; an active vehicle must re-assert its no-friction/no-damping/manual-gravity/
                 // never-sleep setup on it.
                 ApplyVehicleBodyParams();
+                // A new body starts free to turn about every axis: re-apply the script's STATUS_ROTATE locks.
+                if (_rotationLocks != 0)
+                    ApplyRotationLocks();
             }
         }
 
@@ -293,6 +297,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             ShapeId old = _shape;
             _shape = _module.CookPrimShape(_backend, _pbs, _size, CookAsHull, out _axisCorrection, out _shapeKind);
             _backend.SetBodyShape(_body, _shape, recomputeMass: false);   // keeps the body at its current transform
+            // The new shape's mass (and inertia, keeping any rotation locks): volume x density, as at creation. Without
+            // this a resized physical prim kept the mass of its old size, and llGetMass with it.
+            if (_isPhysical)
+                _backend.SetBodyDensity(_body, _simDensity > 0f ? _simDensity * DensityScaleFactor : BodyDesc.Default.Density);
             if (old.IsValid)
                 _backend.ReleaseShape(old);
         }
@@ -303,6 +311,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             // Drop out of the scene's per-frame vehicle drive (no-op if never a vehicle).
             if (_vehicle != null) { _module.UnregisterVehicle(this); _vehicle = null; _vehicleBody = null; }
+            _module.SetScriptForced(this, false);
             // If welded into a parent compound, detach first (parent rebuilds without us).
             if (_linkRoot != null) { JoltPrim r = _linkRoot; _linkRoot = null; r.UnlinkChild(this); }
             // If we are a compound root, orphan our welded children (group teardown removes them anyway).
@@ -499,12 +508,124 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (_body.IsValid && _isPhysical) _backend.SetBodyAngularVelocity(_body, ToS(value));
             }
         }
-        public override Vector3 Torque { get => Vector3.Zero; set { } }
-        public override Vector3 Force { get => Vector3.Zero; set { } }
+        // Script forces: llSetForce and llSetTorque (persistent, region axes: core turns a local vector into region axes
+        // before it gets here), llSetBuoyancy and the STATUS_ROTATE_* locks. Core hands these to the root prim's actor; a
+        // welded child hands any that reach it on to its root, so a linkset is one object (the SL wiki, llSetBuoyancy:
+        // "The most recent call of llSetBuoyancy in any child prim appears to set the global buoyancy level for the
+        // object."). They are kept on the prim and survive a body recreate (resize, relink, physics toggle).
+        private readonly object _scriptForceLock = new object();
+        private Vector3 _force;        // N, region axes; applied before every backend step until set to zero
+        private Vector3 _torque;       // N m, region axes; the same
+        private float _buoyancy;       // the body feels (1 - buoyancy) of the region's gravity
+        private byte _rotationLocks;   // SceneObjectGroup.axisSelect bits: 0x02 X, 0x04 Y, 0x08 Z locked
+
+        public override Vector3 Torque
+        {
+            get { if (_linkRoot != null) return _linkRoot.Torque; lock (_scriptForceLock) return _torque; }
+            set
+            {
+                if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Torque", value.ToString()); return; }
+                if (_linkRoot != null) { _linkRoot.Torque = value; return; }
+                bool on;
+                lock (_scriptForceLock) { _torque = value; on = _force != Vector3.Zero || _torque != Vector3.Zero; }
+                _module.SetScriptForced(this, on);
+            }
+        }
+
+        public override Vector3 Force
+        {
+            get { if (_linkRoot != null) return _linkRoot.Force; lock (_scriptForceLock) return _force; }
+            set
+            {
+                if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Force", value.ToString()); return; }
+                if (_linkRoot != null) { _linkRoot.Force = value; return; }
+                bool on;
+                lock (_scriptForceLock) { _force = value; on = _force != Vector3.Zero || _torque != Vector3.Zero; }
+                _module.SetScriptForced(this, on);
+            }
+        }
+
+        // Called by JoltScene before every backend step for a prim with a force or torque set: the force and torque act
+        // for that step, so they hold at every step rate until the script sets them to zero. Jolt's AddForce and
+        // AddTorque wake a sleeping body. Vehicles keep their own forces: ubODE does not add a vehicle's set force or
+        // torque (ODEPrim.Move hands a vehicle to its controller before it adds them) and core does not hand them to a
+        // vehicle when it sets its physics up (SceneObjectPart.ApplyPhysics).
+        internal void StepScriptForces(float timeStep)
+        {
+            if (!_isPhysical || !_body.IsValid || (_vehicle != null && _vehicle.IsActive))
+                return;
+            Vector3 force, torque;
+            lock (_scriptForceLock) { force = _force; torque = _torque; }
+            if (force != Vector3.Zero)
+                _backend.ApplyForce(_body, LimitForce(ToS(force), timeStep));
+            if (torque != Vector3.Zero)
+                _backend.ApplyTorque(_body, LimitTorque(ToS(torque), timeStep));
+        }
+
+        // An absurd but finite force or torque is cut to the one that brings the body from rest to the engine's speed cap
+        // ([Jolt] BodyMaxLinearSpeed, BodyMaxAngularSpeed) in one step. The engine caps the speed there anyway, so this
+        // changes nothing a script can see; it keeps the engine's arithmetic finite (a 1e30 N force on a 1 g body would
+        // overflow the velocity to infinity, and the cap would then turn it into NaN).
+        private SVector3 LimitForce(SVector3 force, float timeStep)
+        {
+            float max = _module.BodyMaxLinearSpeed * _backend.GetBodyMass(_body) / timeStep;
+            float len = force.Length();
+            return len > max && len > 0f ? force * (max / len) : force;
+        }
+
+        private SVector3 LimitTorque(SVector3 torque, float timeStep)
+        {
+            SVector3 inertia = _backend.GetBodyInertiaDiagonal(_body);
+            float smallest = float.MaxValue;
+            if (inertia.X > 0f) smallest = MathF.Min(smallest, inertia.X);
+            if (inertia.Y > 0f) smallest = MathF.Min(smallest, inertia.Y);
+            if (inertia.Z > 0f) smallest = MathF.Min(smallest, inertia.Z);
+            if (smallest == float.MaxValue)
+                return torque;   // every axis locked: nothing turns it
+            float max = _module.BodyMaxAngularSpeed * smallest / timeStep;
+            float len = torque.Length();
+            return len > max && len > 0f ? torque * (max / len) : torque;
+        }
+
         public override Vector3 Acceleration { get => Vector3.Zero; set { } }
         public override float CollisionScore { get; set; }
         public override bool Kinematic { get => false; set { } }
-        public override float Buoyancy { get => 0f; set { } }
+
+        // llSetBuoyancy as the SL wiki describes it: "A buoyancy value of 0.0 disables the effect", "when buoyancy is
+        // < 1.0, the object sinks", "when buoyancy equals 1.0 it floats", "when buoyancy is > 1.0 the object rises". The
+        // body's gravity is (1 - buoyancy) of the region's, as ubODE computes it (ODEPrim.Move). A vehicle decides its own
+        // gravity (VEHICLE_BUOYANCY); ubODE leaves llSetBuoyancy out for a vehicle too, and the value is kept for when the
+        // vehicle is removed.
+        public override float Buoyancy
+        {
+            get => _linkRoot != null ? _linkRoot.Buoyancy : _buoyancy;
+            set
+            {
+                if (!float.IsFinite(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Buoyancy", value.ToString()); return; }
+                if (_linkRoot != null) { _linkRoot.Buoyancy = value; return; }
+                if (_buoyancy == value) return;
+                _buoyancy = value;
+                if (!_isPhysical || !_body.IsValid || (_vehicle != null && _vehicle.IsActive))
+                    return;
+                _backend.SetBodyGravityFactor(_body, ScriptGravityFactor);
+                // A changed gravity wakes the body, as ubODE's changeBuoyancy does. Not while the region loads: the body is
+                // then created asleep and woken by the scene once everything about it is set up (CreateBodyInternal).
+                if (!_module.IsRegionLoading)
+                    _backend.ActivateBody(_body);
+            }
+        }
+
+        // The body's gravity factor for the script's buoyancy. Its size is cut to what takes a body from rest to the
+        // engine's speed cap in one 1 ms step: no larger value gives a different motion, and the engine's arithmetic
+        // stays finite for any finite buoyancy.
+        private float ScriptGravityFactor
+        {
+            get
+            {
+                float max = _module.BodyMaxLinearSpeed * JoltConfig.MaxPhysicsStepRate / MathF.Max(_module.DefaultGravity.Length(), 1f);
+                return Math.Clamp(1f - _buoyancy, -max, max);
+            }
+        }
         public override bool Flying { get => false; set { } }
         public override bool SetAlwaysRun { get => false; set { } }
         public override bool ThrottleUpdates { get => false; set { } }
@@ -615,7 +736,39 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
             finally { _rebuilding = false; }
         }
-        public override void LockAngularMotion(byte axislocks) { }
+        // llSetStatus STATUS_ROTATE_X/_Y/_Z: "Can turn along this axis (physical objects only)" (SL wiki, llSetStatus).
+        // Core hands the root's actor SceneObjectGroup.axisSelect bits, set = locked (0x02 X, 0x04 Y, 0x08 Z), the bits
+        // ubODE reads (ODEPrim.createAMotor). Each locked axis is one of the prim's own axes; the body gets an infinite
+        // inertia about it (SetBodyRotationLocks), so nothing turns the object about that axis, and locking stops its
+        // turning, as ubODE's does. ubODE fixes the locked axes in the region where they point when they are locked; here
+        // they turn with the object about its free axes. The two agree with all three locked and with one axis free.
+        public override void LockAngularMotion(byte axislocks)
+        {
+            if (_linkRoot != null) { _linkRoot.LockAngularMotion(axislocks); return; }
+            _rotationLocks = (byte)(axislocks & 0x0E);
+            ApplyRotationLocks();
+        }
+
+        private void ApplyRotationLocks()
+        {
+            if (!_isPhysical || !_body.IsValid)
+                return;
+            // The prim's axes in the body's own frame: the same axes, but for a cylinder, whose body is turned by the axis
+            // correction.
+            SQuaternion toBody = SQuaternion.Multiply(SQuaternion.Conjugate(BodyOrientationOf(_orientation)), ToS(_orientation));
+            bool lockX = false, lockY = false, lockZ = false;
+            for (int axis = 0; axis < 3; axis++)
+            {
+                if ((_rotationLocks & (0x02 << axis)) == 0)
+                    continue;
+                SVector3 v = SVector3.Transform(axis == 0 ? SVector3.UnitX : axis == 1 ? SVector3.UnitY : SVector3.UnitZ, toBody);
+                float ax = MathF.Abs(v.X), ay = MathF.Abs(v.Y), az = MathF.Abs(v.Z);
+                if (ax >= ay && ax >= az) lockX = true;
+                else if (ay >= az) lockY = true;
+                else lockZ = true;
+            }
+            _backend.SetBodyRotationLocks(_body, lockX, lockY, lockZ);
+        }
 
         // Forces: wired to the backend's accumulate-until-next-Step Apply* (Jolt AddForce/AddTorque
         // == Bullet ApplyCentralForce/ApplyTorque; both auto-activate a sleeping body). BulletSim treats
@@ -625,6 +778,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // scaled by heartbeat / step, so both impulses are the same as with one step per heartbeat.
         public override void AddForce(Vector3 force, bool pushforce)
         {
+            if (_linkRoot != null) { _linkRoot.AddForce(force, pushforce); return; }
             if (!_body.IsValid || !_isPhysical || !force.IsFinite())
                 return;
             Vector3 f = pushforce ? force * _module.PushForceScale : force / _module.LastTimeStep;
@@ -632,11 +786,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _pushedSinceVehicleStep = true;
         }
 
+        // A non-push angular force is llApplyRotationalImpulse's impulse (SceneObjectGroup.ApplyAngularImpulse): it acts
+        // as a torque for the next backend step, divided by that step, so the angular impulse delivered is the one given
+        // at every step rate, as ubODE delivers it (ODEPrim.changeAddAngularImpulse divides by its step). A push (the
+        // viewer's grab spin) is applied as it comes, as before.
         public override void AddAngularForce(Vector3 force, bool pushforce)
         {
+            if (_linkRoot != null) { _linkRoot.AddAngularForce(force, pushforce); return; }
             if (!_body.IsValid || !_isPhysical || !force.IsFinite())
                 return;
-            _backend.ApplyTorque(_body, ToS(force));   // BulletSim ignores pushforce for angular
+            if (pushforce)
+                _backend.ApplyTorque(_body, ToS(force));
+            else
+                _backend.ApplyTorque(_body, LimitTorque(ToS(force) / _module.LastTimeStep, _module.LastTimeStep));
         }
         public override void AvatarJump(float forceZ) { }
         public override void SetMomentum(Vector3 momentum) { }
@@ -920,7 +1082,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _backend.SetBodyFriction(_body, d.Friction);
             _backend.SetBodyRestitution(_body, d.Restitution);
             _backend.SetBodyDamping(_body, d.LinearDamping, d.AngularDamping);
-            _backend.SetBodyGravityFactor(_body, 1f);
+            _backend.SetBodyGravityFactor(_body, ScriptGravityFactor);   // back to the script's buoyancy (1 with none)
             _backend.SetBodyAllowSleeping(_body, true);
             _backend.SetBodyContinuousCollision(_body, d.UseCcd);
         }

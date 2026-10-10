@@ -738,6 +738,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         void SetBodyDamping(BodyId body, float linear, float angular);
         void SetBodyGravityFactor(BodyId body, float factor);
 
+        /// <summary>Lock or free turning about each of the body's own (local) axes: a locked axis gets an infinite
+        /// inertia, so no torque, impulse or contact turns the body about it, and locking stops the body's turning.
+        /// Kept across later mass and density changes; a new body starts with none.</summary>
+        void SetBodyRotationLocks(BodyId body, bool lockX, bool lockY, bool lockZ);
+
         /// <summary>Lock translation/rotation on world axes. Backs ExtendedPhysics axis locks.</summary>
         void SetBodyAxisLocks(BodyId body, Vector3 allowedTranslation, Vector3 allowedRotation);
 

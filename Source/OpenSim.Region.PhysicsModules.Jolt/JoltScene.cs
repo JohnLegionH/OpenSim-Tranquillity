@@ -71,6 +71,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal float AvatarFlySpeedFactor => _joltConfig.AvatarFlySpeedFactor;
         internal float AvatarFlyDownSpeedFactor => _joltConfig.AvatarFlyDownSpeedFactor;
         internal float VehicleGroundGravityFactor => _joltConfig.VehicleGroundGravityFactor;
+        internal float BodyMaxLinearSpeed => _joltConfig.BodyMaxLinearSpeed;
+        internal float BodyMaxAngularSpeed => _joltConfig.BodyMaxAngularSpeed;
 
         // The vehicle settings every vehicle controller in this region shares, built from [Jolt] in Initialise.
         internal VehicleSettings VehicleSettings { get; private set; } = VehicleSettings.Default;
@@ -1477,6 +1479,38 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
         }
 
+        // Prims with a script force or torque set (llSetForce, llSetTorque): each is applied before every backend step,
+        // next to the vehicle drive, until the script sets it back to zero.
+        private readonly HashSet<JoltPrim> _scriptForced = new HashSet<JoltPrim>();
+
+        internal void SetScriptForced(JoltPrim prim, bool on)
+        {
+            lock (_scriptForced)
+            {
+                if (on) _scriptForced.Add(prim);
+                else _scriptForced.Remove(prim);
+            }
+        }
+
+        private void StepScriptForces(float timeStep)
+        {
+            JoltPrim[] prims;
+            lock (_scriptForced)
+            {
+                if (_scriptForced.Count == 0) return;
+                prims = new JoltPrim[_scriptForced.Count];
+                _scriptForced.CopyTo(prims);
+            }
+            foreach (JoltPrim p in prims)
+            {
+                try { p.StepScriptForces(timeStep); }
+                catch (Exception e)
+                {
+                    m_log.LogError($"{LogHeader} script force EXCEPTION for prim {p.LocalID}: {e}");
+                }
+            }
+        }
+
         internal void MarkLinksetDirty(JoltPrim root)
         {
             lock (_dirtyLinksets) _dirtyLinksets.Add(root);
@@ -1549,6 +1583,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // velocity changes/forces/torques are consumed by THIS step (BulletSim's BeforeStep model).
             LastTimeStep = timeStep;
             StepVehicles(timeStep);
+            StepScriptForces(timeStep);
 
             // ONE backend Step per frame at OpenSim's ~11 fps cadence (Scene.FrameTime 0.0909 s). The
             // character is stepped exactly once per frame, which keeps avatar motion smooth.
@@ -1713,7 +1748,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // [Jolt] PhysicsStepRate on: one heartbeat runs several backend steps of exactly 1 / rate seconds (as many
         // as SubstepAccumulator hands out) inside this call, on the heartbeat thread.
         //   Once per heartbeat, first: the linkset and activation drains (as on the single-step path).
-        //   Every step: the vehicle controllers (with that step's dt), then the backend step, which steps every
+        //   Every step: the vehicle controllers (with that step's dt) and the script forces, then the backend step, which steps every
         //   avatar before the solver; queued body changes and forces from other threads land before the next step.
         //   Once per heartbeat, last: the body and avatar reports (from the last step) and the collision dispatch.
         // The steps before the last hand the backend empty body and avatar buffers, so it reports nothing for them:
@@ -1753,6 +1788,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 bool last = k == n - 1;
                 Interlocked.Add(ref _physicsClockTicks, stepTicks);
                 StepVehicles(dt);
+                StepScriptForces(dt);
                 r = backend.Step(dt,
                     last ? _bodyBuf : Span<BodyState>.Empty,
                     last ? _charBuf : Span<CharacterState>.Empty,
