@@ -195,6 +195,7 @@ public static class PhantomScenarios
     {
         p.Actor = r.Scene.AddPrimShape(p.Name, PrimitiveBaseShape.CreateBox(), p.Position, p.Size, Quaternion.Identity,
                                        p.Physical, p.Phantom, (byte)PhysShapeType.prim, p.LocalId);
+        r.AsSimulatorAdds(p.Actor);
         if (p.Physical)
             p.Actor.Density = 1000f;
         if (p.VolumeDetect)

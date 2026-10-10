@@ -113,6 +113,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // live body, makes it stick. Set when the vehicle becomes active; runtime llSetVehicleType sets it too
         // (harmless - the body is already live so it sticks first time).
         private float _reassertVehicleTime;
+        // Whether that re-assertion also zeroes the body's velocity (below, in StepVehicle): for a type a script sets, and for
+        // a saved vehicle handed back while the region is loading; not for one handed back with the region running, which
+        // keeps the velocity the simulator replays onto it (a vehicle crossing in at speed), as on ubODE.
+        private bool _reassertZeroesVelocity;
 
         // How long after a vehicle becomes active its body params are re-asserted and, with no linear motor set, its
         // velocity zeroed: the steps that start within this time, the same span at any step rate. 0.27 s is the three
@@ -145,6 +149,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal Vector3 CurrentPos => _position;
         internal bool IsPhysicalBody => _isPhysical;
         internal bool IsVehicle => _vehicle != null;
+        // The vehicle controller, null when the prim is not a vehicle. For tests.
+        internal VehicleController VehicleControl => _vehicle;
         // The mass of this prim's body, the one the engine moves (a welded linkset's root: the whole linkset's); 0 without
         // a body. Read by the console test commands.
         internal float BodyMass => _body.IsValid ? _backend.GetBodyMass(_body) : 0f;
@@ -1414,6 +1420,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     // AFTER this set) - so re-assert it on the step-thread steps of the next
                     // ReassertVehicleSeconds, where it sticks.
                     _reassertVehicleTime = ReassertVehicleSeconds;
+                    _reassertZeroesVelocity = true;
                 }
                 else
                 {
@@ -1450,6 +1457,56 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             EnsureVehicle();
             _vehicle.ProcessVehicleFlags(param, remove);
+            WakeVehicle();
+        }
+
+        // A saved vehicle handed back: rezzed from inventory, loaded with the region, copied, arriving from another region,
+        // dropped as an attachment, or a phantom prim's physics switched back on (SceneObjectPart.AddToPhysics, through
+        // SOPVehicle.SetVehicle). PhysicsActor's own SetVehicle replays the record through the script calls: it starts with
+        // VehicleFlags(-1, false), which sets every flag (as on ubODE: -1 with remove false sets them all, -1 with remove true
+        // removes them all), and its motor directions start both motors. ubODE overrides it (ODEPrim.SetVehicle,
+        // ODEDynamics.DoSetVehicle), and so does this. The vehicle gets exactly its record: the type and the type's
+        // preset, the record's flags in place of the preset's, each setting held to the region's limits as the same value
+        // from a script is, and the reference frame. Its motors keep their saved directions and do not run until a script
+        // sets them, as on ubODE.
+        public override void SetVehicle(object pvdata)
+        {
+            if (pvdata is not VehicleData vd)
+                return;
+            VehicleType = (int)vd.m_type;
+            if (_vehicle == null)
+                return;
+            _reassertZeroesVelocity = _module.IsRegionLoading;
+            _vehicle.RestoreFlags((int)vd.m_flags);
+
+            _vehicle.ProcessVectorVehicleParam(VehicleCode.LINEAR_FRICTION_TIMESCALE, vd.m_linearFrictionTimescale);
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_MOTOR_DECAY_TIMESCALE, vd.m_linearMotorDecayTimescale);
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_MOTOR_TIMESCALE, vd.m_linearMotorTimescale);
+            _vehicle.ProcessVectorVehicleParam(VehicleCode.LINEAR_MOTOR_OFFSET, vd.m_linearMotorOffset);
+
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_MOTOR_TIMESCALE, vd.m_angularMotorTimescale);
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_MOTOR_DECAY_TIMESCALE, vd.m_angularMotorDecayTimescale);
+            _vehicle.ProcessVectorVehicleParam(VehicleCode.ANGULAR_FRICTION_TIMESCALE, vd.m_angularFrictionTimescale);
+
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_DEFLECTION_EFFICIENCY, vd.m_angularDeflectionEfficiency);
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_DEFLECTION_TIMESCALE, vd.m_angularDeflectionTimescale);
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_DEFLECTION_EFFICIENCY, vd.m_linearDeflectionEfficiency);
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_DEFLECTION_TIMESCALE, vd.m_linearDeflectionTimescale);
+
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.BANKING_EFFICIENCY, vd.m_bankingEfficiency);
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.BANKING_MIX, vd.m_bankingMix);
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.BANKING_TIMESCALE, vd.m_bankingTimescale);
+
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.HOVER_HEIGHT, vd.m_VhoverHeight);
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.HOVER_EFFICIENCY, vd.m_VhoverEfficiency);
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.HOVER_TIMESCALE, vd.m_VhoverTimescale);
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.BUOYANCY, vd.m_VehicleBuoyancy);
+
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.VERTICAL_ATTRACTION_EFFICIENCY, vd.m_verticalAttractionEfficiency);
+            _vehicle.ProcessFloatVehicleParam(VehicleCode.VERTICAL_ATTRACTION_TIMESCALE, vd.m_verticalAttractionTimescale);
+
+            _vehicle.RestoreMotorDirections(vd.m_linearMotorDirection, vd.m_angularMotorDirection);
+            _vehicle.ProcessRotationVehicleParam(VehicleCode.REFERENCE_FRAME, vd.m_referenceFrame);
             WakeVehicle();
         }
 
@@ -1490,8 +1547,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // arrests the fall; hover then lifts it from rest to the water surface. A live boat re-activated
                 // at runtime is at rest anyway, so zeroing is a no-op for it.
                 // Not once a script has set the linear motor: the vehicle is then being driven, and zeroing would
-                // throw away the motor's first frames, a span that is longer the slower the step rate.
-                if (!_vehicle.LinearMotorSet)
+                // throw away the motor's first frames, a span that is longer the slower the step rate. Not for a saved
+                // vehicle handed back with the region running (_reassertZeroesVelocity).
+                if (_reassertZeroesVelocity && !_vehicle.LinearMotorSet)
                 {
                     _backend.SetBodyLinearVelocity(_body, SVector3.Zero);
                     _backend.SetBodyAngularVelocity(_body, SVector3.Zero);

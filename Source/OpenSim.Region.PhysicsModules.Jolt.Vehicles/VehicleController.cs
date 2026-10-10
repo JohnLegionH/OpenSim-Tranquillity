@@ -161,6 +161,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <summary>The current vehicle flags (preset + any llSetVehicleFlags / llRemoveVehicleFlags). For tests.</summary>
         internal ExtendedVehicleFlags Flags => _props.Flags;
 
+        /// <summary>The current reference frame (llSetVehicleRotationParam VEHICLE_REFERENCE_FRAME). For tests.</summary>
+        internal Quaternion ReferenceFrame => _props.GetRot(VehRotationParam.ReferenceFrame);
+
+        /// <summary>True once a script has set the angular motor, until the motors are reset. For tests.</summary>
+        internal bool AngularMotorSet => !float.IsPositiveInfinity(_props.Dynamics.AngularDecayIndex);
+
         #region Vehicle Parameter Setting — routes from LSL Vehicle wire codes to internal enums
 
         // =================================================================
@@ -302,9 +308,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     _props.ParamsVec[VehVectorParam.AngularFrictionTimescale] = pValue;
                     break;
                 case Vehicle.ANGULAR_MOTOR_DIRECTION:
-                    pValue.X = ClampF(pValue.X, -S.MaxAngularSpeed, S.MaxAngularSpeed);
-                    pValue.Y = ClampF(pValue.Y, -S.MaxAngularSpeed, S.MaxAngularSpeed);
-                    pValue.Z = ClampF(pValue.Z, -S.MaxAngularSpeed, S.MaxAngularSpeed);
+                    pValue = HeldAngularMotor(pValue);
                     _props.ParamsVec[VehVectorParam.AngularMotorDirection] = pValue;
                     MoveAngular(pValue);
                     break;
@@ -315,9 +319,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     _props.ParamsVec[VehVectorParam.LinearFrictionTimescale] = pValue;
                     break;
                 case Vehicle.LINEAR_MOTOR_DIRECTION:
-                    pValue.X = ClampF(pValue.X, -S.MaxLinearSpeed, S.MaxLinearSpeed);
-                    pValue.Y = ClampF(pValue.Y, -S.MaxLinearSpeed, S.MaxLinearSpeed);
-                    pValue.Z = ClampF(pValue.Z, -S.MaxLinearSpeed, S.MaxLinearSpeed);
+                    pValue = HeldLinearMotor(pValue);
                     _props.ParamsVec[VehVectorParam.LinearMotorDirection] = pValue;
                     MoveLinear(pValue);
                     break;
@@ -350,9 +352,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             }
         }
 
+        // A motor direction held to the region's limits, each axis.
+        private Vector3 HeldLinearMotor(Vector3 v)
+            => new Vector3(ClampF(v.X, -S.MaxLinearSpeed, S.MaxLinearSpeed), ClampF(v.Y, -S.MaxLinearSpeed, S.MaxLinearSpeed),
+                           ClampF(v.Z, -S.MaxLinearSpeed, S.MaxLinearSpeed));
+
+        private Vector3 HeldAngularMotor(Vector3 v)
+            => new Vector3(ClampF(v.X, -S.MaxAngularSpeed, S.MaxAngularSpeed), ClampF(v.Y, -S.MaxAngularSpeed, S.MaxAngularSpeed),
+                           ClampF(v.Z, -S.MaxAngularSpeed, S.MaxAngularSpeed));
+
         // =================================================================
         // Process vehicle flags from LSL
         // =================================================================
+        // As on ubODE (ODEDynamics.ProcessVehicleFlags): set these flags, or remove them; remove with -1 removes every
+        // flag, and set with -1 sets every flag.
         public void ProcessVehicleFlags(int pParam, bool remove)
         {
             // Map OpenSim VehicleFlag bits to our internal flags.
@@ -363,6 +376,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 _props.Flags &= ~flags;
             else
                 _props.Flags |= flags;
+        }
+
+        // =================================================================
+        // A saved vehicle handed back (the host's PhysicsActor.SetVehicle)
+        // =================================================================
+        /// <summary>A saved vehicle's flags, in place of every flag it has (its type's).</summary>
+        public void RestoreFlags(int flags)
+        {
+            _props.Flags = (ExtendedVehicleFlags)flags;
+        }
+
+        /// <summary>A saved vehicle's motor directions, held to the region's limits as a script's are, kept as its settings
+        /// without starting either motor: the motors run once a script sets them again, as on ubODE, whose
+        /// ODEDynamics.DoSetVehicle stores the directions with no motor effect.</summary>
+        public void RestoreMotorDirections(Vector3 linear, Vector3 angular)
+        {
+            if (float.IsFinite(linear.X) && float.IsFinite(linear.Y) && float.IsFinite(linear.Z))
+                _props.ParamsVec[VehVectorParam.LinearMotorDirection] = HeldLinearMotor(linear);
+            if (float.IsFinite(angular.X) && float.IsFinite(angular.Y) && float.IsFinite(angular.Z))
+                _props.ParamsVec[VehVectorParam.AngularMotorDirection] = HeldAngularMotor(angular);
         }
 
         #endregion // Vehicle Parameter Setting
