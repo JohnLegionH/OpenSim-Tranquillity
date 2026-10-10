@@ -657,6 +657,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             PhysicsLayer.Debris => BroadPhase.Moving,
             PhysicsLayer.Sensor => BroadPhase.Sensor,
             PhysicsLayer.AvatarQuery => BroadPhase.Moving, // in the broadphase so queries find it; collides with nothing
+            PhysicsLayer.Phantom => BroadPhase.Moving,
             _ => BroadPhase.Moving,
         };
 
@@ -673,6 +674,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // so it can be findable by queries without ever entering the solve.
             if (a == PhysicsLayer.AvatarQuery || b == PhysicsLayer.AvatarQuery)
                 return false;
+
+            // A phantom prim touches the terrain only: objects and avatars pass through it, and a physical one
+            // rests on the ground (llVolumeDetect's comparison of Phantom and VolumeDetect, wiki.secondlife.com).
+            if (a == PhysicsLayer.Phantom || b == PhysicsLayer.Phantom)
+                return a == PhysicsLayer.Terrain || b == PhysicsLayer.Terrain;
 
             // Normalise so we only fill the lower triangle.
             if (a > b) (a, b) = (b, a);
@@ -1903,7 +1909,30 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             }   // _simLock
         }
 
-        public void SetBodyLayer(BodyId body, PhysicsLayer layer) => throw new NotImplementedException();
+        // Phantom and volume detect switched on a live prim. Jolt changes the layer and the sensor flag of a body in
+        // place (BodyInterface::SetObjectLayer, SetIsSensor), so the body keeps its id, transform and velocity; pairs
+        // the new layer no longer allows end at the next step and report OnContactRemoved.
+        public void SetBodyLayer(BodyId body, PhysicsLayer layer)
+        {
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid))
+                    return;
+                _bodyInterface.SetObjectLayer(jid, new ObjectLayer((uint)layer));
+                rec.Layer = layer;
+            }
+        }
+
+        public void SetBodySensor(BodyId body, bool isSensor)
+        {
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolve(body, out _, out BodyID jid))
+                    _bodyInterface.SetIsSensor(jid, isSensor);
+            }
+        }
 
         // Move a body IN PLACE - Jolt's BodyInterface repositions the existing body (velocity, contacts,
         // BodyID all preserved); it does NOT destroy/recreate. This is the real reposition (JoltPhysicsSharp
@@ -2089,6 +2118,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     inv.X > 0f ? 1f / inv.X : 0f,
                     inv.Y > 0f ? 1f / inv.Y : 0f,
                     inv.Z > 0f ? 1f / inv.Z : 0f);
+            }
+            finally { bli.UnlockRead(lockRead); }
+            }   // _simLock
+        }
+
+        // The linear damping Jolt applies to the body each collision step, v *= 1 - c dt (MotionProperties).
+        public float GetBodyLinearDamping(BodyId body)
+        {
+            lock (_simLock)
+            {
+            if (_disposed) return 0f;
+            if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid) ||
+                rec.MotionType != BodyMotionType.Dynamic)
+                return 0f;
+
+            BodyLockInterface bli = _system!.BodyLockInterface;
+            bli.LockRead(jid, out BodyLockRead lockRead);
+            try
+            {
+                return lockRead.Succeeded ? lockRead.Body.MotionProperties.LinearDamping : 0f;
             }
             finally { bli.UnlockRead(lockRead); }
             }   // _simLock
@@ -3396,6 +3445,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             PhysicsLayer.Dynamic => (filter & QueryFilter.Dynamic) != 0,
             PhysicsLayer.Avatar => (filter & QueryFilter.Avatar) != 0,
             PhysicsLayer.Sensor => (filter & QueryFilter.Sensor) != 0,
+            // Phantom prims are found with volume detectors: llCastRay's RC_DETECT_PHANTOM finds both.
+            PhysicsLayer.Phantom => (filter & QueryFilter.Sensor) != 0,
             // The avatar query-marker is found by exactly the filters that name Avatar (llSensor/
             // sit-target). filter=Static/Dynamic/Terrain do NOT return it. This is the ONLY way an
             // avatar surfaces to the query family.

@@ -481,6 +481,40 @@ Damping is two `[Jolt]` keys:
 |---|---|---|
 | `PrimLinearDamping`, `PrimAngularDamping` | 0.05, 0.05 | Linear and angular damping of a physical prim that is not a vehicle, per second (0 to 100): a moving object loses about that share of its speed and spin each second. The same at every step rate. ubODE's, as a rate, are 0.1001 and 0.0250 (dBodySetDamping .002 and .0005 per 0.020 s step). |
 
+## Move to target and hover on objects
+
+`llMoveToTarget` and `llSetHoverHeight` on a physical prim or linkset (avatars are not covered here).
+The Second Life wiki says each "critically damps" to its target "in tau seconds". In Jolt each is a
+critically damped spring with tau as its timescale: from rest, the distance left after t seconds is
+d0 (1 + t / tau) e^(-t / tau), so it is about a quarter of the way in after tau, 91 percent of the
+way after 4 tau, and it does not pass the target. The motion is the same at every
+`PhysicsStepRate`, the engine's damping included.
+
+- `llMoveToTarget(target, tau)`: the object goes to the target and holds there, until
+  `llStopMoveToTarget`, which lets it fall from where it was held. A target 65 m or more away does
+  nothing ("must be less than 65, or no movement will occur"). A tau of 0 or less moves nothing (the
+  simulator also stops an earlier target then); a tau under 2/45 s acts as 2/45 s, the wiki's
+  "smallest functional tau".
+- `llSetHoverHeight(height, water, tau)`: the object holds its centre `height` above the ground, or
+  with `water` TRUE above the ground or the water, whichever is higher. It follows the ground as it
+  moves, so it keeps its height over a slope, and it pulls the object down if it is above the height.
+  `llStopHover` or a height of 0 lets it go. Without volume detect it does not go under the ground;
+  a negative height leaves it on the ground. Heights are cut to 4096 m, the wiki's limit. A tau of 0
+  or less is refused.
+- While either acts, gravity does not, as in ubODE, so buoyancy changes nothing. A set force still
+  acts, and holds the object `F tau^2 / m` from its target, where the spring balances it. A set
+  torque still turns it. With both asked for, move to target acts and hover waits.
+- Each call wakes a sleeping object, and a call that reaches a linked child prim acts on the whole
+  linkset. The object may sleep once it has settled where it is held.
+- On a non-physical object neither acts, but the request is kept and acts once the object is
+  physical ("A llMoveToTarget call seems to persist even if physics is turned off").
+- A vehicle keeps its own hover and motion: neither acts while the object is a vehicle.
+- `llGroundRepel` reaches the physics engine as the same request as `llSetHoverHeight`, so in Jolt
+  it acts as `llSetHoverHeight` does: it also pulls an object down to the height, which Second Life's
+  `llGroundRepel` does not.
+- Under Phlox, `water` TRUE asks for a height above the water level alone, also over land that is
+  higher than the water.
+
 ## Avatar speeds
 
 For a held forward or back key the simulator asks every physics engine for the same speed, 4.096 m/s, walking
@@ -544,6 +578,34 @@ ubODE: the terrain as land, so scripts in its attachments get `land_collision_st
 under the avatar's feet. The contacts carry no relative speed, so they make no collision sound and no
 impact damage. Where damage is on, a prim with a damage value set damages the avatar it touches and
 is removed, as the simulator does with every physics engine.
+
+## Phantom and volume-detect prims
+
+Second Life documents both (wiki.secondlife.com): a phantom object lets "objects and avatars ... pass
+through it", and a physical one collides "with the ground but will not pass through" and queues land
+collision events; with llVolumeDetect "physical object and avatars can pass through the object", which
+raises `collision_start` and `collision_end` "when interpenetrating". Jolt does this as follows:
+
+- A volume-detect prim is a sensor. Avatars and physical objects pass through it without slowing, and
+  it reports what is inside it; the simulator turns that into one `collision_start` when each enters and
+  one `collision_end` when it leaves. What passes through is not told, so an avatar's attachments get
+  no event from it. A non-physical one detects avatars and physical objects; a physical one falls
+  through the ground.
+- A physical phantom prim collides with the terrain and nothing else: it rests on the ground, raises
+  land collision events, and passes through prims and avatars. A non-physical phantom prim is kept out
+  of physics by the simulator, with every engine.
+- Switching phantom or volume detect on or off on a prim, or on a linkset, changes the prim's body in
+  place: it keeps its position and its physics body, and a physical one that was resting on something
+  it can now pass through falls.
+- A ray cast finds phantom and volume-detect prims only when it asks for them: YEngine's `llCastRay`
+  with `RC_DETECT_PHANTOM`. Phlox's `llCastRay` does not pass that option to the physics engine, so its
+  casts do not find them.
+- `PRIM_PHYSICS_SHAPE_CONVEX` on a non-physical prim that is not a mesh makes it collide as its convex
+  hull. A non-physical mesh prim still collides as its triangle mesh whatever its shape type, because
+  Jolt does not read a mesh's own hull list yet.
+
+The harness scenarios beginning `vd-` and `phantom-` show each of these, and print the collision events
+each part raised.
 
 ## Vehicles
 
@@ -808,7 +870,12 @@ Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, t
 `testcar-down` and `car-down` (key held down the ramp), `hover`, `attract-roll` and `attract-pitch`
 (one behaviour alone), `park-new`, `park-faded`, `park-drive`, `park-car` and `park-wake` (sleeping), and
 `crash-wall`, `crash-box`, `crash-headon` and `crash-drop`, `rollonly` (a car rolled and pitched with
-`VEHICLE_FLAG_LIMIT_ROLL_ONLY`) and `motor-offset` (a floating box pushed below its centre of mass). The summary's extra columns give when
+`VEHICLE_FLAG_LIMIT_ROLL_ONLY`) and `motor-offset` (a floating box pushed below its centre of mass), and
+the phantom and volume-detect scenarios: `vd-walk` and `phantom-walk` (an avatar walking through a fixed
+volume-detect or phantom box), `vd-drop`, `phantom-drop` and `phantom-physical-drop` (a box falling through a
+slab), `phantom-physical-walk`, the `-on-walk` and `-off-walk` scenarios (the flag switched before the avatar
+arrives, on one box or a three-box linkset) and `phantom-physical-toggle` (a resting box or linkset made phantom
+and solid again). These print each watched part's collision events under their summary line. The summary's extra columns give when
 the engine last had a body awake and, for the crashes, the impact, arrival and leaving speeds,
 overlap and a pass-through check. The ground is
 level at 25 m with water at 20 m; with a slope it rises northward at that angle from y 40 to y 100.

@@ -226,6 +226,8 @@ The summary table always goes to standard output. Nothing is written anywhere el
                     RunResult res = Harness.Run(sc, opts);
                     string line = res.SummaryLine();
                     output.WriteLine(line);
+                    foreach (CollisionWatch w in res.Watches)
+                        output.WriteLine($"  events {w}");   // console only: summary.csv keeps its columns
                     summary.Append(line).Append('\n');
                     if (outDir != null)
                         File.WriteAllText(Path.Combine(outDir, res.Name + ".csv"), res.ToCsv());

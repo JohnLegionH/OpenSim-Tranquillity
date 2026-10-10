@@ -30,7 +30,7 @@ using VehicleCode = OpenSim.Region.PhysicsModules.Jolt.Vehicles.Vehicle;   // Op
 
 namespace OpenSim.Region.PhysicsModules.Jolt
 {
-    internal sealed class JoltPrim : PhysicsActor
+    internal sealed partial class JoltPrim : PhysicsActor
     {
         private readonly JoltScene _module;
         private readonly IPhysicsBackend _backend;
@@ -43,6 +43,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private Vector3 _size;
         private Quaternion _orientation;
         private bool _isPhysical;
+        // Phantom (STATUS_PHANTOM) and volume detect (llVolumeDetect), and PRIM_PHYSICS_SHAPE_TYPE. The scene adds a
+        // volume detector as phantom and then calls SetVolumeDetect(1); volume detect wins over phantom. On a welded
+        // linkset child these are stored but the root's body carries the linkset's flags.
+        private bool _isPhantom;
+        private bool _isVolumeDetect;
+        private byte _shapeType;
         private Vector3 _velocity;              // last drained linear velocity (the SOP reads this for terse updates)
         private Vector3 _rotationalVelocity;    // last drained angular velocity
 
@@ -167,7 +173,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         internal JoltPrim(JoltScene module, IPhysicsBackend backend, uint localid, string name,
-                          PrimitiveBaseShape pbs, Vector3 position, Vector3 size, Quaternion rotation, bool isPhysical)
+                          PrimitiveBaseShape pbs, Vector3 position, Vector3 size, Quaternion rotation, bool isPhysical,
+                          bool isPhantom = false, byte shapeType = (byte)PhysShapeType.prim)
         {
             _module = module;
             _backend = backend;
@@ -179,6 +186,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _size = size;
             _orientation = rotation;
             _isPhysical = isPhysical;
+            _isPhantom = isPhantom;
+            _shapeType = shapeType;
 
             Build();
         }
@@ -186,9 +195,24 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private SQuaternion BodyOrientationOf(Quaternion primRot)
             => SQuaternion.Multiply(_axisCorrection, ToS(primRot));   // correction first, then prim
 
+        // What the body collides with: a volume detector is a sensor, a phantom touches only the terrain, and
+        // otherwise a physical prim is dynamic and a non-physical one static.
+        private PhysicsLayer BodyLayer
+            => _isVolumeDetect ? PhysicsLayer.Sensor
+             : _isPhantom ? PhysicsLayer.Phantom
+             : _isPhysical ? PhysicsLayer.Dynamic : PhysicsLayer.Static;
+
+        // A mesher shape is cooked as a convex hull when the prim is physical (a triangle mesh has no volume, so no
+        // mass), or when a non-mesh prim asks for PRIM_PHYSICS_SHAPE_CONVEX: "Use the convex hull formulas for
+        // generating the prim's physics-shape" (PRIM_PHYSICS_SHAPE_TYPE, wiki.secondlife.com). A mesh prim's CONVEX,
+        // its default, means the asset's own hull list, which this module does not read yet; one hull of every mesh
+        // point would close the inside of every mesh building, so a non-physical mesh keeps its triangle mesh.
+        private bool CookAsHull
+            => _isPhysical || (_shapeType == (byte)PhysShapeType.convex && _pbs?.SculptType != (byte)SculptType.Mesh);
+
         private void Build()
         {
-            _shape = _module.CookPrimShape(_backend, _pbs, _size, _isPhysical, out _axisCorrection, out _shapeKind);
+            _shape = _module.CookPrimShape(_backend, _pbs, _size, CookAsHull, out _axisCorrection, out _shapeKind);
             _ownMass = null;
             CreateBodyInternal();
         }
@@ -225,9 +249,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             desc.WantsContactEvents = _subscribedMs > 0;   // keep the Persist gate across a body recreate (weld/reshape)
             desc.Friction = _friction;                 // a compound's children get their own just below
             desc.Restitution = _restitution;
+            desc.Layer = BodyLayer;
+            desc.IsSensor = _isVolumeDetect;
             if (_isPhysical)
             {
-                desc.Layer = PhysicsLayer.Dynamic;
                 desc.MotionType = BodyMotionType.Dynamic;
                 desc.Mass = 0f;                        // <=0 -> backend computes Volume*Density
                 desc.Density = PhysicalDensity;        // honour the SOP density (BulletSim mass parity)
@@ -246,7 +271,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
             else
             {
-                desc.Layer = PhysicsLayer.Static;      // non-physical prim = static collision citizen
                 desc.MotionType = BodyMotionType.Static;
                 desc.Mass = 0f;
                 desc.StartActive = false;              // never wake on insert (startup-stall guard)
@@ -338,7 +362,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (!_body.IsValid) { Build(); return; }
             ShapeId old = _shape;
-            _shape = _module.CookPrimShape(_backend, _pbs, _size, _isPhysical, out _axisCorrection, out _shapeKind);
+            _shape = _module.CookPrimShape(_backend, _pbs, _size, CookAsHull, out _axisCorrection, out _shapeKind);
             _ownMass = null;
             _backend.SetBodyShape(_body, _shape, recomputeMass: false);   // keeps the body at its current transform
             // The new shape's mass (and inertia, keeping any rotation locks): volume x density, as at creation. Without
@@ -356,6 +380,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // Drop out of the scene's per-frame vehicle drive (no-op if never a vehicle).
             if (_vehicle != null) { _module.UnregisterVehicle(this); _vehicle = null; _vehicleBody = null; }
             _module.SetScriptForced(this, false);
+            _module.SetTargeted(this, false);
             // If welded into a parent compound, detach first (parent rebuilds without us).
             _welded = false;
             if (_linkRoot != null) { JoltPrim r = _linkRoot; _linkRoot = null; r.UnlinkChild(this); }
@@ -491,7 +516,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private void RecreateBody()
         {
             ShapeId old = _shape;
-            _shape = _module.CookPrimShape(_backend, _pbs, _size, _isPhysical, out _axisCorrection, out _shapeKind);
+            _shape = _module.CookPrimShape(_backend, _pbs, _size, CookAsHull, out _axisCorrection, out _shapeKind);
             _ownMass = null;
             if (_body.IsValid)
                 _backend.RemoveBody(_body);
@@ -1131,7 +1156,63 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override void AvatarJump(float forceZ) { }
         public override void SetMomentum(Vector3 momentum) { }
 
-        public override void SetVolumeDetect(int param) { }   // VolumeDetect / phantom-events: not implemented
+        // Volume detect: "physical object and avatars can pass through the object" and it raises collision_start and
+        // collision_end "when interpenetrating" (llVolumeDetect, wiki.secondlife.com). The body becomes a sensor on the
+        // Sensor layer; SceneObjectPart.PhysicsCollision turns its touching set into those two events only.
+        public override void SetVolumeDetect(int param)
+        {
+            bool on = param != 0;
+            if (_isVolumeDetect == on) return;   // the scene calls this on every flag update
+            _isVolumeDetect = on;
+            ApplyCollisionLayer();
+        }
+
+        public override bool IsVolumeDtc
+        {
+            get => _isVolumeDetect;
+            set { }
+        }
+
+        public override bool Phantom
+        {
+            get => _isPhantom;
+            set
+            {
+                if (_isPhantom == value) return;
+                _isPhantom = value;
+                ApplyCollisionLayer();
+            }
+        }
+
+        // PRIM_PHYSICS_SHAPE_TYPE. NONE never reaches here (the scene takes the prim out of physics); PRIM and CONVEX
+        // re-cook the shape on the same body when that changes how it is cooked (see CookAsHull).
+        public override byte PhysicsShapeType
+        {
+            get => _shapeType;
+            set
+            {
+                if (_shapeType == value) return;
+                bool wasHull = CookAsHull;
+                _shapeType = value;
+                if (CookAsHull != wasHull && _shape.IsValid)
+                    Rebuild();
+            }
+        }
+
+        // Puts the live body on the layer its flags ask for, in place: the body keeps its id, transform and velocity.
+        // A welded child has no body; its root's body carries the linkset's flags. A physical body is woken so one
+        // resting on what it may now pass through falls (the step thread activates it, as for a new body).
+        private void ApplyCollisionLayer()
+        {
+            if (!_body.IsValid) return;
+            _backend.SetBodyLayer(_body, BodyLayer);
+            _backend.SetBodySensor(_body, _isVolumeDetect);
+            if (_isPhysical)
+                _module.RegisterPendingActivation(this);
+        }
+
+        // For the contact dispatch: true when this part, or the linkset root its body belongs to, is a volume detector.
+        internal bool IsVolumeDetectPart => (_linkRoot ?? this)._isVolumeDetect;
 
         // Collision-event subscription.
         // A script with a collision handler -> OpenSim calls SubscribeEvents(50). Flip the LIVE body's
@@ -1363,14 +1444,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _backend.SetBodyContinuousCollision(_body, d.UseCcd);
         }
 
-        // PID / hover / RotLookAt - physical-motion features, not implemented (no-ops).
-        public override Vector3 PIDTarget { set { } }
-        public override bool PIDActive { get => false; set { } }
-        public override float PIDTau { set { } }
-        public override bool PIDHoverActive { get => false; set { } }
-        public override float PIDHoverHeight { set { } }
-        public override PIDHoverType PIDHoverType { set { } }
-        public override float PIDHoverTau { set { } }
+        // Move to target and hover are in JoltPrim.Targets.cs. The angular PID is not used: core turns a physical
+        // object toward llLookAt / llRotLookAt itself (SceneObjectPart.RotLookAt), as it does on ubODE.
         public override Quaternion APIDTarget { set { } }
         public override bool APIDActive { set { } }
         public override float APIDStrength { set { } }

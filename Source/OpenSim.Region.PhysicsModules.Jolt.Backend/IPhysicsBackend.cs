@@ -145,6 +145,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// Backend-managed; do not put prims on this layer. Found only by Avatar-filtered queries.
         /// </summary>
         AvatarQuery = 6,
+
+        /// <summary>
+        /// Phantom prims (STATUS_PHANTOM / PRIM_PHANTOM). Collides with the terrain and nothing else: Second
+        /// Life's phantom objects let objects and avatars pass through them, and a physical one "collide[s] with
+        /// the ground but will not pass through" (llVolumeDetect, wiki.secondlife.com). Found by the queries that
+        /// name Sensor, the same as a volume detector.
+        /// </summary>
+        Phantom = 7,
     }
 
     public enum BodyMotionType : byte
@@ -706,7 +714,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
         void SetBodyShape(BodyId body, ShapeId shape, bool recomputeMass);
         void SetBodyMotionType(BodyId body, BodyMotionType motionType, bool activate);
+        /// <summary>Moves a live body to another layer in place: its transform, velocity and id are kept.</summary>
         void SetBodyLayer(BodyId body, PhysicsLayer layer);
+        /// <summary>Makes a live body a sensor (reports contacts, never resolves them) or a solid body, in place.</summary>
+        void SetBodySensor(BodyId body, bool isSensor);
 
         void SetBodyTransform(BodyId body, Vector3 position, Quaternion orientation, bool activate);
         void SetBodyLinearVelocity(BodyId body, Vector3 velocity);
@@ -719,6 +730,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// The vehicle controller's vertical attractor scales its restoring torque by this (the
         /// BulletSim equivalent is the prim's CalculateLocalInertia result).</summary>
         Vector3 GetBodyInertiaDiagonal(BodyId body);
+        /// <summary>The body's linear damping (1/s); 0 for a static or unknown body.</summary>
+        float GetBodyLinearDamping(BodyId body);
         /// <summary>Recompute + apply the dynamic mass as (shape geometric Volume x physicalDensity kg/m^3).
         /// Lets the module honour a prim's SceneObjectPart.Density instead of the BodyDesc default.</summary>
         void SetBodyDensity(BodyId body, float physicalDensity);
