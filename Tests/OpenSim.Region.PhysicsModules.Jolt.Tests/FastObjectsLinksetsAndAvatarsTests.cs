@@ -347,14 +347,14 @@ public class FastObjectsLinksetsAndAvatarsTests
         Assert.InRange(res.Samples[^1].Position.Z, start.Z - 0.02f, start.Z + 0.02f);
         Assert.True(trace[^1].EastVelocity.X < 0.2f, $"{res.Name}: the linkset still goes on at {trace[^1].EastVelocity}");
 
-        // The parties: the front part and the avatar name each other; the avatar names no other part, and no other part
-        // names the avatar.
+        // The parties: the front part names the avatar, and no other part does; the avatar names the linkset by its root,
+        // as ubODE names a collider (FlyingSeatedAndFastLinksetAvatarTests), and nothing else.
         Assert.True(partWatches[EastId].StartsOf(Avatar) >= 1, $"{res.Name}: {partWatches[EastId]}");
-        Assert.True(avatarWatch.StartsOf(EastId) >= 1, $"{res.Name}: {avatarWatch}");
-        Assert.Subset(new HashSet<uint> { 0u, EastId }, avatarWatch.Touched);
+        Assert.True(avatarWatch.StartsOf(RootId) >= 1, $"{res.Name}: {avatarWatch}");
+        Assert.Subset(new HashSet<uint> { 0u, RootId }, avatarWatch.Touched);
         Assert.Equal(0, partWatches[RootId].StartsOf(Avatar));
         Assert.Equal(0, partWatches[WestId].StartsOf(Avatar));
-        Assert.InRange(-avatarWatch.Strikes[EastId], Speed * 0.9f, Speed * 1.1f);
+        Assert.InRange(-avatarWatch.Strikes[RootId], Speed * 0.9f, Speed * 1.1f);
         Assert.InRange(-partWatches[EastId].Strikes[Avatar], Speed * 0.9f, Speed * 1.1f);
     }
 
@@ -417,7 +417,7 @@ public class FastObjectsLinksetsAndAvatarsTests
         Assert.True(rootTrace.Max(p => p.P.Z) < rootTrace[0].P.Z + 0.05f, $"{res.Name}: the linkset rose");
         Assert.True(moved > 8f, $"{res.Name}: the linkset was pushed only {moved:0.00} m");
         Assert.True(res.Samples[^1].Position.X < l.West.Position.X, $"{res.Name}: the avatar got past the linkset");
-        Assert.True(westWatch.StartsOf(Avatar) >= 1 && avatarWatch.StartsOf(WestId) >= 1, $"{res.Name}: {westWatch} / {avatarWatch}");
+        Assert.True(westWatch.StartsOf(Avatar) >= 1 && avatarWatch.StartsOf(RootId) >= 1, $"{res.Name}: {westWatch} / {avatarWatch}");
     }
 
     // ------------------------------------------------------------------ 6. a part of a sleeping linkset resized

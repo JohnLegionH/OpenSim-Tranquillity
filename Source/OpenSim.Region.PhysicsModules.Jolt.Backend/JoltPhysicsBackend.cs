@@ -2865,16 +2865,23 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         {
             _joltToRecord.TryGetValue(otherJoltId, out JoltBodyRecord? other);
             // What the avatar last stood on is never loose, at any edge it touches: the avatar rides it (adopting its
-            // velocity), so pushing it as well would feed back into the avatar's own speed.
+            // velocity), so pushing it as well would feed back into the avatar's own speed. It rides only ground it can walk
+            // on (StepCharacter); a steep face, such as the side of a post a flying avatar flies into, is still loose, else
+            // Jolt pushed it with the avatar's whole push force in one step, faster than the avatar moved.
             bool loose = other != null && other.MotionType == BodyMotionType.Dynamic && other.Layer == PhysicsLayer.Dynamic
-                         && normal.Z >= -CharacterFeetNormalZ && ch.Character != null && ch.Character.GroundBodyId != otherJoltId;
+                         && normal.Z >= -CharacterFeetNormalZ && ch.Character != null
+                         && !(ch.Character.GroundBodyId == otherJoltId && ch.Character.GroundState == GroundState.OnGround);
             if (loose)
             {
                 // Jolt moves the avatar out of the way of a body at the body's own speed. Not on first touch, before
-                // FinishCharacterContacts has slowed the body to the speed the avatar takes from it. Never for an object on
-                // top of the avatar: with the ground below, Jolt's character took the two for opposing walls and could not
-                // move at all, so an avatar with a box on its head could not walk out from under it.
-                settings.CanPushCharacter = phase != ContactPhase.Begin && normal.Z <= CharacterFeetNormalZ;
+                // FinishCharacterContacts has slowed the body to the speed the avatar takes from it, unless the body has
+                // already struck the avatar and been slowed so, giving it a push (Strike): denied, Jolt's character held
+                // the avatar where it was, the push was lost as blocked, and a fast body struck before this update went on
+                // into the avatar and out past it. Never for an object on top of the avatar: with the ground below, Jolt's
+                // character took the two for opposing walls and could not move at all, so an avatar with a box on its head
+                // could not walk out from under it.
+                settings.CanPushCharacter = (phase != ContactPhase.Begin || ch.StruckBy.Contains(otherJoltId))
+                                            && normal.Z <= CharacterFeetNormalZ;
                 settings.CanReceiveImpulses = false;
             }
             ch.Contacts.Add(new CharacterBodyContact(otherJoltId, otherSubShape, point, normal, phase, loose));
@@ -2971,6 +2978,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         {
             List<CharacterBodyContact> contacts = rec.Contacts;
             rec.LooseAtSide = false;
+            rec.StruckBy.Clear();   // read by this update's contacts; the strikes from here on are for the next
             if (rec.Resting.Count > 0)
                 WakeWhatNoLongerRests(rec, contacts);
             if (contacts.Count == 0)
@@ -3058,6 +3066,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 float taken = MathF.Min(wanted, MathF.Max(0f, rec.PushAllowance));
                 if (taken > 0f)
                     AddCharacterImpulse(new CharacterId(rec.Handle), give * (taken / wanted));
+                if (taken > StrikeSpeed)
+                    rec.StruckBy.Add(jid.ID);
                 common = a - (wanted > 0f ? taken / wanted : 0f) * (a - common);
             }
             _bodyInterface.AddLinearVelocity(jid, n * (common - b));
@@ -3576,6 +3586,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 StickToFloorStepDown = stick ? new Vector3(0f, 0f, -MathF.Max(0.05f, rec.StepHeight)) : Vector3.Zero,
             };
             // Draws on the TempAllocator: only from Step, inside the pool gate (the pool gate rule).
+            // Jolt's character presses what holds it up with its weight (its mass times gravity, each update). A flying
+            // avatar has no weight to give: brushing a light object lying on the ground, it pressed it with the 80 kg of a
+            // standing one (71 m/s into the ground in one 11 Hz step for 1 kg) and the object was thrown up again. Its mass
+            // for meeting objects stays rec.Mass (Strike).
+            float characterMass = rec.Flying ? FlyingCharacterMass : rec.Mass;
+            if (ch.Mass != characterMass)
+                ch.Mass = characterMass;
             using (Enter("CharacterVirtual::ExtendedUpdate (joltc.cpp:8135)"))
                 ch.ExtendedUpdate(dt, ext, new ObjectLayer((uint)PhysicsLayer.Avatar), _system, null, null);
 
@@ -3604,6 +3621,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             FinishCharacterContacts(rec, ch, dt);
         }
+
+        /// <summary>The mass (kg) Jolt's character is given while the avatar flies: next to none, so it presses nothing it
+        /// touches with its weight (StepCharacter).</summary>
+        internal const float FlyingCharacterMass = 0.001f;
 
         /// <summary>The SL wiki, llMoveToTarget: "The smallest functional tau is 0.044444444 (two physics frames, 2/45)". A
         /// smaller hover tau acts as this one, as on a prim (JoltPrim.MinTau).</summary>
@@ -4695,6 +4716,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // The contacts its last update noted, reported after the move (FinishCharacterContacts). Step thread only.
         public readonly List<CharacterBodyContact> Contacts = new();
         public readonly HashSet<uint> Resting = new();   // bodies (Jolt ids) let fall asleep resting on it
+        // Bodies (Jolt ids) that struck it since its last update giving it a push (Strike), and so have been slowed to the
+        // speed it takes from them: these may push it on first touch. Step thread only.
+        public readonly HashSet<uint> StruckBy = new();
     }
 
     internal readonly record struct CharacterBodyContact(uint BodyJoltId, uint SubShape, Vector3 Point, Vector3 Normal, ContactPhase Phase, bool Loose);
