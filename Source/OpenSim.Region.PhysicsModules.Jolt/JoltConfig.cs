@@ -79,6 +79,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float BodyMaxLinearSpeed = PhysicsBackendSettings.JoltMaxLinearSpeed;    // m/s
         public float BodyMaxAngularSpeed = PhysicsBackendSettings.JoltMaxAngularSpeed;  // rad/s
 
+        // The linear and angular damping of a physical prim that is not a vehicle, per second (Jolt's own default).
+        public float PrimLinearDamping = DefaultPrimLinearDamping;
+        public float PrimAngularDamping = DefaultPrimAngularDamping;
+
         public bool AllowUnrecordedNative = false; // true: load a joltc whose hash the module has no record of
 
         // Script ray casts (llCastRay) and pushes on avatars (llPushObject): limits on what scripts can make one region
@@ -116,6 +120,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // The default PhysicsStepRate: fixed 45 Hz physics steps, whatever the heartbeat.
         internal const float DefaultPhysicsStepRate = 45f;
+        internal const float DefaultPrimLinearDamping = 0.05f;
+        internal const float DefaultPrimAngularDamping = 0.05f;
 
         /// <summary>Parse [Jolt]. Missing keys keep their defaults; each invalid one adds a line to <paramref name="warnings"/>.</summary>
         internal static JoltConfig FromConfig(IConfigSource source, List<string> warnings)
@@ -175,6 +181,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.VehicleRestSpeed = F(cfg, "VehicleRestSpeed", c.VehicleRestSpeed, 0f, 1f, warnings);
             c.BodyMaxLinearSpeed = F(cfg, "BodyMaxLinearSpeed", c.BodyMaxLinearSpeed, 1f, 100000f, warnings);
             c.BodyMaxAngularSpeed = F(cfg, "BodyMaxAngularSpeed", c.BodyMaxAngularSpeed, 0.1f, 10000f, warnings);
+            c.PrimLinearDamping = F(cfg, "PrimLinearDamping", c.PrimLinearDamping, 0f, 100f, warnings);
+            c.PrimAngularDamping = F(cfg, "PrimAngularDamping", c.PrimAngularDamping, 0f, 100f, warnings);
             c.RayCastBudgetMs = F(cfg, "RayCastBudgetMs", c.RayCastBudgetMs, 0.1f, 1000f, warnings);
             c.RayCastSimulatorBudgetMs = F(cfg, "RayCastSimulatorBudgetMs", c.RayCastSimulatorBudgetMs, 0.1f, 1000f, warnings);
             c.RayCastMaxTestedHits = I(cfg, "RayCastMaxTestedHits", c.RayCastMaxTestedHits, 1, 1_000_000, warnings);

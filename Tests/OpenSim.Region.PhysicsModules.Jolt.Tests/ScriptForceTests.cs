@@ -22,8 +22,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// ubODE's where the wiki says nothing. Core turns a local vector into region axes with the prim's rotation before it
 /// reaches the actor (SceneObjectPart.ApplyImpulse, ApplyAngularImpulse), and the local cases below do the same.
 /// Accelerations are measured over the first 0.27 s of motion, where the prims' linear and angular damping
-/// (BodyDesc.Default, 0.05 per second) costs under 1 percent. Serial with the other native tests: every run steps a real
-/// backend on the shared job pool.
+/// ([Jolt] PrimLinearDamping and PrimAngularDamping, 0.05 per second by default) costs under 1 percent. Serial with the
+/// other native tests: every run steps a real backend on the shared job pool.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
 public class ScriptForceTests
@@ -115,7 +115,7 @@ public class ScriptForceTests
         // which slows it a little.
         float after = Rate(trace, clearedAt + 0.1, clearedAt + 1.0, p => p.Velocity.X);
         float v = At(trace, clearedAt).Velocity.X;
-        Assert.InRange(after, -(BodyDesc.Default.LinearDamping * v + 0.02f * force.X / mass), 0.02f * force.X / mass);
+        Assert.InRange(after, -(JoltConfig.DefaultPrimLinearDamping * v + 0.02f * force.X / mass), 0.02f * force.X / mass);
     }
 
     // ---- llApplyImpulse ----------------------------------------------------------------------------------------------
@@ -180,7 +180,7 @@ public class ScriptForceTests
         // Cleared: no more angular acceleration; the angular damping (0.05 per second) slows it a little.
         float after = Rate(trace, clearedAt + 0.1, clearedAt + 1.0, p => p.Spin.Z);
         float w = At(trace, clearedAt).Spin.Z;
-        Assert.InRange(after, -(BodyDesc.Default.AngularDamping * w + 0.02f * alpha), 0.02f * alpha);
+        Assert.InRange(after, -(JoltConfig.DefaultPrimAngularDamping * w + 0.02f * alpha), 0.02f * alpha);
     }
 
     // ---- llApplyRotationalImpulse ------------------------------------------------------------------------------------

@@ -724,6 +724,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         void SetBodyDensity(BodyId body, float physicalDensity);
         void SetBodyFriction(BodyId body, float friction);
         void SetBodyRestitution(BodyId body, float restitution);
+        /// <summary>The contact friction and restitution of one part of a body: the compound child whose UserData is
+        /// <paramref name="partUserData"/>, or the whole body when it has one shape. A contact combines the two touching
+        /// parts' values: friction sqrt(f1 x f2), restitution r1 x r2. SetBodyFriction and SetBodyRestitution set every
+        /// part. A recreated body starts again from its BodyDesc values.</summary>
+        void SetBodyPartMaterial(BodyId body, uint partUserData, float friction, float restitution);
+        /// <summary>A live shape's geometric volume (m^3); 0 for an unknown handle.</summary>
+        float GetShapeVolume(ShapeId shape);
         void SetBodyDamping(BodyId body, float linear, float angular);
         void SetBodyGravityFactor(BodyId body, float factor);
 

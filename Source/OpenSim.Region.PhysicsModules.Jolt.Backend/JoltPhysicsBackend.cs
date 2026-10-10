@@ -1201,6 +1201,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             PhysicsSystem system, in Body body1, in Body body2,
             in ContactManifold manifold, ref ContactSettings settings)
         {
+            CombineMaterials(in body1, in body2, in manifold, ref settings);
             PushContact(in body1, in body2, in manifold, in settings, ContactPhase.Begin);
         }
 
@@ -1208,7 +1209,44 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             PhysicsSystem system, in Body body1, in Body body2,
             in ContactManifold manifold, ref ContactSettings settings)
         {
+            CombineMaterials(in body1, in body2, in manifold, ref settings);
             PushContact(in body1, in body2, in manifold, in settings, ContactPhase.Persist);
+        }
+
+        // WORKER-THREAD context, inside the step (which holds _simLock, so no setter changes a record meanwhile). The
+        // friction and restitution of the two touching parts, each a linkset child's own where the body is a compound,
+        // combined as ubODE combines them (ODEScene's near callback: friction sqrt(f1 x f2), restitution r1 x r2; the
+        // SL wiki gives no rule for two surfaces). Jolt's own rule, with which it fills `settings`, is the same for
+        // friction but takes the larger restitution. A pair with an avatar's query marker is left as Jolt made it.
+        private void CombineMaterials(in Body body1, in Body body2, in ContactManifold manifold, ref ContactSettings settings)
+        {
+            _joltToRecord.TryGetValue(body1.ID.ID, out JoltBodyRecord? ra);
+            _joltToRecord.TryGetValue(body2.ID.ID, out JoltBodyRecord? rb);
+            if (ra == null || rb == null || ra.IsCharacterMarker || rb.IsCharacterMarker)
+                return;
+            PartMaterial(ra, manifold.SubShapeID1.Value, out float f1, out float r1);
+            PartMaterial(rb, manifold.SubShapeID2.Value, out float f2, out float r2);
+            settings.CombinedFriction = MathF.Sqrt(f1 * f2);
+            settings.CombinedRestitution = r1 * r2;
+        }
+
+        // The struck part's friction and restitution: a compound child's own (SetBodyPartMaterial), or the body's.
+        private void PartMaterial(JoltBodyRecord rec, uint subShapeId, out float friction, out float restitution)
+        {
+            friction = rec.Friction;
+            restitution = rec.Restitution;
+            float[]? f = rec.PartFriction;
+            float[]? r = rec.PartRestitution;
+            if (f == null || r == null || !_shapes.TryGet(rec.Shape.Value, out JoltShapeRecord shapeRec) || shapeRec.CompoundChildUserData == null)
+                return;
+            int bits = shapeRec.CompoundIndexBits;
+            uint mask = bits >= 32 ? uint.MaxValue : (1u << bits) - 1u;
+            int idx = (int)(subShapeId & mask);
+            if (idx < f.Length && idx < r.Length)
+            {
+                friction = f[idx];
+                restitution = r[idx];
+            }
         }
 
         private void HandleContactRemoved(PhysicsSystem system, ref SubShapeIDPair pair)
@@ -1732,6 +1770,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     WantsContactEvents = desc.WantsContactEvents,
                     Mass = mass,
                     AllowMotionChange = movable,
+                    Friction = desc.Friction,
+                    Restitution = desc.Restitution,
                 };
                 uint handle = _bodies.Add(rec);
                 rec.Handle = handle;
@@ -2088,8 +2128,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             lock (_simLock)
             {
                 if (_disposed) return;
-                if (TryResolve(body, out _, out BodyID jid))
+                if (TryResolve(body, out JoltBodyRecord rec, out BodyID jid))
+                {
                     _bodyInterface.SetFriction(jid, friction);
+                    rec.Friction = friction;
+                    if (rec.PartFriction != null)
+                        Array.Fill(rec.PartFriction, friction);
+                }
             }
         }
 
@@ -2099,8 +2144,55 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             lock (_simLock)
             {
                 if (_disposed) return;
-                if (TryResolve(body, out _, out BodyID jid))
+                if (TryResolve(body, out JoltBodyRecord rec, out BodyID jid))
+                {
                     _bodyInterface.SetRestitution(jid, restitution);
+                    rec.Restitution = restitution;
+                    if (rec.PartRestitution != null)
+                        Array.Fill(rec.PartRestitution, restitution);
+                }
+            }
+        }
+
+        public void SetBodyPartMaterial(BodyId body, uint partUserData, float friction, float restitution)
+        {
+            if (!float.IsFinite(friction) || !float.IsFinite(restitution)) { CountRejectedNonFinite(); return; }
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid))
+                    return;
+                if (!_shapes.TryGet(rec.Shape.Value, out JoltShapeRecord shapeRec) || shapeRec.CompoundChildUserData == null)
+                {
+                    // One shape: the part is the body.
+                    _bodyInterface.SetFriction(jid, friction);
+                    _bodyInterface.SetRestitution(jid, restitution);
+                    rec.Friction = friction;
+                    rec.Restitution = restitution;
+                    return;
+                }
+                int index = Array.IndexOf(shapeRec.CompoundChildUserData, partUserData);
+                if (index < 0)
+                    return;
+                if (rec.PartFriction == null || rec.PartRestitution == null || rec.PartFriction.Length != shapeRec.CompoundChildUserData.Length)
+                {
+                    rec.PartFriction = new float[shapeRec.CompoundChildUserData.Length];
+                    rec.PartRestitution = new float[shapeRec.CompoundChildUserData.Length];
+                    Array.Fill(rec.PartFriction, rec.Friction);
+                    Array.Fill(rec.PartRestitution, rec.Restitution);
+                }
+                rec.PartFriction[index] = friction;
+                rec.PartRestitution[index] = restitution;
+            }
+        }
+
+        public float GetShapeVolume(ShapeId shape)
+        {
+            lock (_simLock)
+            {
+                if (_disposed || !_shapes.TryGet(shape.Value, out JoltShapeRecord rec) || !IsLive(rec))
+                    return 0f;
+                return rec.NativeShape!.Volume;
             }
         }
 
@@ -2988,6 +3080,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     MotionType = BodyMotionType.Static,
                     UserData = 0u,
                     WantsContactEvents = false,
+                    Friction = bcs.Friction,
+                    Restitution = bcs.Restitution,
                 };
                 uint handle = _bodies.Add(rec);
                 rec.Handle = handle;
@@ -3823,6 +3917,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public bool IsCharacterMarker;    // a query-only avatar marker (owned by its character; not a real prim)
         public long ContactStep;          // the last step in which the solver had this body touching another body (BodyHadContact)
         public byte RotationLocks;        // body-local axes it cannot turn about: 1 = x, 2 = y, 4 = z (SetBodyRotationLocks)
+        public float Friction;            // the body's contact friction and restitution (SetBodyFriction, SetBodyRestitution)
+        public float Restitution;
+        public float[]? PartFriction;     // a compound's per-child values, in its child order (SetBodyPartMaterial); null = the body's
+        public float[]? PartRestitution;
     }
 
     internal sealed class JoltShapeRecord

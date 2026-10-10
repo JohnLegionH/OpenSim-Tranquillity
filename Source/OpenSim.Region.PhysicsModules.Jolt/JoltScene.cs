@@ -73,6 +73,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal float VehicleGroundGravityFactor => _joltConfig.VehicleGroundGravityFactor;
         internal float BodyMaxLinearSpeed => _joltConfig.BodyMaxLinearSpeed;
         internal float BodyMaxAngularSpeed => _joltConfig.BodyMaxAngularSpeed;
+        internal float PrimLinearDamping => _joltConfig.PrimLinearDamping;
+        internal float PrimAngularDamping => _joltConfig.PrimAngularDamping;
 
         // The vehicle settings every vehicle controller in this region shares, built from [Jolt] in Initialise.
         internal VehicleSettings VehicleSettings { get; private set; } = VehicleSettings.Default;

@@ -185,7 +185,7 @@ scaled with region area for var regions), the per-frame update buffers, the avat
 the avatar walk, run and fly speeds (see "Avatar speeds"),
 how often capacity warnings are logged, the physics step rate (below), the vehicle settings (the
 share of gravity on a ground vehicle, the type presets, the limits and the sled's assist; see
-"Vehicles"), the engine's body speed caps, the limits on script ray casts and pushes (below),
+"Vehicles"), the engine's body speed caps, the prims' damping (see "Physics material on objects"), the limits on script ray casts and pushes (below),
 `AllowUnrecordedNative` (above), and `TestCommands` (below).
 
 ### Physics step rate
@@ -419,8 +419,48 @@ What a script does to a physical prim or linkset (avatars are not covered here):
 - A value that is not a number is refused and logged. A finite force, torque or buoyancy too large
   for any step to follow is cut to what takes the object to the engine's speed cap
   (`BodyMaxLinearSpeed`, `BodyMaxAngularSpeed`) in one step.
-- Prims carry the engine's linear and angular damping of 0.05 per second: a moving object loses
-  about 5 percent of its speed each second on top of what forces do.
+- Prims carry a linear and angular damping, by default 0.05 per second: a moving object loses
+  about 5 percent of its speed each second on top of what forces do (see "Physics material on
+  objects").
+
+## Physics material on objects
+
+`llSetPhysicsMaterial` (and `PRIM_PHYSICS_MATERIAL`) and `PRIM_MATERIAL` on a prim, as the Second
+Life wiki documents them:
+
+- Friction (0 to 255), restitution (0 to 1), the gravity multiplier (-1 to 28) and density (1 to
+  22587 kg/m^3) each act on the object; a value outside its range is clamped to it, and one that is
+  not a number is refused and logged. A change wakes a sleeping object.
+- `PRIM_MATERIAL` sets the material's friction and restitution: stone 0.8 / 0.4, metal 0.3 / 0.4,
+  glass 0.2 / 0.7, wood 0.6 / 0.5, flesh 0.9 / 0.3, plastic 0.4 / 0.7, rubber 0.9 / 0.9, light
+  0.6 / 0.5. A new prim gets the friction and restitution the simulator keeps for it (wood by
+  default). The simulator's own table gives rubber a restitution of 0.95 and light 0 / 0, so a
+  rubber or light prim rezzed or loaded has those until a script sets its material again.
+- Two touching surfaces combine as in ubODE (the wiki gives no rule): friction is the square root of
+  the product of the two, restitution the product. A box sliding on a surface of the same friction
+  `f` therefore feels `f`. A bounce needs a closing speed of at least 1 m/s (Jolt's
+  `MinVelocityForRestitution`). The terrain has friction 0.6 and restitution 0, so nothing bounces
+  off the ground. At some step rates a low restitution bounces short of its height: a 1 m box
+  dropped 2 m with restitution 0.4 rebounds 8.6 percent low at 45 Hz and 12 percent low at
+  22.5 Hz (within 3 percent at 11 and 90 Hz); from 0.5 up it is within 5 percent at 11 and 45 Hz.
+- The gravity multiplier scales the object's gravity: the object falls at (1 - buoyancy) times the
+  multiplier times the region's gravity, as in ubODE. 0 floats, 2 falls at twice the rate.
+- Density sets the mass: volume times density, in lindograms (kg / 100) for `llGetMass`.
+- In a linkset each prim keeps its own friction, restitution and density ("Can individual prims in
+  a linked set have different Physics settings? Yes.", wiki, Physics Material Settings test): a
+  contact uses the struck prim's friction and restitution, and the mass is the sum of each prim's
+  volume times its own density. The centre of mass and inertia do not follow different densities;
+  they are the linkset's shape at one density, scaled to that mass. The root prim's gravity
+  multiplier applies to the whole linkset, as in ubODE.
+- A vehicle sets its own contact friction (`VehicleContactFriction`), restitution (0) and damping
+  (0) and ignores the gravity multiplier; the prim's values come back when the vehicle type is
+  removed.
+
+Damping is two `[Jolt]` keys:
+
+| Key | Default | What it sets |
+|---|---|---|
+| `PrimLinearDamping`, `PrimAngularDamping` | 0.05, 0.05 | Linear and angular damping of a physical prim that is not a vehicle, per second (0 to 100): a moving object loses about that share of its speed and spin each second. The same at every step rate. ubODE's, as a rate, are 0.1001 and 0.0250 (dBodySetDamping .002 and .0005 per 0.020 s step). |
 
 ## Avatar speeds
 
