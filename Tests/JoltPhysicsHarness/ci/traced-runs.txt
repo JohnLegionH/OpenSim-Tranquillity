@@ -16,7 +16,9 @@ guard-testcar-v20: --scenario testcar --rate 11 --physics-rate 0,45 --jolt Veloc
 guard-park-drive-v10: --scenario park-drive --rate 11 --physics-rate 0,45 --jolt VelocityIterations=10
 guard-park-drive-v20: --scenario park-drive --rate 11 --physics-rate 0,45 --jolt VelocityIterations=20
 
-# The car held against a fixed wall with its key down, at 11 Hz, as VehicleRestAndCrashTests' wall push test runs it
-# (15 s) and three times as long (45 s): whether its movement along the push stays steady or grows (the trace's x).
+# The car held against a fixed wall with its key down: at 11 Hz for 15 s and for 45 s, and at 45 Hz for 45 s, the
+# length VehicleRestAndCrashTests' wall push test runs: how far it is pushed back out of the wall and when it settles
+# (the trace's x).
 wallpush-11: --scenario crash-wall --rate 11
 wallpush-11-long: --scenario crash-wall --rate 11 --duration 45
+wallpush-45-long: --scenario crash-wall --rate 45 --duration 45
