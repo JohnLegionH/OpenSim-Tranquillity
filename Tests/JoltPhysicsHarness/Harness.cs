@@ -287,6 +287,31 @@ public sealed class RunResult
         return sb.ToString();
     }
 
+    public const string PartsCsvHeader = "t,part,x,y,z,vx,vy,vz";
+
+    /// <summary>The traces of the parts a scenario keeps one for (HarnessPart.Trace), one line per part per heartbeat,
+    /// as ToCsv; null when it keeps none.</summary>
+    public string PartsToCsv()
+    {
+        if (!Parts.Any(p => p.Trace != null))
+            return null;
+        var sb = new StringBuilder();
+        sb.Append(PartsCsvHeader).Append('\n');
+        foreach (HarnessPart p in Parts.Where(p => p.Trace != null))
+            foreach ((double t, Vector3 at, Vector3 v) in p.Trace)
+                sb.Append(Fmt(t, "0.0000")).Append(',').Append(p.Name).Append(',')
+                  .Append(Fmt(at.X, "0.0000")).Append(',').Append(Fmt(at.Y, "0.0000")).Append(',').Append(Fmt(at.Z, "0.0000")).Append(',')
+                  .Append(Fmt(v.X, "0.0000")).Append(',').Append(Fmt(v.Y, "0.0000")).Append(',').Append(Fmt(v.Z, "0.0000")).Append('\n');
+        return sb.ToString();
+    }
+
+    /// <summary>One line per part whose sleep the scenario watches: when it first fell asleep ("-": never), whether it
+    /// was asleep at the end, and how far it moved from where it started.</summary>
+    public IEnumerable<string> PartLines()
+        => Parts.Where(p => p.SleepWatched).Select(p =>
+            $"  part {p.Name}: asleep at {Fmt(p.SleptAt, "0.00")} s, asleep at the end {(p.AsleepAtEnd ? "yes" : "no")}, " +
+            $"moved {Fmt(Vector3.Distance(p.Position, p.EndPosition), "0.0000")} m");
+
     public const string SummaryHeader =
         "scenario,slope_deg,rate_hz,steps,top_speed,release_t,release_speed,steady_speed,steady_hspeed,dist_before_release,dist_after_release,time_to_rest,peak_height,peak_rise,z_range,max_tilt_deg,end_x,end_y,end_z,left_region_t,nonfinite," +
         "sleep_after,active_at_end,impact_t,arrival_speed,leaving_speed,penetration,tunneled,push_range_early,push_range_late,push_penetration,crash_rise," +

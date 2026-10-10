@@ -37,13 +37,16 @@ public static class ContactScenarios
     }
 
     // Notes, before every heartbeat, when each physical part's body first falls asleep after it has been awake (a body is
-    // created asleep and woken by the first step), and whether it is asleep now.
+    // created asleep and woken by the first step), and whether it is asleep now; and where it is, for a part that keeps a
+    // trace.
     private static void WatchSleep(Run r)
     {
         foreach (HarnessPart p in r.Parts)
         {
             if (!p.Physical || p.Actor is not JoltPrim jp)
                 continue;
+            p.SleepWatched = true;
+            p.Trace?.Add((r.Now, p.Actor.Position, p.Actor.Velocity));
             if (jp.BodyAwake)
                 p.WasAwake = true;
             p.AsleepAtEnd = jp.PhysicalAndAsleep;
@@ -125,6 +128,7 @@ public static class ContactScenarios
                 {
                     top = PhantomScenarios.AddPart(r, $"box{i + 1}", BoxSize, new Vector3(128f, 128f, ground + BoxSize.Z * (i + 0.5f)), true, false, false, false);
                     Wood(top);
+                    top.Trace = new List<(double, Vector3, Vector3)>();   // every box's sway, in the harness's --out folder
                 }
                 r.Actor = top.Actor;
                 r.ActorSize = BoxSize;

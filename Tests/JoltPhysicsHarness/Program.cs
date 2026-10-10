@@ -54,7 +54,8 @@ public static class Program
   --vehicle-script-again     after --vehicle-restore, the scenario's script makes its vehicle calls again (the same
                              vehicle set up by its script, on a body with the route's history)
   --out DIR                  write <scenario>-s<slope>-r<rate>.csv per run and summary.csv to DIR, and
-                             native.txt, the joltc build loaded (for --check-baseline)
+                             native.txt, the joltc build loaded (for --check-baseline); a scenario that traces
+                             its parts (tower-10) also writes <scenario>-s<slope>-r<rate>-parts.csv
 
   --pool-bench               run the job pool benchmark instead of the scenarios: a heavy scene and light scenes
                              sharing the job pools, each heartbeat on its own thread (see PoolBench.cs). It uses the
@@ -262,9 +263,16 @@ The summary table always goes to standard output. Nothing is written anywhere el
                     output.WriteLine(line);
                     foreach (CollisionWatch w in res.Watches)
                         output.WriteLine($"  events {w}");   // console only: summary.csv keeps its columns
+                    foreach (string part in res.PartLines())
+                        output.WriteLine(part);
                     summary.Append(line).Append('\n');
                     if (outDir != null)
+                    {
                         File.WriteAllText(Path.Combine(outDir, res.Name + ".csv"), res.ToCsv());
+                        string parts = res.PartsToCsv();
+                        if (parts != null)
+                            File.WriteAllText(Path.Combine(outDir, res.Name + "-parts.csv"), parts);
+                    }
                 }
         }
         if (outDir != null)

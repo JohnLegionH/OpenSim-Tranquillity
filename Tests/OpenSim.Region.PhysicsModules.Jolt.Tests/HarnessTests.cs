@@ -213,6 +213,23 @@ public class HarnessTests
     }
 
     [Fact]
+    public void The_tower_traces_every_box_and_says_when_each_fell_asleep()
+    {
+        RunResult r = Harness.Harness.Run(Harness.Harness.Find("tower-10"), new HarnessOptions { RateHz = 11.0, PhysicsRateHz = 45.0 });
+        string[] lines = r.PartsToCsv().TrimEnd('\n').Split('\n');
+        Assert.Equal(RunResult.PartsCsvHeader, lines[0]);
+        // One line per box per heartbeat, every box named.
+        Assert.Equal(10 * r.Samples.Count, lines.Length - 1);
+        Assert.Equal(Enumerable.Range(1, 10).Select(i => $"box{i}"), lines.Skip(1).Select(l => l.Split(',')[1]).Distinct());
+        List<string> parts = r.PartLines().ToList();
+        Assert.Equal(10, parts.Count);
+        Assert.All(parts.Zip(r.Parts), x => Assert.StartsWith($"  part {x.Second.Name}: asleep at {(double.IsNaN(x.Second.SleptAt) ? "-" : x.Second.SleptAt.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture))} s", x.First));
+        // A run of a scenario that keeps no part traces writes none.
+        Assert.Null(Run("drop").PartsToCsv());
+        Assert.Empty(Run("drop").PartLines());
+    }
+
+    [Fact]
     public void Command_line_writes_only_to_its_out_folder()
     {
         string dir = Path.Combine(Path.GetTempPath(), "jolt-harness-test-" + Guid.NewGuid().ToString("N"));
