@@ -17,8 +17,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// <summary>
 /// Backend teardown destroys the region's native physics system (JoltPhysicsSharp 2.19.1's PhysicsSystem.Dispose
 /// does not), and creating and destroying systems from several threads is safe around joltc's global map
-/// of systems. Serial collection: these tests measure the process's private memory and read the process-wide
-/// Foundation reference count, and other tests' backends would disturb both.
+/// of systems. Serial collection: these tests read the process-wide Foundation reference count, and other tests'
+/// backends would disturb it. The memory test measures in a child test host of its own (<see cref="ChildTestHost"/>).
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
 public class SystemTeardownTests
@@ -28,21 +28,32 @@ public class SystemTeardownTests
 
     private const long MB = 1024 * 1024;
 
-    // Every leaked system holds at least its 8 MB temp allocator, so 30 leaked cycles hold 240 MB or more.
-    // A destroyed system leaves nothing behind; the bound leaves room for heap growth and fragmentation.
-    private const int Cycles = 30;
+    // A destroyed system leaves nothing behind; the bound leaves room for heap growth and fragmentation. Every
+    // leaked system holds at least its 8 MB temp allocator, so it crosses the bound within a few cycles, and a leak
+    // of 100 KB a cycle crosses it in about 330 of the 600. The growth is checked every CheckEvery cycles, so a large
+    // leak stops the loop early instead of filling the machine.
+    private const int Cycles = 600;
+    private const int CheckEvery = 10;
     private const long GrowthBound = 32 * MB;
 
-    private static long PrivateBytes()
+    // Set in the child test host that runs the memory test on its own.
+    private const string MemoryChildVariable = "JOLT_TEST_MEMORY_CHILD";
+
+    // The process's private memory, and of it what the process holds: the private memory less what the GC keeps
+    // committed but free. A collection does not hand freed GC memory back at once, and how much it keeps depends
+    // on what the process allocated before, not on a leak; the GC heap's live size still counts.
+    private static (long Private, long Held) Memory()
     {
         for (var i = 0; i < 2; i++)
         {
             GC.Collect();
             GC.WaitForPendingFinalizers();
         }
+        GC.Collect();
+        GCMemoryInfo gc = GC.GetGCMemoryInfo();
         using var p = Process.GetCurrentProcess();
         p.Refresh();
-        return p.PrivateMemorySize64;
+        return (p.PrivateMemorySize64, p.PrivateMemorySize64 - gc.TotalCommittedBytes + gc.HeapSizeBytes);
     }
 
     private static int FoundationRefCount()
@@ -69,6 +80,17 @@ public class SystemTeardownTests
     [Fact]
     public void Repeated_create_and_teardown_does_not_grow_private_memory()
     {
+        // The process's private memory moves with everything the process ran before: after the rest of the suite,
+        // 30 cycles left the GC 27 MB more committed memory with no change in the rest, where alone they leave
+        // about none. So the cycles run in a test host that runs this test alone, and count the GC's live heap
+        // rather than what it keeps committed (Memory).
+        if (Environment.GetEnvironmentVariable(MemoryChildVariable) != "1")
+        {
+            _out.WriteLine(ChildTestHost.RunAndAssertPassed(GetType(), nameof(Repeated_create_and_teardown_does_not_grow_private_memory),
+                new Dictionary<string, string> { [MemoryChildVariable] = "1" }));
+            return;
+        }
+
         // A region that stays up keeps Foundation and the job pools alive, as on a simulator with other regions,
         // so the cycles measure the per-region system alone.
         using var anchor = new JoltTestBackend();
@@ -77,16 +99,23 @@ public class SystemTeardownTests
         for (var i = 0; i < 3; i++)
             Cycle();   // warm the heaps
 
-        long before = PrivateBytes();
-        for (var i = 0; i < Cycles; i++)
-            Cycle();
-        long after = PrivateBytes();
+        var before = Memory();
+        var after = before;
+        var done = 0;
+        while (done < Cycles && after.Held - before.Held < GrowthBound)
+        {
+            for (var i = 0; i < CheckEvery; i++)
+                Cycle();
+            done += CheckEvery;
+            after = Memory();
+        }
 
-        long growth = after - before;
-        _out.WriteLine($"private bytes: before={before / MB} MB after={after / MB} MB growth={growth / MB} MB "
-            + $"over {Cycles} cycles ({growth / Cycles / 1024} KB per cycle); bound {GrowthBound / MB} MB");
+        long growth = after.Held - before.Held;
+        _out.WriteLine($"held bytes: before={before.Held / MB} MB after={after.Held / MB} MB growth={growth / MB} MB "
+            + $"over {done} cycles ({growth / done / 1024} KB per cycle); bound {GrowthBound / MB} MB. "
+            + $"Private bytes, with the GC's free committed memory: {before.Private / MB} -> {after.Private / MB} MB");
         Assert.True(growth < GrowthBound,
-            $"private memory grew {growth / MB} MB over {Cycles} create/teardown cycles (bound {GrowthBound / MB} MB)");
+            $"private memory held grew {growth / MB} MB over {done} create/teardown cycles (bound {GrowthBound / MB} MB)");
     }
 
     [Fact]

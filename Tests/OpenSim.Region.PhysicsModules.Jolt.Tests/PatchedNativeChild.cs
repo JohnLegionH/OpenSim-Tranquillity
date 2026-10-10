@@ -5,9 +5,6 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-using System.Diagnostics;
-using System.Runtime.CompilerServices;
-using System.Text.RegularExpressions;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
 using Xunit;
 
@@ -16,9 +13,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// <summary>
 /// Runs one test in a child test host on a patched joltc supplied to the tests. The suite's own process loads the
 /// stock native from the package, which runs one job pool; a test that needs more than one pool checks the one-pool
-/// fallback in-process and runs its multi-pool half here, on the build that allows it. The child is the same test
-/// build (dotnet test --no-build, same configuration) with JOLT_TEST_NATIVE_BASE pointing at the supplied file's
-/// folder (TestNativeOverride).
+/// fallback in-process and runs its multi-pool half here, on the build that allows it. The child is a
+/// <see cref="ChildTestHost"/> with JOLT_TEST_NATIVE_BASE pointing at the supplied file's folder (TestNativeOverride).
 ///
 /// <para>The repository does not keep the patched build. To supply it, set JOLT_TEST_PATCHED_NATIVE_DIR to a folder
 /// with one subfolder per runtime identifier, each holding that platform's file: win-x64/joltc.dll,
@@ -29,17 +25,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 internal static class PatchedNativeChild
 {
     public const string DirVariable = "JOLT_TEST_PATCHED_NATIVE_DIR";
-
-    private static string RepoRoot([CallerFilePath] string here = "")
-        => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(here)!, "..", ".."));
-
-    private static string TestProject => Path.Combine(RepoRoot(), "Tests", "OpenSim.Region.PhysicsModules.Jolt.Tests");
-
-#if DEBUG
-    private const string Configuration = "Debug";
-#else
-    private const string Configuration = "Release";
-#endif
 
     /// <summary>The folder JOLT_TEST_PATCHED_NATIVE_DIR names, or null when it is not set.</summary>
     public static string? SuppliedFolder
@@ -107,32 +92,10 @@ internal static class PatchedNativeChild
     public static string RunAndAssertPassed(Type testClass, string method)
     {
         string native = Require();
-        string name = $"{testClass.FullName}.{method}";
-        var psi = new ProcessStartInfo("dotnet")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            // Run where the repository's global.json applies, not wherever the parent test host was started.
-            WorkingDirectory = TestProject,
-        };
-        foreach (string a in new[] { "test", TestProject, "--no-build", "-c", Configuration, "--nologo",
-                                     "--filter", $"FullyQualifiedName={name}", "-l", "console;verbosity=normal" })
-            psi.ArgumentList.Add(a);
         // The module takes the file from this folder itself, as it takes the package's file from beside the
         // assemblies of a build for one runtime identifier (JoltNative.Locate).
-        psi.Environment[TestNativeOverride.BaseVariable] = Path.GetDirectoryName(native)!;
-
-        using var p = Process.Start(psi)!;
-        // Both streams are read at once, so a full stderr pipe cannot stall the child.
-        Task<string> err = p.StandardError.ReadToEndAsync();
-        string output = p.StandardOutput.ReadToEnd() + err.Result;
-        Assert.True(p.WaitForExit(15 * 60 * 1000), $"the child test host for {name} did not finish in 15 minutes");
-        Assert.True(p.ExitCode == 0, $"the child test host for {name} on the patched native exited {p.ExitCode}:\n{output}");
-        // The normal console logger: the test's own result line, then the run's totals.
-        Assert.Contains($"  Passed {name} [", output);
-        Assert.Matches(new Regex(@"Total tests: 1\r?\n\s+Passed: 1\r?\n"), output);
-        return output;
+        return ChildTestHost.RunAndAssertPassed(testClass, method,
+            new Dictionary<string, string> { [TestNativeOverride.BaseVariable] = Path.GetDirectoryName(native)! });
     }
 }
 
