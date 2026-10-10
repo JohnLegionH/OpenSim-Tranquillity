@@ -2011,10 +2011,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 bool detectorA = IsVolumeDetectPrim(c.ChildUserDataA);
                 bool detectorB = IsVolumeDetectPrim(c.ChildUserDataB);
                 Vector3 pt = new Vector3(c.Point.X, c.Point.Y, c.Point.Z);
+                // RelativeSpeed is how fast the two part along the normal, below zero while they close: the same for either
+                // side. Core's collision sounds (above 0.2 m/s) and an avatar's impact damage (below -5 m/s) read it, as
+                // ubODE fills it (ODEScene.Collision_accounting_events, ODECharacter for the ground).
                 if (!detectorB && IsSubscribedPrim(c.ChildUserDataA))
-                    _collisions.AddCollider(c.ChildUserDataA, c.ChildUserDataB, new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f));
+                    _collisions.AddCollider(c.ChildUserDataA, c.ChildUserDataB,
+                        new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f) { RelativeSpeed = c.RelativeSpeed });
                 if (!detectorA && IsSubscribedPrim(c.ChildUserDataB))
-                    _collisions.AddCollider(c.ChildUserDataB, c.ChildUserDataA, new ContactPoint(pt, new Vector3(-c.Normal.X, -c.Normal.Y, -c.Normal.Z), 0f));
+                    _collisions.AddCollider(c.ChildUserDataB, c.ChildUserDataA,
+                        new ContactPoint(pt, new Vector3(-c.Normal.X, -c.Normal.Y, -c.Normal.Z), 0f) { RelativeSpeed = c.RelativeSpeed });
 
                 // An avatar's own contacts: the backend reports them with the avatar as side A (no body) and the
                 // touched body, the terrain (0) or another avatar as side B; another avatar reports its own side.
@@ -2025,7 +2030,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // plane under the feet. A contact whose normal points down is at the feet.
                 if (!detectorB && !c.BodyA.IsValid && _frameAvatars.ContainsKey(c.ChildUserDataA))
                     _collisions.AddCollider(c.ChildUserDataA, c.ChildUserDataB,
-                        new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f, c.Normal.Z < -AvatarFeetNormalZ));
+                        new ContactPoint(pt, new Vector3(c.Normal.X, c.Normal.Y, c.Normal.Z), 0f, c.Normal.Z < -AvatarFeetNormalZ)
+                        { RelativeSpeed = c.RelativeSpeed });
             }
 
             // A contact of last frame that is missing now only because neither body is awake is still there: the engine

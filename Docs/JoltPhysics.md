@@ -587,9 +587,35 @@ neither. The avatar's collisions reach the simulator each heartbeat as they do w
 ubODE: the terrain as land, so scripts in its attachments get `land_collision_start`,
 `land_collision` and `land_collision_end`, and a prim or another avatar as an object, giving
 `collision_start`, `collision` and `collision_end`. The floor contact also sets the collision plane
-under the avatar's feet. The contacts carry no relative speed, so they make no collision sound and no
-impact damage. Where damage is on, a prim with a damage value set damages the avatar it touches and
-is removed, as the simulator does with every physics engine.
+under the avatar's feet. Each contact carries the speed at which the two met (see "Avatars and physical
+objects"), from which the simulator plays collision sounds and works out impact damage. Where damage is
+on, a prim with a damage value set damages the avatar it touches and is removed, as the simulator does
+with every physics engine.
+
+## Avatars and physical objects
+
+Second Life documents that "You can push physical object by walking or flying your avatar into them",
+that an object dragged into an avatar should move it, and that "Residents take damage from collisions
+with physical objects" (wiki.secondlife.com, Push and Damage). It gives no figures, so Jolt follows
+ubODE, where an avatar is a body that meets an object with no bounce:
+
+- An object that strikes an avatar never goes into or through it. The two go on along the line of the
+  hit at their common speed, weighted by mass, with the avatar's mass of 80 kg: a 1 kg box thrown at
+  5 m/s stops against it and barely moves it, and a 100 kg box carries it along at up to 2.8 m/s. The
+  avatar's share is a push, held to `AvatarPushMaxSpeed` and the push allowance like any other; what
+  it cannot take the object loses. An avatar standing on the ground is not pushed down into it: an
+  object that lands on its head stops there and comes to rest on it, and falls once they part.
+- An avatar walking or running into an object pushes it along, level, with at most its push force
+  (`PushStrength` x 100 N) and never faster than the avatar moves that way. A light box goes along ahead
+  of it at its pace; a heavy one, held by its friction, barely moves and stops the avatar. The avatar
+  does not step up onto an object it is pushing.
+- What an avatar stands on carries it as before: it can stand on a physical object without sinking or
+  sliding it away.
+- Two avatars still push each other as before, as in ubODE.
+- Every contact report carries the speed at which the two sides met along the contact normal
+  (`ContactPoint.RelativeSpeed`, below zero while they close), for prims, avatars and the land. The
+  simulator plays a prim's collision sound above 0.2 m/s, and an avatar takes impact damage where
+  damage is on below -5 m/s, from the land (a fall from about 1.3 m or more) or from a prim.
 
 ## Phantom and volume-detect prims
 
@@ -912,7 +938,10 @@ slab), `phantom-physical-walk`, the `-on-walk` and `-off-walk` scenarios (the fl
 arrives, on one box or a three-box linkset) and `phantom-physical-toggle` (a resting box or linkset made phantom
 and solid again), and the resting-contact scenarios: `rest-platform`, `rest-ground` and `rest-vd` (a box comes to
 rest on a platform, on the ground or inside a volume-detect box, falls asleep and is thrown off at 5 s),
-`tower-10` (ten stacked boxes) and `rest-no-bounce` (a box of restitution 0 dropped 2 m). These print each
+`tower-10` (ten stacked boxes) and `rest-no-bounce` (a box of restitution 0 dropped 2 m), and the avatar
+scenarios: `avatar-hit-1kg`, `avatar-hit-100kg` and `avatar-hit-10ms` (a box thrown at a standing
+avatar), `avatar-walk-1kg` and `avatar-walk-1000kg` (an avatar walking into a box), `avatar-on-box`,
+`avatar-box-drop` (a box dropped 5 m onto an avatar's head) and `avatar-fall-20m`. These print each
 watched part's collision events under their summary line. The summary's extra columns give when
 the engine last had a body awake and, for the crashes, the impact, arrival and leaving speeds,
 overlap and a pass-through check. The ground is

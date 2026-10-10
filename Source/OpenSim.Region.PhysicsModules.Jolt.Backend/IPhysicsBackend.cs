@@ -436,6 +436,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public Vector3 Normal;
         /// <summary>Newton-seconds. Feeds collision sound volume and damage models.</summary>
         public float Impulse;
+        /// <summary>How fast B moves away from A along <see cref="Normal"/> where they touch (m/s), from their velocities
+        /// before the contact acts on them: below zero while they close. The same number for either side, since both its
+        /// velocity difference and its normal turn round. The simulator's collision sounds and impact damage read it as
+        /// ContactPoint.RelativeSpeed. Zero on an End report.</summary>
+        public float RelativeSpeed;
         public ContactPhase Phase;
     }
 

@@ -368,7 +368,7 @@ public sealed class Run
     public static readonly Vector3 AvatarSize = new(0.45f, 0.6f, 1.9f);   // the default appearance's box
     /// <summary>How far an avatar's capsule centre stands above what it stands on.</summary>
     public float AvatarStandHalf => JoltCharacter.StandHalfFor(AvatarSize);
-    private const uint ActorLocalId = 1000;
+    public const uint ActorLocalId = 1000;
     private const uint OtherLocalId = 1001;
     private const uint ChildLocalId = 1002;
 
@@ -1251,7 +1251,7 @@ public static class Harness
             Gap = GapBelow,
             PassedThrough = (r, s) => s.Position.Z < r.GroundAt(s.Position.X, s.Position.Y),
         },
-    }.Concat(PhantomScenarios.All).Concat(ContactScenarios.All).ToList();
+    }.Concat(PhantomScenarios.All).Concat(ContactScenarios.All).Concat(AvatarHitScenarios.All).ToList();
 
     private static readonly Quaternion West = Quaternion.CreateFromEulers(0f, 0f, MathF.PI);
     private static readonly Vector3 CrashMotor = new(20f, 0f, 0f);

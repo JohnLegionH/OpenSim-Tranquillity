@@ -1417,6 +1417,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             Vector3 point = manifold.PointCount > 0 ? manifold.GetWorldSpaceContactPointOn1(0) : default;
             Vector3 normal = manifold.WorldSpaceNormal;
 
+            // How fast they part along the normal where they touch, from the velocities the callback sees: before this
+            // step's solve, so an impact reports the speed it struck at.
+            float relativeSpeed = manifold.PointCount > 0
+                ? Vector3.Dot(body2.GetPointVelocity(manifold.GetWorldSpaceContactPointOn2(0)) - body1.GetPointVelocity(point), normal)
+                : 0f;
+
             // Impulse is a POST-solve quantity but Added/Persisted fire PRE-solve, so we use Jolt's own
             // in-callback estimator - the same helper its collision-sound sample uses. It reads only the
             // two bodies Jolt already handed us (NOT a lock we take) plus the manifold. It allocates no managed
@@ -1443,7 +1449,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // itself) - the per-child collision identity behind llDetectedLinkNumber.
             uint childA = ResolveStruckPart(ra, manifold.SubShapeID1.Value);
             uint childB = ResolveStruckPart(rb, manifold.SubShapeID2.Value);
-            _contactListener.Push(BuildContact(ra, rb, point, normal, MathF.Max(0f, impulse), phase, childA, childB));
+            _contactListener.Push(BuildContact(ra, rb, point, normal, MathF.Max(0f, impulse), phase, childA, childB, relativeSpeed));
         }
 
         [System.Runtime.InteropServices.DllImport("joltc", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
@@ -1464,7 +1470,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
         private static ContactReport BuildContact(
             JoltBodyRecord? ra, JoltBodyRecord? rb, Vector3 point, Vector3 normal, float impulse, ContactPhase phase,
-            uint childUserDataA, uint childUserDataB)
+            uint childUserDataA, uint childUserDataB, float relativeSpeed = 0f)
         {
             return new ContactReport
             {
@@ -1477,6 +1483,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 Point = point,
                 Normal = normal,
                 Impulse = impulse,
+                RelativeSpeed = relativeSpeed,
                 Phase = phase,
             };
         }
@@ -2647,6 +2654,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     PushStrength = desc.PushStrength,
                     JumpSpeed = desc.JumpSpeed,
                     PushAllowance = MathF.Max(0f, _settings.AvatarPushMaxSpeed),
+                    Mass = desc.Mass,
                 };
                 uint handle = _characters.Add(rec);
                 rec.Handle = handle;
@@ -2699,10 +2707,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 // during ExtendedUpdate, cover terrain/static/dynamic/sensor, and - crucially - a
                 // standing avatar re-reports its floor contact every step, which is the real thing the
                 // Persist gate exists to suppress. Movement is untouched (these are observational).
+                // A touching contact is noted and reported after the move (FinishCharacterContacts), when its relative speed
+                // is known and a loose object the avatar touches has been dealt with.
                 character.OnContactAdded += (CharacterVirtual cv, in BodyID b2, SubShapeID ss, in RVector3 pos, in Vector3 normal, ref CharacterContactSettings s)
-                    => PushCharacterBodyContact(rec, b2.ID, ss.Value, ToVec(pos), normal, ContactPhase.Begin);
+                    => NoteCharacterBodyContact(rec, b2.ID, ss.Value, ToVec(pos), normal, ContactPhase.Begin, ref s);
                 character.OnContactPersisted += (CharacterVirtual cv, in BodyID b2, SubShapeID ss, in RVector3 pos, in Vector3 normal, ref CharacterContactSettings s)
-                    => PushCharacterBodyContact(rec, b2.ID, ss.Value, ToVec(pos), normal, ContactPhase.Persist);
+                    => NoteCharacterBodyContact(rec, b2.ID, ss.Value, ToVec(pos), normal, ContactPhase.Persist, ref s);
                 character.OnContactRemoved += (CharacterVirtual cv, in BodyID b2, SubShapeID ss)
                     => PushCharacterBodyContact(rec, b2.ID, ss.Value, default, default, ContactPhase.End);
 
@@ -2729,7 +2739,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // Side A is the avatar (no BodyId - it is not a solver body; UserData carries the avatar id);
         // side B is the touched body, resolved via the reverse map. Persist is gated exactly like body
         // contacts: forwarded only if the avatar or the other body wants events.
-        private void PushCharacterBodyContact(JoltCharacterRecord ch, uint otherJoltId, uint otherSubShape, Vector3 point, Vector3 normal, ContactPhase phase)
+        private void PushCharacterBodyContact(JoltCharacterRecord ch, uint otherJoltId, uint otherSubShape, Vector3 point, Vector3 normal, ContactPhase phase,
+                                              float relativeSpeed = 0f)
         {
             _joltToRecord.TryGetValue(otherJoltId, out JoltBodyRecord? other);
             bool wants = ch.WantsContactEvents || (other?.WantsContactEvents ?? false);
@@ -2746,8 +2757,207 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 Point = point,
                 Normal = normal,                        // character-contact normal (points from the character into the body)
                 Impulse = 0f,                           // controller-resolved contact; no solver impulse available
+                RelativeSpeed = relativeSpeed,
                 Phase = phase,
             });
+        }
+
+        // A contact of the character's own update with a body, noted for FinishCharacterContacts. A loose object (one the
+        // simulation moves, not under the avatar's feet) is left to FinishCharacterContacts: Jolt's own character push does
+        // not move it, and it does not move the avatar on first touch. Jolt's push moved a light object faster than the
+        // avatar walked and could launch the avatar onto it, and a heavy object thrown at an avatar moved it at the object's
+        // speed, with no regard to the push limits. What is under the avatar's feet is left to Jolt, so it stands on it.
+        private void NoteCharacterBodyContact(JoltCharacterRecord ch, uint otherJoltId, uint otherSubShape, Vector3 point, Vector3 normal,
+                                              ContactPhase phase, ref CharacterContactSettings settings)
+        {
+            _joltToRecord.TryGetValue(otherJoltId, out JoltBodyRecord? other);
+            // What the avatar last stood on is never loose, at any edge it touches: the avatar rides it (adopting its
+            // velocity), so pushing it as well would feed back into the avatar's own speed.
+            bool loose = other != null && other.MotionType == BodyMotionType.Dynamic && other.Layer == PhysicsLayer.Dynamic
+                         && normal.Z >= -CharacterFeetNormalZ && ch.Character != null && ch.Character.GroundBodyId != otherJoltId;
+            if (loose)
+            {
+                // Jolt moves the avatar out of the way of a body at the body's own speed. Not on first touch, before
+                // FinishCharacterContacts has slowed the body to the speed the avatar takes from it. Never for an object on
+                // top of the avatar: with the ground below, Jolt's character took the two for opposing walls and could not
+                // move at all, so an avatar with a box on its head could not walk out from under it.
+                settings.CanPushCharacter = phase != ContactPhase.Begin && normal.Z <= CharacterFeetNormalZ;
+                settings.CanReceiveImpulses = false;
+            }
+            ch.Contacts.Add(new CharacterBodyContact(otherJoltId, otherSubShape, point, normal, phase, loose));
+        }
+
+        // Whether a loose object (a body the simulation moves, other than what the avatar stands on) lies where the avatar's
+        // feet go this step, below its step height: the box the capsule's lower part sweeps, with Jolt's predictive contact
+        // distance (0.1 m) ahead. Only for an avatar walking on the ground.
+        private bool LooseObjectInStep(JoltCharacterRecord rec, CharacterVirtual ch, Vector3 velocity, float dt)
+        {
+            Vector3 level = new Vector3(velocity.X, velocity.Y, 0f);
+            float speed = level.Length();
+            if (rec.Flying || speed < 0.01f || ch.GroundState != GroundState.OnGround)
+                return false;
+            Vector3 dir = level / speed;
+            float reach = speed * dt + 0.1f;
+            Vector3 pos = ch.Position;
+            float feet = pos.Z - rec.CapsuleHalfHeight - rec.CapsuleRadius;
+            float r = rec.CapsuleRadius;
+            Vector3 from = new Vector3(pos.X, pos.Y, 0f), to = from + dir * reach;
+            var center = new Vector3((from.X + to.X) * 0.5f, (from.Y + to.Y) * 0.5f, feet + 0.05f + rec.StepHeight * 0.5f);
+            var half = new Vector3(MathF.Abs(to.X - from.X) * 0.5f + r, MathF.Abs(to.Y - from.Y) * 0.5f + r, rec.StepHeight * 0.5f);
+            Span<BodyId> found = stackalloc BodyId[8];
+            int n = OverlapBox(center, half, Quaternion.Identity, QueryFilter.Dynamic, found);
+            uint ground = ch.GroundBodyId;
+            for (int i = 0; i < n; i++)
+                if (_bodies.TryGet(found[i].Value, out JoltBodyRecord rb) && rb.NativeBodyId != ground
+                    && rb.MotionType == BodyMotionType.Dynamic && rb.Layer == PhysicsLayer.Dynamic)
+                    return true;
+            return false;
+        }
+
+        // A loose object found inside the avatar's capsule is moved back out along the contact normal when it struck the
+        // avatar, rests on an avatar that stands on the ground, or is lighter than the avatar (the lighter gives way). Else
+        // Jolt would move the avatar out of it on its next update, by all the object had gone in during one step, at
+        // whatever speed that took.
+        private void MoveOutOfCapsule(JoltCharacterRecord rec, CharacterVirtual ch, BodyID jid, Vector3 point, Vector3 normal, Vector3 lead, bool wake)
+        {
+            Vector3 pos = ch.Position;
+            float z = Math.Clamp(point.Z, pos.Z - rec.CapsuleHalfHeight, pos.Z + rec.CapsuleHalfHeight);
+            // Out past the character's padding too: a character that starts its move within its padding of a body is held by
+            // it, and an avatar with a box resting on its head could not walk out from under it.
+            float clear = rec.CapsuleRadius + ch.CharacterPadding + 0.005f;
+            float depth = MathF.Max(0f, clear - Vector3.Distance(point, new Vector3(pos.X, pos.Y, z)));
+            Vector3 move = normal * depth + lead;
+            if (move.LengthSquared() < 1e-8f)
+                return;
+            Vector3 at = ToVec(_bodyInterface.GetPosition(jid));
+            _bodyInterface.SetPosition(jid, at + move, wake ? Activation.Activate : Activation.DontActivate);
+        }
+
+        // An object let fall asleep on the avatar (FinishCharacterContacts) is woken, and falls, once the avatar's update no
+        // longer touches it: the avatar moved off, or it was taken away.
+        private void WakeWhatNoLongerRests(JoltCharacterRecord rec, List<CharacterBodyContact> contacts)
+        {
+            rec.Resting.RemoveWhere(id =>
+            {
+                for (int i = 0; i < contacts.Count; i++)
+                    if (contacts[i].BodyJoltId == id)
+                        return false;
+                if (_joltToRecord.TryGetValue(id, out JoltBodyRecord? gone) && gone.MotionType == BodyMotionType.Dynamic)
+                    _bodyInterface.ActivateBody(new BodyID(id));
+                return true;
+            });
+        }
+
+        // A body's velocity at a world point: its centre of mass's, and its turning about it.
+        private Vector3 PointVelocity(BodyID jid, Vector3 point)
+        {
+            Vector3 com = ToVec(_bodyInterface.GetCenterOfMassPosition(jid));
+            return _bodyInterface.GetLinearVelocity(jid) + Vector3.Cross(_bodyInterface.GetAngularVelocity(jid), point - com);
+        }
+
+        // A loose object coming at the avatar faster than this (m/s) strikes it; slower, it is only touching (the avatar may
+        // be pushing it). A resting object's own jitter is far below it.
+        private const float StrikeSpeed = 0.1f;
+
+        // A character contact whose normal (from the avatar into what it touches) points down by more than this is under
+        // its feet: a surface tilted less than 60 degrees from level (the module's AvatarFeetNormalZ).
+        internal const float CharacterFeetNormalZ = 0.5f;
+
+        // After the character's move: each contact it noted is reported with its relative speed, and each loose object it
+        // touches is dealt with. The speeds are those before this: the avatar's step velocity, and the body's as the last
+        // physics step left it.
+        //
+        // A loose object coming at the avatar strikes it as two bodies meeting with no bounce (ubODE's avatar contacts have
+        // bounce 0, ODEScene's near callback): both go on along the contact normal at their common speed, weighted by mass
+        // with the avatar's mass. So the object never goes on into the avatar. The avatar takes its share as a push, held to
+        // the push limits ([Jolt] AvatarPushMaxSpeed); an avatar on the ground is not pushed down into it, so an object
+        // that lands on it stops there. An avatar moving into a loose object pushes it along, level, with at most its push
+        // force (PushStrength x 100 N, Jolt's own MaxStrength) and never faster than the avatar moves that way: a light
+        // object goes along at the avatar's pace, and a heavy one, held by its friction, barely moves.
+        private void FinishCharacterContacts(JoltCharacterRecord rec, CharacterVirtual ch, float dt)
+        {
+            List<CharacterBodyContact> contacts = rec.Contacts;
+            rec.LooseAtSide = false;
+            if (rec.Resting.Count > 0)
+                WakeWhatNoLongerRests(rec, contacts);
+            if (contacts.Count == 0)
+                return;
+            Vector3 vChar = rec.StepVelocity;
+            bool supported = ch.GroundState == GroundState.OnGround;
+            float pushForce = MathF.Max(0f, rec.PushStrength) * PushStrengthBaseNewtons;
+            for (int i = 0; i < contacts.Count; i++)
+            {
+                CharacterBodyContact c = contacts[i];
+                _joltToRecord.TryGetValue(c.BodyJoltId, out JoltBodyRecord? other);
+                var jid = new BodyID(c.BodyJoltId);
+                Vector3 vBody = other != null && other.MotionType != BodyMotionType.Static
+                    ? PointVelocity(jid, c.Point)
+                    : Vector3.Zero;
+                float relativeSpeed = Vector3.Dot(vBody - vChar, c.Normal);
+
+                bool held = false, struck = false, letSleep = false;
+                Vector3 lead = Vector3.Zero;
+                if (c.Loose && other != null && rec.Mass > 0f && other.Mass > 0f)
+                {
+                    Vector3 n = c.Normal;
+                    if (MathF.Abs(n.Z) < CharacterFeetNormalZ)
+                        rec.LooseAtSide = true;
+                    float a = Vector3.Dot(vChar, n), b = Vector3.Dot(vBody, n);
+                    // An avatar on the ground does not give under an object on it or coming down on it.
+                    held = supported && n.Z > CharacterFeetNormalZ;
+                    if ((b < -StrikeSpeed && a > b) || (held && b < 0f))
+                    {
+                        // Struck by it.
+                        struck = true;
+                        float common = held ? a : (rec.Mass * a + other.Mass * b) / (rec.Mass + other.Mass);
+                        if (!held)
+                        {
+                            // The avatar's share is held to its push allowance; what it cannot take, the object loses, so it
+                            // goes on no faster than the avatar does and never into it.
+                            Vector3 give = n * (common - a);
+                            if (supported && give.Z < 0f)
+                                give.Z = 0f;
+                            float wanted = give.Length();
+                            float taken = MathF.Min(wanted, MathF.Max(0f, rec.PushAllowance));
+                            if (taken > 0f)
+                                AddCharacterImpulse(new CharacterId(rec.Handle), give * (taken / wanted));
+                            common = a - (wanted > 0f ? taken / wanted : 0f) * (a - common);
+                        }
+                        _bodyInterface.AddLinearVelocity(jid, n * (common - b));
+                        // The avatar takes its share on its next step, so for this one the object is held back by what it
+                        // would gain on the avatar meanwhile: else it goes that far into it.
+                        lead = n * ((a - common) * dt);
+                        // Come to rest on an avatar standing still, it is let fall asleep there: held up each step against
+                        // the step's gravity it would sink and be lifted again, never still.
+                        letSleep = held && vChar.LengthSquared() < 0.0025f && b > -2f * MathF.Abs(_settings.Gravity.Z) * dt;
+                    }
+                    else
+                    {
+                        Vector3 level = new Vector3(n.X, n.Y, 0f);
+                        float len = level.Length();
+                        if (len > 1e-3f)
+                        {
+                            level /= len;
+                            float ah = Vector3.Dot(vChar, level), bh = Vector3.Dot(vBody, level);
+                            if (ah > bh)
+                            {
+                                float target = MathF.Min(ah, bh + pushForce * dt / other.Mass);
+                                _bodyInterface.AddLinearVelocity(jid, level * (target - bh));
+                            }
+                        }
+                    }
+                }
+
+                if (c.Loose && other != null && (other.Mass < rec.Mass || held || struck))
+                    MoveOutOfCapsule(rec, ch, jid, c.Point, c.Normal, lead, !letSleep);
+                if (letSleep)
+                {
+                    _bodyInterface.DeactivateBody(jid);
+                    rec.Resting.Add(c.BodyJoltId);
+                }
+                PushCharacterBodyContact(rec, c.BodyJoltId, c.SubShape, c.Point, c.Normal, c.Phase, relativeSpeed);
+            }
+            contacts.Clear();
         }
 
         // Push an avatar-vs-AVATAR contact. Both sides are avatars (no BodyId); UserData on each.
@@ -2756,6 +2966,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             uint otherUserData = other != null ? (uint)other.UserData : 0u;
             if (phase == ContactPhase.Persist && !ch.WantsContactEvents)
                 return; // gate on this avatar's flag (the other avatar reports its own side symmetrically)
+            // This avatar moves with the velocity of its step; the other with the one it last stepped with.
+            float relativeSpeed = other != null ? Vector3.Dot(other.LinearVelocity - ch.StepVelocity, normal) : 0f;
             _contactListener.Push(new ContactReport
             {
                 BodyA = BodyId.Invalid,
@@ -2767,6 +2979,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 Point = point,
                 Normal = normal,
                 Impulse = 0f,
+                RelativeSpeed = relativeSpeed,
                 Phase = phase,
             });
         }
@@ -3133,13 +3346,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             Vector3 startPos = ch.Position;
 
             ch.LinearVelocity = newVel;
+            rec.StepVelocity = newVel;
             rec.JumpRequested = false;
+            rec.Contacts.Clear();
 
             // Z-up remap of the (Y-up-defaulted) stair/stick settings. Step-up height = the avatar's
             // StepHeight; stick-to-floor pulls straight down so it tracks steps/ramps without floating.
+            // No step up onto a loose object in the avatar's way: it pushes it instead. Stepping up onto a light box sent the
+            // avatar up and over it at three times its walking speed.
+            bool stepUp = !rec.LooseAtSide && !LooseObjectInStep(rec, ch, newVel, dt);
             var ext = new ExtendedUpdateSettings
             {
-                WalkStairsStepUp = new Vector3(0f, 0f, MathF.Max(0f, rec.StepHeight)),
+                WalkStairsStepUp = new Vector3(0f, 0f, stepUp ? MathF.Max(0f, rec.StepHeight) : 0f),
                 StickToFloorStepDown = new Vector3(0f, 0f, -MathF.Max(0.05f, rec.StepHeight)),
             };
             // Draws on the TempAllocator: only from Step, inside the pool gate (the pool gate rule).
@@ -3153,6 +3371,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             if (pushed)
                 FadePush(rec, ch, newVel, startPos, dt);
+
+            FinishCharacterContacts(rec, ch, dt);
         }
 
         // After the move: what blocked the avatar takes the push speed it blocked (a wall stops it), then the push
@@ -4144,7 +4364,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public Vector3 PendingPush;
         public Vector3 Push;
         public float PushAllowance;
+
+        public float Mass;                     // CharacterDesc.Mass: what a loose object striking the avatar meets
+        public Vector3 StepVelocity;           // the velocity the avatar moved with in its last step
+        public bool LooseAtSide;               // its last step touched a loose object from the side (no stepping up onto it)
+        // The contacts its last update noted, reported after the move (FinishCharacterContacts). Step thread only.
+        public readonly List<CharacterBodyContact> Contacts = new();
+        public readonly HashSet<uint> Resting = new();   // bodies (Jolt ids) let fall asleep resting on it
     }
+
+    internal readonly record struct CharacterBodyContact(uint BodyJoltId, uint SubShape, Vector3 Point, Vector3 Normal, ContactPhase Phase, bool Loose);
 
     internal sealed class JoltConstraintRecord
     {

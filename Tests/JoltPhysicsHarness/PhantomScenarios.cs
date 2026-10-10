@@ -41,6 +41,9 @@ public sealed class CollisionWatch
     /// (each a land_collision event).</summary>
     public int Collisions;
     public int LandCollisions;
+    /// <summary>For each collider (0 = land), the lowest ContactPoint.RelativeSpeed it was reported with: how fast the two
+    /// closed (below zero) at the hardest strike. Collision sounds and an avatar's impact damage read it.</summary>
+    public readonly Dictionary<uint, float> Strikes = new();
     /// <summary>Each start and end, and each update, with the time of the heartbeat that sent it (when attached with a
     /// run): "start" / "end" with the collider's id, "land start" / "land end" with 0, "update" with the number of ids.</summary>
     public readonly List<(double T, string Event, uint Id)> Log = new();
@@ -79,7 +82,11 @@ public sealed class CollisionWatch
 
     private void OnUpdate(EventArgs e)
     {
-        var now = new HashSet<uint>(((CollisionEventUpdate)e).m_objCollisionList.Keys);
+        var update = (CollisionEventUpdate)e;
+        foreach (KeyValuePair<uint, ContactPoint> kv in update.m_objCollisionList)
+            if (!Strikes.TryGetValue(kv.Key, out float least) || kv.Value.RelativeSpeed < least)
+                Strikes[kv.Key] = kv.Value.RelativeSpeed;
+        var now = new HashSet<uint>(update.m_objCollisionList.Keys);
         double t = Now;
         Log.Add((t, "update", (uint)now.Count));
         bool land = now.Remove(0);
@@ -144,6 +151,8 @@ public sealed class HarnessPart
     /// asleep when the run ended (both set by scenarios that watch for sleep).</summary>
     public double SleptAt = double.NaN;
     public bool AsleepAtEnd;
+    /// <summary>Where the part was and how fast it went before each heartbeat, when a scenario keeps a trace of it.</summary>
+    public List<(double T, Vector3 Position, Vector3 Velocity)> Trace;
     internal bool WasAwake;
 
     internal BodyId Body => Actor is JoltPrim jp ? jp.BodyHandle : BodyId.Invalid;
