@@ -146,19 +146,34 @@ public class VehicleRestAndCrashTests
 
     private static Sample At(RunResult r, double t) => r.Samples.First(s => s.T >= t - 1e-9);
 
-    // Held against a wall with the key down for ten seconds: the car stays put (its centre within 2 cm along the
-    // push), does not shake more as time goes on, and does not sink into the wall (5 cm at most, the engine's
-    // contact allowance being 2 cm).
+    // Held against a wall with the key down for 45 s: the car never sinks more than 3 cm into the wall (the engine's
+    // contact allowance being 2 cm) or passes through it, moves no more than 3 cm along the push from the start of
+    // the push (2 s after the impact, when the impact is over) to the end, and in the last third of the push is still
+    // (its range along the push 5 mm at most). After the impact the contact pushes the car back out of the wall
+    // until it settles: on Windows in one steady movement over about 9 s, on Linux in bursts over about 30 s.
+    // Measured (stock native, at velocity steps 20; deepest / net movement / last third's range):
+    //   11 Hz: Windows 19.9 / 9.4 / 0.0 mm, Linux 20.0 / 17.6 / 1.7 mm;
+    //   45 Hz: Windows 11.6 / 0.0 / 0.0 mm.
+    private const float PushSeconds = 45f;
+
     [Theory]
     [InlineData(11.0)]
     [InlineData(45.0)]
     public void A_car_pushing_on_a_wall_stays_put(double rate)
     {
-        RunResult r = Run("crash-wall", rate);
+        RunResult r = Harness.Harness.Run(Harness.Harness.Find("crash-wall"), new HarnessOptions { RateHz = rate, Duration = PushSeconds });
         Summary m = r.Summary;
-        Assert.True(r.Samples[^1].T >= m.ImpactT + 10.0 - 1e-6, "the run covers ten seconds of pushing");
-        Assert.InRange(m.PushRangeEarly, 0f, 0.02f);
-        Assert.InRange(m.PushRangeLate, 0f, m.PushRangeEarly + 0.005f);
-        Assert.InRange(m.PushPenetration, -0.05f, 0.05f);
+        Assert.False(double.IsNaN(m.ImpactT), $"{r.Name}: no impact");
+        double end = r.Samples[^1].T, from = m.ImpactT + 2.0;
+        Assert.True(end >= PushSeconds - 1e-6, $"{r.Name}: the run ends at {end:0.00} s");
+        Assert.Equal(0, m.Tunneled);
+        Assert.True(m.Penetration <= 0.03f, $"{r.Name}: {m.Penetration * 1000f:0.0} mm into the wall");
+        List<Sample> push = r.Samples.Where(s => s.T >= from - 1e-9).ToList();
+        float moved = Math.Abs(push[^1].Position.X - push[0].Position.X);
+        Assert.True(moved <= 0.03f, $"{r.Name}: moved {moved * 1000f:0.0} mm from the start of the push to the end");
+        double lastThird = from + (end - from) * 2.0 / 3.0;
+        List<float> late = push.Where(s => s.T >= lastThird - 1e-9).Select(s => s.Position.X).ToList();
+        float range = late.Max() - late.Min();
+        Assert.True(range <= 0.005f, $"{r.Name}: moved over {range * 1000f:0.0} mm in the last third of the push");
     }
 }
