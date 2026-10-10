@@ -1927,15 +1927,96 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             try
             {
                 if (lockWrite.Succeeded)
-                {
-                    Body b = lockWrite.Body;
-                    MassProperties mp = b.Shape.MassProperties;
-                    mp.ScaleToMass(mass);
-                    MotionProperties motion = b.MotionProperties;
-                    motion.SetMassProperties(motion.AllowedDOFs, mp);
-                }
+                    ApplyMassProperties(lockWrite.Body, rec, mass);
             }
             finally { bli.UnlockWrite(lockWrite); }
+            }   // _simLock
+        }
+
+        // Inertia about a locked axis, as a multiple of the unlocked tensor's trace: far above the others, so the principal
+        // axes Jolt finds for the tensor include each locked axis, whose inverse is then set to exactly zero.
+        private const float LockedInertiaScale = 1e6f;
+
+        // The shape's geometry-correct mass properties scaled to `mass` (keeps the inertia tensor's shape, changes only its
+        // magnitude), with the body's rotation locks (SetBodyRotationLocks) applied, pushed into its motion properties. A
+        // locked axis is taken out of the tensor (its row and column zeroed) and given an infinite inertia (a zero inverse),
+        // so no torque, impulse or contact can turn the body about it, and the free axes keep the inertia of the rest of
+        // the tensor. The caller holds the body's write lock.
+        private static void ApplyMassProperties(Body b, JoltBodyRecord rec, float mass)
+        {
+            MassProperties mp = b.Shape.MassProperties;
+            mp.ScaleToMass(mass);
+            MotionProperties motion = b.MotionProperties;
+            byte locks = rec.RotationLocks;
+            if (locks == 0)
+            {
+                motion.SetMassProperties(motion.AllowedDOFs, mp);
+                return;
+            }
+            Matrix4x4 inertia = mp.Inertia;
+            float big = LockedInertiaScale * MathF.Max(inertia.M11 + inertia.M22 + inertia.M33, 1e-6f);
+            for (int axis = 0; axis < 3; axis++)
+            {
+                if ((locks & (1 << axis)) == 0)
+                    continue;
+                for (int k = 0; k < 3; k++)
+                {
+                    SetInertiaElement(ref inertia, axis, k, 0f);
+                    SetInertiaElement(ref inertia, k, axis, 0f);
+                }
+                SetInertiaElement(ref inertia, axis, axis, big);
+            }
+            mp.Inertia = inertia;
+            motion.SetMassProperties(motion.AllowedDOFs, mp);
+            Vector3 inverse = motion.InverseInertiaDiagonal;
+            float cut = 10f / big;
+            if (inverse.X <= cut) inverse.X = 0f;
+            if (inverse.Y <= cut) inverse.Y = 0f;
+            if (inverse.Z <= cut) inverse.Z = 0f;
+            motion.SetInverseInertia(inverse, motion.InertiaRotation);
+        }
+
+        private static void SetInertiaElement(ref Matrix4x4 m, int row, int column, float value)
+        {
+            switch (row * 3 + column)
+            {
+                case 0: m.M11 = value; break;
+                case 1: m.M12 = value; break;
+                case 2: m.M13 = value; break;
+                case 3: m.M21 = value; break;
+                case 4: m.M22 = value; break;
+                case 5: m.M23 = value; break;
+                case 6: m.M31 = value; break;
+                case 7: m.M32 = value; break;
+                default: m.M33 = value; break;
+            }
+        }
+
+        public void SetBodyRotationLocks(BodyId body, bool lockX, bool lockY, bool lockZ)
+        {
+            byte locks = (byte)((lockX ? 1 : 0) | (lockY ? 2 : 0) | (lockZ ? 4 : 0));
+            lock (_simLock)
+            {
+            if (_disposed) return;
+            if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid))
+                return;
+            if (rec.RotationLocks == locks)
+                return;
+            rec.RotationLocks = locks;
+            if (rec.MotionType != BodyMotionType.Dynamic)
+                return;   // recorded; a static body has no motion properties
+            BodyLockInterface bli = _system!.BodyLockInterface;
+            bli.LockWrite(jid, out BodyLockWrite lockWrite);
+            try
+            {
+                if (lockWrite.Succeeded)
+                    ApplyMassProperties(lockWrite.Body, rec, rec.Mass);
+            }
+            finally { bli.UnlockWrite(lockWrite); }
+            // ubODE stops the body's turning when it locks an axis (ODEPrim createAMotor): what it was turning about a
+            // locked axis would otherwise carry on.
+            if (locks != 0)
+                _bodyInterface.SetAngularVelocity(jid, Vector3.Zero);
             }   // _simLock
         }
 
@@ -1994,12 +2075,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     float mass = MathF.Max(b.Shape.Volume * physicalDensity, 1e-3f);
                     rec.Mass = mass;
                     if (rec.MotionType == BodyMotionType.Dynamic)
-                    {
-                        MassProperties mp = b.Shape.MassProperties;
-                        mp.ScaleToMass(mass);
-                        MotionProperties motion = b.MotionProperties;
-                        motion.SetMassProperties(motion.AllowedDOFs, mp);
-                    }
+                        ApplyMassProperties(b, rec, mass);
                 }
             }
             finally { bli.UnlockWrite(lockWrite); }
@@ -3746,6 +3822,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public bool AllowMotionChange;    // created movable (AllowDynamicOrKinematic) -> may flip motion type
         public bool IsCharacterMarker;    // a query-only avatar marker (owned by its character; not a real prim)
         public long ContactStep;          // the last step in which the solver had this body touching another body (BodyHadContact)
+        public byte RotationLocks;        // body-local axes it cannot turn about: 1 = x, 2 = y, 4 = z (SetBodyRotationLocks)
     }
 
     internal sealed class JoltShapeRecord

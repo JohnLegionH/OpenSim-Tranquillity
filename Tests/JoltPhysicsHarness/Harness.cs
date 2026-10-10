@@ -361,6 +361,36 @@ public sealed class Run
     public float AvatarStandHalf => JoltCharacter.StandHalfFor(AvatarSize);
     private const uint ActorLocalId = 1000;
     private const uint OtherLocalId = 1001;
+    private const uint ChildLocalId = 1002;
+
+    /// <summary>Physics time stepped so far (s): the backend's steps times their length, which with [Jolt]
+    /// PhysicsStepRate on can differ from the heartbeats' time by up to one step.</summary>
+    public double PhysicsTime => Scene.Substepping ? Scene.Substeps.Steps * (double)Scene.Substeps.StepSeconds : Heartbeats * Dt;
+    /// <summary>Heartbeats run so far.</summary>
+    public int Heartbeats;
+    /// <summary>Bodies the engine has awake now.</summary>
+    public int AwakeBodies => Harness.ActiveBodies(Scene);
+
+    /// <summary>A physical sphere prim, as a SceneObjectPart adds one (density 1000).</summary>
+    public PhysicsActor AddSphere(float diameter, Vector3 position)
+    {
+        PhysicsActor pa = Scene.AddPrimShape("harness sphere", PrimitiveBaseShape.CreateSphere(), position,
+                                             new Vector3(diameter, diameter, diameter), Quaternion.Identity, true, ActorLocalId);
+        pa.Density = 1000f;
+        Actor = pa;
+        ActorSize = new Vector3(diameter, diameter, diameter);
+        return pa;
+    }
+
+    /// <summary>A physical box prim linked to <see cref="Actor"/> as its child, as a SceneObjectPart adds a linked part
+    /// (density 1000, then link to the root's actor). Returns the child's actor.</summary>
+    public PhysicsActor AddChildBox(Vector3 size, Vector3 position, Quaternion rotation)
+    {
+        PhysicsActor pa = Scene.AddPrimShape("harness child", PrimitiveBaseShape.CreateBox(), position, size, rotation, true, ChildLocalId);
+        pa.Density = 1000f;
+        pa.link(Actor);
+        return pa;
+    }
 
     /// <summary>The second object: a box prim, physical (density 1000) or not (a fixed wall).</summary>
     public PhysicsActor AddOtherBox(Vector3 size, Vector3 position, Quaternion rotation, bool physical)
@@ -1330,6 +1360,7 @@ public static class Harness
                 sc.Input(r);
                 r.Clock = r.Now;
                 scene.Simulate(dt);
+                r.Heartbeats++;
 
                 Sample s = Read(r, (k + 1) * r.Dt);
                 result.Samples.Add(s);
@@ -1393,7 +1424,7 @@ public static class Harness
     private static readonly System.Reflection.FieldInfo BackendField =
         typeof(JoltScene).GetField("_backend", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
-    private static int ActiveBodies(JoltScene scene)
+    internal static int ActiveBodies(JoltScene scene)
         => BackendField?.GetValue(scene) is OpenSim.Region.PhysicsModules.Jolt.Backend.IPhysicsBackend b ? b.GetCapacityStats().ActiveBodyCount : -1;
 
     /// <summary>Half the size of a box with this rotation along a world axis: how far its surface reaches from its

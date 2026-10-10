@@ -211,8 +211,9 @@ operator sets it; that decides how a rate the heartbeat cannot honour is reporte
 - Collision events cover every step of the heartbeat. A touching pair counts once per heartbeat,
   as before. A contact that begins and ends inside one heartbeat gives `collision_start` in that
   heartbeat and `collision_end` in the next.
-- `llApplyImpulse` on a physical object gives the same velocity change as with one step per
-  heartbeat, and so does a force the scene marks as a push.
+- `llApplyImpulse` and `llApplyRotationalImpulse` on a physical object give the same velocity
+  change as with one step per heartbeat, and so does a force the scene marks as a push. A force or
+  torque set with `llSetForce` or `llSetTorque` acts in every step.
 - `PhysicsStepCollisionSteps` replaces `CollisionSteps` while the rate is on: the solver's
   sub-steps per physics step. 2 at 45 steps per second slices the solver at 90 Hz.
 - A heartbeat runs at most 16 steps. A heartbeat that would need more runs 16 and drops the rest
@@ -390,6 +391,36 @@ Watching the pools:
   each budget (`ray casts refused script=<n> simulator=<n>`). `jolt metrics` shows both lines.
 - The harness's `--pool-bench` (see "Physics harness") measures waits and step times for a heavy
   region sharing pools with light ones, for any `JobPools` and handoff.
+
+## Script forces on objects
+
+What a script does to a physical prim or linkset (avatars are not covered here):
+
+- `llSetForce`, `llSetTorque`, `llSetForceAndTorque`: the force (N) and torque (N m) act in every
+  physics step until the script sets them to `ZERO_VECTOR`, and wake a sleeping object. The script
+  engine turns a local vector into region axes once, when the call is made, so a local force keeps
+  the direction the object faced at that moment; it does not turn with the object.
+- `llApplyImpulse`: the velocity changes by the impulse divided by the mass (`llGetMass`), at once.
+- `llApplyRotationalImpulse`: the angular velocity changes by the impulse divided by the inertia
+  about that axis, at once.
+- `llSetBuoyancy`: the object feels (1 - buoyancy) of the region's gravity, as in ubODE: 0 falls
+  normally, 1 floats where it is, 2 rises at 1 g. Changing it wakes a sleeping object.
+- `llSetStatus` with `STATUS_ROTATE_X`, `_Y` or `_Z` set to `FALSE`: the object cannot turn about
+  that axis of its own; a torque, impulse or collision turns it only about the axes left free.
+  Locking stops its turning, as ubODE does. ubODE fixes a locked axis in the region where it pointed
+  when it was locked; Jolt keeps it on the object. The two agree with all three axes locked and
+  with only one free.
+- `llGetMass`: the volume times the density, in Second Life's lindograms (kg / 100): a 1 m cube at
+  the default density weighs 10, a 0.5 m sphere 0.65, a linkset the sum of its prims. A resized
+  physical prim gets the mass of its new size.
+- A call that reaches a linked child prim acts on the whole linkset.
+- A vehicle keeps its own forces: a set force, torque or buoyancy does nothing while the object is a
+  vehicle (as in ubODE), and takes effect again when the vehicle type is removed. Impulses still act.
+- A value that is not a number is refused and logged. A finite force, torque or buoyancy too large
+  for any step to follow is cut to what takes the object to the engine's speed cap
+  (`BodyMaxLinearSpeed`, `BodyMaxAngularSpeed`) in one step.
+- Prims carry the engine's linear and angular damping of 0.05 per second: a moving object loses
+  about 5 percent of its speed each second on top of what forces do.
 
 ## Avatar speeds
 
