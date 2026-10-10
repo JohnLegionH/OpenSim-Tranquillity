@@ -2196,6 +2196,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             }
         }
 
+        public Vector3 GetShapeCenterOfMass(ShapeId shape)
+        {
+            lock (_simLock)
+            {
+                if (_disposed || !_shapes.TryGet(shape.Value, out JoltShapeRecord rec) || !IsLive(rec))
+                    return Vector3.Zero;
+                return rec.NativeShape!.CenterOfMass;
+            }
+        }
+
         public void SetBodyDamping(BodyId body, float linear, float angular)
         {
             if (!float.IsFinite(linear) || !float.IsFinite(angular)) { CountRejectedNonFinite(); return; }

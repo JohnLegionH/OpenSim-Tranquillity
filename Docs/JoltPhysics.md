@@ -410,9 +410,16 @@ What a script does to a physical prim or linkset (avatars are not covered here):
   Locking stops its turning, as ubODE does. ubODE fixes a locked axis in the region where it pointed
   when it was locked; Jolt keeps it on the object. The two agree with all three axes locked and
   with only one free.
-- `llGetMass`: the volume times the density, in Second Life's lindograms (kg / 100): a 1 m cube at
-  the default density weighs 10, a 0.5 m sphere 0.65, a linkset the sum of its prims. A resized
-  physical prim gets the mass of its new size.
+- `llGetMass` and `llGetObjectMass`: the volume times the density, in Second Life's lindograms
+  (kg / 100): a 1 m cube at the default density weighs 10, a 0.5 m sphere 0.65, a linkset the sum
+  of its prims. A non-physical object weighs what it would weigh physical: the volume is the
+  shape's physical one (the convex hull for a cut, twisted or mesh prim). A resized prim gets the
+  mass of its new size.
+- `llGetCenterOfMass`: in region coordinates. A physical linkset reports the centre of all its
+  prims, each weighted by its own mass; called from a child prim, that prim's own centre; a lone
+  prim, its own centre. For a non-physical object the simulator takes the mass-weighted mean of its
+  prims' centres; the Second Life wiki says it should return the value last computed while the
+  object was physical, or the position (`llGetPos`) when there is none.
 - A call that reaches a linked child prim acts on the whole linkset.
 - A vehicle keeps its own forces: a set force, torque or buoyancy does nothing while the object is a
   vehicle (as in ubODE), and takes effect again when the vehicle type is removed. Impulses still act.
@@ -422,6 +429,17 @@ What a script does to a physical prim or linkset (avatars are not covered here):
 - Prims carry a linear and angular damping, by default 0.05 per second: a moving object loses
   about 5 percent of its speed each second on top of what forces do (see "Physics material on
   objects").
+
+## Editing and moving physical objects
+
+- Selected in the build tool, a physical object stops where it is and stays there: gravity, a set
+  force, an impulse, a push, a set velocity and a vehicle's own motion do not move it, and an object
+  that hits it or lands on it does not move it. Deselected, it carries on from rest. A selected
+  linkset holds as one object. ubODE also lets other objects pass through a selected one; in Jolt it
+  stays solid, as in BulletSim.
+- Moved or turned while it sleeps (by the build tool, `llSetPos`, `PRIM_POSITION`, or a rotation
+  the script engine lets through for a physical object), a physical object wakes and carries on
+  from where it was put: lifted, it falls back; turned, it settles. Not while the region is loading.
 
 ## Physics material on objects
 
@@ -449,8 +467,9 @@ Life wiki documents them:
 - In a linkset each prim keeps its own friction, restitution and density ("Can individual prims in
   a linked set have different Physics settings? Yes.", wiki, Physics Material Settings test): a
   contact uses the struck prim's friction and restitution, and the mass is the sum of each prim's
-  volume times its own density. The centre of mass and inertia do not follow different densities;
-  they are the linkset's shape at one density, scaled to that mass. The root prim's gravity
+  volume times its own density. The centre of mass the engine turns the linkset about, and its
+  inertia, do not follow different densities: they are the linkset's shape at one density, scaled to
+  that mass. `llGetCenterOfMass` does weight each prim by its own density. The root prim's gravity
   multiplier applies to the whole linkset, as in ubODE.
 - A vehicle sets its own contact friction (`VehicleContactFriction`), restitution (0) and damping
   (0) and ignores the gravity multiplier; the prim's values come back when the vehicle type is

@@ -341,11 +341,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             root.ScriptSetPhysicsStatus(true);
             PhysicsActor rpa = root.RootPart.PhysActor;
             if (rpa == null) { MainConsole.Instance.Output($"{LogHeader} linktest: root has no PhysActor."); return; }
-            float singleMass = rpa.Mass;
+            float singleMass = BodyMassOf(rpa);
             c1.RootPart.PhysActor?.link(rpa);   // the OpenSim child.link(root) handoff
             c2.RootPart.PhysActor?.link(rpa);
             System.Threading.Thread.Sleep(500);   // the compound rebuild is coalesced to the next Simulate
-            float compoundMass = rpa.Mass;
+            float compoundMass = BodyMassOf(rpa);
             float startZ = rpa.Position.Z;
 
             System.Threading.Thread.Sleep(3000);   // let the compound fall on the heartbeat
@@ -367,6 +367,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // and confirm the module delivers CollisionEventUpdates - a non-empty collider set while touching
         // (start + ongoing), the struck OBJECT's LocalID in that set (-> llDetected* / link number), and an
         // empty set after the box is removed (-> collision_end). Console stand-in for the viewer script.
+        // The mass of the body the engine moves: a welded linkset's root body carries the whole linkset's (each part's
+        // actor reports only its own Mass, which core adds up).
+        private static float BodyMassOf(PhysicsActor pa) => pa is JoltPrim p ? p.BodyMass : pa.Mass;
+
         private void JoltCollideTest()
         {
             float tz = 25f;
@@ -1399,7 +1403,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             root.ScriptSetPhysicsStatus(true);
             PhysicsActor rpa = root.RootPart.PhysActor;
             if (rpa == null) { MainConsole.Instance.Output($"{LogHeader} unlinktest: no root PhysActor."); return; }
-            float single = rpa.Mass;
+            float single = BodyMassOf(rpa);
 
             // Multi-child + down-to-one: link 2 (3x), unlink each back to the single root body.
             SceneObjectGroup c1 = RezTestPrim("box", rootPos + new Vector3(0.6f, 0f, 0f), size); c1.ScriptSetPhysicsStatus(true);
@@ -1407,13 +1411,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c1.RootPart.PhysActor?.link(rpa);
             c2.RootPart.PhysActor?.link(rpa);
             System.Threading.Thread.Sleep(500);   // rebuild coalesced to the next Simulate
-            float m3 = rpa.Mass;
+            float m3 = BodyMassOf(rpa);
             RemovePrim(c1.RootPart.PhysActor); c1.RootPart.PhysActor = null;   // OpenSim's unlink handoff
             System.Threading.Thread.Sleep(500);
-            float m2 = rpa.Mass;
+            float m2 = BodyMassOf(rpa);
             RemovePrim(c2.RootPart.PhysActor); c2.RootPart.PhysActor = null;
             System.Threading.Thread.Sleep(500);
-            float m1 = rpa.Mass;
+            float m1 = BodyMassOf(rpa);
             MainConsole.Instance.Output($"{LogHeader} [unlinktest] single={single:0.0}  linked3={m3:0.0}(~{single * 3f:0.0})  unlink->{m2:0.0}(~{single * 2f:0.0})  unlink->{m1:0.0}(~{single:0.0}=single, down-to-one clean)");
             _scene.DeleteSceneObject(c1, false); _scene.DeleteSceneObject(c2, false);
 
@@ -1425,10 +1429,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 ch.ScriptSetPhysicsStatus(true);
                 ch.RootPart.PhysActor?.link(rpa);
                 System.Threading.Thread.Sleep(350);
-                float up = rpa.Mass;
+                float up = BodyMassOf(rpa);
                 RemovePrim(ch.RootPart.PhysActor); ch.RootPart.PhysActor = null;
                 System.Threading.Thread.Sleep(350);
-                float down = rpa.Mass;
+                float down = BodyMassOf(rpa);
                 _scene.DeleteSceneObject(ch, false);
                 cyc += $" [{up:0.0}/{down:0.0}]";
                 if (System.Math.Abs(up - single * 2f) > single * 0.1f || System.Math.Abs(down - single) > single * 0.1f) cyclesOk = false;

@@ -403,6 +403,26 @@ public sealed class Run
         return pa;
     }
 
+    /// <summary>A further prim with its own local id, physical or not, as a SceneObjectPart adds one (density 1000, or
+    /// <paramref name="density"/>). With <paramref name="linkTo"/> it is linked to that actor as its child, as core links
+    /// a physical linkset's parts. <see cref="Actor"/> is not changed.</summary>
+    public PhysicsActor AddPart(PrimitiveBaseShape shape, Vector3 size, Vector3 position, Quaternion rotation, bool physical,
+                                uint localId, PhysicsActor linkTo = null, float density = 1000f)
+    {
+        PhysicsActor pa = Scene.AddPrimShape("harness part", shape, position, size, rotation, physical, localId);
+        pa.Density = density;
+        if (linkTo != null)
+            pa.link(linkTo);
+        return pa;
+    }
+
+    private static readonly System.Reflection.FieldInfo MesherField =
+        typeof(JoltScene).GetField("m_mesher", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+    /// <summary>Gives the scene a mesher, as a region hands it the region's IMesher. The harness has none otherwise, so a
+    /// prim that is not a box, sphere or cylinder takes its bounding box.</summary>
+    public void UseMesher(IMesher mesher) => MesherField.SetValue(Scene, mesher);
+
     public float GroundAt(float x, float y) => Scene.TerrainHeightAt(x, y);
 
     /// <summary>A physical box prim, as a SceneObjectPart adds one (density 1000).</summary>

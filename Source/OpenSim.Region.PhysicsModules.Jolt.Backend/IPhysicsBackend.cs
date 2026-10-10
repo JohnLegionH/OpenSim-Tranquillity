@@ -731,6 +731,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         void SetBodyPartMaterial(BodyId body, uint partUserData, float friction, float restitution);
         /// <summary>A live shape's geometric volume (m^3); 0 for an unknown handle.</summary>
         float GetShapeVolume(ShapeId shape);
+        /// <summary>A live shape's centre of mass in the shape's own frame (m), as Jolt computes it from the geometry at a
+        /// uniform density; zero for an unknown handle.</summary>
+        Vector3 GetShapeCenterOfMass(ShapeId shape);
         void SetBodyDamping(BodyId body, float linear, float angular);
         void SetBodyGravityFactor(BodyId body, float factor);
 
