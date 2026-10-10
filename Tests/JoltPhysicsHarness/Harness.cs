@@ -287,6 +287,31 @@ public sealed class RunResult
         return sb.ToString();
     }
 
+    public const string PartsCsvHeader = "t,part,x,y,z,vx,vy,vz";
+
+    /// <summary>The traces of the parts a scenario keeps one for (HarnessPart.Trace), one line per part per heartbeat,
+    /// as ToCsv; null when it keeps none.</summary>
+    public string PartsToCsv()
+    {
+        if (!Parts.Any(p => p.Trace != null))
+            return null;
+        var sb = new StringBuilder();
+        sb.Append(PartsCsvHeader).Append('\n');
+        foreach (HarnessPart p in Parts.Where(p => p.Trace != null))
+            foreach ((double t, Vector3 at, Vector3 v) in p.Trace)
+                sb.Append(Fmt(t, "0.0000")).Append(',').Append(p.Name).Append(',')
+                  .Append(Fmt(at.X, "0.0000")).Append(',').Append(Fmt(at.Y, "0.0000")).Append(',').Append(Fmt(at.Z, "0.0000")).Append(',')
+                  .Append(Fmt(v.X, "0.0000")).Append(',').Append(Fmt(v.Y, "0.0000")).Append(',').Append(Fmt(v.Z, "0.0000")).Append('\n');
+        return sb.ToString();
+    }
+
+    /// <summary>One line per part whose sleep the scenario watches: when it first fell asleep ("-": never), whether it
+    /// was asleep at the end, and how far it moved from where it started.</summary>
+    public IEnumerable<string> PartLines()
+        => Parts.Where(p => p.SleepWatched).Select(p =>
+            $"  part {p.Name}: asleep at {Fmt(p.SleptAt, "0.00")} s, asleep at the end {(p.AsleepAtEnd ? "yes" : "no")}, " +
+            $"moved {Fmt(Vector3.Distance(p.Position, p.EndPosition), "0.0000")} m");
+
     public const string SummaryHeader =
         "scenario,slope_deg,rate_hz,steps,top_speed,release_t,release_speed,steady_speed,steady_hspeed,dist_before_release,dist_after_release,time_to_rest,peak_height,peak_rise,z_range,max_tilt_deg,end_x,end_y,end_z,left_region_t,nonfinite," +
         "sleep_after,active_at_end,impact_t,arrival_speed,leaving_speed,penetration,tunneled,push_range_early,push_range_late,push_penetration,crash_rise," +
@@ -1530,6 +1555,10 @@ public static class Harness
             result.Parts.AddRange(r.Parts);
             result.Watches.AddRange(r.Watches);
             result.Summary.LeftRegionT = leftAt;
+            // The run ends on the first sample outside the region, where the body has already left the engine and so
+            // reads as nothing awake. That is not sleep, so a run that leaves the region has no sleep time.
+            if (!double.IsNaN(leftAt))
+                result.Summary.SleepAfter = double.NaN;
             Backend.PhysicsCapacityStats stats = scene.CapacityStats();
             result.Summary.RayCasts = stats.RayCasts;
             result.Summary.RayCastsRefused = stats.RayCastsRefused;
@@ -1641,10 +1670,10 @@ public static class Harness
     // The object is going through the second one: their centres have crossed along x (the way it was driven) while
     // the two are still pushed into each other by more than ThroughOverlap, so it did not go round or over. (At the
     // harness's speeds a step moves less than the two objects span together, so a pass through always leaves such a
-    // sample.)
+    // sample.) Only while both are in the region (BothInRegion).
     private const float ThroughOverlap = 0.1f;
     private static bool PassedThroughOther(Run r, Sample s)
-        => s.Position.X >= s.Other.X && GapToOther(r, s) < -ThroughOverlap;
+        => BothInRegion(r, s) && s.Position.X >= s.Other.X && GapToOther(r, s) < -ThroughOverlap;
 
     // The gap from the object's lowest point to the ground under it.
     private static float GapBelow(Run r, Sample s)
@@ -1656,7 +1685,15 @@ public static class Harness
     /// <summary>A gap under this counts as the surfaces meeting.</summary>
     public const float ContactGap = 0.02f;
 
-    private static bool InRegion(Vector3 p) => p.X >= 0f && p.Y >= 0f && p.X <= Course.Size && p.Y <= Course.Size;
+    internal static bool InRegion(Vector3 p) => p.X >= 0f && p.Y >= 0f && p.X <= Course.Size && p.Y <= Course.Size;
+
+    /// <summary>The object and the second one (when there is one) are both still in the region. A body that crosses the
+    /// edge leaves the engine and waits just outside it, where it crossed, until core crosses it into the neighbour
+    /// (JoltPrim, after ubODE's ODEPrim.UpdatePositionAndVelocity); the harness has no core to cross it, so it waits
+    /// there to the end of the run while the other one moves on. A position read after that is where it waits, not
+    /// where it would have gone, so the rules that set the two objects' positions against each other skip such
+    /// samples.</summary>
+    internal static bool BothInRegion(Run r, Sample s) => InRegion(s.Position) && (r.Other == null || InRegion(s.Other));
 
     private static bool Finite(Vector3 v) => float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z);
 
@@ -1763,7 +1800,8 @@ public static class Harness
             // the contact, or a body still swinging onto it).
             if (after >= LeavingDelay - 1e-9 && after <= 1.0 + 1e-9)
                 m.LeavingSpeed = MathF.Max(m.LeavingSpeed, MathF.Max(s.Speed, s.OtherSpeed));
-            m.Penetration = MathF.Max(m.Penetration, overlap);
+            if (BothInRegion(r, s))
+                m.Penetration = MathF.Max(m.Penetration, overlap);
             if (after <= 1.0 + 1e-9)
                 m.CrashRise = MathF.Max(m.CrashRise, MathF.Max(s.Position.Z - z0, r.Other != null ? s.Other.Z - otherZ0 : 0f));
             if (sc.PassedThrough != null && sc.PassedThrough(r, s))

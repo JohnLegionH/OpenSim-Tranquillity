@@ -215,7 +215,11 @@ operator sets it; that decides how a rate the heartbeat cannot honour is reporte
   change as with one step per heartbeat, and so does a force the scene marks as a push. A force or
   torque set with `llSetForce` or `llSetTorque` acts in every step.
 - `PhysicsStepCollisionSteps` replaces `CollisionSteps` while the rate is on: the solver's
-  sub-steps per physics step. 2 at 45 steps per second slices the solver at 90 Hz.
+  sub-steps per physics step. 2 at 45 steps per second slices the solver at 90 Hz. The module
+  takes more where that would slice it slower than 60 Hz, the step Jolt is built around ("In
+  general, the system is stable when running at 60 Hz with 1 collision step", Jolt's
+  Docs/Architecture.md): 3 at 22.5 steps per second. Ten stacked boxes stepped in 1/45 s solver
+  steps can sway and never fall asleep.
 - A heartbeat runs at most 16 steps. A heartbeat that would need more runs 16 and drops the rest
   of its time; `jolt capacity` shows how many heartbeats did ("physics steps").
 - A rate set below the heartbeat's own rate is refused with one warning at region start, and the
@@ -855,9 +859,9 @@ movement" (wiki.secondlife.com, the collision events). Jolt does this as follows
   `land_collision` goes on while it sleeps, as in ubODE; the wiki says nothing about it at rest.
 - Only prims whose scripts have a collision event are tracked, so the rest cost nothing extra.
 - `VelocityIterations` and `PositionIterations` in `[Jolt]` set the engine's velocity and position
-  steps (defaults 10 and 2, Jolt's own). A tall stack needs more velocity steps to come to rest: ten
-  stacked 0.5 m boxes do not fall asleep at 10 at 11 or 45 Hz, and fall over at 22.5 Hz; at 40 they
-  stand and sleep at 11 to 90 Hz.
+  steps (defaults 20 and 2; Jolt's own are 10 and 2). The velocity default is 20 because a tall stack
+  needs more velocity steps to come to rest: ten stacked 0.5 m boxes do not fall asleep at 10 at 11 or
+  45 Hz, and fall over at 22.5 Hz; at 20 they stand and sleep at 11 to 90 Hz.
 - A sleeping object moved by setting its position wakes (see "Editing and moving physical objects"), and
   an object asleep on a fixed prim wakes when that prim is moved or turned, so it falls instead of
   hanging in the air. Either way the contact ends once they part: one end event on each side.
@@ -1257,7 +1261,9 @@ What the option leaves as the harness has it:
 ### The regression check
 
 The Jolt harness workflow runs the runs listed in `Tests/JoltPhysicsHarness/ci/runs.txt`, one
-`--out` folder each, and then compares each run's `summary.csv` with a recorded baseline:
+`--out` folder each, and then compares each run's `summary.csv` with a recorded baseline. It also
+runs those in `ci/traced-runs.txt` (the ten-box tower at three solver settings) and uploads their
+traces with the others, under `traced/`, without comparing them:
 
 ```
 dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --check-baseline <folder of the runs> --baselines Tests/JoltPhysicsHarness/ci/baselines

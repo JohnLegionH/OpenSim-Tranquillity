@@ -71,12 +71,12 @@ public class PhysicsMaterialTests
     }
 
     // The length of the engine's integration step: the physics step split into the solver's collision steps ([Jolt]
-    // CollisionSteps 6 with one step per heartbeat, PhysicsStepCollisionSteps 2 with PhysicsStepRate on). Jolt adds
+    // CollisionSteps 6 with one step per heartbeat, PhysicsStepCollisionSteps 2 with PhysicsStepRate on, 3 at 22.5 Hz). Jolt adds
     // gravity to a body's velocity, then multiplies it by (1 - damping x h), then moves it, in each of these.
     private static double Substep(double physicsHz)
     {
         var c = new JoltConfig();
-        return physicsHz > 0 ? 1.0 / physicsHz / c.PhysicsStepCollisionSteps : 1.0 / Heartbeat / c.CollisionSteps;
+        return physicsHz > 0 ? 1.0 / physicsHz / c.CollisionStepsAt((float)physicsHz) : 1.0 / Heartbeat / c.CollisionSteps;
     }
 
     // The distance a body starting at rest falls in time t under g with damping c, stepped as the engine steps it.

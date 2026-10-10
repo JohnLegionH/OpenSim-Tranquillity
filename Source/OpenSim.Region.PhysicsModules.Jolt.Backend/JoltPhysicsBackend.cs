@@ -866,8 +866,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             _linearCastThreshold = _system.Settings.LinearCastThreshold;
             _bodyInterface = _system.BodyInterface;
             // [Jolt] VelocityIterations and PositionIterations: the solver's velocity and position steps per collision step.
-            // Their defaults (10 and 2) are Jolt's own. A tall stack needs more velocity steps to come to rest: ten 0.5 m boxes
-            // do not fall asleep at 10 and do at 20.
+            // PhysicsBackendSettings.Default keeps Jolt's own 10 and 2; the module's [Jolt] default is 20 velocity steps, since a
+            // tall stack needs more to come to rest: ten 0.5 m boxes do not fall asleep at 10 and do at 20.
             PhysicsSettings solver = _system.Settings;
             if (settings.VelocityIterations > 0)
                 solver.NumVelocitySteps = (uint)settings.VelocityIterations;
@@ -1255,6 +1255,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // The length of one solver step of the current Update (the step's time over its collision steps). Written under
         // _simLock before the Update, read by the contact callbacks inside it.
         private float _collisionStepSeconds;
+
+        /// <summary>The length of one solver step of the last Update (tests).</summary>
+        internal float CollisionStepSecondsForTest => Volatile.Read(ref _collisionStepSeconds);
 
         // Jolt applies restitution in the solver step in which it first finds a closing contact, at the speed the body had
         // at the start of that step, and the body bounces "from its current position rather than from a position where it

@@ -189,6 +189,19 @@ public class HarnessTests
     }
 
     [Fact]
+    public void A_run_that_leaves_the_region_reports_no_sleep_time()
+    {
+        // The sled runs off the region's south edge, which ends the run on the first sample outside. By then its body
+        // has left the engine, so that sample reads as nothing awake. That is not sleep: sleep_after is "-", not the
+        // leaving time less a release time the run never reached.
+        RunResult r = Run("sled");
+        Assert.False(double.IsNaN(r.Summary.LeftRegionT), "the sled did not leave the region");
+        Assert.True(double.IsNaN(r.Summary.SleepAfter), $"sleep_after {r.Summary.SleepAfter}");
+        int column = Array.IndexOf(RunResult.SummaryHeader.Split(','), "sleep_after");
+        Assert.Equal("-", r.SummaryLine().Split(',')[column]);
+    }
+
+    [Fact]
     public void Vehicle_param_overrides_reach_the_controller()
     {
         // The same car with a slower motor covers less ground under the key: an override changes the run.
@@ -210,6 +223,23 @@ public class HarnessTests
         Assert.Equal(plain.Samples[0].Position.X + 0.001f, moved.Samples[0].Position.X, 0.0002f);
         Assert.Equal(plain.Samples[0].Position.Y - 0.002f, moved.Samples[0].Position.Y, 0.0002f);
         Assert.Throws<ArgumentException>(() => Program.Run(new[] { "--scenario", "drop", "--start-offset", "0.001" }, new StringWriter()));
+    }
+
+    [Fact]
+    public void The_tower_traces_every_box_and_says_when_each_fell_asleep()
+    {
+        RunResult r = Harness.Harness.Run(Harness.Harness.Find("tower-10"), new HarnessOptions { RateHz = 11.0, PhysicsRateHz = 45.0 });
+        string[] lines = r.PartsToCsv().TrimEnd('\n').Split('\n');
+        Assert.Equal(RunResult.PartsCsvHeader, lines[0]);
+        // One line per box per heartbeat, every box named.
+        Assert.Equal(10 * r.Samples.Count, lines.Length - 1);
+        Assert.Equal(Enumerable.Range(1, 10).Select(i => $"box{i}"), lines.Skip(1).Select(l => l.Split(',')[1]).Distinct());
+        List<string> parts = r.PartLines().ToList();
+        Assert.Equal(10, parts.Count);
+        Assert.All(parts.Zip(r.Parts), x => Assert.StartsWith($"  part {x.Second.Name}: asleep at {(double.IsNaN(x.Second.SleptAt) ? "-" : x.Second.SleptAt.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture))} s", x.First));
+        // A run of a scenario that keeps no part traces writes none.
+        Assert.Null(Run("drop").PartsToCsv());
+        Assert.Empty(Run("drop").PartLines());
     }
 
     [Fact]

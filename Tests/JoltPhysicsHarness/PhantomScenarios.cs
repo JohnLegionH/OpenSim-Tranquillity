@@ -151,6 +151,8 @@ public sealed class HarnessPart
     /// asleep when the run ended (both set by scenarios that watch for sleep).</summary>
     public double SleptAt = double.NaN;
     public bool AsleepAtEnd;
+    /// <summary>The scenario watches this part's sleep (SleptAt and AsleepAtEnd are set).</summary>
+    public bool SleepWatched;
     /// <summary>Where the part was and how fast it went before each heartbeat, when a scenario keeps a trace of it.</summary>
     public List<(double T, Vector3 Position, Vector3 Velocity)> Trace;
     internal bool WasAwake;
