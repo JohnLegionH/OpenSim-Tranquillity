@@ -55,6 +55,11 @@ public sealed class GrabPlan
     public Vector3 CursorOffset;
     /// <summary>A fixed wall or a second physical box lies along the way.</summary>
     public float Mass;
+    /// <summary>Not core's grab path: each update sets the actor's move-to-target (PIDTarget, PIDTau, PIDActive), as
+    /// llMoveToTarget does, with <see cref="PidTau"/>, to record what that controller does with the same cursor.</summary>
+    public bool UsePid;
+    public float PidTau = 0.25f;
+    internal bool PidOn;
     public bool Obstacle;
     public bool ObstaclePhysical;
     /// <summary>The next update's number (updates are numbered from the start of the run, at j / ViewerHz).</summary>
@@ -224,12 +229,26 @@ public static class GrabScenarios
                 continue;
             if (!p.UpdatesWhileHeld && t > p.DragEnd)
                 continue;
-            p.Core.Update(part, p.Ideal(t) + p.CursorOffset);
+            if (p.UsePid)
+            {
+                PhysicsActor a = r.Actor;
+                a.PIDTarget = p.Ideal(t) + p.CursorOffset;
+                a.PIDTau = p.PidTau;
+                a.PIDActive = true;
+                p.PidOn = true;
+            }
+            else
+                p.Core.Update(part, p.Ideal(t) + p.CursorOffset);
             p.Sent++;
+        }
+        if (p.UsePid && p.PidOn && !double.IsNaN(p.ReleaseAt) && r.Now > p.ReleaseAt)
+        {
+            r.Actor.PIDActive = false;
+            p.PidOn = false;
         }
     }
 
-    private static Scenario Drag(string name, string description, float mass, Vector3 direction, float distance, bool release = false, bool held = true)
+    private static Scenario Drag(string name, string description, float mass, Vector3 direction, float distance, bool release = false, bool held = true, bool pid = false)
         => new()
         {
             Name = name,
@@ -239,6 +258,7 @@ public static class GrabScenarios
             {
                 GrabPlan p = Begin(r, "box", direction, distance, mass);
                 p.UpdatesWhileHeld = held;
+                p.UsePid = pid;
                 if (release)
                     p.ReleaseAt = ReleaseTime;
             },
@@ -313,6 +333,9 @@ public static class GrabScenarios
         Drag("grab-side-1kg-still", "As grab-side-1kg, but the viewer sends nothing once the cursor has stopped (a mouse held perfectly still).", 1f, Vector3.UnitX, Reach, held: false),
         Drag("grab-release-1kg", "A 1 kg cube dragged along x and let go as the cursor stops, while still moving; 4.5 s watched.", 1f, Vector3.UnitX, Reach, release: true),
         Drag("grab-release-100kg", "A 100 kg cube dragged along x and let go as the cursor stops, while still moving; 4.5 s watched.", 100f, Vector3.UnitX, Reach, release: true),
+        Drag("grab-pid-side-1kg", "Not core's grab path: a 1 kg cube whose move-to-target (tau 0.25 s) is set to the cursor at each update, dragged 5 m along x in 2 s, held 5 s.", 1f, Vector3.UnitX, Reach, pid: true),
+        Drag("grab-pid-lift-1kg", "Not core's grab path: a 1 kg cube whose move-to-target (tau 0.25 s) is set to the cursor at each update, lifted 3 m in 2 s, held 5 s.", 1f, Vector3.UnitZ, LiftHeight, pid: true),
+        Drag("grab-pid-release-1kg", "Not core's grab path: as grab-pid-side-1kg, move-to-target switched off as the cursor stops, 4.5 s watched.", 1f, Vector3.UnitX, Reach, release: true, pid: true),
         Linkset(),
         Obstacle("grab-wall", "A 10 kg cube dragged 5 m along x into a fixed wall 2.5 m ahead, held 5 s.", false),
         Obstacle("grab-box", "A 10 kg cube dragged 5 m along x into a second 10 kg physical cube 2.5 m ahead, held 5 s.", true),

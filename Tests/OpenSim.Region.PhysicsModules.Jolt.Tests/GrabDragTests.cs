@@ -30,7 +30,7 @@ public class GrabDragTests
     public static IEnumerable<object[]> Cases()
     {
         foreach (string name in new[] { "grab-side-1kg", "grab-side-100kg", "grab-lift-1kg", "grab-lift-100kg", "grab-side-1kg-still",
-                                        "grab-release-1kg", "grab-release-100kg", "grab-linkset", "grab-wall", "grab-box" })
+                                        "grab-release-1kg", "grab-release-100kg", "grab-pid-side-1kg", "grab-pid-lift-1kg", "grab-pid-release-1kg", "grab-linkset", "grab-wall", "grab-box" })
             foreach (double physicsHz in new[] { 0.0, 45.0 })
                 yield return new object[] { name, physicsHz };
     }
