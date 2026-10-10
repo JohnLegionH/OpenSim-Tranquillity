@@ -45,6 +45,9 @@ public static class Program
   --shot-speed V[,V..]       shot scenarios: the speed the ball is shot at (m/s, default 25). Lists sweep, as above.
   --start-offset DX,DY       move the scenario's own body (car, box or prim) DX and DY metres from its start;
                              nothing else moves (default: 0,0)
+  --sim-defaults             build every prim and avatar with the values the simulator hands the engine for a new
+                             one (a prim's wood material: friction 0.6, restitution 0.5; the default avatar box,
+                             2.1 m tall) instead of the harness's own (friction 0.6, restitution 0; 1.9 m)
   --out DIR                  write <scenario>-s<slope>-r<rate>.csv per run and summary.csv to DIR, and
                              native.txt, the joltc build loaded (for --check-baseline)
 
@@ -181,6 +184,7 @@ The summary table always goes to standard output. Nothing is written anywhere el
                     if (d.Length != 2) throw new ArgumentException("--start-offset needs two numbers: DX,DY");
                     (o.StartOffsetX, o.StartOffsetY) = (d[0], d[1]);
                     break;
+                case "--sim-defaults": o.SimulatorDefaults = true; break;
                 case "--out": outDir = Next(); break;
                 default: throw new ArgumentException($"unknown argument '{a}'");
             }
@@ -255,7 +259,7 @@ The summary table always goes to standard output. Nothing is written anywhere el
 
     private static HarnessOptions Copy(HarnessOptions o, double rate, float slope)
     {
-        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay, StartSpeed = o.StartSpeed, StartOffsetX = o.StartOffsetX, StartOffsetY = o.StartOffsetY };
+        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay, StartSpeed = o.StartSpeed, StartOffsetX = o.StartOffsetX, StartOffsetY = o.StartOffsetY, SimulatorDefaults = o.SimulatorDefaults };
         foreach (KeyValuePair<string, string> kv in o.Jolt) c.Jolt[kv.Key] = kv.Value;
         c.VehicleParams.AddRange(o.VehicleParams);
         c.VehicleFlags.AddRange(o.VehicleFlags);

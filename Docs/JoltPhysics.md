@@ -994,6 +994,7 @@ dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --sce
 | `--vparam NAME=V` or `NAME=X,Y,Z` | A vehicle parameter by its LSL name, applied after the scenario's own, e.g. `LINEAR_FRICTION_TIMESCALE=1,1,1000` (repeatable) |
 | `--vflag NAME` or `-NAME` | A vehicle flag set (or removed) after the scenario's own, e.g. `HOVER_UP_ONLY` (repeatable) |
 | `--ball M[,M..]`, `--shot-speed V[,V..]` | The `tunnel-` scenarios: the ball's diameter (m, default 0.2) and the speed it is shot at (m/s, default 25); lists run every combination |
+| `--sim-defaults` | Build every prim and avatar with the values the simulator hands the engine for a new one, instead of the harness's own (see "What the harness builds differently", below) |
 | `--out DIR` | Also write a CSV per run (`<scenario>-s<slope>-r<rate>.csv`, with `-p<rate>` added when the physics rate is on) and `summary.csv` there |
 
 Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, then released),
@@ -1039,6 +1040,37 @@ inside each heartbeat, so the two can be compared, e.g.
 `--scenario testcar --slope 15 --rate 11 --physics-rate 0,45`; the summary marks those rows
 `<scenario>/p45`. The harness writes nothing unless `--out` is given. The module's test
 project runs the same scenarios as regression tests (`HarnessTests`).
+
+### What the harness builds differently
+
+The harness adds its prims and avatars through the same `PhysicsScene` calls a region makes, but it
+does not set everything the simulator sets on a new one. By default:
+
+- A prim gets no material. `SceneObjectPart.AddToPhysics` gives every new actor its material (a new
+  prim is wood: friction 0.6, restitution 0.5), density, gravity multiplier, friction, restitution and
+  buoyancy. Without them the body keeps the backend's friction 0.6 and restitution 0.
+- A fixed prim gets no density, so it reports the mass of the backend's 1000 kg/m³, 100 times the
+  mass of the simulator's density 1000 (which the module scales by 0.01). A physical prim gets 1000.
+- An avatar is 0.45 x 0.6 x 1.9 m. For the default appearance the simulator hands `AddAvatar`
+  0.45 x 0.6 x 2.1 m (`AvatarAppearance.SetSize` adds 0.2 m to the height), and subscribes it to
+  collisions every 100 ms.
+
+`--sim-defaults` builds them as the simulator does. Two restitutions in a contact multiply and the
+terrain's is 0, so this changes a bounce only between two prims: a ball shot at a fixed wall comes back
+off it. A vehicle sets its own contact friction and restitution 0 while it is one, so no vehicle
+scenario changes. An avatar stands 0.1 m higher.
+
+What the option leaves as the harness has it:
+
+- A vehicle is made as a script makes one (`llSetVehicleType`, then its parameters). A vehicle rezzed
+  or loaded with its settings reaches the engine through `PhysicsActor.SetVehicle` instead, which the
+  harness does not use.
+- Every prim is added before the first step, as a region adds the prims it loads at start-up, not
+  after it, as a prim rezzed later is.
+- There is no mesher, so a prim that is not a plain box, sphere or cylinder is a bounding box. Every
+  scenario uses only plain boxes and spheres.
+- The physics step rate is one step per heartbeat unless `--physics-rate` is given; the module's own
+  default is 45 Hz.
 
 ### The regression check
 

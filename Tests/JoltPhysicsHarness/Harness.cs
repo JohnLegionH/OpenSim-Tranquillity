@@ -76,6 +76,14 @@ public sealed class HarnessOptions
     /// <summary>Shot scenarios (<see cref="TunnelScenarios"/>): the ball's diameter (m) and the speed it is shot at (m/s).</summary>
     public float ShotBall = TunnelScenarios.DefaultBall;
     public float ShotSpeed = TunnelScenarios.DefaultSpeed;
+    /// <summary>Build every prim and avatar with the values the simulator hands the engine for a new one, instead of
+    /// the harness's own (off by default, so the recorded baselines keep their meaning). A prim gets what
+    /// SceneObjectPart.AddToPhysics sets on every new actor: the material (wood: friction 0.6, restitution 0.5), density
+    /// 1000, gravity multiplier 1, buoyancy 0, and for a root no rotation locks, before it is linked or made a vehicle.
+    /// An avatar gets the default appearance's box as ScenePresence.AddToPhysicalScene hands it to AddAvatar (0.2 m taller
+    /// than the appearance's size, AvatarAppearance.SetSize), then its rotation, a 100 ms collision subscription and
+    /// always-run off. Without it a prim keeps the backend's friction 0.6 and restitution 0, and an avatar is 1.9 m.</summary>
+    public bool SimulatorDefaults;
 
     private static double DefaultPhysicsRate()
     {
@@ -369,8 +377,32 @@ public sealed class Run
     public int Stage;
 
     public static readonly Vector3 AvatarSize = new(0.45f, 0.6f, 1.9f);   // the default appearance's box
+    /// <summary>The box the simulator hands AddAvatar for the default appearance: AvatarAppearance.SetSize(0.45, 0.6, 1.9)
+    /// adds 0.2 m to the height (AVBOXAJUST).</summary>
+    public static readonly Vector3 SimulatorAvatarSize = new(0.45f, 0.6f, 2.1f);
+    /// <summary>The avatar box this run uses: <see cref="SimulatorAvatarSize"/> with <see cref="HarnessOptions.SimulatorDefaults"/>.</summary>
+    public Vector3 AvatarBox => Options.SimulatorDefaults ? SimulatorAvatarSize : AvatarSize;
     /// <summary>How far an avatar's capsule centre stands above what it stands on.</summary>
-    public float AvatarStandHalf => JoltCharacter.StandHalfFor(AvatarSize);
+    public float AvatarStandHalf => JoltCharacter.StandHalfFor(AvatarBox);
+
+    /// <summary>With <see cref="HarnessOptions.SimulatorDefaults"/>: what SceneObjectPart.AddToPhysics sets on a new prim's
+    /// actor right after AddPrimShape, in its order, with a new part's values (SceneObjectPart: material wood, density
+    /// 1000, gravity multiplier 1; SOPMaterialData: wood is friction 0.6, restitution 0.5; buoyancy 0; RotationAxisLocks
+    /// 0, set on a root only). Returns the actor.</summary>
+    public PhysicsActor AsSimulatorAdds(PhysicsActor pa, bool root = true)
+    {
+        if (!Options.SimulatorDefaults || pa == null)
+            return pa;
+        pa.SetMaterial((int)Material.Wood);
+        pa.Density = 1000f;
+        pa.GravModifier = 1f;
+        pa.Friction = 0.6f;
+        pa.Restitution = 0.5f;
+        pa.Buoyancy = 0f;
+        if (root)
+            pa.LockAngularMotion(0);
+        return pa;
+    }
     public const uint ActorLocalId = 1000;
     private const uint OtherLocalId = 1001;
     private const uint ChildLocalId = 1002;
@@ -392,6 +424,7 @@ public sealed class Run
     {
         PhysicsActor pa = Scene.AddPrimShape("harness sphere", PrimitiveBaseShape.CreateSphere(), position,
                                              new Vector3(diameter, diameter, diameter), Quaternion.Identity, true, ActorLocalId);
+        AsSimulatorAdds(pa);
         pa.Density = 1000f;
         Actor = pa;
         ActorSize = new Vector3(diameter, diameter, diameter);
@@ -404,6 +437,7 @@ public sealed class Run
     public PhysicsActor AddChildBox(Vector3 size, Vector3 position, Quaternion rotation, uint localId = ChildLocalId)
     {
         PhysicsActor pa = Scene.AddPrimShape("harness child", PrimitiveBaseShape.CreateBox(), position, size, rotation, true, localId);
+        AsSimulatorAdds(pa, root: false);
         pa.Density = 1000f;
         pa.link(Actor);
         return pa;
@@ -413,6 +447,7 @@ public sealed class Run
     public PhysicsActor AddOtherBox(Vector3 size, Vector3 position, Quaternion rotation, bool physical)
     {
         PhysicsActor pa = Scene.AddPrimShape("harness other", PrimitiveBaseShape.CreateBox(), position, size, rotation, physical, OtherLocalId);
+        AsSimulatorAdds(pa);
         if (physical)
             pa.Density = 1000f;
         Other = pa;
@@ -427,6 +462,7 @@ public sealed class Run
                                 uint localId, PhysicsActor linkTo = null, float density = 1000f)
     {
         PhysicsActor pa = Scene.AddPrimShape("harness part", shape, position, size, rotation, physical, localId);
+        AsSimulatorAdds(pa, root: linkTo == null);
         pa.Density = density;
         if (linkTo != null)
             pa.link(linkTo);
@@ -447,6 +483,7 @@ public sealed class Run
     {
         position += new Vector3(Options.StartOffsetX, Options.StartOffsetY, 0f);
         PhysicsActor pa = Scene.AddPrimShape("harness box", PrimitiveBaseShape.CreateBox(), position, size, rotation, true, ActorLocalId);
+        AsSimulatorAdds(pa);
         pa.Density = 1000f;
         Actor = pa;
         ActorSize = size;
@@ -469,9 +506,17 @@ public sealed class Run
     /// it to AddAvatar at login, teleport, a region crossing or standing up.</summary>
     public PhysicsActor AddAvatarAt(Vector3 position, bool flying)
     {
-        PhysicsActor pa = Scene.AddAvatar(ActorLocalId, "Test User", position, AvatarSize, 0f, flying);
+        PhysicsActor pa = Scene.AddAvatar(ActorLocalId, "Test User", position, AvatarBox, 0f, flying);
+        if (Options.SimulatorDefaults)
+        {
+            // ScenePresence.AddToPhysicalScene, after AddAvatar: the body's rotation (none for a new arrival), a 100 ms
+            // collision subscription, and always-run as the agent last set it (off).
+            pa.Orientation = Quaternion.Identity;
+            pa.SubscribeEvents(100);
+            pa.SetAlwaysRun = false;
+        }
         Actor = pa;
-        ActorSize = AvatarSize;
+        ActorSize = AvatarBox;
         return pa;
     }
 
@@ -615,8 +660,8 @@ public static class Harness
     private static void SetupRayRow(Run r)
     {
         for (int i = 0; i < RayRowBoxes; i++)
-            r.Scene.AddPrimShape("harness row", PrimitiveBaseShape.CreateBox(), new Vector3(20f + i * 0.5f, 128f, Course.Ground + 1f),
-                                 new Vector3(0.25f, 0.5f, 0.5f), Quaternion.Identity, false, 2000u + (uint)i);
+            r.AsSimulatorAdds(r.Scene.AddPrimShape("harness row", PrimitiveBaseShape.CreateBox(), new Vector3(20f + i * 0.5f, 128f, Course.Ground + 1f),
+                                                   new Vector3(0.25f, 0.5f, 0.5f), Quaternion.Identity, false, 2000u + (uint)i));
         r.AddBox(new Vector3(1f, 1f, 1f), new Vector3(128f, 100f, Course.Ground + 0.52f), Quaternion.Identity);
     }
 
