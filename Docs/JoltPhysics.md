@@ -989,9 +989,38 @@ exact solution over the step the engine takes:
   mass, so the motor also turns the vehicle: each step's motor change `dv` is an impulse `m dv` at
   the offset `r`, turning the body by `I^-1 (r x m dv)`. A thrust below the centre of mass pitches
   the nose up, as a rocket's would.
-- Banking turns the yaw rate about world z toward a target in proportion to the roll and
+- Banking turns the yaw rate about world z toward a target in proportion to the roll angle and
   `VEHICLE_BANKING_EFFICIENCY` (and, with `VEHICLE_BANKING_MIX` toward 1, the forward speed over
-  30 m/s), with `VEHICLE_BANKING_TIMESCALE` as its time constant. It needs the attractor on.
+  30 m/s), with `VEHICLE_BANKING_TIMESCALE` as its time constant: `target = -roll * eff * pi * ((1 - mix)
+  + mix * speed / 30)`. The roll is the angle about the vehicle's x axis, as the attractor measures it,
+  whatever the pitch; upside down it is measured from the nearer side and turns the other way. A
+  negative efficiency leans out of the turn. It needs the attractor on.
+- With `VEHICLE_FLAG_LIMIT_MOTOR_UP`, banking's strength fades in the air as `e^(-t / T)`, `t` the
+  time since the vehicle last touched something and `T` the banking timescale, as `llSetVehicleFlags`
+  documents; it is whole again on the step after the vehicle touches something.
+- `VEHICLE_FLAG_MOUSELOOK_STEER` and `VEHICLE_FLAG_MOUSELOOK_BANK` aim the angular motor where the
+  driver's camera looks (see "Mouselook steering" below).
+
+### Mouselook steering
+
+The simulator hands a vehicle's root the driver's camera once a script takes the seated driver's
+controls (`llTakeControls`): `PhysicsActor.TryGetCameraData`, the direction the camera looks. With
+`VEHICLE_FLAG_MOUSELOOK_STEER` the angular motor turns the vehicle so that its x axis points that way,
+in yaw and pitch. With `VEHICLE_FLAG_MOUSELOOK_BANK` the pitch aims the same way, and the camera's
+yaw becomes a roll toward it (a camera to the left rolls the vehicle left), which banking then turns
+into a yaw; with both flags set, the bank rule is used.
+
+Each aimed axis of the angular motor asks for `a / Tm`, the turning rate that would close its angle
+`a` to the camera in one motor timescale, held to that axis of the script's
+`VEHICLE_ANGULAR_MOTOR_DIRECTION`: the flags "only turn the vehicle up to the current
+VEHICLE_ANGULAR_MOTOR_DIRECTION", and a zero direction does not turn it. The motor equation acts on
+that as on any motor direction, with its timescale and decay. Together with the motor's own lag this
+gives a turn with half critical damping: it overshoots the camera by about a sixth of the angle and
+settles in a few motor timescales. The axes not aimed keep the script's direction.
+
+The camera is used whether or not the driver is in mouselook; Second Life's pages do not say what
+happens outside it. With no driver's camera (no script has taken the controls) the flags change
+nothing. `VEHICLE_FLAG_CAMERA_DECOUPLED` is a hint for the viewer and does nothing in the engine.
 - Linear deflection turns the velocity toward the vehicle's nose, keeping its speed, the angle between
   them decaying as `e^(-eff t / T)`; with `VEHICLE_FLAG_NO_DEFLECTION_UP` only the horizontal part
   turns. Angular deflection turns the nose toward the velocity the same way, scaled by the speed over
@@ -1047,12 +1076,7 @@ The car and the airplane presets agree in every field.
 
 These documented behaviours are not simulated:
 
-- `VEHICLE_FLAG_MOUSELOOK_STEER` and `VEHICLE_FLAG_MOUSELOOK_BANK` (steering or banking toward the
-  viewer's mouselook camera): the flags are stored and do nothing.
 - `VEHICLE_FLAG_BLOCK_INTERFERENCE` (passengers' attachments cannot push the vehicle): stored, no effect.
-- `VEHICLE_FLAG_LIMIT_MOTOR_UP`'s effect on banking ("the strength of the banking will decay when the
-  vehicle no longer experiences collisions"): the rate of that decay is not documented, so banking
-  keeps its strength in the air.
 - Wind (`VEHICLE_LINEAR_WIND_EFFICIENCY` and the angular one): no wind is simulated.
 
 ### Parked vehicles sleep
@@ -1180,7 +1204,11 @@ Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, t
 `testcar-down` and `car-down` (key held down the ramp), `hover`, `attract-roll` and `attract-pitch`
 (one behaviour alone), `park-new`, `park-faded`, `park-drive`, `park-car` and `park-wake` (sleeping), and
 `crash-wall`, `crash-box`, `crash-headon` and `crash-drop`, `rollonly` (a car rolled and pitched with
-`VEHICLE_FLAG_LIMIT_ROLL_ONLY`) and `motor-offset` (a floating box pushed below its centre of mass), and
+`VEHICLE_FLAG_LIMIT_ROLL_ONLY`) and `motor-offset` (a floating box pushed below its centre of mass),
+`bank-turn` (the airplane rolled 20 degrees and pitched 30 degrees nose up, banking into a right turn),
+`mouselook-turn` (a car with `VEHICLE_FLAG_MOUSELOOK_STEER` turning to a driver's camera looking north)
+and `mouselook-bank` (the airplane with `VEHICLE_FLAG_MOUSELOOK_BANK` rolling and banking toward a camera
+60 degrees to its right), and
 the phantom and volume-detect scenarios: `vd-walk` and `phantom-walk` (an avatar walking through a fixed
 volume-detect or phantom box), `vd-drop`, `phantom-drop` and `phantom-physical-drop` (a box falling through a
 slab), `phantom-physical-walk`, the `-on-walk` and `-off-walk` scenarios (the flag switched before the avatar
