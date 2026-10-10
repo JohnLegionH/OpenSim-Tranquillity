@@ -189,6 +189,19 @@ public class HarnessTests
     }
 
     [Fact]
+    public void A_run_that_leaves_the_region_reports_no_sleep_time()
+    {
+        // The sled runs off the region's south edge, which ends the run on the first sample outside. By then its body
+        // has left the engine, so that sample reads as nothing awake. That is not sleep: sleep_after is "-", not the
+        // leaving time less a release time the run never reached.
+        RunResult r = Run("sled");
+        Assert.False(double.IsNaN(r.Summary.LeftRegionT), "the sled did not leave the region");
+        Assert.True(double.IsNaN(r.Summary.SleepAfter), $"sleep_after {r.Summary.SleepAfter}");
+        int column = Array.IndexOf(RunResult.SummaryHeader.Split(','), "sleep_after");
+        Assert.Equal("-", r.SummaryLine().Split(',')[column]);
+    }
+
+    [Fact]
     public void Vehicle_param_overrides_reach_the_controller()
     {
         // The same car with a slower motor covers less ground under the key: an override changes the run.

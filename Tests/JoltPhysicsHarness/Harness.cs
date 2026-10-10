@@ -1555,6 +1555,10 @@ public static class Harness
             result.Parts.AddRange(r.Parts);
             result.Watches.AddRange(r.Watches);
             result.Summary.LeftRegionT = leftAt;
+            // The run ends on the first sample outside the region, where the body has already left the engine and so
+            // reads as nothing awake. That is not sleep, so a run that leaves the region has no sleep time.
+            if (!double.IsNaN(leftAt))
+                result.Summary.SleepAfter = double.NaN;
             Backend.PhysicsCapacityStats stats = scene.CapacityStats();
             result.Summary.RayCasts = stats.RayCasts;
             result.Summary.RayCastsRefused = stats.RayCastsRefused;
