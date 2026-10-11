@@ -24,8 +24,6 @@
 
   <!-- The native joltc comes from the JoltPhysics.Native package through the backend's reference, and lands in an
        application's output under runtimes/<rid>/native/; JoltNative (in the backend) picks the file for the running
-       platform, checks its hash and loads it. The patched build, for operators who want more than one job pool, is
-       not kept in the repository: the joltc-native workflow builds it (native/joltc/README.md), and no build copies
-       it. -->
+       platform, checks its hash and loads it. -->
 
 </Project>

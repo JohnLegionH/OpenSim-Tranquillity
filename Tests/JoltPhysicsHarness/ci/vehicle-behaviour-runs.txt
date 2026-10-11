@@ -4,7 +4,7 @@
 #   dotnet JoltPhysicsHarness.dll --check-baseline <folder of the runs> --baselines Tests/JoltPhysicsHarness/ci/vehicle-behaviour-baselines
 # They are recorded for the stock Windows x64 joltc only (stock-1.0.4-win-x64); a build with no folder there is skipped.
 # They are not in runs.txt because a run listed there needs a baseline for every joltc build the project tests (the
-# patched build and the Linux file as well), and the committed baselines must match that list.
+# stock Windows x64 and Linux x64 files), and the committed baselines must match that list.
 iw-car-pad: --scenario car --slope 0 --rate 11,45 --jolt VehicleBehaviour=InWorldz
 iw-car-ramp: --scenario car-down --slope 15 --rate 11,45 --jolt VehicleBehaviour=InWorldz
 iw-airplane: --scenario airplane --rate 11,45 --jolt VehicleBehaviour=InWorldz

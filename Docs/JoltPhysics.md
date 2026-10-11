@@ -28,9 +28,9 @@ in the output:
 On a platform this project does not test, the module starts and logs a notice saying so.
 musl-based Linux (Alpine) has no native: there, keep another physics engine.
 
-The stock joltc runs **one job pool** (`JobPools`, below): its physics systems share one scratch
-allocator, so two physics updates at once would stop the process. For more than one pool, replace
-the file with this project's patched build (Windows x64 and Linux x64 only); how, and why, is in
+All regions in a process share one job pool on this native (`JobPools`, below): its physics systems
+share one scratch allocator, so two physics updates at once would stop the process. More pools need a
+change in joltc itself. The recorded files and their hashes are in
 [native/joltc/README.md](../native/joltc/README.md).
 
 A build with no runtime identifier carries every platform's file, so the same output runs on each.
@@ -39,45 +39,17 @@ module also finds it. Copy the whole output, including its `runtimes` folder.
 
 ### What is supported
 
-| Setup | On the stock joltc | On the patched joltc |
-|---|---|---|
-| One region per region server process | Tested and supported | Tested and supported |
-| Several regions in one process, on one job pool (`JobPools = 1`, the default) | Tested and working: the regions take turns on the pool | Tested and working |
-| More than one job pool (`JobPools` above 1) | Not available: the module runs one pool (below) | Tested and working; Windows x64 and Linux x64 only |
+| Setup | Status |
+|---|---|
+| One region per region server process | Tested and supported |
+| Several regions in one process, on one job pool (`JobPools = 1`, the default) | Tested and working: the regions take turns on the pool |
+| More than one job pool (`JobPools` above 1) | Not available: the module runs one pool |
 
-When `JobPools` asks for more than one pool on the stock joltc, the region server still starts and
-every region runs. The module runs one pool, sized as `JobPools = 1` would size it, logs one warning
-at start with the setting, the reason and the remedy (shown below, under "The native check at start"), and
+When `JobPools` asks for more than one pool, the region server still starts and every region runs.
+The module runs one pool, sized as `JobPools = 1` would size it, logs one warning at start with the
+setting, the reason and the remedy (shown below, under "The native check at start"), and
 `jolt capacity` shows the pools in use and why. All the process's regions then take turns on that
 pool, so a region whose physics is busy can make the others wait for their step; no step is skipped.
-
-### Selecting the patched build
-
-The patched joltc is this project's build of the same joltc source with two patches: each physics
-system gets its own scratch allocator, and the map of systems gets a lock. It is built on GitHub's
-runners by `.github/workflows/joltc-native.yml` from pinned joltc and Jolt Physics commits and the
-patches in `native/joltc/`, so anyone can rebuild it and compare the hashes.
-[native/joltc/README.md](../native/joltc/README.md) gives the recipe and the hashes.
-
-The repository does not keep the compiled file. To get it, run the `joltc native` workflow
-(`workflow_dispatch`, on a fork or a branch that has it) and download its `joltc-win-x64` or
-`joltc-linux-x64` artifact: the file, its `SHA256SUMS`, its exports and the toolchain it was built
-with. Check its hash against the table in the README; a file with another hash is refused at start
-(see "The native check at start").
-
-The module has no setting for the file's path: it loads the file it finds in the output. To select
-the patched build, replace the stock file in the build or publish output with the patched file for
-the platform, under the same name (`runtimes/win-x64/native/joltc.dll` or
-`runtimes/linux-x64/native/libjoltc.so`; for a build or publish for one runtime identifier, the
-file beside the application's assemblies), then check the output:
-
-```
-pwsh -File assert-joltc-native.ps1 -PublishDir "<publish directory>" -RequirePatched
-```
-
-At start the module's line says `patched build (native/joltc); safe for more than one job pool`, and
-`JobPools` takes effect. A rebuild of the output puts the stock file back, so replace it again after
-each build. Other platforms have no patched build and run one pool.
 
 ### When the JoltPhysics.Native version changes
 
@@ -94,11 +66,6 @@ through a JoltPhysicsSharp update) is refused at start until its files are recor
    the new version on Windows x64 and Linux x64 ("Physics harness", below). Until they are
    recorded, the regression check reports the new files as having no baseline.
 
-The patched build is made from the joltc source behind `JoltPhysics.Native 1.0.4` and replaces the
-stock file only under JoltPhysicsSharp 2.19.1. With a newer package, rebuild it from the joltc
-source of that package (the recipe in native/joltc/README.md) and record its hashes before using
-it for more than one pool.
-
 ### The native check at start
 
 When `physics = Jolt`, the module picks the file for the platform it runs on, computes its SHA-256
@@ -109,17 +76,10 @@ process, naming the build:
 [JOLT SCENE] joltc for linux-x64: /opt/opensim/bin/runtimes/linux-x64/native/libjoltc.so sha256 5FC05170... (stock JoltPhysics.Native 1.0.4; one job pool)
 ```
 
-or, with the patched build in place:
+With `JobPools` above 1 it also logs one warning, and runs one pool:
 
 ```
-[JOLT SCENE] joltc for linux-x64: /opt/opensim/bin/runtimes/linux-x64/native/libjoltc.so sha256 EEAD7C1A... (patched build (native/joltc); safe for more than one job pool)
-```
-
-With `JobPools` above 1 on a native that runs one pool, it also logs one warning, and runs one
-pool:
-
-```
-[JOLT SCENE] [Jolt] JobPools = 3, but the module runs ONE job pool: the loaded joltc (stock JoltPhysics.Native 1.0.4) is not safe for more than one job pool: its physics systems share one scratch allocator, and two physics updates at once would stop the process. Regions take turns on that pool. To run more than one pool, replace runtimes/linux-x64/native/libjoltc.so with this project's patched build (native/joltc/README.md); otherwise set [Jolt] JobPools = 1.
+[JOLT SCENE] [Jolt] JobPools = 3, but the module runs ONE job pool: the loaded joltc (stock JoltPhysics.Native 1.0.4) is not safe for more than one job pool: its physics systems share one scratch allocator, and two physics updates at once would stop the process. Regions take turns on that pool. More than one pool needs a change in joltc itself; set [Jolt] JobPools = 1.
 ```
 
 In the cases below the module logs one error line and throws from its `Initialise`, before any
@@ -162,7 +122,7 @@ Jolt is chosen per simulator in `[Startup]`, and it needs the Meshmerizer mesher
 
 `assert-joltc-native.ps1` (next to the module's project file) checks a build or publish directory
 before it is deployed: every `runtimes/<rid>/native/` joltc must be a build the module has a
-record of for its platform (with `-RequirePatched`, the patched build where there is one), and no
+record of for its platform, and no
 other joltc file may be there (`-AllowStray` reports such files without failing, for an
 installation that still holds files from an older deploy). It runs in Windows PowerShell and in
 PowerShell 7 on Linux:
@@ -335,9 +295,9 @@ All regions in a simulator share Jolt's worker threads through `JobPools` job po
 `ThreadCount` is the total number of worker threads, split evenly across the pools, and each
 region is given the pool with the fewest regions when it starts.
 
-More than one pool needs the patched joltc (see "Platforms"). On the stock joltc the module runs
-one pool, sized as `JobPools = 1` would size it, logs a warning at start naming the setting, and
-`jolt capacity` shows the pools in use and why.
+All regions in a process share one job pool on the joltc this module runs on, so more than one pool
+needs a change in joltc itself. The module runs one pool, sized as `JobPools = 1` would size it,
+logs a warning at start naming the setting, and `jolt capacity` shows the pools in use and why.
 
 `ThreadCount = 0` (the default) is automatic: each pool gets its share of the processor count
 less one, at most 4 threads and at least 1. On a 20-thread machine with one pool that is 4 threads;
@@ -1543,10 +1503,9 @@ dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --che
 
 The baseline depends on the joltc build that was loaded, not on the operating system: the stock
 files are built without Jolt's `CROSS_PLATFORM_DETERMINISTIC` option, so the stock Windows x64 file
-gives different results from the stock Linux x64 file, while the patched build gives the same
-results on both. Each `--out` folder holds `native.txt`, naming the build the run loaded, and the
-check reads `ci/baselines/patched/` for the patched build or `ci/baselines/stock-<version>-<rid>/`
-for a stock file. It leaves out `ray_us_per_cast`, which is timed on the wall clock. A build with
+gives different results from the stock Linux x64 file. Each `--out` folder holds `native.txt`,
+naming the build the run loaded, and the check reads `ci/baselines/stock-<version>-<rid>/` for that
+file. It leaves out `ray_us_per_cast`, which is timed on the wall clock. A build with
 no baseline (the stock Arm64 and macOS files, a file the module has no record of, or a new package
 version not yet recorded) is reported as `SKIPPED: no baseline for this native` with exit code 3,
 neither passed nor failed. Exit 0 is passed and 1 is failed. To record a build's baseline from a set

@@ -9,11 +9,9 @@
 // for the joltc build the runs loaded.
 //
 // Different joltc builds give different results: the stock JoltPhysics.Native files are not built with Jolt's
-// CROSS_PLATFORM_DETERMINISTIC option, so the stock Windows file and the stock Linux file disagree with each other and
-// with this project's patched build, while the patched build gives the same rows on Windows and Linux. So a baseline
-// belongs to a build, not to an operating system: each run's --out folder holds native.txt, naming the build the run
-// loaded (from JoltNative's record), and the check reads the baseline folder for that build:
-//   ci/baselines/patched/                  this project's patched build, any platform
+// CROSS_PLATFORM_DETERMINISTIC option, so the stock Windows file and the stock Linux file disagree with each other.
+// So a baseline belongs to a build, not to an operating system: each run's --out folder holds native.txt, naming the
+// build the run loaded (from JoltNative's record), and the check reads the baseline folder for that build:
 //   ci/baselines/stock-<version>-<rid>/    the stock file of JoltPhysics.Native <version> for one platform
 // A build with no folder (the stock ARM and macOS files, an unrecorded file, a new package version before its rows
 // are recorded) is reported as having no baseline: skipped, neither passed nor failed. A run with no file in the
@@ -49,15 +47,12 @@ public static class BaselineCheck
     private const int ListedDifferences = 20;
 
     /// <summary>
-    /// The baseline folder name for a joltc build: "patched" for this project's patched build, or
-    /// "stock-&lt;package version&gt;-&lt;runtimes folder&gt;" for a package file. Null for an unrecorded file.
+    /// The baseline folder name for a joltc build: "stock-&lt;package version&gt;-&lt;runtimes folder&gt;" for a
+    /// package file. Null for an unrecorded file.
     /// </summary>
-    public static string KeyFor(JoltNativeBuild build) => build switch
-    {
-        null => null,
-        { Origin: JoltNativeOrigin.PatchedBuild } => "patched",
-        _ => $"stock-{build.PackageVersion}-{build.Folder}",
-    };
+    public static string KeyFor(JoltNativeBuild build) => build == null
+        ? null
+        : $"stock-{build.PackageVersion}-{build.Folder}";
 
     /// <summary>The lines of native.txt for the build a run loaded.</summary>
     public static string Describe(JoltNativeInfo info) =>

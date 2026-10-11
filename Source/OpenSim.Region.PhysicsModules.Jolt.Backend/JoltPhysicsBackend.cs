@@ -321,7 +321,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         //   3. body Create/Remove races Update -> TempAllocator abort on login with a physical object
         //      (so EVERY body op takes _simLock)
         //   4. Update races Update ACROSS REGIONS on a process-shared TempAllocator (stock joltc) -> abort
-        //      (so the patched joltc gives each PhysicsSystem its own allocator - see _simLock's comment).
+        //      (so every region's Update runs on one job pool - see _simLock's comment).
         // The per-body locking BodyInterface protects per-body DATA, but structural broadphase mutation
         // (add/remove) and the LIFO TempAllocator are NOT safe concurrent with _system.Update.
         //
@@ -411,26 +411,25 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // touching this lock's scope or the gate must keep every allocator use
         // inside the gate (ShapeAndAllocatorRuleTests).
         //
-        // The patched joltc (amerkoleci/joltc @ 1715c5aab8 + a per-system
-        // allocator patch; that commit is the exact source of the shipped
-        // 1.0.4, exports identical 1086/1086) gives EACH
-        // JPH_PhysicsSystem its own TempAllocatorImplWithMallocFallback(8MB),
-        // wired through ALL SEVEN consuming sites: PhysicsSystem_Update and
-        // CharacterVirtual Update / ExtendedUpdate / RefreshContacts /
-        // WalkStairs / StickToFloor / SetShape. That matches BulletSim's
-        // per-world scratch and InWorldz PhysX's per-PxScene scratch model:
-        // regions share no native scratch, so cross-region native calls need no
-        // mutual exclusion, and _simLock only guards INTRA-region races (this
-        // region's scene thread vs its own heartbeat Step).
+        // The stock joltc (amerkoleci/joltc @ 1715c5aab8, the source of
+        // JoltPhysics.Native 1.0.4) has ONE process-wide
+        // TempAllocatorImplWithMallocFallback(8MB), used at ALL SEVEN consuming
+        // sites: PhysicsSystem_Update and CharacterVirtual Update /
+        // ExtendedUpdate / RefreshContacts / WalkStairs / StickToFloor /
+        // SetShape. All regions in the process therefore share one job pool,
+        // and its gate keeps two regions' native calls from overlapping.
+        // _simLock guards the INTRA-region races (this region's scene thread vs
+        // its own heartbeat Step). A joltc with an allocator per physics system
+        // (BulletSim's per-world scratch, PhysX's per-PxScene scratch) would
+        // allow one pool per region; that needs a change in joltc itself.
         //
         // The races (all real, all still needed):
         //   1. NarrowPhaseQuery races Update   -> queries take _simLock
         //   2. Dispose races Step              -> Dispose takes _simLock + _disposed
         //   3. body Create/Remove races Update -> all body ops take _simLock
         //   4. Update races Update ACROSS REGIONS on the stock shared allocator
-        //      -> a STATIC _simLock would cover it, at the cost of all
-        //      cross-region parallelism; the patched joltc instead gives every
-        //      PhysicsSystem its own allocator, so the lock stays per-instance.
+        //      -> the one job pool's gate covers it (a STATIC _simLock would
+        //      too); this lock stays per-instance.
         //      1-3 are the races this lock guards.
         //
         // LOCK ORDER - always _simLock FIRST, then _characterGate. Both are
@@ -446,7 +445,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // =====================================================================
         // The allocator owner check.
         //
-        // The patched joltc hands system->tempAllocator to exactly SEVEN native entry points
+        // joltc hands its TempAllocator to exactly SEVEN native entry points
         // (joltc.cpp:1050 PhysicsSystem_Update, :8107/:8135/:8151/:8182/:8198/:8223 the CharacterVirtual
         // scratch users). TempAllocatorImpl is a LIFO stack with a non-atomic mTop whose ordering Jolt
         // guarantees "though job dependencies" (Jolt/Core/TempAllocator.h:11-13) - so two callers that are
@@ -1023,10 +1022,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         //
         // joltc keeps every system in a global map, s_PhysicsSystems: JPH_PhysicsSystem_Create inserts and
         // JPH_PhysicsSystem_Destroy erases. Regions are created and torn down on different threads. The native this
-        // module runs on by default, the stock joltc of the JoltPhysics.Native package, has no lock on it. The patched
-        // build (native/joltc/physics-systems-map-lock.patch) locks the map around the insert, the erase and the read in
-        // joltc's step-listener callback (ManagedPhysicsStepListener::OnStep). Both calls are taken under s_systemMapGate
-        // either way, so the stock joltc is safe here.
+        // module runs on, the stock joltc of the JoltPhysics.Native package, has no lock on it. Both calls
+        // are taken under s_systemMapGate, and this module uses no step listener, so the map is never read concurrently.
         // =====================================================================
         private static readonly object s_systemMapGate = new object();
 
@@ -3294,7 +3291,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         }
 
         // This takes _simLock as well as _characterGate. CharacterVirtual::SetShape is one of the seven
-        // per-system TempAllocator consumers in the patched joltc (joltc.cpp:8223, *system->tempAllocator).
+        // TempAllocator consumers in joltc (joltc.cpp:8223).
         // Step holds _simLock for the whole step but releases _characterGate after phase 1, so with
         // _characterGate alone, for the whole of _system.Update (joltc.cpp:1050, the SAME allocator) this method
         // could acquire _characterGate freely and allocate into that stack behind Update's back. TempAllocator is
