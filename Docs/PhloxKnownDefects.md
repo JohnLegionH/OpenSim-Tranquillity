@@ -515,7 +515,9 @@ These are facts about Phlox's compiler. Where SL's rule is known, it is cited.
 - YEngine's XMR extensions are not available: `switch`, `break`, `continue`, `constant`,
   `try`/`catch`/`finally`/`throw`, arrays, `foreach`, classes and the `xmr*` functions.
 - YEngine accepts several user functions with the same name and different parameters.
-  Phlox rejects them, as SL does.
+  Phlox rejects them, as SL does. This is deliberate: a script that defines two user functions
+  with one name does not compile on Phlox. Rename one, or make `//YEngine:` the script's first
+  line so that YEngine runs it (see "Which engine runs a script").
 - Phlox compiles SLua scripts; YEngine does not. Where YEngine is the default, an SLua script
   needs `//InWorldz.Phlox:slua` as its first line to run on Phlox.
 
@@ -606,6 +608,28 @@ pauses 15 ms after every chat call instead (`ChatThrottle`).
   The SL wiki says of `llGroundNormal`: "This function does not return a unit vector."
 - `llApplyImpulse` in an attachment pushes the wearer, as in YEngine and Halcyon. `llApplyRotationalImpulse` in an
   attachment does nothing, as the SL wiki says ("It does not work on attachments"); Halcyon turned the wearer.
+- `llApplyImpulse` pauses for the physics throttle (`PhysicsThrottle`) after every call, also a call that does
+  nothing, as Halcyon did; YEngine does not pause. This is deliberate. An impulse with a NaN or infinite component is
+  dropped; it used to reach the object or the wearer.
+- `llMoveToTarget` with a target outside the region where there is no neighbouring region brings the target back
+  inside the region's edge, as Halcyon did, so a physical object is not driven off the edge; a target in a
+  neighbouring region is kept. YEngine passes the target on unchanged. This is deliberate.
+- `llSetStatus` with `STATUS_ROTATE_X`, `_Y` or `_Z` locks or frees the axis it names, for the whole object from any
+  of its prims, and `llGetStatus` reads it back, as YEngine does. The SL wiki gives the values 0x002, 0x004 and 0x008
+  and says "all prims in an object share the same status"
+  ([LlSetStatus](https://wiki.secondlife.com/wiki/LlSetStatus)). Phlox used to write other bits, so locking X did
+  nothing, Y locked X and Z locked Y, and a call from a child prim locked nothing.
+- `llGetForce` and `llGetTorque` return the force and torque `llSetForce` and `llSetTorque` last stored on the
+  object, in region axes, as YEngine does. They used to read the physics engine, which gave `ZERO_VECTOR` on an
+  engine that does not keep them (`llGetTorque` always gave `ZERO_VECTOR`).
+- `llGetAccel` gives the object's acceleration, and `ZERO_VECTOR` in an attachment or a child prim, as the SL wiki
+  says ([LlGetAccel](https://wiki.secondlife.com/wiki/LlGetAccel)); YEngine gives the prim's own value there.
+  `llGetOmega` gives the root's angular velocity, the physical spin or what `llTargetOmega` set, also in a child prim
+  ("Returns the omega of the root if called in a child prim",
+  [LlGetOmega](https://wiki.secondlife.com/wiki/LlGetOmega)); YEngine gives the calling prim's. Both used to give
+  `ZERO_VECTOR`.
+- `llGetVel` in an attachment gives the wearer's velocity (the seat object's when the wearer sits), as YEngine and
+  Halcyon do; the SL wiki page says nothing about attachments. It used to give the attachment prim's own velocity.
 - `llCastRay` that the physics engine refuses (for example a cast over the engine's time or hit budget) returns
   `[RCERR_CAST_TIME_EXCEEDED]`. The region log gets at most one warning per script per minute for it: the first
   refused cast writes one at once, and the next, written by the first cast refused after the minute is up, gives the
@@ -735,10 +759,15 @@ pauses 15 ms after every chat call instead (`ChatThrottle`).
 `bot_update(string, integer, list)` is the only event beyond SL's set. The bot manager
 raises it for the `bot*` functions, as Halcyon did: `BOT_MOVE_COMPLETE` with `[bot position]` when
 a navigation path is done; `BOT_MOVE_UPDATE` with `[next node, bot position]` each time the bot
-moves on to another point (after a teleport point too, the last one included); `BOT_MOVE_FAILED`
-with `[next node, bot position]` when a move times out; `BOT_MOVE_AVATAR_LOST` with
+moves on to another point (after a teleport point too, the last one included, and after a
+`botWanderWithin` point that has a wait after it); `BOT_MOVE_FAILED` with `[next node, bot position]`
+when the bot has not reached a point after `BOT_MOVEMENT_TELEPORT_AFTER` seconds (60 by default) and is
+teleported to it, followed by `BOT_MOVE_UPDATE` as the path goes on; `BOT_MOVE_AVATAR_LOST` with
 `[avatar position, 0.0, bot position]`, once, when a followed avatar leaves the region (the
-position is then `ZERO_VECTOR`) or is farther than `BOT_LOST_AVATAR_DISTANCE` (default 1000 m).
+position is then `ZERO_VECTOR`) or is farther than `BOT_LOST_AVATAR_DISTANCE` (default 1000 m), and with
+`[avatar position, distance, bot position]` when `BOT_REQUIRES_LINE_OF_SIGHT` is set and an object is
+in between. With `BOT_MOVEMENT_FLAG_FOLLOW_INDEFINITELY` a path starts again after its last point,
+reported as a move on to node (number of points), and never completes.
 It goes to every script registered with `botRegisterForNavigationEvents`, and to the script that
 created the bot with `botCreateBot`.
 
@@ -791,7 +820,8 @@ the `listen` events of `botListen`, `NULL_KEY` in other events with detect data,
 does not sense itself. The option lists of `botFollowAvatar`, `botSetNavigationPoints` and `botWanderWithin` take an
 integer key and an integer or float value (`botFollowAvatar` also a vector); any other pair makes `botFollowAvatar`
 return `BOT_ERROR` and the other two do nothing. In `botSetNavigationPoints` a number among the points is the wait
-for `BOT_TRAVELMODE_WAIT`, in seconds.
+for `BOT_TRAVELMODE_WAIT`, in seconds. A persistent bot comes back after a region restart under the key it had, or
+under a new key if an avatar or another bot in the simulator already holds that one.
 
 ### Constants
 - `IW_PRIM_ALPHA` and `IW_PRIM_PROJECTOR*` are extra prim-params rules.
@@ -839,7 +869,7 @@ name) promises.
 ### Functions that return a fixed value
 | Function | Returns |
 |---|---|
-| `llGetAccel`, `llGetOmega`, `llGetTorque`, `iwGetAngularVelocity` | `ZERO_VECTOR` |
+| `iwGetAngularVelocity` | `ZERO_VECTOR` |
 | `llGetEnergy` | 1.0 |
 | `llCloud` | 0 |
 | `llGetCameraAspect`, `llGetCameraFOV` | 1.7778 and 1.0472 (the viewer does not send them) |
@@ -923,13 +953,8 @@ such list.
   outside this repository, such as a Jolt module, shows no effect either until it implements `SetConstantForce`.
 - `llSetForce` in an unattached physical object: a local force (`local` TRUE) is turned once by the object's rotation
   when it is set, not kept in the object's frame as it turns.
-- `botSetNavigationPoints`: a move that times out (about 60 s) raises `BOT_MOVE_FAILED` and ends the path. Halcyon
-  teleported the bot to the point and went on, after `BOT_MOVEMENT_TELEPORT_AFTER` seconds (60 by default); that
-  option and `BOT_MOVEMENT_TYPE` (`BOT_MOVEMENT_FLAG_FOLLOW_INDEFINITELY` repeats the path) are not read.
-- `botWanderWithin` raises no `bot_update`. Halcyon raised `BOT_MOVE_UPDATE` as the bot reached each wander point (when
-  there was a wait between points) and `BOT_MOVE_FAILED` when it did not reach one.
-- `botFollowAvatar` walks once toward the avatar and does not keep following it; `BOT_REQUIRES_LINE_OF_SIGHT`, the
-  start and stop following distances and the allow-running, flying and jumping options are not read.
+- `botFollowAvatar` goes straight for the avatar. Halcyon also steered around objects along the avatar's recent
+  positions.
 
 ### Prim-params rules
 - `PRIM_HEALTH` and the damage type in `PRIM_DAMAGE` are accepted and dropped. Reading them

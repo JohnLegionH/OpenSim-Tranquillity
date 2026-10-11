@@ -141,8 +141,8 @@ public class CollisionEventUpdate : EventArgs
         {
             if (curcp.PenetrationDepth < contact.PenetrationDepth)
             {
-                if (Math.Abs(curcp.PenetrationDepth) > Math.Abs(contact.RelativeSpeed))
-                    contact.RelativeSpeed = curcp.PenetrationDepth;
+                if (Math.Abs(curcp.RelativeSpeed) > Math.Abs(contact.RelativeSpeed))
+                    contact.RelativeSpeed = curcp.RelativeSpeed;
                 curcp = contact;
             }
             else if (MathF.Abs(curcp.RelativeSpeed) < MathF.Abs(contact.RelativeSpeed))
@@ -317,7 +317,7 @@ public abstract class PhysicsActor
         // vehicleActor.ProcessSetVehicle((VehicleData)vdata);
 
         this.VehicleType = (int)vdata.m_type;
-        this.VehicleFlags(-1, false);   // clears all flags
+        this.VehicleFlags(-1, true);   // clears all flags, whether an engine removes the bits given or clears on -1
         this.VehicleFlags((int)vdata.m_flags, false);
 
         // Linear properties
