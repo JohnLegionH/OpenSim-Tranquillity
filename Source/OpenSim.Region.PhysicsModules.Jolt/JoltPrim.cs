@@ -1272,7 +1272,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (_welded)
                 {
                     SyncFromLink();
-                    _velocity = root._velocity;
+                    // The part goes on at the velocity its point had: the root's, and the spin's share at the part's offset.
+                    _velocity = root._velocity + Vector3.Cross(root._rotationalVelocity, _position - root._position);
                     _rotationalVelocity = root._rotationalVelocity;
                 }
                 _welded = false;
