@@ -18,6 +18,7 @@
 // cylinder axis-correction ordering must be unambiguous (left operand applied first).
 
 using System;
+using System.Threading;
 using Microsoft.Extensions.Logging;
 using OpenSim.Framework;
 using OpenSim.Region.PhysicsModules.SharedBase;
@@ -1066,6 +1067,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "RotationalVelocity", value.ToString()); return; }
                 if (_selected) return;
                 _rotationalVelocity = value;
+                Volatile.Write(ref _apidSpunByScript, 1);   // a rotation target takes this as the speed it starts from
                 if (_body.IsValid && _isPhysical) _backend.SetBodyAngularVelocity(_body, ToS(value));
             }
         }
@@ -1405,6 +1407,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 else if (ay >= az) lockY = true;
                 else lockZ = true;
             }
+            _bodyLockX = lockX; _bodyLockY = lockY; _bodyLockZ = lockZ;
             _backend.SetBodyRotationLocks(_body, lockX, lockY, lockZ);
         }
 
@@ -1796,11 +1799,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _backend.SetBodyContinuousCollision(_body, PhysicalPrimCcd);
         }
 
-        // Move to target and hover are in JoltPrim.Targets.cs. The angular PID is not used: core turns a physical
+        // Move to target and hover are in JoltPrim.Targets.cs, the rotation target (APIDTarget, APIDStrength, APIDDamping,
+        // APIDActive) in JoltPrim.AngularTarget.cs. Core does not hand the rotation target to the actor: it turns a physical
         // object toward llLookAt / llRotLookAt itself (SceneObjectPart.RotLookAt), as it does on ubODE.
-        public override Quaternion APIDTarget { set { } }
-        public override bool APIDActive { set { } }
-        public override float APIDStrength { set { } }
-        public override float APIDDamping { set { } }
     }
 }
