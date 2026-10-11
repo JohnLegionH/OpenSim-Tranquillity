@@ -601,6 +601,59 @@ public class SceneObjectSpinTests : OpenSimTestCase
         Assert.Equal(new[] { Omega(Vector3.Zero) }, f.Actor.Calls);
     }
 
+    [Theory]
+    [InlineData(0.00001f)]
+    [InlineData(0.001f)]
+    [InlineData(1f)]
+    [InlineData(40f)]
+    public void AScriptsTargetOmegaOfAnySizeIsAppliedAgainOnRelease(float rate)
+    {
+        var f = Make();
+        var omega = new Vector3(0, 0, rate);
+        f.Root.UpdateAngularVelocity(omega);
+        f.Start();
+        f.Spin(Turn(90));
+        f.Step();
+        f.Actor.Clear();
+        f.Stop();
+        Assert.Equal(Omega(omega), f.Actor.Calls[^1]);
+        Assert.Equal(omega, f.Root.AngularVelocity);
+    }
+
+    [Fact]
+    public void AScriptsTargetOmegaIsAppliedAgainAfterEveryTurnOfSeveral()
+    {
+        var f = Make();
+        var omega = new Vector3(0, 0, 1);
+        f.Root.UpdateAngularVelocity(omega);
+        for (int i = 0; i < 3; i++)
+        {
+            f.Start();
+            f.Spin(Turn(30 + 30 * i));
+            f.Step();
+            f.Actor.Clear();
+            f.Stop();
+            Assert.Equal(new[] { Omega(Vector3.Zero), Omega(omega) }, f.Actor.Calls);
+        }
+    }
+
+    [Fact]
+    public void AScriptsTargetOmegaIsAppliedAgainWhenTheActorsSpinWasChangedBehindThePartsBack()
+    {
+        // The part keeps its own copy of the spin and refreshes it only when it is read. The turn's end must not
+        // compare the omega with that copy: whatever the engine changed meanwhile, the script's omega is written.
+        var f = Make();
+        var omega = new Vector3(0, 0, 1);
+        f.Root.UpdateAngularVelocity(omega);
+        f.Start();
+        f.Spin(Turn(90));
+        f.Actor.RotationalVelocity = new Vector3(0, 0, 3);
+        f.Actor.Clear();
+        f.Stop();
+        Assert.Equal(Omega(omega), f.Actor.Calls[^1]);
+        Assert.Equal(omega, f.Actor.RotationalVelocity);
+    }
+
     [Fact]
     public void AScriptsTargetOmegaOutsideAnyTurnIsAppliedAsBefore()
     {
