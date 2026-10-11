@@ -86,8 +86,7 @@ public class RotationTargetTeardownTests
             (r, a) =>
             {
                 framesAfter++;
-                // A late write from a script that has not heard the object is gone must not throw. (It does put the removed
-                // prim back in the scene's list when it turns the target on, as it does for PIDActive; that is not asserted.)
+                // A late write from a script that has not heard the object is gone must not throw.
                 a.APIDTarget = Quaternion.Identity;
                 a.APIDActive = true;
             });
@@ -96,6 +95,28 @@ public class RotationTargetTeardownTests
         Assert.Equal(bodiesBefore - 1, bodiesAfter);
         Assert.True(shapesAfter < shapesBefore, $"the shape stayed registered ({shapesBefore} -> {shapesAfter})");
         Assert.True(framesAfter > 0);
+    }
+
+    [Fact]
+    public void A_rotation_target_switched_on_for_a_removed_prim_does_not_put_it_back_on_the_steps_list()
+    {
+        int framesAfter = 0, onTheList = -1;
+        Run(8,
+            (r, a) =>
+            {
+                var scene = (JoltScene)r.PhysicsScene;
+                scene.RemovePrim(a);
+                // A script that has not heard the object is gone turns the target on again.
+                a.APIDTarget = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, 0.5f);
+                a.APIDActive = true;
+            },
+            (r, a) =>
+            {
+                framesAfter++;
+                onTheList = Targeted((JoltScene)r.PhysicsScene);
+            });
+        Assert.True(framesAfter > 0);
+        Assert.Equal(0, onTheList);
     }
 
     [Fact]
