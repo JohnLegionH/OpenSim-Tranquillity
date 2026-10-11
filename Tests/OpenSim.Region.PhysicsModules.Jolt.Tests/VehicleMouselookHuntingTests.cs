@@ -59,7 +59,12 @@ public class VehicleMouselookHuntingTests
     // at 15, 30 and 60 updates a second as asked; with one step per heartbeat (11 Hz) it is read once per heartbeat and
     // the rate does not matter, so one is run. The wobble of the heading stays under the shake itself (the steering
     // filters it rather than amplifying it), the largest excursion stays within 1.5 times the shake, and the wobble of
-    // each 5 s window of the run stays small beside it (it does not grow).
+    // each 5 s window of the run stays small beside it (it does not grow). The car must also not steer to one side: the
+    // mean heading, taken over the runs of eight camera seeds. One run's mean is a finite sample of a heading that also
+    // wanders slowly of itself (0.06 degrees, standard deviation, whatever the shake: 40 seeds at 0.2 and 1 degree, on
+    // Windows and Linux, give means that centre on 0 with that spread), so a single run's mean falls outside 0.3 of a
+    // 0.2 degree shake about one time in three on either platform. The mean of eight runs has a spread of 0.06 over
+    // the square root of 8, about 0.02 degrees, and the limit of 0.3 of the shake holds with room on both platforms.
     public static IEnumerable<object[]> Shakes()
     {
         foreach (float noise in new[] { 0.2f, 0.5f, 1.0f })
@@ -70,6 +75,8 @@ public class VehicleMouselookHuntingTests
         }
     }
 
+    private const int MeanSeeds = 8;
+
     [Theory]
     [MemberData(nameof(Shakes))]
     public void A_shaking_camera_is_not_amplified_and_does_not_make_the_car_hunt(double physicsRate, float noise, double cameraRate)
@@ -77,13 +84,16 @@ public class VehicleMouselookHuntingTests
         RunResult r = Run("mouselook-hold", physicsRate, noise, cameraRate);
         var late = r.Samples.Where(s => s.T >= 5.0).ToArray();
         var (std, peak, mean) = Wobble(late.Select(HeadingDegrees));
+        double pooledMean = (mean + Enumerable.Range(2, MeanSeeds - 1).Sum(seed =>
+            Wobble(Run("mouselook-hold", physicsRate, noise, cameraRate, o => o.CameraSeed = seed).Samples
+                .Where(s => s.T >= 5.0).Select(HeadingDegrees)).mean)) / MeanSeeds;
         double[] windows = Enumerable.Range(0, 4).Select(i =>
             Wobble(late.Where(s => s.T >= 5.0 + 5.0 * i && s.T < 10.0 + 5.0 * i).Select(HeadingDegrees)).std).ToArray();
         _out.WriteLine($"physics {physicsRate,4} Hz  camera shake {noise:0.0} deg at {cameraRate,2} Hz: heading std {std:0.0000} deg, " +
-                       $"largest {peak:0.0000} deg, mean {mean:0.0000}; std in each 5 s window from 5 s: {string.Join(" ", windows.Select(w => w.ToString("0.000")))}");
+                       $"largest {peak:0.0000} deg, mean {mean:0.0000}, mean of {MeanSeeds} seeds {pooledMean:0.0000}; std in each 5 s window from 5 s: {string.Join(" ", windows.Select(w => w.ToString("0.000")))}");
         Assert.True(std < 0.6 * noise, $"std {std} against a shake of {noise}");
         Assert.True(peak < 1.5 * noise, $"largest {peak} against a shake of {noise}");
-        Assert.True(Math.Abs(mean) < 0.3 * noise, $"mean {mean} against a shake of {noise}");
+        Assert.True(Math.Abs(pooledMean) < 0.3 * noise, $"mean of {MeanSeeds} seeds {pooledMean} against a shake of {noise}");
         Assert.True(windows.Max() < 0.6 * noise, $"a window's std {windows.Max()} against a shake of {noise}");
     }
 

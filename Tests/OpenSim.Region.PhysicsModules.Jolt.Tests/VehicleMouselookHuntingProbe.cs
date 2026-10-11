@@ -8,13 +8,22 @@
 using System.Text;
 using OpenSim.Region.PhysicsModules.Jolt.Harness;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
+/// <summary>
+/// A measurement aid, skipped by default (it takes about a minute): the heading mean of the shaking-camera run for 40
+/// camera seeds at each shake and rate, with the spread of those means. It is the evidence behind the mean of eight
+/// seeds in <see cref="VehicleMouselookHuntingTests"/>. Remove the Skip to run it.
+/// </summary>
 [Collection(JoltNativeSerial.Name)]
 public class VehicleMouselookHuntingProbe
 {
-    [Fact]
+    private readonly ITestOutputHelper _out;
+    public VehicleMouselookHuntingProbe(ITestOutputHelper output) => _out = output;
+
+    [Fact(Skip = "Measurement aid; remove the Skip to print the heading means of 40 camera seeds")]
     public void Probe_prints_every_shake_case()
     {
         const double Rad = 180.0 / Math.PI;
@@ -54,6 +63,6 @@ public class VehicleMouselookHuntingProbe
             double[] h = r.Samples.Where(s => s.T >= 5.0).Select(s => Harness.Harness.Heading(s.Rotation) * Rad).ToArray();
             sb.AppendLine($"PROBE HELD 45Hz: mean {h.Average():0.0000} min {h.Min():0.0000} max {h.Max():0.0000} n {h.Length}");
         }
-        Assert.Fail("\n" + sb);
+        _out.WriteLine(sb.ToString());
     }
 }
