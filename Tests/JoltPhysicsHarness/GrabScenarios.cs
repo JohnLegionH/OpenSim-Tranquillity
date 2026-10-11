@@ -106,7 +106,38 @@ internal sealed class CoreGrab
         Scene scene = (Scene)RuntimeHelpers.GetUninitializedObject(typeof(Scene));
         EventsField.SetValue(scene, new EventManager());
         SceneField.SetValue(Group, scene);
+        _scene = scene;
     }
+
+    private readonly Scene _scene;
+    private static readonly FieldInfo SceneGraphField = typeof(Scene).GetField("m_sceneGraph", BindingFlags.NonPublic | BindingFlags.Instance);
+    private static readonly FieldInfo UpdateListField = typeof(SceneGraph).GetField("m_updateList", BindingFlags.NonPublic | BindingFlags.Instance);
+    private static readonly FieldInfo UpdateLockField = typeof(SceneGraph).GetField("m_updateLock", BindingFlags.NonPublic | BindingFlags.Instance);
+
+    /// <summary>ObjectSpinStart, as Scene.ProcessSpinStart hands it to the group when the agent may move it.</summary>
+    public void SpinStart() => Group.SpinStart(null);
+
+    /// <summary>One ObjectSpinUpdate, as Scene.ProcessSpinObject hands it to the group when the agent may move it.</summary>
+    public void SpinUpdate(Quaternion rotation) => Group.SpinMovement(rotation, null);
+
+    /// <summary>ObjectSpinStop, through the scene's own handler.</summary>
+    public void SpinStop() => _scene.ProcessSpinObjectStop(Group.UUID, null);
+
+    /// <summary>Makes the group one that a script's llRotLookAt reaches: the physics flag set on the root, and a scene graph
+    /// that takes the group on its update list (the region's frame then runs the root's UpdateLookAt through
+    /// SceneObjectGroup.Update; <see cref="UpdateLookAt"/> stands in for that call).</summary>
+    public void EnableScriptCalls()
+    {
+        Root.Flags |= PrimFlags.Physics;
+        SceneGraph graph = (SceneGraph)RuntimeHelpers.GetUninitializedObject(typeof(SceneGraph));
+        UpdateListField.SetValue(graph, new Dictionary<UUID, SceneObjectGroup>());
+        UpdateLockField.SetValue(graph, new object());
+        GC.SuppressFinalize(graph);   // its finalizer reads fields a real scene sets up
+        SceneGraphField.SetValue(_scene, graph);
+    }
+
+    /// <summary>What the region's frame does for a group on the update list with a look-at active.</summary>
+    public void UpdateLookAt() => Root.UpdateLookAt();
 
     private SceneObjectPart NewPart(string name, PhysicsActor actor)
     {
