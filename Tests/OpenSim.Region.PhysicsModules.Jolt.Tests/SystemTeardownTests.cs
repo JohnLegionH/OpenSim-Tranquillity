@@ -59,8 +59,8 @@ public class SystemTeardownTests
     private static int FoundationRefCount()
         => (int)typeof(JoltPhysicsBackend).GetField("s_foundationRefCount", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
 
-    private static PhysicsSystem? NativeSystem(JoltPhysicsBackend b)
-        => (PhysicsSystem?)typeof(JoltPhysicsBackend).GetField("_system", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(b);
+    private static PhysicsSystem NativeSystem(JoltPhysicsBackend b)
+        => (PhysicsSystem)typeof(JoltPhysicsBackend).GetField("_system", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(b);
 
     private static void Cycle()
     {
@@ -212,7 +212,7 @@ public class SystemTeardownTests
         int baseline = FoundationRefCount();
 
         var b = new JoltPhysicsBackend();
-        PhysicsSystem? system = null;
+        PhysicsSystem system = null;
         b.AfterSystemCreatedForTest = () =>
         {
             system = NativeSystem(b);
@@ -229,6 +229,41 @@ public class SystemTeardownTests
         Assert.Equal(baseline, FoundationRefCount());
 
         b.Dispose();
+        Assert.Equal(baseline, FoundationRefCount());
+        anchor.Step();
+    }
+
+    [Fact]
+    public void A_scene_whose_backend_fails_to_initialize_gives_back_what_the_backend_took()
+    {
+        using var anchor = new JoltTestBackend();
+        int baseline = FoundationRefCount();
+
+        var config = new Nini.Config.IniConfigSource();
+        Nini.Config.IConfig startup = config.AddConfig("Startup");
+        startup.Set("physics", "Jolt");
+        startup.Set("meshing", "Meshmerizer");
+        config.AddConfig("Jolt");
+        var scene = new JoltScene();
+        scene.Initialise(config);
+
+        PhysicsSystem system = null;
+        scene.BackendCreatedForTest = b => b.AfterSystemCreatedForTest = () =>
+        {
+            system = NativeSystem(b);
+            throw new InvalidOperationException("injected start failure");
+        };
+        var heights = new float[256 * 256];
+        var e = Assert.Throws<InvalidOperationException>(() => scene.InitialiseWithoutScene("Test Region", 256, 256, heights, 20f, 0.0909f));
+        Assert.Equal("injected start failure", e.Message);
+
+        Assert.NotNull(system);
+        Assert.True(system!.IsDisposed);
+        Assert.Equal(IntPtr.Zero, system.Handle);
+        Assert.Null(scene.Backend);
+        Assert.Equal(baseline, FoundationRefCount());
+
+        scene.Dispose();   // nothing left to give back
         Assert.Equal(baseline, FoundationRefCount());
         anchor.Step();
     }

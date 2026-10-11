@@ -90,21 +90,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public override string ToString() => $"Character({Value})";
     }
 
-    /// <summary>Opaque reference to a joint/constraint between two bodies.</summary>
-    public readonly struct ConstraintId : IEquatable<ConstraintId>
-    {
-        public static readonly ConstraintId Invalid = default;
-
-        public readonly uint Value;
-        public ConstraintId(uint value) => Value = value;
-
-        public bool IsValid => Value != 0u;
-        public bool Equals(ConstraintId other) => Value == other.Value;
-        public override bool Equals(object? o) => o is ConstraintId c && Equals(c);
-        public override int GetHashCode() => (int)Value;
-        public override string ToString() => $"Constraint({Value})";
-    }
-
     // ---------------------------------------------------------------------
     // Enums
     // ---------------------------------------------------------------------
@@ -227,29 +212,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// <summary>Everything a default llCastRay should see.</summary>
         Default = Terrain | Static | Dynamic | Avatar,
         All = Terrain | Static | Dynamic | Avatar | Sensor,
-    }
-
-    public enum ConstraintKind : byte
-    {
-        Fixed = 0,
-        Point = 1,
-        Distance = 2,   // supports spring parameters
-        Hinge = 3,
-        Slider = 4,
-        Cone = 5,
-        SwingTwist = 6,
-        SixDof = 7,
-        Pulley = 8,
-        Gear = 9,
-        RackAndPinion = 10,
-        Path = 11,      // smooth spline path
-    }
-
-    public enum MotorMode : byte
-    {
-        Off = 0,
-        Velocity = 1,
-        Position = 2,
     }
 
     // ---------------------------------------------------------------------
@@ -379,38 +341,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             PushStrength = 1.0f,
             JumpSpeed = 4.0f,
         };
-    }
-
-    public struct ConstraintDesc
-    {
-        public ConstraintKind Kind;
-        public BodyId BodyA;
-        /// <summary>Invalid = attach to world.</summary>
-        public BodyId BodyB;
-
-        /// <summary>Anchor points in each body's local space.</summary>
-        public Vector3 AnchorA;
-        public Vector3 AnchorB;
-
-        /// <summary>Primary axis in local space. Hinge axis, slider axis, cone axis.</summary>
-        public Vector3 AxisA;
-        public Vector3 AxisB;
-
-        /// <summary>Kind-dependent limits. Hinge/Slider: [min,max]. Cone: half-angle in X.</summary>
-        public Vector2 Limits;
-        public bool LimitsEnabled;
-
-        /// <summary>Distance constraint spring. Frequency in Hz, damping 0-1.</summary>
-        public float SpringFrequency;
-        public float SpringDamping;
-
-        /// <summary>Gear / rack-and-pinion ratio.</summary>
-        public float Ratio;
-
-        /// <summary>Break force threshold in newtons. 0 = unbreakable.</summary>
-        public float BreakForce;
-
-        public uint UserData;
     }
 
     // ---------------------------------------------------------------------
@@ -795,9 +725,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// Kept across later mass and density changes; a new body starts with none.</summary>
         void SetBodyRotationLocks(BodyId body, bool lockX, bool lockY, bool lockZ);
 
-        /// <summary>Lock translation/rotation on world axes. Backs ExtendedPhysics axis locks.</summary>
-        void SetBodyAxisLocks(BodyId body, Vector3 allowedTranslation, Vector3 allowedRotation);
-
         void ApplyForce(BodyId body, Vector3 force);
         void ApplyTorque(BodyId body, Vector3 torque);
         void ApplyImpulse(BodyId body, Vector3 impulse);
@@ -907,15 +834,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         void SetCharacterConstantForce(CharacterId character, Vector3 acceleration);
 
         bool TryGetCharacterState(CharacterId character, out CharacterState state);
-
-        // -- constraints --------------------------------------------------
-
-        ConstraintId CreateConstraint(in ConstraintDesc desc);
-        void RemoveConstraint(ConstraintId constraint);
-        void SetConstraintEnabled(ConstraintId constraint, bool enabled);
-        void SetConstraintMotor(ConstraintId constraint, MotorMode mode, float target, float maxForce);
-        void SetConstraintLimits(ConstraintId constraint, float min, float max);
-        bool IsConstraintBroken(ConstraintId constraint);
 
         // -- world --------------------------------------------------------
 

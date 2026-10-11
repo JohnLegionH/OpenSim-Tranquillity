@@ -147,7 +147,7 @@ public class BaselineCheckTests
         Assert.Contains("linux-arm64", report);
 
         var w = new StringWriter();
-        Assert.Equal(3, BaselineCheck.Main(new[] { "--check-baseline", s.Output, "--baselines", s.Baselines }, w));
+        Assert.Equal(3, BaselineCheck.Run(new[] { "--check-baseline", s.Output, "--baselines", s.Baselines }, w));
     }
 
     [Fact]
@@ -205,7 +205,7 @@ public class BaselineCheckTests
         (outcome, report) = s.Check();
         Assert.Equal(BaselineOutcome.Failed, outcome);
         Assert.Contains("row 1 a: end_x recorded 0, now 1.000", report);
-        Assert.Equal(1, BaselineCheck.Main(new[] { "--check-baseline", s.Output, "--baselines", s.Baselines }, new StringWriter()));
+        Assert.Equal(1, BaselineCheck.Run(new[] { "--check-baseline", s.Output, "--baselines", s.Baselines }, new StringWriter()));
     }
 
     [Fact]
@@ -239,7 +239,7 @@ public class BaselineCheckTests
         JoltNativeInfo native = Info("linux-x64", Build(JoltNativeOrigin.Package, "linux-x64"));
         s.AddRun("a", Summary(Row("a")).Replace("\n", "\r\n"), native);
         s.AddRun("b", Summary(Row("b")), native);
-        Assert.Equal(0, BaselineCheck.Main(new[] { "--record-baseline", s.Output, "--baselines", s.Baselines, "--leave-out", "b" }, new StringWriter()));
+        Assert.Equal(0, BaselineCheck.Run(new[] { "--record-baseline", s.Output, "--baselines", s.Baselines, "--leave-out", "b" }, new StringWriter()));
         string folder = Path.Combine(s.Baselines, BaselineCheck.KeyFor(native.Build));
         Assert.Equal(new[] { "a.csv" }, Directory.GetFiles(folder).Select(Path.GetFileName).ToArray());
         Assert.DoesNotContain("\r", File.ReadAllText(Path.Combine(folder, "a.csv")));

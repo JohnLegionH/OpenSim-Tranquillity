@@ -151,8 +151,8 @@ if ($found.Count -eq 0 -and $bad -eq 0) {
 }
 if ($bad -gt 0) {
     if ($RequirePatched) {
-        Write-Host ("JOLTC GUARD FAIL: {0} native(s) are not the patched build. Copy the patched file from the module's runtimes folder" -f $bad)
-        Write-Host "in the repository (native/joltc/README.md) over the file in the output."
+        Write-Host ("JOLTC GUARD FAIL: {0} native(s) are not the patched build. Replace each with the patched build" -f $bad)
+        Write-Host "from the joltc native workflow (native/joltc/README.md), over the file in the output."
     } else {
         Write-Host ("JOLTC GUARD FAIL: {0} native(s) are not a build the module has a record of; it refuses them at start." -f $bad)
         Write-Host "Restore the files from the JoltPhysics.Native package (a clean build) or the patched build."

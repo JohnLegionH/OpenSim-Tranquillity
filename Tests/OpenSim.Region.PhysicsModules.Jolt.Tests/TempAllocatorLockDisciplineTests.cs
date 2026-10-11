@@ -109,8 +109,8 @@ public class TempAllocatorLockDisciplineTests
     {
         var source = BackendSource();
 
-        Assert.Equal(1, Regex.Matches(source, @"\.ExtendedUpdate\(").Count);
-        Assert.Equal(1, Regex.Matches(source, @"\bStepCharacter\(\s*\w+\s*,").Count);   // the one call, in Step
+        Assert.Single(Regex.Matches(source, @"\.ExtendedUpdate\("));
+        Assert.Single(Regex.Matches(source, @"\bStepCharacter\(\s*\w+\s*,"));   // the one call, in Step
 
         // Step takes the pool gate and calls StepLocked, which holds the locks.
         var step = MethodBody(source, "StepResult StepLocked(");
@@ -160,7 +160,7 @@ public class TempAllocatorLockDisciplineTests
         Assert.DoesNotContain("lock (_simLock)", step);
         Assert.DoesNotContain("Enter(_simLock)", step);
         Assert.DoesNotContain(".Gate", locked);
-        Assert.Equal(1, Regex.Matches(source, @"\bStepLocked\(pool,").Count);
+        Assert.Single(Regex.Matches(source, @"\bStepLocked\(pool,"));
     }
 
     /// <summary>
@@ -170,7 +170,7 @@ public class TempAllocatorLockDisciplineTests
     public void PhysicsSystem_Update_is_called_once_and_under_simLock()
     {
         var source = BackendSource();
-        Assert.Equal(1, Regex.Matches(source, @"_system\.Update\(").Count);
+        Assert.Single(Regex.Matches(source, @"_system\.Update\("));
 
         var step = MethodBody(source, "StepResult StepLocked(");   // Step's locked body
         Assert.Contains("_system.Update(", step);

@@ -117,7 +117,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (WrongConsoleScene())
                 return;
 
-            if (_backend == null) { MainConsole.Instance.Output($"{LogHeader} no backend."); return; }
+            // Read once: a teardown on another thread nulls _backend, so the commands below use this one reference.
+            IPhysicsBackend backend = _backend;
+            if (backend == null) { MainConsole.Instance.Output($"{LogHeader} no backend."); return; }
 
             if (MainConsole.Instance.ConsoleScene is null)
                 MainConsole.Instance.Output($"{LogHeader} --- region '{RegionName}' ---");
@@ -184,7 +186,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 {
                     float exp = HillZ(px, py);
                     float dd = (float)Math.Sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy));
-                    bool hit = _backend.RayCast(new SVector3(px, py, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.All, out RayHit h);
+                    bool hit = backend.RayCast(new SVector3(px, py, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.All, out RayHit h);
                     string act = hit ? $"{h.Point.Z,8:0.000}" : "  miss  ";
                     string del = hit ? $"{h.Point.Z - exp,8:0.000}" : "   -    ";
                     MainConsole.Instance.Output($"  ({px,6:0.0},{py,6:0.0}) | {exp,8:0.000} | {act} | {del} | {dd,6:0.0}");
@@ -249,9 +251,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
                 // Decision-point check (physical -> convex hull): cook the SAME prism physical,
                 // inline, purely to confirm routing (cook+release, no body - the check is the shape choice).
-                ShapeId hull = CookPrimShape(_backend, GetPrismPbs(), size, true, out _, out string hullKind);
+                ShapeId hull = CookPrimShape(backend, GetPrismPbs(), size, true, out _, out string hullKind);
                 MainConsole.Instance.Output($"  decision-point: physical prism cooks to '{hullKind}' (expect 'hull(mesher)' - a mesh's Volume=0 would rez a physical prim mass-0; hull avoids it).");
-                if (hull.IsValid) _backend.ReleaseShape(hull);
+                if (hull.IsValid) backend.ReleaseShape(hull);
 
                 MainConsole.Instance.Output($"  now run: jolt raymesh  (grid cast - triangle top HITs ~101.5, empty bbox corners MISS; a box would hit all).");
                 return;
@@ -479,7 +481,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private bool CarState(JoltPrim jp, out float tiltDeg, out SVector3 pos, out SVector3 linVel, out SQuaternion orient)
         {
             tiltDeg = 0f; pos = default; linVel = default; orient = SQuaternion.Identity;
-            if (jp == null || !_backend.TryGetBodyState(jp.BodyHandle, out BodyState st))
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (jp == null || backend == null || !backend.TryGetBodyState(jp.BodyHandle, out BodyState st))
                 return false;
             var up = SVector3.Transform(new SVector3(0f, 0f, 1f), st.Orientation);
             tiltDeg = (float)(Math.Acos(Math.Clamp(up.Z, -1f, 1f)) * 180.0 / Math.PI);
@@ -1067,7 +1070,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private bool BoatState(JoltPrim jp, out float tiltDeg, out float posZ, out SVector3 linVel, out SVector3 angVel, out SQuaternion orient)
         {
             tiltDeg = 0f; posZ = float.NaN; linVel = default; angVel = default; orient = SQuaternion.Identity;
-            if (jp == null || !_backend.TryGetBodyState(jp.BodyHandle, out BodyState st))
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (jp == null || backend == null || !backend.TryGetBodyState(jp.BodyHandle, out BodyState st))
                 return false;
             var up = SVector3.Transform(new SVector3(0f, 0f, 1f), st.Orientation);
             tiltDeg = (float)(Math.Acos(Math.Clamp(up.Z, -1f, 1f)) * 180.0 / Math.PI);
@@ -1621,7 +1625,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private void DropOne(string kind, Vector3 size, float x, float y)
         {
             float terrainZ = 20f;
-            if (_backend.RayCast(new SVector3(x, y, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.Terrain, out RayHit th))
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (backend != null && backend.RayCast(new SVector3(x, y, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.Terrain, out RayHit th))
                 terrainZ = th.Point.Z;
             float dropZ = terrainZ + 15f;
 
@@ -1680,6 +1685,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 MainConsole.Instance.Output($"{LogHeader} waited {waitedMs} ms for drops to settle before reading.");
 
             MainConsole.Instance.Output($"{LogHeader} drop status (step {_stepCount}, ActiveBodyCount now={_lastActiveBodyCount}):");
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
             foreach (DropTrack t in _drops)
             {
                 string shapeNow = "?";
@@ -1693,7 +1699,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                         // Ground truth from Jolt: is the body active, and where is it NOW? Distinguishes
                         // Static/asleep (active=N, liveZ==startZ) from active-falling (active=Y, liveZ<startZ)
                         // from fell-through-terrain (liveZ << terrain).
-                        if (_backend.TryGetBodyState(jp.BodyHandle, out BodyState st))
+                        if (backend != null && backend.TryGetBodyState(jp.BodyHandle, out BodyState st))
                         {
                             haveLive = true;
                             liveZ = st.Position.Z;
@@ -1739,7 +1745,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (sp.IsSatOnObject) { MainConsole.Instance.Output($"{LogHeader} '{sp.Name}' is already seated - `jolt unsit` first."); return; }
 
             Vector3 pos = sp.AbsolutePosition + new Vector3(1.5f, 0f, 0f);   // 1.5 m to the avatar's +X
-            if (_backend.RayCast(new SVector3(pos.X, pos.Y, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.Terrain, out RayHit th))
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (backend != null && backend.RayCast(new SVector3(pos.X, pos.Y, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.Terrain, out RayHit th))
                 pos.Z = th.Point.Z + 0.5f;   // box half-height 0.5 -> resting on terrain
 
             SceneObjectGroup seat = RezTestPrim("box", pos, new Vector3(1f, 1f, 1f));
@@ -1808,7 +1815,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             Vector3 expectedLocal = offset + new Vector3(0f, 0f, SlSitZ);
 
             Vector3 pos = sp.AbsolutePosition + new Vector3(2f, 0f, 0f);
-            if (_backend.RayCast(new SVector3(pos.X, pos.Y, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.Terrain, out RayHit th))
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (backend != null && backend.RayCast(new SVector3(pos.X, pos.Y, 5000f), new SVector3(0f, 0f, -1f), 10000f, QueryFilter.Terrain, out RayHit th))
                 pos.Z = th.Point.Z + 0.5f;
 
             SceneObjectGroup seat = RezTestPrim("box", pos, new Vector3(1f, 1f, 1f));

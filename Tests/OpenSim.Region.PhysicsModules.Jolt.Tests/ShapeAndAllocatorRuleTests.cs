@@ -58,7 +58,7 @@ public class ShapeAndAllocatorRuleTests
     private static List<Instruction> Decode(MethodBase method)
     {
         var list = new List<Instruction>();
-        byte[]? il = method.GetMethodBody()?.GetILAsByteArray();
+        byte[] il = method.GetMethodBody()?.GetILAsByteArray();
         if (il == null)
             return list;
         int i = 0;
@@ -105,9 +105,9 @@ public class ShapeAndAllocatorRuleTests
     private static IEnumerable<MethodBase> AllMethods(Assembly assembly)
         => assembly.GetTypes().SelectMany(t => t.GetMethods(Everything).Cast<MethodBase>().Concat(t.GetConstructors(Everything)));
 
-    private static MethodBase? Resolve(MethodBase caller, int token)
+    private static MethodBase Resolve(MethodBase caller, int token)
     {
-        Type? t = caller.DeclaringType;
+        Type t = caller.DeclaringType;
         try
         {
             return caller.Module.ResolveMethod(token,
@@ -133,9 +133,9 @@ public class ShapeAndAllocatorRuleTests
                 {
                     if (ins.Op != OpCodes.Call && ins.Op != OpCodes.Callvirt && ins.Op != OpCodes.Newobj && ins.Op != OpCodes.Ldftn)
                         continue;
-                    MethodBase? callee = Resolve(caller, ins.Token);
+                    MethodBase callee = Resolve(caller, ins.Token);
                     string key = $"{callee?.DeclaringType?.FullName}.{callee?.Name}";
-                    if (callee != null && found.TryGetValue(key, out SortedSet<string>? callers))
+                    if (callee != null && found.TryGetValue(key, out SortedSet<string> callers))
                         callers.Add($"{caller.DeclaringType!.Name}.{caller.Name}");
                 }
         return found;
@@ -175,8 +175,8 @@ public class ShapeAndAllocatorRuleTests
                 {
                     if (ins.Op != OpCodes.Call && ins.Op != OpCodes.Callvirt && ins.Op != OpCodes.Ldftn)
                         continue;
-                    MethodBase? callee = Resolve(caller, ins.Token);
-                    if (callee?.DeclaringType == typeof(JoltPhysicsBackend) && callersOf.TryGetValue(callee.Name, out SortedSet<string>? set))
+                    MethodBase callee = Resolve(caller, ins.Token);
+                    if (callee?.DeclaringType == typeof(JoltPhysicsBackend) && callersOf.TryGetValue(callee.Name, out SortedSet<string> set))
                         set.Add($"{caller.DeclaringType!.Name}.{caller.Name}");
                 }
         Assert.Equal(new[] { "JoltPhysicsBackend.Step" }, callersOf["StepLocked"]);
@@ -230,7 +230,7 @@ public class ShapeAndAllocatorRuleTests
                 {
                     if (ins.Op != OpCodes.Call && ins.Op != OpCodes.Callvirt && ins.Op != OpCodes.Newobj && ins.Op != OpCodes.Ldftn)
                         continue;
-                    MethodBase? callee = Resolve(caller, ins.Token);
+                    MethodBase callee = Resolve(caller, ins.Token);
                     if (callee?.DeclaringType?.Namespace == "JoltPhysicsSharp" && callee.Name.Contains("StepListener", StringComparison.Ordinal))
                         calls.Add($"{caller.DeclaringType!.Name}.{caller.Name} -> {callee.DeclaringType.Name}.{callee.Name}");
                 }
