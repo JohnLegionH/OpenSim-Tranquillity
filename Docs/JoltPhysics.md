@@ -1047,9 +1047,8 @@ of time (Halcyon's step) instead of per step, so it does not depend on the step 
 
 Choose `InWorldz` for a region whose vehicles were built for InWorldz or Halcyon grids and are tuned against these behaviours; leave
 the default for vehicles built for Second Life. In the harness the choice is `--jolt VehicleBehaviour=InWorldz`; the runs `iw-car-pad`,
-`iw-car-ramp`, `iw-airplane` and `iw-mouselook-turn` of `ci/vehicle-behaviour-runs.txt` record it (a car on level ground, a car down a 15 degree ramp,
-an airplane, a car turned 90 degrees by the mouselook camera), checked with `--check-baseline <runs folder> --baselines Tests/JoltPhysicsHarness/ci/vehicle-behaviour-baselines`. Their
-baselines are recorded for the stock Windows x64 joltc only.
+`iw-car-ramp`, `iw-airplane` and `iw-mouselook-turn` of `ci/runs.txt` record it (a car on level ground, a car down a 15 degree ramp,
+an airplane, a car turned 90 degrees by the mouselook camera), checked with the regression check below like the other runs.
 
 Not built from the InWorldz code, and why: the friction stop below 0.002 m/s (`VehicleDynamics.cs:1500-1508`) is reached only when
 the vehicle's speed is under 0.002 m/s and one component of its local velocity is at least 0.002 m/s, which cannot both hold (no

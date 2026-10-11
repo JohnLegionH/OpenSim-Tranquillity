@@ -22,3 +22,11 @@ push: --scenario push-avatar,push-flood,push-car,push-box --rate 11 --physics-ra
 # Arriving avatars: one arriving on a fixed platform 3 m above the ground stays on it; one arriving 3 m above the
 # platform, not flying, falls and lands on it. end_z is where each stands.
 avatar-arrive: --scenario avatar-platform,avatar-platform-drop --rate 11,45 --physics-rate 0,45
+
+# [Jolt] VehicleBehaviour = InWorldz (the six InWorldz vehicle behaviours and the InWorldz preset values): a car on
+# level ground, a car driven down a 15 degree ramp, an airplane, and a car turned through 90 degrees by the
+# mouselook camera.
+iw-car-pad: --scenario car --slope 0 --rate 11,45 --jolt VehicleBehaviour=InWorldz
+iw-car-ramp: --scenario car-down --slope 15 --rate 11,45 --jolt VehicleBehaviour=InWorldz
+iw-airplane: --scenario airplane --rate 11,45 --jolt VehicleBehaviour=InWorldz
+iw-mouselook-turn: --scenario mouselook-turn --rate 11 --physics-rate 0,45 --hold 16 --duration 20 --jolt VehicleBehaviour=InWorldz
