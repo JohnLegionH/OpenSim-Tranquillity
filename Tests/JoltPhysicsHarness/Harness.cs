@@ -155,6 +155,7 @@ public readonly record struct VehicleFlagSetting(int Flag, bool Remove)
         ["NO_DEFLECTION_UP"] = 0x1, ["LIMIT_ROLL_ONLY"] = 0x2, ["HOVER_WATER_ONLY"] = 0x4, ["HOVER_TERRAIN_ONLY"] = 0x8,
         ["HOVER_GLOBAL_HEIGHT"] = 0x10, ["HOVER_UP_ONLY"] = 0x20, ["LIMIT_MOTOR_UP"] = 0x40,
         ["MOUSELOOK_STEER"] = 0x80, ["MOUSELOOK_BANK"] = 0x100, ["CAMERA_DECOUPLED"] = 0x200, ["BLOCK_INTERFERENCE"] = 0x400,
+        ["TORQUE_WORLD_Z"] = 0x20000,   // not a Second Life flag: the module's own (ExtendedVehicleFlags.TorqueWorldZ)
     };
 
     /// <summary>Parses NAME (set) or -NAME (remove); NAME is an LSL VEHICLE_FLAG_* name with or without the prefix.</summary>

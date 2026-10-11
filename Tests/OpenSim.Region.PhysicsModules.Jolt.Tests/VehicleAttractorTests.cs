@@ -90,6 +90,14 @@ public class VehicleAttractorTests
         foreach (double rate in new[] { 11.0, 45.0 })
         {
             var o = new HarnessOptions { RateHz = rate, SlopeDeg = 33f, Jolt = { ["VehiclePresets"] = "legacy" } };
+            // The figures here were measured with the InWorldz car, which the legacy preset used to give: its angular
+            // friction, angular deflection, attractor and torque about world z, set by hand now that the legacy car is
+            // the documented one.
+            foreach (string p in new[] { "ANGULAR_FRICTION_TIMESCALE=100,100,0.3", "ANGULAR_DEFLECTION_EFFICIENCY=0.5",
+                                         "ANGULAR_DEFLECTION_TIMESCALE=2", "VERTICAL_ATTRACTION_EFFICIENCY=0.6",
+                                         "VERTICAL_ATTRACTION_TIMESCALE=2" })
+                o.VehicleParams.Add(VehicleParamSetting.Parse(p));
+            o.VehicleFlags.Add(VehicleFlagSetting.Parse("TORQUE_WORLD_Z"));
             o.VehicleFlags.Add(VehicleFlagSetting.Parse("-LIMIT_ROLL_ONLY"));
             RunResult r = Harness.Harness.Run(Harness.Harness.Find("testcar-down"), o);
             int off = r.Samples.FindIndex(s => !s.Touching && s.Position.Y < Course.RampTopY + 1f);
