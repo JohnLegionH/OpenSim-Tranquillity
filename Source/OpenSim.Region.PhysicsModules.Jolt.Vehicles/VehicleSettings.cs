@@ -18,6 +18,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         Legacy,
     }
 
+    /// <summary>Whose vehicle behaviour a region follows where Second Life's documentation and the InWorldz simulator differ.</summary>
+    public enum VehicleBehaviour
+    {
+        /// <summary>What Second Life's wiki documents.</summary>
+        SecondLife,
+
+        /// <summary>The InWorldz Halcyon simulator's behaviour in six places (see <see cref="VehicleSettings.Behaviour"/>).</summary>
+        InWorldz,
+    }
+
     /// <summary>
     /// The per-region settings every vehicle controller in a region shares: the preset set and the limits a script's
     /// vehicle parameters are held to. The host builds one from its configuration when the region starts. Each default
@@ -30,6 +40,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public static readonly VehicleSettings Default = new VehicleSettings();
 
         public VehiclePresetSet Presets { get; init; } = VehiclePresetSet.Documented;
+
+        /// <summary>
+        /// Whose behaviour the vehicle code follows where Second Life's pages and the InWorldz Halcyon code differ.
+        /// <see cref="VehicleBehaviour.SecondLife"/>, the default, is what the pages document. <see cref="VehicleBehaviour.InWorldz"/>
+        /// turns on six behaviours of Halcyon's vehicle code (the pitch righting kept under LIMIT_ROLL_ONLY, hover up only
+        /// acting with buoyancy, friction that would push up dropped, the delay of a short motor's decay, the stronger and
+        /// escalating self-righting, and the buoyancy adjustment); it does not choose the preset values, which are
+        /// <see cref="Presets"/>. The host picks both from its configuration (JoltConfig.ToVehicleSettings).
+        /// </summary>
+        public VehicleBehaviour Behaviour { get; init; } = VehicleBehaviour.SecondLife;
 
         /// <summary>Largest linear motor speed a script can set (m/s, each axis), and the cap on the motor's result.</summary>
         public float MaxLinearSpeed { get; init; } = VehicleLimits.MaxLinearVelocity;

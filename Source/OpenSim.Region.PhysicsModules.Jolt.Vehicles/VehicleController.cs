@@ -10,7 +10,10 @@
  * behaviour: it is carried over from the InWorldz Halcyon sled movement (SledAssist). The frame
  * structure, the parameter routing and the legacy type presets come from the InWorldz Halcyon
  * vehicle code, as OpenSim's BulletSim vehicle code expresses it; the legacy values are kept
- * behind VehiclePresets = legacy (VehicleSettings).
+ * behind VehiclePresets = legacy (VehicleSettings). Six behaviours of the Halcyon code that differ from the documented
+ * model (the pitch righting kept under LIMIT_ROLL_ONLY, hover up only acting with buoyancy, friction that would push up
+ * dropped, a quick motor's delayed decay, the stronger and escalating self-righting, and the buoyancy adjustment) are
+ * on only where the region chooses VehicleSettings.Behaviour = InWorldz.
  * The physics engine is reached only through IVehicleBody, per this table (BulletSim's names
  * on the left):
  *
@@ -103,6 +106,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public VehicleSettings Settings { get; set; } = VehicleSettings.Default;
         private VehicleSettings S => Settings;
 
+        // The region follows InWorldz's vehicle behaviour in six places (VehicleSettings.Behaviour). Each is written so
+        // that with Second Life's behaviour, the default, the arithmetic is what it was without the choice.
+        private bool InWorldz => S.Behaviour == VehicleBehaviour.InWorldz;
+
         // =====================================================================
         // Ephemeral per-frame computed values (not persisted)
         // =====================================================================
@@ -178,6 +185,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         /// <summary>True once a script has set the angular motor, until the motors are reset. For tests.</summary>
         internal bool AngularMotorSet => !float.IsPositiveInfinity(_props.Dynamics.AngularDecayIndex);
+
+        /// <summary>The seconds since each motor was set, as its decay clock reads (negative while a short motor's decay is
+        /// held back under InWorldz's behaviour). For tests.</summary>
+        internal float LinearMotorAge => _props.Dynamics.LinearDecayIndex;
+        internal float AngularMotorAge => _props.Dynamics.AngularDecayIndex;
+
+        /// <summary>The factor the attractor's strength has grown to while the vehicle is overturned (InWorldz's behaviour;
+        /// 1 otherwise). For tests.</summary>
+        internal float AttractorEscalation => _props.Dynamics.VerticalForceAdjust;
 
         #region Vehicle Parameter Setting — routes from LSL Vehicle wire codes to internal enums
 
@@ -700,7 +716,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _props.Dynamics.LastAccessTOD = Clock();
 
             // The motor's grip restarts at full on every set and decays from here (s = 0).
-            _props.Dynamics.LinearDecayIndex = 0.0f;
+            _props.Dynamics.LinearDecayIndex = MotorDecayStart(VehVectorParam.LinearMotorTimescale);
 
             _props.Dynamics.TargetLinearDelta = direction - _props.Dynamics.LinearDirection;
             _props.Dynamics.LinearDirection = direction;
@@ -718,11 +734,45 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _props.Dynamics.LastAccessTOD = Clock();
 
             // The motor's grip restarts at full on every set and decays from here (s = 0).
-            _props.Dynamics.AngularDecayIndex = 0.0f;
+            _props.Dynamics.AngularDecayIndex = MotorDecayStart(VehVectorParam.AngularMotorTimescale);
 
             _props.Dynamics.TargetAngularDelta = direction - _props.Dynamics.AngularDirection;
             _props.Dynamics.AngularDirection = direction;
             _body.KeepAwake();
+        }
+
+        // InWorldz holds the decay of a quick motor back by a few hundredths of a second, "SL cheat, ramp and decay
+        // should proceed simultaneously, but short decays often will prevent motor ramp-up altogether. The cheat is to
+        // delay the decay by a tiny amount" (VehicleDynamics.cs:3066-3072 for the linear motor, 3099-3105 for the angular
+        // one). A motor whose timescale vector is shorter than 0.9 (its length) starts its decay clock at
+        // 0.0156 (1 - f) - 0.06 f, with f = 1 - length: negative, so the grip stays whole for that long (up to 0.06 s,
+        // for a motor timescale near 0); any other motor starts it at 0.0156 s. Second Life's decay starts at the set.
+        private float MotorDecayStart(VehVectorParam motorTimescale)
+        {
+            if (!InWorldz)
+                return 0.0f;
+            float length = _props.GetVec(motorTimescale).Length();
+            float f = length < MotorDecayDelayBelow ? 1.0f - length : 0.0f;
+            return VehicleLimits.MinPhysicsTimestep * (1.0f - f) - VehicleLimits.ThresholdDelayFubar * f;
+        }
+
+        // A motor timescale vector shorter than this (m) has its decay delayed (VehicleDynamics.cs:3070, 3103).
+        internal const float MotorDecayDelayBelow = 0.9f;
+
+        // The motor step on one axis. Where the decay clock reads negative (InWorldz's delay) the motor holds its whole
+        // grip until the clock reaches zero and decays from there; everywhere else it is VehicleMotorSolver.Step.
+        private static double MotorStep(double v0, double motor, double motorTimescale, double decayTimescale, double age,
+                                        double frictionTimescale, double h, double accel = 0.0)
+        {
+            if (age < 0)
+            {
+                double delay = -age;
+                if (h <= delay)
+                    return VehicleMotorSolver.StepFullGrip(v0, motor, motorTimescale, frictionTimescale, h, accel);
+                double v = VehicleMotorSolver.StepFullGrip(v0, motor, motorTimescale, frictionTimescale, delay, accel);
+                return VehicleMotorSolver.Step(v, motor, motorTimescale, decayTimescale, 0.0, frictionTimescale, h - delay, accel);
+            }
+            return VehicleMotorSolver.Step(v0, motor, motorTimescale, decayTimescale, age, frictionTimescale, h, accel);
         }
 
         /// <summary>
@@ -835,6 +885,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         #region Gravity
 
+        // The buoyancy the vehicle has: its VEHICLE_BUOYANCY, except that InWorldz makes a value from 0.977 up to (not
+        // including) 1 into 1, "Legacy grid hack" (PhysxPrim.cs:2963-2965, reached from the vehicle's buoyancy through
+        // VehicleDynamics.cs:1546-1548): a vehicle set to 0.98 floats, where Second Life's would sink slowly.
+        private float Buoyancy()
+        {
+            float buoyancy = _props.GetFloat(VehFloatParam.Buoyancy, 0f);
+            if (InWorldz && buoyancy >= LegacyFloatBuoyancy && buoyancy < 1f)
+                return 1f;
+            return buoyancy;
+        }
+
+        internal const float LegacyFloatBuoyancy = 0.977f;
+
         /// <summary>
         /// The share of the world's gravity the vehicle feels: 1 - buoyancy, times the ground factor for a ground
         /// vehicle touching something. With hover on and HOVER_UP_ONLY, buoyancy vanishes above the hover height
@@ -843,8 +906,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private float GravityShare()
         {
-            float buoyancy = _props.GetFloat(VehFloatParam.Buoyancy, 0f);
-            if (HoverTarget(out float targetZ, out bool upOnly) && upOnly && _body.Position.Z > targetZ)
+            float buoyancy = Buoyancy();
+            // (InWorldz's hover has no such rule: its buoyancy stays above the hover height.)
+            if (HoverTarget(out float targetZ, out bool upOnly) && upOnly && !InWorldz && _body.Position.Z > targetZ)
                 buoyancy = 0f;
             float share = 1f - buoyancy;   // ComputeGravity(buoyancy), GravModifier = 1
 
@@ -1195,7 +1259,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // The gravity share under the hover height: 1 - buoyancy, times the ground factor for a ground vehicle touching.
         private float GravityShareBelow()
         {
-            float share = 1f - _props.GetFloat(VehFloatParam.Buoyancy, 0f);
+            float share = 1f - Buoyancy();
             if (IsGroundVehicle && _body.HasCollision)
                 share *= GroundGravityFactor;
             return share;
@@ -1212,6 +1276,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // The gravity share over the hover height with HOVER_UP_ONLY, where buoyancy vanishes.
         private float GravityShareAbove()
         {
+            if (InWorldz)
+                return GravityShareBelow();   // buoyancy does not vanish above the height
             float share = 1f;
             if (IsGroundVehicle && _body.HasCollision)
                 share *= GroundGravityFactor;
@@ -1247,6 +1313,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             float hoverTimescale = _props.GetFloat(VehFloatParam.HoverTimescale, 1000f);
             targetZ = 0f;
             upOnly = (_props.Flags & ExtendedVehicleFlags.HoverUpOnly) != 0;
+
+            // InWorldz: with HOVER_UP_ONLY the hover force acts only "if diff > 0 || Buoyancy > 0" (diff the height still
+            // to climb): below its height the vehicle is lifted as ever, but above it hover acts only while buoyancy is
+            // positive, and then pushes the vehicle down to its height as an ordinary hover does ("bug for bug compatible
+            // with standard vehicles; unless there is some positive buoyancy, hover does not work", PhysxPrim.pid.cs:323-325;
+            // the flag reaches it from VehicleDynamics.cs:1596-1597). So a buoyant up-only hover is a plain hover.
+            if (upOnly && InWorldz && Buoyancy() > 0f)
+                upOnly = false;
 
             // If timescale is effectively disabled, skip
             if (hoverTimescale >= S.MaxHoverTimescale)
@@ -1329,15 +1403,28 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             double damping = efficiency / (double)timescale;
             bool rollOnly = (_props.Flags & ExtendedVehicleFlags.LimitRollOnly) != 0;
 
+            // InWorldz: a stronger spring, and with LIMIT_ROLL_ONLY a weak pitch spring for cars, boats and sleds.
+            double rollStiffness = stiffness, pitchStiffness = stiffness;
+            bool pitchSprung = !rollOnly;
+            if (InWorldz)
+            {
+                rollStiffness = pitchStiffness = stiffness * AttractorStrength(angle, h);
+                if (rollOnly && _props.Type != VehicleType.Airplane && _props.Type != VehicleType.Balloon)
+                {
+                    pitchStiffness *= RollOnlyPitchShare;
+                    pitchSprung = true;
+                }
+            }
+
             // The spring's own rates: the body's, plus what the last step's turn left out of them.
             double rollRate = Vector3.Dot(_rawWorldAngularVel, x);
             double pitchRate = Vector3.Dot(_rawWorldAngularVel, y);
-            (double rollTurn, double rollCarry) = VehicleSpring.MoveOverGeneral(roll, rollRate + (_attractorCarry?.X ?? 0), stiffness, damping, h);
+            (double rollTurn, double rollCarry) = VehicleSpring.MoveOverGeneral(roll, rollRate + (_attractorCarry?.X ?? 0), rollStiffness, damping, h);
             // With LIMIT_ROLL_ONLY the pitch is left alone: no spring and no damping on it (any rate the last step's
             // pitch turn left out is handed back).
             double pitchTurn = pitchRate + (_attractorCarry?.Y ?? 0), pitchCarry = 0;
-            if (!rollOnly)
-                (pitchTurn, pitchCarry) = VehicleSpring.MoveOverGeneral(pitch, pitchTurn, stiffness, damping, h);
+            if (pitchSprung)
+                (pitchTurn, pitchCarry) = VehicleSpring.MoveOverGeneral(pitch, pitchTurn, pitchStiffness, damping, h);
             _attractorCarry = new Vector3((float)rollCarry, (float)pitchCarry, 0f);
 
             // Applied whole with the motors' change (TorqueFini's per-step clean-up would stop it short).
@@ -1346,6 +1433,52 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         // What the last attractor step's turn left out of the spring's roll and pitch rates; null when it did not act.
         private Vector3? _attractorCarry;
+
+        // ---- InWorldz's attractor (VehicleDynamics.cs, SimulateVerticalAttractor 1217-1334) ----
+        //
+        // Halcyon scales the attractor's restoring force by a factor that depends on the tilt and on how long the vehicle
+        // has been overturned; here that factor scales the stiffness of the spring (the damping is left as it is, as
+        // Halcyon leaves its damping term). Its force baseline, pi e^(3 efficiency), is not taken: the spring keeps
+        // the timescale and efficiency Second Life documents.
+        //   - Vehicles other than airplanes "have very strong restorative forces": x (1 + (1 + tilt / pi)^4) (1272-1274).
+        //   - Other than airplanes, while overturned (tilt at least 0.6 pi) and not improving (the tilt no smaller than
+        //     the step before's) the factor grows by 1.3 every step; otherwise it falls by 1.1 every step, to 1 (1288-1302).
+        //     Halcyon's step is 15 ms (PhysxScene.cs:55-56); the growth and fall are taken per 15 ms of time, so they
+        //     do not depend on the step rate here.
+        //   - Halcyon has no limit on the growth (its PhysX body's angular speed limit bounds the effect); here the factor
+        //     stops at MaxAttractorEscalation, because beyond about that the exact spring rings from one step to the
+        //     next and the vehicle no longer rights itself smoothly.
+        // The tilt is the angle between the vehicle's z axis and up; Halcyon takes it from the Euler roll and pitch,
+        // which agree for the tilts of a vehicle that is righting itself.
+
+        /// <summary>InWorldz's strength factor for a tilt of <paramref name="tilt"/> radians: 1 + (1 + tilt / pi)^4.</summary>
+        internal static float InWorldzAttractorBoost(float tilt)
+            => 1f + (float)Math.Pow(1.0 + tilt / Math.PI, 4.0);
+
+        // With LIMIT_ROLL_ONLY, the share of its pitch spring a car, boat or sled keeps: "vtwix.Y *= 0.1f"
+        // (VehicleDynamics.cs:1278-1284, "Other vehicles need a tad more stablization because of stronger PhysX collisions").
+        internal const double RollOnlyPitchShare = 0.1;
+
+        // Halcyon's physics step, over which its strength factor grows by 1.3 or falls by 1.1.
+        internal const double HalcyonStep = 0.015;
+        internal const double EscalationGrowth = 1.3, EscalationFall = 1.1;
+        internal const float MaxAttractorEscalation = 10f;
+
+        private float AttractorStrength(float tilt, float h)
+        {
+            VehicleDynamicsState d = _props.Dynamics;
+            float last = d.LastVerticalAngle;
+            d.LastVerticalAngle = tilt;
+            if (_props.Type == VehicleType.Airplane)
+                return 1f;
+
+            double steps = h / HalcyonStep;
+            if (tilt >= VehicleLimits.ThresholdOverturnAngle && tilt >= last)
+                d.VerticalForceAdjust = Math.Min(d.VerticalForceAdjust * (float)Math.Pow(EscalationGrowth, steps), MaxAttractorEscalation);
+            else
+                d.VerticalForceAdjust = Math.Max(d.VerticalForceAdjust / (float)Math.Pow(EscalationFall, steps), 1f);
+            return InWorldzAttractorBoost(tilt) * d.VerticalForceAdjust;
+        }
 
         // The attractor hands the body back its true roll and pitch rates when it stops acting.
         private void LetGoOfAttractor(Vector3 x, Vector3 y)
@@ -1471,9 +1604,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // Friction and gravity alone over the step, and the motor with them.
             Vector3 frictionOnly = FrictionStep(v0, frictionTs, h, gravity);
             Vector3 v1 = new Vector3(
-                (float)VehicleMotorSolver.Step(v0.X, motor.X, motorTs.X, decayTs.X, age, frictionTs.X, h, gravity.X),
-                (float)VehicleMotorSolver.Step(v0.Y, motor.Y, motorTs.Y, decayTs.Y, age, frictionTs.Y, h, gravity.Y),
-                (float)VehicleMotorSolver.Step(v0.Z, motor.Z, motorTs.Z, decayTs.Z, age, frictionTs.Z, h, gravity.Z));
+                (float)MotorStep(v0.X, motor.X, motorTs.X, decayTs.X, age, frictionTs.X, h, gravity.X),
+                (float)MotorStep(v0.Y, motor.Y, motorTs.Y, decayTs.Y, age, frictionTs.Y, h, gravity.Y),
+                (float)MotorStep(v0.Z, motor.Z, motorTs.Z, decayTs.Z, age, frictionTs.Z, h, gravity.Z));
             v1.X = Utils.Clamp(v1.X, -S.MaxLinearSpeed, S.MaxLinearSpeed);
             v1.Y = Utils.Clamp(v1.Y, -S.MaxLinearSpeed, S.MaxLinearSpeed);
             v1.Z = Utils.Clamp(v1.Z, -S.MaxLinearSpeed, S.MaxLinearSpeed);
@@ -1482,6 +1615,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // and the motor's share on top of it.
             Vector3 frictionChange = (frictionOnly - v0) * _rotation - gravityWorld * h;
             Vector3 motorChange = (v1 - frictionOnly) * _rotation;
+
+            // InWorldz: "Cheat: Do not fight gravity." Friction that would push the vehicle up in world z is dropped
+            // (VehicleDynamics.cs:1494-1495), so a falling vehicle is not slowed by its friction and one rising is. What
+            // friction does to the step is the change it makes to the velocity the vehicle would have with no friction
+            // (its velocity and the gravity over the step); where that change is upward in world z it is taken out,
+            // leaving the vehicle to the engine's gravity on that axis.
+            if (InWorldz)
+            {
+                float frictionUp = ((frictionOnly - (v0 + gravity * h)) * _rotation).Z;
+                if (frictionUp > 0f)
+                    frictionChange.Z -= frictionUp;
+            }
 
             // VEHICLE_FLAG_LIMIT_MOTOR_UP / LIMIT_MOTOR_DOWN: the motor does not push up (down) in world terms.
             // Friction's share is left whole.
@@ -1561,9 +1706,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             double age = _props.Dynamics.AngularDecayIndex;
 
             Vector3 v1 = new Vector3(
-                (float)VehicleMotorSolver.Step(v0.X, motor.X, motorTs.X, decayTs.X, age, frictionTs.X, h),
-                (float)VehicleMotorSolver.Step(v0.Y, motor.Y, motorTs.Y, decayTs.Y, age, frictionTs.Y, h),
-                (float)VehicleMotorSolver.Step(v0.Z, motor.Z, motorTs.Z, decayTs.Z, age, frictionTs.Z, h));
+                (float)MotorStep(v0.X, motor.X, motorTs.X, decayTs.X, age, frictionTs.X, h),
+                (float)MotorStep(v0.Y, motor.Y, motorTs.Y, decayTs.Y, age, frictionTs.Y, h),
+                (float)MotorStep(v0.Z, motor.Z, motorTs.Z, decayTs.Z, age, frictionTs.Z, h));
             v1.X = Utils.Clamp(v1.X, -S.MaxAngularSpeed, S.MaxAngularSpeed);
             v1.Y = Utils.Clamp(v1.Y, -S.MaxAngularSpeed, S.MaxAngularSpeed);
             v1.Z = Utils.Clamp(v1.Z, -S.MaxAngularSpeed, S.MaxAngularSpeed);

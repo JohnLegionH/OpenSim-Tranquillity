@@ -107,6 +107,22 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         }
 
         /// <summary>
+        /// The velocity on one axis after h seconds of the motor at its whole grip (no decay yet), friction and a constant
+        /// acceleration a: dv/dt = (M - v) / Tm - v / Tf + a, whose solution is v_inf + (v0 - v_inf) e^(-(1 / Tm + 1 / Tf) h)
+        /// with v_inf = (M / Tm + a) / (1 / Tm + 1 / Tf). For the span before a motor's decay starts (InWorldz holds it
+        /// back a few hundredths of a second for a quick motor).
+        /// </summary>
+        public static double StepFullGrip(double v0, double motor, double motorTimescale, double frictionTimescale, double h, double accel = 0.0)
+        {
+            if (h <= 0)
+                return v0;
+            motorTimescale = Math.Max(motorTimescale, MinTimescale);
+            double rate = 1.0 / motorTimescale + FrictionRate(Math.Max(frictionTimescale, MinTimescale));
+            double steady = (motor / motorTimescale + accel) / rate;
+            return steady + (v0 - steady) * Math.Exp(-rate * h);
+        }
+
+        /// <summary>
         /// The velocity on one axis after a step of friction and a constant acceleration a, no motor:
         /// v0 e^(-h / Tf) + a Tf (1 - e^(-h / Tf)), or v0 + a h with no friction on the axis.
         /// </summary>

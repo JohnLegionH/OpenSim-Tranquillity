@@ -58,6 +58,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public int PhysicsStepCollisionSteps = 2;  // solver sub-steps per physics step, used only when PhysicsStepRate is on; at least 60 Hz (CollisionStepsAt)
         public float VehicleGroundGravityFactor = 1f;   // gravity on a car or sled touching something; 1 = whole
         public VehiclePresetSet VehiclePresets = VehiclePresetSet.Documented;   // the values llSetVehicleType gives each type
+        public bool VehiclePresetsSet = false;     // VehiclePresets came from a valid value in the configuration
+        public VehicleBehaviour VehicleBehaviour = VehicleBehaviour.SecondLife;   // whose behaviour the vehicle code follows where they differ
 
         // The limits a script's vehicle parameters are held to (VehicleSettings says what each one does).
         public float VehicleMaxLinearSpeed = VehicleLimits.MaxLinearVelocity;       // m/s
@@ -158,7 +160,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.PhysicsStepRateSet = TryF(cfg.GetString("PhysicsStepRate", null), 0f, MaxPhysicsStepRate, out _);
             c.PhysicsStepCollisionSteps = I(cfg, "PhysicsStepCollisionSteps", c.PhysicsStepCollisionSteps, 1, 64, warnings);
             c.VehicleGroundGravityFactor = F(cfg, "VehicleGroundGravityFactor", c.VehicleGroundGravityFactor, 0f, 1f, warnings);
-            c.VehiclePresets = E(cfg, "VehiclePresets", c.VehiclePresets, warnings);
+            c.VehiclePresets = E(cfg, "VehiclePresets", c.VehiclePresets, warnings, out bool presetsValid);
+            c.VehiclePresetsSet = presetsValid && cfg.GetString("VehiclePresets", null) != null;
+            c.VehicleBehaviour = E(cfg, "VehicleBehaviour", c.VehicleBehaviour, warnings, out _);
             c.VehicleMaxLinearSpeed = F(cfg, "VehicleMaxLinearSpeed", c.VehicleMaxLinearSpeed, 1f, 10000f, warnings);
             c.VehicleReferenceSpeed = F(cfg, "VehicleReferenceSpeed", c.VehicleReferenceSpeed, 0.1f, 10000f, warnings);
             c.VehicleMaxAngularSpeed = F(cfg, "VehicleMaxAngularSpeed", c.VehicleMaxAngularSpeed, 0.1f, 1000f, warnings);
@@ -192,10 +196,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             return c;
         }
 
+        /// <summary>
+        /// The preset values llSetVehicleType gives: VehiclePresets where the configuration sets it; otherwise the
+        /// InWorldz presets (legacy) under VehicleBehaviour = InWorldz and the documented presets under SecondLife.
+        /// </summary>
+        internal VehiclePresetSet EffectivePresets
+            => VehiclePresetsSet ? VehiclePresets
+             : VehicleBehaviour == VehicleBehaviour.InWorldz ? VehiclePresetSet.Legacy
+             : VehiclePresetSet.Documented;
+
         /// <summary>The vehicle settings every vehicle controller in a region with this configuration shares.</summary>
         internal VehicleSettings ToVehicleSettings() => new VehicleSettings
         {
-            Presets = VehiclePresets,
+            Presets = EffectivePresets,
+            Behaviour = VehicleBehaviour,
             MaxLinearSpeed = VehicleMaxLinearSpeed,
             ReferenceSpeed = VehicleReferenceSpeed,
             MaxAngularSpeed = VehicleMaxAngularSpeed,
@@ -335,13 +349,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         // An enum value by its name, case ignored (numbers are not accepted).
-        private static T E<T>(IConfig cfg, string key, T def, List<string> warnings) where T : struct, Enum
+        private static T E<T>(IConfig cfg, string key, T def, List<string> warnings, out bool valid) where T : struct, Enum
         {
+            valid = false;
             string raw = cfg.GetString(key, null);
             if (raw == null) return def;
             string name = raw.Trim();
             if (name.Length > 0 && !char.IsDigit(name[0]) && name[0] != '-' && Enum.TryParse(name, true, out T v) && Enum.IsDefined(v))
+            {
+                valid = true;
                 return v;
+            }
             warnings?.Add($"[{Section}] {key} = \"{raw}\" is invalid (expected one of {string.Join(", ", Enum.GetNames<T>())}); using the default {def}.");
             return def;
         }

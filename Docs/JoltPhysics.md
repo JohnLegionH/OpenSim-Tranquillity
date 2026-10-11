@@ -951,7 +951,8 @@ with 0.2.
 
 ### Vehicle type presets
 
-`llSetVehicleType` gives each type its defaults. `[Jolt] VehiclePresets` chooses which:
+`llSetVehicleType` gives each type its defaults. `[Jolt] VehiclePresets` chooses which (where the key is not set,
+[`VehicleBehaviour`](#vehicle-behaviour-secondlife-or-inworldz) does: `InWorldz` gives `legacy`, `SecondLife` gives `documented`):
 
 - `documented` (the default): Second Life's documented values, from the wiki page of each type
   (`VEHICLE_TYPE_SLED`, `_CAR`, `_BOAT`, `_AIRPLANE`, `_BALLOON`). The sled page's hover efficiency
@@ -989,6 +990,43 @@ The module's vehicle debugging and enablement switches (`DoMotors`, `DoBanking` 
 `VehicleSettings`, all on, and the `Debug*` ones, all off) are part of a region's vehicle settings: one region's
 setting does not change another's. They have no `[Jolt]` keys.
 
+### Vehicle behaviour: SecondLife or InWorldz
+
+`[Jolt] VehicleBehaviour` chooses whose behaviour a region's vehicles follow where Second Life's documentation and the
+InWorldz (Halcyon) simulator differ. It is read once when the region starts.
+
+- `SecondLife` (the default): what Second Life's wiki documents. Nothing changes for a region that does not set the key.
+- `InWorldz`: the six behaviours below, and the InWorldz preset values (`VehiclePresets = legacy`).
+
+```ini
+[Jolt]
+    VehicleBehaviour = InWorldz
+```
+
+Any other value is refused at start-up: the log names the allowed values (`SecondLife, InWorldz`) and `SecondLife` is used.
+
+**How it combines with `VehiclePresets`:** where `VehiclePresets` is set it decides the preset values, whatever the behaviour;
+where it is not set, the behaviour does (`InWorldz` gives `legacy`, `SecondLife` gives `documented`).
+
+| Behaviour under `InWorldz` | `SecondLife` (documented) | `InWorldz` (Halcyon) | What a driver notices |
+|---|---|---|---|
+| `LIMIT_ROLL_ONLY` | The attractor leaves the pitch alone for every type. | Cars, boats and sleds keep a tenth of the pitch spring (airplanes and balloons keep none). | A roll-only car left nose-up or nose-down comes slowly back to level. |
+| `HOVER_UP_ONLY` | Hover never pushes down, and buoyancy vanishes above the hover height. | Above its height the hover acts only while buoyancy is positive, and then pushes down; buoyancy does not vanish. | A buoyant up-only hover vehicle (a balloon) is held at its height instead of drifting above it. |
+| Friction that would push up | Friction acts on every axis, so a falling vehicle with a short vertical friction is slowed. | That friction is dropped. | A falling car falls at g, not at its slowed terminal speed. |
+| Motor decay | The motor starts to decay as it is set. | A motor whose timescale vector is shorter than 0.9 holds its whole grip for up to 0.06 s first. | A quick motor (a car's turning motor) reaches more of its speed before its decay takes it back. |
+| Self-righting | The attractor is the spring of the vehicle's timescale and efficiency. | Vehicles other than airplanes are righted harder (the spring is `1 + (1 + tilt / pi)^4` times as stiff), and while overturned (tilt of 108 degrees or more) and not improving, harder by a factor of 1.3 every 15 ms, up to 10 times. | A flipped car rights itself sooner. |
+| `VEHICLE_BUOYANCY` | The share of gravity is `1 - buoyancy`. | A buoyancy from 0.977 up to (not including) 1 acts as 1. | A balloon set to 0.98 floats instead of sinking slowly. |
+
+Each behaviour follows Halcyon's code as read (not run: it needs PhysX); the figures its formula gives are checked in the
+tests. Two things are the module's own: the self-righting factor stops at 10 where Halcyon has no limit, and it grows per 15 ms
+of time (Halcyon's step) instead of per step, so it does not depend on the step rate. Halcyon's buoyancy adjustment also covers
+`llSetBuoyancy` on an ordinary object; here it is applied to a vehicle's buoyancy only.
+
+Choose `InWorldz` for a region whose vehicles were built for InWorldz or Halcyon grids and are tuned against these behaviours; leave
+the default for vehicles built for Second Life. In the harness the choice is `--jolt VehicleBehaviour=InWorldz`; the runs `iw-car-pad`,
+`iw-car-ramp` and `iw-airplane` of `ci/vehicle-behaviour-runs.txt` record it (a car on level ground, a car down a 15 degree ramp,
+an airplane), checked with `--check-baseline <runs folder> --baselines Tests/JoltPhysicsHarness/ci/vehicle-behaviour-baselines`. Their
+baselines are recorded for the stock Windows x64 joltc only.
 ### Vehicle limits
 
 The limits a script's vehicle parameters are held to are `[Jolt]` keys, read once when the region
