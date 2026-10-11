@@ -588,10 +588,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// zero, which only brakes), and hover is off or the vehicle is at its hover height. Friction, the attractor
         /// and deflection only slow or turn a vehicle that is already moving, and gravity is held by what it rests
         /// on. A host may then let the body sleep and call <see cref="Rest"/> instead of <see cref="Step"/> while it
-        /// sleeps.
+        /// sleeps. A vehicle with VEHICLE_FLAG_MOUSELOOK_STEER or _BANK is never idle: a sleeping vehicle would read no
+        /// camera, and the InWorldz simulator keeps such a vehicle awake for that reason (its sleep threshold is 0;
+        /// VehicleDynamics.cs:784-789).
         /// </summary>
         public bool IsIdle
-            => MotorIdle(_props.Dynamics.LinearDirection, _props.GetVec(VehVectorParam.LinearMotorDecayTimescale), _props.Dynamics.LinearDecayIndex)
+            => (_props.Flags & (ExtendedVehicleFlags.MouselookSteer | ExtendedVehicleFlags.MouselookBank)) == 0
+            && MotorIdle(_props.Dynamics.LinearDirection, _props.GetVec(VehVectorParam.LinearMotorDecayTimescale), _props.Dynamics.LinearDecayIndex)
             && MotorIdle(_props.Dynamics.AngularDirection, _props.GetVec(VehVectorParam.AngularMotorDecayTimescale), _props.Dynamics.AngularDecayIndex)
             && HoverIdle()
             && AttractorIdle();
