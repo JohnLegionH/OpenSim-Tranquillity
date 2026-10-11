@@ -405,9 +405,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         // flag, and set with -1 sets every flag.
         public void ProcessVehicleFlags(int pParam, bool remove)
         {
-            // Map OpenSim VehicleFlag bits to our internal flags.
-            // Standard flags share the same bit positions (1-32768).
-            ExtendedVehicleFlags flags = (ExtendedVehicleFlags)pParam;
+            ExtendedVehicleFlags flags = FromScriptFlags(pParam);
 
             if (remove)
                 _props.Flags &= ~flags;
@@ -421,7 +419,25 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <summary>A saved vehicle's flags, in place of every flag it has (its type's).</summary>
         public void RestoreFlags(int flags)
         {
-            _props.Flags = (ExtendedVehicleFlags)flags;
+            _props.Flags = FromScriptFlags(flags);
+        }
+
+        // A script's flag number, and the number a saved record keeps, as the engine's flags. The bits 0x1 to 0x8000 are the
+        // same in both. The InWorldz extensions are numbered differently: a script sends REACT_TO_CURRENTS 0x10000,
+        // REACT_TO_WIND 0x20000, LIMIT_MOTOR_DOWN 0x40000, TORQUE_WORLD_Z 0x80000, MOUSEPOINT_STEER 0x100000 and
+        // MOUSEPOINT_BANK 0x200000 (the InWorldz simulator's VehicleFlags.cs), where the engine's enum has them at
+        // 1 << 16 to 1 << 21 in another order. A bit above 0x200000 has no flag and is kept where it is, so -1 is still
+        // every bit.
+        internal static ExtendedVehicleFlags FromScriptFlags(int script)
+        {
+            ExtendedVehicleFlags flags = (ExtendedVehicleFlags)(script & (0xFFFF | ~0x3FFFFF));
+            if ((script & 0x10000) != 0) flags |= ExtendedVehicleFlags.ReactToCurrents;
+            if ((script & 0x20000) != 0) flags |= ExtendedVehicleFlags.ReactToWind;
+            if ((script & 0x40000) != 0) flags |= ExtendedVehicleFlags.LimitMotorDown;
+            if ((script & 0x80000) != 0) flags |= ExtendedVehicleFlags.TorqueWorldZ;
+            if ((script & 0x100000) != 0) flags |= ExtendedVehicleFlags.MousePointSteer;
+            if ((script & 0x200000) != 0) flags |= ExtendedVehicleFlags.MousePointBank;
+            return flags;
         }
 
         /// <summary>Both motors and the banking turn off, their directions kept as settings: a failed region crossing, as
