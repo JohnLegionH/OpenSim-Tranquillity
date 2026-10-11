@@ -2,7 +2,8 @@
 # with the runs listed in Tests/JoltPhysicsHarness/ci/runs.txt, checks their summaries against the baseline recorded
 # for the joltc build they loaded (Tests/JoltPhysicsHarness/ci/baselines; a build with none is reported as skipped),
 # and uploads each runner's traces, so the two platforms' results can be set side by side, with those of the runs in
-# Tests/JoltPhysicsHarness/ci/traced-runs.txt, which are not checked against a baseline. Runs when the Jolt module,
+# Tests/JoltPhysicsHarness/ci/traced-runs.txt, which are not checked against a baseline, and those of
+# Tests/JoltPhysicsHarness/ci/vehicle-behaviour-runs.txt, which are checked against their own baselines. Runs when the Jolt module,
 # its backend or vehicles, the harness, that list or this file changes, or by hand. Run by hand with pool_sweep set,
 # it runs only the pool sweep job instead.
 name: Jolt harness
@@ -119,6 +120,35 @@ jobs:
             dotnet "$dll" $args --out "$out/$name" | tee "$out/$name.txt"
             echo "::endgroup::"
           done
+
+      # Under vehicle-behaviour/, which the check above does not read: the runs of [Jolt] VehicleBehaviour = InWorldz,
+      # checked against their own baselines (a build with none is reported as skipped). Their outputs are uploaded
+      # with the others, so a baseline for a platform can be recorded from the artifact.
+      - name: Run the vehicle behaviour runs and check them against their baselines
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/harness/vehicle-behaviour"
+          mkdir -p "$out"
+          dll=Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll
+          grep -v '^[[:space:]]*#' Tests/JoltPhysicsHarness/ci/vehicle-behaviour-runs.txt | grep ':' | while IFS= read -r line; do
+            name="${line%%:*}"
+            args="${line#*:}"
+            case "$name" in *[!A-Za-z0-9_-]*|'') echo "bad run name '$name'"; exit 1;; esac
+            echo "::group::$name:$args"
+            # shellcheck disable=SC2086
+            dotnet "$dll" $args --out "$out/$name" | tee "$out/$name.txt"
+            echo "::endgroup::"
+          done
+          set +e
+          dotnet "$dll" --check-baseline "$out" --baselines Tests/JoltPhysicsHarness/ci/vehicle-behaviour-baselines > "$out/baseline-check.txt"
+          rc=$?
+          set -e
+          cat "$out/baseline-check.txt"
+          case "$rc" in
+            0) ;;
+            3) echo "::notice title=Vehicle behaviour baseline skipped::$(head -n 1 "$out/baseline-check.txt")" ;;
+            *) exit "$rc" ;;
+          esac
 
       - name: Upload the traces
         if: always()
