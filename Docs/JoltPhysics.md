@@ -973,15 +973,13 @@ flag, also one a script set before `llSetVehicleType`. The module's own extensio
 motor disabling) are not Second Life parameters and are the same in both sets. The legacy boat and
 airplane also carry the module's torque-about-world-z flag, which no documented type sets.
 
-The legacy car is the documented car: every value and flag the car's page gives is the page's, and only
-what the page leaves out stays as InWorldz had it (the wind, mouselook and banking-azimuth extensions and the
-motor-disabling height and delay). It used to be the InWorldz car, with torque about world z and different
-numbers. A car script that sets its own values after `llSetVehicleType` is unchanged except where it leaves
-a value at the preset: against the old legacy car, linear friction is now (100, 2, 1000) for (100, 0.1, 10),
-angular friction 1000 for (100, 100, 0.3), the linear motor 1 s with a 60 s decay for (0.5, 1, 1) with
-(10, 2, 2), the angular motor 1 s with a 0.8 s decay for (0.2, 0.2, 0.05) with (0.3, 0.3, 0.1), angular
-deflection off (0, 10 s) for 0.5 / 2 s, and the vertical attractor 1 / 10 s for 0.6 / 2 s; and the car no
-longer turns about world z with its angular motor's third axis.
+The legacy car is the InWorldz car, as the Halcyon source gives it: linear friction (100, 0.1, 10), angular
+friction (100, 100, 0.3), the linear motor 0.5 / 1 / 1 s with decay 10 / 2 / 2 s, the angular motor
+0.2 / 0.2 / 0.05 s with decay 0.3 / 0.3 / 0.1 s, linear deflection 1 / 2 s, angular deflection 0.5 / 2 s, the vertical
+attractor 0.6 / 2 s, banking -0.2 with mix 1 and timescale 1 s, and the flags `NO_DEFLECTION_UP`, `LIMIT_ROLL_ONLY`,
+`HOVER_UP_ONLY` and `LIMIT_MOTOR_UP`. It has no torque about world z (the legacy boat and airplane do; the car does
+not). It differs from the documented car in the friction, motor and decay timescales, the angular deflection and the
+attractor. The documented car (the default) is unchanged.
 
 A vehicle rotation or vector parameter that is not a number (a NaN or an infinity in any component) is refused,
 as a float one is, and the stored value is kept; this includes `VEHICLE_REFERENCE_FRAME`, also when a saved
@@ -1054,7 +1052,9 @@ exact solution over the step the engine takes:
   damped (1). The hover flags choose terrain, water or the global height as before; with
   `VEHICLE_FLAG_HOVER_GLOBAL_HEIGHT` set the global height wins over `VEHICLE_FLAG_HOVER_WATER_ONLY`
   and `VEHICLE_FLAG_HOVER_TERRAIN_ONLY` set with it (the flag's page: "instead of height above ground or
-  water"; before, the water or terrain flag won). With
+  water"). With `VEHICLE_FLAG_HOVER_WATER_ONLY` and `VEHICLE_FLAG_HOVER_TERRAIN_ONLY` both set and the global
+  flag clear, the vehicle hovers over the higher of the water and the ground, as with neither flag: Second
+  Life's pages call the case undefined, and InWorldz reads both flags set as hovering over both. With
   `VEHICLE_FLAG_HOVER_UP_ONLY` hover never pushes down, and buoyancy vanishes above the hover height.
   A vehicle without full buoyancy hovers below its height, where the spring holds its weight.
 - The vertical attractor is the same spring on the vehicle's roll and pitch, with
@@ -1094,9 +1094,11 @@ that as on any motor direction, with its timescale and decay. Together with the 
 gives a turn with half critical damping: it overshoots the camera by about a sixth of the angle and
 settles in a few motor timescales. The axes not aimed keep the script's direction.
 
-The camera is used whether or not the driver is in mouselook; Second Life's pages do not say what
-happens outside it. With no driver's camera (no script has taken the controls) the flags change
-nothing. `VEHICLE_FLAG_CAMERA_DECOUPLED` is a hint for the viewer and does nothing in the engine.
+The flags act only while the driver is in mouselook (the viewer's mouselook control flag, which the simulator
+passes with the camera as `CameraData.MouseLook`). Out of mouselook the vehicle behaves as if the flags were
+clear: the angular motor turns it at the script's direction. Second Life's pages do not say what happens
+outside mouselook; InWorldz acts on the camera for these flags only in mouselook. With no driver's camera (no
+script has taken the controls) the flags change nothing. `VEHICLE_FLAG_CAMERA_DECOUPLED` is a hint for the viewer and does nothing in the engine.
 - Linear deflection turns the velocity toward the vehicle's nose, keeping its speed, the angle between
   them decaying as `e^(-eff t / T)`; with `VEHICLE_FLAG_NO_DEFLECTION_UP` only the horizontal part
   turns. Angular deflection turns the nose toward the velocity the same way, scaled by the speed over

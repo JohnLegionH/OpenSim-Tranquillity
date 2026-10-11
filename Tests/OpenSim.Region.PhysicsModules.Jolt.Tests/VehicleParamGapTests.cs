@@ -100,10 +100,11 @@ public class VehicleParamGapTests
         Assert.Equal(before, Snapshot(v));
     }
 
-    // The legacy car follows Second Life's page for the car where the page gives a value or flag, and keeps the
-    // InWorldz extras where it is silent. TORQUE_WORLD_Z is not one of the page's flags.
+    // The legacy car is InWorldz's, not the documented one (VehicleDynamics.cs:1767-1804): every value and flag as
+    // Halcyon's car preset has it, and, like it, no torque about world z. It differs from the documented car in exactly
+    // these values (the first is the documented car's, the second the legacy car's).
     [Fact]
-    public void The_legacy_car_has_the_pages_flags_and_values_and_the_extras_where_the_page_is_silent()
+    public void The_legacy_car_is_the_InWorldz_car_with_no_torque_about_world_z()
     {
         var legacy = new VehicleController(null!) { Settings = new VehicleSettings { Presets = VehiclePresetSet.Legacy } };
         legacy.ProcessTypeChange(Vehicle.TYPE_CAR);
@@ -112,13 +113,36 @@ public class VehicleParamGapTests
 
         Assert.Equal(ExtendedVehicleFlags.NoDeflectionUp | ExtendedVehicleFlags.LimitRollOnly
                      | ExtendedVehicleFlags.HoverUpOnly | ExtendedVehicleFlags.LimitMotorUp, legacy.Flags);
+        Assert.Equal(0, (int)(legacy.Flags & ExtendedVehicleFlags.TorqueWorldZ));
         Assert.Equal(documented.Flags, legacy.Flags);
-        Assert.Equal(new Vector3(100f, 2f, 1000f), legacy.GetVecParam(VehVectorParam.LinearFrictionTimescale));
-        Assert.Equal(new Vector3(0.8f), legacy.GetVecParam(VehVectorParam.AngularMotorDecayTimescale));
 
-        // Not Second Life parameters: still the InWorldz car's.
+        // Halcyon's car, line by line.
+        Assert.Equal(new Vector3(100f, 0.1f, 10f), legacy.GetVecParam(VehVectorParam.LinearFrictionTimescale));
+        Assert.Equal(new Vector3(100f, 100f, 0.3f), legacy.GetVecParam(VehVectorParam.AngularFrictionTimescale));
+        Assert.Equal(new Vector3(0.5f, 1f, 1f), legacy.GetVecParam(VehVectorParam.LinearMotorTimescale));
+        Assert.Equal(new Vector3(0.2f, 0.2f, 0.05f), legacy.GetVecParam(VehVectorParam.AngularMotorTimescale));
+        Assert.Equal(new Vector3(10f, 2f, 2f), legacy.GetVecParam(VehVectorParam.LinearMotorDecayTimescale));
+        Assert.Equal(new Vector3(0.3f, 0.3f, 0.1f), legacy.GetVecParam(VehVectorParam.AngularMotorDecayTimescale));
+        Assert.Equal(Vector3.Zero, legacy.GetVecParam(VehVectorParam.LinearMotorOffset));
+        Assert.Equal(1f, legacy.GetFloatParam(VehFloatParam.LinearDeflectionEfficiency));
+        Assert.Equal(2f, legacy.GetFloatParam(VehFloatParam.LinearDeflectionTimescale));
+        Assert.Equal(0.5f, legacy.GetFloatParam(VehFloatParam.AngularDeflectionEfficiency));
+        Assert.Equal(2f, legacy.GetFloatParam(VehFloatParam.AngularDeflectionTimescale));
+        Assert.Equal(0.6f, legacy.GetFloatParam(VehFloatParam.VerticalAttractionEfficiency));
+        Assert.Equal(2f, legacy.GetFloatParam(VehFloatParam.VerticalAttractionTimescale));
+        Assert.Equal(-0.2f, legacy.GetFloatParam(VehFloatParam.BankingEfficiency));
+        Assert.Equal(1f, legacy.GetFloatParam(VehFloatParam.BankingMix));
+        Assert.Equal(1f, legacy.GetFloatParam(VehFloatParam.BankingTimescale));
+        Assert.Equal(1f, legacy.GetFloatParam(VehFloatParam.InvertedBankingModifier));
         Assert.Equal(0.75f, legacy.GetFloatParam(VehFloatParam.DisableMotorsAbove));
         Assert.Equal(2.5f, legacy.GetFloatParam(VehFloatParam.DisableMotorsAfter));
+
+        // And not the documented car's.
+        Assert.NotEqual(documented.GetVecParam(VehVectorParam.LinearFrictionTimescale), legacy.GetVecParam(VehVectorParam.LinearFrictionTimescale));
+        Assert.NotEqual(documented.GetVecParam(VehVectorParam.AngularFrictionTimescale), legacy.GetVecParam(VehVectorParam.AngularFrictionTimescale));
+        Assert.NotEqual(documented.GetVecParam(VehVectorParam.LinearMotorTimescale), legacy.GetVecParam(VehVectorParam.LinearMotorTimescale));
+        Assert.NotEqual(documented.GetFloatParam(VehFloatParam.AngularDeflectionEfficiency), legacy.GetFloatParam(VehFloatParam.AngularDeflectionEfficiency));
+        Assert.NotEqual(documented.GetFloatParam(VehFloatParam.VerticalAttractionTimescale), legacy.GetFloatParam(VehFloatParam.VerticalAttractionTimescale));
     }
 
     // The legacy car's other types are unchanged: the sled is still the InWorldz sled.

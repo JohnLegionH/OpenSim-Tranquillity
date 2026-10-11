@@ -43,6 +43,9 @@ public sealed class HarnessOptions
     public float? Hold;
     /// <summary>How often a held key re-sends the motor, as a script's control event does while a key is down.</summary>
     public float KeyRepeat = 0.1f;
+    /// <summary>The mouselook scenarios' driver is in mouselook (the simulator's CameraData.MouseLook); false gives the
+    /// same camera with the driver out of mouselook.</summary>
+    public bool DriverInMouselook = true;
     /// <summary>Feed a driven vehicle the way a region does (see <see cref="InputFeed"/>).</summary>
     public InputFeed Feed = InputFeed.Heartbeat;
     /// <summary>Region feed: seconds from physics turning on to the first control event.</summary>
@@ -155,7 +158,6 @@ public readonly record struct VehicleFlagSetting(int Flag, bool Remove)
         ["NO_DEFLECTION_UP"] = 0x1, ["LIMIT_ROLL_ONLY"] = 0x2, ["HOVER_WATER_ONLY"] = 0x4, ["HOVER_TERRAIN_ONLY"] = 0x8,
         ["HOVER_GLOBAL_HEIGHT"] = 0x10, ["HOVER_UP_ONLY"] = 0x20, ["LIMIT_MOTOR_UP"] = 0x40,
         ["MOUSELOOK_STEER"] = 0x80, ["MOUSELOOK_BANK"] = 0x100, ["CAMERA_DECOUPLED"] = 0x200, ["BLOCK_INTERFERENCE"] = 0x400,
-        ["TORQUE_WORLD_Z"] = 0x20000,   // not a Second Life flag: the module's own (ExtendedVehicleFlags.TorqueWorldZ)
     };
 
     /// <summary>Parses NAME (set) or -NAME (remove); NAME is an LSL VEHICLE_FLAG_* name with or without the prefix.</summary>
@@ -1490,7 +1492,7 @@ public static class Harness
         {
             CameraAtAxis = Vector3.Normalize(at),
             CameraRotation = Quaternion.CreateFromEulers(0f, 0f, MathF.Atan2(at.Y, at.X)),
-            MouseLook = true,
+            MouseLook = r.Options.DriverInMouselook,
         };
         r.Actor.OnPhysicsRequestingCameraData += () => camera;
     }

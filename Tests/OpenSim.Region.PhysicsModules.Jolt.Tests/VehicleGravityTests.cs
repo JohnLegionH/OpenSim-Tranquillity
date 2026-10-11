@@ -101,9 +101,9 @@ public class VehicleGravityTests
         return sum / n;
     }
 
-    // The test car (motor timescale 1, decay 0.5, friction 1 s along) and the car preset (1, 60, 100 s: the legacy
-    // set's car is the documented car), key held down the ramp: the speed on the lower ramp is the equation's, within
-    // 1% (1.5% for the car preset, which keeps LIMIT_ROLL_ONLY with no angular friction), at every rate.
+    // The test car (motor timescale 1, decay 0.5, friction 1 s along) and the car preset (legacy 0.5, 10, 100 s;
+    // documented 1, 60, 100 s), key held down the ramp: the speed on the lower ramp is the equation's, within 1%, at
+    // every rate.
     [Theory]
     [InlineData("testcar-down", 5f, 1.0, 0.5, 1.0, "documented")]
     [InlineData("testcar-down", 15f, 1.0, 0.5, 1.0, "documented")]
@@ -111,8 +111,8 @@ public class VehicleGravityTests
     [InlineData("testcar-down", 15f, 1.0, 0.5, 1.0, "legacy")]
     [InlineData("car-down", 5f, 1.0, 60.0, 100.0, "documented")]
     [InlineData("car-down", 15f, 1.0, 60.0, 100.0, "documented")]
-    [InlineData("car-down", 5f, 1.0, 60.0, 100.0, "legacy")]
-    [InlineData("car-down", 15f, 1.0, 60.0, 100.0, "legacy")]
+    [InlineData("car-down", 5f, 0.5, 10.0, 100.0, "legacy")]
+    [InlineData("car-down", 15f, 0.5, 10.0, 100.0, "legacy")]
     public void A_car_driven_down_a_ramp_settles_at_the_equations_speed(string scenario, float slope, double tm, double td, double tf, string presets)
     {
         foreach (double rate in Harness.Harness.Rates)
@@ -130,7 +130,7 @@ public class VehicleGravityTests
             double expected = EquationSteady(rate, 8.0, tm, td, tf, slope, limitMotorUp: true);
             // The documented test car (LIMIT_ROLL_ONLY with no angular friction, so its pitch rests on the contact
             // alone): 1.5% for it.
-            double tolerance = presets == "documented" || scenario == "car-down" ? 0.015 : 0.01;
+            double tolerance = presets == "documented" ? 0.015 : 0.01;
             Assert.True(Math.Abs(m.SteadySpeed - expected) <= tolerance * expected, $"{scenario} {slope} deg at {rate} Hz: {m.SteadySpeed:0.000} against {expected:0.000}");
         }
     }

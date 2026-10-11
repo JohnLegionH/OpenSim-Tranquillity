@@ -17,8 +17,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// (llSetVehicleFlags): the angular motor turns the vehicle so that its x axis points where the driver's camera looks
 /// (STEER), or turns the camera's yaw into a roll that banking then turns into a yaw (BANK), and "only turn the vehicle up
 /// to the current VEHICLE_ANGULAR_MOTOR_DIRECTION; If VEHICLE_ANGULAR_MOTOR_DIRECTION is set to ZERO_VECTOR, then the
-/// vehicle will not turn". A body with no gravity or contacts that keeps what the controller sets and turns by its
-/// angular velocity. Pure, parallel.
+/// vehicle will not turn". They act only while the driver is in mouselook; out of it the vehicle behaves as if the flags
+/// were clear. A body with no gravity or contacts that keeps what the controller sets and turns by its angular
+/// velocity. Pure, parallel.
 /// </summary>
 public class VehicleMouselookTests
 {
@@ -62,7 +63,10 @@ public class VehicleMouselookTests
 
     // A car with everything that turns it off but the angular motor (timescale 1 s, no decay to speak of in the run):
     // no friction, deflection, attractor or banking. The motor is set once.
-    private static (VehicleController car, FreeBody body, Action<double> step) Car(int flags, Vector3 motor, Vector3? camera)
+    private static (VehicleController car, FreeBody body, Action<double> step) Car(int flags, Vector3 motor, Vector3? camera, bool inMouselook = true)
+        => Car(flags, motor, camera, () => inMouselook);
+
+    private static (VehicleController car, FreeBody body, Action<double> step) Car(int flags, Vector3 motor, Vector3? camera, Func<bool> inMouselook)
     {
         var body = new FreeBody();
         var car = new VehicleController(body);
@@ -80,7 +84,7 @@ public class VehicleMouselookTests
         car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE, 120f);
         car.ProcessVehicleFlags(flags, remove: false);
         if (camera.HasValue)
-            car.DriverCamera = () => camera;
+            car.DriverCamera = () => new DriverView(camera.Value, inMouselook());
         car.ProcessVectorVehicleParam(Vehicle.ANGULAR_MOTOR_DIRECTION, motor);
         void Step(double h)
         {
@@ -151,6 +155,59 @@ public class VehicleMouselookTests
             Assert.True(Math.Abs(end - Math.PI / 3) < 0.5 * Math.PI / 180, $"{rate} Hz: heading {end * 180 / Math.PI:0.00} deg at 15 s");
             Assert.Equal(0f, Harness.Harness.Heading(still.Orientation));
             Assert.Equal(Harness.Harness.Heading(plain.Orientation), Harness.Harness.Heading(blind.Orientation));
+        }
+    }
+
+    // Out of mouselook the flags do nothing: the driver's camera is looked at only in mouselook (InWorldz acts on the
+    // camera for these two flags only while the camera is in mouselook). With the camera 60 degrees left but the driver
+    // not in mouselook, a STEER car and a BANK car turn exactly as the same car with the flag clear: at the script's
+    // motor direction, on past the camera, to the bit, at every rate.
+    [Theory]
+    [InlineData(SteerFlag, 0f, 0f, 0.3f)]
+    [InlineData(BankFlag, 0.5f, 0f, 0f)]
+    [InlineData(SteerFlag | BankFlag, 0.5f, 0f, 0.3f)]
+    [InlineData(SteerFlag, 0f, 1f, 0f)]
+    public void Out_of_mouselook_the_flags_change_nothing(int flags, float x, float y, float z)
+    {
+        foreach (double rate in Rates)
+        {
+            double h = 1.0 / rate;
+            var motor = new Vector3(x, y, z);
+            var (_, away, stepAway) = Car(flags, motor, Level(Math.PI / 3), inMouselook: false);
+            var (_, plain, stepPlain) = Car(0, motor, null);
+            var (_, aimed, stepAimed) = Car(flags, motor, Level(Math.PI / 3), inMouselook: true);
+            for (int i = 1; i <= (int)Math.Round(8 * rate); i++)
+            {
+                stepAway(h); stepPlain(h); stepAimed(h);
+                Assert.Equal(plain.AngularVelocity, away.AngularVelocity);
+                Assert.Equal(plain.Orientation, away.Orientation);
+            }
+            // The control: in mouselook the same car does not turn as the plain one does (it aims, so it differs).
+            Assert.NotEqual(plain.Orientation, aimed.Orientation);
+        }
+    }
+
+    // The driver can leave and enter mouselook while driving: the camera steers only while he is in it. A STEER car aims
+    // at a camera 60 degrees left, the driver leaves mouselook at 0.5 s and the motor's direction (2 rad/s) turns the car
+    // on past the camera; the same car that stays in mouselook settles on the camera.
+    [Fact]
+    public void Leaving_mouselook_stops_the_steering_at_once()
+    {
+        foreach (double rate in Rates)
+        {
+            double h = 1.0 / rate, t = 0;
+            bool inMouselook = true;
+            var (_, leaves, stepLeaves) = Car(SteerFlag, new Vector3(0f, 0f, 2f), Level(Math.PI / 3), () => inMouselook);
+            var (_, stays, stepStays) = Car(SteerFlag, new Vector3(0f, 0f, 2f), Level(Math.PI / 3), true);
+            for (int i = 1; i <= (int)Math.Round(4 * rate); i++)
+            {
+                t = i * h;
+                inMouselook = t <= 0.5;
+                stepLeaves(h); stepStays(h);
+            }
+            Assert.True(leaves.AngularVelocity.Z > 1.5f, $"{rate} Hz: left mouselook, turning {leaves.AngularVelocity.Z} rad/s at 4 s");
+            Assert.True(Harness.Harness.Heading(leaves.Orientation) > Math.PI / 3 + 0.3 || Harness.Harness.Heading(leaves.Orientation) < 0, $"{rate} Hz: heading {Harness.Harness.Heading(leaves.Orientation)}");
+            Assert.True(Math.Abs(stays.AngularVelocity.Z) < 1f, $"{rate} Hz: stayed in mouselook, turning {stays.AngularVelocity.Z} rad/s at 4 s");
         }
     }
 
@@ -263,6 +320,21 @@ public class VehicleBankingAndMouselookHarnessTests
             Assert.True(turned[physics] < -0.2, $"physics {physics} Hz: turned {turned[physics]:0.000} rad");
         }
         Assert.True(Math.Abs(turned[45.0] - turned[0.0]) <= 0.03 * Math.Abs(turned[0.0]), $"turned {turned[0.0]:0.0000} and {turned[45.0]:0.0000}");
+    }
+
+    // The same car with its driver out of mouselook is not steered by the camera: its angular motor, held at 1.5 rad/s,
+    // keeps turning it round and round (still turning at 1.4 rad/s or more in the last two seconds of the hold, and
+    // through north without stopping there), at both rates.
+    [Fact]
+    public void The_car_is_not_steered_by_the_camera_out_of_mouselook()
+    {
+        foreach (double physics in new[] { 0.0, 45.0 })
+        {
+            RunResult r = Run("mouselook-turn", physics, o => o.DriverInMouselook = false);
+            Assert.Equal(0, r.Summary.NonFinite);
+            foreach (Sample s in r.Samples.Where(s => s.T >= 4.0 && s.T <= r.Summary.ReleaseT))
+                Assert.True(s.AngularVelocity.Z >= 1.4f, $"physics {physics} Hz at {s.T:0.000} s: turning {s.AngularVelocity.Z:0.000} rad/s");
+        }
     }
 
     // The car steered by the camera turns left to face north, no faster than its 1.5 rad/s, and drives on north: at

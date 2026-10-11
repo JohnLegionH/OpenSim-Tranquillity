@@ -139,6 +139,23 @@ public class VehicleHoverTests
         Assert.InRange(m.End.Z, 40f - 0.02f, 40f + 0.02f);
     }
 
+    // HOVER_WATER_ONLY and HOVER_TERRAIN_ONLY both set, the global flag clear: the vehicle hovers over both, that is over
+    // the higher of the water and the ground, as with neither flag. Second Life's pages call the case undefined;
+    // InWorldz's hover takes "both flags set or both clear" to mean both (VehicleDynamics.cs:1580-1588). The course's
+    // ground is at 25 m and its water at 20 m, so over the water alone the vehicle would settle at 28 m, not 33 m.
+    [Theory]
+    [InlineData(11.0)]
+    [InlineData(22.5)]
+    [InlineData(45.0)]
+    [InlineData(90.0)]
+    public void Water_only_and_terrain_only_together_hover_over_both(double rate)
+    {
+        Summary both = Run(rate, 1f, 1f, 15f, 8f, "HOVER_WATER_ONLY", "HOVER_TERRAIN_ONLY").Summary;
+        Summary neither = Run(rate, 1f, 1f, 15f, 8f).Summary;
+        Assert.InRange(both.End.Z, Course.Ground + 8f - 0.02f, Course.Ground + 8f + 0.02f);
+        Assert.Equal(neither.End.Z, both.End.Z, 3);
+    }
+
     // HOVER_UP_ONLY: hover does not push down, and buoyancy vanishes above the hover height. A bouncy hover that would
     // swing the balloon 4.5 m over its height instead lets it coast up under gravity alone from where it crosses the
     // height: v^2 / 2g above it at most, then down again.

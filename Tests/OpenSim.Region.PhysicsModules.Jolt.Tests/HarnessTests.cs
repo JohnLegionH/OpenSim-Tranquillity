@@ -111,9 +111,8 @@ public class HarnessTests
     public void Preset_car_on_level_ground_at_11_hz()
     {
         Summary m = Run("car", slope: 0f).Summary;
-        // The legacy set's car is the documented car, so these are its figures.
-        Assert.InRange(m.SteadySpeed, 7.239f, 7.339f);   // 7.289 over the last second of the hold (7.903 with the InWorldz car)
-        Assert.InRange(m.TimeToRest, 4.3, 4.6);            // 4.455 (2.636 with the InWorldz car)
+        Assert.InRange(m.SteadySpeed, 7.853f, 7.953f);   // 7.903 over the last second of the hold (before 7.702, was 7.455)
+        Assert.InRange(m.TimeToRest, 2.5, 2.8);            // 2.636 (before 6.000, was 6.182)
     }
 
     [Theory]

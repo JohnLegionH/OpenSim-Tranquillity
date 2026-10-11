@@ -62,10 +62,9 @@ public class VehiclePresetTests
     {
         [Vehicle.TYPE_SLED] = new(V(1000, 1, 1000), V(1000), V(1000), V(120), V(1000), V(120), V(0, 0, -0.1f),
             0, 0, 1000, 0, 1, 0.3f, 1, 1, 0.1f, 10, 0, 1, 10, NoDeflectionUp | RollOnly | MotorUp),
-        // The car: Second Life's page for every value and flag it gives (the legacy set only keeps InWorldz's extras
-        // where the page is silent), so the same row as the documented car.
-        [Vehicle.TYPE_CAR] = new(V(100, 2, 1000), V(1000), V(1), V(60), V(1), V(0.8f), V(0),
-            0, 0, 1000, 0, 1, 2, 0, 10, 1, 10, -0.2f, 1, 1, NoDeflectionUp | RollOnly | UpOnly | MotorUp),
+        // InWorldz's car (VehicleDynamics.cs:1767-1804): not the documented car, and without TORQUE_WORLD_Z.
+        [Vehicle.TYPE_CAR] = new(V(100, 0.1f, 10), V(100, 100, 0.3f), V(0.5f, 1, 1), V(10, 2, 2), V(0.2f, 0.2f, 0.05f), V(0.3f, 0.3f, 0.1f), V(0),
+            0, 0, 1000, 0, 1, 2, 0.5f, 2, 0.6f, 2, -0.2f, 1, 1, NoDeflectionUp | RollOnly | UpOnly | MotorUp),
         [Vehicle.TYPE_BOAT] = new(V(200, 0.5f, 3), V(10, 1, 0.1f), V(1, 5, 5), V(1, 10, 10), V(0.2f, 2, 0.1f), V(0.3f, 0.3f, 0.1f), V(0),
             0.5f, 0.8f, 0.2f, 1, 0.5f, 3, 0.5f, 5, 0.5f, 0.2f, 1, 0.5f, 0.2f, NoDeflectionUp | WaterOnly | MotorUp | MotorDown | WorldZ),
         [Vehicle.TYPE_AIRPLANE] = new(V(200, 10, 5), V(1, 0.1f, 0.5f), V(2), V(60), V(1, 2, 1), V(8), V(0),
