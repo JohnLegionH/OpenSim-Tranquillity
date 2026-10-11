@@ -8,9 +8,9 @@
 // Jolt implementation of IPhysicsBackend.
 //
 // ============================ READ THIS FIRST ============================
-// Jolt binding: JoltPhysicsSharp 2.18.6 (newest still shipping lib/net8.0/),
+// Jolt binding: JoltPhysicsSharp 2.19.1,
 // single precision (Foundation.Init(false); the native is loaded by JoltNative). The Jolt calls below
-// are the 2.18.6 surface, checked by reflection against the shipped assembly.
+// are the 2.19.1 surface.
 //
 // The parts worth reading carefully are the ones that are easy to get wrong and
 // expensive to discover later:
@@ -309,7 +309,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         private ObjectLayerPairFilterTable? _objectLayerPairFilter;
         private BroadPhaseLayerInterfaceTable? _broadPhaseInterface;
         private ObjectVsBroadPhaseLayerFilterTable? _objectVsBroadPhaseFilter;
-        // NOTE: 2.18.6 has NO TempAllocator - temp allocation is internal
+        // NOTE: 2.19.1 has NO TempAllocator - temp allocation is internal
         // to PhysicsSystem.Update. There is deliberately no _tempAllocator field.
 
         // Cached BodyInterface, valid for the PhysicsSystem's lifetime.
@@ -613,8 +613,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // collapse to one - matching BulletSim's single terrain hit without touching legitimate multi-hit.
         private const float CoincidentEpsilonSq = 1e-6f;
 
-        // Minimum heightfield sample count per side. joltc 2.18.6 silently mis-cooks n<3 (asserts
-        // compiled out); the terrain feed passes region-derived (N+1) odd counts (257, 513, ...),
+        // Minimum heightfield sample count per side. joltc silently mis-cooks n<3 (asserts
+        // compiled out; checked against JoltPhysicsSharp 2.18.6); the terrain feed passes region-derived (N+1) odd counts (257, 513, ...),
         // which a 257-sample test showed cook faithfully. 4 is a defensive floor above the 3 hard limit.
         private const int MinHeightFieldSampleCount = 4;
 
@@ -879,7 +879,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             // Determinism (for A/B parity runs): single-threaded ALONE is not enough - Jolt
             // also needs its DeterministicSimulation flag on to guarantee bit-identical re-runs. It
-            // defaults true in 2.18.6, but we set it EXPLICITLY when asked rather than lean on a default
+            // defaults true in Jolt's PhysicsSettings, but we set it EXPLICITLY when asked rather than lean on a default
             // that a future lib bump could flip. (Left untouched otherwise, to keep the fast path fast.)
             if (settings.DeterministicMode)
             {
@@ -888,7 +888,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 _system.Settings = physicsSettings;
             }
 
-            // Contacts + body activation arrive as C# EVENTS in 2.18.6, not a
+            // Contacts + body activation arrive as C# EVENTS in 2.19.1, not a
             // listener object. The handlers ONLY enqueue / push into the ring - they never touch
             // scene state, never allocate, and never mutate the active set (see the field notes).
             _system.OnBodyActivated += HandleBodyActivated;
@@ -906,7 +906,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // Avatar-vs-avatar collision registry (characters add themselves on create).
             _charVsChar = new CharacterVsCharacterCollisionSimple();
 
-            // Contact ring; it is engine-agnostic. 2.18.6 exposes contacts as EVENTS on PhysicsSystem
+            // Contact ring; it is engine-agnostic. 2.19.1 exposes contacts as EVENTS on PhysicsSystem
             // (OnContactAdded/Persisted/Removed), NOT a SetContactListener object; the handlers
             // subscribed above push into this ring, and OnBodyActivated / OnBodyDeactivated keep
             // the O(active) set.
@@ -1024,9 +1024,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         //
         // joltc keeps every system in a global map, s_PhysicsSystems: JPH_PhysicsSystem_Create inserts and
         // JPH_PhysicsSystem_Destroy erases. Regions are created and torn down on different threads. The native this
-        // module ships now locks the map itself (native/joltc/physics-systems-map-lock.patch), around the insert, the
-        // erase and the read in joltc's step-listener callback (ManagedPhysicsStepListener::OnStep). Both calls are
-        // still taken under s_systemMapGate as well, so a stock joltc, which has no such lock, stays safe here.
+        // module runs on by default, the stock joltc of the JoltPhysics.Native package, has no lock on it. The patched
+        // build (native/joltc/physics-systems-map-lock.patch) locks the map around the insert, the erase and the read in
+        // joltc's step-listener callback (ManagedPhysicsStepListener::OnStep). Both calls are taken under s_systemMapGate
+        // either way, so the stock joltc is safe here.
         // =====================================================================
         private static readonly object s_systemMapGate = new object();
 
@@ -1628,7 +1629,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // Y-up field, then wrap it in a RotatedTranslatedShape and return the WRAPPER's handle,
             // which is already Z-up-correct and self-consistent for any caller/query. See below.
             //
-            // Sample-count constraint (checked empirically against joltc 2.18.6):
+            // Sample-count constraint (checked empirically against JoltPhysicsSharp 2.18.6):
             // the managed HeightFieldShapeSettings exposes NO block-size / bits-per-sample setter, so the
             // native default block size is used. joltc is a RELEASE build with Jolt's asserts compiled
             // out, so a bad count does NOT throw - it silently mis-cooks (n>=3 incl. odd/non-PoT all
@@ -1646,7 +1647,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             if (n < MinHeightFieldSampleCount)
                 throw new ArgumentException(
                     $"HeightFieldShape sample count must be >= {MinHeightFieldSampleCount}; got {n} " +
-                    "(n<3 silently mis-cooks in joltc 2.18.6).");
+                    "(n<3 silently mis-cooks in joltc).");
             if (heights.Length < n * n)
                 throw new ArgumentException($"height buffer too small: need {n * n} samples, got {heights.Length}.");
 
@@ -1714,9 +1715,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public ShapeId CreateScaledShape(ShapeId baseShape, Vector3 scale)
         {
             // The whole reason this is on the interface: prim resize wraps the cooked shape in a
-            // ScaledShape - cheap, shares the underlying geometry, no re-cook. Verified per-type in
-            // 2.18.6: box/hull/mesh accept ANY scale (incl. mirror/tri-non-uniform); sphere/capsule
-            // reject non-uniform (MakeScaleValid uniform-ises to the mean); cylinder allows an axial
+            // ScaledShape - cheap, shares the underlying geometry, no re-cook. Verified per-type
+            // against JoltPhysicsSharp 2.18.6: box/hull/mesh accept ANY scale (incl. mirror/tri-non-uniform);
+            // sphere/capsule reject non-uniform (MakeScaleValid uniform-ises to the mean); cylinder allows an axial
             // scale with UNIFORM radial only. We MakeScaleValid so we never cook a distorted/invalid
             // shape; the layer above can pre-check IsValidScale if it wants to degrade differently
             // (e.g. swap a non-uniformly-scaled sphere for an ellipsoid hull) rather than accept the clamp.
@@ -2119,7 +2120,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             if (rec.MotionType != BodyMotionType.Dynamic)
                 return; // mass is inert for static/kinematic motion; recorded for a later flip to Dynamic.
 
-            // No BodyInterface.SetMass in 2.18.6. Take the shape's geometry-correct mass properties,
+            // No BodyInterface.SetMass in 2.19.1. Take the shape's geometry-correct mass properties,
             // scale them to the target mass (keeps the inertia tensor's SHAPE, changes only its
             // magnitude), and push them through a body write-lock.
             BodyLockInterface bli = _system!.BodyLockInterface;
@@ -2797,9 +2798,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     rec.MarkerRecord = markerRec;
                 }
 
-                // Avatar as a COLLISION CITIZEN. Rather than an inner rigid body (which in 2.18.6
-                // cannot report kinematic-vs-static/terrain, whose CollideKinematicVsNonDynamic fix
-                // HANGS the solver, and which as a solid body perturbs the avatar push behaviour), we
+                // Avatar as a COLLISION CITIZEN. Rather than an inner rigid body (which, checked
+                // against JoltPhysicsSharp 2.18.6, cannot report kinematic-vs-static/terrain, whose
+                // CollideKinematicVsNonDynamic fix HANGS the solver, and which as a solid body perturbs the avatar push behaviour), we
                 // forward the CharacterVirtual's OWN contact events. They fire on THIS (step) thread
                 // during ExtendedUpdate, cover terrain/static/dynamic/sensor, and - crucially - a
                 // standing avatar re-reports its floor contact every step, which is the real thing the
