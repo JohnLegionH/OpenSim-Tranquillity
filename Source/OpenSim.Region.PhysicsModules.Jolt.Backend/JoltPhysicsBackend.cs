@@ -994,6 +994,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             settings.Dispose();
         }
 
+        // =====================================================================
+        // Body creation settings are freed by us too.
+        //
+        // The same OwnsHandle defect: JoltPhysicsSharp 2.19.1 builds BodyCreationSettings through the parameterless
+        // NativeObject constructor, so Dispose() frees nothing native. The native settings object keeps its reference on
+        // the shape it was made with, so the shape outlives its last release and the destroy of the system that held the
+        // body: measured, about 243 KB for every region start and stop (the terrain heightfield), and the shape of every
+        // body ever created. The settings are only read by the call that makes the body, so they are destroyed right after.
+        // =====================================================================
+        [System.Runtime.InteropServices.DllImport("joltc", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern void JPH_BodyCreationSettings_Destroy(IntPtr settings);
+
+        internal static void FreeBodyCreationSettings(BodyCreationSettings settings)
+        {
+            bool bindingDestroys = s_ownsHandle?.GetValue(settings) is true;
+            if (!bindingDestroys && !settings.IsDisposed && settings.Handle != IntPtr.Zero)
+                JPH_BodyCreationSettings_Destroy(settings.Handle);
+            settings.Dispose();
+        }
+
         private readonly struct ShapeSettingsScope : IDisposable
         {
             private readonly ShapeSettings _settings;
@@ -1921,7 +1941,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             finally
             {
                 // CreateAndAddBody copies the settings; the managed settings object is ours to free.
-                bcs.Dispose();
+                FreeBodyCreationSettings(bcs);
             }
             }   // _simLock
         }
@@ -2758,7 +2778,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 markerBcs.UserData = desc.UserData;
                 BodyID markerId;
                 try { markerId = _bodyInterface.CreateAndAddBody(markerBcs, Activation.DontActivate); }
-                finally { markerBcs.Dispose(); }
+                finally { FreeBodyCreationSettings(markerBcs); }
 
                 // CreateBody's invalid-id policy. At MaxBodies the avatar gets no query
                 // marker (queries will not see it; it still walks and collides): count it, record nothing against
@@ -4008,7 +4028,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 _joltToRecord[joltId.ID] = rec;
                 _terrainBody = new BodyId(handle);
             }
-            finally { bcs.Dispose(); }
+            finally { FreeBodyCreationSettings(bcs); }
             }   // _simLock
         }
 
