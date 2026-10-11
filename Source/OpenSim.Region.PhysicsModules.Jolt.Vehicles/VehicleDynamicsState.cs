@@ -48,6 +48,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         public uint LastVerticalFrameNumber;
 
+        // Seconds since the vehicle's tilt last changed by the attractor's threshold (InWorldz's attractor dormancy);
+        // infinite until it first does.
+        public float AttractorQuietTime;
+
         public Vector3 WindDirection;
         public Vector3 WaterDirection;
 
@@ -72,6 +76,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             BankingDirection = 0f;
             BankingTargetVelocity = 0f;
             LastVerticalFrameNumber = 0;
+            AttractorQuietTime = float.PositiveInfinity;
             WindDirection = Vector3.Zero;
             WaterDirection = Vector3.Zero;
         }
@@ -99,6 +104,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             BankingDirection = 0f;
             BankingTargetVelocity = 0f;
             LastVerticalFrameNumber = 0;
+            AttractorQuietTime = float.PositiveInfinity;
             WindDirection = Vector3.Zero;
             WaterDirection = Vector3.Zero;
         }

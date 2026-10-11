@@ -239,6 +239,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // would be stored and drive the motors. Ignore it; the stored param is unchanged.
             if (!float.IsFinite(pValue))
                 return;
+            bool hoverWasOn = InWorldz && HoverCommanded();
             switch (pParam)
             {
                 case Vehicle.ANGULAR_DEFLECTION_EFFICIENCY:
@@ -325,7 +326,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     break;
                 case Vehicle.ANGULAR_MOTOR_DIRECTION:
                     _props.ParamsVec[VehVectorParam.AngularMotorDirection] = HeldAngularMotor(new Vector3(pValue, pValue, pValue));
-                    MoveAngular(_props.ParamsVec[VehVectorParam.AngularMotorDirection]);
+                    if (!ScriptMotorIgnored())
+                        MoveAngular(_props.ParamsVec[VehVectorParam.AngularMotorDirection]);
                     break;
                 case Vehicle.LINEAR_FRICTION_TIMESCALE:
                     pValue = ClampF(pValue, S.MinTimescale, S.MaxTimescale);
@@ -341,7 +343,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     _props.ParamsVec[VehVectorParam.LinearMotorOffset] = new Vector3(pValue, pValue, pValue);
                     break;
             }
+
+            // InWorldz: "Special case for legacy scripts: height<=0 nd eff=0 means no hover". A hover that was on is cleared
+            // and its timescale put to the off value (VehicleDynamics.cs:1562-1571).
+            if (hoverWasOn && HoverOffByLegacyRule())
+                _props.ParamsFloat[VehFloatParam.HoverTimescale] = S.MaxHoverTimescale;
         }
+
+        // Hover is commanded: its timescale is below the off value and the legacy rule does not switch it off.
+        private bool HoverCommanded()
+            => _props.GetFloat(VehFloatParam.HoverTimescale, 1000f) < S.MaxHoverTimescale && !HoverOffByLegacyRule();
+
+        // InWorldz: a hover height of zero or below with efficiency zero is no hover (VehicleDynamics.cs:1563-1564).
+        private bool HoverOffByLegacyRule()
+            => _props.GetFloat(VehFloatParam.HoverHeight, 0f) <= 0f && _props.GetFloat(VehFloatParam.HoverEfficiency, 0f) == 0f;
 
         // =================================================================
         // Process vector param from LSL
@@ -361,7 +376,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 case Vehicle.ANGULAR_MOTOR_DIRECTION:
                     pValue = HeldAngularMotor(pValue);
                     _props.ParamsVec[VehVectorParam.AngularMotorDirection] = pValue;
-                    MoveAngular(pValue);
+                    if (!ScriptMotorIgnored())
+                        MoveAngular(pValue);
                     break;
                 case Vehicle.LINEAR_FRICTION_TIMESCALE:
                     pValue.X = ClampF(pValue.X, S.MinTimescale, S.MaxTimescale);
@@ -544,6 +560,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             _props.Dynamics.Timestep = timeStep;
 
+            // InWorldz's camera steering sets the angular motor from the driver's camera before the motors act.
+            if (InWorldz)
+                SimulateMouselookInput();
+
             // -------------------------------------------------------
             // Ground penetration fix
             float groundHeight = _body.GetTerrainHeight(_body.Position);
@@ -610,10 +630,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// on. A host may then let the body sleep and call <see cref="Rest"/> instead of <see cref="Step"/> while it
         /// sleeps. A vehicle with VEHICLE_FLAG_MOUSELOOK_STEER or _BANK is never idle: a sleeping vehicle would read no
         /// camera, and the InWorldz simulator keeps such a vehicle awake for that reason (its sleep threshold is 0;
-        /// VehicleDynamics.cs:784-789).
+        /// VehicleDynamics.cs:784-789). Under InWorldz's behaviour, where the two MOUSEPOINT flags steer and bank from the
+        /// camera too, the same holds for them.
         /// </summary>
         public bool IsIdle
             => (_props.Flags & (ExtendedVehicleFlags.MouselookSteer | ExtendedVehicleFlags.MouselookBank)) == 0
+            && !(InWorldz && (_props.Flags & (ExtendedVehicleFlags.MousePointSteer | ExtendedVehicleFlags.MousePointBank)) != 0)
             && MotorIdle(_props.Dynamics.LinearDirection, _props.GetVec(VehVectorParam.LinearMotorDecayTimescale), _props.Dynamics.LinearDecayIndex)
             && MotorIdle(_props.Dynamics.AngularDirection, _props.GetVec(VehVectorParam.AngularMotorDecayTimescale), _props.Dynamics.AngularDecayIndex)
             && HoverIdle()
@@ -1407,6 +1429,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             if (hoverTimescale >= S.MaxHoverTimescale)
                 return false;
 
+            // InWorldz: a height of zero or below with efficiency zero is no hover, "legacy scripts" (VehicleDynamics.cs:1563-1564).
+            if (InWorldz && HoverOffByLegacyRule())
+                return false;
+
             Vector3 pos = _body.Position;
             float targetBase;
 
@@ -1478,6 +1504,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 return;
             }
 
+            // InWorldz: the attractor goes dormant once the tilt has stopped changing.
+            if (InWorldz && AttractorDormant(angle, h))
+            {
+                LetGoOfAttractor(x, y);
+                return;
+            }
+
             double roll = Math.Atan2(y.Z, z.Z);
             double pitch = Math.Asin(Utils.Clamp(-x.Z, -1f, 1f));
             double stiffness = 1.0 / ((double)timescale * timescale);
@@ -1514,6 +1547,31 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         // What the last attractor step's turn left out of the spring's roll and pitch rates; null when it did not act.
         private Vector3? _attractorCarry;
+
+        /// <summary>
+        /// InWorldz's attractor dormancy (VehicleDynamics.cs:1255-1264, read, not run): "Go dormant if in the sweet spot or
+        /// if no angular changes are happening. Do not go dormant if the vehicle is overturned." The attractor acts while the
+        /// tilt has changed by at least pi / 256 (0.7 degrees) between two steps within the last
+        /// <see cref="VehicleLimits.MaxAttractDormancy"/> seconds (1.5 s), or while the tilt is at least
+        /// <see cref="VehicleLimits.ThresholdOverturnAngle"/> (0.6 pi). The tilt it is compared with is the one of the last step
+        /// the attractor acted on, so a dormant attractor wakes once the tilt has moved 0.7 degrees from where it went to
+        /// sleep. Halcyon counts frames of about 15 ms; here the change that wakes it is taken per
+        /// <see cref="HalcyonStep"/> of time while the attractor acts (the tilt it is compared with is then the last step's),
+        /// so the step rate does not decide how long it stays awake; once it has been dormant for a step the tilt it is
+        /// compared with is the stale one and the change is the displacement itself. An airplane is measured from the nearer of upright and
+        /// inverted, as there.
+        /// </summary>
+        private bool AttractorDormant(float tilt, float h)
+        {
+            VehicleDynamicsState d = _props.Dynamics;
+            bool wasDormant = d.AttractorQuietTime >= VehicleLimits.MaxAttractDormancy;
+            d.AttractorQuietTime += h;
+            double threshold = VehicleLimits.ThresholdAttractorAngle * (wasDormant ? 1.0 : h / HalcyonStep);
+            if (Math.Abs(d.LastVerticalAngle - tilt) >= threshold)
+                d.AttractorQuietTime = 0f;
+            float measured = _props.Type == VehicleType.Airplane && tilt > Math.PI / 2.0 ? (float)Math.PI - tilt : tilt;
+            return measured < VehicleLimits.ThresholdOverturnAngle && d.AttractorQuietTime >= VehicleLimits.MaxAttractDormancy;
+        }
 
         // ---- InWorldz's attractor (VehicleDynamics.cs, SimulateVerticalAttractor 1217-1334) ----
         //
@@ -1672,6 +1730,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// The engine applies the gravity itself over the step (<see cref="ApplyGravity"/>); the change written here
         /// is the exact solution less that gravity, so the two together end the step on the exact velocity.
         /// </summary>
+        // The seconds InWorldz puts a linear motor's decay clock on while hover moderates it (VehicleDynamics.cs:2719).
+        internal const float HoverModerationSeconds = 10.0f;
+
         private void SimulateLinearMotorAndFriction(float h, bool motorOn, bool frictionOn)
         {
             Vector3 v0 = _rawLocalLinearVel;
@@ -1721,7 +1782,30 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             if ((_props.Flags & ExtendedVehicleFlags.LimitMotorDown) != 0 && motorChange.Z < 0)
                 motorChange.Z = 0;
 
+            bool hoverFights = false;
+            if (InWorldz)
+            {
+                // "Gravity check. Any up Z-forces less than the effective gravity are nulled" (VehicleDynamics.cs:2707-2712,
+                // read, not run): the motor's upward change of velocity this step has gravity times the share of it not
+                // carried by buoyancy added to it (gravity is negative), and is dropped if that leaves it below zero. It is
+                // compared as a change of velocity against an acceleration, as there.
+                if (motorChange.Z > 0f)
+                {
+                    motorChange.Z += _body.Gravity.Z * (1f - _props.GetFloat(VehFloatParam.Buoyancy, 0f));
+                    if (motorChange.Z < 0f)
+                        motorChange.Z = 0f;
+                }
+
+                // "Hover moderation. If hover is present, accelerate the motor decay" (2714-2720): a motor that still moves the
+                // vehicle up or down while a hover flag is set and the hover is on has its decay clock put on ten seconds.
+                hoverFights = Math.Abs(motorChange.Z) > VehicleLimits.ThresholdLinearMotorDeltaV
+                    && (_props.Flags & (ExtendedVehicleFlags.HoverGlobalHeight | ExtendedVehicleFlags.HoverTerrainOnly | ExtendedVehicleFlags.HoverWaterOnly)) != 0
+                    && _props.GetFloat(VehFloatParam.HoverTimescale, 1000f) < S.MaxHoverTimescale;
+            }
+
             _props.Dynamics.LinearDecayIndex += h;
+            if (hoverFights)
+                _props.Dynamics.LinearDecayIndex += HoverModerationSeconds;
             ApplyLinearVelocityChange(frictionChange + motorChange);
             _motorTorqueVelChange += MotorOffsetTurn(motorChange);
         }
@@ -1846,6 +1930,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         private Vector3 MouselookMotor(Vector3 motor, Vector3 motorTs)
         {
             const ExtendedVehicleFlags mouselook = ExtendedVehicleFlags.MouselookSteer | ExtendedVehicleFlags.MouselookBank;
+            // InWorldz sets the motor from the camera in SimulateMouselookInput instead.
+            if (InWorldz)
+                return motor;
             if ((_props.Flags & mouselook) == 0 || DriverCamera?.Invoke() is not DriverView { InMouselook: true, At: Vector3 camera }
                 || !float.IsFinite(camera.X) || !float.IsFinite(camera.Y) || !float.IsFinite(camera.Z)
                 || camera.LengthSquared() < MinCameraAxis)
@@ -1856,14 +1943,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             Vector3 d = Vector3.Normalize(camera) * Quaternion.Inverse(_rotation);
             double yaw = Math.Atan2(d.Y, d.X);
             double pitch = -Math.Atan2(d.Z, Math.Sqrt(d.X * d.X + d.Y * d.Y));
-            if (InWorldz)
-            {
-                // InWorldz does not steer or bank on a camera that is within the dead zone of the vehicle's heading.
-                if (InMouselookDeadZone(d.Y, VehFloatParam.MouselookAzimuth))
-                    yaw = 0;
-                if (InMouselookDeadZone(d.Z, VehFloatParam.MouselookAltitude))
-                    pitch = 0;
-            }
             motor.Y = Aim(pitch, motor.Y, motorTs.Y);
             if ((_props.Flags & ExtendedVehicleFlags.MouselookBank) != 0)
                 motor.X = Aim(-yaw, motor.X, motorTs.X);
@@ -1873,24 +1952,77 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         }
 
         /// <summary>
-        /// InWorldz's mouselook dead zone (VehicleDynamics.cs:819-844, read, not run). It takes how far the camera is off
-        /// the vehicle's x axis on one axis as a share of the range the vehicle gives it (the sideways part of the
-        /// camera's direction in the vehicle's frame, times pi / 2, over [MouselookAzimuth] for yaw, or the vertical part
-        /// over [MouselookAltitude] for pitch, held to -1..1) and does nothing while that share is no more than
-        /// pi / 32 (0.098: "Angle below which mouselook steer/bank actions do not occur", VehicleLimits.cs
-        /// ThresholdMouselookAngle). With the default range of pi / 4 that is a camera within 2.8 degrees of the heading.
-        /// Outside it the aim is what it was without a dead zone: the angle over the motor timescale, held to the motor
-        /// direction. InWorldz also shapes the share outside the zone (e^x - 1) / (e - 1) and turns at that share of
-        /// the motor direction; that is not taken.
+        /// InWorldz's camera steering (VehicleDynamics.cs:792-861 and 813-856, read, not run), which sets the angular motor
+        /// from the driver's camera on every step in place of <see cref="MouselookMotor"/>'s aim. For each axis the sideways
+        /// part of the camera's direction in the vehicle's frame (the yaw's sine, and for the pitch the vertical part) is
+        /// taken as a share of the range the vehicle gives it (times pi / 2, over MOUSELOOK_AZIMUTH for yaw, over
+        /// MOUSELOOK_ALTITUDE for pitch, pi / 4 by default, held to -1..1; <see cref="MouselookShare"/>), which is 0 within
+        /// pi / 32 of the heading and otherwise shaped "into a soft exponential: (e^x-1) / (e-1)". STEERING (the mouselook
+        /// steer flag with the driver in mouselook, or MOUSEPOINT_STEER in any view) sets the angular motor to
+        /// (0, pitch share * the script's y, yaw share * the script's z) when either share is not 0; BANKING (the bank flag
+        /// in mouselook, or MOUSEPOINT_BANK in any view) to (-yaw share * the script's x, 0, 0) when the yaw share is not 0.
+        /// Both set, banking is the later and stands. Each is an ordinary set of the motor, so its decay restarts and the
+        /// angular rate limiter applies; with the camera inside the zone nothing is set and the motor goes on as it was,
+        /// fading by its decay. The script's direction is the one stored (<see cref="ScriptMotorIgnored"/> keeps a script's
+        /// own set from moving the motor while this acts). LIMIT_ROLL_ONLY leaves the pitch share at 0.
+        /// InWorldz reads the camera once in eight steps (frame number mod 8); here it is read on every step. The camera
+        /// reaches the simulator some ten to twenty times a second and the motor's timescale is about a second, so a read
+        /// on every step only makes the turn answer the camera sooner by under a fifth of a second; the pacing is not taken.
+        /// InWorldz measures the pitch as the vertical part of the camera's own y axis (its sideways axis, which a camera
+        /// that is not rolled keeps level); the camera's direction is all the host gives the vehicle, and the pitch of
+        /// the camera is what a driver aims with, so the pitch share here is the camera's pitch.
         /// </summary>
-        private bool InMouselookDeadZone(float component, VehFloatParam range)
+        private void SimulateMouselookInput()
+        {
+            const ExtendedVehicleFlags any = ExtendedVehicleFlags.MouselookSteer | ExtendedVehicleFlags.MouselookBank
+                | ExtendedVehicleFlags.MousePointSteer | ExtendedVehicleFlags.MousePointBank;
+            ExtendedVehicleFlags flags = _props.Flags;
+            if ((flags & any) == 0 || DriverCamera?.Invoke() is not DriverView { At: Vector3 camera } view
+                || !float.IsFinite(camera.X) || !float.IsFinite(camera.Y) || !float.IsFinite(camera.Z)
+                || camera.LengthSquared() < MinCameraAxis)
+                return;
+
+            bool steering = ((flags & ExtendedVehicleFlags.MouselookSteer) != 0 && view.InMouselook) || (flags & ExtendedVehicleFlags.MousePointSteer) != 0;
+            bool banking = ((flags & ExtendedVehicleFlags.MouselookBank) != 0 && view.InMouselook) || (flags & ExtendedVehicleFlags.MousePointBank) != 0;
+            if (!steering && !banking)
+                return;
+
+            Vector3 d = Vector3.Normalize(camera) * Quaternion.Inverse(_rotation);
+            float xcam = MouselookShare(d.Y, VehFloatParam.MouselookAzimuth);
+            float ycam = (flags & ExtendedVehicleFlags.LimitRollOnly) != 0 ? 0f : MouselookShare(-d.Z, VehFloatParam.MouselookAltitude);
+            Vector3 direction = _props.GetVec(VehVectorParam.AngularMotorDirection);
+            if (steering && (xcam != 0f || ycam != 0f))
+                MoveAngular(new Vector3(0f, ycam * direction.Y, xcam * direction.Z));
+            if (banking && xcam != 0f)
+                MoveAngular(new Vector3(-xcam * direction.X, 0f, 0f));
+        }
+
+        /// <summary>
+        /// A camera's offset on one axis as InWorldz shapes it: the component of the camera's direction (in the vehicle's
+        /// frame) times pi / 2 over the range, held to -1..1; 0 while that is no more than pi / 32 (0.098, "Angle below which
+        /// mouselook steer/bank actions do not occur", <see cref="VehicleLimits.ThresholdMouselookAngle"/>), which with the
+        /// default range of pi / 4 is a camera within 2.8 degrees of the heading; outside it the sign times
+        /// (e^|x| - 1) / (e - 1), a curve that runs from 0 to 1 and is 6 percent of the way at the edge of the zone, 39
+        /// percent at 15 degrees and whole from 30 degrees.
+        /// </summary>
+        private float MouselookShare(float component, VehFloatParam range)
         {
             float most = _props.GetFloat(range, (float)(Math.PI / 4.0));
             if (!(most > 0f))
-                return false;
+                return 0f;
             float share = Utils.Clamp(component * (float)(Math.PI / 2.0) / most, -1f, 1f);
-            return Math.Abs(share) <= VehicleLimits.ThresholdMouselookAngle;
+            float size = Math.Abs(share);
+            if (size <= VehicleLimits.ThresholdMouselookAngle)
+                return 0f;
+            return Math.Sign(share) * (float)((Math.Exp(size) - 1.0) / (Math.E - 1.0));
         }
+
+        // InWorldz: "Skip angular motor action if in camera mouselook mode and mouselook steer or bank are enabled"
+        // (VehicleDynamics.cs:478-482): while the driver is in mouselook with either flag set, a script's set of the angular
+        // motor direction is kept as the direction the camera's share is taken of, and does not move the motor.
+        private bool ScriptMotorIgnored()
+            => InWorldz && (_props.Flags & (ExtendedVehicleFlags.MouselookSteer | ExtendedVehicleFlags.MouselookBank)) != 0
+            && DriverCamera?.Invoke() is DriverView { InMouselook: true };
 
         private static float Aim(double angle, float most, float timescale)
         {

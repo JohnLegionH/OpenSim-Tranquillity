@@ -103,6 +103,7 @@ public class VehicleInWorldzParamTests
         rig.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_TIMESCALE, 1f);
         rig.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE, 120f);
         setup(rig.Car);
+        rig.Car.ProcessVehicleFlags(0x2, remove: true);      // the car's LIMIT_ROLL_ONLY: under InWorldz it keeps the pitch out of the steering
         rig.Car.ProcessVehicleFlags(0x80, remove: false);
         double y = yawDegrees * Deg, p = pitchDegrees * Deg;
         var at = new Vector3((float)(Math.Cos(p) * Math.Cos(y)), (float)(Math.Cos(p) * Math.Sin(y)), (float)-Math.Sin(p));

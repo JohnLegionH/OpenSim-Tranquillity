@@ -18,6 +18,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// (VehicleDynamics.cs:819-836; read, not run): a camera within asin(azimuth / 16) = 2.81 degrees of the heading, with the
 /// default azimuth. Measured first: with no dead zone the steering holds steady under a shaking camera and a held one
 /// (VehicleMouselookHuntingTests), so the dead zone is a matter of feel and Second Life's behaviour, the default, has none.
+/// Outside the zone the turn is the shaped share of the script's motor direction (VehicleInWorldzMouselookRulesTests); the
+/// rows here that compare it with a Second Life vehicle compare with one whose motor is set to that share.
 /// Pure (a body with no engine), parallel.
 /// </summary>
 public class VehicleMouselookDeadZoneTests
@@ -35,6 +37,7 @@ public class VehicleMouselookDeadZoneTests
         var rig = new BehaviourRig(Settings(behaviour), Vehicle.TYPE_CAR, gravity: false);
         rig.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_TIMESCALE, 1f);
         rig.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE, 120f);
+        rig.Car.ProcessVehicleFlags(0x2, remove: true);      // the car's LIMIT_ROLL_ONLY: under InWorldz it keeps the pitch out of the steering
         rig.Car.ProcessVehicleFlags(flag, remove: false);
         double y = yawDegrees * Deg, p = pitchDegrees * Deg;
         var at = new Vector3((float)(Math.Cos(p) * Math.Cos(y)), (float)(Math.Cos(p) * Math.Sin(y)), (float)-Math.Sin(p));
@@ -49,6 +52,24 @@ public class VehicleMouselookDeadZoneTests
     // 0.0156 s), which moves a two second turn by a few parts in a hundred thousand.
     private static void Same(double expected, double actual)
         => Assert.True(Math.Abs(expected - actual) <= 1e-3 * Math.Abs(expected), $"{actual:R} against {expected:R}");
+
+    // The share InWorldz turns at for a camera `degrees` off the heading (default range pi / 4, no zone edge handling needed
+    // here: the rows are outside it): (e^x - 1) / (e - 1) of x = 2 sin(angle) held to 1.
+    private static double Shaped(double degrees)
+    {
+        double x = Math.Min(Math.Abs(Math.Sin(degrees * Deg)) * 2.0, 1.0);
+        return Math.Sign(degrees) * (Math.Exp(x) - 1.0) / (Math.E - 1.0);
+    }
+
+    // A Second Life vehicle with no flags whose motor direction is set to `motor`, stepped once.
+    private static BehaviourRig Plain(Vector3 motor)
+    {
+        var rig = new BehaviourRig(Settings(VehicleBehaviour.SecondLife), Vehicle.TYPE_CAR, gravity: false);
+        rig.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_TIMESCALE, 1f);
+        rig.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE, 120f);
+        rig.Car.ProcessVectorVehicleParam(Vehicle.ANGULAR_MOTOR_DIRECTION, motor);
+        return rig;
+    }
 
     private static double Heading(BehaviourRig r) => Math.Atan2((Vector3.UnitX * r.Body.Orientation).Y, (Vector3.UnitX * r.Body.Orientation).X) / Deg;
 
@@ -75,10 +96,9 @@ public class VehicleMouselookDeadZoneTests
             Assert.True(Math.Abs(Heading(sl)) > 0.2 * Math.Abs(yawDegrees), $"{rate} Hz, {yawDegrees} degrees: Second Life's turned {Heading(sl):0.0000}");
             if (turns)
             {
-                // Outside the zone: what it was without one (compared over the first step: the turn itself brings the car
-                // into the zone, where it stops steering).
+                // Outside the zone: the shaped share of the motor direction (compared over the first step).
                 var a = Car(VehicleBehaviour.InWorldz, SteerFlag, yawDegrees, 0, TurnMotor);
-                var b = Car(VehicleBehaviour.SecondLife, SteerFlag, yawDegrees, 0, TurnMotor);
+                var b = Plain(new Vector3(0f, 0f, (float)(2.0 * Shaped(yawDegrees))));
                 a.Step(h);
                 b.Step(h);
                 Same(b.Body.AngularVelocity.Z, a.Body.AngularVelocity.Z);
@@ -102,7 +122,7 @@ public class VehicleMouselookDeadZoneTests
         if (rolls)
         {
             var a = Car(VehicleBehaviour.InWorldz, BankFlag, yawDegrees, 0, new Vector3(2f, 0f, 0f));
-            var b = Car(VehicleBehaviour.SecondLife, BankFlag, yawDegrees, 0, new Vector3(2f, 0f, 0f));
+            var b = Plain(new Vector3((float)(-2.0 * Shaped(yawDegrees)), 0f, 0f));
             a.Step(1.0 / 45);
             b.Step(1.0 / 45);
             Same(b.Body.AngularVelocity.X, a.Body.AngularVelocity.X);
@@ -125,7 +145,7 @@ public class VehicleMouselookDeadZoneTests
         if (pitches)
         {
             var a = Car(VehicleBehaviour.InWorldz, SteerFlag, 0, pitchDegrees, new Vector3(0f, 2f, 0f));
-            var b = Car(VehicleBehaviour.SecondLife, SteerFlag, 0, pitchDegrees, new Vector3(0f, 2f, 0f));
+            var b = Plain(new Vector3(0f, (float)(2.0 * Shaped(pitchDegrees)), 0f));
             a.Step(1.0 / 45);
             b.Step(1.0 / 45);
             Same(b.Body.AngularVelocity.Y, a.Body.AngularVelocity.Y);
@@ -143,17 +163,21 @@ public class VehicleMouselookDeadZoneTests
         Assert.True(Heading(sl) > 0.01, $"turned {Heading(sl):0.00000}");
     }
 
-    // Once the camera leaves the zone the car turns until it faces it, and then holds still inside it: with a camera at
-    // 20 degrees the car settles within the zone's width of the camera and stops there.
+    // The turn is a rate that follows the camera's offset, not an aim at the camera. A bare motor (no angular friction, no
+    // decay: nothing takes the speed off it but the shrinking share) overshoots a camera at 20 degrees and comes back, hunting
+    // about it within 5 degrees (measured: 15.8 to 24.2 after the first 5 s, a period of about 4.5 s); a car with its own
+    // friction settles (VehicleInWorldzMouselookTurnTests).
     [Fact]
-    public void A_car_steered_inside_the_zone_comes_to_rest_within_it()
+    public void A_bare_motor_steered_by_the_shaped_share_hunts_about_the_camera_within_five_degrees()
     {
         var iw = Car(VehicleBehaviour.InWorldz, SteerFlag, 20, 0, TurnMotor);
-        iw.Run(1.0 / 45, 45 * 15);
-        double error = 20 - Heading(iw);
-        Assert.True(Math.Abs(error) <= 2.82, $"settled {error:0.000} degrees from the camera");
-        double before = Heading(iw);
         iw.Run(1.0 / 45, 45 * 5);
-        Assert.Equal(before, Heading(iw), 3);
+        double worst = 0;
+        for (int i = 0; i < 35; i++)
+        {
+            iw.Run(1.0 / 45, 45);
+            worst = Math.Max(worst, Math.Abs(Heading(iw) - 20.0));
+        }
+        Assert.InRange(worst, 3.0, 5.0);
     }
 }

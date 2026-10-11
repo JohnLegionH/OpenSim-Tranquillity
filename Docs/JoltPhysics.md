@@ -1025,7 +1025,7 @@ setting does not change another's. They have no `[Jolt]` keys.
 InWorldz (Halcyon) simulator differ. It is read once when the region starts.
 
 - `SecondLife` (the default): what Second Life's wiki documents. Nothing changes for a region that does not set the key.
-- `InWorldz`: the six behaviours below, the mouselook dead zone (below the table), and the InWorldz preset values
+- `InWorldz`: the behaviours in the table below, camera steering (below the table), and the InWorldz preset values
   (`VehiclePresets = legacy`).
 
 ```ini
@@ -1046,15 +1046,21 @@ where it is not set, the behaviour does (`InWorldz` gives `legacy`, `SecondLife`
 | Motor decay | The motor starts to decay as it is set. | A motor whose timescale vector is shorter than 0.9 holds its whole grip for up to 0.06 s first. | A quick motor (a car's turning motor) reaches more of its speed before its decay takes it back. |
 | Self-righting | The attractor is the spring of the vehicle's timescale and efficiency. | Vehicles other than airplanes are righted harder (the spring is `1 + (1 + tilt / pi)^4` times as stiff), and while overturned (tilt of 108 degrees or more) and not improving, harder by a factor of 1.3 every 15 ms, up to 10 times. | A flipped car rights itself sooner. |
 | `VEHICLE_BUOYANCY` | The share of gravity is `1 - buoyancy`. | A buoyancy from 0.977 up to (not including) 1 acts as 1. | A balloon set to 0.98 floats instead of sinking slowly. |
+| Upward linear motor | The motor pulls toward its direction on every axis. | The motor's upward change of velocity in a step has `g * (1 - buoyancy)` (g negative) added to it, and is dropped if that leaves it below zero (`VehicleDynamics.cs:2707-2712`, read, not run). The comparison is a change of velocity in one step against an acceleration, as there, so for a vehicle with no buoyancy an upward push is dropped unless it changes the velocity by more than 9.8 m/s in one step, and a push bigger than that has 9.8 m/s taken off it. | A car or boat with an upward motor component does not rise (a vehicle with buoyancy 1, a balloon, is not touched). A motor that pulls up against a fall (a motor target below the falling speed) is dropped too. |
+| Hover moderation | Hover and the linear motor act together. | While a hover flag (`HOVER_GLOBAL_HEIGHT`, `HOVER_TERRAIN_ONLY`, `HOVER_WATER_ONLY`) is set, the hover timescale is below 300 s and the motor still moves the vehicle up or down by more than 0.005 m/s in a step, the linear motor's decay clock is put on 10 s each step (`VehicleDynamics.cs:2714-2720`). | A hovering vehicle with a vertical motor loses its whole linear motor, all three axes, within a few steps. |
+| Hover at height 0 and efficiency 0 | A hover of height 0 with efficiency 0 hovers (bouncing about the ground). | It is no hover, "legacy scripts" (`VehicleDynamics.cs:1563-1564`); a hover that was on has its timescale put to 300 s as well, so a later height and efficiency do not bring it back until the script sets the timescale again. | A script that clears its hover by zeroing the height and efficiency stops hovering. |
+| Attractor dormancy | The attractor acts all the time. | It goes dormant once the tilt has not changed by pi / 256 (0.7 degrees) in a step for 1.5 s, never while the tilt is 108 degrees or more, and wakes when the tilt has moved 0.7 degrees from where it went dormant (`VehicleDynamics.cs:1255-1264`). The step's change is taken per 15 ms of time while it acts, so the step rate does not decide how long it stays awake. | A vehicle that has stopped tilting stays at the lean it has (a car on a slope, a boat settled at an angle) until something moves it 0.7 degrees. |
 
-**The mouselook dead zone** (`InWorldz` only): the mouselook flags do not steer or bank while the camera is within about 2.8
-degrees of the vehicle's heading (or of its pitch); see "Mouselook steering" below.
+**Camera steering** (`InWorldz` only): the mouselook flags do not steer or bank while the camera is within about 2.8
+degrees of the vehicle's heading (or of its pitch); outside that the turn is the camera's offset, shaped, as a share of the script's
+motor direction, and `VEHICLE_FLAG_MOUSEPOINT_STEER` and `_BANK` do the same in any view; see "Mouselook steering" below.
 
 **InWorldz extension flags.** A script sends them on InWorldz's numbers: `VEHICLE_FLAG_REACT_TO_CURRENTS` 0x10000,
 `REACT_TO_WIND` 0x20000, `LIMIT_MOTOR_DOWN` 0x40000, `TORQUE_WORLD_Z` 0x80000, `MOUSEPOINT_STEER` 0x100000 and
 `MOUSEPOINT_BANK` 0x200000 (`VehicleFlags.cs:48-60`). Each reaches the engine as itself, from `llSetVehicleFlags`,
 `llRemoveVehicleFlags` and a saved vehicle (rezzed, copied, loaded with the region, crossing in). `LIMIT_MOTOR_DOWN` and
-`TORQUE_WORLD_Z` act; the other four are held and read back but nothing acts on them yet. They act under either behaviour,
+`TORQUE_WORLD_Z` act; `MOUSEPOINT_STEER` and `MOUSEPOINT_BANK` act under `InWorldz` (camera steering, below); `REACT_TO_WIND` and
+`REACT_TO_CURRENTS` are held and read back but nothing acts on them yet. They act under either behaviour,
 because a script has to ask for them. Before this was fixed the numbers were read as another engine flag each (a script's
 `LIMIT_MOTOR_DOWN` set an unused flag, `REACT_TO_CURRENTS` set `LIMIT_MOTOR_DOWN`, `REACT_TO_WIND` set `TORQUE_WORLD_Z`, and
 `TORQUE_WORLD_Z` set `MOUSEPOINT_BANK`), so a vehicle that set one of those flags changes: it now does what the script asked.
@@ -1081,9 +1087,13 @@ of time (Halcyon's step) instead of per step, so it does not depend on the step 
 
 Choose `InWorldz` for a region whose vehicles were built for InWorldz or Halcyon grids and are tuned against these behaviours; leave
 the default for vehicles built for Second Life. In the harness the choice is `--jolt VehicleBehaviour=InWorldz`; the runs `iw-car-pad`,
-`iw-car-ramp` and `iw-airplane` of `ci/vehicle-behaviour-runs.txt` record it (a car on level ground, a car down a 15 degree ramp,
-an airplane), checked with `--check-baseline <runs folder> --baselines Tests/JoltPhysicsHarness/ci/vehicle-behaviour-baselines`. Their
+`iw-car-ramp`, `iw-airplane` and `iw-mouselook-turn` of `ci/vehicle-behaviour-runs.txt` record it (a car on level ground, a car down a 15 degree ramp,
+an airplane, a car turned 90 degrees by the mouselook camera), checked with `--check-baseline <runs folder> --baselines Tests/JoltPhysicsHarness/ci/vehicle-behaviour-baselines`. Their
 baselines are recorded for the stock Windows x64 joltc only.
+
+Not built from the InWorldz code, and why: the friction stop below 0.002 m/s (`VehicleDynamics.cs:1500-1508`) is reached only when
+the vehicle's speed is under 0.002 m/s and one component of its local velocity is at least 0.002 m/s, which cannot both hold (no
+component is larger than the speed); it is a patch for PhysX's sleeping, and the rest rule (`VehicleRestSpeed`) does that here.
 ### Vehicle limits
 
 The limits a script's vehicle parameters are held to are `[Jolt]` keys, read once when the region
@@ -1223,9 +1233,26 @@ sideways part of the camera's direction in the vehicle's frame, times pi / 2 ove
 preset, and a script sets it with `VEHICLE_MOUSELOOK_AZIMUTH`, 11001), held to -1..1, is compared with pi / 32; while it is no more
 than that, which with the preset azimuth is a camera within 2.81 degrees of the heading, the yaw (or, with the bank flag, the roll)
 is not aimed at all, and the motor on that axis is zero. The pitch has the same threshold over the altitude range
-(`VEHICLE_MOUSELOOK_ALTITUDE`, 11002). Outside the zone the aim is what it is under
-Second Life's behaviour; InWorldz also shapes the share outside the zone and turns at that share of the motor direction, which
-is not taken. A car steered by a camera in the zone settles within the zone's width of it and holds still. It is InWorldz's alone
+(`VEHICLE_MOUSELOOK_ALTITUDE`, 11002). Outside the zone InWorldz does not aim the vehicle at the camera: the share is shaped
+"into a soft exponential", (e^x - 1) / (e - 1) (6 percent of the way just outside the zone, 39 percent for a camera 15 degrees off,
+the whole of it from 30 degrees), and the angular motor is set to that share of the direction the script gave
+(`VehicleDynamics.cs:833-856`, read, not run): steering sets (0, pitch share * the script's y, yaw share * the script's z), banking
+(-yaw share * the script's x, 0, 0), both set banking stands, and the camera's pitch is not steered under `LIMIT_ROLL_ONLY`.
+Each camera step is an ordinary set of the motor, so its decay restarts while the camera is held off the heading, and the angular
+rate limiter applies; with the camera inside the zone nothing is set and the motor goes on as it was, fading by its decay.
+While the driver is in mouselook with a mouselook flag set a script's own set of the angular motor direction is kept as the
+direction the share is taken of and does not move the motor (`VehicleDynamics.cs:478-482`). `VEHICLE_FLAG_MOUSEPOINT_STEER`
+and `_BANK` steer and bank from the camera in any view, not only mouselook (`VehicleDynamics.cs:813-816`); a vehicle with either
+set is never let to sleep. Measured on the real engine (`VehicleInWorldzMouselookTurnTests`, the car preset, a camera turned 90
+degrees, the angular motor 1.5 rad/s held for 16 s): InWorldz turns at the whole rate until the camera is within 30 degrees,
+then slower, and does not overshoot (89.99 degrees at most at 45 Hz, 89.3 at one step per heartbeat; 20 degrees short at 1 s, 3
+at 2 s, within a degree from 4 s, within half a degree from 9.3 s at 45 Hz, and about 0.7 short once inside the zone at 11 Hz);
+Second Life's aim overshoots by 11.4 degrees and is within half a degree from 8.7 s. A bare motor with no angular friction
+or decay hunts about a camera 20 degrees off by up to 5 degrees (a period of about 4.5 s), as any rate steered by an offset
+does; a car with its own friction settles. InWorldz reads the camera once in eight frames (`VehicleDynamics.cs:796`); here it is read
+on every step, which only makes the turn answer the camera sooner by under a fifth of a second. InWorldz measures the pitch as the
+vertical part of the camera's own sideways axis (`VehicleDynamics.cs:808, 820`), which is level for a camera that is not rolled;
+the host passes the camera's direction only, and the pitch share here is the camera's pitch. It is InWorldz's alone
 because the engine holds steady without it: measured on the real engine (`VehicleMouselookHuntingTests`, a car driven straight with
 the camera on its heading, the camera shaking by 0.2, 0.5 and 1 degree at 15, 30 and 60 updates a second at 45 Hz physics, and at
 one step per heartbeat), the heading wobbles by less than the shake itself (a standard deviation of 0.05 to 0.2 degrees, never above
@@ -1298,7 +1325,8 @@ or the vehicle resting on something. A script setting a motor or any vehicle par
 does a collision. A vehicle with `VEHICLE_FLAG_MOUSELOOK_STEER` or `VEHICLE_FLAG_MOUSELOOK_BANK` set
 never sleeps, whether or not its driver is in mouselook: a sleeping vehicle would read no camera, and
 InWorldz keeps such a vehicle awake for that reason (its sleep threshold is 0, `VehicleDynamics.cs:784-789`,
-read, not run). Second Life's pages say nothing about sleeping.
+read, not run); under `InWorldz` a vehicle with `VEHICLE_FLAG_MOUSEPOINT_STEER` or `_BANK` set never sleeps either. Second Life's
+pages say nothing about sleeping.
 
 A vehicle body has no contact friction by default (`VehicleContactFriction` 0, as BulletSim), and
 Second Life's vehicle friction is a velocity decay with no static part, so without more a car that
