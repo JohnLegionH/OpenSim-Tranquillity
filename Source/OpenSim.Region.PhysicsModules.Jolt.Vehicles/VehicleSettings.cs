@@ -18,6 +18,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         Legacy,
     }
 
+    /// <summary>Whose vehicle behaviour a region follows where Second Life's documentation and the InWorldz simulator differ.</summary>
+    public enum VehicleBehaviour
+    {
+        /// <summary>What Second Life's wiki documents.</summary>
+        SecondLife,
+
+        /// <summary>The InWorldz Halcyon simulator's behaviour in six places (see <see cref="VehicleSettings.Behaviour"/>).</summary>
+        InWorldz,
+    }
+
     /// <summary>
     /// The per-region settings every vehicle controller in a region shares: the preset set and the limits a script's
     /// vehicle parameters are held to. The host builds one from its configuration when the region starts. Each default
@@ -31,6 +41,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         public VehiclePresetSet Presets { get; init; } = VehiclePresetSet.Documented;
 
+        /// <summary>
+        /// Whose behaviour the vehicle code follows where Second Life's pages and the InWorldz Halcyon code differ.
+        /// <see cref="VehicleBehaviour.SecondLife"/>, the default, is what the pages document. <see cref="VehicleBehaviour.InWorldz"/>
+        /// turns on six behaviours of Halcyon's vehicle code (the pitch righting kept under LIMIT_ROLL_ONLY, hover up only
+        /// acting with buoyancy, friction that would push up dropped, the delay of a short motor's decay, the stronger and
+        /// escalating self-righting, and the buoyancy adjustment); it does not choose the preset values, which are
+        /// <see cref="Presets"/>. The host picks both from its configuration (JoltConfig.ToVehicleSettings).
+        /// </summary>
+        public VehicleBehaviour Behaviour { get; init; } = VehicleBehaviour.SecondLife;
+
         /// <summary>Largest linear motor speed a script can set (m/s, each axis), and the cap on the motor's result.</summary>
         public float MaxLinearSpeed { get; init; } = VehicleLimits.MaxLinearVelocity;
 
@@ -40,6 +60,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         /// <summary>Largest angular motor speed a script can set (rad/s, each axis), and the cap on the angular result.</summary>
         public float MaxAngularSpeed { get; init; } = VehicleLimits.MaxAngularVelocity;
+
+        /// <summary>
+        /// The angular rate limiter's floor. Setting the angular motor direction scales it by the ratio
+        /// (angular deflection timescale + 0.001) / (angular deflection efficiency + 0.00001) when that is below 1 (a
+        /// vehicle that deflects hard and fast is not turned as fast by its motor), but by no less than this share.
+        /// 0.1 is the InWorldz figure (VehicleDynamics.cs:3107-3116); 1 turns the limiter off. Second Life documents
+        /// no such limiter (its only cap on the angular motor is the 4 pi rad/s magnitude, <see cref="MaxAngularSpeed"/>).
+        /// </summary>
+        public float AngularLimiterFloor { get; init; } = VehicleLimits.AngularLimiterFloor;
 
         /// <summary>Shortest timescale a script can set (s).</summary>
         public float MinTimescale { get; init; } = VehicleLimits.MinPhysicsTimestep;
@@ -88,5 +117,34 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public float RestSpeed { get; init; } = DefaultRestSpeed;
 
         public const float DefaultRestSpeed = 0.1f;
+
+        // Enablement switches, useful for debugging specific features. A region's settings, so that switching one off
+        // in one region does not change the vehicles of another. All are true in production.
+        public bool DoAngularDeflection { get; init; } = true;
+        public bool DoLinearDeflection { get; init; } = true;
+        public bool DoMotors { get; init; } = true;
+        public bool DoAngularFriction { get; init; } = true;
+        public bool DoLinearFriction { get; init; } = true;
+        public bool DoVerticalAttractor { get; init; } = true;
+        public bool DoBanking { get; init; } = true;
+
+        // Debugging switches: all false in production. Stored for the region; no vehicle code reads one yet.
+        public bool DebugPrintParams { get; init; } = false;
+        public bool DebugTimestep { get; init; } = false;
+        public bool DebugSpikeDetection { get; init; } = false;
+        public bool DebugVehicleChange { get; init; } = false;
+        public bool DebugAngular { get; init; } = false;
+        public bool DebugBanking { get; init; } = false;
+        public bool DebugBlendedZ { get; init; } = false;
+        public bool DebugLinear { get; init; } = false;
+        public bool DebugAttractor { get; init; } = false;
+        public bool DebugRayCast { get; init; } = false;
+        public bool DebugWind { get; init; } = false;
+        public bool DebugAngularFriction { get; init; } = false;
+        public bool DebugLinearFriction { get; init; } = false;
+        public bool DebugAngularMotor { get; init; } = false;
+        public bool DebugLinearMotor { get; init; } = false;
+        public bool DebugDeflection { get; init; } = false;
+        public bool DebugRegionChange { get; init; } = false;
     }
 }

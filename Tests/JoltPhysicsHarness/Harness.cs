@@ -43,6 +43,14 @@ public sealed class HarnessOptions
     public float? Hold;
     /// <summary>How often a held key re-sends the motor, as a script's control event does while a key is down.</summary>
     public float KeyRepeat = 0.1f;
+    /// <summary>The mouselook scenarios' driver is in mouselook (the simulator's CameraData.MouseLook); false gives the
+    /// same camera with the driver out of mouselook.</summary>
+    public bool DriverInMouselook = true;
+    /// <summary>The mouselook scenarios' camera shakes as a hand on a mouse does: each camera update (<see cref="CameraRateHz"/>
+    /// a second) adds a random yaw and pitch of this standard deviation (degrees) to where the camera looks. 0 = a held camera.</summary>
+    public float CameraNoiseDegrees;
+    public double CameraRateHz = 30.0;
+    public int CameraSeed = 1;
     /// <summary>Feed a driven vehicle the way a region does (see <see cref="InputFeed"/>).</summary>
     public InputFeed Feed = InputFeed.Heartbeat;
     /// <summary>Region feed: seconds from physics turning on to the first control event.</summary>
@@ -1048,6 +1056,19 @@ public static class Harness
         },
         new()
         {
+            Name = "mouselook-hold",
+            Description = "VEHICLE_TYPE_CAR with its presets on level ground facing east, VEHICLE_FLAG_MOUSELOOK_STEER, the driver's camera looking along the car's heading (east), shaking as a hand on a mouse does when --camera-noise is given: motor <3,0,0> (slow enough to stay inside the region for 25 s) and angular motor <0,0,1.5> held. For measuring whether the steering hunts.",
+            DefaultDuration = _ => 25f, DefaultHold = _ => 1000f,
+            Setup = r =>
+            {
+                SetupCar(r, false, MouselookSteerFlag);
+                DriverCamera(r, Vector3.UnitX);
+            },
+            Input = r => r.HoldMotor(new Vector3(3f, 0f, 0f), new Vector3(0f, 0f, 1.5f)),
+            Steady = (r, s) => LastSeconds(r, s, 5.0),
+        },
+        new()
+        {
             Name = "mouselook-bank",
             Description = "VEHICLE_TYPE_AIRPLANE with its presets, held up by buoyancy 1, 60 m up facing east, VEHICLE_FLAG_MOUSELOOK_BANK, the driver's camera looking 60 degrees right of east: motor <15,0,0> and angular motor <0.5,0,0> (the fastest it may roll) held for the whole run. The camera's yaw becomes a roll to the right, and banking turns the airplane right toward the camera.",
             DefaultDuration = _ => 15f, DefaultHold = _ => 1000f,
@@ -1485,11 +1506,51 @@ public static class Harness
     /// ScenePresence hands it to the vehicle's root actor once the driver's controls are taken.</summary>
     private static void DriverCamera(Run r, Vector3 at)
     {
+        HarnessOptions o = r.Options;
+        if (o.CameraNoiseDegrees > 0f)
+        {
+            // A shaking camera: a new offset at every camera update, held until the next (simulated time).
+            float yaw0 = MathF.Atan2(at.Y, at.X);
+            float sigma = o.CameraNoiseDegrees * MathF.PI / 180f;
+            var rng = new Random(o.CameraSeed);
+            long last = long.MinValue;
+            long? t0 = null;
+            float dyaw = 0f, dpitch = 0f;
+            float Gauss() => (float)(Math.Sqrt(-2.0 * Math.Log(1.0 - rng.NextDouble())) * Math.Cos(2.0 * Math.PI * rng.NextDouble()));
+            r.Actor.OnPhysicsRequestingCameraData += () =>
+            {
+                // The time of the step reading the camera: the vehicle controller's clock, which moves with each physics
+                // step (the harness's own time moves once a heartbeat); the harness time before a controller has one.
+                double now = r.Now;
+                Func<DateTime> clock = (r.Actor as JoltPrim)?.VehicleControl?.Clock;
+                if (clock != null)
+                {
+                    long ticks = clock().Ticks;
+                    t0 ??= ticks - (long)(r.Now * TimeSpan.TicksPerSecond);
+                    now = (ticks - t0.Value) / (double)TimeSpan.TicksPerSecond;
+                }
+                long tick = (long)Math.Floor(now * o.CameraRateHz + 1e-9);
+                if (tick != last)
+                {
+                    last = tick;
+                    dyaw = Gauss() * sigma;
+                    dpitch = Gauss() * sigma;
+                }
+                float yaw = yaw0 + dyaw;
+                return new CameraData
+                {
+                    CameraAtAxis = new Vector3(MathF.Cos(dpitch) * MathF.Cos(yaw), MathF.Cos(dpitch) * MathF.Sin(yaw), MathF.Sin(dpitch)),
+                    CameraRotation = Quaternion.CreateFromEulers(0f, -dpitch, yaw),
+                    MouseLook = o.DriverInMouselook,
+                };
+            };
+            return;
+        }
         var camera = new CameraData
         {
             CameraAtAxis = Vector3.Normalize(in at),
             CameraRotation = Quaternion.CreateFromEulers(0f, 0f, MathF.Atan2(at.Y, at.X)),
-            MouseLook = true,
+            MouseLook = r.Options.DriverInMouselook,
         };
         r.Actor.OnPhysicsRequestingCameraData += () => camera;
     }

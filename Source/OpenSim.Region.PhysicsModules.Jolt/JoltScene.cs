@@ -317,6 +317,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     m_Config = source;
                     _joltConfig = joltConfig;
                     VehicleSettings = joltConfig.ToVehicleSettings();
+                    if (VehicleSettings.Behaviour != VehicleBehaviour.SecondLife)
+                        m_log.LogInformation($"{LogHeader} vehicle behaviour: {VehicleSettings.Behaviour} (preset values: {VehicleSettings.Presets}).");
                     m_log.LogInformation($"{LogHeader} enabled (physics = {Name}).");
                 }
             }

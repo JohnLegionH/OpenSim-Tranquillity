@@ -25,6 +25,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         TYPE_BOAT = 3,
         TYPE_AIRPLANE = 4,
         TYPE_BALLOON = 5,
+        // InWorldz's two extra vehicle types (VehicleType.cs:53-54 of the Halcyon source); Second Life has no such types.
+        TYPE_SAILBOAT = 10001,
+        TYPE_MOTORCYCLE = 10002,
         LINEAR_FRICTION_TIMESCALE = 16,
         ANGULAR_FRICTION_TIMESCALE = 17,
         LINEAR_MOTOR_DIRECTION = 18,
@@ -49,6 +52,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         BANKING_TIMESCALE = 40,
         REFERENCE_FRAME = 44,
         BLOCK_EXIT = 45,
-        ROLL_FRAME = 46
+        ROLL_FRAME = 46,
+        // InWorldz's float parameters (FloatParams.cs of the Halcyon source): VEHICLE_MOUSELOOK_AZIMUTH and _ALTITUDE (the
+        // range the camera's turn is a share of), VEHICLE_BANKING_AZIMUTH (the roll's range for banking),
+        // VEHICLE_DISABLE_MOTORS_ABOVE and _AFTER (the height and delay of the in-air motor disable), and
+        // VEHICLE_INVERTED_BANKING_MODIFIER. Second Life has none of them.
+        MOUSELOOK_AZIMUTH = 11001,
+        MOUSELOOK_ALTITUDE = 11002,
+        BANKING_AZIMUTH = 11003,
+        DISABLE_MOTORS_ABOVE = 11004,
+        DISABLE_MOTORS_AFTER = 11005,
+        INVERTED_BANKING_MODIFIER = 11006
     }
 }

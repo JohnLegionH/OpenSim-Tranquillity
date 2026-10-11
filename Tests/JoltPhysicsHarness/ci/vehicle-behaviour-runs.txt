@@ -1,0 +1,11 @@
+# Harness runs for [Jolt] VehicleBehaviour = InWorldz (the six InWorldz vehicle behaviours and the InWorldz preset values):
+# a car on level ground, a car driven down a 15 degree ramp, an airplane, and a car turned through 90 degrees by the mouselook camera. Same format as runs.txt, checked against
+# the baselines in vehicle-behaviour-baselines/ instead of baselines/:
+#   dotnet JoltPhysicsHarness.dll --check-baseline <folder of the runs> --baselines Tests/JoltPhysicsHarness/ci/vehicle-behaviour-baselines
+# They are recorded for the stock Windows x64 joltc only (stock-1.0.4-win-x64); a build with no folder there is skipped.
+# They are not in runs.txt because a run listed there needs a baseline for every joltc build the project tests (the
+# patched build and the Linux file as well), and the committed baselines must match that list.
+iw-car-pad: --scenario car --slope 0 --rate 11,45 --jolt VehicleBehaviour=InWorldz
+iw-car-ramp: --scenario car-down --slope 15 --rate 11,45 --jolt VehicleBehaviour=InWorldz
+iw-airplane: --scenario airplane --rate 11,45 --jolt VehicleBehaviour=InWorldz
+iw-mouselook-turn: --scenario mouselook-turn --rate 11 --physics-rate 0,45 --hold 16 --duration 20 --jolt VehicleBehaviour=InWorldz
