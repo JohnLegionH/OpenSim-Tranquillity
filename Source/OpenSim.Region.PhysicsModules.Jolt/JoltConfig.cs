@@ -65,6 +65,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float VehicleMaxLinearSpeed = VehicleLimits.MaxLinearVelocity;       // m/s
         public float VehicleReferenceSpeed = VehicleLimits.MaxLegacyLinearVelocity; // m/s
         public float VehicleMaxAngularSpeed = VehicleLimits.MaxAngularVelocity;     // rad/s
+        public float VehicleAngularLimiterFloor = VehicleLimits.AngularLimiterFloor;// share; 1 = no limiter
         public float VehicleMinTimescale = VehicleLimits.MinPhysicsTimestep;        // s
         public float VehicleMaxTimescale = VehicleLimits.MaxTimescale;              // s
         public float VehicleMaxDecayTimescale = VehicleLimits.MaxDecayTimescale;    // s
@@ -166,6 +167,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.VehicleMaxLinearSpeed = F(cfg, "VehicleMaxLinearSpeed", c.VehicleMaxLinearSpeed, 1f, 10000f, warnings);
             c.VehicleReferenceSpeed = F(cfg, "VehicleReferenceSpeed", c.VehicleReferenceSpeed, 0.1f, 10000f, warnings);
             c.VehicleMaxAngularSpeed = F(cfg, "VehicleMaxAngularSpeed", c.VehicleMaxAngularSpeed, 0.1f, 1000f, warnings);
+            c.VehicleAngularLimiterFloor = F(cfg, "VehicleAngularLimiterFloor", c.VehicleAngularLimiterFloor, 0f, 1f, warnings);
             c.VehicleMinTimescale = F(cfg, "VehicleMinTimescale", c.VehicleMinTimescale, (float)VehicleMotorSolver.MinTimescale, 1f, warnings);
             c.VehicleMaxTimescale = F(cfg, "VehicleMaxTimescale", c.VehicleMaxTimescale, 1f, VehicleLimits.MaxTimescale, warnings);
             c.VehicleMaxDecayTimescale = F(cfg, "VehicleMaxDecayTimescale", c.VehicleMaxDecayTimescale, 1f, VehicleLimits.MaxTimescale, warnings);
@@ -213,6 +215,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             MaxLinearSpeed = VehicleMaxLinearSpeed,
             ReferenceSpeed = VehicleReferenceSpeed,
             MaxAngularSpeed = VehicleMaxAngularSpeed,
+            AngularLimiterFloor = VehicleAngularLimiterFloor,
             MinTimescale = VehicleMinTimescale,
             MaxTimescale = VehicleMaxTimescale,
             MaxDecayTimescale = VehicleMaxDecayTimescale,

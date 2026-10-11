@@ -166,7 +166,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         public bool IsGroundVehicle
         {
-            get { return (_props.Type == VehicleType.Car || _props.Type == VehicleType.Sled); }
+            // A motorcycle is a car where InWorldz tells the two apart (VehicleDynamics.cs:2826).
+            get { return (_props.Type == VehicleType.Car || _props.Type == VehicleType.Motorcycle || _props.Type == VehicleType.Sled); }
         }
 
         /// <summary>Read a current float vehicle param (preset default + any llSetVehicleFloatParam override).
@@ -211,6 +212,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 case Vehicle.TYPE_BOAT:     newType = VehicleType.Boat; break;
                 case Vehicle.TYPE_AIRPLANE: newType = VehicleType.Airplane; break;
                 case Vehicle.TYPE_BALLOON:  newType = VehicleType.Balloon; break;
+                case Vehicle.TYPE_SAILBOAT:    newType = VehicleType.Sailboat; break;
+                case Vehicle.TYPE_MOTORCYCLE:  newType = VehicleType.Motorcycle; break;
                 default:                    newType = VehicleType.None; break;
             }
 
@@ -736,10 +739,37 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // The motor's grip restarts at full on every set and decays from here (s = 0).
             _props.Dynamics.AngularDecayIndex = MotorDecayStart(VehVectorParam.AngularMotorTimescale);
 
+            direction = LimitedAngularRate(direction);
             _props.Dynamics.TargetAngularDelta = direction - _props.Dynamics.AngularDirection;
             _props.Dynamics.AngularDirection = direction;
             _body.KeepAwake();
         }
+
+        /// <summary>
+        /// The angular rate limiter. InWorldz scales the angular motor direction it is given by
+        ///
+        ///   s = (angular deflection timescale + 0.001) / (angular deflection efficiency + 0.00001)
+        ///
+        /// when s is below 1, but by no less than 0.1: "SL induces an angular rate limiter based on the angular
+        /// deflection timescale. Basically angular deflection is enabled even when the vehicle is not moving"
+        /// (VehicleDynamics.cs:3107-3116, read, not run). A vehicle whose deflection is strong (efficiency up) and fast
+        /// (timescale down) is turned more slowly by its motor. The floor is [Jolt] VehicleAngularLimiterFloor
+        /// (<see cref="VehicleSettings.AngularLimiterFloor"/>); with 1 there is no limiter. The scale is taken from the
+        /// deflection settings at the moment the direction is set, as InWorldz does; the direction a script set is kept
+        /// as it was (GetVecParam) and the motor works on the scaled one. Under both behaviours.
+        /// </summary>
+        private Vector3 LimitedAngularRate(Vector3 direction)
+        {
+            float timescale = _props.GetFloat(VehFloatParam.AngularDeflectionTimescale, 1000f);
+            float efficiency = _props.GetFloat(VehFloatParam.AngularDeflectionEfficiency, 0f);
+            float scale = (timescale + VehicleLimits.AngularLimiterTimescaleBias) / (efficiency + VehicleLimits.AngularLimiterEfficiencyBias);
+            if (scale < 1.0f)
+                direction *= Math.Max(scale, S.AngularLimiterFloor);
+            return direction;
+        }
+
+        /// <summary>The angular motor direction the motor works on: the script's, after the angular rate limiter. For tests.</summary>
+        internal Vector3 AngularMotorDirectionInEffect => _props.Dynamics.AngularDirection;
 
         // InWorldz holds the decay of a quick motor back by a few hundredths of a second, "SL cheat, ramp and decay
         // should proceed simultaneously, but short decays often will prevent motor ramp-up altogether. The cheat is to
@@ -1770,12 +1800,40 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             Vector3 d = Vector3.Normalize(camera) * Quaternion.Inverse(_rotation);
             double yaw = Math.Atan2(d.Y, d.X);
             double pitch = -Math.Atan2(d.Z, Math.Sqrt(d.X * d.X + d.Y * d.Y));
+            if (InWorldz)
+            {
+                // InWorldz does not steer or bank on a camera that is within the dead zone of the vehicle's heading.
+                if (InMouselookDeadZone(d.Y, VehFloatParam.MouselookAzimuth))
+                    yaw = 0;
+                if (InMouselookDeadZone(d.Z, VehFloatParam.MouselookAltitude))
+                    pitch = 0;
+            }
             motor.Y = Aim(pitch, motor.Y, motorTs.Y);
             if ((_props.Flags & ExtendedVehicleFlags.MouselookBank) != 0)
                 motor.X = Aim(-yaw, motor.X, motorTs.X);
             else
                 motor.Z = Aim(yaw, motor.Z, motorTs.Z);
             return motor;
+        }
+
+        /// <summary>
+        /// InWorldz's mouselook dead zone (VehicleDynamics.cs:819-844, read, not run). It takes how far the camera is off
+        /// the vehicle's x axis on one axis as a share of the range the vehicle gives it (the sideways part of the
+        /// camera's direction in the vehicle's frame, times pi / 2, over [MouselookAzimuth] for yaw, or the vertical part
+        /// over [MouselookAltitude] for pitch, held to -1..1) and does nothing while that share is no more than
+        /// pi / 32 (0.098: "Angle below which mouselook steer/bank actions do not occur", VehicleLimits.cs
+        /// ThresholdMouselookAngle). With the default range of pi / 4 that is a camera within 2.8 degrees of the heading.
+        /// Outside it the aim is what it was without a dead zone: the angle over the motor timescale, held to the motor
+        /// direction. InWorldz also shapes the share outside the zone (e^x - 1) / (e - 1) and turns at that share of
+        /// the motor direction; that is not taken.
+        /// </summary>
+        private bool InMouselookDeadZone(float component, VehFloatParam range)
+        {
+            float most = _props.GetFloat(range, (float)(Math.PI / 4.0));
+            if (!(most > 0f))
+                return false;
+            float share = Utils.Clamp(component * (float)(Math.PI / 2.0) / most, -1f, 1f);
+            return Math.Abs(share) <= VehicleLimits.ThresholdMouselookAngle;
         }
 
         private static float Aim(double angle, float most, float timescale)
@@ -2126,6 +2184,88 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                                  | ExtendedVehicleFlags.HoverUpOnly | ExtendedVehicleFlags.LimitMotorUp;
                     break;
 
+                // The two InWorldz vehicle types, which Second Life does not have: the same values with either preset set
+                // (there is no documented set for them), InWorldz's own, value for value and flag for flag.
+                case VehicleType.Motorcycle:
+                    // VehicleDynamics.cs:1806-1844.
+                    _props.ParamsVec[VehVectorParam.LinearFrictionTimescale]     = new Vector3(100f, 0.1f, 10f);
+                    _props.ParamsVec[VehVectorParam.AngularFrictionTimescale]    = new Vector3(3f, 0.2f, 10f);
+                    _props.ParamsVec[VehVectorParam.LinearMotorDirection]        = Vector3.Zero;
+                    _props.ParamsVec[VehVectorParam.AngularMotorDirection]       = Vector3.Zero;
+                    _props.ParamsVec[VehVectorParam.LinearMotorOffset]           = new Vector3(0f, 0f, -0.1f);
+                    _props.ParamsVec[VehVectorParam.LinearMotorTimescale]        = new Vector3(0.5f, 1f, 1f);
+                    _props.ParamsVec[VehVectorParam.AngularMotorTimescale]       = new Vector3(0.1f, 0.1f, 0.05f);
+                    _props.ParamsVec[VehVectorParam.LinearMotorDecayTimescale]   = new Vector3(10f, 1f, 1f);
+                    _props.ParamsVec[VehVectorParam.AngularMotorDecayTimescale]  = new Vector3(0.2f, 0.8f, 0.1f);
+                    _props.ParamsVec[VehVectorParam.LinearWindEfficiency]        = Vector3.Zero;
+                    _props.ParamsVec[VehVectorParam.AngularWindEfficiency]       = Vector3.Zero;
+
+                    _props.ParamsFloat[VehFloatParam.HoverHeight]                   = 0f;
+                    _props.ParamsFloat[VehFloatParam.HoverEfficiency]               = 0f;
+                    _props.ParamsFloat[VehFloatParam.HoverTimescale]                = 1000f;
+                    _props.ParamsFloat[VehFloatParam.Buoyancy]                      = 0f;
+                    _props.ParamsFloat[VehFloatParam.LinearDeflectionEfficiency]    = 1f;
+                    _props.ParamsFloat[VehFloatParam.LinearDeflectionTimescale]     = 2f;
+                    _props.ParamsFloat[VehFloatParam.AngularDeflectionEfficiency]   = 0.8f;
+                    _props.ParamsFloat[VehFloatParam.AngularDeflectionTimescale]    = 2f;
+                    _props.ParamsFloat[VehFloatParam.VerticalAttractionEfficiency]  = 1f;
+                    _props.ParamsFloat[VehFloatParam.VerticalAttractionTimescale]   = 1f;
+                    _props.ParamsFloat[VehFloatParam.BankingEfficiency]             = 0.95f;
+                    _props.ParamsFloat[VehFloatParam.InvertedBankingModifier]       = -0.5f;
+                    _props.ParamsFloat[VehFloatParam.BankingMix]                    = 0.5f;
+                    _props.ParamsFloat[VehFloatParam.BankingTimescale]              = 0.1f;
+                    _props.ParamsFloat[VehFloatParam.MouselookAltitude]             = (float)Math.PI / 4f;
+                    _props.ParamsFloat[VehFloatParam.MouselookAzimuth]              = (float)Math.PI / 4f;
+                    _props.ParamsFloat[VehFloatParam.BankingAzimuth]                = (float)Math.PI / 2f;
+                    _props.ParamsFloat[VehFloatParam.DisableMotorsAbove]            = 1.5f;
+                    _props.ParamsFloat[VehFloatParam.DisableMotorsAfter]            = 2.5f;
+
+                    _props.ParamsRot[VehRotationParam.ReferenceFrame] = Quaternion.Identity;
+                    _props.Flags = ExtendedVehicleFlags.NoDeflectionUp | ExtendedVehicleFlags.HoverUpOnly | ExtendedVehicleFlags.LimitMotorUp
+                                 | ExtendedVehicleFlags.LimitMotorDown | ExtendedVehicleFlags.LimitRollOnly | ExtendedVehicleFlags.TorqueWorldZ;
+                    break;
+
+                case VehicleType.Sailboat:
+                    // VehicleDynamics.cs:1886-1924. Wind and water currents are stored (the two efficiency vectors and
+                    // the REACT_TO_WIND and REACT_TO_CURRENTS flags) but not simulated: no vehicle here reacts to either.
+                    _props.ParamsVec[VehVectorParam.LinearFrictionTimescale]     = new Vector3(200f, 0.5f, 3f);
+                    _props.ParamsVec[VehVectorParam.AngularFrictionTimescale]    = new Vector3(10f, 1f, 0.2f);
+                    _props.ParamsVec[VehVectorParam.LinearMotorDirection]        = Vector3.Zero;
+                    _props.ParamsVec[VehVectorParam.AngularMotorDirection]       = Vector3.Zero;
+                    _props.ParamsVec[VehVectorParam.LinearMotorOffset]           = Vector3.Zero;
+                    _props.ParamsVec[VehVectorParam.LinearMotorTimescale]        = new Vector3(1f, 5f, 5f);
+                    _props.ParamsVec[VehVectorParam.AngularMotorTimescale]       = new Vector3(2f, 2f, 0.1f);
+                    _props.ParamsVec[VehVectorParam.LinearMotorDecayTimescale]   = new Vector3(1f, 10f, 10f);
+                    _props.ParamsVec[VehVectorParam.AngularMotorDecayTimescale]  = new Vector3(0.3f, 0.3f, 0.1f);
+                    _props.ParamsVec[VehVectorParam.LinearWindEfficiency]        = new Vector3(0.02f, 0.001f, 0f);
+                    _props.ParamsVec[VehVectorParam.AngularWindEfficiency]       = new Vector3(0.1f, 0.01f, 0f);
+
+                    _props.ParamsFloat[VehFloatParam.HoverHeight]                   = 0.0001f;
+                    _props.ParamsFloat[VehFloatParam.HoverEfficiency]               = 0.8f;
+                    _props.ParamsFloat[VehFloatParam.HoverTimescale]                = 0.5f;
+                    _props.ParamsFloat[VehFloatParam.Buoyancy]                      = 0f;
+                    _props.ParamsFloat[VehFloatParam.LinearDeflectionEfficiency]    = 0.5f;
+                    _props.ParamsFloat[VehFloatParam.LinearDeflectionTimescale]     = 3f;
+                    _props.ParamsFloat[VehFloatParam.AngularDeflectionEfficiency]   = 0.5f;
+                    _props.ParamsFloat[VehFloatParam.AngularDeflectionTimescale]    = 5f;
+                    _props.ParamsFloat[VehFloatParam.VerticalAttractionEfficiency]  = 0.5f;
+                    _props.ParamsFloat[VehFloatParam.VerticalAttractionTimescale]   = 0.3f;
+                    _props.ParamsFloat[VehFloatParam.BankingEfficiency]             = 0.8f;
+                    _props.ParamsFloat[VehFloatParam.InvertedBankingModifier]       = -0.2f;
+                    _props.ParamsFloat[VehFloatParam.BankingMix]                    = 0.5f;
+                    _props.ParamsFloat[VehFloatParam.BankingTimescale]              = 0.5f;
+                    _props.ParamsFloat[VehFloatParam.MouselookAltitude]             = (float)Math.PI / 4f;
+                    _props.ParamsFloat[VehFloatParam.MouselookAzimuth]              = (float)Math.PI / 4f;
+                    _props.ParamsFloat[VehFloatParam.BankingAzimuth]                = (float)Math.PI / 2f;
+                    _props.ParamsFloat[VehFloatParam.DisableMotorsAbove]            = 0f;
+                    _props.ParamsFloat[VehFloatParam.DisableMotorsAfter]            = 0f;
+
+                    _props.ParamsRot[VehRotationParam.ReferenceFrame] = Quaternion.Identity;
+                    _props.Flags = ExtendedVehicleFlags.NoDeflectionUp | ExtendedVehicleFlags.HoverWaterOnly | ExtendedVehicleFlags.LimitMotorUp
+                                 | ExtendedVehicleFlags.LimitMotorDown | ExtendedVehicleFlags.ReactToWind | ExtendedVehicleFlags.ReactToCurrents
+                                 | ExtendedVehicleFlags.TorqueWorldZ;
+                    break;
+
                 case VehicleType.Boat:
                     _props.ParamsVec[VehVectorParam.LinearFrictionTimescale]     = new Vector3(200f, 0.5f, 3f);
                     _props.ParamsVec[VehVectorParam.AngularFrictionTimescale]    = new Vector3(10f, 1f, 0.1f);
@@ -2272,6 +2412,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     case VehicleType.Boat:     return Vehicle.TYPE_BOAT;
                     case VehicleType.Airplane: return Vehicle.TYPE_AIRPLANE;
                     case VehicleType.Balloon:  return Vehicle.TYPE_BALLOON;
+                    case VehicleType.Sailboat:    return Vehicle.TYPE_SAILBOAT;
+                    case VehicleType.Motorcycle:  return Vehicle.TYPE_MOTORCYCLE;
                     default:                         return Vehicle.TYPE_NONE;
                 }
             }

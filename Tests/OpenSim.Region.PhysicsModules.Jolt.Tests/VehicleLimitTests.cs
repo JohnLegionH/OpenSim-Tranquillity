@@ -116,6 +116,8 @@ public class VehicleLimitTests
     [InlineData("VehicleMaxLinearSpeed", "fast")]
     [InlineData("VehicleReferenceSpeed", "0")]
     [InlineData("VehicleMaxAngularSpeed", "-1")]
+    [InlineData("VehicleAngularLimiterFloor", "2")]
+    [InlineData("VehicleAngularLimiterFloor", "-0.5")]
     [InlineData("VehicleMinTimescale", "0")]
     [InlineData("VehicleMinTimescale", "2")]
     [InlineData("VehicleMaxTimescale", "5000")]

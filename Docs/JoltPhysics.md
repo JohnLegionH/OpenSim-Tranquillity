@@ -982,6 +982,35 @@ attractor 0.6 / 2 s, banking -0.2 with mix 1 and timescale 1 s, and the flags `N
 not). It differs from the documented car in the friction, motor and decay timescales, the angular deflection and the
 attractor. The documented car (the default) is unchanged.
 
+Two vehicle types exist on InWorldz and not in Second Life: `VEHICLE_TYPE_SAILBOAT` (10001) and `VEHICLE_TYPE_MOTORCYCLE`
+(10002). Both are always available, with either preset set and either behaviour, since there is no Second Life type to differ
+from; their values are the InWorldz source's, value for value (Halcyon's `VehicleDynamics.cs`, read, not run):
+
+| | Sailboat (10001) | Motorcycle (10002) |
+|---|---|---|
+| linear friction / angular friction | (200, 0.5, 3) / (10, 1, 0.2) | (100, 0.1, 10) / (3, 0.2, 10) |
+| linear motor timescale / decay | (1, 5, 5) / (1, 10, 10) | (0.5, 1, 1) / (10, 1, 1) |
+| angular motor timescale / decay | (2, 2, 0.1) / (0.3, 0.3, 0.1) | (0.1, 0.1, 0.05) / (0.2, 0.8, 0.1) |
+| linear motor offset | 0 | (0, 0, -0.1) |
+| hover height / efficiency / timescale | 0.0001 / 0.8 / 0.5 s | 0 / 0 / 1000 s (off) |
+| buoyancy | 0 | 0 |
+| linear deflection efficiency / timescale | 0.5 / 3 s | 1 / 2 s |
+| angular deflection efficiency / timescale | 0.5 / 5 s | 0.8 / 2 s |
+| vertical attractor efficiency / timescale | 0.5 / 0.3 s | 1 / 1 s |
+| banking efficiency / mix / timescale | 0.8 / 0.5 / 0.5 s | 0.95 / 0.5 / 0.1 s |
+| inverted banking modifier | -0.2 | -0.5 |
+| motors disabled above / after | 0 / 0 | 1.5 m / 2.5 s |
+| flags | `NO_DEFLECTION_UP`, `HOVER_WATER_ONLY`, `LIMIT_MOTOR_UP`, `LIMIT_MOTOR_DOWN`, `REACT_TO_WIND`, `REACT_TO_CURRENTS`, `TORQUE_WORLD_Z` | `NO_DEFLECTION_UP`, `HOVER_UP_ONLY`, `LIMIT_MOTOR_UP`, `LIMIT_MOTOR_DOWN`, `LIMIT_ROLL_ONLY`, `TORQUE_WORLD_Z` |
+
+The sailboat's wind and water-current efficiencies (0.02, 0.001, 0 and 0.1, 0.01, 0) and its two react flags are stored and not
+simulated: no vehicle here reacts to wind or currents. A motorcycle is a ground vehicle where `VehicleGroundGravityFactor`
+is concerned, as InWorldz treats it as a car. A script's type number reaches the engine as it is (`llSetVehicleType` ->
+`SceneObjectPart.SetVehicleType` -> the physics actor's `VehicleType`); the Phlox script engine knows both constants and accepts
+the numbers, the YEngine takes its constants from `ScriptBaseClass` (`LSL_Constants.cs`, `XMREngine.cs:397`), which lacks both names (a script there can pass the number).
+The simulator's own saved record of a vehicle (`SOPVehicle`) has no preset for these two types: a vehicle of either type that is
+handed back from its saved record (a region restart, a rez, a crossing) has the no-vehicle values for every setting the record
+holds, with only what its script set, until the script sets its type again; `SOPVehicle.ProcessTypeChange` would need a case for each.
+
 A vehicle rotation or vector parameter that is not a number (a NaN or an infinity in any component) is refused,
 as a float one is, and the stored value is kept; this includes `VEHICLE_REFERENCE_FRAME`, also when a saved
 vehicle hands one back.
@@ -996,7 +1025,8 @@ setting does not change another's. They have no `[Jolt]` keys.
 InWorldz (Halcyon) simulator differ. It is read once when the region starts.
 
 - `SecondLife` (the default): what Second Life's wiki documents. Nothing changes for a region that does not set the key.
-- `InWorldz`: the six behaviours below, and the InWorldz preset values (`VehiclePresets = legacy`).
+- `InWorldz`: the six behaviours below, the mouselook dead zone (below the table), and the InWorldz preset values
+  (`VehiclePresets = legacy`).
 
 ```ini
 [Jolt]
@@ -1016,6 +1046,9 @@ where it is not set, the behaviour does (`InWorldz` gives `legacy`, `SecondLife`
 | Motor decay | The motor starts to decay as it is set. | A motor whose timescale vector is shorter than 0.9 holds its whole grip for up to 0.06 s first. | A quick motor (a car's turning motor) reaches more of its speed before its decay takes it back. |
 | Self-righting | The attractor is the spring of the vehicle's timescale and efficiency. | Vehicles other than airplanes are righted harder (the spring is `1 + (1 + tilt / pi)^4` times as stiff), and while overturned (tilt of 108 degrees or more) and not improving, harder by a factor of 1.3 every 15 ms, up to 10 times. | A flipped car rights itself sooner. |
 | `VEHICLE_BUOYANCY` | The share of gravity is `1 - buoyancy`. | A buoyancy from 0.977 up to (not including) 1 acts as 1. | A balloon set to 0.98 floats instead of sinking slowly. |
+
+**The mouselook dead zone** (`InWorldz` only): the mouselook flags do not steer or bank while the camera is within about 2.8
+degrees of the vehicle's heading (or of its pitch); see "Mouselook steering" below.
 
 Each behaviour follows Halcyon's code as read (not run: it needs PhysX); the figures its formula gives are checked in the
 tests. Two things are the module's own: the self-righting factor stops at 10 where Halcyon has no limit, and it grows per 15 ms
@@ -1038,6 +1071,7 @@ the motor decay cap, which is Second Life's documented 120 s.
 | `VehicleMaxLinearSpeed` | 200 | Linear motor speed a script can set (m/s, each axis) and the motor's result. Second Life documents about 30. |
 | `VehicleReferenceSpeed` | 30 | The forward speed (m/s) at which dynamic banking and angular deflection reach full strength. |
 | `VehicleMaxAngularSpeed` | 12.566371 (4 pi) | Angular motor speed a script can set (rad/s, each axis) and the angular result. |
+| `VehicleAngularLimiterFloor` | 0.1 | The angular rate limiter's floor, 0 to 1 (below the table). 1 turns the limiter off. |
 | `VehicleMinTimescale` | 0.0156 | Shortest timescale a script can set (s), 0.001 to 1. |
 | `VehicleMaxTimescale` | 1000 | Longest friction, motor or deflection timescale (s), at most 1000. 1000 s or more is "off" for friction and deflection. |
 | `VehicleMaxDecayTimescale` | 120 | Longest motor decay timescale (s). It was 1000 before this key. |
@@ -1049,6 +1083,22 @@ the motor decay cap, which is Second Life's documented 120 s.
 | `VehicleContactFriction` | 0 | The contact friction of a vehicle body (BulletSim's `VehicleFriction`, also 0 by default): 0 leaves the vehicle's friction timescales as the only friction on it. |
 | `VehicleRestSpeed` | 0.1 | The rest rule (m/s), see "Parked vehicles sleep" below. 0 turns it off. |
 | `BodyMaxLinearSpeed`, `BodyMaxAngularSpeed` | 500, 47.12389 | The physics engine's own cap on every moving body, vehicle or not (Jolt's defaults). Keep it above `VehicleMaxLinearSpeed`. |
+
+**The angular rate limiter** (under both behaviours). When a script sets `VEHICLE_ANGULAR_MOTOR_DIRECTION`, the direction the
+motor works on is the script's times the ratio
+
+    s = (angular deflection timescale + 0.001) / (angular deflection efficiency + 0.00001)
+
+when `s` is below 1, but by no less than `VehicleAngularLimiterFloor`. A vehicle whose angular deflection is strong and quick
+(efficiency up, timescale down) is turned more slowly by its motor: 0.5 s and 1 gives a direction of 0.5 times what was set, and
+anything at 0.1 s or quicker with efficiency 1 gives the floor, 0.1 times. The ratio is taken from the deflection settings at the
+moment the direction is set, as InWorldz does (settings made afterwards do not rescale a direction already set), and what the script
+set is kept as it was (`VEHICLE_ANGULAR_MOTOR_DIRECTION` reads back unchanged). The formula and the 0.1 floor are the InWorldz
+code's (`VehicleDynamics.cs:3107-3116`, read, not run), which says it copies Second Life; Second Life's pages do not document
+such a limiter, so there is no Second Life figure to prefer. Second Life does document a cap of 4 pi rad/s on the *magnitude*
+of the angular motor (the tutorial's "Steering the Vehicle", and the `VEHICLE_ANGULAR_MOTOR_DIRECTION` page); the module holds each
+axis to 4 pi, as InWorldz does (`VehicleMaxAngularSpeed`), which lets a diagonal direction reach 4 pi times the square root of 3.
+None of the type presets (either set) has a ratio below 1, so a vehicle that sets no deflection of its own is not limited.
 
 ### Vehicle motors and friction
 
@@ -1137,6 +1187,20 @@ passes with the camera as `CameraData.MouseLook`). Out of mouselook the vehicle 
 clear: the angular motor turns it at the script's direction. Second Life's pages do not say what happens
 outside mouselook; InWorldz acts on the camera for these flags only in mouselook. With no driver's camera (no
 script has taken the controls) the flags change nothing. `VEHICLE_FLAG_CAMERA_DECOUPLED` is a hint for the viewer and does nothing in the engine.
+
+Under `[Jolt] VehicleBehaviour = InWorldz` there is a dead zone, as in InWorldz (`VehicleDynamics.cs:819-844`, read, not run): the
+sideways part of the camera's direction in the vehicle's frame, times pi / 2 over the vehicle's mouselook azimuth (pi / 4 in every
+preset: a script cannot set it here), held to -1..1, is compared with pi / 32; while it is no more than that, which with the
+preset azimuth is a camera within 2.81 degrees of the heading, the yaw (or, with the bank flag, the roll) is not aimed at all, and the
+motor on that axis is zero. The pitch has the same threshold over the altitude range. Outside the zone the aim is what it is under
+Second Life's behaviour; InWorldz also shapes the share outside the zone and turns at that share of the motor direction, which
+is not taken. A car steered by a camera in the zone settles within the zone's width of it and holds still. It is InWorldz's alone
+because the engine holds steady without it: measured on the real engine (`VehicleMouselookHuntingTests`, a car driven straight with
+the camera on its heading, the camera shaking by 0.2, 0.5 and 1 degree at 15, 30 and 60 updates a second at 45 Hz physics, and at
+one step per heartbeat), the heading wobbles by less than the shake itself (a standard deviation of 0.05 to 0.2 degrees, never above
+0.6 of the shake, and not growing over 20 s), a held camera leaves it straight to 0.03 degrees, and after a 90 degree turn of the camera
+the car overshoots by 11 to 16 degrees and is within half a degree of the camera by 12 s. A dead zone is therefore a matter of feel,
+not a cure for hunting.
 - Linear deflection turns the velocity toward the vehicle's nose, keeping its speed, the angle between
   them decaying as `e^(-eff t / T)`; with `VEHICLE_FLAG_NO_DEFLECTION_UP` only the horizontal part
   turns. Angular deflection turns the nose toward the velocity the same way, scaled by the speed over
@@ -1322,6 +1386,7 @@ Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, t
 `crash-wall`, `crash-box`, `crash-headon` and `crash-drop`, `rollonly` (a car rolled and pitched with
 `VEHICLE_FLAG_LIMIT_ROLL_ONLY`) and `motor-offset` (a floating box pushed below its centre of mass),
 `bank-turn` (the airplane rolled 20 degrees and pitched 30 degrees nose up, banking into a right turn),
+`mouselook-hold` (the same car driving straight with the camera on its heading; `--camera-noise DEG --camera-rate HZ` shakes the camera),
 `mouselook-turn` (a car with `VEHICLE_FLAG_MOUSELOOK_STEER` turning to a driver's camera looking north)
 and `mouselook-bank` (the airplane with `VEHICLE_FLAG_MOUSELOOK_BANK` rolling and banking toward a camera
 60 degrees to its right), and

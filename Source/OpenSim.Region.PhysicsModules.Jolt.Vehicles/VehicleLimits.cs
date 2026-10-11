@@ -67,6 +67,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public const float MinRegionHeight           = -128.0f;
         public const float MaxRegionHeight           = 10000.0f;
         public const float MaxAttractDormancy        = 1.5f;
+
+        // The angular rate limiter (VehicleDynamics.cs:3107-3116): the angular motor direction is scaled by
+        // max((deflection timescale + 0.001) / (deflection efficiency + 0.00001), 0.1) when that ratio is below 1.
+        public const float AngularLimiterFloor       = 0.1f;
+        public const float AngularLimiterTimescaleBias  = 0.001f;
+        public const float AngularLimiterEfficiencyBias = 0.00001f;
     }
 
     /// <summary>

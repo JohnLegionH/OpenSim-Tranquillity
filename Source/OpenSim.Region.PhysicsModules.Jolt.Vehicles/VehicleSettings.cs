@@ -61,6 +61,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <summary>Largest angular motor speed a script can set (rad/s, each axis), and the cap on the angular result.</summary>
         public float MaxAngularSpeed { get; init; } = VehicleLimits.MaxAngularVelocity;
 
+        /// <summary>
+        /// The angular rate limiter's floor. Setting the angular motor direction scales it by the ratio
+        /// (angular deflection timescale + 0.001) / (angular deflection efficiency + 0.00001) when that is below 1 (a
+        /// vehicle that deflects hard and fast is not turned as fast by its motor), but by no less than this share.
+        /// 0.1 is the InWorldz figure (VehicleDynamics.cs:3107-3116); 1 turns the limiter off. Second Life documents
+        /// no such limiter (its only cap on the angular motor is the 4 pi rad/s magnitude, <see cref="MaxAngularSpeed"/>).
+        /// </summary>
+        public float AngularLimiterFloor { get; init; } = VehicleLimits.AngularLimiterFloor;
+
         /// <summary>Shortest timescale a script can set (s).</summary>
         public float MinTimescale { get; init; } = VehicleLimits.MinPhysicsTimestep;
 

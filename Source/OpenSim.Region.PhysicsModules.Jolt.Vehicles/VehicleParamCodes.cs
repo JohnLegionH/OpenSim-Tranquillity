@@ -25,6 +25,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         TYPE_BOAT = 3,
         TYPE_AIRPLANE = 4,
         TYPE_BALLOON = 5,
+        // InWorldz's two extra vehicle types (VehicleType.cs:53-54 of the Halcyon source); Second Life has no such types.
+        TYPE_SAILBOAT = 10001,
+        TYPE_MOTORCYCLE = 10002,
         LINEAR_FRICTION_TIMESCALE = 16,
         ANGULAR_FRICTION_TIMESCALE = 17,
         LINEAR_MOTOR_DIRECTION = 18,
