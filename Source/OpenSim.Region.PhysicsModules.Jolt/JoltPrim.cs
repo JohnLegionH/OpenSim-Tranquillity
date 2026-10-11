@@ -903,6 +903,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return;
             _backend.SetBodyPartMaterial(root._body, LocalID, friction, restitution);
             root.WakeBody();
+            // What rests on a non-physical prim now touches a different surface: wake it, as when the prim is moved.
+            WakeWhatRestsOn(_position, _orientation);
         }
 
         // llSetPhysicsMaterial GRAVITY_MULTIPLIER: the body's gravity is (1 - buoyancy) x the multiplier x the region's, as
