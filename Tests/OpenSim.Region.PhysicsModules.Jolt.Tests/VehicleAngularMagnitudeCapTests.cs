@@ -42,10 +42,12 @@ public class VehicleAngularMagnitudeCapTests
         v.ProcessVectorVehicleParam(Vehicle.ANGULAR_MOTOR_DIRECTION, new Vector3(x, y, z));
         Vector3 held = Stored(v);
         Assert.Equal(Cap, held.Length(), 3);
-        Vector3 want = Vector3.Normalize(new Vector3(x, y, z));
-        Assert.Equal(want.X, Vector3.Normalize(held).X, 4);
-        Assert.Equal(want.Y, Vector3.Normalize(held).Y, 4);
-        Assert.Equal(want.Z, Vector3.Normalize(held).Z, 4);
+        Vector3 asked = new Vector3(x, y, z);
+        Vector3 want = Vector3.Normalize(in asked);
+        Vector3 heldDirection = Vector3.Normalize(in held);
+        Assert.Equal(want.X, heldDirection.X, 4);
+        Assert.Equal(want.Y, heldDirection.Y, 4);
+        Assert.Equal(want.Z, heldDirection.Z, 4);
     }
 
     [Theory]

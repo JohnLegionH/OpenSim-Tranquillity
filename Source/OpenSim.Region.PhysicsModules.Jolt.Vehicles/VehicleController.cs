@@ -1987,7 +1987,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             if (!steering && !banking)
                 return;
 
-            Vector3 d = Vector3.Normalize(camera) * Quaternion.Inverse(_rotation);
+            Vector3 d = Vector3.Normalize(in camera) * Quaternion.Inverse(_rotation);
             float xcam = MouselookShare(d.Y, VehFloatParam.MouselookAzimuth);
             float ycam = (flags & ExtendedVehicleFlags.LimitRollOnly) != 0 ? 0f : MouselookShare(-d.Z, VehFloatParam.MouselookAltitude);
             Vector3 direction = _props.GetVec(VehVectorParam.AngularMotorDirection);
