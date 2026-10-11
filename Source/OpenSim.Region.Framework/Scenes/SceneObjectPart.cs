@@ -1052,6 +1052,9 @@ public class SceneObjectPart : EntityBase, IDisposable
     /// <summary>Update angular velocity and schedule terse update.</summary>
     public void UpdateAngularVelocity(Vector3 avel)
     {
+        if (ParentGroup.RecordScriptOmega(this, avel))
+            return; // a rotate-drag owns the spin; it is applied again when the drag ends
+
         if(m_angularVelocity.NotEqual(avel))
         {
             AngularVelocity = avel;
@@ -3322,8 +3325,8 @@ public class SceneObjectPart : EntityBase, IDisposable
         if (ParentGroup.RootPart != this && ParentGroup.UsesPhysics)
             ParentGroup.StopLookAt();
 
-        // just in case do this always
-        if (APIDActive)
+        // just in case do this always, but a rotate-drag owns the spin: the look-at is only switched off
+        if (APIDActive && !ParentGroup.IsSpinning)
             AngularVelocity = Vector3.Zero;
 
         APIDActive = false;
@@ -5532,6 +5535,26 @@ public class SceneObjectPart : EntityBase, IDisposable
     {
         try
         {
+            // A rotate-drag holds the root's angular target: the viewer's rotation, with the look-at a script
+            // set kept (APIDTarget, APIDStrength) and used again when the drag ends.
+            if (ParentGroup.TryGetSpinTarget(out Quaternion dragTarget))
+            {
+                PhysicsActor root = ParentGroup.RootPart.PhysActor;
+                if (root is not null && root.IsPhysical)
+                {
+                    Quaternion current = GetWorldRotation();
+
+                    // q and -q are one rotation: aim at the one that is the short way round
+                    if (Quaternion.Dot(current, dragTarget) < 0f)
+                        dragTarget = new Quaternion(-dragTarget.X, -dragTarget.Y, -dragTarget.Z, -dragTarget.W);
+
+                    SteerToward(dragTarget, SceneObjectGroup.SpinStrength);
+                    return;
+                }
+
+                ParentGroup.EndSpin(); // no body to turn any more
+            }
+
             if (APIDActive)
             {
                 PhysicsActor pa = ParentGroup.RootPart.PhysActor;
@@ -5541,32 +5564,40 @@ public class SceneObjectPart : EntityBase, IDisposable
                     return;
                 }
 
-                Quaternion currRot = GetWorldRotation();
-                currRot.Normalize();
-
-                // difference between current orientation and desired orientation
-                Quaternion dR = currRot / APIDTarget;
-
-                // find axis and angle of rotation to rotate to desired orientation
-                dR.GetAxisAngle(out Vector3 axis, out float angle);
-                axis *= currRot;
-
-                // clamp strength to avoid overshoot
-                float strength = 1.0f / APIDStrength;
-                if (strength > 1.0) strength = 1.0f;
-
-                // set angular velocity to rotate to desired orientation
-                // with velocity proportional to strength and angle
-                AngularVelocity = axis * angle * strength * (float)Math.PI;
-
-                // This ensures that we'll check this object on the next iteration
-                ParentGroup.QueueForUpdateCheck();
+                SteerToward(APIDTarget, APIDStrength);
             }
         }
         catch (Exception ex)
         {
             m_log.LogError("[Physics] " + ex);
         }
+    }
+
+    /// <summary>
+    /// Set the root's angular velocity to turn it toward a rotation, in proportion to the angle left to turn.
+    /// </summary>
+    private void SteerToward(Quaternion target, float lookAtStrength)
+    {
+        Quaternion currRot = GetWorldRotation();
+        currRot.Normalize();
+
+        // difference between current orientation and desired orientation
+        Quaternion dR = currRot / target;
+
+        // find axis and angle of rotation to rotate to desired orientation
+        dR.GetAxisAngle(out Vector3 axis, out float angle);
+        axis *= currRot;
+
+        // clamp strength to avoid overshoot
+        float strength = 1.0f / lookAtStrength;
+        if (strength > 1.0) strength = 1.0f;
+
+        // set angular velocity to rotate to desired orientation
+        // with velocity proportional to strength and angle
+        AngularVelocity = axis * angle * strength * (float)Math.PI;
+
+        // This ensures that we'll check this object on the next iteration
+        ParentGroup.QueueForUpdateCheck();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
