@@ -1056,11 +1056,18 @@ public class SceneObjectPart : EntityBase, IDisposable
             return; // a rotate-drag owns the spin; it is applied again when the drag ends
 
         if(m_angularVelocity.NotEqual(avel))
-        {
-            AngularVelocity = avel;
-            ScheduleTerseUpdate();
-            ParentGroup.HasGroupChanged = true;
-        }
+            ApplyAngularVelocity(avel);
+    }
+
+    /// <summary>
+    /// Write the angular velocity to the actor whatever the part's own copy holds, and schedule a terse update.
+    /// The copy is refreshed from the actor only when it is read, so it can equal a value the actor no longer has.
+    /// </summary>
+    internal void ApplyAngularVelocity(Vector3 avel)
+    {
+        AngularVelocity = avel;
+        ScheduleTerseUpdate();
+        ParentGroup.HasGroupChanged = true;
     }
 
     /// <summary>Get or set angular velocity. Does not schedule update.</summary>
