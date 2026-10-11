@@ -882,8 +882,8 @@ movement" (wiki.secondlife.com, the collision events). Jolt does this as follows
   needs more velocity steps to come to rest: ten stacked 0.5 m boxes do not fall asleep at 10 at 11 or
   45 Hz, and fall over at 22.5 Hz; at 20 they stand and sleep at 11 to 90 Hz.
 - A sleeping object moved by setting its position wakes (see "Editing and moving physical objects"), and
-  an object asleep on a fixed prim wakes when that prim is moved or turned, so it falls instead of
-  hanging in the air. Either way the contact ends once they part: one end event on each side.
+  an object asleep on a fixed prim wakes when that prim is moved or turned, or its friction, restitution or
+  material changes, so it falls or slides instead of hanging in the air. Either way the contact ends once they part: one end event on each side.
 - A selected object keeps its contacts while it is held, and gets no end event for them.
 
 ## Vehicles
