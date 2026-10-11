@@ -88,5 +88,34 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public float RestSpeed { get; init; } = DefaultRestSpeed;
 
         public const float DefaultRestSpeed = 0.1f;
+
+        // Enablement switches, useful for debugging specific features. A region's settings, so that switching one off
+        // in one region does not change the vehicles of another. All are true in production.
+        public bool DoAngularDeflection { get; init; } = true;
+        public bool DoLinearDeflection { get; init; } = true;
+        public bool DoMotors { get; init; } = true;
+        public bool DoAngularFriction { get; init; } = true;
+        public bool DoLinearFriction { get; init; } = true;
+        public bool DoVerticalAttractor { get; init; } = true;
+        public bool DoBanking { get; init; } = true;
+
+        // Debugging switches: all false in production. Stored for the region; no vehicle code reads one yet.
+        public bool DebugPrintParams { get; init; } = false;
+        public bool DebugTimestep { get; init; } = false;
+        public bool DebugSpikeDetection { get; init; } = false;
+        public bool DebugVehicleChange { get; init; } = false;
+        public bool DebugAngular { get; init; } = false;
+        public bool DebugBanking { get; init; } = false;
+        public bool DebugBlendedZ { get; init; } = false;
+        public bool DebugLinear { get; init; } = false;
+        public bool DebugAttractor { get; init; } = false;
+        public bool DebugRayCast { get; init; } = false;
+        public bool DebugWind { get; init; } = false;
+        public bool DebugAngularFriction { get; init; } = false;
+        public bool DebugLinearFriction { get; init; } = false;
+        public bool DebugAngularMotor { get; init; } = false;
+        public bool DebugLinearMotor { get; init; } = false;
+        public bool DebugDeflection { get; init; } = false;
+        public bool DebugRegionChange { get; init; } = false;
     }
 }

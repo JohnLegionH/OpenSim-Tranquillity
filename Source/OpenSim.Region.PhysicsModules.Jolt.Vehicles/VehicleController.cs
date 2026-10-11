@@ -350,6 +350,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             switch (pParam)
             {
                 case Vehicle.REFERENCE_FRAME:
+                    // A rotation with a NaN or infinite component is not a rotation: refuse it and keep the frame, as
+                    // the float and vector parameters do. (Normalize turns a NaN into the identity and an infinity
+                    // into NaN, either of which would turn the whole vehicle.)
+                    if (!float.IsFinite(pValue.X) || !float.IsFinite(pValue.Y) || !float.IsFinite(pValue.Z) || !float.IsFinite(pValue.W))
+                        return;
                     pValue = Quaternion.Normalize(pValue);
                     _props.ParamsRot[VehRotationParam.ReferenceFrame] = pValue;
                     break;
@@ -479,13 +484,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // -------------------------------------------------------
             // Deflection + sled run in the order Angular -> Linear -> Sled, BEFORE hover.
             // Angular deflection — swings the nose toward the velocity direction (weathervane).
-            if (VehicleLimits.DoAngularDeflection)
+            if (S.DoAngularDeflection)
             {
                 SimulateAngularDeflection(timeStep);
             }
 
             // Linear deflection — changing velocity toward the forward axis (the "tracking" bite).
-            if (VehicleLimits.DoLinearDeflection)
+            if (S.DoLinearDeflection)
             {
                 SimulateLinearDeflection(timeStep);
             }
@@ -499,16 +504,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // -------------------------------------------------------
             // Vertical attractor and banking
             float tilt = 0f;
-            if (VehicleLimits.DoVerticalAttractor)
+            if (S.DoVerticalAttractor)
                 SimulateVerticalAttractor(pTimestep, out tilt, out _);
 
             // -------------------------------------------------------
             // Motors and friction, linear and angular, then the banking turn motor. They are stepped over the
             // step the engine is about to take (pTimestep), not the smoothed one: each is the exact solution
             // over that step.
-            SimulateLinearMotorAndFriction(pTimestep, VehicleLimits.DoMotors, VehicleLimits.DoLinearFriction);
-            float angularz = SimulateAngularMotorAndFriction(pTimestep, VehicleLimits.DoMotors, VehicleLimits.DoAngularFriction);
-            float banking = VehicleLimits.DoVerticalAttractor ? SimulateBanking(pTimestep, tilt) : 0f;
+            SimulateLinearMotorAndFriction(pTimestep, S.DoMotors, S.DoLinearFriction);
+            float angularz = SimulateAngularMotorAndFriction(pTimestep, S.DoMotors, S.DoAngularFriction);
+            float banking = S.DoVerticalAttractor ? SimulateBanking(pTimestep, tilt) : 0f;
             _motorTorqueVelChange += new Vector3(0f, 0f, angularz + banking);
 
             // Apply gravity manually (same pattern as BSDynamics)
@@ -590,7 +595,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             Vector3 motor = _props.Dynamics.LinearDirection;
             Vector3 motorTs = _props.GetVec(VehVectorParam.LinearMotorTimescale);
             Vector3 decayTs = _props.GetVec(VehVectorParam.LinearMotorDecayTimescale);
-            Vector3 frictionTs = VehicleLimits.DoLinearFriction ? _props.GetVec(VehVectorParam.LinearFrictionTimescale) : FrictionOff;
+            Vector3 frictionTs = S.DoLinearFriction ? _props.GetVec(VehVectorParam.LinearFrictionTimescale) : FrictionOff;
             double age = _props.Dynamics.LinearDecayIndex;
             return new Vector3(
                 (float)SteadyOnAxis(accel.X, motor.X, motorTs.X, decayTs.X, age, frictionTs.X),
@@ -1244,18 +1249,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             Vector3 pos = _body.Position;
             float targetBase;
 
-            // Determine the base height based on hover flags
-            if ((_props.Flags & ExtendedVehicleFlags.HoverWaterOnly) != 0)
+            // Determine the base height based on hover flags. The global height comes first: with HOVER_GLOBAL_HEIGHT
+            // set the vehicle hovers at that height "instead of height above ground or water" (the flag's page on the
+            // Second Life wiki), whatever other hover flag is set with it; InWorldz's hover does the same ("Global hover
+            // overrides water and ground", VehicleDynamics.cs:1575-1576).
+            if ((_props.Flags & ExtendedVehicleFlags.HoverGlobalHeight) != 0)
+            {
+                targetBase = 0f; // Global = absolute height, hover height is the target
+            }
+            else if ((_props.Flags & ExtendedVehicleFlags.HoverWaterOnly) != 0)
             {
                 targetBase = _body.GetWaterLevel(pos);
             }
             else if ((_props.Flags & ExtendedVehicleFlags.HoverTerrainOnly) != 0)
             {
                 targetBase = _body.GetTerrainHeight(pos);
-            }
-            else if ((_props.Flags & ExtendedVehicleFlags.HoverGlobalHeight) != 0)
-            {
-                targetBase = 0f; // Global = absolute height, hover height is the target
             }
             else
             {
@@ -1375,7 +1383,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             float timescale = _props.GetFloat(VehFloatParam.BankingTimescale, 1000f);
             float efficiency = _props.GetFloat(VehFloatParam.BankingEfficiency, 0f);
-            if (!VehicleLimits.DoBanking || efficiency == 0f || timescale >= S.MaxAttractTimescale
+            if (!S.DoBanking || efficiency == 0f || timescale >= S.MaxAttractTimescale
                 || _props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f) >= S.MaxAttractTimescale)
                 return 0f;
 
@@ -1921,42 +1929,22 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     break;
 
                 case VehicleType.Car:
-                    _props.ParamsVec[VehVectorParam.LinearFrictionTimescale]     = new Vector3(100f, 0.1f, 10f);
-                    _props.ParamsVec[VehVectorParam.AngularFrictionTimescale]    = new Vector3(100f, 100f, 0.3f);
-                    _props.ParamsVec[VehVectorParam.LinearMotorDirection]        = Vector3.Zero;
-                    _props.ParamsVec[VehVectorParam.AngularMotorDirection]       = Vector3.Zero;
-                    _props.ParamsVec[VehVectorParam.LinearMotorOffset]           = Vector3.Zero;
-                    _props.ParamsVec[VehVectorParam.LinearMotorTimescale]        = new Vector3(0.5f, 1f, 1f);
-                    _props.ParamsVec[VehVectorParam.AngularMotorTimescale]       = new Vector3(0.2f, 0.2f, 0.05f);
-                    _props.ParamsVec[VehVectorParam.LinearMotorDecayTimescale]   = new Vector3(10f, 2f, 2f);
-                    _props.ParamsVec[VehVectorParam.AngularMotorDecayTimescale]  = new Vector3(0.3f, 0.3f, 0.1f);
+                    // Second Life's page for the car gives every value and flag below, so the legacy car is the
+                    // documented car (the call at the end); the InWorldz car's own values (friction (100, 0.1, 10),
+                    // angular deflection 0.5 / 2 s, TORQUE_WORLD_Z and the rest) are not kept. Only what the page
+                    // does not give stays as InWorldz had it: the wind efficiencies, the mouselook and banking
+                    // azimuths, the inverted banking modifier and the motor-disabling height and delay.
                     _props.ParamsVec[VehVectorParam.LinearWindEfficiency]        = Vector3.Zero;
                     _props.ParamsVec[VehVectorParam.AngularWindEfficiency]       = Vector3.Zero;
 
-                    _props.ParamsFloat[VehFloatParam.HoverHeight]                   = 0f;
-                    _props.ParamsFloat[VehFloatParam.HoverEfficiency]               = 0f;
-                    _props.ParamsFloat[VehFloatParam.HoverTimescale]                = 1000f;
-                    _props.ParamsFloat[VehFloatParam.Buoyancy]                      = 0f;
-                    _props.ParamsFloat[VehFloatParam.LinearDeflectionEfficiency]    = 1f;
-                    _props.ParamsFloat[VehFloatParam.LinearDeflectionTimescale]     = 2f;
-                    _props.ParamsFloat[VehFloatParam.AngularDeflectionEfficiency]   = 0.5f;
-                    _props.ParamsFloat[VehFloatParam.AngularDeflectionTimescale]    = 2f;
-                    _props.ParamsFloat[VehFloatParam.VerticalAttractionEfficiency]  = 0.6f;
-                    _props.ParamsFloat[VehFloatParam.VerticalAttractionTimescale]   = 2f;
-                    _props.ParamsFloat[VehFloatParam.BankingEfficiency]             = -0.2f;
                     _props.ParamsFloat[VehFloatParam.InvertedBankingModifier]       = 1f;
-                    _props.ParamsFloat[VehFloatParam.BankingMix]                    = 1f;
-                    _props.ParamsFloat[VehFloatParam.BankingTimescale]              = 1f;
                     _props.ParamsFloat[VehFloatParam.MouselookAltitude]             = (float)Math.PI / 4f;
                     _props.ParamsFloat[VehFloatParam.MouselookAzimuth]              = (float)Math.PI / 4f;
                     _props.ParamsFloat[VehFloatParam.BankingAzimuth]                = (float)Math.PI / 2f;
                     _props.ParamsFloat[VehFloatParam.DisableMotorsAbove]            = 0.75f;
                     _props.ParamsFloat[VehFloatParam.DisableMotorsAfter]            = 2.5f;
 
-                    _props.ParamsRot[VehRotationParam.ReferenceFrame] = Quaternion.Identity;
-                    _props.Flags = ExtendedVehicleFlags.NoDeflectionUp | ExtendedVehicleFlags.LimitRollOnly
-                                 | ExtendedVehicleFlags.HoverUpOnly | ExtendedVehicleFlags.LimitMotorUp
-                                 | ExtendedVehicleFlags.TorqueWorldZ;
+                    SetDocumentedDefaults(VehicleType.Car);
                     break;
 
                 case VehicleType.Boat:

@@ -67,35 +67,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         public const float MinRegionHeight           = -128.0f;
         public const float MaxRegionHeight           = 10000.0f;
         public const float MaxAttractDormancy        = 1.5f;
-
-        // Enablement switches, useful for debugging specific features.
-        // All should be true in production.
-        public static bool DoAngularDeflection   = true;
-        public static bool DoLinearDeflection    = true;
-        public static bool DoMotors              = true;
-        public static bool DoAngularFriction     = true;
-        public static bool DoLinearFriction      = true;
-        public static bool DoVerticalAttractor   = true;
-        public static bool DoBanking             = true;
-
-        // Debugging switches — all should be false in production.
-        public static bool DebugPrintParams      = false;
-        public static bool DebugTimestep         = false;
-        public static bool DebugSpikeDetection   = false;
-        public static bool DebugVehicleChange    = false;
-        public static bool DebugAngular          = false;
-        public static bool DebugBanking          = false;
-        public static bool DebugBlendedZ         = false;
-        public static bool DebugLinear           = false;
-        public static bool DebugAttractor        = false;
-        public static bool DebugRayCast          = false;
-        public static bool DebugWind             = false;
-        public static bool DebugAngularFriction  = false;
-        public static bool DebugLinearFriction   = false;
-        public static bool DebugAngularMotor     = false;
-        public static bool DebugLinearMotor      = false;
-        public static bool DebugDeflection       = false;
-        public static bool DebugRegionChange     = false;
     }
 
     /// <summary>

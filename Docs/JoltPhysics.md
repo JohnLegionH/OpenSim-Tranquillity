@@ -958,7 +958,8 @@ with 0.2.
   of 10 is held to 1, as `llSetVehicleFloatParam` holds any efficiency, and the sled has hover off:
   the page's hover timescale of 10 s would turn hover on, against the page's own "no hover", so the
   sled's is 1000 s.
-- `legacy`: the InWorldz Halcyon values the module used before, for vehicles tuned against them.
+- `legacy`: the InWorldz Halcyon values the module used before, for vehicles tuned against them, except
+  the car (below).
 
 ```ini
 [Jolt]
@@ -969,8 +970,26 @@ A script's own `llSetVehicleFloatParam`, `llSetVehicleVectorParam` and `llSetVeh
 override either set; most scripted vehicles set their own values after the type, and differ only
 in what they leave at the preset. Choosing a type sets that type's flags and clears every other
 flag, also one a script set before `llSetVehicleType`. The module's own extension parameters (wind, mouselook,
-motor disabling) are not Second Life parameters and are the same in both sets. The legacy car,
-boat and airplane also carry the module's torque-about-world-z flag, which no documented type sets.
+motor disabling) are not Second Life parameters and are the same in both sets. The legacy boat and
+airplane also carry the module's torque-about-world-z flag, which no documented type sets.
+
+The legacy car is the documented car: every value and flag the car's page gives is the page's, and only
+what the page leaves out stays as InWorldz had it (the wind, mouselook and banking-azimuth extensions and the
+motor-disabling height and delay). It used to be the InWorldz car, with torque about world z and different
+numbers. A car script that sets its own values after `llSetVehicleType` is unchanged except where it leaves
+a value at the preset: against the old legacy car, linear friction is now (100, 2, 1000) for (100, 0.1, 10),
+angular friction 1000 for (100, 100, 0.3), the linear motor 1 s with a 60 s decay for (0.5, 1, 1) with
+(10, 2, 2), the angular motor 1 s with a 0.8 s decay for (0.2, 0.2, 0.05) with (0.3, 0.3, 0.1), angular
+deflection off (0, 10 s) for 0.5 / 2 s, and the vertical attractor 1 / 10 s for 0.6 / 2 s; and the car no
+longer turns about world z with its angular motor's third axis.
+
+A vehicle rotation or vector parameter that is not a number (a NaN or an infinity in any component) is refused,
+as a float one is, and the stored value is kept; this includes `VEHICLE_REFERENCE_FRAME`, also when a saved
+vehicle hands one back.
+
+The module's vehicle debugging and enablement switches (`DoMotors`, `DoBanking` and the others on
+`VehicleSettings`, all on, and the `Debug*` ones, all off) are part of a region's vehicle settings: one region's
+setting does not change another's. They have no `[Jolt]` keys.
 
 ### Vehicle limits
 
@@ -1032,7 +1051,10 @@ exact solution over the step the engine takes:
 
 - Hover is a damped spring on the height error `e`: `e'' = -e / T^2 - 2 eff e' / T`, with
   `VEHICLE_HOVER_TIMESCALE` `T` and `VEHICLE_HOVER_EFFICIENCY` `eff` from bouncy (0) to critically
-  damped (1). The hover flags choose terrain, water or the global height as before. With
+  damped (1). The hover flags choose terrain, water or the global height as before; with
+  `VEHICLE_FLAG_HOVER_GLOBAL_HEIGHT` set the global height wins over `VEHICLE_FLAG_HOVER_WATER_ONLY`
+  and `VEHICLE_FLAG_HOVER_TERRAIN_ONLY` set with it (the flag's page: "instead of height above ground or
+  water"; before, the water or terrain flag won). With
   `VEHICLE_FLAG_HOVER_UP_ONLY` hover never pushes down, and buoyancy vanishes above the hover height.
   A vehicle without full buoyancy hovers below its height, where the spring holds its weight.
 - The vertical attractor is the same spring on the vehicle's roll and pitch, with

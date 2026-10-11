@@ -122,6 +122,23 @@ public class VehicleHoverTests
         Assert.InRange(m.End.Z, expectedZ - 0.02f, expectedZ + 0.02f);
     }
 
+    // HOVER_GLOBAL_HEIGHT with another hover flag: the global height wins, as Second Life's page for the flag documents
+    // ("Hover at global height instead of height above ground or water") and as InWorldz's hover does (a global
+    // hover overrides water and ground). Each case also sets the other flag; the course's ground is at 25 m and its
+    // water at 20 m, so a vehicle that wrongly used either would settle there plus the height, not at 40 m.
+    [Theory]
+    [InlineData(11.0, "HOVER_GLOBAL_HEIGHT", "HOVER_WATER_ONLY")]
+    [InlineData(11.0, "HOVER_GLOBAL_HEIGHT", "HOVER_TERRAIN_ONLY")]
+    [InlineData(11.0, "HOVER_GLOBAL_HEIGHT", "HOVER_WATER_ONLY", "HOVER_TERRAIN_ONLY")]
+    [InlineData(45.0, "HOVER_GLOBAL_HEIGHT", "HOVER_WATER_ONLY")]
+    [InlineData(45.0, "HOVER_GLOBAL_HEIGHT", "HOVER_TERRAIN_ONLY")]
+    [InlineData(45.0, "HOVER_GLOBAL_HEIGHT", "HOVER_WATER_ONLY", "HOVER_TERRAIN_ONLY")]
+    public void Global_height_wins_over_the_other_hover_flags(double rate, params string[] flags)
+    {
+        Summary m = Run(rate, 1f, 1f, 15f, 40f, flags).Summary;
+        Assert.InRange(m.End.Z, 40f - 0.02f, 40f + 0.02f);
+    }
+
     // HOVER_UP_ONLY: hover does not push down, and buoyancy vanishes above the hover height. A bouncy hover that would
     // swing the balloon 4.5 m over its height instead lets it coast up under gravity alone from where it crosses the
     // height: v^2 / 2g above it at most, then down again.
