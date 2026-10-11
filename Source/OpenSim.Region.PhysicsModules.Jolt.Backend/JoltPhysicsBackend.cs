@@ -47,7 +47,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         private readonly HandleTable<JoltBodyRecord> _bodies = new HandleTable<JoltBodyRecord>();
         private readonly HandleTable<JoltShapeRecord> _shapes = new HandleTable<JoltShapeRecord>();
         private readonly HandleTable<JoltCharacterRecord> _characters = new HandleTable<JoltCharacterRecord>();
-        private readonly HandleTable<JoltConstraintRecord> _constraints = new HandleTable<JoltConstraintRecord>();
 
         private JoltContactListener _contactListener = null!;
 
@@ -1169,7 +1168,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             _queryFilters.Clear();
 
             // Our own handle tables first (pure managed bookkeeping).
-            _constraints.Clear();
             _characters.Clear();
             _bodies.Clear();
             _shapes.Clear();
@@ -2460,14 +2458,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             }
         }
 
-        public void SetBodyAxisLocks(BodyId body, Vector3 allowedTranslation, Vector3 allowedRotation)
-        {
-            // Jolt: SixDOFConstraint to world, or MotionProperties mass/inertia
-            // scaling. The constraint route is more predictable; the inertia
-            // route is cheaper. Start with the constraint and measure.
-            throw new NotImplementedException();
-        }
-
         // Apply* only act on DYNAMIC bodies (see TryResolveDynamic). All of these auto-activate a
         // sleeping body - AddForce and AddImpulse were both verified to wake it - which matches SL's
         // wake-on-impulse behaviour. AddForce/AddTorque accumulate and are consumed by the next Step;
@@ -2532,6 +2522,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         {
             if (!float.IsFinite(waterHeight) || !float.IsFinite(buoyancy) || !float.IsFinite(linearDrag) || !float.IsFinite(angularDrag))
                 { CountRejectedNonFinite(); return; }
+            // Not implemented, and nothing outside the non-finite-argument test calls it: the vehicle buoyancy model
+            // does its own lift. Jolt's ApplyBuoyancyImpulse needs a step length and a fluid velocity this signature
+            // does not carry, so there is no one obvious mapping to write.
             // Jolt: Body.ApplyBuoyancyImpulse(surfacePosition, surfaceNormal,
             //         buoyancy, linearDrag, angularDrag, fluidVelocity,
             //         gravity, deltaTime)
@@ -3899,25 +3892,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         }
 
         // =====================================================================
-        // Constraints
-        // =====================================================================
-
-        public ConstraintId CreateConstraint(in ConstraintDesc desc)
-        {
-            // ConstraintKind maps essentially 1:1 onto Jolt's set. The four with
-            // no PhysX equivalent - Pulley, Gear, RackAndPinion, Path - are the
-            // interesting ones for scripted content, and they are the reason
-            // this section is worth exposing to SLua rather than keeping internal.
-            throw new NotImplementedException();
-        }
-
-        public void RemoveConstraint(ConstraintId constraint) => throw new NotImplementedException();
-        public void SetConstraintEnabled(ConstraintId constraint, bool enabled) => throw new NotImplementedException();
-        public void SetConstraintMotor(ConstraintId constraint, MotorMode mode, float target, float maxForce) => throw new NotImplementedException();
-        public void SetConstraintLimits(ConstraintId constraint, float min, float max) => throw new NotImplementedException();
-        public bool IsConstraintBroken(ConstraintId constraint) => throw new NotImplementedException();
-
-        // =====================================================================
         // World
         // =====================================================================
 
@@ -4919,15 +4893,4 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
     internal readonly record struct CharacterStepTrace(uint UserData, Vector3 Displacement, Vector3 Asked, Vector3 Reported, float Seconds, bool Placed);
 
     internal readonly record struct CharacterBodyContact(uint BodyJoltId, uint SubShape, Vector3 Point, Vector3 Normal, ContactPhase Phase, bool Loose);
-
-    internal sealed class JoltConstraintRecord
-    {
-        public IntPtr Native;
-        public ConstraintKind Kind;
-        public BodyId BodyA;
-        public BodyId BodyB;
-        public float BreakForce;
-        public bool Broken;
-        public uint UserData;
-    }
 }
