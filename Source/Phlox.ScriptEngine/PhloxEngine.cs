@@ -119,6 +119,12 @@ namespace Phlox.ScriptEngine
         /// </summary>
         public bool HttpInFlightThrottle { get; private set; } = true;
 
+        /// <summary>
+        /// The notecard trace, or null while it is off. [InWorldz.Phlox] NotecardTrace, default false. Nothing is tracked or
+        /// logged without it; every trace call is made through this property and skipped when it is null.
+        /// </summary>
+        internal PhloxNotecardTrace NotecardTrace { get; private set; }
+
         /// <summary>This region's notecard cache (used only while <see cref="NotecardCacheEnabled"/>).</summary>
         internal PhloxNotecardCache NotecardCache { get; } = new PhloxNotecardCache();
 
@@ -216,6 +222,12 @@ namespace Phlox.ScriptEngine
                 "HttpInFlightThrottle = {8}",
                 ResetThrottle, ChatThrottle, BotThrottle, PhysicsThrottle, LinkMessageThrottle, NotecardThrottle,
                 NotecardCacheEnabled, FormatStringThrottle, HttpInFlightThrottle);
+            if (m_Config.GetBoolean("NotecardTrace", false))
+            {
+                NotecardTrace = new PhloxNotecardTrace();
+                m_log.LogInformation("[PhloxEngine]: NotecardTrace = true: every notecard request is logged under {0} and kept until it is answered or lost",
+                    PhloxNotecardTrace.Tag);
+            }
 
             // Syscalls that can reach a service run off the scheduler thread.
             // auto (default) = inline when the answer is local or cached, deferred otherwise;
@@ -477,11 +489,15 @@ namespace Phlox.ScriptEngine
                 o.Output(TerminatedLine(st.TerminatedReason));
             o.Output($"  queued events : {st.QueuedEvents}");
             o.Output($"  other scripts' dataserver answers dropped (queue at half its limit): {st.OtherAnswersDropped}");
+            foreach (string line in NotecardTraceStatusLines(itemId)) o.Output(line);
             o.Output($"  LSL state     : {st.LslState}");
             o.Output($"  timer         : {(st.TimerIntervalMs > 0 ? st.TimerIntervalMs + " ms" : "not set")}");
             o.Output($"  region mask   : part.ScriptEvents={part?.ScriptEvents.ToString() ?? "(no part)"}");
             o.Output($"  aggregate     : {part?.AggregatedScriptEvents.ToString() ?? "(no part)"}");
         }
+
+        /// <summary>The notecard trace's lines of a script's status: its waiting requests. None while the trace is off.</summary>
+        internal string[] NotecardTraceStatusLines(UUID itemId) => NotecardTrace?.StatusLines(itemId) ?? Array.Empty<string>();
 
         /// <summary>The status line's note on why a script is held, in words an operator reads.</summary>
         internal static string HeldText(string localDisable)
@@ -740,6 +756,11 @@ namespace Phlox.ScriptEngine
                 else
                     m_log.LogWarning("[PhloxEngine]: The script scheduler did not stop within 5 s; it is still running {0}, whose last saved state is kept; every other script is saved",
                         running);
+            }
+            if (NotecardTrace != null)
+            {
+                NotecardTrace.LogWaiting("region stop");
+                m_ExeScheduler?.TraceAnswersHeldAtStop();
             }
             StateManager?.StopExcept(running);
         }
@@ -1536,7 +1557,9 @@ namespace Phlox.ScriptEngine
             => PostScriptEvent(itemID, parms, completed, answersOtherScript: false);
 
         /// <param name="answersOtherScript">A dataserver answer to a request another script of the prim made (see PostedEvent).</param>
-        internal bool PostScriptEvent(UUID itemID, EventParams parms, Action completed, bool answersOtherScript)
+        /// <param name="traceQuery">The query id of a notecard answer the trace follows (null: not followed), with the time it was asked.</param>
+        internal bool PostScriptEvent(UUID itemID, EventParams parms, Action completed, bool answersOtherScript,
+            string traceQuery = null, ulong traceAskedOn = 0)
         {
             if (m_ExeScheduler == null) return false;
 
@@ -1551,7 +1574,9 @@ namespace Phlox.ScriptEngine
                 Args = ToPhloxArgs(parms.Params),
                 DetectVars = detectVars,
                 Completed = completed,
-                AnswersOtherScript = answersOtherScript
+                AnswersOtherScript = answersOtherScript,
+                TraceQuery = traceQuery,
+                TraceAskedOn = traceAskedOn
             };
             evt.Normalize();
             if (parms is GrabUpdateParams) m_ExeScheduler.PostGrabUpdate(itemID, evt);
@@ -1889,7 +1914,16 @@ namespace Phlox.ScriptEngine
         /// </summary>
         internal int PostDataserverToPrim(SceneObjectPart part, UUID skip, UUID asker, string queryId, string data)
         {
-            if (part?.ParentGroup == null || part.ParentGroup.IsDeleted) return 0;
+            // The notecard trace follows this answer when the request that asked for it was traced: its events carry the query id.
+            PhloxNotecardTrace trace = NotecardTrace;
+            ulong askedOn = 0;
+            bool traced = trace != null && trace.TakeForPost(UUID.Parse(queryId), out askedOn);
+
+            if (part?.ParentGroup == null || part.ParentGroup.IsDeleted)
+            {
+                if (traced) trace.Dropped(queryId, asker, PhloxNotecardTrace.ReasonPrimGone);
+                return 0;
+            }
 
             TaskInventoryDictionary inventory;
             lock (part.TaskInventory)
@@ -1904,24 +1938,41 @@ namespace Phlox.ScriptEngine
                 return byName != 0 ? byName : a.ItemID.CompareTo(b.ItemID);
             });
 
-            int posted = 0;
+            // The scripts that are offered it, and for the trace the ones that are not. The trace's post line is written
+            // before any event is posted, so it comes before the lines of the scheduler thread that handles them.
+            var targets = new List<TaskInventoryItem>();
+            List<(UUID Item, string Reason)> skipped = null;
             foreach (TaskInventoryItem item in scripts)
             {
-                if (item.ItemID == skip || !HasOrIsLoading(item.ItemID)) continue;
+                if (item.ItemID != skip && HasOrIsLoading(item.ItemID)) { targets.Add(item); continue; }
+                if (traced) (skipped ??= new()).Add((item.ItemID, item.ItemID == skip ? PhloxNotecardTrace.ReasonNotOwed : PhloxNotecardTrace.ReasonNotLoaded));
+            }
+            var engines = new List<IScriptEngine>();
+            foreach (IScriptModule m in World?.RequestModuleInterfaces<IScriptModule>() ?? Array.Empty<IScriptModule>())
+                if (!ReferenceEquals(m, this) && m is IScriptEngine other && !engines.Contains(other)) engines.Add(other);
+            if (traced)
+            {
+                foreach (TaskInventoryItem item in scripts) trace.Name(item.ItemID, item.Name);
+                trace.Posted(queryId, part.LocalId, targets.Count, engines.Count);
+                if (skipped != null) foreach (var s in skipped) trace.Dropped(queryId, s.Item, s.Reason);
+            }
+
+            int posted = 0;
+            foreach (TaskInventoryItem item in targets)
+            {
                 // Another script's answer is marked here, once, as it is posted: the asker's own never is.
                 if (PostScriptEvent(item.ItemID, new EventParams("dataserver", new object[] { queryId, data }, new DetectParams[0]),
-                        null, answersOtherScript: item.ItemID != asker))
+                        null, answersOtherScript: item.ItemID != asker, traceQuery: traced ? queryId : null, traceAskedOn: askedOn))
                     posted++;
+                else if (traced)
+                    trace.Dropped(queryId, item.ItemID, PhloxNotecardTrace.ReasonNotAccepted);
             }
 
             // An exception from another engine is logged for that engine and goes no further: the engines after it are
             // still offered the answer, and it never reaches the asking script's request (whose failure path would
             // report it to the owner as the request's own error).
-            var seen = new List<IScriptEngine>();
-            foreach (IScriptModule m in World?.RequestModuleInterfaces<IScriptModule>() ?? Array.Empty<IScriptModule>())
+            foreach (IScriptEngine e in engines)
             {
-                if (ReferenceEquals(m, this) || m is not IScriptEngine e || seen.Contains(e)) continue;
-                seen.Add(e);
                 try
                 {
                     e.PostObjectEvent(part.LocalId, new EventParams("dataserver",

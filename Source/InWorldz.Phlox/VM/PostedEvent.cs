@@ -30,6 +30,13 @@ namespace InWorldz.Phlox.VM
         /// </summary>
         public bool AnswersOtherScript;
 
+        /// <summary>
+        /// The query id of a notecard answer the notecard trace follows, and the engine-clock time the request was made
+        /// (see PhloxNotecardTrace). Null unless the trace is on. Never serialized: a restored event is not followed.
+        /// </summary>
+        public string TraceQuery;
+        public ulong TraceAskedOn;
+
         public void SignalCompleted()
         {
             Action c = Completed;

@@ -463,6 +463,14 @@ namespace Phlox.ScriptEngine
                             DeliverNextQueuedEvent(interp);
                     }
 
+                    if (m_Engine.NotecardTrace != null)
+                    {
+                        int restoredQueued;
+                        lock (interp.ScriptState.EventQueueLock) restoredQueued = interp.ScriptState.EventQueue?.Count ?? 0;
+                        m_Engine.NotecardTrace.Restored(req.ItemID, req.Prim.Inventory?.GetInventoryItem(req.ItemID)?.Name,
+                            interp.ScriptState.RunState.ToString(), restoredQueued);
+                    }
+
                     // The timer keeps its phase: the next timer() comes after what was left of the interval when the
                     // state was captured, at once if that had run out (Halcyon InjectScript). A stopped script keeps
                     // that time for its start.
@@ -776,6 +784,7 @@ namespace Phlox.ScriptEngine
             m_Engine.StateManager?.DeleteState(itemId);
             bool wasCrashed = script.ScriptState.TerminatedReason != null;
             lock (m_AllScriptsLock) m_HeldFresh.Remove(itemId);   // A reset of a held script owes it nothing more
+            TraceClearedQueue(script, "reset");
             script.Reset();
             if (wasCrashed)
             {
@@ -793,7 +802,7 @@ namespace Phlox.ScriptEngine
             m_HeldArrivals.RemoveAll(held => held.ItemId == itemId);
             lock (m_PendingEvents)
             {
-                DropPendingEventsLocked(itemId);
+                DropPendingEventsLocked(itemId, "reset");
                 PostEvent(itemId, new PostedEvent
                 {
                     EventType = SupportedEventList.Events.STATE_ENTRY,
@@ -815,13 +824,17 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>The events posted to this item and not yet moved into its queue are dropped. The caller holds m_PendingEvents.</summary>
-        private void DropPendingEventsLocked(UUID itemId)
+        private void DropPendingEventsLocked(UUID itemId, string why)
         {
             if (m_PendingEvents.Count == 0) return;
             var keep = new List<PendingEvent>(m_PendingEvents.Count);
             foreach (var pe in m_PendingEvents)
             {
-                if (pe.ItemId == itemId) pe.Evt.SignalCompleted();   // No waiter waits for a dropped event
+                if (pe.ItemId == itemId)
+                {
+                    pe.Evt.SignalCompleted();   // No waiter waits for a dropped event
+                    TraceDropped(pe.Evt, itemId, "cleared by " + why + " (posted, not yet in the script's queue)");
+                }
                 else keep.Add(pe);
             }
             if (keep.Count == m_PendingEvents.Count) return;
@@ -1164,6 +1177,7 @@ namespace Phlox.ScriptEngine
             RemoveFromRunQueue(itemId);
             m_Suspended.Remove(itemId);
             UnregisterFromNotifications(script);
+            TraceClearedQueue(script, "unload");
             // Whatever the API's unload hook throws, the script still leaves the scheduler - a throw here used to
             // abort the unload and keep the script (and everything it held) loaded for the life of the region.
             try { script.OnUnload(ScriptUnloadReason.Unloaded, RuntimeState.LocalDisableFlag.None); }
@@ -1432,17 +1446,21 @@ namespace Phlox.ScriptEngine
                     {
                         ArmMinDelay(script);
                         script.ScriptState.DoEvent(info, nextEvt, nextEvt.Args);
+                        TraceDelivered(nextEvt, script.ItemId);
                         CheckAndResetTimer(script, info);
                         return; // stay on run queue
                     }
                     catch (Exception e)   // not only VMException: restored values can be wrong in ways the VM does not check
                     {
+                        TraceDropped(nextEvt, script.ItemId, "handler could not start: " + e.Message);
                         TerminateWithError(script, e);
                         m_RunIndex.Remove(m_NextScript.Value.ItemId);
                         m_RunQueue.Remove(m_NextScript);
                         return;
                     }
                 }
+                else
+                    TraceDropped(nextEvt, script.ItemId, PhloxNotecardTrace.ReasonDequeuedNoHandler);
             }
 
 			m_Engine.StateManager?.ScriptChanged(script);
@@ -1584,6 +1602,61 @@ namespace Phlox.ScriptEngine
             return true;
         }
 
+        // ── The notecard trace's hooks ─────────────────────────────────────────
+        // Each one does nothing for an event without a TraceQuery, which only a trace-on engine sets.
+
+        private PhloxNotecardTrace NotecardTrace => m_Engine?.NotecardTrace;
+
+        private void TraceDropped(PostedEvent evt, UUID item, string reason)
+        {
+            if (evt.TraceQuery != null) NotecardTrace?.Dropped(evt.TraceQuery, item, reason);
+        }
+
+        private void TraceQueued(PostedEvent evt, UUID item, int depth, string note = null)
+        {
+            if (evt.TraceQuery != null) NotecardTrace?.Queued(evt.TraceQuery, item, depth, note);
+        }
+
+        private void TraceDelivered(PostedEvent evt, UUID item)
+        {
+            if (evt.TraceQuery != null) NotecardTrace?.Delivered(evt.TraceQuery, item, evt.TraceAskedOn);
+        }
+
+        /// <summary>The script's own queue is cleared (reset, state change, unload): each followed answer in it is lost.</summary>
+        private void TraceClearedQueue(Interpreter script, string why)
+        {
+            PhloxNotecardTrace trace = NotecardTrace;
+            if (trace == null) return;
+            List<PostedEvent> followed = null;
+            lock (script.ScriptState.EventQueueLock)
+                foreach (PostedEvent evt in script.ScriptState.EventQueue)
+                    if (evt.TraceQuery != null) (followed ??= new List<PostedEvent>()).Add(evt);
+            if (followed != null)
+                foreach (PostedEvent evt in followed) trace.Dropped(evt.TraceQuery, script.ItemId, "cleared by " + why);
+        }
+
+        /// <summary>
+        /// At a region stop: a followed answer the scheduler still holds, posted but not yet taken into any script's queue
+        /// (the final save takes only each script's own queue), or held for a script that is still loading.
+        /// </summary>
+        internal void TraceAnswersHeldAtStop()
+        {
+            PhloxNotecardTrace trace = NotecardTrace;
+            if (trace == null) return;
+            lock (m_PendingEvents)
+                foreach (PendingEvent pe in m_PendingEvents)
+                    if (pe.Evt?.TraceQuery != null)
+                        trace.Note(pe.Evt.TraceQuery, pe.ItemId, "answer still in the scheduler's incoming queue at the stop: not saved");
+            try
+            {
+                foreach (var held in m_DeferredEvents)
+                    foreach (PostedEvent evt in held.Value.Events)
+                        if (evt.TraceQuery != null)
+                            trace.Note(evt.TraceQuery, held.Key, "answer still held for a script that has not loaded, at the stop: not saved");
+            }
+            catch (InvalidOperationException) { }   // the scheduler thread did not stop and changed the table under the walk
+        }
+
         private void ProcessEventQueue()
         {
             List<PendingEvent> events;
@@ -1612,7 +1685,11 @@ namespace Phlox.ScriptEngine
                     // Held only while this item's Phlox load is in flight; anything else - a deleted or reset-away
                     // script's late sensor, HTTP or dataserver event, another engine's script, a failed compile - is dropped.
                     if (m_Engine != null && m_Engine.IsLoading(pe.ItemId)) AddDeferredEvent(pe.ItemId, pe.Evt);
-                    else m_DroppedForUnloaded++;
+                    else
+                    {
+                        m_DroppedForUnloaded++;
+                        TraceDropped(pe.Evt, pe.ItemId, PhloxNotecardTrace.ReasonNotLoaded);
+                    }
                     continue;
                 }
 
@@ -1639,14 +1716,17 @@ namespace Phlox.ScriptEngine
                     if (pe.Evt.AnswersOtherScript && script.ScriptState.EventQueue.Count >= OTHER_ANSWER_LIMIT)
                     {
                         CountOtherAnswerDrop(pe.ItemId);
+                        TraceDropped(pe.Evt, pe.ItemId, PhloxNotecardTrace.ReasonHalfLimit + PhloxNotecardTrace.ReasonHeldForCrossing);
                         continue;
                     }
                     if (script.ScriptState.EventQueue.Count >= MAX_EVENT_QUEUE_DEPTH && !OverflowsQueueLimit(pe.Evt.EventType))
                     {
                         CountQueueFullDrop(pe.ItemId, pe.Evt.EventType);
+                        TraceDropped(pe.Evt, pe.ItemId, PhloxNotecardTrace.ReasonQueueFull + PhloxNotecardTrace.ReasonHeldForCrossing);
                         continue;
                     }
                     script.ScriptState.QueueEvent(pe.Evt);
+                    TraceQueued(pe.Evt, pe.ItemId, script.ScriptState.EventQueue.Count, "script held for a crossing; runs after it");
                     continue;
                 }
 
@@ -1655,6 +1735,7 @@ namespace Phlox.ScriptEngine
                 if (!script.ScriptState.Enabled)
                 {
                     pe.Evt.SignalCompleted();
+                    TraceDropped(pe.Evt, pe.ItemId, PhloxNotecardTrace.ReasonDisabled);
                     continue;
                 }
 
@@ -1662,7 +1743,12 @@ namespace Phlox.ScriptEngine
 
                 PhloxEventInfo info = FindEventHandler(pe.Evt, script);
                 CheckAndResetTouchWait(script, pe.Evt);
-                if (info == null) { pe.Evt.SignalCompleted(); continue; }
+                if (info == null)
+                {
+                    pe.Evt.SignalCompleted();
+                    TraceDropped(pe.Evt, pe.ItemId, PhloxNotecardTrace.ReasonNoHandler);
+                    continue;
+                }
 
                 // Flood protection: drop events if the script's queue is full - but never on_rez, state_entry,
                 // state_exit or timer, which RuntimeState.QueueEvent lets past the limit as Halcyon's did. A lost
@@ -1675,12 +1761,14 @@ namespace Phlox.ScriptEngine
                 {
                     CountOtherAnswerDrop(pe.ItemId);
                     pe.Evt.SignalCompleted();
+                    TraceDropped(pe.Evt, pe.ItemId, PhloxNotecardTrace.ReasonHalfLimit);
                     continue;
                 }
                 if (queueDepth >= MAX_EVENT_QUEUE_DEPTH && !OverflowsQueueLimit(pe.Evt.EventType))
                 {
                     CountQueueFullDrop(pe.ItemId, pe.Evt.EventType);
                     pe.Evt.SignalCompleted();
+                    TraceDropped(pe.Evt, pe.ItemId, PhloxNotecardTrace.ReasonQueueFull);
                     continue;
                 }
 
@@ -1693,6 +1781,7 @@ namespace Phlox.ScriptEngine
                 {
                     pe.Evt.SignalCompleted();   // It will run on resume, but nobody waits that long
                     script.ScriptState.QueueEvent(pe.Evt);
+                    TraceQueued(pe.Evt, pe.ItemId, script.ScriptState.EventQueue.Count, "script suspended; runs on resume");
                     continue;
                 }
 
@@ -1704,10 +1793,14 @@ namespace Phlox.ScriptEngine
                     if (MinDelayHolds(script))
                     {
                         script.ScriptState.QueueEvent(pe.Evt);
+                        TraceQueued(pe.Evt, pe.ItemId, script.ScriptState.EventQueue.Count, "held by llMinEventDelay");
                         TrackMinDelayWake(script);
                     }
                     else
+                    {
+                        TraceQueued(pe.Evt, pe.ItemId, script.ScriptState.EventQueue.Count, "script is waiting; the handler starts at once");
                         StartEvent(pe.Evt, script, info);
+                    }
                 }
                 else if (IsNullChangeControl(pe.Evt) && ControlQueued(script))
                 {
@@ -1718,6 +1811,7 @@ namespace Phlox.ScriptEngine
                 else
                 {
                     script.ScriptState.QueueEvent(pe.Evt);
+                    TraceQueued(pe.Evt, pe.ItemId, script.ScriptState.EventQueue.Count, $"script is {script.ScriptState.RunState}");
                 }
             }
         }
@@ -2038,15 +2132,21 @@ namespace Phlox.ScriptEngine
                 }
                 PhloxEventInfo info = FindEventHandler(nextEvt, script);
                 CheckAndResetTouchWait(script, nextEvt);
-                if (info == null) continue;
+                if (info == null)
+                {
+                    TraceDropped(nextEvt, script.ItemId, PhloxNotecardTrace.ReasonDequeuedNoHandler);
+                    continue;
+                }
                 try
                 {
                     script.ScriptState.DoEvent(info, nextEvt, nextEvt.Args);
+                    TraceDelivered(nextEvt, script.ItemId);
                     CheckAndResetTimer(script, info);
                     AddToRunQueue(script);
                 }
                 catch (Exception e)   // not only VMException: restored values can be wrong in ways the VM does not check
                 {
+                    TraceDropped(nextEvt, script.ItemId, "handler could not start: " + e.Message);
                     TerminateWithError(script, e);
                 }
                 return;
@@ -2922,6 +3022,7 @@ namespace Phlox.ScriptEngine
         private void OnStateChange(Interpreter script, int newState)
         {
             UnregisterFromNotifications(script);
+            TraceClearedQueue(script, "state change");
             script.ScriptState.StateChangePrep();
             // SL state: "All listens are released". The API drops them from the listen manager; the saved record goes
             // with them, so a restore cannot bring back a listen of the state the script left.
@@ -2938,7 +3039,7 @@ namespace Phlox.ScriptEngine
             // Under one lock with state_exit and state_entry, so nothing gets in between.
             lock (m_PendingEvents)
             {
-                DropPendingEventsLocked(script.ItemId);
+                DropPendingEventsLocked(script.ItemId, "state change");
                 PostEvent(script.ItemId, new PostedEvent
                 {
                     EventType = SupportedEventList.Events.STATE_EXIT,
@@ -2981,11 +3082,13 @@ namespace Phlox.ScriptEngine
                 ArmMinDelay(script);
                 script.ScriptState.SampleMemoryPeak();   // Event boundary
                 script.ScriptState.DoEvent(info, evt, evt.Args);
+                TraceDelivered(evt, script.ItemId);
                 CheckAndResetTimer(script, info);
                 AddToRunQueue(script);
             }
             catch (Exception e)   // not only VMException: restored values can be wrong in ways the VM does not check
             {
+                TraceDropped(evt, script.ItemId, "handler could not start: " + e.Message);
                 TerminateWithError(script, e);
             }
         }
@@ -3376,8 +3479,16 @@ namespace Phlox.ScriptEngine
                 list = new DeferredEvents { ExpiresOn = InWorldz.Phlox.Util.Clock.Now + DeferredEventLifetimeMs };
                 m_DeferredEvents[itemId] = list;
             }
-            if (list.Events.Count < MaxDeferredEventsPerItem) list.Events.Add(evt);   // Halcyon: the first 32 are kept
-            else m_DroppedForUnloaded++;
+            if (list.Events.Count < MaxDeferredEventsPerItem)
+            {
+                list.Events.Add(evt);   // Halcyon: the first 32 are kept
+                TraceQueued(evt, itemId, list.Events.Count, "script is still loading; held until it has");
+            }
+            else
+            {
+                m_DroppedForUnloaded++;
+                TraceDropped(evt, itemId, PhloxNotecardTrace.ReasonDeferredFull);
+            }
         }
 
         /// <summary>Halcyon DeferredEventManager.DoExpirations - an item that has not loaded within 60 s loses its events. Checked once a second.</summary>
@@ -3394,6 +3505,7 @@ namespace Phlox.ScriptEngine
             foreach (UUID id in expired)
             {
                 m_DroppedForUnloaded += m_DeferredEvents[id].Events.Count;
+                foreach (PostedEvent evt in m_DeferredEvents[id].Events) TraceDropped(evt, id, PhloxNotecardTrace.ReasonDeferredExpired);
                 m_DeferredEvents.Remove(id);
             }
         }
@@ -3401,7 +3513,9 @@ namespace Phlox.ScriptEngine
         /// <summary>The item's load was cancelled (removed while compiling) - its held events go with it.</summary>
         internal void DropDeferred(UUID itemId)
         {
-            if (m_DeferredEvents.Remove(itemId, out var list)) m_DroppedForUnloaded += list.Events.Count;
+            if (!m_DeferredEvents.Remove(itemId, out var list)) return;
+            m_DroppedForUnloaded += list.Events.Count;
+            foreach (PostedEvent evt in list.Events) TraceDropped(evt, itemId, PhloxNotecardTrace.ReasonLoadCancelled);
         }
 
         /// <summary>Held events for items not loaded, and events dropped because their item was not loaded (tests, leak check).</summary>

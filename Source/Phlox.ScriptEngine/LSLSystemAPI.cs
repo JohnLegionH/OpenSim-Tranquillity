@@ -299,6 +299,17 @@ namespace Phlox.ScriptEngine
                 NotecardSleep(NOTECARD_LINE_FAST_DELAY);
         }
 
+        /// <summary>A notecard read refused before any query id was made (no such notecard): NULL_KEY comes back and no answer follows.</summary>
+        private void TraceRefused(NotecardRead read, string name)
+            => m_ScriptEngine?.NotecardTrace?.Refused(m_itemID, TraceScriptName(), m_host.LocalId, m_host.Name, name, read);
+
+        /// <summary>This script's name in its prim's inventory, for the notecard trace's lines.</summary>
+        private string TraceScriptName()
+        {
+            lock (m_host.TaskInventory)
+                return m_host.TaskInventory.TryGetValue(m_itemID, out TaskInventoryItem item) ? item.Name : string.Empty;
+        }
+
         /// <summary>
         /// Answer a notecard read with <paramref name="answer"/> of the notecard's text. From the region's notecard cache
         /// when it is on and holds the asset (true: a cached read); otherwise fetched on the thread pool,
@@ -309,12 +320,17 @@ namespace Phlox.ScriptEngine
         /// "0" or EOF). Halcyon also paused the script (ScriptSleep(ERROR_DELAY), its ScriptShoutError's 15 ms); here the
         /// fetch runs on the thread pool, where a ScriptSleep would set the run state off the script's own thread (the
         /// strand, SyscallSleepRaceTests), so the error is shouted without a pause.
+        /// With the notecard trace on (<paramref name="read"/> says what was asked), each step is also logged under its query id.
         /// </summary>
         private bool AnswerNotecardRead(UUID assetId, UUID queryID, Func<PhloxNotecardCache.Card, string> answer,
-            string cardName, string logAs)
+            string cardName, string logAs, NotecardRead read)
         {
             PhloxNotecardCache cache = m_ScriptEngine != null && m_ScriptEngine.NotecardCacheEnabled ? m_ScriptEngine.NotecardCache : null;
-            if (cache != null && cache.TryGet(assetId, out PhloxNotecardCache.Card cached))
+            PhloxNotecardTrace trace = m_ScriptEngine?.NotecardTrace;
+            PhloxNotecardCache.Card cached = null;
+            bool hit = cache != null && cache.TryGet(assetId, out cached);
+            trace?.Requested(queryID, m_itemID, TraceScriptName(), m_host.LocalId, m_host.Name, cardName, assetId, read, hit);
+            if (hit)
             {
                 PostDataserverEvent(queryID, answer(cached));
                 return true;
@@ -323,18 +339,23 @@ namespace Phlox.ScriptEngine
             {
                 try
                 {
+                    trace?.FetchStarted(queryID);
                     AssetBase asset = World.AssetService.Get(assetId.ToString());
                     if (asset == null || asset.Data == null || asset.Type != (sbyte)AssetType.Notecard)
                     {
+                        trace?.FetchFailed(queryID, asset == null ? "null" : asset.Data == null ? "no data" : "wrong type (" + asset.Type + ")");
                         ShoutError("Notecard '" + cardName + "' could not be found.");
                         return;
                     }
                     var card = new PhloxNotecardCache.Card(HasEmbeddedItems(asset.Data) ? string.Empty : StripNotecardHeader(asset.Data));
+                    trace?.FetchEnded(queryID, "lines=" + card.LineCount);
                     cache?.Cache(assetId, card);
                     PostDataserverEvent(queryID, answer(card));
                 }
                 catch (Exception ex)
                 {
+                    // An exception after the fetch ended (the cache, the post) is a loss the same way: no answer follows.
+                    trace?.FetchFailed(queryID, "exception: " + ex.Message);
                     if (logAs != null) m_log.LogError("[PhloxAPI]: {0} ex: {1}", logAs, ex.Message);
                     ShoutError("Notecard '" + cardName + "' could not be found.");
                 }
@@ -548,6 +569,7 @@ namespace Phlox.ScriptEngine
         {
             PauseSensorForParcel();
             m_PendingDataserver.Clear();
+            m_ScriptEngine?.NotecardTrace?.ClearScript(m_itemID, "stop");
             ReleaseControlsOnUnload();
         }
 
@@ -564,6 +586,7 @@ namespace Phlox.ScriptEngine
         {
             PauseSensorForParcel();
             m_PendingDataserver.Clear();
+            m_ScriptEngine?.NotecardTrace?.ClearScript(m_itemID, "crossing hold");
             var async = m_ScriptEngine?.AsyncCommands;
             async?.HttpRequestPlugin.RemoveEvents(m_localID, m_itemID);
             async?.XmlRequestPlugin.RemoveEvents(m_localID, m_itemID);
@@ -618,6 +641,8 @@ namespace Phlox.ScriptEngine
             else listens?.Remove(m_itemID);
 
             m_PendingDataserver.Clear();
+            m_ScriptEngine?.NotecardTrace?.ClearScript(m_itemID,
+                end == ScriptEnd.Reset ? "reset" : end == ScriptEnd.StateChange ? "state change" : "unload", forgetScript: end == ScriptEnd.Unload);
 
             var async = m_ScriptEngine?.AsyncCommands;
             if (end == ScriptEnd.Unload)
@@ -5423,11 +5448,13 @@ namespace Phlox.ScriptEngine
             {
                 // Halcyon LSLSystemAPI.cs:14543-14547, the error, then its 100 ms (which replaces the 15).
                 ScriptShoutError("Notecard '" + name + "' could not be found.");
+                TraceRefused(NotecardRead.Count("llGetNumberOfNotecardLines"), name);
                 NotecardSleep(NOTECARD_COUNT_ERROR_DELAY);
                 return UUID.Zero.ToString();
             }
             UUID queryID = NewDataserverQuery();
-            bool cached = AnswerNotecardRead(notecard, queryID, c => c.LineCount.ToString(), name, "llGetNumberOfNotecardLines");
+            bool cached = AnswerNotecardRead(notecard, queryID, c => c.LineCount.ToString(), name, "llGetNumberOfNotecardLines",
+                NotecardRead.Count("llGetNumberOfNotecardLines"));
             NotecardSleep(cached ? NOTECARD_COUNT_FAST_DELAY : NOTECARD_COUNT_LONG_DELAY);
             return queryID.ToString();
         }
@@ -5444,11 +5471,13 @@ namespace Phlox.ScriptEngine
             {
                 // Halcyon GetNotecardSegment, LSLSystemAPI.cs:14624-14628 (no delay after it).
                 ScriptShoutError("Notecard '" + name + "' could not be found.");
+                TraceRefused(NotecardRead.OfLine("llGetNotecardLine", line), name);
                 return UUID.Zero.ToString();
             }
             UUID queryID = NewDataserverQuery();
             int lineNum = line;
-            bool cached = AnswerNotecardRead(notecard, queryID, c => NotecardLineAnswer(c, lineNum), name, "llGetNotecardLine");
+            bool cached = AnswerNotecardRead(notecard, queryID, c => NotecardLineAnswer(c, lineNum), name, "llGetNotecardLine",
+                NotecardRead.OfLine("llGetNotecardLine", line));
             if (cached) NotecardLineCachedSleep(line, 0);
             else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
             return queryID.ToString();
@@ -5458,11 +5487,16 @@ namespace Phlox.ScriptEngine
             // Faithful port: read a segment of a notecard line (offset + length)
             if (m_host == null || string.IsNullOrEmpty(name)) return UUID.Zero.ToString();
             UUID notecard = NotecardAssetIn(m_host, name);
-            if (notecard == UUID.Zero) { ScriptShoutError("Notecard '" + name + "' could not be found."); return UUID.Zero.ToString(); }
+            if (notecard == UUID.Zero)
+            {
+                ScriptShoutError("Notecard '" + name + "' could not be found.");
+                TraceRefused(NotecardRead.Segment("iwGetNotecardSegment", line, startOffset, maxLength), name);
+                return UUID.Zero.ToString();
+            }
             UUID queryID = NewDataserverQuery();
             int lineNum = line;
             bool cached = AnswerNotecardRead(notecard, queryID, c => NotecardSegmentAnswer(c, lineNum, startOffset, maxLength),
-                name, "iwGetNotecardSegment");
+                name, "iwGetNotecardSegment", NotecardRead.Segment("iwGetNotecardSegment", line, startOffset, maxLength));
             if (cached) NotecardLineCachedSleep(line, startOffset);   // As llGetNotecardLine
             else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
             return queryID.ToString();
@@ -5952,11 +5986,13 @@ namespace Phlox.ScriptEngine
             {
                 UUID queryID = NewDataserverQuery();
                 // Halcyon's GetNumberOfNotecardLines delays and cache, as llGetNumberOfNotecardLines
-                bool cached = AnswerNotecardRead(notecard, queryID, c => c.LineCount.ToString(), name, null);
+                bool cached = AnswerNotecardRead(notecard, queryID, c => c.LineCount.ToString(), name, null,
+                    NotecardRead.Count("iwGetLinkNumberOfNotecardLines"));
                 NotecardSleep(cached ? NOTECARD_COUNT_FAST_DELAY : NOTECARD_COUNT_LONG_DELAY);
                 return queryID.ToString();
             }
             ScriptShoutError("iwGetLinkNumberOfNotecardLines: Link number " + linknumber + " does not contain notecard '" + name + "'.");
+            TraceRefused(NotecardRead.Count("iwGetLinkNumberOfNotecardLines"), name);
             // Halcyon sleeps 100 ms when the link is one prim without the notecard; a link of several prims
             // was refused before any read (LSLSystemAPI.cs:14585-14599), without a sleep.
             if (GetLinkParts(linknumber).Take(2).Count() == 1) NotecardSleep(NOTECARD_COUNT_ERROR_DELAY);
@@ -5971,12 +6007,14 @@ namespace Phlox.ScriptEngine
                 UUID queryID = NewDataserverQuery();
                 int lineNum = line;
                 // Halcyon's GetNotecardSegment delays and cache, as llGetNotecardLine
-                bool cached = AnswerNotecardRead(notecard, queryID, c => NotecardLineAnswer(c, lineNum), name, null);
+                bool cached = AnswerNotecardRead(notecard, queryID, c => NotecardLineAnswer(c, lineNum), name, null,
+                    NotecardRead.OfLine("iwGetLinkNotecardLine", line));
                 if (cached) NotecardLineCachedSleep(line, 0);
                 else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
                 return queryID.ToString();
             }
             ShoutError("iwGetLinkNotecardLine: Notecard '" + name + "' not found in link " + linknumber + ".");
+            TraceRefused(NotecardRead.OfLine("iwGetLinkNotecardLine", line), name);
             // Halcyon (LSLSystemAPI.cs:14674-14684) reads the link's first prim, whose GetNotecardSegment pauses
             // on a missing notecard (:14627); a link number with no prim returns without an error or a pause.
             if (GetLinkParts(linknumber).Any()) ChatSleep();
@@ -5992,13 +6030,14 @@ namespace Phlox.ScriptEngine
                 int lineNum = line;
                 // Halcyon's GetNotecardSegment delays and cache, as iwGetNotecardSegment
                 bool cached = AnswerNotecardRead(notecard, queryID, c => NotecardSegmentAnswer(c, lineNum, startOffset, maxLength),
-                    name, null);
+                    name, null, NotecardRead.Segment("iwGetLinkNotecardSegment", line, startOffset, maxLength));
                 if (cached) NotecardLineCachedSleep(line, startOffset);
                 else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
                 return queryID.ToString();
             }
             // As iwGetLinkNotecardLine: Halcyon said 'could not be found' for a link prim without it (LSLSystemAPI.cs:14624-14628).
             ShoutError("iwGetLinkNotecardSegment: Notecard '" + name + "' not found in link " + linknumber + ".");
+            TraceRefused(NotecardRead.Segment("iwGetLinkNotecardSegment", line, startOffset, maxLength), name);
             if (GetLinkParts(linknumber).Any()) ChatSleep();
             return UUID.Zero.ToString();
         }

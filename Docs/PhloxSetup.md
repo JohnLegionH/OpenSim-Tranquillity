@@ -108,6 +108,7 @@ This is every key the engine reads from the section. All of them are optional.
 | `NotecardThrottle` | `true` | Anti-abuse: short delays on notecard reads. |
 | `NotecardCache` | `true` | Keeps parsed notecards in memory for notecard reads. |
 | `NotecardLineReadCharsMax` | `[YEngine] NotecardLineReadCharsMax`, else `1024` | Most bytes (UTF-8, not characters) a notecard line read returns, as SL's 1024-byte limit; longer lines are cut without splitting a character. 0 or below means 1024; the most is 65535. |
+| `NotecardTrace` | `false` | Logs every notecard request, step by step, under the tag `[NotecardTrace]`, and keeps each script's own requests until they are answered or lost, so `phlox status` can show what a script waits on. For finding a notecard reader that stops with nothing in the log; see [The notecard trace](#the-notecard-trace). Off: nothing is tracked or logged. |
 | `FormatStringThrottle` | `true` | Anti-abuse: 100 ms pause after `iwFormatString`. |
 | `HttpInFlightThrottle` | `true` | Anti-abuse: at most 10 `llHTTPRequest` calls in flight per object and 200 per region. A refused call returns `NULL_KEY` after 80 ms. |
 | `MaxListenEventsPerSecond` | `20` | Listen events one script may receive per second; the rest of that second's are dropped, with one log line per script per second. `0` or below: no limit (as YEngine and Halcyon). |
@@ -120,6 +121,49 @@ This is every key the engine reads from the section. All of them are optional.
 | `StateRowMaxAgeDays` | `0` | Deletes saved-state rows not saved or loaded for this many days whose scripts are not loaded in the simulator; checked every 6 hours, first 1 hour after start. `0`: never (the default). |
 
 Setting any anti-abuse switch to `false` removes that slowdown and nothing else.
+
+## The notecard trace
+
+`NotecardTrace = true` makes a script's notecard requests (`llGetNotecardLine`,
+`llGetNumberOfNotecardLines`, `iwGetNotecardSegment` and the three `iwGetLink...` readers)
+visible from the call to the handler or to a loss. It is meant for a reader that stops with
+nothing in the log, and it logs several lines for every read, so leave it off otherwise. The
+start-up log says `NotecardTrace = true` when it is on.
+
+### How to read the trace
+
+Every line starts `[NotecardTrace]: q=<query id>` and the query id is the key the call
+returned and the `dataserver` event carries, so all lines of one request share it. The steps,
+in the order they happen:
+
+| Step | What it says |
+|---|---|
+| `request` | The call, the asking script (name and item id), the prim, the notecard name, its asset id, `count` or `line N` (a segment adds its offset and length), and `source=cache` (answered from the notecard cache) or `source=fetch` (read from the asset service on a worker thread). A read of a notecard that is not in the prim has `q=none ... refused`: the call returned `NULL_KEY` and no answer follows. |
+| `fetch start`, `fetch end` | Only for `source=fetch`. The end line has `took=<ms>` and `result=`: `lines=N` (a notecard was found), `null` (the asset service returned nothing), `no data`, `wrong type (<asset type>)`, or `exception: <text>`. Any result but `lines=N` is followed by a `lost` line: no answer will be posted. |
+| `post` | The answer is posted to the scripts of the asking prim: how many. Another script engine's scripts in the prim are offered it too, and are not traced. |
+| `queued` | One line per receiving script: the depth of its event queue, and a note (the handler starts at once, or why it waits). |
+| `dropped` | The answer did not reach the script, and `reason=` says which rule dropped it: `script not loaded`; `queue full (64 events)`; `half limit` (another script's answer, queue holding 32 or more); `no dataserver handler in the script's current state`; `script disabled`; `deferred backlog full` or `deferred events expired` (the script was still loading); `cleared by reset`, `state change` or `unload`; or the same rules `while the script is held for a crossing`. |
+| `lost` | The asking script's own request can no longer be answered: its fetch failed, or it was cleared by a reset, state change, stop, unload or crossing hold. |
+| `deliver` | The handler starts, with the time since the request. |
+
+A healthy read has `request`, (`fetch start`, `fetch end`,) `post`, `queued` and `deliver`. A
+script that waits for an answer is stopped at the first step missing from its query id, or at
+a `dropped` or `lost` line. A request with a `post` line and nothing after it was posted but not yet
+taken in by the scheduler (for example because the region was stopping).
+
+With the trace on, each script keeps its own requests until the answer is delivered to it or a
+loss is recorded, and `phlox status <object name or item id>` adds:
+
+```
+  notecard trace: 2 request(s) waiting for an answer, 0 lost (see the [NotecardTrace] lines)
+    oldest: 12873 ms, notecard "cards", line 41, query 5c0c...
+```
+
+`lost` counts the requests of that script that ended in a loss. At a region stop the trace logs
+each request still waiting (`still waiting at region stop`) and each answer the scheduler still
+held in its incoming queue, which the final save does not take. When a script is restored from
+its saved state it logs `restored`, with the script's state and queue; a request that was in
+flight at a stop is not part of the saved state, so a restored script has none waiting.
 
 When there is no `[OSSL]` section, Phlox also reads the OSSL keys below from
 `[InWorldz.Phlox]`.
