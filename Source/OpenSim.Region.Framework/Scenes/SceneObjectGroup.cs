@@ -2861,12 +2861,22 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
             }
             else
             {
-                PhysicsActor pa = RootPart.PhysActor;
-                if (pa is not null)
+                lock (m_grabLock)
                 {
-                    pa.PIDTarget = target;
-                    pa.PIDTau = tau;
-                    pa.PIDActive = true;
+                    PhysicsActor pa = RootPart.PhysActor;
+                    if (pa is not null)
+                    {
+                        // remembered so a drag can put it back; while a drag holds the target it is only remembered
+                        m_scriptMoveActive = true;
+                        m_scriptMoveTarget = target;
+                        m_scriptMoveTau = tau;
+                        if (m_grabbed)
+                            return;
+
+                        pa.PIDTarget = target;
+                        pa.PIDTau = tau;
+                        pa.PIDActive = true;
+                    }
                 }
             }
         }
@@ -2883,9 +2893,16 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
         }
         else
         {
-            PhysicsActor pa = RootPart.PhysActor;
-            if (pa is not null)
-                pa.PIDActive = false;
+            lock (m_grabLock)
+            {
+                m_scriptMoveActive = false;
+                if (m_grabbed)
+                    return; // the drag holds the target; nothing is put back when it ends
+
+                PhysicsActor pa = RootPart.PhysActor;
+                if (pa is not null)
+                    pa.PIDActive = false;
+            }
 
             RootPart.ScheduleTerseUpdate(); // send a stop information
         }
@@ -2934,7 +2951,8 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
         SceneObjectPart rootpart = m_rootPart;
         if (rootpart is not null)
         {
-            if (rootpart.PhysActor is not null)
+            // a target core gave the actor is switched off by the part, unless a rotate-drag holds it
+            if (rootpart.PhysActor is not null && !rootpart.HasGivenRotationTarget)
             {
                 rootpart.PhysActor.APIDActive = false;
             }
@@ -2962,16 +2980,33 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
 
         if (pa is not null)
         {
-            if (height != 0f)
+            lock (m_grabLock)
             {
-                pa.PIDHoverHeight = height;
-                pa.PIDHoverType = hoverType;
-                pa.PIDHoverTau = tau;
-                pa.PIDHoverActive = true;
-            }
-            else
-            {
-                pa.PIDHoverActive = false;
+                if (!IsAttachment)
+                {
+                    // remembered so a drag can put it back; while a drag is held it is only remembered
+                    m_scriptHoverActive = height != 0f;
+                    if (m_scriptHoverActive)
+                    {
+                        m_scriptHoverHeight = height;
+                        m_scriptHoverType = hoverType;
+                        m_scriptHoverTau = tau;
+                    }
+                    if (m_grabbed)
+                        return;
+                }
+
+                if (height != 0f)
+                {
+                    pa.PIDHoverHeight = height;
+                    pa.PIDHoverType = hoverType;
+                    pa.PIDHoverTau = tau;
+                    pa.PIDHoverActive = true;
+                }
+                else
+                {
+                    pa.PIDHoverActive = false;
+                }
             }
         }
     }
@@ -3871,20 +3906,42 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
 
     double lastTouchTime = 0;
 
+    // Click-and-drag of a physical object. The viewer sends ObjectGrabUpdate only while the mouse moves, so a drag
+    // steers the root actor with its move-to-target (a velocity of distance / tau, gravity not applied) instead of
+    // pushing it: a push per update is a spring with no damper that does nothing while the mouse is still.
+    private const float GrabTau = 0.25f;
+    private readonly object m_grabLock = new();
+    private bool m_grabbed;
+    private UUID m_grabAgent;
+    private Vector3 m_grabAnchor;
+    private PhysicsActor m_grabActor;
+
+    // What scripts last set on the root actor (llMoveToTarget, llSetHoverHeight), put back when a drag ends.
+    private bool m_scriptMoveActive;
+    private Vector3 m_scriptMoveTarget;
+    private float m_scriptMoveTau;
+    private bool m_scriptHoverActive;
+    private float m_scriptHoverHeight;
+    private float m_scriptHoverTau;
+    private PIDHoverType m_scriptHoverType;
+
     /// <summary>
-    /// If object is physical, apply force to move it around
+    /// If object is physical, steer it to the cursor with the physics actor's move-to-target
     /// If object is not physical, just put it at the resulting location
     /// </summary>
     /// <param name="partID">Part ID to check for grab</param>
-    /// <param name="offset">Always seems to be 0,0,0, so ignoring</param>
-    /// <param name="pos">New position.  We do the math here to turn it into a force</param>
+    /// <param name="offset">Not used: the offset of the grabbed point from the root is taken from the first update of a drag</param>
+    /// <param name="pos">New position of the grabbed point</param>
     /// <param name="remoteClient"></param>
     public void GrabMovement(UUID partID, Vector3 offset, Vector3 pos, IClientAPI remoteClienth)
     {
         if (m_scene.EventManager.TriggerGroupMove(UUID, pos))
         {
             if (BlockGrabOverride)
+            {
+                EndGrab();
                 return;
+            }
 
             SceneObjectPart part = GetPart(partID);
 
@@ -3892,19 +3949,27 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
                 return;
 
             if (part.BlockGrab)
+            {
+                EndGrab();
                 return;
+            }
 
             PhysicsActor pa = m_rootPart.PhysActor;
 
             if (pa is not null && pa.IsPhysical)
             {
-                // empirically convert distance diference to a impulse
-                Vector3 grabforce = pos - AbsolutePosition;
-                grabforce *= pa.Mass * 0.1f;
-                pa.AddForce(grabforce, false);
+                if (IsPhysicalDragRefused())
+                {
+                    EndGrab();
+                    return;
+                }
+
+                SteerGrab(pa, pos, remoteClienth is null ? UUID.Zero : remoteClienth.AgentId);
             }
             else
             {
+                EndGrab();
+
                 if(IsAttachment)
                     return;
 
@@ -3930,63 +3995,290 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
     }
 
     /// <summary>
-    /// If object is physical, prepare for spinning torques (set flag to save old orientation)
+    /// Whether a drag or a turn of the physical root body is refused, for the mouse drag and the rotate-drag alike.
+    /// A drag moves the root's body, so the root's block applies whichever part was grabbed.
     /// </summary>
-    /// <param name="rotation">Rotation.  We do the math here to turn it into a torque</param>
-    /// <param name="remoteClient"></param>
-    public void SpinStart(IClientAPI remoteClient)
+    private bool IsPhysicalDragRefused()
+        => m_rootPart.BlockGrab || IsSelected || IsAttachment
+            || m_rootPart.VehicleType != (int)Vehicle.TYPE_NONE || GetSittingAvatarsCount() > 0;
+
+    /// <summary>
+    /// Point the root actor's move-to-target at the dragged point. The first update of a drag also takes the target
+    /// from any script and sets the drag's tau.
+    /// </summary>
+    private void SteerGrab(PhysicsActor pa, Vector3 pos, UUID agent)
     {
-        if (BlockGrabOverride || m_rootPart.BlockGrab)
-                return;
-        if (m_scene.EventManager.TriggerGroupSpinStart(UUID))
+        if (!pos.IsFinite())
+            return;
+
+        lock (m_grabLock)
         {
-            PhysicsActor pa = m_rootPart.PhysActor;
-            if (pa is not null)
+            bool wasHeld = m_grabbed;
+            if (!wasHeld || m_grabAgent != agent)
+                m_grabAnchor = AbsolutePosition - pos; // keeps the grabbed point under the cursor instead of the centre
+
+            Vector3 target = pos + m_grabAnchor;
+            if (wasHeld && ReferenceEquals(m_grabActor, pa))
             {
-                if (pa.IsPhysical)
-                {
-                    m_rootPart.IsWaitingForFirstSpinUpdatePacket = true;
-                }
+                m_grabAgent = agent;
+                pa.PIDTarget = target;
+                return;
+            }
+
+            // a new drag, or the root's actor was replaced and the new one is switched on
+            m_grabbed = true;
+            m_grabAgent = agent;
+            m_grabActor = pa;
+
+            // only what the actor still has active is put back: a record left from an actor that has since been replaced is dropped
+            m_scriptMoveActive &= pa.PIDActive;
+            m_scriptHoverActive &= pa.PIDHoverActive;
+            if (m_scriptHoverActive)
+                pa.PIDHoverActive = false; // a hover can override the target's height
+            if (m_scriptMoveActive)
+                pa.PIDActive = false; // so an engine that reads tau when the target is switched on takes the drag's
+
+            pa.PIDTau = GrabTau;
+            pa.PIDTarget = target;
+            pa.PIDActive = true;
+
+            if (!wasHeld)
+            {
+                m_scene.EventManager.OnRemovePresence += GrabHolderRemoved;
+                m_scene.EventManager.OnMakeChildAgent += GrabHolderMadeChild;
             }
         }
     }
 
     /// <summary>
-    /// If object is physical, apply torque to spin it around
+    /// The viewer let go (ObjectDeGrab) or grabbed again (ObjectGrab, which means the earlier release was lost).
+    /// Only the agent that holds the drag can end it.
     /// </summary>
-    /// <param name="rotation">Rotation.  We do the math here to turn it into a torque</param>
+    public void ReleaseGrab(UUID agent)
+    {
+        lock (m_grabLock)
+        {
+            if (m_grabbed && m_grabAgent == agent)
+                EndGrab();
+        }
+    }
+
+    private void GrabHolderRemoved(UUID agentId) => ReleaseGrab(agentId);
+
+    private void GrabHolderMadeChild(ScenePresence presence)
+    {
+        if (presence is not null)
+            ReleaseGrab(presence.UUID);
+    }
+
+    /// <summary>
+    /// End a drag: the move-to-target is switched off, or put back to what a script had set, and so is a script's hover.
+    /// The velocity the object has is left alone and gravity acts again.
+    /// </summary>
+    private void EndGrab()
+    {
+        lock (m_grabLock)
+        {
+            if (!m_grabbed)
+                return;
+
+            PhysicsActor pa = m_grabActor;
+            DropGrabState();
+            if (pa is null)
+                return;
+
+            if (m_scriptMoveActive)
+            {
+                pa.PIDTarget = m_scriptMoveTarget;
+                pa.PIDTau = m_scriptMoveTau;
+                pa.PIDActive = true;
+            }
+            else
+                pa.PIDActive = false;
+
+            if (m_scriptHoverActive)
+            {
+                pa.PIDHoverHeight = m_scriptHoverHeight;
+                pa.PIDHoverType = m_scriptHoverType;
+                pa.PIDHoverTau = m_scriptHoverTau;
+                pa.PIDHoverActive = true;
+            }
+        }
+    }
+
+    private void DropGrabState()
+    {
+        m_grabbed = false;
+        m_grabAgent = UUID.Zero;
+        m_grabActor = null;
+        m_scene.EventManager.OnRemovePresence -= GrabHolderRemoved;
+        m_scene.EventManager.OnMakeChildAgent -= GrabHolderMadeChild;
+    }
+
+    // Ctrl-Shift drag (rotate-drag) of a physical object. The viewer sends the rotation it wants, absolute, each time the
+    // mouse moves, so the turn steers the root with the look-at controller (SceneObjectPart.UpdateLookAt, the one
+    // llRotLookAt uses) toward that rotation instead of pushing it with an angular force per update.
+    internal const float SpinStrength = 1.0f; // llRotLookAt strength: a time constant of 1/pi s, no overshoot at the heartbeat's rate
+    internal const float SpinTargetSeconds = 0.1f; // strength and damping given to an engine with a rotation target: a short lag behind the mouse
+    private readonly object m_spinLock = new();
+    private bool m_spinning;
+    private UUID m_spinAgent;
+    private Quaternion m_spinTarget = Quaternion.Identity;
+
+    // The last llTargetOmega on the root, put back when a turn ends. While a turn is held it is only remembered.
+    private bool m_scriptOmegaSet;
+    private Vector3 m_scriptOmega;
+
+    /// <summary>
+    /// A new start by the agent that holds a turn means the earlier stop never arrived, so that turn ends. The turn
+    /// itself begins with the first update, which carries the rotation to steer to.
+    /// </summary>
+    public void SpinStart(IClientAPI remoteClient)
+    {
+        if (BlockGrabOverride || m_rootPart.BlockGrab)
+            return;
+
+        if (m_scene.EventManager.TriggerGroupSpinStart(UUID))
+            ReleaseSpin(remoteClient is null ? UUID.Zero : remoteClient.AgentId);
+    }
+
+    /// <summary>
+    /// Whether a rotate-drag holds the root, and the rotation it steers to. Read once a frame by the look-at controller.
+    /// </summary>
+    internal bool TryGetSpinTarget(out Quaternion target)
+    {
+        lock (m_spinLock)
+        {
+            target = m_spinTarget;
+            return m_spinning;
+        }
+    }
+
+    internal bool IsSpinning
+    {
+        get { lock (m_spinLock) return m_spinning; }
+    }
+
+    /// <summary>
+    /// What a script last set with llTargetOmega on the root. While a turn is held it is remembered and not applied.
+    /// </summary>
+    /// <returns>true if it was only remembered</returns>
+    internal bool RecordScriptOmega(SceneObjectPart part, Vector3 omega)
+    {
+        if (part != m_rootPart)
+            return false;
+
+        lock (m_spinLock)
+        {
+            PhysicsActor pa = part.PhysActor;
+            m_scriptOmegaSet = pa is not null && pa.IsPhysical && omega != Vector3.Zero;
+            m_scriptOmega = omega;
+            return m_spinning;
+        }
+    }
+
+    /// <summary>
+    /// The viewer let go (ObjectSpinStop), grabbed again or started a new turn. Only the agent that holds the turn can end it.
+    /// </summary>
+    public void ReleaseSpin(UUID agent)
+    {
+        lock (m_spinLock)
+        {
+            if (m_spinning && m_spinAgent == agent)
+                EndSpin();
+        }
+    }
+
+    private void SpinHolderRemoved(UUID agentId) => ReleaseSpin(agentId);
+
+    private void SpinHolderMadeChild(ScenePresence presence)
+    {
+        if (presence is not null)
+            ReleaseSpin(presence.UUID);
+    }
+
+    /// <summary>
+    /// End a turn: the controller stops and so does the spin it left. A script's look-at, which the turn took over, runs
+    /// again from the next frame and a script's llTargetOmega is applied again.
+    /// </summary>
+    internal void EndSpin()
+    {
+        lock (m_spinLock)
+        {
+            if (!m_spinning)
+                return;
+
+            m_spinning = false;
+            m_spinAgent = UUID.Zero;
+            m_scene.EventManager.OnRemovePresence -= SpinHolderRemoved;
+            m_scene.EventManager.OnMakeChildAgent -= SpinHolderMadeChild;
+
+            // an engine with a rotation target stops the turn when the target is switched off
+            bool switchedOff = m_rootPart.ReleaseRotationTarget();
+
+            PhysicsActor pa = m_rootPart.PhysActor;
+            if (pa is null || !pa.IsPhysical)
+                return;
+
+            if (!switchedOff)
+                m_rootPart.AngularVelocity = Vector3.Zero;
+
+            if (m_scriptOmegaSet)
+                m_rootPart.UpdateAngularVelocity(m_scriptOmega);
+            else
+                m_rootPart.ScheduleTerseUpdate();
+
+            QueueForUpdateCheck(); // a script's look-at picks up again
+        }
+    }
+
+    /// <summary>
+    /// Take the rotation the viewer asks for as the controller's target. The first update of a turn starts it.
+    /// </summary>
+    private void SteerSpin(Quaternion rotation, UUID agent)
+    {
+        if (!float.IsFinite(rotation.X) || !float.IsFinite(rotation.Y) || !float.IsFinite(rotation.Z) || !float.IsFinite(rotation.W))
+            return;
+
+        float length = MathF.Sqrt(rotation.X * rotation.X + rotation.Y * rotation.Y + rotation.Z * rotation.Z + rotation.W * rotation.W);
+        if (length < 1e-6f)
+            return;
+
+        lock (m_spinLock)
+        {
+            if (!m_spinning)
+            {
+                m_spinning = true;
+                m_scene.EventManager.OnRemovePresence += SpinHolderRemoved;
+                m_scene.EventManager.OnMakeChildAgent += SpinHolderMadeChild;
+            }
+
+            m_spinAgent = agent;
+            m_spinTarget = new Quaternion(rotation.X / length, rotation.Y / length, rotation.Z / length, rotation.W / length);
+        }
+
+        QueueForUpdateCheck(); // the controller runs from the update list
+    }
+
+    /// <summary>
+    /// If object is physical, steer it to the rotation the viewer asks for
+    /// If object is not physical, just put it at that rotation
+    /// </summary>
+    /// <param name="newOrientation">The absolute rotation the viewer wants, sent each time the mouse moves</param>
     /// <param name="remoteClient"></param>
     public void SpinMovement(Quaternion newOrientation, IClientAPI remoteClient)
-    {
-        // The incoming newOrientation, sent by the client, "seems" to be the
-        // desired target orientation. This needs further verification; in particular,
-        // one would expect that the initial incoming newOrientation should be
-        // fairly close to the original prim's physical orientation,
-        // m_rootPart.PhysActor.Orientation. This however does not seem to be the
-        // case (might just be an issue with different quaternions representing the
-        // same rotation, or it might be a coordinate system issue).
-        //
-        // Since it's not clear what the relationship is between the PhysActor.Orientation
-        // and the incoming orientations sent by the client, we take an alternative approach
-        // of calculating the delta rotation between the orientations being sent by the
-        // client. (Since a spin is invoked by ctrl+shift+drag in the client, we expect
-        // a steady stream of several new orientations coming in from the client.)
-        // This ensures that the delta rotations are being calculated from self-consistent
-        // pairs of old/new rotations. Given the delta rotation, we apply a torque around
-        // the delta rotation axis, scaled by the object mass times an arbitrary scaling
-        // factor (to ensure the resulting torque is not "too strong" or "too weak").
-        //
-        // Ideally we need to calculate (probably iteratively) the exact torque or series
-        // of torques needed to arrive exactly at the destination orientation. However, since
-        // it is not yet clear how to map the destination orientation (provided by the viewer)
-        // into PhysActor orientations (needed by the physics engine), we omit this step.
-        // This means that the resulting torque will at least be in the correct direction,
-        // but it will result in over-shoot or under-shoot of the target orientation.
-        // For the end user, this means that ctrl+shift+drag can be used for relative,
-        // but not absolute, adjustments of orientation for physical prims.
+        => SpinMovement(m_rootPart.UUID, newOrientation, remoteClient);
 
+    /// <param name="partID">The part that was grabbed</param>
+    /// <param name="newOrientation">The absolute rotation the viewer wants, sent each time the mouse moves</param>
+    /// <param name="remoteClient"></param>
+    public void SpinMovement(UUID partID, Quaternion newOrientation, IClientAPI remoteClient)
+    {
         if (BlockGrabOverride || m_rootPart.BlockGrab)
-                return;
+        {
+            EndSpin();
+            return;
+        }
 
         if (m_scene.EventManager.TriggerGroupSpin(UUID, newOrientation))
         {
@@ -3994,39 +4286,21 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
 
             if (pa is not null && pa.IsPhysical)
             {
-                if (m_rootPart.IsWaitingForFirstSpinUpdatePacket)
+                SceneObjectPart part = GetPart(partID);
+                if (part is null)
+                    return;
+
+                if (part.BlockGrab || IsPhysicalDragRefused())
                 {
-                  // first time initialization of "old" orientation for calculation of delta rotations
-                    m_rootPart.SpinOldOrientation = newOrientation;
-                    m_rootPart.IsWaitingForFirstSpinUpdatePacket = false;
+                    EndSpin();
+                    return;
                 }
-                else
-                {
-                    // save and update old orientation
-                    Quaternion old = m_rootPart.SpinOldOrientation;
-                    m_rootPart.SpinOldOrientation = newOrientation;
-                    //m_log.LogError("[SCENE OBJECT GROUP]: Old orientation is " + old);
-                    //m_log.LogError("[SCENE OBJECT GROUP]: Incoming new orientation is " + newOrientation);
 
-                    // compute difference between previous old rotation and new incoming rotation
-                    Quaternion minimalRotationFromQ1ToQ2 = newOrientation * Quaternion.Inverse(old);
-
-                    minimalRotationFromQ1ToQ2.GetAxisAngle(out Vector3 spinforce, out float rotationAngle);
-                    if(Math.Abs(rotationAngle)< 0.001)
-                        return;
-
-                    spinforce.Normalize();
-
-                    //m_log.LogError("SCENE OBJECT GROUP]: rotation axis is " + rotationAxis);
-                    if(rotationAngle > 0)
-                        spinforce = spinforce * pa.Mass * 0.1f; // 0.1 is an arbitrary torque scaling factor
-                    else
-                       spinforce = spinforce * pa.Mass * -0.1f; // 0.1 is an arbitrary torque scaling
-                    pa.AddAngularForce(spinforce,true);
-                }
+                SteerSpin(newOrientation, remoteClient is null ? UUID.Zero : remoteClient.AgentId);
             }
             else
             {
+                EndSpin();
                 NonPhysicalSpinMovement(newOrientation);
             }
         }

@@ -321,6 +321,10 @@ public partial class Scene
 
         SceneObjectGroup obj = part.ParentGroup;
 
+        // a new grab by the agent that holds a drag means the release of the earlier one never arrived
+        obj.ReleaseGrab(remoteClient.AgentId);
+        obj.ReleaseSpin(remoteClient.AgentId);
+
         SurfaceTouchEventArgs surfaceArg = null;
         if (surfaceArgs != null && surfaceArgs.Count > 0)
             surfaceArg = surfaceArgs[0];
@@ -401,6 +405,9 @@ public partial class Scene
 
         SceneObjectGroup grp = part.ParentGroup;
 
+        grp.ReleaseGrab(remoteClient.AgentId);
+        grp.ReleaseSpin(remoteClient.AgentId);
+
         SurfaceTouchEventArgs surfaceArg = null;
         if (surfaceArgs != null && surfaceArgs.Count > 0)
             surfaceArg = surfaceArgs[0];
@@ -452,7 +459,7 @@ public partial class Scene
         {
             if (Permissions.CanMoveObject(group, remoteClient))// && PermissionsMngr.)
             {
-                group.SpinMovement(rotation, remoteClient);
+                group.SpinMovement(objectID, rotation, remoteClient);
             }
             // This is outside the above permissions condition
             // so that if the object is locked the client moving the object
@@ -462,19 +469,12 @@ public partial class Scene
         }
     }
 
+    /// <summary>
+    /// The viewer let go of a rotate-drag. Only the agent that holds the turn can end it.
+    /// </summary>
     public virtual void ProcessSpinObjectStop(UUID objectID, IClientAPI remoteClient)
     {
-/* no op for now
-        SceneObjectGroup group = GetGroupByPrim(objectID);
-        if (group != null)
-        {
-            if (Permissions.CanMoveObject(group.UUID, remoteClient.AgentId))// && PermissionsMngr.)
-            {
-//                    group.SpinMovement(rotation, remoteClient);
-            }
-            group.SendGroupTerseUpdate();
-        }
-*/
+        GetGroupByPrim(objectID)?.ReleaseSpin(remoteClient.AgentId);
     }
 
     public void ProcessScriptReset(IClientAPI remoteClient, UUID objectID,
