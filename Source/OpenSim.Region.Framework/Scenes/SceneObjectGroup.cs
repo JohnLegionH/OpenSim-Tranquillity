@@ -4224,7 +4224,7 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
                 m_rootPart.AngularVelocity = Vector3.Zero;
 
             if (m_scriptOmegaSet)
-                m_rootPart.UpdateAngularVelocity(m_scriptOmega);
+                m_rootPart.ApplyAngularVelocity(m_scriptOmega); // not compared with the part's copy, which may be stale
             else
                 m_rootPart.ScheduleTerseUpdate();
 
