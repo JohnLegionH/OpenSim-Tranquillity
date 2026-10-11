@@ -2660,12 +2660,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // contact callbacks report during it. Written under _simLock, read from the solver's worker threads.
         private long _contactStep;
 
+        // The engine reports no contact for a body asleep, which has not moved since it last touched what it rests on, so
+        // a sleeping body keeps the state it went to sleep with: touching if it touched in the last step it was awake.
         public bool BodyHadContact(BodyId body)
         {
             if (!_bodies.TryGet(body.Value, out JoltBodyRecord rec))
                 return false;
             long step = Volatile.Read(ref _contactStep);
-            return step != 0 && Volatile.Read(ref rec.ContactStep) == step;
+            long last = Volatile.Read(ref rec.ContactStep);
+            if (step != 0 && !Volatile.Read(ref rec.Awake) && rec.MotionType == BodyMotionType.Dynamic)
+                return last != 0 && last >= Volatile.Read(ref rec.SleptStep);
+            return step != 0 && last == step;
         }
 
         public bool IsBodyAwake(BodyId body)
@@ -3386,6 +3391,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     rec.InnerCapsule = inner;
                     rec.CapsuleHalfHeight = capsuleHalfHeight;
                     rec.CapsuleRadius = capsuleRadius;
+                    // The query marker carries the capsule too: queries find the avatar at its new size.
+                    if (rec.MarkerBodyId != 0)
+                        _bodyInterface.SetShape(new BodyID(rec.MarkerBodyId), wrapper, false, Activation.DontActivate);
                     if (SupportRadiusOf(capsuleRadius) != rec.SupportRadius)
                         ReplaceCharacterForSupportRadius(rec);
                 }
@@ -3399,7 +3407,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
         // Builds the avatar's controller again from its current state, with the supporting plane for its present radius.
         // The new one is made before the old is let go, so a failure leaves the avatar as it was. Under _simLock and
-        // _characterGate. The query marker keeps the shape it was made with, as it does after any resize.
+        // _characterGate.
         private void ReplaceCharacterForSupportRadius(JoltCharacterRecord rec)
         {
             CharacterVirtual old = rec.Character!;
@@ -4588,7 +4596,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     _justDeactivated.Add(delta.BodyId);
                 }
                 if (_joltToRecord.TryGetValue(delta.BodyId, out JoltBodyRecord? woken))
+                {
+                    if (!delta.Activated)
+                        Volatile.Write(ref woken.SleptStep, _contactStep);
                     Volatile.Write(ref woken.Awake, delta.Activated);
+                }
             }
 
             int bodyCount = 0;
@@ -4889,6 +4901,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public float Mass;                // explicit or Volume x Density; 0 where mass is unused (static)
         public bool AllowMotionChange;    // created movable (AllowDynamicOrKinematic) -> may flip motion type
         public bool IsCharacterMarker;    // a query-only avatar marker (owned by its character; not a real prim)
+        public long SleptStep;            // the step in which the engine last put the body to sleep (BodyHadContact)
         public long ContactStep;          // the last step in which the solver had this body touching another body (BodyHadContact)
         public byte RotationLocks;        // body-local axes it cannot turn about: 1 = x, 2 = y, 4 = z (SetBodyRotationLocks)
         public float Friction;            // the body's contact friction and restitution (SetBodyFriction, SetBodyRestitution)

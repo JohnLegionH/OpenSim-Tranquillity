@@ -44,6 +44,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private Vector3 _size;
         private Quaternion _orientation;
         private bool _isPhysical;
+        // Set first thing in Destroy. The scene's per-frame lists refuse a prim once it is set, so a script's late write
+        // to a removed prim's actor cannot put it back on a list the scene keeps.
+        internal volatile bool IsRemoved;
         // Phantom (STATUS_PHANTOM) and volume detect (llVolumeDetect), and PRIM_PHYSICS_SHAPE_TYPE. The scene adds a
         // volume detector as phantom and then calls SetVolumeDetect(1); volume detect wins over phantom. On a welded
         // linkset child these are stored but the root's body carries the linkset's flags.
@@ -547,6 +550,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // our handle-ref then frees the shape - no leak, no premature free.
         internal void Destroy()
         {
+            IsRemoved = true;
             // Drop out of the scene's per-frame vehicle drive (no-op if never a vehicle).
             if (_vehicle != null) { _module.UnregisterVehicle(this); _vehicle = null; _vehicleBody = null; }
             _module.SetScriptForced(this, false);
@@ -900,6 +904,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return;
             _backend.SetBodyPartMaterial(root._body, LocalID, friction, restitution);
             root.WakeBody();
+            // What rests on a non-physical prim now touches a different surface: wake it, as when the prim is moved.
+            WakeWhatRestsOn(_position, _orientation);
         }
 
         // llSetPhysicsMaterial GRAVITY_MULTIPLIER: the body's gravity is (1 - buoyancy) x the multiplier x the region's, as
@@ -1268,7 +1274,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (_welded)
                 {
                     SyncFromLink();
-                    _velocity = root._velocity;
+                    // The part goes on at the velocity its point had: the root's, and the spin's share at the part's offset.
+                    _velocity = root._velocity + Vector3.Cross(root._rotationalVelocity, _position - root._position);
                     _rotationalVelocity = root._rotationalVelocity;
                 }
                 _welded = false;
