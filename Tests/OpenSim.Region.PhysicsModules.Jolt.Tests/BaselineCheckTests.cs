@@ -81,8 +81,6 @@ public class BaselineCheckTests
     [Fact]
     public void Each_recorded_build_names_its_baseline_folder()
     {
-        Assert.Equal("patched", BaselineCheck.KeyFor(Build(JoltNativeOrigin.PatchedBuild, "win-x64")));
-        Assert.Equal("patched", BaselineCheck.KeyFor(Build(JoltNativeOrigin.PatchedBuild, "linux-x64")));
         Assert.Equal($"stock-{JoltNative.PackageVersion}-win-x64", BaselineCheck.KeyFor(Build(JoltNativeOrigin.Package, "win-x64")));
         Assert.Equal($"stock-{JoltNative.PackageVersion}-linux-x64", BaselineCheck.KeyFor(Build(JoltNativeOrigin.Package, "linux-x64")));
         Assert.Equal($"stock-{JoltNative.PackageVersion}-osx", BaselineCheck.KeyFor(Build(JoltNativeOrigin.Package, "osx")));
@@ -102,15 +100,13 @@ public class BaselineCheckTests
         Assert.Contains("baseline=none\n", unrecorded);
     }
 
-    // The same platform's stock and patched files get different baselines; the two stock platforms get their own.
+    // The two stock platforms' files get their own baselines.
     [Fact]
     public void The_baseline_is_chosen_by_the_loaded_build_not_by_the_platform()
     {
         var s = new Scratch();
-        string patchedRows = Summary(Row("drop", ("end_z", "25.500")));
         string stockWinRows = Summary(Row("drop", ("end_z", "25.501")));
         string stockLinuxRows = Summary(Row("drop", ("end_z", "25.502")));
-        s.AddBaseline("patched", "drop-run", patchedRows);
         s.AddBaseline($"stock-{JoltNative.PackageVersion}-win-x64", "drop-run", stockWinRows);
         s.AddBaseline($"stock-{JoltNative.PackageVersion}-linux-x64", "drop-run", stockLinuxRows);
 
@@ -118,8 +114,6 @@ public class BaselineCheckTests
                  {
                      ("win-x64", JoltNativeOrigin.Package, stockWinRows),
                      ("linux-x64", JoltNativeOrigin.Package, stockLinuxRows),
-                     ("win-x64", JoltNativeOrigin.PatchedBuild, patchedRows),
-                     ("linux-x64", JoltNativeOrigin.PatchedBuild, patchedRows),
                  })
         {
             JoltNativeBuild build = Build(origin, rid);
@@ -139,7 +133,7 @@ public class BaselineCheckTests
     public void A_build_with_no_baseline_folder_is_skipped_not_passed_or_failed()
     {
         var s = new Scratch();
-        s.AddBaseline("patched", "drop-run", Summary(Row("drop")));
+        s.AddBaseline($"stock-{JoltNative.PackageVersion}-win-x64", "drop-run", Summary(Row("drop")));
         s.AddRun("drop-run", Summary(Row("drop", ("end_z", "99"))), Info("linux-arm64", Build(JoltNativeOrigin.Package, "linux-arm64")));
         var (outcome, report) = s.Check();
         Assert.Equal(BaselineOutcome.Skipped, outcome);
@@ -147,14 +141,14 @@ public class BaselineCheckTests
         Assert.Contains("linux-arm64", report);
 
         var w = new StringWriter();
-        Assert.Equal(3, BaselineCheck.Main(new[] { "--check-baseline", s.Output, "--baselines", s.Baselines }, w));
+        Assert.Equal(3, BaselineCheck.Run(new[] { "--check-baseline", s.Output, "--baselines", s.Baselines }, w));
     }
 
     [Fact]
     public void An_unrecorded_native_has_no_baseline()
     {
         var s = new Scratch();
-        s.AddBaseline("patched", "drop-run", Summary(Row("drop")));
+        s.AddBaseline($"stock-{JoltNative.PackageVersion}-win-x64", "drop-run", Summary(Row("drop")));
         s.AddRun("drop-run", Summary(Row("drop")), Info("win-x64", null, "ABCDEF"));
         var (outcome, report) = s.Check();
         Assert.Equal(BaselineOutcome.Skipped, outcome);
@@ -205,16 +199,17 @@ public class BaselineCheckTests
         (outcome, report) = s.Check();
         Assert.Equal(BaselineOutcome.Failed, outcome);
         Assert.Contains("row 1 a: end_x recorded 0, now 1.000", report);
-        Assert.Equal(1, BaselineCheck.Main(new[] { "--check-baseline", s.Output, "--baselines", s.Baselines }, new StringWriter()));
+        Assert.Equal(1, BaselineCheck.Run(new[] { "--check-baseline", s.Output, "--baselines", s.Baselines }, new StringWriter()));
     }
 
     [Fact]
     public void A_recorded_run_that_did_not_run_fails()
     {
         var s = new Scratch();
-        s.AddBaseline("patched", "a", Summary(Row("a")));
-        s.AddBaseline("patched", "b", Summary(Row("b")));
-        s.AddRun("a", Summary(Row("a")), Info("linux-x64", Build(JoltNativeOrigin.PatchedBuild, "linux-x64")));
+        string key = $"stock-{JoltNative.PackageVersion}-linux-x64";
+        s.AddBaseline(key, "a", Summary(Row("a")));
+        s.AddBaseline(key, "b", Summary(Row("b")));
+        s.AddRun("a", Summary(Row("a")), Info("linux-x64", Build(JoltNativeOrigin.Package, "linux-x64")));
         var (outcome, report) = s.Check();
         Assert.Equal(BaselineOutcome.Failed, outcome);
         Assert.Contains("FAILED  b: recorded in the baseline but not run", report);
@@ -224,9 +219,9 @@ public class BaselineCheckTests
     public void Runs_that_loaded_different_natives_fail()
     {
         var s = new Scratch();
-        s.AddBaseline("patched", "a", Summary(Row("a")));
-        s.AddRun("a", Summary(Row("a")), Info("win-x64", Build(JoltNativeOrigin.PatchedBuild, "win-x64")));
-        s.AddRun("b", Summary(Row("b")), Info("win-x64", Build(JoltNativeOrigin.Package, "win-x64")));
+        s.AddBaseline($"stock-{JoltNative.PackageVersion}-win-x64", "a", Summary(Row("a")));
+        s.AddRun("a", Summary(Row("a")), Info("win-x64", Build(JoltNativeOrigin.Package, "win-x64")));
+        s.AddRun("b", Summary(Row("b")), Info("linux-x64", Build(JoltNativeOrigin.Package, "linux-x64")));
         var (outcome, report) = s.Check();
         Assert.Equal(BaselineOutcome.Failed, outcome);
         Assert.StartsWith("FAILED: the runs loaded different joltc files", report);
@@ -239,7 +234,7 @@ public class BaselineCheckTests
         JoltNativeInfo native = Info("linux-x64", Build(JoltNativeOrigin.Package, "linux-x64"));
         s.AddRun("a", Summary(Row("a")).Replace("\n", "\r\n"), native);
         s.AddRun("b", Summary(Row("b")), native);
-        Assert.Equal(0, BaselineCheck.Main(new[] { "--record-baseline", s.Output, "--baselines", s.Baselines, "--leave-out", "b" }, new StringWriter()));
+        Assert.Equal(0, BaselineCheck.Run(new[] { "--record-baseline", s.Output, "--baselines", s.Baselines, "--leave-out", "b" }, new StringWriter()));
         string folder = Path.Combine(s.Baselines, BaselineCheck.KeyFor(native.Build));
         Assert.Equal(new[] { "a.csv" }, Directory.GetFiles(folder).Select(Path.GetFileName).ToArray());
         Assert.DoesNotContain("\r", File.ReadAllText(Path.Combine(folder, "a.csv")));
@@ -262,7 +257,8 @@ public class BaselineCheckTests
             .ToArray();
         string[] keys = JoltNative.Known.Select(BaselineCheck.KeyFor).Distinct().ToArray();
         string[] folders = Directory.GetDirectories(CommittedBaselines).Select(Path.GetFileName).ToArray();
-        Assert.Contains("patched", folders);
+        Assert.Contains($"stock-{JoltNative.PackageVersion}-win-x64", folders);
+        Assert.Contains($"stock-{JoltNative.PackageVersion}-linux-x64", folders);
         foreach (string folder in folders)
         {
             Assert.Contains(folder, keys);

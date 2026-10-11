@@ -21,9 +21,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The managed Jolt binding. Pinned: the patched joltc is built from the joltc commit behind
-         JoltPhysics.Native 1.0.4, the native this version binds to. Changing it needs the native rebuilt
-         to match (native/joltc/README.md). -->
+    <!-- The managed Jolt binding. Pinned to the version that binds to
+         JoltPhysics.Native 1.0.4. Changing it means checking the native's record again (JoltNativePackageTests). -->
     <PackageReference Include="JoltPhysicsSharp" Version="2.19.1" />
     <!-- The native joltc, the one JoltPhysicsSharp 2.19.1 depends on, named here so its version is pinned in one
          place. Its files flow to every application that reaches this project, under runtimes/<rid>/native/.

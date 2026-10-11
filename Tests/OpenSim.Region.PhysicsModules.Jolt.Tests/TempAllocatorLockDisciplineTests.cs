@@ -12,8 +12,7 @@ using Xunit;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// The patched joltc gives every <c>JPH_PhysicsSystem</c> its own
-/// <c>TempAllocatorImplWithMallocFallback</c> (<c>joltc.cpp:956</c>) and passes it to exactly seven native
+/// joltc has one <c>TempAllocatorImplWithMallocFallback</c> per process and passes it to exactly seven native
 /// entry points: <c>PhysicsSystem::Update</c> (<c>:1050</c>) and six <c>CharacterVirtual</c> scratch users
 /// (<c>:8107, :8135, :8151, :8182, :8198, :8223</c>). Two of those seven are reachable from this tree's managed
 /// code — <c>ExtendedUpdate</c> and <c>SetShape</c> — plus <c>Update</c> itself.
@@ -109,8 +108,8 @@ public class TempAllocatorLockDisciplineTests
     {
         var source = BackendSource();
 
-        Assert.Equal(1, Regex.Matches(source, @"\.ExtendedUpdate\(").Count);
-        Assert.Equal(1, Regex.Matches(source, @"\bStepCharacter\(\s*\w+\s*,").Count);   // the one call, in Step
+        Assert.Single(Regex.Matches(source, @"\.ExtendedUpdate\("));
+        Assert.Single(Regex.Matches(source, @"\bStepCharacter\(\s*\w+\s*,"));   // the one call, in Step
 
         // Step takes the pool gate and calls StepLocked, which holds the locks.
         var step = MethodBody(source, "StepResult StepLocked(");
@@ -160,7 +159,7 @@ public class TempAllocatorLockDisciplineTests
         Assert.DoesNotContain("lock (_simLock)", step);
         Assert.DoesNotContain("Enter(_simLock)", step);
         Assert.DoesNotContain(".Gate", locked);
-        Assert.Equal(1, Regex.Matches(source, @"\bStepLocked\(pool,").Count);
+        Assert.Single(Regex.Matches(source, @"\bStepLocked\(pool,"));
     }
 
     /// <summary>
@@ -170,7 +169,7 @@ public class TempAllocatorLockDisciplineTests
     public void PhysicsSystem_Update_is_called_once_and_under_simLock()
     {
         var source = BackendSource();
-        Assert.Equal(1, Regex.Matches(source, @"_system\.Update\(").Count);
+        Assert.Single(Regex.Matches(source, @"_system\.Update\("));
 
         var step = MethodBody(source, "StepResult StepLocked(");   // Step's locked body
         Assert.Contains("_system.Update(", step);

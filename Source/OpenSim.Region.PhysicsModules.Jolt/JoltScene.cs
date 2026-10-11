@@ -317,6 +317,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     m_Config = source;
                     _joltConfig = joltConfig;
                     VehicleSettings = joltConfig.ToVehicleSettings();
+                    if (VehicleSettings.Behaviour != VehicleBehaviour.SecondLife)
+                        m_log.LogInformation($"{LogHeader} vehicle behaviour: {VehicleSettings.Behaviour} (preset values: {VehicleSettings.Presets}).");
                     m_log.LogInformation($"{LogHeader} enabled (physics = {Name}).");
                 }
             }
@@ -356,6 +358,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // AddRegion's work once the scene is known. The heightmap and water height are read where AddRegion
         // always read them, after the backend exists.
+        /// <summary>TEST-ONLY: run on the new backend before it is initialised, so a test can make Initialize fail.</summary>
+        internal Action<JoltPhysicsBackend> BackendCreatedForTest;
+
         private void InitialiseRegion(uint sizeX, uint sizeY, RequestAssetDelegate requestAsset, Func<float[]> heightMap, Func<float> waterHeight, float heartbeatSeconds)
         {
             // Stored BEFORE base.Initialise, because that calls SetTerrain(heightMap) - which needs the
@@ -388,8 +393,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // Instrumentation: per-region RSS delta across backend init (8MB TempAllocator +
             // MaxBodies preallocation + JobSystemThreadPool), reported by `jolt metrics`.
             long rssBefore = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64;
-            _backend = new JoltPhysicsBackend();
-            _backend.Initialize(settings);
+            var created = new JoltPhysicsBackend();
+            BackendCreatedForTest?.Invoke(created);
+            try { created.Initialize(settings); }
+            catch
+            {
+                // A backend whose Initialize failed part-way still holds what it had taken (its reference on the shared
+                // job pools and Jolt, and the physics system if that was made); the region will not use it, so give
+                // those back before the failure goes on.
+                created.Dispose();
+                throw;
+            }
+            _backend = created;
             PhysicsCapacityStats initStats = _backend.GetCapacityStats();
             _contactBufMax = _joltConfig.ContactBufferMax > 0 ? _joltConfig.ContactBufferMax : initStats.ContactRingCapacity;
             LogJobPool(initStats);
@@ -450,6 +465,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (!m_Enabled)
                 return;
+
+            // The console keeps every handler it was given (ICommands has no way to take one back), so end this
+            // region's route to the scene: its `jolt` commands then do nothing and the console holds no reference to
+            // the scene. The other regions' handlers are theirs and stay.
+            _consoleRoute?.Detach();
+            if (scene != null && ReferenceEquals(s_parityScene, scene))
+                s_parityScene = null;
+
+            // The region is going away: tear its physics down now rather than leave it to whoever closes the scene.
+            // Dispose can run again from the scene's own close; it does nothing the second time.
+            Dispose();
         }
 
         public void RegionLoaded(Scene scene)
@@ -497,9 +523,27 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // Registering per region + the WrongConsoleScene() check in each handler makes
             // `change region <name>` actually select the target.
             if (MainConsole.Instance != null)
-            {
-                RegisterConsoleCommands(MainConsole.Instance.Commands, m_testCommands, HandleJoltConsole, HandleJoltTestConsole);
-            }
+                AttachConsole(MainConsole.Instance.Commands);
+        }
+
+        /// <summary>Registers this region's `jolt` console commands on <paramref name="commands"/>.</summary>
+        internal void AttachConsole(ICommands commands)
+        {
+            _consoleRoute ??= new ConsoleRoute(this);
+            RegisterConsoleCommands(commands, m_testCommands, _consoleRoute.Read, _consoleRoute.Test);
+        }
+
+        // What the console is given to call. The console cannot drop a handler, so what it holds is this small object,
+        // and RemoveRegion cuts the scene out of it.
+        private ConsoleRoute _consoleRoute;
+
+        private sealed class ConsoleRoute
+        {
+            private volatile JoltScene _scene;
+            public ConsoleRoute(JoltScene scene) { _scene = scene; }
+            public void Detach() => _scene = null;
+            public void Read(string module, string[] cmd) => _scene?.HandleJoltConsole(module, cmd);
+            public void Test(string module, string[] cmd) => _scene?.HandleJoltTestConsole(module, cmd);
         }
 
         // The `jolt` subcommands that only read and report. They never change the region, so they are always

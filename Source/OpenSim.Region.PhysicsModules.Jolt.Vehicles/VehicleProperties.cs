@@ -83,7 +83,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         Boat = 3,
         Airplane = 4,
         Balloon = 5,
-        // InWorldz extensions — kept for completeness but not settable via standard LSL
+        // InWorldz's two extra types, as scripts name them: VEHICLE_TYPE_SAILBOAT 10001 and VEHICLE_TYPE_MOTORCYCLE 10002
+        // (Vehicle.TYPE_SAILBOAT, TYPE_MOTORCYCLE). The numbers here are the module's own.
         Motorcycle = 6,
         Sailboat = 7,
     }

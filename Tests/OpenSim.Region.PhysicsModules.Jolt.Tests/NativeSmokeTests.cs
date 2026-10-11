@@ -10,7 +10,7 @@ using Xunit;
 
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
-/// <summary>Can a test host load the patched joltc and stand a PhysicsSystem up at all?</summary>
+/// <summary>Can a test host load the joltc the build ships and stand a PhysicsSystem up at all?</summary>
 public class NativeSmokeTests
 {
     [Fact]

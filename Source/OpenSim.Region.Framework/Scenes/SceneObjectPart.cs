@@ -2434,6 +2434,10 @@ public class SceneObjectPart : EntityBase, IDisposable
 
         dupe.m_sittingAvatars = new HashSet<ScenePresence>();
         dupe.SitTargetAvatar = UUID.Zero;
+
+        // MemberwiseClone shares the vehicle record; the copy gets its own (VehicleData holds only values)
+        if (m_vehicleParams != null)
+            dupe.m_vehicleParams = new SOPVehicle { vd = m_vehicleParams.vd };
         // safeguard  actual copy is done in sog.copy
         dupe.KeyframeMotion = null;
         dupe.PayPrice = (int[])PayPrice.Clone();
@@ -3134,8 +3138,9 @@ public class SceneObjectPart : EntityBase, IDisposable
             "[SCENE OBJECT PART]: Physical object {0}, localID {1} went out of bounds at {2} in {3}.  Stopping at {4} and making non-physical.",
             Name, LocalId, pos, ParentGroup.Scene.Name, AbsolutePosition);
 
-        RemFlag(PrimFlags.Physics);
-        DoPhysicsPropertyUpdate(false, true);
+        // The whole object, as llSetStatus(STATUS_PHYSICS, FALSE) does: every part's flag, the region's
+        // physical-prim count, and the parts' actor events
+        ParentGroup.ScriptSetPhysicsStatus(false);
     }
 
     public void PhysicsRequestingTerseUpdate()

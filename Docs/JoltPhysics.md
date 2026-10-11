@@ -28,9 +28,9 @@ in the output:
 On a platform this project does not test, the module starts and logs a notice saying so.
 musl-based Linux (Alpine) has no native: there, keep another physics engine.
 
-The stock joltc runs **one job pool** (`JobPools`, below): its physics systems share one scratch
-allocator, so two physics updates at once would stop the process. For more than one pool, replace
-the file with this project's patched build (Windows x64 and Linux x64 only); how, and why, is in
+All regions in a process share one job pool on this native (`JobPools`, below): its physics systems
+share one scratch allocator, so two physics updates at once would stop the process. More pools need a
+change in joltc itself. The recorded files and their hashes are in
 [native/joltc/README.md](../native/joltc/README.md).
 
 A build with no runtime identifier carries every platform's file, so the same output runs on each.
@@ -39,45 +39,17 @@ module also finds it. Copy the whole output, including its `runtimes` folder.
 
 ### What is supported
 
-| Setup | On the stock joltc | On the patched joltc |
-|---|---|---|
-| One region per region server process | Tested and supported | Tested and supported |
-| Several regions in one process, on one job pool (`JobPools = 1`, the default) | Tested and working: the regions take turns on the pool | Tested and working |
-| More than one job pool (`JobPools` above 1) | Not available: the module runs one pool (below) | Tested and working; Windows x64 and Linux x64 only |
+| Setup | Status |
+|---|---|
+| One region per region server process | Tested and supported |
+| Several regions in one process, on one job pool (`JobPools = 1`, the default) | Tested and working: the regions take turns on the pool |
+| More than one job pool (`JobPools` above 1) | Not available: the module runs one pool |
 
-When `JobPools` asks for more than one pool on the stock joltc, the region server still starts and
-every region runs. The module runs one pool, sized as `JobPools = 1` would size it, logs one warning
-at start with the setting, the reason and the remedy (shown below, under "The native check at start"), and
+When `JobPools` asks for more than one pool, the region server still starts and every region runs.
+The module runs one pool, sized as `JobPools = 1` would size it, logs one warning at start with the
+setting, the reason and the remedy (shown below, under "The native check at start"), and
 `jolt capacity` shows the pools in use and why. All the process's regions then take turns on that
 pool, so a region whose physics is busy can make the others wait for their step; no step is skipped.
-
-### Selecting the patched build
-
-The patched joltc is this project's build of the same joltc source with two patches: each physics
-system gets its own scratch allocator, and the map of systems gets a lock. It is built on GitHub's
-runners by `.github/workflows/joltc-native.yml` from pinned joltc and Jolt Physics commits and the
-patches in `native/joltc/`, so anyone can rebuild it and compare the hashes.
-[native/joltc/README.md](../native/joltc/README.md) gives the recipe and the hashes.
-
-The repository does not keep the compiled file. To get it, run the `joltc native` workflow
-(`workflow_dispatch`, on a fork or a branch that has it) and download its `joltc-win-x64` or
-`joltc-linux-x64` artifact: the file, its `SHA256SUMS`, its exports and the toolchain it was built
-with. Check its hash against the table in the README; a file with another hash is refused at start
-(see "The native check at start").
-
-The module has no setting for the file's path: it loads the file it finds in the output. To select
-the patched build, replace the stock file in the build or publish output with the patched file for
-the platform, under the same name (`runtimes/win-x64/native/joltc.dll` or
-`runtimes/linux-x64/native/libjoltc.so`; for a build or publish for one runtime identifier, the
-file beside the application's assemblies), then check the output:
-
-```
-pwsh -File assert-joltc-native.ps1 -PublishDir "<publish directory>" -RequirePatched
-```
-
-At start the module's line says `patched build (native/joltc); safe for more than one job pool`, and
-`JobPools` takes effect. A rebuild of the output puts the stock file back, so replace it again after
-each build. Other platforms have no patched build and run one pool.
 
 ### When the JoltPhysics.Native version changes
 
@@ -94,11 +66,6 @@ through a JoltPhysicsSharp update) is refused at start until its files are recor
    the new version on Windows x64 and Linux x64 ("Physics harness", below). Until they are
    recorded, the regression check reports the new files as having no baseline.
 
-The patched build is made from the joltc source behind `JoltPhysics.Native 1.0.4` and replaces the
-stock file only under JoltPhysicsSharp 2.19.1. With a newer package, rebuild it from the joltc
-source of that package (the recipe in native/joltc/README.md) and record its hashes before using
-it for more than one pool.
-
 ### The native check at start
 
 When `physics = Jolt`, the module picks the file for the platform it runs on, computes its SHA-256
@@ -109,17 +76,10 @@ process, naming the build:
 [JOLT SCENE] joltc for linux-x64: /opt/opensim/bin/runtimes/linux-x64/native/libjoltc.so sha256 5FC05170... (stock JoltPhysics.Native 1.0.4; one job pool)
 ```
 
-or, with the patched build in place:
+With `JobPools` above 1 it also logs one warning, and runs one pool:
 
 ```
-[JOLT SCENE] joltc for linux-x64: /opt/opensim/bin/runtimes/linux-x64/native/libjoltc.so sha256 EEAD7C1A... (patched build (native/joltc); safe for more than one job pool)
-```
-
-With `JobPools` above 1 on a native that runs one pool, it also logs one warning, and runs one
-pool:
-
-```
-[JOLT SCENE] [Jolt] JobPools = 3, but the module runs ONE job pool: the loaded joltc (stock JoltPhysics.Native 1.0.4) is not safe for more than one job pool: its physics systems share one scratch allocator, and two physics updates at once would stop the process. Regions take turns on that pool. To run more than one pool, replace runtimes/linux-x64/native/libjoltc.so with this project's patched build (native/joltc/README.md); otherwise set [Jolt] JobPools = 1.
+[JOLT SCENE] [Jolt] JobPools = 3, but the module runs ONE job pool: the loaded joltc (stock JoltPhysics.Native 1.0.4) is not safe for more than one job pool: its physics systems share one scratch allocator, and two physics updates at once would stop the process. Regions take turns on that pool. More than one pool needs a change in joltc itself; set [Jolt] JobPools = 1.
 ```
 
 In the cases below the module logs one error line and throws from its `Initialise`, before any
@@ -162,7 +122,7 @@ Jolt is chosen per simulator in `[Startup]`, and it needs the Meshmerizer mesher
 
 `assert-joltc-native.ps1` (next to the module's project file) checks a build or publish directory
 before it is deployed: every `runtimes/<rid>/native/` joltc must be a build the module has a
-record of for its platform (with `-RequirePatched`, the patched build where there is one), and no
+record of for its platform, and no
 other joltc file may be there (`-AllowStray` reports such files without failing, for an
 installation that still holds files from an older deploy). It runs in Windows PowerShell and in
 PowerShell 7 on Linux:
@@ -335,9 +295,9 @@ All regions in a simulator share Jolt's worker threads through `JobPools` job po
 `ThreadCount` is the total number of worker threads, split evenly across the pools, and each
 region is given the pool with the fewest regions when it starts.
 
-More than one pool needs the patched joltc (see "Platforms"). On the stock joltc the module runs
-one pool, sized as `JobPools = 1` would size it, logs a warning at start naming the setting, and
-`jolt capacity` shows the pools in use and why.
+All regions in a process share one job pool on the joltc this module runs on, so more than one pool
+needs a change in joltc itself. The module runs one pool, sized as `JobPools = 1` would size it,
+logs a warning at start naming the setting, and `jolt capacity` shows the pools in use and why.
 
 `ThreadCount = 0` (the default) is automatic: each pool gets its share of the processor count
 less one, at most 4 threads and at least 1. On a 20-thread machine with one pool that is 4 threads;
@@ -722,6 +682,11 @@ objects"), from which the simulator plays collision sounds and works out impact 
 on, a prim with a damage value set damages the avatar it touches and is removed, as the simulator does
 with every physics engine.
 
+An avatar's capsule is changed in place when its height changes. A change of its radius also makes the
+avatar's controller again, because Jolt takes the supporting plane (one radius below the capsule's centre)
+only when the controller is made; position, velocity, contact events and the avatar-against-avatar collision
+carry over.
+
 ## Avatars and physical objects
 
 Second Life documents that "You can push physical object by walking or flying your avatar into them",
@@ -1006,14 +971,16 @@ with 0.2.
 
 ### Vehicle type presets
 
-`llSetVehicleType` gives each type its defaults. `[Jolt] VehiclePresets` chooses which:
+`llSetVehicleType` gives each type its defaults. `[Jolt] VehiclePresets` chooses which (where the key is not set,
+[`VehicleBehaviour`](#vehicle-behaviour-secondlife-or-inworldz) does: `InWorldz` gives `legacy`, `SecondLife` gives `documented`):
 
 - `documented` (the default): Second Life's documented values, from the wiki page of each type
   (`VEHICLE_TYPE_SLED`, `_CAR`, `_BOAT`, `_AIRPLANE`, `_BALLOON`). The sled page's hover efficiency
   of 10 is held to 1, as `llSetVehicleFloatParam` holds any efficiency, and the sled has hover off:
   the page's hover timescale of 10 s would turn hover on, against the page's own "no hover", so the
   sled's is 1000 s.
-- `legacy`: the InWorldz Halcyon values the module used before, for vehicles tuned against them.
+- `legacy`: the InWorldz Halcyon values the module used before, for vehicles tuned against them, except
+  the car (below).
 
 ```ini
 [Jolt]
@@ -1024,9 +991,128 @@ A script's own `llSetVehicleFloatParam`, `llSetVehicleVectorParam` and `llSetVeh
 override either set; most scripted vehicles set their own values after the type, and differ only
 in what they leave at the preset. Choosing a type sets that type's flags and clears every other
 flag, also one a script set before `llSetVehicleType`. The module's own extension parameters (wind, mouselook,
-motor disabling) are not Second Life parameters and are the same in both sets. The legacy car,
-boat and airplane also carry the module's torque-about-world-z flag, which no documented type sets.
+motor disabling) are not Second Life parameters and are the same in both sets. The legacy boat and
+airplane also carry the module's torque-about-world-z flag, which no documented type sets.
 
+The legacy car is the InWorldz car, as the Halcyon source gives it: linear friction (100, 0.1, 10), angular
+friction (100, 100, 0.3), the linear motor 0.5 / 1 / 1 s with decay 10 / 2 / 2 s, the angular motor
+0.2 / 0.2 / 0.05 s with decay 0.3 / 0.3 / 0.1 s, linear deflection 1 / 2 s, angular deflection 0.5 / 2 s, the vertical
+attractor 0.6 / 2 s, banking -0.2 with mix 1 and timescale 1 s, and the flags `NO_DEFLECTION_UP`, `LIMIT_ROLL_ONLY`,
+`HOVER_UP_ONLY` and `LIMIT_MOTOR_UP`. It has no torque about world z (the legacy boat and airplane do; the car does
+not). It differs from the documented car in the friction, motor and decay timescales, the angular deflection and the
+attractor. The documented car (the default) is unchanged.
+
+Two vehicle types exist on InWorldz and not in Second Life: `VEHICLE_TYPE_SAILBOAT` (10001) and `VEHICLE_TYPE_MOTORCYCLE`
+(10002). Both are always available, with either preset set and either behaviour, since there is no Second Life type to differ
+from; their values are the InWorldz source's, value for value (Halcyon's `VehicleDynamics.cs`, read, not run):
+
+| | Sailboat (10001) | Motorcycle (10002) |
+|---|---|---|
+| linear friction / angular friction | (200, 0.5, 3) / (10, 1, 0.2) | (100, 0.1, 10) / (3, 0.2, 10) |
+| linear motor timescale / decay | (1, 5, 5) / (1, 10, 10) | (0.5, 1, 1) / (10, 1, 1) |
+| angular motor timescale / decay | (2, 2, 0.1) / (0.3, 0.3, 0.1) | (0.1, 0.1, 0.05) / (0.2, 0.8, 0.1) |
+| linear motor offset | 0 | (0, 0, -0.1) |
+| hover height / efficiency / timescale | 0.0001 / 0.8 / 0.5 s | 0 / 0 / 1000 s (off) |
+| buoyancy | 0 | 0 |
+| linear deflection efficiency / timescale | 0.5 / 3 s | 1 / 2 s |
+| angular deflection efficiency / timescale | 0.5 / 5 s | 0.8 / 2 s |
+| vertical attractor efficiency / timescale | 0.5 / 0.3 s | 1 / 1 s |
+| banking efficiency / mix / timescale | 0.8 / 0.5 / 0.5 s | 0.95 / 0.5 / 0.1 s |
+| inverted banking modifier | -0.2 | -0.5 |
+| motors disabled above / after | 0 / 0 | 1.5 m / 2.5 s |
+| flags | `NO_DEFLECTION_UP`, `HOVER_WATER_ONLY`, `LIMIT_MOTOR_UP`, `LIMIT_MOTOR_DOWN`, `REACT_TO_WIND`, `REACT_TO_CURRENTS`, `TORQUE_WORLD_Z` | `NO_DEFLECTION_UP`, `HOVER_UP_ONLY`, `LIMIT_MOTOR_UP`, `LIMIT_MOTOR_DOWN`, `LIMIT_ROLL_ONLY`, `TORQUE_WORLD_Z` |
+
+The sailboat's wind and water-current efficiencies (0.02, 0.001, 0 and 0.1, 0.01, 0) and its two react flags are stored and not
+simulated: no vehicle here reacts to wind or currents. A motorcycle is a ground vehicle where `VehicleGroundGravityFactor`
+is concerned, as InWorldz treats it as a car. A script's type number reaches the engine as it is (`llSetVehicleType` ->
+`SceneObjectPart.SetVehicleType` -> the physics actor's `VehicleType`); the Phlox script engine knows both constants and accepts
+the numbers, the YEngine takes its constants from `ScriptBaseClass` (`LSL_Constants.cs`, `XMREngine.cs:397`), which lacks both names (a script there can pass the number).
+The simulator's own saved record of a vehicle (`SOPVehicle`) has no preset for these two types: a vehicle of either type that is
+handed back from its saved record (a region restart, a rez, a crossing) has the no-vehicle values for every setting the record
+holds, with only what its script set, until the script sets its type again; `SOPVehicle.ProcessTypeChange` would need a case for each.
+
+A vehicle rotation or vector parameter that is not a number (a NaN or an infinity in any component) is refused,
+as a float one is, and the stored value is kept; this includes `VEHICLE_REFERENCE_FRAME`, also when a saved
+vehicle hands one back.
+
+The module's vehicle debugging and enablement switches (`DoMotors`, `DoBanking` and the others on
+`VehicleSettings`, all on, and the `Debug*` ones, all off) are part of a region's vehicle settings: one region's
+setting does not change another's. They have no `[Jolt]` keys.
+
+### Vehicle behaviour: SecondLife or InWorldz
+
+`[Jolt] VehicleBehaviour` chooses whose behaviour a region's vehicles follow where Second Life's documentation and the
+InWorldz (Halcyon) simulator differ. It is read once when the region starts.
+
+- `SecondLife` (the default): what Second Life's wiki documents. Nothing changes for a region that does not set the key.
+- `InWorldz`: the behaviours in the table below, camera steering (below the table), and the InWorldz preset values
+  (`VehiclePresets = legacy`).
+
+```ini
+[Jolt]
+    VehicleBehaviour = InWorldz
+```
+
+Any other value is refused at start-up: the log names the allowed values (`SecondLife, InWorldz`) and `SecondLife` is used.
+
+**How it combines with `VehiclePresets`:** where `VehiclePresets` is set it decides the preset values, whatever the behaviour;
+where it is not set, the behaviour does (`InWorldz` gives `legacy`, `SecondLife` gives `documented`).
+
+| Behaviour under `InWorldz` | `SecondLife` (documented) | `InWorldz` (Halcyon) | What a driver notices |
+|---|---|---|---|
+| `LIMIT_ROLL_ONLY` | The attractor leaves the pitch alone for every type. | Cars, boats and sleds keep a tenth of the pitch spring (airplanes and balloons keep none). | A roll-only car left nose-up or nose-down comes slowly back to level. |
+| `HOVER_UP_ONLY` | Hover never pushes down, and buoyancy vanishes above the hover height. | Above its height the hover acts only while buoyancy is positive, and then pushes down; buoyancy does not vanish. | A buoyant up-only hover vehicle (a balloon) is held at its height instead of drifting above it. |
+| Friction that would push up | Friction acts on every axis, so a falling vehicle with a short vertical friction is slowed. | That friction is dropped. | A falling car falls at g, not at its slowed terminal speed. |
+| Motor decay | The motor starts to decay as it is set. | A motor whose timescale vector is shorter than 0.9 holds its whole grip for up to 0.06 s first. | A quick motor (a car's turning motor) reaches more of its speed before its decay takes it back. |
+| Self-righting | The attractor is the spring of the vehicle's timescale and efficiency. | Vehicles other than airplanes are righted harder (the spring is `1 + (1 + tilt / pi)^4` times as stiff), and while overturned (tilt of 108 degrees or more) and not improving, harder by a factor of 1.3 every 15 ms, up to 10 times. | A flipped car rights itself sooner. |
+| `VEHICLE_BUOYANCY` | The share of gravity is `1 - buoyancy`. | A buoyancy from 0.977 up to (not including) 1 acts as 1. | A balloon set to 0.98 floats instead of sinking slowly. |
+| Upward linear motor | The motor pulls toward its direction on every axis. | The motor's upward change of velocity in a step has `g * (1 - buoyancy)` (g negative) added to it, and is dropped if that leaves it below zero (`VehicleDynamics.cs:2707-2712`, read, not run). The comparison is a change of velocity in one step against an acceleration, as there, so for a vehicle with no buoyancy an upward push is dropped unless it changes the velocity by more than 9.8 m/s in one step, and a push bigger than that has 9.8 m/s taken off it. | A car or boat with an upward motor component does not rise (a vehicle with buoyancy 1, a balloon, is not touched). A motor that pulls up against a fall (a motor target below the falling speed) is dropped too. |
+| Hover moderation | Hover and the linear motor act together. | While a hover flag (`HOVER_GLOBAL_HEIGHT`, `HOVER_TERRAIN_ONLY`, `HOVER_WATER_ONLY`) is set, the hover timescale is below 300 s and the motor still moves the vehicle up or down by more than 0.005 m/s in a step, the linear motor's decay clock is put on 10 s each step (`VehicleDynamics.cs:2714-2720`). | A hovering vehicle with a vertical motor loses its whole linear motor, all three axes, within a few steps. |
+| Hover at height 0 and efficiency 0 | A hover of height 0 with efficiency 0 hovers (bouncing about the ground). | It is no hover, "legacy scripts" (`VehicleDynamics.cs:1563-1564`); a hover that was on has its timescale put to 300 s as well, so a later height and efficiency do not bring it back until the script sets the timescale again. | A script that clears its hover by zeroing the height and efficiency stops hovering. |
+| Attractor dormancy | The attractor acts all the time. | It goes dormant once the tilt has not changed by pi / 256 (0.7 degrees) in a step for 1.5 s, never while the tilt is 108 degrees or more, and wakes when the tilt has moved 0.7 degrees from where it went dormant (`VehicleDynamics.cs:1255-1264`). The step's change is taken per 15 ms of time while it acts, so the step rate does not decide how long it stays awake. | A vehicle that has stopped tilting stays at the lean it has (a car on a slope, a boat settled at an angle) until something moves it 0.7 degrees. |
+
+**Camera steering** (`InWorldz` only): the mouselook flags do not steer or bank while the camera is within about 2.8
+degrees of the vehicle's heading (or of its pitch); outside that the turn is the camera's offset, shaped, as a share of the script's
+motor direction, and `VEHICLE_FLAG_MOUSEPOINT_STEER` and `_BANK` do the same in any view; see "Mouselook steering" below.
+
+**InWorldz extension flags.** A script sends them on InWorldz's numbers: `VEHICLE_FLAG_REACT_TO_CURRENTS` 0x10000,
+`REACT_TO_WIND` 0x20000, `LIMIT_MOTOR_DOWN` 0x40000, `TORQUE_WORLD_Z` 0x80000, `MOUSEPOINT_STEER` 0x100000 and
+`MOUSEPOINT_BANK` 0x200000 (`VehicleFlags.cs:48-60`). Each reaches the engine as itself, from `llSetVehicleFlags`,
+`llRemoveVehicleFlags` and a saved vehicle (rezzed, copied, loaded with the region, crossing in). `LIMIT_MOTOR_DOWN` and
+`TORQUE_WORLD_Z` act; `MOUSEPOINT_STEER` and `MOUSEPOINT_BANK` act under `InWorldz` (camera steering, below); `REACT_TO_WIND` and
+`REACT_TO_CURRENTS` are held and read back but nothing acts on them yet. They act under either behaviour,
+because a script has to ask for them. Before this was fixed the numbers were read as another engine flag each (a script's
+`LIMIT_MOTOR_DOWN` set an unused flag, `REACT_TO_CURRENTS` set `LIMIT_MOTOR_DOWN`, `REACT_TO_WIND` set `TORQUE_WORLD_Z`, and
+`TORQUE_WORLD_Z` set `MOUSEPOINT_BANK`), so a vehicle that set one of those flags changes: it now does what the script asked.
+The type presets were right and do not change.
+
+**InWorldz parameters** (`llSetVehicleFloatParam`; the code is `VehicleParamCodes.cs`'s, the range is InWorldz's
+`ClampFloatParam`, and a value that is not a number is refused). Each is held and read back under both behaviours; a type
+change puts the preset value back. The region's saved record of a vehicle (`SOPVehicle`) has no field for them, so a value a
+script set is lost when the vehicle is rezzed, copied, loaded with the region or crosses into another: the preset comes back.
+
+| Parameter | Code | Held to | What it does here |
+|---|---|---|---|
+| `VEHICLE_MOUSELOOK_AZIMUTH` | 11001 | pi / 32 to pi | The sideways range of the mouselook dead zone (`InWorldz` only). |
+| `VEHICLE_MOUSELOOK_ALTITUDE` | 11002 | pi / 32 to pi | The vertical range of the dead zone (`InWorldz` only). |
+| `VEHICLE_BANKING_AZIMUTH` | 11003 | pi / 128 to pi | The roll range banking counts as a share of (`InWorldz` only; the default pi / 2 is Second Life's). |
+| `VEHICLE_DISABLE_MOTORS_ABOVE` | 11004 | as sent | Held only. InWorldz casts a ray down about eight times a second and drops the motors above this height for the delay below; that ray and the delay are not built here. |
+| `VEHICLE_DISABLE_MOTORS_AFTER` | 11005 | as sent | Held only (see above). |
+| `VEHICLE_INVERTED_BANKING_MODIFIER` | 11006 | -10 to 10 | An airplane flying inverted banks by this factor times its banking efficiency (`InWorldz` only; no other type is marked inverted there). |
+
+Each behaviour follows Halcyon's code as read (not run: it needs PhysX); the figures its formula gives are checked in the
+tests. Two things are the module's own: the self-righting factor stops at 10 where Halcyon has no limit, and it grows per 15 ms
+of time (Halcyon's step) instead of per step, so it does not depend on the step rate. Halcyon's buoyancy adjustment also covers
+`llSetBuoyancy` on an ordinary object; here it is applied to a vehicle's buoyancy only.
+
+Choose `InWorldz` for a region whose vehicles were built for InWorldz or Halcyon grids and are tuned against these behaviours; leave
+the default for vehicles built for Second Life. In the harness the choice is `--jolt VehicleBehaviour=InWorldz`; the runs `iw-car-pad`,
+`iw-car-ramp`, `iw-airplane` and `iw-mouselook-turn` of `ci/runs.txt` record it (a car on level ground, a car down a 15 degree ramp,
+an airplane, a car turned 90 degrees by the mouselook camera), checked with the regression check below like the other runs.
+
+Not built from the InWorldz code, and why: the friction stop below 0.002 m/s (`VehicleDynamics.cs:1500-1508`) is reached only when
+the vehicle's speed is under 0.002 m/s and one component of its local velocity is at least 0.002 m/s, which cannot both hold (no
+component is larger than the speed); it is a patch for PhysX's sleeping, and the rest rule (`VehicleRestSpeed`) does that here.
 ### Vehicle limits
 
 The limits a script's vehicle parameters are held to are `[Jolt]` keys, read once when the region
@@ -1037,7 +1123,8 @@ the motor decay cap, which is Second Life's documented 120 s.
 |---|---|---|
 | `VehicleMaxLinearSpeed` | 200 | Linear motor speed a script can set (m/s, each axis) and the motor's result. Second Life documents about 30. |
 | `VehicleReferenceSpeed` | 30 | The forward speed (m/s) at which dynamic banking and angular deflection reach full strength. |
-| `VehicleMaxAngularSpeed` | 12.566371 (4 pi) | Angular motor speed a script can set (rad/s, each axis) and the angular result. |
+| `VehicleMaxAngularSpeed` | 12.566371 (4 pi) | Angular motor speed a script can set (rad/s) and the angular result: the magnitude of the direction under `SecondLife`, each axis under `InWorldz` (below the table). |
+| `VehicleAngularLimiterFloor` | 0.1 | The angular rate limiter's floor, 0 to 1 (below the table). 1 turns the limiter off. |
 | `VehicleMinTimescale` | 0.0156 | Shortest timescale a script can set (s), 0.001 to 1. |
 | `VehicleMaxTimescale` | 1000 | Longest friction, motor or deflection timescale (s), at most 1000. 1000 s or more is "off" for friction and deflection. |
 | `VehicleMaxDecayTimescale` | 120 | Longest motor decay timescale (s). It was 1000 before this key. |
@@ -1049,6 +1136,28 @@ the motor decay cap, which is Second Life's documented 120 s.
 | `VehicleContactFriction` | 0 | The contact friction of a vehicle body (BulletSim's `VehicleFriction`, also 0 by default): 0 leaves the vehicle's friction timescales as the only friction on it. |
 | `VehicleRestSpeed` | 0.1 | The rest rule (m/s), see "Parked vehicles sleep" below. 0 turns it off. |
 | `BodyMaxLinearSpeed`, `BodyMaxAngularSpeed` | 500, 47.12389 | The physics engine's own cap on every moving body, vehicle or not (Jolt's defaults). Keep it above `VehicleMaxLinearSpeed`. |
+
+**The angular rate limiter** (under both behaviours). When a script sets `VEHICLE_ANGULAR_MOTOR_DIRECTION`, the direction the
+motor works on is the script's times the ratio
+
+    s = (angular deflection timescale + 0.001) / (angular deflection efficiency + 0.00001)
+
+when `s` is below 1, but by no less than `VehicleAngularLimiterFloor`. A vehicle whose angular deflection is strong and quick
+(efficiency up, timescale down) is turned more slowly by its motor: 0.5 s and 1 gives a direction of 0.5 times what was set, and
+anything at 0.1 s or quicker with efficiency 1 gives the floor, 0.1 times. The ratio is taken from the deflection settings at the
+moment the direction is set, as InWorldz does (settings made afterwards do not rescale a direction already set), and what the script
+set is kept as it was (`VEHICLE_ANGULAR_MOTOR_DIRECTION` reads back unchanged). The formula and the 0.1 floor are the InWorldz
+code's (`VehicleDynamics.cs:3107-3116`, read, not run), which says it copies Second Life; Second Life's pages do not document
+such a limiter, so there is no Second Life figure to prefer. Second Life does document a cap of 4 pi rad/s on the *magnitude*
+of the angular motor: "The magnitude of the angular motor is capped to be no more than two rotations per second (4 * PI
+radians/sec)" (the tutorial's "Steering the Vehicle"), and "VEHICLE_ANGULAR_MOTOR_DIRECTION magnitude is capped at 4 * PI (2
+revolutions per second total)" (the `VEHICLE_ANGULAR_MOTOR_DIRECTION` page). Under `SecondLife` a direction longer than
+`VehicleMaxAngularSpeed` is scaled down to that length with its direction kept, so <10, 10, 10> is held as <7.26, 7.26, 7.26>;
+a direction inside the cap is stored as sent. Under `InWorldz` each axis is held to 4 pi, as InWorldz does
+(`VehicleDynamics.cs:394-398`), which lets a diagonal direction reach 4 pi times the square root of 3. The scalar form of the call
+(which sets all three axes) and a saved vehicle's direction are held the same way. A script that sets a diagonal longer than 4 pi
+turns more slowly under the default than it did before this rule.
+None of the type presets (either set) has a ratio below 1, so a vehicle that sets no deflection of its own is not limited.
 
 ### Vehicle motors and friction
 
@@ -1087,7 +1196,12 @@ exact solution over the step the engine takes:
 
 - Hover is a damped spring on the height error `e`: `e'' = -e / T^2 - 2 eff e' / T`, with
   `VEHICLE_HOVER_TIMESCALE` `T` and `VEHICLE_HOVER_EFFICIENCY` `eff` from bouncy (0) to critically
-  damped (1). The hover flags choose terrain, water or the global height as before. With
+  damped (1). The hover flags choose terrain, water or the global height as before; with
+  `VEHICLE_FLAG_HOVER_GLOBAL_HEIGHT` set the global height wins over `VEHICLE_FLAG_HOVER_WATER_ONLY`
+  and `VEHICLE_FLAG_HOVER_TERRAIN_ONLY` set with it (the flag's page: "instead of height above ground or
+  water"). With `VEHICLE_FLAG_HOVER_WATER_ONLY` and `VEHICLE_FLAG_HOVER_TERRAIN_ONLY` both set and the global
+  flag clear, the vehicle hovers over the higher of the water and the ground, as with neither flag: Second
+  Life's pages call the case undefined, and InWorldz reads both flags set as hovering over both. With
   `VEHICLE_FLAG_HOVER_UP_ONLY` hover never pushes down, and buoyancy vanishes above the hover height.
   A vehicle without full buoyancy hovers below its height, where the spring holds its weight.
 - The vertical attractor is the same spring on the vehicle's roll and pitch, with
@@ -1127,9 +1241,43 @@ that as on any motor direction, with its timescale and decay. Together with the 
 gives a turn with half critical damping: it overshoots the camera by about a sixth of the angle and
 settles in a few motor timescales. The axes not aimed keep the script's direction.
 
-The camera is used whether or not the driver is in mouselook; Second Life's pages do not say what
-happens outside it. With no driver's camera (no script has taken the controls) the flags change
-nothing. `VEHICLE_FLAG_CAMERA_DECOUPLED` is a hint for the viewer and does nothing in the engine.
+The flags act only while the driver is in mouselook (the viewer's mouselook control flag, which the simulator
+passes with the camera as `CameraData.MouseLook`). Out of mouselook the vehicle behaves as if the flags were
+clear: the angular motor turns it at the script's direction. Second Life's pages do not say what happens
+outside mouselook; InWorldz acts on the camera for these flags only in mouselook. With no driver's camera (no
+script has taken the controls) the flags change nothing. `VEHICLE_FLAG_CAMERA_DECOUPLED` is a hint for the viewer and does nothing in the engine.
+
+Under `[Jolt] VehicleBehaviour = InWorldz` there is a dead zone, as in InWorldz (`VehicleDynamics.cs:819-844`, read, not run): the
+sideways part of the camera's direction in the vehicle's frame, times pi / 2 over the vehicle's mouselook azimuth (pi / 4 in every
+preset, and a script sets it with `VEHICLE_MOUSELOOK_AZIMUTH`, 11001), held to -1..1, is compared with pi / 32; while it is no more
+than that, which with the preset azimuth is a camera within 2.81 degrees of the heading, the yaw (or, with the bank flag, the roll)
+is not aimed at all, and the motor on that axis is zero. The pitch has the same threshold over the altitude range
+(`VEHICLE_MOUSELOOK_ALTITUDE`, 11002). Outside the zone InWorldz does not aim the vehicle at the camera: the share is shaped
+"into a soft exponential", (e^x - 1) / (e - 1) (6 percent of the way just outside the zone, 39 percent for a camera 15 degrees off,
+the whole of it from 30 degrees), and the angular motor is set to that share of the direction the script gave
+(`VehicleDynamics.cs:833-856`, read, not run): steering sets (0, pitch share * the script's y, yaw share * the script's z), banking
+(-yaw share * the script's x, 0, 0), both set banking stands, and the camera's pitch is not steered under `LIMIT_ROLL_ONLY`.
+Each camera step is an ordinary set of the motor, so its decay restarts while the camera is held off the heading, and the angular
+rate limiter applies; with the camera inside the zone nothing is set and the motor goes on as it was, fading by its decay.
+While the driver is in mouselook with a mouselook flag set a script's own set of the angular motor direction is kept as the
+direction the share is taken of and does not move the motor (`VehicleDynamics.cs:478-482`). `VEHICLE_FLAG_MOUSEPOINT_STEER`
+and `_BANK` steer and bank from the camera in any view, not only mouselook (`VehicleDynamics.cs:813-816`); a vehicle with either
+set is never let to sleep. Measured on the real engine (`VehicleInWorldzMouselookTurnTests`, the car preset, a camera turned 90
+degrees, the angular motor 1.5 rad/s held for 16 s): InWorldz turns at the whole rate until the camera is within 30 degrees,
+then slower, and does not overshoot (89.99 degrees at most at 45 Hz, 89.3 at one step per heartbeat; 20 degrees short at 1 s, 3
+at 2 s, within a degree from 4 s, within half a degree from 9.3 s at 45 Hz, and about 0.7 short once inside the zone at 11 Hz);
+Second Life's aim overshoots by 11.4 degrees and is within half a degree from 8.7 s. A bare motor with no angular friction
+or decay hunts about a camera 20 degrees off by up to 5 degrees (a period of about 4.5 s), as any rate steered by an offset
+does; a car with its own friction settles. InWorldz reads the camera once in eight frames (`VehicleDynamics.cs:796`); here it is read
+on every step, which only makes the turn answer the camera sooner by under a fifth of a second. InWorldz measures the pitch as the
+vertical part of the camera's own sideways axis (`VehicleDynamics.cs:808, 820`), which is level for a camera that is not rolled;
+the host passes the camera's direction only, and the pitch share here is the camera's pitch. It is InWorldz's alone
+because the engine holds steady without it: measured on the real engine (`VehicleMouselookHuntingTests`, a car driven straight with
+the camera on its heading, the camera shaking by 0.2, 0.5 and 1 degree at 15, 30 and 60 updates a second at 45 Hz physics, and at
+one step per heartbeat), the heading wobbles by less than the shake itself (a standard deviation of 0.05 to 0.2 degrees, never above
+0.6 of the shake, and not growing over 20 s), a held camera leaves it straight to 0.03 degrees, and after a 90 degree turn of the camera
+the car overshoots by 11 to 16 degrees and is within half a degree of the camera by 12 s. A dead zone is therefore a matter of feel,
+not a cure for hunting.
 - Linear deflection turns the velocity toward the vehicle's nose, keeping its speed, the angle between
   them decaying as `e^(-eff t / T)`; with `VEHICLE_FLAG_NO_DEFLECTION_UP` only the horizontal part
   turns. Angular deflection turns the nose toward the velocity the same way, scaled by the speed over
@@ -1193,7 +1341,11 @@ These documented behaviours are not simulated:
 A vehicle's body may sleep, as any other body does, while nothing in the vehicle would move it: no
 motor pulling (never set, faded, or set to zero), hover off or at its height, and the attractor done
 or the vehicle resting on something. A script setting a motor or any vehicle parameter wakes it, as
-does a collision.
+does a collision. A vehicle with `VEHICLE_FLAG_MOUSELOOK_STEER` or `VEHICLE_FLAG_MOUSELOOK_BANK` set
+never sleeps, whether or not its driver is in mouselook: a sleeping vehicle would read no camera, and
+InWorldz keeps such a vehicle awake for that reason (its sleep threshold is 0, `VehicleDynamics.cs:784-789`,
+read, not run); under `InWorldz` a vehicle with `VEHICLE_FLAG_MOUSEPOINT_STEER` or `_BANK` set never sleeps either. Second Life's
+pages say nothing about sleeping.
 
 A vehicle body has no contact friction by default (`VehicleContactFriction` 0, as BulletSim), and
 Second Life's vehicle friction is a velocity decay with no static part, so without more a car that
@@ -1251,6 +1403,9 @@ These read and report only, and are always available:
 | `jolt raytest` | A physics ray down through the first avatar |
 | `jolt reloadcheck` | Physical prims that moved since they were loaded |
 | `jolt vehiclestatus` | The vehicle state of every prim that has one |
+
+When a region is removed its physics is torn down and its `jolt` commands stop answering. The console has no
+call to take a command back, so they stay listed but do nothing; the other regions' commands are not touched.
 
 ### Test commands
 
@@ -1315,6 +1470,7 @@ Scenarios: `car` (the car type's presets, motor `<8,0,0>` while a key is held, t
 `crash-wall`, `crash-box`, `crash-headon` and `crash-drop`, `rollonly` (a car rolled and pitched with
 `VEHICLE_FLAG_LIMIT_ROLL_ONLY`) and `motor-offset` (a floating box pushed below its centre of mass),
 `bank-turn` (the airplane rolled 20 degrees and pitched 30 degrees nose up, banking into a right turn),
+`mouselook-hold` (the same car driving straight with the camera on its heading; `--camera-noise DEG --camera-rate HZ` shakes the camera),
 `mouselook-turn` (a car with `VEHICLE_FLAG_MOUSELOOK_STEER` turning to a driver's camera looking north)
 and `mouselook-bank` (the airplane with `VEHICLE_FLAG_MOUSELOOK_BANK` rolling and banking toward a camera
 60 degrees to its right), and
@@ -1409,10 +1565,9 @@ dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --che
 
 The baseline depends on the joltc build that was loaded, not on the operating system: the stock
 files are built without Jolt's `CROSS_PLATFORM_DETERMINISTIC` option, so the stock Windows x64 file
-gives different results from the stock Linux x64 file, while the patched build gives the same
-results on both. Each `--out` folder holds `native.txt`, naming the build the run loaded, and the
-check reads `ci/baselines/patched/` for the patched build or `ci/baselines/stock-<version>-<rid>/`
-for a stock file. It leaves out `ray_us_per_cast`, which is timed on the wall clock. A build with
+gives different results from the stock Linux x64 file. Each `--out` folder holds `native.txt`,
+naming the build the run loaded, and the check reads `ci/baselines/stock-<version>-<rid>/` for that
+file. It leaves out `ray_us_per_cast`, which is timed on the wall clock. A build with
 no baseline (the stock Arm64 and macOS files, a file the module has no record of, or a new package
 version not yet recorded) is reported as `SKIPPED: no baseline for this native` with exit code 3,
 neither passed nor failed. Exit 0 is passed and 1 is failed. To record a build's baseline from a set

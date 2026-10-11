@@ -43,7 +43,7 @@ public class AvatarConstantForceTests
 
     // An avatar put this far above level ground, flying or not, then `setup` (the force, buoyancy, hover...), then `input`
     // before each heartbeat.
-    private static Scenario At(string name, float height, bool flying, float duration, Action<Run> setup, Action<Run>? input = null) => new()
+    private static Scenario At(string name, float height, bool flying, float duration, Action<Run> setup, Action<Run> input = null) => new()
     {
         Name = name,
         Description = name,
@@ -56,7 +56,7 @@ public class AvatarConstantForceTests
         Input = input ?? (_ => { }),
     };
 
-    private static (RunResult Result, List<Point> Trace) Run(Scenario sc, double physicsRate, List<CharacterStepTrace>? steps = null)
+    private static (RunResult Result, List<Point> Trace) Run(Scenario sc, double physicsRate, List<CharacterStepTrace> steps = null)
     {
         var trace = new List<Point>();
         Action<Run> input = sc.Input;

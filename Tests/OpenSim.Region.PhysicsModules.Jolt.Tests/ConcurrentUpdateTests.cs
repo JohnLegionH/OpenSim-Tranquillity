@@ -132,7 +132,7 @@ public class ConcurrentUpdateTests
     private static bool NativeAllowsPools => JoltNative.EnsureLoaded(allowUnrecorded: false).SafeForMultiplePools;
 
     // The pools a run asking for `jobPools` must get on the native this process loaded: all of them on one the record
-    // marks safe for more than one pool (the patched build), else one (the stock package native). Worked out here, not
+    // marks safe for more than one pool, else one (every recorded build is one: the stock package native). Worked out here, not
     // with the backend's own resolver, so a backend that skipped the fallback fails this check before it steps.
     private static int PoolsOnThisNative(int jobPools) => NativeAllowsPools ? jobPools : 1;
 
@@ -148,12 +148,11 @@ public class ConcurrentUpdateTests
         });
     }
 
-    // Multi-pool halves run on the patched native: in this process when it loaded that build, else in a child test
-    // host on a supplied patched build (the *_on_the_patched_native tests below); the one-pool fallback is checked here.
+    // The multi-pool halves run only on a native the record marks safe for more than one pool; on the stock native the
+    // one-pool fallback is checked instead.
     [Fact]
     public void Heavy_regions_one_update_per_pool()
     {
-        PatchedNativeChild.AssertPatchedWhenChild();
         foreach (var pools in new[] { 1, 2 })
         {
             var regions = RunRegions(regions: 4, boxes: 1000, frames: 100, jobPools: pools, out var took);
@@ -169,7 +168,6 @@ public class ConcurrentUpdateTests
     [Fact]
     public void Ten_regions_complete()
     {
-        PatchedNativeChild.AssertPatchedWhenChild();
         foreach (var pools in new[] { 1, 3 })
         {
             var regions = RunRegions(regions: 10, boxes: 100, frames: 100, jobPools: pools, out _);
@@ -186,25 +184,6 @@ public class ConcurrentUpdateTests
                 AssertOnePoolFallback(regions, pools);
             DisposeAll(regions);
         }
-    }
-
-    // The two tests above in a child test host on the patched native (PatchedNativeChild), so their multi-pool halves
-    // run; skipped, with the reason, when no patched build is supplied.
-    [PatchedNativeFact]
-    public void Heavy_regions_one_update_per_pool_on_the_patched_native() => RunOnPatched(nameof(Heavy_regions_one_update_per_pool));
-
-    [PatchedNativeFact]
-    public void Ten_regions_complete_on_the_patched_native() => RunOnPatched(nameof(Ten_regions_complete));
-
-    private void RunOnPatched(string method)
-    {
-        if (NativeAllowsPools)
-        {
-            // This process loaded a build that runs more than one pool, so the test itself ran its multi-pool half.
-            _out.WriteLine($"{method} ran its multi-pool half in this process");
-            return;
-        }
-        _out.WriteLine(PatchedNativeChild.RunAndAssertPassed(GetType(), method));
     }
 
     [Fact]

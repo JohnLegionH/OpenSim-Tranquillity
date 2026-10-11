@@ -24,6 +24,8 @@ public static class Program
   --slope DEG[,DEG..]        ramp angles for the scenarios that use one (default: each scenario's own list)
   --duration S               seconds to simulate (default: the scenario's)
   --hold S                   seconds the drive key is held (default: the scenario's)
+  --camera-noise DEG         mouselook scenarios: the camera shakes, each update adding a random yaw and pitch of this
+                             standard deviation (degrees); --camera-rate HZ updates a second (30); --camera-seed N
   --keyrepeat S              how often a held key re-sends the motor (default: 0.1)
   --feed heartbeat|region    how a held key reaches a car: 'heartbeat' (default) lands each key event half a
                              heartbeat before a step, the car resting on the ground at the start; 'region' feeds
@@ -85,9 +87,9 @@ The summary table always goes to standard output. Nothing is written anywhere el
         try
         {
             if (args.Length > 0 && args[0] == "--stress")
-                return Stress.Main(args[1..], Console.Out);
+                return Stress.Run(args[1..], Console.Out);
             if (args.Length > 0 && args[0] is "--check-baseline" or "--record-baseline")
-                return BaselineCheck.Main(args, Console.Out);
+                return BaselineCheck.Run(args, Console.Out);
             return Run(args, Console.Out);
         }
         catch (ArgumentException e)
@@ -160,6 +162,9 @@ The summary table always goes to standard output. Nothing is written anywhere el
                     break;
                 case "--duration": o.Duration = (float)PositiveDouble(Next(), a); break;
                 case "--hold": o.Hold = (float)NonNegativeDouble(Next(), a); break;
+                case "--camera-noise": o.CameraNoiseDegrees = (float)NonNegativeDouble(Next(), a); break;
+                case "--camera-rate": o.CameraRateHz = PositiveDouble(Next(), a); break;
+                case "--camera-seed": o.CameraSeed = (int)NonNegativeDouble(Next(), a); break;
                 case "--keyrepeat": o.KeyRepeat = (float)PositiveDouble(Next(), a); break;
                 case "--keydelay": o.KeyDelay = (float)NonNegativeDouble(Next(), a); break;
                 case "--startspeed": o.StartSpeed = (float)NonNegativeDouble(Next(), a); break;

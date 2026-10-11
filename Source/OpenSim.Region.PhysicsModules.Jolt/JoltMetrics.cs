@@ -22,8 +22,7 @@
 //
 // NOT YET obtainable here: TempAllocator high-water / malloc-fallback rate. The native
 // TempAllocatorImplWithMallocFallback tracks that internally but the joltc C API does not export it.
-// Add a counter to the native the next time it is patched (same bucket as the s_PhysicsSystems lock
-// TODO in native/joltc/README.md), then surface it here.
+// Surface it here if joltc ever exports it.
 
 using System;
 using System.Collections.Concurrent;

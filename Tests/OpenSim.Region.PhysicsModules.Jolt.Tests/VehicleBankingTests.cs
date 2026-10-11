@@ -88,7 +88,7 @@ public class VehicleBankingTests
             {
                 step(1.0 / rate);
                 Vector3 nose = Vector3.UnitX * body.Orientation;
-                double angle = Math.Acos(Math.Clamp(Vector3.Dot(nose, Vector3.Normalize(velocity)), -1f, 1f));
+                double angle = Math.Acos(Math.Clamp(Vector3.Dot(nose, Vector3.Normalize(in velocity)), -1f, 1f));
                 double expected = a0 * Math.Exp(-efficiency * (speed / 30.0) * (i / rate) / timescale);
                 Assert.True(Math.Abs(angle - expected) < 2e-4, $"{rate} Hz at {i / rate:0.000} s (step {i}): {angle} against {expected}");
             }
