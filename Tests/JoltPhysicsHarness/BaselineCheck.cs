@@ -232,7 +232,7 @@ public static class BaselineCheck
     /// The command line: --check-baseline OUTROOT --baselines DIR, or --record-baseline OUTROOT --baselines DIR
     /// [--leave-out RUN[,RUN..]]. Exit 0 passed (or recorded), 1 failed, 3 skipped (no baseline for this native).
     /// </summary>
-    public static int Main(string[] args, TextWriter output)
+    public static int Run(string[] args, TextWriter output)
     {
         string mode = args.Length > 0 ? args[0] : null;
         string outputRoot = args.Length > 1 ? args[1] : throw new ArgumentException($"{mode} needs the folder the runs wrote to");

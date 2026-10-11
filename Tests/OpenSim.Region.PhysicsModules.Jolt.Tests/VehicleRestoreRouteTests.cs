@@ -133,7 +133,7 @@ public class VehicleRestoreRouteTests
             [nameof(VehVectorParam.AngularMotorTimescale)] = Text(new Vector3(vd.m_angularMotorTimescale)),
             [nameof(VehVectorParam.LinearMotorDecayTimescale)] = Text(new Vector3(vd.m_linearMotorDecayTimescale)),
             [nameof(VehVectorParam.AngularMotorDecayTimescale)] = Text(new Vector3(vd.m_angularMotorDecayTimescale)),
-            ["ReferenceFrame"] = Text(Quaternion.Normalize(vd.m_referenceFrame)),
+            ["ReferenceFrame"] = Text(Quaternion.Normalize(in vd.m_referenceFrame)),
             ["linear motor running"] = false.ToString(),
             ["angular motor running"] = false.ToString(),
         };

@@ -27,11 +27,11 @@ internal static class PatchedNativeChild
     public const string DirVariable = "JOLT_TEST_PATCHED_NATIVE_DIR";
 
     /// <summary>The folder JOLT_TEST_PATCHED_NATIVE_DIR names, or null when it is not set.</summary>
-    public static string? SuppliedFolder
+    public static string SuppliedFolder
     {
         get
         {
-            string? dir = Environment.GetEnvironmentVariable(DirVariable);
+            string dir = Environment.GetEnvironmentVariable(DirVariable);
             return string.IsNullOrEmpty(dir) ? null : Path.GetFullPath(dir);
         }
     }
@@ -43,7 +43,7 @@ internal static class PatchedNativeChild
     /// Why a test that needs the patched build cannot run here, or null when it can: the record has a patched build
     /// for the running platform and JOLT_TEST_PATCHED_NATIVE_DIR is set.
     /// </summary>
-    public static string? SkipReason()
+    public static string SkipReason()
     {
         string rid = JoltNative.CurrentRid();
         if (!JoltNative.Platforms.TryGetValue(rid, out var platform) || !Recorded.Any(b => b.Folder == platform.Folder))
@@ -65,7 +65,7 @@ internal static class PatchedNativeChild
     /// </summary>
     public static string Require()
     {
-        string? supplied = SuppliedFolder;
+        string supplied = SuppliedFolder;
         Assert.True(supplied != null, $"{DirVariable} is not set");
         string rid = JoltNative.CurrentRid();
         string path = PathIn(supplied!, JoltNative.Platforms[rid].Folder);
@@ -107,7 +107,7 @@ public sealed class PatchedNativeFactAttribute : FactAttribute
 {
     public PatchedNativeFactAttribute()
     {
-        string? reason = PatchedNativeChild.SkipReason();
+        string reason = PatchedNativeChild.SkipReason();
         if (reason != null)
             Skip = reason;
     }

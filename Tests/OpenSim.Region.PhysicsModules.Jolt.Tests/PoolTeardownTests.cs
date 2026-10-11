@@ -63,7 +63,7 @@ public class PoolTeardownTests
     /// <summary>What the binding says about the live pool's handle, read by reflection (NativeObject.OwnsHandle).</summary>
     private static string PoolHandleState()
     {
-        var pools = (Array?)typeof(JoltPhysicsBackend).GetField("s_pools", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null);
+        var pools = (Array)typeof(JoltPhysicsBackend).GetField("s_pools", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null);
         if (pools == null || pools.Length == 0)
             return "no pools";
         var sys = pools.GetValue(0)!.GetType().GetField("System")!.GetValue(pools.GetValue(0))!;

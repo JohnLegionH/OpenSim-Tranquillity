@@ -59,8 +59,8 @@ public class SystemTeardownTests
     private static int FoundationRefCount()
         => (int)typeof(JoltPhysicsBackend).GetField("s_foundationRefCount", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
 
-    private static PhysicsSystem? NativeSystem(JoltPhysicsBackend b)
-        => (PhysicsSystem?)typeof(JoltPhysicsBackend).GetField("_system", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(b);
+    private static PhysicsSystem NativeSystem(JoltPhysicsBackend b)
+        => (PhysicsSystem)typeof(JoltPhysicsBackend).GetField("_system", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(b);
 
     private static void Cycle()
     {
@@ -212,7 +212,7 @@ public class SystemTeardownTests
         int baseline = FoundationRefCount();
 
         var b = new JoltPhysicsBackend();
-        PhysicsSystem? system = null;
+        PhysicsSystem system = null;
         b.AfterSystemCreatedForTest = () =>
         {
             system = NativeSystem(b);
@@ -247,7 +247,7 @@ public class SystemTeardownTests
         var scene = new JoltScene();
         scene.Initialise(config);
 
-        PhysicsSystem? system = null;
+        PhysicsSystem system = null;
         scene.BackendCreatedForTest = b => b.AfterSystemCreatedForTest = () =>
         {
             system = NativeSystem(b);

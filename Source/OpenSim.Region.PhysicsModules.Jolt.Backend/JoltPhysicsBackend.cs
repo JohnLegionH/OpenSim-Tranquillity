@@ -485,7 +485,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // bug for the same reason - the inner call runs on another system's allocator while this one's sequence
         // is still open, and neither allocator's LIFO order survives if the callback does anything on either.
         // ---------------------------------------------------------------------
-        [ThreadStatic] private static string t_allocatorSiteInFlight;
+        [ThreadStatic] private static string? t_allocatorSiteInFlight;
 
         // ---------------------------------------------------------------------
         // The pool gate rule.
@@ -504,7 +504,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// <summary>Marks one of the seven allocator entry points as open on this thread for its duration.</summary>
         private readonly struct AllocatorSite : IDisposable
         {
-            private readonly string m_previous;
+            private readonly string? m_previous;
             private readonly bool m_on;
 
             public AllocatorSite(JoltPhysicsBackend owner, string api, bool needsGate)
@@ -521,7 +521,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                         + "does not hold this region's pool gate. On a joltc whose regions share one allocator, the gate is "
                         + "what keeps two regions' calls apart (Jolt/Core/TempAllocator.h:83-84).");
 
-                string open = t_allocatorSiteInFlight;
+                string? open = t_allocatorSiteInFlight;
                 if (open is not null)
                     throw new InvalidOperationException(
                         $"Re-entrant TempAllocator use: {api} entered while {open} is still open on this thread. Both draw on a "
@@ -2126,7 +2126,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             try
             {
                 if (lockWrite.Succeeded)
-                    ApplyMassProperties(lockWrite.Body, rec, mass);
+                    ApplyMassProperties(lockWrite.Body!, rec, mass);
             }
             finally { bli.UnlockWrite(lockWrite); }
             }   // _simLock
@@ -2209,7 +2209,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             try
             {
                 if (lockWrite.Succeeded)
-                    ApplyMassProperties(lockWrite.Body, rec, rec.Mass);
+                    ApplyMassProperties(lockWrite.Body!, rec, rec.Mass);
             }
             finally { bli.UnlockWrite(lockWrite); }
             // ubODE stops the body's turning when it locks an axis (ODEPrim createAMotor): what it was turning about a
@@ -2243,7 +2243,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             {
                 if (!lockRead.Succeeded)
                     return Vector3.Zero;
-                Vector3 inv = lockRead.Body.MotionProperties.InverseInertiaDiagonal;
+                Vector3 inv = lockRead.Body!.MotionProperties.InverseInertiaDiagonal;
                 return new Vector3(
                     inv.X > 0f ? 1f / inv.X : 0f,
                     inv.Y > 0f ? 1f / inv.Y : 0f,
@@ -2267,7 +2267,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             bli.LockRead(jid, out BodyLockRead lockRead);
             try
             {
-                return lockRead.Succeeded ? lockRead.Body.MotionProperties.LinearDamping : 0f;
+                return lockRead.Succeeded ? lockRead.Body!.MotionProperties.LinearDamping : 0f;
             }
             finally { bli.UnlockRead(lockRead); }
             }   // _simLock
@@ -2290,7 +2290,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             {
                 if (lockWrite.Succeeded)
                 {
-                    Body b = lockWrite.Body;
+                    Body b = lockWrite.Body!;
                     float mass = MathF.Max(b.Shape.Volume * physicalDensity, 1e-3f);
                     rec.Mass = mass;
                     if (rec.MotionType == BodyMotionType.Dynamic)
@@ -2435,7 +2435,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             {
                 if (lockWrite.Succeeded)
                 {
-                    MotionProperties motion = lockWrite.Body.MotionProperties;
+                    MotionProperties motion = lockWrite.Body!.MotionProperties;
                     motion.LinearDamping = MathF.Max(0f, linear);
                     motion.AngularDamping = MathF.Max(0f, angular);
                 }
@@ -2622,7 +2622,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             try
             {
                 if (lockWrite.Succeeded)
-                    lockWrite.Body.SetAllowSleeping(allow);
+                    lockWrite.Body!.SetAllowSleeping(allow);
             }
             finally { bli.UnlockWrite(lockWrite); }
             }   // _simLock

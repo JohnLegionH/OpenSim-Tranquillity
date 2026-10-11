@@ -350,7 +350,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             switch (pParam)
             {
                 case Vehicle.REFERENCE_FRAME:
-                    pValue = Quaternion.Normalize(pValue);
+                    pValue = Quaternion.Normalize(in pValue);
                     _props.ParamsRot[VehRotationParam.ReferenceFrame] = pValue;
                     break;
                 case Vehicle.ROLL_FRAME:
@@ -1045,7 +1045,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             float speed = velocity.Length();
             if (speed < VehicleLimits.ThresholdDeflectionSpeed || toward.Length() < MinDeflectionHeading)
                 return Vector3.Zero;
-            Vector3 u = velocity / speed, d = Vector3.Normalize(toward);
+            Vector3 u = velocity / speed, d = Vector3.Normalize(in toward);
             Vector3 axis = Vector3.Cross(u, d);
             float sin = axis.Length();
             if (sin < MinTurnSine)
@@ -1602,7 +1602,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             // Where the camera looks in the vehicle's frame: its yaw from the x axis (about +z, positive to the left) and
             // its pitch (about +y, positive nose down).
-            Vector3 d = Vector3.Normalize(camera) * Quaternion.Inverse(_rotation);
+            Vector3 d = Vector3.Normalize(in camera) * Quaternion.Inverse(_rotation);
             double yaw = Math.Atan2(d.Y, d.X);
             double pitch = -Math.Atan2(d.Z, Math.Sqrt(d.X * d.X + d.Y * d.Y));
             motor.Y = Aim(pitch, motor.Y, motorTs.Y);
@@ -1675,8 +1675,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private static Quaternion RotBetween(Vector3 a, Vector3 b)
         {
-            a = Vector3.Normalize(a);
-            b = Vector3.Normalize(b);
+            a = Vector3.Normalize(in a);
+            b = Vector3.Normalize(in b);
             float dot = Vector3.Dot(a, b);
 
             if (dot > 0.999999f)
@@ -1688,14 +1688,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 Vector3 axis = Vector3.Cross(Vector3.UnitX, a);
                 if (Vector3.Mag(axis) < 0.0001f)
                     axis = Vector3.Cross(Vector3.UnitY, a);
-                axis = Vector3.Normalize(axis);
+                axis = Vector3.Normalize(in axis);
                 return new Quaternion(axis.X, axis.Y, axis.Z, 0f);
             }
 
             Vector3 cross = Vector3.Cross(a, b);
             float w = (float)Math.Sqrt(a.LengthSquared() * b.LengthSquared()) + dot;
             Quaternion result = new Quaternion(cross.X, cross.Y, cross.Z, w);
-            return Quaternion.Normalize(result);
+            return Quaternion.Normalize(in result);
         }
 
         /// <summary>

@@ -1487,7 +1487,7 @@ public static class Harness
     {
         var camera = new CameraData
         {
-            CameraAtAxis = Vector3.Normalize(at),
+            CameraAtAxis = Vector3.Normalize(in at),
             CameraRotation = Quaternion.CreateFromEulers(0f, 0f, MathF.Atan2(at.Y, at.X)),
             MouseLook = true,
         };

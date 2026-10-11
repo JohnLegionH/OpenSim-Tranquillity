@@ -78,7 +78,7 @@ Exit code 0 when every thread finished; 20 when a scene stopped advancing for 60
         public int NonFinite;
     }
 
-    public static int Main(string[] args, TextWriter output)
+    public static int Run(string[] args, TextWriter output)
     {
         var o = new StressOptions();
         for (int i = 0; i < args.Length; i++)
