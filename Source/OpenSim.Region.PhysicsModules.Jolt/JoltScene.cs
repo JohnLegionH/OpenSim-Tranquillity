@@ -1318,6 +1318,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // LSL_Api.llCastRay), this is the one place to send it to RayCastBudget.Script instead.
         internal static RayCastBudget BudgetFor(RayFilterFlags filter) => RayCastBudget.Simulator;
 
+        /// <summary>Tells core that a physical prim's actor turns its body toward the rotation target it is given
+        /// (JoltPrim.AngularTarget.cs), so core hands llRotLookAt, llLookAt and the rotate-drag to the actor instead of
+        /// steering the body's angular velocity itself.</summary>
+        public override bool SupportsRotationTarget() => true;
+
         /// <summary>
         /// The clock the ray cast budgets are measured with (PhysicsBackendSettings.RayCastClock); null is the wall
         /// clock. Tests set it before the region is initialised.

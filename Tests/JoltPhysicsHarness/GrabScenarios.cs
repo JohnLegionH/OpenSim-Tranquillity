@@ -105,9 +105,12 @@ internal sealed class CoreGrab
         }
         Scene scene = (Scene)RuntimeHelpers.GetUninitializedObject(typeof(Scene));
         EventsField.SetValue(scene, new EventManager());
+        ClientManagerField.SetValue(scene, new ClientManager());   // ScheduleTerseUpdate counts the clients (none here)
         SceneField.SetValue(Group, scene);
         _scene = scene;
     }
+
+    private static readonly FieldInfo ClientManagerField = typeof(Scene).GetField("m_clientManager", BindingFlags.NonPublic | BindingFlags.Instance);
 
     private readonly Scene _scene;
     private static readonly FieldInfo SceneGraphField = typeof(Scene).GetField("m_sceneGraph", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -120,8 +123,9 @@ internal sealed class CoreGrab
     /// <summary>One ObjectSpinUpdate, as Scene.ProcessSpinObject hands it to the group when the agent may move it.</summary>
     public void SpinUpdate(Quaternion rotation) => Group.SpinMovement(rotation, null);
 
-    /// <summary>ObjectSpinStop, through the scene's own handler.</summary>
-    public void SpinStop() => _scene.ProcessSpinObjectStop(Group.UUID, null);
+    /// <summary>ObjectSpinStop, as Scene.ProcessSpinObjectStop hands it to the group (it looks the group up by part and passes the
+    /// sender's agent id; the harness has no agent, so the holder is the nil id the group records for a null client).</summary>
+    public void SpinStop() => Group.ReleaseSpin(UUID.Zero);
 
     /// <summary>Makes the group one that a script's llRotLookAt reaches: the physics flag set on the root, and a scene graph
     /// that takes the group on its update list (the region's frame then runs the root's UpdateLookAt through
@@ -129,12 +133,37 @@ internal sealed class CoreGrab
     public void EnableScriptCalls()
     {
         Root.Flags |= PrimFlags.Physics;
+        EnsureGraph();
+    }
+
+    private static readonly FieldInfo PhysicsSceneField = typeof(SceneGraph).GetField("_PhyScene", BindingFlags.NonPublic | BindingFlags.Instance);
+
+    private SceneGraph EnsureGraph()
+    {
+        if (SceneGraphField.GetValue(_scene) is SceneGraph existing)
+            return existing;
         SceneGraph graph = (SceneGraph)RuntimeHelpers.GetUninitializedObject(typeof(SceneGraph));
         UpdateListField.SetValue(graph, new Dictionary<UUID, SceneObjectGroup>());
         UpdateLockField.SetValue(graph, new object());
         GC.SuppressFinalize(graph);   // its finalizer reads fields a real scene sets up
         SceneGraphField.SetValue(_scene, graph);
+        return graph;
     }
+
+    /// <summary>Makes <paramref name="physics"/> the group's scene's physics scene, so what core asks of it
+    /// (<c>PhysicsScene.SupportsRotationTarget</c>) is answered by the engine under test, as in a region. The physics flag
+    /// goes on the root too: core's per-frame look-at pass and the drag act on a physical root.</summary>
+    public void UsePhysicsScene(PhysicsScene physics)
+    {
+        Root.Flags |= PrimFlags.Physics;
+        PhysicsSceneField.SetValue(EnsureGraph(), physics);
+    }
+
+    private static readonly FieldInfo PartAngularVelocityField = typeof(SceneObjectPart).GetField("m_angularVelocity", BindingFlags.NonPublic | BindingFlags.Instance);
+
+    /// <summary>The angular velocity core last set on the root part itself, read from the part's field and not through its
+    /// getter (which takes the actor's): only core's own controller, or a script's call, ever sets it.</summary>
+    public Vector3 CorePartAngularVelocity => (Vector3)PartAngularVelocityField.GetValue(Root);
 
     /// <summary>What the region's frame does for a group on the update list with a look-at active.</summary>
     public void UpdateLookAt() => Root.UpdateLookAt();
@@ -146,6 +175,9 @@ internal sealed class CoreGrab
         _parts.Add(part);
         return part;
     }
+
+    /// <summary>A child part of the group (0-based), for a call that names a part other than the root.</summary>
+    public SceneObjectPart Child(int index) => _parts[1 + index];
 
     /// <summary>The part grabbed: the root, or the child <paramref name="index"/> (0-based) of the group.</summary>
     public UUID PartId(int child = -1) => child < 0 ? Root.UUID : _parts[1 + child].UUID;

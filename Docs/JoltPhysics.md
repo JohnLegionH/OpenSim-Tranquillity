@@ -606,10 +606,11 @@ way after 4 tau, and it does not pass the target. The motion is the same at ever
 ## Rotation target on objects
 
 The physics actor's rotation target (`APIDTarget`, `APIDStrength`, `APIDDamping`, `APIDActive`) turns a physical prim or
-linkset to a rotation. The simulator does not hand it to the actor today: it turns an object for `llRotLookAt` and
-`llLookAt` with its own controller, which sets the angular velocity once per frame (the actor call in
-`SceneObjectGroup.RotLookAt` is commented out; only `StopLookAt` sends `APIDActive = false`, which does nothing here unless
-the target was turned on). So no setting is needed and nothing changes for a script until the simulator uses it.
+linkset to a rotation. The Jolt scene answers true to `PhysicsScene.SupportsRotationTarget()`, so the simulator hands the
+target of `llRotLookAt`, `llLookAt` and the rotate-drag (Ctrl-Shift drag) to the root prim's actor, and does not run its own
+look-at controller for that object (which sets the angular velocity once per frame and leaves a body resting on the ground
+several degrees short). The rotate-drag gives the viewer's rotation as the target on every update, with strength and damping
+0.1 s; ending the drag or a look-at switches the target off. No setting is needed.
 
 The Second Life wiki gives no formula. `llRotLookAt`: the object turns "smoothly" with "strength resistance at damping force",
 damping is "seconds to critically damp in", "capped at 1.0", and "the minimum value for strength seems to be 0.0445".
@@ -647,7 +648,14 @@ Together with other things a script sets:
 - selected in the build tool the object is held still; the request is kept and acts when it is let go.
 
 On the ground at one physics step per heartbeat the object can twitch back by under a degree as it settles; it stays within
-2 degrees of the target.
+2 degrees of the target. Through the simulator's own handlers (a rotate-drag of 90 degrees in 1 s at 30 updates a second, a 1 kg
+or 100 kg cube, a 4 m cube or three linked cubes resting on the ground) the object ends within 0.3 degrees of the cursor's
+rotation without passing it by more than 0.2 degrees, at one physics step per heartbeat and at 45 steps a second; it trails the
+cursor by about 42 degrees at the fastest part of the turn, since the simulator hands the target over once per frame.
+
+When a rotate-drag ends the simulator switches the target off and then gives back an angular velocity a script had set with
+`llTargetOmega` during the drag. Switching the target off does not zero an angular velocity written since the last physics step,
+so that spin carries on (clear of the ground; on the ground contact friction stops a set spin, as it does without a target).
 
 ## Avatar speeds
 

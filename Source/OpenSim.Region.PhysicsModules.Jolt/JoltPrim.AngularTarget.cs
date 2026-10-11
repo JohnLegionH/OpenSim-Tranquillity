@@ -43,7 +43,8 @@
 //
 // Switching it off sets the angular velocity to zero before the next step, as core does when it stops a look-at
 // (SceneObjectPart.StopLookAt): it was turning at the spring's speed and nothing else would stop it, since the body's
-// own damping takes about a minute. The rotation it had reached is kept.
+// own damping takes about a minute. The rotation it had reached is kept. An angular velocity written since the last step
+// is kept instead (core gives a script's llTargetOmega back when a rotate-drag ends, just after it switches the target off).
 //
 // A body that has settled at its target may sleep; a new target, or a body found asleep away from its target, wakes it.
 
@@ -157,7 +158,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             bool vehicle = _vehicle != null && _vehicle.IsActive;
             if (!active || !_isPhysical || !_body.IsValid || vehicle || !_backend.TryGetBodyState(_body, out BodyState s))
             {
-                AngularLetGo(vehicle);
+                AngularLetGo(vehicle, keepVelocity: spun);
                 return active;
             }
 
@@ -273,7 +274,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private bool _bodyLockX, _bodyLockY, _bodyLockZ;   // the body's own axes with an infinite inertia (ApplyRotationLocks)
 
         // The target is off, not usable, or the body is not one it acts on: the spin it set is ended, the body may sleep.
-        private void AngularLetGo(bool vehicle)
+        // An angular velocity written since the last step (core applies a script's llTargetOmega again when a rotate-drag is
+        // let go, right after it switches the target off) is the one the body keeps.
+        private void AngularLetGo(bool vehicle, bool keepVelocity = false)
         {
             _angHaveVirtual = false;
             if (!_angActing)
@@ -285,7 +288,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (!_linApproaching) _noSleepBody = BodyId.Invalid;
                 return;
             }
-            _backend.SetBodyAngularVelocity(_body, SVector3.Zero);
+            if (!keepVelocity)
+                _backend.SetBodyAngularVelocity(_body, SVector3.Zero);
             ApplySleepRule();
         }
 

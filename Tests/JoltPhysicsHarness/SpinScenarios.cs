@@ -58,10 +58,17 @@ public sealed class SpinPlan
     public float Omega;
     /// <summary>No drag at all: the script's call alone.</summary>
     public bool NoDrag;
+    /// <summary>The script's llRotLookAt is called on a child part of the linkset (core hands it on to the root).</summary>
+    public bool ViaChild;
+    /// <summary>The mouse's move drag runs with the rotate-drag: the cursor carries the object this many metres up, over the same seconds.</summary>
+    public float LiftMetres;
+    internal Vector3 LiftFrom;
     /// <summary>Not core's spin path: each update sets the root's look-at target (core's own llRotLookAt call) to the rotation the viewer
     /// sent, and the frame runs UpdateLookAt, to record what that controller does with the same cursor; the release stops it.</summary>
     public bool DragViaLookAt;
     public int Sent;
+    /// <summary>Whether core's own look-at controller ever set a non-zero angular velocity on the root part during the run.</summary>
+    public bool CoreWroteSpin;
     internal int NextUpdate;
     internal bool Started, Stopped, ScriptOn;
     internal CoreGrab Core;
@@ -98,15 +105,22 @@ public sealed class SpinMeasure
     public float YawAtRelease, DegPerSecAtRelease, TurnAfterRelease;
     public double SpinSecondsAfterRelease = double.NaN;
     public bool NotANumber;
+    /// <summary>Whether core's own controller wrote an angular velocity on the root part (it does not when the engine has the target).</summary>
+    public bool CoreWroteSpin;
+    /// <summary>After the cursor stopped: the most the yaw went back from the highest it had reached (degrees), sampled at the heartbeat.</summary>
+    public float Twitch;
+    /// <summary>How far the object's centre ended above where it started (m).</summary>
+    public float Rise;
 
-    public static string Header => "run,updates,mass,lag_deg,overshoot_deg,end_yaw_deg,end_err_deg,max_yaw_deg,min_yaw_deg,settled,settle_s,top_dps,dps_at_drag_end,dps_end,yaw_at_release,dps_at_release,turn_after_release_deg,spin_s_after_release,reach_s_after_stop,nan";
+    public static string Header => "run,updates,mass,lag_deg,overshoot_deg,end_yaw_deg,end_err_deg,max_yaw_deg,min_yaw_deg,settled,settle_s,top_dps,dps_at_drag_end,dps_end,yaw_at_release,dps_at_release,turn_after_release_deg,spin_s_after_release,reach_s_after_stop,nan,core_wrote_spin,twitch_deg,rise_m";
 
     public string Row()
     {
         string F(float v) => float.IsNaN(v) ? "" : v.ToString("0.0", CultureInfo.InvariantCulture);
         string D(double v) => double.IsNaN(v) ? "" : v.ToString("0.00", CultureInfo.InvariantCulture);
         return string.Join(",", Run, Updates.ToString(CultureInfo.InvariantCulture), Mass.ToString("0.0", CultureInfo.InvariantCulture), F(MaxLag), F(Overshoot), F(EndYaw), F(EndError), F(MaxYaw), F(MinYaw),
-                           Settled ? "1" : "0", D(SettleSeconds), F(TopDegPerSec), F(AtDragEndDegPerSec), F(EndDegPerSec), F(YawAtRelease), F(DegPerSecAtRelease), F(TurnAfterRelease), D(SpinSecondsAfterRelease), D(ReachSeconds), NotANumber ? "1" : "0");
+                           Settled ? "1" : "0", D(SettleSeconds), F(TopDegPerSec), F(AtDragEndDegPerSec), F(EndDegPerSec), F(YawAtRelease), F(DegPerSecAtRelease), F(TurnAfterRelease), D(SpinSecondsAfterRelease), D(ReachSeconds), NotANumber ? "1" : "0",
+                           CoreWroteSpin ? "1" : "0", F(Twitch), F(Rise));
     }
 }
 
@@ -140,6 +154,7 @@ public static class SpinScenarios
         a.Density = mass * 100f / (size * size * size);
         plan.Mass = a.Mass;
         plan.Core = new CoreGrab(a);
+        plan.Core.UsePhysicsScene(r.PhysicsScene);
         r.Cleanups.Add(plan.Core.Release);
         return plan;
     }
@@ -157,18 +172,31 @@ public static class SpinScenarios
             if (p.LookAt)
             {
                 core.EnableScriptCalls();
-                core.Group.RotLookAt(Turn(p.LookAtDegrees), p.LookAtStrength, 0.5f);
+                if (p.ViaChild)
+                    core.Child(0).RotLookAt(Turn(p.LookAtDegrees), p.LookAtStrength, 0.5f);
+                else
+                    core.Group.RotLookAt(Turn(p.LookAtDegrees), p.LookAtStrength, 0.5f);
             }
             if (p.Omega != 0f)
             {
-                // llTargetOmega on a physical prim ends in SceneObjectPart.UpdateAngularVelocity, which sets the part's
-                // AngularVelocity (the root's actor takes it as its rotational velocity) and then schedules a terse update,
-                // which needs a running scene. The setter is the part that reaches the actor.
-                core.Root.AngularVelocity = Vector3.UnitZ * p.Omega;
+                // llTargetOmega on a physical prim ends in SceneObjectPart.UpdateAngularVelocity: during a rotate-drag the group
+                // only remembers the spin, otherwise it sets the part's AngularVelocity (the root's actor takes it as its
+                // rotational velocity) and schedules a terse update.
+                core.Root.UpdateAngularVelocity(Vector3.UnitZ * p.Omega);
             }
         }
-        if ((p.ScriptOn && p.LookAt) || (p.DragViaLookAt && p.Started))
+        // The region's frame runs the root's look-at pass for a look-at or a rotate-drag that is held; when the scene
+        // says the engine has a rotation target, that pass hands the target to the actor.
+        if (p.Started || (p.ScriptOn && p.LookAt))
             core.UpdateLookAt();
+        if (core.CorePartAngularVelocity != Vector3.Zero)
+            p.CoreWroteSpin = true;
+        if (p.Omega != 0f)
+        {
+            // The region's terse update reads the part's angular velocity from the actor each frame (the getter refreshes the
+            // part's own copy), and UpdateAngularVelocity writes only a value that differs from that copy.
+            _ = core.Root.AngularVelocity;
+        }
         if (p.NoDrag)
             return;
         double until = r.Now + 1e-9;
@@ -205,7 +233,15 @@ public static class SpinScenarios
             if (p.DragViaLookAt)
                 core.Group.RotLookAt(Turn(p.Ideal(t)), p.LookAtStrength, 0.5f);
             else
+            {
+                if (p.LiftMetres != 0f)
+                {
+                    // the mouse's move drag, at the same update: the object's centre carried up with the cursor
+                    float lift = p.LiftMetres * p.Ideal(t) / p.TotalDegrees;
+                    core.Update(core.PartId(), p.LiftFrom + new Vector3(0f, 0f, lift));
+                }
                 core.SpinUpdate(Turn(p.Ideal(t)));
+            }
             p.Sent++;
         }
     }
@@ -235,25 +271,28 @@ public static class SpinScenarios
                       + "Three 1 m cubes in a row along x (10 kg each) turned 90 degrees in 1 s about the vertical axis, then the mouse still 5.5 s."
                       + (air ? " Clear of the ground, buoyancy 1." : " Resting on the ground."),
         DefaultDuration = _ => 7f,
-        Setup = r =>
-        {
-            const float cube = 1f;
-            float z = r.GroundAt(X, Y) + cube * 0.5f + 0.02f + (air ? AirHeight : 0f);
-            var unit = new Vector3(cube, cube, cube);
-            PhysicsActor root = r.Actor = r.AddPart(PrimitiveBaseShape.CreateBox(), unit, new Vector3(X, Y, z), Quaternion.Identity, true, RootId);
-            if (air)
-                root.Buoyancy = 1f;
-            r.ActorSize = unit;
-            PhysicsActor left = r.AddPart(PrimitiveBaseShape.CreateBox(), unit, new Vector3(X - 1f, Y, z), Quaternion.Identity, true, LeftId, root);
-            PhysicsActor right = r.AddPart(PrimitiveBaseShape.CreateBox(), unit, new Vector3(X + 1f, Y, z), Quaternion.Identity, true, RightId, root);
-            var plan = new SpinPlan { Kind = "linkset", DragViaLookAt = viaLookAt };
-            _last = plan;
-            plan.Mass = root.Mass;
-            plan.Core = new CoreGrab(root, left, right);
-            r.Cleanups.Add(plan.Core.Release);
-        },
+        Setup = r => LinksetSetup(r, air, viaLookAt),
         Input = Feed,
     };
+
+    private static void LinksetSetup(Run r, bool air, bool viaLookAt)
+    {
+        const float cube = 1f;
+        float z = r.GroundAt(X, Y) + cube * 0.5f + 0.02f + (air ? AirHeight : 0f);
+        var unit = new Vector3(cube, cube, cube);
+        PhysicsActor root = r.Actor = r.AddPart(PrimitiveBaseShape.CreateBox(), unit, new Vector3(X, Y, z), Quaternion.Identity, true, RootId);
+        if (air)
+            root.Buoyancy = 1f;
+        r.ActorSize = unit;
+        PhysicsActor left = r.AddPart(PrimitiveBaseShape.CreateBox(), unit, new Vector3(X - 1f, Y, z), Quaternion.Identity, true, LeftId, root);
+        PhysicsActor right = r.AddPart(PrimitiveBaseShape.CreateBox(), unit, new Vector3(X + 1f, Y, z), Quaternion.Identity, true, RightId, root);
+        var plan = new SpinPlan { Kind = "linkset", DragViaLookAt = viaLookAt };
+        _last = plan;
+        plan.Mass = root.Mass;
+        plan.Core = new CoreGrab(root, left, right);
+        plan.Core.UsePhysicsScene(r.PhysicsScene);
+        r.Cleanups.Add(plan.Core.Release);
+    }
 
     /// <summary>A script's call on the same object as the drag.</summary>
     private static Scenario Script(string name, string description, Action<SpinPlan> script, bool noDrag = false, bool air = true)
@@ -287,6 +326,22 @@ public static class SpinScenarios
         Cube("spin-release-1kg", "A 1 kg cube turned 90 degrees and let go (ObjectSpinStop) as the cursor stops, while still turning; 5 s watched.", 1f, 1f, release: 1.5, air: true),
         Cube("spin-release-mid-1kg", "A 1 kg cube let go (ObjectSpinStop) half way through the turn; 5.5 s watched.", 1f, 1f, release: 1.0, air: true),
         Cube("spin-release-mid-100kg", "A 100 kg cube let go (ObjectSpinStop) half way through the turn; 5.5 s watched.", 1f, 100f, release: 1.0, air: true),
+        Cube("spin-90-slow6-1kg", "A 1 kg cube turned 90 degrees very slowly, in 6 s, through core's spin path.", 1f, 1f, dragSeconds: 6.0),
+        Cube("spin-release-1kg", "A 1 kg cube turned 90 degrees and let go (ObjectSpinStop) as the cursor stops; 5 s watched.", 1f, 1f, release: 1.5),
+        Cube("spin-release-mid-1kg", "A 1 kg cube let go (ObjectSpinStop) half way through the turn; 5.5 s watched.", 1f, 1f, release: 1.0),
+        new Scenario
+        {
+            Name = "spin-with-grab",
+            Description = "A 1 kg cube on the ground carried 2 m up by the mouse's move drag while the rotate-drag turns it 90 degrees in 1 s, then both held 5.5 s.",
+            DefaultDuration = _ => 7f,
+            Setup = r =>
+            {
+                SpinPlan p = Begin(r, "box", 1f, 1f);
+                p.LiftMetres = 2f;
+                p.LiftFrom = r.Actor.Position;
+            },
+            Input = Feed,
+        },
         Linkset(),
         Linkset(air: true),
         Script("spin-lookat-s1", "A script's llRotLookAt (back to the start rotation, strength 1) held on the 1 kg cube while the cursor turns it 90 degrees.",
@@ -308,6 +363,30 @@ public static class SpinScenarios
         Cube("spin-lookatdrag-slow6-1kg", "As spin-lookatdrag-1kg, turned slowly, in 6 s.", 1f, 1f, air: true, viaLookAt: true, dragSeconds: 6.0),
         Linkset(air: true, viaLookAt: true),
         Linkset(viaLookAt: true),
+        Script("spin-omega-ground", "A script's llTargetOmega of 1 rad/s about the vertical axis on the 1 kg cube on the ground while the cursor turns it 90 degrees.",
+               p => { p.Omega = 1f; p.ReferenceDegrees = float.NaN; }, air: false),
+        new Scenario
+        {
+            Name = "spin-lookat-linkset-child",
+            Description = "Three 1 m cubes in a row along x (10 kg each) on the ground, a script's llRotLookAt to 90 degrees (strength 1) called on a child part, no drag.",
+            DefaultDuration = _ => 7f,
+            Setup = r =>
+            {
+                LinksetSetup(r, air: false, viaLookAt: false);
+                SpinPlan p = _last;
+                p.NoDrag = true;
+                p.LookAt = true;
+                p.LookAtDegrees = 90f;
+                p.LookAtStrength = 1f;
+                p.ReferenceDegrees = 90f;
+                p.ViaChild = true;
+            },
+            Input = Feed,
+        },
+        Script("spin-omega-release", "A script's llTargetOmega of 1 rad/s about the vertical axis on the 1 kg cube while the cursor turns it 90 degrees, and the turn let go as the cursor stops: the spin is applied again.",
+               p => { p.Omega = 1f; p.ReferenceDegrees = float.NaN; p.ReleaseAt = 1.5; }),
+        Script("spin-omega-release-ground", "As spin-omega-release, resting on the ground.",
+               p => { p.Omega = 1f; p.ReferenceDegrees = float.NaN; p.ReleaseAt = 1.5; }, air: false),
         Script("spin-omega", "A script's llTargetOmega of 1 rad/s about the vertical axis on the 1 kg cube while the cursor turns it 90 degrees.",
                p => { p.Omega = 1f; p.ReferenceDegrees = float.NaN; }),
         Script("spin-omega-alone", "A script's llTargetOmega of 1 rad/s about the vertical axis alone, with no drag.",
@@ -348,6 +427,9 @@ public static class SpinScenarios
         double lastFast = double.NaN;
         m.MaxYaw = float.MinValue;
         m.MinYaw = float.MaxValue;
+        m.CoreWroteSpin = p.CoreWroteSpin;
+        m.Rise = ss[^1].Position.Z - ss[0].Position.Z;
+        float runningMax = float.MinValue;
         for (int i = 0; i < ss.Count; i++)
         {
             Sample s = ss[i];
@@ -364,6 +446,11 @@ public static class SpinScenarios
                 m.MaxLag = MathF.Max(m.MaxLag, p.Ideal(s.T) - yaw[i]);
             if (!float.IsNaN(reference))
                 m.Overshoot = MathF.Max(m.Overshoot, yaw[i] - reference);
+            if (s.T > p.DragEnd)
+            {
+                runningMax = MathF.Max(runningMax, yaw[i]);
+                m.Twitch = MathF.Max(m.Twitch, runningMax - yaw[i]);
+            }
             if (s.T >= p.DragEnd - 1e-9 && m.AtDragEndDegPerSec == 0f)
                 m.AtDragEndDegPerSec = dps;
             if (!p.NoDrag && !float.IsNaN(reference) && double.IsNaN(m.ReachSeconds) && s.T > p.DragStart && yaw[i] >= reference - 2f)
