@@ -356,7 +356,7 @@ public class AngularTargetTests
         // 270 degrees about Z is 90 the other way.
         List<Pt> trace = Run(45.0, 3f, r => LookAt(Cube(r, 1f, 1f, true), TurnZ(270f), 0.2f, 0.2f));
         Assert.True(Turned(trace).Max() <= 90.5f, $"went the long way: {Turned(trace).Max():0.0}");
-        Quaternion q = Quaternion.Normalize(TurnZ(50f) * Turn(30f, Vector3.UnitX));
+        Quaternion qRaw = TurnZ(50f) * Turn(30f, Vector3.UnitX); Quaternion q = Quaternion.Normalize(in qRaw);
         trace = Run(45.0, 3f, r => LookAt(Cube(r, 1f, 1f, true), q, 0.2f, 0.2f));
         Assert.True(Between(trace[^1].Rot, q) < 2f, $"{Between(trace[^1].Rot, q):0.0} degrees from a target about a tilted axis");
         // A target given as the negative of the same rotation is the same target.
@@ -375,7 +375,7 @@ public class AngularTargetTests
         Assert.True(Turned(trace).Max() < 0.5f, $"turned {Turned(trace).Max():0.0} degrees about a locked axis");
 
         // X and Y locked: Z is free, and a target that is a tilt and a turn is reached as far as Z goes.
-        Quaternion tilted = Quaternion.Normalize(TurnZ(90f) * Turn(40f, Vector3.UnitX));
+        Quaternion tiltedRaw = TurnZ(90f) * Turn(40f, Vector3.UnitX); Quaternion tilted = Quaternion.Normalize(in tiltedRaw);
         trace = Run(45.0, 3f, r => { PhysicsActor a = Cube(r, 1f, 1f, true); a.LockAngularMotion(0x06); LookAt(a, tilted, 0.2f, 0.2f); });
         Vector3 xAxis = Vector3.UnitX * trace[^1].Rot;
         Vector3 zAxis = Vector3.UnitZ * trace[^1].Rot;
