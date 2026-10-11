@@ -1507,7 +1507,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         internal void RegisterVehicle(JoltPrim prim)
         {
-            lock (_vehicles) _vehicles.Add(prim);
+            lock (_vehicles)
+            {
+                if (!prim.IsRemoved) _vehicles.Add(prim);   // checked under the lock Destroy's removal takes, after IsRemoved is set
+            }
         }
 
         internal void UnregisterVehicle(JoltPrim prim)
@@ -1543,7 +1546,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             lock (_scriptForced)
             {
-                if (on) _scriptForced.Add(prim);
+                if (on) { if (!prim.IsRemoved) _scriptForced.Add(prim); }
                 else _scriptForced.Remove(prim);
             }
         }
@@ -1575,7 +1578,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             lock (_targeted)
             {
-                if (on) _targeted.Add(prim);
+                if (on) { if (!prim.IsRemoved) _targeted.Add(prim); }
                 else _targeted.Remove(prim);
             }
         }

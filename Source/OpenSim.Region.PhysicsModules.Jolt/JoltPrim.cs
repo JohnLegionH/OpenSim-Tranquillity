@@ -43,6 +43,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private Vector3 _size;
         private Quaternion _orientation;
         private bool _isPhysical;
+        // Set first thing in Destroy. The scene's per-frame lists refuse a prim once it is set, so a script's late write
+        // to a removed prim's actor cannot put it back on a list the scene keeps.
+        internal volatile bool IsRemoved;
         // Phantom (STATUS_PHANTOM) and volume detect (llVolumeDetect), and PRIM_PHYSICS_SHAPE_TYPE. The scene adds a
         // volume detector as phantom and then calls SetVolumeDetect(1); volume detect wins over phantom. On a welded
         // linkset child these are stored but the root's body carries the linkset's flags.
@@ -546,6 +549,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // our handle-ref then frees the shape - no leak, no premature free.
         internal void Destroy()
         {
+            IsRemoved = true;
             // Drop out of the scene's per-frame vehicle drive (no-op if never a vehicle).
             if (_vehicle != null) { _module.UnregisterVehicle(this); _vehicle = null; _vehicleBody = null; }
             _module.SetScriptForced(this, false);
