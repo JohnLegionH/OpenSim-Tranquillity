@@ -72,7 +72,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private Vector3 _moveCarry;     // what the last move-to-target step left out of the spring's velocity
         private float _hoverCarry;      // the same for hover (vertical)
         private bool _lastWasMove;
-        private BodyId _noSleepBody = BodyId.Invalid;   // the body this has told the engine not to put to sleep
+        private BodyId _noSleepBody = BodyId.Invalid;   // the body a controller has told the engine not to put to sleep
+        private bool _linApproaching;   // move to target or hover is still bringing the object in
+        private bool _angApproaching;   // the rotation target is (JoltPrim.AngularTarget.cs)
 
         public override Vector3 PIDTarget
         {
@@ -156,6 +158,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// Returns false once neither is asked for and the body has been let go, so the scene stops stepping it.
         /// </summary>
         internal bool StepTargets(float timeStep)
+        {
+            bool angular = StepAngularTarget(timeStep);
+            bool linear = StepLinearTargets(timeStep);
+            return angular || linear;
+        }
+
+        private bool StepLinearTargets(float timeStep)
         {
             Vector3 target;
             float tau, height, hoverTau;
@@ -302,11 +311,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // spring part way. Once it has settled where it is held it may sleep, and the controller wakes it if it is moved.
         private void KeepAwakeWhile(bool approaching)
         {
-            bool forbidden = _noSleepBody.Equals(_body);
-            if (approaching == forbidden)
+            _linApproaching = approaching;
+            ApplySleepRule();
+        }
+
+        // The body may sleep once no controller is still bringing it in.
+        private void ApplySleepRule()
+        {
+            if (!_body.IsValid)
                 return;
-            _backend.SetBodyAllowSleeping(_body, !approaching);
-            _noSleepBody = approaching ? _body : BodyId.Invalid;
+            bool forbid = _linApproaching || _angApproaching;
+            bool forbidden = _noSleepBody.Equals(_body);
+            if (forbid == forbidden)
+                return;
+            _backend.SetBodyAllowSleeping(_body, !forbid);
+            _noSleepBody = forbid ? _body : BodyId.Invalid;
         }
 
         // The acceleration of the script's set force (llSetForce), which the engine applies through this step.
@@ -329,9 +348,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// </summary>
         private readonly record struct Damping(float Mean, float End, float ForceMean, float ForceEnd);
 
-        private Damping DampingOver(float h)
+        private Damping DampingOver(float h) => DampingFor(_backend.GetBodyLinearDamping(_body), h);
+
+        // The same for a damping c (1/s), linear or angular: Jolt damps both as v x (1 - c h / n) in each sub-step.
+        private Damping DampingFor(float c, float h)
         {
-            float c = _backend.GetBodyLinearDamping(_body);
             int n = _module.CollisionSteps;
             double q = 1.0 - Math.Max(c, 0f) * h / n;
             if (q <= 0.0)
@@ -381,9 +402,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // A body that is no longer physical was recreated static, and a physical one is recreated with the script's
             // gravity; only a body still held here needs it back.
             // A vehicle sets its own sleeping rule (JoltPrim.ApplyVehicleBodyParams).
-            if (_noSleepBody.Equals(_body) && _body.IsValid && !vehicle)
-                _backend.SetBodyAllowSleeping(_body, true);
-            _noSleepBody = BodyId.Invalid;
+            _linApproaching = false;
+            if (vehicle)
+                _noSleepBody = BodyId.Invalid;
+            else
+                ApplySleepRule();
             if (_body.IsValid && _isPhysical && !vehicle)
             {
                 _backend.SetBodyGravityFactor(_body, ScriptGravityFactor);
