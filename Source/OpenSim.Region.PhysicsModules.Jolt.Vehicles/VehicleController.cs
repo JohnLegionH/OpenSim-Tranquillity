@@ -268,6 +268,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 case Vehicle.BUOYANCY:
                     _props.ParamsFloat[VehFloatParam.Buoyancy] = ClampF(pValue, -1f, 1f);
                     break;
+                // InWorldz's parameters, held to the ranges of the InWorldz simulator's ClampFloatParam
+                // (VehicleDynamics.cs:164-218); the disable-motors pair has no range there.
+                case Vehicle.MOUSELOOK_AZIMUTH:
+                    _props.ParamsFloat[VehFloatParam.MouselookAzimuth] = ClampF(pValue, VehicleLimits.ThresholdMouselookAngle, (float)Math.PI);
+                    break;
+                case Vehicle.MOUSELOOK_ALTITUDE:
+                    _props.ParamsFloat[VehFloatParam.MouselookAltitude] = ClampF(pValue, VehicleLimits.ThresholdMouselookAngle, (float)Math.PI);
+                    break;
+                case Vehicle.BANKING_AZIMUTH:
+                    _props.ParamsFloat[VehFloatParam.BankingAzimuth] = ClampF(pValue, VehicleLimits.ThresholdBankAngle, (float)Math.PI);
+                    break;
+                case Vehicle.DISABLE_MOTORS_ABOVE:
+                    _props.ParamsFloat[VehFloatParam.DisableMotorsAbove] = pValue;
+                    break;
+                case Vehicle.DISABLE_MOTORS_AFTER:
+                    _props.ParamsFloat[VehFloatParam.DisableMotorsAfter] = pValue;
+                    break;
+                case Vehicle.INVERTED_BANKING_MODIFIER:
+                    _props.ParamsFloat[VehFloatParam.InvertedBankingModifier] = ClampF(pValue, -10f, 10f);
+                    break;
                 case Vehicle.HOVER_EFFICIENCY:
                     _props.ParamsFloat[VehFloatParam.HoverEfficiency] = ClampF(pValue, 0f, 1f);
                     break;
@@ -1603,11 +1623,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 angle = (float)Math.PI - angle;
             else if (angle < -HalfPi)
                 angle = -(float)Math.PI - angle;
-            float range = _props.GetFloat(VehFloatParam.BankingAzimuth, HalfPi);
+            // InWorldz lets a script set the range (VEHICLE_BANKING_AZIMUTH); Second Life's roll range is the whole pi / 2.
+            float range = InWorldz ? _props.GetFloat(VehFloatParam.BankingAzimuth, HalfPi) : HalfPi;
             float roll = Utils.Clamp(angle * HalfPi / range, -HalfPi, HalfPi);
             if (Math.Abs(roll) <= VehicleLimits.ThresholdBankAngle)
                 return 0f;
             float attitude = tilt > Math.PI / 2.0 ? -1f : 1f;
+            // InWorldz: an airplane flying inverted banks by the inverted banking modifier (VehicleDynamics.cs:1241-1247,
+            // 1376-1377; only an airplane is marked inverted there).
+            if (InWorldz && _props.Type == VehicleType.Airplane && tilt > Math.PI / 2.0)
+                efficiency *= _props.GetFloat(VehFloatParam.InvertedBankingModifier, 1f);
 
             float target = -roll * attitude * efficiency * (float)Math.PI * ((1f - mix) + mix * speedShare);
             // With the angular motor engaged, banking turns no faster than the legacy angular speed.

@@ -1050,6 +1050,30 @@ where it is not set, the behaviour does (`InWorldz` gives `legacy`, `SecondLife`
 **The mouselook dead zone** (`InWorldz` only): the mouselook flags do not steer or bank while the camera is within about 2.8
 degrees of the vehicle's heading (or of its pitch); see "Mouselook steering" below.
 
+**InWorldz extension flags.** A script sends them on InWorldz's numbers: `VEHICLE_FLAG_REACT_TO_CURRENTS` 0x10000,
+`REACT_TO_WIND` 0x20000, `LIMIT_MOTOR_DOWN` 0x40000, `TORQUE_WORLD_Z` 0x80000, `MOUSEPOINT_STEER` 0x100000 and
+`MOUSEPOINT_BANK` 0x200000 (`VehicleFlags.cs:48-60`). Each reaches the engine as itself, from `llSetVehicleFlags`,
+`llRemoveVehicleFlags` and a saved vehicle (rezzed, copied, loaded with the region, crossing in). `LIMIT_MOTOR_DOWN` and
+`TORQUE_WORLD_Z` act; the other four are held and read back but nothing acts on them yet. They act under either behaviour,
+because a script has to ask for them. Before this was fixed the numbers were read as another engine flag each (a script's
+`LIMIT_MOTOR_DOWN` set an unused flag, `REACT_TO_CURRENTS` set `LIMIT_MOTOR_DOWN`, `REACT_TO_WIND` set `TORQUE_WORLD_Z`, and
+`TORQUE_WORLD_Z` set `MOUSEPOINT_BANK`), so a vehicle that set one of those flags changes: it now does what the script asked.
+The type presets were right and do not change.
+
+**InWorldz parameters** (`llSetVehicleFloatParam`; the code is `VehicleParamCodes.cs`'s, the range is InWorldz's
+`ClampFloatParam`, and a value that is not a number is refused). Each is held and read back under both behaviours; a type
+change puts the preset value back. The region's saved record of a vehicle (`SOPVehicle`) has no field for them, so a value a
+script set is lost when the vehicle is rezzed, copied, loaded with the region or crosses into another: the preset comes back.
+
+| Parameter | Code | Held to | What it does here |
+|---|---|---|---|
+| `VEHICLE_MOUSELOOK_AZIMUTH` | 11001 | pi / 32 to pi | The sideways range of the mouselook dead zone (`InWorldz` only). |
+| `VEHICLE_MOUSELOOK_ALTITUDE` | 11002 | pi / 32 to pi | The vertical range of the dead zone (`InWorldz` only). |
+| `VEHICLE_BANKING_AZIMUTH` | 11003 | pi / 128 to pi | The roll range banking counts as a share of (`InWorldz` only; the default pi / 2 is Second Life's). |
+| `VEHICLE_DISABLE_MOTORS_ABOVE` | 11004 | as sent | Held only. InWorldz casts a ray down about eight times a second and drops the motors above this height for the delay below; that ray and the delay are not built here. |
+| `VEHICLE_DISABLE_MOTORS_AFTER` | 11005 | as sent | Held only (see above). |
+| `VEHICLE_INVERTED_BANKING_MODIFIER` | 11006 | -10 to 10 | An airplane flying inverted banks by this factor times its banking efficiency (`InWorldz` only; no other type is marked inverted there). |
+
 Each behaviour follows Halcyon's code as read (not run: it needs PhysX); the figures its formula gives are checked in the
 tests. Two things are the module's own: the self-righting factor stops at 10 where Halcyon has no limit, and it grows per 15 ms
 of time (Halcyon's step) instead of per step, so it does not depend on the step rate. Halcyon's buoyancy adjustment also covers
@@ -1070,7 +1094,7 @@ the motor decay cap, which is Second Life's documented 120 s.
 |---|---|---|
 | `VehicleMaxLinearSpeed` | 200 | Linear motor speed a script can set (m/s, each axis) and the motor's result. Second Life documents about 30. |
 | `VehicleReferenceSpeed` | 30 | The forward speed (m/s) at which dynamic banking and angular deflection reach full strength. |
-| `VehicleMaxAngularSpeed` | 12.566371 (4 pi) | Angular motor speed a script can set (rad/s, each axis) and the angular result. |
+| `VehicleMaxAngularSpeed` | 12.566371 (4 pi) | Angular motor speed a script can set (rad/s) and the angular result: the magnitude of the direction under `SecondLife`, each axis under `InWorldz` (below the table). |
 | `VehicleAngularLimiterFloor` | 0.1 | The angular rate limiter's floor, 0 to 1 (below the table). 1 turns the limiter off. |
 | `VehicleMinTimescale` | 0.0156 | Shortest timescale a script can set (s), 0.001 to 1. |
 | `VehicleMaxTimescale` | 1000 | Longest friction, motor or deflection timescale (s), at most 1000. 1000 s or more is "off" for friction and deflection. |
@@ -1096,8 +1120,14 @@ moment the direction is set, as InWorldz does (settings made afterwards do not r
 set is kept as it was (`VEHICLE_ANGULAR_MOTOR_DIRECTION` reads back unchanged). The formula and the 0.1 floor are the InWorldz
 code's (`VehicleDynamics.cs:3107-3116`, read, not run), which says it copies Second Life; Second Life's pages do not document
 such a limiter, so there is no Second Life figure to prefer. Second Life does document a cap of 4 pi rad/s on the *magnitude*
-of the angular motor (the tutorial's "Steering the Vehicle", and the `VEHICLE_ANGULAR_MOTOR_DIRECTION` page); the module holds each
-axis to 4 pi, as InWorldz does (`VehicleMaxAngularSpeed`), which lets a diagonal direction reach 4 pi times the square root of 3.
+of the angular motor: "The magnitude of the angular motor is capped to be no more than two rotations per second (4 * PI
+radians/sec)" (the tutorial's "Steering the Vehicle"), and "VEHICLE_ANGULAR_MOTOR_DIRECTION magnitude is capped at 4 * PI (2
+revolutions per second total)" (the `VEHICLE_ANGULAR_MOTOR_DIRECTION` page). Under `SecondLife` a direction longer than
+`VehicleMaxAngularSpeed` is scaled down to that length with its direction kept, so <10, 10, 10> is held as <7.26, 7.26, 7.26>;
+a direction inside the cap is stored as sent. Under `InWorldz` each axis is held to 4 pi, as InWorldz does
+(`VehicleDynamics.cs:394-398`), which lets a diagonal direction reach 4 pi times the square root of 3. The scalar form of the call
+(which sets all three axes) and a saved vehicle's direction are held the same way. A script that sets a diagonal longer than 4 pi
+turns more slowly under the default than it did before this rule.
 None of the type presets (either set) has a ratio below 1, so a vehicle that sets no deflection of its own is not limited.
 
 ### Vehicle motors and friction
@@ -1190,9 +1220,10 @@ script has taken the controls) the flags change nothing. `VEHICLE_FLAG_CAMERA_DE
 
 Under `[Jolt] VehicleBehaviour = InWorldz` there is a dead zone, as in InWorldz (`VehicleDynamics.cs:819-844`, read, not run): the
 sideways part of the camera's direction in the vehicle's frame, times pi / 2 over the vehicle's mouselook azimuth (pi / 4 in every
-preset: a script cannot set it here), held to -1..1, is compared with pi / 32; while it is no more than that, which with the
-preset azimuth is a camera within 2.81 degrees of the heading, the yaw (or, with the bank flag, the roll) is not aimed at all, and the
-motor on that axis is zero. The pitch has the same threshold over the altitude range. Outside the zone the aim is what it is under
+preset, and a script sets it with `VEHICLE_MOUSELOOK_AZIMUTH`, 11001), held to -1..1, is compared with pi / 32; while it is no more
+than that, which with the preset azimuth is a camera within 2.81 degrees of the heading, the yaw (or, with the bank flag, the roll)
+is not aimed at all, and the motor on that axis is zero. The pitch has the same threshold over the altitude range
+(`VEHICLE_MOUSELOOK_ALTITUDE`, 11002). Outside the zone the aim is what it is under
 Second Life's behaviour; InWorldz also shapes the share outside the zone and turns at that share of the motor direction, which
 is not taken. A car steered by a camera in the zone settles within the zone's width of it and holds still. It is InWorldz's alone
 because the engine holds steady without it: measured on the real engine (`VehicleMouselookHuntingTests`, a car driven straight with
@@ -1264,7 +1295,10 @@ These documented behaviours are not simulated:
 A vehicle's body may sleep, as any other body does, while nothing in the vehicle would move it: no
 motor pulling (never set, faded, or set to zero), hover off or at its height, and the attractor done
 or the vehicle resting on something. A script setting a motor or any vehicle parameter wakes it, as
-does a collision.
+does a collision. A vehicle with `VEHICLE_FLAG_MOUSELOOK_STEER` or `VEHICLE_FLAG_MOUSELOOK_BANK` set
+never sleeps, whether or not its driver is in mouselook: a sleeping vehicle would read no camera, and
+InWorldz keeps such a vehicle awake for that reason (its sleep threshold is 0, `VehicleDynamics.cs:784-789`,
+read, not run). Second Life's pages say nothing about sleeping.
 
 A vehicle body has no contact friction by default (`VehicleContactFriction` 0, as BulletSim), and
 Second Life's vehicle friction is a velocity decay with no static part, so without more a car that
