@@ -356,6 +356,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // AddRegion's work once the scene is known. The heightmap and water height are read where AddRegion
         // always read them, after the backend exists.
+        /// <summary>TEST-ONLY: run on the new backend before it is initialised, so a test can make Initialize fail.</summary>
+        internal Action<JoltPhysicsBackend> BackendCreatedForTest;
+
         private void InitialiseRegion(uint sizeX, uint sizeY, RequestAssetDelegate requestAsset, Func<float[]> heightMap, Func<float> waterHeight, float heartbeatSeconds)
         {
             // Stored BEFORE base.Initialise, because that calls SetTerrain(heightMap) - which needs the
@@ -388,8 +391,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // Instrumentation: per-region RSS delta across backend init (8MB TempAllocator +
             // MaxBodies preallocation + JobSystemThreadPool), reported by `jolt metrics`.
             long rssBefore = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64;
-            _backend = new JoltPhysicsBackend();
-            _backend.Initialize(settings);
+            var created = new JoltPhysicsBackend();
+            BackendCreatedForTest?.Invoke(created);
+            try { created.Initialize(settings); }
+            catch
+            {
+                // A backend whose Initialize failed part-way still holds what it had taken (its reference on the shared
+                // job pools and Jolt, and the physics system if that was made); the region will not use it, so give
+                // those back before the failure goes on.
+                created.Dispose();
+                throw;
+            }
+            _backend = created;
             PhysicsCapacityStats initStats = _backend.GetCapacityStats();
             _contactBufMax = _joltConfig.ContactBufferMax > 0 ? _joltConfig.ContactBufferMax : initStats.ContactRingCapacity;
             LogJobPool(initStats);
