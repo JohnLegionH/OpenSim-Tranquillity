@@ -553,6 +553,18 @@ Damping is two `[Jolt]` keys:
 |---|---|---|
 | `PrimLinearDamping`, `PrimAngularDamping` | 0.05, 0.05 | Linear and angular damping of a physical prim that is not a vehicle, per second (0 to 100): a moving object loses about that share of its speed and spin each second. The same at every step rate. ubODE's, as a rate, are 0.1001 and 0.0250 (dBodySetDamping .002 and .0005 per 0.020 s step). |
 
+## Mass: what a script reads and where it comes from
+
+- `llGetMass` and `llGetObjectMass` return the engine's own body mass, unscaled: the same number the engine uses in every
+  force, impulse and speed figure in this document (an impulse of 10 on a mass of 2 changes the speed by 5). An avatar
+  reads 80. `llGetMassMKS` is 100 times `llGetMass`.
+- A prim's density setting is `SceneObjectPart.Density` (default 1000, accepted from 1 to 22587; `PRIM_PHYSICS_MATERIAL`
+  and `llSetPhysicsMaterial` set it as given). The module multiplies it by 0.01 to get kg/m3, so a prim's mass is its
+  volume (m3) x density x 0.01, and a linkset's is the sum over its prims, each at its own density.
+- Worked example, a 0.6 m cube (volume 0.216 m3): at the default density 1000 it weighs 0.216 x 10 = 2.16; at density
+  15432 it weighs 0.216 x 154.32 = 33.33, so three such cubes linked weigh 100. To make those three weigh 1, set density
+  154.32. Reading the number as "kg / 100" and choosing the density from that gives a mass 100 times too small.
+
 ## Move to target and hover on objects
 
 `llMoveToTarget` and `llSetHoverHeight` on a physical prim or linkset (avatars are not covered here).
