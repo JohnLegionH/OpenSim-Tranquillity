@@ -75,7 +75,8 @@ public class VehicleLimitTests
     // What a script asks for, the figure with no keys, the key, and the figure with the key.
     [Theory]
     [InlineData("LINEAR_MOTOR_DIRECTION", 500f, 200f, "VehicleMaxLinearSpeed", "1000", 500f)]
-    [InlineData("ANGULAR_MOTOR_DIRECTION", 100f, 12.566371f, "VehicleMaxAngularSpeed", "20", 20f)]
+    // The cap is on the magnitude (Second Life), and the scalar form sets all three axes: the first axis reads the cap over the square root of 3.
+    [InlineData("ANGULAR_MOTOR_DIRECTION", 100f, 7.2552f, "VehicleMaxAngularSpeed", "20", 11.5470f)]
     [InlineData("LINEAR_FRICTION_TIMESCALE", 0.001f, 0.0156f, "VehicleMinTimescale", "0.005", 0.005f)]
     [InlineData("LINEAR_FRICTION_TIMESCALE", 5000f, 1000f, "VehicleMaxTimescale", "500", 500f)]
     [InlineData("LINEAR_MOTOR_DECAY_TIMESCALE", 1000f, 120f, "VehicleMaxDecayTimescale", "1000", 1000f)]

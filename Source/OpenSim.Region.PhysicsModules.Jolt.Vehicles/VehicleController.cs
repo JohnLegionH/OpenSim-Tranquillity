@@ -304,8 +304,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     _props.ParamsVec[VehVectorParam.AngularFrictionTimescale] = new Vector3(pValue, pValue, pValue);
                     break;
                 case Vehicle.ANGULAR_MOTOR_DIRECTION:
-                    pValue = ClampF(pValue, -S.MaxAngularSpeed, S.MaxAngularSpeed);
-                    _props.ParamsVec[VehVectorParam.AngularMotorDirection] = new Vector3(pValue, pValue, pValue);
+                    _props.ParamsVec[VehVectorParam.AngularMotorDirection] = HeldAngularMotor(new Vector3(pValue, pValue, pValue));
                     MoveAngular(_props.ParamsVec[VehVectorParam.AngularMotorDirection]);
                     break;
                 case Vehicle.LINEAR_FRICTION_TIMESCALE:
@@ -394,9 +393,22 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             => new Vector3(ClampF(v.X, -S.MaxLinearSpeed, S.MaxLinearSpeed), ClampF(v.Y, -S.MaxLinearSpeed, S.MaxLinearSpeed),
                            ClampF(v.Z, -S.MaxLinearSpeed, S.MaxLinearSpeed));
 
+        // The angular motor direction. Second Life documents the cap on its magnitude ("The magnitude of the angular motor
+        // is capped to be no more than two rotations per second (4 * PI radians/sec)"), so the vector is scaled down with
+        // its direction kept. The InWorldz simulator holds each axis instead (VehicleDynamics.cs:394-398), which lets a
+        // diagonal direction reach the cap times the square root of 3.
         private Vector3 HeldAngularMotor(Vector3 v)
-            => new Vector3(ClampF(v.X, -S.MaxAngularSpeed, S.MaxAngularSpeed), ClampF(v.Y, -S.MaxAngularSpeed, S.MaxAngularSpeed),
-                           ClampF(v.Z, -S.MaxAngularSpeed, S.MaxAngularSpeed));
+        {
+            if (InWorldz)
+                return new Vector3(ClampF(v.X, -S.MaxAngularSpeed, S.MaxAngularSpeed), ClampF(v.Y, -S.MaxAngularSpeed, S.MaxAngularSpeed),
+                                   ClampF(v.Z, -S.MaxAngularSpeed, S.MaxAngularSpeed));
+            // In double, so that a huge component does not overflow the length.
+            double length = Math.Sqrt((double)v.X * v.X + (double)v.Y * v.Y + (double)v.Z * v.Z);
+            if (!(length > S.MaxAngularSpeed))
+                return v;
+            float scale = (float)(S.MaxAngularSpeed / length);
+            return new Vector3(v.X * scale, v.Y * scale, v.Z * scale);
+        }
 
         // =================================================================
         // Process vehicle flags from LSL
