@@ -118,6 +118,55 @@ public class SystemTeardownTests
             $"private memory held grew {growth / MB} MB over {done} create/teardown cycles (bound {GrowthBound / MB} MB)");
     }
 
+    // Each cycle cooks a 257 x 257 terrain, makes the terrain body from it, lets go of the shape and tears the backend
+    // down. The body creation settings the binding never frees held the shape: about 243 KB a cycle, 73 MB over
+    // the 300 cycles here, against a bound of 32 MB.
+    [Fact]
+    public void Repeated_terrain_cook_and_teardown_does_not_grow_private_memory()
+    {
+        if (Environment.GetEnvironmentVariable(MemoryChildVariable) != "1")
+        {
+            _out.WriteLine(ChildTestHost.RunAndAssertPassed(GetType(), nameof(Repeated_terrain_cook_and_teardown_does_not_grow_private_memory),
+                new Dictionary<string, string> { [MemoryChildVariable] = "1" }));
+            return;
+        }
+
+        const int TerrainCycles = 300;
+        var heights = new float[257 * 257];
+        Array.Fill(heights, 25f);
+        void TerrainCycle()
+        {
+            var t = new JoltTestBackend();
+            ShapeId terrain = t.B.CreateHeightFieldShape(heights, 257, 257, new System.Numerics.Vector3(1f));
+            t.B.SetTerrain(terrain, System.Numerics.Vector3.Zero);
+            t.B.ReleaseShape(terrain);
+            t.Step();
+            t.Dispose();
+        }
+
+        using var anchor = new JoltTestBackend();
+        anchor.Ground();
+        anchor.Step();
+        for (var i = 0; i < 3; i++)
+            TerrainCycle();
+
+        var before = Memory();
+        var after = before;
+        var done = 0;
+        while (done < TerrainCycles && after.Held - before.Held < GrowthBound)
+        {
+            for (var i = 0; i < CheckEvery; i++)
+                TerrainCycle();
+            done += CheckEvery;
+            after = Memory();
+        }
+
+        long growth = after.Held - before.Held;
+        _out.WriteLine($"held bytes: growth={growth / MB} MB over {done} terrain cycles ({growth / done / 1024} KB per cycle); bound {GrowthBound / MB} MB");
+        Assert.True(growth < GrowthBound,
+            $"private memory held grew {growth / MB} MB over {done} terrain cook and teardown cycles (bound {GrowthBound / MB} MB)");
+    }
+
     [Fact]
     public void Backends_created_and_torn_down_on_several_threads_while_another_steps()
     {

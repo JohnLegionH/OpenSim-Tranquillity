@@ -994,6 +994,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             settings.Dispose();
         }
 
+        // =====================================================================
+        // Body creation settings are freed by us too.
+        //
+        // The same OwnsHandle defect: JoltPhysicsSharp 2.19.1 builds BodyCreationSettings through the parameterless
+        // NativeObject constructor, so Dispose() frees nothing native. The native settings object keeps its reference on
+        // the shape it was made with, so the shape outlives its last release and the destroy of the system that held the
+        // body: measured, about 243 KB for every region start and stop (the terrain heightfield), and the shape of every
+        // body ever created. The settings are only read by the call that makes the body, so they are destroyed right after.
+        // =====================================================================
+        [System.Runtime.InteropServices.DllImport("joltc", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern void JPH_BodyCreationSettings_Destroy(IntPtr settings);
+
+        internal static void FreeBodyCreationSettings(BodyCreationSettings settings)
+        {
+            bool bindingDestroys = s_ownsHandle?.GetValue(settings) is true;
+            if (!bindingDestroys && !settings.IsDisposed && settings.Handle != IntPtr.Zero)
+                JPH_BodyCreationSettings_Destroy(settings.Handle);
+            settings.Dispose();
+        }
+
         private readonly struct ShapeSettingsScope : IDisposable
         {
             private readonly ShapeSettings _settings;
@@ -1167,7 +1187,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // Our own handle tables first (pure managed bookkeeping).
             _characters.Clear();
             _bodies.Clear();
-            _shapes.Clear();
+            // Shapes the callers never released. A body holds its own native reference, so letting go of ours here
+            // is the same as ReleaseShape at the last count; left to finalizers they would outlive the system.
+            foreach (JoltShapeRecord shapeRec in _shapes.TakeAll())
+            {
+                shapeRec.NativeShape?.Dispose();
+                shapeRec.NativeShape = null;
+                shapeRec.InnerShape?.Dispose();
+                shapeRec.InnerShape = null;
+            }
             _joltToRecord.Clear();
             _activeBodies.Clear();
             while (_activationQueue.TryDequeue(out _)) { }
@@ -1913,7 +1941,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             finally
             {
                 // CreateAndAddBody copies the settings; the managed settings object is ours to free.
-                bcs.Dispose();
+                FreeBodyCreationSettings(bcs);
             }
             }   // _simLock
         }
@@ -2519,16 +2547,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         {
             if (!float.IsFinite(waterHeight) || !float.IsFinite(buoyancy) || !float.IsFinite(linearDrag) || !float.IsFinite(angularDrag))
                 { CountRejectedNonFinite(); return; }
-            // Not implemented, and nothing outside the non-finite-argument test calls it: the vehicle buoyancy model
-            // does its own lift. Jolt's ApplyBuoyancyImpulse needs a step length and a fluid velocity this signature
-            // does not carry, so there is no one obvious mapping to write.
-            // Jolt: Body.ApplyBuoyancyImpulse(surfacePosition, surfaceNormal,
-            //         buoyancy, linearDrag, angularDrag, fluidVelocity,
-            //         gravity, deltaTime)
-            // Must be called every step while submerged - it is an impulse, not
-            // a persistent state. This should replace the hand-rolled lift in
-            // the vehicle buoyancy model.
-            throw new NotImplementedException();
+            // A no-op, not an implementation: nothing in the module calls it (the vehicle buoyancy model does its own
+            // lift), and Jolt's ApplyBuoyancyImpulse needs a step length and a fluid velocity this signature does not
+            // carry, so there is no one mapping to write and nothing to test it against. A call that does nothing cannot
+            // push a body the wrong way; a throw would only crash a caller that is not there yet.
         }
 
         public void ActivateBody(BodyId body)
@@ -2693,6 +2715,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // Z-up adaptation (Jolt's CharacterVirtual defaults are Y-up): Up = +Z, the capsule is
             // rotated to stand along Z, and SupportingVolume is a plane one radius below the centre so
             // the bottom hemisphere counts as ground. The Y-up ExtendedUpdateSettings are remapped in Step.
+            if (_disposed)
+                return CharacterId.Invalid;   // a region being torn down: refused, as CreateBody does
             if (_system == null)
                 throw new InvalidOperationException("CreateCharacter before Initialize.");
             if (!IsFinite(desc.Position) || !IsUsable(desc.Orientation))
@@ -2701,21 +2725,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             PhysicsSystem system = _system;
 
             (Shape wrapper, Shape inner) = BuildStandingCapsule(desc.CapsuleHalfHeight, desc.CapsuleRadius);
-            var settings = new CharacterVirtualSettings
-            {
-                Shape = wrapper,
-                Up = Vector3.UnitZ,
-                SupportingVolume = new Plane(Vector3.UnitZ, -MathF.Max(0.01f, desc.CapsuleRadius)),
-                MaxSlopeAngle = desc.MaxSlopeAngle,
-                Mass = desc.Mass,
-                MaxStrength = MathF.Max(0f, desc.PushStrength) * PushStrengthBaseNewtons,
-                // NOTE: PredictiveContactDistance / PenetrationRecoverySpeed are left at Jolt's defaults
-                // (0.1 / 1.0). Raising PredictiveContactDistance to 0.15 (to reduce the feet dip) was
-                // tried and REVERTED: on a cone's incline the early look-ahead lifted the capsule off the ground
-                // (visible hover) and fought penetration recovery frame-to-frame (a walking hop/bob). The
-                // clean-hold walk (defaults) is "mostly SL-like" with only a MINOR feet-dip on transitions,
-                // which is preferable to hover+hop. Do not raise the look-ahead without a slope walk-test.
-            };
+            var settings = MakeCharacterSettings(wrapper, desc.CapsuleRadius, desc.MaxSlopeAngle, desc.Mass, desc.PushStrength);
 
             // _simLock: AddCharacter runs on the LOGIN/TELEPORT thread and adds the query-marker body,
             // which mutates the broadphase Update is walking. Taken outside _characterGate per the
@@ -2723,6 +2733,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             lock (_simLock)
             lock (_characterGate)
             {
+                if (_disposed)
+                {
+                    // Disposed between the check above and the lock: the system is gone, so make nothing against it.
+                    wrapper.Dispose();
+                    inner.Dispose();
+                    return CharacterId.Invalid;
+                }
                 var character = new CharacterVirtual(settings, desc.Position, desc.Orientation, desc.UserData, system);
                 character.MaxSlopeAngle = desc.MaxSlopeAngle;
                 character.UserData = desc.UserData;
@@ -2736,6 +2753,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     WantsContactEvents = desc.WantsContactEvents,
                     CapsuleHalfHeight = desc.CapsuleHalfHeight,
                     CapsuleRadius = desc.CapsuleRadius,
+                    SupportRadius = SupportRadiusOf(desc.CapsuleRadius),
                     MaxSlopeAngle = desc.MaxSlopeAngle,
                     StepHeight = desc.StepHeight,
                     PushStrength = desc.PushStrength,
@@ -2760,7 +2778,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 markerBcs.UserData = desc.UserData;
                 BodyID markerId;
                 try { markerId = _bodyInterface.CreateAndAddBody(markerBcs, Activation.DontActivate); }
-                finally { markerBcs.Dispose(); }
+                finally { FreeBodyCreationSettings(markerBcs); }
 
                 // CreateBody's invalid-id policy. At MaxBodies the avatar gets no query
                 // marker (queries will not see it; it still walks and collides): count it, record nothing against
@@ -2797,29 +2815,57 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 // Persist gate exists to suppress. Movement is untouched (these are observational).
                 // A touching contact is noted and reported after the move (FinishCharacterContacts), when its relative speed
                 // is known and a loose object the avatar touches has been dealt with.
-                character.OnContactAdded += (CharacterVirtual cv, in BodyID b2, SubShapeID ss, in RVector3 pos, in Vector3 normal, ref CharacterContactSettings s)
-                    => NoteCharacterBodyContact(rec, b2.ID, ss.Value, ToVec(pos), normal, ContactPhase.Begin, ref s);
-                character.OnContactPersisted += (CharacterVirtual cv, in BodyID b2, SubShapeID ss, in RVector3 pos, in Vector3 normal, ref CharacterContactSettings s)
-                    => NoteCharacterBodyContact(rec, b2.ID, ss.Value, ToVec(pos), normal, ContactPhase.Persist, ref s);
-                character.OnContactRemoved += (CharacterVirtual cv, in BodyID b2, SubShapeID ss)
-                    => PushCharacterBodyContact(rec, b2.ID, ss.Value, default, default, ContactPhase.End);
-
-                // Avatar-avatar: register in the shared collision so capsules push/block, and report
-                // the contact. otherCharacter.UserData gives the other avatar's id directly.
-                if (_charVsChar != null)
-                {
-                    _charVsChar.Add(character);
-                    character.SetCharacterVsCharacterCollision(_charVsChar);
-                }
-                character.OnCharacterContactAdded += (CharacterVirtual cv, CharacterVirtual other, SubShapeID ss, in RVector3 pos, in Vector3 normal, ref CharacterContactSettings s)
-                    => PushCharacterCharacterContact(rec, other, ToVec(pos), normal, ContactPhase.Begin);
-                character.OnCharacterContactPersisted += (CharacterVirtual cv, CharacterVirtual other, SubShapeID ss, in RVector3 pos, in Vector3 normal, ref CharacterContactSettings s)
-                    => PushCharacterCharacterContact(rec, other, ToVec(pos), normal, ContactPhase.Persist);
+                WireCharacter(rec, character);
 
                 _characterList.Add(rec);
                 return new CharacterId(handle);
             }
         }
+
+        // The controller's contact events, and its entry in the avatar-vs-avatar registry. Runs under _simLock and
+        // _characterGate, for a new controller and for the one that replaces it on a resize.
+        private void WireCharacter(JoltCharacterRecord rec, CharacterVirtual character)
+        {
+            character.OnContactAdded += (CharacterVirtual cv, in BodyID b2, SubShapeID ss, in RVector3 pos, in Vector3 normal, ref CharacterContactSettings s)
+                => NoteCharacterBodyContact(rec, b2.ID, ss.Value, ToVec(pos), normal, ContactPhase.Begin, ref s);
+            character.OnContactPersisted += (CharacterVirtual cv, in BodyID b2, SubShapeID ss, in RVector3 pos, in Vector3 normal, ref CharacterContactSettings s)
+                => NoteCharacterBodyContact(rec, b2.ID, ss.Value, ToVec(pos), normal, ContactPhase.Persist, ref s);
+            character.OnContactRemoved += (CharacterVirtual cv, in BodyID b2, SubShapeID ss)
+                => PushCharacterBodyContact(rec, b2.ID, ss.Value, default, default, ContactPhase.End);
+
+            // Avatar-avatar: register in the shared collision so capsules push/block, and report
+            // the contact. otherCharacter.UserData gives the other avatar's id directly.
+            if (_charVsChar != null)
+            {
+                _charVsChar.Add(character);
+                character.SetCharacterVsCharacterCollision(_charVsChar);
+            }
+            character.OnCharacterContactAdded += (CharacterVirtual cv, CharacterVirtual other, SubShapeID ss, in RVector3 pos, in Vector3 normal, ref CharacterContactSettings s)
+                => PushCharacterCharacterContact(rec, other, ToVec(pos), normal, ContactPhase.Begin);
+            character.OnCharacterContactPersisted += (CharacterVirtual cv, CharacterVirtual other, SubShapeID ss, in RVector3 pos, in Vector3 normal, ref CharacterContactSettings s)
+                => PushCharacterCharacterContact(rec, other, ToVec(pos), normal, ContactPhase.Persist);
+        }
+
+        // The supporting plane is one radius below the capsule's centre, and CharacterVirtual takes it only at creation
+        // (joltc has no call to change it), so a radius change has to build a new controller. Clamped as the capsule is.
+        private static float SupportRadiusOf(float capsuleRadius) => MathF.Max(0.01f, capsuleRadius);
+
+        private static CharacterVirtualSettings MakeCharacterSettings(Shape wrapper, float capsuleRadius, float maxSlopeAngle, float mass, float pushStrength)
+            => new CharacterVirtualSettings
+            {
+                Shape = wrapper,
+                Up = Vector3.UnitZ,
+                SupportingVolume = new Plane(Vector3.UnitZ, -SupportRadiusOf(capsuleRadius)),
+                MaxSlopeAngle = maxSlopeAngle,
+                Mass = mass,
+                MaxStrength = MathF.Max(0f, pushStrength) * PushStrengthBaseNewtons,
+                // NOTE: PredictiveContactDistance / PenetrationRecoverySpeed are left at Jolt's defaults
+                // (0.1 / 1.0). Raising PredictiveContactDistance to 0.15 (to reduce the feet dip) was
+                // tried and REVERTED: on a cone's incline the early look-ahead lifted the capsule off the ground
+                // (visible hover) and fought penetration recovery frame-to-frame (a walking hop/bob). The
+                // clean-hold walk (defaults) is "mostly SL-like" with only a MINOR feet-dip on transitions,
+                // which is preferable to hover+hop. Do not raise the look-ahead without a slope walk-test.
+            };
 
         private static Vector3 ToVec(in RVector3 d) => new Vector3((float)d.X, (float)d.Y, (float)d.Z);   // 2.19.x renamed Double3 -> RVector3
 
@@ -3196,12 +3242,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // to the inner, and BOTH are disposed together when the character is removed.
         private static (Shape wrapper, Shape inner) BuildStandingCapsule(float halfHeight, float radius)
         {
-            Shape capsule = new CapsuleShape(MathF.Max(0.01f, halfHeight), MathF.Max(0.01f, radius));
+            Shape capsule = RequireCooked(new CapsuleShape(MathF.Max(0.01f, halfHeight), MathF.Max(0.01f, radius)), "avatar capsule");
             try
             {
                 var rt = new RotatedTranslatedShapeSettings(Vector3.Zero, CapsuleYToZ, capsule);
                 using var free = new ShapeSettingsScope(rt);
-                return (rt.Create(), capsule);
+                return (RequireCooked(rt.Create(), "avatar capsule (Z-up wrapper)"), capsule);
             }
             catch
             {
@@ -3340,8 +3386,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     rec.InnerCapsule = inner;
                     rec.CapsuleHalfHeight = capsuleHalfHeight;
                     rec.CapsuleRadius = capsuleRadius;
-                    // NOTE: the SupportingVolume plane still uses the ORIGINAL radius; a large radius change
-                    // would want it refreshed too. Minor, as resize is rare.
+                    if (SupportRadiusOf(capsuleRadius) != rec.SupportRadius)
+                        ReplaceCharacterForSupportRadius(rec);
                 }
                 else
                 {
@@ -3349,6 +3395,25 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     inner.Dispose();
                 }
             }
+        }
+
+        // Builds the avatar's controller again from its current state, with the supporting plane for its present radius.
+        // The new one is made before the old is let go, so a failure leaves the avatar as it was. Under _simLock and
+        // _characterGate. The query marker keeps the shape it was made with, as it does after any resize.
+        private void ReplaceCharacterForSupportRadius(JoltCharacterRecord rec)
+        {
+            CharacterVirtual old = rec.Character!;
+            CharacterVirtualSettings settings = MakeCharacterSettings(rec.StandingShape!, rec.CapsuleRadius, rec.MaxSlopeAngle, rec.Mass, rec.PushStrength);
+            var replacement = new CharacterVirtual(settings, old.Position, old.Rotation, rec.UserData, _system!);
+            replacement.MaxSlopeAngle = rec.MaxSlopeAngle;
+            replacement.UserData = rec.UserData;
+            replacement.LinearVelocity = old.LinearVelocity;
+
+            _charVsChar?.Remove(old);
+            old.Dispose();
+            rec.Character = replacement;
+            rec.SupportRadius = SupportRadiusOf(rec.CapsuleRadius);
+            WireCharacter(rec, replacement);
         }
 
         /// <summary>
@@ -3895,9 +3960,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public void SetGravity(Vector3 gravity)
         {
             if (!IsFinite(gravity)) { CountRejectedNonFinite(); return; }
-            if (_system != null)
-                _system.Gravity = gravity;
-            _settings.Gravity = gravity;
+            // Under _simLock like every other write to the system: Step runs _system.Update under it, and Dispose frees it.
+            lock (_simLock)
+            {
+                if (_disposed)
+                    return;
+                if (_system != null)
+                    _system.Gravity = gravity;
+                _settings.Gravity = gravity;
+            }
         }
 
         public void SetTerrain(ShapeId heightFieldShape, Vector3 position)
@@ -3957,7 +4028,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 _joltToRecord[joltId.ID] = rec;
                 _terrainBody = new BodyId(handle);
             }
-            finally { bcs.Dispose(); }
+            finally { FreeBodyCreationSettings(bcs); }
             }   // _simLock
         }
 
@@ -4788,6 +4859,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 while (_free.TryDequeue(out _)) { }
             }
         }
+
+        /// <summary>Empties the table and returns what was live in it, so the caller can release what the entries own.</summary>
+        public List<T> TakeAll()
+        {
+            lock (_gate)
+            {
+                var live = new List<T>(_count);
+                for (int i = 0; i < _highWater; i++)
+                    if (_slots[i] is T item)
+                        live.Add(item);
+                Clear();
+                return live;
+            }
+        }
     }
 
     // Records hold the native handles plus whatever module-side bookkeeping the
@@ -4843,6 +4928,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // Tuning knobs captured from CharacterDesc.
         public float CapsuleHalfHeight;
         public float CapsuleRadius;
+        public float SupportRadius;            // the radius the supporting plane was built from (CharacterVirtual has no setter for it)
         public float MaxSlopeAngle;
         public float StepHeight;
         public float PushStrength;

@@ -627,6 +627,11 @@ objects"), from which the simulator plays collision sounds and works out impact 
 on, a prim with a damage value set damages the avatar it touches and is removed, as the simulator does
 with every physics engine.
 
+An avatar's capsule is changed in place when its height changes. A change of its radius also makes the
+avatar's controller again, because Jolt takes the supporting plane (one radius below the capsule's centre)
+only when the controller is made; position, velocity, contact events and the avatar-against-avatar collision
+carry over.
+
 ## Avatars and physical objects
 
 Second Life documents that "You can push physical object by walking or flying your avatar into them",
@@ -1343,6 +1348,9 @@ These read and report only, and are always available:
 | `jolt raytest` | A physics ray down through the first avatar |
 | `jolt reloadcheck` | Physical prims that moved since they were loaded |
 | `jolt vehiclestatus` | The vehicle state of every prim that has one |
+
+When a region is removed its physics is torn down and its `jolt` commands stop answering. The console has no
+call to take a command back, so they stay listed but do nothing; the other regions' commands are not touched.
 
 ### Test commands
 

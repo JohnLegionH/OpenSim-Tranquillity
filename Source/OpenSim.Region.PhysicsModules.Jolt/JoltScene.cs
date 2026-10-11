@@ -465,6 +465,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             if (!m_Enabled)
                 return;
+
+            // The console keeps every handler it was given (ICommands has no way to take one back), so end this
+            // region's route to the scene: its `jolt` commands then do nothing and the console holds no reference to
+            // the scene. The other regions' handlers are theirs and stay.
+            _consoleRoute?.Detach();
+            if (scene != null && ReferenceEquals(s_parityScene, scene))
+                s_parityScene = null;
+
+            // The region is going away: tear its physics down now rather than leave it to whoever closes the scene.
+            // Dispose can run again from the scene's own close; it does nothing the second time.
+            Dispose();
         }
 
         public void RegionLoaded(Scene scene)
@@ -512,9 +523,27 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // Registering per region + the WrongConsoleScene() check in each handler makes
             // `change region <name>` actually select the target.
             if (MainConsole.Instance != null)
-            {
-                RegisterConsoleCommands(MainConsole.Instance.Commands, m_testCommands, HandleJoltConsole, HandleJoltTestConsole);
-            }
+                AttachConsole(MainConsole.Instance.Commands);
+        }
+
+        /// <summary>Registers this region's `jolt` console commands on <paramref name="commands"/>.</summary>
+        internal void AttachConsole(ICommands commands)
+        {
+            _consoleRoute ??= new ConsoleRoute(this);
+            RegisterConsoleCommands(commands, m_testCommands, _consoleRoute.Read, _consoleRoute.Test);
+        }
+
+        // What the console is given to call. The console cannot drop a handler, so what it holds is this small object,
+        // and RemoveRegion cuts the scene out of it.
+        private ConsoleRoute _consoleRoute;
+
+        private sealed class ConsoleRoute
+        {
+            private volatile JoltScene _scene;
+            public ConsoleRoute(JoltScene scene) { _scene = scene; }
+            public void Detach() => _scene = null;
+            public void Read(string module, string[] cmd) => _scene?.HandleJoltConsole(module, cmd);
+            public void Test(string module, string[] cmd) => _scene?.HandleJoltTestConsole(module, cmd);
         }
 
         // The `jolt` subcommands that only read and report. They never change the region, so they are always

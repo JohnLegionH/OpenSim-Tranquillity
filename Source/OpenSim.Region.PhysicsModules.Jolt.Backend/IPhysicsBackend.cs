@@ -732,9 +732,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         void ApplyAngularImpulse(BodyId body, Vector3 angularImpulse);
 
         /// <summary>
-        /// Archimedes impulse for one step. The water plane and the object's
-        /// submerged fraction are computed by the engine from the shape.
-        /// This is what boat vehicles should ride on rather than hand-rolled lift.
+        /// Archimedes impulse for one step. NOT IMPLEMENTED: the call changes nothing (a non-finite argument is still
+        /// counted and dropped). The vehicle buoyancy model applies its own lift, and Jolt's buoyancy impulse needs a
+        /// step length and a fluid velocity that these arguments do not carry.
         /// </summary>
         void ApplyBuoyancy(
             BodyId body, float waterHeight, float buoyancy, float linearDrag, float angularDrag);
@@ -772,6 +772,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
         // -- characters ---------------------------------------------------
 
+        /// <summary>Makes an avatar controller. On a backend that has been disposed it makes nothing and returns <see cref="CharacterId.Invalid"/>.</summary>
         CharacterId CreateCharacter(in CharacterDesc desc);
         void RemoveCharacter(CharacterId character);
 
