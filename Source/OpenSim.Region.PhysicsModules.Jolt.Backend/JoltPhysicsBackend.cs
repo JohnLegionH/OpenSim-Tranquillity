@@ -3391,6 +3391,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 }
                 else
                 {
+                    // The query marker carries the capsule too: queries find the avatar at its new size.
+                    if (rec.MarkerBodyId != 0)
+                        _bodyInterface.SetShape(new BodyID(rec.MarkerBodyId), wrapper, false, Activation.DontActivate);
                     wrapper.Dispose();
                     inner.Dispose();
                 }
@@ -3399,7 +3402,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
         // Builds the avatar's controller again from its current state, with the supporting plane for its present radius.
         // The new one is made before the old is let go, so a failure leaves the avatar as it was. Under _simLock and
-        // _characterGate. The query marker keeps the shape it was made with, as it does after any resize.
+        // _characterGate.
         private void ReplaceCharacterForSupportRadius(JoltCharacterRecord rec)
         {
             CharacterVirtual old = rec.Character!;
