@@ -2329,8 +2329,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
             if (backend == null)
                 return;
+            // The query stops at the length of the span it is given, so a full span may mean more bodies overlap: ask again
+            // with a span twice as long until one comes back with room to spare.
             Span<BodyId> found = stackalloc BodyId[64];
-            int n = backend.OverlapBox(center, half + new SVector3(SupportWakeMargin), orientation, QueryFilter.Dynamic, found);
+            SVector3 reach = half + new SVector3(SupportWakeMargin);
+            int n = backend.OverlapBox(center, reach, orientation, QueryFilter.Dynamic, found);
+            while (n == found.Length)
+            {
+                found = new BodyId[found.Length * 2];
+                n = backend.OverlapBox(center, reach, orientation, QueryFilter.Dynamic, found);
+            }
             for (int i = 0; i < n; i++)
             {
                 if (!backend.TryGetBodyUserData(found[i], out uint id) || id == except)
