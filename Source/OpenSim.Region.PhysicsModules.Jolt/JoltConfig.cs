@@ -97,6 +97,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public bool BodyEnhancedEdgeRemoval = false;
         public bool AvatarEnhancedEdgeRemoval = false;
 
+        // true: avatars and physical objects standing on a prim that keyframed motion (llSetKeyframedMotion) is moving are
+        // carried with it, as Second Life does. false: the prim is a fixed body that is set to each new place, and what
+        // stands on it is left behind.
+        public bool KeyframedMotionCarriesRiders = true;
+
         // Script ray casts (llCastRay) and pushes on avatars (llPushObject): limits on what scripts can make one region
         // do. They guard against abuse, so each defaults to its safe value.
         public float RayCastBudgetMs = PhysicsBackendSettings.DefaultRayCastBudgetMs;         // script casts, per region per heartbeat
@@ -157,6 +162,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.HonourConvexMesh = B(cfg, "HonourConvexMesh", c.HonourConvexMesh, warnings);
             c.BodyEnhancedEdgeRemoval = B(cfg, "BodyEnhancedEdgeRemoval", c.BodyEnhancedEdgeRemoval, warnings);
             c.AvatarEnhancedEdgeRemoval = B(cfg, "AvatarEnhancedEdgeRemoval", c.AvatarEnhancedEdgeRemoval, warnings);
+            c.KeyframedMotionCarriesRiders = B(cfg, "KeyframedMotionCarriesRiders", c.KeyframedMotionCarriesRiders, warnings);
             c.BodyUpdateBufferMax = I(cfg, "BodyUpdateBufferMax", c.BodyUpdateBufferMax, 1, 8_388_607, warnings);
             c.CharacterUpdateBufferMax = I(cfg, "CharacterUpdateBufferMax", c.CharacterUpdateBufferMax, 1, 65536, warnings);
             c.ContactBufferMax = I(cfg, "ContactBufferMax", c.ContactBufferMax, 0, 16_777_216, warnings);
