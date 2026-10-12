@@ -501,7 +501,7 @@ public class MeshShapesTodayTests
         Console.WriteLine(line);
         Assert.Equal(3, afterThree);
         Assert.Equal(1, afterOne);
-        Assert.Equal(1, afterThreeAgain);   // stale: the hulls of the asset decoded last
+        Assert.Equal(3, afterThreeAgain);   // the mesher now returns the hulls of the mesh asked for
     }
 
     // ---------------------------------------------------------------- the mesher's bounding-box substitution
