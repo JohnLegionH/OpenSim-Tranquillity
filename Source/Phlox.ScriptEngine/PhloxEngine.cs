@@ -108,6 +108,13 @@ namespace Phlox.ScriptEngine
         public bool LinkMessageThrottle { get; private set; } = true;
         /// <summary>Halcyon's notecard read delays. [InWorldz.Phlox] NotecardThrottle.</summary>
         public bool NotecardThrottle { get; private set; } = true;
+        /// <summary>
+        /// Which pause llGetNotecardLine, llGetNumberOfNotecardLines and the link variants of those two take while
+        /// <see cref="NotecardThrottle"/> is on. false (default): SL's 0.1 s for every call, cached or fetched. true:
+        /// Halcyon's timing (25 ms or 50 ms for a count, 25 ms for an uncached line, 1 ms on every 16th cached line).
+        /// [InWorldz.Phlox] NotecardPause = sl | halcyon.
+        /// </summary>
+        public bool NotecardHalcyonTiming { get; private set; }
         /// <summary>The parsed-notecard cache (Halcyon's NotecardCache). [InWorldz.Phlox] NotecardCache.</summary>
         public bool NotecardCacheEnabled { get; private set; } = true;
         /// <summary>iwFormatString's 100 ms. [InWorldz.Phlox] FormatStringThrottle.</summary>
@@ -216,6 +223,13 @@ namespace Phlox.ScriptEngine
                 "HttpInFlightThrottle = {8}",
                 ResetThrottle, ChatThrottle, BotThrottle, PhysicsThrottle, LinkMessageThrottle, NotecardThrottle,
                 NotecardCacheEnabled, FormatStringThrottle, HttpInFlightThrottle);
+
+            // Notecard read pause: sl (default) or halcyon; anything else is sl, with a warning.
+            string notecardPause = m_Config.GetString("NotecardPause", "sl").Trim().ToLowerInvariant();
+            NotecardHalcyonTiming = notecardPause == "halcyon";
+            if (notecardPause != "sl" && notecardPause != "halcyon")
+                m_log.LogWarning("[PhloxEngine]: NotecardPause = '{0}' is not 'sl' or 'halcyon'; using sl", notecardPause);
+            m_log.LogInformation("[PhloxEngine]: NotecardPause = {0}", NotecardHalcyonTiming ? "halcyon" : "sl");
 
             // Syscalls that can reach a service run off the scheduler thread.
             // auto (default) = inline when the answer is local or cached, deferred otherwise;
@@ -740,6 +754,16 @@ namespace Phlox.ScriptEngine
                 else
                     m_log.LogWarning("[PhloxEngine]: The script scheduler did not stop within 5 s; it is still running {0}, whose last saved state is kept; every other script is saved",
                         running);
+            }
+            else
+            {
+                // The scheduler thread is gone, so nothing else touches its queues: events it had not yet taken up go to
+                // their scripts' own queues, which the saved state carries.
+                try { m_ExeScheduler?.QueueIncomingForFinalSave(); }
+                catch (Exception e)
+                {
+                    m_log.LogWarning("[PhloxEngine]: Events waiting for the script scheduler could not be queued before the final save: {0}", e.Message);
+                }
             }
             StateManager?.StopExcept(running);
         }
@@ -1706,8 +1730,8 @@ namespace Phlox.ScriptEngine
                 foreach (SceneObjectPart part in attachment.Parts)
                 {
                     TaskInventoryDictionary scripts;
-                    lock (part.TaskInventory)
-                        scripts = (TaskInventoryDictionary)part.TaskInventory.Clone();
+                    // Clone takes the inventory's read lock itself.
+                    scripts = (TaskInventoryDictionary)part.TaskInventory.Clone();
                     foreach (var kvp in scripts)
                         if (kvp.Value.Type == (int)AssetType.LSLText || kvp.Value.Type == 10)
                             items.Add(kvp.Value.ItemID);
@@ -1795,8 +1819,8 @@ namespace Phlox.ScriptEngine
                 try
                 {
                     TaskInventoryDictionary scripts;
-                    lock (part.TaskInventory)
-                        scripts = (TaskInventoryDictionary)part.TaskInventory.Clone();
+                    // Clone takes the inventory's read lock itself.
+                    scripts = (TaskInventoryDictionary)part.TaskInventory.Clone();
 
                     foreach (var kvp in scripts)
                     {
@@ -1892,8 +1916,8 @@ namespace Phlox.ScriptEngine
             if (part?.ParentGroup == null || part.ParentGroup.IsDeleted) return 0;
 
             TaskInventoryDictionary inventory;
-            lock (part.TaskInventory)
-                inventory = (TaskInventoryDictionary)part.TaskInventory.Clone();
+            // Clone takes the inventory's read lock itself.
+            inventory = (TaskInventoryDictionary)part.TaskInventory.Clone();
             var scripts = new List<TaskInventoryItem>();
             foreach (TaskInventoryItem item in inventory.Values)
                 if (item.Type == (int)AssetType.LSLText || item.Type == 10)

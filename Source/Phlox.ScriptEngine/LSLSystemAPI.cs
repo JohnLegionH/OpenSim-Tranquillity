@@ -268,7 +268,7 @@ namespace Phlox.ScriptEngine
             foreach (SceneObjectPart part in parts)
             {
                 if (part?.TaskInventory == null) continue;
-                lock (part.TaskInventory)
+                using (InventoryLock.Read(part.TaskInventory))
                 {
                     foreach (var kvp in part.TaskInventory)
                         if (kvp.Value.Type == (int)AssetType.LSLText || kvp.Value.Type == INVENTORY_SCRIPT)
@@ -291,6 +291,39 @@ namespace Phlox.ScriptEngine
         private const int NOTECARD_LINE_LONG_DELAY = 25;
         private const int NOTECARD_LINE_FAST_DELAY = 1;
         private const int NOTECARD_LINES_PER_DELAY = 16;
+
+        /// <summary>
+        /// SL's pause for llGetNotecardLine and llGetNumberOfNotecardLines: "causes the script to sleep for 0.1 seconds"
+        /// (YEngine: LSL_Api.cs m_sleepMsOnGetNotecardLine and m_sleepMsOnGetNumberOfNotecardLines, 100).
+        /// </summary>
+        private const int NOTECARD_SL_DELAY = 100;
+
+        /// <summary>
+        /// The pause of llGetNumberOfNotecardLines and iwGetLinkNumberOfNotecardLines after an answer: SL's 100 ms, or
+        /// with [InWorldz.Phlox] NotecardPause = halcyon Halcyon's 25 ms cached and 50 ms fetched.
+        /// </summary>
+        private void NotecardCountSleep(bool cached)
+        {
+            if (m_ScriptEngine != null && m_ScriptEngine.NotecardHalcyonTiming)
+                NotecardSleep(cached ? NOTECARD_COUNT_FAST_DELAY : NOTECARD_COUNT_LONG_DELAY);
+            else
+                NotecardSleep(NOTECARD_SL_DELAY);
+        }
+
+        /// <summary>
+        /// The pause of llGetNotecardLine and iwGetLinkNotecardLine after an answer: SL's 100 ms, or with
+        /// [InWorldz.Phlox] NotecardPause = halcyon Halcyon's (<see cref="NotecardLineCachedSleep"/> cached, 25 ms fetched).
+        /// </summary>
+        private void NotecardLineSleep(bool cached, int line)
+        {
+            if (m_ScriptEngine != null && m_ScriptEngine.NotecardHalcyonTiming)
+            {
+                if (cached) NotecardLineCachedSleep(line, 0);
+                else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
+            }
+            else
+                NotecardSleep(NOTECARD_SL_DELAY);
+        }
 
         /// <summary>Halcyon GetNotecardSegment's cached-read delay: 1 ms on every 16th line read from offset 0.</summary>
         private void NotecardLineCachedSleep(int line, int startOffset)
@@ -326,6 +359,10 @@ namespace Phlox.ScriptEngine
                     AssetBase asset = World.AssetService.Get(assetId.ToString());
                     if (asset == null || asset.Data == null || asset.Type != (sbyte)AssetType.Notecard)
                     {
+                        LogNotecardFetchFailed(cardName, assetId,
+                            asset == null ? "the asset service returned no asset"
+                            : asset.Data == null ? "the asset has no data"
+                            : "the asset is of type " + asset.Type + ", not a notecard");
                         ShoutError("Notecard '" + cardName + "' could not be found.");
                         return;
                     }
@@ -336,11 +373,26 @@ namespace Phlox.ScriptEngine
                 catch (Exception ex)
                 {
                     if (logAs != null) m_log.LogError("[PhloxAPI]: {0} ex: {1}", logAs, ex.Message);
+                    LogNotecardFetchFailed(cardName, assetId, ex.Message);
                     ShoutError("Notecard '" + cardName + "' could not be found.");
                 }
             });
             cache?.CacheCheck();
             return false;
+        }
+
+        /// <summary>
+        /// A notecard fetch that gave no notecard: the script is sent no dataserver event (SL: "it is possible for any
+        /// dataserver request to fail"), and the region log says which notecard, which asset and which script, so the
+        /// loss is not silent. Runs on the thread pool.
+        /// </summary>
+        private void LogNotecardFetchFailed(string cardName, UUID assetId, string reason)
+        {
+            string script;
+            try { script = llGetScriptName(); }
+            catch (Exception) { script = string.Empty; }
+            m_log.LogWarning("[PhloxAPI]: Notecard '{0}' (asset {1}) could not be read for script '{2}' ({3}) in object '{4}': {5}; no dataserver event is sent",
+                cardName, assetId, script, m_itemID, m_host?.Name, reason);
         }
 
         /// <summary>SL's notecard line limit: "If the requested line is longer than 1024 bytes (not characters), dataserver will only return the first 1024 bytes".</summary>
@@ -907,7 +959,7 @@ namespace Phlox.ScriptEngine
 
         private void SetRestoredGrant(TaskInventoryItem item, UUID granter, int mask, UUID experience)
         {
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Write(m_host.TaskInventory))
             {
                 item.PermsGranter = granter;
                 item.PermsMask = mask;
@@ -2687,7 +2739,7 @@ namespace Phlox.ScriptEngine
             // Find the script in this prim's inventory
             UUID srcId = UUID.Zero;
             bool found = false;
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
             {
                 foreach (KeyValuePair<UUID, TaskInventoryItem> inv in m_host.TaskInventory)
                 {
@@ -2933,7 +2985,7 @@ namespace Phlox.ScriptEngine
             int implicitPerms = GetImplicitPermissions(item, agentID);
             if (implicitPerms == 0) return false;
             if ((perm & (~implicitPerms)) != 0) return false;
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Write(m_host.TaskInventory))
             {
                 item.PermsGranter = agentID;
                 item.PermsMask = perm;
@@ -2988,7 +3040,7 @@ namespace Phlox.ScriptEngine
             UUID invItemID = InventorySelf();
             if (invItemID == UUID.Zero) return;
             TaskInventoryItem item;
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
                 item = m_host.TaskInventory[invItemID];
             ClearGrantClaim();   // The answer to this request replaces any grant a restore saved or left waiting
             ForgetExperienceGrant();   // and whatever it grants is not an Experience's grant
@@ -3043,7 +3095,7 @@ namespace Phlox.ScriptEngine
             if (ownerAcct != null) ownerName = ownerAcct.FirstName + " " + ownerAcct.LastName;
             if (string.IsNullOrEmpty(ownerName)) ownerName = "(unknown)";
 
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
                 item = m_host.TaskInventory[invItemID];
 
             lock (m_permRequestLock)
@@ -4249,7 +4301,7 @@ namespace Phlox.ScriptEngine
             }
 
             TaskInventoryItem lmItem = null;
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
             {
                 foreach (var kvp in m_host.TaskInventory)
                     if (kvp.Value.Name == landmark) { lmItem = kvp.Value; break; }
@@ -4357,7 +4409,7 @@ namespace Phlox.ScriptEngine
         private static UUID InventoryAnimation(SceneObjectPart part, string name)
         {
             if (part == null) return UUID.Zero;
-            lock (part.TaskInventory)
+            using (InventoryLock.Read(part.TaskInventory))
                 foreach (var kvp in part.TaskInventory)
                     if (kvp.Value.Name == name && kvp.Value.Type == (int)AssetType.Animation)
                         return kvp.Value.AssetID;
@@ -4998,7 +5050,7 @@ namespace Phlox.ScriptEngine
         {
             if (m_host == null) return 0;
             int count = 0;
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
                 foreach (var kvp in m_host.TaskInventory)
                     if (type == -1 || kvp.Value.Type == type) count++;
             return count;
@@ -5046,10 +5098,12 @@ namespace Phlox.ScriptEngine
         {
             var names = new List<string>();
             foreach (SceneObjectPart part in parts)
-                lock (part.TaskInventory)
+                using (InventoryLock.Read(part.TaskInventory))
                     foreach (var kvp in part.TaskInventory)
-                        if ((type == -1 || kvp.Value.Type == type) && (match == null || match(kvp.Value.Name)))
+                        if (type == -1 || kvp.Value.Type == type)
                             names.Add(kvp.Value.Name);
+            // The caller's filter (a pattern match, possibly a regular expression) runs after the lock is let go.
+            if (match != null) names.RemoveAll(n => !match(n));
             names.Sort(InvNameComparer.Instance);
             return names;
         }
@@ -5062,7 +5116,7 @@ namespace Phlox.ScriptEngine
         public int llGetInventoryType(string name)
         {
             if (m_host == null) return -1;
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
                 foreach (var kvp in m_host.TaskInventory)
                     if (kvp.Value.Name == name) return kvp.Value.Type;
             return -1;
@@ -5077,7 +5131,7 @@ namespace Phlox.ScriptEngine
         public string llGetInventoryKey(string name)
         {
             if (m_host == null) return UUID.Zero.ToString();
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
                 foreach (var kvp in m_host.TaskInventory)
                     if (kvp.Value.Name == name)
                     {
@@ -5092,7 +5146,7 @@ namespace Phlox.ScriptEngine
         public string llGetInventoryCreator(string item)
         {
             if (m_host == null) return UUID.Zero.ToString();
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
                 foreach (var kvp in m_host.TaskInventory)
                     if (kvp.Value.Name == item) return kvp.Value.CreatorID.ToString();
             // SL: "If item is missing from the prim's inventory then an error is shouted on DEBUG_CHANNEL"; "" as YEngine
@@ -5103,7 +5157,7 @@ namespace Phlox.ScriptEngine
         public string llGetInventoryDesc(string item)
         {
             if (m_host == null) return string.Empty;
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
                 foreach (var kvp in m_host.TaskInventory)
                     if (kvp.Value.Name == item) return kvp.Value.Description ?? string.Empty;
             ShoutError("No item named '" + item + "'");
@@ -5113,7 +5167,7 @@ namespace Phlox.ScriptEngine
         {
             // SL returns timestamp when item was acquired; we use CreationDate as closest equivalent
             if (m_host == null) return string.Empty;
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
                 foreach (var kvp in m_host.TaskInventory)
                     if (kvp.Value.Name == item)
                     {
@@ -5126,7 +5180,7 @@ namespace Phlox.ScriptEngine
         public int llGetInventoryPermMask(string item, int mask)
         {
             if (m_host == null) return -1;
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
             {
                 foreach (var kvp in m_host.TaskInventory)
                 {
@@ -5219,7 +5273,7 @@ namespace Phlox.ScriptEngine
 
             // Find the item in task inventory
             TaskInventoryItem item = null;
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
             {
                 foreach (TaskInventoryItem inv in m_host.TaskInventory.Values)
                 {
@@ -5284,7 +5338,7 @@ namespace Phlox.ScriptEngine
             {
                 string entry = inventory.Data[i]?.ToString();
                 UUID found = UUID.Zero;
-                lock (part.TaskInventory)
+                using (InventoryLock.Read(part.TaskInventory))
                     foreach (var kvp in part.TaskInventory)
                         if (kvp.Value.Name == entry || kvp.Value.ItemID.ToString() == entry) { found = kvp.Value.ItemID; break; }
                 if (found == UUID.Zero)
@@ -5304,17 +5358,20 @@ namespace Phlox.ScriptEngine
         public void llRemoveInventory(string item)
         {
             if (m_host == null) return;
-            lock (m_host.TaskInventory)
+            // Found under the read lock; removed after it is let go, because the removal takes the write lock itself.
+            UUID itemId = UUID.Zero;
+            using (InventoryLock.Read(m_host.TaskInventory))
             {
                 foreach (var kvp in m_host.TaskInventory)
                 {
                     if (kvp.Value.Name == item)
                     {
-                        m_host.Inventory.RemoveInventoryItem(kvp.Value.ItemID);
-                        return;
+                        itemId = kvp.Value.ItemID;
+                        break;
                     }
                 }
             }
+            if (itemId != UUID.Zero) m_host.Inventory.RemoveInventoryItem(itemId);
         }
 
         public void llAllowInventoryDrop(int add)
@@ -5404,7 +5461,7 @@ namespace Phlox.ScriptEngine
         private static UUID NotecardAssetIn(SceneObjectPart part, string name)
         {
             if (string.IsNullOrEmpty(name)) return UUID.Zero;
-            lock (part.TaskInventory)
+            using (InventoryLock.Read(part.TaskInventory))
                 foreach (var kvp in part.TaskInventory)
                     if (kvp.Value.Type == (int)AssetType.Notecard && kvp.Value.Name == name)
                         return kvp.Value.AssetID;
@@ -5412,8 +5469,9 @@ namespace Phlox.ScriptEngine
         }
 
         /// <summary>
-        /// Halcyon's GetNumberOfNotecardLines delays (LSLSystemAPI.cs:14521-14580) - 25 ms answered from the
-        /// notecard cache, 50 ms fetched, 100 ms when there is no such notecard - and its cache. The answer is unchanged.
+        /// Pauses the script 100 ms after the answer, as SL does; with NotecardPause = halcyon Halcyon's delays
+        /// (LSLSystemAPI.cs:14521-14580) - 25 ms answered from the notecard cache, 50 ms fetched - instead. A notecard
+        /// that is not there pauses 100 ms either way. The answer is unchanged.
         /// </summary>
         public string llGetNumberOfNotecardLines(string name)
         {
@@ -5428,13 +5486,14 @@ namespace Phlox.ScriptEngine
             }
             UUID queryID = NewDataserverQuery();
             bool cached = AnswerNotecardRead(notecard, queryID, c => c.LineCount.ToString(), name, "llGetNumberOfNotecardLines");
-            NotecardSleep(cached ? NOTECARD_COUNT_FAST_DELAY : NOTECARD_COUNT_LONG_DELAY);
+            NotecardCountSleep(cached);
             return queryID.ToString();
         }
 
         /// <summary>
-        /// Halcyon's GetNotecardSegment delays (LSLSystemAPI.cs:14602-14661) - 25 ms fetched; from the cache,
-        /// 1 ms on lines 0, 16, 32 ... read from offset 0 and none otherwise; none for a missing notecard - and its cache.
+        /// Pauses the script 100 ms after the answer, as SL does; with NotecardPause = halcyon Halcyon's
+        /// GetNotecardSegment delays (LSLSystemAPI.cs:14602-14661) - 25 ms fetched; from the cache, 1 ms on lines
+        /// 0, 16, 32 ... and none otherwise - instead. A missing notecard has no read pause either way.
         /// </summary>
         public string llGetNotecardLine(string name, int line)
         {
@@ -5449,8 +5508,7 @@ namespace Phlox.ScriptEngine
             UUID queryID = NewDataserverQuery();
             int lineNum = line;
             bool cached = AnswerNotecardRead(notecard, queryID, c => NotecardLineAnswer(c, lineNum), name, "llGetNotecardLine");
-            if (cached) NotecardLineCachedSleep(line, 0);
-            else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
+            NotecardLineSleep(cached, line);
             return queryID.ToString();
         }
         public string iwGetNotecardSegment(string name, int line, int startOffset, int maxLength)
@@ -5511,7 +5569,7 @@ namespace Phlox.ScriptEngine
             if (m_host == null) return UUID.Zero.ToString();
 
             TaskInventoryItem landmark = null;
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
             {
                 foreach (var kvp in m_host.TaskInventory)
                 {
@@ -5599,7 +5657,7 @@ namespace Phlox.ScriptEngine
         {
             int count = 0;
             foreach (SceneObjectPart part in GetLinkParts(linknumber))
-                lock (part.TaskInventory)
+                using (InventoryLock.Read(part.TaskInventory))
                     foreach (var kvp in part.TaskInventory)
                         if (type == -1 || kvp.Value.Type == type) count++;
             return count;
@@ -5607,7 +5665,7 @@ namespace Phlox.ScriptEngine
         public int iwGetLinkInventoryType(int linknumber, string name)
         {
             foreach (SceneObjectPart part in GetLinkParts(linknumber))
-                lock (part.TaskInventory)
+                using (InventoryLock.Read(part.TaskInventory))
                     foreach (var kvp in part.TaskInventory)
                         if (kvp.Value.Name == name) return kvp.Value.Type;
             return -1;
@@ -5620,7 +5678,7 @@ namespace Phlox.ScriptEngine
         {
             int rc = -1;
             foreach (SceneObjectPart part in GetLinkParts(linknumber))
-                lock (part.TaskInventory)
+                using (InventoryLock.Read(part.TaskInventory))
                     foreach (var kvp in part.TaskInventory)
                         if (kvp.Value.Name == item)
                         {
@@ -5642,7 +5700,7 @@ namespace Phlox.ScriptEngine
         public string iwGetLinkInventoryKey(int linknumber, string name)
         {
             foreach (SceneObjectPart part in GetLinkParts(linknumber))
-                lock (part.TaskInventory)
+                using (InventoryLock.Read(part.TaskInventory))
                     foreach (var kvp in part.TaskInventory)
                         // llGetInventoryKey's rule, as Halcyon's shared GetInventoryKey.
                         if (kvp.Value.Name == name)
@@ -5659,7 +5717,7 @@ namespace Phlox.ScriptEngine
             var parts = GetLinkParts(linknumber).ToList();
             if (parts.Count == 0) return UUID.Zero.ToString();
             foreach (SceneObjectPart part in parts)
-                lock (part.TaskInventory)
+                using (InventoryLock.Read(part.TaskInventory))
                     foreach (var kvp in part.TaskInventory)
                         if (kvp.Value.Name == item) return kvp.Value.CreatorID.ToString();
             if (parts.Count == 1 && parts[0].LinkNum == 0) ScriptShoutError("No item named '" + item + "'");
@@ -5670,18 +5728,21 @@ namespace Phlox.ScriptEngine
         {
             foreach (SceneObjectPart part in GetLinkParts(linknumber))
             {
-                lock (part.TaskInventory)
+                // Found under the read lock; removed after it is let go, because the removal takes the write lock itself.
+                UUID itemId = UUID.Zero;
+                using (InventoryLock.Read(part.TaskInventory))
                 {
                     foreach (var kvp in part.TaskInventory)
                     {
                         if (kvp.Value.Name == item)
                         {
-                            // One per selected prim, as Halcyon (LSLSystemAPI.cs:5498-5503).
-                            part.Inventory.RemoveInventoryItem(kvp.Key);
+                            itemId = kvp.Key;
                             break;
                         }
                     }
                 }
+                // One per selected prim, as Halcyon (LSLSystemAPI.cs:5498-5503).
+                if (itemId != UUID.Zero) part.Inventory.RemoveInventoryItem(itemId);
             }
         }
         public void iwGiveLinkInventory(int linknumber, string destination, string inventory)
@@ -5707,7 +5768,7 @@ namespace Phlox.ScriptEngine
             foreach (SceneObjectPart part in GetLinkParts(linknumber))
             {
                 anyPart = true;
-                lock (part.TaskInventory)
+                using (InventoryLock.Read(part.TaskInventory))
                     foreach (var kvp in part.TaskInventory)
                         if (kvp.Value.Name == inventory)
                         { item = kvp.Value; sourcePart = part; break; }
@@ -5881,7 +5942,7 @@ namespace Phlox.ScriptEngine
         public string iwGetLinkInventoryDesc(int linknumber, string name)
         {
             foreach (SceneObjectPart part in GetLinkParts(linknumber))
-                lock (part.TaskInventory)
+                using (InventoryLock.Read(part.TaskInventory))
                     foreach (var kvp in part.TaskInventory)
                         if (kvp.Value.Name == name) return kvp.Value.Description;
             return string.Empty;
@@ -5889,7 +5950,7 @@ namespace Phlox.ScriptEngine
         public string iwGetLinkInventoryLastOwner(int linknumber, string name)
         {
             foreach (SceneObjectPart part in GetLinkParts(linknumber))
-                lock (part.TaskInventory)
+                using (InventoryLock.Read(part.TaskInventory))
                     foreach (var kvp in part.TaskInventory)
                         if (kvp.Value.Name == name) return kvp.Value.LastOwnerID.ToString();
             return UUID.Zero.ToString();
@@ -5934,7 +5995,7 @@ namespace Phlox.ScriptEngine
             {
                 string name = inventory.Data[i]?.ToString();
                 UUID found = UUID.Zero;
-                lock (part.TaskInventory)
+                using (InventoryLock.Read(part.TaskInventory))
                     foreach (var kvp in part.TaskInventory)
                         if (kvp.Value.Name == name || kvp.Value.ItemID.ToString() == name) { found = kvp.Value.ItemID; break; }
                 if (found == UUID.Zero) return IW_DELIVER_ITEM;
@@ -5953,7 +6014,7 @@ namespace Phlox.ScriptEngine
                 UUID queryID = NewDataserverQuery();
                 // Halcyon's GetNumberOfNotecardLines delays and cache, as llGetNumberOfNotecardLines
                 bool cached = AnswerNotecardRead(notecard, queryID, c => c.LineCount.ToString(), name, null);
-                NotecardSleep(cached ? NOTECARD_COUNT_FAST_DELAY : NOTECARD_COUNT_LONG_DELAY);
+                NotecardCountSleep(cached);
                 return queryID.ToString();
             }
             ScriptShoutError("iwGetLinkNumberOfNotecardLines: Link number " + linknumber + " does not contain notecard '" + name + "'.");
@@ -5972,8 +6033,7 @@ namespace Phlox.ScriptEngine
                 int lineNum = line;
                 // Halcyon's GetNotecardSegment delays and cache, as llGetNotecardLine
                 bool cached = AnswerNotecardRead(notecard, queryID, c => NotecardLineAnswer(c, lineNum), name, null);
-                if (cached) NotecardLineCachedSleep(line, 0);
-                else NotecardSleep(NOTECARD_LINE_LONG_DELAY);
+                NotecardLineSleep(cached, line);
                 return queryID.ToString();
             }
             ShoutError("iwGetLinkNotecardLine: Notecard '" + name + "' not found in link " + linknumber + ".");
@@ -6012,7 +6072,7 @@ namespace Phlox.ScriptEngine
         {
             foreach (SceneObjectPart part in GetLinkParts(linknumber))
             {
-                lock (part.TaskInventory)
+                using (InventoryLock.Read(part.TaskInventory))
                     foreach (var kvp in part.TaskInventory)
                         if (kvp.Value.Type == (int)AssetType.Notecard && kvp.Value.Name == name)
                             return new List<UUID> { kvp.Value.AssetID };
@@ -6752,7 +6812,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             if (string.IsNullOrEmpty(k)) return UUID.Zero;
             // The prim's inventory first, then a key (Halcyon :692-717): "no-one can name an inventory item with a
             // UUID string and have this code return the UUID in the name instead of the inventory item's UUID".
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
             {
                 foreach (var kvp in m_host.TaskInventory)
                 {
@@ -6773,7 +6833,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         private UUID TextureKeyOrName(string k)
         {
             if (string.IsNullOrEmpty(k)) return UUID.Zero;
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
             {
                 foreach (var kvp in m_host.TaskInventory)
                 {
@@ -6794,7 +6854,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         private static string InventoryName(SceneObjectPart part, UUID assetID)
         {
             if (assetID == UUID.Zero) return string.Empty;
-            lock (part.TaskInventory)
+            using (InventoryLock.Read(part.TaskInventory))
             {
                 foreach (var kvp in part.TaskInventory)
                 {
@@ -9539,7 +9599,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         private UUID SoundKeyOrName(string k)
         {
             if (string.IsNullOrEmpty(k)) return UUID.Zero;
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
             {
                 foreach (var kvp in m_host.TaskInventory)
                 {
@@ -9610,7 +9670,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             else if (!UUID.TryParse(impact_sound, out sound))
             {
                 sound = UUID.Zero;
-                lock (part.TaskInventory)
+                using (InventoryLock.Read(part.TaskInventory))
                 {
                     foreach (TaskInventoryItem item in part.TaskInventory.Values)
                     {
@@ -14025,7 +14085,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         {
             UUID invItemID = InventorySelf();
             if (invItemID.IsZero()) return null;
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
                 return m_host.TaskInventory.TryGetValue(invItemID, out TaskInventoryItem item) ? item : null;
         }
 
@@ -18518,7 +18578,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
                 byte assetType = 0;
                 string objName = string.Empty;
 
-                lock (m_host.TaskInventory)
+                using (InventoryLock.Read(m_host.TaskInventory))
                 {
                     foreach (KeyValuePair<UUID, TaskInventoryItem> inv in m_host.TaskInventory)
                     {
@@ -18629,9 +18689,8 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
             {
                 foreach (SceneObjectPart part in group.Parts)
                 {
-                    TaskInventoryDictionary itemsDictionary;
-                    lock (part.TaskInventory)
-                        itemsDictionary = (TaskInventoryDictionary)part.TaskInventory.Clone();
+                    // Clone takes the inventory's read lock itself.
+                    var itemsDictionary = (TaskInventoryDictionary)part.TaskInventory.Clone();
 
                     foreach (TaskInventoryItem item in itemsDictionary.Values)
                     {
@@ -18765,7 +18824,7 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         private TaskInventoryItem FindInventoryItem(string name, int type)
         {
             if (m_host == null) return null;
-            lock (m_host.TaskInventory)
+            using (InventoryLock.Read(m_host.TaskInventory))
                 foreach (var kvp in m_host.TaskInventory)
                     if (kvp.Value.Name == name && (type == -1 || kvp.Value.Type == type))
                         return kvp.Value;
