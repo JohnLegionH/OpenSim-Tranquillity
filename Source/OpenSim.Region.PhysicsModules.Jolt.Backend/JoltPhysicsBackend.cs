@@ -1420,6 +1420,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             _joltToRecord.TryGetValue(body1.ID.ID, out JoltBodyRecord? ra);
             _joltToRecord.TryGetValue(body2.ID.ID, out JoltBodyRecord? rb);
 
+            // A sensor pair the engine found in this update needs no help from the sweep of fast bodies (SweepFastBodiesForSensors).
+            if (Volatile.Read(ref _sensorSweepActive) && (body1.IsSensor || body2.IsSensor))
+                _sensorPairsReported[SensorPairKey(body1.ID.ID, body2.ID.ID)] = 0;
+
             // Stamp both bodies as touching in this step (BodyHadContact), before the Persist gate: Added or
             // Persisted fires for every touching pair in every step while either body is awake. A sensor or an
             // avatar's query marker touches nothing solid.
@@ -1892,6 +1896,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 bcs.Restitution = desc.Restitution;
                 bcs.IsSensor = desc.IsSensor;
                 bcs.UserData = desc.UserData;
+                if (_settings.BodyInternalEdgeRemoval && desc.MotionType == BodyMotionType.Dynamic)
+                    bcs.EnhancedInternalEdgeRemoval = true;
 
                 if (movable)
                 {
@@ -1972,6 +1978,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 uint handle = _bodies.Add(rec);
                 rec.Handle = handle;
                 _joltToRecord[joltId.ID] = rec;
+                if (desc.Layer == PhysicsLayer.Sensor)
+                    Interlocked.Increment(ref _sensorBodies);
                 return new BodyId(handle);
             }
             finally
@@ -2043,6 +2051,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             _bodyInterface.RemoveAndDestroyBody(joltId);
             _joltToRecord.TryRemove(rec.NativeBodyId, out _);
             _bodies.Remove(body.Value); // bumps the generation so the stale handle fails validation.
+            if (rec.Layer == PhysicsLayer.Sensor)
+                Interlocked.Decrement(ref _sensorBodies);
             // _activeBodies is step-thread-owned; if this body happened to be active, the stale
             // id is self-healed at the top of Step (it no longer resolves via _joltToRecord).
             }   // _simLock
@@ -2111,6 +2121,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 if (!TryResolve(body, out JoltBodyRecord rec, out BodyID jid))
                     return;
                 _bodyInterface.SetObjectLayer(jid, new ObjectLayer((uint)layer));
+                if (rec.Layer == PhysicsLayer.Sensor && layer != PhysicsLayer.Sensor)
+                    Interlocked.Decrement(ref _sensorBodies);
+                else if (rec.Layer != PhysicsLayer.Sensor && layer == PhysicsLayer.Sensor)
+                    Interlocked.Increment(ref _sensorBodies);
                 rec.Layer = layer;
             }
         }
@@ -2285,6 +2299,25 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public float GetBodyMass(BodyId body)
         {
             return TryResolve(body, out JoltBodyRecord rec, out _) ? rec.Mass : 0f;
+        }
+
+        public bool GetBodyEnhancedEdgeRemoval(BodyId body)
+        {
+            lock (_simLock)
+            {
+                if (_disposed || !TryResolve(body, out _, out BodyID jid))
+                    return false;
+                BodyLockInterface bli = _system!.BodyLockInterface;
+                bli.LockRead(jid, out BodyLockRead lockRead);
+                try { return lockRead.Succeeded && lockRead.Body!.EnhancedInternalEdgeRemoval; }
+                finally { bli.UnlockRead(lockRead); }
+            }
+        }
+
+        public bool GetCharacterEnhancedEdgeRemoval(CharacterId character)
+        {
+            lock (_characterGate)
+                return _characters.TryGet(character.Value, out JoltCharacterRecord rec) && rec.Character != null && rec.Character.EnhancedInternalEdgeRemoval;
         }
 
         // Local principal moments of inertia (diagonal), read from the live MotionProperties.
@@ -2777,6 +2810,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
             (Shape wrapper, Shape inner) = BuildStandingCapsule(desc.CapsuleHalfHeight, desc.CapsuleRadius);
             var settings = MakeCharacterSettings(wrapper, desc.CapsuleRadius, desc.MaxSlopeAngle, desc.Mass, desc.PushStrength);
+            settings.EnhancedInternalEdgeRemoval = _settings.AvatarInternalEdgeRemoval;
 
             // _simLock: AddCharacter runs on the LOGIN/TELEPORT thread and adds the query-marker body,
             // which mutates the broadphase Update is walking. Taken outside _characterGate per the
@@ -3170,6 +3204,130 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             return n * ((a - common) * dt);
         }
 
+        // ---------------------------------------------------------------------
+        // Fast bodies and volume-detect prims. Jolt finds a sensor's contact only where a body overlaps it at the start of a
+        // collision step: its cast of a fast body ignores sensors, and a sensor is not cast itself. A body that is wholly on
+        // one side of a thin detector at one step and wholly on the other at the next is never found, however the heartbeat is
+        // divided, and the detector raises nothing. Second Life documents that a detector "triggers collision_start and
+        // collision_end events when interpenetrating" and no speed beyond which that stops.
+        //
+        // So, in an update, when the region has a sensor: each awake dynamic body that would go further than
+        // SensorSweepMinTravel is noted before it (its centre of mass and its turn), and afterwards, from where it was to
+        // where the update left it, its shape is cast against the sensors. A sensor the path passed through, that the
+        // engine did not report in this update, and that the body does not overlap where it ended (the engine finds that one
+        // in the next update, as it finds every sensor contact), gets a begin contact, which the scene turns into one
+        // collision_start; the next heartbeat has no contact, which is the collision_end. A sensor the path meets on the way
+        // to a stop short of it is not passed through: the path cast is the one the update made (to where it ended), not the
+        // one it would have made.
+        // ---------------------------------------------------------------------
+
+        private int _sensorBodies;                       // bodies on the Sensor layer now
+        private bool _sensorSweepActive;                 // volatile reads: the contact callbacks run on the engine's job threads
+        private const float SensorSweepMinTravel = 0.1f; // m an update must move a body for it to be swept
+
+        private readonly struct SweptBody
+        {
+            public readonly uint JoltId;
+            public readonly Vector3 From;
+            public readonly Quaternion Rotation;
+            public SweptBody(uint id, Vector3 from, Quaternion rotation) { JoltId = id; From = from; Rotation = rotation; }
+        }
+
+        private readonly List<SweptBody> _sensorSwept = new List<SweptBody>();                                   // step-thread only
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, byte> _sensorPairsReported = new System.Collections.Concurrent.ConcurrentDictionary<ulong, byte>();
+        private readonly List<ShapeCastResult> _sensorCastHits = new List<ShapeCastResult>();
+        private readonly List<CollideShapeResult> _sensorEndOverlaps = new List<CollideShapeResult>();
+        private readonly HashSet<uint> _sensorsOverlappedAtEnd = new HashSet<uint>();
+
+        /// <summary>Begin contacts the sweep of fast bodies against sensors has raised that the engine did not (tests).</summary>
+        internal long SensorCrossingsRaised => Interlocked.Read(ref _sensorCrossingsRaised);
+        private long _sensorCrossingsRaised;
+
+        private static ulong SensorPairKey(uint a, uint b) => a < b ? ((ulong)a << 32) | b : ((ulong)b << 32) | a;
+
+        private void BeginSensorSweep(float deltaTime)
+        {
+            _sensorSwept.Clear();
+            _sensorPairsReported.Clear();
+            if (Volatile.Read(ref _sensorBodies) <= 0)
+            {
+                Volatile.Write(ref _sensorSweepActive, false);
+                return;
+            }
+            _sweptBodies.Clear();
+            _sweptBodies.UnionWith(_activeBodies);
+            if (!_activationQueue.IsEmpty)
+                foreach (ActivationDelta delta in _activationQueue)
+                    if (delta.Activated)
+                        _sweptBodies.Add(delta.BodyId);
+            foreach (uint joltId in _sweptBodies)
+            {
+                if (!_joltToRecord.TryGetValue(joltId, out JoltBodyRecord? rec) || rec.IsCharacterMarker
+                    || rec.MotionType != BodyMotionType.Dynamic || rec.Layer != PhysicsLayer.Dynamic)
+                    continue;
+                var jid = new BodyID(joltId);
+                if (_bodyInterface.GetLinearVelocity(jid).Length() * deltaTime <= SensorSweepMinTravel)
+                    continue;
+                _sensorSwept.Add(new SweptBody(joltId, ToVec(_bodyInterface.GetCenterOfMassPosition(jid)), _bodyInterface.GetRotation(jid)));
+            }
+            Volatile.Write(ref _sensorSweepActive, _sensorSwept.Count > 0);
+        }
+
+        private void FinishSensorSweep()
+        {
+            if (!Volatile.Read(ref _sensorSweepActive))
+                return;
+            Volatile.Write(ref _sensorSweepActive, false);
+            for (int i = 0; i < _sensorSwept.Count; i++)
+            {
+                SweptBody swept = _sensorSwept[i];
+                if (!_joltToRecord.TryGetValue(swept.JoltId, out JoltBodyRecord? rec) || !_shapes.TryGet(rec.Shape.Value, out JoltShapeRecord shapeRec) || shapeRec.NativeShape == null)
+                    continue;
+                var jid = new BodyID(swept.JoltId);
+                Vector3 to = ToVec(_bodyInterface.GetCenterOfMassPosition(jid));
+                Vector3 path = to - swept.From;
+                if (!(path.Length() > SensorSweepMinTravel))
+                    continue;
+
+                Matrix4x4 start = Matrix4x4.CreateFromQuaternion(swept.Rotation);
+                start.Translation = swept.From;
+                _sensorCastHits.Clear();
+                _system!.NarrowPhaseQuery.CastShape(shapeRec.NativeShape, Matrix4x4.Transpose(start), path, DefaultCastSettings(), Vector3.Zero,
+                    CollisionCollectorType.AllHit, _sensorCastHits, null, FilterFor(QueryFilter.Sensor), null, null);
+                if (_sensorCastHits.Count == 0)
+                    continue;
+
+                // The sensors the body overlaps where it is now: the engine reports those in its next update.
+                Matrix4x4 end = Matrix4x4.CreateFromQuaternion(_bodyInterface.GetRotation(jid));
+                end.Translation = to;
+                _sensorEndOverlaps.Clear();
+                _sensorsOverlappedAtEnd.Clear();
+                _system.NarrowPhaseQuery.CollideShape(shapeRec.NativeShape, Vector3.One, Matrix4x4.Transpose(end), DefaultCollideSettings(), Vector3.Zero,
+                    CollisionCollectorType.AllHit, _sensorEndOverlaps, null, FilterFor(QueryFilter.Sensor), null, null);
+                for (int k = 0; k < _sensorEndOverlaps.Count; k++)
+                    _sensorsOverlappedAtEnd.Add(_sensorEndOverlaps[k].BodyID2.ID);
+
+                for (int h = 0; h < _sensorCastHits.Count; h++)
+                {
+                    ShapeCastResult hit = _sensorCastHits[h];
+                    uint sensorId = hit.BodyID2.ID;
+                    if (sensorId == swept.JoltId || _sensorsOverlappedAtEnd.Contains(sensorId)
+                        || _sensorPairsReported.ContainsKey(SensorPairKey(swept.JoltId, sensorId))
+                        || !_joltToRecord.TryGetValue(sensorId, out JoltBodyRecord? sensorRec) || sensorRec.Layer != PhysicsLayer.Sensor)
+                        continue;
+                    // One begin for the pair, however many of the body's parts or the detector's the path crossed.
+                    _sensorPairsReported[SensorPairKey(swept.JoltId, sensorId)] = 0;
+                    Interlocked.Increment(ref _sensorCrossingsRaised);
+                    float axis = hit.PenetrationAxis.Length();
+                    Vector3 normal = axis > 1e-6f ? -hit.PenetrationAxis / axis : Vector3.UnitZ;
+                    Vector3 v = _bodyInterface.GetLinearVelocity(jid);
+                    _contactListener.Push(BuildContact(rec, sensorRec, hit.ContactPointOn2, normal, 0f, ContactPhase.Begin,
+                        ResolveStruckPart(rec, hit.SubShapeID1.Value), ResolveStruckPart(sensorRec, hit.SubShapeID2.Value), Vector3.Dot(v, -normal)));
+                }
+            }
+            _sensorSwept.Clear();
+        }
+
         // An avatar meets bodies only in its own update, once per step before the simulation's update
         // (NoteCharacterBodyContact), and Jolt's cast of a fast body does not see it: its query marker is on the AvatarQuery
         // layer, which collides with nothing. So a body fast enough to cross an avatar within one update would go through
@@ -3458,6 +3616,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         {
             CharacterVirtual old = rec.Character!;
             CharacterVirtualSettings settings = MakeCharacterSettings(rec.StandingShape!, rec.CapsuleRadius, rec.MaxSlopeAngle, rec.Mass, rec.PushStrength);
+            settings.EnhancedInternalEdgeRemoval = _settings.AvatarInternalEdgeRemoval;
             var replacement = new CharacterVirtual(settings, old.Position, old.Rotation, rec.UserData, _system!);
             replacement.MaxSlopeAngle = rec.MaxSlopeAngle;
             replacement.UserData = rec.UserData;
@@ -4605,6 +4764,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     lock (_characterGate)
                         StrikeAvatarsInTheWay(deltaTime);
                 UpdateCastBySpeed(deltaTime / collisionSteps);
+                BeginSensorSweep(deltaTime);
                 // The update's capacity error is counted, not discarded.
                 PhysicsUpdateError updateError;
                 // ONE Update at a time on this region's pool - Step holds the pool's gate.
@@ -4620,6 +4780,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     Interlocked.Decrement(ref pool.Inside);
                 }
                 RecordUpdateError(updateError);
+                FinishSensorSweep();
             }
 
             // 3. Fold this frame's queued activation deltas into the step-thread-owned active

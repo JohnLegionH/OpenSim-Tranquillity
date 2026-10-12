@@ -706,6 +706,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         void SetBodyMass(BodyId body, float mass);
         /// <summary>Read the body's assigned mass (explicit, or shape Volume x Density). 0 if unknown/static.</summary>
         float GetBodyMass(BodyId body);
+
+        /// <summary>True when the body (or the avatar) has Jolt's enhanced internal edge removal on (PhysicsBackendSettings
+        /// BodyInternalEdgeRemoval, AvatarInternalEdgeRemoval). False for a handle that is not live.</summary>
+        bool GetBodyEnhancedEdgeRemoval(BodyId body);
+        bool GetCharacterEnhancedEdgeRemoval(CharacterId character);
         /// <summary>Local principal moments of inertia (diagonal), kg*m^2. Zero for non-dynamic bodies.
         /// The vehicle controller's vertical attractor scales its restoring torque by this (the
         /// BulletSim equivalent is the prim's CalculateLocalInertia result).</summary>
@@ -974,6 +979,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// </summary>
         public float MaxBodyLinearSpeed;
         public float MaxBodyAngularSpeed;
+
+        /// <summary>
+        /// Jolt's enhanced internal edge removal (BodyCreationSettings mEnhancedInternalEdgeRemoval; CharacterVirtualSettings
+        /// mEnhancedInternalEdgeRemoval): extra work to drop the contacts a body makes with the shared edges inside a
+        /// triangle mesh or a heightfield, which push it off its path. For bodies that move under physics, and for avatars.
+        /// Off in an unset struct, which is the engine's own default.
+        /// </summary>
+        public bool BodyInternalEdgeRemoval;
+        public bool AvatarInternalEdgeRemoval;
 
         public const float JoltMaxLinearSpeed = 500f;
         public const float JoltMaxAngularSpeed = 0.25f * MathF.PI * 60f;

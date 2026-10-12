@@ -92,6 +92,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // mesh. Core gives every mesh CONVEX unless the upload says otherwise, so this turns hollow mesh into solid.
         public bool HonourConvexMesh = false;
 
+        // Jolt's enhanced internal edge removal, for bodies that move under physics and for avatars: the contacts with the
+        // shared edges inside a triangle mesh or a heightfield that can push a body off its path. Costs more per contact.
+        public bool BodyEnhancedEdgeRemoval = false;
+        public bool AvatarEnhancedEdgeRemoval = false;
+
         // Script ray casts (llCastRay) and pushes on avatars (llPushObject): limits on what scripts can make one region
         // do. They guard against abuse, so each defaults to its safe value.
         public float RayCastBudgetMs = PhysicsBackendSettings.DefaultRayCastBudgetMs;         // script casts, per region per heartbeat
@@ -150,6 +155,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.ScaleCapsWithArea = B(cfg, "ScaleCapsWithArea", c.ScaleCapsWithArea, warnings);
             c.AllowUnrecordedNative = B(cfg, "AllowUnrecordedNative", c.AllowUnrecordedNative, warnings);
             c.HonourConvexMesh = B(cfg, "HonourConvexMesh", c.HonourConvexMesh, warnings);
+            c.BodyEnhancedEdgeRemoval = B(cfg, "BodyEnhancedEdgeRemoval", c.BodyEnhancedEdgeRemoval, warnings);
+            c.AvatarEnhancedEdgeRemoval = B(cfg, "AvatarEnhancedEdgeRemoval", c.AvatarEnhancedEdgeRemoval, warnings);
             c.BodyUpdateBufferMax = I(cfg, "BodyUpdateBufferMax", c.BodyUpdateBufferMax, 1, 8_388_607, warnings);
             c.CharacterUpdateBufferMax = I(cfg, "CharacterUpdateBufferMax", c.CharacterUpdateBufferMax, 1, 65536, warnings);
             c.ContactBufferMax = I(cfg, "ContactBufferMax", c.ContactBufferMax, 0, 16_777_216, warnings);
@@ -312,6 +319,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             s.JobPoolFairHandoff = JobPoolFairHandoff;
             s.MaxBodyLinearSpeed = BodyMaxLinearSpeed;
             s.MaxBodyAngularSpeed = BodyMaxAngularSpeed;
+            s.BodyInternalEdgeRemoval = BodyEnhancedEdgeRemoval;
+            s.AvatarInternalEdgeRemoval = AvatarEnhancedEdgeRemoval;
             s.RayCastBudgetMs = RayCastBudgetMs;
             s.RayCastSimulatorBudgetMs = RayCastSimulatorBudgetMs;
             s.RayCastMaxTestedHits = RayCastMaxTestedHits;
