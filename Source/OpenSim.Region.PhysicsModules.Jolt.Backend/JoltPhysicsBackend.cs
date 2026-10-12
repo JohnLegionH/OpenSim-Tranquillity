@@ -366,6 +366,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         private readonly ConcurrentDictionary<uint, JoltBodyRecord> _joltToRecord =
             new ConcurrentDictionary<uint, JoltBodyRecord>();
 
+        // The Jolt ids of the bodies removed since the avatars were last stepped (only kept while there is an avatar): an avatar
+        // whose ground was one of them finds its ground again before its step (StepCharacter). Written under _simLock, read and
+        // cleared by the step.
+        private readonly ConcurrentDictionary<uint, byte> _removedBodyIds = new ConcurrentDictionary<uint, byte>();
+
         // Current terrain body (SetTerrain replaces it). BodyId.Invalid = none.
         private BodyId _terrainBody = BodyId.Invalid;
 
@@ -2056,6 +2061,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             _bodyInterface.RemoveAndDestroyBody(joltId);
             _joltToRecord.TryRemove(rec.NativeBodyId, out _);
             _bodies.Remove(body.Value); // bumps the generation so the stale handle fails validation.
+            if (_characterList.Count > 0)
+                _removedBodyIds[rec.NativeBodyId] = 0;   // an avatar that stood on it finds its ground again in its next step (StepCharacter)
             if (rec.Layer == PhysicsLayer.Sensor)
                 Interlocked.Decrement(ref _sensorBodies);
             // _activeBodies is step-thread-owned; if this body happened to be active, the stale
@@ -3805,6 +3812,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             if (ch == null || _system == null)
                 return;
 
+            // The body the avatar stands on was removed since its last step, as a prim's body is when the prim becomes a kinematic
+            // one (a fixed body cannot): the character still holds the removed body as its ground and finds no ground velocity
+            // in it, so a platform that began to move in this step would take the avatar along only from the next one. Finding
+            // the ground again, as after a teleport, takes the new body's velocity at once.
+            if (!_removedBodyIds.IsEmpty && ch.GroundBodyId != 0 && _removedBodyIds.ContainsKey(ch.GroundBodyId))
+                using (Enter("CharacterVirtual::RefreshContacts (joltc.cpp:8151)"))
+                    ch.RefreshContacts(new ObjectLayer((uint)PhysicsLayer.Avatar), _system, null, null);
+
             // Buoyancy scales gravity as it does on a prim: 1 floats, 0.5 falls at half gravity, above 1 rises. As in ubODE
             // (ODECharacter.MoveCharacter), it does nothing while the avatar flies or hovers. With none set, gz * 1 is gz.
             float gz = _settings.Gravity.Z * (1f - rec.Buoyancy);
@@ -4789,6 +4804,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                         _bodyInterface.SetPositionAndRotation(
                             new BodyID(crec.MarkerBodyId), crec.Character.Position, crec.Character.Rotation, Activation.DontActivate);
                 }
+                _removedBodyIds.Clear();   // every avatar has been stepped since
             }
 
             // 2. Advance the simulation (3-arg Update, temp allocation internal).
