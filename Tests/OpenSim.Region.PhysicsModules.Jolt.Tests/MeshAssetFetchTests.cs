@@ -462,4 +462,80 @@ public class MeshAssetFetchTests
             finally { scene.Dispose(); }
         }
     }
+
+    // ------------------------------------------------------------------ the gateway and the trough, fetched
+
+    // The recon's gateway (opening 1.6 m wide, 2.1 m tall) and open trough (slot 3.4 m, floor top 0.3 m), with the asset
+    // fetched through the delegate instead of being in the shape. Non-physical: the ball rests on the floor, and a box and an
+    // avatar pass the opening. Physical: one hull of every point, as before the fetch existed.
+    private static PhysicsActor AddFetched(JoltScene scene, FakeAssets assets, byte[] asset, float height, bool physical, byte type, out string kind)
+    {
+        UUID id = UUID.Random();
+        PhysicsActor a = AddUnloaded(scene, id, new Vector3(CentreX, CentreY, Ground + height * 0.5f), Vector3.One, physical, false, type);
+        Assert.Equal(1, assets.Requests[id]);
+        assets.Answer(id, asset);
+        kind = KindOf(a);
+        return a;
+    }
+
+    [Fact]
+    public void The_trough_and_the_gateway_through_the_fetch_path()
+    {
+        var lines = new List<string>();
+        (Vector3[] verts, int[] tris) trough = Soup(Trough), gate = Soup(Gateway);
+        foreach (bool physical in new[] { false, true })
+            foreach (byte type in new byte[] { (byte)PhysShapeType.prim, (byte)PhysShapeType.convex })
+            {
+                string shape = type == (byte)PhysShapeType.prim ? "PRIM" : "CONVEX";
+                float rest, boxPast, avPast;
+                string kind, kind2;
+
+                var a1 = new FakeAssets();
+                JoltScene s1 = SceneWith(a1, Scratch());
+                try
+                {
+                    AddFetched(s1, a1, Asset(trough, Trough, true), TroughHeight, physical, type, out kind);
+                    Step(s1, 2f);
+                    rest = DropBall(s1, TroughHeight);
+                }
+                finally { s1.Dispose(); }
+
+                var a2 = new FakeAssets();
+                JoltScene s2 = SceneWith(a2, Scratch());
+                try
+                {
+                    AddFetched(s2, a2, Asset(gate, Gateway, true), GatewayHeight, physical, type, out kind2);
+                    Step(s2, 2f);
+                    boxPast = FireBox(s2);
+                }
+                finally { s2.Dispose(); }
+
+                var a3 = new FakeAssets();
+                JoltScene s3 = SceneWith(a3, Scratch());
+                try
+                {
+                    AddFetched(s3, a3, Asset(gate, Gateway, true), GatewayHeight, physical, type, out _);
+                    Step(s3, 2f);
+                    avPast = WalkAvatar(s3);
+                }
+                finally { s3.Dispose(); }
+
+                lines.Add($"MESH-ASSETS fetched physical={physical} shape={shape} cooked_trough={kind} cooked_gateway={kind2} " +
+                          $"ball_rest_z={F(rest)} box_past_far_side={F(boxPast)} avatar_past_far_side={F(avPast)}");
+                if (physical)
+                {
+                    Assert.Equal("hull(mesher)", kind);
+                    Assert.InRange(rest, TroughHeight, TroughHeight + 0.4f);
+                    Assert.True(boxPast < 0f && avPast < 0f, $"physical gateway let something through: box {boxPast}, avatar {avPast}");
+                }
+                else
+                {
+                    Assert.Equal("mesh(mesher)", kind);
+                    Assert.InRange(rest, TroughFloorTop + 0.1f, TroughFloorTop + 0.3f);
+                    Assert.True(boxPast > 0f && avPast > 0f, $"non-physical gateway blocked: box {boxPast}, avatar {avPast}");
+                }
+            }
+        foreach (string l in lines) _out.WriteLine(l);
+        Console.WriteLine(string.Join(Environment.NewLine, lines));
+    }
 }
