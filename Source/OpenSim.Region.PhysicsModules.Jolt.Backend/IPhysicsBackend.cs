@@ -722,7 +722,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         Vector3 GetShapeCenterOfMass(ShapeId shape);
         /// <summary>The density (kg/m^3) a convex shape gives its mass properties; Jolt's default is 1000. A compound
         /// built from shapes afterwards weights each sub-shape's mass, centre of mass and inertia by it. A body made on the
-        /// shape alone is not affected: its mass is set from BodyDesc. No-op for a non-convex shape or an unknown handle.</summary>
+        /// shape alone is not affected: its mass is set from BodyDesc. A hull compound (CreateHullCompoundShape) sets it on
+        /// every hull. No-op for any other non-convex shape or an unknown handle.</summary>
         void SetShapeDensity(ShapeId shape, float density);
         /// <summary>A convex shape's density (kg/m^3); 0 for a non-convex shape or an unknown handle.</summary>
         float GetShapeDensity(ShapeId shape);

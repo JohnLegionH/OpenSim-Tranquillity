@@ -534,7 +534,21 @@ mesher decodes, unless it has already decoded and cached that map.
   about a size limit; the figure is Halcyon's (`ShapeDeterminer.CanUseLowDetailShape`). A physical mesh is
   never boxed for its size. (The mesher's own rule, a box for any prim under 0.2 m on every side, still
   applies to a prim that is not a mesh.)
-- A physical mesh is one convex hull of all its points; the hull list inside the asset is not read yet.
+- A physical mesh whose shape type is `PRIM` collides as the hull list its asset carries: one convex hull per
+  entry, at the prim's scale, as Second Life does ("PRIM: the visible shape of the prim determines its
+  physics-shape", `PRIM_PHYSICS_SHAPE_TYPE`; the viewer's upload writes the hulls of its convex decomposition).
+  An open boat or a gateway built that way keeps its inside and its opening. It follows the prim through a resize,
+  a switch between physical and not, and a change of shape type, as a lone prim and as a part of a linkset.
+- A physical mesh of shape type `CONVEX`, and a physical mesh whose asset has no hull list, is one convex hull of
+  all its points, as before.
+- A hull of fewer than four points, or one Jolt cannot build, is left out. If none is left, or the list has more
+  than 256 hulls or a hull has more than 256 points (the limits of the viewer's upload), the prim is one hull of
+  its points. Each case is logged once per asset.
+- Mass is the volume of the hulls times density, so a hollow physical mesh weighs what its hulls hold, not what
+  the hull of all its points would (a trough of three boxes: 3.84 m3, not the 12 m3 of the box round them).
+- Prims of one mesh asset, one size, one physical state and one shape type share one cooked shape, however many
+  there are, and it is freed when the last of them goes. A prim that joins a linkset takes a shape of its own,
+  because a linkset gives each part's shape that part's density.
 
 | Key | Default | What it sets |
 |---|---|---|
@@ -884,9 +898,8 @@ raises `collision_start` and `collision_end` "when interpenetrating". Jolt does 
   with `RC_DETECT_PHANTOM`. Phlox's `llCastRay` does not pass that option to the physics engine, so its
   casts do not find them.
 - `PRIM_PHYSICS_SHAPE_CONVEX` on a non-physical prim that is not a mesh makes it collide as its convex
-  hull. A non-physical mesh prim still collides as its triangle mesh whatever its shape type, because
-  Jolt does not read a mesh's own hull list yet; `[Jolt] HonourConvexMesh = true` makes it one convex hull
-  of its points (see "Mesh prims").
+  hull. A non-physical mesh prim still collides as its triangle mesh whatever its shape type;
+  `[Jolt] HonourConvexMesh = true` makes it one convex hull of its points (see "Mesh prims").
 
 The harness scenarios beginning `vd-` and `phantom-` show each of these, and print the collision events
 each part raised.
