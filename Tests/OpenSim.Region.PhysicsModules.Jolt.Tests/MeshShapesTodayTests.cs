@@ -474,6 +474,34 @@ public class MeshShapesTodayTests
         }
     }
 
+    // The mesher keeps the hull list of the asset it decoded last in fields of its own, and hands it out through
+    // GetConvexHulls on the concrete class. A second request for a mesh it already holds is answered from its cache
+    // without decoding, so the hulls read after it are those of whatever asset was decoded last.
+    [Fact]
+    public void Mesher_hull_list_belongs_to_the_last_decode_not_the_last_request()
+    {
+        string scratch = Scratch();
+        var config = new IniConfigSource();
+        config.AddConfig("Startup").Set("meshing", "Meshmerizer");
+        config.Configs["Startup"].Set("DecodedSculptMapPath", scratch);
+        var mesher = new Meshmerizer();
+        mesher.Initialise(config);
+        PrimitiveBaseShape three = MeshPbs(Asset(Soup(Gateway), Gateway, false));
+        PrimitiveBaseShape one = MeshPbs(Asset(Soup(Trough.Take(1).ToArray()), Trough.Take(1).ToArray(), false));
+        mesher.CreateMesh("a", three, Vector3.One, 32f, false, false, false);
+        int afterThree = mesher.GetConvexHulls(Vector3.One)!.Count;
+        mesher.CreateMesh("b", one, Vector3.One, 32f, false, false, false);
+        int afterOne = mesher.GetConvexHulls(Vector3.One)!.Count;
+        mesher.CreateMesh("a again", three, Vector3.One, 32f, false, false, false);   // answered from the cache
+        int afterThreeAgain = mesher.GetConvexHulls(Vector3.One)!.Count;
+        string line = $"MESH-SHAPES mesher hull_list_hulls: after asset of 3 = {afterThree}, after asset of 1 = {afterOne}, after asset of 3 again (cache hit) = {afterThreeAgain}";
+        _out.WriteLine(line);
+        Console.WriteLine(line);
+        Assert.Equal(3, afterThree);
+        Assert.Equal(1, afterOne);
+        Assert.Equal(1, afterThreeAgain);   // stale: the hulls of the asset decoded last
+    }
+
     // ---------------------------------------------------------------- the mesher's bounding-box substitution
 
     [Fact]
