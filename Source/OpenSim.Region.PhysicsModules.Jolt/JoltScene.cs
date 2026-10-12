@@ -1314,9 +1314,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal static bool IsMeshPrim(PrimitiveBaseShape pbs) =>
             pbs != null && pbs.SculptEntry && pbs.SculptType == (byte)SculptType.Mesh;
 
-        /// <summary>True when a mesh prim's shape cannot be cooked until its asset is fetched and the scene can fetch it.</summary>
+        // A sculpted prim (a sculpt map, a JPEG 2000 texture) is read by the same mesher from the same field as a mesh, so it
+        // is fetched the same way.
+        internal static bool IsSculptPrim(PrimitiveBaseShape pbs) =>
+            pbs != null && pbs.SculptEntry && pbs.SculptType != (byte)SculptType.Mesh;
+
+        /// <summary>True when a mesh or sculpted prim's shape cannot be cooked until its asset is fetched and the scene can fetch it.</summary>
         internal bool WantsMeshAsset(PrimitiveBaseShape pbs) =>
-            m_mesher != null && RequestAssetMethod != null && IsMeshPrim(pbs) && !pbs.SculptTexture.IsZero()
+            m_mesher != null && RequestAssetMethod != null && (IsMeshPrim(pbs) || IsSculptPrim(pbs)) && !pbs.SculptTexture.IsZero()
             && (pbs.SculptData == null || pbs.SculptData.Length == 0);
 
         /// <summary>Ask for a mesh asset for a prim, unless it is on its way for another prim (the prim joins them) or was

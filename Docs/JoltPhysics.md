@@ -521,6 +521,8 @@ as its bounding box and asks the scene's request-asset delegate for the asset (t
 BulletSim modules do). When the asset arrives the shape is cooked from it and put on the same body: the
 body keeps its position, rotation, velocities, linkset and its physical, phantom and volume-detect state,
 and what rests on a fixed prim is woken to meet the new surface.
+A sculpted prim (a sculpt map instead of a mesh) is fetched the same way: its map is a JPEG 2000 texture that the
+mesher decodes, unless it has already decoded and cached that map.
 
 - Prims that wait for the same asset share one request. The bytes are put on a copy of the prim's shape for
   the cook only, so the part's own shape never holds them.

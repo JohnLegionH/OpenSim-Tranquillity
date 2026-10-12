@@ -6,6 +6,7 @@
  */
 
 using System.Globalization;
+using CoreJ2K;
 using System.Reflection;
 using Nini.Config;
 using OpenMetaverse;
@@ -537,5 +538,138 @@ public class MeshAssetFetchTests
             }
         foreach (string l in lines) _out.WriteLine(l);
         Console.WriteLine(string.Join(Environment.NewLine, lines));
+    }
+
+    // ------------------------------------------------------------------ sculpted prims: the same fetch
+
+    // A sculpt map: a 64 x 64 grid whose red and green are the point's x and y and whose blue is a gentle bump, which the
+    // mesher reads as a sheet (plane sculpt) of that height.
+    private static SkiaSharp.SKBitmap SculptMap()
+    {
+        var bmp = new SkiaSharp.SKBitmap(64, 64);
+        for (int y = 0; y < 64; y++)
+            for (int x = 0; x < 64; x++)
+            {
+                byte z = (byte)(96 + 64 * Math.Sin(Math.PI * x / 63.0) * Math.Sin(Math.PI * y / 63.0));
+                bmp.SetPixel(x, y, new SkiaSharp.SKColor((byte)(x * 255 / 63), (byte)(y * 255 / 63), z));
+            }
+        return bmp;
+    }
+
+    private static byte[] SculptMapJ2k()
+    {
+        using var bmp = SculptMap();
+        return J2kImage.ToBytes(bmp);
+    }
+
+    private static PrimitiveBaseShape UnloadedSculpt(UUID id, SculptType type = SculptType.Plane)
+    {
+        PrimitiveBaseShape pbs = PrimitiveBaseShape.CreateBox();
+        pbs.PathCurve = (byte)Extrusion.Curve1;
+        pbs.ProfileCurve = 0;
+        pbs.SculptEntry = true;
+        pbs.SculptType = (byte)type;
+        pbs.SculptTexture = id;
+        pbs.SculptData = Array.Empty<byte>();
+        return pbs;
+    }
+
+    private static PhysicsActor AddSculpt(JoltScene scene, PrimitiveBaseShape pbs, bool physical)
+        => scene.AddPrimShape("sculpt", pbs, new Vector3(CentreX, CentreY, Ground + 2f), new Vector3(2f, 2f, 2f), Quaternion.Identity, physical,
+                              false, (byte)PhysShapeType.prim, _id++);
+
+    [Theory]
+    [InlineData(SculptType.Plane)]
+    [InlineData(SculptType.Sphere)]
+    [InlineData(SculptType.Torus)]
+    [InlineData(SculptType.Cylinder)]
+    public void A_sculpted_prim_without_its_map_requests_the_asset_and_is_cooked_when_it_arrives(SculptType type)
+    {
+        var assets = new FakeAssets();
+        JoltScene scene = SceneWith(assets, Scratch());
+        try
+        {
+            UUID id = UUID.Random();
+            PhysicsActor a = AddSculpt(scene, UnloadedSculpt(id, type), false);
+            Assert.Equal(BoxKind, KindOf(a));
+            Assert.Equal(1, assets.Requests.GetValueOrDefault(id));
+
+            assets.Answer(id, SculptMapJ2k());
+
+            Assert.Equal("mesh(mesher)", KindOf(a));
+            Assert.Equal(1, assets.Total);
+        }
+        finally { scene.Dispose(); }
+    }
+
+    [Fact]
+    public void A_physical_sculpted_prim_is_cooked_as_a_hull_when_its_map_arrives()
+    {
+        var assets = new FakeAssets();
+        JoltScene scene = SceneWith(assets, Scratch());
+        try
+        {
+            UUID id = UUID.Random();
+            PhysicsActor a = AddSculpt(scene, UnloadedSculpt(id, SculptType.Sphere), true);
+            Assert.Equal(BoxKind, KindOf(a));
+            assets.Answer(id, SculptMapJ2k());
+            Assert.Equal("hull(mesher)", KindOf(a));
+            Assert.True(a.IsPhysical);
+        }
+        finally { scene.Dispose(); }
+    }
+
+    [Fact]
+    public void A_sculpted_prim_whose_map_is_already_decoded_on_disk_asks_for_nothing()
+    {
+        var assets = new FakeAssets();
+        string scratch = Scratch();
+        JoltScene scene = SceneWith(assets, scratch);
+        try
+        {
+            UUID id = UUID.Random();
+            using (var bmp = SculptMap())
+            using (var image = SkiaSharp.SKImage.FromBitmap(bmp))
+            using (var png = image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100))
+            using (var fs = File.OpenWrite(Path.Combine(scratch, "smap_" + id)))
+                png.SaveTo(fs);
+            PhysicsActor a = AddSculpt(scene, UnloadedSculpt(id), false);
+            Assert.Equal("mesh(mesher)", KindOf(a));
+            Assert.Equal(0, assets.Total);
+        }
+        finally { scene.Dispose(); }
+    }
+
+    [Fact]
+    public void A_sculpted_prim_whose_map_is_missing_or_unreadable_stays_a_box_and_is_logged_once()
+    {
+        var assets = new FakeAssets();
+        JoltScene scene = SceneWith(assets, Scratch());
+        try
+        {
+            UUID missing = UUID.Random(), junk = UUID.Random();
+            PhysicsActor a = AddSculpt(scene, UnloadedSculpt(missing), false);
+            PhysicsActor b = AddSculpt(scene, UnloadedSculpt(junk), false);
+            assets.Answer(missing, null);
+            assets.Answer(junk, new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 });
+            Assert.Equal(BoxKind, KindOf(a));
+            Assert.Equal(BoxKind, KindOf(b));
+            Assert.Equal(2, FailuresLogged(scene));
+        }
+        finally { scene.Dispose(); }
+    }
+
+    [Fact]
+    public void A_plain_prim_asks_for_no_asset()
+    {
+        var assets = new FakeAssets();
+        JoltScene scene = SceneWith(assets, Scratch());
+        try
+        {
+            scene.AddPrimShape("box", PrimitiveBaseShape.CreateBox(), new Vector3(CentreX, CentreY, Ground + 2f), Vector3.One,
+                               Quaternion.Identity, false, _id++);
+            Assert.Equal(0, assets.Total);
+        }
+        finally { scene.Dispose(); }
     }
 }

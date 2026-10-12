@@ -264,7 +264,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             lock (_shapeLock)
             {
                 PrimitiveBaseShape pbs = _pbs;
-                if (IsRemoved || pbs == null || !JoltScene.IsMeshPrim(pbs) || pbs.SculptTexture != assetId)
+                if (IsRemoved || pbs == null || !(JoltScene.IsMeshPrim(pbs) || JoltScene.IsSculptPrim(pbs)) || pbs.SculptTexture != assetId)
                     return MeshArrival.Skipped;
                 _meshBytes = data;
                 try { Rebuild(); }
