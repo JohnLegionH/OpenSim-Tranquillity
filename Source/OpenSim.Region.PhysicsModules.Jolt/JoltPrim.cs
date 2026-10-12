@@ -485,6 +485,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _kinematicBody = KinematicWanted;
             _module.SetKinematicTracked(this, _kinematicBody);
             _kinMoving = false;
+            _segActive = false;
             lock (_kinLock)
             {
                 _kinTarget = _position;
@@ -827,6 +828,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 {
                     // Keyframed motion sets the pose about every 50 ms: the body is moved to the last one at the next step.
                     if (_kinematicBody && !_module.IsRegionLoading) NoteKinematicPose(value, null);
+                    else if (WatchesMoves && NoteMoveSet(was, _orientation)) { }   // a series of plain sets began: the body is kinematic
                     else { RepositionBody(); WakeWhatRestsOn(was, _orientation); }
                 }
             }
@@ -845,6 +847,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (_body.IsValid)
                 {
                     if (_kinematicBody && !_module.IsRegionLoading) NoteKinematicPose(null, value);
+                    else if (WatchesMoves && NoteMoveSet(_position, was)) { }
                     else { RepositionBody(); WakeWhatRestsOn(_position, was); }
                 }
             }
