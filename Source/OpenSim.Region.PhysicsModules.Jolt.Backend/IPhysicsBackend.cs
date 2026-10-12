@@ -676,6 +676,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// </summary>
         ShapeId CreateScaledShape(ShapeId baseShape, Vector3 scale);
 
+        /// <summary>
+        /// True when the shape can be scaled by exactly this scale (CreateScaledShape would otherwise change it to the
+        /// nearest valid one: a sphere or capsule needs a uniform scale, a cylinder a uniform radial one). False for a
+        /// shape that is not live.
+        /// </summary>
+        bool IsScaleValid(ShapeId shape, Vector3 scale);
+
         void AddShapeRef(ShapeId shape);
         void ReleaseShape(ShapeId shape);
 

@@ -227,14 +227,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // one, a CONVEX mesh and every other prim are cooked as before.
         private bool UseHullList => _isPhysical && _shapeType == (byte)PhysShapeType.prim;
 
-        // A prim on its own may take a cooked shape another prim of the same asset, size and kind holds. A part of a linkset
-        // may not: the linkset gives each part's shape that part's own density (SetShapeDensity).
-        private bool MayShareShape => _linkRoot == null && (_linkChildren == null || _linkChildren.Count == 0) && !_compoundShape.IsValid;
+        // A prim may take a cooked shape another prim of the same asset holds (at its size or scaled to it). A part of a linkset
+        // may too, unless its density differs from the root's: the linkset gives each part's shape that part's own density
+        // relative to the root's (SetShapeDensity), and a shape in use elsewhere keeps the engine's default. A part of the
+        // root's own density needs none set, so it can use the shared shape (or a scaled shape over it, which takes no density).
+        private bool MayShareShape => _linkRoot == null || PhysicalDensity == _linkRoot.PhysicalDensity;
 
-        // Takes a shape of its own in place of a shared one, before this prim becomes a part of a linkset's compound.
+        // Takes a shape of its own in place of a shared one, before this prim becomes a part of a linkset's compound, when
+        // the part's density has to be written into its shape.
         private void MakeShapePrivate()
         {
-            if (!_shape.IsValid || !_module.IsSharedShape(_shape))
+            if (!_shape.IsValid || !_module.IsSharedShape(_shape) || MayShareShape)
                 return;
             ShapeId old = _shape;
             _shape = CookOwnShape(out _axisCorrection, out _shapeKind);

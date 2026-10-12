@@ -16,7 +16,7 @@
 // expensive to discover later:
 //   - broad phase / object layer filtering  (BroadPhase region + Initialize)
 //   - DontActivate on insert                (CreateBody)
-//   - ScaledShape wrapper                   (CreateScaledShape; the prims re-cook their own shape on a resize)
+//   - ScaledShape wrapper                   (CreateScaledShape; a resized mesh prim wraps its asset's cooked shape)
 //   - contact ring buffer                   (JoltContactListener)
 //   - CharacterVirtual stepping order       (Step)
 // =========================================================================
@@ -1766,9 +1766,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
         public ShapeId CreateScaledShape(ShapeId baseShape, Vector3 scale)
         {
-            // Wraps a cooked shape in a ScaledShape: cheap, shares the underlying geometry, no re-cook. Nothing in the
-            // module calls it today (a prim that is resized re-cooks its own shape); it is here for a caller that
-            // wants to share one cooked shape at several scales. Verified per-type
+            // Wraps a cooked shape in a ScaledShape: cheap, shares the underlying geometry, no re-cook. A mesh prim that is
+            // resized takes one of these over the shape cooked for its asset (JoltScene.CookMeshShape). Verified per-type
             // against JoltPhysicsSharp 2.18.6: box/hull/mesh accept ANY scale (incl. mirror/tri-non-uniform);
             // sphere/capsule reject non-uniform (MakeScaleValid uniform-ises to the mean); cylinder allows an axial
             // scale with UNIFORM radial only. We MakeScaleValid so we never cook a distorted/invalid
@@ -1788,6 +1787,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 BaseShape = baseShape,
             };
             return new ShapeId(_shapes.Add(rec));
+        }
+
+        public bool IsScaleValid(ShapeId shape, Vector3 scale)
+        {
+            if (!IsFinite(scale) || scale.X <= 0f || scale.Y <= 0f || scale.Z <= 0f)
+                return false;
+            return _shapes.TryGet(shape.Value, out JoltShapeRecord rec) && IsLive(rec) && rec.NativeShape!.IsValidScale(scale);
         }
 
         public void AddShapeRef(ShapeId shape)

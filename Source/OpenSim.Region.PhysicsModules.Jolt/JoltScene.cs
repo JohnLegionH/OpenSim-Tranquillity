@@ -1206,7 +1206,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (!share || !isMesh || pbs.SculptTexture.IsZero())
                 return CookMeshShapeCore(backend, pbs, size, isPhysical, bodyIsPhysical, listWanted, out kind);
 
-            var key = new SharedShapeKey(pbs.SculptTexture, size, listWanted ? SharedShapeKind.HullList : isPhysical ? SharedShapeKind.Hull : SharedShapeKind.Mesh);
+            SharedShapeKind kindWanted = listWanted ? SharedShapeKind.HullList : isPhysical ? SharedShapeKind.Hull : SharedShapeKind.Mesh;
+            var key = new SharedShapeKey(pbs.SculptTexture, size, kindWanted);
+            var baseKey = new BaseKey(pbs.SculptTexture, kindWanted);
             // The lock is held across the cook so that prims asking for the same shape at once get one cook, not two. The
             // threads that come here are the scene's own (adding a prim, changing its size or physical state) and the asset
             // service's callback thread (a mesh arriving); the cook is milliseconds and the native calls take the backend's
@@ -1219,16 +1221,89 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     kind = held.Kind;
                     return held.Shape;
                 }
+
+                // Another size of a mesh already cooked: the shape of that cook, at this prim's scale. No fetch, no decode, no
+                // cook. A size the size rules treat differently (a non-physical mesh under SmallMeshSide on every side is a
+                // box; the mesher makes no side under MesherMinSide) is cooked as it was.
+                bool scalable = ScaleReusable(size, bodyIsPhysical);
+                if (scalable && _bases.TryGetValue(baseKey, out BaseShape basis))
+                {
+                    ShapeId scaled = ScaledFromBase(backend, basis, size);
+                    if (scaled.IsValid)
+                    {
+                        var wrapped = new SharedShape { Key = key, Shape = scaled, Kind = basis.Kind, Users = 1, Basis = basis };
+                        basis.Entries++;
+                        _sharedShapes[key] = wrapped;
+                        _sharedByShape[scaled.Value] = wrapped;
+                        kind = basis.Kind;
+                        return scaled;
+                    }
+                }
+
                 ShapeId shape = CookMeshShapeCore(backend, pbs, size, isPhysical, bodyIsPhysical, listWanted, out kind);
                 if (shape.IsValid && kind != BoxFallbackKind && !kind.StartsWith("box", StringComparison.Ordinal))
                 {
                     var entry = new SharedShape { Key = key, Shape = shape, Kind = kind, Users = 1 };
+                    if (scalable && !_bases.ContainsKey(baseKey))
+                    {
+                        // This cook becomes the shape the asset's other sizes are made from. The table keeps a reference of its
+                        // own, so it outlives this size's prims while other sizes use it.
+                        backend.AddShapeRef(shape);
+                        var basis2 = new BaseShape { Key = baseKey, Shape = shape, Size = size, Kind = kind, Entries = 1 };
+                        _bases[baseKey] = basis2;
+                        entry.Basis = basis2;
+                    }
                     _sharedShapes[key] = entry;
                     _sharedByShape[shape.Value] = entry;
                 }
                 return shape;
             }
         }
+
+        // Whether a size can be made by scaling the shape cooked at another size. A mesh prim under 0.05 m on every side that is
+        // not physical is a box, and the mesher raises a side under 0.01 m to 0.01 m, so those sizes are not a scale of
+        // another: they are cooked on their own.
+        private static bool ScaleReusable(Vector3 size, bool bodyIsPhysical)
+        {
+            if (!(size.X >= MesherMinSide && size.Y >= MesherMinSide && size.Z >= MesherMinSide))
+                return false;
+            return bodyIsPhysical || size.X >= SmallMeshSide || size.Y >= SmallMeshSide || size.Z >= SmallMeshSide;
+        }
+
+        // The base shape at another size: the shape itself at the same size, otherwise a scaled shape over it. Invalid when
+        // Jolt would not scale it by exactly that (then the caller cooks it).
+        private ShapeId ScaledFromBase(IPhysicsBackend backend, BaseShape basis, Vector3 size)
+        {
+            if (size == basis.Size)
+            {
+                backend.AddShapeRef(basis.Shape);
+                return basis.Shape;
+            }
+            var scale = new SVector3(size.X / basis.Size.X, size.Y / basis.Size.Y, size.Z / basis.Size.Z);
+            if (!backend.IsScaleValid(basis.Shape, scale))
+                return ShapeId.Invalid;
+            try
+            {
+                ShapeId scaled = backend.CreateScaledShape(basis.Shape, scale);
+                Interlocked.Increment(ref _scaledShapesMade);
+                return scaled;
+            }
+            catch (Exception e)
+            {
+                m_log.LogWarning($"{LogHeader} scaling the shape of a mesh asset threw ({e.GetType().Name}: {e.Message}); cooked at its own size.");
+                return ShapeId.Invalid;
+            }
+        }
+
+        // The size at which each mesh asset was last decoded by the mesher, which keeps that mesh for the life of the process.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<UUID, Vector3> _decodedAt = new System.Collections.Concurrent.ConcurrentDictionary<UUID, Vector3>();
+
+        /// <summary>The smallest side (m) the mesher makes a mesh with; it raises a smaller one to this (Meshmerizer.MakeMesh).</summary>
+        internal const float MesherMinSide = 0.01f;
+
+        /// <summary>How many scaled shapes have been made over a cooked mesh shape (a resize or another size of the same asset).</summary>
+        internal int ScaledShapesMade => Volatile.Read(ref _scaledShapesMade);
+        private int _scaledShapesMade;
 
         private ShapeId CookMeshShapeCore(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, bool bodyIsPhysical,
                                           bool listWanted, out string kind)
@@ -1270,7 +1345,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // mesh whose three sides are all under 0.2 m by its 8-corner box (Meshmerizer.CreateMesh). A mesh prim
                 // passes true, because the size rule is applied above, at Halcyon's 0.05 m. Another prim keeps passing
                 // false, so its behaviour is as it was.
-                mesh = m_mesher.CreateMesh("jolt-prim", pbs, size, MeshLod, isMesh, false, false);
+                // A mesh asset already decoded at another size is read at that size (the mesher keeps it) and its points scaled
+                // to this one: a mesh's points are linear in the size, and the asset's bytes are gone once decoded, so asking
+                // the mesher for a new size would mean fetching the asset again.
+                Vector3 meshSize = size;
+                if (isMesh && !pbs.SculptTexture.IsZero() && size.X >= MesherMinSide && size.Y >= MesherMinSide && size.Z >= MesherMinSide
+                    && _decodedAt.TryGetValue(pbs.SculptTexture, out Vector3 decoded) && decoded != size)
+                    meshSize = decoded;
+                mesh = m_mesher.CreateMesh("jolt-prim", pbs, meshSize, MeshLod, isMesh, false, false);
+                if (mesh == null && meshSize != size)
+                {
+                    meshSize = size;
+                    mesh = m_mesher.CreateMesh("jolt-prim", pbs, size, MeshLod, isMesh, false, false);
+                }
+                if (mesh != null && isMesh && !pbs.SculptTexture.IsZero())
+                    _decodedAt.TryAdd(pbs.SculptTexture, meshSize);
                 if (mesh == null)
                 {
                     // A sculpt whose asset (texture) has not been fetched meshes to null - it needs the
@@ -1288,8 +1377,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 }
 
                 points = new SVector3[verts.Length / 3];
+                var toSize = new SVector3(size.X / meshSize.X, size.Y / meshSize.Y, size.Z / meshSize.Z);
                 for (int i = 0; i < points.Length; i++)
-                    points[i] = new SVector3(verts[3 * i], verts[3 * i + 1], verts[3 * i + 2]);
+                    points[i] = meshSize == size
+                        ? new SVector3(verts[3 * i], verts[3 * i + 1], verts[3 * i + 2])
+                        : new SVector3(verts[3 * i] * toSize.X, verts[3 * i + 1] * toSize.Y, verts[3 * i + 2] * toSize.Z);
 
                 // The mesher builds an inverted sculpt inside out, as the viewer draws it. The physics engine meets a
                 // triangle from its front only, so an inside-out sculpt would let a ray or a body from outside pass
@@ -1398,7 +1490,31 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             public ShapeId Shape;
             public string Kind;
             public int Users;
+            public BaseShape Basis;   // the cooked shape this one is, or is scaled from; null when it is neither
         }
+
+        // The shape cooked for a mesh asset (at the size of the first prim that needed one), which every other size of the same
+        // asset and kind is a scaled shape over. Kept while any size of it is in use.
+        private readonly struct BaseKey : IEquatable<BaseKey>
+        {
+            private readonly UUID _asset;
+            private readonly SharedShapeKind _kind;
+            public BaseKey(UUID asset, SharedShapeKind kind) { _asset = asset; _kind = kind; }
+            public bool Equals(BaseKey o) => _asset == o._asset && _kind == o._kind;
+            public override bool Equals(object obj) => obj is BaseKey k && Equals(k);
+            public override int GetHashCode() => HashCode.Combine(_asset, _kind);
+        }
+
+        private sealed class BaseShape
+        {
+            public BaseKey Key;
+            public ShapeId Shape;
+            public Vector3 Size;
+            public string Kind;
+            public int Entries;   // sizes (SharedShape entries) in use
+        }
+
+        private readonly Dictionary<BaseKey, BaseShape> _bases = new Dictionary<BaseKey, BaseShape>();
 
         private readonly object _sharedShapeLock = new object();
         private readonly Dictionary<SharedShapeKey, SharedShape> _sharedShapes = new Dictionary<SharedShapeKey, SharedShape>();
@@ -1418,6 +1534,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                         return;
                     _sharedByShape.Remove(shape.Value);
                     _sharedShapes.Remove(held.Key);
+                    if (held.Basis != null && --held.Basis.Entries <= 0)
+                    {
+                        _bases.Remove(held.Basis.Key);
+                        backend.ReleaseShape(held.Basis.Shape);   // the table's own reference
+                    }
                 }
             }
             backend.ReleaseShape(shape);
@@ -2806,6 +2927,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 _sharedShapes.Clear();
                 _sharedByShape.Clear();
+                _bases.Clear();
             }
             _backend?.Dispose();   // backend teardown -> Foundation.Shutdown
             _backend = null;
