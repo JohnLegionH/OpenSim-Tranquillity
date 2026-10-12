@@ -184,8 +184,13 @@ public class RayCastAndPushLimitTests
 
                 scene.Simulate(Heartbeat);   // a fresh heartbeat: the budget never interferes here
                 List<ContactResult> now = Cast(scene, from, dir, length, count);
-                var before = new RayHit[count];
-                int n = backend.RayCastAll(new SVector3(from.X, from.Y, from.Z), new SVector3(dir.X, dir.Y, dir.Z), length, QueryFilter.Default, before);
+                // A ray that starts inside a convex shape is not solid to it ("llCastRay will not detect a prim if the line starts
+                // inside the prim"): the older cast reported that shape at distance 0, so those hits are left out of what it is
+                // compared with, asking it for a few more to fill the count.
+                var wider = new RayHit[count + 8];
+                int all = backend.RayCastAll(new SVector3(from.X, from.Y, from.Z), new SVector3(dir.X, dir.Y, dir.Z), length, QueryFilter.Default, wider);
+                RayHit[] before = wider.Take(all).Where(h => h.Distance > 1e-4f).Take(count).ToArray();
+                int n = before.Length;
 
                 Assert.Equal(n, now.Count);
                 for (int h = 0; h < n; h++)

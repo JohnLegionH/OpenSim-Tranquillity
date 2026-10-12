@@ -245,7 +245,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 ClosestHits c = t_closest ??= new ClosestHits();
                 c.Reset(hits.Length, RayMaxTested, clock, start + (allowed - used), origin, rayDir);
 
-                var settings = new RayCastSettings();   // what RayCastAll passes: the same faces are tested
+                // The same faces are tested as RayCastAll tests, except that a convex shape (a box, the avatar's capsule) is not
+                // solid to a ray that starts inside it: "llCastRay will not detect a prim if the line starts inside the prim"
+                // (wiki.secondlife.com/wiki/LlCastRay), so the cast goes on to what lies beyond instead of hitting it at distance 0.
+                var settings = new RayCastSettings { TreatConvexAsSolid = false };
                 Vector3 o = origin, d = rayDir;
                 IntPtr objectFilter = FilterFor(filter).Handle;
                 JPH_NarrowPhaseQuery_CastRay2(_system.NarrowPhaseQuery.Handle, &o, &d, &settings,

@@ -16,7 +16,7 @@
 // expensive to discover later:
 //   - broad phase / object layer filtering  (BroadPhase region + Initialize)
 //   - DontActivate on insert                (CreateBody)
-//   - ScaledShape for prim resize           (CreateScaledShape)
+//   - ScaledShape wrapper                   (CreateScaledShape; the prims re-cook their own shape on a resize)
 //   - contact ring buffer                   (JoltContactListener)
 //   - CharacterVirtual stepping order       (Step)
 // =========================================================================
@@ -1572,9 +1572,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
         public ShapeId CreateMeshShape(ReadOnlySpan<Vector3> vertices, ReadOnlySpan<int> indices)
         {
-            // Cook once per ASSET, never per prim. Key the cache on the mesh asset UUID plus LOD, and
-            // hand the same ShapeId to every prim that references it. Cooking is the single most
-            // expensive operation here and re-cooking per prim is how region startup gets slow.
+            // This cooks the mesh it is given and keeps no cache: every caller that wants a shape shared between prims
+            // has to hold the ShapeId itself. Cooking is the single most expensive operation here.
             // NOTE: a MeshShape reports Volume 0 (Jolt does not integrate triangle-soup volume), so a
             // DYNAMIC body on a mesh gets the clamped fallback mass - meshes are meant to be static.
             if (indices.Length % 3 != 0)
@@ -1683,8 +1682,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // which is already Z-up-correct and self-consistent for any caller/query. See below.
             //
             // Sample-count constraint (checked empirically against JoltPhysicsSharp 2.18.6):
-            // the managed HeightFieldShapeSettings exposes NO block-size / bits-per-sample setter, so the
-            // native default block size is used. joltc is a RELEASE build with Jolt's asserts compiled
+            // the managed HeightFieldShapeSettings has BlockSize and BitsPerSample properties in 2.19.1;
+            // this leaves both at the native defaults. joltc is a RELEASE build with Jolt's asserts compiled
             // out, so a bad count does NOT throw - it silently mis-cooks (n>=3 incl. odd/non-PoT all
             // return a non-null shape; only n<3 fails). A 257-sample test showed an odd/prime count
             // reproduces its input faithfully (block divisibility is a NON-constraint), and a var region
@@ -1767,8 +1766,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
         public ShapeId CreateScaledShape(ShapeId baseShape, Vector3 scale)
         {
-            // The whole reason this is on the interface: prim resize wraps the cooked shape in a
-            // ScaledShape - cheap, shares the underlying geometry, no re-cook. Verified per-type
+            // Wraps a cooked shape in a ScaledShape: cheap, shares the underlying geometry, no re-cook. Nothing in the
+            // module calls it today (a prim that is resized re-cooks its own shape); it is here for a caller that
+            // wants to share one cooked shape at several scales. Verified per-type
             // against JoltPhysicsSharp 2.18.6: box/hull/mesh accept ANY scale (incl. mirror/tri-non-uniform);
             // sphere/capsule reject non-uniform (MakeScaleValid uniform-ises to the mean); cylinder allows an axial
             // scale with UNIFORM radial only. We MakeScaleValid so we never cook a distorted/invalid
