@@ -595,6 +595,15 @@ sample after the first 1.5 s whose vertical speed differs by more than 0.1 m/s f
 predict. `EnhancedEdgeRemovalTests` prints the count with each setting off and on, at one physics step per heartbeat and
 at 45 Hz (lines "SEAM ..."); `SeamScenarios.HitchCount` is the figure.
 
+Measured (Release, 5 s runs, hitches with the setting off, then on, at one physics step per heartbeat / at 45 Hz): a ball on
+the flat mesh floor 15 then 0 / 19 then 0 (it also keeps its speed: it ends 128.6 m along instead of 122.3); on the rolling
+terrain 3 then 0 / 3 then 0; a sled on the rippled floor stops dead at its start with the setting off and slides 6 m with
+it on; a sled on the flat floor, and an avatar on every ground, show no hitch either way. The ball on the rippled floor
+counts about the same either way (20 then 21): the ripple itself bends its vertical speed by more than the threshold.
+With `BodyEnhancedEdgeRemoval` on, 11 of the 13 recorded harness baselines move (the car, crash and ramp rows: the terrain is
+a heightfield, so every body on the ground meets the removal); with `AvatarEnhancedEdgeRemoval` on none does. Both stay
+off by default for that reason and for the extra cost per contact, which was not measured.
+
 
 ## Mass: what a script reads and where it comes from
 
