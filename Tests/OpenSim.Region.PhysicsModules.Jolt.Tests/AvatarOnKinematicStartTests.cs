@@ -33,7 +33,7 @@ public class AvatarOnKinematicStartTests
 
     // The platform is set 1.5 m along x in each of ten heartbeats (16.5 m/s at 11 Hz) with the hint turned on at the first of them:
     // the abrupt fast start of the ledger row. The offset is read two heartbeats after the last set.
-    private double OffsetAfterAbruptStart(double physicsRate, bool hintFirst, params (string, string)[] jolt)
+    private double OffsetAfterAbruptStart(double physicsRate, bool hintFirst, float stepMetres = 1.5f, params (string, string)[] jolt)
     {
         double across = double.NaN;
         var sc = KinematicTestRig.Platform("avatar", 6f, r =>
@@ -41,7 +41,7 @@ public class AvatarOnKinematicStartTests
             if (r.Heartbeats == (hintFirst ? 12 : 22))
                 r.Other.MovedByKeyframedMotion = true;   // hintFirst: the platform has been kinematic and at rest ten heartbeats already
             if (r.Heartbeats >= 22 && r.Heartbeats < 32)
-                r.Other.Position += new Vector3(1.5f, 0f, 0f);
+                r.Other.Position += new Vector3(stepMetres, 0f, 0f);
             if (r.Heartbeats == 33)
                 across = Math.Abs(r.Actor.Position.X - r.Other.Position.X);
         });
@@ -56,6 +56,18 @@ public class AvatarOnKinematicStartTests
     {
         double across = OffsetAfterAbruptStart(physicsRate, hintFirst: false);
         Say($"START abrupt 16.5 m/s rate {physicsRate:0}: avatar {F(across)} m from the middle of the platform after ten heartbeats");
+        Assert.True(across < 0.1, $"the avatar was {across:0.000} m from the middle of the platform");
+    }
+
+    [Theory]
+    [InlineData(2.0f, 0.0)]
+    [InlineData(2.7f, 0.0)]
+    [InlineData(3.6f, 0.0)]
+    [InlineData(2.7f, 45.0)]
+    public void An_avatar_takes_a_start_of_up_to_the_jump_distance_a_heartbeat_in_the_same_step(float stepMetres, double physicsRate)
+    {
+        double across = OffsetAfterAbruptStart(physicsRate, hintFirst: false, stepMetres);
+        Say($"START abrupt {stepMetres / (1.0 / 11.0):0.0} m/s rate {physicsRate:0}: avatar {F(across)} m from the middle of the platform after ten heartbeats");
         Assert.True(across < 0.1, $"the avatar was {across:0.000} m from the middle of the platform");
     }
 
