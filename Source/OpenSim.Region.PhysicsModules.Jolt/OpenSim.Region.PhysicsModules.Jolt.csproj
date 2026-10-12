@@ -18,6 +18,8 @@
     <ProjectReference Include="../../Source/OpenSim.Framework/OpenSim.Framework.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Region.Framework/OpenSim.Region.Framework.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.SharedBase/OpenSim.Region.PhysicsModules.SharedBase.csproj" />
+    <!-- Meshmerizer: the module reads a mesh asset's hull list from the mesh the mesher returns (GetConvexHulls). -->
+    <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.Meshing/OpenSim.Region.PhysicsModules.Meshing.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.Jolt.Backend/OpenSim.Region.PhysicsModules.Jolt.Backend.csproj" />
     <ProjectReference Include="../../Source/OpenSim.Region.PhysicsModules.Jolt.Vehicles/OpenSim.Region.PhysicsModules.Jolt.Vehicles.csproj" />
   </ItemGroup>
