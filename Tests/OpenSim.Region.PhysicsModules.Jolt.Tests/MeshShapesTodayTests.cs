@@ -332,7 +332,7 @@ public class MeshShapesTodayTests
                     string shape = type == (byte)PhysShapeType.prim ? "PRIM" : "CONVEX";
 
                     JoltScene s1 = NewScene(scratch);
-                    float rest, kindOk;
+                    float rest;
                     string kind;
                     try
                     {
