@@ -234,6 +234,15 @@ The module bounds a script cast three ways:
   be told: it gets no hits from the physics engine, and returns only what it tests itself (avatars,
   phantoms and, for long rays, the ground) with a status of that many hits.
 
+What a cast finds follows Second Life's `llCastRay` page: a ray that starts inside a prim or an
+avatar does not hit it ("llCastRay will not detect a prim if the line starts inside the prim"), and
+goes on to what lies beyond. This holds for both entry points and both budgets. On the 5-argument
+`RaycastWorld` the types a cast asks for are filtered inside the engine, so a type the script
+rejects never takes one of its `RC_MAX_HITS`; on the 4-argument entry the caller sees every solid
+type and filters afterwards, so a rejected hit there does take one. The engine returns up to 256
+hits (`RayCastMaxHits`) and finds phantom and volume-detect prims when the cast asks for them
+(`RayFilterFlags.phantom` / `volumedtc`, on the 5-argument entry).
+
 The two budgets are drawn separately each heartbeat, and running out of one never refuses a cast
 charged to the other. `RayCastMaxTestedHits` and `RayCastMaxHits` apply to every cast in both.
 
