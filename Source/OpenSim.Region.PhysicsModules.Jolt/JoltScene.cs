@@ -1252,7 +1252,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             // ---- Extract geometry. CRITICAL: the Meshmerizer CACHES and SHARES the Mesh object,
             // keyed on GetMeshKey(size, lod), and returns the SAME instance for every identical prim
-            // (key ignores isPhysical/convex). getIndexListAsInt()/getVertexListAsFloat() throw
+            // (the key has no isPhysical/convex part; the one answer that depends on isPhysical, the 8-corner box
+            // given to a small non-physical mesh, is kept in a cache of its own, so a physical request for the
+            // same mesh is never handed that box). getIndexListAsInt()/getVertexListAsFloat() throw
             // NotSupportedException once m_triangles/m_vertices are null, and releaseSourceMeshData()
             // nulls exactly those - so calling it POISONS the cache and makes the NEXT identical prim's
             // extraction throw. Both accessors already return FRESH COPIES, so we own the arrays and must
