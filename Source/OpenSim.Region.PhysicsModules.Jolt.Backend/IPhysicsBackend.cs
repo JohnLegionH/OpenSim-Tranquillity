@@ -138,6 +138,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// name Sensor, the same as a volume detector.
         /// </summary>
         Phantom = 7,
+
+        /// <summary>
+        /// A non-physical prim that keyframed motion is moving: a kinematic body that collides exactly as
+        /// <see cref="Static"/> does. It sits in the moving broad phase, so that each move does not touch the large
+        /// tree of fixed prims; the prim goes back to <see cref="Static"/> when the motion ends.
+        /// </summary>
+        MovingStatic = 8,
     }
 
     /// <summary>
@@ -700,6 +707,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         void SetBodySensor(BodyId body, bool isSensor);
 
         void SetBodyTransform(BodyId body, Vector3 position, Quaternion orientation, bool activate);
+
+        /// <summary>
+        /// Moves a kinematic body so that it reaches the given pose after <paramref name="seconds"/> of simulation, by
+        /// giving it the linear and angular velocity that cover the way in that time. What touches or stands on the body
+        /// is carried or pushed by it. Nothing happens for a body that is not kinematic or a time that is not positive.
+        /// </summary>
+        void MoveKinematicBody(BodyId body, Vector3 position, Quaternion orientation, float seconds);
+
+        /// <summary>
+        /// Puts a body at a pose with the given velocities at once, with no travel in between: a teleport when the
+        /// velocities are zero (what touches it is not flung), and the way to stop a kinematic body at a place.
+        /// </summary>
+        void SetBodyPoseAndVelocity(BodyId body, Vector3 position, Quaternion orientation, Vector3 linearVelocity, Vector3 angularVelocity);
+
         void SetBodyLinearVelocity(BodyId body, Vector3 velocity);
         void SetBodyAngularVelocity(BodyId body, Vector3 velocity);
 

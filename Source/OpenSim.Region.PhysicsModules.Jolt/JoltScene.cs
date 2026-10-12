@@ -79,6 +79,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal float PrimAngularDamping => _joltConfig.PrimAngularDamping;
         internal bool HonourConvexMesh => _joltConfig.HonourConvexMesh;
         internal int MaxPhysicalComplexity => _joltConfig.MaxPhysicalComplexity;
+        internal bool KeyframedMotionCarriesRiders => _joltConfig.KeyframedMotionCarriesRiders;
 
         // The vehicle settings every vehicle controller in this region shares, built from [Jolt] in Initialise.
         internal VehicleSettings VehicleSettings { get; private set; } = VehicleSettings.Default;
@@ -204,6 +205,33 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             lock (_pendingActivation)
                 if (!_pendingActivation.Contains(p)) _pendingActivation.Add(p);
+        }
+
+        // The prims whose body is kinematic because keyframed motion is moving them. Core sets their position about every
+        // 50 ms, on its own timer; the prim keeps only the last pose it was given, and once per heartbeat, before the step,
+        // each of them is moved to it over the time that step covers (JoltPrim.StepKinematic), so the body carries the
+        // velocity of the motion and what stands on it is carried.
+        private readonly HashSet<JoltPrim> _kinematicPrims = new HashSet<JoltPrim>();
+        private JoltPrim[] _kinematicSnapshot = Array.Empty<JoltPrim>();
+        internal void SetKinematicTracked(JoltPrim p, bool tracked)
+        {
+            lock (_kinematicPrims)
+            {
+                if (tracked ? _kinematicPrims.Add(p) : _kinematicPrims.Remove(p))
+                    _kinematicSnapshot = _kinematicPrims.Count == 0 ? Array.Empty<JoltPrim>() : new List<JoltPrim>(_kinematicPrims).ToArray();
+            }
+        }
+
+        // Moves every kinematic prim to the pose it was last given, over `seconds` of simulation: the time the coming
+        // step (or burst of steps) covers. Runs on the step thread, first thing in the heartbeat.
+        private void StepKinematics(float seconds)
+        {
+            JoltPrim[] prims = _kinematicSnapshot;
+            for (int i = 0; i < prims.Length; i++)
+            {
+                try { prims[i].StepKinematic(seconds); }
+                catch (Exception e) { m_log.LogError($"{LogHeader} kinematic move EXCEPTION for prim {prims[i].LocalID}: {e}"); }
+            }
         }
 
         // The logged-in avatars, keyed by their CharacterId handle (the value the character drain
@@ -2559,6 +2587,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // BulletSim draining ALL taints before PE.PhysicsStep().
             DrainPendingActivation();
 
+            // Keyframed prims take the pose their object was last given, over the time this step covers.
+            StepKinematics(timeStep);
+
             // Run each active vehicle's controller BEFORE the physics step, so its
             // velocity changes/forces/torques are consumed by THIS step (BulletSim's BeforeStep model).
             LastTimeStep = timeStep;
@@ -2783,6 +2814,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             PushForceScale = timeStep / dt;
             if (n == 0)
                 return 1f;   // nothing stepped: no reports, and no collision_end for contacts that were not re-checked
+            StepKinematics(n * dt);   // the time the steps of this heartbeat cover; a heartbeat that steps nothing leaves the pose for the next
 
             // Held for the whole heartbeat: a teardown that lands between two steps disposes the backend (whose steps
             // then return nothing) but cannot null it out from under this loop. A teardown that landed after Simulate

@@ -213,7 +213,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private PhysicsLayer BodyLayer
             => _isVolumeDetect ? PhysicsLayer.Sensor
              : _isPhantom ? PhysicsLayer.Phantom
-             : _isPhysical ? PhysicsLayer.Dynamic : PhysicsLayer.Static;
+             : _isPhysical ? PhysicsLayer.Dynamic
+             : _kinematicBody ? PhysicsLayer.MovingStatic : PhysicsLayer.Static;
 
         // A mesher shape is cooked as a convex hull when the prim is physical (a triangle mesh has no volume, so no
         // mass), or when a non-mesh prim asks for PRIM_PHYSICS_SHAPE_CONVEX: "Use the convex hull formulas for
@@ -479,6 +480,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _rotationalVelocity = Vector3.Zero;
             }
 
+            // A prim keyframed motion moves is made a kinematic body, which can be moved to a pose over a time and so carries
+            // what stands on it; every other non-physical prim stays a body with no motion at all.
+            _kinematicBody = KinematicWanted;
+            _module.SetKinematicTracked(this, _kinematicBody);
+            _kinMoving = false;
+            lock (_kinLock)
+            {
+                _kinTarget = _position;
+                _kinRotation = _orientation;
+                _kinPending = false;
+            }
+
             BodyDesc desc = BodyDesc.Default;
             desc.Shape = _compoundShape.IsValid ? _compoundShape : _shape;   // linkset root -> the compound
             desc.Position = ToS(_position);
@@ -512,6 +525,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // (AddPrimShape + SetVehicle are synchronous) AND StepVehicles has asserted the vehicle's
                 // gravity-cancellation for this frame. So a reloaded boat is NEVER a live gravity body before
                 // its buoyancy is in force -> it cannot free-fall during the load / the reload stall.
+                desc.StartActive = false;
+            }
+            else if (_kinematicBody)
+            {
+                desc.MotionType = BodyMotionType.Kinematic;
+                desc.LinearVelocity = SVector3.Zero;   // it moves only when StepKinematic moves it
+                desc.AngularVelocity = SVector3.Zero;
+                desc.Mass = 0f;
+                desc.Ccd = ContinuousCollision.Off;
                 desc.StartActive = false;
             }
             else
@@ -581,6 +603,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // viewer interpolating a rested object.
         internal void ApplyStepState(in BodyState s)
         {
+            // A kinematic prim's pose is the one its object was given (the body only follows it), and a drain that wrote the
+            // body's place back could overwrite a pose set since the step.
+            if (_kinematicBody)
+                return;
             var newPos = new Vector3(s.Position.X, s.Position.Y, s.Position.Z);
             // A position that is not a number is dropped (the last good transform is kept): handed to the simulator it
             // would become the object's position.
@@ -759,6 +785,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (_vehicle != null) { _module.UnregisterVehicle(this); _vehicle = null; _vehicleBody = null; }
             _module.SetScriptForced(this, false);
             _module.SetTargeted(this, false);
+            _module.SetKinematicTracked(this, false);
             // If welded into a parent compound, detach first (parent rebuilds without us).
             _welded = false;
             if (_linkRoot != null) { JoltPrim r = _linkRoot; _linkRoot = null; r.UnlinkChild(this); }
@@ -796,7 +823,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (_position == value) return;   // the drain writes _position directly; only a real move recreates
                 Vector3 was = _position;
                 _position = value;
-                if (_body.IsValid) { RepositionBody(); WakeWhatRestsOn(was, _orientation); }
+                if (_body.IsValid)
+                {
+                    // Keyframed motion sets the pose about every 50 ms: the body is moved to the last one at the next step.
+                    if (_kinematicBody && !_module.IsRegionLoading) NoteKinematicPose(value, null);
+                    else { RepositionBody(); WakeWhatRestsOn(was, _orientation); }
+                }
             }
         }
 
@@ -810,7 +842,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (_orientation == value) return;
                 Quaternion was = _orientation;
                 _orientation = value;
-                if (_body.IsValid) { RepositionBody(); WakeWhatRestsOn(_position, was); }
+                if (_body.IsValid)
+                {
+                    if (_kinematicBody && !_module.IsRegionLoading) NoteKinematicPose(null, value);
+                    else { RepositionBody(); WakeWhatRestsOn(_position, was); }
+                }
             }
         }
 
@@ -1763,6 +1799,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _backend.SetBodySensor(_body, _isVolumeDetect);
             if (_isPhysical)
                 _module.RegisterPendingActivation(this);
+            SyncKinematicBody();   // a phantom or volume-detect prim is not moved as a kinematic one, and is again when that ends
         }
 
         // For the contact dispatch: true when this part, or the linkset root its body belongs to, is a volume detector.

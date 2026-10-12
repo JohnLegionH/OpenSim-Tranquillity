@@ -660,6 +660,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             PhysicsLayer.Sensor => BroadPhase.Sensor,
             PhysicsLayer.AvatarQuery => BroadPhase.Moving, // in the broadphase so queries find it; collides with nothing
             PhysicsLayer.Phantom => BroadPhase.Moving,
+            PhysicsLayer.MovingStatic => BroadPhase.Moving, // a prim keyframed motion moves: kept out of the tree of fixed prims
             _ => BroadPhase.Moving,
         };
 
@@ -681,6 +682,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // rests on the ground (llVolumeDetect's comparison of Phantom and VolumeDetect, wiki.secondlife.com).
             if (a == PhysicsLayer.Phantom || b == PhysicsLayer.Phantom)
                 return a == PhysicsLayer.Terrain || b == PhysicsLayer.Terrain;
+
+            // A prim that keyframed motion moves collides exactly as a fixed one does; only its broad phase differs.
+            if (a == PhysicsLayer.MovingStatic) a = PhysicsLayer.Static;
+            if (b == PhysicsLayer.MovingStatic) b = PhysicsLayer.Static;
 
             // Normalise so we only fill the lower triangle.
             if (a > b) (a, b) = (b, a);
@@ -2153,6 +2158,36 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 if (TryResolve(body, out _, out BodyID jid))
                     _bodyInterface.SetPositionAndRotation(jid, position, orientation,
                         activate ? Activation.Activate : Activation.DontActivate);
+            }
+        }
+
+        // BodyInterface::MoveKinematic (Body::MoveKinematic): sets the linear and angular velocity that take the body to the
+        // pose in `seconds`, and wakes it when that velocity is not zero. What stands on the body is carried by it: an
+        // avatar takes the velocity of the body under its feet (CharacterVirtual ground velocity), a dynamic body by
+        // contact friction. Only a kinematic body takes it (a static one has no motion properties).
+        public void MoveKinematicBody(BodyId body, Vector3 position, Quaternion orientation, float seconds)
+        {
+            if (!IsFinite(position) || !IsUsable(orientation) || !float.IsFinite(seconds)) { CountRejectedNonFinite(); return; }
+            if (seconds <= 0f)
+                return;
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolve(body, out JoltBodyRecord rec, out BodyID jid) && rec.MotionType == BodyMotionType.Kinematic)
+                    _bodyInterface.MoveKinematic(jid, position, orientation, seconds);
+            }
+        }
+
+        // BodyInterface::SetPositionRotationAndVelocity: the pose and the velocities at once. The body is activated when a
+        // velocity is not zero; with both zero a kinematic body stays where it is put and what rests on it is not flung.
+        public void SetBodyPoseAndVelocity(BodyId body, Vector3 position, Quaternion orientation, Vector3 linearVelocity, Vector3 angularVelocity)
+        {
+            if (!IsFinite(position) || !IsUsable(orientation) || !IsFinite(linearVelocity) || !IsFinite(angularVelocity)) { CountRejectedNonFinite(); return; }
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolve(body, out JoltBodyRecord rec, out BodyID jid) && rec.MotionType != BodyMotionType.Static)
+                    _bodyInterface.SetPositionRotationAndVelocity(jid, position, orientation, linearVelocity, angularVelocity);
             }
         }
 
@@ -4550,6 +4585,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         {
             PhysicsLayer.Terrain => (filter & QueryFilter.Terrain) != 0,
             PhysicsLayer.Static => (filter & QueryFilter.Static) != 0,
+            // A prim keyframed motion moves is a fixed prim to every query.
+            PhysicsLayer.MovingStatic => (filter & QueryFilter.Static) != 0,
             PhysicsLayer.Dynamic => (filter & QueryFilter.Dynamic) != 0,
             PhysicsLayer.Avatar => (filter & QueryFilter.Avatar) != 0,
             PhysicsLayer.Sensor => (filter & QueryFilter.Sensor) != 0,
