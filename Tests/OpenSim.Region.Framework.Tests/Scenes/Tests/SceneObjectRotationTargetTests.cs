@@ -465,7 +465,7 @@ public class SceneObjectRotationTargetTests : OpenSimTestCase
         f.Start();
         f.Spin(Turn(90));
         f.Step();
-        Assert.Empty(f.Actor.Calls.Where(c => c.StartsWith("Target=") || c == On));
+        Assert.DoesNotContain(f.Actor.Calls, c => c.StartsWith("Target=") || c == On);
         Assert.True(Quaternion.Dot(Turn(90), f.Root.RotationOffset) > 0.999f);
     }
 
