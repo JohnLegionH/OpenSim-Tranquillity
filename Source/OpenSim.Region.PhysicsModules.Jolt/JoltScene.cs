@@ -43,6 +43,7 @@ using OpenSim.Region.PhysicsModules.Jolt.Backend;
 using OpenSim.Region.PhysicsModules.Jolt.Vehicles;
 // The backend speaks System.Numerics.Vector3; OpenSim speaks OpenMetaverse.Vector3 (the unqualified
 // Vector3 here). Alias the numerics one so backend calls are unambiguous.
+using Meshmerizer = OpenSim.Region.PhysicsModules.Meshing.Meshmerizer;
 using SVector3 = System.Numerics.Vector3;
 using SQuaternion = System.Numerics.Quaternion;
 
@@ -1134,8 +1135,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // `isPhysical` says how a mesher shape is cooked (true: one convex hull, so the body has volume and mass). The prim's
         // own physical flag is `bodyIsPhysical`; it differs from `isPhysical` only for a non-physical prim cooked as a hull,
         // and the small-mesh rule below goes by it.
+        //
+        // `useHullList` is set for a physical prim whose shape type is PRIM: a mesh asset's own hull list is then cooked, one
+        // convex hull per entry. `share` lets a mesh prim take the cooked shape another prim with the same asset, size and
+        // kind already holds (a shape taken this way is given back with ReleaseShape of this class, not the backend's).
         internal ShapeId CookPrimShape(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out SQuaternion axisCorrection, out string kind,
-                                       bool? bodyIsPhysical = null)
+                                       bool? bodyIsPhysical = null, bool useHullList = false, bool share = false)
         {
             axisCorrection = SQuaternion.Identity;
             float hx = size.X * 0.5f, hy = size.Y * 0.5f, hz = size.Z * 0.5f;
@@ -1178,7 +1183,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // BulletSim's BSShapeCollection.CreateGeomMeshOrHull (physical && ShouldUseHulls -> hull;
             // else mesh). Contract: a triangle MeshShape has Volume 0, so a PHYSICAL prim
             // MUST use the convex hull or it would rez with mass 0 - hence physical -> hull here.
-            ShapeId cooked = CookMeshShape(backend, pbs, size, isPhysical, bodyIsPhysical ?? isPhysical, out kind);
+            ShapeId cooked = CookMeshShape(backend, pbs, size, isPhysical, bodyIsPhysical ?? isPhysical, useHullList, share, out kind);
             if (cooked.IsValid)
                 return cooked;
 
@@ -1191,7 +1196,42 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // getIndexListAsInt -> CreateMeshShape (non-physical triangle mesh) or CreateConvexHullShape
         // (physical hull). Returns ShapeId.Invalid on any failure so the caller can fall back. Also
         // stashes a characterization of the RAW mesher output (_lastMeshStats) for the diagnostic read-out.
-        private ShapeId CookMeshShape(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, bool bodyIsPhysical, out string kind)
+        private ShapeId CookMeshShape(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, bool bodyIsPhysical,
+                                      bool useHullList, bool share, out string kind)
+        {
+            // A mesh prim's shape is a function of its asset, size and how it is cooked, so prims that agree on all three can
+            // hold one cooked shape. Only a real cook is kept: a box for want of the asset, or for size, is not.
+            bool isMesh = IsMeshPrim(pbs);
+            bool listWanted = isMesh && isPhysical && useHullList;
+            if (!share || !isMesh || pbs.SculptTexture.IsZero())
+                return CookMeshShapeCore(backend, pbs, size, isPhysical, bodyIsPhysical, listWanted, out kind);
+
+            var key = new SharedShapeKey(pbs.SculptTexture, size, listWanted ? SharedShapeKind.HullList : isPhysical ? SharedShapeKind.Hull : SharedShapeKind.Mesh);
+            // The lock is held across the cook so that prims asking for the same shape at once get one cook, not two. The
+            // threads that come here are the scene's own (adding a prim, changing its size or physical state) and the asset
+            // service's callback thread (a mesh arriving); the cook is milliseconds and the native calls take the backend's
+            // own lock, which never calls back into this class, so the lock order is this lock, then the backend's.
+            lock (_sharedShapeLock)
+            {
+                if (_sharedShapes.TryGetValue(key, out SharedShape held))
+                {
+                    held.Users++;
+                    kind = held.Kind;
+                    return held.Shape;
+                }
+                ShapeId shape = CookMeshShapeCore(backend, pbs, size, isPhysical, bodyIsPhysical, listWanted, out kind);
+                if (shape.IsValid && kind != BoxFallbackKind && !kind.StartsWith("box", StringComparison.Ordinal))
+                {
+                    var entry = new SharedShape { Key = key, Shape = shape, Kind = kind, Users = 1 };
+                    _sharedShapes[key] = entry;
+                    _sharedByShape[shape.Value] = entry;
+                }
+                return shape;
+            }
+        }
+
+        private ShapeId CookMeshShapeCore(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, bool bodyIsPhysical,
+                                          bool listWanted, out string kind)
         {
             kind = BoxFallbackKind;
             bool isMesh = IsMeshPrim(pbs);
@@ -1221,13 +1261,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // never a propagating exception that could abort a prim rez or a whole region load.
             SVector3[] points;
             int[] indices;
+            IMesh mesh;
             try
             {
                 // The mesher's isPhysical argument is true to mean "keep the real triangles": with false it replaces a
                 // mesh whose three sides are all under 0.2 m by its 8-corner box (Meshmerizer.CreateMesh). A mesh prim
                 // passes true, because the size rule is applied above, at Halcyon's 0.05 m. Another prim keeps passing
                 // false, so its behaviour is as it was.
-                IMesh mesh = m_mesher.CreateMesh("jolt-prim", pbs, size, MeshLod, isMesh, false, false);
+                mesh = m_mesher.CreateMesh("jolt-prim", pbs, size, MeshLod, isMesh, false, false);
                 if (mesh == null)
                 {
                     // A sculpt whose asset (texture) has not been fetched meshes to null - it needs the
@@ -1264,6 +1305,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return ShapeId.Invalid;
             }
 
+            // A physical mesh whose asset carries a hull list collides as those hulls (Second Life's behaviour for a physical
+            // mesh of shape type PRIM). An asset without one, or whose list cannot be used, falls through to one hull of the
+            // mesh's points below.
+            if (listWanted)
+            {
+                ShapeId list = CookHullList(backend, mesh, pbs.SculptTexture, size, out string listKind);
+                if (list.IsValid)
+                {
+                    kind = listKind;
+                    return list;
+                }
+            }
+
             // Cook the Jolt shape. No shape/body exists until one of these RETURNS a handle, so a throw
             // here creates nothing to leak - caller falls back to a full bbox.
             try
@@ -1272,6 +1326,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     ? backend.CreateConvexHullShape(points)   // physical: hull (mesh Volume=0 -> mass 0)
                     : backend.CreateMeshShape(points, indices); // non-physical: real triangle mesh
                 kind = isPhysical ? "hull(mesher)" : "mesh(mesher)";
+                if (isMesh)
+                    Interlocked.Increment(ref _meshShapesCooked);
                 return shape;
             }
             catch (Exception e)
@@ -1288,6 +1344,192 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // cooked again when the asset arrives. Prims waiting for one asset share one request. The bytes are put on a copy
         // of the prim's shape for the cook only, and dropped with it.
         // ---------------------------------------------------------------------
+
+        /// <summary>How many shapes have been cooked natively for mesh prims (a mesh, a hull or a hull list: one count each,
+        /// whatever the number of hulls in it). A shape shared by several prims is cooked, and counted, once.</summary>
+        internal int MeshShapesCooked => Volatile.Read(ref _meshShapesCooked);
+        private int _meshShapesCooked;
+
+        /// <summary>How many cooked mesh shapes the scene holds for sharing between prims.</summary>
+        internal int SharedShapeCount { get { lock (_sharedShapeLock) return _sharedShapes.Count; } }
+
+        // ---------------------------------------------------------------------
+        // Shared shapes. Prims of one mesh asset, one size and one way of cooking (triangle mesh, one hull, hull list) take one
+        // cooked shape between them. The scene counts the prims using each (Users); the shape is released to the backend when
+        // the last gives it up. Every release of a shape a prim holds goes through ReleaseShape below. A shape holds no state
+        // of one prim except the density a linkset gives its parts (SetShapeDensity), so a prim that joins a linkset first
+        // takes a shape of its own (JoltPrim.MakeShapePrivate).
+        // ---------------------------------------------------------------------
+
+        internal enum SharedShapeKind { Mesh, Hull, HullList }
+
+        private readonly struct SharedShapeKey : IEquatable<SharedShapeKey>
+        {
+            private readonly UUID _asset;
+            private readonly int _x, _y, _z;      // the size's bits: only an identical size shares
+            private readonly SharedShapeKind _kind;
+
+            public SharedShapeKey(UUID asset, Vector3 size, SharedShapeKind kind)
+            {
+                _asset = asset;
+                _x = BitConverter.SingleToInt32Bits(size.X);
+                _y = BitConverter.SingleToInt32Bits(size.Y);
+                _z = BitConverter.SingleToInt32Bits(size.Z);
+                _kind = kind;
+            }
+
+            public bool Equals(SharedShapeKey o) => _asset == o._asset && _x == o._x && _y == o._y && _z == o._z && _kind == o._kind;
+            public override bool Equals(object obj) => obj is SharedShapeKey k && Equals(k);
+            public override int GetHashCode() => HashCode.Combine(_asset, _x, _y, _z, _kind);
+        }
+
+        private sealed class SharedShape
+        {
+            public SharedShapeKey Key;
+            public ShapeId Shape;
+            public string Kind;
+            public int Users;
+        }
+
+        private readonly object _sharedShapeLock = new object();
+        private readonly Dictionary<SharedShapeKey, SharedShape> _sharedShapes = new Dictionary<SharedShapeKey, SharedShape>();
+        private readonly Dictionary<uint, SharedShape> _sharedByShape = new Dictionary<uint, SharedShape>();
+
+        /// <summary>Gives back a shape a prim holds: a shared one is released to the backend when its last prim gives it up,
+        /// any other at once.</summary>
+        internal void ReleaseShape(IPhysicsBackend backend, ShapeId shape)
+        {
+            if (!shape.IsValid)
+                return;
+            lock (_sharedShapeLock)
+            {
+                if (_sharedByShape.TryGetValue(shape.Value, out SharedShape held))
+                {
+                    if (--held.Users > 0)
+                        return;
+                    _sharedByShape.Remove(shape.Value);
+                    _sharedShapes.Remove(held.Key);
+                }
+            }
+            backend.ReleaseShape(shape);
+        }
+
+        /// <summary>True when the shape is one the scene shares between prims.</summary>
+        internal bool IsSharedShape(ShapeId shape)
+        {
+            lock (_sharedShapeLock)
+                return shape.IsValid && _sharedByShape.ContainsKey(shape.Value);
+        }
+
+        // One notice per asset and reason about a hull list that cannot be used as it is. Logged, and kept for the tests.
+        private void HullNotice(UUID asset, string reason, string text)
+        {
+            string line = $"{LogHeader} mesh asset {asset}: {text}";
+            lock (_hullNotices)
+            {
+                if (!_hullNoticeKeys.Add(asset + "|" + reason))
+                    return;
+                if (_hullNotices.Count < 1000)
+                    _hullNotices.Add(line);
+            }
+            m_log.LogWarning(line);
+        }
+
+        // The asset's hull list as one shape: a compound of its hulls (one hull is the hull itself), each at the prim's scale.
+        // Returns ShapeId.Invalid, and the caller cooks one hull of the mesh's points, when the asset has no list, a list
+        // over the viewer's limits, or no hull in it that can be built. A hull of fewer than four points, or one Jolt cannot
+        // build, is left out. Nothing reaches the native code unless it has passed these checks.
+        private ShapeId CookHullList(IPhysicsBackend backend, IMesh mesh, UUID asset, Vector3 size, out string kind)
+        {
+            kind = BoxFallbackKind;
+            List<List<Vector3>> hulls;
+            try { hulls = (m_mesher as Meshmerizer)?.GetConvexHulls(mesh, size); }
+            catch (Exception e)
+            {
+                m_log.LogWarning($"{LogHeader} reading the hull list of mesh asset {asset} threw ({e.GetType().Name}: {e.Message}); one hull of the points.");
+                return ShapeId.Invalid;
+            }
+            if (hulls == null || hulls.Count == 0)
+                return ShapeId.Invalid;   // an asset with no hull list: the points hull, as for any physical mesh
+
+            if (!HullListWithinLimits(hulls))
+            {
+                int most = 0;
+                foreach (List<Vector3> h in hulls) most = Math.Max(most, h.Count);
+                HullNotice(asset, "limit", $"hull list of {hulls.Count} hulls, the largest of {most} points, is over the {MaxAssetHulls}-hull, {MaxPointsPerAssetHull}-point limit of the viewer's upload; one hull of the points.");
+                return ShapeId.Invalid;
+            }
+
+            var ids = new List<ShapeId>(hulls.Count);
+            int skipped = 0;
+            foreach (List<Vector3> hull in hulls)
+            {
+                if (hull.Count < 4) { skipped++; continue; }
+                var points = new SVector3[hull.Count];
+                for (int i = 0; i < points.Length; i++)
+                    points[i] = new SVector3(hull[i].X, hull[i].Y, hull[i].Z);
+                try { ids.Add(backend.CreateConvexHullShape(points)); }
+                catch (Exception) { skipped++; }   // not finite, coplanar, collinear...: Jolt's own check, before any native hull exists
+            }
+
+            if (ids.Count == 0)
+            {
+                HullNotice(asset, "none", $"none of the {hulls.Count} hulls in its hull list can be used (fewer than 4 points, or Jolt cannot build them); one hull of the points.");
+                return ShapeId.Invalid;
+            }
+            if (skipped > 0)
+                HullNotice(asset, "skipped", $"{skipped} of {hulls.Count} hulls in its hull list skipped (fewer than 4 points, or Jolt cannot build them); the other {ids.Count} are used.");
+
+            kind = $"{HullListKind} x{ids.Count})";
+            if (ids.Count == 1)
+            {
+                Interlocked.Increment(ref _meshShapesCooked);
+                return ids[0];
+            }
+            try
+            {
+                ShapeId compound = backend.CreateHullCompoundShape(ids.ToArray());
+                Interlocked.Increment(ref _meshShapesCooked);
+                return compound;
+            }
+            catch (Exception e)
+            {
+                HullNotice(asset, "compound", $"its {ids.Count} hulls could not be joined into one shape ({e.GetType().Name}: {e.Message}); one hull of the points.");
+                kind = BoxFallbackKind;
+                return ShapeId.Invalid;
+            }
+            finally
+            {
+                // The compound holds its own reference to each hull. Nothing is left to release when it was one hull.
+                if (ids.Count > 1)
+                    foreach (ShapeId id in ids)
+                        backend.ReleaseShape(id);
+            }
+        }
+
+        /// <summary>The kind of a shape cooked from an asset's hull list, up to the number of hulls: "hulls(asset x3)".</summary>
+        internal const string HullListKind = "hulls(asset";
+
+        // Each notice about an asset's hull list that was logged (one per asset and reason), for the tests.
+        private readonly List<string> _hullNotices = new List<string>();
+        private readonly HashSet<string> _hullNoticeKeys = new HashSet<string>();
+        internal string[] HullNotices { get { lock (_hullNotices) return _hullNotices.ToArray(); } }
+
+        // The limits the Second Life viewer's upload puts on a convex decomposition: at most 256 hulls, of at most 256
+        // points each (indra/llphysicsextensionsos/llconvexdecompositionvhacd.cpp MAX_HULLS and MAX_VERTICES_PER_HULL; the
+        // uploader warns above 256 points in a hull, indra/newview/llmodelpreview.cpp). An asset over either is not trusted.
+        internal const int MaxAssetHulls = 256;
+        internal const int MaxPointsPerAssetHull = 256;
+
+        internal static bool HullListWithinLimits(List<List<OpenMetaverse.Vector3>> hulls)
+        {
+            if (hulls.Count > MaxAssetHulls)
+                return false;
+            foreach (List<OpenMetaverse.Vector3> hull in hulls)
+                if (hull.Count > MaxPointsPerAssetHull)
+                    return false;
+            return true;
+        }
 
         /// <summary>The shape kind of a prim cooked as its bounding box.</summary>
         internal const string BoxFallbackKind = "bbox(fallback)";
@@ -2534,6 +2776,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         public override void Dispose()
         {
+            // The backend's teardown frees every shape it still holds, the shared ones with the rest.
+            lock (_sharedShapeLock)
+            {
+                _sharedShapes.Clear();
+                _sharedByShape.Clear();
+            }
             _backend?.Dispose();   // backend teardown -> Foundation.Shutdown
             _backend = null;
         }

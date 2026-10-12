@@ -657,6 +657,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         ShapeId CreateMeshShape(ReadOnlySpan<Vector3> vertices, ReadOnlySpan<int> indices);
         ShapeId CreateCompoundShape(ReadOnlySpan<CompoundChild> children);
 
+        /// <summary>
+        /// One shape made of convex hulls that already exist (CreateConvexHullShape), each at the shape's origin: how a
+        /// mesh asset's hull list is cooked. Unlike a linkset's CreateCompoundShape the parts are not prims: a hit on it
+        /// names the body, SetBodyPartMaterial treats it as one shape, and SetShapeDensity sets the density of every hull.
+        /// Needs at least two hulls (use the single hull directly otherwise). The hull handles may be released after
+        /// the call; the shape keeps the hulls alive.
+        /// </summary>
+        ShapeId CreateHullCompoundShape(ReadOnlySpan<ShapeId> hulls);
+
         ShapeId CreateHeightFieldShape(
             ReadOnlySpan<float> heights, int sampleCountX, int sampleCountY, Vector3 scale);
 

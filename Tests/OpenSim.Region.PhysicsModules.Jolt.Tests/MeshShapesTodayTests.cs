@@ -158,6 +158,12 @@ public class MeshShapesTodayTests
                 h[i] = new Vector3((i & 1) == 0 ? b.X0 : b.X1, (i & 2) == 0 ? b.Y0 : b.Y1, (i & 4) == 0 ? b.Z0 : b.Z1);
             hulls.Add(h);
         }
+        return ConvexBlockOfHulls(hulls);
+    }
+
+    // The "physics_convex" block for any hulls (a hull list of any shape; at most 256 points each, as the byte count says).
+    private static byte[] ConvexBlockOfHulls(List<Vector3[]> hulls)
+    {
         (Vector3 mn, Vector3 mx) = Bounds(hulls.SelectMany(h => h));
         var pos = new List<ushort>();
         foreach (Vector3[] h in hulls)
@@ -184,6 +190,22 @@ public class MeshShapesTodayTests
     /// the decomposition is just the bounding hull (an upload with a physics file); without one (an upload that used
     /// Analyze) the hull list is there and no physics mesh is.</summary>
     internal static byte[] Asset((Vector3[] verts, int[] tris) display, Box[] boxes, bool withPhysicsMesh)
+        => AssetOf(display, withPhysicsMesh ? null : ConvexBlock(boxes), withPhysicsMesh);
+
+    /// <summary>An asset (display LODs, no physics mesh) whose hull list is exactly these hulls.</summary>
+    internal static byte[] AssetWithHulls((Vector3[] verts, int[] tris) display, Vector3[][] hulls)
+        => AssetOf(display, ConvexBlockOfHulls(hulls.ToList()), false);
+
+    /// <summary>The eight corners of a box, as one hull.</summary>
+    internal static Vector3[] BoxHull(Box b)
+    {
+        var h = new Vector3[8];
+        for (int i = 0; i < 8; i++)
+            h[i] = new Vector3((i & 1) == 0 ? b.X0 : b.X1, (i & 2) == 0 ? b.Y0 : b.Y1, (i & 4) == 0 ? b.Z0 : b.Z1);
+        return h;
+    }
+
+    private static byte[] AssetOf((Vector3[] verts, int[] tris) display, byte[] convexBlock, bool withPhysicsMesh)
     {
         var blocks = new List<(string name, byte[] data)>();
         byte[] mesh = MeshBlock(display.verts, display.tris);
@@ -192,7 +214,7 @@ public class MeshShapesTodayTests
         if (withPhysicsMesh)
             blocks.Add(("physics_mesh", mesh));
         else
-            blocks.Add(("physics_convex", ConvexBlock(boxes)));
+            blocks.Add(("physics_convex", convexBlock));
         var header = new OSDMap();
         int offset = 0;
         foreach ((string name, byte[] data) in blocks)
@@ -368,7 +390,15 @@ public class MeshShapesTodayTests
                     // Today: a non-physical mesh keeps its triangle mesh (the ball rests on the trough floor, the box and
                     // the avatar pass the opening); a physical one is one hull of every point (the ball rests on top, the
                     // opening is closed). The shape type and which blocks the asset carries make no difference.
-                    if (physical)
+                    if (physical && type == (byte)PhysShapeType.prim && !withPhysicsMesh)
+                    {
+                        // A physical PRIM mesh whose asset carries a hull list collides as its hulls (MeshHullListTests): the
+                        // ball rests on the floor and the opening is open, as for the same shape built of boxes.
+                        Assert.StartsWith("hulls(asset", kind);
+                        Assert.InRange(rest, TroughFloorTop + 0.1f, TroughFloorTop + 0.3f);
+                        Assert.True(boxPast > 0f && avPast > 0f, $"physical hull-list gateway blocked: box {boxPast}, avatar {avPast}");
+                    }
+                    else if (physical)
                     {
                         Assert.Equal("hull(mesher)", kind);
                         Assert.InRange(rest, TroughHeight, TroughHeight + 0.4f);
