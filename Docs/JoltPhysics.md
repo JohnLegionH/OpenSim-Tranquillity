@@ -146,7 +146,8 @@ the avatar walk, run and fly speeds (see "Avatar speeds"),
 how often capacity warnings are logged, the physics step rate (below), the vehicle settings (the
 share of gravity on a ground vehicle, the type presets, the limits and the sled's assist; see
 "Vehicles"), the engine's body speed caps, the prims' damping (see "Physics material on objects"), the limits on script ray casts and pushes (below),
-`AllowUnrecordedNative` (above), and `TestCommands` (below).
+`AllowUnrecordedNative` (above), `BodyEnhancedEdgeRemoval` and `AvatarEnhancedEdgeRemoval` (see "Seams in
+triangle meshes and terrain"), and `TestCommands` (below).
 
 ### Physics step rate
 
@@ -233,6 +234,15 @@ The module bounds a script cast three ways:
   that code (it logs each one as a warning). OpenSim's `llCastRay` (LSL_Api, used by YEngine) cannot
   be told: it gets no hits from the physics engine, and returns only what it tests itself (avatars,
   phantoms and, for long rays, the ground) with a status of that many hits.
+
+What a cast finds follows Second Life's `llCastRay` page: a ray that starts inside a prim or an
+avatar does not hit it ("llCastRay will not detect a prim if the line starts inside the prim"), and
+goes on to what lies beyond. This holds for both entry points and both budgets. On the 5-argument
+`RaycastWorld` the types a cast asks for are filtered inside the engine, so a type the script
+rejects never takes one of its `RC_MAX_HITS`; on the 4-argument entry the caller sees every solid
+type and filters afterwards, so a rejected hit there does take one. The engine returns up to 256
+hits (`RayCastMaxHits`) and finds phantom and volume-detect prims when the cast asks for them
+(`RayFilterFlags.phantom` / `volumedtc`, on the 5-argument entry).
 
 The two budgets are drawn separately each heartbeat, and running out of one never refuses a cast
 charged to the other. `RayCastMaxTestedHits` and `RayCastMaxHits` apply to every cast in both.
@@ -547,13 +557,53 @@ mesher decodes, unless it has already decoded and cached that map.
   its points. Each case is logged once per asset.
 - Mass is the volume of the hulls times density, so a hollow physical mesh weighs what its hulls hold, not what
   the hull of all its points would (a trough of three boxes: 3.84 m3, not the 12 m3 of the box round them).
-- Prims of one mesh asset, one size, one physical state and one shape type share one cooked shape, however many
-  there are, and it is freed when the last of them goes. A prim that joins a linkset takes a shape of its own,
-  because a linkset gives each part's shape that part's density.
+- Prims of one mesh asset, one physical state and one shape type share one cooked shape, however many there are
+  and at whatever size: the shape is cooked once, at the size of the first prim, and a prim of another size
+  (a resize, or another copy) takes a scaled shape over it. Nothing is fetched, decoded or cooked again. The scaled
+  shape weighs, balances and collides as a fresh cook at that size does, for a hull list, a triangle mesh and one
+  hull, scaled the same way on every axis or not (`MeshResizeScaledShapeTests`: the same mass, centre of mass and
+  rest height to the figures printed, and the same passage through a gateway). A size the size rules treat
+  differently is cooked on its own: a non-physical mesh under 0.05 m on every side is a box, and the mesher makes no
+  side under 0.01 m. The cooked shape is freed when the last size of it goes.
+- A part of a linkset shares a shape the same way unless its density differs from the root's. The linkset writes each
+  part's density, relative to the root's, into the part's shape, and a shape that other prims use keeps the engine's
+  default, so such a part takes a shape of its own (a cook from the mesh the mesher kept, without a fetch); a part
+  of the root's density needs none written and takes the shared or scaled shape.
 
 | Key | Default | What it sets |
 |---|---|---|
+| `BodyEnhancedEdgeRemoval` | `false` | `true`: Jolt's enhanced internal edge removal for every body that moves under physics (a physical prim, a vehicle): the contacts with the shared edges inside a triangle mesh or a heightfield that can push a body off its path are removed. Costs more per contact with a mesh or the terrain. Off, nothing changes. See "Seams in triangle meshes and terrain". |
+| `AvatarEnhancedEdgeRemoval` | `false` | `true`: the same for avatars. Off, nothing changes. |
 | `HonourConvexMesh` | `false` | `true`: a non-physical mesh whose `PRIM_PHYSICS_SHAPE_TYPE` is `PRIM_PHYSICS_SHAPE_CONVEX` collides as one convex hull of its points, not its triangle mesh. The simulator gives every mesh that shape type unless the upload sets another, so with this on a hollow mesh without a physics model becomes solid. Off, nothing changes. |
+
+## Seams in triangle meshes and terrain
+
+A triangle mesh (a non-physical mesh prim, a floor or road built of one) and the terrain's heightfield are made of
+triangles that meet along shared edges. A body crossing an edge can touch it as if it were a wall and be pushed off its
+path: a vertical spike in its speed. Jolt can remove those contacts ("enhanced internal edge removal",
+`BodyCreationSettings::mEnhancedInternalEdgeRemoval`, `CharacterVirtualSettings::mEnhancedInternalEdgeRemoval`: "extra
+effort to remove ghost contacts ... This is more expensive but makes bodies move smoother over a mesh with convex
+edges"). Neither Second Life nor Halcyon documents anything of the kind, so it is off:
+
+- `[Jolt] BodyEnhancedEdgeRemoval = true` turns it on for every body that moves under physics, when it is created (a prim that
+  becomes physical gets a new body, which has it).
+- `[Jolt] AvatarEnhancedEdgeRemoval = true` turns it on for avatars.
+
+The harness scenarios `seam-ball`, `seam-sled` and `seam-walker` cross a flat floor of 12800 triangles (a mesh prim),
+the `seam-ripple-*` ones a floor that ripples (4 cm every 3 m), the `seam-terrain-*` ones rolling terrain. A hitch is a
+sample after the first 1.5 s whose vertical speed differs by more than 0.1 m/s from what the two samples before it
+predict. `EnhancedEdgeRemovalTests` prints the count with each setting off and on, at one physics step per heartbeat and
+at 45 Hz (lines "SEAM ..."); `SeamScenarios.HitchCount` is the figure.
+
+Measured (Release, 5 s runs, hitches with the setting off, then on, at one physics step per heartbeat / at 45 Hz): a ball on
+the flat mesh floor 15 then 0 / 19 then 0 (it also keeps its speed: it ends 128.6 m along instead of 122.3); on the rolling
+terrain 3 then 0 / 3 then 0; a sled on the rippled floor stops dead at its start with the setting off and slides 6 m with
+it on; a sled on the flat floor, and an avatar on every ground, show no hitch either way. The ball on the rippled floor
+counts about the same either way (20 then 21): the ripple itself bends its vertical speed by more than the threshold.
+With `BodyEnhancedEdgeRemoval` on, 11 of the 13 recorded harness baselines move (the car, crash and ramp rows: the terrain is
+a heightfield, so every body on the ground meets the removal); with `AvatarEnhancedEdgeRemoval` on none does. Both stay
+off by default for that reason and for the extra cost per contact, which was not measured.
+
 
 ## Mass: what a script reads and where it comes from
 
@@ -915,10 +965,19 @@ A physical linkset is checked the same way, as one object: a three-prim linkset 
 limit, at either physics step rate. A flying avatar it has struck can show one physics step's velocity
 above the limit (14 m/s at a 45 Hz step rate) when the linkset catches it up again as its push fades.
 
-Phantom and volume-detect prims still let a fast prim through: Jolt does not cast against sensors,
-and a phantom prim touches only the terrain. A volume-detect prim finds what is inside it at the
-start of each collision step, so a fast prim that is never inside it at such a start, which can
-happen when it crosses it in less than a collision step, raises no `collision_start` from it.
+A phantom prim touches only the terrain, so a fast prim goes through it. Jolt does not cast against
+sensors, and a volume-detect prim finds what is inside it at the start of each collision step, so a
+fast prim that is never inside it at such a start, which can happen when it crosses it in less than a
+collision step, would raise no `collision_start` from it. The module closes that: in an update that has
+a volume-detect prim in the region, each awake physical prim that moves further than 0.1 m is swept from
+where it was to where the update left it against the volume-detect prims, and a detector the path went
+through, that the engine did not report in that update and that the prim does not overlap where it ended
+(the engine reports that one in the next update), gets one `collision_start`; the next heartbeat has no
+contact, which is the `collision_end`. A prim stopped by a wall before the detector never crosses it and
+raises nothing. Second Life says only that a volume-detect prim raises both events "when
+interpenetrating" (wiki.secondlife.com/wiki/LlVolumeDetect); it documents no speed beyond which a crossing
+is missed. `VolumeDetectFastCrossingTests` shoots a 0.2 m ball through a 0.1 m detector at 5, 25, 50 and
+200 m/s at one physics step per heartbeat and at 45 Hz: one start and one end each.
 
 `FastObjectTests` shoots 0.05, 0.2 and 1 m balls at 10 to 500 m/s (`[Jolt] BodyMaxLinearSpeed`, 500 m/s
 by default, is the most a prim can move) at a fixed wall 0.01 m and 0.1 m thick, at a resting 0.5 m
@@ -1538,7 +1597,7 @@ level ground or up the ramp, then stopped), `avatar-wall` (walking into a fixed 
 watched part's collision events under their summary line.
 The shot scenarios fire a physical ball (`--ball`, `--shot-speed`) at something: `tunnel-wall-1cm` and
 `tunnel-wall-10cm` (a fixed wall), `tunnel-box` (a 0.5 m box resting on the ground), `tunnel-ground`
-(straight down from 3 m), `tunnel-vd-wall` (through a 1 m volume-detect slab, then at a wall),
+(straight down from 3 m), `tunnel-vd-wall` (through a 1 m volume-detect slab, then at a wall), `tunnel-vd-slab` (through a 0.1 m slab),
 `tunnel-phantom-box` and `tunnel-phantom-ball` (a physical phantom box, or a phantom ball at a wall);
 `tunneled` is 1 when the ball went through. The summary's extra columns give when
 the engine last had a body awake and, for the crashes, the impact, arrival and leaving speeds,

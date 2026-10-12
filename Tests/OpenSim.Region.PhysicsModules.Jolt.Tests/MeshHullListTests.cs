@@ -390,12 +390,13 @@ public class MeshHullListTests
             Assert.Equal(1, scene.MeshShapesCooked);
             Add(Vector3.One, true, Prim, 1);
             Assert.Equal(1, scene.MeshShapesCooked);
-            Add(new Vector3(1f, 1f, 1.5f), true, Prim, 2);   // size
-            Assert.Equal(2, scene.MeshShapesCooked);
+            Add(new Vector3(1f, 1f, 1.5f), true, Prim, 2);   // size: the same cook, scaled (MeshResizeScaledShapeTests)
+            Assert.Equal(1, scene.MeshShapesCooked);
+            Assert.Equal(1, scene.ScaledShapesMade);
             Add(Vector3.One, false, Prim, 3);                // physical state
-            Assert.Equal(3, scene.MeshShapesCooked);
+            Assert.Equal(2, scene.MeshShapesCooked);
             Add(Vector3.One, true, Convex, 4);               // shape type
-            Assert.Equal(4, scene.MeshShapesCooked);
+            Assert.Equal(3, scene.MeshShapesCooked);
             Assert.Equal(4, scene.SharedShapeCount);
         }
         finally { scene.Dispose(); }
@@ -450,8 +451,10 @@ public class MeshHullListTests
                 prims[0].Size = round % 2 == 0 ? new Vector3(1.5f, 1f, 1f) : Vector3.One;
             // prims[0] ended at size one again: back on the shared shape
             Assert.Equal(((JoltPrim)prims[1]).ShapeHandle, ((JoltPrim)prims[0]).ShapeHandle);
-            // Size one is cooked once; size 1.5 each time the copy goes back to it, because a shape nobody uses is freed.
-            Assert.InRange(scene.MeshShapesCooked, 2, 11);
+            // Size one is cooked once; size 1.5 is a scaled shape over it, made each time the copy goes to it, because a shape
+            // nobody uses is freed.
+            Assert.Equal(1, scene.MeshShapesCooked);
+            Assert.InRange(scene.ScaledShapesMade, 1, 10);
             foreach (PhysicsActor p in prims) scene.RemovePrim(p);
             Assert.Equal(shapesBefore, scene.CapacityStats().LiveShapeCount);
             Assert.Equal(0, scene.SharedShapeCount);
