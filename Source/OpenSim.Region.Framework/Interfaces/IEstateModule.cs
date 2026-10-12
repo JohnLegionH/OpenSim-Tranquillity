@@ -70,9 +70,13 @@ public interface IEstateModule
     /// Returns whether the transfer ID is being used for a terrain transfer.
     /// </summary>
     bool IsTerrainXfer(ulong xferID);
+    /// <summary>
+    /// Apply an EstateChangeInfo capability request. A null setting is one the request did not carry
+    /// and is left unchanged; a false is applied as false.
+    /// </summary>
     bool handleEstateChangeInfoCap(string estateName, UUID invoice,
-        bool externallyVisible, bool allowDirectTeleport, bool denyAnonymous, bool denyAgeUnverified,
-        bool alloVoiceChat, bool overridePublicAccess, bool allowEnvironmentOverride);
+        bool? externallyVisible, bool? allowDirectTeleport, bool? denyAnonymous, bool? denyAgeUnverified,
+        bool? alloVoiceChat, bool? overridePublicAccess, bool? allowEnvironmentOverride);
     void HandleRegionInfoRequest(IClientAPI remote_client);
     bool SetRegionInfobyCap(OSDMap map);
 }

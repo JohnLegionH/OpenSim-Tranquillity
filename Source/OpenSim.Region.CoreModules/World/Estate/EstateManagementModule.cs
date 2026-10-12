@@ -2221,27 +2221,36 @@ public class EstateManagementModule : IEstateModule, INonSharedRegionModule
     }
 
     public bool handleEstateChangeInfoCap(string estateName, UUID invoice,
-        bool externallyVisible,
-        bool allowDirectTeleport,
-        bool denyAnonymous, bool denyAgeUnverified,
-        bool alloVoiceChat, bool overridePublicAccess,
-        bool allowEnvironmentOverride)
+        bool? externallyVisible,
+        bool? allowDirectTeleport,
+        bool? denyAnonymous, bool? denyAgeUnverified,
+        bool? alloVoiceChat, bool? overridePublicAccess,
+        bool? allowEnvironmentOverride)
     {
-        bool lastallowEnvOvr = Scene.RegionInfo.EstateSettings.AllowEnvironmentOverride;
+        EstateSettings settings = Scene.RegionInfo.EstateSettings;
+        bool lastallowEnvOvr = settings.AllowEnvironmentOverride;
 
-        Scene.RegionInfo.EstateSettings.PublicAccess = externallyVisible;
-        Scene.RegionInfo.EstateSettings.AllowDirectTeleport = allowDirectTeleport;
+        // A null argument is a setting the request did not carry: leave it as it is.
+        if (externallyVisible.HasValue)
+            settings.PublicAccess = externallyVisible.Value;
+        if (allowDirectTeleport.HasValue)
+            settings.AllowDirectTeleport = allowDirectTeleport.Value;
 
-        Scene.RegionInfo.EstateSettings.DenyAnonymous = denyAnonymous;
-        Scene.RegionInfo.EstateSettings.AllowVoice = alloVoiceChat;
+        if (denyAnonymous.HasValue)
+            settings.DenyAnonymous = denyAnonymous.Value;
+        if (alloVoiceChat.HasValue)
+            settings.AllowVoice = alloVoiceChat.Value;
 
         // taxfree is now !AllowAccessOverride
-        Scene.RegionInfo.EstateSettings.TaxFree = overridePublicAccess;
-        Scene.RegionInfo.EstateSettings.DenyMinors = denyAgeUnverified;
-        Scene.RegionInfo.EstateSettings.AllowEnvironmentOverride = allowEnvironmentOverride;
+        if (overridePublicAccess.HasValue)
+            settings.TaxFree = overridePublicAccess.Value;
+        if (denyAgeUnverified.HasValue)
+            settings.DenyMinors = denyAgeUnverified.Value;
+        if (allowEnvironmentOverride.HasValue)
+            settings.AllowEnvironmentOverride = allowEnvironmentOverride.Value;
 
-        Scene.EstateDataService.StoreEstateSettings(Scene.RegionInfo.EstateSettings);
-        if(lastallowEnvOvr && !allowEnvironmentOverride)
+        Scene.EstateDataService.StoreEstateSettings(settings);
+        if (lastallowEnvOvr && !settings.AllowEnvironmentOverride)
             Scene.ClearAllParcelEnvironments();
 
         TriggerEstateInfoChange();
