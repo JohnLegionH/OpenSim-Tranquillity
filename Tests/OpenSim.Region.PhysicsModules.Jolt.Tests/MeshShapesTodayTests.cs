@@ -35,36 +35,36 @@ public class MeshShapesTodayTests
     private readonly ITestOutputHelper _out;
     public MeshShapesTodayTests(ITestOutputHelper output) { _out = output; }
 
-    private const float Heartbeat = 1f / 11f;
-    private const int Size = 256;
-    private const float Ground = 25f;
-    private const float CentreX = 128f, CentreY = 128f;
+    internal const float Heartbeat = 1f / 11f;
+    internal const int Size = 256;
+    internal const float Ground = 25f;
+    internal const float CentreX = 128f, CentreY = 128f;
 
     // ---------------------------------------------------------------- geometry (metres, centred on the prim)
 
-    private readonly record struct Box(float X0, float X1, float Y0, float Y1, float Z0, float Z1);
+    internal readonly record struct Box(float X0, float X1, float Y0, float Y1, float Z0, float Z1);
 
     // A gateway 4 m wide, 2 m deep and 3 m tall, open along y: two pillars and a lintel. The opening is 1.6 m wide and
     // 2.1 m tall. Its centre is 1.5 m above its foot.
-    private static readonly Box[] Gateway =
+    internal static readonly Box[] Gateway =
     {
         new(-2f, -0.8f, -1f, 1f, -1.5f, 1.5f),
         new(0.8f, 2f, -1f, 1f, -1.5f, 1.5f),
         new(-0.8f, 0.8f, -1f, 1f, 0.6f, 1.5f),
     };
-    private const float GatewayHeight = 3f;
+    internal const float GatewayHeight = 3f;
 
     // A trough 4 m long, 2 m deep and 1.5 m tall, open on top: a floor and two walls. The slot is 3.4 m wide; its floor
     // is 0.3 m thick. Its centre is 0.75 m above its foot.
-    private static readonly Box[] Trough =
+    internal static readonly Box[] Trough =
     {
         new(-2f, 2f, -1f, 1f, -0.75f, -0.45f),
         new(-2f, -1.7f, -1f, 1f, -0.45f, 0.75f),
         new(1.7f, 2f, -1f, 1f, -0.45f, 0.75f),
     };
-    private const float TroughHeight = 1.5f, TroughFloorTop = 0.3f;
+    internal const float TroughHeight = 1.5f, TroughFloorTop = 0.3f;
 
-    private static (Vector3[] verts, int[] tris) Soup(Box[] boxes)
+    internal static (Vector3[] verts, int[] tris) Soup(Box[] boxes)
     {
         var v = new List<Vector3>();
         var t = new List<int>();
@@ -183,7 +183,7 @@ public class MeshShapesTodayTests
     /// <summary>The asset as the viewer's upload writes it: a header of offsets, then the blocks. With a physics mesh
     /// the decomposition is just the bounding hull (an upload with a physics file); without one (an upload that used
     /// Analyze) the hull list is there and no physics mesh is.</summary>
-    private static byte[] Asset((Vector3[] verts, int[] tris) display, Box[] boxes, bool withPhysicsMesh)
+    internal static byte[] Asset((Vector3[] verts, int[] tris) display, Box[] boxes, bool withPhysicsMesh)
     {
         var blocks = new List<(string name, byte[] data)>();
         byte[] mesh = MeshBlock(display.verts, display.tris);
@@ -208,7 +208,7 @@ public class MeshShapesTodayTests
         return ms.ToArray();
     }
 
-    private static PrimitiveBaseShape MeshPbs(byte[] asset)
+    internal static PrimitiveBaseShape MeshPbs(byte[] asset)
     {
         PrimitiveBaseShape pbs = PrimitiveBaseShape.CreateBox();
         pbs.PathCurve = (byte)Extrusion.Curve1;   // as the viewer sends a mesh: circle profile, curved path (never the box fast path)
@@ -222,7 +222,7 @@ public class MeshShapesTodayTests
 
     // ---------------------------------------------------------------- the scene
 
-    private static JoltScene NewScene(string scratch)
+    internal static JoltScene NewScene(string scratch, params (string key, string value)[] joltSettings)
     {
         var config = new IniConfigSource();
         IConfig startup = config.AddConfig("Startup");
@@ -231,6 +231,8 @@ public class MeshShapesTodayTests
         startup.Set("DecodedSculptMapPath", scratch);
         IConfig jolt = config.AddConfig("Jolt");
         jolt.Set("PhysicsStepRate", "45");
+        foreach ((string key, string value) in joltSettings)
+            jolt.Set(key, value);
         var scene = new JoltScene();
         scene.Initialise(config);
         float[] heights = new float[Size * Size];
@@ -242,30 +244,30 @@ public class MeshShapesTodayTests
         return scene;
     }
 
-    private static string Scratch()
+    internal static string Scratch()
     {
         string d = Path.Combine(Path.GetTempPath(), "mesh-shapes-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(d);
         return d;
     }
 
-    private static void Step(JoltScene scene, float seconds)
+    internal static void Step(JoltScene scene, float seconds)
     {
         for (int i = 0; i < (int)MathF.Ceiling(seconds / Heartbeat); i++)
             scene.Simulate(Heartbeat);
     }
 
-    private static uint _id = 1000;
+    internal static uint _id = 1000;
 
-    private static PhysicsActor AddMesh(JoltScene scene, byte[] asset, float height, bool physical, byte shapeType, out string kind)
+    internal static PhysicsActor AddMesh(JoltScene scene, byte[] asset, float height, bool physical, byte shapeType, out string kind, Vector3? size = null)
     {
         PhysicsActor a = scene.AddPrimShape("mesh", MeshPbs(asset), new Vector3(CentreX, CentreY, Ground + height * 0.5f),
-                                            Vector3.One, Quaternion.Identity, physical, false, shapeType, _id++);
+                                            size ?? Vector3.One, Quaternion.Identity, physical, false, shapeType, _id++);
         kind = (string)typeof(JoltPrim).GetField("_shapeKind", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(a)!;
         return a;
     }
 
-    private static void AddBoxes(JoltScene scene, Box[] boxes, float height)
+    internal static void AddBoxes(JoltScene scene, Box[] boxes, float height)
     {
         foreach (Box b in boxes)
         {
@@ -276,7 +278,7 @@ public class MeshShapesTodayTests
     }
 
     // A 0.4 m ball dropped from 2 m over the trough's middle; where it rests, above the ground.
-    private float DropBall(JoltScene scene, float top)
+    internal static float DropBall(JoltScene scene, float top)
     {
         PhysicsActor ball = scene.AddPrimShape("ball", sphere(), new Vector3(CentreX, CentreY, Ground + top + 2f), new Vector3(0.4f, 0.4f, 0.4f),
                                                Quaternion.Identity, true, _id++);
@@ -292,7 +294,7 @@ public class MeshShapesTodayTests
 
     // A 0.5 m physical box fired along +y at 8 m/s from 3 m before a gateway; how far past the gateway's far side
     // (y = +1 m) it got in 5 s. Positive means it passed through the opening.
-    private float FireBox(JoltScene scene)
+    internal static float FireBox(JoltScene scene)
     {
         PhysicsActor box = scene.AddPrimShape("probe", PrimitiveBaseShape.CreateBox(), new Vector3(CentreX, CentreY - 3f, Ground + 0.4f),
                                               new Vector3(0.5f, 0.5f, 0.5f), Quaternion.Identity, true, _id++);
@@ -303,7 +305,7 @@ public class MeshShapesTodayTests
     }
 
     // An avatar set 4 m before the gateway and walked along +y at 3 m/s for 6 s; how far past the far side it got.
-    private float WalkAvatar(JoltScene scene)
+    internal static float WalkAvatar(JoltScene scene)
     {
         PhysicsActor av = scene.AddAvatar(777u, "Test User", new Vector3(CentreX, CentreY - 4f, Ground + Run.AvatarSize.Z * 0.5f), Run.AvatarSize, 0f, false);
         Step(scene, 1f);
@@ -312,7 +314,7 @@ public class MeshShapesTodayTests
         return av.Position.Y - (CentreY + 1f);
     }
 
-    private static string F(float v) => v.ToString("0.00", CultureInfo.InvariantCulture);
+    internal static string F(float v) => v.ToString("0.00", CultureInfo.InvariantCulture);
 
     // ---------------------------------------------------------------- what a dropped ball rests on, and what passes
 
@@ -397,9 +399,9 @@ public class MeshShapesTodayTests
         Console.WriteLine(string.Join("\n", lines));
     }
 
-    // What the module does with a mesh prim whose asset bytes have not been loaded into the shape (SculptData empty):
-    // it never asks for the asset (the request-asset delegate it is given is not used), so the mesher returns nothing and
-    // the prim collides as its bounding box.
+    // What the module does with a mesh prim whose asset bytes are not loaded (SculptData empty) when the scene has no
+    // request-asset delegate to fetch them with: the mesher returns nothing and the prim collides as its bounding box.
+    // (With a delegate it asks for the asset and cooks the shape when it arrives: MeshAssetFetchTests.)
     [Fact]
     public void Mesh_prim_without_loaded_asset_collides_as_a_box()
     {
