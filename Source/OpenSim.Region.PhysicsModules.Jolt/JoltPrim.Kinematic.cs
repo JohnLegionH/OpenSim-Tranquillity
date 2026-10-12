@@ -70,19 +70,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (_keyframed == value)
                     return;
                 _keyframed = value;
+                if (value)
+                    _moveKinematic = false;   // the hint decides while keyframed motion moves the prim
                 SyncKinematicBody();
             }
         }
 
-        // A single prim or linkset root that is not physical, phantom or a volume detector, while keyframed motion moves it.
+        // A single prim or linkset root that is not physical, phantom or a volume detector, while keyframed motion moves it
+        // (the hint decides, whatever MovedPrimsCarryRiders says), or while a series of plain sets moves it and
+        // [Jolt] MovedPrimsCarryRiders is on.
         private bool KinematicWanted
-            => _keyframed && !_isPhysical && !_isPhantom && !_isVolumeDetect && _linkRoot == null && _module.KeyframedMotionCarriesRiders;
+            => !_isPhysical && !_isPhantom && !_isVolumeDetect && _linkRoot == null
+               && (_keyframed ? _module.KeyframedMotionCarriesRiders : _moveKinematic && _module.MovedPrimsCarryRiders);
 
         // Makes the body the kind the prim now wants: a kinematic one while keyframed motion moves it, a fixed one again
         // after. A static body cannot become kinematic (it has no motion properties; allocating them for every prim is the
         // memory cost the static rule avoids), so the body is made again where the object is. What rests on the prim is woken:
-        // the new body has no record of what touched the old one.
-        private void SyncKinematicBody()
+        // the new body has no record of what touched the old one. When a series of plain sets has just begun, the pose before
+        // the set is given: the new body is put there and moved to the set's pose by the next StepKinematic, so the set
+        // already carries what stands on the prim.
+        private void SyncKinematicBody(Vector3? from = null, Quaternion? fromRotation = null)
         {
             if (IsRemoved || KinematicWanted == _kinematicBody)
                 return;
@@ -92,19 +99,122 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     return;
                 _backend.RemoveBody(_body);
                 CreateBodyInternal();   // reads KinematicWanted: layer, motion type and the scene's list of moving prims
+                if (from.HasValue && _kinematicBody)
+                {
+                    _backend.SetBodyPoseAndVelocity(_body, ToS(from.Value), BodyOrientationOf(fromRotation ?? _orientation), SVector3.Zero, SVector3.Zero);
+                    lock (_kinLock) _kinPending = true;   // CreateBodyInternal took the set's pose as the target
+                }
             }
-            WakeWhatRestsOn(_position, _orientation);
+            WakeWhatRestsOn(from ?? _position, fromRotation ?? _orientation);
         }
 
         // A position or rotation set on the kinematic prim: only the pose is kept; StepKinematic moves the body.
         private void NoteKinematicPose(Vector3? position, Quaternion? rotation)
         {
+            if (_moveKinematic)
+            {
+                double now = _module.KinematicClock;
+                float gap = (float)(now - _moveLastClock);
+                float heartbeat = _module.KinematicHeartbeat;
+                if (gap > 0.5f * heartbeat)   // a second set in the same heartbeat is not a gap
+                    _moveGap = Math.Clamp(0.5f * _moveGap + 0.5f * gap, heartbeat, (float)MoveMaxGapSeconds + heartbeat);
+                _moveLastClock = now;
+            }
             lock (_kinLock)
             {
                 if (position.HasValue) _kinTarget = position.Value;
                 if (rotation.HasValue) _kinRotation = rotation.Value;
                 _kinPending = true;
             }
+        }
+
+        // ---------------------------------------------------------------------
+        // [Jolt] MovedPrimsCarryRiders: a series of plain sets is a motion.
+        //
+        // A non-physical prim that llSetPos, llSetRegionPos, llSetPrimitiveParams or the build tool moves arrives as position
+        // and rotation sets with no hint. Second Life does not carry an avatar over such a move (its wiki pages for the calls
+        // say nothing of it), so with the setting off (the default) none of this runs and the prim is a fixed body set to each
+        // new place. With it on, the second set of a series makes the body a kinematic one (as the hint does) and each new pose
+        // moves it, as above; a quiet time ends the series and the body is fixed again.
+        //   - A series: two sets that fall in different heartbeats, at most MoveMaxGapSeconds plus one heartbeat apart, the
+        //     second no further than KinematicJumpDistance and no more than MoveJumpAngle from the first. llSetPos waits 0.2 s
+        //     after each call, so a script that steps a platform with it is about 0.2 s between sets. Sets are stamped with
+        //     the region's simulated time (JoltScene.KinematicClock), which counts whole heartbeats: a true gap of 0.2 s is
+        //     seen as two or three heartbeats (0.18 or 0.27 s at 11 Hz), so one heartbeat is allowed over the 0.25 s.
+        //   - The quiet time is MoveQuietSeconds with no set: above the longest gap a series allows (0.25 s plus a heartbeat),
+        //     so a series is never cut between two of its sets, and short enough that a rider is not carried by a platform
+        //     that has stopped for long (its body stops moving after one heartbeat with no new pose in any case).
+        //   - A longer move, or a set the same heartbeat as the one before it (several sets of one call), is not a series: the
+        //     body is set to the place as before.
+        // A prim keyframed motion moves is not touched: the hint path decides.
+        // ---------------------------------------------------------------------
+        internal const double MoveMaxGapSeconds = 0.25;
+        internal const double MoveQuietSeconds = 0.5;
+        internal const float MoveJumpAngle = MathF.PI * 0.5f;   // a quarter turn in one heartbeat is a jump, not a motion
+
+        // The body is kinematic because a series of plain sets is moving the prim (the hint is not).
+        private volatile bool _moveKinematic;
+        private double _moveLastClock = double.NegativeInfinity;
+
+        // A plain set may begin a series: the prim is a lone non-physical solid prim and the setting is on.
+        private bool WatchesMoves
+            => _module.MovedPrimsCarryRiders && !_keyframed && !_isPhysical && !_isPhantom && !_isVolumeDetect
+               && _linkRoot == null && !_module.IsRegionLoading;
+
+        // A set of the pose from (fromPos, fromRot) to the one the prim now has, on a fixed body. Returns true when it began a
+        // series: the body is now kinematic and will be moved to the new pose by the next step.
+        private bool NoteMoveSet(Vector3 fromPos, Quaternion fromRot)
+        {
+            double now = _module.KinematicClock;
+            double gap = now - _moveLastClock;
+            _moveLastClock = now;
+            float heartbeat = _module.KinematicHeartbeat;
+            if (!(gap > 0.5 * heartbeat && gap <= MoveMaxGapSeconds + heartbeat))
+                return false;
+            if (Vector3.Distance(fromPos, _position) > KinematicJumpDistance || AngleBetween(ToS(fromRot), ToS(_orientation)) > MoveJumpAngle)
+                return false;
+            _moveGap = (float)gap;
+            _moveKinematic = true;
+            SyncKinematicBody(fromPos, fromRot);
+            if (!_kinematicBody)
+            {
+                _moveKinematic = false;   // the body could not be made kinematic (it is being removed, or is away)
+                return false;
+            }
+            return true;
+        }
+
+        // A series of plain sets arrives in steps (0.2 m every 0.2 s for llSetPos), and a body that took each step in one
+        // heartbeat and then stood still would start and stop what stands on it again and again: a cube on it slides back and
+        // falls off. So the body glides from where it is to each new pose over the time the sets are apart (the running mean of
+        // the gaps, MoveGap), at the speed the sets add up to, and a rider keeps pace. The body therefore trails the object by
+        // at most one step of the series. Written and read on the step thread only.
+        private SVector3 _segFrom, _segTo;
+        private SQuaternion _segFromRotation, _segToRotation;
+        private float _segSeconds, _segElapsed;
+        private bool _segActive;
+
+        // The running mean of the time between sets, in simulated seconds (see NoteKinematicPose and NoteMoveSet).
+        private volatile float _moveGap;
+
+        private void StepMoveSegment(float seconds)
+        {
+            _segElapsed += seconds;
+            float f = MathF.Min(1f, _segElapsed / _segSeconds);
+            SVector3 at = SVector3.Lerp(_segFrom, _segTo, f);
+            SQuaternion turned = SQuaternion.Slerp(_segFromRotation, _segToRotation, f);
+            _backend.MoveKinematicBody(_body, at, turned, seconds);
+            _kinMoving = true;
+            if (f >= 1f)
+                _segActive = false;
+        }
+
+        // The series has ended: nothing has set the prim for the quiet time. The body stopped where the last pose put it, and
+        // is made a fixed body there.
+        private void EndMove()
+        {
+            _moveKinematic = false;
+            SyncKinematicBody();
         }
 
         // Called by the scene on the step thread, before the step, with the simulated time the step (or the heartbeat's
@@ -123,23 +233,47 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 rotation = _kinRotation;
                 _kinPending = false;
             }
+            if (!pending && !_segActive && _moveKinematic && _module.KinematicClock - _moveLastClock > MoveQuietSeconds)
+            {
+                // The body has come to rest at the last pose (below); the fixed body made next is put where the object is.
+                EndMove();
+                return;
+            }
             SQuaternion bodyRotation = BodyOrientationOf(rotation);
             if (pending)
             {
                 if (!_backend.TryGetBodyState(_body, out BodyState s))
                     return;
                 var from = new Vector3(s.Position.X, s.Position.Y, s.Position.Z);
-                if (Vector3.Distance(from, target) > MathF.Max(KinematicJumpDistance, KinematicJumpSpeed * seconds))
+                if (Vector3.Distance(from, target) > MathF.Max(KinematicJumpDistance, KinematicJumpSpeed * seconds)
+                    || (_moveKinematic && AngleBetween(s.Orientation, bodyRotation) > MoveJumpAngle))
                 {
                     _backend.SetBodyPoseAndVelocity(_body, ToS(target), bodyRotation, SVector3.Zero, SVector3.Zero);
                     _kinMoving = false;
+                    _segActive = false;
                     WakeWhatRestsOn(from, _orientation);
+                }
+                else if (_moveKinematic)
+                {
+                    // A series of plain sets: glide to the new pose over the time the sets are apart (see StepMoveSegment).
+                    _segFrom = s.Position;
+                    _segFromRotation = s.Orientation;
+                    _segTo = ToS(target);
+                    _segToRotation = bodyRotation;
+                    _segSeconds = MathF.Max(seconds, _moveGap);
+                    _segElapsed = 0f;
+                    _segActive = true;
+                    StepMoveSegment(seconds);
                 }
                 else
                 {
                     _backend.MoveKinematicBody(_body, ToS(target), bodyRotation, seconds);
                     _kinMoving = true;
                 }
+            }
+            else if (_segActive)
+            {
+                StepMoveSegment(seconds);
             }
             else if (_kinMoving)
             {

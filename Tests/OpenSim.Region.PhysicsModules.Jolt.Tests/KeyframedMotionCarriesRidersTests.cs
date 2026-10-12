@@ -279,8 +279,8 @@ public class KeyframedMotionCarriesRidersTests
     [InlineData(45.0)]
     public void A_fast_motion_below_the_jump_distance_still_carries_an_avatar(double physicsRate)
     {
-        // 1.5 m in each heartbeat is 16.5 m/s, a motion. An avatar takes the platform's velocity one step after the platform has
-        // it, so it trails by what the platform moves in a heartbeat and then keeps pace.
+        // 1.5 m in each heartbeat is 16.5 m/s, a motion. The avatar takes the platform's velocity in the step the motion starts
+        // (AvatarOnKinematicStartTests pins the figure); this test keeps the loose bound it was first written with.
         var rig = new Rig();
         double across = 0;
         var sc = Custom(rig, "avatar", 6f, r =>

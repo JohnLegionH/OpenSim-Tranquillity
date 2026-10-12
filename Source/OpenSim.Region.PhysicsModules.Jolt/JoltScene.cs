@@ -78,6 +78,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal float PrimAngularDamping => _joltConfig.PrimAngularDamping;
         internal bool HonourConvexMesh => _joltConfig.HonourConvexMesh;
         internal bool KeyframedMotionCarriesRiders => _joltConfig.KeyframedMotionCarriesRiders;
+        internal bool MovedPrimsCarryRiders => _joltConfig.MovedPrimsCarryRiders;
 
         // The vehicle settings every vehicle controller in this region shares, built from [Jolt] in Initialise.
         internal VehicleSettings VehicleSettings { get; private set; } = VehicleSettings.Default;
@@ -184,6 +185,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // velocity of the motion and what stands on it is carried.
         private readonly HashSet<JoltPrim> _kinematicPrims = new HashSet<JoltPrim>();
         private JoltPrim[] _kinematicSnapshot = Array.Empty<JoltPrim>();
+
+        // Simulated seconds the region has stepped (written on the step thread, read by whatever thread sets a prim's pose)
+        // and the time the last heartbeat covered. A set of a pose is stamped with this clock, so a series of sets is judged
+        // in simulated time, in whole heartbeats (see JoltPrim.NoteMoveSet).
+        private double _kinematicClock;
+        private volatile float _kinematicHeartbeat = 1f / 11f;
+        internal double KinematicClock => Volatile.Read(ref _kinematicClock);
+        internal float KinematicHeartbeat => _kinematicHeartbeat;
+
         internal void SetKinematicTracked(JoltPrim p, bool tracked)
         {
             lock (_kinematicPrims)
@@ -197,6 +207,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // step (or burst of steps) covers. Runs on the step thread, first thing in the heartbeat.
         private void StepKinematics(float seconds)
         {
+            if (seconds > 0f)
+            {
+                Volatile.Write(ref _kinematicClock, _kinematicClock + seconds);
+                _kinematicHeartbeat = seconds;
+            }
             JoltPrim[] prims = _kinematicSnapshot;
             for (int i = 0; i < prims.Length; i++)
             {

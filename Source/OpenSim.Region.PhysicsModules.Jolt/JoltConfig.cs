@@ -102,6 +102,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // stands on it is left behind.
         public bool KeyframedMotionCarriesRiders = true;
 
+        // true: a non-physical prim that a series of position or rotation sets moves with no keyframed-motion hint
+        // (llSetPos, llSetRegionPos, llSetPrimitiveParams, the build tool) carries what stands on it while the series lasts.
+        // false (the default): such a prim is a fixed body set to each new place and what stands on it is left behind, as in
+        // Second Life. A prim that keyframed motion moves is not affected: KeyframedMotionCarriesRiders decides.
+        public bool MovedPrimsCarryRiders = false;
+
         // Script ray casts (llCastRay) and pushes on avatars (llPushObject): limits on what scripts can make one region
         // do. They guard against abuse, so each defaults to its safe value.
         public float RayCastBudgetMs = PhysicsBackendSettings.DefaultRayCastBudgetMs;         // script casts, per region per heartbeat
@@ -163,6 +169,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.BodyEnhancedEdgeRemoval = B(cfg, "BodyEnhancedEdgeRemoval", c.BodyEnhancedEdgeRemoval, warnings);
             c.AvatarEnhancedEdgeRemoval = B(cfg, "AvatarEnhancedEdgeRemoval", c.AvatarEnhancedEdgeRemoval, warnings);
             c.KeyframedMotionCarriesRiders = B(cfg, "KeyframedMotionCarriesRiders", c.KeyframedMotionCarriesRiders, warnings);
+            c.MovedPrimsCarryRiders = B(cfg, "MovedPrimsCarryRiders", c.MovedPrimsCarryRiders, warnings);
             c.BodyUpdateBufferMax = I(cfg, "BodyUpdateBufferMax", c.BodyUpdateBufferMax, 1, 8_388_607, warnings);
             c.CharacterUpdateBufferMax = I(cfg, "CharacterUpdateBufferMax", c.CharacterUpdateBufferMax, 1, 65536, warnings);
             c.ContactBufferMax = I(cfg, "ContactBufferMax", c.ContactBufferMax, 0, 16_777_216, warnings);
