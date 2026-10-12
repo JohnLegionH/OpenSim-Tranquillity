@@ -656,7 +656,7 @@ uses.
 
 With the setting on, the harness platform (`kin-*-setpos`, a set every 0.2 s) carries a cube and an avatar 6 m sideways at 1 and
 3 m/s (they stayed on in every run; an avatar slid at most 0.6 m, a cube at most 0.4 m) where they fell 3 m before, and moving up
-nothing sank more than 0.42 m. With it off the 16 `kin-*-setpos` harness runs give the same sample files, byte for byte, as the build
+nothing sank more than 0.42 m, except the cube lifted 0.6 m by each set (above), which falls as before. With it off the 16 `kin-*-setpos` harness runs give the same sample files, byte for byte, as the build
 before the key was added.
 
 ## Seams in triangle meshes and terrain
