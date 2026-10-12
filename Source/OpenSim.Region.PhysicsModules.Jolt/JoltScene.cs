@@ -75,6 +75,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal float BodyMaxAngularSpeed => _joltConfig.BodyMaxAngularSpeed;
         internal float PrimLinearDamping => _joltConfig.PrimLinearDamping;
         internal float PrimAngularDamping => _joltConfig.PrimAngularDamping;
+        internal bool HonourConvexMesh => _joltConfig.HonourConvexMesh;
 
         // The vehicle settings every vehicle controller in this region shares, built from [Jolt] in Initialise.
         internal VehicleSettings VehicleSettings { get; private set; } = VehicleSettings.Default;
@@ -1116,6 +1117,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
             lock (_prims)
                 _prims[localid] = prim;
+            prim.RequestMeshAssetIfNeeded();   // after registration: the answer may arrive before this returns
             return prim;
         }
 
@@ -1128,7 +1130,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // when there is no mesher or the geometry is unusable. `axisCorrection` (System.Numerics) is
         // folded into the body
         // orientation by JoltPrim; `kind` is for the diagnostic read-out.
-        internal ShapeId CookPrimShape(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out SQuaternion axisCorrection, out string kind)
+        //
+        // `isPhysical` says how a mesher shape is cooked (true: one convex hull, so the body has volume and mass). The prim's
+        // own physical flag is `bodyIsPhysical`; it differs from `isPhysical` only for a non-physical prim cooked as a hull,
+        // and the small-mesh rule below goes by it.
+        internal ShapeId CookPrimShape(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out SQuaternion axisCorrection, out string kind,
+                                       bool? bodyIsPhysical = null)
         {
             axisCorrection = SQuaternion.Identity;
             float hx = size.X * 0.5f, hy = size.Y * 0.5f, hz = size.Z * 0.5f;
@@ -1171,12 +1178,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // BulletSim's BSShapeCollection.CreateGeomMeshOrHull (physical && ShouldUseHulls -> hull;
             // else mesh). Contract: a triangle MeshShape has Volume 0, so a PHYSICAL prim
             // MUST use the convex hull or it would rez with mass 0 - hence physical -> hull here.
-            ShapeId cooked = CookMeshShape(backend, pbs, size, isPhysical, out kind);
+            ShapeId cooked = CookMeshShape(backend, pbs, size, isPhysical, bodyIsPhysical ?? isPhysical, out kind);
             if (cooked.IsValid)
                 return cooked;
 
             // Mesher unavailable / returned nothing usable / cook threw: conservative solid bounding box.
-            kind = "bbox(fallback)";
+            kind = BoxFallbackKind;
             return backend.CreateBoxShape(new SVector3(hx, hy, hz));
         }
 
@@ -1184,9 +1191,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // getIndexListAsInt -> CreateMeshShape (non-physical triangle mesh) or CreateConvexHullShape
         // (physical hull). Returns ShapeId.Invalid on any failure so the caller can fall back. Also
         // stashes a characterization of the RAW mesher output (_lastMeshStats) for the diagnostic read-out.
-        private ShapeId CookMeshShape(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out string kind)
+        private ShapeId CookMeshShape(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, bool bodyIsPhysical, out string kind)
         {
-            kind = "bbox(fallback)";
+            kind = BoxFallbackKind;
+            bool isMesh = IsMeshPrim(pbs);
+
+            // A non-physical mesh smaller than SmallMeshSide on every side is a box, which needs no asset. Halcyon's rule
+            // (ShapeDeterminer.CanUseLowDetailShape: a static prim under 0.05 m on every side takes its low-detail shape);
+            // the Second Life wiki says nothing about a size limit. A physical mesh is never boxed for its size.
+            if (isMesh && !bodyIsPhysical && size.X < SmallMeshSide && size.Y < SmallMeshSide && size.Z < SmallMeshSide)
+            {
+                kind = "box(small mesh)";
+                return backend.CreateBoxShape(new SVector3(size.X * 0.5f, size.Y * 0.5f, size.Z * 0.5f));
+            }
             if (m_mesher == null)
             {
                 m_log.LogWarning($"{LogHeader} no IMesher - cannot cook mesh; bounding-box fallback.");
@@ -1206,9 +1223,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             int[] indices;
             try
             {
-                // isPhysical:false to the mesher = "do not substitute a bounding box for tiny prims" -
-                // we always want the real triangle soup (BulletSim passes false here for the same reason).
-                IMesh mesh = m_mesher.CreateMesh("jolt-prim", pbs, size, MeshLod, false, false, false);
+                // The mesher's isPhysical argument is true to mean "keep the real triangles": with false it replaces a
+                // mesh whose three sides are all under 0.2 m by its 8-corner box (Meshmerizer.CreateMesh). A mesh prim
+                // passes true, because the size rule is applied above, at Halcyon's 0.05 m. Another prim keeps passing
+                // false, so its behaviour is as it was.
+                IMesh mesh = m_mesher.CreateMesh("jolt-prim", pbs, size, MeshLod, isMesh, false, false);
                 if (mesh == null)
                 {
                     // A sculpt whose asset (texture) has not been fetched meshes to null - it needs the
@@ -1260,6 +1279,134 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 m_log.LogWarning($"{LogHeader} backend cook of mesher output threw ({e.GetType().Name}: {e.Message}); bounding-box fallback.");
                 return ShapeId.Invalid;   // kind stays "bbox(fallback)"
             }
+        }
+
+        // ---------------------------------------------------------------------
+        // Mesh assets. A mesh prim's shape comes from its asset, which nothing in core loads for the physics engine: a prim
+        // whose bytes are not in its shape and whose mesh the mesher has not cached cooks as its bounding box, asks the
+        // scene's request-asset delegate for the asset (as ubODE does, ODEMeshWorker.cs, and BulletSim, BSShapes.cs), and is
+        // cooked again when the asset arrives. Prims waiting for one asset share one request. The bytes are put on a copy
+        // of the prim's shape for the cook only, and dropped with it.
+        // ---------------------------------------------------------------------
+
+        /// <summary>The shape kind of a prim cooked as its bounding box.</summary>
+        internal const string BoxFallbackKind = "bbox(fallback)";
+
+        // A non-physical mesh smaller than this (m) on every side is cooked as a box.
+        internal const float SmallMeshSide = 0.05f;
+
+        // How long a failed asset is left alone before the next prim that needs it asks again (a grid's asset service can
+        // be down for a while; the prims are still boxes meanwhile).
+        internal const long MeshAssetRetryMs = 10 * 60 * 1000;
+
+        /// <summary>The clock the retry wait reads, in milliseconds. A test sets it.</summary>
+        internal Func<long> MeshAssetClockMs = () => Environment.TickCount64;
+
+        /// <summary>How many assets have been logged as missing or unreadable (one line per asset).</summary>
+        internal int MeshAssetFailuresLogged => Volatile.Read(ref _meshAssetFailuresLogged);
+        private int _meshAssetFailuresLogged;
+
+        private readonly object _meshAssetLock = new object();
+        private readonly Dictionary<UUID, List<JoltPrim>> _meshAssetWaiting = new Dictionary<UUID, List<JoltPrim>>();
+        private readonly Dictionary<UUID, long> _meshAssetFailedAt = new Dictionary<UUID, long>();
+        private readonly HashSet<UUID> _meshAssetFailureLogged = new HashSet<UUID>();
+
+        internal static bool IsMeshPrim(PrimitiveBaseShape pbs) =>
+            pbs != null && pbs.SculptEntry && pbs.SculptType == (byte)SculptType.Mesh;
+
+        // A sculpted prim (a sculpt map, a JPEG 2000 texture) is read by the same mesher from the same field as a mesh, so it
+        // is fetched the same way.
+        internal static bool IsSculptPrim(PrimitiveBaseShape pbs) =>
+            pbs != null && pbs.SculptEntry && pbs.SculptType != (byte)SculptType.Mesh;
+
+        /// <summary>True when a mesh or sculpted prim's shape cannot be cooked until its asset is fetched and the scene can fetch it.</summary>
+        internal bool WantsMeshAsset(PrimitiveBaseShape pbs) =>
+            m_mesher != null && RequestAssetMethod != null && (IsMeshPrim(pbs) || IsSculptPrim(pbs)) && !pbs.SculptTexture.IsZero()
+            && (pbs.SculptData == null || pbs.SculptData.Length == 0);
+
+        /// <summary>Ask for a mesh asset for a prim, unless it is on its way for another prim (the prim joins them) or was
+        /// found missing or unreadable a short while ago (the prim stays a box).</summary>
+        internal void RequestMeshAsset(JoltPrim prim, UUID assetId)
+        {
+            RequestAssetDelegate request = RequestAssetMethod;
+            if (request == null || assetId.IsZero())
+                return;
+            lock (_meshAssetLock)
+            {
+                if (_meshAssetFailedAt.TryGetValue(assetId, out long failedAt))
+                {
+                    if (MeshAssetClockMs() - failedAt < MeshAssetRetryMs)
+                        return;
+                    _meshAssetFailedAt.Remove(assetId);
+                }
+                if (_meshAssetWaiting.TryGetValue(assetId, out List<JoltPrim> waiting))
+                {
+                    if (!waiting.Contains(prim))
+                        waiting.Add(prim);
+                    return;
+                }
+                _meshAssetWaiting[assetId] = new List<JoltPrim> { prim };
+            }
+            try
+            {
+                request(assetId, asset => MeshAssetReceived(assetId, asset));
+            }
+            catch (Exception e)
+            {
+                MeshAssetFailed(assetId, $"the request threw ({e.GetType().Name}: {e.Message})");
+            }
+        }
+
+        // The answer to a request, on whatever thread the asset service uses. Each prim still waiting, and still holding
+        // this mesh, is cooked from the bytes; a prim removed meanwhile is left alone.
+        private void MeshAssetReceived(UUID assetId, AssetBase asset)
+        {
+            List<JoltPrim> waiting;
+            lock (_meshAssetLock)
+                _meshAssetWaiting.Remove(assetId, out waiting);
+            if (waiting == null || _backend == null)
+                return;
+
+            byte[] data = asset?.Data;
+            if (data == null || data.Length == 0)
+            {
+                MeshAssetFailed(assetId, asset == null ? "the asset service has no such asset" : "the asset has no data");
+                return;
+            }
+
+            bool anyCooked = false, anyBox = false;
+            foreach (JoltPrim prim in waiting)
+            {
+                try
+                {
+                    switch (prim.MeshAssetArrived(assetId, data))
+                    {
+                        case JoltPrim.MeshArrival.Cooked: anyCooked = true; break;
+                        case JoltPrim.MeshArrival.Unreadable: anyBox = true; break;
+                    }
+                }
+                catch (Exception e)
+                {
+                    m_log.LogWarning($"{LogHeader} cooking mesh asset {assetId} for prim {prim.LocalID} threw ({e.GetType().Name}: {e.Message}); it stays a bounding box.");
+                }
+            }
+            if (anyBox && !anyCooked)
+                MeshAssetFailed(assetId, "its mesh could not be read");
+        }
+
+        private void MeshAssetFailed(UUID assetId, string why)
+        {
+            bool first;
+            lock (_meshAssetLock)
+            {
+                _meshAssetWaiting.Remove(assetId);
+                _meshAssetFailedAt[assetId] = MeshAssetClockMs();
+                first = _meshAssetFailureLogged.Add(assetId);
+            }
+            if (!first)
+                return;
+            Interlocked.Increment(ref _meshAssetFailuresLogged);
+            m_log.LogWarning($"{LogHeader} mesh asset {assetId}: {why}; prims that use it stay bounding boxes.");
         }
 
         // Characterize RAW mesher output (counts, bounds, enclosed volume). Duplicate-vertex count uses mm-quantized coords (O(n)); degenerate = topological

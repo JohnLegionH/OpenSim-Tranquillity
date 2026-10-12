@@ -513,6 +513,33 @@ Damping is two `[Jolt]` keys:
 |---|---|---|
 | `PrimLinearDamping`, `PrimAngularDamping` | 0.05, 0.05 | Linear and angular damping of a physical prim that is not a vehicle, per second (0 to 100): a moving object loses about that share of its speed and spin each second. The same at every step rate. ubODE's, as a rate, are 0.1001 and 0.0250 (dBodySetDamping .002 and .0005 per 0.020 s step). |
 
+## Mesh prims
+
+The simulator does not load a mesh asset for the physics engine, so the module fetches it. A mesh prim
+whose shape holds no mesh bytes, and whose mesh the mesher has not already made at that size, is created
+as its bounding box and asks the scene's request-asset delegate for the asset (the way the ubODE and
+BulletSim modules do). When the asset arrives the shape is cooked from it and put on the same body: the
+body keeps its position, rotation, velocities, linkset and its physical, phantom and volume-detect state,
+and what rests on a fixed prim is woken to meet the new surface.
+A sculpted prim (a sculpt map instead of a mesh) is fetched the same way: its map is a JPEG 2000 texture that the
+mesher decodes, unless it has already decoded and cached that map.
+
+- Prims that wait for the same asset share one request. The bytes are put on a copy of the prim's shape for
+  the cook only, so the part's own shape never holds them.
+- A prim removed before the asset arrives is not touched when it arrives, and a prim whose shape has
+  changed to another mesh meanwhile is left alone.
+- An asset that is missing, empty or unreadable leaves its prims bounding boxes and is logged once per
+  asset. Another prim that needs it asks again only after ten minutes, in case the asset service was down.
+- A non-physical mesh under 0.05 m on every side is a box and asks for no asset. Second Life says nothing
+  about a size limit; the figure is Halcyon's (`ShapeDeterminer.CanUseLowDetailShape`). A physical mesh is
+  never boxed for its size. (The mesher's own rule, a box for any prim under 0.2 m on every side, still
+  applies to a prim that is not a mesh.)
+- A physical mesh is one convex hull of all its points; the hull list inside the asset is not read yet.
+
+| Key | Default | What it sets |
+|---|---|---|
+| `HonourConvexMesh` | `false` | `true`: a non-physical mesh whose `PRIM_PHYSICS_SHAPE_TYPE` is `PRIM_PHYSICS_SHAPE_CONVEX` collides as one convex hull of its points, not its triangle mesh. The simulator gives every mesh that shape type unless the upload sets another, so with this on a hollow mesh without a physics model becomes solid. Off, nothing changes. |
+
 ## Mass: what a script reads and where it comes from
 
 - `llGetMass` and `llGetObjectMass` return the engine's own body mass, unscaled: the same number the engine uses in every
@@ -858,7 +885,8 @@ raises `collision_start` and `collision_end` "when interpenetrating". Jolt does 
   casts do not find them.
 - `PRIM_PHYSICS_SHAPE_CONVEX` on a non-physical prim that is not a mesh makes it collide as its convex
   hull. A non-physical mesh prim still collides as its triangle mesh whatever its shape type, because
-  Jolt does not read a mesh's own hull list yet.
+  Jolt does not read a mesh's own hull list yet; `[Jolt] HonourConvexMesh = true` makes it one convex hull
+  of its points (see "Mesh prims").
 
 The harness scenarios beginning `vd-` and `phantom-` show each of these, and print the collision events
 each part raised.
