@@ -1247,6 +1247,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 points = new SVector3[verts.Length / 3];
                 for (int i = 0; i < points.Length; i++)
                     points[i] = new SVector3(verts[3 * i], verts[3 * i + 1], verts[3 * i + 2]);
+
+                // The mesher builds an inverted sculpt inside out, as the viewer draws it. The physics engine meets a
+                // triangle from its front only, so an inside-out sculpt would let a ray or a body from outside pass
+                // through it: put the triangles back the way round the unflagged shape has them.
+                if (IsSculptPrim(pbs) && (pbs.SculptType & SculptInvertFlag) != 0)
+                    for (int i = 0; i + 2 < indices.Length; i += 3)
+                        (indices[i + 1], indices[i + 2]) = (indices[i + 2], indices[i + 1]);
             }
             catch (Exception e)
             {
@@ -1313,6 +1320,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         internal static bool IsMeshPrim(PrimitiveBaseShape pbs) =>
             pbs != null && pbs.SculptEntry && pbs.SculptType == (byte)SculptType.Mesh;
+
+        /// <summary>The bit of a sculpt's type byte that draws it inside out (the mirror bit is 128).</summary>
+        internal const byte SculptInvertFlag = 64;
 
         // A sculpted prim (a sculpt map, a JPEG 2000 texture) is read by the same mesher from the same field as a mesh, so it
         // is fetched the same way.
