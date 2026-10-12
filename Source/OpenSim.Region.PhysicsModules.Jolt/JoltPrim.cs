@@ -18,6 +18,7 @@
 // cylinder axis-correction ordering must be unambiguous (left operand applied first).
 
 using System;
+using System.Threading;
 using Microsoft.Extensions.Logging;
 using OpenSim.Framework;
 using OpenSim.Region.PhysicsModules.SharedBase;
@@ -147,6 +148,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         internal BodyId BodyHandle => _body;
         internal string ShapeKind => _shapeKind;
+        internal ShapeId ShapeHandle => _shape;
         // Read by the `jolt reloadcheck` / `jolt vehiclestatus` console commands.
         internal Vector3 BirthPos => _birthPos;
         internal Vector3 CurrentPos => _position;
@@ -213,12 +215,32 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // A mesher shape is cooked as a convex hull when the prim is physical (a triangle mesh has no volume, so no
         // mass), or when a non-mesh prim asks for PRIM_PHYSICS_SHAPE_CONVEX: "Use the convex hull formulas for
-        // generating the prim's physics-shape" (PRIM_PHYSICS_SHAPE_TYPE, wiki.secondlife.com). A mesh prim's CONVEX,
-        // its default, means the asset's own hull list, which this module does not read yet; one hull of every mesh
+        // generating the prim's physics-shape" (PRIM_PHYSICS_SHAPE_TYPE, wiki.secondlife.com). One hull of every mesh
         // point would close the inside of every mesh building, so a non-physical mesh keeps its triangle mesh, unless
-        // [Jolt] HonourConvexMesh is on: then a non-physical mesh marked CONVEX is one hull.
+        // [Jolt] HonourConvexMesh is on: then a non-physical mesh marked CONVEX is one hull. A physical mesh of shape
+        // type PRIM is cooked from its asset's hull list when it has one (UseHullList); this is the fallback hull.
         private bool CookAsHull
             => _isPhysical || (_shapeType == (byte)PhysShapeType.convex && (_pbs?.SculptType != (byte)SculptType.Mesh || _module.HonourConvexMesh));
+
+        // A physical mesh prim of shape type PRIM collides as the hull list its asset carries, one convex hull per entry
+        // (Second Life's behaviour for a physical mesh); the asset's list is cooked in JoltScene.CookHullList. A mesh without
+        // one, a CONVEX mesh and every other prim are cooked as before.
+        private bool UseHullList => _isPhysical && _shapeType == (byte)PhysShapeType.prim;
+
+        // A prim on its own may take a cooked shape another prim of the same asset, size and kind holds. A part of a linkset
+        // may not: the linkset gives each part's shape that part's own density (SetShapeDensity).
+        private bool MayShareShape => _linkRoot == null && (_linkChildren == null || _linkChildren.Count == 0) && !_compoundShape.IsValid;
+
+        // Takes a shape of its own in place of a shared one, before this prim becomes a part of a linkset's compound.
+        private void MakeShapePrivate()
+        {
+            if (!_shape.IsValid || !_module.IsSharedShape(_shape))
+                return;
+            ShapeId old = _shape;
+            _shape = CookOwnShape(out _axisCorrection, out _shapeKind);
+            _ownMass = null;
+            _module.ReleaseShape(_backend, old);
+        }
 
         // The bytes of a mesh asset that has just arrived, set only while this prim is cooked from them (MeshAssetArrived).
         private byte[] _meshBytes;
@@ -239,7 +261,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 pbs = pbs.Copy();
                 pbs.SculptData = bytes;
             }
-            ShapeId shape = _module.CookPrimShape(_backend, pbs, _size, CookAsHull, out axisCorrection, out kind, _isPhysical);
+            ShapeId shape = _module.CookPrimShape(_backend, pbs, _size, CookAsHull, out axisCorrection, out kind, _isPhysical, UseHullList, MayShareShape);
             _meshAssetWanted = bytes == null && kind == JoltScene.BoxFallbackKind && _module.WantsMeshAsset(_pbs);
             return shape;
         }
@@ -292,7 +314,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _ownMass = null;
             CreateBodyInternal();
             if (old.IsValid)
-                _backend.ReleaseShape(old);
+                _module.ReleaseShape(_backend, old);
         }
 
         // A part of a welded linkset: a child with no body of its own, or the root whose body is the compound. Such a part
@@ -312,7 +334,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _shape = CookOwnShape(out _axisCorrection, out _shapeKind);
                 _ownMass = null;
                 if (old.IsValid)
-                    _backend.ReleaseShape(old);
+                    _module.ReleaseShape(_backend, old);
                 _module.MarkLinksetDirty(_linkRoot ?? this);
             }
             RequestMeshAssetIfNeeded();
@@ -615,7 +637,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     if (_isPhysical)
                         _backend.SetBodyDensity(_body, _simDensity > 0f ? _simDensity * DensityScaleFactor : BodyDesc.Default.Density);
                     if (old.IsValid)
-                        _backend.ReleaseShape(old);
+                        _module.ReleaseShape(_backend, old);
                 }
             }
             RequestMeshAssetIfNeeded();
@@ -650,7 +672,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _body = BodyId.Invalid;
             if (_compoundShape.IsValid) { _backend.ReleaseShape(_compoundShape); _compoundShape = ShapeId.Invalid; }
             if (_shape.IsValid)
-                _backend.ReleaseShape(_shape);
+                _module.ReleaseShape(_backend, _shape);
             _shape = ShapeId.Invalid;
         }
 
@@ -818,7 +840,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     _backend.RemoveBody(_body);
                 CreateBodyInternal();
                 if (old.IsValid)
-                    _backend.ReleaseShape(old);
+                    _module.ReleaseShape(_backend, old);
             }
             RequestMeshAssetIfNeeded();
         }
@@ -876,7 +898,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 finally
                 {
                     if (hull.IsValid)
-                        _backend.ReleaseShape(hull);
+                        _module.ReleaseShape(_backend, hull);
                 }
             }
             _ownMass = own;
@@ -1158,6 +1180,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "RotationalVelocity", value.ToString()); return; }
                 if (_selected) return;
                 _rotationalVelocity = value;
+                Volatile.Write(ref _apidSpunByScript, 1);   // a rotation target takes this as the speed it starts from
                 if (_body.IsValid && _isPhysical) _backend.SetBodyAngularVelocity(_body, ToS(value));
             }
         }
@@ -1422,6 +1445,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     foreach (JoltPrim c in _linkChildren)
                         if (c._body.IsValid) { _backend.RemoveBody(c._body); c._body = BodyId.Invalid; }
 
+                    // A shape shared with other prims must not be given this part's density (SetShapeDensity below).
+                    lock (_shapeLock) MakeShapePrivate();
+                    foreach (JoltPrim c in _linkChildren)
+                        lock (c._shapeLock) c.MakeShapePrivate();
+
                     SQuaternion rootBody = BodyOrientationOf(_orientation);
                     SQuaternion invRoot = SQuaternion.Conjugate(rootBody);
                     var kids = new CompoundChild[1 + _linkChildren.Count];
@@ -1498,6 +1526,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 else if (ay >= az) lockY = true;
                 else lockZ = true;
             }
+            _bodyLockX = lockX; _bodyLockY = lockY; _bodyLockZ = lockZ;
             _backend.SetBodyRotationLocks(_body, lockX, lockY, lockZ);
         }
 
@@ -1570,9 +1599,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             set
             {
                 if (_shapeType == value) return;
-                bool wasHull = CookAsHull;
+                bool wasHull = CookAsHull, wasList = UseHullList;
                 _shapeType = value;
-                if (CookAsHull != wasHull && _shape.IsValid)
+                if ((CookAsHull != wasHull || UseHullList != wasList) && _shape.IsValid)
                     Rebuild();
             }
         }
@@ -1890,11 +1919,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _backend.SetBodyContinuousCollision(_body, PhysicalPrimCcd);
         }
 
-        // Move to target and hover are in JoltPrim.Targets.cs. The angular PID is not used: core turns a physical
+        // Move to target and hover are in JoltPrim.Targets.cs, the rotation target (APIDTarget, APIDStrength, APIDDamping,
+        // APIDActive) in JoltPrim.AngularTarget.cs. Core does not hand the rotation target to the actor: it turns a physical
         // object toward llLookAt / llRotLookAt itself (SceneObjectPart.RotLookAt), as it does on ubODE.
-        public override Quaternion APIDTarget { set { } }
-        public override bool APIDActive { set { } }
-        public override float APIDStrength { set { } }
-        public override float APIDDamping { set { } }
     }
 }

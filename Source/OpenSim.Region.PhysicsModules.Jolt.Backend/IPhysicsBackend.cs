@@ -657,6 +657,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         ShapeId CreateMeshShape(ReadOnlySpan<Vector3> vertices, ReadOnlySpan<int> indices);
         ShapeId CreateCompoundShape(ReadOnlySpan<CompoundChild> children);
 
+        /// <summary>
+        /// One shape made of convex hulls that already exist (CreateConvexHullShape), each at the shape's origin: how a
+        /// mesh asset's hull list is cooked. Unlike a linkset's CreateCompoundShape the parts are not prims: a hit on it
+        /// names the body, SetBodyPartMaterial treats it as one shape, and SetShapeDensity sets the density of every hull.
+        /// Needs at least two hulls (use the single hull directly otherwise). The hull handles may be released after
+        /// the call; the shape keeps the hulls alive.
+        /// </summary>
+        ShapeId CreateHullCompoundShape(ReadOnlySpan<ShapeId> hulls);
+
         ShapeId CreateHeightFieldShape(
             ReadOnlySpan<float> heights, int sampleCountX, int sampleCountY, Vector3 scale);
 
@@ -713,7 +722,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         Vector3 GetShapeCenterOfMass(ShapeId shape);
         /// <summary>The density (kg/m^3) a convex shape gives its mass properties; Jolt's default is 1000. A compound
         /// built from shapes afterwards weights each sub-shape's mass, centre of mass and inertia by it. A body made on the
-        /// shape alone is not affected: its mass is set from BodyDesc. No-op for a non-convex shape or an unknown handle.</summary>
+        /// shape alone is not affected: its mass is set from BodyDesc. A hull compound (CreateHullCompoundShape) sets it on
+        /// every hull. No-op for any other non-convex shape or an unknown handle.</summary>
         void SetShapeDensity(ShapeId shape, float density);
         /// <summary>A convex shape's density (kg/m^3); 0 for a non-convex shape or an unknown handle.</summary>
         float GetShapeDensity(ShapeId shape);

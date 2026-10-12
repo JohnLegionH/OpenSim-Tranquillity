@@ -374,9 +374,10 @@ What a script does to a physical prim or linkset (avatars are not covered here):
   Locking stops its turning, as ubODE does. ubODE fixes a locked axis in the region where it pointed
   when it was locked; Jolt keeps it on the object. The two agree with all three axes locked and
   with only one free.
-- `llGetMass` and `llGetObjectMass`: the volume times the density, in Second Life's lindograms
-  (kg / 100): a 1 m cube at the default density weighs 10, a 0.5 m sphere 0.65, a linkset the sum
-  of its prims. A non-physical object weighs what it would weigh physical: the volume is the
+- `llGetMass` and `llGetObjectMass`: the engine's own body mass, unscaled: the volume (m3) times
+  the density times 0.01, the same number every force, impulse and speed figure here uses. A 1 m
+  cube at the default density (1000) weighs 10, a 0.5 m sphere 0.65, a linkset the sum of its
+  prims. A non-physical object weighs what it would weigh physical: the volume is the
   shape's physical one (the convex hull for a cut, twisted or mesh prim). A resized prim gets the
   mass of its new size.
 - `llGetCenterOfMass`: in region coordinates. A physical linkset reports the centre of all its
@@ -495,7 +496,7 @@ Life wiki documents them:
   none to that distance, because the step may find the body already above the top of its bounce.
 - The gravity multiplier scales the object's gravity: the object falls at (1 - buoyancy) times the
   multiplier times the region's gravity, as in ubODE. 0 floats, 2 falls at twice the rate.
-- Density sets the mass: volume times density, in lindograms (kg / 100) for `llGetMass`.
+- Density sets the mass: volume (m3) times density times 0.01, the engine's own body mass, which is what `llGetMass` reads.
 - In a linkset each prim keeps its own friction, restitution and density ("Can individual prims in
   a linked set have different Physics settings? Yes.", wiki, Physics Material Settings test): a
   contact uses the struck prim's friction and restitution, and the mass is the sum of each prim's
@@ -534,7 +535,21 @@ mesher decodes, unless it has already decoded and cached that map.
   about a size limit; the figure is Halcyon's (`ShapeDeterminer.CanUseLowDetailShape`). A physical mesh is
   never boxed for its size. (The mesher's own rule, a box for any prim under 0.2 m on every side, still
   applies to a prim that is not a mesh.)
-- A physical mesh is one convex hull of all its points; the hull list inside the asset is not read yet.
+- A physical mesh whose shape type is `PRIM` collides as the hull list its asset carries: one convex hull per
+  entry, at the prim's scale, as Second Life does ("PRIM: the visible shape of the prim determines its
+  physics-shape", `PRIM_PHYSICS_SHAPE_TYPE`; the viewer's upload writes the hulls of its convex decomposition).
+  An open boat or a gateway built that way keeps its inside and its opening. It follows the prim through a resize,
+  a switch between physical and not, and a change of shape type, as a lone prim and as a part of a linkset.
+- A physical mesh of shape type `CONVEX`, and a physical mesh whose asset has no hull list, is one convex hull of
+  all its points, as before.
+- A hull of fewer than four points, or one Jolt cannot build, is left out. If none is left, or the list has more
+  than 256 hulls or a hull has more than 256 points (the limits of the viewer's upload), the prim is one hull of
+  its points. Each case is logged once per asset.
+- Mass is the volume of the hulls times density, so a hollow physical mesh weighs what its hulls hold, not what
+  the hull of all its points would (a trough of three boxes: 3.84 m3, not the 12 m3 of the box round them).
+- Prims of one mesh asset, one size, one physical state and one shape type share one cooked shape, however many
+  there are, and it is freed when the last of them goes. A prim that joins a linkset takes a shape of its own,
+  because a linkset gives each part's shape that part's density.
 
 | Key | Default | What it sets |
 |---|---|---|
@@ -588,6 +603,60 @@ way after 4 tau, and it does not pass the target. The motion is the same at ever
   `llGroundRepel` does not.
 - Under Phlox, `water` TRUE asks for a height above the water level alone, also over land that is
   higher than the water.
+
+## Rotation target on objects
+
+The physics actor's rotation target (`APIDTarget`, `APIDStrength`, `APIDDamping`, `APIDActive`) turns a physical prim or
+linkset to a rotation. The Jolt scene answers true to `PhysicsScene.SupportsRotationTarget()`, so the simulator hands the
+target of `llRotLookAt`, `llLookAt` and the rotate-drag (Ctrl-Shift drag) to the root prim's actor, and does not run its own
+look-at controller for that object (which sets the angular velocity once per frame and leaves a body resting on the ground
+several degrees short). The rotate-drag gives the viewer's rotation as the target on every update, with strength and damping
+0.1 s; ending the drag or a look-at switches the target off. No setting is needed.
+
+The Second Life wiki gives no formula. `llRotLookAt`: the object turns "smoothly" with "strength resistance at damping force",
+damping is "seconds to critically damp in", "capped at 1.0", and "the minimum value for strength seems to be 0.0445".
+`llLookAt`: "strength is an inverse value meaning lower values cause the object to turn faster". In Jolt the target is a
+critically damped spring on the rotation: with r the rotation vector from the target to the object (the short way round),
+r'' = -r / T^2 - 2 r' / T, so from rest the angle left after t seconds is a0 (1 + t / T) e^(-t / T) and the object does not
+pass its target. T is the slower of strength and damping (damping cut to 1): the wiki gives both as times and does not say
+how they combine, so that is a choice. A strength under 0.0445, or one that is not a number, does nothing (the request is
+kept). Each physics step the engine sets the body's angular velocity to the one that takes it, through the engine's angular
+damping, from where it is to where the spring is at the end of the step, so:
+
+- the motion is the same at every `PhysicsStepRate` and for any mass or size (a velocity does not depend on inertia);
+- an object resting on the ground reaches the target as well as one in the air, because what contact friction took from one
+  step is asked for again in the next (a 90 degree turn on the ground ends within 0.1 degrees of the target in the figures);
+- the target may be moved many times a second: the spring carries on across a new target, and trails it by about twice T at
+  the target's speed (T of 0.1 s: 32 degrees behind a 90 degree turn made in 1 s, 6 degrees behind one made in 6 s, the same at
+  15, 30 and 60 updates a second);
+- a linkset turns as one body, and a call that reaches a child prim is the root's.
+
+Switching it off (`APIDActive` false) sets the angular velocity to zero before the next step, as the simulator does when it stops
+a look-at; the rotation reached is kept. Left as it was the object would go on turning at the spring's speed, since the body's
+own damping takes about a minute. A body that has settled at its target may sleep; a new target, or any change to it, wakes it.
+
+Together with other things a script sets:
+
+- a move to target and a rotation target act together (the first sets the linear velocity, the second the angular);
+- a set force acts as it does alone and the object still reaches its target; a set torque is held against and the object
+  still reaches its target;
+- gravity and buoyancy are not touched (a move to target turns gravity off while it acts; this does not): an object with
+  buoyancy 0 falls as it does with no target, one with buoyancy 1 stays where it is;
+- an angular velocity a script sets is taken as the speed the spring starts from and is brought to the target, not fought;
+- `STATUS_ROTATE_X`, `_Y` and `_Z` locks: the spring acts on the axes left free, and an object with its turning axis locked
+  does not turn about it;
+- a vehicle keeps its own controller: the target does nothing on an active vehicle;
+- selected in the build tool the object is held still; the request is kept and acts when it is let go.
+
+On the ground at one physics step per heartbeat the object can twitch back by under a degree as it settles; it stays within
+2 degrees of the target. Through the simulator's own handlers (a rotate-drag of 90 degrees in 1 s at 30 updates a second, a 1 kg
+or 100 kg cube, a 4 m cube or three linked cubes resting on the ground) the object ends within 0.3 degrees of the cursor's
+rotation without passing it by more than 0.2 degrees, at one physics step per heartbeat and at 45 steps a second; it trails the
+cursor by about 42 degrees at the fastest part of the turn, since the simulator hands the target over once per frame.
+
+When a rotate-drag ends the simulator switches the target off and then gives back an angular velocity a script had set with
+`llTargetOmega` during the drag. Switching the target off does not zero an angular velocity written since the last physics step,
+so that spin carries on (clear of the ground; on the ground contact friction stops a set spin, as it does without a target).
 
 ## Avatar speeds
 
@@ -884,9 +953,8 @@ raises `collision_start` and `collision_end` "when interpenetrating". Jolt does 
   with `RC_DETECT_PHANTOM`. Phlox's `llCastRay` does not pass that option to the physics engine, so its
   casts do not find them.
 - `PRIM_PHYSICS_SHAPE_CONVEX` on a non-physical prim that is not a mesh makes it collide as its convex
-  hull. A non-physical mesh prim still collides as its triangle mesh whatever its shape type, because
-  Jolt does not read a mesh's own hull list yet; `[Jolt] HonourConvexMesh = true` makes it one convex hull
-  of its points (see "Mesh prims").
+  hull. A non-physical mesh prim still collides as its triangle mesh whatever its shape type;
+  `[Jolt] HonourConvexMesh = true` makes it one convex hull of its points (see "Mesh prims").
 
 The harness scenarios beginning `vd-` and `phantom-` show each of these, and print the collision events
 each part raised.

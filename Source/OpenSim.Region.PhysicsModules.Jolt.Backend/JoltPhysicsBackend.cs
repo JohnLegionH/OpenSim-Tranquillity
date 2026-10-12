@@ -1642,6 +1642,36 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             return new ShapeId(_shapes.Add(rec));
         }
 
+        public ShapeId CreateHullCompoundShape(ReadOnlySpan<ShapeId> hulls)
+        {
+            // Same Jolt limit as CreateCompoundShape: a StaticCompoundShape with fewer than 2 sub-shapes access-violates.
+            if (hulls.Length < 2)
+                throw new ArgumentException($"a hull compound needs >= 2 hulls (got {hulls.Length}); use the single hull directly.");
+
+            var settings = new StaticCompoundShapeSettings();
+            using var free = new ShapeSettingsScope(settings);
+            var handles = new IntPtr[hulls.Length];
+            for (int i = 0; i < hulls.Length; i++)
+            {
+                if (!_shapes.TryGet(hulls[i].Value, out JoltShapeRecord hullRec) || !IsLive(hullRec))
+                    throw new ArgumentException($"CreateHullCompoundShape: hull {i} ({hulls[i]}) is not a live shape.");
+                if (hullRec.NativeShape!.Type != ShapeType.Convex)
+                    throw new ArgumentException($"CreateHullCompoundShape: shape {i} ({hulls[i]}) is not a convex hull.");
+                // Create() AddRefs each hull, so it lives on in the compound after the caller releases its handle.
+                settings.AddShape(Vector3.Zero, Quaternion.Identity, hullRec.NativeShape, 0u);
+                handles[i] = hullRec.NativeShape.Handle;
+            }
+
+            var rec = new JoltShapeRecord
+            {
+                NativeShape = RequireCooked(settings.Create(), "CreateHullCompoundShape"),
+                RefCount = 1,
+                IsWrapper = true,
+                HullHandles = handles,   // no CompoundChildUserData: a hit on any hull is a hit on the body
+            };
+            return new ShapeId(_shapes.Add(rec));
+        }
+
         public ShapeId CreateHeightFieldShape(
             ReadOnlySpan<float> heights, int sampleCountX, int sampleCountY, Vector3 scale)
         {
@@ -2425,6 +2455,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             {
                 if (_disposed || density <= 0f || !_shapes.TryGet(shape.Value, out JoltShapeRecord rec) || !IsLive(rec))
                     return;
+                if (rec.HullHandles != null)
+                {
+                    // A hull compound (a mesh asset's hull list): every hull takes the density.
+                    foreach (IntPtr hull in rec.HullHandles)
+                        if (JPH_ConvexShape_GetDensity(hull) != density)
+                            JPH_ConvexShape_SetDensity(hull, density);
+                    return;
+                }
                 Shape native = rec.NativeShape!;
                 if (native.Type != ShapeType.Convex)
                     return;
@@ -2439,6 +2477,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             {
                 if (_disposed || !_shapes.TryGet(shape.Value, out JoltShapeRecord rec) || !IsLive(rec))
                     return 0f;
+                if (rec.HullHandles != null)
+                    return JPH_ConvexShape_GetDensity(rec.HullHandles[0]);
                 Shape native = rec.NativeShape!;
                 return native.Type == ShapeType.Convex ? JPH_ConvexShape_GetDensity(native.Handle) : 0f;
             }
@@ -4925,6 +4965,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public ShapeId BaseShape;         // caller-visible wrapped shape (CreateScaledShape); Invalid otherwise
         public uint[]? CompoundChildUserData; // ordered child UserData for a StaticCompound; null otherwise
         public int CompoundIndexBits;     // low bits of a hit SubShapeID that encode the compound child index
+        public IntPtr[]? HullHandles;     // the native hulls of a hull compound (CreateHullCompoundShape), for SetShapeDensity; null otherwise
     }
 
     internal sealed class JoltCharacterRecord
