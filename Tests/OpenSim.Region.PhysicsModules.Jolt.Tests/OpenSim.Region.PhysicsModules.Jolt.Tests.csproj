@@ -30,6 +30,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Source\OpenSim.Region.PhysicsModules.Jolt.Backend\OpenSim.Region.PhysicsModules.Jolt.Backend.csproj" />
     <ProjectReference Include="..\..\Source\OpenSim.Region.PhysicsModules.Jolt\OpenSim.Region.PhysicsModules.Jolt.csproj" />
+    <!-- The mesher a region loads with meshing = Meshmerizer, for the tests that cook a mesh asset. -->
+    <ProjectReference Include="..\..\Source\OpenSim.Region.PhysicsModules.Meshing\OpenSim.Region.PhysicsModules.Meshing.csproj" />
     <!-- The physics harness, whose scenarios run here as regression tests. -->
     <ProjectReference Include="..\JoltPhysicsHarness\JoltPhysicsHarness.csproj" />
   </ItemGroup>

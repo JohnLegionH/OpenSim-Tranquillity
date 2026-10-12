@@ -216,16 +216,80 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // mass), or when a non-mesh prim asks for PRIM_PHYSICS_SHAPE_CONVEX: "Use the convex hull formulas for
         // generating the prim's physics-shape" (PRIM_PHYSICS_SHAPE_TYPE, wiki.secondlife.com). A mesh prim's CONVEX,
         // its default, means the asset's own hull list, which this module does not read yet; one hull of every mesh
-        // point would close the inside of every mesh building, so a non-physical mesh keeps its triangle mesh.
+        // point would close the inside of every mesh building, so a non-physical mesh keeps its triangle mesh, unless
+        // [Jolt] HonourConvexMesh is on: then a non-physical mesh marked CONVEX is one hull.
         private bool CookAsHull
-            => _isPhysical || (_shapeType == (byte)PhysShapeType.convex && _pbs?.SculptType != (byte)SculptType.Mesh);
+            => _isPhysical || (_shapeType == (byte)PhysShapeType.convex && (_pbs?.SculptType != (byte)SculptType.Mesh || _module.HonourConvexMesh));
+
+        // The bytes of a mesh asset that has just arrived, set only while this prim is cooked from them (MeshAssetArrived).
+        private byte[] _meshBytes;
+        // Set when the last cook left a mesh prim a bounding box for want of its asset (RequestMeshAssetIfNeeded asks).
+        private bool _meshAssetWanted;
+        // Held while the shape is swapped or the prim is removed, so an asset arriving on another thread never cooks for,
+        // or puts a shape on, a prim that is being destroyed.
+        private readonly object _shapeLock = new object();
+
+        // Cook this prim's shape as it is now. A mesh asset that has just arrived goes on a copy of the shape for the cook,
+        // so the part's own shape never holds the bytes.
+        private ShapeId CookOwnShape(out SQuaternion axisCorrection, out string kind)
+        {
+            PrimitiveBaseShape pbs = _pbs;
+            byte[] bytes = _meshBytes;
+            if (bytes != null && pbs != null)
+            {
+                pbs = pbs.Copy();
+                pbs.SculptData = bytes;
+            }
+            ShapeId shape = _module.CookPrimShape(_backend, pbs, _size, CookAsHull, out axisCorrection, out kind, _isPhysical);
+            _meshAssetWanted = bytes == null && kind == JoltScene.BoxFallbackKind && _module.WantsMeshAsset(_pbs);
+            return shape;
+        }
+
+        /// <summary>Asks the scene for this prim's mesh asset if the last cook was a box for want of it. Called once the prim
+        /// is in the scene and after a re-cook, never inside a cook, because the answer can come before the call returns.</summary>
+        internal void RequestMeshAssetIfNeeded()
+        {
+            PrimitiveBaseShape pbs = _pbs;
+            if (!_meshAssetWanted || IsRemoved || pbs == null)
+                return;
+            _meshAssetWanted = false;
+            _module.RequestMeshAsset(this, pbs.SculptTexture);
+        }
+
+        internal enum MeshArrival { Skipped, Cooked, Unreadable }
+
+        /// <summary>The mesh asset this prim asked for has arrived: cook the shape from it, on the same body. Skipped when the
+        /// prim has been removed or no longer uses that mesh.</summary>
+        internal MeshArrival MeshAssetArrived(UUID assetId, byte[] data)
+        {
+            lock (_shapeLock)
+            {
+                PrimitiveBaseShape pbs = _pbs;
+                if (IsRemoved || pbs == null || !(JoltScene.IsMeshPrim(pbs) || JoltScene.IsSculptPrim(pbs)) || pbs.SculptTexture != assetId)
+                    return MeshArrival.Skipped;
+                _meshBytes = data;
+                try { Rebuild(); }
+                finally { _meshBytes = null; }
+                if (_shapeKind == JoltScene.BoxFallbackKind)
+                    return MeshArrival.Unreadable;
+                // What rested on the box now meets a different surface, and a body whose shape changed has contacts to find
+                // again: wake it (a physical one at the next step, as a new body is) or what rests on a fixed one.
+                if (_linkRoot != null)
+                    _module.RegisterPendingActivation(_linkRoot);
+                else if (_isPhysical)
+                    _module.RegisterPendingActivation(this);
+                else
+                    WakeWhatRestsOn(_position, _orientation);
+                return MeshArrival.Cooked;
+            }
+        }
 
         // Cook the shape and create the body. Also reached when a prim has lost its body (the engine refused one at
         // MaxBodies), so the shape it held is released once the new body is made.
         private void Build()
         {
             ShapeId old = _shape;
-            _shape = _module.CookPrimShape(_backend, _pbs, _size, CookAsHull, out _axisCorrection, out _shapeKind);
+            _shape = CookOwnShape(out _axisCorrection, out _shapeKind);
             _ownMass = null;
             CreateBodyInternal();
             if (old.IsValid)
@@ -243,12 +307,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // old handle is released now.
         private void RecookLinkedShape()
         {
-            ShapeId old = _shape;
-            _shape = _module.CookPrimShape(_backend, _pbs, _size, CookAsHull, out _axisCorrection, out _shapeKind);
-            _ownMass = null;
-            if (old.IsValid)
-                _backend.ReleaseShape(old);
-            _module.MarkLinksetDirty(_linkRoot ?? this);
+            lock (_shapeLock)
+            {
+                ShapeId old = _shape;
+                _shape = CookOwnShape(out _axisCorrection, out _shapeKind);
+                _ownMass = null;
+                if (old.IsValid)
+                    _backend.ReleaseShape(old);
+                _module.MarkLinksetDirty(_linkRoot ?? this);
+            }
+            RequestMeshAssetIfNeeded();
         }
 
         // Create the Jolt body for the CURRENT _isPhysical / _shape / _axisCorrection and cached
@@ -533,17 +601,25 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private void Rebuild()
         {
             if (IsWeldedChild || IsCompoundRoot) { RecookLinkedShape(); return; }
-            if (!_body.IsValid) { Build(); return; }
-            ShapeId old = _shape;
-            _shape = _module.CookPrimShape(_backend, _pbs, _size, CookAsHull, out _axisCorrection, out _shapeKind);
-            _ownMass = null;
-            _backend.SetBodyShape(_body, _shape, recomputeMass: false);   // keeps the body at its current transform
-            // The new shape's mass (and inertia, keeping any rotation locks): volume x density, as at creation. Without
-            // this a resized physical prim kept the mass of its old size, and llGetMass with it.
-            if (_isPhysical)
-                _backend.SetBodyDensity(_body, _simDensity > 0f ? _simDensity * DensityScaleFactor : BodyDesc.Default.Density);
-            if (old.IsValid)
-                _backend.ReleaseShape(old);
+            lock (_shapeLock)
+            {
+                if (!_body.IsValid)
+                    Build();
+                else
+                {
+                    ShapeId old = _shape;
+                    _shape = CookOwnShape(out _axisCorrection, out _shapeKind);
+                    _ownMass = null;
+                    _backend.SetBodyShape(_body, _shape, recomputeMass: false);   // keeps the body at its current transform
+                    // The new shape's mass (and inertia, keeping any rotation locks): volume x density, as at creation. Without
+                    // this a resized physical prim kept the mass of its old size, and llGetMass with it.
+                    if (_isPhysical)
+                        _backend.SetBodyDensity(_body, _simDensity > 0f ? _simDensity * DensityScaleFactor : BodyDesc.Default.Density);
+                    if (old.IsValid)
+                        _backend.ReleaseShape(old);
+                }
+            }
+            RequestMeshAssetIfNeeded();
         }
 
         // Called by JoltScene.RemovePrim. RemoveBody drops the body's native shape ref; releasing
@@ -551,6 +627,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal void Destroy()
         {
             IsRemoved = true;
+            lock (_shapeLock)
+                DestroyLocked();
+        }
+
+        private void DestroyLocked()
+        {
             // Drop out of the scene's per-frame vehicle drive (no-op if never a vehicle).
             if (_vehicle != null) { _module.UnregisterVehicle(this); _vehicle = null; _vehicleBody = null; }
             _module.SetScriptForced(this, false);
@@ -728,14 +810,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _welded = false;
                 _module.MarkLinksetDirty(_linkRoot);
             }
-            ShapeId old = _shape;
-            _shape = _module.CookPrimShape(_backend, _pbs, _size, CookAsHull, out _axisCorrection, out _shapeKind);
-            _ownMass = null;
-            if (_body.IsValid)
-                _backend.RemoveBody(_body);
-            CreateBodyInternal();
-            if (old.IsValid)
-                _backend.ReleaseShape(old);
+            lock (_shapeLock)
+            {
+                ShapeId old = _shape;
+                _shape = CookOwnShape(out _axisCorrection, out _shapeKind);
+                _ownMass = null;
+                if (_body.IsValid)
+                    _backend.RemoveBody(_body);
+                CreateBodyInternal();
+                if (old.IsValid)
+                    _backend.ReleaseShape(old);
+            }
+            RequestMeshAssetIfNeeded();
         }
 
         // This prim's own mass: core adds up every part's (SceneObjectGroup.GetMass) for llGetMass and llGetObjectMass, as

@@ -88,6 +88,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         public bool AllowUnrecordedNative = false; // true: load a joltc whose hash the module has no record of
 
+        // true: a non-physical mesh whose physics shape type is CONVEX is one convex hull of its points, not its triangle
+        // mesh. Core gives every mesh CONVEX unless the upload says otherwise, so this turns hollow mesh into solid.
+        public bool HonourConvexMesh = false;
+
         // Script ray casts (llCastRay) and pushes on avatars (llPushObject): limits on what scripts can make one region
         // do. They guard against abuse, so each defaults to its safe value.
         public float RayCastBudgetMs = PhysicsBackendSettings.DefaultRayCastBudgetMs;         // script casts, per region per heartbeat
@@ -145,6 +149,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.MaxContactConstraints = I(cfg, "MaxContactConstraints", c.MaxContactConstraints, 1, 8_388_607, warnings);
             c.ScaleCapsWithArea = B(cfg, "ScaleCapsWithArea", c.ScaleCapsWithArea, warnings);
             c.AllowUnrecordedNative = B(cfg, "AllowUnrecordedNative", c.AllowUnrecordedNative, warnings);
+            c.HonourConvexMesh = B(cfg, "HonourConvexMesh", c.HonourConvexMesh, warnings);
             c.BodyUpdateBufferMax = I(cfg, "BodyUpdateBufferMax", c.BodyUpdateBufferMax, 1, 8_388_607, warnings);
             c.CharacterUpdateBufferMax = I(cfg, "CharacterUpdateBufferMax", c.CharacterUpdateBufferMax, 1, 65536, warnings);
             c.ContactBufferMax = I(cfg, "ContactBufferMax", c.ContactBufferMax, 0, 16_777_216, warnings);
