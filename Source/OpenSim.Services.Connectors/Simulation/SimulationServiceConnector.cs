@@ -506,6 +506,21 @@ public class SimulationServiceConnector : ISimulationService
     }
 
     /// <summary>
+    /// The held crossing has no remote messages yet: a region reached over this connector is sent the object the
+    /// ordinary way (<see cref="SupportsHeldCrossing"/> is false).
+    /// </summary>
+    public bool SupportsHeldCrossing(GridRegion destination) => false;
+
+    public bool CreateObject(GridRegion destination, Vector3 newPosition, ISceneObject sog, bool isLocalCall, CrossingHoldRequest hold)
+    {
+        return hold is null && CreateObject(destination, newPosition, sog, isLocalCall);
+    }
+
+    public bool RecallObject(GridRegion destination, UUID objectID) => false;
+
+    public bool CrossingCompleted(GridRegion source, UUID objectID, IList<UUID> missingRiders) => false;
+
+    /// <summary>
     ///
     /// </summary>
     public bool CreateObject(GridRegion destination, UUID userID, UUID itemID)

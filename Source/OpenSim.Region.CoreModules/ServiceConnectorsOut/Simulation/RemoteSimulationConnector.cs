@@ -265,5 +265,29 @@ public class RemoteSimulationConnectorModule : ISharedRegionModule, ISimulationS
         return false;
     }
 
+    // A held crossing only runs between regions of this simulator until the remote messages exist.
+    public bool SupportsHeldCrossing(GridRegion destination)
+    {
+        return m_localBackend.SupportsHeldCrossing(destination);
+    }
+
+    public bool CreateObject(GridRegion destination, Vector3 newPosition, ISceneObject sog, bool isLocalCall, CrossingHoldRequest hold)
+    {
+        if (hold is null)
+            return CreateObject(destination, newPosition, sog, isLocalCall);
+
+        return m_localBackend.CreateObject(destination, newPosition, sog, isLocalCall, hold);
+    }
+
+    public bool RecallObject(GridRegion destination, UUID objectID)
+    {
+        return m_localBackend.RecallObject(destination, objectID);
+    }
+
+    public bool CrossingCompleted(GridRegion source, UUID objectID, IList<UUID> missingRiders)
+    {
+        return m_localBackend.CrossingCompleted(source, objectID, missingRiders);
+    }
+
     #endregion
 }

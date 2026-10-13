@@ -2547,6 +2547,9 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
 
         m_scene.EventManager.OnRegionHeartbeatEnd += RegionHeartbeatEnd;
 
+        // an object that crossed with this avatar is held until it has arrived
+        m_scene.NoteArrival(UUID);
+
         m_log.LogDebug("[CompleteMovement] end: {0}ms", Util.EnvironmentTickCountSubtract(ts));
     }
 

@@ -1717,6 +1717,7 @@ public partial class Scene : SceneBase
                 if (Frame % 4 == 0)
                 {
                     CheckTerrainUpdates();
+                    ReleaseExpiredCrossingHolds();
                 }
 
                 if (Frame % m_update_terrain == 0)

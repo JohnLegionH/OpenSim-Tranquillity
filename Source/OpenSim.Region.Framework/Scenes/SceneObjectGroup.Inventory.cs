@@ -629,10 +629,19 @@ public partial class SceneObjectGroup : EntityBase
             {
                 foreach (IScriptModule engine in engines)
                 {
-                    if (engine is not null && engine.SuspendScript(item.ItemID))
+                    // an engine that fails leaves that one script running: it does not stop the others being
+                    // suspended, and the ones that were are all listed to be resumed
+                    try
                     {
-                        suspended.Add(item.ItemID);
-                        break;
+                        if (engine is not null && engine.SuspendScript(item.ItemID))
+                        {
+                            suspended.Add(item.ItemID);
+                            break;
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        m_log.LogWarning($"[SCENE OBJECT GROUP]: Script engine {engine?.ScriptEngineName} failed to suspend script {item.ItemID} in object {Name}: {e.Message}");
                     }
                 }
             }
@@ -650,8 +659,15 @@ public partial class SceneObjectGroup : EntityBase
         {
             foreach (IScriptModule engine in engines)
             {
-                if (engine is not null && engine.ResumeScript(itemID))
-                    break;
+                try
+                {
+                    if (engine is not null && engine.ResumeScript(itemID))
+                        break;
+                }
+                catch (Exception e)
+                {
+                    m_log.LogWarning($"[SCENE OBJECT GROUP]: Script engine {engine?.ScriptEngineName} failed to resume script {itemID}: {e.Message}");
+                }
             }
         }
     }

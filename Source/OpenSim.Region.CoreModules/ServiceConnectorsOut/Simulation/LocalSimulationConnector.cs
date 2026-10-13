@@ -338,6 +338,46 @@ public class LocalSimulationConnectorModule : ISharedRegionModule, ISimulationSe
         return false;
     }
 
+    public bool SupportsHeldCrossing(GridRegion destination)
+    {
+        return destination is not null && m_scenes.ContainsKey(destination.RegionID);
+    }
+
+    public bool CreateObject(GridRegion destination, Vector3 newPosition, ISceneObject sog, bool isLocalCall, CrossingHoldRequest hold)
+    {
+        if (hold is null)
+            return CreateObject(destination, newPosition, sog, isLocalCall);
+
+        if (destination is null || !m_scenes.TryGetValue(destination.RegionID, out Scene s))
+            return false;
+
+        if (isLocalCall)
+        {
+            ISceneObject sogClone = sog.CloneForNewScene();
+            sogClone.SetState(sog.GetStateSnapshot(), s);
+            return s.IncomingCreateObject(newPosition, sogClone, hold);
+        }
+
+        return s.IncomingCreateObject(newPosition, sog, hold);
+    }
+
+    public bool RecallObject(GridRegion destination, UUID objectID)
+    {
+        if (destination is null || !m_scenes.TryGetValue(destination.RegionID, out Scene s))
+            return false;
+
+        return s.RecallHeldObject(objectID);
+    }
+
+    public bool CrossingCompleted(GridRegion source, UUID objectID, IList<UUID> missingRiders)
+    {
+        if (source is null || !m_scenes.TryGetValue(source.RegionID, out Scene s))
+            return false;
+
+        s.CrossingCompleted(objectID, missingRiders);
+        return true;
+    }
+
     #endregion
 
     #region Misc

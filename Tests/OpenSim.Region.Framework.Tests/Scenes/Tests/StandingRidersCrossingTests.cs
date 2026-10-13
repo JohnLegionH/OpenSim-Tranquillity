@@ -136,7 +136,7 @@ public class StandingRidersCrossingTests : OpenSimTestCase
 
         CrossPlatform();
 
-        Assert.Null(m_sceneA.GetSceneObjectGroup(m_platformId));
+        // the old region keeps its frozen copy until the rider has arrived (see HeldCrossingTests)
         SceneObjectGroup arrived = m_sceneB.GetSceneObjectGroup(m_platformId);
         Assert.NotNull(arrived);
 
@@ -144,6 +144,7 @@ public class StandingRidersCrossingTests : OpenSimTestCase
         Assert.False(rider.RideOn.IsLinked);
         ScenePresence riderB = Arrive(rider.UUID);
 
+        Assert.Null(m_sceneA.GetSceneObjectGroup(m_platformId));
         Assert.False(riderB.IsChildAgent);
         Vector3 expected = arrived.AbsolutePosition + offset;
         Assert.InRange(Vector3.Distance(riderB.AbsolutePosition, expected), 0f, 0.05f);
