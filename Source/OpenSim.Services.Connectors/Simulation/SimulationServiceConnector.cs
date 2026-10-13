@@ -288,6 +288,9 @@ public class SimulationServiceConnector : ISimulationService
 
         reason = "Failed to contact destination";
 
+        // a destination has to say it can take carried riders; no answer is no
+        ctx.CarriedRiders = false;
+
         // m_log.LogDebug("[REMOTE SIMULATION CONNECTOR]: QueryAccess start, position={0}", position);
 
         // Eventually, we want to use a caps url instead of the agentID
@@ -324,10 +327,13 @@ public class SimulationServiceConnector : ISimulationService
             bool success = result["success"].AsBoolean();
 
             bool has_Result = false;
+            if (!result.ContainsKey("_Result"))
+                ctx.ReadAnswer(result);
             if (result.TryGetValue("_Result", out tmpOSD))
             {
                 has_Result = true;
                 OSDMap data = (OSDMap)tmpOSD;
+                ctx.ReadAnswer(data);
 
                 // FIXME: If there is a _Result map then it's the success key here that indicates the true success
                 // or failure, not the sibling result node.

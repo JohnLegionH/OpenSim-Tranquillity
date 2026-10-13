@@ -177,6 +177,12 @@ public abstract class HeldCrossingFixture : OpenSimTestCase
         public bool ThrowOnObject { get; set; }
         public bool RefuseRecall { get; set; }
 
+        /// <summary>False: the destination answers the access question as a region from before carried riders does.</summary>
+        public bool CarriedRidersSupported { get; set; } = true;
+
+        /// <summary>The avatars the destination's access question refuses (a ban line, an access level, a full region).</summary>
+        public HashSet<UUID> RefuseAccess { get; } = new();
+
         public List<UUID> Recalled { get; } = new();
         public List<UUID> Completed { get; } = new();
 
@@ -185,6 +191,21 @@ public abstract class HeldCrossingFixture : OpenSimTestCase
             if (RefuseAgentUpdates.Contains(++m_agentUpdates))
                 return false;
             return UpdateAgent(destination, cAgentData, ctx);
+        }
+
+        bool ISimulationService.QueryAccess(GridRegion destination, UUID agentID, string agentHomeURI, bool viaTeleport,
+            Vector3 position, List<UUID> features, EntityTransferContext ctx, out string reason)
+        {
+            if (RefuseAccess.Contains(agentID))
+            {
+                reason = "The region will not take you.";
+                return false;
+            }
+
+            bool allowed = QueryAccess(destination, agentID, agentHomeURI, viaTeleport, position, features, ctx, out reason);
+            if (!CarriedRidersSupported)
+                ctx.CarriedRiders = false;
+            return allowed;
         }
 
         bool ISimulationService.SupportsHeldCrossing(GridRegion destination) => HeldSupported(destination);

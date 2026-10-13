@@ -263,6 +263,9 @@ public class LocalSimulationConnectorModule : ISharedRegionModule, ISimulationSe
 
             }
 
+            // a region of this simulator is the same code as the asking one
+            ctx.CarriedRiders = true;
+
             return m_scenes[destination.RegionID].QueryAccess(agentID, agentHomeURI, viaTeleport, position, features, out reason);
         }
 

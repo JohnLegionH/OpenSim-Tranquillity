@@ -1493,8 +1493,22 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                 return;
             }
 
-            if (!entityTransfer.checkAgentAccessToRegion(av, destination, newpos + offset, ctx, out _))
+            // The question also asks whether the destination can take an avatar that arrives carried. One that cannot
+            // (a region from before this existed) would take it for an ordinary crossing avatar and could send it
+            // straight back, so a rider is carried only to a region that says it can.
+            if (!entityTransfer.checkAgentAccessToRegion(av, destination, newpos + offset, ctx, out string refusal))
+            {
+                LeaveRiderBehind(av, string.IsNullOrWhiteSpace(refusal)
+                    ? $"The region ahead would not take you along with {Name}."
+                    : $"The region ahead would not take you along with {Name}: {refusal}");
                 return;
+            }
+
+            if (!ctx.CarriedRiders)
+            {
+                LeaveRiderBehind(av, $"The region ahead cannot take avatars standing on {Name}.");
+                return;
+            }
 
             av.CarriedByGroup = id;
             av.CarriedOffset = offset;
@@ -1502,6 +1516,16 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
             av.FreezeForCrossing();
             av.RemoveFromPhysicalScene();
         });
+    }
+
+    /// <summary>
+    /// An avatar standing on an object that crosses, which the other region will not take: it is not touched (still
+    /// in physics, no input lost), its link to the object is ended, and it is told why the object leaves without it.
+    /// </summary>
+    private static void LeaveRiderBehind(ScenePresence rider, string reason)
+    {
+        rider.RideOn.Clear();
+        rider.ControllingClient.SendAlertMessage(reason);
     }
 
     private void ReleaseStandingRiders(List<ScenePresence> riders, Vector3 rootPos)
