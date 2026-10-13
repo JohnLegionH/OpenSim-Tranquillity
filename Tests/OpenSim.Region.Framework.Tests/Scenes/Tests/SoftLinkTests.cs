@@ -81,6 +81,52 @@ public class SoftLinkTests : OpenSimTestCase
     }
 
     [Fact]
+    public void A_stretch_with_no_reports_is_no_information_and_does_not_break_the_link()
+    {
+        SoftLink link = Fed((0, GroupA), (RideOnLimits.StartMs, GroupA));
+        double t = RideOnLimits.StartMs;
+
+        // reports stop for 1500 ms while the avatar stays on the object, then resume without a feet contact (the
+        // first frame after an engine's body wakes up): the silence does not count
+        link.Update(t + 1500, UUID.Zero, true);
+
+        Assert.True(link.IsLinked);
+        Assert.Equal(GroupA, link.GroupID);
+    }
+
+    [Fact]
+    public void Reports_that_resume_without_the_object_break_the_link_after_the_break_time()
+    {
+        SoftLink link = Fed((0, GroupA), (RideOnLimits.StartMs, GroupA));
+        double t = RideOnLimits.StartMs + 1500;
+        link.Update(t, UUID.Zero, true);
+
+        for (double dt = 100; dt < RideOnLimits.BreakMs; dt += 100)
+            link.Update(t + dt, UUID.Zero, true);
+        Assert.True(link.IsLinked);
+
+        link.Update(t + RideOnLimits.BreakMs, UUID.Zero, true);
+        Assert.False(link.IsLinked);
+    }
+
+    [Fact]
+    public void A_silence_does_not_hide_a_report_without_the_object_before_it()
+    {
+        SoftLink link = Fed((0, GroupA), (RideOnLimits.StartMs, GroupA));
+        double t = RideOnLimits.StartMs;
+        link.Update(t + 100, UUID.Zero, true);
+        link.Update(t + 200, UUID.Zero, true);
+        link.Update(t + 200 + 1500, UUID.Zero, true);
+        Assert.True(link.IsLinked);
+
+        // 200 ms of reports without the object came before the silence, 800 ms more after it make the break time
+        link.Update(t + 200 + 1500 + RideOnLimits.BreakMs - 200 - 1, UUID.Zero, true);
+        Assert.True(link.IsLinked);
+        link.Update(t + 200 + 1500 + RideOnLimits.BreakMs - 200, UUID.Zero, true);
+        Assert.False(link.IsLinked);
+    }
+
+    [Fact]
     public void An_avatar_that_cannot_stand_loses_the_link_at_once()
     {
         SoftLink link = Fed((0, GroupA), (RideOnLimits.StartMs, GroupA));

@@ -20,6 +20,12 @@ public static class RideOnLimits
     /// <summary>How long an avatar may be off the object it stands on before the link ends (ms). Covers a jump or hop.</summary>
     public const int BreakMs = 1000;
 
+    /// <summary>
+    /// A stretch of at least this long between two reports is silence, not evidence: an engine stops reporting for an
+    /// avatar whose body is asleep, and that says nothing about whether the avatar still stands on the object (ms).
+    /// </summary>
+    public const int ReportGapMs = BreakMs;
+
     /// <summary>How far outside the object's horizontal bounds a standing avatar may be and still be carried (m).</summary>
     public const float PositionGate = 1.0f;
 
@@ -35,7 +41,10 @@ public sealed class SoftLink
 {
     private UUID m_candidate = UUID.Zero;
     private double m_candidateSince;
-    private double m_lastContact;
+    private double m_lastReport;
+
+    // time covered by reports that did not name the object, since the last report that did
+    private double m_absentMs;
 
     /// <summary>The object the avatar is linked to, or <see cref="UUID.Zero"/>.</summary>
     public UUID GroupID { get; private set; } = UUID.Zero;
@@ -57,18 +66,29 @@ public sealed class SoftLink
             return;
         }
 
+        // only the time that reports cover counts towards the break time; a long silence before this report is
+        // no information about the object
+        double sinceLastReport = nowMs - m_lastReport;
+        m_lastReport = nowMs;
+        bool silence = sinceLastReport >= RideOnLimits.ReportGapMs;
+
         if (contactGroup.IsZero())
         {
             m_candidate = UUID.Zero;
-            if (IsLinked && nowMs - m_lastContact >= RideOnLimits.BreakMs)
-                GroupID = UUID.Zero;
+            if (IsLinked)
+            {
+                if (!silence)
+                    m_absentMs += sinceLastReport;
+                if (m_absentMs >= RideOnLimits.BreakMs)
+                    Clear();
+            }
             return;
         }
 
         if (contactGroup.Equals(GroupID))
         {
             m_candidate = UUID.Zero;
-            m_lastContact = nowMs;
+            m_absentMs = 0;
             return;
         }
 
@@ -81,13 +101,16 @@ public sealed class SoftLink
         if (nowMs - m_candidateSince >= RideOnLimits.StartMs)
         {
             GroupID = contactGroup;
-            m_lastContact = nowMs;
+            m_absentMs = 0;
             m_candidate = UUID.Zero;
         }
-        else if (IsLinked && nowMs - m_lastContact >= RideOnLimits.BreakMs)
+        else if (IsLinked)
         {
-            // standing on something else for a moment, the old object not touched for the break time
-            GroupID = UUID.Zero;
+            // standing on something else for a moment, the old object not named for the break time
+            if (!silence)
+                m_absentMs += sinceLastReport;
+            if (m_absentMs >= RideOnLimits.BreakMs)
+                Clear();
         }
     }
 
@@ -95,5 +118,6 @@ public sealed class SoftLink
     {
         GroupID = UUID.Zero;
         m_candidate = UUID.Zero;
+        m_absentMs = 0;
     }
 }

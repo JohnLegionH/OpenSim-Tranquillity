@@ -663,6 +663,13 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
     public bool m_gotCrossUpdate;
     public byte m_crossingFlags;
 
+    /// <summary>
+    /// While this avatar is being carried across a region border by the object it stands on: that object and the
+    /// avatar's position relative to the object's root. Set on both sides of the crossing.
+    /// </summary>
+    public UUID CarriedByGroup;
+    public Vector3 CarriedOffset;
+
     public string Grouptitle
     {
         get { return m_groupTitle; }
@@ -5063,6 +5070,11 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         {
             cAgent.CrossingFlags = m_crossingFlags;
             cAgent.CrossingFlags |= 1;
+            if ((m_crossingFlags & AgentData.CrossingCarried) != 0)
+            {
+                cAgent.CarriedByGroup = CarriedByGroup;
+                cAgent.CarriedOffset = CarriedOffset;
+            }
             cAgent.CrossExtraFlags = 0;
             if((LastCommands & ScriptControlled.CONTROL_LBUTTON) != 0)
                 cAgent.CrossExtraFlags |= 1;
@@ -5222,6 +5234,13 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
 
         m_crossingFlags = cAgent.CrossingFlags;
         m_gotCrossUpdate = (m_crossingFlags != 0);
+        if ((m_crossingFlags & AgentData.CrossingCarried) != 0)
+        {
+            CarriedByGroup = cAgent.CarriedByGroup;
+            CarriedOffset = cAgent.CarriedOffset;
+        }
+        else
+            CarriedByGroup = UUID.Zero;
         if(m_gotCrossUpdate)
         {
             LastCommands &= ~(ScriptControlled.CONTROL_LBUTTON | ScriptControlled.CONTROL_ML_LBUTTON);
