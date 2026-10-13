@@ -565,6 +565,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             return flags;
         }
 
+        /// <summary>
+        /// A saved vehicle's flags over the flags its type's preset gave it: each flag where the record differs from
+        /// <paramref name="presetFlags"/> (the flags the record's own preset holds) takes the record's value, and every
+        /// other flag keeps what the controller's preset set. Those flags are the ones a script set or removed.
+        /// </summary>
+        public void RestoreFlagsOverPreset(int flags, int presetFlags)
+        {
+            ExtendedVehicleFlags record = FromScriptFlags(flags);
+            ExtendedVehicleFlags changed = record ^ FromScriptFlags(presetFlags);
+            _props.Flags = (_props.Flags & ~changed) | (record & changed);
+        }
+
         /// <summary>Both motors and the banking turn off, their directions kept as settings: a failed region crossing, as
         /// ubODE's ODEDynamics.Stop (motor effect 0), so a vehicle put back inside the edge does not drive out again until a
         /// script sets a motor.</summary>
