@@ -915,6 +915,14 @@ falls (or stays, when flying) until it lands on what is below. Flying and veloci
 The one correction: a position that would put the body below the terrain is lifted to stand on the
 terrain. An arriving avatar is never moved down.
 
+An avatar made over a platform that is held at rest, or one that is already moving by keyframed motion,
+stands on it from the first step and is carried by it without a drop (measured to within 0.05 m under
+both step modes, `RidersCrossArrivalTests`). An avatar taken out of physics and made again at the same
+place on its platform, as a failed region crossing does, is carried again. While it stands on a platform
+its feet contact names the platform's root in every collision report, moving or still. Every avatar is
+also held inside the region's edges after each step, so one carried past the edge by a platform is held
+at the edge and left behind by the platform.
+
 ## What an avatar stands on
 
 An avatar standing on the terrain reports ground (`CollidingGround`), and one standing on a prim,
