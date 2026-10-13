@@ -1970,7 +1970,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return;
             _reassertZeroesVelocity = _module.IsRegionLoading;
 
-            bool overPreset = _vehicle.Settings.Presets == VehiclePresetSet.Legacy;
+            // Also for the two InWorldz-only types (sailboat 10001, motorcycle 10002): the simulator has no preset for
+            // them, so their record is the unset type's bare values, while a script's llSetVehicleType gives them the
+            // InWorldz preset under every behaviour and presets setting. Every type the simulator has a preset for
+            // keeps the documented path (the record applied whole).
+            bool overPreset = _vehicle.Settings.Presets == VehiclePresetSet.Legacy
+                || (int)vd.m_type == (int)VehicleCode.TYPE_SAILBOAT || (int)vd.m_type == (int)VehicleCode.TYPE_MOTORCYCLE;
             VehicleData simulatorPreset = default;
             if (overPreset)
             {
