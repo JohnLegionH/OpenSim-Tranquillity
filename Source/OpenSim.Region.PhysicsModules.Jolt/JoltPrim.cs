@@ -1422,6 +1422,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _rotationalVelocity = _heldRotationalVelocity;
             _backend.SetBodyLinearVelocity(_body, ToS(_heldVelocity));
             _backend.SetBodyAngularVelocity(_body, ToS(_heldRotationalVelocity));
+            _vehicle?.ResumeAfterHold();
         }
 
         // Held: the body is made kinematic (it keeps its place, nothing it touches moves it, gravity does not act) and
