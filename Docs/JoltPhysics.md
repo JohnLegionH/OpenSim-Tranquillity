@@ -926,6 +926,13 @@ it sets `AllowOutsideRegion` on the avatar's actor (a rider behind the object's 
 region), and while it is set the avatar stays where the platform puts it, even with the platform wholly outside
 the region. The region clears it when the avatar leaves the object, and the edge hold then applies again.
 
+A physical object that crossed into the region together with avatars is held still until they have arrived
+(`PhysicsActor.HoldStill`, then `ReleaseHold` when the last one has, or the hold time ran out): its body is
+kept still the way a selected object's is (no gravity, no drift, nothing that touches it moves it) but stays
+solid, so an avatar made over it stands on it. Let go, it moves on with the velocity it arrived with. An
+object that is selected when the hold ends stays still until it is deselected (`HeldPhysicalPrimTests`, both
+step modes). ubODE's held body is also solid; it stops and disables the body instead.
+
 ## What an avatar stands on
 
 An avatar standing on the terrain reports ground (`CollidingGround`), and one standing on a prim,
