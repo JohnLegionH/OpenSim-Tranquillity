@@ -11,8 +11,6 @@
  * IVehicleBody is the NEUTRAL seam between the vehicle controller
  * (VehicleController) and whatever physics engine hosts the body. No engine
  * types cross this line in either direction.
- *
- * THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND.
  */
 
 using OpenMetaverse;
