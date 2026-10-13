@@ -171,8 +171,10 @@ public class OdeCharacter : PhysicsActor
     private bool m_useHoverPID;
     private PIDHoverType m_PIDHoverType;
 
-    public OdeCharacter(uint localID, String avName, ODEScene parent_scene, Vector3 pos, Vector3 pSize, float pfeetOffset, float density, float walk_divisor, float rundivisor)
+    public OdeCharacter(uint localID, String avName, ODEScene parent_scene, Vector3 pos, Vector3 pSize, float pfeetOffset, float density, float walk_divisor, float rundivisor, bool allowOutsideRegion = false)
     {
+        // set before the add is queued: the physics thread can run it, and step the character, as soon as it is
+        AllowOutsideRegion = allowOutsideRegion;
         m_baseLocalID = localID;
         m_parent_scene = parent_scene;
 

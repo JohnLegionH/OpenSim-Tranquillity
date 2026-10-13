@@ -5403,7 +5403,7 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
 
         PhysicsActor pa = scene.AddAvatar(
             LocalId, Firstname + "." + Lastname, pVec,
-            Appearance.AvatarBoxSize,Appearance.AvatarFeetOffset, isFlying);
+            Appearance.AvatarBoxSize,Appearance.AvatarFeetOffset, isFlying, IsCarriedHere());
         pa.Orientation = m_bodyRot;
         //PhysicsActor.OnRequestTerseUpdate += SendTerseUpdateToAllClients;
         pa.OnCollisionUpdate += PhysicsCollisionUpdate;
@@ -5411,7 +5411,6 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
         pa.SubscribeEvents(100);
         pa.LocalID = LocalId;
         pa.SetAlwaysRun = m_setAlwaysRun;
-        pa.AllowOutsideRegion = IsCarriedHere();
         PhysicsActor = pa;
     }
 

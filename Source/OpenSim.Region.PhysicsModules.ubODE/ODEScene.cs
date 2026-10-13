@@ -1264,9 +1264,12 @@ public partial class ODEScene : PhysicsScene
     }
 
     public override PhysicsActor AddAvatar(uint localID, string avName, Vector3 position, Vector3 size, float feetOffset, bool isFlying)
+        => AddAvatar(localID, avName, position, size, feetOffset, isFlying, false);
+
+    public override PhysicsActor AddAvatar(uint localID, string avName, Vector3 position, Vector3 size, float feetOffset, bool isFlying, bool allowOutsideRegion)
     {
         OdeCharacter newAv = new(localID, avName, this, position,
-            size, feetOffset, avDensity, avMovementDivisorWalk, avMovementDivisorRun)
+            size, feetOffset, avDensity, avMovementDivisorWalk, avMovementDivisorRun, allowOutsideRegion)
         {
             Flying = isFlying,
             MinimumGroundFlightOffset = minimumGroundFlightOffset
