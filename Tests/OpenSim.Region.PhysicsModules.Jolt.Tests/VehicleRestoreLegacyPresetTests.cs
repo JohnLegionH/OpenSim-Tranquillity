@@ -135,6 +135,42 @@ public class VehicleRestoreLegacyPresetTests
         Assert.Equal("<0.1, 0.1, 0.05>", o.Restored[nameof(VehVectorParam.AngularMotorTimescale)]);
     }
 
+    // The same script changes plus a flag the types' presets lack being set.
+    private static void ScriptChangesAndFlagSet(Run r, SharedVehicle type)
+    {
+        ScriptChanges(r, type);
+        r.SetFlags((int)VehicleFlag.MOUSELOOK_STEER, true);
+    }
+
+    public static IEnumerable<object[]> InWorldzOnlyTypes() => TypesAndRoutes(Sailboat, Motorcycle);
+
+    // Second Life behaviour with the documented presets, the two types the simulator has no preset for: a fresh
+    // llSetVehicleType gives them the InWorldz preset under every behaviour, so a restore must too.
+    [Theory]
+    [MemberData(nameof(InWorldzOnlyTypes))]
+    public void Under_Second_Life_behaviour_an_InWorldz_only_type_with_only_its_type_restores_to_the_preset(SharedVehicle type, VehicleRoute route)
+        => AssertRestoredIsWhatTheScriptMade(RunRoute(type, route, setup: TypeOnly, configure: SecondLife), $"{type} by {route}");
+
+    [Theory]
+    [MemberData(nameof(InWorldzOnlyTypes))]
+    public void Under_Second_Life_behaviour_an_InWorldz_only_type_keeps_what_the_script_changed(SharedVehicle type, VehicleRoute route)
+        => AssertRestoredIsWhatTheScriptMade(RunRoute(type, route, setup: ScriptChanges, configure: SecondLife), $"{type} by {route}");
+
+    [Theory]
+    [MemberData(nameof(InWorldzOnlyTypes))]
+    public void Under_Second_Life_behaviour_an_InWorldz_only_type_keeps_a_flag_the_script_set(SharedVehicle type, VehicleRoute route)
+        => AssertRestoredIsWhatTheScriptMade(RunRoute(type, route, setup: ScriptChangesAndFlagSet, configure: SecondLife), $"{type} by {route}");
+
+    [Fact]
+    public void Under_Second_Life_behaviour_the_motorcycle_keeps_per_axis_timescales_and_a_script_timescale_goes_to_all_axes()
+    {
+        Outcome o = RunRoute(Motorcycle, VehicleRoute.Rez, setup: TypeOnly, configure: SecondLife);
+        Assert.Equal("<0.5, 1, 1>", o.Restored[nameof(VehVectorParam.LinearMotorTimescale)]);
+        o = RunRoute(Motorcycle, VehicleRoute.Rez, setup: ScriptChanges, configure: SecondLife);
+        Assert.Equal("<0.7, 0.7, 0.7>", o.Restored[nameof(VehVectorParam.LinearMotorTimescale)]);
+        Assert.Equal("<0.1, 0.1, 0.05>", o.Restored[nameof(VehVectorParam.AngularMotorTimescale)]);
+    }
+
     // Second Life behaviour with the documented presets: the vehicle gets exactly its record, as before.
     [Theory]
     [InlineData(SharedVehicle.TYPE_CAR, VehicleRoute.Rez)]
