@@ -2468,9 +2468,13 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
                 if (m_attachments.Count > 0)
                 {
                     foreach (SceneObjectGroup sog in m_attachments)
-                    {
                         sog.RootPart.ParentGroup.CreateScriptInstances(0, false, m_scene.DefaultScriptEngine, GetStateSource());
-                        sog.ResumeScripts();
+
+                    // When an object that crossed with this avatar is held for it, the scripts start with that object
+                    if (!m_scene.DeferAttachmentScripts(UUID, m_attachments))
+                    {
+                        foreach (SceneObjectGroup sog in m_attachments)
+                            sog.ResumeScripts();
                     }
 
                     foreach (ScenePresence p in allpresences)

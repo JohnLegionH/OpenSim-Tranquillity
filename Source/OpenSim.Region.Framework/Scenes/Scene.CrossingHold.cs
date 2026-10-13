@@ -29,6 +29,7 @@ public partial class Scene
         public HashSet<UUID> Waiting;
         public double DeadlineMs;
         public bool AnyArrived;
+        public List<SceneObjectGroup> DeferredAttachments = new();
         public bool Released;
         public double ReleasedAtMs;
     }
@@ -214,12 +215,34 @@ public partial class Scene
     }
 
     /// <summary>
+    /// An avatar that an object here is held for is arriving with attachments. Their scripts are not to start at its own
+    /// arrival but with the object, when the hold ends: they are noted and true is returned. False when no object
+    /// waits for the avatar (the scripts start at once).
+    /// </summary>
+    internal bool DeferAttachmentScripts(UUID agentId, IEnumerable<SceneObjectGroup> attachments)
+    {
+        lock (m_crossingHoldLock)
+        {
+            foreach (ArrivalHold hold in m_arrivalHolds.Values)
+            {
+                if (hold.Released || !hold.Waiting.Contains(agentId))
+                    continue;
+
+                hold.DeferredAttachments.AddRange(attachments);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Lets a held object run: its keyframed motion starts and its scripts resume, then the sending region is told
     /// the crossing is complete, with the riders that did not arrive.
     /// </summary>
     private void ReleaseArrivalHold(ArrivalHold hold)
     {
         List<UUID> missing;
+        List<SceneObjectGroup> deferred;
         lock (m_crossingHoldLock)
         {
             if (hold.Released)
@@ -227,6 +250,8 @@ public partial class Scene
             hold.Released = true;
             hold.ReleasedAtMs = CrossingClock();
             missing = new List<UUID>(hold.Waiting);
+            deferred = new List<SceneObjectGroup>(hold.DeferredAttachments);
+            hold.DeferredAttachments.Clear();
         }
 
         SceneObjectGroup group = hold.Group;
@@ -243,6 +268,20 @@ public partial class Scene
         catch (Exception e)
         {
             m_log.LogError(e, $"[SCENE]: Problem starting the arrived object {group.UUID}");
+        }
+
+        // the scripts in the attachments of the avatars that arrived start together with the object
+        foreach (SceneObjectGroup attachment in deferred)
+        {
+            try
+            {
+                if (!attachment.IsDeleted)
+                    attachment.ResumeScripts();
+            }
+            catch (Exception e)
+            {
+                m_log.LogError(e, $"[SCENE]: Problem starting the scripts of an attachment that arrived with {group.UUID}");
+            }
         }
 
         try
