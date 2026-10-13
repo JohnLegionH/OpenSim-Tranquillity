@@ -5341,6 +5341,49 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
     }
 
     /// <summary>
+    /// The object this avatar stands on, as far as the engine's feet contacts show: see <see cref="SoftLink"/>.
+    /// </summary>
+    public SoftLink RideOn { get; } = new();
+
+    /// <summary>Time source of <see cref="RideOn"/> for <see cref="PhysicsCollisionUpdate"/>, in milliseconds.</summary>
+    public Func<double> RideOnClock { get; set; } = Util.GetTimeStampMS;
+
+    /// <summary>
+    /// Feeds <see cref="RideOn"/> from one frame of the engine's contact reports. Every engine names the touched object
+    /// by its root part's local id and flags the feet contacts, so this reads the same under all of them. The lowest
+    /// feet contact decides, as for the collision plane: ground below the object means the avatar is not on it.
+    /// </summary>
+    public void UpdateSoftLink(Dictionary<uint, ContactPoint> contacts, double nowMs)
+    {
+        bool canStand = !IsChildAgent && !IsInTransit && !IsNPC && !Flying && ParentID == 0 && ParentUUID.IsZero();
+
+        UUID group = UUID.Zero;
+        if (canStand && contacts is not null)
+        {
+            uint lowestId = 0;
+            float lowestZ = float.MaxValue;
+            foreach (KeyValuePair<uint, ContactPoint> c in contacts)
+            {
+                if (c.Value.CharacterFeet && c.Value.Position.Z < lowestZ)
+                {
+                    lowestZ = c.Value.Position.Z;
+                    lowestId = c.Key;
+                }
+            }
+
+            if (lowestId != 0)
+            {
+                SceneObjectGroup sog = m_scene.GetSceneObjectPart(lowestId)?.ParentGroup;
+                if (sog is not null && !sog.IsDeleted && !sog.inTransit && !sog.IsAttachmentCheckFull()
+                        && !sog.IsVolumeDetect)
+                    group = sog.UUID;
+            }
+        }
+
+        RideOn.Update(nowMs, group, canStand);
+    }
+
+    /// <summary>
     /// Event called by the physics plugin to tell the avatar about a collision.
     /// </summary>
     /// <remarks>
@@ -5353,14 +5396,16 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
     /// <param name="e"></param>
     public void PhysicsCollisionUpdate(EventArgs e)
     {
-        if (IsChildAgent)
+        if (IsChildAgent || IsInTransit)
+        {
+            RideOn.Clear();
             return;
-
-        if(IsInTransit)
-            return;
+        }
 
         CollisionEventUpdate collisionData = (CollisionEventUpdate)e;
         Dictionary<uint, ContactPoint> coldata = collisionData.m_objCollisionList;
+
+        UpdateSoftLink(coldata, RideOnClock());
 
         if (coldata.Count == 0)
             CollisionPlane = Vector4.UnitW;
