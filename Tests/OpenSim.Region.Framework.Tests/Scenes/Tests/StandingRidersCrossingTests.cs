@@ -327,15 +327,20 @@ public class StandingRidersCrossingTests : OpenSimTestCase
         Assert.Equal(UUID.Zero, riderB.CarriedByGroup);
         Assert.False(riderB.PhysicsActor.AllowOutsideRegion);
 
-        // The ordinary border check takes over: the first region is there, so a crossing back to it starts. In this
-        // two-region fixture a crossing back from an avatar that arrived by crossing does not complete, so the test
-        // reads the attempt: the avatar either became a child agent or, its crossing failed, was put back into
-        // physics with a new actor (CrossToNewRegionFail).
-        PhysicsActor before = riderB.PhysicsActor;
+        // The ordinary border check takes over: the first region is there, so the avatar crosses back to it. The
+        // crossing is finished on this side when the avatar is a child agent here; it becomes a root agent in the
+        // first region when its viewer completes the movement, which the test client does on request.
+        UUID id = riderB.UUID;
         Frames(riderB, 1);
-        Assert.True(riderB.IsChildAgent || !ReferenceEquals(before, riderB.PhysicsActor),
-            "no crossing was attempted after the carry ended");
+        Assert.True(riderB.IsChildAgent);
         Assert.False(riderB.IsInTransit);
+
+        m_sceneA.Update(4);
+        ScenePresence backA = m_sceneA.GetScenePresence(id);
+        ((TestClient)backA.ControllingClient).CompleteMovement();
+        Assert.False(backA.IsChildAgent);
+        Assert.Equal(UUID.Zero, backA.CarriedByGroup);
+        Assert.False(backA.PhysicsActor.AllowOutsideRegion);
     }
 
     [Fact]

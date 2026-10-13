@@ -767,6 +767,9 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
     }
 
     public bool inTransit = false;
+
+    // the scripts a crossing suspended, resumed if the object stays
+    private List<UUID> m_crossSuspendedScripts;
     private delegate SceneObjectGroup SOGCrossDelegate(SceneObjectGroup sog,Vector3 pos, TeleportObjectData tpData);
 
     /// <summary>
@@ -933,6 +936,12 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         if (destination is not null && !isTeleport)
             riders = sog.FreezeStandingRiders(entityTransfer, destination, newpos, ctx, val);
 
+        // From here until the object is sent, nothing may change what is sent: its scripts stop (the riders' attachment
+        // scripts were stopped with the riders), its motion and its physics body stop below, and the object is in
+        // transit, which keeps scripts and avatars from moving it. A crossing with nowhere to go freezes nothing.
+        if (destination is not null)
+            sog.m_crossSuspendedScripts = sog.SuspendScripts(sogScene.RequestModuleInterfaces<IScriptModule>());
+
         root.KeyframeMotion?.StartCrossingCheck();
 
         root.PhysActor?.CrossingStart();
@@ -973,6 +982,14 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
             }
 
             m_log.LogDebug($"[SCENE OBJECT]: Avatar {av.Name} needs to be crossed to {destination.RegionName}");
+        }
+
+        // The seated avatars are frozen as the standing ones were: before the object is sent they take no input and
+        // their attachment scripts are stopped
+        foreach (ScenePresence av in sog.m_sittingAvatars)
+        {
+            if (!av.IsNPC)
+                av.FreezeForCrossing();
         }
 
         // We unparent the SP quietly so that it won't
@@ -1142,6 +1159,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                     av.m_crossingFlags = 0;
                     av.sitAnimation = "SIT";
                     av.IsInTransit = false;
+                    av.ThawAfterCrossing();
 
                     av.Animator?.SetMovementAnimations("STAND");
                     av.AddToPhysicalScene(false);
@@ -1206,6 +1224,8 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                 av.ParentUUID = UUID.Zero;
                 av.ParentID = avinfo.ParentID;
                 av.m_crossingFlags = 0;
+                av.IsInTransit = false;
+                av.ThawAfterCrossing();
             }
         }
         avsToCross.Clear();
@@ -1246,7 +1266,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
 
             av.CarriedByGroup = id;
             av.CarriedOffset = offset;
-            av.IsInTransit = true;
+            av.FreezeForCrossing();
             av.RemoveFromPhysicalScene();
             (riders ??= new List<ScenePresence>()).Add(av);
         });
@@ -1281,6 +1301,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         rider.AbsolutePosition = pos;
         rider.IsInLocalTransit = false;
         rider.IsInTransit = false;
+        rider.ThawAfterCrossing();
         rider.AddToPhysicalScene(false);
     }
 
@@ -1288,6 +1309,11 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
     {
         if (sog is null || sog.IsDeleted)
             return;
+
+        // the object stays: its scripts run again
+        List<UUID> frozenScripts = sog.m_crossSuspendedScripts;
+        sog.m_crossSuspendedScripts = null;
+        ResumeScripts(sog.m_scene.RequestModuleInterfaces<IScriptModule>(), frozenScripts);
 
         SceneObjectPart rootp = sog.m_rootPart;
 

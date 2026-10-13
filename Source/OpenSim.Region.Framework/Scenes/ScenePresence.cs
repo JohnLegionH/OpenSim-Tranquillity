@@ -670,6 +670,37 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
     public UUID CarriedByGroup;
     public Vector3 CarriedOffset;
 
+    // the attachment scripts a crossing suspended, resumed if the crossing does not take the avatar away
+    private List<UUID> m_crossingSuspendedScripts;
+
+    /// <summary>
+    /// Freezes the avatar for a crossing it takes part in, seated or standing, before anything about it is read for
+    /// the other region: it is in transit (its input, border check and collision reports are ignored), its movement
+    /// controls are cleared and the scripts of its attachments are suspended. <see cref="ThawAfterCrossing"/> gives
+    /// the scripts back when the crossing does not take the avatar away.
+    /// </summary>
+    public void FreezeForCrossing()
+    {
+        IsInTransit = true;
+
+        MovementFlags &= ~CONTROL_FLAG_NORM_MASK;
+        m_AgentControlFlags &= unchecked((ACFlags)(~CONTROL_FLAG_NORM_MASK));
+
+        IScriptModule[] engines = m_scene.RequestModuleInterfaces<IScriptModule>();
+        List<UUID> suspended = new();
+        foreach (SceneObjectGroup attachment in GetAttachments())
+            suspended.AddRange(attachment.SuspendScripts(engines));
+        m_crossingSuspendedScripts = suspended;
+    }
+
+    /// <summary>Resumes the attachment scripts <see cref="FreezeForCrossing"/> suspended. IsInTransit is the caller's.</summary>
+    public void ThawAfterCrossing()
+    {
+        List<UUID> suspended = m_crossingSuspendedScripts;
+        m_crossingSuspendedScripts = null;
+        SceneObjectGroup.ResumeScripts(m_scene.RequestModuleInterfaces<IScriptModule>(), suspended);
+    }
+
     public string Grouptitle
     {
         get { return m_groupTitle; }
