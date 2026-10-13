@@ -607,6 +607,18 @@ An avatar takes the velocity of the body under its feet and a physical object is
 - A platform that turns carries a rider round: 2 m from the centre of a platform turned 90 degrees at 30 degrees a second, a
   cube ended at 89.2 degrees and an avatar at 88.5 degrees, both at their radius (one step per heartbeat; at 45 Hz both about 89.5).
 - A linkset moves as one body: the parts' own sets, which follow the root's, change nothing, and the root's body is not made again.
+- **Known limit: an abrupt fast start on a running region.** In the harness an avatar is carried exactly (0.00 m from the
+  platform's middle) when a platform starts at 16.5, 22, 29.7 or 39.6 m/s, at one step per heartbeat and at 45 Hz. On a running
+  test region (45 Hz, heartbeats up to 110 ms apart) a platform that keyframed motion started at 16.7 m/s (5 m in 0.3 s) kept the
+  avatar on, but at 22 m/s (6.6 m in 0.3 s) the avatar was carried at about 10 m/s and fell, and at about 29 m/s (9 m in 0.3 s) it
+  moved 1.5, 1.7 and 0.3 m in successive 0.1 s samples and fell where the platform had been. The difference is not explained.
+  Keyframed motion up to about 17 m/s carries an avatar on a running region; above that it is not guaranteed.
+- **A platform that crosses into a neighbouring region.** The simulator hands a seated avatar over with the object and nothing
+  else, so what stands on a keyframed platform that crosses is left in the first region: its body goes with the object, and the
+  rider falls to the ground there (a stand-in for the crossing, one region: the platform removed once its middle is outside, an
+  avatar and a cube both end on the ground). A crossing that fails puts the object back half a metre inside the edge, stopped:
+  a rider stays on it and is carried again when the motion runs again (the avatar slid 0.6 m on the jump back, the cube 0.7 m).
+  A crossing between two real regions has not been measured.
 
 Not changed: a non-physical prim moved any other way (`llSetPos`, `llSetRegionPos`, the build tool) stays a fixed body that is set
 to each new place unless `MovedPrimsCarryRiders` is on (next section), as is a keyframed motion that the actor was not told of;
@@ -1061,6 +1073,13 @@ raises nothing. Second Life says only that a volume-detect prim raises both even
 interpenetrating" (wiki.secondlife.com/wiki/LlVolumeDetect); it documents no speed beyond which a crossing
 is missed. `VolumeDetectFastCrossingTests` shoots a 0.2 m ball through a 0.1 m detector at 5, 25, 50 and
 200 m/s at one physics step per heartbeat and at 45 Hz: one start and one end each.
+
+An avatar is swept the same way after its own move: when the avatar moved further than 0.1 m in a step and the region has a
+volume-detect prim, its capsule is cast from where it was to where it is, and a detector the path crossed that the avatar's update
+did not report and the avatar does not overlap where it ended gets one `collision_start`. Without it a flying avatar that crossed a
+0.1 m detector at 48 m/s at one step per heartbeat, or at 96 m/s at either step rate, raised nothing. `VolumeDetectFastAvatarTests`
+flies an avatar through a 0.1 m detector at 16, 48 and 96 m/s at both step rates (one start and one end each) and past one without
+touching it (nothing).
 
 `FastObjectTests` shoots 0.05, 0.2 and 1 m balls at 10 to 500 m/s (`[Jolt] BodyMaxLinearSpeed`, 500 m/s
 by default, is the most a prim can move) at a fixed wall 0.01 m and 0.1 m thick, at a resting 0.5 m
