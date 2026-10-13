@@ -37,6 +37,56 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         internal bool IsTracked(uint localId) => _collidedLastFrame.Contains(localId);
 
+        /// <summary>The simulated time of the frame being built, in seconds; the scene sets it each heartbeat.</summary>
+        internal double Now;
+
+        /// <summary>The shortest time between two sends of an unchanged set to one part. The Second Life wiki page for the
+        /// collision event: "Smallest repeat rate is approximatively 0.13 seconds."</summary>
+        internal const double MinRepeatSeconds = 0.13;
+
+        private readonly Dictionary<uint, double> _lastSent = new Dictionary<uint, double>();
+
+        /// <summary>
+        /// <see cref="ShouldDeliver"/> for a prim (a part with a script), with the collision event's repeat rate: a set that
+        /// names the same colliders as last frame's goes again only once <see cref="MinRepeatSeconds"/> have passed since
+        /// the last one sent. A set that differs (a new collider is collision_start, a missing one must be told) goes at
+        /// once, and so does the first after a gap; collision_end is the empty update <see cref="EndFrame"/> reports and is
+        /// never held back. A set naming only the ground (land_collision, whose wiki page gives no repeat rate) is not
+        /// held back either. Avatars do not use this: the scene reads their updates for the collision plane under the feet
+        /// and for impact damage, which must not lag.
+        /// </summary>
+        internal bool ShouldDeliverToPart(uint prim, CollisionEventUpdate set)
+        {
+            if (!ShouldDeliver(prim, set))
+                return false;
+            if (!NamesAnObject(set))
+                return true;   // the ground alone is land_collision, whose wiki page gives no repeat rate: every heartbeat, as ubODE
+            if (_previous.TryGetValue(prim, out CollisionEventUpdate last) && SameColliders(set, last)
+                && _lastSent.TryGetValue(prim, out double sent) && Now - sent < MinRepeatSeconds - 1e-9)
+                return false;
+            _lastSent[prim] = Now;
+            return true;
+        }
+
+        private static bool NamesAnObject(CollisionEventUpdate set)
+        {
+            foreach (uint id in set.m_objCollisionList.Keys)
+                if (id != 0)
+                    return true;
+            return false;
+        }
+
+        private static bool SameColliders(CollisionEventUpdate a, CollisionEventUpdate b)
+        {
+            Dictionary<uint, ContactPoint> x = a.m_objCollisionList, y = b.m_objCollisionList;
+            if (x.Count != y.Count)
+                return false;
+            foreach (uint id in x.Keys)
+                if (!y.ContainsKey(id))
+                    return false;
+            return true;
+        }
+
         // Top Colliders, ubODE's model - a prim's CollisionScore is the number of Begin/Persist
         // contact reports that named it this frame, counted BEFORE the subscription filter, and reset every frame.
         // _prevScored is last frame's scored set, so the module can zero the prims that dropped out.
@@ -152,7 +202,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             foreach (uint id in _collidedLastFrame)
                 if (!_accum.ContainsKey(id))
+                {
                     _ended.Add(id);
+                    _lastSent.Remove(id);
+                }
             _collidedLastFrame.Clear();
             foreach (uint id in _accum.Keys)
                 _collidedLastFrame.Add(id);
