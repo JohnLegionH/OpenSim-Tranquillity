@@ -54,11 +54,14 @@ public abstract class HeldCrossingFixture : OpenSimTestCase
         base.Dispose();
     }
 
+    /// <summary>The simulation connector both regions use; a class of tests can bring its own.</summary>
+    protected virtual FaultyConnector NewConnector() => new FaultyConnector();
+
     protected void SetupTwoRegions(uint regionX, uint regionY, bool banOwnerInDestination = false)
     {
         EntityTransferModule etmA = new();
         EntityTransferModule etmB = new();
-        m_connector = new FaultyConnector();
+        m_connector = NewConnector();
         m_engineA = new HoldEngine();
         m_engineB = new HoldEngine();
 
@@ -90,13 +93,13 @@ public abstract class HeldCrossingFixture : OpenSimTestCase
         m_sceneB.CrossingClock = () => m_now;
     }
 
-    protected ScenePresence AddAvatar(int userTail, Vector3 position)
+    protected ScenePresence AddAvatar(int userTail, Vector3 position, List<TestClient> neighbourClients = null)
     {
         UUID userId = TestHelpers.ParseTail(userTail);
         AgentCircuitData acd = SceneHelpers.GenerateAgentData(userId);
         acd.circuitcode = (uint)(1000 + userTail);
         TestClient tc = new(acd, m_sceneA);
-        EntityTransferHelpers.SetupInformClientOfNeighbourTriggersNeighbourClientCreate(tc, new List<TestClient>());
+        EntityTransferHelpers.SetupInformClientOfNeighbourTriggersNeighbourClientCreate(tc, neighbourClients ?? new List<TestClient>());
         ScenePresence sp = SceneHelpers.AddScenePresence(m_sceneA, tc, acd);
         sp.AbsolutePosition = position;
         return sp;
@@ -163,7 +166,7 @@ public abstract class HeldCrossingFixture : OpenSimTestCase
     // ---- stand-ins -------------------------------------------------------------------------------------------------
 
     /// <summary>The local simulation connector, told to fail a step, with a record of the new messages.</summary>
-    public sealed class FaultyConnector : LocalSimulationConnectorModule, ISimulationService
+    public class FaultyConnector : LocalSimulationConnectorModule, ISimulationService
     {
         private int m_agentUpdates;
 
@@ -184,7 +187,20 @@ public abstract class HeldCrossingFixture : OpenSimTestCase
             return UpdateAgent(destination, cAgentData, ctx);
         }
 
+        bool ISimulationService.SupportsHeldCrossing(GridRegion destination) => HeldSupported(destination);
+
         bool ISimulationService.CreateObject(GridRegion destination, Vector3 newPosition, ISceneObject sog, bool isLocalCall, CrossingHoldRequest hold)
+            => SendHeld(destination, newPosition, sog, isLocalCall, hold);
+
+        bool ISimulationService.RecallObject(GridRegion destination, UUID objectID) => SendRecall(destination, objectID);
+
+        bool ISimulationService.CrossingCompleted(GridRegion source, UUID objectID, IList<UUID> missingRiders)
+            => SendCompleted(source, objectID, missingRiders);
+
+        // the four messages of a held crossing; a class of tests that sends them another way overrides these
+        protected virtual bool HeldSupported(GridRegion destination) => SupportsHeldCrossing(destination);
+
+        protected virtual bool SendHeld(GridRegion destination, Vector3 newPosition, ISceneObject sog, bool isLocalCall, CrossingHoldRequest hold)
         {
             if (ThrowOnObject)
                 throw new InvalidOperationException("the send failed");
@@ -193,13 +209,13 @@ public abstract class HeldCrossingFixture : OpenSimTestCase
             return CreateObject(destination, newPosition, sog, isLocalCall, hold);
         }
 
-        bool ISimulationService.RecallObject(GridRegion destination, UUID objectID)
+        protected virtual bool SendRecall(GridRegion destination, UUID objectID)
         {
             Recalled.Add(objectID);
             return !RefuseRecall && RecallObject(destination, objectID);
         }
 
-        bool ISimulationService.CrossingCompleted(GridRegion source, UUID objectID, IList<UUID> missingRiders)
+        protected virtual bool SendCompleted(GridRegion source, UUID objectID, IList<UUID> missingRiders)
         {
             Completed.Add(objectID);
             return CrossingCompleted(source, objectID, missingRiders);
