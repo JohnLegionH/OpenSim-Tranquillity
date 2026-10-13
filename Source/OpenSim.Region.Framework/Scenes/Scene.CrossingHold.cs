@@ -8,6 +8,7 @@
 using Microsoft.Extensions.Logging;
 using OpenMetaverse;
 using OpenSim.Framework;
+using OpenSim.Region.PhysicsModules.SharedBase;
 using OpenSim.Services.Interfaces;
 using GridRegion = OpenSim.Services.Interfaces.GridRegion;
 
@@ -30,6 +31,7 @@ public partial class Scene
         public double DeadlineMs;
         public bool AnyArrived;
         public List<SceneObjectGroup> DeferredAttachments = new();
+        public bool PhysicsHeld;
         public bool Released;
         public double ReleasedAtMs;
     }
@@ -76,6 +78,21 @@ public partial class Scene
             return false;
         }
 
+        // A physical object is held still by its engine, not left to fall or drift while the riders arrive
+        bool physicsHeld = false;
+        try
+        {
+            if (newObject.UsesPhysics && newObject.RootPart.PhysActor is PhysicsActor actor)
+            {
+                actor.HoldStill();
+                physicsHeld = true;
+            }
+        }
+        catch (Exception e)
+        {
+            m_log.LogError(e, $"[SCENE]: Problem holding the arrived object {newObject.UUID} still");
+        }
+
         lock (m_crossingHoldLock)
         {
             m_arrivalHolds[newObject.UUID] = new ArrivalHold
@@ -83,7 +100,8 @@ public partial class Scene
                 Group = newObject,
                 Source = hold.Source,
                 Waiting = new HashSet<UUID>(hold.ExpectedRiders),
-                DeadlineMs = CrossingClock() + RideOnLimits.ArriveHoldMs
+                DeadlineMs = CrossingClock() + RideOnLimits.ArriveHoldMs,
+                PhysicsHeld = physicsHeld
             };
         }
         return true;
@@ -260,6 +278,8 @@ public partial class Scene
             if (!group.IsDeleted)
             {
                 group.HeldForRiders = false;
+                if (hold.PhysicsHeld)
+                    group.RootPart.PhysActor?.ReleaseHold();
                 foreach (SceneObjectPart part in group.Parts)
                     part.KeyframeMotion?.ReleaseHold();
                 group.ResumeScripts();

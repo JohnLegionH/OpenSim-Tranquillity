@@ -150,6 +150,9 @@ public enum Changes : int
     SetVehicle,
     SetInertia,
 
+    HoldStill,          // arg null. Stops a physical prim where it is, keeping its velocity, until ReleaseHold
+    ReleaseHold,        // arg null. Lets it move on with the velocity it was held with
+
     Null             //keep this last used do dim the methods array. does nothing but pulsing the prim
 }
 
