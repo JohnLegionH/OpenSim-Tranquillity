@@ -933,6 +933,12 @@ solid, so an avatar made over it stands on it. Let go, it moves on with the velo
 object that is selected when the hold ends stays still until it is deselected (`HeldPhysicalPrimTests`, both
 step modes). ubODE's held body is also solid; it stops and disables the body instead.
 
+A vehicle is held the same way and takes up where it was: the vehicle step is skipped while it is held, so no motor
+or hover builds up, and the release tells the controller the gap was a hold (`ResumeAfterHold`). Without that, a
+hold of over a second looked to the controller like a vehicle that had been idle, and it released its motors
+(`HeldVehicleTests`: a balloon with a motor and a hover height, held five seconds, moves after the release as
+one that was never held does, both step modes).
+
 ## What an avatar stands on
 
 An avatar standing on the terrain reports ground (`CollidingGround`), and one standing on a prim,
