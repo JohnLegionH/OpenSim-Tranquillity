@@ -1362,22 +1362,66 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // rest. That is ubODE's (ODEPrim.DoSelectedStatus stops and disables the body; Move skips a selected prim). ubODE
         // also stops a selected object colliding; here it stays solid, as BulletSim's selected object (BSPrim.IsStatic).
         // The root holds the whole welded linkset; a welded child's flag is kept for when it is unlinked.
+        //
+        // An object held for riders that crossed with it (HoldStill) is kept still the same way, so _selected means "kept
+        // still" for either reason; _userSelected and _held say which, and the object is let go only when neither holds it.
         private volatile bool _selected;
+        private bool _userSelected;
+        private bool _held;
+        private Vector3 _heldVelocity;
+        private Vector3 _heldRotationalVelocity;
 
         public override bool Selected
         {
             set
             {
-                if (_selected == value)
-                    return;
-                _selected = value;
-                if (_linkRoot != null || !_isPhysical || !_body.IsValid)
-                    return;
-                if (value)
-                    HoldSelected();
-                else
-                    ReleaseSelected();
+                _userSelected = value;
+                SetKeptStill(value || _held);
             }
+        }
+
+        private void SetKeptStill(bool still)
+        {
+            if (_selected == still)
+                return;
+            _selected = still;
+            if (_linkRoot != null || !_isPhysical || !_body.IsValid)
+                return;
+            if (still)
+                HoldSelected();
+            else
+                ReleaseSelected();
+        }
+
+        // Held for the riders that cross with the object (PhysicsActor.HoldStill): kept still like a selected one, with the
+        // velocity it arrived with remembered for ReleaseHold. The body stays solid, so an avatar standing on it is held up.
+        public override void HoldStill()
+        {
+            if (_held || !_isPhysical || _linkRoot != null)
+                return;
+
+            _heldVelocity = _velocity;
+            _heldRotationalVelocity = _rotationalVelocity;
+            _held = true;
+            SetKeptStill(true);
+        }
+
+        // The hold ends: dynamic again with the velocity it was held with. An object that is selected stays still (it gets no
+        // velocity), and falls from rest when it is let go.
+        public override void ReleaseHold()
+        {
+            if (!_held)
+                return;
+
+            _held = false;
+            SetKeptStill(_userSelected);
+            if (_userSelected || !_body.IsValid || !_isPhysical)
+                return;
+
+            _velocity = _heldVelocity;
+            _rotationalVelocity = _heldRotationalVelocity;
+            _backend.SetBodyLinearVelocity(_body, ToS(_heldVelocity));
+            _backend.SetBodyAngularVelocity(_body, ToS(_heldRotationalVelocity));
         }
 
         // Held: the body is made kinematic (it keeps its place, nothing it touches moves it, gravity does not act) and
