@@ -263,8 +263,8 @@ public class LocalSimulationConnectorModule : ISharedRegionModule, ISimulationSe
 
             }
 
-            // a region of this simulator is the same code as the asking one
-            ctx.CarriedRiders = true;
+            // the region says whether it has the rider crossing feature on
+            ctx.CarriedRiders = m_scenes[destination.RegionID].EnableStandingRiderCrossing;
 
             return m_scenes[destination.RegionID].QueryAccess(agentID, agentHomeURI, viaTeleport, position, features, out reason);
         }
@@ -343,7 +343,9 @@ public class LocalSimulationConnectorModule : ISharedRegionModule, ISimulationSe
 
     public bool SupportsHeldCrossing(GridRegion destination)
     {
-        return destination is not null && m_scenes.ContainsKey(destination.RegionID);
+        // a region with the rider crossing feature off answers as an older region does
+        return destination is not null && m_scenes.TryGetValue(destination.RegionID, out Scene scene)
+            && scene.EnableStandingRiderCrossing;
     }
 
     public bool CreateObject(GridRegion destination, Vector3 newPosition, ISceneObject sog, bool isLocalCall, CrossingHoldRequest hold)

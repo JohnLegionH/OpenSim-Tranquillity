@@ -5292,7 +5292,8 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
 
         m_crossingFlags = cAgent.CrossingFlags;
         m_gotCrossUpdate = (m_crossingFlags != 0);
-        if ((m_crossingFlags & AgentData.CrossingCarried) != 0)
+        // a region with the rider crossing feature off takes an avatar sent as carried for an ordinary one
+        if ((m_crossingFlags & AgentData.CrossingCarried) != 0 && m_scene.EnableStandingRiderCrossing)
         {
             CarriedByGroup = cAgent.CarriedByGroup;
             CarriedOffset = cAgent.CarriedOffset;
@@ -5434,6 +5435,10 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
     /// </summary>
     public void UpdateSoftLink(Dictionary<uint, ContactPoint> contacts, double nowMs)
     {
+        // nothing is tracked unless the region has the rider crossing feature on
+        if (!m_scene.EnableStandingRiderCrossing)
+            return;
+
         bool canStand = !IsChildAgent && !IsInTransit && !IsNPC && !Flying && ParentID == 0 && ParentUUID.IsZero();
 
         UUID group = UUID.Zero;

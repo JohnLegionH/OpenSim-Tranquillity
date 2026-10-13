@@ -64,6 +64,8 @@ public class StandingRidersCrossingTests : OpenSimTestCase
         SceneHelpers sh = new();
         m_sceneA = sh.SetupScene("sceneA", TestHelpers.ParseTail(0x100), 1000, 1000);
         m_sceneB = sh.SetupScene("sceneB", TestHelpers.ParseTail(0x200), 1000, 999);
+        m_sceneA.EnableStandingRiderCrossing = true;
+        m_sceneB.EnableStandingRiderCrossing = true;
 
         SceneHelpers.SetupSceneModules(new Scene[] { m_sceneA, m_sceneB }, config, lscm);
         SceneHelpers.SetupSceneModules(m_sceneA, config, new CapabilitiesModule(), etmA);

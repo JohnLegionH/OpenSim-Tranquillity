@@ -114,9 +114,16 @@ public class CarriedRiderRefusalTests : HeldCrossingFixture
         Assert.False(asker.CarriedRiders);
 
         OSDMap answer = new();
-        EntityTransferContext.WriteAnswer(answer);
+        EntityTransferContext.WriteAnswer(answer, true);
         asker.ReadAnswer(answer);
         Assert.True(asker.CarriedRiders);
+
+        // a region with the feature off says no
+        EntityTransferContext.WriteAnswer(answer, false);
+        asker.ReadAnswer(answer);
+        Assert.False(asker.CarriedRiders);
+        EntityTransferContext.WriteAnswer(answer, true);
+        asker.ReadAnswer(answer);
 
         // the answer of a region from before the capability
         asker.ReadAnswer(new OSDMap { ["success"] = OSD.FromBoolean(true) });

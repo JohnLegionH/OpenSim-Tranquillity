@@ -1031,7 +1031,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
 
         Vector3 curPos = root.GroupPosition;
         List<ScenePresence> riders = null;
-        if (destination is not null && !isTeleport)
+        if (destination is not null && !isTeleport && sogScene.EnableStandingRiderCrossing)
         {
             sog.FreezeStandingRiders(entityTransfer, destination, newpos, ctx, val, state.Riders);
             if (state.Riders.Count > 0)
@@ -1042,7 +1042,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         // From here until the object is sent, nothing may change what is sent: its scripts stop (the riders' attachment
         // scripts were stopped with the riders), its motion and its physics body stop below, and the object is in
         // transit, which keeps scripts and avatars from moving it. A crossing with nowhere to go freezes nothing.
-        if (destination is not null)
+        if (destination is not null && sogScene.EnableStandingRiderCrossing)
         {
             sog.m_crossSuspendedScripts = sog.SuspendScripts(sogScene.RequestModuleInterfaces<IScriptModule>());
             sog.CrossStep("scripts-suspended");
@@ -1094,10 +1094,13 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
 
         // The seated avatars are frozen as the standing ones were: before the object is sent they take no input and
         // their attachment scripts are stopped
-        foreach (ScenePresence av in sog.m_sittingAvatars)
+        if (sogScene.EnableStandingRiderCrossing)
         {
-            if (!av.IsNPC)
-                av.FreezeForCrossing();
+            foreach (ScenePresence av in sog.m_sittingAvatars)
+            {
+                if (!av.IsNPC)
+                    av.FreezeForCrossing();
+            }
         }
 
         // We unparent the SP quietly so that it won't

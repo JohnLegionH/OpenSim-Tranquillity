@@ -2717,7 +2717,8 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
 
     public bool SupportsHeldCrossing(GridRegion destination)
     {
-        return destination is not null && m_scene.SimulationService is not null
+        // a region with the rider crossing feature off sends every object the old way
+        return destination is not null && m_scene.EnableStandingRiderCrossing && m_scene.SimulationService is not null
             && m_scene.SimulationService.SupportsHeldCrossing(destination);
     }
 

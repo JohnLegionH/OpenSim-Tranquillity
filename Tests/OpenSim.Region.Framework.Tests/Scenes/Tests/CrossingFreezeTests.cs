@@ -69,6 +69,8 @@ public class CrossingFreezeTests : OpenSimTestCase
         SceneHelpers sh = new();
         m_sceneA = sh.SetupScene("sceneA", TestHelpers.ParseTail(0x100), regionX, regionY);
         m_sceneB = sh.SetupScene("sceneB", TestHelpers.ParseTail(0x200), regionX, regionY - 1);
+        m_sceneA.EnableStandingRiderCrossing = true;
+        m_sceneB.EnableStandingRiderCrossing = true;
 
         SceneHelpers.SetupSceneModules(new Scene[] { m_sceneA, m_sceneB }, config, lscm);
         SceneHelpers.SetupSceneModules(m_sceneA, config, new CapabilitiesModule(), etmA, m_engineA);

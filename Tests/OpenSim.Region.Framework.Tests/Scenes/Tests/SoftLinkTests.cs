@@ -24,6 +24,14 @@ public class SoftLinkTests : OpenSimTestCase
     private static readonly UUID GroupA = UUID.Random();
     private static readonly UUID GroupB = UUID.Random();
 
+    // the rider crossing feature is off unless a region switches it on
+    private static TestScene NewScene()
+    {
+        TestScene scene = new SceneHelpers().SetupScene();
+        scene.EnableStandingRiderCrossing = true;
+        return scene;
+    }
+
     private static SoftLink Fed(params (double t, UUID g)[] reports)
     {
         SoftLink link = new();
@@ -164,7 +172,7 @@ public class SoftLinkTests : OpenSimTestCase
     [Fact]
     public void Feet_on_the_root_part_link_the_avatar_to_the_object()
     {
-        TestScene scene = new SceneHelpers().SetupScene();
+        TestScene scene = NewScene();
         ScenePresence sp = SceneHelpers.AddScenePresence(scene, TestHelpers.ParseTail(0x1));
         SceneObjectGroup so = SceneHelpers.AddSceneObject(scene);
 
@@ -177,7 +185,7 @@ public class SoftLinkTests : OpenSimTestCase
     [Fact]
     public void Feet_on_a_child_part_link_the_avatar_to_the_whole_object()
     {
-        TestScene scene = new SceneHelpers().SetupScene();
+        TestScene scene = NewScene();
         ScenePresence sp = SceneHelpers.AddScenePresence(scene, TestHelpers.ParseTail(0x1));
         SceneObjectGroup so = SceneHelpers.AddSceneObject(scene, 3, UUID.Random(), "Rider", 0x10);
         SceneObjectPart child = so.Parts[2];
@@ -191,7 +199,7 @@ public class SoftLinkTests : OpenSimTestCase
     [Fact]
     public void A_side_contact_does_not_link()
     {
-        TestScene scene = new SceneHelpers().SetupScene();
+        TestScene scene = NewScene();
         ScenePresence sp = SceneHelpers.AddScenePresence(scene, TestHelpers.ParseTail(0x1));
         SceneObjectGroup so = SceneHelpers.AddSceneObject(scene);
 
@@ -203,7 +211,7 @@ public class SoftLinkTests : OpenSimTestCase
     [Fact]
     public void Terrain_alone_does_not_link()
     {
-        TestScene scene = new SceneHelpers().SetupScene();
+        TestScene scene = NewScene();
         ScenePresence sp = SceneHelpers.AddScenePresence(scene, TestHelpers.ParseTail(0x1));
 
         StandFor(sp, 0, Feet(21f));
@@ -214,7 +222,7 @@ public class SoftLinkTests : OpenSimTestCase
     [Fact]
     public void The_lowest_feet_contact_decides_so_ground_below_the_object_does_not_link()
     {
-        TestScene scene = new SceneHelpers().SetupScene();
+        TestScene scene = NewScene();
         ScenePresence sp = SceneHelpers.AddScenePresence(scene, TestHelpers.ParseTail(0x1));
         SceneObjectGroup so = SceneHelpers.AddSceneObject(scene);
         Dictionary<uint, ContactPoint> both = new() { { 0, Feet(20f) }, { so.RootPart.LocalId, Feet(20.2f) } };
@@ -228,7 +236,7 @@ public class SoftLinkTests : OpenSimTestCase
     [Fact]
     public void An_object_that_is_gone_does_not_link()
     {
-        TestScene scene = new SceneHelpers().SetupScene();
+        TestScene scene = NewScene();
         ScenePresence sp = SceneHelpers.AddScenePresence(scene, TestHelpers.ParseTail(0x1));
 
         StandFor(sp, 987654u, Feet(1f));
@@ -239,7 +247,7 @@ public class SoftLinkTests : OpenSimTestCase
     [Fact]
     public void Flying_breaks_the_link_at_once()
     {
-        TestScene scene = new SceneHelpers().SetupScene();
+        TestScene scene = NewScene();
         ScenePresence sp = SceneHelpers.AddScenePresence(scene, TestHelpers.ParseTail(0x1));
         SceneObjectGroup so = SceneHelpers.AddSceneObject(scene);
         StandFor(sp, so.RootPart.LocalId, Feet(1f));
@@ -254,7 +262,7 @@ public class SoftLinkTests : OpenSimTestCase
     [Fact]
     public void The_physics_collision_update_feeds_the_link_from_the_presences_clock()
     {
-        TestScene scene = new SceneHelpers().SetupScene();
+        TestScene scene = NewScene();
         ScenePresence sp = SceneHelpers.AddScenePresence(scene, TestHelpers.ParseTail(0x1));
         SceneObjectGroup so = SceneHelpers.AddSceneObject(scene);
         double now = 1000;
@@ -273,7 +281,7 @@ public class SoftLinkTests : OpenSimTestCase
     [Fact]
     public void A_presence_in_transit_has_no_link()
     {
-        TestScene scene = new SceneHelpers().SetupScene();
+        TestScene scene = NewScene();
         ScenePresence sp = SceneHelpers.AddScenePresence(scene, TestHelpers.ParseTail(0x1));
         SceneObjectGroup so = SceneHelpers.AddSceneObject(scene);
         double now = 0;

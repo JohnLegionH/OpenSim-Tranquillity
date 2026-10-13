@@ -51,10 +51,13 @@ public class EntityTransferContext
     /// </summary>
     public bool CarriedRiders { get; set; }
 
-    /// <summary>Adds the destination's side of the carried-rider capability to its access answer.</summary>
-    public static void WriteAnswer(OSDMap answer)
+    /// <summary>
+    /// Adds the destination's side of the carried-rider capability to its access answer: true when the region has the
+    /// rider crossing feature switched on.
+    /// </summary>
+    public static void WriteAnswer(OSDMap answer, bool carriedRiders)
     {
-        answer[CarriedRidersKey] = OSD.FromBoolean(true);
+        answer[CarriedRidersKey] = OSD.FromBoolean(carriedRiders);
     }
 
     /// <summary>Reads the destination's access answer; an answer without the capability (an older region) clears it.</summary>

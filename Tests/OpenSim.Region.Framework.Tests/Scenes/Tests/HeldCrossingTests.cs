@@ -57,6 +57,10 @@ public abstract class HeldCrossingFixture : OpenSimTestCase
     /// <summary>The simulation connector both regions use; a class of tests can bring its own.</summary>
     protected virtual FaultyConnector NewConnector() => new FaultyConnector();
 
+    /// <summary>Whether the rider crossing feature is switched on in each region (it is off by default in a real region).</summary>
+    protected virtual bool FeatureOnInFirstRegion => true;
+    protected virtual bool FeatureOnInSecondRegion => true;
+
     protected void SetupTwoRegions(uint regionX, uint regionY, bool banOwnerInDestination = false)
     {
         EntityTransferModule etmA = new();
@@ -75,6 +79,8 @@ public abstract class HeldCrossingFixture : OpenSimTestCase
         SceneHelpers sh = new();
         m_sceneA = sh.SetupScene("sceneA", TestHelpers.ParseTail(0x100), regionX, regionY);
         m_sceneB = sh.SetupScene("sceneB", TestHelpers.ParseTail(0x200), regionX, regionY - 1);
+        m_sceneA.EnableStandingRiderCrossing = FeatureOnInFirstRegion;
+        m_sceneB.EnableStandingRiderCrossing = FeatureOnInSecondRegion;
 
         SceneHelpers.SetupSceneModules(new Scene[] { m_sceneA, m_sceneB }, config, m_connector);
         SceneHelpers.SetupSceneModules(m_sceneA, config, new CapabilitiesModule(), etmA, m_engineA);
