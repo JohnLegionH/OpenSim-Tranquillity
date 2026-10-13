@@ -39,6 +39,7 @@ public partial class Scene
     private readonly object m_crossingHoldLock = new();
     private readonly Dictionary<UUID, ArrivalHold> m_arrivalHolds = new();
     private readonly Dictionary<UUID, SceneObjectGroup> m_pendingCrossings = new();
+    private readonly Dictionary<UUID, double> m_pendingSince = new();
 
     /// <summary>The clock (ms) the arrival hold of a crossing object is measured on; a test can replace it.</summary>
     public Func<double> CrossingClock { get; set; } = Util.GetTimeStampMS;
@@ -143,6 +144,7 @@ public partial class Scene
         {
             if (!m_pendingCrossings.Remove(objectID, out group))
                 return;
+            m_pendingSince.Remove(objectID);
         }
 
         try
@@ -159,18 +161,72 @@ public partial class Scene
     internal void AddPendingCrossing(SceneObjectGroup group)
     {
         lock (m_crossingHoldLock)
+        {
             m_pendingCrossings[group.UUID] = group;
+            m_pendingSince[group.UUID] = CrossingClock();
+        }
     }
 
     internal bool RemovePendingCrossing(UUID objectID)
     {
         lock (m_crossingHoldLock)
+        {
+            m_pendingSince.Remove(objectID);
             return m_pendingCrossings.Remove(objectID);
+        }
     }
 
-    /// <summary>Releases the held arrivals whose time has run out.</summary>
+    /// <summary>
+    /// Lets go of the frozen copy of an object whose crossing was never reported complete: the other region's hold ended
+    /// long ago, so the report was lost (a region on another simulator can be unreachable at that moment).
+    /// </summary>
+    private void ReleaseLostPendingCrossings()
+    {
+        List<SceneObjectGroup> lost = null;
+        lock (m_crossingHoldLock)
+        {
+            if (m_pendingCrossings.Count == 0)
+                return;
+
+            double now = CrossingClock();
+            List<UUID> ids = null;
+            foreach (KeyValuePair<UUID, double> entry in m_pendingSince)
+            {
+                if (now - entry.Value >= RideOnLimits.ArriveHoldMs + RideOnLimits.PendingGraceMs)
+                    (ids ??= new List<UUID>()).Add(entry.Key);
+            }
+
+            if (ids is null)
+                return;
+
+            lost = new List<SceneObjectGroup>();
+            foreach (UUID id in ids)
+            {
+                m_pendingSince.Remove(id);
+                if (m_pendingCrossings.Remove(id, out SceneObjectGroup group))
+                    lost.Add(group);
+            }
+        }
+
+        foreach (SceneObjectGroup group in lost)
+        {
+            m_log.LogWarning($"[SCENE]: The crossing of object {group.UUID} was never reported complete; letting go of the copy kept here");
+            try
+            {
+                DeleteSceneObject(group, true, true);
+            }
+            catch (Exception e)
+            {
+                m_log.LogError(e, $"[SCENE]: Problem removing the object {group.UUID} whose crossing was never reported complete");
+            }
+        }
+    }
+
+    /// <summary>Releases the held arrivals whose time has run out, and the copies kept for crossings never reported complete.</summary>
     public void ReleaseExpiredCrossingHolds()
     {
+        ReleaseLostPendingCrossings();
+
         List<ArrivalHold> due = null;
         lock (m_crossingHoldLock)
         {

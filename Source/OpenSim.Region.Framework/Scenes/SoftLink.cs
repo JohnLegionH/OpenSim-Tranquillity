@@ -37,6 +37,12 @@ public static class RideOnLimits
 
     /// <summary>How long a region that received a crossing object waits for its riders before it runs it (ms).</summary>
     public const int ArriveHoldMs = 10000;
+
+    /// <summary>
+    /// How long after that wait a region that sent a crossing object keeps its frozen copy while it has still not heard that
+    /// the crossing is complete, before it takes the report for lost and lets go of the copy (ms).
+    /// </summary>
+    public const int PendingGraceMs = 60000;
 }
 
 /// <summary>

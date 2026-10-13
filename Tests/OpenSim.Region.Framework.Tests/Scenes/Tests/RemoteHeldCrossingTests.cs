@@ -215,6 +215,35 @@ public class RemoteHeldCrossingTests : HeldCrossingFixture
     }
 
     [Fact]
+    public void An_old_copy_whose_complete_message_was_lost_is_let_go_after_a_while()
+    {
+        TestHelpers.InMethod();
+        Setup();
+        m_sceneA.CrossingClock = () => m_now;
+        Wire.Lost.Add("complete");
+        ScenePresence rider = AddStandingRider(0x11, StandingOffset);
+
+        Cross(rider);
+        Arrive(rider.UUID);
+
+        // the new region let the object go, and its report never arrived
+        Assert.False(m_sceneB.HoldsArrival(m_platform.UUID));
+        Assert.Single(Wire.Sent("complete"));
+        Assert.True(m_sceneA.HasPendingCrossing(m_platform.UUID));
+
+        m_now += RideOnLimits.ArriveHoldMs + RideOnLimits.PendingGraceMs - 1;
+        m_sceneA.ReleaseExpiredCrossingHolds();
+        Assert.True(m_sceneA.HasPendingCrossing(m_platform.UUID));
+
+        m_now += 2;
+        m_sceneA.ReleaseExpiredCrossingHolds();
+
+        Assert.False(m_sceneA.HasPendingCrossing(m_platform.UUID));
+        Assert.Null(m_sceneA.GetSceneObjectGroup(m_platform.UUID));
+        Assert.NotNull(m_sceneB.GetSceneObjectGroup(m_platform.UUID));
+    }
+
+    [Fact]
     public void A_recall_after_a_rider_arrived_is_refused_by_the_destination_handler()
     {
         TestHelpers.InMethod();
