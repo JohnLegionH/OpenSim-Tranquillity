@@ -774,6 +774,13 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
     /// </summary>
     public bool HeldForRiders { get; set; }
 
+    /// <summary>
+    /// Set on the frozen original of an object this region sent to another region, from the moment that region took it
+    /// until it reports the crossing complete (the object is then deleted) or gives it back (see <see cref="ShowToViewers"/>):
+    /// the viewers of this region are not shown it, since they would see it twice.
+    /// </summary>
+    public bool HiddenForCrossing { get; private set; }
+
     // the scripts a crossing suspended, resumed if the object stays
     private List<UUID> m_crossSuspendedScripts;
 
@@ -1202,7 +1209,11 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         {
             state.Committed = true;
             if (held)
+            {
                 sogScene.AddPendingCrossing(sog);
+                // the other region has the object now: this copy is only kept for a recall, and not shown to anyone
+                sog.HideFromViewers(avsToCross);
+            }
             sog.CrossStep("object-sent");
 
             if(isTeleport)
@@ -1350,6 +1361,47 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
     /// Gives back to this region the avatars a crossing froze that did not leave: the standing ones go back in
     /// physics next to the object, the seated ones sit again.
     /// </summary>
+    /// <summary>
+    /// Takes the object away from the viewers of this region, as a delete would, but keeps it here. The avatars that
+    /// cross with it are left alone: their viewers follow them to the other region.
+    /// </summary>
+    private void HideFromViewers(List<avtocrossInfo> riders)
+    {
+        HiddenForCrossing = true;
+        SceneObjectPart root = m_rootPart;
+        List<uint> rootId = new() { root.LocalId };
+
+        Scene.ForEachScenePresence(delegate (ScenePresence viewer)
+        {
+            if (viewer.IsNPC || riders.Exists(r => r.av == viewer))
+                return;
+
+            viewer.ControllingClient.SendKillObject(rootId);
+            viewer.ControllingClient.SendEntityUpdate(root, PrimUpdateFlags.Kill);
+        });
+    }
+
+    /// <summary>The other region gave the object back: it is sent to the viewers of this region again.</summary>
+    private void ShowToViewers()
+    {
+        if (!HiddenForCrossing)
+            return;
+
+        HiddenForCrossing = false;
+        if (IsDeleted || Scene is null)
+            return;
+
+        SceneObjectPart[] parts = m_parts.GetArray();
+        Scene.ForEachScenePresence(delegate (ScenePresence viewer)
+        {
+            if (viewer.IsNPC)
+                return;
+
+            foreach (SceneObjectPart part in parts)
+                viewer.ControllingClient.SendEntityUpdate(part, PrimUpdateFlags.CancelKill);
+        });
+    }
+
     private void RestoreAvatarsToThisRegion(List<avtocrossInfo> avsToCross, Vector3 rootPos)
     {
         foreach (avtocrossInfo avinfo in avsToCross)
@@ -1518,6 +1570,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         sog.RootPart.PhysActor?.CrossingFailure();
 
         sog.inTransit = false;
+        sog.ShowToViewers();
         AttachToBackup();
         sog.ScheduleGroupForUpdate(PrimUpdateFlags.FullUpdatewithAnimMatOvr);
 
