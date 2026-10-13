@@ -3374,6 +3374,57 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             _sensorSwept.Clear();
         }
 
+        // The same for an avatar. Its own update (CharacterVirtual::ExtendedUpdate) reports the sensors it overlaps along the
+        // move it can make in a step, and an avatar that goes through a thin detector faster than its capsule is wide in one
+        // step (flying at 48 m/s at 11 Hz with one step per heartbeat) is wholly on one side of it at one step and wholly on
+        // the other at the next, so the detector raised nothing. After the avatar's move, when the region has a sensor and the
+        // avatar went further than SensorSweepMinTravel, its capsule is cast from where it was to where it is against the sensors;
+        // a sensor the path crossed, that its update did not report and that it does not overlap where it ended (the next update
+        // finds that one), gets a begin contact among the update's, so the detector's collision_start is raised and the next
+        // heartbeat's absence is the collision_end, as for a body.
+        private void SweepCharacterAgainstSensors(JoltCharacterRecord rec, CharacterVirtual ch, Vector3 from)
+        {
+            if (Volatile.Read(ref _sensorBodies) <= 0 || rec.StandingShape == null || _system == null)
+                return;
+            Vector3 to = ch.Position;
+            Vector3 path = to - from;
+            if (!(path.Length() > SensorSweepMinTravel))
+                return;
+            Matrix4x4 start = Matrix4x4.CreateFromQuaternion(ch.Rotation);
+            start.Translation = from;
+            _sensorCastHits.Clear();
+            _system.NarrowPhaseQuery.CastShape(rec.StandingShape, Matrix4x4.Transpose(start), path, DefaultCastSettings(), Vector3.Zero,
+                CollisionCollectorType.AllHit, _sensorCastHits, null, FilterFor(QueryFilter.Sensor), null, null);
+            if (_sensorCastHits.Count == 0)
+                return;
+
+            Matrix4x4 end = Matrix4x4.CreateFromQuaternion(ch.Rotation);
+            end.Translation = to;
+            _sensorEndOverlaps.Clear();
+            _sensorsOverlappedAtEnd.Clear();
+            _system.NarrowPhaseQuery.CollideShape(rec.StandingShape, Vector3.One, Matrix4x4.Transpose(end), DefaultCollideSettings(), Vector3.Zero,
+                CollisionCollectorType.AllHit, _sensorEndOverlaps, null, FilterFor(QueryFilter.Sensor), null, null);
+            for (int k = 0; k < _sensorEndOverlaps.Count; k++)
+                _sensorsOverlappedAtEnd.Add(_sensorEndOverlaps[k].BodyID2.ID);
+
+            for (int h = 0; h < _sensorCastHits.Count; h++)
+            {
+                ShapeCastResult hit = _sensorCastHits[h];
+                uint sensorId = hit.BodyID2.ID;
+                if (_sensorsOverlappedAtEnd.Contains(sensorId) || !(hit.Fraction > 0f)
+                    || !_joltToRecord.TryGetValue(sensorId, out JoltBodyRecord? sensorRec) || sensorRec.Layer != PhysicsLayer.Sensor)
+                    continue;
+                bool reported = false;
+                for (int c = 0; c < rec.Contacts.Count && !reported; c++)
+                    reported = rec.Contacts[c].BodyJoltId == sensorId;
+                if (reported)
+                    continue;   // the update found it, or an earlier hit of this cast was one
+                float axis = hit.PenetrationAxis.Length();
+                Vector3 normal = axis > 1e-6f ? hit.PenetrationAxis / axis : Vector3.UnitZ;
+                rec.Contacts.Add(new CharacterBodyContact(sensorId, hit.SubShapeID2.Value, hit.ContactPointOn2, normal, ContactPhase.Begin, false));
+            }
+        }
+
         // An avatar meets bodies only in its own update, once per step before the simulation's update
         // (NoteCharacterBodyContact), and Jolt's cast of a fast body does not see it: its query marker is on the AvatarQuery
         // layer, which collides with nothing. So a body fast enough to cross an avatar within one update would go through
@@ -4016,6 +4067,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             if (forced)
                 FinishForceCarry(rec, ch, forceStep, forceTau, newVel, startPos, dt);
 
+            SweepCharacterAgainstSensors(rec, ch, startPos);
             FinishCharacterContacts(rec, ch, dt);
 
             // Where it stands and what it touches are found again where it was left, after this update's contacts were
