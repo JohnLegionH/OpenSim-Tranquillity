@@ -1719,6 +1719,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // preset, the record's flags in place of the preset's, each setting held to the region's limits as the same value
         // from a script is, and the reference frame. Its motors keep their saved directions and do not run until a script
         // sets them, as on ubODE.
+        //
+        // With the InWorldz presets (VehiclePresetSet.Legacy) the record is not what the script's vehicle held: the
+        // record starts from the simulator's preset for the type (SOPVehicle.ProcessTypeChange: one value for each motor
+        // timescale and decay, a type's own flags; no preset at all for the two InWorldz types) and holds what the script
+        // changed, where the vehicle starts from the InWorldz preset (per-axis timescales, the type's flags). So a value
+        // that still equals the simulator's preset is not the script's and keeps the InWorldz preset's; one that differs
+        // is the script's and is applied as the same script call is (a float timescale on all three axes). A flag is
+        // taken from the record only where the record differs from the simulator's preset flags. A script that sets a
+        // value to exactly the simulator's preset value cannot be told from one that set nothing; the InWorldz value
+        // stays. With the documented presets the record is applied whole.
         public override void SetVehicle(object pvdata)
         {
             if (pvdata is not VehicleData vd)
@@ -1727,33 +1737,68 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (_vehicle == null)
                 return;
             _reassertZeroesVelocity = _module.IsRegionLoading;
-            _vehicle.RestoreFlags((int)vd.m_flags);
 
-            _vehicle.ProcessVectorVehicleParam(VehicleCode.LINEAR_FRICTION_TIMESCALE, vd.m_linearFrictionTimescale);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_MOTOR_DECAY_TIMESCALE, vd.m_linearMotorDecayTimescale);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_MOTOR_TIMESCALE, vd.m_linearMotorTimescale);
-            _vehicle.ProcessVectorVehicleParam(VehicleCode.LINEAR_MOTOR_OFFSET, vd.m_linearMotorOffset);
+            bool overPreset = _vehicle.Settings.Presets == VehiclePresetSet.Legacy;
+            VehicleData simulatorPreset = default;
+            if (overPreset)
+            {
+                var preset = new OpenSim.Region.Framework.Scenes.SOPVehicle();
+                preset.ProcessTypeChange(vd.m_type);
+                simulatorPreset = preset.vd;
+                _vehicle.RestoreFlagsOverPreset((int)vd.m_flags, (int)simulatorPreset.m_flags);
+            }
+            else
+                _vehicle.RestoreFlags((int)vd.m_flags);
 
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_MOTOR_TIMESCALE, vd.m_angularMotorTimescale);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_MOTOR_DECAY_TIMESCALE, vd.m_angularMotorDecayTimescale);
-            _vehicle.ProcessVectorVehicleParam(VehicleCode.ANGULAR_FRICTION_TIMESCALE, vd.m_angularFrictionTimescale);
+            // Whether the record's value is the script's: always with the documented presets, otherwise when it differs.
+            bool Script(float record, float preset) => !overPreset || record != preset;
+            bool ScriptVector(Vector3 record, Vector3 preset) => !overPreset || record != preset;
 
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_DEFLECTION_EFFICIENCY, vd.m_angularDeflectionEfficiency);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_DEFLECTION_TIMESCALE, vd.m_angularDeflectionTimescale);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_DEFLECTION_EFFICIENCY, vd.m_linearDeflectionEfficiency);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_DEFLECTION_TIMESCALE, vd.m_linearDeflectionTimescale);
+            if (ScriptVector(vd.m_linearFrictionTimescale, simulatorPreset.m_linearFrictionTimescale))
+                _vehicle.ProcessVectorVehicleParam(VehicleCode.LINEAR_FRICTION_TIMESCALE, vd.m_linearFrictionTimescale);
+            if (Script(vd.m_linearMotorDecayTimescale, simulatorPreset.m_linearMotorDecayTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_MOTOR_DECAY_TIMESCALE, vd.m_linearMotorDecayTimescale);
+            if (Script(vd.m_linearMotorTimescale, simulatorPreset.m_linearMotorTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_MOTOR_TIMESCALE, vd.m_linearMotorTimescale);
+            if (ScriptVector(vd.m_linearMotorOffset, simulatorPreset.m_linearMotorOffset))
+                _vehicle.ProcessVectorVehicleParam(VehicleCode.LINEAR_MOTOR_OFFSET, vd.m_linearMotorOffset);
 
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.BANKING_EFFICIENCY, vd.m_bankingEfficiency);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.BANKING_MIX, vd.m_bankingMix);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.BANKING_TIMESCALE, vd.m_bankingTimescale);
+            if (Script(vd.m_angularMotorTimescale, simulatorPreset.m_angularMotorTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_MOTOR_TIMESCALE, vd.m_angularMotorTimescale);
+            if (Script(vd.m_angularMotorDecayTimescale, simulatorPreset.m_angularMotorDecayTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_MOTOR_DECAY_TIMESCALE, vd.m_angularMotorDecayTimescale);
+            if (ScriptVector(vd.m_angularFrictionTimescale, simulatorPreset.m_angularFrictionTimescale))
+                _vehicle.ProcessVectorVehicleParam(VehicleCode.ANGULAR_FRICTION_TIMESCALE, vd.m_angularFrictionTimescale);
 
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.HOVER_HEIGHT, vd.m_VhoverHeight);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.HOVER_EFFICIENCY, vd.m_VhoverEfficiency);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.HOVER_TIMESCALE, vd.m_VhoverTimescale);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.BUOYANCY, vd.m_VehicleBuoyancy);
+            if (Script(vd.m_angularDeflectionEfficiency, simulatorPreset.m_angularDeflectionEfficiency))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_DEFLECTION_EFFICIENCY, vd.m_angularDeflectionEfficiency);
+            if (Script(vd.m_angularDeflectionTimescale, simulatorPreset.m_angularDeflectionTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_DEFLECTION_TIMESCALE, vd.m_angularDeflectionTimescale);
+            if (Script(vd.m_linearDeflectionEfficiency, simulatorPreset.m_linearDeflectionEfficiency))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_DEFLECTION_EFFICIENCY, vd.m_linearDeflectionEfficiency);
+            if (Script(vd.m_linearDeflectionTimescale, simulatorPreset.m_linearDeflectionTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_DEFLECTION_TIMESCALE, vd.m_linearDeflectionTimescale);
 
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.VERTICAL_ATTRACTION_EFFICIENCY, vd.m_verticalAttractionEfficiency);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.VERTICAL_ATTRACTION_TIMESCALE, vd.m_verticalAttractionTimescale);
+            if (Script(vd.m_bankingEfficiency, simulatorPreset.m_bankingEfficiency))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.BANKING_EFFICIENCY, vd.m_bankingEfficiency);
+            if (Script(vd.m_bankingMix, simulatorPreset.m_bankingMix))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.BANKING_MIX, vd.m_bankingMix);
+            if (Script(vd.m_bankingTimescale, simulatorPreset.m_bankingTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.BANKING_TIMESCALE, vd.m_bankingTimescale);
+
+            if (Script(vd.m_VhoverHeight, simulatorPreset.m_VhoverHeight))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.HOVER_HEIGHT, vd.m_VhoverHeight);
+            if (Script(vd.m_VhoverEfficiency, simulatorPreset.m_VhoverEfficiency))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.HOVER_EFFICIENCY, vd.m_VhoverEfficiency);
+            if (Script(vd.m_VhoverTimescale, simulatorPreset.m_VhoverTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.HOVER_TIMESCALE, vd.m_VhoverTimescale);
+            if (Script(vd.m_VehicleBuoyancy, simulatorPreset.m_VehicleBuoyancy))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.BUOYANCY, vd.m_VehicleBuoyancy);
+
+            if (Script(vd.m_verticalAttractionEfficiency, simulatorPreset.m_verticalAttractionEfficiency))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.VERTICAL_ATTRACTION_EFFICIENCY, vd.m_verticalAttractionEfficiency);
+            if (Script(vd.m_verticalAttractionTimescale, simulatorPreset.m_verticalAttractionTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.VERTICAL_ATTRACTION_TIMESCALE, vd.m_verticalAttractionTimescale);
 
             _vehicle.RestoreMotorDirections(vd.m_linearMotorDirection, vd.m_angularMotorDirection);
             _vehicle.ProcessRotationVehicleParam(VehicleCode.REFERENCE_FRAME, vd.m_referenceFrame);
