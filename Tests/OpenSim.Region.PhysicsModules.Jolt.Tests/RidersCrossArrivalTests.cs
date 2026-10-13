@@ -281,6 +281,62 @@ public class RidersCrossArrivalTests
         finally { scene.Dispose(); }
     }
 
+    // ------------------------------------------------------------------ 3c: the flag is there from creation
+
+    // Another thread stepping the region can run a whole step between the moment the character is made and the moment its
+    // creator has it back. The hook stands in for that thread: it steps the scene from inside the creation.
+    private static (JoltCharacter Avatar, bool FlagSeenAtCreation) ArriveWhileTheRegionSteps(JoltScene scene, Vector3 at, bool allowOutside)
+    {
+        bool seen = false;
+        scene.AvatarCreatedHook = c =>
+        {
+            seen = c.AllowOutsideRegion;
+            for (int i = 0; i < 3; i++)
+                scene.Simulate(Heartbeat);
+        };
+        PhysicsActor pa = scene.AddAvatar(AvatarId, "Test User", at, Run.AvatarSize, 0f, false, allowOutside);
+        scene.AvatarCreatedHook = null;
+        pa.SubscribeEvents(100);
+        return (Assert.IsType<JoltCharacter>(pa), seen);
+    }
+
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(45f)]
+    public void An_avatar_added_with_the_flag_has_it_from_creation_and_is_not_pulled_inside_by_a_step_in_between(float physicsRate)
+    {
+        JoltScene scene = NewScene(physicsRate);
+        try
+        {
+            Platform(scene, -1f);
+            float seat = PlatformTop + StandHalf;
+            var (av, seen) = ArriveWhileTheRegionSteps(scene, new Vector3(-2f, 128f, seat + 0.05f), allowOutside: true);
+            Step(scene, 11);
+            Say($"RIDE added with the flag, stepped during creation: avatar at {av.Position}, flag at creation {seen}");
+            Assert.True(seen, "the flag was not set when the region could first step the character");
+            Assert.True(av.AllowOutsideRegion);
+            Assert.InRange(av.Position.X, -2.05f, -1.95f);
+        }
+        finally { scene.Dispose(); }
+    }
+
+    [Fact]
+    public void An_avatar_added_without_the_flag_is_still_pulled_inside()
+    {
+        JoltScene scene = NewScene(0f);
+        try
+        {
+            Platform(scene, -1f);
+            float seat = PlatformTop + StandHalf;
+            var (av, seen) = ArriveWhileTheRegionSteps(scene, new Vector3(-2f, 128f, seat + 0.05f), allowOutside: false);
+            Step(scene, 3);
+            Assert.False(seen);
+            Assert.False(av.AllowOutsideRegion);
+            Assert.InRange(av.Position.X, 0.009f, 0.5f);
+        }
+        finally { scene.Dispose(); }
+    }
+
     [Fact]
     public void A_carried_avatar_is_pulled_inside_by_the_clamp_once_it_is_no_longer_carried()
     {

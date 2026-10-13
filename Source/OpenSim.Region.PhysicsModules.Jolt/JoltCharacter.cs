@@ -92,8 +92,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal float FeetOffset => _feetOffset;
 
         internal JoltCharacter(JoltScene module, IPhysicsBackend backend, uint localid, string name,
-                               Vector3 position, Vector3 size, float feetOffset, bool isFlying)
+                               Vector3 position, Vector3 size, float feetOffset, bool isFlying, bool allowOutsideRegion = false)
         {
+            // set before the controller exists: it is stepped from the moment CreateCharacterInternal has made it
+            AllowOutsideRegion = allowOutsideRegion;
             _module = module;
             _backend = backend;
             LocalID = localid;

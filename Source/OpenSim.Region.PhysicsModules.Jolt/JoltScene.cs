@@ -1080,7 +1080,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override PhysicsActor AddAvatar(uint localID, string avName, Vector3 position, Vector3 size, float feetOffset, bool isFlying)
             => CreateAvatar(localID, avName, position, Vector3.Zero, size, feetOffset, isFlying);
 
-        private PhysicsActor CreateAvatar(uint localID, string avName, Vector3 position, Vector3 velocity, Vector3 size, float feetOffset, bool isFlying)
+        // The avatar of an object that carried it in, outside the region, is made with the flag set: the region steps on
+        // its own thread, and a step between the character's creation and a flag set by the caller would pull it inside.
+        public override PhysicsActor AddAvatar(uint localID, string avName, Vector3 position, Vector3 size, float feetOffset, bool isFlying, bool allowOutsideRegion)
+            => CreateAvatar(localID, avName, position, Vector3.Zero, size, feetOffset, isFlying, allowOutsideRegion);
+
+        // Test seam: called on the creating thread once the new character is registered, before the caller has it back.
+        // A test steps the scene from here, which is what another thread stepping the region could do at that moment.
+        internal Action<JoltCharacter> AvatarCreatedHook;
+
+        private PhysicsActor CreateAvatar(uint localID, string avName, Vector3 position, Vector3 velocity, Vector3 size, float feetOffset, bool isFlying, bool allowOutsideRegion = false)
         {
             IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
             if (backend == null)
@@ -1108,12 +1117,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             float centreZ = ArrivalCentreZ(position.Z, terrainZ, standHalf, feetOffset);
             var spawn = new Vector3(position.X, position.Y, centreZ);
 
-            var jc = new JoltCharacter(this, backend, localID, avName, spawn, size, feetOffset, isFlying);
+            var jc = new JoltCharacter(this, backend, localID, avName, spawn, size, feetOffset, isFlying, allowOutsideRegion);
             if (velocity != Vector3.Zero)
                 jc.SetMomentum(velocity);
 
             lock (_avatars)
                 _avatars[jc.CharacterHandle.Value] = jc;
+
+            AvatarCreatedHook?.Invoke(jc);
 
             string lifted = centreZ != position.Z ? " (lifted onto the terrain)" : "";
             m_log.LogInformation($"{LogHeader} avatar '{avName}' id={localID} placed at ({position.X:0},{position.Y:0}) askedZ={position.Z:0.000} centreZ={spawn.Z:0.000}{lifted} terrainZ={terrainZ:0.00} standHalf={standHalf:0.000} feetOffset={feetOffset:0.000} flying={isFlying}.");
