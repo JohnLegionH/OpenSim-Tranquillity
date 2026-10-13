@@ -1168,6 +1168,10 @@ public class OdeCharacter : PhysicsActor
             fixbody = true;
             _position.X = 128f;
         }
+        else if (AllowOutsideRegion)
+        {
+            // carried by an object that crossed in: the avatar may stand outside the region (see PhysicsActor)
+        }
         else if (_position.X < 0.0f)
         {
             fixbody = true;
@@ -1183,6 +1187,9 @@ public class OdeCharacter : PhysicsActor
         {
             fixbody = true;
             _position.Y = 128f;
+        }
+        else if (AllowOutsideRegion)
+        {
         }
         else if (_position.Y < 0.0f)
         {

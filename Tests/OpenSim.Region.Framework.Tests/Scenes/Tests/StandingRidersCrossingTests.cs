@@ -11,6 +11,7 @@ using OpenSim.Framework;
 using OpenSim.Region.CoreModules.Framework;
 using OpenSim.Region.CoreModules.Framework.EntityTransfer;
 using OpenSim.Region.CoreModules.ServiceConnectorsOut.Simulation;
+using OpenSim.Region.PhysicsModules.SharedBase;
 using OpenSim.Tests.Common;
 
 namespace OpenSim.Region.Framework.Scenes.Tests;
@@ -45,7 +46,7 @@ public class StandingRidersCrossingTests : OpenSimTestCase
         base.Dispose();
     }
 
-    private void SetupTwoRegions()
+    private void SetupTwoRegions(float platformSize = 0.5f)
     {
         EntityTransferModule etmA = new();
         EntityTransferModule etmB = new();
@@ -70,6 +71,8 @@ public class StandingRidersCrossingTests : OpenSimTestCase
 
         m_platform = SceneHelpers.AddSceneObject(m_sceneA, 1, TestHelpers.ParseTail(0x1), "", 0x2);
         m_platformId = m_platform.UUID;
+        if (platformSize != 0.5f)
+            m_platform.RootPart.Scale = new Vector3(platformSize, platformSize, 0.5f);
         m_platform.AbsolutePosition = PlatformStart;
     }
 
@@ -210,6 +213,192 @@ public class StandingRidersCrossingTests : OpenSimTestCase
         CrossPlatform();
 
         Assert.True(m_sceneA.GetScenePresence(edge.UUID).IsChildAgent);
+    }
+
+    // ---- arrival outside the new region's bounds: a rider behind the object's centre lands past the edge ----
+
+    // 8 m platform crossing towards -y: a rider 3 m behind its centre arrives 2.8 m past the destination's far edge
+    private static readonly Vector3 BehindCentre = new(0f, 3f, 0.1f);
+
+    private static ContactPoint Feet(float z) => new(new Vector3(0, 0, z), new Vector3(0, 0, -1), 0f, true);
+
+    private static void Report(ScenePresence sp, double t, uint objectId)
+        => sp.UpdateSoftLink(new Dictionary<uint, ContactPoint> { { objectId, Feet(20f) } }, t);
+
+    // The engine names the platform for the first quarter second, then the avatar is on the object for good.
+    private static void StandOn(ScenePresence sp, uint platformLocalId)
+    {
+        Report(sp, 0, platformLocalId);
+        Report(sp, RideOnLimits.StartMs, platformLocalId);
+    }
+
+    // Ground only (id 0) for longer than the break time: the avatar has walked off.
+    private static void WalkOff(ScenePresence sp, double from)
+    {
+        for (double t = from; t <= from + RideOnLimits.BreakMs + 100; t += 100)
+            Report(sp, t, 0);
+    }
+
+    // One physics step and one update of the presence in the second region, the way a frame runs them (the scene's own
+    // update loop decides by the wall clock whether it steps physics, which a test cannot wait for).
+    private void Frames(ScenePresence sp, int count)
+    {
+        // A presence skips its update (and with it the border check) until the viewer's handshake and caps have
+        // come in; the fixture has no viewer, so mark the initial data as sent.
+        typeof(ScenePresence).GetField("NeedInitialData", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            .SetValue(sp, -1);
+        for (int i = 0; i < count; i++)
+        {
+            m_sceneB.PhysicsScene.Simulate(m_sceneB.FrameTime);
+            sp.Update();
+        }
+    }
+
+    private ScenePresence ArriveBehindCentre(out SceneObjectGroup arrived)
+    {
+        SetupTwoRegions(platformSize: 8f);
+        ScenePresence rider = AddAvatar(0x11, BehindCentre, linked: true);
+        CrossPlatform();
+        arrived = m_sceneB.GetSceneObjectGroup(m_platformId);
+        Assert.NotNull(arrived);
+        ScenePresence riderB = Arrive(rider.UUID);
+        Assert.False(riderB.IsChildAgent);
+        return riderB;
+    }
+
+    [Fact]
+    public void A_rider_behind_the_centre_arrives_outside_the_bounds_at_its_exact_offset_and_is_carried()
+    {
+        TestHelpers.InMethod();
+        ScenePresence riderB = ArriveBehindCentre(out SceneObjectGroup arrived);
+
+        Vector3 expected = arrived.AbsolutePosition + BehindCentre;
+        Assert.True(expected.Y > m_sceneB.RegionInfo.RegionSizeY, $"the test needs an arrival outside the bounds, not {expected}");
+        Assert.InRange(Vector3.Distance(riderB.AbsolutePosition, expected), 0f, 0.05f);
+        Assert.Equal(m_platformId, riderB.CarriedByGroup);
+
+        // the border check would send it straight back to the first region: it must not, while carried
+        Frames(riderB, 5);
+        Assert.False(riderB.IsChildAgent);
+        Assert.False(riderB.IsInTransit);
+        Assert.InRange(Vector3.Distance(riderB.AbsolutePosition, expected), 0f, 0.05f);
+        Assert.True(m_sceneA.GetScenePresence(riderB.UUID).IsChildAgent);
+        Assert.True(riderB.PhysicsActor.AllowOutsideRegion);
+    }
+
+    [Fact]
+    public void A_carried_rider_outside_the_bounds_can_teleport_within_the_region()
+    {
+        TestHelpers.InMethod();
+        ScenePresence riderB = ArriveBehindCentre(out SceneObjectGroup _);
+        Assert.True(riderB.AbsolutePosition.Y > m_sceneB.RegionInfo.RegionSizeY, "the rider must be outside the bounds");
+        m_sceneB.Update(4);
+
+        Vector3 target = new(100f, 100f, 30f);
+        m_sceneB.RequestTeleportLocation(riderB.ControllingClient, m_sceneB.RegionInfo.RegionHandle, target,
+            Vector3.UnitX, (uint)TeleportFlags.ViaLocation);
+
+        Assert.False(riderB.IsInTransit);
+        Assert.InRange(Vector3.Distance(riderB.AbsolutePosition, target), 0f, 0.5f);
+        Assert.False(riderB.IsChildAgent);
+        Assert.Equal(UUID.Zero, riderB.CarriedByGroup);
+        Assert.False(riderB.PhysicsActor.AllowOutsideRegion);
+
+        // and it stays there (the test engine settles height onto the terrain, so only x and y are compared)
+        m_sceneB.Update(4);
+        Assert.InRange(Vector2.Distance(new Vector2(riderB.AbsolutePosition.X, riderB.AbsolutePosition.Y),
+            new Vector2(target.X, target.Y)), 0f, 0.5f);
+        Assert.False(riderB.IsChildAgent);
+    }
+
+    [Fact]
+    public void A_carried_rider_that_walks_off_the_object_outside_the_bounds_is_sent_back_by_the_border_check()
+    {
+        TestHelpers.InMethod();
+        ScenePresence riderB = ArriveBehindCentre(out SceneObjectGroup arrived);
+        uint platformId = arrived.RootPart.LocalId;
+        StandOn(riderB, platformId);
+        Frames(riderB, 3);
+        Assert.False(riderB.IsChildAgent);
+
+        // it walks off the far side, away from the region it is standing in
+        riderB.Velocity = new Vector3(0f, 2f, 0f);
+        WalkOff(riderB, 300);
+        Assert.Equal(UUID.Zero, riderB.CarriedByGroup);
+        Assert.False(riderB.PhysicsActor.AllowOutsideRegion);
+
+        // The ordinary border check takes over: the first region is there, so a crossing back to it starts. In this
+        // two-region fixture a crossing back from an avatar that arrived by crossing does not complete, so the test
+        // reads the attempt: the avatar either became a child agent or, its crossing failed, was put back into
+        // physics with a new actor (CrossToNewRegionFail).
+        PhysicsActor before = riderB.PhysicsActor;
+        Frames(riderB, 1);
+        Assert.True(riderB.IsChildAgent || !ReferenceEquals(before, riderB.PhysicsActor),
+            "no crossing was attempted after the carry ended");
+        Assert.False(riderB.IsInTransit);
+    }
+
+    [Fact]
+    public void A_carried_rider_that_walks_off_the_object_past_an_edge_with_no_neighbour_is_held_inside()
+    {
+        TestHelpers.InMethod();
+        ScenePresence riderB = ArriveBehindCentre(out SceneObjectGroup arrived);
+        uint platformId = arrived.RootPart.LocalId;
+        StandOn(riderB, platformId);
+
+        // carried 3 m past the west edge, where no region lies
+        riderB.AbsolutePosition = new Vector3(-3f, 100f, 25f);
+        Frames(riderB, 3);
+        Assert.False(riderB.IsChildAgent);
+        Assert.InRange(riderB.AbsolutePosition.X, -3.001f, -2.999f);
+
+        WalkOff(riderB, 300);
+        Frames(riderB, 1);
+
+        // one pull back inside, not an attempt every frame
+        Assert.False(riderB.IsChildAgent);
+        Assert.False(riderB.IsInTransit);
+        Vector3 held = riderB.AbsolutePosition;
+        Assert.InRange(held.X, 0f, 1f);
+        Frames(riderB, 5);
+        Assert.Equal(held, riderB.AbsolutePosition);
+        Assert.False(riderB.IsInTransit);
+    }
+
+    [Fact]
+    public void A_carried_rider_whose_link_never_forms_is_not_exempt_for_ever()
+    {
+        TestHelpers.InMethod();
+        ScenePresence riderB = ArriveBehindCentre(out SceneObjectGroup _);
+
+        // reports that never name the object (it was never under the avatar here)
+        for (double t = 0; t <= RideOnLimits.CarriedGraceMs + 200; t += 100)
+            Report(riderB, t, 0);
+
+        Assert.Equal(UUID.Zero, riderB.CarriedByGroup);
+        Assert.False(riderB.PhysicsActor.AllowOutsideRegion);
+    }
+
+    [Fact]
+    public void A_carried_rider_inside_the_bounds_arrives_exactly_and_an_ordinary_avatar_has_no_exemption()
+    {
+        TestHelpers.InMethod();
+        SetupTwoRegions();
+        Vector3 offset = new(0.5f, 0f, 0.1f);
+        ScenePresence rider = AddAvatar(0x11, offset, linked: true);
+        CrossPlatform();
+        SceneObjectGroup arrived = m_sceneB.GetSceneObjectGroup(m_platformId);
+        ScenePresence riderB = Arrive(rider.UUID);
+
+        Assert.InRange(Vector3.Distance(riderB.AbsolutePosition, arrived.AbsolutePosition + offset), 0f, 0.05f);
+        for (int i = 0; i < 3; i++)
+            m_sceneB.Update(4);
+        Assert.False(riderB.IsChildAgent);
+
+        // an avatar nobody carries: no exemption, and the border check applies as it always did
+        ScenePresence walker = SceneHelpers.AddScenePresence(m_sceneB, TestHelpers.ParseTail(0x31));
+        Assert.False(walker.PhysicsActor.AllowOutsideRegion);
+        Assert.Equal(UUID.Zero, walker.CarriedByGroup);
     }
 
     [Fact]

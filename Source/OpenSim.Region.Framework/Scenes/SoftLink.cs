@@ -29,6 +29,12 @@ public static class RideOnLimits
     /// <summary>How far outside the object's horizontal bounds a standing avatar may be and still be carried (m).</summary>
     public const float PositionGate = 1.0f;
 
+    /// <summary>
+    /// How long an avatar that arrived carried by an object may go without being linked to it, counted over contact
+    /// reports, before it is an ordinary avatar again and the engine may pull it inside the region (ms).
+    /// </summary>
+    public const int CarriedGraceMs = 3000;
+
     /// <summary>How long a region that received a crossing object waits for its riders before it runs it (ms).</summary>
     public const int ArriveHoldMs = 10000;
 }
