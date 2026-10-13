@@ -193,6 +193,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         private void KeepInRegion()
         {
+            // an avatar carried in by an object stands where the object puts it, possibly outside the region
+            if (AllowOutsideRegion)
+                return;
             float maxX = _module.RegionSizeX - EdgeMargin, maxY = _module.RegionSizeY - EdgeMargin;
             float x = Math.Clamp(_position.X, EdgeMargin, maxX), y = Math.Clamp(_position.Y, EdgeMargin, maxY);
             if (x == _position.X && y == _position.Y)

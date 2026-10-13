@@ -218,6 +218,109 @@ public class RidersCrossArrivalTests
         finally { scene.Dispose(); }
     }
 
+    // ------------------------------------------------------------------ 3b: a carried avatar is exempt from the clamp
+
+    // Core sets AllowOutsideRegion on the actor of an avatar that an object carried in, right after AddAvatar.
+    private static JoltCharacter ArriveCarried(JoltScene scene, Vector3 at)
+    {
+        PhysicsActor pa = scene.AddAvatar(AvatarId, "Test User", at, Run.AvatarSize, 0f, false);
+        pa.AllowOutsideRegion = true;
+        pa.SubscribeEvents(100);
+        return Assert.IsType<JoltCharacter>(pa);
+    }
+
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(45f)]
+    public void A_carried_avatar_made_west_of_the_region_over_a_platform_stays_where_it_was_put(float physicsRate)
+    {
+        JoltScene scene = NewScene(physicsRate);
+        try
+        {
+            JoltPrim plat = Platform(scene, -1f);            // spans x from -4 to 2
+            float seat = PlatformTop + StandHalf;
+            JoltCharacter av = ArriveCarried(scene, new Vector3(-2f, 128f, seat + 0.05f));
+            Step(scene, 55);
+            Say($"RIDE carried, west of the region, rate {physicsRate:0}: avatar at {av.Position}");
+            Assert.InRange(av.Position.X, -2.05f, -1.95f);
+            Assert.True(av.IsSupported, $"not supported at {av.Position}");
+            Assert.True(av.GroundBody.IsValid && av.GroundBody.Value == plat.BodyHandle.Value, $"not standing on the platform at {av.Position}");
+            Assert.InRange(av.Position.Z, seat - Tolerance, seat + Tolerance);
+        }
+        finally { scene.Dispose(); }
+    }
+
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(45f)]
+    public void A_carried_avatar_stays_on_its_platform_when_the_platform_is_wholly_outside_the_region(float physicsRate)
+    {
+        JoltScene scene = NewScene(physicsRate);
+        try
+        {
+            JoltPrim plat = Platform(scene, 4f);
+            Vector3 start = plat.Position;
+            float seat = PlatformTop + StandHalf;
+            JoltCharacter av = ArriveCarried(scene, new Vector3(4f, 128f, seat + 0.01f));
+            Step(scene, 22);
+            Vector3 offset0 = av.Position - plat.Position;
+            plat.MovedByKeyframedMotion = true;
+            double maxDrift = 0;
+            for (int h = 1; h <= 121; h++)                   // 11 m west: the platform ends centred on x = -7
+            {
+                plat.Position = start - new Vector3(h * Heartbeat, 0f, 0f);
+                scene.Simulate(Heartbeat);
+                maxDrift = Math.Max(maxDrift, (av.Position - plat.Position - offset0).Length());
+            }
+            Say($"RIDE carried out of the region, rate {physicsRate:0}: avatar at {av.Position}, platform at {plat.Position}, most off its place {F(maxDrift)} m");
+            Assert.True(av.Position.X < -5f, $"the avatar is at {av.Position}");
+            Assert.True(av.IsSupported);
+            Assert.True(av.GroundBody.IsValid && av.GroundBody.Value == plat.BodyHandle.Value, "not standing on the platform");
+            Assert.True(maxDrift <= Tolerance, $"the avatar was {maxDrift:0.000} m off its place on the platform");
+        }
+        finally { scene.Dispose(); }
+    }
+
+    [Fact]
+    public void A_carried_avatar_is_pulled_inside_by_the_clamp_once_it_is_no_longer_carried()
+    {
+        JoltScene scene = NewScene(0f);
+        try
+        {
+            Platform(scene, -1f);
+            float seat = PlatformTop + StandHalf;
+            JoltCharacter av = ArriveCarried(scene, new Vector3(-2f, 128f, seat + 0.05f));
+            Step(scene, 22);
+            Assert.InRange(av.Position.X, -2.05f, -1.95f);
+
+            av.AllowOutsideRegion = false;                   // core: the link ended
+            Step(scene, 3);
+            Say($"RIDE no longer carried: avatar at {av.Position}");
+            Assert.InRange(av.Position.X, 0.009f, 0.5f);
+            float held = av.Position.X;
+            Step(scene, 11);
+            Assert.InRange(av.Position.X, held - 0.05f, held + 0.05f);
+        }
+        finally { scene.Dispose(); }
+    }
+
+    [Fact]
+    public void The_exemption_does_not_change_an_avatar_inside_the_region()
+    {
+        JoltScene scene = NewScene(0f);
+        try
+        {
+            Platform(scene, 100f);
+            float seat = PlatformTop + StandHalf;
+            JoltCharacter av = ArriveCarried(scene, new Vector3(101f, 128f, seat + 0.01f));
+            Step(scene, 33);
+            Assert.InRange(av.Position.X, 100.95f, 101.05f);
+            Assert.InRange(av.Position.Y, 127.95f, 128.05f);
+            Assert.InRange(av.Position.Z, seat - Tolerance, seat + Tolerance);
+        }
+        finally { scene.Dispose(); }
+    }
+
     // ------------------------------------------------------------------ 4: a failed crossing
 
     [Theory]
