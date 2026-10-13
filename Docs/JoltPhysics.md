@@ -920,8 +920,11 @@ stands on it from the first step and is carried by it without a drop (measured t
 both step modes, `RidersCrossArrivalTests`). An avatar taken out of physics and made again at the same
 place on its platform, as a failed region crossing does, is carried again. While it stands on a platform
 its feet contact names the platform's root in every collision report, moving or still. Every avatar is
-also held inside the region's edges after each step, so one carried past the edge by a platform is held
-at the edge and left behind by the platform.
+also held inside the region's edges after each step, so one carried past the edge by a platform would be held
+at the edge and left behind by the platform. The region exempts an avatar that a crossing object carried in:
+it sets `AllowOutsideRegion` on the avatar's actor (a rider behind the object's centre arrives outside the
+region), and while it is set the avatar stays where the platform puts it, even with the platform wholly outside
+the region. The region clears it when the avatar leaves the object, and the edge hold then applies again.
 
 ## What an avatar stands on
 

@@ -202,6 +202,13 @@ public abstract class PhysicsActor
 #pragma warning restore 67
 
 
+    /// <summary>
+    /// Set by the region for an avatar that an object carries across a border: the avatar may be outside the region's
+    /// bounds (it stands behind the object's centre, which has just crossed in) and the engine must not pull it inside.
+    /// Only avatar actors read it. Cleared as soon as the avatar is no longer carried.
+    /// </summary>
+    public bool AllowOutsideRegion { get; set; }
+
     public CameraData TryGetCameraData()
     {
         GetCameraData handler = OnPhysicsRequestingCameraData;
