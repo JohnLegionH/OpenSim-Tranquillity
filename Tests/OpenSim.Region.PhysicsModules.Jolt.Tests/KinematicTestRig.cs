@@ -1,4 +1,4 @@
-/* Copyright (c) Legion Builds
+/* Copyright (c) 2026 Legion Builds
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -6,6 +6,7 @@
  */
 
 using OpenMetaverse;
+using OpenSim.Framework;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
 using OpenSim.Region.PhysicsModules.Jolt.Harness;
 using OpenSim.Region.PhysicsModules.SharedBase;
@@ -16,6 +17,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// and the heartbeat hooks the kinematic tests need.</summary>
 internal static class KinematicTestRig
 {
+    private const uint SampledBoxLocalId = 1999u;
+
     public static Scenario Platform(string rider, float duration, Action<Run> input, Action<Run> setup = null)
         => new()
         {
@@ -30,8 +33,14 @@ internal static class KinematicTestRig
                     r.AddBox(new Vector3(0.5f, 0.5f, 0.5f), new Vector3(start.X, start.Y, top + 0.26f), Quaternion.Identity);
                 else if (rider == "avatar")
                     r.AddAvatarAt(new Vector3(start.X, start.Y, top + r.AvatarStandHalf + 0.05f), false);
-                else   // a box on the ground far from the platform: the run needs an actor to sample
-                    r.AddBox(new Vector3(0.5f, 0.5f, 0.5f), new Vector3(60f, 60f, r.GroundAt(60f, 60f) + 0.26f), Quaternion.Identity);
+                else
+                {
+                    // A box on the ground far from the platform: the run needs an actor to sample. It has an id of its own: a test
+                    // that adds its rider later (through AddBox or AddAvatarAt, which use the run's actor id) would otherwise have two
+                    // bodies with one id, and the rider's place read now and then as this box's.
+                    r.Actor = r.AddPart(PrimitiveBaseShape.CreateBox(), new Vector3(0.5f, 0.5f, 0.5f), new Vector3(60f, 60f, r.GroundAt(60f, 60f) + 0.26f), Quaternion.Identity, true, SampledBoxLocalId);
+                    r.ActorSize = new Vector3(0.5f, 0.5f, 0.5f);
+                }
                 setup?.Invoke(r);
             },
             Input = input,

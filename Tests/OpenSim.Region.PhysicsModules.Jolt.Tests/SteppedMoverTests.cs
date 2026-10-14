@@ -51,7 +51,7 @@ public class SteppedMoverTests
         RunResult run = KinematicTestRig.Run(KinematicScenarios.Motion(rider, up, 2f, keyframed, keyframed, 0.05, uneven ? Uneven : null), rate,
             how == "steps-on" ? new[] { On } : new (string, string)[0]);
         KinematicScenarios.Figures f = KinematicScenarios.Measure(run, up, 2f);
-        Say($"STEP {rider} {(up ? "up" : "side")} rate {rate:0}{(uneven ? " uneven" : "")} {how}: {f.Verdict}, follow {F(f.SteadyFollow)} (whole run {F(f.MaxFollow)}), sink {F(f.MaxSink)} air {F(f.MaxAir)}");
+        Say($"STEP {rider} {(up ? "up" : "side")} rate {rate:0}{(uneven ? " uneven" : "")} {how}: {f.Verdict}, follow {F(f.SteadyFollow)} (whole run {F(f.MaxFollow)}, stop {F(f.StopFollow)}), sink {F(f.MaxSink)} air {F(f.MaxAir)}");
         return f;
     }
 
