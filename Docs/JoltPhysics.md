@@ -676,8 +676,15 @@ uses.
   at no more than 3 m/s, and at least a heartbeat (a step of 0.6 m over 0.2 s), and is fixed again after the quiet time. With the setting
   off nothing changes: a platform lifted 0.6 m by each set throws a cube standing on it.
 - A prim that keyframed motion moves is not affected: the hint decides, whatever this key says, and a keyframed prim's sets every
-  50 ms are not taken for a series. Physical prims, phantom and volume-detect prims and linkset children are not moved this way;
-  a linkset root is, and keeps its body.
+  50 ms are not taken for a series. Physical prims and phantom and volume-detect prims are not moved this way; a linkset root is, and
+  keeps its body.
+- **A child prim moved on its own** (`llSetLinkPrimitiveParams` on a child, the build tool on one child of a linkset whose root is a fixed
+  prim) is part of its root's compound, so its move rebuilds the compound and cannot give its riders a velocity. With the setting on,
+  what stands on the child (physical prims within a few centimetres of it, and avatars whose feet are on its top) takes the child's
+  step with each set: it is moved by the same move and turn, keeping its velocity. A jump (over 4 m or a quarter turn) is not carried.
+  A root that is physical, or that keyframed motion moves (its body carries the whole linkset), is not affected. Harness, a child moved
+  3 m east or up in sets of 0.1 m, two a heartbeat: a cube or an avatar standing on it ends at its place on the child (0.00 m off);
+  with the setting off it is left 3 m behind (a cube, an avatar sideways).
 
 | Key | Default | What it sets |
 |---|---|---|

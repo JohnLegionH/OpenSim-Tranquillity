@@ -2806,6 +2806,52 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             return false;
         }
 
+        // A child prim of a fixed linkset has been set from (fromPos, fromRot) to (toPos, toRot), a box of `size`: what stands on it
+        // or rests on it (a physical prim, an avatar; not the prim `except`, the linkset's root, whose body is the compound) is
+        // moved with it, by the same move and turn. The compound is rebuilt with the child in its new place at the next heartbeat; a
+        // body of its own for the child would be needed to give its riders the child's velocity, so they take the child's steps
+        // instead, one with each set. Used under [Jolt] MovedPrimsCarryRiders: see JoltPrim.MoveWithinLinkset.
+        internal void CarryRidersOfChild(SVector3 fromPos, SQuaternion fromRot, SVector3 toPos, SQuaternion toRot, SVector3 size, uint except)
+        {
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (backend == null)
+                return;
+            SQuaternion turn = SQuaternion.Normalize(toRot * SQuaternion.Inverse(fromRot));
+            SVector3 half = size * 0.5f;
+            Span<BodyId> found = stackalloc BodyId[32];
+            int n = backend.OverlapBox(fromPos, half + new SVector3(SupportWakeMargin), fromRot, QueryFilter.Dynamic, found);
+            for (int i = 0; i < n; i++)
+            {
+                if (!backend.TryGetBodyUserData(found[i], out uint id) || id == except)
+                    continue;
+                JoltPrim prim;
+                lock (_prims)
+                    _prims.TryGetValue(id, out prim);
+                if (prim == null || !backend.TryGetBodyState(prim.BodyHandle, out BodyState st))
+                    continue;
+                SVector3 at = toPos + SVector3.Transform(st.Position - fromPos, turn);
+                backend.SetBodyPoseAndVelocity(prim.BodyHandle, at, SQuaternion.Normalize(turn * st.Orientation), st.LinearVelocity, st.AngularVelocity);
+                prim.WakeAfterSupportMoved();
+            }
+
+            // An avatar stands on the child when its feet are within SupportWakeMargin plus a step of the child's top and its middle is over
+            // the child (the backend's avatar bodies do not tell which avatar they are, so the avatars are tested by where they are).
+            JoltCharacter[] avatars;
+            lock (_avatars)
+                avatars = new List<JoltCharacter>(_avatars.Values).ToArray();
+            SQuaternion unturn = SQuaternion.Inverse(fromRot);
+            foreach (JoltCharacter avatar in avatars)
+            {
+                Vector3 now = avatar.Position;
+                SVector3 rel = SVector3.Transform(new SVector3(now.X, now.Y, now.Z) - fromPos, unturn);
+                float feet = rel.Z - avatar.Size.Z * 0.5f;
+                if (MathF.Abs(rel.X) > half.X || MathF.Abs(rel.Y) > half.Y || feet < half.Z - 0.3f || feet > half.Z + 0.3f)
+                    continue;
+                SVector3 at = toPos + SVector3.Transform(rel, turn);
+                avatar.Position = new Vector3(at.X, at.Y, at.Z);
+            }
+        }
+
         private bool AllStillTouchingAsleep(JoltPrim prim, CollisionEventUpdate set)
         {
             foreach (uint collider in set.m_objCollisionList.Keys)

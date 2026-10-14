@@ -219,6 +219,22 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             return true;
         }
 
+        // A child prim of a fixed linkset is set to a new place on its own (llSetLinkPrimitiveParams on a child, the build tool on one
+        // child): the root's compound is rebuilt with it there, and what stands on the child would be left behind. With [Jolt]
+        // MovedPrimsCarryRiders on, it takes the child's step with it (JoltScene.CarryRidersOfChild). Not for a root that is physical
+        // or that keyframed motion is moving (the root's body carries the linkset then), for a phantom or volume-detect child, and not
+        // for a jump (over KinematicJumpDistance or a quarter turn), which is a set somewhere else, not a motion.
+        private void CarryRidersOfMove(Vector3 wasAt, Quaternion wasTurned)
+        {
+            JoltPrim root = _linkRoot;
+            if (root == null || !_module.MovedPrimsCarryRiders || _module.IsRegionLoading || _isPhantom || _isVolumeDetect
+                || root._isPhysical || root._keyframed)
+                return;
+            if (Vector3.Distance(wasAt, _position) > KinematicJumpDistance || AngleBetween(ToS(wasTurned), ToS(_orientation)) > MoveJumpAngle)
+                return;
+            _module.CarryRidersOfChild(ToS(wasAt), ToS(wasTurned), ToS(_position), ToS(_orientation), ToS(_size), root.LocalID);
+        }
+
         // A series of plain sets arrives in steps (0.2 m every 0.2 s for llSetPos), and a body that took each step in one
         // heartbeat and then stood still would start and stop what stands on it again and again: a cube on it slides back and
         // falls off. So the body glides from where it is to each new pose over the time the sets are apart (the running mean of
