@@ -1756,9 +1756,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _vehicle.ProcessFloatVehicleParam(VehicleCode.VERTICAL_ATTRACTION_EFFICIENCY, vd.m_verticalAttractionEfficiency);
             _vehicle.ProcessFloatVehicleParam(VehicleCode.VERTICAL_ATTRACTION_TIMESCALE, vd.m_verticalAttractionTimescale);
 
+            RestoreMotorAxes(vd);
             _vehicle.RestoreMotorDirections(vd.m_linearMotorDirection, vd.m_angularMotorDirection);
             _vehicle.ProcessRotationVehicleParam(VehicleCode.REFERENCE_FRAME, vd.m_referenceFrame);
             WakeVehicle();
+        }
+
+        // A value for each axis of the four motor timescales, where the record holds one (a script's vector call writes it;
+        // the record keeps the single values beside it, which the calls above have just applied to all three axes). It goes on
+        // top of them. The controller takes a vector for these four only under VehicleBehaviour = InWorldz and holds a decay to
+        // the region's limit, so under SecondLife this changes nothing, as the same vector from a script changes nothing.
+        private void RestoreMotorAxes(VehicleData vd)
+        {
+            if (vd.m_linearMotorTimescaleAxes is Vector3 lt)
+                _vehicle.ProcessVectorVehicleParam(VehicleCode.LINEAR_MOTOR_TIMESCALE, lt);
+            if (vd.m_linearMotorDecayTimescaleAxes is Vector3 ld)
+                _vehicle.ProcessVectorVehicleParam(VehicleCode.LINEAR_MOTOR_DECAY_TIMESCALE, ld);
+            if (vd.m_angularMotorTimescaleAxes is Vector3 at)
+                _vehicle.ProcessVectorVehicleParam(VehicleCode.ANGULAR_MOTOR_TIMESCALE, at);
+            if (vd.m_angularMotorDecayTimescaleAxes is Vector3 ad)
+                _vehicle.ProcessVectorVehicleParam(VehicleCode.ANGULAR_MOTOR_DECAY_TIMESCALE, ad);
         }
 
         private void EnsureVehicle()
