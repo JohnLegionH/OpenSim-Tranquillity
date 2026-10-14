@@ -1,4 +1,4 @@
-/* Copyright (c) Legion Builds
+/* Copyright (c) 2026 Legion Builds
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -17,10 +17,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
 /// Phantom and volume-detect prims behave as Second Life documents (wiki.secondlife.com):
-/// - llVolumeDetect: "physical object and avatars can pass through the object", and it raises collision_start and
-///   collision_end "when interpenetrating"; the scene passes only those two on (SceneObjectPart.PhysicsCollision).
-/// - STATUS_PHANTOM: "objects and avatars can pass through it"; a physical phantom object collides "with the ground but
-///   will not pass through" and queues land collision events (llVolumeDetect's comparison table).
+/// - llVolumeDetect: physical objects and avatars pass through the object, and it raises collision_start and
+///   collision_end while they interpenetrate it; the scene passes only those two on (SceneObjectPart.PhysicsCollision).
+/// - STATUS_PHANTOM: objects and avatars pass through it; a physical phantom object still collides with the ground
+///   without passing through, and queues land collision events (the comparison table on
+///   wiki.secondlife.com/wiki/LlVolumeDetect).
 /// Each scenario runs in the harness at one physics step per heartbeat (0) and at 45 Hz, with an 11 Hz heartbeat.
 /// Serial with the other native tests: every run steps a real backend on the shared job pool.
 /// </summary>
@@ -297,7 +298,7 @@ public class PhantomAndVolumeDetectTests
         return pa;
     }
 
-    // "When physical they fall through the ground with the risk of going off-world." (llVolumeDetect)
+    // A physical volume detect object falls through the ground, at the risk of leaving the world (wiki.secondlife.com/wiki/LlVolumeDetect)
     [Fact]
     public void A_physical_volume_detect_prim_falls_through_the_ground()
     {

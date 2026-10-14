@@ -21,7 +21,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// SceneObjectGroup.GetMass, the sum of every part's actor Mass, and llApplyImpulse goes through
 /// SceneObjectPart.ApplyImpulse (a local impulse turned by the calling prim's region rotation) to
 /// SceneObjectGroup.applyImpulse, which hands it to the root's actor as a non-push AddForce. The SL wiki: llApplyImpulse
-/// "Applies impulse to object", and an impulse is mass x the change in velocity, so an impulse of the reported mass x 2 m/s
+/// applies an impulse to the object (wiki.secondlife.com/wiki/LlApplyImpulse), and an impulse is mass x the change in velocity, so an impulse of the reported mass x 2 m/s
 /// gives an object at rest a speed of 2 m/s. The objects float (buoyancy 1), so nothing but the impulse moves them. Serial
 /// with the other native tests: every run steps a real backend on the shared job pool.
 /// </summary>

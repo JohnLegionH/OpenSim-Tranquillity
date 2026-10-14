@@ -18,7 +18,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// PhysicsStepRate 45 and with one physics step per heartbeat: what reaches the prim's PhysicsActor from
 /// llSetPhysicsMaterial (Friction, Restitution, GravModifier, Density), PRIM_MATERIAL (SetMaterial) and the prims'
 /// damping ([Jolt] PrimLinearDamping, PrimAngularDamping). The figures are the Second Life wiki's (llSetPhysicsMaterial's
-/// ranges, PRIM_MATERIAL's table, "mass = density * volume"), and ubODE's where the wiki gives none: two touching
+/// ranges, PRIM_MATERIAL's table, mass as density times volume), and ubODE's where the wiki gives none: two touching
 /// surfaces combine as friction sqrt(f1 x f2) and restitution r1 x r2, and gravity is (1 - buoyancy) x the multiplier.
 /// Every scene here has the prim's damping in its prediction. Serial with the other native tests: every run steps a real
 /// backend on the shared job pool.

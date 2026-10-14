@@ -63,9 +63,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private const float DensityScaleFactor = 0.01f;
         private float _simDensity;
 
-        // The physics material: llSetPhysicsMaterial and PRIM_MATERIAL. Ranges from the SL wiki (llSetPhysicsMaterial):
-        // gravity_multiplier "range [-1.0, +28.0], default: 1.0", restitution "range [0.0, 1.0]", friction "range [0.0,
-        // 255.0]", density "range [1.0, 22587.0] kg/m^3, default: 1000.0". A value outside its range is clamped to it; a
+        // The physics material: llSetPhysicsMaterial and PRIM_MATERIAL. Ranges from the SL wiki (llSetPhysicsMaterial,
+        // wiki.secondlife.com/wiki/LlSetPhysicsMaterial): gravity multiplier -1.0 to +28.0 (default 1.0), restitution 0.0 to
+        // 1.0, friction 0.0 to 255.0, density 1.0 to 22587.0 kg/m^3 (default 1000.0). A value outside its range is clamped to it; a
         // non-finite one is refused. Core sets all four on every new actor (SceneObjectPart.AddToPhysics); until then a
         // prim has BodyDesc's friction and restitution.
         private float _friction = BodyDesc.Default.Friction;
@@ -93,9 +93,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         };
 
         // The linear and angular damping of a physical prim that is not a vehicle, per second: [Jolt] PrimLinearDamping and
-        // PrimAngularDamping, 0.05 by default (Jolt's own). The SL wiki gives no figure (llSetPhysicsMaterial: a collision of
-        // two objects with restitution 1.0 "will still not be perfectly elastic due to damping in the physics engine";
-        // llSetAngularVelocity: a spun cube with gravity 0 "slows down over time"). ubODE's, as a rate, are 0.1001 and 0.0250
+        // PrimAngularDamping, 0.05 by default (Jolt's own). The SL wiki gives no figure (llSetPhysicsMaterial notes that two
+        // objects of restitution 1.0 still do not bounce perfectly, because the engine damps; llSetAngularVelocity, that a
+        // spun cube with gravity 0 slows down; wiki.secondlife.com). ubODE's, as a rate, are 0.1001 and 0.0250
         // (ODEPrim: dBodySetDamping(Body, .002f, .0005f), which ODE applies as v x (1 - scale) every 0.020 s step). Jolt
         // applies v x (1 - rate x step) each step, the same decay per second at any step rate. A vehicle has none (its
         // controller does its own friction).
@@ -425,8 +425,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _body = _backend.CreateBody(desc);
 
             // A linkset: each child's own friction and restitution, and a mass that sums each part's volume x its own
-            // density ("Can individual prims in a linked set have different Physics settings? Yes.", SL wiki, Physics
-            // Material Settings test).
+            // density (the SL wiki's Physics Material Settings test page allows different physics settings for each prim in
+            // a linked set).
             if (_body.IsValid && _compoundShape.IsValid && _linkChildren != null)
             {
                 foreach (JoltPrim c in _linkChildren)
@@ -851,8 +851,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // This prim's own mass: core adds up every part's (SceneObjectGroup.GetMass) for llGetMass and llGetObjectMass, as
         // ubODE's per-part mass (ODEPrim.Mass, density x volume for every prim) is added up. A lone physical prim reads its
         // body's mass, the one the engine moves; any other prim (non-physical, a linkset's root or a welded child) its own
-        // volume x density. The SL wiki gives a non-physical object a mass like any other ("Returns a float that is the
-        // mass of object", llGetMass), and "mass = density * volume" (Physics Material Settings test).
+        // volume x density. The SL wiki gives a non-physical object a mass like any other (llGetMass returns the object's
+        // mass, wiki.secondlife.com/wiki/LlGetMass), and mass is density times volume (its Physics Material Settings test).
         public override float Mass
         {
             get
@@ -911,7 +911,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // OpenSim sets pa.Density = SceneObjectPart.Density in AddToPhysics (default 1000). Store it and
         // forward the PHYSICAL density (x DensityScaleFactor) so Jolt's mass matches BulletSim. A live
         // physical body recomputes immediately; a not-yet-physical prim applies it at CreateBodyInternal.
-        // The SL wiki: "mass = density * volume. That volume is the true volume of the shape." (Physics Material Settings
+        // The SL wiki: mass is density times the true volume of the shape (its Physics Material Settings
         // test), and llGetMass is in lindograms, kg / 100. A welded child's density counts in its root's mass.
         public override float Density
         {
@@ -1037,8 +1037,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         public override Vector3 GeometricCenter => _position;
 
-        // llGetCenterOfMass, in region coordinates. The SL wiki: "Returns the vector position of the object's center of
-        // mass in region coordinates." and "If called from a child prim, the child's center of mass is returned instead".
+        // llGetCenterOfMass, in region coordinates. The SL wiki (wiki.secondlife.com/wiki/LlGetCenterOfMass): it gives the
+        // object's centre of mass, and a call from a child prim gives that child's instead.
         // Core reads a physical object's from its root's actor and a child's from the child's actor; for a non-physical
         // object it takes the mass-weighted mean of every part's (SceneObjectGroup.GetCenterOfMass). So a physical
         // linkset's root reports the whole linkset's, each part's weighted by its own volume x density, and every other
@@ -1270,8 +1270,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override float CollisionScore { get; set; }
         public override bool Kinematic { get => false; set { } }
 
-        // llSetBuoyancy as the SL wiki describes it: "A buoyancy value of 0.0 disables the effect", "when buoyancy is
-        // < 1.0, the object sinks", "when buoyancy equals 1.0 it floats", "when buoyancy is > 1.0 the object rises". The
+        // llSetBuoyancy as the SL wiki describes it (wiki.secondlife.com/wiki/LlSetBuoyancy): 0.0 disables the effect, below
+        // 1.0 the object sinks, at 1.0 it floats, above 1.0 it rises. The
         // body's gravity is (1 - buoyancy) of the region's, as ubODE computes it (ODEPrim.Move). A vehicle decides its own
         // gravity (VEHICLE_BUOYANCY); ubODE leaves llSetBuoyancy out for a vehicle too, and the value is kept for when the
         // vehicle is removed.
@@ -1458,8 +1458,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     var kids = new CompoundChild[1 + _linkChildren.Count];
                     kids[0] = new CompoundChild { Shape = _shape, Position = SVector3.Zero, Orientation = SQuaternion.Identity, UserData = LocalID };
                     // Each part's own density in the compound's mass properties, so its centre of mass and inertia follow
-                    // where the mass is ("Can individual prims in a linked set have different Physics settings? Yes.", SL
-                    // wiki, Physics Material Settings test), as ubODE adds each part's own mass at its own place
+                    // where the mass is (the SL wiki's Physics Material Settings test page allows different physics settings
+                    // for each prim in a linked set), as ubODE adds each part's own mass at its own place
                     // (ODEPrim.MakeBody). The densities are relative to the root's, which keeps Jolt's default: the body's
                     // mass is set to the parts' sum just after (CreateBodyInternal), and a linkset of one density is built
                     // exactly as before.
@@ -1498,7 +1498,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
             finally { _rebuilding = false; }
         }
-        // llSetStatus STATUS_ROTATE_X/_Y/_Z: "Can turn along this axis (physical objects only)" (SL wiki, llSetStatus).
+        // llSetStatus STATUS_ROTATE_X/_Y/_Z: whether the object can turn about the axis, for physical objects only
+        // (wiki.secondlife.com/wiki/LlSetStatus).
         // Core hands the root's actor SceneObjectGroup.axisSelect bits, set = locked (0x02 X, 0x04 Y, 0x08 Z), the bits
         // ubODE reads (ODEPrim.createAMotor). Each locked axis is one of the prim's own axes; the body gets an infinite
         // inertia about it (SetBodyRotationLocks), so nothing turns the object about that axis, and locking stops its
@@ -1566,8 +1567,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override void AvatarJump(float forceZ) { }
         public override void SetMomentum(Vector3 momentum) { }
 
-        // Volume detect: "physical object and avatars can pass through the object" and it raises collision_start and
-        // collision_end "when interpenetrating" (llVolumeDetect, wiki.secondlife.com). The body becomes a sensor on the
+        // Volume detect: physical objects and avatars pass through the object, and it raises collision_start and
+        // collision_end while they interpenetrate it (wiki.secondlife.com/wiki/LlVolumeDetect). The body becomes a sensor on the
         // Sensor layer; SceneObjectPart.PhysicsCollision turns its touching set into those two events only.
         public override void SetVolumeDetect(int param)
         {

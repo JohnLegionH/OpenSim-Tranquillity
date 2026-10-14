@@ -22,10 +22,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// Position and Orientation on the part itself when it is edited; and root first, then each child, when the object is
 /// turned physical or not, with delink() after a part turns non-physical. Afterwards the linkset is one body, with the
 /// summed mass of its parts, resting where it rested, and the engine holds no shape it did not hold before. A ray reports
-/// the part it hit: llCastRay "RC_GET_ROOT_KEY: The hit uuid will be replaced by the object's root instead of any child."
-/// and "RC_GET_LINK_NUM: Stride includes the link number that was hit." (wiki.secondlife.com). Each part's own density
-/// places the linkset's centre of mass ("Can individual prims in a linked set have different Physics settings? Yes.",
-/// Physics Material Settings test). Serial with the other native tests: every run steps a real backend on the shared job
+/// the part it hit: llCastRay's RC_GET_ROOT_KEY replaces the hit's uuid with its object's root and RC_GET_LINK_NUM adds
+/// the number of the link that was hit (wiki.secondlife.com/wiki/LlCastRay). Each part's own density
+/// places the linkset's centre of mass (the wiki's Physics Material Settings test page allows different physics settings
+/// for each prim in a linked set). Serial with the other native tests: every run steps a real backend on the shared job
 /// pool.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]

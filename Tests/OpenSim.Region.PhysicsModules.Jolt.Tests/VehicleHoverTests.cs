@@ -123,7 +123,7 @@ public class VehicleHoverTests
     }
 
     // HOVER_GLOBAL_HEIGHT with another hover flag: the global height wins, as Second Life's page for the flag documents
-    // ("Hover at global height instead of height above ground or water") and as InWorldz's hover does (a global
+    // (the flag hovers at the global height rather than above ground or water) and as InWorldz's hover does (a global
     // hover overrides water and ground). Each case also sets the other flag; the course's ground is at 25 m and its
     // water at 20 m, so a vehicle that wrongly used either would settle there plus the height, not at 40 m.
     [Theory]

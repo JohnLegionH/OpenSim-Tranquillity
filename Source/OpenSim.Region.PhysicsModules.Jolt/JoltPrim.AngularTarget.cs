@@ -8,11 +8,12 @@
 // llRotLookAt and llLookAt on a physical prim: a rotation target that acts before every physics step.
 //
 // The engine is handed the target (APIDTarget), how hard to go for it (APIDStrength), how long to take to settle
-// (APIDDamping) and whether it is on (APIDActive). The Second Life wiki says (llRotLookAt) the object turns "smoothly"
-// to the target "with strength resistance at damping force", damping being "seconds to critically damp in", "capped at
-// 1.0; greater values are reduced to 1.0", and "the minimum value for strength seems to be 0.0445 for the function to
-// have any effect"; (llLookAt) "strength is an inverse value meaning lower values cause the object to turn faster" and
-// "damping smooths the objects movements out preventing jitter or sharp movements". Neither page gives a formula.
+// (APIDDamping) and whether it is on (APIDActive). The Second Life wiki says of llRotLookAt
+// (wiki.secondlife.com/wiki/LlRotLookAt) that the object turns smoothly to the target, strength working against damping,
+// damping being the seconds to critically damp in and capped at 1.0 (more is reduced to 1.0), and strength below about
+// 0.0445 having no effect; and of llLookAt (wiki.secondlife.com/wiki/LlLookAt) that strength is an inverse value (a lower
+// one turns the object faster) and damping smooths its movement, preventing jitter and sharp movements. Neither page
+// gives a formula.
 //
 // What is built is a critically damped spring on the rotation, the rotation counterpart of move to target (see
 // JoltPrim.Targets.cs). With r the rotation vector (axis x angle, region axes, the short way round) that takes the target
@@ -61,10 +62,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 {
     internal sealed partial class JoltPrim
     {
-        /// <summary>The SL wiki, llRotLookAt: "The minimum value for strength seems to be 0.0445 for the function to have any effect."</summary>
+        /// <summary>llRotLookAt: a strength below about 0.0445 has no effect (wiki.secondlife.com/wiki/LlRotLookAt).</summary>
         internal const float MinLookAtStrength = 0.0445f;
 
-        /// <summary>The SL wiki, llRotLookAt: "damping seems to be capped at 1.0; greater values are reduced to 1.0".</summary>
+        /// <summary>llRotLookAt: damping is capped at 1.0, a larger value being reduced to it (wiki.secondlife.com/wiki/LlRotLookAt).</summary>
         internal const float MaxLookAtDamping = 1f;
 
         /// <summary>The body this far (rad) from the spring's rotation is taken to have been moved by something else: the spring starts again from it.</summary>

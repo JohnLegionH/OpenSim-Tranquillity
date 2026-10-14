@@ -40,15 +40,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
     internal sealed partial class JoltPrim
     {
         /// <summary>
-        /// The SL wiki, llMoveToTarget: "The smallest functional tau is 0.044444444 (two physics frames, 2/45)." A
+        /// llMoveToTarget acts on a tau of two physics frames, 2/45 s, or more (wiki.secondlife.com/wiki/LlMoveToTarget). A
         /// smaller tau (and a smaller hover tau) acts as this one.
         /// </summary>
         internal const float MinTau = 2f / 45f;
 
-        /// <summary>The SL wiki, llMoveToTarget: the distance to the target "must be less than 65, or no movement will occur."</summary>
+        /// <summary>llMoveToTarget: the target must be less than 65 m away, or nothing moves (wiki.secondlife.com/wiki/LlMoveToTarget).</summary>
         internal const float MaxTargetDistance = 65f;
 
-        /// <summary>The SL wiki, llSetHoverHeight: "Under SL Server 1.26.2 the limit is 4096 meters above the ground level."</summary>
+        /// <summary>llSetHoverHeight: the limit is 4096 m above the ground (wiki.secondlife.com/wiki/LlSetHoverHeight).</summary>
         internal const float MaxHoverHeight = 4096f;
 
         /// <summary>
@@ -116,7 +116,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 lock (_targetLock)
                 {
                     _hoverHeight = Math.Clamp(value, -MaxHoverHeight, MaxHoverHeight);
-                    // "Assigning height a value of zero will have the same effect as llStopHover." (as ubODE's changePIDHoverHeight)
+                    // A height of zero has the effect of llStopHover (wiki.secondlife.com/wiki/LlSetHoverHeight), as in ubODE's changePIDHoverHeight
                     if (value == 0f) _hoverActive = false;
                     _targetsChanged = true;
                 }
@@ -178,9 +178,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _targetsChanged = false;
             }
 
-            // "Only works in physics-enabled objects." The request is kept: "A llMoveToTarget call seems to persist even
-            // if physics is turned off." Nothing acts on an active vehicle ("Do not use with vehicles."; ubODE hands a
-            // vehicle to its own controller before either of these).
+            // llMoveToTarget works on physical objects only, yet the request is kept: the wiki notes that a call seems to
+            // persist after physics is turned off (wiki.secondlife.com/wiki/LlMoveToTarget). Nothing acts on an active vehicle
+            // (the page says not to use it with vehicles; ubODE hands a vehicle to its own controller before either of these).
             bool vehicle = _vehicle != null && _vehicle.IsActive;
             if (!_isPhysical || !_body.IsValid || vehicle || !_backend.TryGetBodyState(_body, out BodyState s))
             {
@@ -205,7 +205,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             Vector3 vel = new Vector3(s.LinearVelocity.X, s.LinearVelocity.Y, s.LinearVelocity.Z);
             bool awake = (s.Flags & BodyStateFlags.Active) != 0;
 
-            // A tau of 0 or less does nothing ("Calling llMoveToTarget with a tau of 0.0 or less will silently fail");
+            // A tau of 0 or less does nothing: the call silently fails (wiki.secondlife.com/wiki/LlMoveToTarget);
             // the hover's is refused the same way, as ubODE's is.
             bool moving = move && tau > 0f && (target - pos).Length() < MaxTargetDistance;
             bool hovering = !moving && hover && hoverTau > 0f && height != 0f;
@@ -369,11 +369,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         /// <summary>
-        /// The height hover holds the object's centre at, over (x, y). The SL wiki, llSetHoverHeight: water TRUE means
-        /// "hover above water too", the higher of the two (GroundAndWater, as ubODE); "if FALSE ignore water like it
-        /// isn't there" (Ground). Water is the water level alone and Absolute the region's zero. "Unless volume detect is
-        /// enabled, negative height values when water is FALSE will not move the object below the ground level": no
-        /// target is under the ground unless the prim is volume detect.
+        /// The height hover holds the object's centre at, over (x, y). The SL wiki, llSetHoverHeight
+        /// (wiki.secondlife.com/wiki/LlSetHoverHeight): water TRUE means hover above the water too, the higher of the two
+        /// (GroundAndWater, as ubODE); FALSE ignores the water (Ground). Water is the water level alone and Absolute the
+        /// region's zero. Unless volume detect is on, a negative height with water FALSE does not take the object below the
+        /// ground: no target is under the ground unless the prim is volume detect.
         /// </summary>
         private float HoverTargetAt(float x, float y, float height, PIDHoverType type)
         {

@@ -18,10 +18,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// heartbeat, with [Jolt] PhysicsStepRate 45 and with one physics step per heartbeat. Core adds up every part's Mass
 /// (SceneObjectGroup.GetMass); it reads a physical object's centre of mass from its root's actor, a child's from the
 /// child's, and a non-physical object's as the mass-weighted mean of its parts' (SceneObjectGroup.GetCenterOfMass), and the
-/// tests read them the same way. Targets, from the SL wiki: llGetMass "Returns a float that is the mass of object (in
-/// lindograms)", with no difference for a non-physical object; "mass = density * volume" (Physics Material Settings
-/// test), 1 m^3 at the default density being 10; llGetCenterOfMass "Returns the vector position of the object's center
-/// of mass in region coordinates" and "If called from a child prim, the child's center of mass is returned instead".
+/// tests read them the same way. Targets, from the SL wiki: llGetMass gives the object's mass in lindograms
+/// (wiki.secondlife.com/wiki/LlGetMass), with no difference for a non-physical object; mass is density times volume (the
+/// Physics Material Settings test page), 1 m^3 at the default density being 10; llGetCenterOfMass gives the object's
+/// centre of mass in region coordinates, a child prim's own when called from a child
+/// (wiki.secondlife.com/wiki/LlGetCenterOfMass).
 /// Serial with the other native tests: every run steps a real backend on the shared job pool.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]

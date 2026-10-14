@@ -1,4 +1,4 @@
-/* Copyright (c) Legion Builds
+/* Copyright (c) 2026 Legion Builds
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -16,8 +16,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
 /// What a cast sees from where it starts and which hits it counts, as llCastRay documents it
-/// (wiki.secondlife.com/wiki/LlCastRay): "llCastRay will not detect a prim if the line starts inside the prim"; the
-/// same for an avatar a ray starts inside; and "RC_MAX_HITS: Maximum number of hits to return", which a type the cast
+/// (wiki.secondlife.com/wiki/LlCastRay): a cast does not detect a prim its line starts inside; the
+/// same for an avatar a ray starts inside; and RC_MAX_HITS, the most hits to return, which a type the cast
 /// rejects must not use up (the cast is filtered by type inside the engine, so a rejected body is never a hit).
 /// Serial with the other native tests: every scene steps a real backend on the shared job pool.
 /// </summary>

@@ -1,4 +1,4 @@
-/* Copyright (c) Legion Builds
+/* Copyright (c) 2026 Legion Builds
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -16,7 +16,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// Avatars and physical objects meeting (the harness's avatar-hit, avatar-walk, avatar-on-box, avatar-box-drop and
 /// avatar-fall scenarios), at an 11 Hz heartbeat with [Jolt] PhysicsStepRate 45 and with one physics step per heartbeat.
 /// Second Life documents that an avatar walking into a physical object pushes it, that an object hitting an avatar moves
-/// it, and that "Residents take damage from collisions with physical objects" (wiki.secondlife.com, Push and Damage); it
+/// it, and that a resident is damaged by colliding with a physical object (wiki.secondlife.com, Push and Damage); it
 /// gives no figures. The module follows ubODE: an object meets an avatar as two bodies with no bounce, the avatar held
 /// to the push limits ([Jolt] AvatarPushMaxSpeed). Core plays collision sounds and works out impact and fall damage from
 /// ContactPoint.RelativeSpeed (SceneObjectPart.PhysicsCollision, ScenePresence's damage: below -5 m/s hurts), which

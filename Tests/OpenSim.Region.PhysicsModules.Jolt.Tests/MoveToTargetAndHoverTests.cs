@@ -297,7 +297,7 @@ public class MoveToTargetAndHoverTests
     [InlineData(0.0)]
     public void A_height_of_zero_stops_hover(double physicsHz)
     {
-        // "Assigning height a value of zero will have the same effect as llStopHover."
+        // A height of zero has the same effect as llStopHover (wiki.secondlife.com/wiki/LlSetHoverHeight).
         List<Point> trace = Run(physicsHz, 3f,
             r => { r.AddBox(Unit, new Vector3(128f, 128f, Course.Ground + 5f), Quaternion.Identity); Hover(r.Actor, 5f, PIDHoverType.Ground, 0.3f); },
             (r, now) => { if (r.Heartbeats == 11) r.Actor.PIDHoverHeight = 0f; });
@@ -523,7 +523,7 @@ public class MoveToTargetAndHoverTests
     [InlineData(0.0)]
     public void A_tau_of_zero_or_less_does_nothing(double physicsHz)
     {
-        // "Calling llMoveToTarget with a tau of 0.0 or less will silently fail, and do nothing." The hover's is refused
+        // A call with a tau of 0.0 or less silently fails and does nothing (wiki.secondlife.com/wiki/LlMoveToTarget). The hover's is refused
         // the same way.
         foreach (bool hover in new[] { false, true })
         {
@@ -560,8 +560,8 @@ public class MoveToTargetAndHoverTests
     [InlineData(0.0)]
     public void A_non_physical_object_keeps_the_target_until_it_is_physical(double physicsHz)
     {
-        // "Only works in attachments and physics-enabled objects." / "A llMoveToTarget call seems to persist even if
-        // physics is turned off."
+        // llMoveToTarget works on attachments and physical objects only, yet a call seems to persist after physics is
+        // turned off (wiki.secondlife.com/wiki/LlMoveToTarget).
         Vector3 target = High + new Vector3(2f, 0f, 0f);
         Vector3 whileStatic = Vector3.Zero;
         List<Point> trace = Run(physicsHz, 4f,

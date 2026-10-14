@@ -1,4 +1,4 @@
-/* Copyright (c) Legion Builds
+/* Copyright (c) 2026 Legion Builds
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -20,8 +20,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// rule (SceneObjectPart.SendCollisionEvent). So naming is the engine's.
 ///
 /// Second Life documents no rule for llDetectedKey or llDetectedName when the other object is a linkset. llCollisionFilter's
-/// example (wiki.secondlife.com/wiki/LlCollisionFilter) has a filter on "Post" detect "A child prim named "Object"" of an
-/// object named "Post", and not "A prim named "Post"" of an object named "Object": the filter matches the object's name, and
+/// example (wiki.secondlife.com/wiki/LlCollisionFilter) has a filter on "Post" detect a child prim named "Object" of an
+/// object named "Post", and not a prim named "Post" of an object named "Object": the filter matches the object's name, and
 /// core checks the filter against the part it names. ubODE names the other side by its root
 /// (ODEScene.Collision_accounting_events: p1.ParentActor.m_baseLocalID) and sends the update to the part touched. Its
 /// ParentActor is the root only for a part core has linked, which it does for a physical linkset alone

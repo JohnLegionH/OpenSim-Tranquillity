@@ -1140,9 +1140,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         #region Deflection (Angular + Linear) + Sled movement (gated Type==Sled)
 
         /// <summary>
-        /// Angular deflection, as Second Life documents it (Linden_Vehicle_Tutorial, "Linear and Angular Deflection";
-        /// LlSetVehicleFloatParam): it reorients the vehicle so that its x axis points the way it is moving, the
-        /// timescale being "the time coefficient for exponential decay toward full deflection" and the efficiency a
+        /// Angular deflection, as Second Life documents it (wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial, "Linear and
+        /// Angular Deflection"; LlSetVehicleFloatParam): it reorients the vehicle so that its x axis points the way it is
+        /// moving, the timescale being the time constant of an exponential decay toward full deflection and the efficiency a
         /// slider from no deflection (0) to the most (1). The angle a between the nose and the velocity decays as
         ///
         ///   a' = -eff s a / T,   so over a step h the nose turns a (1 - e^(-eff s h / T)) toward the velocity,
@@ -1189,9 +1189,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         private const float MinTurnSine = 1e-6f;
 
         /// <summary>
-        /// Linear deflection, as Second Life documents it (Linden_Vehicle_Tutorial, "Linear and Angular Deflection";
-        /// LlSetVehicleFloatParam): it rotates the velocity until it points along the vehicle's x axis, keeping its
-        /// speed, with the timescale "the time coefficient for exponential decay toward full deflection" and the
+        /// Linear deflection, as Second Life documents it (wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial, "Linear and
+        /// Angular Deflection"; LlSetVehicleFloatParam): it rotates the velocity until it points along the vehicle's x axis,
+        /// keeping its speed, with the timescale the time constant of an exponential decay toward full deflection and the
         /// efficiency a slider from none (0) to the most (1). The angle a between the velocity and the nose decays as
         ///
         ///   a' = -eff a / T,   so over a step h the velocity turns a (1 - e^(-eff h / T)) toward the nose.
@@ -1467,7 +1467,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             float targetBase;
 
             // Determine the base height based on hover flags. The global height comes first: with HOVER_GLOBAL_HEIGHT
-            // set the vehicle hovers at that height "instead of height above ground or water" (the flag's page on the
+            // set the vehicle hovers at that height rather than above the ground or water (the flag's page on the
             // Second Life wiki), whatever other hover flag is set with it; InWorldz's hover does the same ("Global hover
             // overrides water and ground", VehicleDynamics.cs:1575-1576).
             if ((_props.Flags & ExtendedVehicleFlags.HoverGlobalHeight) != 0)
@@ -1501,8 +1501,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         #region Vertical Attractor
 
         /// <summary>
-        /// The vertical attractor, as Second Life documents it (Linden_Vehicle_Tutorial, "The Vertical Attractor";
-        /// LlSetVehicleFloatParam): a spring that brings the vehicle's local z axis to the world's up, with
+        /// The vertical attractor, as Second Life documents it (wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial, "The
+        /// Vertical Attractor"; LlSetVehicleFloatParam): a spring that brings the vehicle's local z axis to the world's up, with
         /// VERTICAL_ATTRACTION_TIMESCALE setting its period and VERTICAL_ATTRACTION_EFFICIENCY its damping, from
         /// wobbling around up (0) to reaching it with exponential decay (1). Off at a timescale of 500 s or more.
         ///
@@ -1516,10 +1516,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// velocity that turns it where the spring would at the step's end. Gives the tilt from up (angle), for
         /// banking.
         ///
-        /// VEHICLE_FLAG_LIMIT_ROLL_ONLY unlocks the attractor about the pitch axis (Linden_Vehicle_Tutorial: "unlock
-        /// the attractor around the pitch axis by setting the VEHICLE_FLAG_LIMIT_ROLL_ONLY bit"; LlSetVehicleFlags:
-        /// "For vehicles with vertical attractor that want to be able to climb/dive"), for every vehicle type: the
-        /// attractor then corrects roll and leaves pitch alone.
+        /// VEHICLE_FLAG_LIMIT_ROLL_ONLY unlocks the attractor about the pitch axis (the tutorial's section on the vertical
+        /// attractor, and LlSetVehicleFlags, which offers the flag to vehicles that must be able to climb and dive), for
+        /// every vehicle type: the attractor then corrects roll and leaves pitch alone.
+        ///
+        /// Ported from Halcyon VehicleDynamics.SimulateVerticalAttractor(), then changed to the documented damped spring
+        /// above; what is kept from Halcyon's version is described where it is applied below.
         /// </summary>
         private void SimulateVerticalAttractor(float h, out float angle, out bool inverted)
         {
@@ -1841,10 +1843,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         }
 
         /// <summary>
-        /// VEHICLE_LINEAR_MOTOR_OFFSET: "offset from the center of mass of the vehicle where the linear motor is
-        /// applied" (LlSetVehicleVectorParam), so the motor's push also turns the vehicle, as a force at that point
-        /// does ("In rockets using this offset gives that very distinctive spiraling out of control",
-        /// VEHICLE_LINEAR_MOTOR_OFFSET). The motor's change of velocity this step, dv, is an impulse m dv at the
+        /// VEHICLE_LINEAR_MOTOR_OFFSET: the offset from the vehicle's centre of mass at which the linear motor acts
+        /// (wiki.secondlife.com/wiki/LlSetVehicleVectorParam), so the motor's push also turns the vehicle, as a force at that
+        /// point does (the page notes that rockets built with this offset spin out of control; the parameter's own page,
+        /// VEHICLE_LINEAR_MOTOR_OFFSET, says the same). The motor's change of velocity this step, dv, is an impulse m dv at the
         /// offset point r (in the vehicle frame); its angular impulse about the centre of mass turns the body by
         ///
         ///   dw = I^-1 (r x m dv)

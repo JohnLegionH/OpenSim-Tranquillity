@@ -12,9 +12,9 @@ using Xunit;
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
-/// The cap on the angular motor direction. Second Life: "The magnitude of the angular motor is capped to be no more than
-/// two rotations per second (4 * PI radians/sec)" (Linden Vehicle Tutorial, "Steering the Vehicle") and
-/// "VEHICLE_ANGULAR_MOTOR_DIRECTION magnitude is capped at 4 * PI (2 revolutions per second total)". So under the Second
+/// The cap on the angular motor direction. Second Life holds its magnitude to two rotations per second, 4 pi radians per
+/// second (wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial, "Steering the Vehicle", and the
+/// VEHICLE_ANGULAR_MOTOR_DIRECTION page). So under the Second
 /// Life behaviour the vector is scaled down, direction kept, to a length of 4 pi. The InWorldz simulator holds each axis
 /// to 4 pi instead (VehicleDynamics.cs:394-398), so a diagonal can be longer. Pure, parallel.
 /// </summary>

@@ -1,4 +1,4 @@
-/* Copyright (c) Legion Builds
+/* Copyright (c) 2026 Legion Builds
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -246,7 +246,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 c.Reset(hits.Length, RayMaxTested, clock, start + (allowed - used), origin, rayDir);
 
                 // The same faces are tested as RayCastAll tests, except that a convex shape (a box, the avatar's capsule) is not
-                // solid to a ray that starts inside it: "llCastRay will not detect a prim if the line starts inside the prim"
+                // solid to a ray that starts inside it: a cast does not report a prim its line starts inside
                 // (wiki.secondlife.com/wiki/LlCastRay), so the cast goes on to what lies beyond instead of hitting it at distance 0.
                 var settings = new RayCastSettings { TreatConvexAsSolid = false };
                 Vector3 o = origin, d = rayDir;
