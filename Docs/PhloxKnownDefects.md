@@ -305,9 +305,7 @@ These are facts about Phlox's compiler. Where SL's rule is known, it is cited.
   - a region crossing, also into a region of another simulator process; its start parameter
     is then 0.
 
-  The SL wiki ([State](https://wiki.secondlife.com/wiki/State)) says a script does not run the `state_entry` event of the default
-  state again by itself when the object is rezzed or attached (even by a new owner), when it is moved to another
-  region, or when the simulator restarts. Carried state is used before the state database's row; carried state saved for
+  The SL wiki ([State](https://wiki.secondlife.com/wiki/State)) says a script does not run the default state's `state_entry` event again on its own after a rez or an attach (a new owner included), a move to another region, or a simulator restart. Carried state is used before the state database's row; carried state saved for
   another asset (the script was edited) gives way to the row.
 
   What the script is told on arrival, once, after `state_entry` or the event it was in the
@@ -481,8 +479,7 @@ These are facts about Phlox's compiler. Where SL's rule is known, it is cited.
   - A grant from an Experience ends when its granter enters a parcel where the Experience
     cannot run: the estate blocks it, or neither allows nor trusts it. The script loses the
     grant and the controls it took, and gets `experience_permissions_denied` with
-    `XP_ERROR_NOT_PERMITTED_LAND` (17), as SL lists it among the reasons the experience can no longer run: the agent has
-    moved to a parcel where the experience cannot run
+    `XP_ERROR_NOT_PERMITTED_LAND` (17), as SL lists it among the reasons the experience can no longer run: the agent entered a parcel on which the experience is not allowed to run
     ([experience_permissions_denied](https://wiki.secondlife.com/wiki/Experience_permissions_denied)).
   - When an avatar blocks an Experience from its profile, the simulator ends every grant that
     avatar gave to a script of that Experience and posts `experience_permissions_denied` with
@@ -610,10 +607,9 @@ pauses 15 ms after every chat call instead (`ChatThrottle`).
   Before, every refused cast wrote its own line, so a script casting in a loop could write thousands a second.
 - `llPushObject` with `local` TRUE turns the impulse by the target's rotation, avatar or object, as the SL wiki says: with `local` TRUE the target's own axes are used, with FALSE the region's axes
   ([LlPushObject](https://wiki.secondlife.com/wiki/LlPushObject)). YEngine does the same. A local push on an avatar
-  used to be turned by the pushing prim's rotation. `ang_impulse` is not applied to an avatar (the same page says it is ignored for agents and their attachments), and Phlox does not apply it to objects either.
+  used to be turned by the pushing prim's rotation. `ang_impulse` is not applied to an avatar (the same page says the `ang_impulse` argument is ignored for agents and their attachments), and Phlox does not apply it to objects either.
 - `llPushObject` on land where pushing is restricted, by the parcel's Restrict Pushing or by the region's setting:
-  an object may push its owner, and so an attachment may push its wearer, as the SL wiki says ([LlPushObject](https://wiki.secondlife.com/wiki/LlPushObject)): in no-push areas an
-  object can push only its owner or itself. Phlox used to refuse it. Pushing another avatar there still works only
+  an object may push its owner, and so an attachment may push its wearer, as the SL wiki says ([LlPushObject](https://wiki.secondlife.com/wiki/LlPushObject)): where pushing is not allowed, an object may push only its owner or itself. Phlox used to refuse it. Pushing another avatar there still works only
   for an object owned by the land's owner or by the estate owner or an estate manager, and on a region that restricts
   pushing, an avatar with no parcel under it can only be pushed by its own objects. YEngine allows an object to push its
   owner on both settings, but refuses when the region restricts pushing and finds no parcel; YEngine also lets any
@@ -657,8 +653,7 @@ pauses 15 ms after every chat call instead (`ChatThrottle`).
   `llRequestExperiencePermissions` answers `experience_permissions_denied` with
   `XP_ERROR_EXPERIENCE_DISABLED` (8) or `XP_ERROR_EXPERIENCE_SUSPENDED` (9), and 8 when both
   apply, before the land or the avatar is looked at. `llGetExperienceDetails` gives the same code
-  and its message as the state. The SL wiki gives the codes (8: the experience's owner has turned it off for the time being; 9: Linden Lab
-  customer support has suspended it;
+  and its message as the state. The SL wiki gives the codes (the experience's owner has turned it off for the time being; Linden Lab customer support has suspended it;
   [llGetExperienceErrorMessage](https://wiki.secondlife.com/wiki/LlGetExperienceErrorMessage)) but
   not when they are raised; YEngine raises them in the same places and order. The state is read
   from the Experience service at each call. When the service cannot answer, the request is refused
