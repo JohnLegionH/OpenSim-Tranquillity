@@ -153,19 +153,19 @@ public class RestingContactAndBounceTests
     [InlineData(90.0)]
     public void A_tower_of_ten_boxes_stands_and_falls_asleep_at_the_shipped_solver_settings(double physicsRate)
     {
-        // The solver settings OpenSimDefaults.ini sets in [Jolt], which every simulator reads before its own ini.
+        // The solver settings RegionServerDefaults.ini sets in [Jolt], which every simulator reads before its own ini.
         AssertTowerStandsAndSleeps(Run("tower-10", physicsRate, ShippedSolverSettings()));
     }
 
     private static (string Key, string Value)[] ShippedSolverSettings([CallerFilePath] string here = "")
     {
         string ini = Path.Combine(Path.GetDirectoryName(here)!, "..", "..", "Source", "OpenSim.Server.RegionServer", "AppData",
-            "OpenSimDefaults.ini");
+            "RegionServerDefaults.ini");
         IConfig jolt = new IniConfigSource(ini).Configs["Jolt"];
         Assert.NotNull(jolt);
         var keys = new[] { "VelocityIterations", "PositionIterations" };
         foreach (string key in keys)
-            Assert.False(string.IsNullOrEmpty(jolt.Get(key)), $"OpenSimDefaults.ini [Jolt] sets no {key}");
+            Assert.False(string.IsNullOrEmpty(jolt.Get(key)), $"RegionServerDefaults.ini [Jolt] sets no {key}");
         return keys.Select(k => (k, jolt.Get(k))).ToArray();
     }
 

@@ -204,19 +204,20 @@ public class VehicleInWorldzTypeTests
         Assert.True(Math.Abs(rig.Body.LinearVelocity.X - expected) < 0.01 * expected, $"{type}: {rig.Body.LinearVelocity.X:0.0000} against {expected:0.0000}");
     }
 
-    // Core: the type number a script gives reaches the physics actor as it is, and the simulator's own record keeps it.
-    // SOPVehicle has no preset of its own for the two (it gives the no-vehicle values), so a vehicle handed back from
-    // its saved record has those values, not the preset's (see Docs/JoltPhysics.md).
+    // Core: the type number a script gives reaches the physics actor as it is, and the simulator's own record keeps it
+    // together with the type's InWorldz preset (the saved record holds both types, so a vehicle handed back from it
+    // has the preset's values, not the no-vehicle values).
     [Fact]
-    public void The_simulators_record_keeps_the_number_and_has_no_preset_for_it()
+    public void The_simulators_record_keeps_the_number_and_the_preset_for_it()
     {
         var record = new SOPVehicle();
         record.ProcessTypeChange((SharedVehicle)10001);
         Assert.Equal(10001, (int)record.Type);
-        Assert.Equal(new Vector3(1000f, 1000f, 1000f), record.vd.m_linearFrictionTimescale);
-        Assert.Equal((OpenSim.Region.PhysicsModules.SharedBase.VehicleFlag)0, record.vd.m_flags);
+        Assert.Equal(new Vector3(200f, 0.5f, 3f), record.vd.m_linearFrictionTimescale);
+        Assert.NotEqual((OpenSim.Region.PhysicsModules.SharedBase.VehicleFlag)0, record.vd.m_flags);
         record.ProcessTypeChange((SharedVehicle)10002);
         Assert.Equal(10002, (int)record.Type);
-        Assert.Equal(new Vector3(1000f, 1000f, 1000f), record.vd.m_linearFrictionTimescale);
+        Assert.Equal(new Vector3(100f, 0.1f, 10f), record.vd.m_linearFrictionTimescale);
+        Assert.NotEqual((OpenSim.Region.PhysicsModules.SharedBase.VehicleFlag)0, record.vd.m_flags);
     }
 }
