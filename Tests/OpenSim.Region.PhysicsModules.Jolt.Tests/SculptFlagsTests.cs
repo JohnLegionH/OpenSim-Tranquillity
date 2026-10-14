@@ -45,7 +45,7 @@ public class SculptFlagsTests
     }
 
     // A 64 x 64 sculpt map of the given type, whose faces point outwards when it has no flag.
-    private static byte[] Map(SculptType type)
+    internal static byte[] Map(SculptType type)
     {
         const int N = 64;
         using var bmp = new SKBitmap(N, N);
@@ -68,7 +68,7 @@ public class SculptFlagsTests
         return J2kImage.ToBytes(bmp);
     }
 
-    private static PrimitiveBaseShape Sculpt(byte[] map, byte sculptType)
+    internal static PrimitiveBaseShape Sculpt(byte[] map, byte sculptType)
     {
         PrimitiveBaseShape pbs = PrimitiveBaseShape.CreateBox();
         pbs.PathCurve = (byte)Extrusion.Curve1;

@@ -44,6 +44,7 @@ using OpenSim.Region.PhysicsModules.Jolt.Vehicles;
 // The backend speaks System.Numerics.Vector3; OpenSim speaks OpenMetaverse.Vector3 (the unqualified
 // Vector3 here). Alias the numerics one so backend calls are unambiguous.
 using Meshmerizer = OpenSim.Region.PhysicsModules.Meshing.Meshmerizer;
+using PrimProfileRings = OpenSim.Region.PhysicsModules.Meshing.PrimProfileRings;
 using SVector3 = System.Numerics.Vector3;
 using SQuaternion = System.Numerics.Quaternion;
 
@@ -1141,8 +1142,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // kind already holds (a shape taken this way is given back with ReleaseShape of this class, not the backend's).
         internal ShapeId CookPrimShape(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out SQuaternion axisCorrection, out string kind,
                                        bool? bodyIsPhysical = null, bool useHullList = false, bool share = false)
+            => CookPrimShape(backend, pbs, size, isPhysical, out axisCorrection, out kind, out _, bodyIsPhysical, useHullList, share);
+
+        // As above, and `hullCount` is how many convex hulls the shape is made of: the cells of a concave prim or the hulls of
+        // a mesh asset's list, else 1 (a box, a sphere, a cylinder, a mesh, one hull, the bounding box). A complexity limit
+        // reads it (JoltPrim.HullCount).
+        internal ShapeId CookPrimShape(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out SQuaternion axisCorrection, out string kind,
+                                       out int hullCount, bool? bodyIsPhysical = null, bool useHullList = false, bool share = false)
         {
             axisCorrection = SQuaternion.Identity;
+            hullCount = 1;
             float hx = size.X * 0.5f, hy = size.Y * 0.5f, hz = size.Z * 0.5f;
 
             if (pbs != null && PrimHasNoCuts(pbs))
@@ -1183,12 +1192,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // BulletSim's BSShapeCollection.CreateGeomMeshOrHull (physical && ShouldUseHulls -> hull;
             // else mesh). Contract: a triangle MeshShape has Volume 0, so a PHYSICAL prim
             // MUST use the convex hull or it would rez with mass 0 - hence physical -> hull here.
-            ShapeId cooked = CookMeshShape(backend, pbs, size, isPhysical, bodyIsPhysical ?? isPhysical, useHullList, share, out kind);
+            ShapeId cooked = CookMeshShape(backend, pbs, size, isPhysical, bodyIsPhysical ?? isPhysical, useHullList, share, out kind, out hullCount);
             if (cooked.IsValid)
                 return cooked;
 
             // Mesher unavailable / returned nothing usable / cook threw: conservative solid bounding box.
             kind = BoxFallbackKind;
+            hullCount = 1;
             return backend.CreateBoxShape(new SVector3(hx, hy, hz));
         }
 
@@ -1197,14 +1207,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // (physical hull). Returns ShapeId.Invalid on any failure so the caller can fall back. Also
         // stashes a characterization of the RAW mesher output (_lastMeshStats) for the diagnostic read-out.
         private ShapeId CookMeshShape(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, bool bodyIsPhysical,
-                                      bool useHullList, bool share, out string kind)
+                                      bool useHullList, bool share, out string kind, out int hullCount)
         {
             // A mesh prim's shape is a function of its asset, size and how it is cooked, so prims that agree on all three can
             // hold one cooked shape. Only a real cook is kept: a box for want of the asset, or for size, is not.
             bool isMesh = IsMeshPrim(pbs);
             bool listWanted = isMesh && isPhysical && useHullList;
+            // A prim made from its own profile and path (not a mesh, not a sculpt) is cooked as convex cells when it is
+            // physical and of shape type PRIM (useHullList). It is never shared: sharing is by asset.
+            bool cellsWanted = !isMesh && isPhysical && useHullList && !IsSculptPrim(pbs);
             if (!share || !isMesh || pbs.SculptTexture.IsZero())
-                return CookMeshShapeCore(backend, pbs, size, isPhysical, bodyIsPhysical, listWanted, out kind);
+                return CookMeshShapeCore(backend, pbs, size, isPhysical, bodyIsPhysical, listWanted, cellsWanted, out kind, out hullCount);
 
             SharedShapeKind kindWanted = listWanted ? SharedShapeKind.HullList : isPhysical ? SharedShapeKind.Hull : SharedShapeKind.Mesh;
             var key = new SharedShapeKey(pbs.SculptTexture, size, kindWanted);
@@ -1219,6 +1232,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 {
                     held.Users++;
                     kind = held.Kind;
+                    hullCount = held.HullCount;
                     return held.Shape;
                 }
 
@@ -1231,25 +1245,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     ShapeId scaled = ScaledFromBase(backend, basis, size);
                     if (scaled.IsValid)
                     {
-                        var wrapped = new SharedShape { Key = key, Shape = scaled, Kind = basis.Kind, Users = 1, Basis = basis };
+                        var wrapped = new SharedShape { Key = key, Shape = scaled, Kind = basis.Kind, HullCount = basis.HullCount, Users = 1, Basis = basis };
                         basis.Entries++;
                         _sharedShapes[key] = wrapped;
                         _sharedByShape[scaled.Value] = wrapped;
                         kind = basis.Kind;
+                        hullCount = basis.HullCount;
                         return scaled;
                     }
                 }
 
-                ShapeId shape = CookMeshShapeCore(backend, pbs, size, isPhysical, bodyIsPhysical, listWanted, out kind);
+                ShapeId shape = CookMeshShapeCore(backend, pbs, size, isPhysical, bodyIsPhysical, listWanted, false, out kind, out hullCount);
                 if (shape.IsValid && kind != BoxFallbackKind && !kind.StartsWith("box", StringComparison.Ordinal))
                 {
-                    var entry = new SharedShape { Key = key, Shape = shape, Kind = kind, Users = 1 };
+                    var entry = new SharedShape { Key = key, Shape = shape, Kind = kind, HullCount = hullCount, Users = 1 };
                     if (scalable && !_bases.ContainsKey(baseKey))
                     {
                         // This cook becomes the shape the asset's other sizes are made from. The table keeps a reference of its
                         // own, so it outlives this size's prims while other sizes use it.
                         backend.AddShapeRef(shape);
-                        var basis2 = new BaseShape { Key = baseKey, Shape = shape, Size = size, Kind = kind, Entries = 1 };
+                        var basis2 = new BaseShape { Key = baseKey, Shape = shape, Size = size, Kind = kind, HullCount = hullCount, Entries = 1 };
                         _bases[baseKey] = basis2;
                         entry.Basis = basis2;
                     }
@@ -1306,9 +1321,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private int _scaledShapesMade;
 
         private ShapeId CookMeshShapeCore(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, bool bodyIsPhysical,
-                                          bool listWanted, out string kind)
+                                          bool listWanted, bool cellsWanted, out string kind, out int hullCount)
         {
             kind = BoxFallbackKind;
+            hullCount = 1;
             bool isMesh = IsMeshPrim(pbs);
 
             // A non-physical mesh smaller than SmallMeshSide on every side is a box, which needs no asset. Halcyon's rule
@@ -1339,6 +1355,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             SVector3[] points;
             int[] indices;
             IMesh mesh;
+            double meshVolume = 0.0;   // of the mesher's own mesh: what the cells are measured against (cellsWanted only)
             try
             {
                 // The mesher's isPhysical argument is true to mean "keep the real triangles": with false it replaces a
@@ -1376,6 +1393,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     return ShapeId.Invalid;
                 }
 
+                if (cellsWanted)
+                {
+                    // What the cells are measured against is the prim's real mesh. For a prim under 0.2 m on every side the
+                    // mesh above is its bounding box (the mesher is asked for a non-physical one), so ask for the real
+                    // triangles; the mesher keeps both, and the one hull below is still made from the points above.
+                    IMesh whole = m_mesher.CreateMesh("jolt-prim", pbs, size, MeshLod, true, false, false);
+                    if (whole != null)
+                        meshVolume = PrimHullCells.MeshVolume(whole.getVertexListAsFloat(), whole.getIndexListAsInt());
+                }
+
                 points = new SVector3[verts.Length / 3];
                 var toSize = new SVector3(size.X / meshSize.X, size.Y / meshSize.Y, size.Z / meshSize.Z);
                 for (int i = 0; i < points.Length; i++)
@@ -1411,11 +1438,27 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // mesh's points below.
             if (listWanted)
             {
-                ShapeId list = CookHullList(backend, mesh, pbs.SculptTexture, size, out string listKind);
+                ShapeId list = CookHullList(backend, mesh, pbs.SculptTexture, size, out string listKind, out int listCount);
                 if (list.IsValid)
                 {
                     kind = listKind;
+                    hullCount = listCount;
                     return list;
+                }
+            }
+
+            // A physical prim of shape type PRIM that is not convex (hollow, cut, twisted, a torus, tube, ring...) collides as
+            // a compound of convex cells. A prim that is one cell, and any failure, falls through to the one hull below, as
+            // every physical prim always was.
+            if (cellsWanted)
+            {
+                ShapeId cells = CookPrimCells(backend, pbs, size, meshVolume, out int cellCount);
+                if (cells.IsValid)
+                {
+                    kind = $"{PrimCellsKind} x{cellCount})";
+                    hullCount = cellCount;
+                    Interlocked.Increment(ref _primCellShapesCooked);
+                    return cells;
                 }
             }
 
@@ -1489,6 +1532,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             public SharedShapeKey Key;
             public ShapeId Shape;
             public string Kind;
+            public int HullCount;
             public int Users;
             public BaseShape Basis;   // the cooked shape this one is, or is scaled from; null when it is neither
         }
@@ -1511,6 +1555,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             public ShapeId Shape;
             public Vector3 Size;
             public string Kind;
+            public int HullCount;
             public int Entries;   // sizes (SharedShape entries) in use
         }
 
@@ -1565,13 +1610,81 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             m_log.LogWarning(line);
         }
 
+        /// <summary>The kind of a shape cooked from a concave prim's convex cells, up to the number of cells: "hulls(prim x12)".</summary>
+        internal const string PrimCellsKind = "hulls(prim";
+
+        /// <summary>How many shapes have been cooked as convex cells for prims made from their own profile and path.</summary>
+        internal int PrimCellShapesCooked => Volatile.Read(ref _primCellShapesCooked);
+        private int _primCellShapesCooked;
+
+        // A prim made from its own profile and path as a compound of convex cells (PrimHullCells): one hull for each convex
+        // piece of its profile over each span of its path, cut from the rings the mesher extrudes it from. Returns
+        // ShapeId.Invalid, and the caller cooks one hull of the mesh's points, when the prim has no rings, is one cell (it is
+        // convex already), or no split can be cooked. A cell the hull builder refuses is never left out: a missing cell would
+        // leave a hole in a wall, so the whole prim keeps the one hull.
+        //
+        // This runs where every shape is cooked (the thread that adds the prim or changes its shape, never the step: see
+        // JoltPrim.CookOwnShape). The cell points come from the mesher and the native hull builds take no lock the step holds,
+        // so a step in progress never waits for it; the one call here that takes the step's lock is GetShapeVolume, which
+        // is a read of a number and which waits for the step, not the other way round.
+        private ShapeId CookPrimCells(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, double meshVolume, out int cellCount)
+        {
+            cellCount = 1;
+            if (!(m_mesher is Meshmerizer meshmerizer))
+                return ShapeId.Invalid;
+            try
+            {
+                if (!meshmerizer.TryGetPrimProfileRings("jolt-prim", pbs, size, MeshLod, out PrimProfileRings rings))
+                    return ShapeId.Invalid;
+                PrimHullCellSet set = PrimHullCells.Build(backend, rings, meshVolume);
+                if (!set.Success)
+                {
+                    PrimCellsNotice("build", $"a physical prim could not be split into convex cells ({set.Failure}); one hull of its points.");
+                    return ShapeId.Invalid;
+                }
+                if (set.CellCount < 2)
+                    return ShapeId.Invalid;     // convex already: the one hull is exactly it
+
+                ShapeId compound = PrimHullCells.CookCompound(backend, set.Cells, out int failed);
+                if (failed > 0 || !compound.IsValid)
+                {
+                    PrimCellsNotice("cook", $"{failed} of {set.CellCount} convex cells of a physical prim could not be built; one hull of its points.");
+                    if (compound.IsValid)
+                        backend.ReleaseShape(compound);
+                    return ShapeId.Invalid;
+                }
+                cellCount = set.CellCount;
+                return compound;
+            }
+            catch (Exception e)
+            {
+                PrimCellsNotice("threw", $"splitting a physical prim into convex cells threw ({e.GetType().Name}: {e.Message}); one hull of its points.");
+                return ShapeId.Invalid;
+            }
+        }
+
+        // One notice per reason about a prim that kept its one hull for want of cells. Logged, and kept for the tests.
+        private void PrimCellsNotice(string reason, string text)
+        {
+            string line = $"{LogHeader} {text}";
+            lock (_hullNotices)
+            {
+                if (!_hullNoticeKeys.Add("prim|" + reason))
+                    return;
+                if (_hullNotices.Count < 1000)
+                    _hullNotices.Add(line);
+            }
+            m_log.LogWarning(line);
+        }
+
         // The asset's hull list as one shape: a compound of its hulls (one hull is the hull itself), each at the prim's scale.
         // Returns ShapeId.Invalid, and the caller cooks one hull of the mesh's points, when the asset has no list, a list
         // over the viewer's limits, or no hull in it that can be built. A hull of fewer than four points, or one Jolt cannot
         // build, is left out. Nothing reaches the native code unless it has passed these checks.
-        private ShapeId CookHullList(IPhysicsBackend backend, IMesh mesh, UUID asset, Vector3 size, out string kind)
+        private ShapeId CookHullList(IPhysicsBackend backend, IMesh mesh, UUID asset, Vector3 size, out string kind, out int hullCount)
         {
             kind = BoxFallbackKind;
+            hullCount = 1;
             List<List<Vector3>> hulls;
             try { hulls = (m_mesher as Meshmerizer)?.GetConvexHulls(mesh, size); }
             catch (Exception e)
@@ -1611,6 +1724,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 HullNotice(asset, "skipped", $"{skipped} of {hulls.Count} hulls in its hull list skipped (fewer than 4 points, or Jolt cannot build them); the other {ids.Count} are used.");
 
             kind = $"{HullListKind} x{ids.Count})";
+            hullCount = ids.Count;
             if (ids.Count == 1)
             {
                 Interlocked.Increment(ref _meshShapesCooked);
@@ -1626,6 +1740,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 HullNotice(asset, "compound", $"its {ids.Count} hulls could not be joined into one shape ({e.GetType().Name}: {e.Message}); one hull of the points.");
                 kind = BoxFallbackKind;
+                hullCount = 1;
                 return ShapeId.Invalid;
             }
             finally
