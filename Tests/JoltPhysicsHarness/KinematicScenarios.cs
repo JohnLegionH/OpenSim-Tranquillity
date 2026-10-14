@@ -49,6 +49,10 @@ public static class KinematicScenarios
         /// starts to the end of the path, against the rider's mean place over that stretch (what remains is the start and
         /// the stop, which a rider on a body that changes speed at once feels as the change). 0 when the figures were read without the speed.</summary>
         public double SteadyFollow { get; init; }
+
+        /// <summary>The same as MaxFollow, over the stop only: from the end of the path to the end of the run (the platform
+        /// goes from its speed to rest in one heartbeat). 0 when the figures were read without the speed.</summary>
+        public double StopFollow { get; init; }
     }
 
     private static string NameOf(string rider, bool up, float speed, bool keyframed)
@@ -136,7 +140,7 @@ public static class KinematicScenarios
         List<Sample> s = result.Samples;
         int at = s.FindLastIndex(x => x.T <= SettleSeconds + 1e-6);
         Vector3 off0 = s[at].Position - s[at].Other;
-        double maxLag = 0, maxSink = 0, maxAir = 0, maxFollow = 0, steady = 0;
+        double maxLag = 0, maxSink = 0, maxAir = 0, maxFollow = 0, steady = 0, stopFollow = 0;
         for (int i = at + 1; i < s.Count; i++)
         {
             Vector3 rel = s[i].Position - s[i].Other;
@@ -148,6 +152,8 @@ public static class KinematicScenarios
             maxAir = Math.Max(maxAir, dz);
             if (speed > 0f && s[i].T >= SettleSeconds + 0.5 && s[i].T <= SettleSeconds + PathLength / speed + 1e-6)
                 moving.Add(rel);
+            if (speed > 0f && s[i].T > SettleSeconds + PathLength / speed + 1e-6)
+                stopFollow = Math.Max(stopFollow, (rel - off0).Length());
         }
         if (moving.Count > 0)
         {
@@ -163,7 +169,7 @@ public static class KinematicScenarios
         bool on = Math.Abs(relEnd.X) < PlatformSide / 2 - 0.1 && Math.Abs(relEnd.Y) < PlatformSide / 2 - 0.1 && Math.Abs(relEnd.Z - off0.Z) < 0.3;
         double slide = Math.Sqrt(Math.Pow(relEnd.X - off0.X, 2) + Math.Pow(relEnd.Y - off0.Y, 2));
         string verdict = on ? (slide > 0.5 ? "stays on, slid" : "stays on") : (end.Position.Z < end.Other.Z - 0.3 ? "fell below" : "left behind");
-        return new Figures(verdict, on, slide, maxLag, maxSink, maxAir) { MaxFollow = maxFollow, SteadyFollow = steady };
+        return new Figures(verdict, on, slide, maxLag, maxSink, maxAir) { MaxFollow = maxFollow, SteadyFollow = steady, StopFollow = stopFollow };
     }
 
     /// <summary>A turning platform: where the rider is, as an angle about the platform's centre and a distance from it, at the end
