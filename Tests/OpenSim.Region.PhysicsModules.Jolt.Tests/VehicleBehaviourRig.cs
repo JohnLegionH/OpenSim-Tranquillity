@@ -31,7 +31,23 @@ internal sealed class BehaviourBody : IVehicleBody
     public void AddTorque(Vector3 torque) { }
     public void KeepAwake() { }
     public float GetTerrainHeight(Vector3 pos) => 0f;
-    public float GetWaterLevel(Vector3 pos) => -100f;
+    public float GetWaterLevel(Vector3 pos) => WaterLevel;
+
+    /// <summary>The water's height (far below the body by default).</summary>
+    public float WaterLevel { get; set; } = -100f;
+
+    /// <summary>The wind the region's wind module gives at a position; null (the default) is a region with no wind module.</summary>
+    public Func<Vector3, Vector3> WindAt { get; set; }
+
+    /// <summary>The times the controller asked for the wind.</summary>
+    public int WindReads { get; private set; }
+
+    public bool TryGetWind(Vector3 position, out Vector3 wind)
+    {
+        WindReads++;
+        wind = WindAt == null ? Vector3.Zero : WindAt(position);
+        return WindAt != null;
+    }
 
     /// <summary>Half the size of the body's box; zero (the default) means the body has none, so the motor-height rule never measures.</summary>
     public Vector3 BoundsHalfSize { get; set; }
@@ -106,6 +122,20 @@ internal sealed class BehaviourRig
         Car.ProcessVectorVehicleParam(Vehicle.LINEAR_FRICTION_TIMESCALE, new Vector3(1000f));
         Car.ProcessVectorVehicleParam(Vehicle.ANGULAR_FRICTION_TIMESCALE, new Vector3(1000f));
         Car.ProcessVehicleFlags((int)ExtendedVehicleFlags.LimitMotorUp, true);
+    }
+
+    /// <summary>
+    /// A driver's camera turned by <paramref name="yawRadians"/> about the vertical and then rolled by
+    /// <paramref name="rollRadians"/> about its own x axis, as the simulator's CameraData.CameraRotation holds it (x along
+    /// the line of sight, y to the left): its left axis then rises by the sine of the roll. InWorldz takes the camera steering's
+    /// pitch share from that rise.
+    /// </summary>
+    public static Quaternion CameraRotation(double yawRadians, double rollRadians)
+    {
+        var roll = System.Numerics.Quaternion.CreateFromAxisAngle(System.Numerics.Vector3.UnitX, (float)rollRadians);
+        var yaw = System.Numerics.Quaternion.CreateFromAxisAngle(System.Numerics.Vector3.UnitZ, (float)yawRadians);
+        var q = System.Numerics.Quaternion.Concatenate(roll, yaw);
+        return new Quaternion(q.X, q.Y, q.Z, q.W);
     }
 
     public void Flag(ExtendedVehicleFlags flag, bool on) => Car.ProcessVehicleFlags((int)flag, !on);

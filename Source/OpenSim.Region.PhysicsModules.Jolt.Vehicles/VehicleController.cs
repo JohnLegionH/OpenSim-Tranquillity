@@ -99,9 +99,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
     /// </summary>
     /// <summary>
     /// What the vehicle knows of its driver's camera: the world direction it looks along, and whether the driver is in
-    /// mouselook (the viewer's AGENT_CONTROL_MOUSELOOK control flag, as the simulator's CameraData.MouseLook).
+    /// mouselook (the viewer's AGENT_CONTROL_MOUSELOOK control flag, as the simulator's CameraData.MouseLook), and, when the
+    /// host has it, the camera's rotation (its x axis along At, its y axis to the left, as the simulator's
+    /// CameraData.CameraRotation), which InWorldz's camera steering takes its pitch from.
     /// </summary>
-    public readonly record struct DriverView(Vector3 At, bool InMouselook);
+    public readonly record struct DriverView(Vector3 At, bool InMouselook, Quaternion? Rotation = null);
 
     public sealed class VehicleController
     {
@@ -445,11 +447,27 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     if (InWorldz)
                         _props.ParamsVec[VehVectorParam.AngularMotorDecayTimescale] = HeldTimescales(pValue, S.EffectiveMaxDecayTimescale);
                     break;
+                // InWorldz's wind parameters (VehicleDynamics.cs:448-459): how much of the wind pushes the vehicle along each of its
+                // axes and rolls and pitches it, each axis held to -10..10. Second Life has no such parameters and ignores them.
+                case Vehicle.LINEAR_WIND_EFFICIENCY:
+                    if (InWorldz)
+                        _props.ParamsVec[VehVectorParam.LinearWindEfficiency] = HeldWindEfficiency(pValue);
+                    break;
+                case Vehicle.ANGULAR_WIND_EFFICIENCY:
+                    if (InWorldz)
+                        _props.ParamsVec[VehVectorParam.AngularWindEfficiency] = HeldWindEfficiency(pValue);
+                    break;
                 case Vehicle.BLOCK_EXIT:
                     // Not simulated; ignored, as Halcyon did
                     break;
             }
         }
+
+        private static Vector3 HeldWindEfficiency(Vector3 v)
+            => new Vector3(
+                ClampF(v.X, -HalcyonVehicleLaws.MaxWindEfficiency, HalcyonVehicleLaws.MaxWindEfficiency),
+                ClampF(v.Y, -HalcyonVehicleLaws.MaxWindEfficiency, HalcyonVehicleLaws.MaxWindEfficiency),
+                ClampF(v.Z, -HalcyonVehicleLaws.MaxWindEfficiency, HalcyonVehicleLaws.MaxWindEfficiency));
 
         // =================================================================
         // Process rotation param from LSL
@@ -655,6 +673,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 SimulateVerticalAttractor(pTimestep, out tilt, out _);
 
             // -------------------------------------------------------
+            // InWorldz: the wind, or the water's current, at the vehicle's position pushes it (before the motors, as in Halcyon).
+            SimulateWind(pTimestep);
+
+            // -------------------------------------------------------
             // Motors and friction, linear and angular, then the banking turn motor. They are stepped over the
             // step the engine is about to take (pTimestep), not the smoothed one: each is the exact solution
             // over that step.
@@ -686,11 +708,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// sleeps. A vehicle with VEHICLE_FLAG_MOUSELOOK_STEER or _BANK is never idle: a sleeping vehicle would read no
         /// camera, and the InWorldz simulator keeps such a vehicle awake for that reason (its sleep threshold is 0;
         /// VehicleDynamics.cs:784-789). Under InWorldz's behaviour, where the two MOUSEPOINT flags steer and bank from the
-        /// camera too, the same holds for them.
+        /// camera too, the same holds for them, and for a vehicle with VEHICLE_FLAG_REACT_TO_WIND or _REACT_TO_CURRENTS, which
+        /// the wind moves (the simulator's sleep threshold is 0 for it too, VehicleDynamics.cs:784-789).
         /// </summary>
         public bool IsIdle
             => (_props.Flags & (ExtendedVehicleFlags.MouselookSteer | ExtendedVehicleFlags.MouselookBank)) == 0
-            && !(InWorldz && (_props.Flags & (ExtendedVehicleFlags.MousePointSteer | ExtendedVehicleFlags.MousePointBank)) != 0)
+            && !(InWorldz && (_props.Flags & (ExtendedVehicleFlags.MousePointSteer | ExtendedVehicleFlags.MousePointBank
+                | ExtendedVehicleFlags.ReactToWind | ExtendedVehicleFlags.ReactToCurrents)) != 0)
             && MotorIdle(_props.Dynamics.LinearDirection, _props.GetVec(VehVectorParam.LinearMotorDecayTimescale), _props.Dynamics.LinearDecayIndex)
             && MotorIdle(_props.Dynamics.AngularDirection, _props.GetVec(VehVectorParam.AngularMotorDecayTimescale), _props.Dynamics.AngularDecayIndex)
             && HoverIdle()
@@ -2077,6 +2101,57 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             return local * bodyRotation;
         }
 
+        // InWorldz's wind: the wind (or water current) at the vehicle's position as last sampled, held between samples.
+        private Vector3 _windSample;
+
+        /// <summary>The wind the vehicle last sampled, in the world's frame. For tests.</summary>
+        internal Vector3 WindSample => _windSample;
+
+        /// <summary>
+        /// InWorldz's wind and water currents (VehicleDynamics.cs:863-992, BuildWindData and SimulateWindForces, read, not run),
+        /// only under <see cref="VehicleBehaviour.InWorldz"/>. A vehicle with VEHICLE_FLAG_REACT_TO_WIND set is pushed by the
+        /// wind at its position (the surface wind or the wind aloft above the water), and one with VEHICLE_FLAG_REACT_TO_CURRENTS
+        /// by the water's current below the water; the wind module of the region says which. The wind is read once in eight
+        /// steps (frame number mod 8) and held between reads. Its push is
+        /// <see cref="HalcyonVehicleLaws.WindLinearVelocityChange"/> on the vehicle's velocity, scaled by
+        /// VEHICLE_LINEAR_WIND_EFFICIENCY, and <see cref="HalcyonVehicleLaws.WindAngularVelocityChange"/> on its angular
+        /// velocity, scaled by VEHICLE_ANGULAR_WIND_EFFICIENCY. With neither flag set, under Second Life's behaviour, or with
+        /// no wind module, nothing is read and nothing pushes the vehicle.
+        /// Halcyon applies the push only for the wind flag, and reads the current for a vehicle under the water that has either
+        /// flag but pushes it only when the wind flag is set, so REACT_TO_CURRENTS alone does nothing there. Here the
+        /// current flag does what its name says: a vehicle below the water is pushed by the current with either flag, and a
+        /// vehicle above it only with the wind flag.
+        /// </summary>
+        private void SimulateWind(float h)
+        {
+            const ExtendedVehicleFlags react = ExtendedVehicleFlags.ReactToWind | ExtendedVehicleFlags.ReactToCurrents;
+            if (!InWorldz || (_props.Flags & react) == 0)
+            {
+                _windSample = Vector3.Zero;
+                return;
+            }
+
+            Vector3 position = _body.Position;
+            if (m_frameNum % HalcyonVehicleLaws.WindSampleInterval == 0)
+                _windSample = _body.TryGetWind(position, out Vector3 wind) && float.IsFinite(wind.X) && float.IsFinite(wind.Y)
+                    ? new Vector3(wind.X, wind.Y, 0f) : Vector3.Zero;
+
+            bool underWater = position.Z < _body.GetWaterLevel(position);
+            if (!underWater && (_props.Flags & ExtendedVehicleFlags.ReactToWind) == 0)
+                return;
+
+            Vector3 windLocal = _windSample * Quaternion.Inverse(_rotation);
+            Vector3 push = HalcyonVehicleLaws.WindLinearVelocityChange(windLocal, _localLinearVel,
+                _props.GetVec(VehVectorParam.LinearWindEfficiency), h);
+            if (push != Vector3.Zero)
+                ApplyLinearVelocityChange(push * _rotation);
+
+            Vector3 turn = HalcyonVehicleLaws.WindAngularVelocityChange(windLocal, _localAngularVel,
+                _props.GetVec(VehVectorParam.AngularWindEfficiency), h);
+            if (turn != Vector3.Zero)
+                AddTorqueVelocityChange(turn * _rotation);
+        }
+
         // InWorldz's motor-height rule: the last height measured below the vehicle, how long it has been above the limit, and
         // whether the motors are off for it.
         private float _heightAbove;
@@ -2093,7 +2168,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// measured once in eight steps: a ray from the lower left edge of the vehicle's box, and if that finds nothing near
         /// from the lower right edge, each starting a metre up the vehicle's own axis and going down it for three times the
         /// limit; the height is the distance less that metre, or the limit plus one metre when nothing is hit. The vehicle's own
-        /// parts are not hit. Only under InWorldz: Second Life has no such rule.
+        /// parts are not hit. The delay's clock runs as Halcyon's does, eight steps' time on every step
+        /// (<see cref="HalcyonVehicleLaws.MotorsOffAboveHeight"/>), so a delay of 2.5 s runs out in about 0.3 s. Only under
+        /// InWorldz: Second Life has no such rule.
         /// </summary>
         private void SimulateMotorHeight(float h)
         {
@@ -2419,9 +2496,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// InWorldz reads the camera once in eight steps (frame number mod 8); here it is read on every step. The camera
         /// reaches the simulator some ten to twenty times a second and the motor's timescale is about a second, so a read
         /// on every step only makes the turn answer the camera sooner by under a fifth of a second; the pacing is not taken.
-        /// InWorldz measures the pitch as the vertical part of the camera's own y axis (its sideways axis, which a camera
-        /// that is not rolled keeps level); the camera's direction is all the host gives the vehicle, and the pitch of
-        /// the camera is what a driver aims with, so the pitch share here is the camera's pitch.
+        /// InWorldz measures the pitch as the vertical part of the camera's own y axis in the vehicle's frame (its sideways
+        /// axis, which a camera that is not rolled keeps level relative to the world), and so does this: the pitch share
+        /// is that axis's z, with the sign InWorldz gives it, taken from the camera's rotation when the host gives it
+        /// (<see cref="DriverView.Rotation"/>) and from a camera that is not rolled, looking along its direction, when not.
         /// </summary>
         private void SimulateMouselookInput()
         {
@@ -2438,14 +2516,30 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             if (!steering && !banking)
                 return;
 
-            Vector3 d = Vector3.Normalize(in camera) * Quaternion.Inverse(_rotation);
+            Quaternion toVehicle = Quaternion.Inverse(_rotation);
+            Vector3 d = Vector3.Normalize(in camera) * toVehicle;
             float xcam = MouselookShare(d.Y, VehFloatParam.MouselookAzimuth);
-            float ycam = (flags & ExtendedVehicleFlags.LimitRollOnly) != 0 ? 0f : MouselookShare(-d.Z, VehFloatParam.MouselookAltitude);
+
+            // The pitch share is the vertical part of the camera's own y axis in the vehicle's frame, as InWorldz takes it
+            // (VehicleDynamics.cs:808, 820, the z of (0,1,0) turned by the camera's rotation).
+            float ycam = (flags & ExtendedVehicleFlags.LimitRollOnly) != 0 ? 0f
+                : MouselookShare((CameraLeftAxis(view, camera) * toVehicle).Z, VehFloatParam.MouselookAltitude);
             Vector3 direction = _props.GetVec(VehVectorParam.AngularMotorDirection);
             if (steering && (xcam != 0f || ycam != 0f))
                 MoveAngular(new Vector3(0f, ycam * direction.Y, xcam * direction.Z));
             if (banking && xcam != 0f)
                 MoveAngular(new Vector3(-xcam * direction.X, 0f, 0f));
+        }
+
+        // The camera's own y axis (its left) in world coordinates: from its rotation when it is a rotation, else that of a camera
+        // that is not rolled and looks along 'at'.
+        private static Vector3 CameraLeftAxis(DriverView view, Vector3 at)
+        {
+            if (view.Rotation is Quaternion q && float.IsFinite(q.X) && float.IsFinite(q.Y) && float.IsFinite(q.Z) && float.IsFinite(q.W)
+                && q.LengthSquared() > 1e-6f)
+                return Vector3.UnitY * Quaternion.Normalize(in q);
+            Vector3 left = Vector3.Cross(Vector3.UnitZ, at);
+            return left.LengthSquared() < 1e-12f ? Vector3.UnitY : Vector3.Normalize(in left);
         }
 
         /// <summary>
@@ -2865,8 +2959,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     break;
 
                 case VehicleType.Sailboat:
-                    // VehicleDynamics.cs:1886-1924. Wind and water currents are stored (the two efficiency vectors and
-                    // the REACT_TO_WIND and REACT_TO_CURRENTS flags) but not simulated: no vehicle here reacts to either.
+                    // VehicleDynamics.cs:1886-1924. The two wind efficiency vectors and the REACT_TO_WIND and
+                    // REACT_TO_CURRENTS flags act under InWorldz's behaviour (SimulateWind) and are only held under Second Life's.
                     _props.ParamsVec[VehVectorParam.LinearFrictionTimescale]     = new Vector3(200f, 0.5f, 3f);
                     _props.ParamsVec[VehVectorParam.AngularFrictionTimescale]    = new Vector3(10f, 1f, 0.2f);
                     _props.ParamsVec[VehVectorParam.LinearMotorDirection]        = Vector3.Zero;

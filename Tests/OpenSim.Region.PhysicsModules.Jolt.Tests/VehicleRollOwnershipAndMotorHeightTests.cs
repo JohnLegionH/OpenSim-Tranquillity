@@ -125,11 +125,11 @@ public class VehicleRollOwnershipAndMotorHeightTests
     {
         BehaviourRig high = HighCar(VehicleBehaviour.InWorldz, onTheFloor: false);
         BehaviourRig low = HighCar(VehicleBehaviour.InWorldz, onTheFloor: true);
-        high.Run(Step, 45);              // 1 s: high, but not yet for 2 s
-        low.Run(Step, 45);
-        Assert.Equal(low.Body.LinearVelocity.X, high.Body.LinearVelocity.X, 3);   // real seconds: Halcyon's clock would have run out by now
-        high.Run(Step, 45 * 2);          // 3 s: it has been high for over 2 s
-        low.Run(Step, 45 * 2);
+        high.Run(Step, 6);               // 0.13 s: the height is first measured at the 8th step, so the motor is still on
+        low.Run(Step, 6);
+        Assert.Equal(low.Body.LinearVelocity.X, high.Body.LinearVelocity.X, 3);
+        high.Run(Step, 45 * 3 - 6);      // 3 s: Halcyon's clock runs eight steps' time on every step, so the 2 s has run out in about 0.3 s
+        low.Run(Step, 45 * 3 - 6);
         float held = high.Body.LinearVelocity.X;
         high.Run(Step, 45);
         low.Run(Step, 45);
@@ -140,8 +140,8 @@ public class VehicleRollOwnershipAndMotorHeightTests
     [Fact]
     public void Under_InWorldz_the_angular_motor_goes_off_too()
     {
-        BehaviourRig high = HighCar(VehicleBehaviour.InWorldz, onTheFloor: false, angular: true);
-        BehaviourRig low = HighCar(VehicleBehaviour.InWorldz, onTheFloor: true, angular: true);
+        BehaviourRig high = HighCar(VehicleBehaviour.InWorldz, onTheFloor: false, after: 8f, angular: true);
+        BehaviourRig low = HighCar(VehicleBehaviour.InWorldz, onTheFloor: true, after: 8f, angular: true);
         high.Run(Step, 45 * 3);
         low.Run(Step, 45 * 3);
         float held = high.Body.AngularVelocity.Z;
@@ -236,14 +236,38 @@ public class VehicleRollOwnershipAndMotorHeightTests
     [Fact]
     public void The_height_clock_counts_above_the_limit_and_clears_at_or_under_it()
     {
+        // The clock adds eight steps' time on every step (VehicleDynamics.cs:2564), so a step of 0.05 s adds 0.4 s.
         float t = 0f;
-        Assert.False(HalcyonVehicleLaws.MotorsOffAboveHeight(2f, 1f, 2.5f, 1f, ref t));
-        Assert.Equal(1f, t);
-        Assert.False(HalcyonVehicleLaws.MotorsOffAboveHeight(2f, 1f, 2.5f, 1f, ref t));
-        Assert.True(HalcyonVehicleLaws.MotorsOffAboveHeight(2f, 1f, 2.5f, 1f, ref t));
-        Assert.Equal(3f, t);
-        Assert.False(HalcyonVehicleLaws.MotorsOffAboveHeight(1f, 1f, 2.5f, 1f, ref t));    // at the limit: not above it
+        Assert.False(HalcyonVehicleLaws.MotorsOffAboveHeight(2f, 1f, 2.5f, 0.05f, ref t));
+        Assert.Equal(0.4f, t, 5);
+        for (int i = 0; i < 5; i++)
+            Assert.False(HalcyonVehicleLaws.MotorsOffAboveHeight(2f, 1f, 2.5f, 0.05f, ref t));
+        Assert.Equal(2.4f, t, 4);
+        Assert.True(HalcyonVehicleLaws.MotorsOffAboveHeight(2f, 1f, 2.5f, 0.05f, ref t));
+        Assert.Equal(2.8f, t, 4);
+        Assert.False(HalcyonVehicleLaws.MotorsOffAboveHeight(1f, 1f, 2.5f, 0.05f, ref t));    // at the limit: not above it
         Assert.Equal(0f, t);
-        Assert.True(HalcyonVehicleLaws.MotorsOffAboveHeight(5f, 1f, 0f, 0.02f, ref t));    // after 0: off at once
+        Assert.True(HalcyonVehicleLaws.MotorsOffAboveHeight(5f, 1f, 0f, 0.02f, ref t));       // after 0: off at once
+    }
+
+    // Halcyon's quirk, kept on purpose: a delay of 2.5 s, the legacy car's, runs out in 15 steps at 45 Hz, 0.33 s.
+    [Fact]
+    public void A_delay_of_two_and_a_half_seconds_runs_out_in_about_a_third_of_a_second()
+    {
+        float t = 0f;
+        int steps = 0;
+        while (!HalcyonVehicleLaws.MotorsOffAboveHeight(2f, 1f, 2.5f, (float)Step, ref t))
+            steps++;
+        Assert.Equal(14, steps);
+
+        BehaviourRig high = HighCar(VehicleBehaviour.InWorldz, onTheFloor: false, above: 1f, after: 2.5f);
+        BehaviourRig low = HighCar(VehicleBehaviour.InWorldz, onTheFloor: true, above: 1f, after: 2.5f);
+        high.Run(Step, 45);              // 1 s: long past the third of a second
+        low.Run(Step, 45);
+        float held = high.Body.LinearVelocity.X;
+        high.Run(Step, 45);
+        low.Run(Step, 45);
+        Assert.True(Math.Abs(high.Body.LinearVelocity.X - held) < 0.01f * held, "the motor was still on after 2 s");
+        Assert.True(low.Body.LinearVelocity.X > held + 0.5f);
     }
 }

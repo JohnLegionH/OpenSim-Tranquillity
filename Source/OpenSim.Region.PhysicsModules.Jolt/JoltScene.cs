@@ -92,6 +92,29 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // The region's IMesher, driving the cook path for cut/hollow/sculpt/mesh prims.
         private IMesher m_mesher;
 
+        // The region's wind module, which vehicles with REACT_TO_WIND or REACT_TO_CURRENTS ask for the wind at their position
+        // under VehicleBehaviour = InWorldz. Null when the region has none.
+        private IWindModule m_wind;
+
+        /// <summary>Gives the scene a wind module without a region (the tests and the harness; a region's is found when it loads).</summary>
+        internal void UseWindModule(IWindModule module) => m_wind = module;
+
+        /// <summary>
+        /// The wind at a region position (the water's current below the water, the surface wind above it, the wind aloft over
+        /// that), from the region's wind module. False when the region has no wind module.
+        /// </summary>
+        internal bool TryGetWind(Vector3 pos, out Vector3 wind)
+        {
+            wind = Vector3.Zero;
+            IWindModule module = m_wind;
+            if (module == null || !float.IsFinite(pos.X) || !float.IsFinite(pos.Y) || !float.IsFinite(pos.Z))
+                return false;
+            const float Limit = 1e6f;
+            wind = module.WindSpeed((int)MathF.Floor(Math.Clamp(pos.X, -Limit, Limit)), (int)MathF.Floor(Math.Clamp(pos.Y, -Limit, Limit)),
+                (int)MathF.Floor(Math.Clamp(pos.Z, -Limit, Limit)));
+            return true;
+        }
+
         public string RegionName { get; private set; }
 
         // Terrain: the current cooked heightfield ShapeId (released + replaced on each SetTerrain),
@@ -498,6 +521,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             RegisterParityConsole(scene);
 
             // The IMesher the cook path needs; without one, prims fall back to bounding boxes.
+            m_wind = scene.RequestModuleInterface<IWindModule>();
+
             m_mesher = scene.RequestModuleInterface<IMesher>();
             if (m_mesher == null)
                 m_log.LogWarning($"{LogHeader} no IMesher available - shape cooking will need it.");

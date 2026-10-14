@@ -137,6 +137,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         public float GetWaterLevel(Vector3 pos) => _module.WaterLevel;
 
+        public bool TryGetWind(Vector3 position, out Vector3 wind) => _module.TryGetWind(position, out wind);
+
         public bool TryGetBounds(out Vector3 center, out Vector3 halfSize) => _prim.TryGetVehicleBounds(out center, out halfSize);
 
         public bool CastRayNearest(Vector3 origin, Vector3 direction, float maxDistance, out float distance)

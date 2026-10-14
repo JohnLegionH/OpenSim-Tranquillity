@@ -1868,8 +1868,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // The driver's camera for the mouselook vehicle flags: where it looks (world) and whether the driver is in
         // mouselook, as the simulator hands it to the vehicle's root actor (ScenePresence answers
         // OnPhysicsRequestingCameraData once a script takes the seated driver's controls, with MouseLook from the
-        // driver's control flags); null when no driver's camera is hooked up.
-        private DriverView? DriverCameraAxis() => TryGetCameraData() is CameraData c ? new DriverView(c.CameraAtAxis, c.MouseLook) : null;
+        // driver's control flags); null when no driver's camera is hooked up. The camera's rotation goes with it: InWorldz's
+        // camera steering takes its pitch from the camera's own y axis.
+        private DriverView? DriverCameraAxis() => TryGetCameraData() is CameraData c ? new DriverView(c.CameraAtAxis, c.MouseLook, c.CameraRotation) : null;
 
         // The vehicle's bounding box in its own (prim) frame, for the motor-height rule's down rays: the box of the root
         // prim's size, grown over each welded part's own size box at the part's place. A box, not the hull, as the rule
