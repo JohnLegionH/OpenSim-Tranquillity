@@ -200,6 +200,19 @@ Position updates to viewers, timers and sensors stay at the heartbeat rate. Phys
 in the harness the test car takes about 1.5 times the step time of one step per heartbeat
 (`jolt metrics` shows each region's step time).
 
+### Collision repeat rate and time dilation
+
+At any step rate, a part that keeps touching another object is sent `collision` no faster than once in 0.13 s of
+simulated time. The collision event's wiki page says "Smallest repeat rate is approximatively 0.13 seconds", so at an
+11 Hz heartbeat a repeat comes every second heartbeat (about 0.18 s). A new contact (`collision_start`), a contact that
+went (`collision_end`) and the first update after a gap are never held back. Contact with the ground alone
+(`land_collision`, whose page gives no rate) and avatars' updates (their collision plane and impact damage) still
+come every heartbeat.
+
+The region's time dilation (`llGetRegionTimeDilation`; 0.0 is full dilation, 1.0 none) is the simulated seconds of
+the last 11 heartbeats over the real seconds they took, at most 1, so a region that falls behind says so. Before
+this the Jolt scene always reported 1.
+
 ### Script ray casts and pushes
 
 Scripts written by anyone can cast rays and push avatars. These keys bound what they can make one

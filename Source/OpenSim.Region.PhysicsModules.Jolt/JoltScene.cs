@@ -110,6 +110,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal int CollisionSteps { get; private set; } = 1;
         internal SVector3 DefaultGravity { get; private set; } = new SVector3(0f, 0f, -9.80665f);
         internal float LastTimeStep = 0.0909f;
+        // Simulated seconds: the sum of every heartbeat's time step. The collision repeat rate is measured on it.
+        internal double SimTime;
+        // The heartbeat timer's clock, in Stopwatch ticks. Null reads Stopwatch.GetTimestamp(); the tests set their own.
+        internal Func<long> HeartbeatClock;
         // The clock new vehicle controllers read (motor reset and spike checks). Null in a region, where
         // they read the wall clock; the test harness sets a simulated one so it can step faster than real time.
         internal Func<DateTime> VehicleClock;
@@ -2180,7 +2184,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             IPhysicsBackend backend = _backend;
             if (backend == null)
                 return 1f;
-            NoteHeartbeatGap();
+            NoteHeartbeatGap(timeStep);
+            SimTime += timeStep;
             backend.BeginRayCastBudget();   // [Jolt] RayCastBudgetMs and RayCastSimulatorBudgetMs are per heartbeat, at every PhysicsStepRate
             if (_substeps != null)
                 return SimulateSubsteps(timeStep);
@@ -2281,12 +2286,47 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // no physics step leaves its gap pending; the next heartbeat that reports keeps the longer one.
         private long _lastSimulateTimestamp;
         private long _pendingGapTicks;
-        private void NoteHeartbeatGap()
+        private void NoteHeartbeatGap(float timeStep)
         {
-            long now = System.Diagnostics.Stopwatch.GetTimestamp();
-            if (_lastSimulateTimestamp != 0 && now - _lastSimulateTimestamp > _pendingGapTicks)
-                _pendingGapTicks = now - _lastSimulateTimestamp;
+            long now = HeartbeatClock != null ? HeartbeatClock() : System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_lastSimulateTimestamp != 0)
+            {
+                long gap = now - _lastSimulateTimestamp;
+                if (gap > _pendingGapTicks)
+                    _pendingGapTicks = gap;
+                NoteDilationSample(timeStep, gap);
+            }
             _lastSimulateTimestamp = now;
+        }
+
+        // Time dilation (PhysicsScene.TimeDilation; llGetRegionTimeDilation): the simulated seconds of the last
+        // DilationWindowHeartbeats heartbeats over the real seconds between them, at most 1. A heartbeat is asked to
+        // simulate a fixed time; one that arrives late loses the difference, so the ratio falls below 1 while the region
+        // runs behind and returns to 1 when it catches up. Averaging over about a second keeps the timer's jitter from
+        // showing as dilation. The Second Life wiki page for llGetRegionTimeDilation: 0.0 is full dilation and 1.0 none.
+        private const int DilationWindowHeartbeats = 11;
+        private readonly double[] _dilationStepSeconds = new double[DilationWindowHeartbeats];
+        private readonly double[] _dilationGapSeconds = new double[DilationWindowHeartbeats];
+        private int _dilationCount;
+        private int _dilationNext;
+        private volatile float _timeDilation = 1f;
+
+        public override float TimeDilation => _timeDilation;
+
+        private void NoteDilationSample(float timeStep, long gapTicks)
+        {
+            _dilationStepSeconds[_dilationNext] = timeStep;
+            _dilationGapSeconds[_dilationNext] = gapTicks / (double)System.Diagnostics.Stopwatch.Frequency;
+            _dilationNext = (_dilationNext + 1) % DilationWindowHeartbeats;
+            if (_dilationCount < DilationWindowHeartbeats)
+                _dilationCount++;
+            double steps = 0, gaps = 0;
+            for (int i = 0; i < _dilationCount; i++)
+            {
+                steps += _dilationStepSeconds[i];
+                gaps += _dilationGapSeconds[i];
+            }
+            _timeDilation = gaps <= steps ? 1f : (float)(steps / gaps);
         }
 
         // Everything after the backend step: metrics, capacity, the body / character drains and the collision
@@ -2564,6 +2604,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
 
             _collisions.BeginFrame();
+            _collisions.Now = SimTime;
             if (mergeSubsteps)
                 _framePairs.Clear();
             for (int i = 0; i < contactCount; i++)
@@ -2654,11 +2695,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // Deliver this frame's sets (outside the lock).
             foreach (KeyValuePair<uint, CollisionEventUpdate> kv in _collisions.Current)
             {
-                if (!_collisions.ShouldDeliver(kv.Key, kv.Value))
-                    continue;
                 if (_framePrims.TryGetValue(kv.Key, out JoltPrim p))
-                    p.SendCollisionUpdate(kv.Value);
-                else if (_frameAvatars.TryGetValue(kv.Key, out JoltCharacter a))
+                {
+                    // A part's repeats keep the collision event's documented rate; an avatar's updates (the collision
+                    // plane under the feet, impact damage) go every heartbeat.
+                    if (_collisions.ShouldDeliverToPart(kv.Key, kv.Value))
+                        p.SendCollisionUpdate(kv.Value);
+                }
+                else if (_collisions.ShouldDeliver(kv.Key, kv.Value) && _frameAvatars.TryGetValue(kv.Key, out JoltCharacter a))
                     a.SendCollisionUpdate(kv.Value);
             }
 
