@@ -1320,10 +1320,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             LinkOffsetOf(position ?? _position, rotation ?? _orientation, out SVector3 offset, out SQuaternion relative);
             bool moved = SVector3.Distance(offset, _linkOffset) > LinkMoveTolerance;
             bool turned = 2f * MathF.Acos(MathF.Min(1f, MathF.Abs(SQuaternion.Dot(relative, _linkRotation)))) > LinkTurnTolerance;
+            Vector3 wasAt = _position;
+            Quaternion wasTurned = _orientation;
             if (position.HasValue) _position = position.Value;
             if (rotation.HasValue) _orientation = rotation.Value;
             if (!moved && !turned)
                 return;
+            CarryRidersOfMove(wasAt, wasTurned);
             if (moved) _linkOffset = offset;
             if (turned) _linkRotation = relative;
             _module.MarkLinksetDirty(_linkRoot);

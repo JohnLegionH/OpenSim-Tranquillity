@@ -7,6 +7,7 @@
 
 using System.Globalization;
 using OpenMetaverse;
+using OpenSim.Framework;
 using OpenSim.Region.PhysicsModules.Jolt.Harness;
 using Xunit;
 using Xunit.Abstractions;
@@ -140,5 +141,72 @@ public class SteppedMoverTests
             Assert.False(KinematicTestRig.PlatformPrim(r).IsKinematicBody, "the body was made kinematic with nothing on it");
         });
         KinematicTestRig.Run(sc, rate, On);
+    }
+
+    // ------------------------------------------------------------------ a child prim moved on its own
+
+    // The root is a 6 x 6 x 0.5 m platform and its one child a 4 x 4 x 0.5 m platform with its middle 3 m east of the root's, its top level
+    // with the root's. The rider stands on the child, 1 m past the root's edge. A script moves the child alone (llSetLinkPrimitiveParams)
+    // 0.1 m every 50 ms (two sets a heartbeat) for 3 m, east or up; how far the rider ends from its place on the child.
+    private double RiderOffsetAfterChildMoves(string rider, bool up, double rate, params (string, string)[] jolt)
+    {
+        const float armLength = 3f;
+        JoltPrim child = null;
+        Vector3 centre = default, childAt = default;
+        double offset = double.NaN;
+        Vector3 start = default;
+        var sc = KinematicTestRig.Platform("none", 9f, r =>
+        {
+            int h = r.Heartbeats;
+            if (h == 0)
+            {
+                centre = r.Other.Position;
+                child = (JoltPrim)r.AddPart(PrimitiveBaseShape.CreateBox(), new Vector3(4f, 4f, 0.5f), centre + new Vector3(armLength, 0f, 0f), Quaternion.Identity, false, 5502u, linkTo: r.Other);
+                float top = centre.Z + 0.25f;
+                var at = new Vector3(centre.X + armLength + 1f, centre.Y, top);
+                if (rider == "box")
+                    r.AddBox(new Vector3(0.5f, 0.5f, 0.5f), at + new Vector3(0f, 0f, 0.26f), Quaternion.Identity);
+                else
+                    r.AddAvatarAt(at + new Vector3(0f, 0f, r.AvatarStandHalf + 0.05f), false);
+            }
+            if (h == 44)
+            {
+                childAt = child.Position;
+                start = r.Actor.Position - childAt;
+            }
+            if (h >= 44 && h < 44 + 15)
+            {
+                Vector3 dir = up ? Vector3.UnitZ : Vector3.UnitX;
+                for (int k = 0; k < 2; k++)
+                {
+                    childAt += dir * 0.1f;
+                    child.Position = childAt;
+                }
+            }
+            if (h == 44 + 15 + 25)
+                offset = ((r.Actor.Position - child.Position) - start).Length();
+        });
+        KinematicTestRig.Run(sc, rate, jolt);
+        return offset;
+    }
+
+    // A child prim moved on its own carries what stands on it with the setting on (a root's compound is rebuilt for each step; the
+    // rider takes the child's step with each set). With the setting off the rider is left behind sideways and shoved up or dropped, as before.
+    [Theory]
+    [InlineData("box", false, 0.0)]
+    [InlineData("box", false, 45.0)]
+    [InlineData("avatar", false, 0.0)]
+    [InlineData("avatar", false, 45.0)]
+    [InlineData("box", true, 45.0)]
+    [InlineData("avatar", true, 45.0)]
+    public void A_child_prim_moved_on_its_own_carries_its_riders_with_the_setting_on(string rider, bool up, double rate)
+    {
+        double on = RiderOffsetAfterChildMoves(rider, up, rate, On);
+        double off = RiderOffsetAfterChildMoves(rider, up, rate);
+        Say($"CHILD {rider} {(up ? "up" : "east")} 3 m rate {rate:0}: rider {F(on)} m from its place on the child with the setting on, {F(off)} m off");
+        Assert.True(on < 0.3, $"the rider ended {on:0.00} m from its place on the child");
+        // An avatar on a child that moves up is pushed up by the rebuilt compound with the setting off as well.
+        if (!(rider == "avatar" && up))
+            Assert.True(off > 1.0, $"with the setting off the rider ended {off:0.00} m from its place: nothing was carried");
     }
 }
