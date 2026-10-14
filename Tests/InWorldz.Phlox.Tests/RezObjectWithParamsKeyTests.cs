@@ -13,11 +13,11 @@ using Xunit.Abstractions;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// llRezObjectWithParams returns a key. SL wiki (LlRezObjectWithParams): "Returns a key which will
-/// be the key of the object when it is successfully rezzed in the world. On failure, returns
-/// (key)"" (in LSL)". The key is the rezzed root's, the same one object_rez reports, as upstream
-/// LSL_Api also returns the rezzed group's id. A value-returning async call hands its value back
-/// through SysReturn on every path (AsyncReturnGuardTests), so the plain statement form still runs.
+/// llRezObjectWithParams returns a key. SL wiki (https://wiki.secondlife.com/wiki/LlRezObjectWithParams): on success the
+/// value is the key of the object as rezzed into the world; on failure it is the empty key, written (key)"" in LSL.
+/// The key is the rezzed root's, the same one object_rez reports, as upstream LSL_Api also returns the rezzed group's id.
+/// A value-returning async call hands its value back through SysReturn on every path (AsyncReturnGuardTests), so the
+/// plain statement form still runs.
 /// </summary>
 // Touches no process-wide state, so it runs in parallel.
 public class RezObjectWithParamsKeyTests

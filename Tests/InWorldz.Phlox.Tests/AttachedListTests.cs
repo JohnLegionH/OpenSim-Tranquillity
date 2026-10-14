@@ -15,7 +15,8 @@ namespace InWorldz.Phlox.Tests;
 
 /// <summary>
 /// llGetAttachedList leaves out HUD attachments, as Halcyon (ScenePresence.CollectVisibleAttachmentIds,
-/// which skips IsAttachedHUD) and the SL wiki ("does not include HUD attachments") do.
+/// which skips IsAttachedHUD) and the SL wiki (https://wiki.secondlife.com/wiki/LlGetAttachedList: HUD attachments
+/// are not in the list) do.
 /// </summary>
 // No longer in "phlox-state": this class touches no process-wide state, so it runs in parallel.
 public class AttachedListTests
