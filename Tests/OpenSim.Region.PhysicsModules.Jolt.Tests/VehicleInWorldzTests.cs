@@ -290,8 +290,10 @@ public class VehicleInWorldzTests
     }
 
     // The motor holds its whole grip until the clock reaches zero and decays from there. An angular motor of 1 rad/s,
-    // timescale 0.2 s, decay 0.05 s: after 0.2 s, against a fine integration of dv/dt = g (M - v) / Tm with g = 1
-    // until the delay (0.0338 s) and e^(-(t - delay) / Td) after it; Second Life's with the delay 0.
+    // timescale 0.2 s, decay 0.05 s: after 0.2 s. Second Life's, against a fine integration of dv/dt = g (M - v) / Tm with
+    // g = 1 until the delay (0 for Second Life) and e^(-(t - delay) / Td) after it. InWorldz's angular motor is Halcyon's
+    // stepwise ramp, so it is checked against that ramp worked out apart from the controller, with the clock starting
+    // 0.0338 s before the set.
     [Theory]
     [MemberData(nameof(RateData))]
     public void The_decay_of_a_quick_motor_is_held_back_by_its_delay(double rate)
@@ -312,28 +314,32 @@ public class VehicleInWorldzTests
             rig.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE, 0.05f);
             rig.Car.ProcessVectorVehicleParam(Vehicle.ANGULAR_MOTOR_DIRECTION, new Vector3(0f, 0f, 1f));
             rig.Run(h, steps);
-            double expected = Integrate(0.0, 1.0, 0.2, 0.05, inWorldz ? delay : 0.0, t);
+            double expected = inWorldz
+                ? HalcyonMotorReference.Curve(0.2, 0.05, double.PositiveInfinity, h, steps, 1.0, startIndex: -delay)[steps - 1]
+                : Integrate(0.0, 1.0, 0.2, 0.05, 0.0, t);
             Near(expected, rig.Body.AngularVelocity.Z, 2e-4, 2e-5, $"{(inWorldz ? "InWorldz" : "Second Life")} at {rate} Hz, {t:0.000} s");
         }
     }
 
-    // The same motor, the same 2 s, at every rate: the delay ends inside a step at 11 Hz (0.0909 s) and the result is
-    // the same as with small steps.
+    // The same motor, the same 2 s, at every rate: the delay ends inside a step at 11 Hz (0.0909 s). Halcyon's ramp is a
+    // formula per step, so the speed is not the same at every rate (as the exact solution of Second Life's behaviour is); at each
+    // rate it is the stepwise ramp's.
     [Fact]
-    public void The_delayed_decay_gives_the_same_speed_at_every_step_rate()
+    public void The_delayed_decay_follows_the_stepwise_ramp_at_every_step_rate()
     {
-        var speeds = new List<float>();
+        double delay = -HalcyonMotorReference.DecayStart(0.2);
+        Assert.InRange(delay, 0.0338, 0.0339);
         foreach (double rate in Rates)
         {
             var rig = new BehaviourRig(InWorldz, Vehicle.TYPE_CAR, gravity: false);
             rig.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_TIMESCALE, 0.2f);
             rig.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE, 0.05f);
             rig.Car.ProcessVectorVehicleParam(Vehicle.ANGULAR_MOTOR_DIRECTION, new Vector3(0f, 0f, 1f));
-            rig.Run(1.0 / rate, (int)Math.Round(2.0 * rate));
-            speeds.Add(rig.Body.AngularVelocity.Z);
+            int steps = (int)Math.Round(2.0 * rate);
+            rig.Run(1.0 / rate, steps);
+            double expected = HalcyonMotorReference.Curve(0.2, 0.05, double.PositiveInfinity, 1.0 / rate, steps, 1.0, startIndex: -delay)[steps - 1];
+            Near(expected, rig.Body.AngularVelocity.Z, 2e-4, 2e-5, $"speed after 2 s at {rate} Hz");
         }
-        foreach (float s in speeds)
-            Near(speeds[3], s, 1e-4, 1e-6, "speed after 2 s");
     }
 
     private static double Integrate(double v0, double motor, double tm, double td, double delay, double span)

@@ -80,6 +80,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <summary>Longest motor decay timescale a script can set (s): Second Life documents 120.</summary>
         public float MaxDecayTimescale { get; init; } = VehicleLimits.MaxDecayTimescale;
 
+        /// <summary>True when the region's configuration sets <see cref="MaxDecayTimescale"/> itself. Where it does not,
+        /// <see cref="VehicleBehaviour.InWorldz"/> holds the decay timescale to InWorldz's 1000 s (see
+        /// <see cref="EffectiveMaxDecayTimescale"/>).</summary>
+        public bool MaxDecayTimescaleSet { get; init; } = false;
+
+        /// <summary>
+        /// The longest motor decay timescale a script can set under this region's behaviour: <see cref="MaxDecayTimescale"/>
+        /// where the configuration set it, else 120 s under Second Life's behaviour (its pages' range) and 1000 s under
+        /// InWorldz's (the Halcyon code holds the linear and angular motor decay timescales to its longest timescale,
+        /// VehicleDynamics.cs:406-421; its 120 s constant is named for them and not used there).
+        /// </summary>
+        public float EffectiveMaxDecayTimescale
+            => MaxDecayTimescaleSet || Behaviour != VehicleBehaviour.InWorldz ? MaxDecayTimescale : VehicleLimits.MaxTimescale;
+
         /// <summary>A hover timescale at or above this turns hover off (s); also the longest a script can set.</summary>
         public float MaxHoverTimescale { get; init; } = VehicleLimits.MaxHoverTimescale;
 

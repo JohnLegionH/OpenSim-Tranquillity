@@ -1162,6 +1162,10 @@ where it is not set, the behaviour does (`InWorldz` gives `legacy`, `SecondLife`
 | Hover moderation | Hover and the linear motor act together. | While a hover flag (`HOVER_GLOBAL_HEIGHT`, `HOVER_TERRAIN_ONLY`, `HOVER_WATER_ONLY`) is set, the hover timescale is below 300 s and the motor still moves the vehicle up or down by more than 0.005 m/s in a step, the linear motor's decay clock is put on 10 s each step (`VehicleDynamics.cs:2714-2720`). | A hovering vehicle with a vertical motor loses its whole linear motor, all three axes, within a few steps. |
 | Hover at height 0 and efficiency 0 | A hover of height 0 with efficiency 0 hovers (bouncing about the ground). | It is no hover, "legacy scripts" (`VehicleDynamics.cs:1563-1564`); a hover that was on has its timescale put to 300 s as well, so a later height and efficiency do not bring it back until the script sets the timescale again. | A script that clears its hover by zeroing the height and efficiency stops hovering. |
 | Attractor dormancy | The attractor acts all the time. | It goes dormant once the tilt has not changed by pi / 256 (0.7 degrees) in a step for 1.5 s, never while the tilt is 108 degrees or more, and wakes when the tilt has moved 0.7 degrees from where it went dormant (`VehicleDynamics.cs:1255-1264`). The step's change is taken per 15 ms of time while it acts, so the step rate does not decide how long it stays awake. | A vehicle that has stopped tilting stays at the lean it has (a car on a slope, a boat settled at an angle) until something moves it 0.7 degrees. |
+| Motor timescales for each axis | `llSetVehicleVectorParam` with a linear or angular motor timescale or decay timescale (codes 30, 31, 34, 35) does nothing: Second Life documents them as floats. A float sets all three axes. | The call sets each axis, each held to the range the float setter holds all three to (`VehicleDynamics.cs:406-427`, `LSLSystemAPI.cs:8572-8601`, read, not run). A float still sets all three. | A script that sets a car's throttle and steering timescales apart, or an airplane's roll and pitch, gets what it asked for. |
+| Motor decay timescale cap | 120 s, the longest the Second Life page documents. | 1000 s (`VehicleDynamics.cs:406-421`; its 120 s constant is named for these values and not used there), unless `VehicleMaxDecayTimescale` is set in the region's configuration. | A script that sets a decay of 500 s gets 500 s, not 120 s. |
+| Angular deflection | The nose turns by a share of the remaining angle each step, `1 - e^(-efficiency x speed share x h / T)`. | A push of angular velocity each step: `speed share x pi x (h / T) x efficiency x ln(1 + angle)` about the normalised Euler angles of the rotation from the nose to the velocity, less a damping term `angular velocity x (h / T) x efficiency x ln(1 + pi - angle) / ln(1 + pi)` within pi / 64 of aligned. It is dropped while the linear motor is stalled against something, and applied only when a component of it is at least pi / 512 (`VehicleDynamics.cs:1114-1169`). Off at a timescale of 1000 s or more, and below 0.2 m/s, as under Second Life. | A plane swings toward its heading by a push that grows with the angle's logarithm and eases off close to alignment, and stops swinging when it is jammed. |
+| Angular motor | The motor and angular friction are one equation, `dw/dt = g (M - w) / Tm - w / Tf`, solved exactly: a friction timescale shorter than the motor's holds the motor down to `M Tf / (Tf + Tm)`. | The motor ramps the velocity by a per-step growth, `next = a (1 + ln(abs M / abs a) / (Tm / h))` (from rest, a stiction start of pi / 64 rad/s; toward zero, `-ln(1 + abs a)`; across zero, to zero and back), with `a` the motor's target when that is further along than the velocity, blends the result with the velocity by its grip `e^(-s / Td)`, and friction takes its share `1 - e^(-h / Tf)` of the velocity at the start of the step on top as its own change. So a short friction does not hold the motor down (`VehicleDynamics.cs:2733-2960`, `1402-1458`). | A quick airplane roll or a car's turn reaches a speed the documented equation would hold down: with a 1 s motor and 0.5 s friction the documented settle is a third of the direction, this ramp goes past three quarters of it. |
 
 **Camera steering** (`InWorldz` only): the mouselook flags do not steer or bank while the camera is within about 2.8
 degrees of the vehicle's heading (or of its pitch); outside that the turn is the camera's offset, shaped, as a share of the script's
@@ -1197,6 +1201,15 @@ tests. Two things are the module's own: the self-righting factor stops at 10 whe
 of time (Halcyon's step) instead of per step, so it does not depend on the step rate. Halcyon's buoyancy adjustment also covers
 `llSetBuoyancy` on an ordinary object; here it is applied to a vehicle's buoyancy only.
 
+The angular motor's ramp and the deflection push depend on the step the engine takes, as Halcyon's did on its own (its step was never
+longer than its shortest timescale, 0.0156 s, so the ramp's steps per timescale are held to at least 1 here: at 45 Hz a quicker motor
+does not overshoot its direction). Left out of the angular motor: the clamp that reduces a motor speed against the vertical attractor
+(`VehicleDynamics.cs:2809-2856`). The linear motor keeps the documented equation under both behaviours; Halcyon's linear ramp
+(`VehicleDynamics.cs:2576-2725`) is built the same way as its angular one and differs from the documented equation in the same way, but is not built here.
+A per-axis timescale or a decay above 120 s set by a script acts at once, but the region's saved record of a vehicle (`SOPVehicle`)
+holds one float for each and keeps a decay at 120 s at most, so after the vehicle is rezzed, copied, loaded with the region or crosses into
+another region the motor comes back with one value on all three axes.
+
 Choose `InWorldz` for a region whose vehicles were built for InWorldz or Halcyon grids and are tuned against these behaviours; leave
 the default for vehicles built for Second Life. In the harness the choice is `--jolt VehicleBehaviour=InWorldz`; the runs `iw-car-pad`,
 `iw-car-ramp`, `iw-airplane` and `iw-mouselook-turn` of `ci/runs.txt` record it (a car on level ground, a car down a 15 degree ramp,
@@ -1209,7 +1222,7 @@ component is larger than the speed); it is a patch for PhysX's sleeping, and the
 
 The limits a script's vehicle parameters are held to are `[Jolt]` keys, read once when the region
 starts, so a vehicle maker can tune them. Each default is the value the module always had, except
-the motor decay cap, which is Second Life's documented 120 s (https://wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial).
+the motor decay cap, which is Second Life's documented 120 s under `SecondLife` (https://wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial) and 1000 s under `InWorldz`.
 
 | Key | Default | What it limits |
 |---|---|---|
@@ -1219,7 +1232,7 @@ the motor decay cap, which is Second Life's documented 120 s (https://wiki.secon
 | `VehicleAngularLimiterFloor` | 0.1 | The angular rate limiter's floor, 0 to 1 (below the table). 1 turns the limiter off. |
 | `VehicleMinTimescale` | 0.0156 | Shortest timescale a script can set (s), 0.001 to 1. |
 | `VehicleMaxTimescale` | 1000 | Longest friction, motor or deflection timescale (s), at most 1000. 1000 s or more is "off" for friction and deflection. |
-| `VehicleMaxDecayTimescale` | 120 | Longest motor decay timescale (s). It was 1000 before this key. |
+| `VehicleMaxDecayTimescale` | 120 under `SecondLife`, 1000 under `InWorldz` | Longest motor decay timescale (s), linear and angular. It was 1000 before this key. Where the key is set it decides, whatever the behaviour; where it is not set, the behaviour does (the stock configuration leaves it unset). |
 | `VehicleMaxHoverTimescale` | 300 | Hover is off at or above this hover timescale (s). |
 | `VehicleMaxAttractTimescale` | 500 | The vertical attractor and banking are off at or above this timescale (s). |
 | `VehicleMaxMotorOffset` | 100 | Linear motor offset (m, each axis). |

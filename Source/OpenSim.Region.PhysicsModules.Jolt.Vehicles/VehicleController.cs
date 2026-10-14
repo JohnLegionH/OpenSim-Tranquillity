@@ -280,7 +280,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     break;
                 case Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE:
                     // Scalar set → apply to all 3 axes
-                    pValue = ClampF(pValue, S.MinTimescale, S.MaxDecayTimescale);
+                    pValue = ClampF(pValue, S.MinTimescale, S.EffectiveMaxDecayTimescale);
                     _props.ParamsVec[VehVectorParam.AngularMotorDecayTimescale] = new Vector3(pValue, pValue, pValue);
                     break;
                 case Vehicle.ANGULAR_MOTOR_TIMESCALE:
@@ -335,7 +335,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     _props.ParamsFloat[VehFloatParam.LinearDeflectionTimescale] = ClampF(pValue, S.MinTimescale, S.MaxTimescale);
                     break;
                 case Vehicle.LINEAR_MOTOR_DECAY_TIMESCALE:
-                    pValue = ClampF(pValue, S.MinTimescale, S.MaxDecayTimescale);
+                    pValue = ClampF(pValue, S.MinTimescale, S.EffectiveMaxDecayTimescale);
                     _props.ParamsVec[VehVectorParam.LinearMotorDecayTimescale] = new Vector3(pValue, pValue, pValue);
                     break;
                 case Vehicle.LINEAR_MOTOR_TIMESCALE:
@@ -426,6 +426,25 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     pValue.Z = ClampF(pValue.Z, -S.MaxMotorOffset, S.MaxMotorOffset);
                     _props.ParamsVec[VehVectorParam.LinearMotorOffset] = pValue;
                     break;
+                // InWorldz takes a value for each axis of the four motor timescales (llSetVehicleVectorParam with codes 30,
+                // 31, 34 and 35; Halcyon's VectorParams.cs:45-52 and VehicleDynamics.cs:406-427), each held to the same
+                // range the float setter gives all three. Second Life documents these as floats and the call is ignored.
+                case Vehicle.LINEAR_MOTOR_TIMESCALE:
+                    if (InWorldz)
+                        _props.ParamsVec[VehVectorParam.LinearMotorTimescale] = HeldTimescales(pValue, S.MaxTimescale);
+                    break;
+                case Vehicle.ANGULAR_MOTOR_TIMESCALE:
+                    if (InWorldz)
+                        _props.ParamsVec[VehVectorParam.AngularMotorTimescale] = HeldTimescales(pValue, S.MaxTimescale);
+                    break;
+                case Vehicle.LINEAR_MOTOR_DECAY_TIMESCALE:
+                    if (InWorldz)
+                        _props.ParamsVec[VehVectorParam.LinearMotorDecayTimescale] = HeldTimescales(pValue, S.EffectiveMaxDecayTimescale);
+                    break;
+                case Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE:
+                    if (InWorldz)
+                        _props.ParamsVec[VehVectorParam.AngularMotorDecayTimescale] = HeldTimescales(pValue, S.EffectiveMaxDecayTimescale);
+                    break;
                 case Vehicle.BLOCK_EXIT:
                     // Not simulated; ignored, as Halcyon did
                     break;
@@ -453,6 +472,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     break;
             }
         }
+
+        // A timescale on each axis, held to the region's shortest timescale and the given longest.
+        private Vector3 HeldTimescales(Vector3 v, float longest)
+            => new Vector3(ClampF(v.X, S.MinTimescale, longest), ClampF(v.Y, S.MinTimescale, longest), ClampF(v.Z, S.MinTimescale, longest));
 
         // A motor direction held to the region's limits, each axis.
         private Vector3 HeldLinearMotor(Vector3 v)
@@ -626,6 +649,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             // -------------------------------------------------------
             // Vertical attractor and banking
+            _attractorChange = Vector3.Zero;
             float tilt = 0f;
             if (S.DoVerticalAttractor)
                 SimulateVerticalAttractor(pTimestep, out tilt, out _);
@@ -838,6 +862,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             if (_props.Type == VehicleType.None) return;
 
             _props.Dynamics.LastAccessTOD = Clock();
+
+            // InWorldz: "Scale the target if the motor has been decaying" (VehicleDynamics.cs:3087-3095): the velocity the
+            // ramp works from is the target it reached, less the decay since.
+            if (InWorldz && _props.Dynamics.AngularDecayIndex > VehicleLimits.ThresholdAngularMotorEngaged)
+            {
+                Vector3 decayTs = _props.GetVec(VehVectorParam.AngularMotorDecayTimescale);
+                float index = _props.Dynamics.AngularDecayIndex;
+                _props.Dynamics.AngularTargetVelocity = new Vector3(
+                    _props.Dynamics.AngularTargetVelocity.X * HalcyonVehicleLaws.MovementExpDecay(index, decayTs.X),
+                    _props.Dynamics.AngularTargetVelocity.Y * HalcyonVehicleLaws.MovementExpDecay(index, decayTs.Y),
+                    _props.Dynamics.AngularTargetVelocity.Z * HalcyonVehicleLaws.MovementExpDecay(index, decayTs.Z));
+            }
 
             // The motor's grip restarts at full on every set and decays from here (s = 0).
             _props.Dynamics.AngularDecayIndex = MotorDecayStart(VehVectorParam.AngularMotorTimescale);
@@ -1158,6 +1194,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private void SimulateAngularDeflection(float h)
         {
+            if (InWorldz)
+            {
+                SimulateAngularDeflectionInWorldz(h);
+                return;
+            }
             Vector3 rate = Vector3.Zero;
             float timescale = _props.GetFloat(VehFloatParam.AngularDeflectionTimescale, 1000f);
             float efficiency = _props.GetFloat(VehFloatParam.AngularDeflectionEfficiency, 0f);
@@ -1180,6 +1221,31 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             }
             _motorTorqueVelChange += rate - _angularDeflectionRate;
             _angularDeflectionRate = rate;
+        }
+
+        /// <summary>
+        /// InWorldz's angular deflection (VehicleDynamics.cs:1114-1169, read, not run), in place of the documented law
+        /// above: a push of angular velocity each step that is not a share of the remaining angle but speedShare x pi x
+        /// (h / T) x efficiency x ln(1 + angle), along the normalised Euler angles of the rotation from the nose to the
+        /// velocity, with a damping term within pi / 64 of aligned (<see cref="HalcyonVehicleLaws.AngularDeflectionPush"/>);
+        /// the push is zero while the linear motor is stalled against something (<see cref="IsLinearMotorStalled"/>), and it is
+        /// applied only when one of its components is at least pi / 512, as an accumulated velocity change. It is a push, not a
+        /// rate, so nothing of the last step is taken back.
+        /// </summary>
+        private void SimulateAngularDeflectionInWorldz(float h)
+        {
+            float timescale = _props.GetFloat(VehFloatParam.AngularDeflectionTimescale, 1000f);
+            float efficiency = _props.GetFloat(VehFloatParam.AngularDeflectionEfficiency, 0f);
+            Vector3 push = HalcyonVehicleLaws.AngularDeflectionPush(_rotation, _worldLinearVel, _localLinearVel, _worldAngularVel,
+                timescale, efficiency, h, S.ReferenceSpeed);
+            if (push == Vector3.Zero)
+                return;
+            if (IsLinearMotorStalled())
+                return;
+            if (Math.Abs(push.X) >= VehicleLimits.ThresholdAngularMotorDeltaV ||
+                Math.Abs(push.Y) >= VehicleLimits.ThresholdAngularMotorDeltaV ||
+                Math.Abs(push.Z) >= VehicleLimits.ThresholdAngularMotorDeltaV)
+                AddTorqueVelocityChange(push);
         }
 
         // The turning rate angular deflection gave the body in the last step.
@@ -1574,8 +1640,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _attractorCarry = new Vector3((float)rollCarry, (float)pitchCarry, 0f);
 
             // Applied whole with the motors' change (TorqueFini's per-step clean-up would stop it short).
-            _motorTorqueVelChange += x * (float)(rollTurn - rollRate) + y * (float)(pitchTurn - pitchRate);
+            _attractorChange = x * (float)(rollTurn - rollRate) + y * (float)(pitchTurn - pitchRate);
+            _motorTorqueVelChange += _attractorChange;
         }
+
+        // The change of angular velocity the attractor gave the body this step (world); zero when it did not act. InWorldz's
+        // angular motor leaves an axis alone while the attractor acts on it and the motor has no direction there.
+        private Vector3 _attractorChange;
 
         // What the last attractor step's turn left out of the spring's roll and pitch rates; null when it did not act.
         private Vector3? _attractorCarry;
@@ -1907,6 +1978,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 _props.Dynamics.AngularDecayIndex = float.PositiveInfinity;
             double age = _props.Dynamics.AngularDecayIndex;
 
+            if (InWorldz)
+                return SimulateAngularMotorAndFrictionInWorldz(h, v0, motor, motorTs, decayTs, frictionTs, torqueWorldZ);
+
             Vector3 v1 = new Vector3(
                 (float)MotorStep(v0.X, motor.X, motorTs.X, decayTs.X, age, frictionTs.X, h),
                 (float)MotorStep(v0.Y, motor.Y, motorTs.Y, decayTs.Y, age, frictionTs.Y, h),
@@ -1934,6 +2008,146 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             change.Z = 0;
             _motorTorqueVelChange += change;
             return aboutWorldZ;
+        }
+
+        /// <summary>
+        /// InWorldz's angular motor and friction (VehicleDynamics.cs:2733-2960 and SimulateAngularFriction, 1402-1458; read,
+        /// not run), in place of the documented equation above. Each is a change of angular velocity worked out from the
+        /// velocity at the start of the step, and the two are added: the motor sets the velocity it would have (see
+        /// <see cref="HalcyonAngularMotor"/>), and friction takes the share 1 - e^(-h / Tf) of that start velocity away on
+        /// top. So a friction timescale shorter than the motor's does not hold the motor down, as the documented equation
+        /// would. The friction is the one of the documented solver (the exact exponential, off on an axis at 1000 s or more).
+        /// The motor's change is applied only when it is at least pi / 512 about the world's x or y axis (the z part is
+        /// always kept, for banking), as Halcyon's is.
+        /// </summary>
+        private float SimulateAngularMotorAndFrictionInWorldz(float h, Vector3 v0, Vector3 motor, Vector3 motorTs, Vector3 decayTs,
+                                                              Vector3 frictionTs, bool torqueWorldZ)
+        {
+            Vector3 motorChange = HalcyonAngularMotor(h, v0, motor, motorTs, decayTs);
+            Vector3 frictionChange = new Vector3(
+                (float)VehicleMotorSolver.FrictionStep(v0.X, frictionTs.X, h) - v0.X,
+                (float)VehicleMotorSolver.FrictionStep(v0.Y, frictionTs.Y, h) - v0.Y,
+                (float)VehicleMotorSolver.FrictionStep(v0.Z, frictionTs.Z, h) - v0.Z);
+
+            Vector3 motorWorld = ChangeToWorld(motorChange, torqueWorldZ);
+            Vector3 frictionWorld = ChangeToWorld(frictionChange, torqueWorldZ);
+            if (Math.Abs(motorWorld.X) < VehicleLimits.ThresholdAngularMotorDeltaV && Math.Abs(motorWorld.Y) < VehicleLimits.ThresholdAngularMotorDeltaV)
+            {
+                motorWorld.X = 0f;
+                motorWorld.Y = 0f;
+            }
+
+            _props.Dynamics.AngularDecayIndex += h;
+
+            // The change about world Z is applied in Step, with banking's.
+            Vector3 change = motorWorld + frictionWorld;
+            float aboutWorldZ = change.Z;
+            change.Z = 0;
+            _motorTorqueVelChange += change;
+            return aboutWorldZ;
+        }
+
+        // A change of angular velocity in the motor's frame (the vehicle's axes, or with TORQUE_WORLD_Z the vehicle's x and
+        // y and the world's z) as a change of world angular velocity.
+        private Vector3 ChangeToWorld(Vector3 change, bool torqueWorldZ)
+            => torqueWorldZ ? new Vector3(change.X, change.Y, 0f) * _rotation + new Vector3(0f, 0f, change.Z) : change * _rotation;
+
+        /// <summary>
+        /// The change of angular velocity InWorldz's angular motor makes in one step of h seconds, in the motor's frame, from
+        /// the velocity <paramref name="lastvel"/> (VehicleDynamics.cs:2733-2960, read, not run). On each axis the motor
+        /// ramps the velocity toward its direction M by a per-step growth, "a stepwise iteration of the continuous
+        /// a*b^(t*Tau) function" (<see cref="HalcyonVehicleLaws.GrowthRate"/>):
+        ///
+        ///   next = a (1 + ln(|M| / |a|) / (Tm / h)),   a = the velocity, or the motor's target if that is further along
+        ///
+        /// (from rest, from pi / 64 rad/s, a stiction start; toward zero, by -ln(1 + |a|) / (Tm / h); across zero, to zero and
+        /// then the other way), kept as the motor's target for the next step, and the result blended with the velocity
+        /// by the motor's grip e^(-s / Td) (<see cref="HalcyonVehicleLaws.MovementExpDecay"/>), s the time since the
+        /// direction was set: result = next g + v (1 - g). The grip is dropped (the motor adds nothing) on an axis where the
+        /// velocity is already past the motor's, and on an axis with no direction while the vertical attractor is acting;
+        /// and on every axis while the linear motor is stalled against something, which also ends the motor.
+        ///
+        /// Left out: the clamp that reduces a motor speed against the vertical attractor (VehicleDynamics.cs:2809-2856), a
+        /// separate rule. The ramp's timescale is held to at least the step (steps per timescale at least 1): Halcyon's step
+        /// never exceeded its shortest timescale, so that a step longer than a quick motor's timescale does not overshoot
+        /// the direction.
+        /// </summary>
+        private Vector3 HalcyonAngularMotor(float h, Vector3 lastvel, Vector3 motor, Vector3 motorTs, Vector3 decayTs)
+        {
+            VehicleDynamicsState d = _props.Dynamics;
+            float[] last = { lastvel.X, lastvel.Y, lastvel.Z };
+            float[] dir = { motor.X, motor.Y, motor.Z };
+            float[] ts = { motorTs.X, motorTs.Y, motorTs.Z };
+            float[] decay = { HalcyonVehicleLaws.MovementExpDecay(d.AngularDecayIndex, decayTs.X),
+                              HalcyonVehicleLaws.MovementExpDecay(d.AngularDecayIndex, decayTs.Y),
+                              HalcyonVehicleLaws.MovementExpDecay(d.AngularDecayIndex, decayTs.Z) };
+            float[] target = { d.AngularTargetVelocity.X, d.AngularTargetVelocity.Y, d.AngularTargetVelocity.Z };
+            float[] attractor = { _attractorChange.X, _attractorChange.Y, _attractorChange.Z };
+
+            // If the decay hits maximum entropy no further computations are required.
+            if (decay[0] == 0 && decay[1] == 0 && decay[2] == 0)
+            {
+                d.AngularTargetVelocity = Vector3.Zero;
+                return Vector3.Zero;
+            }
+
+            float[] newvel = new float[3];
+            float[] ramp = new float[3];
+            float max = S.MaxAngularSpeed;
+            for (int i = 0; i < 3; i++)
+            {
+                float dirsign = VehicleMath.PosNeg(dir[i]);
+
+                // A target velocity is used where the velocity is lower, so that friction at low speed cannot hold the
+                // motor down: "The target ensures forward progress."
+                float adjvel = last[i];
+                if (dirsign * (target[i] - adjvel) > 0)
+                    adjvel = target[i];
+
+                ramp[i] = HalcyonVehicleLaws.GrowthRate(adjvel, dir[i], Math.Max(ts[i] / h, 1f));
+                newvel[i] = adjvel + adjvel * ramp[i];
+
+                // At the crossover point, flip to indicate the velocity is growing.
+                if (ramp[i] == VehicleLimits.ThresholdInverseCrossover)
+                    ramp[i] = -ramp[i];
+
+                // Avoid zero velocity stiction when the new velocity is increasing.
+                if (ramp[i] > 0 && dir[i] != 0 && Math.Abs(newvel[i]) < VehicleLimits.ThresholdAngularMotorDeltaV)
+                    newvel[i] = dirsign * VehicleLimits.ThresholdAngularMotorDeltaV * 8;
+
+                // The new target: the new velocity while ramping toward zero, else held to the direction.
+                if (dir[i] * newvel[i] < 0 || ramp[i] < 0)
+                    target[i] = newvel[i];
+                else
+                    target[i] = Utils.Clamp(newvel[i], -Math.Abs(dir[i]), Math.Abs(dir[i]));
+
+                newvel[i] = Utils.Clamp(newvel[i], -max, max);
+
+                // Release the motor when it has decayed and has no direction.
+                if (decay[i] == 0 && dir[i] == 0)
+                    newvel[i] = last[i];
+
+                // If the velocity on the axis is already past the motor's (the motor adds no power), or the attractor is acting
+                // on an axis the motor has no direction on, use the velocity.
+                if ((attractor[i] != 0 && dir[i] == 0) || (ramp[i] >= 0 && dirsign * (last[i] - newvel[i]) > 0))
+                    decay[i] = 0;
+            }
+
+            d.AngularTargetVelocity = new Vector3(target[0], target[1], target[2]);
+
+            // Accelerate the angular decay when the linear motor is stalled.
+            if ((decay[0] != 0 || decay[1] != 0 || decay[2] != 0) && IsLinearMotorStalled())
+            {
+                decay[0] = decay[1] = decay[2] = 0;
+                d.AngularDecayIndex = VehicleLimits.MaxDecayTimescale * 100.0f;
+                d.AngularTargetVelocity = Vector3.Zero;
+            }
+
+            // Apply the decay to each axis.
+            return new Vector3(
+                newvel[0] * decay[0] + last[0] * (1.0f - decay[0]) - last[0],
+                newvel[1] * decay[1] + last[1] * (1.0f - decay[1]) - last[1],
+                newvel[2] * decay[2] + last[2] * (1.0f - decay[2]) - last[2]);
         }
 
         /// <summary>
