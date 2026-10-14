@@ -434,6 +434,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (_substeps != null)
                 m_log.LogInformation($"{LogHeader} region '{RegionName}': physics steps at {_substeps.RateHz:0.##} Hz " +
                                      $"({settings.CollisionSteps} collision steps each, at most {SubstepAccumulator.MaxStepsPerFrame} per heartbeat).");
+            m_log.LogInformation($"{LogHeader} region '{RegionName}': settings: {_joltConfig.StartupSummary(stepRate)}.");
         }
 
         // The shared job pools are sized once, by the first region's request; every region reads the same
