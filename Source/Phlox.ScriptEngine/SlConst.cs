@@ -11,6 +11,9 @@
  * table. LSLSystemAPI.cs reaches them through "using static". SlConstTests.SlConstMatchesTable pins
  * every field here against InWorldz.Phlox.Compiler.DefaultConstants.Constants, and
  * SlConstantsTests.SlConstantsMatchLL pins that table against SL's own (lsl-definitions @ 10741b9).
+ *
+ * The names and values are Second Life's, as published in secondlife/lsl-definitions (MIT licence; the
+ * holder is Linden Research, Inc.; see ThirdPartyLicenses/lsl-definitions.txt).
  */
 namespace Phlox.ScriptEngine
 {
