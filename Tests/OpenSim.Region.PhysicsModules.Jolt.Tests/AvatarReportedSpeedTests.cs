@@ -1,4 +1,4 @@
-/* Copyright (c) Legion Builds
+/* Copyright (c) 2026 Legion Builds
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -28,7 +28,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 [Collection(JoltNativeSerial.Name)]
 public class AvatarReportedSpeedTests
 {
-    private const float PushCap = 10f;   // [Jolt] AvatarPushMaxSpeed default
+    private static readonly float AvatarMass = JoltCharacter.MassFor(Harness.Run.AvatarSize);   // what JoltCharacter reports: mass from shape and size
+    private const float PushCap = 10f;   // [Jolt] AvatarPushMaxSpeed, set to 10 in these runs: the cap rule is what they check (the default is 100)
     private const float Gravity = 9.80665f;
 
     // A scenario that also records each avatar update of the run's backend. The backend calls the trace on the step
@@ -59,7 +60,7 @@ public class AvatarReportedSpeedTests
     {
         var steps = new List<CharacterStepTrace>();
         RunResult res = Harness.Harness.Run(Traced(Harness.Harness.Find(scenario), steps),
-            new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz });
+            new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz, Jolt = { ["AvatarPushMaxSpeed"] = "10" } });
         return (res, steps);
     }
 
@@ -114,7 +115,7 @@ public class AvatarReportedSpeedTests
         Assert.True(res.Samples[^1].Position.X < AvatarHitScenarios.X - 3f, $"{res.Name}: the avatar was carried only {AvatarHitScenarios.X - res.Samples[^1].Position.X:0.00} m");
     }
 
-    // The 100 kg box thrown at 5 m/s at a flying avatar: they meet at their common speed by mass, 100 x 5 / 180 = 2.78 m/s,
+    // The 100 kg box thrown at 5 m/s at a flying avatar: they meet at their common speed by mass, 100 x 5 / (100 + the avatar's mass),
     // and the avatar reports no more than that (the meeting of a box and a flying avatar is unchanged).
     [Theory]
     [InlineData(0.0)]
@@ -123,7 +124,7 @@ public class AvatarReportedSpeedTests
     {
         (RunResult res, List<CharacterStepTrace> steps) = Run("avatar-fly-hit-100kg", physicsHz);
 
-        const float Common = 100f * 5f / 180f;
+        float Common = 100f * 5f / (100f + AvatarMass);
         float most = steps.Max(t => t.Reported.Length());
         Assert.InRange(most, Common * 0.9f, Common * 1.02f);
     }

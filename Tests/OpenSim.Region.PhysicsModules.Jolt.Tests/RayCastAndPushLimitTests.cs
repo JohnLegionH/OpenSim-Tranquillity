@@ -1,4 +1,4 @@
-/* Copyright (c) Legion Builds
+/* Copyright (c) 2026 Legion Builds
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -88,13 +88,13 @@ public class RayCastAndPushLimitTests
         Assert.Equal(5f, d.RayCastSimulatorBudgetMs);
         Assert.Equal(1024, d.RayCastMaxTestedHits);
         Assert.Equal(256, d.RayCastMaxHits);
-        Assert.Equal(10f, d.AvatarPushMaxSpeed);
+        Assert.Equal(100f, d.AvatarPushMaxSpeed);
         Assert.Equal(5f, d.AvatarPushRecovery);
         PhysicsBackendSettings ds = d.ToBackendSettings(256, 256);
         Assert.Equal(5f, ds.RayCastBudgetMs);
         Assert.Equal(5f, ds.RayCastSimulatorBudgetMs);
         Assert.Equal(1024, ds.RayCastMaxTestedHits);
-        Assert.Equal(10f, ds.AvatarPushMaxSpeed);
+        Assert.Equal(100f, ds.AvatarPushMaxSpeed);
         Assert.Equal(5f, ds.AvatarPushRecovery);
         Assert.Equal(PhysicsBackendSettings.Default.RayCastBudgetMs, ds.RayCastBudgetMs);
         Assert.Equal(PhysicsBackendSettings.Default.RayCastSimulatorBudgetMs, ds.RayCastSimulatorBudgetMs);
@@ -651,16 +651,17 @@ public class RayCastAndPushLimitTests
         Assert.True(r.Samples.Max(s => s.Velocity.Z) <= v + 1e-3f);
     }
 
-    // A push of 1e9 every heartbeat for six seconds. Each push spends the avatar's push allowance (AvatarPushMaxSpeed,
-    // 10 m/s, refilled at AvatarPushRecovery, 5 m/s per second), and pushes never take its speed past 10 m/s. Since the
-    // allowance refills slower than gravity takes speed away, the most it can rise is 10^2 / (2 (g - 5)) = 10.4 m.
+    // A push of 1e9 every heartbeat for six seconds, with the cap set to 10 m/s (the default is 100, which this flood would
+    // carry out of the region). Each push spends the avatar's push allowance (AvatarPushMaxSpeed, refilled at
+    // AvatarPushRecovery, 5 m/s per second), and pushes never take its speed past the cap. Since the allowance refills
+    // slower than gravity takes speed away, the most it can rise is 10^2 / (2 (g - 5)) = 10.4 m.
     [Theory]
     [InlineData(0.0)]
     [InlineData(45.0)]
     public void A_flood_of_pushes_cannot_take_an_avatar_past_the_cap(double physicsRate)
     {
-        RunResult r = Harness.Harness.Run(Harness.Harness.Find("push-flood"), new HarnessOptions { PhysicsRateHz = physicsRate });
-        const float cap = PhysicsBackendSettings.DefaultAvatarPushMaxSpeed;
+        RunResult r = Harness.Harness.Run(Harness.Harness.Find("push-flood"), new HarnessOptions { PhysicsRateHz = physicsRate, Jolt = { ["AvatarPushMaxSpeed"] = "10" } });
+        const float cap = 10f;
         const float recovery = PhysicsBackendSettings.DefaultAvatarPushRecovery;
         Assert.Equal(0, r.Summary.NonFinite);
         // What pushes add: the horizontal speed, the upward speed, and the speed while going up. Falling back, gravity

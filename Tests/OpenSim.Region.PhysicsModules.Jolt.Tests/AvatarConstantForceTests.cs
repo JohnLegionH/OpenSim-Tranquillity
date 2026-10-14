@@ -1,4 +1,4 @@
-/* Copyright (c) Legion Builds
+/* Copyright (c) 2026 Legion Builds
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -29,7 +29,7 @@ public class AvatarConstantForceTests
     private const float G = 9.80665f;                     // [Jolt] Gravity default
     private const float X = 60f, Y = 60f;                 // over level ground (Course.Ground)
     private const float WalkRequest = AvatarForceScenarios.WalkRequest;
-    private const float PushCap = 10f;                    // [Jolt] AvatarPushMaxSpeed default
+    private const float PushCap = 10f;   // [Jolt] AvatarPushMaxSpeed, set to 10 in these runs: the cap rule is what they check (the default is 100)
     private const float BodySpeedCap = PhysicsBackendSettings.JoltMaxLinearSpeed;
     private const float GroundFade = 0.25f;               // the push's fade on walkable ground (s)
     private const float FlyingFade = 1f;                  // the push's fade while flying (s)
@@ -77,7 +77,7 @@ public class AvatarConstantForceTests
                 input(r);
             },
         };
-        RunResult result = Harness.Harness.Run(traced, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsRate });
+        RunResult result = Harness.Harness.Run(traced, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsRate, Jolt = { ["AvatarPushMaxSpeed"] = "10" } });
         return (result, trace);
     }
 
