@@ -25,6 +25,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// line "MESH-RESIZE ..." in the test output. Serial with the other native tests (the native engine is process-wide).
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[DeleteScratchFolders]
 public class MeshResizeScaledShapeTests
 {
     private readonly ITestOutputHelper _out;

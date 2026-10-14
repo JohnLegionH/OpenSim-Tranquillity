@@ -23,6 +23,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[DeleteScratchFolders]
 public class MeshHullListFiguresTests
 {
     private readonly ITestOutputHelper _out;

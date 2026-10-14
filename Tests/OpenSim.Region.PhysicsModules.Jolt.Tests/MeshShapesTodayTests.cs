@@ -30,6 +30,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// Each result is a line "MESH-SHAPES ..." in the test output. Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[DeleteScratchFolders]
 public class MeshShapesTodayTests
 {
     private readonly ITestOutputHelper _out;
@@ -266,12 +267,8 @@ public class MeshShapesTodayTests
         return scene;
     }
 
-    internal static string Scratch()
-    {
-        string d = Path.Combine(Path.GetTempPath(), "mesh-shapes-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(d);
-        return d;
-    }
+    /// <summary>A new folder under the system temp path, deleted when the test ends (see <see cref="ScratchFolders"/>).</summary>
+    internal static string Scratch() => ScratchFolders.Create();
 
     internal static void Step(JoltScene scene, float seconds)
     {

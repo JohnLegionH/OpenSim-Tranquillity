@@ -27,6 +27,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// result is a line "PRIM-WIRING ..." in the test output. Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[DeleteScratchFolders]
 public class PrimHullWiringTests
 {
     private readonly ITestOutputHelper _out;

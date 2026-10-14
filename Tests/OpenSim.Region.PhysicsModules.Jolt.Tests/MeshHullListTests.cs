@@ -22,6 +22,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// "MESH-HULLS ..." in the test output. Serial with the other native tests (the native engine is process-wide).
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[DeleteScratchFolders]
 public class MeshHullListTests
 {
     private readonly ITestOutputHelper _out;

@@ -27,6 +27,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// line "PRIM-MASS ..." in the test output. Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[DeleteScratchFolders]
 public class PrimRealVolumeTests
 {
     private readonly ITestOutputHelper _out;

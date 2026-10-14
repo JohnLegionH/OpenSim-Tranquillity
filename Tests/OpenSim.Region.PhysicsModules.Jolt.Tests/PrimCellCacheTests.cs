@@ -27,6 +27,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// tests (the memory run is a child process).
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[DeleteScratchFolders]
 public class PrimCellCacheTests
 {
     private readonly ITestOutputHelper _out;

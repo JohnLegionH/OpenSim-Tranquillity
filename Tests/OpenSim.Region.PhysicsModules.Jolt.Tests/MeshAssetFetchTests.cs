@@ -24,6 +24,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// requests and answers when the test says. Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[DeleteScratchFolders]
 public class MeshAssetFetchTests
 {
     private readonly ITestOutputHelper _out;

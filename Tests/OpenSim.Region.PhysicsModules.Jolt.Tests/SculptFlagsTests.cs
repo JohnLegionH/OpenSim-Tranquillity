@@ -25,6 +25,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// Serial with the other native tests (they share the native library).
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[DeleteScratchFolders]
 public class SculptFlagsTests
 {
     private readonly ITestOutputHelper _out;

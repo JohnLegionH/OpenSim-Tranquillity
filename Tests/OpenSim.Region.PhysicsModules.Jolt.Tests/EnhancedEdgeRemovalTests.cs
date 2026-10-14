@@ -24,6 +24,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// Each figure is a line "SEAM ..." in the test output. Serial with the other native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[DeleteScratchFolders]
 public class EnhancedEdgeRemovalTests
 {
     private readonly ITestOutputHelper _out;

@@ -29,6 +29,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// Serial with the other native tests (they cook through the native hull builder).
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
+[DeleteScratchFolders]
 public class PrimHullCellsTests
 {
     private readonly ITestOutputHelper _out;
