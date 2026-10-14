@@ -211,7 +211,7 @@ the region starts.
 | `RayCastBudgetMs` | 5 | Time (ms) one region's script ray casts may take in one heartbeat, at any `PhysicsStepRate`: the casts the module can tell are a script's (Phlox's `llCastRay`). |
 | `RayCastSimulatorBudgetMs` | 5 | Time (ms) every other ray cast may take in one heartbeat: the simulator's own (rez placement, landing after login or teleport) and YEngine's `llCastRay`. |
 | `RayCastMaxTestedHits` | 1024 | Hits the engine may report to one cast before it is cut short (a mesh reports each triangle the ray crosses). |
-| `RayCastMaxHits` | 256 | Hits one cast returns, Second Life's documented maximum for `RC_MAX_HITS`. |
+| `RayCastMaxHits` | 256 | Hits one cast returns, Second Life's documented maximum for `RC_MAX_HITS` (https://wiki.secondlife.com/wiki/LlCastRay). |
 | `AvatarPushMaxSpeed` | 10 | Speed (m/s) pushes can give an avatar. 0: pushes do not move avatars. |
 | `AvatarPushRecovery` | 5 | How fast (m/s per second) an avatar's push allowance refills. |
 
@@ -222,8 +222,8 @@ The module bounds a script cast three ways:
 - It keeps only the closest hits the script asked for, and once it has them the engine skips
   everything further along the ray. A long ray through a pile of prims costs about what the
   part of it up to those hits costs.
-- A ray is cut to the region widened by 8 m on each side (Second Life: "The random failures seem
-  to happen if the ray begins or ends more than 8 meters outside of current region bounds"), and
+- A ray is cut to the region widened by 8 m on each side (the Second Life page for `llCastRay`, https://wiki.secondlife.com/wiki/LlCastRay, says casts fail at random when a ray
+  starts or ends more than 8 m outside the region's bounds), and
   between heights -128 and 10000 m. A ray with a non-finite start, direction or length hits nothing.
 - A cast that runs past what is left of its budget in the heartbeat, or past `RayCastMaxTestedHits`,
   is cut short; once the region has spent a budget in a heartbeat, further casts charged to it are
@@ -235,8 +235,8 @@ The module bounds a script cast three ways:
   be told: it gets no hits from the physics engine, and returns only what it tests itself (avatars,
   phantoms and, for long rays, the ground) with a status of that many hits.
 
-What a cast finds follows Second Life's `llCastRay` page: a ray that starts inside a prim or an
-avatar does not hit it ("llCastRay will not detect a prim if the line starts inside the prim"), and
+What a cast finds follows Second Life's `llCastRay` page (https://wiki.secondlife.com/wiki/LlCastRay): a ray that starts inside a prim or an
+avatar does not hit it (the page says a prim is not detected when the line starts inside it), and
 goes on to what lies beyond. This holds for both entry points and both budgets. On the 5-argument
 `RaycastWorld` the types a cast asks for are filtered inside the engine, so a type the script
 rejects never takes one of its `RC_MAX_HITS`; on the 4-argument entry the caller sees every solid
@@ -283,7 +283,7 @@ writes no log line for a refused cast.
 **Pushes.** `llPushObject` on an avatar, and an attachment's `llApplyImpulse` on its wearer, change
 the avatar's velocity by the impulse divided by its mass (80 kg). The script engine checks the
 region's and parcel's push restrictions and weakens a push from more than 17 m away before it
-reaches the module ("The push impact is diminished with distance", llPushObject). Second Life also
+reaches the module (the `llPushObject` page, https://wiki.secondlife.com/wiki/LlPushObject, says a push weakens with distance). Second Life also
 limits a push by the pushing object's script energy, which depends on its mass; the physics module
 is not told which object pushed, so it bounds the avatar's side instead:
 
@@ -393,7 +393,7 @@ What a script does to a physical prim or linkset (avatars are not covered here):
 - `llGetCenterOfMass`: in region coordinates. A physical linkset reports the centre of all its
   prims, each weighted by its own mass; called from a child prim, that prim's own centre; a lone
   prim, its own centre. For a non-physical object the simulator takes the mass-weighted mean of its
-  prims' centres; the Second Life wiki says it should return the value last computed while the
+  prims' centres; the Second Life page for `llGetCenterOfMass` (https://wiki.secondlife.com/wiki/LlGetCenterOfMass) says it should return the value last computed while the
   object was physical, or the position (`llGetPos`) when there is none.
 - A call that reaches a linked child prim acts on the whole linkset.
 - A vehicle keeps its own forces: a set force, torque or buoyancy does nothing while the object is a
@@ -456,8 +456,8 @@ and no prim of it has a body of its own. These keep it one body, with the mass o
   object now, wherever the linkset has moved since it was linked. Turning it physical again makes it
   one body.
 - A ray cast reports the prim it hit, not the root: `llCastRay` then returns that prim's key and,
-  with `RC_GET_LINK_NUM`, its link number, and the root's key only with `RC_GET_ROOT_KEY` ("The hit
-  uuid will be replaced by the object's root instead of any child.", wiki, llCastRay). Both script
+  with `RC_GET_LINK_NUM`, its link number, and the root's key only with `RC_GET_ROOT_KEY` (the `llCastRay` page, https://wiki.secondlife.com/wiki/LlCastRay, says that flag
+  replaces the hit key with the root's instead of the child's). Both script
   engines look the prim up from what the physics engine reports.
 - A linkset meets an avatar as one object with the mass of all its prims, by the rule for a single
   object (see "Avatars and physical objects"): thrown at an avatar it stops against it or carries it
@@ -466,9 +466,8 @@ and no prim of it has a body of its own. These keep it one body, with the mass o
   own link number from `llDetectedLinkNumber`, and the simulator passes the event to the root's script
   by `llPassCollisions`. Whatever touches the linkset, a prim, another linkset or an avatar, names it by
   its root prim: `llDetectedKey` and `llDetectedName` are the object's, and a collision filter set by
-  name matches the object's name. Second Life documents no rule for this; its `llCollisionFilter`
-  example has a filter on an object named "Post" detect "A child prim named "Object"" of it (wiki,
-  llCollisionFilter). ubODE names every collider by its root likewise. A non-physical linkset is not
+  name matches the object's name. Second Life documents no rule for this; the example on its `llCollisionFilter` page (https://wiki.secondlife.com/wiki/LlCollisionFilter)
+  has a filter on an object named "Post" detecting a child prim named "Object" of it. ubODE names every collider by its root likewise. A non-physical linkset is not
   one body (the simulator links only a physical one), so each of its prims is named as itself, as in
   ubODE.
 - A linkset asleep on something keeps touching it when one of its prims is resized: it stays one body
@@ -481,7 +480,7 @@ and no prim of it has a body of its own. These keep it one body, with the mass o
 ## Physics material on objects
 
 `llSetPhysicsMaterial` (and `PRIM_PHYSICS_MATERIAL`) and `PRIM_MATERIAL` on a prim, as the Second
-Life wiki documents them:
+Life wiki documents them (`llSetPhysicsMaterial`, https://wiki.secondlife.com/wiki/LlSetPhysicsMaterial):
 
 - Friction (0 to 255), restitution (0 to 1), the gravity multiplier (-1 to 28) and density (1 to
   22587 kg/m^3) each act on the object; a value outside its range is clamped to it, and one that is
@@ -507,8 +506,9 @@ Life wiki documents them:
 - The gravity multiplier scales the object's gravity: the object falls at (1 - buoyancy) times the
   multiplier times the region's gravity, as in ubODE. 0 floats, 2 falls at twice the rate.
 - Density sets the mass: volume (m3) times density times 0.01, the engine's own body mass, which is what `llGetMass` reads.
-- In a linkset each prim keeps its own friction, restitution and density ("Can individual prims in
-  a linked set have different Physics settings? Yes.", wiki, Physics Material Settings test): a
+- In a linkset each prim keeps its own friction, restitution and density (the Physics Material Settings test page,
+  https://wiki.secondlife.com/wiki/Physics_Material_Settings_test, answers yes to whether prims in a linked set can have different
+  settings): a
   contact uses the struck prim's friction and restitution, and the mass is the sum of each prim's
   volume times its own density. The centre of mass the engine turns the linkset about, and its
   inertia, follow each prim's density too, so a heavy prim at one end pulls the centre of mass
@@ -546,8 +546,8 @@ mesher decodes, unless it has already decoded and cached that map.
   never boxed for its size. (The mesher's own rule, a box for any prim under 0.2 m on every side, still
   applies to a prim that is not a mesh.)
 - A physical mesh whose shape type is `PRIM` collides as the hull list its asset carries: one convex hull per
-  entry, at the prim's scale, as Second Life does ("PRIM: the visible shape of the prim determines its
-  physics-shape", `PRIM_PHYSICS_SHAPE_TYPE`; the viewer's upload writes the hulls of its convex decomposition).
+  entry, at the prim's scale, as Second Life does (for `PRIM_PHYSICS_SHAPE_TYPE` the `PRIM` type takes the physics shape from
+  the prim's visible shape, https://wiki.secondlife.com/wiki/PRIM_PHYSICS_SHAPE_TYPE; the viewer's upload writes the hulls of its convex decomposition).
   An open boat or a gateway built that way keeps its inside and its opening. It follows the prim through a resize,
   a switch between physical and not, and a change of shape type, as a lone prim and as a part of a linkset.
 - A physical mesh of shape type `CONVEX`, and a physical mesh whose asset has no hull list, is one convex hull of
@@ -581,9 +581,9 @@ mesher decodes, unless it has already decoded and cached that map.
 A triangle mesh (a non-physical mesh prim, a floor or road built of one) and the terrain's heightfield are made of
 triangles that meet along shared edges. A body crossing an edge can touch it as if it were a wall and be pushed off its
 path: a vertical spike in its speed. Jolt can remove those contacts ("enhanced internal edge removal",
-`BodyCreationSettings::mEnhancedInternalEdgeRemoval`, `CharacterVirtualSettings::mEnhancedInternalEdgeRemoval`: "extra
-effort to remove ghost contacts ... This is more expensive but makes bodies move smoother over a mesh with convex
-edges"). Neither Second Life nor Halcyon documents anything of the kind, so it is off:
+`BodyCreationSettings::mEnhancedInternalEdgeRemoval`, `CharacterVirtualSettings::mEnhancedInternalEdgeRemoval`; Jolt's own comment says it spends extra
+effort removing ghost contacts, which costs more but makes bodies move more smoothly over a mesh with convex
+edges). Neither Second Life nor Halcyon documents anything of the kind, so it is off:
 
 - `[Jolt] BodyEnhancedEdgeRemoval = true` turns it on for every body that moves under physics, when it is created (a prim that
   becomes physical gets a new body, which has it).
@@ -620,7 +620,7 @@ off by default for that reason and for the extra cost per contact, which was not
 ## Move to target and hover on objects
 
 `llMoveToTarget` and `llSetHoverHeight` on a physical prim or linkset (avatars are not covered here).
-The Second Life wiki says each "critically damps" to its target "in tau seconds". In Jolt each is a
+The Second Life pages for `llMoveToTarget` and `llSetHoverHeight` (https://wiki.secondlife.com/wiki/LlMoveToTarget, https://wiki.secondlife.com/wiki/LlSetHoverHeight) say each brings the object to its target with critical damping over tau seconds. In Jolt each is a
 critically damped spring with tau as its timescale: from rest, the distance left after t seconds is
 d0 (1 + t / tau) e^(-t / tau), so it is about a quarter of the way in after tau, 91 percent of the
 way after 4 tau, and it does not pass the target. The motion is the same at every
@@ -628,14 +628,13 @@ way after 4 tau, and it does not pass the target. The motion is the same at ever
 
 - `llMoveToTarget(target, tau)`: the object goes to the target and holds there, until
   `llStopMoveToTarget`, which lets it fall from where it was held. A target 65 m or more away does
-  nothing ("must be less than 65, or no movement will occur"). A tau of 0 or less moves nothing (the
-  simulator also stops an earlier target then); a tau under 2/45 s acts as 2/45 s, the wiki's
-  "smallest functional tau".
+  nothing (the `llMoveToTarget` page gives 65 m as the limit, beyond which no movement occurs). A tau of 0 or less moves nothing (the
+  simulator also stops an earlier target then); a tau under 2/45 s acts as 2/45 s, the smallest tau the wiki says functions.
 - `llSetHoverHeight(height, water, tau)`: the object holds its centre `height` above the ground, or
   with `water` TRUE above the ground or the water, whichever is higher. It follows the ground as it
   moves, so it keeps its height over a slope, and it pulls the object down if it is above the height.
   `llStopHover` or a height of 0 lets it go. Without volume detect it does not go under the ground;
-  a negative height leaves it on the ground. Heights are cut to 4096 m, the wiki's limit. A tau of 0
+  a negative height leaves it on the ground. Heights are cut to 4096 m, the limit the `llSetHoverHeight` page gives. A tau of 0
   or less is refused.
 - While either acts, gravity does not, as in ubODE, so buoyancy changes nothing. A set force still
   acts, and holds the object `F tau^2 / m` from its target, where the spring balances it. A set
@@ -643,7 +642,7 @@ way after 4 tau, and it does not pass the target. The motion is the same at ever
 - Each call wakes a sleeping object, and a call that reaches a linked child prim acts on the whole
   linkset. The object may sleep once it has settled where it is held.
 - On a non-physical object neither acts, but the request is kept and acts once the object is
-  physical ("A llMoveToTarget call seems to persist even if physics is turned off").
+  physical (a user note on the `llMoveToTarget` page says a call seems to persist when physics is turned off).
 - A vehicle keeps its own hover and motion: neither acts while the object is a vehicle.
 - Selected in the build tool, the object is held still and neither acts. The request is kept:
   deselected, the object goes on to its target from rest where it was held, or falls if the script
@@ -663,9 +662,8 @@ look-at controller for that object (which sets the angular velocity once per fra
 several degrees short). The rotate-drag gives the viewer's rotation as the target on every update, with strength and damping
 0.1 s; ending the drag or a look-at switches the target off. No setting is needed.
 
-The Second Life wiki gives no formula. `llRotLookAt`: the object turns "smoothly" with "strength resistance at damping force",
-damping is "seconds to critically damp in", "capped at 1.0", and "the minimum value for strength seems to be 0.0445".
-`llLookAt`: "strength is an inverse value meaning lower values cause the object to turn faster". In Jolt the target is a
+The Second Life wiki gives no formula (https://wiki.secondlife.com/wiki/LlRotLookAt, https://wiki.secondlife.com/wiki/LlLookAt). `llRotLookAt`: the object turns smoothly, with strength setting how much it resists and damping the number of seconds to critically damp in; damping is capped at 1.0, and a note on the page puts the minimum useful strength near 0.0445.
+`llLookAt`: strength is an inverse value, so lower values turn the object faster. In Jolt the target is a
 critically damped spring on the rotation: with r the rotation vector from the target to the object (the short way round),
 r'' = -r / T^2 - 2 r' / T, so from rest the angle left after t seconds is a0 (1 + t / T) e^(-t / T) and the object does not
 pass its target. T is the slower of strength and damping (damping cut to 1): the wiki gives both as times and does not say
@@ -780,9 +778,9 @@ carry over.
 
 ## Avatars and physical objects
 
-Second Life documents that "You can push physical object by walking or flying your avatar into them",
-that an object dragged into an avatar should move it, and that "Residents take damage from collisions
-with physical objects" (wiki.secondlife.com, Push and Damage). It gives no figures, so Jolt follows
+Second Life documents that an avatar can push a physical object by walking or flying into it,
+that an object dragged into an avatar should move it, and that residents take damage from collisions
+with physical objects (the Push and Damage page, https://wiki.secondlife.com/wiki/Push_and_Damage). It gives no figures, so Jolt follows
 ubODE, where an avatar is a body that meets an object with no bounce:
 
 - An object that strikes an avatar never goes into or through it. The two go on along the line of the
@@ -828,9 +826,9 @@ The simulator takes a seated avatar out of physics (`ScenePresence.RemoveFromPhy
 engine), and the physics engine is not told who sits where. So on Jolt:
 
 - A seated avatar adds no mass or shape to what it sits on, as on ubODE: a physical seat or vehicle
-  keeps its own mass, and objects pass through where the avatar sits. Second Life documents "Sitting avatars add
-  their mass to the object" (wiki, llGetObjectMass) and a seated avatar's collision volume
-  (`SIT_FLAG_NO_COLLIDE`, wiki, llSetLinkSitFlags); neither can be done in the physics engine alone.
+  keeps its own mass, and objects pass through where the avatar sits. Second Life documents that sitting avatars add
+  their mass to the object (`llGetObjectMass`, https://wiki.secondlife.com/wiki/LlGetObjectMass) and a seated avatar's collision volume
+  (`SIT_FLAG_NO_COLLIDE`, `llSetLinkSitFlags`, https://wiki.secondlife.com/wiki/LlSetLinkSitFlags); neither can be done in the physics engine alone.
 - The seat's prims get a `collision_end` for the avatar when it sits, and the seated avatar's
   attachments get no collision events until it stands.
 - Standing up, the simulator puts the avatar back where `ScenePresence.StandUp` places it, without
@@ -855,8 +853,7 @@ A script in an attachment reaches its wearer: core hands `llSetBuoyancy` to the 
 as its buoyancy, and `llSetHoverHeight` and `llStopHover` as its hover (SceneObjectGroup.SetBuoyancy,
 SetHoverHeight). Jolt acts on both, following ubODE where Second Life documents nothing:
 
-- Buoyancy scales the gravity on the avatar by (1 - buoyancy), as on a prim (`llSetBuoyancy`: "when
-  buoyancy equals 1.0 it floats", "when buoyancy is > 1.0 the object rises"). At 1 an avatar that walks
+- Buoyancy scales the gravity on the avatar by (1 - buoyancy), as on a prim (`llSetBuoyancy`, https://wiki.secondlife.com/wiki/LlSetBuoyancy: at 1.0 the object floats, above 1.0 it rises). At 1 an avatar that walks
   off a ledge goes on level in the air; at 0.5 it falls at half gravity; above 1 it rises off the ground.
   As in ubODE it does nothing while the avatar flies or hovers. A floating avatar (buoyancy 1 or more) is
   not drawn down onto the floor as it walks off an edge.
@@ -974,8 +971,8 @@ where it was to where the update left it against the volume-detect prims, and a 
 through, that the engine did not report in that update and that the prim does not overlap where it ended
 (the engine reports that one in the next update), gets one `collision_start`; the next heartbeat has no
 contact, which is the `collision_end`. A prim stopped by a wall before the detector never crosses it and
-raises nothing. Second Life says only that a volume-detect prim raises both events "when
-interpenetrating" (wiki.secondlife.com/wiki/LlVolumeDetect); it documents no speed beyond which a crossing
+raises nothing. Second Life says only that a volume-detect prim raises both events while
+objects interpenetrate it (https://wiki.secondlife.com/wiki/LlVolumeDetect); it documents no speed beyond which a crossing
 is missed. `VolumeDetectFastCrossingTests` shoots a 0.2 m ball through a 0.1 m detector at 5, 25, 50 and
 200 m/s at one physics step per heartbeat and at 45 Hz: one start and one end each.
 
@@ -992,10 +989,10 @@ avatar.
 
 ## Phantom and volume-detect prims
 
-Second Life documents both (wiki.secondlife.com): a phantom object lets "objects and avatars ... pass
-through it", and a physical one collides "with the ground but will not pass through" and queues land
-collision events; with llVolumeDetect "physical object and avatars can pass through the object", which
-raises `collision_start` and `collision_end` "when interpenetrating". Jolt does this as follows:
+Second Life documents both (`llSetStatus` with `STATUS_PHANTOM`, https://wiki.secondlife.com/wiki/LlSetStatus, and `llVolumeDetect`, https://wiki.secondlife.com/wiki/LlVolumeDetect): objects and avatars pass
+through a phantom object, while a physical phantom one still collides with the ground but does not pass through it, and queues land
+collision events; with `llVolumeDetect` physical objects and avatars can pass through the object, which
+raises `collision_start` and `collision_end` while they interpenetrate. Jolt does this as follows:
 
 - A volume-detect prim is a sensor. Avatars and physical objects pass through it without slowing, and
   it reports what is inside it; the simulator turns that into one `collision_start` when each enters and
@@ -1020,10 +1017,9 @@ each part raised.
 
 ## Resting contacts and collision events
 
-Second Life documents `collision_end` as "Triggered when task stops colliding with another task" and
-`land_collision_end` when it "stops colliding with land", and that "A collision with a physical object or
-avatar resting on object does not continuously trigger collisions but for a few times, unless there is
-movement" (wiki.secondlife.com, the collision events). Jolt does this as follows:
+Second Life documents `collision_end` as raised when the object stops colliding with another object, and
+`land_collision_end` when it stops colliding with land, and that an object or avatar resting on a physical object does not
+keep triggering collisions, apart from a few times, unless there is movement (the event pages https://wiki.secondlife.com/wiki/Collision_end, https://wiki.secondlife.com/wiki/Land_collision_end and https://wiki.secondlife.com/wiki/Collision). Jolt does this as follows:
 
 - An object that comes to rest on another object, on the ground or inside a volume-detect prim and falls
   asleep keeps touching it: no end event comes when it falls asleep, and one comes when it is moved off.
@@ -1074,7 +1070,7 @@ with 0.2.
 `llSetVehicleType` gives each type its defaults. `[Jolt] VehiclePresets` chooses which (where the key is not set,
 [`VehicleBehaviour`](#vehicle-behaviour-secondlife-or-inworldz) does: `InWorldz` gives `legacy`, `SecondLife` gives `documented`):
 
-- `documented` (the default): Second Life's documented values, from the wiki page of each type
+- `documented` (the default): Second Life's documented values, from the wiki page of each type (https://wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial)
   (`VEHICLE_TYPE_SLED`, `_CAR`, `_BOAT`, `_AIRPLANE`, `_BALLOON`). The sled page's hover efficiency
   of 10 is held to 1, as `llSetVehicleFloatParam` holds any efficiency, and the sled has hover off:
   the page's hover timescale of 10 s would turn hover on, against the page's own "no hover", so the
@@ -1217,11 +1213,11 @@ component is larger than the speed); it is a patch for PhysX's sleeping, and the
 
 The limits a script's vehicle parameters are held to are `[Jolt]` keys, read once when the region
 starts, so a vehicle maker can tune them. Each default is the value the module always had, except
-the motor decay cap, which is Second Life's documented 120 s.
+the motor decay cap, which is Second Life's documented 120 s (https://wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial).
 
 | Key | Default | What it limits |
 |---|---|---|
-| `VehicleMaxLinearSpeed` | 200 | Linear motor speed a script can set (m/s, each axis) and the motor's result. Second Life documents about 30. |
+| `VehicleMaxLinearSpeed` | 200 | Linear motor speed a script can set (m/s, each axis) and the motor's result. Second Life documents about 30 (https://wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial). |
 | `VehicleReferenceSpeed` | 30 | The forward speed (m/s) at which dynamic banking and angular deflection reach full strength. |
 | `VehicleMaxAngularSpeed` | 12.566371 (4 pi) | Angular motor speed a script can set (rad/s) and the angular result: the magnitude of the direction under `SecondLife`, each axis under `InWorldz` (below the table). |
 | `VehicleAngularLimiterFloor` | 0.1 | The angular rate limiter's floor, 0 to 1 (below the table). 1 turns the limiter off. |
@@ -1231,7 +1227,7 @@ the motor decay cap, which is Second Life's documented 120 s.
 | `VehicleMaxHoverTimescale` | 300 | Hover is off at or above this hover timescale (s). |
 | `VehicleMaxAttractTimescale` | 500 | The vertical attractor and banking are off at or above this timescale (s). |
 | `VehicleMaxMotorOffset` | 100 | Linear motor offset (m, each axis). |
-| `VehicleMinHoverHeight`, `VehicleMaxHoverHeight` | -128, 10000 | Hover height range (m). Second Life documents a maximum of 100. |
+| `VehicleMinHoverHeight`, `VehicleMaxHoverHeight` | -128, 10000 | Hover height range (m). Second Life documents a maximum of 100 (https://wiki.secondlife.com/wiki/LlSetVehicleFloatParam). |
 | `VehicleSledAssist` | 0.045 | The sled's slope assist: a sled with its nose down is pushed along it at this share of g times the square root of the sine of its pitch (a tenth of it, back down the slope, nose up). 0.045 is what the InWorldz sled code gave at its 15 ms step; it is now the same at any step rate. 0 turns it off. |
 | `VehicleContactFriction` | 0 | The contact friction of a vehicle body (BulletSim's `VehicleFriction`, also 0 by default): 0 leaves the vehicle's friction timescales as the only friction on it. |
 | `VehicleRestSpeed` | 0.1 | The rest rule (m/s), see "Parked vehicles sleep" below. 0 turns it off. |
@@ -1249,9 +1245,9 @@ moment the direction is set, as InWorldz does (settings made afterwards do not r
 set is kept as it was (`VEHICLE_ANGULAR_MOTOR_DIRECTION` reads back unchanged). The formula and the 0.1 floor are the InWorldz
 code's (`VehicleDynamics.cs:3107-3116`, read, not run), which says it copies Second Life; Second Life's pages do not document
 such a limiter, so there is no Second Life figure to prefer. Second Life does document a cap of 4 pi rad/s on the *magnitude*
-of the angular motor: "The magnitude of the angular motor is capped to be no more than two rotations per second (4 * PI
-radians/sec)" (the tutorial's "Steering the Vehicle"), and "VEHICLE_ANGULAR_MOTOR_DIRECTION magnitude is capped at 4 * PI (2
-revolutions per second total)" (the `VEHICLE_ANGULAR_MOTOR_DIRECTION` page). Under `SecondLife` a direction longer than
+of the angular motor: the vehicle tutorial's "Steering the Vehicle" section (https://wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial) caps it at two rotations per second (4 pi
+radians/s), and the `VEHICLE_ANGULAR_MOTOR_DIRECTION` page (https://wiki.secondlife.com/wiki/VEHICLE_ANGULAR_MOTOR_DIRECTION) gives the same cap, 4 pi, or 2
+revolutions per second in total. Under `SecondLife` a direction longer than
 `VehicleMaxAngularSpeed` is scaled down to that length with its direction kept, so <10, 10, 10> is held as <7.26, 7.26, 7.26>;
 a direction inside the cap is stored as sent. Under `InWorldz` each axis is held to 4 pi, as InWorldz does
 (`VehicleDynamics.cs:394-398`), which lets a diagonal direction reach 4 pi times the square root of 3. The scalar form of the call
@@ -1262,7 +1258,7 @@ None of the type presets (either set) has a ratio below 1, so a vehicle that set
 ### Vehicle motors and friction
 
 The linear motor and linear friction act on each axis of the vehicle's frame as one equation, as the
-Second Life wiki's vehicle tutorial describes them:
+Second Life wiki's vehicle tutorial (https://wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial) describes them:
 
     dv/dt = g * (M - v) / Tm  -  v / Tf  +  a          g = e^(-s / Td)
 
@@ -1291,7 +1287,7 @@ follows from it:
 
 ### Hover, the vertical attractor, banking and deflection
 
-Each follows the Second Life wiki's vehicle tutorial and `llSetVehicleFloatParam`, and each is the
+Each follows the Second Life wiki's vehicle tutorial (https://wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial) and `llSetVehicleFloatParam` (https://wiki.secondlife.com/wiki/LlSetVehicleFloatParam), and each is the
 exact solution over the step the engine takes:
 
 - Hover is a damped spring on the height error `e`: `e'' = -e / T^2 - 2 eff e' / T`, with
