@@ -1132,6 +1132,8 @@ public partial class Scene : SceneBase
             EnableStandingRiderCrossing = entityTransferConfig.GetBoolean("EnableStandingRiderCrossing", false);
         }
 
+        m_log.LogInformation($"[SCENE]: {Name}: [EntityTransfer] EnableStandingRiderCrossing is {(EnableStandingRiderCrossing ? "on" : "off")}");
+
         #region Interest Management
 
         IConfig interestConfig = m_config.Configs["InterestManagement"];
