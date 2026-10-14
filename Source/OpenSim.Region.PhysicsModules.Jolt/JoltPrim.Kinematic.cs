@@ -1,4 +1,4 @@
-/* Copyright (c) Legion Builds
+/* Copyright (c) 2026 Legion Builds
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -19,8 +19,13 @@
 // motion: an avatar standing on it takes that velocity from it, and a physical object on it is carried by friction.
 //   - A move longer than KinematicJumpDistance in one heartbeat is a jump, not a motion (a script or builder set the
 //     object somewhere else): the body is put there with no velocity, so nothing is flung, and what rested on it is woken.
-//   - A heartbeat in which no new pose arrived stops the body at the last pose: a kinematic body keeps the velocity it
-//     was given, and would carry on past where the motion stopped.
+//   - Poses arrive about every 50 ms and a heartbeat is about 91 ms, so one heartbeat finds one set, the next two, and a
+//     slow one three: moved to the last pose each time, the body's speed would swing by a half or more from one heartbeat
+//     to the next and throw what rests on it. While poses come about every heartbeat the body is moved at the mean of
+//     the last few heartbeats' speeds instead, kept within KinematicFollowBand of the last pose (StepTracked).
+//   - A heartbeat in which no new pose arrived stops the body at the last pose (after at most one heartbeat of coasting at
+//     the speed it had, which keeps a heartbeat that comes early from stopping a platform that is still moving): a
+//     kinematic body keeps the velocity it was given, and would carry on past where the motion stopped.
 //   - When the hint goes off (the motion stopped, was paused or played out, or the object was selected) the body is made
 //     a fixed one again where the object is.
 // Phantom and volume-detect prims, physical prims and linkset children are not moved this way.
@@ -44,6 +49,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal const float KinematicJumpDistance = 4f;
         internal const float KinematicJumpSpeed = 40f;
 
+        // While a motion's poses arrive about every heartbeat, the body is moved at the mean speed of the last
+        // KinematicSpeedWindow heartbeats, never further than KinematicFollowBand from the last pose. A band of 4 cm keeps
+        // what rests on the body within 5 cm of where the object's pose says the platform is; the window is a little over a
+        // third of a second, long enough to even out a heartbeat that finds one set and the next three.
+        internal const int KinematicSpeedWindow = 4;
+        internal const float KinematicFollowBand = 0.04f;
+        // Heartbeats with no new pose that the body coasts through at its speed before it is stopped at the last pose.
+        internal const int KinematicCoastBeats = 1;
+        // A series of plain sets whose mean gap is over this many heartbeats glides to each pose (StepMoveSegment); one that
+        // comes more often is followed like keyframed motion (StepTracked).
+        internal const float KinematicTrackGapBeats = 1.5f;
+
         // Core's hint: keyframed motion is moving this prim's object now.
         private volatile bool _keyframed;
 
@@ -59,6 +76,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // The body was moved at its last step (so it has a velocity to take away if no new pose comes).
         private bool _kinMoving;
+
+        // The speeds of the last heartbeats in which the body followed a motion (step thread only), the number of them, the
+        // next place to write, and the heartbeats since a pose last came.
+        private readonly SVector3[] _speedWindow = new SVector3[KinematicSpeedWindow];
+        private int _speedCount, _speedNext, _coasted;
 
         internal bool IsKinematicBody => _kinematicBody;
 
@@ -209,6 +231,55 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _segActive = false;
         }
 
+        private void ForgetSpeeds()
+        {
+            _speedCount = 0;
+            _speedNext = 0;
+            _coasted = 0;
+        }
+
+        private SVector3 MeanSpeed()
+        {
+            SVector3 sum = SVector3.Zero;
+            for (int i = 0; i < _speedCount; i++)
+                sum += _speedWindow[i];
+            return sum / MathF.Max(1, _speedCount);
+        }
+
+        // Moves the body from `from` towards the last pose at the mean of the speeds the last heartbeats asked for, so a
+        // heartbeat that happens to find one set where the one before found two does not change the body's speed; the body is
+        // kept within KinematicFollowBand of the pose, so it never falls behind the object by more than that.
+        private void StepTracked(SVector3 from, SVector3 to, SQuaternion rotation, float seconds)
+        {
+            _speedWindow[_speedNext] = (to - from) / seconds;
+            _speedNext = (_speedNext + 1) % KinematicSpeedWindow;
+            _speedCount = Math.Min(_speedCount + 1, KinematicSpeedWindow);
+            _coasted = 0;
+            SVector3 next = from + MeanSpeed() * seconds;
+            SVector3 off = to - next;
+            float far = off.Length();
+            if (far > KinematicFollowBand)
+                next = to - off * (KinematicFollowBand / far);
+            _backend.MoveKinematicBody(_body, next, rotation, seconds);
+            _kinMoving = true;
+        }
+
+        // No new pose this heartbeat, but the body was following a motion a heartbeat ago: it goes on at the speed it had, and
+        // stops at the last pose if that comes first.
+        private bool CoastTracked(SVector3 to, SQuaternion rotation, float seconds)
+        {
+            if (_speedCount == 0 || _coasted >= KinematicCoastBeats || !_backend.TryGetBodyState(_body, out BodyState s))
+                return false;
+            SVector3 v = MeanSpeed();
+            SVector3 next = s.Position + v * seconds;
+            if (SVector3.Dot(to - next, v) < 0f)
+                next = to;   // would pass the last pose
+            _coasted++;
+            _backend.MoveKinematicBody(_body, next, rotation, seconds);
+            _kinMoving = true;
+            return true;
+        }
+
         // The series has ended: nothing has set the prim for the quiet time. The body stopped where the last pose put it, and
         // is made a fixed body there.
         private void EndMove()
@@ -251,11 +322,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     _backend.SetBodyPoseAndVelocity(_body, ToS(target), bodyRotation, SVector3.Zero, SVector3.Zero);
                     _kinMoving = false;
                     _segActive = false;
+                    ForgetSpeeds();
                     WakeWhatRestsOn(from, _orientation);
                 }
-                else if (_moveKinematic)
+                else if (_moveKinematic && _moveGap > KinematicTrackGapBeats * _module.KinematicHeartbeat)
                 {
-                    // A series of plain sets: glide to the new pose over the time the sets are apart (see StepMoveSegment).
+                    // A series of plain sets that come less often than every heartbeat: glide to the new pose over the time the sets are apart (see StepMoveSegment).
                     _segFrom = s.Position;
                     _segFromRotation = s.Orientation;
                     _segTo = ToS(target);
@@ -263,22 +335,28 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     _segSeconds = MathF.Max(seconds, _moveGap);
                     _segElapsed = 0f;
                     _segActive = true;
+                    ForgetSpeeds();
                     StepMoveSegment(seconds);
                 }
                 else
                 {
-                    _backend.MoveKinematicBody(_body, ToS(target), bodyRotation, seconds);
-                    _kinMoving = true;
+                    // Keyframed motion, or a series of plain sets that comes about every heartbeat.
+                    _segActive = false;
+                    StepTracked(s.Position, ToS(target), bodyRotation, seconds);
                 }
             }
             else if (_segActive)
             {
                 StepMoveSegment(seconds);
             }
+            else if (CoastTracked(ToS(target), bodyRotation, seconds))
+            {
+            }
             else if (_kinMoving)
             {
                 _backend.SetBodyPoseAndVelocity(_body, ToS(target), bodyRotation, SVector3.Zero, SVector3.Zero);
                 _kinMoving = false;
+                ForgetSpeeds();
             }
         }
     }
