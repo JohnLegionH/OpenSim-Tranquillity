@@ -29,10 +29,10 @@
  */
 
 /*
- * The stepwise motor ramp, the linear motor, the angular motor's clamp against the vertical attractor and the angular
- * deflection ported from InWorldz Halcyon
+ * The stepwise motor ramp, the linear motor, the angular motor's clamp against the vertical attractor, the vertical
+ * attractor itself and the angular deflection ported from InWorldz Halcyon
  * (InWorldz.PhysxPhysics/Vehicle/VehicleDynamics.cs: MovementExpDecay, GetGrowthRate, the linear motor of Simulate(),
- * the attractor clamp of the angular motor, SimulateAngularDeflection;
+ * the attractor clamp of the angular motor, SimulateAngularDeflection, SimulateVerticalAttractor;
  * InWorldz.PhysxPhysics/PhysUtil.cs: AngleBetween, RotBetween, Rot2Euler).
  * Adapted 2026 by Legion Builds
  */
@@ -45,7 +45,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
     /// <summary>
     /// The laws of the InWorldz Halcyon vehicle code that the controller uses under
     /// <see cref="VehicleBehaviour.InWorldz"/> in place of Second Life's documented ones: the linear and angular motors'
-    /// stepwise ramp, the angular motor's clamp against the vertical attractor and the angular deflection push. Each is a
+    /// stepwise ramp, the angular motor's clamp against the vertical attractor, the vertical attractor's push and damping and the angular
+    /// deflection push. Each is a
     /// per-step formula, so its result depends on the step the engine
     /// takes, as Halcyon's did on its own (a step that was never longer than its shortest timescale; see
     /// <see cref="GrowthRate"/>). Halcyon was read, not run.
@@ -240,6 +241,35 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 vvel = vvel + (velocity - vvel) * voverthrust;
             return vvel;
         }
+
+        /// <summary>
+        /// The restoring push of InWorldz's vertical attractor over one step (VehicleDynamics.cs:1262-1322, read, not run):
+        /// a change of angular velocity about the vehicle's x axis (roll) and y axis (pitch) of
+        ///
+        ///   (-yAxisZ, xAxisZ) x pi e^(3 efficiency) x strength x h / T
+        ///
+        /// where yAxisZ and xAxisZ are the world z components of the vehicle's y and x axes (the sines of its roll and
+        /// pitch), T the vertical attraction timescale held to at least the step, and strength the cars' and boats' stronger
+        /// righting and its escalation (1 for an airplane). <paramref name="pitchShare"/> scales the pitch part: 0 for
+        /// LIMIT_ROLL_ONLY on an airplane or balloon, 0.1 on any other vehicle, else 1. Halcyon applies the push as a torque
+        /// impulse scaled by the body's inertia tensor ("vtwix *= (wtensor * vframe)"), which is this change of angular
+        /// velocity whatever the inertia.
+        /// </summary>
+        public static (float roll, float pitch) AttractorPush(float yAxisZ, float xAxisZ, float efficiency, float timescale, float step,
+            float strength, float pitchShare)
+        {
+            float t = Math.Max(timescale, step);
+            float baseline = (float)(Math.PI * Math.Pow(Math.E, efficiency * 3.0)) * strength * step / t;
+            return (-yAxisZ * baseline, xAxisZ * baseline * pitchShare);
+        }
+
+        /// <summary>
+        /// The share of the roll and pitch angular velocity InWorldz's vertical attractor takes away each step, "efficiency
+        /// which is really the damping factor" (VehicleDynamics.cs:1306-1308, 2229-2233: MovementExpGrowth(efficiency, 1)):
+        /// e^(efficiency / e) - 1, held between 0 and 1.
+        /// </summary>
+        public static float AttractorDampingShare(float efficiency)
+            => Utils.Clamp((float)Math.Pow(Math.E, efficiency / Math.E) - 1.0f, 0.0f, 1.0f);
 
         /// <summary>
         /// The angular deflection push of one step (VehicleDynamics.cs:1114-1169, up to the stall cut-off and the

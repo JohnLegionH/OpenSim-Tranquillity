@@ -72,8 +72,8 @@ public class VehicleInWorldzTests
 
     // VehicleDynamics.cs:1278-1284: with LIMIT_ROLL_ONLY the pitch force of an airplane or balloon is zeroed, and that of
     // any other vehicle is multiplied by 0.1. A car pitched 30 degrees with the attractor at 1 s / 1: in the first step
-    // its pitch spring has the stiffness (1 + (1 + 30 / 180)^4) / 100 (the boost, then a tenth); an airplane or balloon,
-    // or any vehicle under Second Life's choice, turns not at all about its pitch axis.
+    // its pitch push is sin(30 degrees) x 0.1 x (1 + (1 + 30 / 180)^4) x pi e^3 h / 1 (the boost, then a tenth); an
+    // airplane or balloon, or any vehicle under Second Life's choice, turns not at all about its pitch axis.
     [Theory]
     [InlineData(Vehicle.TYPE_CAR, true)]
     [InlineData(Vehicle.TYPE_BOAT, true)]
@@ -100,8 +100,8 @@ public class VehicleInWorldzTests
                     continue;
                 }
                 double boost = 1.0 + Math.Pow(1.0 + 30 * Deg / Math.PI, 4.0);
-                (double move, _) = VehicleSpring.MoveOverGeneral(30 * Deg, 0, 0.1 * boost, 1.0, h);
-                Near(move, pitchRate, 1e-3, 1e-6, $"{type} at {rate} Hz: pitch rate");
+                double expected = -Math.Sin(30 * Deg) * 0.1 * boost * Math.PI * Math.Exp(3.0) * h / 1.0;
+                Near(expected, pitchRate, 1e-3, 1e-6, $"{type} at {rate} Hz: pitch rate");
                 Assert.True(pitchRate < 0f, "the nose comes up");
                 Assert.Equal(0f, rig.Body.AngularVelocity.X, 5);
             }
@@ -123,7 +123,7 @@ public class VehicleInWorldzTests
             return (float)(BehaviourRig.RollAndPitch(rig.Body.Orientation).pitch / Deg);
         }
         Assert.InRange(Pitch(SecondLife), 29.99f, 30.01f);
-        Assert.InRange(Pitch(InWorldz), 2f, 25f);
+        Assert.InRange(Pitch(InWorldz), -1f, 5f);
     }
 
     // ---------------------------------------------------------------------------------------------------------
@@ -368,8 +368,8 @@ public class VehicleInWorldzTests
     public void The_strength_boost_is_one_plus_one_plus_tilt_over_pi_to_the_fourth(double tiltOverPi, double expected)
         => Assert.Equal(expected, VehicleController.InWorldzAttractorBoost((float)(tiltOverPi * Math.PI)), 4);
 
-    // The first step of a car rolled by 20, 60 or 90 degrees with the attractor at 1 s / efficiency 0.5 has the spring's
-    // stiffness times the boost; an airplane's has not.
+    // The first step of a car rolled by 20, 60 or 90 degrees with the attractor at 1 s / efficiency 0.5 turns it by
+    // sin(roll) pi e^1.5 h x the boost; an airplane's has no boost.
     [Theory]
     [InlineData(Vehicle.TYPE_CAR, 20.0)]
     [InlineData(Vehicle.TYPE_CAR, 60.0)]
@@ -387,8 +387,8 @@ public class VehicleInWorldzTests
             rig.Car.ProcessFloatVehicleParam(Vehicle.VERTICAL_ATTRACTION_EFFICIENCY, 0.5f);
             rig.Tilt(rollDegrees, 0);
             rig.Step(h);
-            (double move, _) = VehicleSpring.MoveOverGeneral(rollDegrees * Deg, 0, boost, 0.5, h);
-            Near(move, rig.Body.AngularVelocity.X, 1e-3, 1e-6, $"{type} {rollDegrees} degrees at {rate} Hz: roll rate");
+            double expected = -Math.Sin(rollDegrees * Deg) * boost * Math.PI * Math.Exp(1.5) * h / 1.0;
+            Near(expected, rig.Body.AngularVelocity.X, 1e-3, 1e-6, $"{type} {rollDegrees} degrees at {rate} Hz: roll rate");
         }
     }
 
@@ -408,8 +408,8 @@ public class VehicleInWorldzTests
         Near(expected, rig.Car.AttractorEscalation, 1e-5, 0, $"{rate} Hz, {steps} steps");
         // The first step used 1.3^(h / 0.015) of it, with the boost at 150 degrees.
         double boost = 1.0 + Math.Pow(1.0 + 150 * Deg / Math.PI, 4.0);
-        (double move, _) = VehicleSpring.MoveOverGeneral(150 * Deg, 0, boost * Math.Pow(1.3, h / 0.015) / (1.5 * 1.5), 0.6 / 1.5, h);
-        Near(move, rollRates[0], 1e-3, 1e-6, $"{rate} Hz: first step's roll rate");
+        double firstPush = -Math.Sin(150 * Deg) * boost * Math.Pow(1.3, h / 0.015) * Math.PI * Math.Exp(3 * 0.6) * h / 1.5;
+        Near(firstPush, rollRates[0], 1e-3, 1e-6, $"{rate} Hz: first step's roll rate");
         for (int i = 1; i < rollRates.Count; i++)
             Assert.True(Math.Abs(rollRates[i]) > Math.Abs(rollRates[i - 1]) * 0.999, "the turning force grows while it is held");
     }

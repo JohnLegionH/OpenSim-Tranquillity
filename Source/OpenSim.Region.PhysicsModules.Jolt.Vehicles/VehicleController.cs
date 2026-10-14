@@ -1598,7 +1598,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// every vehicle type: the attractor then corrects roll and leaves pitch alone.
         ///
         /// Ported from Halcyon VehicleDynamics.SimulateVerticalAttractor(), then changed to the documented damped spring
-        /// above; what is kept from Halcyon's version is described where it is applied below.
+        /// above. Under InWorldz's behaviour the Halcyon law itself acts (<see cref="SimulateHalcyonVerticalAttractor"/>).
         /// </summary>
         private void SimulateVerticalAttractor(float h, out float angle, out bool inverted)
         {
@@ -1620,34 +1620,33 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 return;
             }
 
+            bool rollOnly = (_props.Flags & ExtendedVehicleFlags.LimitRollOnly) != 0;
+
+            // InWorldz: Halcyon's attractor, a push on the angular velocity and a share of it taken away each step, in place of
+            // the documented spring below.
+            if (InWorldz)
+            {
+                SimulateHalcyonVerticalAttractor(h, x, y, angle, timescale, efficiency, rollOnly);
+                return;
+            }
+
             double roll = Math.Atan2(y.Z, z.Z);
             double pitch = Math.Asin(Utils.Clamp(-x.Z, -1f, 1f));
             double stiffness = 1.0 / ((double)timescale * timescale);
             double damping = efficiency / (double)timescale;
-            bool rollOnly = (_props.Flags & ExtendedVehicleFlags.LimitRollOnly) != 0;
 
-            // InWorldz: a stronger spring, and with LIMIT_ROLL_ONLY a weak pitch spring for cars, boats and sleds.
-            double rollStiffness = stiffness, pitchStiffness = stiffness;
+            // With LIMIT_ROLL_ONLY the pitch is left alone.
             bool pitchSprung = !rollOnly;
-            if (InWorldz)
-            {
-                rollStiffness = pitchStiffness = stiffness * AttractorStrength(angle, h);
-                if (rollOnly && _props.Type != VehicleType.Airplane && _props.Type != VehicleType.Balloon)
-                {
-                    pitchStiffness *= RollOnlyPitchShare;
-                    pitchSprung = true;
-                }
-            }
 
             // The spring's own rates: the body's, plus what the last step's turn left out of them.
             double rollRate = Vector3.Dot(_rawWorldAngularVel, x);
             double pitchRate = Vector3.Dot(_rawWorldAngularVel, y);
-            (double rollTurn, double rollCarry) = VehicleSpring.MoveOverGeneral(roll, rollRate + (_attractorCarry?.X ?? 0), rollStiffness, damping, h);
+            (double rollTurn, double rollCarry) = VehicleSpring.MoveOverGeneral(roll, rollRate + (_attractorCarry?.X ?? 0), stiffness, damping, h);
             // With LIMIT_ROLL_ONLY the pitch is left alone: no spring and no damping on it (any rate the last step's
             // pitch turn left out is handed back).
             double pitchTurn = pitchRate + (_attractorCarry?.Y ?? 0), pitchCarry = 0;
             if (pitchSprung)
-                (pitchTurn, pitchCarry) = VehicleSpring.MoveOverGeneral(pitch, pitchTurn, pitchStiffness, damping, h);
+                (pitchTurn, pitchCarry) = VehicleSpring.MoveOverGeneral(pitch, pitchTurn, stiffness, damping, h);
             _attractorCarry = new Vector3((float)rollCarry, (float)pitchCarry, 0f);
 
             // Applied whole with the motors' change (TorqueFini's per-step clean-up would stop it short).
@@ -1689,18 +1688,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         // ---- InWorldz's attractor (VehicleDynamics.cs, SimulateVerticalAttractor 1217-1334) ----
         //
-        // Halcyon scales the attractor's restoring force by a factor that depends on the tilt and on how long the vehicle
-        // has been overturned; here that factor scales the stiffness of the spring (the damping is left as it is, as
-        // Halcyon leaves its damping term). Its force baseline, pi e^(3 efficiency), is not taken: the spring keeps
-        // the timescale and efficiency Second Life documents.
+        // Halcyon scales the attractor's restoring push by a factor that depends on the tilt and on how long the vehicle
+        // has been overturned (the push itself and its damping: SimulateHalcyonVerticalAttractor).
         //   - Vehicles other than airplanes "have very strong restorative forces": x (1 + (1 + tilt / pi)^4) (1272-1274).
         //   - Other than airplanes, while overturned (tilt at least 0.6 pi) and not improving (the tilt no smaller than
         //     the step before's) the factor grows by 1.3 every step; otherwise it falls by 1.1 every step, to 1 (1288-1302).
         //     Halcyon's step is 15 ms (PhysxScene.cs:55-56); the growth and fall are taken per 15 ms of time, so they
         //     do not depend on the step rate here.
         //   - Halcyon has no limit on the growth (its PhysX body's angular speed limit bounds the effect); here the factor
-        //     stops at MaxAttractorEscalation, because beyond about that the exact spring rings from one step to the
-        //     next and the vehicle no longer rights itself smoothly.
+        //     stops at MaxAttractorEscalation, the cap the documented-spring form of this attractor needed and this one keeps.
         // The tilt is the angle between the vehicle's z axis and up; Halcyon takes it from the Euler roll and pitch,
         // which agree for the tilts of a vehicle that is righting itself.
 
@@ -1731,6 +1727,34 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             else
                 d.VerticalForceAdjust = Math.Max(d.VerticalForceAdjust / (float)Math.Pow(EscalationFall, steps), 1f);
             return InWorldzAttractorBoost(tilt) * d.VerticalForceAdjust;
+        }
+
+        /// <summary>
+        /// InWorldz's vertical attractor (VehicleDynamics.cs:1217-1334, read, not run), in place of the documented spring. Each
+        /// step it gives the roll and pitch angular velocity a push toward upright of
+        /// pi e^(3 efficiency) sin(tilt about the axis) h / T (<see cref="HalcyonVehicleLaws.AttractorPush"/>), scaled by the
+        /// strength of <see cref="AttractorStrength"/> (the cars' and boats' stronger righting and its escalation), and takes
+        /// the share e^(efficiency / e) - 1 of the roll and pitch angular velocity away
+        /// (<see cref="HalcyonVehicleLaws.AttractorDampingShare"/>). Both are worked out from the velocity at the start of the
+        /// step and added to the motors' change. With LIMIT_ROLL_ONLY the pitch push of an airplane or balloon is zero and
+        /// that of any other vehicle a tenth; the damping stays on both axes. Per step, as Halcyon's: a push of a fixed share
+        /// each step, so it depends on the engine's step as Halcyon's did on its own.
+        /// </summary>
+        private void SimulateHalcyonVerticalAttractor(float h, Vector3 x, Vector3 y, float tilt, float timescale, float efficiency, bool rollOnly)
+        {
+            float strength = AttractorStrength(tilt, h);
+            float pitchShare = 1f;
+            if (rollOnly)
+                pitchShare = _props.Type == VehicleType.Airplane || _props.Type == VehicleType.Balloon ? 0f : (float)RollOnlyPitchShare;
+
+            (float rollPush, float pitchPush) = HalcyonVehicleLaws.AttractorPush(y.Z, x.Z, efficiency, timescale, h, strength, pitchShare);
+            float damping = HalcyonVehicleLaws.AttractorDampingShare(efficiency);
+            float rollRate = Vector3.Dot(_rawWorldAngularVel, x);
+            float pitchRate = Vector3.Dot(_rawWorldAngularVel, y);
+
+            _attractorCarry = null;
+            _attractorChange = x * (rollPush - damping * rollRate) + y * (pitchPush - damping * pitchRate);
+            _motorTorqueVelChange += _attractorChange;
         }
 
         // The attractor hands the body back its true roll and pitch rates when it stops acting.

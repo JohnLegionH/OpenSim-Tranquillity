@@ -216,16 +216,16 @@ public class VehicleInWorldzMotorRulesTests
 
     // ---- the attractor's dormancy ----
 
-    private static BehaviourRig Righting(VehicleBehaviour b, double rollDegrees)
+    private static BehaviourRig Righting(VehicleBehaviour b, double rollDegrees, float timescale = 1f)
     {
         var rig = Rig(b, gravity: false);
-        rig.Car.ProcessFloatVehicleParam(Vehicle.VERTICAL_ATTRACTION_TIMESCALE, 1f);
+        rig.Car.ProcessFloatVehicleParam(Vehicle.VERTICAL_ATTRACTION_TIMESCALE, timescale);
         rig.Car.ProcessFloatVehicleParam(Vehicle.VERTICAL_ATTRACTION_EFFICIENCY, 1f);
         rig.Tilt(rollDegrees, 0);
         return rig;
     }
 
-    // How much the angular velocity changes over `steps` steps from here: the attractor's spring changes it, and nothing
+    // How much the angular velocity changes over `steps` steps from here: the attractor changes it, and nothing
     // else does (no friction, no motor, no gravity).
     private static float Change(BehaviourRig rig, double h, int steps)
     {
@@ -241,8 +241,9 @@ public class VehicleInWorldzMotorRulesTests
         {
             double h = 1.0 / rate;
             int At(double seconds) => (int)Math.Round(rate * seconds);
-            var iw = Righting(VehicleBehaviour.InWorldz, 3);
-            var sl = Righting(VehicleBehaviour.SecondLife, 3);
+            // A 5 s timescale: a 3 degree tilt takes more than 1.5 s to right itself, and moves under 0.7 degree a step.
+            var iw = Righting(VehicleBehaviour.InWorldz, 3, 5f);
+            var sl = Righting(VehicleBehaviour.SecondLife, 3, 5f);
             iw.Run(h, At(1.0));
             sl.Run(h, At(1.0));
             Assert.True(Change(iw, h, At(1.2) - At(1.0)) > 1e-4f, $"{rate} Hz: still righting at 1 s");
@@ -259,9 +260,21 @@ public class VehicleInWorldzMotorRulesTests
     [Fact]
     public void An_overturned_vehicle_is_never_dormant()
     {
-        var iw = Righting(VehicleBehaviour.InWorldz, 120);
-        iw.Run(1.0 / 45, 45 * 2);
-        Assert.True(Change(iw, 1.0 / 45, 10) > 1e-3f);
+        const double h = 1.0 / 45;
+        // Held in place (the angular velocity cleared each step), the tilt does not change, as the dormancy rule watches it.
+        float Push(double rollDegrees)
+        {
+            var rig = Righting(VehicleBehaviour.InWorldz, rollDegrees);
+            for (int i = 0; i < 90; i++)
+            {
+                rig.Car.Step((float)h);
+                rig.Body.AngularVelocity = Vector3.Zero;
+            }
+            rig.Car.Step((float)h);
+            return rig.Body.AngularVelocity.Length();
+        }
+        Assert.True(Push(120) > 1e-3f, "overturned: still acting after 2 s without a change");
+        Assert.Equal(0f, Push(80));                       // under 0.6 pi: dormant after 1.5 s without a change
     }
 
     // A vehicle that is level and still starts dormant (nothing to right); one tilted past the 0.7 degree threshold wakes it.
