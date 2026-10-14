@@ -1,4 +1,4 @@
-/* Copyright (c) Legion Builds
+/* Copyright (c) 2026 Legion Builds
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -61,8 +61,7 @@ public class MovedPrimsCarryRidersTests
             foreach (bool up in new[] { false, true })
                 foreach (float speed in new[] { 1f, 3f })
                     foreach (double rate in new[] { 0.0, 45.0 })
-                        if (!(rider == "box" && up && speed == 3f))   // see A_cube_on_a_platform_lifted_in_big_steps_is_thrown_by_the_first_set
-                            yield return new object[] { rider, up, speed, rate };
+                        yield return new object[] { rider, up, speed, rate };
     }
 
     [Theory]
@@ -78,18 +77,20 @@ public class MovedPrimsCarryRidersTests
         Assert.True(f.Slide < 0.3 * speed + 0.4, $"it slid {f.Slide:0.00} m on the platform");
     }
 
-    // A platform lifted 0.6 m by each set (3 m/s at 0.2 s): the first set of a series is a plain set, and a fixed body set 0.6 m up
-    // into the cube throws it. The series starts at the second set, too late. It falls as it does with the setting off.
+    // A platform lifted 0.6 m by each set (3 m/s at 0.2 s): with the setting off, a fixed body set 0.6 m up into the cube throws it and
+    // it falls. With it on, the first set already carries it (the body takes the step at no more than 3 m/s), as the sets after it do.
     [Theory]
     [InlineData(0.0)]
     [InlineData(45.0)]
-    public void A_cube_on_a_platform_lifted_in_big_steps_is_thrown_by_the_first_set(double rate)
+    public void A_cube_on_a_platform_lifted_in_big_steps_is_carried_from_the_first_set_with_the_setting_on(double rate)
     {
         KinematicScenarios.Figures on = Measure("box", up: true, 3f, rate, On);
         KinematicScenarios.Figures off = Measure("box", up: true, 3f, rate, Off);
-        Say($"MOVE cube up 3 m/s rate {rate:0}: on {on.Verdict} sink {F(on.MaxSink)}; off {off.Verdict} sink {F(off.MaxSink)}");
-        Assert.Equal(off, on);
-        Assert.False(on.OnAtEnd);
+        Say($"MOVE cube up 3 m/s rate {rate:0}: on {on.Verdict} sink {F(on.MaxSink)} air {F(on.MaxAir)}; off {off.Verdict} sink {F(off.MaxSink)}");
+        Assert.True(on.OnAtEnd, on.Verdict);
+        Assert.True(on.MaxSink < 0.5, $"it sank {on.MaxSink:0.00} m below its resting height");
+        Assert.True(on.MaxAir < 0.8, $"it rose {on.MaxAir:0.00} m above its resting height");
+        Assert.False(off.OnAtEnd);
     }
 
     // ------------------------------------------------------------------ off: as before
