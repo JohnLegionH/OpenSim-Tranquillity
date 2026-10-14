@@ -1,4 +1,4 @@
-/* Copyright (c) Legion Builds
+/* Copyright (c) 2026 Legion Builds
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -24,7 +24,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// The rules are those the classes for each part already hold: an object meets an avatar with no bounce at their common
 /// speed by mass, the avatar's share held to [Jolt] AvatarPushMaxSpeed (AvatarObjectCollisionTests); a contact's
 /// restitution is the two prims' product and a body rebounds to the height that gives (RestingContactAndBounceTests);
-/// collision_end is "Triggered when task stops colliding with another task" (wiki.secondlife.com), so resting is not
+/// collision_end is raised when a task stops colliding with another (wiki.secondlife.com/wiki/Collision_end), so resting is not
 /// ending; a linkset is one body with its parts' summed mass, and a ray reports the part it hit (LinksetTests).
 /// Serial with the other native tests: every run steps a real backend on the shared job pool.
 /// </summary>

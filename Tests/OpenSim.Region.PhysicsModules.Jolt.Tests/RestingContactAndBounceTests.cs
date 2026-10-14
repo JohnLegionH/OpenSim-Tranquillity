@@ -1,4 +1,4 @@
-/* Copyright (c) Legion Builds
+/* Copyright (c) 2026 Legion Builds
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -16,13 +16,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
 /// Resting contacts and bounces, as Second Life documents them (wiki.secondlife.com):
-/// - collision_end is "Triggered when task stops colliding with another task", and land_collision_end when it "stops
-///   colliding with land": a box that rests on something and falls asleep has not stopped touching it, so no end event
+/// - collision_end is raised when a task stops colliding with another task, and land_collision_end when it stops
+///   colliding with land: a box that rests on something and falls asleep has not stopped touching it, so no end event
 ///   comes until it is moved off. A volume detector raises collision_start and collision_end only, so likewise.
-/// - "A collision with a physical object or avatar resting on object does not continuously trigger collisions but for a
-///   few times, unless there is movement" (collision): once the box is asleep no more collision events come. The wiki
+/// - A collision with a physical object or avatar that rests on an object does not keep triggering beyond a few
+///   times unless something moves (the collision event's page): once the box is asleep no more collision events come. The wiki
 ///   says nothing of land_collision at rest; ubODE keeps sending a sleeping prim's contacts, so land_collision goes on.
-/// - Restitution: "higher Restitution is bouncier" (Physics Material Settings test); a box leaves at its restitution x
+/// - Restitution: a higher value is bouncier (Physics Material Settings test); a box leaves at its restitution x
 ///   its arrival speed, so it rises to restitution^2 x the drop (less its damping).
 /// The resting scenarios run with an 11 Hz heartbeat at one physics step per heartbeat and at 22.5, 45 and 90 Hz.
 /// Serial with the other native tests: every run steps a real backend on the shared job pool.

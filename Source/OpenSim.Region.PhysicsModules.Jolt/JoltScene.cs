@@ -1395,9 +1395,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 {
                     // The struck part's SceneObjectPart.LocalId (0 = terrain): a linkset's child where the ray hit it, not the
                     // root whose body it is welded into. The script engines look the part up by it and replace it with the
-                    // root only when asked: "RC_GET_ROOT_KEY: The hit uuid will be replaced by the object's root instead of
-                    // any child." and "RC_GET_LINK_NUM: Stride includes the link number that was hit." (llCastRay,
-                    // wiki.secondlife.com).
+                    // root only when asked: RC_GET_ROOT_KEY replaces the hit's uuid with its object's root, and RC_GET_LINK_NUM
+                    // adds the number of the link that was hit (llCastRay, wiki.secondlife.com/wiki/LlCastRay).
                     ConsumerID = hits[i].ChildUserData != 0 ? hits[i].ChildUserData : hits[i].UserData,
                     Pos = new Vector3(hits[i].Point.X, hits[i].Point.Y, hits[i].Point.Z),
                     Normal = new Vector3(hits[i].Normal.X, hits[i].Normal.Y, hits[i].Normal.Z),
@@ -2012,9 +2011,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // SceneObjectPart.SendCollisionEvent). Core names whatever id it is given, by part (CreateColliderArgs), so
                 // the name is the engine's to choose. ubODE names every collider by its root
                 // (ODEScene.Collision_accounting_events: ParentActor.m_baseLocalID), which is a part's own id unless core
-                // linked it, as it does a physical linkset alone; Second Life's llCollisionFilter example matches a child
-                // prim's collision by its object's name ("A child prim named "Object" hits ..., the collision will be
-                // detected" for a filter on the object "Post"). So a prim, a linkset and an avatar name an object alike.
+                // linked it, as it does a physical linkset alone; Second Life's llCollisionFilter example
+                // (wiki.secondlife.com/wiki/LlCollisionFilter) matches a child prim's collision by its object's name (a filter on
+                // the object "Post" detects a hit by a child prim named "Object" of that object). So a prim, a linkset and an
+                // avatar name an object alike.
                 // Jolt's normal points A -> B; give each side the surface normal pointing back at it.
                 // ContactReport carries System.Numerics vectors (SVector3); OpenSim's ContactPoint is OMV.
                 // A volume detector's contacts go to the detector alone: what passes through it is not told, as ubODE

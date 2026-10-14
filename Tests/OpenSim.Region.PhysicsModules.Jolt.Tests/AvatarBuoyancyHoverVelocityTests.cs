@@ -1,4 +1,4 @@
-/* Copyright (c) Legion Builds
+/* Copyright (c) 2026 Legion Builds
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -15,10 +15,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// An attachment's llSetBuoyancy and llSetHoverHeight acting on its wearer, and the velocity an avatar reports (the
 /// harness's avatar-buoyancy, avatar-ledge, avatar-hover, avatar-wall and avatar-moving-platform scenarios), at an 11 Hz
 /// heartbeat with [Jolt] PhysicsStepRate 45 and with one physics step per heartbeat. Core hands both calls to the
-/// wearer's actor (SceneObjectGroup.SetBuoyancy, SetHoverHeight). The Second Life wiki: llSetBuoyancy, "when buoyancy
-/// is &lt; 1.0, the object sinks", "when buoyancy equals 1.0 it floats"; llSetHoverHeight, "Critically damps to a height
-/// above the ground (or water) in tau seconds", its example "Put in an attached prim and touch to start floating in air
-/// without flying". The reported velocity is what core sends viewers, scripts' llGetVel and sensors, and the animator.
+/// wearer's actor (SceneObjectGroup.SetBuoyancy, SetHoverHeight). The Second Life wiki: llSetBuoyancy, below 1.0 the
+/// object sinks and at 1.0 it floats (wiki.secondlife.com/wiki/LlSetBuoyancy); llSetHoverHeight, a critically damped
+/// approach to the height over tau seconds, its example an attached prim that floats its wearer in the air without
+/// flying (wiki.secondlife.com/wiki/LlSetHoverHeight). The reported velocity is what core sends viewers, scripts' llGetVel and sensors, and the animator.
 /// Serial with the other native tests: every run steps a real backend on the shared job pool.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]

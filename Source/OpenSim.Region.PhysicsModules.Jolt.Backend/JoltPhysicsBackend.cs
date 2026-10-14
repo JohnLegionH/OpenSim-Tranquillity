@@ -3754,7 +3754,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// touches with its weight (StepCharacter).</summary>
         internal const float FlyingCharacterMass = 0.001f;
 
-        /// <summary>The SL wiki, llMoveToTarget: "The smallest functional tau is 0.044444444 (two physics frames, 2/45)". A
+        /// <summary>The smallest tau llMoveToTarget acts on is two physics frames, 2/45 s (wiki.secondlife.com/wiki/LlMoveToTarget). A
         /// smaller hover tau acts as this one, as on a prim (JoltPrim.MinTau).</summary>
         internal const float MinHoverTau = 2f / 45f;
 
@@ -3762,8 +3762,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         internal const float MaxHoverSpeed = 50f;
 
         // The velocity a hovering avatar moves with this step. Across: what it is asked for, walking or flying, plus the
-        // ground's velocity on ground it can walk on. Up and down: the critically damped spring the SL wiki describes
-        // ("Critically damps to a height above the ground (or water) in tau seconds", llSetHoverHeight), the one a prim's
+        // ground's velocity on ground it can walk on. Up and down: the critically damped spring the SL wiki describes for
+        // llSetHoverHeight, reaching the height over tau seconds (wiki.secondlife.com/wiki/LlSetHoverHeight), the one a prim's
         // hover uses (JoltPrim.StepHover), with tau as its timescale. On the error e from the height,
         //   e'' = -e / tau^2 - 2 e' / tau        so from rest   e(t) = e0 (1 + t / tau) e^(-t / tau)
         // The height follows the ground along the avatar's path, so it rises with the ground as the avatar moves on.

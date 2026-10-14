@@ -111,7 +111,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal const float MinAvatarSpeedFactor = 0.1f;
         internal const float MaxAvatarSpeedFactor = 10f;
 
-        // Second Life's documented maximum for llCastRay's RC_MAX_HITS ("Maximum value is 256").
+        // Second Life's documented maximum for llCastRay's RC_MAX_HITS, 256 (wiki.secondlife.com/wiki/LlCastRay).
         internal const int MaxRayCastHits = 256;
 
         // The highest PhysicsStepRate accepted. Each step costs a backend update, so a rate far above the heartbeat

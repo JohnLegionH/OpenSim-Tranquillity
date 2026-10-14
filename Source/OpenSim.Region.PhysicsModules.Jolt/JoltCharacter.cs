@@ -395,7 +395,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // A push: llPushObject on this avatar, or an attachment's llApplyImpulse on its wearer (both reach here as an
         // impulse). The avatar's velocity changes by impulse / mass, within the push limits the backend holds it to
         // ([Jolt] AvatarPushMaxSpeed, AvatarPushRecovery). Second Life ignores the angular part on an avatar
-        // ("ang_impulse is ignored when applying to agents or their attachments", llPushObject), so AddAngularForce
+        // (llPushObject ignores the angular impulse for agents and their attachments, wiki.secondlife.com/wiki/LlPushObject), so AddAngularForce
         // stays inert.
         public override void AddForce(Vector3 force, bool pushforce)
         {
@@ -410,7 +410,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private Vector3 _constantForce;
         private bool _constantForceLocal;
 
-        // The SL wiki, llSetForce: "Used on an attachment, it will apply the force to the avatar". The force is in newtons and
+        // llSetForce on an attachment applies the force to the avatar (wiki.secondlife.com/wiki/LlSetForce). The force is in newtons and
         // the avatar accelerates by force / its mass on every step until the next call; zero ends it. A local force is in the
         // avatar's own axes: it is turned by the avatar's orientation now, and again whenever that changes, so it turns with
         // the avatar. The actor keeps it and gives it to every backend character it makes; core hands it to a new actor.
@@ -438,8 +438,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private PIDHoverType _hoverType;
         private bool _hoverActive;
 
-        // The SL wiki, llSetBuoyancy: "when buoyancy is < 1.0, the object sinks", "when buoyancy equals 1.0 it floats",
-        // "when buoyancy is > 1.0 the object rises". On the avatar it scales gravity by 1 - buoyancy while it neither flies
+        // llSetBuoyancy (wiki.secondlife.com/wiki/LlSetBuoyancy): below 1.0 the object sinks, at 1.0 it floats, above 1.0 it
+        // rises. On the avatar it scales gravity by 1 - buoyancy while it neither flies
         // nor hovers, as ubODE's avatar does (ODECharacter.MoveCharacter).
         public override float Buoyancy
         {
