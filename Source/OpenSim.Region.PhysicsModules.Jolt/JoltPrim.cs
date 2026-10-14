@@ -159,6 +159,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // The mass of this prim's body, the one the engine moves (a welded linkset's root: the whole linkset's); 0 without
         // a body. Read by the console test commands.
         internal float BodyMass => _body.IsValid ? _backend.GetBodyMass(_body) : 0f;
+        /// <summary>The compound shape a linkset's root body is made of (invalid for anything else), for the tests.</summary>
+        internal ShapeId CompoundHandle => _compoundShape;
 
         // Live vehicle state for the `jolt vehiclestatus` console command (type / buoyancy / active).
         internal string VehicleInfo()
@@ -235,11 +237,27 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal int HullCount => _hullCount;
         private int _hullCount = 1;
 
+        // The real volume (m^3, at the prim's size) a physical concave prim weighs when it is cooked as cells: the volume of the
+        // mesher's closed mesh, which the cells (they hold the whole solid, a little over) stand in for in collision, the
+        // centre of mass and how the mass is spread. 0 when the shape's own volume is the weight: every other shape, and a
+        // concave prim whose mesh volume cannot be trusted (JoltScene.CookPrimCells). Set where the shape is cooked.
+        private double _massVolume;
+        private float _massFactor = 1f;   // _massVolume over the volume of the cooked cells: 1 for every other shape
+
         // A prim may take a cooked shape another prim of the same asset holds (at its size or scaled to it). A part of a linkset
         // may too, unless its density differs from the root's: the linkset gives each part's shape that part's own density
         // relative to the root's (SetShapeDensity), and a shape in use elsewhere keeps the engine's default. A part of the
         // root's own density needs none set, so it can use the shared shape (or a scaled shape over it, which takes no density).
-        private bool MayShareShape => _linkRoot == null || PhysicalDensity == _linkRoot.PhysicalDensity;
+        // A concave prim that weighs less than its cells' volume (_massFactor under 1) is given a density of its own in a
+        // linkset as well (SetShapeDensity, see ShapeMassFactor), so in a linkset it takes a shape of its own too.
+        private bool MayShareShape
+            => _linkRoot != null ? PhysicalDensity == _linkRoot.PhysicalDensity && !NeedsOwnDensity
+                                 : !NeedsOwnDensity || _linkChildren == null || _linkChildren.Count == 0;
+
+        // Under this much (2 %) of difference between what a concave prim weighs and its cells' volume, its place in a linkset's
+        // compound is the same to the eye as with the shared shape's default density.
+        private const float OwnDensityMargin = 0.02f;
+        private bool NeedsOwnDensity => MathF.Abs(_massFactor - 1f) > OwnDensityMargin;
 
         // Takes a shape of its own in place of a shared one, before this prim becomes a part of a linkset's compound, when
         // the part's density has to be written into its shape.
@@ -275,8 +293,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // Cooked on the thread that built or changed the prim, never on the step: the one cook the step reaches
             // (RebuildCompoundNow -> MakeShapePrivate) is of a shared shape, and only a mesh asset's shape is shared, so a
             // prim cooked as cells is never cooked there.
-            ShapeId shape = _module.CookPrimShape(_backend, pbs, _size, CookAsHull, out axisCorrection, out kind, out int hullCount, _isPhysical, UseHullList, MayShareShape);
+            ShapeId shape = _module.CookPrimShape(_backend, pbs, _size, CookAsHull, out axisCorrection, out kind, out int hullCount, out double massVolume, _isPhysical, UseHullList, MayShareShape);
             _hullCount = hullCount;
+            _massVolume = massVolume;
+            _massFactor = massVolume > 0.0 ? ShapeMassFactorOf(shape, massVolume) : 1f;
             _meshAssetWanted = bytes == null && kind == JoltScene.BoxFallbackKind && _module.WantsMeshAsset(_pbs);
             return shape;
         }
@@ -414,6 +434,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 desc.MotionType = BodyMotionType.Dynamic;
                 desc.Mass = 0f;                        // <=0 -> backend computes Volume*Density
                 desc.Density = PhysicalDensity;        // honour the SOP density (BulletSim mass parity)
+                // A concave prim weighs its real volume: the body's inertia is the cells' scaled to that mass (a linkset's mass is
+                // set just below from its parts).
+                if (_massVolume > 0.0 && !_compoundShape.IsValid)
+                    desc.Mass = LoneMass();
                 desc.LinearDamping = PrimLinearDamping;
                 desc.AngularDamping = PrimAngularDamping;
                 desc.GravityFactor = ScriptGravityFactor;   // llSetBuoyancy (a vehicle sets its own just below)
@@ -650,7 +674,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     // The new shape's mass (and inertia, keeping any rotation locks): volume x density, as at creation. Without
                     // this a resized physical prim kept the mass of its old size, and llGetMass with it.
                     if (_isPhysical)
-                        _backend.SetBodyDensity(_body, _simDensity > 0f ? _simDensity * DensityScaleFactor : BodyDesc.Default.Density);
+                        SetLoneBodyMass();
                     if (old.IsValid)
                         _module.ReleaseShape(_backend, old);
                 }
@@ -896,9 +920,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (!shape.IsValid)
                 return null;
             own = new OwnMassData { AxisCorrection = _axisCorrection };
-            if (_isPhysical || MassVolume(shape) > 0f)
+            if (_isPhysical || _backend.GetShapeVolume(shape) > 0f)
             {
-                own.Volume = MassVolume(shape);
+                own.Volume = OwnVolume;
                 own.CenterOfMass = _backend.GetShapeCenterOfMass(shape);
             }
             else
@@ -906,11 +930,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // The shape it would have if it were physical: for shape type PRIM that is its convex cells, so llGetMass reads
                 // the same before and after physics is switched on. Cooked on the caller's thread (a script's), once: the
                 // result is kept in _ownMass until the shape is cooked again.
-                ShapeId hull = _module.CookPrimShape(_backend, _pbs, _size, true, out SQuaternion correction, out _, out _,
+                ShapeId hull = _module.CookPrimShape(_backend, _pbs, _size, true, out SQuaternion correction, out _, out _, out double hullMassVolume,
                                                      null, _shapeType == (byte)PhysShapeType.prim);
                 try
                 {
-                    own.Volume = MassVolume(hull);
+                    own.Volume = hullMassVolume > 0.0 ? (float)hullMassVolume : _backend.GetShapeVolume(hull);
                     own.CenterOfMass = _backend.GetShapeCenterOfMass(hull);
                     own.AxisCorrection = correction;
                 }
@@ -950,21 +974,44 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // The density the backend works in (kg/m^3): the SOP density x DensityScaleFactor.
         private float PhysicalDensity => _simDensity > 0f ? _simDensity * DensityScaleFactor : BodyDesc.Default.Density;
 
-        // The one place a prim's mass source is decided: the volume of its cooked shape (m^3), times its density. For a
-        // compound of convex cells that is the sum of the cells' volumes, so a hollow physical prim weighs its hulls and not
-        // the filled solid, as a physical mesh with a hull list does (and as Halcyon's physics shapes did). Read by OwnMass
-        // (llGetMass, the centre of mass of a prim that is not a lone body) and LinksetMass (a welded linkset's body). A
-        // lone physical body is given its density instead (CreateBodyInternal, Rebuild, ApplyMass: SetBodyDensity) and the
-        // backend multiplies by the same shape volume; a rule other than "the cooked shape's volume" has to change those
-        // three too, to set the mass from this method.
-        private float MassVolume(ShapeId shape) => _backend.GetShapeVolume(shape);
+        // The one place a prim's mass source is decided: the volume it weighs (m^3), times its density. For most shapes that is the
+        // volume of the cooked shape. A physical concave prim cooked as convex cells weighs the real volume of its shape, the
+        // volume of the mesher's closed mesh (_massVolume), as the SL wiki's mass test pages measure it; the cells give its
+        // collision shape, its centre of mass and how the mass is spread, and their inertia is scaled to the real mass
+        // (SetBodyMass). Where the mesh volume cannot be trusted _massVolume is 0 and the cells' volume is the weight, as a
+        // physical mesh with a hull list weighs its hulls. Read by OwnMass (llGetMass, the centre of mass of a prim that is not
+        // a lone body) and LinksetMass (a welded linkset's body); a lone body is given LoneMass by SetLoneBodyMass.
+        private float OwnVolume => _massVolume > 0.0 ? (float)_massVolume : _backend.GetShapeVolume(_shape);
 
-        // A welded linkset's mass: each part's shape volume x its own density.
+        private float LoneMass() => MathF.Max((float)_massVolume * PhysicalDensity, 1e-3f);
+
+        // A lone physical body's mass: its real volume x density when it has one, else its density, from which the backend
+        // takes the shape's own volume.
+        private void SetLoneBodyMass()
+        {
+            if (_massVolume > 0.0)
+                _backend.SetBodyMass(_body, LoneMass());
+            else
+                _backend.SetBodyDensity(_body, PhysicalDensity);
+        }
+
+        // How much of its cells' volume a prim weighs: the real volume over the cells' (1 for every other shape). A linkset gives
+        // each part's cells a density times this, so the part's centre of mass and inertia in the compound are weighted by
+        // what it weighs, not by the cells' volume, which is over the real one most for thin walls.
+        private float ShapeMassFactor() => _massFactor;
+
+        private float ShapeMassFactorOf(ShapeId shape, double massVolume)
+        {
+            float cells = _backend.GetShapeVolume(shape);
+            return cells > 0f ? (float)massVolume / cells : 1f;
+        }
+
+        // A welded linkset's mass: each part's volume x its own density.
         private float LinksetMass()
         {
-            float mass = MassVolume(_shape) * PhysicalDensity;
+            float mass = OwnVolume * PhysicalDensity;
             foreach (JoltPrim c in _linkChildren)
-                mass += MassVolume(c._shape) * c.PhysicalDensity;
+                mass += c.OwnVolume * c.PhysicalDensity;
             return MathF.Max(mass, 1e-3f);
         }
 
@@ -977,7 +1024,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (_compoundShape.IsValid && _linkChildren != null && _linkChildren.Count > 0)
                 _backend.SetBodyMass(_body, LinksetMass());
             else
-                _backend.SetBodyDensity(_body, PhysicalDensity);
+                SetLoneBodyMass();
             WakeBody();
         }
 
@@ -1488,7 +1535,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     // (ODEPrim.MakeBody). The densities are relative to the root's, which keeps Jolt's default: the body's
                     // mass is set to the parts' sum just after (CreateBodyInternal), and a linkset of one density is built
                     // exactly as before.
-                    _backend.SetShapeDensity(_shape, JoltShapeDensity);
+                    _backend.SetShapeDensity(_shape, JoltShapeDensity * ShapeMassFactor());
                     for (int i = 0; i < _linkChildren.Count; i++)
                     {
                         JoltPrim c = _linkChildren[i];
@@ -1506,7 +1553,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                         if (!c._welded)
                             c.LinkOffsetOf(c._position, c._orientation, out c._linkOffset, out c._linkRotation);
                         c._welded = true;
-                        _backend.SetShapeDensity(c._shape, JoltShapeDensity * c.PhysicalDensity / PhysicalDensity);
+                        _backend.SetShapeDensity(c._shape, JoltShapeDensity * c.PhysicalDensity / PhysicalDensity * c.ShapeMassFactor());
                     }
                     _compoundShape = _backend.CreateCompoundShape(kids);
                 }

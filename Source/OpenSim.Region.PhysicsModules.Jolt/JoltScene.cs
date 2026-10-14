@@ -1144,14 +1144,22 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                                        bool? bodyIsPhysical = null, bool useHullList = false, bool share = false)
             => CookPrimShape(backend, pbs, size, isPhysical, out axisCorrection, out kind, out _, bodyIsPhysical, useHullList, share);
 
-        // As above, and `hullCount` is how many convex hulls the shape is made of: the cells of a concave prim or the hulls of
-        // a mesh asset's list, else 1 (a box, a sphere, a cylinder, a mesh, one hull, the bounding box). A complexity limit
-        // reads it (JoltPrim.HullCount).
+        // As below, without the real volume.
         internal ShapeId CookPrimShape(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out SQuaternion axisCorrection, out string kind,
                                        out int hullCount, bool? bodyIsPhysical = null, bool useHullList = false, bool share = false)
+            => CookPrimShape(backend, pbs, size, isPhysical, out axisCorrection, out kind, out hullCount, out _, bodyIsPhysical, useHullList, share);
+
+        // As above, and `hullCount` is how many convex hulls the shape is made of: the cells of a concave prim or the hulls of
+        // a mesh asset's list, else 1 (a box, a sphere, a cylinder, a mesh, one hull, the bounding box). A complexity limit
+        // reads it (JoltPrim.HullCount). `massVolume` is the real volume (m^3, at `size`) a concave prim cooked as cells weighs,
+        // from the mesher's closed mesh; 0 when the shape's own volume is the one to use (everything else, and a concave prim
+        // whose mesh cannot be trusted).
+        internal ShapeId CookPrimShape(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, out SQuaternion axisCorrection, out string kind,
+                                       out int hullCount, out double massVolume, bool? bodyIsPhysical = null, bool useHullList = false, bool share = false)
         {
             axisCorrection = SQuaternion.Identity;
             hullCount = 1;
+            massVolume = 0.0;
             float hx = size.X * 0.5f, hy = size.Y * 0.5f, hz = size.Z * 0.5f;
 
             if (pbs != null && PrimHasNoCuts(pbs))
@@ -1192,13 +1200,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // BulletSim's BSShapeCollection.CreateGeomMeshOrHull (physical && ShouldUseHulls -> hull;
             // else mesh). Contract: a triangle MeshShape has Volume 0, so a PHYSICAL prim
             // MUST use the convex hull or it would rez with mass 0 - hence physical -> hull here.
-            ShapeId cooked = CookMeshShape(backend, pbs, size, isPhysical, bodyIsPhysical ?? isPhysical, useHullList, share, out kind, out hullCount);
+            ShapeId cooked = CookMeshShape(backend, pbs, size, isPhysical, bodyIsPhysical ?? isPhysical, useHullList, share, out kind, out hullCount, out massVolume);
             if (cooked.IsValid)
                 return cooked;
 
             // Mesher unavailable / returned nothing usable / cook threw: conservative solid bounding box.
             kind = BoxFallbackKind;
             hullCount = 1;
+            massVolume = 0.0;
             return backend.CreateBoxShape(new SVector3(hx, hy, hz));
         }
 
@@ -1207,17 +1216,35 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // (physical hull). Returns ShapeId.Invalid on any failure so the caller can fall back. Also
         // stashes a characterization of the RAW mesher output (_lastMeshStats) for the diagnostic read-out.
         private ShapeId CookMeshShape(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, bool bodyIsPhysical,
-                                      bool useHullList, bool share, out string kind, out int hullCount)
+                                      bool useHullList, bool share, out string kind, out int hullCount, out double massVolume)
         {
+            massVolume = 0.0;
             // A mesh prim's shape is a function of its asset, size and how it is cooked, so prims that agree on all three can
             // hold one cooked shape. Only a real cook is kept: a box for want of the asset, or for size, is not.
             bool isMesh = IsMeshPrim(pbs);
             bool listWanted = isMesh && isPhysical && useHullList;
             // A prim made from its own profile and path (not a mesh, not a sculpt) is cooked as convex cells when it is
-            // physical and of shape type PRIM (useHullList). It is never shared: sharing is by asset.
+            // physical and of shape type PRIM (useHullList). Prims of one set of shape parameters share one compound, cooked at
+            // unit size and scaled to each prim's size (CookPrimCellsShared); a prim that may not share cooks its own.
             bool cellsWanted = !isMesh && isPhysical && useHullList && !IsSculptPrim(pbs);
+            if (cellsWanted && share && CellShapeCacheEnabled && ScaleReusable(size, true) && m_mesher is Meshmerizer)
+            {
+                ShapeId shared = CookPrimCellsShared(backend, pbs, size, isPhysical, bodyIsPhysical, out kind, out hullCount, out massVolume);
+                if (shared.IsValid)
+                    return shared;
+            }
             if (!share || !isMesh || pbs.SculptTexture.IsZero())
-                return CookMeshShapeCore(backend, pbs, size, isPhysical, bodyIsPhysical, listWanted, cellsWanted, out kind, out hullCount);
+            {
+                // A prim that may not share (a part of a linkset that needs a density of its own) still skips the search for its
+                // cells when prims of its parameters have been cooked: its own compound is made from their points.
+                if (cellsWanted && !share && CellShapeCacheEnabled && ScaleReusable(size, true))
+                {
+                    ShapeId copy = CookPrimCellsCopy(backend, pbs, size, out kind, out hullCount, out massVolume);
+                    if (copy.IsValid)
+                        return copy;
+                }
+                return CookMeshShapeCore(backend, pbs, size, isPhysical, bodyIsPhysical, listWanted, cellsWanted, out kind, out hullCount, out massVolume, out _);
+            }
 
             SharedShapeKind kindWanted = listWanted ? SharedShapeKind.HullList : isPhysical ? SharedShapeKind.Hull : SharedShapeKind.Mesh;
             var key = new SharedShapeKey(pbs.SculptTexture, size, kindWanted);
@@ -1255,7 +1282,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     }
                 }
 
-                ShapeId shape = CookMeshShapeCore(backend, pbs, size, isPhysical, bodyIsPhysical, listWanted, false, out kind, out hullCount);
+                ShapeId shape = CookMeshShapeCore(backend, pbs, size, isPhysical, bodyIsPhysical, listWanted, false, out kind, out hullCount, out _, out _);
                 if (shape.IsValid && kind != BoxFallbackKind && !kind.StartsWith("box", StringComparison.Ordinal))
                 {
                     var entry = new SharedShape { Key = key, Shape = shape, Kind = kind, HullCount = hullCount, Users = 1 };
@@ -1274,6 +1301,137 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return shape;
             }
         }
+
+        // ---------------------------------------------------------------------
+        // Shared compounds of cells. A concave prim's cells are a function of its shape parameters alone: they are cooked once
+        // at unit size and a prim of any size holds a scaled shape over that compound (a hull compound scales exactly on each
+        // axis, IsScaleValid), so prims with the same parameters share one cooked compound, and a change to any parameter
+        // is a different key. The real volume of the prim's mesh is kept with it (unit size, times the size's three sides).
+        // The compound and its sizes are released as a mesh asset's are (ReleaseShape).
+        // ---------------------------------------------------------------------
+
+        // The shape parameters the mesher reads for a prim made from its own profile and path (Meshmerizer.ExtrudePrimShape),
+        // and the level of detail it is asked for: two prims with the same string have the same unit mesh.
+        internal static string PrimShapeParameters(PrimitiveBaseShape pbs)
+            => string.Join("|", MeshLod.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+                pbs.PathCurve, pbs.ProfileCurve, pbs.HollowShape, pbs.ProfileBegin, pbs.ProfileEnd, pbs.ProfileHollow,
+                pbs.PathBegin, pbs.PathEnd, pbs.PathScaleX, pbs.PathScaleY, pbs.PathShearX, pbs.PathShearY,
+                pbs.PathTwist, pbs.PathTwistBegin, pbs.PathRadiusOffset, pbs.PathTaperX, pbs.PathTaperY,
+                pbs.PathRevolutions, pbs.PathSkew);
+
+        /// <summary>Whether prims of one set of shape parameters share one cooked compound of cells. On: a test turns it off to
+        /// measure what the cache saves.</summary>
+        internal bool CellShapeCacheEnabled = true;
+
+        // Parameters of prims that came out as no cells (convex already, or a split that cannot be cooked): asked again, they go
+        // straight to the cook of their own. Small, and emptied if it ever grows past the limit.
+        private readonly HashSet<string> _notCells = new HashSet<string>();
+        private const int NotCellsLimit = 4096;
+
+        private ShapeId CookPrimCellsShared(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, bool bodyIsPhysical,
+                                            out string kind, out int hullCount, out double massVolume)
+        {
+            kind = BoxFallbackKind;
+            hullCount = 1;
+            massVolume = 0.0;
+            string parameters = PrimShapeParameters(pbs);
+            var key = new SharedShapeKey(UUID.Zero, size, SharedShapeKind.PrimCells, parameters);
+            var baseKey = new BaseKey(UUID.Zero, SharedShapeKind.PrimCells, parameters);
+            double sides = (double)size.X * size.Y * size.Z;
+            lock (_sharedShapeLock)
+            {
+                if (_sharedShapes.TryGetValue(key, out SharedShape held))
+                {
+                    held.Users++;
+                    kind = held.Kind;
+                    hullCount = held.HullCount;
+                    massVolume = held.MassVolume;
+                    return held.Shape;
+                }
+                if (_notCells.Contains(parameters))
+                    return ShapeId.Invalid;
+
+                if (!_bases.TryGetValue(baseKey, out BaseShape basis))
+                {
+                    ShapeId unit = CookMeshShapeCore(backend, pbs, Vector3.One, isPhysical, bodyIsPhysical, false, true, out string unitKind, out int unitCount, out double unitVolume, out SVector3[][] unitCells);
+                    if (!unit.IsValid || !unitKind.StartsWith(PrimCellsKind, StringComparison.Ordinal))
+                    {
+                        if (unit.IsValid)
+                            backend.ReleaseShape(unit);
+                        if (_notCells.Count >= NotCellsLimit)
+                            _notCells.Clear();
+                        _notCells.Add(parameters);
+                        return ShapeId.Invalid;
+                    }
+                    // The table's own reference is the one the cook returned; it is dropped with the last size.
+                    basis = new BaseShape { Key = baseKey, Shape = unit, Size = Vector3.One, Kind = unitKind, HullCount = unitCount, UnitMassVolume = unitVolume, UnitCells = unitCells, Entries = 0 };
+                    _bases[baseKey] = basis;
+                }
+
+                ShapeId scaled = ScaledFromBase(backend, basis, size);
+                if (!scaled.IsValid)
+                {
+                    if (basis.Entries <= 0)
+                    {
+                        _bases.Remove(baseKey);
+                        backend.ReleaseShape(basis.Shape);
+                    }
+                    return ShapeId.Invalid;
+                }
+                var entry = new SharedShape { Key = key, Shape = scaled, Kind = basis.Kind, HullCount = basis.HullCount, MassVolume = basis.UnitMassVolume * sides, Users = 1, Basis = basis };
+                basis.Entries++;
+                _sharedShapes[key] = entry;
+                _sharedByShape[scaled.Value] = entry;
+                kind = entry.Kind;
+                hullCount = entry.HullCount;
+                massVolume = entry.MassVolume;
+                return scaled;
+            }
+        }
+
+        /// <summary>How many compounds of cells have been made for a prim of its own from the points of the cells of prims with the same parameters.</summary>
+        internal int PrimCellCopiesMade => Volatile.Read(ref _primCellCopiesMade);
+        private int _primCellCopiesMade;
+
+        // A compound of cells of a prim's own, for a prim that may not share one (CookPrimCellsShared): made from the points of
+        // the cells the scene holds for its parameters, scaled to its size, so no mesh is read and no split is searched for. An
+        // invalid shape (and the caller cooks in full) when none is held or a cell does not cook.
+        private ShapeId CookPrimCellsCopy(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, out string kind, out int hullCount, out double massVolume)
+        {
+            kind = BoxFallbackKind;
+            hullCount = 1;
+            massVolume = 0.0;
+            var baseKey = new BaseKey(UUID.Zero, SharedShapeKind.PrimCells, PrimShapeParameters(pbs));
+            BaseShape basis;
+            lock (_sharedShapeLock)
+            {
+                if (!_bases.TryGetValue(baseKey, out basis) || basis.UnitCells == null)
+                    return ShapeId.Invalid;
+            }
+            var scaled = new SVector3[basis.UnitCells.Length][];
+            for (int c = 0; c < scaled.Length; c++)
+            {
+                SVector3[] unit = basis.UnitCells[c];
+                scaled[c] = new SVector3[unit.Length];
+                for (int i = 0; i < unit.Length; i++)
+                    scaled[c][i] = new SVector3(unit[i].X * size.X, unit[i].Y * size.Y, unit[i].Z * size.Z);
+            }
+            ShapeId compound = PrimHullCells.CookCompound(backend, scaled, out int failed);
+            if (failed > 0 || !compound.IsValid)
+            {
+                if (compound.IsValid)
+                    backend.ReleaseShape(compound);
+                return ShapeId.Invalid;
+            }
+            Interlocked.Increment(ref _primCellCopiesMade);
+            kind = basis.Kind;
+            hullCount = basis.HullCount;
+            massVolume = basis.UnitMassVolume * size.X * size.Y * size.Z;
+            return compound;
+        }
+
+        /// <summary>How many compounds of cells the scene holds as bases that prims of one set of shape parameters are scaled from.</summary>
+        internal int PrimCellBaseCount { get { lock (_sharedShapeLock) { int n = 0; foreach (BaseKey k in _bases.Keys) if (k.IsPrimCells) n++; return n; } } }
 
         // Whether a size can be made by scaling the shape cooked at another size. A mesh prim under 0.05 m on every side that is
         // not physical is a box, and the mesher raises a side under 0.01 m to 0.01 m, so those sizes are not a scale of
@@ -1321,10 +1479,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private int _scaledShapesMade;
 
         private ShapeId CookMeshShapeCore(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, bool isPhysical, bool bodyIsPhysical,
-                                          bool listWanted, bool cellsWanted, out string kind, out int hullCount)
+                                          bool listWanted, bool cellsWanted, out string kind, out int hullCount, out double massVolume,
+                                          out SVector3[][] cellPoints)
         {
             kind = BoxFallbackKind;
             hullCount = 1;
+            massVolume = 0.0;
+            cellPoints = null;
             bool isMesh = IsMeshPrim(pbs);
 
             // A non-physical mesh smaller than SmallMeshSide on every side is a box, which needs no asset. Halcyon's rule
@@ -1356,6 +1517,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             int[] indices;
             IMesh mesh;
             double meshVolume = 0.0;   // of the mesher's own mesh: what the cells are measured against (cellsWanted only)
+            PrimHullCells.MeshAssessment assessment = null;   // what the same mesh says about the prim's real volume (cellsWanted only)
             try
             {
                 // The mesher's isPhysical argument is true to mean "keep the real triangles": with false it replaces a
@@ -1400,7 +1562,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     // triangles; the mesher keeps both, and the one hull below is still made from the points above.
                     IMesh whole = m_mesher.CreateMesh("jolt-prim", pbs, size, MeshLod, true, false, false);
                     if (whole != null)
-                        meshVolume = PrimHullCells.MeshVolume(whole.getVertexListAsFloat(), whole.getIndexListAsInt());
+                    {
+                        float[] wholeVertices = whole.getVertexListAsFloat();
+                        int[] wholeIndices = whole.getIndexListAsInt();
+                        meshVolume = PrimHullCells.MeshVolume(wholeVertices, wholeIndices);
+                        // The assessment reads the mesh at the size it was made at; a prim is its unit shape scaled on each axis, so
+                        // the checks hold at every size and the volume is the unit one times the size's three sides.
+                        assessment = PrimHullCells.AssessMesh(wholeVertices, wholeIndices);
+                    }
                 }
 
                 points = new SVector3[verts.Length / 3];
@@ -1452,11 +1621,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // every physical prim always was.
             if (cellsWanted)
             {
-                ShapeId cells = CookPrimCells(backend, pbs, size, meshVolume, out int cellCount);
+                ShapeId cells = CookPrimCells(backend, pbs, size, meshVolume, assessment, out int cellCount, out double realVolume, out SVector3[][] cellSet);
                 if (cells.IsValid)
                 {
                     kind = $"{PrimCellsKind} x{cellCount})";
                     hullCount = cellCount;
+                    massVolume = realVolume;
+                    cellPoints = cellSet;
                     Interlocked.Increment(ref _primCellShapesCooked);
                     return cells;
                 }
@@ -1505,26 +1676,29 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // takes a shape of its own (JoltPrim.MakeShapePrivate).
         // ---------------------------------------------------------------------
 
-        internal enum SharedShapeKind { Mesh, Hull, HullList }
+        internal enum SharedShapeKind { Mesh, Hull, HullList, PrimCells }
 
         private readonly struct SharedShapeKey : IEquatable<SharedShapeKey>
         {
             private readonly UUID _asset;
+            private readonly string _parameters;   // a prim made from its own profile and path: its shape parameters; else null
             private readonly int _x, _y, _z;      // the size's bits: only an identical size shares
             private readonly SharedShapeKind _kind;
 
-            public SharedShapeKey(UUID asset, Vector3 size, SharedShapeKind kind)
+            public SharedShapeKey(UUID asset, Vector3 size, SharedShapeKind kind, string parameters = null)
             {
                 _asset = asset;
+                _parameters = parameters;
                 _x = BitConverter.SingleToInt32Bits(size.X);
                 _y = BitConverter.SingleToInt32Bits(size.Y);
                 _z = BitConverter.SingleToInt32Bits(size.Z);
                 _kind = kind;
             }
 
-            public bool Equals(SharedShapeKey o) => _asset == o._asset && _x == o._x && _y == o._y && _z == o._z && _kind == o._kind;
+            public bool Equals(SharedShapeKey o) => _asset == o._asset && _x == o._x && _y == o._y && _z == o._z && _kind == o._kind
+                                                    && string.Equals(_parameters, o._parameters, StringComparison.Ordinal);
             public override bool Equals(object obj) => obj is SharedShapeKey k && Equals(k);
-            public override int GetHashCode() => HashCode.Combine(_asset, _x, _y, _z, _kind);
+            public override int GetHashCode() => HashCode.Combine(_asset, _x, _y, _z, _kind, _parameters);
         }
 
         private sealed class SharedShape
@@ -1533,6 +1707,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             public ShapeId Shape;
             public string Kind;
             public int HullCount;
+            public double MassVolume;   // the real volume of a shape of cells at this size (see CookPrimCells); 0 when its own volume is used
             public int Users;
             public BaseShape Basis;   // the cooked shape this one is, or is scaled from; null when it is neither
         }
@@ -1543,10 +1718,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             private readonly UUID _asset;
             private readonly SharedShapeKind _kind;
-            public BaseKey(UUID asset, SharedShapeKind kind) { _asset = asset; _kind = kind; }
-            public bool Equals(BaseKey o) => _asset == o._asset && _kind == o._kind;
+            private readonly string _parameters;
+            public BaseKey(UUID asset, SharedShapeKind kind, string parameters = null) { _asset = asset; _kind = kind; _parameters = parameters; }
+            public bool IsPrimCells => _kind == SharedShapeKind.PrimCells;
+            public bool Equals(BaseKey o) => _asset == o._asset && _kind == o._kind && string.Equals(_parameters, o._parameters, StringComparison.Ordinal);
             public override bool Equals(object obj) => obj is BaseKey k && Equals(k);
-            public override int GetHashCode() => HashCode.Combine(_asset, _kind);
+            public override int GetHashCode() => HashCode.Combine(_asset, _kind, _parameters);
         }
 
         private sealed class BaseShape
@@ -1556,6 +1733,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             public Vector3 Size;
             public string Kind;
             public int HullCount;
+            public double UnitMassVolume;   // for a shape of cells: the real volume at unit size (see CookPrimCells)
+            public SVector3[][] UnitCells;  // and the points of its cells at unit size, from which a prim's own compound is made
             public int Entries;   // sizes (SharedShape entries) in use
         }
 
@@ -1627,9 +1806,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // JoltPrim.CookOwnShape). The cell points come from the mesher and the native hull builds take no lock the step holds,
         // so a step in progress never waits for it; the one call here that takes the step's lock is GetShapeVolume, which
         // is a read of a number and which waits for the step, not the other way round.
-        private ShapeId CookPrimCells(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, double meshVolume, out int cellCount)
+        //
+        // `realVolume` is what the prim weighs per unit of density: the volume of the mesher's closed mesh when
+        // PrimHullCells.AssessMesh trusts it and it is not above the cells' (the cells hold the whole solid, so a mesh volume
+        // above theirs is a mesh that lies); otherwise 0, and the cells' own volume is the weight. A prim that keeps the
+        // cells' volume is named once for each reason.
+        private ShapeId CookPrimCells(IPhysicsBackend backend, PrimitiveBaseShape pbs, Vector3 size, double meshVolume,
+                                      PrimHullCells.MeshAssessment assessment, out int cellCount, out double realVolume, out SVector3[][] cellPoints)
         {
             cellCount = 1;
+            realVolume = 0.0;
+            cellPoints = null;
             if (!(m_mesher is Meshmerizer meshmerizer))
                 return ShapeId.Invalid;
             try
@@ -1654,6 +1841,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     return ShapeId.Invalid;
                 }
                 cellCount = set.CellCount;
+                realVolume = RealVolumeOf(assessment, set.CellsVolume);
+                cellPoints = set.Cells;
                 return compound;
             }
             catch (Exception e)
@@ -1662,6 +1851,30 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 return ShapeId.Invalid;
             }
         }
+
+        /// <summary>A mesh volume above the cells' volume by more than this fraction is not believed: the cells hold the whole solid.</summary>
+        internal const double MeshOverCellsTolerance = 0.005;
+
+        // The weight volume of a prim cooked as cells, from the mesher's mesh, or 0 when the cells' volume is to be used.
+        internal double RealVolumeOf(PrimHullCells.MeshAssessment assessment, double cellsVolume)
+        {
+            if (assessment == null)
+                return 0.0;
+            if (!assessment.Trusted)
+            {
+                PrimCellsNotice("mass-" + assessment.Reason, $"a physical prim's mesh volume cannot be trusted ({MeshReasonText(assessment.Reason)}); it weighs the volume of its convex cells.");
+                return 0.0;
+            }
+            if (assessment.SignedVolume > cellsVolume * (1.0 + MeshOverCellsTolerance))
+            {
+                PrimCellsNotice("mass-over-cells", "a physical prim's mesh volume is above that of its convex cells, which hold the whole solid; it weighs the volume of its cells.");
+                return 0.0;
+            }
+            return assessment.SignedVolume;
+        }
+
+        private static string MeshReasonText(string reason)
+            => reason == "self-crossing" ? "its surface crosses itself" : reason == "open" ? "its surface has a hole" : "its surface encloses no volume or winds inside out";
 
         // One notice per reason about a prim that kept its one hull for want of cells. Logged, and kept for the tests.
         private void PrimCellsNotice(string reason, string text)

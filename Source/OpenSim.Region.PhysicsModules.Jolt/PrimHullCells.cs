@@ -475,6 +475,208 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // ------------------------------------------------------------------------------------------ volume
 
         /// <summary>
+        /// What the mesher's own mesh says about a prim: its volume and centroid, and whether that volume can be trusted as the
+        /// prim's real shape volume. <see cref="Reason"/> is null when it can; otherwise one of "empty" (no volume, or the
+        /// triangles wind inside out), "open" (the surface has a hole) or "self-crossing" (two triangles pass through each other,
+        /// as a heavily twisted prim's surface does, so the divergence-theorem volume counts a stretch twice or cancels it).
+        /// </summary>
+        internal sealed class MeshAssessment
+        {
+            /// <summary>The volume the divergence theorem gives, positive when the triangles wind outward.</summary>
+            internal double SignedVolume;
+            /// <summary>The centroid of the solid the mesh encloses (meaningful when <see cref="Reason"/> is null).</summary>
+            internal SVector3 Centroid;
+            /// <summary>How many edges of the surface are not matched by an opposite edge (0 for a closed surface), and how far
+            /// the farthest of their ends is from the best plane through the prim's centre (0 when all lie in one).</summary>
+            internal int RimEdges;
+            internal double RimOffPlane;
+            internal string Reason;
+            internal bool Trusted => Reason == null;
+        }
+
+        /// <summary>
+        /// How far (in the mesh's unit-size frame) an unmatched edge may lie from the plane the others lie in. The mesher's
+        /// full-circle sphere carries one flat disc through its centre that nothing closes; a divergence-theorem volume taken
+        /// from the centre counts no volume for a sheet in a plane through it, so a surface open only there is as good as a closed one.
+        /// </summary>
+        internal const double RimPlaneTolerance = 1e-4;
+
+        /// <summary>
+        /// Reads a prim's mesh as its real shape: a closed, outward-wound, non-self-crossing triangle mesh has a volume that is
+        /// the prim's. <paramref name="vertices"/> is x, y, z for each vertex.
+        /// </summary>
+        internal static MeshAssessment AssessMesh(float[] vertices, int[] indices)
+        {
+            var result = new MeshAssessment();
+            double signed = 0.0, cx = 0, cy = 0, cz = 0;
+            int triangles = indices.Length / 3;
+            for (int t = 0; t < triangles; t++)
+            {
+                int ia = indices[3 * t] * 3, ib = indices[3 * t + 1] * 3, ic = indices[3 * t + 2] * 3;
+                double x0 = vertices[ia], y0 = vertices[ia + 1], z0 = vertices[ia + 2];
+                double x1 = vertices[ib], y1 = vertices[ib + 1], z1 = vertices[ib + 2];
+                double x2 = vertices[ic], y2 = vertices[ic + 1], z2 = vertices[ic + 2];
+                double v = (x0 * (y1 * z2 - z1 * y2) - y0 * (x1 * z2 - z1 * x2) + z0 * (x1 * y2 - y1 * x2)) / 6.0;
+                signed += v;
+                cx += v * (x0 + x1 + x2) * 0.25; cy += v * (y0 + y1 + y2) * 0.25; cz += v * (z0 + z1 + z2) * 0.25;
+            }
+            result.SignedVolume = signed;
+            if (signed > 0)
+                result.Centroid = new SVector3((float)(cx / signed), (float)(cy / signed), (float)(cz / signed));
+
+            int[] corner = WeldCorners(vertices, indices);
+            MeasureRim(vertices, indices, corner, result);
+            if (!(signed > 1e-9))
+                result.Reason = "empty";
+            else if (result.RimOffPlane > RimPlaneTolerance)
+                result.Reason = "open";
+            else if (SelfCrossing(vertices, indices, corner))
+                result.Reason = "self-crossing";
+            return result;
+        }
+
+        // The welded vertex number of each triangle corner: corners at one position (to 1e-5) are one vertex, since the mesher
+        // repeats a vertex for each face that uses it.
+        private static int[] WeldCorners(float[] vertices, int[] indices)
+        {
+            var welded = new Dictionary<(long, long, long), int>();
+            var corner = new int[indices.Length / 3 * 3];
+            for (int c = 0; c < corner.Length; c++)
+            {
+                int vertex = indices[c] * 3;
+                var key = ((long)Math.Round(vertices[vertex] * 1e5), (long)Math.Round(vertices[vertex + 1] * 1e5), (long)Math.Round(vertices[vertex + 2] * 1e5));
+                if (!welded.TryGetValue(key, out int id))
+                    welded[key] = id = welded.Count;
+                corner[c] = id;
+            }
+            return corner;
+        }
+
+        // Counts the edges of the surface that no opposite edge cancels (a closed surface has none) and how far their ends are
+        // from one plane through the origin: the origin the volume is taken from, so a sheet in such a plane adds no volume.
+        private static void MeasureRim(float[] vertices, int[] indices, int[] corner, MeshAssessment result)
+        {
+            var net = new Dictionary<(int, int), int>();
+            var position = new Dictionary<int, SVector3>();
+            for (int t = 0; t + 2 < corner.Length; t += 3)
+                for (int k = 0; k < 3; k++)
+                {
+                    int u = corner[t + k], v = corner[t + (k + 1) % 3];
+                    if (u == v)
+                        continue;
+                    net[(Math.Min(u, v), Math.Max(u, v))] = net.GetValueOrDefault((Math.Min(u, v), Math.Max(u, v))) + (u < v ? 1 : -1);
+                    int a = indices[t + k] * 3, b = indices[t + (k + 1) % 3] * 3;
+                    position[u] = new SVector3(vertices[a], vertices[a + 1], vertices[a + 2]);
+                    position[v] = new SVector3(vertices[b], vertices[b + 1], vertices[b + 2]);
+                }
+            var rim = new HashSet<int>();
+            foreach (var kv in net)
+                if (kv.Value != 0)
+                {
+                    result.RimEdges++;
+                    rim.Add(kv.Key.Item1);
+                    rim.Add(kv.Key.Item2);
+                }
+            if (rim.Count == 0)
+                return;
+            SVector3[] points = rim.Select(i => position[i]).ToArray();
+            SVector3 normal = SVector3.Zero;
+            double best = 1e-9;
+            for (int i = 0; i < points.Length; i++)
+                for (int j = i + 1; j < points.Length; j++)
+                {
+                    SVector3 cross = SVector3.Cross(points[i], points[j]);
+                    if (cross.Length() > best) { best = cross.Length(); normal = cross; }
+                }
+            if (normal == SVector3.Zero)
+                return;                     // every end of every unmatched edge is on one line through the origin
+            normal = SVector3.Normalize(normal);
+            foreach (SVector3 point in points)
+                result.RimOffPlane = Math.Max(result.RimOffPlane, Math.Abs(SVector3.Dot(normal, point)));
+        }
+
+        // Whether any two triangles of the mesh pass through each other. Triangles that share a vertex (by position: the mesher
+        // repeats a corner for each face) are neighbours and are not compared. Two triangles cross when an edge of one pierces
+        // the inside of the other, so every edge is tested against every triangle whose box it meets, found by sweeping the
+        // triangles in order of their lowest x.
+        private static bool SelfCrossing(float[] vertices, int[] indices, int[] corner)
+        {
+            int triangles = indices.Length / 3;
+            var lo = new double[triangles * 3];
+            var hi = new double[triangles * 3];
+            for (int t = 0; t < triangles; t++)
+                for (int axis = 0; axis < 3; axis++)
+                {
+                    double a = vertices[indices[3 * t] * 3 + axis], b = vertices[indices[3 * t + 1] * 3 + axis], c = vertices[indices[3 * t + 2] * 3 + axis];
+                    lo[3 * t + axis] = Math.Min(a, Math.Min(b, c));
+                    hi[3 * t + axis] = Math.Max(a, Math.Max(b, c));
+                }
+            int[] order = Enumerable.Range(0, triangles).ToArray();
+            Array.Sort(order, (p, q) => lo[3 * p].CompareTo(lo[3 * q]));
+            const double Gap = 1e-6;
+            for (int i = 0; i < triangles; i++)
+            {
+                int a = order[i];
+                for (int j = i + 1; j < triangles; j++)
+                {
+                    int b = order[j];
+                    if (lo[3 * b] > hi[3 * a] + Gap)
+                        break;
+                    if (lo[3 * b + 1] > hi[3 * a + 1] + Gap || lo[3 * a + 1] > hi[3 * b + 1] + Gap
+                        || lo[3 * b + 2] > hi[3 * a + 2] + Gap || lo[3 * a + 2] > hi[3 * b + 2] + Gap)
+                        continue;
+                    if (SharesCorner(corner, a, b))
+                        continue;
+                    if (EdgesPierce(vertices, indices, a, b) || EdgesPierce(vertices, indices, b, a))
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        private static bool SharesCorner(int[] corner, int a, int b)
+        {
+            for (int i = 0; i < 3; i++)
+                for (int k = 0; k < 3; k++)
+                    if (corner[3 * a + i] == corner[3 * b + k])
+                        return true;
+            return false;
+        }
+
+        // Whether an edge of triangle `edges` goes through the inside of triangle `face` (Moller-Trumbore on the segment, with a
+        // margin so an edge that only meets the other's border, as at a seam, is not a crossing).
+        private static bool EdgesPierce(float[] v, int[] idx, int edges, int face)
+        {
+            const double Margin = 1e-5;
+            int f0 = idx[3 * face] * 3, f1 = idx[3 * face + 1] * 3, f2 = idx[3 * face + 2] * 3;
+            double ox = v[f0], oy = v[f0 + 1], oz = v[f0 + 2];
+            double e1x = v[f1] - ox, e1y = v[f1 + 1] - oy, e1z = v[f1 + 2] - oz;
+            double e2x = v[f2] - ox, e2y = v[f2 + 1] - oy, e2z = v[f2 + 2] - oz;
+            for (int k = 0; k < 3; k++)
+            {
+                int p = idx[3 * edges + k] * 3, q = idx[3 * edges + (k + 1) % 3] * 3;
+                double dx = v[q] - v[p], dy = v[q + 1] - v[p + 1], dz = v[q + 2] - v[p + 2];
+                double hx = dy * e2z - dz * e2y, hy = dz * e2x - dx * e2z, hz = dx * e2y - dy * e2x;
+                double det = e1x * hx + e1y * hy + e1z * hz;
+                if (Math.Abs(det) < 1e-14)
+                    continue;                   // parallel to the face: no crossing through its inside
+                double inv = 1.0 / det;
+                double sx = v[p] - ox, sy = v[p + 1] - oy, sz = v[p + 2] - oz;
+                double u = inv * (sx * hx + sy * hy + sz * hz);
+                if (u < Margin || u > 1 - Margin)
+                    continue;
+                double qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x;
+                double w = inv * (dx * qx + dy * qy + dz * qz);
+                if (w < Margin || u + w > 1 - Margin)
+                    continue;
+                double t = inv * (e2x * qx + e2y * qy + e2z * qz);
+                if (t > Margin && t < 1 - Margin)
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
         /// The volume of a closed triangle mesh (the divergence theorem: the sum of the signed volumes of the tetrahedra
         /// from the origin to each triangle). <paramref name="vertices"/> is x, y, z for each vertex.
         /// </summary>

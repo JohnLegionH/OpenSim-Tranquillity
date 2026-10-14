@@ -569,6 +569,26 @@ mesher decodes, unless it has already decoded and cached that map.
   default, so such a part takes a shape of its own (a cook from the mesh the mesher kept, without a fetch); a part
   of the root's density needs none written and takes the shared or scaled shape.
 
+**Concave physical prims (hollow, cut, twisted, torus, tube, ring, hollow sphere)**
+
+- A physical prim of shape type `PRIM` that is made from its own profile and path (not a mesh, not a sculpt) and is not
+  convex collides as a compound of convex cells: one hull for each convex piece of its profile over each span of its path,
+  cut from the rings the mesher builds the prim from, at most 64 cells. A hollow box is four, a torus twelve. A hollow
+  prim keeps its cavity, so a ball can rest inside a hollow box. `CONVEX`, `NONE`, the plain box, sphere and cylinder,
+  sculpts, meshes and every non-physical prim are cooked as before. A prim that is one cell, or whose cells cannot all be
+  built, is one hull of its points, as before; the second case is logged once.
+- It weighs the real volume of its shape, the volume of the mesher's closed mesh, times its density, and `llGetMass`, the
+  body and a welded linkset's mass read the same number. The cells give the collision shape, the centre of mass and how the
+  mass is spread; their inertia is scaled to the real mass. A thin-walled prim weighs what its wall is, not what its cells
+  hold (a hollow 0.95 torus: the cells are 3.7 times the real volume). Where the mesh volume cannot be trusted the prim
+  weighs the volume of its cells instead, and each reason is logged once: the mesh encloses no volume or winds inside out,
+  its surface has a hole, or two of its triangles pass through each other (a heavily twisted prim does this), or its
+  volume is above the cells' (they hold the whole solid). `CONVEX` weighs its hull, as before.
+- Prims with the same shape parameters share one cooked compound, cooked once at unit size; a prim of another size takes a
+  scaled shape over it. Any change to a parameter is another entry, and an entry is freed with its last prim. A part of a
+  linkset that weighs less than its cells' volume takes a compound of its own, made from the shared cells' points (no new
+  split), because the linkset writes each part's weight into its shape.
+
 | Key | Default | What it sets |
 |---|---|---|
 | `BodyEnhancedEdgeRemoval` | `false` | `true`: Jolt's enhanced internal edge removal for every body that moves under physics (a physical prim, a vehicle): the contacts with the shared edges inside a triangle mesh or a heightfield that can push a body off its path are removed. Costs more per contact with a mesh or the terrain. Off, nothing changes. See "Seams in triangle meshes and terrain". |
