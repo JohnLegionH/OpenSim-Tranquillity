@@ -15,8 +15,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// What the vehicle controller gives under Second Life's behaviour (the default) for the things the InWorldz solver
 /// work touches (the motors' ramp and decay, angular deflection, per-axis motor timescales, the decay cap), to the bit.
 /// The figures were taken from the controller before that work: every scenario is a state of the body sampled during a
-/// run, and the golden words are the bits of those floats. The same check on the InWorldz choice covers what that work
-/// leaves alone (the linear motor). Pure (a body with no engine), parallel.
+/// run, and the golden words are the bits of those floats. The linear motor under Second Life's choice is pinned the same
+/// way; under the InWorldz choice it is Halcyon's stepwise law, compared with a reference worked out from Halcyon's
+/// formulas (HalcyonLinearReference) rather than with figures taken from the controller. Pure (a body with no engine), parallel.
 /// </summary>
 public class VehicleSolverUnchangedTests
 {
@@ -102,7 +103,7 @@ public class VehicleSolverUnchangedTests
         return Sampled(rig, 0.1, 600, 60);
     }
 
-    // The linear motor with friction and decay, a car, nothing angular: what the InWorldz solver work leaves alone.
+    // The linear motor with friction and decay, a car, nothing angular.
     private static float[] LinearMotor(VehicleSettings s, float motorTs, float decayTs, double h, int steps)
     {
         var rig = new BehaviourRig(s, Vehicle.TYPE_CAR, gravity: false);
@@ -126,11 +127,14 @@ public class VehicleSolverUnchangedTests
         ["LongDecay"] = LongDecay,
     };
 
-    private static readonly Dictionary<string, Func<VehicleSettings, float[]>> LinearScenarios = new()
+    private static readonly Dictionary<string, (float motorTs, float decayTs, double h, int steps)> LinearRuns = new()
     {
-        ["LinearMotorSlow"] = s => LinearMotor(s, 1.5f, 6f, Hz45, 450),
-        ["LinearMotorQuick"] = s => LinearMotor(s, 0.05f, 2f, Hz45, 225),
+        ["LinearMotorSlow"] = (1.5f, 6f, Hz45, 450),
+        ["LinearMotorQuick"] = (0.05f, 2f, Hz45, 225),
     };
+
+    private static readonly Dictionary<string, Func<VehicleSettings, float[]>> LinearScenarios = LinearRuns.ToDictionary(
+        kv => kv.Key, kv => (Func<VehicleSettings, float[]>)(s => LinearMotor(s, kv.Value.motorTs, kv.Value.decayTs, kv.Value.h, kv.Value.steps)));
 
     private static uint[] Bits(float[] state) => state.Select(f => (uint)BitConverter.SingleToInt32Bits(f)).ToArray();
 
@@ -150,13 +154,33 @@ public class VehicleSolverUnchangedTests
         Assert.Equal(golden, Bits(Scenarios[scenario](VehicleSettings.Default)));
     }
 
+    // The InWorldz linear motor of the same two runs, against Halcyon's law worked out step by step in doubles: the motor's ramp
+    // and decay from the velocity at the start of the step, and the friction (100 s on x, 20 s on y) as a change of velocity of
+    // its own from the same velocity. The state sampled is the velocity on x and y.
     [Theory]
     [MemberData(nameof(LinearNames))]
-    public void The_InWorldz_linear_motor_is_what_it_was_to_the_bit(string scenario)
+    public void The_InWorldz_linear_motor_follows_the_Halcyon_reference(string scenario)
     {
-        float[] state = LinearScenarios[scenario](InWorldz);
-        Assert.True(InWorldzLinearGolden.TryGetValue(scenario, out uint[] golden), $"no golden for {scenario}: [\"{scenario}\"] = new uint[] {{ {Words(state)} }},");
-        Assert.True(golden.SequenceEqual(Bits(state)), $"{scenario}: new uint[] {{ {Words(state)} }}");
+        (float motorTs, float decayTs, double h, int steps) = LinearRuns[scenario];
+        var rig = new BehaviourRig(InWorldz, Vehicle.TYPE_CAR, gravity: false);
+        rig.Car.ProcessVectorVehicleParam(Vehicle.LINEAR_FRICTION_TIMESCALE, new Vector3(100f, 20f, 100f));
+        rig.Car.ProcessFloatVehicleParam(Vehicle.LINEAR_MOTOR_TIMESCALE, motorTs);
+        rig.Car.ProcessFloatVehicleParam(Vehicle.LINEAR_MOTOR_DECAY_TIMESCALE, decayTs);
+        rig.Car.ProcessVectorVehicleParam(Vehicle.LINEAR_MOTOR_DIRECTION, new Vector3(10f, 3f, 0f));
+        var want = new HalcyonLinearReference(new double[] { 10, 3, 0 }, new double[] { motorTs, motorTs, motorTs }, new double[] { decayTs, decayTs, decayTs })
+        {
+            Friction = new double[] { 100, 20, 100 },
+        };
+        int every = Math.Max(1, steps / 10);
+        for (int i = 1; i <= steps; i++)
+        {
+            rig.Step(h);
+            want.Step(h);
+            if (i % every != 0)
+                continue;
+            Assert.True(Math.Abs(want.V[0] - rig.Body.LinearVelocity.X) <= 0.003 + 0.002 * Math.Abs(want.V[0]), $"{scenario} x at step {i}: {rig.Body.LinearVelocity.X:R} against {want.V[0]:R}");
+            Assert.True(Math.Abs(want.V[1] - rig.Body.LinearVelocity.Y) <= 0.003 + 0.002 * Math.Abs(want.V[1]), $"{scenario} y at step {i}: {rig.Body.LinearVelocity.Y:R} against {want.V[1]:R}");
+        }
     }
 
     [Theory]
@@ -185,11 +209,5 @@ public class VehicleSolverUnchangedTests
     {
         ["LinearMotorQuick"] = new uint[] { 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411FDFB0, 0x403F6017, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411FDFE2, 0x403F3FEF, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411FD76B, 0x403F0D6D, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411FCCD4, 0x403ECE6A, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411FBFAA, 0x403E803B, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411FAF64, 0x403E1FD3, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411F9B67, 0x403DA9C4, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411F830C, 0x403D1A5B, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411F659D, 0x403C6DB5, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411F425A, 0x403B9FDD, 0, 0x42C80000, 0x3F800000 },
         ["LinearMotorSlow"] = new uint[] { 0, 0, 0, 0x3F800000, 0, 0, 0, 0x40922826, 0x3FAC2FDB, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x40D7271A, 0x3FF972F2, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x40FA8DD1, 0x400F2652, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x4106F9DB, 0x40181C7E, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x410C8D77, 0x401C3D63, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x410FDA68, 0x401DB17F, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x4111D10A, 0x401D8CA3, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x4112F2DF, 0x401C617A, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x41138948, 0x401A82C9, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x4113BFE2, 0x4018220D, 0, 0x42C80000, 0x3F800000 },
-    };
-
-    private static readonly Dictionary<string, uint[]> InWorldzLinearGolden = new()
-    {
-        ["LinearMotorSlow"] = new uint[] { 0, 0, 0, 0x3F800000, 0, 0, 0, 0x4091E1AE, 0x3FABDC9C, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x40D6D9C7, 0x3FF9181E, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x40FA4892, 0x400EFD6A, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x4106DC31, 0x4017F8D6, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x410C741B, 0x401C1E11, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x410FC470, 0x401D9559, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x4111BDAA, 0x401D72C7, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x4112E173, 0x401C4937, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x4113795B, 0x401A6B9F, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x4113B118, 0x40180BA0, 0, 0x42C80000, 0x3F800000 },
-        ["LinearMotorQuick"] = new uint[] { 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411FE1B7, 0x403F6595, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411FE0B4, 0x403F44CE, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411FD86F, 0x403F1383, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411FCE1A, 0x403ED5FE, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411FC13E, 0x403E899C, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411FB157, 0x403E2B59, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411F9DCA, 0x403DB7D8, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411F85F2, 0x403D2B64, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411F691A, 0x403C8220, 0, 0x42C80000, 0x3F800000, 0, 0, 0, 0x3F800000, 0, 0, 0, 0x411F4683, 0x403BB81C, 0, 0x42C80000, 0x3F800000 },
     };
 }

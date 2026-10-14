@@ -845,6 +845,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             _props.Dynamics.LastAccessTOD = Clock();
 
+            // InWorldz: "Scale the target if the motor has been decaying" (VehicleDynamics.cs:3054-3062).
+            if (InWorldz && _props.Dynamics.LinearDecayIndex > VehicleLimits.ThresholdLinearMotorEngaged)
+            {
+                Vector3 decayTs = _props.GetVec(VehVectorParam.LinearMotorDecayTimescale);
+                float index = _props.Dynamics.LinearDecayIndex;
+                _props.Dynamics.LinearTargetVelocity = new Vector3(
+                    _props.Dynamics.LinearTargetVelocity.X * HalcyonVehicleLaws.MovementExpDecay(index, decayTs.X),
+                    _props.Dynamics.LinearTargetVelocity.Y * HalcyonVehicleLaws.MovementExpDecay(index, decayTs.Y),
+                    _props.Dynamics.LinearTargetVelocity.Z * HalcyonVehicleLaws.MovementExpDecay(index, decayTs.Z));
+            }
+
             // The motor's grip restarts at full on every set and decays from here (s = 0).
             _props.Dynamics.LinearDecayIndex = MotorDecayStart(VehVectorParam.LinearMotorTimescale);
 
@@ -1828,7 +1839,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// assist (<see cref="SledAssist"/>; see
         /// <see cref="VehicleMotorSolver"/>). The velocity after the step is the exact solution of that equation over
         /// it, so the result does not depend on the step rate. Friction acts on every axis all the time; the motor's
-        /// pull fades with its decay and is never cut off.
+        /// pull fades with its decay and is never cut off. Under InWorldz the motor is Halcyon's instead
+        /// (<see cref="HalcyonLinearMotorChange"/>), a change on top of friction's.
         ///
         /// The engine applies the gravity itself over the step (<see cref="ApplyGravity"/>); the change written here
         /// is the exact solution less that gravity, so the two together end the step on the exact velocity.
@@ -1853,18 +1865,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             // Friction and gravity alone over the step, and the motor with them.
             Vector3 frictionOnly = FrictionStep(v0, frictionTs, h, gravity);
-            Vector3 v1 = new Vector3(
-                (float)MotorStep(v0.X, motor.X, motorTs.X, decayTs.X, age, frictionTs.X, h, gravity.X),
-                (float)MotorStep(v0.Y, motor.Y, motorTs.Y, decayTs.Y, age, frictionTs.Y, h, gravity.Y),
-                (float)MotorStep(v0.Z, motor.Z, motorTs.Z, decayTs.Z, age, frictionTs.Z, h, gravity.Z));
-            v1.X = Utils.Clamp(v1.X, -S.MaxLinearSpeed, S.MaxLinearSpeed);
-            v1.Y = Utils.Clamp(v1.Y, -S.MaxLinearSpeed, S.MaxLinearSpeed);
-            v1.Z = Utils.Clamp(v1.Z, -S.MaxLinearSpeed, S.MaxLinearSpeed);
+            Vector3 motorChange;
+            if (InWorldz)
+            {
+                motorChange = HalcyonLinearMotorChange(h, v0, motor, motorTs, decayTs);
+            }
+            else
+            {
+                Vector3 v1 = new Vector3(
+                    (float)MotorStep(v0.X, motor.X, motorTs.X, decayTs.X, age, frictionTs.X, h, gravity.X),
+                    (float)MotorStep(v0.Y, motor.Y, motorTs.Y, decayTs.Y, age, frictionTs.Y, h, gravity.Y),
+                    (float)MotorStep(v0.Z, motor.Z, motorTs.Z, decayTs.Z, age, frictionTs.Z, h, gravity.Z));
+                v1.X = Utils.Clamp(v1.X, -S.MaxLinearSpeed, S.MaxLinearSpeed);
+                v1.Y = Utils.Clamp(v1.Y, -S.MaxLinearSpeed, S.MaxLinearSpeed);
+                v1.Z = Utils.Clamp(v1.Z, -S.MaxLinearSpeed, S.MaxLinearSpeed);
+                motorChange = (v1 - frictionOnly) * _rotation;
+            }
 
             // The step's change in world coordinates: friction's share (with gravity's, less the g h the engine adds),
             // and the motor's share on top of it.
             Vector3 frictionChange = (frictionOnly - v0) * _rotation - gravityWorld * h;
-            Vector3 motorChange = (v1 - frictionOnly) * _rotation;
 
             // InWorldz: "Cheat: Do not fight gravity." Friction that would push the vehicle up in world z is dropped
             // (VehicleDynamics.cs:1494-1495), so a falling vehicle is not slowed by its friction and one rising is. What
@@ -1911,6 +1931,35 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 _props.Dynamics.LinearDecayIndex += HoverModerationSeconds;
             ApplyLinearVelocityChange(frictionChange + motorChange);
             _motorTorqueVelChange += MotorOffsetTurn(motorChange);
+        }
+
+        /// <summary>
+        /// The change of world velocity InWorldz's linear motor makes in one step of h seconds (VehicleDynamics.cs:2576-2725,
+        /// read, not run), in place of the documented equation: the ramp toward the direction with the motor's target velocity
+        /// and the decay blend (<see cref="HalcyonVehicleLaws.LinearMotor"/>), from the velocity at the start of the step, as a
+        /// change on top of friction's, which is worked out from the same start velocity. Nothing is applied when the new
+        /// velocity is under 0.005 m/s on every world axis ("let the vehicle eventually sleep"), or when the motor has
+        /// nothing left to add. The limit-motor flags, the gravity check and the hover moderation act on the change in the
+        /// caller, as they do on Halcyon's.
+        /// </summary>
+        private Vector3 HalcyonLinearMotorChange(float h, Vector3 lastvel, Vector3 motor, Vector3 motorTs, Vector3 decayTs)
+        {
+            float index = _props.Dynamics.LinearDecayIndex;
+            Vector3 target = _props.Dynamics.LinearTargetVelocity;
+            Vector3 local = HalcyonVehicleLaws.LinearMotor(h, lastvel, motor, motorTs, decayTs, ref index, ref target,
+                S.MaxLinearSpeed, IsLinearMotorStalled);
+            _props.Dynamics.LinearDecayIndex = index;
+            _props.Dynamics.LinearTargetVelocity = target;
+            if (local == lastvel)
+                return Vector3.Zero;
+
+            Vector3 world = local * _rotation;
+            if (Math.Abs(world.X) < VehicleLimits.ThresholdLinearMotorDeltaV &&
+                Math.Abs(world.Y) < VehicleLimits.ThresholdLinearMotorDeltaV &&
+                Math.Abs(world.Z) < VehicleLimits.ThresholdLinearMotorDeltaV)
+                return Vector3.Zero;
+
+            return world - _rawWorldLinearVel;
         }
 
         /// <summary>
@@ -2067,8 +2116,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// velocity is already past the motor's, and on an axis with no direction while the vertical attractor is acting;
         /// and on every axis while the linear motor is stalled against something, which also ends the motor.
         ///
-        /// Left out: the clamp that reduces a motor speed against the vertical attractor (VehicleDynamics.cs:2809-2856), a
-        /// separate rule. The ramp's timescale is held to at least the step (steps per timescale at least 1): Halcyon's step
+        /// While the vertical attractor is on, the roll and pitch speeds the ramp gives are first clamped against it
+        /// (<see cref="HalcyonVehicleLaws.AttractorClamp"/>, VehicleDynamics.cs:2809-2856). The ramp's timescale is held to at least the step (steps per timescale at least 1): Halcyon's step
         /// never exceeded its shortest timescale, so that a step longer than a quick motor's timescale does not overshoot
         /// the direction.
         /// </summary>
@@ -2094,6 +2143,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             float[] newvel = new float[3];
             float[] ramp = new float[3];
             float max = S.MaxAngularSpeed;
+
+            // The attractor's timescale as the clamp reads it, held to at least the step; with the attractor switched off for
+            // the region there is nothing to overpower, and the clamp is out.
+            float attractTimescale = S.DoVerticalAttractor
+                ? Math.Max(_props.GetFloat(VehFloatParam.VerticalAttractionTimescale, 1000f), h)
+                : float.PositiveInfinity;
             for (int i = 0; i < 3; i++)
             {
                 float dirsign = VehicleMath.PosNeg(dir[i]);
@@ -2114,6 +2169,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 // Avoid zero velocity stiction when the new velocity is increasing.
                 if (ramp[i] > 0 && dir[i] != 0 && Math.Abs(newvel[i]) < VehicleLimits.ThresholdAngularMotorDeltaV)
                     newvel[i] = dirsign * VehicleLimits.ThresholdAngularMotorDeltaV * 8;
+
+                // The clamp against the vertical attractor, on the roll and pitch velocities.
+                if (i < 2 && attractTimescale < S.MaxAttractTimescale)
+                    newvel[i] = HalcyonVehicleLaws.AttractorClamp(newvel[i], _props.Type, attractTimescale);
 
                 // The new target: the new velocity while ramping toward zero, else held to the direction.
                 if (dir[i] * newvel[i] < 0 || ramp[i] < 0)

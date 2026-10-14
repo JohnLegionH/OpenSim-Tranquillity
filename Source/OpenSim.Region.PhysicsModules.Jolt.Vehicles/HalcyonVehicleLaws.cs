@@ -29,8 +29,10 @@
  */
 
 /*
- * The stepwise motor ramp and the angular deflection ported from InWorldz Halcyon
- * (InWorldz.PhysxPhysics/Vehicle/VehicleDynamics.cs: MovementExpDecay, GetGrowthRate, SimulateAngularDeflection;
+ * The stepwise motor ramp, the linear motor, the angular motor's clamp against the vertical attractor and the angular
+ * deflection ported from InWorldz Halcyon
+ * (InWorldz.PhysxPhysics/Vehicle/VehicleDynamics.cs: MovementExpDecay, GetGrowthRate, the linear motor of Simulate(),
+ * the attractor clamp of the angular motor, SimulateAngularDeflection;
  * InWorldz.PhysxPhysics/PhysUtil.cs: AngleBetween, RotBetween, Rot2Euler).
  * Adapted 2026 by Legion Builds
  */
@@ -42,8 +44,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 {
     /// <summary>
     /// The laws of the InWorldz Halcyon vehicle code that the controller uses under
-    /// <see cref="VehicleBehaviour.InWorldz"/> in place of Second Life's documented ones: the angular motor's stepwise
-    /// ramp and the angular deflection push. Each is a per-step formula, so its result depends on the step the engine
+    /// <see cref="VehicleBehaviour.InWorldz"/> in place of Second Life's documented ones: the linear and angular motors'
+    /// stepwise ramp, the angular motor's clamp against the vertical attractor and the angular deflection push. Each is a
+    /// per-step formula, so its result depends on the step the engine
     /// takes, as Halcyon's did on its own (a step that was never longer than its shortest timescale; see
     /// <see cref="GrowthRate"/>). Halcyon was read, not run.
     /// </summary>
@@ -104,6 +107,138 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 }
             }
             return elog / stepsPerTimescale;
+        }
+
+        /// <summary>
+        /// The velocity InWorldz's linear motor wants for one step of <paramref name="step"/> seconds, in the vehicle's frame
+        /// (VehicleDynamics.cs:2576-2690, read, not run). On each axis the motor ramps the velocity toward its direction M by
+        /// <see cref="GrowthRate"/>, "a stepwise iteration of the continuous a*b^(t*Tau) function":
+        ///
+        ///   next = a (1 + ln(|M| / |a|) / (Tm / h)),   a = the velocity, or the motor's target if that is further along
+        ///
+        /// (the target is "used in cases when the velocity is lower because high friction during low speeds causes velocity
+        /// changes to be lost"). The new target is the new velocity while the motor ramps toward zero, else the new velocity
+        /// held to the direction. A ramp that starts under 0.005 m/s starts at eight times that, the speed is held to
+        /// <paramref name="maxSpeed"/>, and an axis with no direction and no target keeps its velocity. The result is blended
+        /// with the velocity by the motor's grip e^(-s / Td) (<see cref="MovementExpDecay"/>), s the time since the
+        /// direction was set: result = next g + v (1 - g). The grip is dropped (the motor adds nothing) on an axis where the
+        /// velocity is already past the motor's, and on every axis while the motor is stalled against something
+        /// (<paramref name="stalled"/>), which also ends the motor (the clock is put far past any decay and the target
+        /// cleared). Once every axis has decayed away nothing is computed: the target follows the velocity.
+        ///
+        /// The ramp's timescale is held to at least the step (steps per timescale at least 1): Halcyon's step never exceeded
+        /// its shortest timescale, so a step longer than a quick motor's timescale must not overshoot the direction. The
+        /// caller moves the clock on by the step afterwards, and decides what the change of velocity may do (motor limit
+        /// flags, gravity, hover).
+        /// </summary>
+        public static Vector3 LinearMotor(float step, Vector3 lastvel, Vector3 direction, Vector3 motorTimescale,
+            Vector3 decayTimescale, ref float decayIndex, ref Vector3 targetVelocity, float maxSpeed, Func<bool> stalled)
+        {
+            float[] last = { lastvel.X, lastvel.Y, lastvel.Z };
+            float[] dir = { direction.X, direction.Y, direction.Z };
+            float[] ts = { motorTimescale.X, motorTimescale.Y, motorTimescale.Z };
+            float[] decay = { MovementExpDecay(decayIndex, decayTimescale.X),
+                              MovementExpDecay(decayIndex, decayTimescale.Y),
+                              MovementExpDecay(decayIndex, decayTimescale.Z) };
+            float[] target = { targetVelocity.X, targetVelocity.Y, targetVelocity.Z };
+
+            // If the decay hits maximum entropy no further computations are required.
+            if (decay[0] == 0 && decay[1] == 0 && decay[2] == 0)
+            {
+                targetVelocity = lastvel;
+                return lastvel;
+            }
+
+            float[] newvel = new float[3];
+            float[] ramp = new float[3];
+            for (int i = 0; i < 3; i++)
+            {
+                float dirsign = VehicleMath.PosNeg(dir[i]);
+
+                // The target is used where the velocity is lower: "The target ensures forward progress."
+                float adjvel = last[i];
+                if (dirsign * (target[i] - adjvel) >= 0)
+                    adjvel = target[i];
+
+                ramp[i] = GrowthRate(adjvel, dir[i], Math.Max(ts[i] / step, 1f));
+                newvel[i] = adjvel + adjvel * ramp[i];
+
+                // At the crossover point, flip to indicate the velocity is growing.
+                if (ramp[i] == VehicleLimits.ThresholdInverseCrossover)
+                    ramp[i] = -ramp[i];
+
+                // Avoid zero velocity stiction when the new velocity is increasing.
+                if (ramp[i] > 0 && dir[i] != 0 && Math.Abs(newvel[i]) < VehicleLimits.ThresholdLinearMotorDeltaV)
+                    newvel[i] = dirsign * VehicleLimits.ThresholdLinearMotorDeltaV * 8;
+
+                // The new target: the new velocity while ramping toward zero, else held to the direction.
+                if (dir[i] * newvel[i] < 0 || ramp[i] < 0)
+                    target[i] = newvel[i];
+                else
+                    target[i] = Utils.Clamp(newvel[i], -Math.Abs(dir[i]), Math.Abs(dir[i]));
+
+                newvel[i] = Utils.Clamp(newvel[i], -maxSpeed, maxSpeed);
+
+                // Release the motor when the target and the direction are zero.
+                if (target[i] == 0 && dir[i] == 0)
+                    newvel[i] = last[i];
+
+                // If the velocity on the axis is already past the motor's (the motor adds no power), use the velocity.
+                if (ramp[i] >= 0 && dirsign * (last[i] - newvel[i]) > 0)
+                    decay[i] = 0;
+            }
+
+            targetVelocity = new Vector3(target[0], target[1], target[2]);
+
+            // Accelerate the decay when stalled.
+            if ((decay[0] != 0 || decay[1] != 0 || decay[2] != 0) && stalled())
+            {
+                decay[0] = decay[1] = decay[2] = 0;
+                decayIndex = VehicleLimits.MaxDecayTimescale * 100.0f;
+                targetVelocity = Vector3.Zero;
+            }
+
+            // Apply the decay to each axis.
+            return new Vector3(
+                newvel[0] * decay[0] + last[0] * (1.0f - decay[0]),
+                newvel[1] * decay[1] + last[1] * (1.0f - decay[1]),
+                newvel[2] * decay[2] + last[2] * (1.0f - decay[2]));
+        }
+
+        /// <summary>
+        /// InWorldz's clamp of the angular motor against the vertical attractor (VehicleDynamics.cs:2809-2856, read, not run):
+        /// "limit the angular velocity to not over power the vertical attractor. This fixes bad scripts with extreme banking
+        /// velocities but it tries to leave well behaved scripts alone." It acts on the roll and pitch velocities the motor
+        /// is about to set while the attractor is on (its timescale under the longest, <see cref="VehicleLimits.MaxAttractTimescale"/>).
+        /// <paramref name="attractionTimescale"/> is the vertical attraction timescale held to at least the step. Velocities
+        /// below the clamp point are left alone; above it the excess is cut to the share
+        /// ln(T + 0.06) / ln(500) of itself, T the timescale held to at least 1. The clamp point is "the maximum velocity
+        /// permissible given a vertical attraction timescale of 1.0s", pi x 1.1 for a car or motorcycle, pi x 0.95 for a boat
+        /// or sailboat, pi x 0.8 for every other type, and it drops in proportion to the timescale below 1 s.
+        /// </summary>
+        public static float AttractorClamp(float velocity, VehicleType type, float attractionTimescale)
+        {
+            float velclamp;
+            if (type == VehicleType.Car || type == VehicleType.Motorcycle)
+                velclamp = (float)Math.PI * 1.1f;
+            else if (type == VehicleType.Boat || type == VehicleType.Sailboat)
+                velclamp = (float)Math.PI * 0.95f;
+            else
+                velclamp = (float)Math.PI * 0.8f;
+
+            float vtimescale = attractionTimescale;
+            if (vtimescale < 1.0f)
+            {
+                velclamp = velclamp * vtimescale;
+                vtimescale = 1.0f;
+            }
+
+            float voverthrust = (float)(Math.Log(vtimescale + 0.06) / Math.Log(VehicleLimits.MaxAttractTimescale));
+
+            float vvel = Utils.Clamp(velocity, -velclamp, velclamp);
+            if (velocity != vvel)
+                vvel = vvel + (velocity - vvel) * voverthrust;
+            return vvel;
         }
 
         /// <summary>

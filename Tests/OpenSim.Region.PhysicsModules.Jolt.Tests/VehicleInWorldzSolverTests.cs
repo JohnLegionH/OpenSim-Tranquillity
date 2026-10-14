@@ -87,8 +87,8 @@ public class VehicleInWorldzSolverTests
         Assert.Equal(new Vector3(2f, 3f, 4f), Read(iw.Car, Vehicle.LINEAR_MOTOR_TIMESCALE));
     }
 
-    // The linear motor takes each axis to its direction at its own timescale: v = M (1 - e^(-A)), A = (Td / Tm)(1 - e^(-t / Td)),
-    // the decay clock starting a step into the run (a motor whose timescales are not quick starts it at 0.0156 s).
+    // The linear motor ramps each axis toward its direction at its own timescale, by Halcyon's stepwise ramp from the 0.04 m/s
+    // start (HalcyonLinearReference); the quicker axis is further along. (The earlier figures were the documented equation's.)
     [Fact]
     public void The_linear_motor_follows_the_timescale_of_each_axis()
     {
@@ -97,11 +97,15 @@ public class VehicleInWorldzSolverTests
         rig.Car.ProcessVectorVehicleParam(Vehicle.LINEAR_MOTOR_TIMESCALE, tm);
         rig.Car.ProcessVectorVehicleParam(Vehicle.LINEAR_MOTOR_DECAY_TIMESCALE, new Vector3(1000f));
         rig.Car.ProcessVectorVehicleParam(Vehicle.LINEAR_MOTOR_DIRECTION, new Vector3(5f, 5f, 5f));
-        rig.Run(Hz45, 90);   // 2 s
-        double Expected(double ts) => 5.0 * (1 - Math.Exp(-(1000.0 / ts) * (1 - Math.Exp(-(2.0 + 0.0156) / 1000.0))));
-        Near(Expected(3), rig.Body.LinearVelocity.X, 0.01, 0, "x");
-        Near(Expected(4), rig.Body.LinearVelocity.Y, 0.01, 0, "y");
-        Near(Expected(5), rig.Body.LinearVelocity.Z, 0.01, 0, "z");
+        var want = new HalcyonLinearReference(new double[] { 5, 5, 5 }, new double[] { 3, 4, 5 }, new double[] { 1000, 1000, 1000 });
+        for (int i = 0; i < 90; i++)   // 2 s
+        {
+            rig.Step(Hz45);
+            want.Step(Hz45);
+        }
+        Near(want.V[0], rig.Body.LinearVelocity.X, 0.002, 0.003, "x");
+        Near(want.V[1], rig.Body.LinearVelocity.Y, 0.002, 0.003, "y");
+        Near(want.V[2], rig.Body.LinearVelocity.Z, 0.002, 0.003, "z");
         Assert.True(rig.Body.LinearVelocity.X > rig.Body.LinearVelocity.Y && rig.Body.LinearVelocity.Y > rig.Body.LinearVelocity.Z);
     }
 
@@ -157,23 +161,42 @@ public class VehicleInWorldzSolverTests
         Assert.Equal(300f, Configured(("VehicleBehaviour", "SecondLife"), ("VehicleMaxDecayTimescale", "300")).EffectiveMaxDecayTimescale);
     }
 
-    // A motor with a 60 s timescale and a decay of 500 s: A = (Td / Tm)(1 - e^(-t / Td)), v = M (1 - e^(-A)). At 100 s the
-    // InWorldz grip has decayed less (500 s) than Second Life's, held to 120 s, so the motor has gone further.
+    // A motor with a 60 s timescale and a decay of 500 s. Under Second Life: A = (Td / Tm)(1 - e^(-t / Td)), v = M (1 - e^(-A)),
+    // the decay held to 120 s. Under InWorldz the motor is Halcyon's ramp, blended with the velocity by the grip e^(-s / Td), and
+    // the grip is dropped once it falls under 0.002 (at 6.2 Td: 746 s for a decay of 120 s, 3100 s for 500 s). Its ramp works from
+    // the target, so the grip matters only when it is nearly gone: with a friction of 50 s the vehicle is held at its speed while
+    // the motor lives (500 s: 4.8 m/s at 900 s) and has lost it by 900 s once the motor is gone (120 s: 0.2 m/s).
     [Fact]
     public void A_500_s_decay_keeps_the_motor_pulling_longer_under_InWorldz()
     {
-        double Velocity(VehicleSettings s)
+        double Velocity(VehicleSettings s, double seconds, bool friction)
         {
             var rig = Rig(s);
             rig.Car.ProcessFloatVehicleParam(Vehicle.LINEAR_MOTOR_TIMESCALE, 60f);
             rig.Car.ProcessFloatVehicleParam(Vehicle.LINEAR_MOTOR_DECAY_TIMESCALE, 500f);
+            if (friction)
+                rig.Car.ProcessVectorVehicleParam(Vehicle.LINEAR_FRICTION_TIMESCALE, new Vector3(50f, 1000f, 1000f));
             rig.Car.ProcessVectorVehicleParam(Vehicle.LINEAR_MOTOR_DIRECTION, new Vector3(5f, 0f, 0f));
-            rig.Run(0.1, 1000);
+            rig.Run(0.1, (int)(seconds / 0.1));
             return rig.Body.LinearVelocity.X;
         }
+        double Reference(double td, double seconds)
+        {
+            var want = new HalcyonLinearReference(new double[] { 5, 0, 0 }, new double[] { 60, 60, 60 }, new double[] { td, td, td })
+            {
+                Friction = new double[] { 50, 1000, 1000 },
+            };
+            for (int i = 0; i < (int)(seconds / 0.1); i++)
+                want.Step(0.1);
+            return want.V[0];
+        }
         double Expected(double td) => 5.0 * (1 - Math.Exp(-(td / 60.0) * (1 - Math.Exp(-100.0 / td))));
-        Near(Expected(500), Velocity(InWorldz), 0.01, 0, "InWorldz");
-        Near(Expected(120), Velocity(SecondLife), 0.01, 0, "Second Life");
+        double iw = Velocity(InWorldz, 900, friction: true);
+        Near(Reference(500, 900), iw, 0.002, 0.003, "InWorldz, decay 500 s");
+        Assert.True(iw > 4.0, $"{iw}");
+        Assert.True(Reference(120, 900) < 0.5, $"{Reference(120, 900)} with a decay of 120 s");
+        // Under Second Life the 120 s cap holds, as before.
+        Near(Expected(120), Velocity(SecondLife, 100, friction: false), 0.01, 0, "Second Life");
     }
 
     // ---------------------------------------------------------------------------------------------------------
