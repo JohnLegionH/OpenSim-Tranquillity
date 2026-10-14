@@ -166,12 +166,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         //   - The quiet time is MoveQuietSeconds with no set: above the longest gap a series allows (0.25 s plus a heartbeat),
         //     so a series is never cut between two of its sets, and short enough that a rider is not carried by a platform
         //     that has stopped for long (its body stops moving after one heartbeat with no new pose in any case).
+        //   - The first set of a series begins it too when a physical prim or an avatar rests on the prim (JoltScene.AnythingRestsOn),
+        //     so that set already carries it: a single llSetPos of a platform moves its rider. With nothing on the prim a set that
+        //     is not part of a series leaves the body fixed.
         //   - A longer move, or a set the same heartbeat as the one before it (several sets of one call), is not a series: the
         //     body is set to the place as before.
         // A prim keyframed motion moves is not touched: the hint path decides.
         // ---------------------------------------------------------------------
         internal const double MoveMaxGapSeconds = 0.25;
         internal const double MoveQuietSeconds = 0.5;
+        internal const float MoveFirstSetSpeed = 3f;   // metres a second
         internal const float MoveJumpAngle = MathF.PI * 0.5f;   // a quarter turn in one heartbeat is a jump, not a motion
 
         // The body is kinematic because a series of plain sets is moving the prim (the hint is not).
@@ -191,11 +195,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             double gap = now - _moveLastClock;
             _moveLastClock = now;
             float heartbeat = _module.KinematicHeartbeat;
-            if (!(gap > 0.5 * heartbeat && gap <= MoveMaxGapSeconds + heartbeat))
-                return false;
+            bool inSeries = gap > 0.5 * heartbeat && gap <= MoveMaxGapSeconds + heartbeat;
             if (Vector3.Distance(fromPos, _position) > KinematicJumpDistance || AngleBetween(ToS(fromRot), ToS(_orientation)) > MoveJumpAngle)
                 return false;
-            _moveGap = (float)gap;
+            if (inSeries)
+                _moveGap = (float)gap;
+            else if (gap > 0.5 * heartbeat && _module.AnythingRestsOn(ToS(fromPos), ToS(_size * 0.5f), ToS(fromRot), LocalID))
+            {
+                // The first set of a series, with a rider on the prim: it carries it too. Nothing says how soon the next set comes, so
+                // the body takes the step at no more than MoveFirstSetSpeed (a step of 0.6 m, a floor lifted at 3 m/s, over 0.2 s),
+                // and at least a heartbeat; a step under a heartbeat's worth of that speed is taken in one heartbeat.
+                _moveGap = Math.Clamp(Vector3.Distance(fromPos, _position) / MoveFirstSetSpeed, heartbeat, (float)MoveMaxGapSeconds);
+            }
+            else
+                return false;
             _moveKinematic = true;
             SyncKinematicBody(fromPos, fromRot);
             if (!_kinematicBody)

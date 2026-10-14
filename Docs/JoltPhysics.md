@@ -696,6 +696,18 @@ and an avatar stay on (slide at most 0.15 m, the cube at most 0.04 m and trailin
 before; moving up, nothing sank, and riders end at most 0.4 m above their resting height when a fast lift stops. The same
 platform moved by plain sets gave the same figures before and after.
 
+## Stepped platforms
+
+Keyframed motion sets its object's pose about every 50 ms, and a script that moves a floor with `llSetLinkPrimitiveParamsFast` does it
+10 or 20 times a second. A region's heartbeat is about 91 ms, so one heartbeat finds one set of a 20 Hz motion, the next two, and a slow
+one three. A body moved to the last pose each heartbeat would change speed by a half or more from one heartbeat to the next, and a
+cube resting on it would be thrown. While the poses come about every heartbeat the body is moved at the mean speed of the last four
+heartbeats, kept within 4 cm of the last pose, and carries on at that speed for one heartbeat in which no pose comes before it is stopped
+at the last pose. Harness figures, a platform going up at 2 m/s in steps of 0.1 m every 50 ms (regular heartbeats, and heartbeats that
+find 1 to 3 sets), how far a rider moves about its place while the platform is at speed: a cube 0.045 to 0.060 m (0.09 to 0.11 m
+before), an avatar 0.043 to 0.046 m (0 to 0.08 m before). At the start and the stop of a motion the speed changes in one heartbeat, as
+the script made it do, and a cube rises up to 0.3 m on a stop from 2 m/s (0.35 to 0.52 m with uneven heartbeats before).
+
 ## Prims moved by plain sets
 
 Second Life does not carry an avatar over a non-physical prim that `llSetPos` moves (the wiki pages for `llSetPos` and
@@ -710,15 +722,20 @@ uses.
   extra heartbeat keeps both inside the rule. A single set, a set in the same heartbeat as the one before, a longer pause or a
   longer move is a plain set.
 - **The body becomes kinematic at the second set**, put at the pose before it and moved to the set's pose by the next step, so
-  the second set already carries. It glides to each new pose over the time the sets have been apart (a running mean), so what
-  stands on it feels the velocity the sets add up to and not a jolt and a stop for each step; the body trails the object by up to
-  one step of the series (0.2 m at 1 m/s, 0.6 m at 3 m/s).
+  the second set already carries. A series whose sets come less often than every heartbeat and a half (`llSetPos`) glides to each new pose over
+  the time the sets have been apart (a running mean), so what stands on it feels the velocity the sets add up to and not a jolt
+  and a stop for each step; the body trails the object by up to one step of the series (0.2 m at 1 m/s, 0.6 m at 3 m/s). A series
+  whose sets come about every heartbeat (a script that calls `llSetLinkPrimitiveParamsFast` 10 or 20 times a second) is followed as
+  keyframed motion is, below.
 - **The quiet time is 0.5 s** with no set. It is above the longest gap a series allows, so a series is never cut between two of
   its sets, and short enough that the body is fixed again soon after the last set, where the object was left, and what rests
   on it is woken. The body is at rest at the last pose from the heartbeat after the glide ends.
 - A move further than 4 m, or more than a quarter turn, during a series is a jump: the pose is taken with no velocity.
-- The first set of a series is a plain set, since a lone `llSetPos` cannot be told from it: a platform lifted 0.6 m by each
-  set throws a cube standing on it (a fixed body set 0.6 m up into it), with the setting on or off.
+- **The first set carries too when something rests on the prim.** A set that is not part of a series begins one when a physical
+  prim or an avatar stands on or against the prim (an overlap test, one box query, run only for such a set); with nothing on it, the
+  prim stays a fixed body. So a single `llSetPos` of a platform with a rider on it moves the rider with it. The body takes that step
+  at no more than 3 m/s, and at least a heartbeat (a step of 0.6 m over 0.2 s), and is fixed again after the quiet time. With the setting
+  off nothing changes: a platform lifted 0.6 m by each set throws a cube standing on it.
 - A prim that keyframed motion moves is not affected: the hint decides, whatever this key says, and a keyframed prim's sets every
   50 ms are not taken for a series. Physical prims, phantom and volume-detect prims and linkset children are not moved this way;
   a linkset root is, and keeps its body.
@@ -729,7 +746,7 @@ uses.
 
 With the setting on, the harness platform (`kin-*-setpos`, a set every 0.2 s) carries a cube and an avatar 6 m sideways at 1 and
 3 m/s (they stayed on in every run; an avatar slid at most 0.6 m, a cube at most 0.4 m) where they fell 3 m before, and moving up
-nothing sank more than 0.42 m, except the cube lifted 0.6 m by each set (above), which falls as before. With it off the 16 `kin-*-setpos` harness runs give the same sample files, byte for byte, as the build
+nothing sank more than 0.45 m, the cube lifted 0.6 m by each set included. With it off the 16 `kin-*-setpos` harness runs give the same sample files, byte for byte, as the build
 before the key was added.
 
 ## Seams in triangle meshes and terrain

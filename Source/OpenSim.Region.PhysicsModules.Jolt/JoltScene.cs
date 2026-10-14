@@ -3187,6 +3187,24 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
         }
 
+        // Whether a physical prim or an avatar stands on or against the box (within SupportWakeMargin of it), other than the prim
+        // `except`: something that a move of the box would leave behind or throw. Used when a fixed prim is set to a new place
+        // and [Jolt] MovedPrimsCarryRiders is on: see JoltPrim.NoteMoveSet.
+        internal bool AnythingRestsOn(SVector3 center, SVector3 half, SQuaternion orientation, uint except)
+        {
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (backend == null)
+                return false;
+            Span<BodyId> found = stackalloc BodyId[16];
+            int n = backend.OverlapBox(center, half + new SVector3(SupportWakeMargin), orientation, QueryFilter.Dynamic | QueryFilter.Avatar, found);
+            if (n == found.Length)
+                return true;   // a crowd: some of it is not the prim itself
+            for (int i = 0; i < n; i++)
+                if (!backend.TryGetBodyUserData(found[i], out uint id) || id != except)
+                    return true;
+            return false;
+        }
+
         private bool AllStillTouchingAsleep(JoltPrim prim, CollisionEventUpdate set)
         {
             foreach (uint collider in set.m_objCollisionList.Keys)
