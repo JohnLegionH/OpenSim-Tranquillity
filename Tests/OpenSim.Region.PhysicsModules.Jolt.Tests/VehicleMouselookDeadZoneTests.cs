@@ -25,14 +25,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 public class VehicleMouselookDeadZoneTests
 {
     private const double Deg = Math.PI / 180.0;
-    private const int SteerFlag = 0x80, BankFlag = 0x100;
+    private const int SteerFlag = 0x80, BankFlag = 0x100, MousePointSteerFlag = 0x100000;
     private static readonly double[] Rates = { 11.0, 22.5, 45.0, 90.0 };
 
     private static VehicleSettings Settings(VehicleBehaviour b) => new VehicleSettings { Behaviour = b };
 
     // A car with only the angular motor acting (timescale 1 s, no decay to speak of), the camera looking `yawDegrees` to the
     // left of its heading and `pitchDegrees` below the horizon; the motor direction is set to <roll, pitch, yaw>.
-    private static BehaviourRig Car(VehicleBehaviour behaviour, int flag, double yawDegrees, double pitchDegrees, Vector3 motor, Quaternion? cameraRotation = null)
+    private static BehaviourRig Car(VehicleBehaviour behaviour, int flag, double yawDegrees, double pitchDegrees, Vector3 motor)
     {
         var rig = new BehaviourRig(Settings(behaviour), Vehicle.TYPE_CAR, gravity: false);
         rig.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_TIMESCALE, 1f);
@@ -41,7 +41,7 @@ public class VehicleMouselookDeadZoneTests
         rig.Car.ProcessVehicleFlags(flag, remove: false);
         double y = yawDegrees * Deg, p = pitchDegrees * Deg;
         var at = new Vector3((float)(Math.Cos(p) * Math.Cos(y)), (float)(Math.Cos(p) * Math.Sin(y)), (float)-Math.Sin(p));
-        rig.Car.DriverCamera = () => new DriverView(at, true, cameraRotation);
+        rig.Car.DriverCamera = () => new DriverView(at, true);
         rig.Car.ProcessVectorVehicleParam(Vehicle.ANGULAR_MOTOR_DIRECTION, motor);
         return rig;
     }
@@ -131,24 +131,20 @@ public class VehicleMouselookDeadZoneTests
             Assert.Equal(0f, iw.Body.AngularVelocity.X);
     }
 
-    // Pitch has the same threshold over its own range, MOUSELOOK_ALTITUDE (pi / 4 by default: 2.81 degrees). Under InWorldz the
-    // pitch share is the vertical part of the camera's own y axis in the vehicle's frame (VehicleDynamics.cs:808, 820), so the
-    // rows turn the camera about its own x axis by the angle; Second Life's pitch is where the camera looks, so its rows
-    // look that many degrees below the horizon.
+    // Pitch has the same threshold over its own range, MOUSELOOK_ALTITUDE (pi / 4 by default: 2.81 degrees).
     [Theory]
     [InlineData(2.0, false)]
     [InlineData(4.0, true)]
     public void The_pitch_aim_has_the_zone_over_the_altitude_range(double pitchDegrees, bool pitches)
     {
-        Quaternion rolled = Quaternion.CreateFromAxisAngle(Vector3.UnitX, (float)(pitchDegrees * Deg));
-        var iw = Car(VehicleBehaviour.InWorldz, SteerFlag, 0, 0, new Vector3(0f, 2f, 0f), rolled);
+        var iw = Car(VehicleBehaviour.InWorldz, SteerFlag, 0, pitchDegrees, new Vector3(0f, 2f, 0f));
         var sl = Car(VehicleBehaviour.SecondLife, SteerFlag, 0, pitchDegrees, new Vector3(0f, 2f, 0f));
         iw.Run(1.0 / 45, 90);
         sl.Run(1.0 / 45, 90);
         Assert.NotEqual(0f, sl.Body.AngularVelocity.Y);
         if (pitches)
         {
-            var a = Car(VehicleBehaviour.InWorldz, SteerFlag, 0, 0, new Vector3(0f, 2f, 0f), rolled);
+            var a = Car(VehicleBehaviour.InWorldz, SteerFlag, 0, pitchDegrees, new Vector3(0f, 2f, 0f));
             var b = Plain(new Vector3(0f, (float)(2.0 * Shaped(pitchDegrees)), 0f));
             a.Step(1.0 / 45);
             b.Step(1.0 / 45);
@@ -158,20 +154,46 @@ public class VehicleMouselookDeadZoneTests
             Assert.Equal(0f, iw.Body.AngularVelocity.Y);
     }
 
-    // Under InWorldz a camera that looks up or down, level, gives no pitch share, whatever the angle;
-    // the share is the vertical part of the camera's y axis, which a level camera keeps level (with or without the camera's
-    // rotation from the host).
-    [Theory]
-    [InlineData(20.0, false)]
-    [InlineData(-45.0, false)]
-    [InlineData(20.0, true)]
-    [InlineData(-45.0, true)]
-    public void Under_InWorldz_a_camera_that_looks_up_or_down_does_not_pitch_the_vehicle(double pitchDegrees, bool hostGivesRotation)
+    // Under InWorldz the pitch share is the vertical part of the camera's forward axis in the vehicle's frame: a driver who
+    // looks up pitches the nose up and one who looks down pitches it down, and a level camera gives no pitch. The vehicle
+    // then turns toward the camera, so the rows look at the first third of a second, before it has caught up.
+    [Fact]
+    public void Under_InWorldz_looking_up_pitches_the_nose_up_and_looking_down_pitches_it_down()
     {
-        Quaternion? rotation = hostGivesRotation ? Quaternion.CreateFromAxisAngle(Vector3.UnitY, (float)(pitchDegrees * Deg)) : null;
-        var iw = Car(VehicleBehaviour.InWorldz, SteerFlag, 0, pitchDegrees, new Vector3(0f, 2f, 0f), rotation);
+        var level = Car(VehicleBehaviour.InWorldz, SteerFlag, 0, 0.0, new Vector3(0f, 2f, 0f));
+        var up = Car(VehicleBehaviour.InWorldz, SteerFlag, 0, -20.0, new Vector3(0f, 2f, 0f));
+        var down = Car(VehicleBehaviour.InWorldz, SteerFlag, 0, 20.0, new Vector3(0f, 2f, 0f));
+        level.Run(1.0 / 45, 15);
+        up.Run(1.0 / 45, 15);
+        down.Run(1.0 / 45, 15);
+        // A positive turn about y takes the nose down, so a nose up is a turn the other way.
+        Assert.Equal(0f, level.Body.AngularVelocity.Y);
+        Assert.True(up.Body.AngularVelocity.Y < -0.1f, $"looking up: {up.Body.AngularVelocity.Y}");
+        Assert.True(down.Body.AngularVelocity.Y > 0.1f, $"looking down: {down.Body.AngularVelocity.Y}");
+        Assert.True((Vector3.UnitX * up.Body.Orientation).Z > 0.005f, "the nose did not rise");
+        Assert.True((Vector3.UnitX * down.Body.Orientation).Z < -0.005f, "the nose did not fall");
+    }
+
+    // Mouse-point steering acts on the script's own motor direction while the camera is inside the zone, so its level camera
+    // turns the vehicle by that direction; a camera that looks up takes the motor from it the other way.
+    [Fact]
+    public void Under_InWorldz_mouse_point_steering_pitches_the_nose_up_for_a_camera_that_looks_up()
+    {
+        var up = Car(VehicleBehaviour.InWorldz, MousePointSteerFlag, 0, -20.0, new Vector3(0f, 2f, 0f));
+        up.Run(1.0 / 45, 15);
+        Assert.True(up.Body.AngularVelocity.Y < -0.1f, $"looking up: {up.Body.AngularVelocity.Y}");
+        Assert.True((Vector3.UnitX * up.Body.Orientation).Z > 0.005f, "the nose did not rise");
+    }
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(30.0)]
+    public void Under_InWorldz_a_level_camera_gives_no_pitch(double yawDegrees)
+    {
+        var iw = Car(VehicleBehaviour.InWorldz, SteerFlag, yawDegrees, 0.0, new Vector3(0f, 2f, 0f));
         iw.Run(1.0 / 45, 90);
         Assert.Equal(0f, iw.Body.AngularVelocity.Y);
+        Assert.Equal(0f, (Vector3.UnitX * iw.Body.Orientation).Z, 4);
     }
 
     // The dead zone is InWorldz's alone: Second Life steers on a camera a tenth of a degree off.

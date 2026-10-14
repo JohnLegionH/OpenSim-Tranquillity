@@ -36,9 +36,7 @@ public class VehicleInWorldzMouselookRulesTests
         rig.Car.ProcessVehicleFlags(flags, remove: false);
         double y = yawDegrees * Deg, p = pitchDegrees * Deg;
         var at = new Vector3((float)(Math.Cos(p) * Math.Cos(y)), (float)(Math.Cos(p) * Math.Sin(y)), (float)-Math.Sin(p));
-        // InWorldz's pitch share is the rise of the camera's own y axis, so its camera is rolled by the pitch the rows give.
-        Quaternion? rotation = behaviour == VehicleBehaviour.InWorldz ? BehaviourRig.CameraRotation(y, p) : null;
-        rig.Car.DriverCamera = () => new DriverView(at, inMouselook, rotation);
+        rig.Car.DriverCamera = () => new DriverView(at, inMouselook);
         rig.Car.ProcessVectorVehicleParam(Vehicle.ANGULAR_MOTOR_DIRECTION, motor);
         return rig;
     }

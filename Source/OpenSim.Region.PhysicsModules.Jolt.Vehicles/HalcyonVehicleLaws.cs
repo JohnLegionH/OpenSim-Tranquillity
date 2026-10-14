@@ -92,9 +92,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// moving the way the wind blows faster than the wind ("tapers off once the vehicle achieves the current wind speed");
         /// what is left is scaled axis by axis by <paramref name="efficiency"/> and, when its length is under
         /// <see cref="VehicleLimits.MinPhysicsForce"/>, dropped. The result is the change of velocity, wind x efficiency x h.
-        /// Halcyon's test for "already as fast as the wind" takes the sign of a velocity of exactly 0 as positive, so a
-        /// vehicle at rest gets no push from a wind that blows along its negative axis; the vehicle must be moving along
-        /// that axis first. That is kept.
+        /// A vehicle whose velocity on an axis is exactly 0 gets the whole wind on that axis, whichever way it blows
+        /// (Halcyon's test takes the sign of 0 as positive, so a vehicle at rest got none from a wind along its negative axis;
+        /// that is cured here).
         /// </summary>
         public static Vector3 WindLinearVelocityChange(Vector3 windLocal, Vector3 velocityLocal, Vector3 efficiency, float h)
         {
@@ -123,11 +123,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             return push.Length() >= VehicleLimits.MinPhysicsForce ? push * h : Vector3.Zero;
         }
 
-        // The wind on one axis for a vehicle moving at v on it: none once the vehicle moves the way the wind blows at least as
-        // fast as the wind does (VehicleDynamics.cs:928-935). A velocity of 0 counts as positive.
+        // The wind on one axis for a vehicle moving at v on it: none once the vehicle moves the way the wind blows faster than
+        // the wind does (VehicleDynamics.cs:928-935). A vehicle that is not moving on the axis is not moving the way the wind
+        // blows, so it gets the wind from either side.
         private static float WindTaper(float v, float wind)
         {
-            if (v * wind >= 0f && VehicleMath.PosNeg(v) * (v - wind) > 0f)
+            if (v != 0f && v * wind >= 0f && VehicleMath.PosNeg(v) * (v - wind) > 0f)
                 return 0f;
             return wind;
         }

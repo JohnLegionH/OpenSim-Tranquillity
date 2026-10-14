@@ -141,13 +141,17 @@ public class VehicleWindTests
     }
 
     [Fact]
-    public void A_vehicle_at_rest_gets_no_push_from_a_wind_along_its_negative_axis_as_in_Halcyon()
+    public void A_vehicle_at_rest_is_pushed_by_a_wind_along_its_negative_axis()
     {
-        // VehicleDynamics.cs:928-935 takes the sign of a velocity of exactly 0 as positive, so a wind on the negative side
-        // is cut as if the vehicle had already outrun it; once the vehicle moves that way the wind pushes.
+        // VehicleDynamics.cs:928-935 takes the sign of a velocity of exactly 0 as positive, so Halcyon cut a wind on the
+        // negative side as if the vehicle had already outrun it; a vehicle that is not moving gets the push either way.
         BehaviourRig still = Boat(VehicleBehaviour.InWorldz, Wind, new Vector3(1f, 0f, 0f), Blowing(-5f));
         still.Run(Step, 45 * 2);
-        Assert.Equal(Vector3.Zero, still.Body.LinearVelocity);
+        Assert.True(still.Body.LinearVelocity.X < -4f, $"{still.Body.LinearVelocity.X}");
+
+        BehaviourRig astern = Boat(VehicleBehaviour.InWorldz, Wind, new Vector3(1f, 0f, 0f), Blowing(5f));
+        astern.Run(Step, 45 * 2);
+        Assert.True(astern.Body.LinearVelocity.X > 4f, $"{astern.Body.LinearVelocity.X}");
 
         BehaviourRig moving = Boat(VehicleBehaviour.InWorldz, Wind, new Vector3(1f, 0f, 0f), Blowing(-5f));
         moving.Body.LinearVelocity = new Vector3(-0.5f, 0f, 0f);
@@ -295,7 +299,7 @@ public class VehicleWindTests
     [InlineData(-4f, -5f, 0f)]
     [InlineData(-4f, -3f, -4f)]
     [InlineData(-4f, 1f, -4f)]
-    [InlineData(-4f, 0f, 0f)]      // at rest: a velocity of 0 counts as positive, so the negative wind is cut
+    [InlineData(-4f, 0f, -4f)]     // at rest: the wind from either side pushes
     [InlineData(4f, 0f, 4f)]
     public void The_taper_cuts_the_wind_once_the_vehicle_has_outrun_it(float wind, float velocity, float expected)
     {
@@ -317,5 +321,21 @@ public class VehicleWindTests
         Assert.Equal(0.3f, dw.X, 5);
         Assert.Equal(0.1f, dw.Y, 5);
         Assert.Equal(0f, dw.Z, 5);
+    }
+
+    [Theory]
+    [InlineData(5f)]
+    [InlineData(-5f)]
+    public void A_vehicle_not_turning_is_rolled_by_a_wind_along_its_y_axis_from_either_side(float windY)
+    {
+        Vector3 dw = HalcyonVehicleLaws.WindAngularVelocityChange(new Vector3(0f, windY, 0f), Vector3.Zero, Vector3.One, 1f);
+        Assert.Equal(-windY, dw.X, 5);
+    }
+
+    [Fact]
+    public void A_wind_that_just_matches_a_zero_speed_pushes_from_either_side()
+    {
+        Assert.Equal(-3f, HalcyonVehicleLaws.WindLinearVelocityChange(new Vector3(-3f, 0f, 0f), Vector3.Zero, Vector3.One, 1f).X, 5);
+        Assert.Equal(3f, HalcyonVehicleLaws.WindLinearVelocityChange(new Vector3(3f, 0f, 0f), Vector3.Zero, Vector3.One, 1f).X, 5);
     }
 }

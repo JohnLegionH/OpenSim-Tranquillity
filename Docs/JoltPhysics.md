@@ -1429,12 +1429,12 @@ at 2 s, within a degree from 4 s, within half a degree from 9.3 s at 45 Hz, and 
 Second Life's aim overshoots by 11.4 degrees and is within half a degree from 8.7 s. A bare motor with no angular friction
 or decay hunts about a camera 20 degrees off by up to 5 degrees (a period of about 4.5 s), as any rate steered by an offset
 does; a car with its own friction settles. InWorldz reads the camera once in eight frames (`VehicleDynamics.cs:796`); here it is read
-on every step, which only makes the turn answer the camera sooner by under a fifth of a second. InWorldz measures the pitch as the
-vertical part of the camera's own sideways axis in the vehicle's frame (`VehicleDynamics.cs:808, 820`: the z of (0, 1, 0) turned by
-the camera's rotation), and so does this, under `InWorldz` only: the host passes the camera's
-rotation (`CameraData.CameraRotation`) with its direction. The sideways axis of a camera that is not rolled is level, so a camera
-that merely looks up or down gives no pitch share, and one rolled relative to the vehicle (or a vehicle rolled under a level
-camera) does. Where a host gives no rotation the camera is taken as not rolled. It is InWorldz's alone
+on every step, which only makes the turn answer the camera sooner by under a fifth of a second. The pitch is taken from where the camera
+looks: the vertical part of the camera's forward axis in the vehicle's frame (a driver who looks up pitches the nose up, one who
+looks down pitches it down, and a level camera gives none). InWorldz's code reads the z of the camera's sideways axis there
+(`VehicleDynamics.cs:808, 820`, `ycam = localUp.Z`), although its own comment calls the value up and down; a camera that is not
+rolled keeps that axis level, so the pitch of its steering never acted. That line is taken as a slip and not followed; the dead
+zone, the curve, the azimuth and altitude ranges, `LIMIT_ROLL_ONLY` and banking are as InWorldz has them. It is InWorldz's alone
 because the engine holds steady without it: measured on the real engine (`VehicleMouselookHuntingTests`, a car driven straight with
 the camera on its heading, the camera shaking by 0.2, 0.5 and 1 degree at 15, 30 and 60 updates a second at 45 Hz physics, and at
 one step per heartbeat), the heading wobbles by less than the shake itself (a standard deviation of 0.05 to 0.2 degrees, never above
@@ -1511,9 +1511,9 @@ were still.
 - `VEHICLE_ANGULAR_WIND_EFFICIENCY` (12002, the same range) turns the vehicle: a wind along its x axis pitches it about y by the
   wind's x part, and one along its y axis rolls it about x by minus the wind's y part, each scaled by that axis's efficiency
   and cut by the same taper against the vehicle's angular velocity. There is no push about z.
-- Halcyon's taper takes the sign of a velocity of exactly 0 as positive, so a vehicle at rest gets no push from a wind
-  along its negative axis: the vehicle must already be moving that way. A boat that sits still with the wind on its stern
-  (local +x) sails off; with the wind on its bow it stays put until something moves it. This is kept as Halcyon has it.
+- A vehicle that is not moving on an axis (a velocity of exactly 0) gets the whole wind on that axis from either side. Halcyon's
+  taper takes the sign of 0 as positive, so there a boat at rest got no push from a wind along its negative axis, nor the roll
+  that a wind along +y gives; that is cured here.
 - Halcyon reads the water's current for a vehicle below the water that has either flag but pushes only for
   `REACT_TO_WIND`, so `REACT_TO_CURRENTS` alone did nothing there. Here the current flag does what its name says: a vehicle
   below the water is pushed by the current with either flag, and a vehicle above it by the wind with `REACT_TO_WIND` only.

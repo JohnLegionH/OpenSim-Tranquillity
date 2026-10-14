@@ -124,20 +124,6 @@ internal sealed class BehaviourRig
         Car.ProcessVehicleFlags((int)ExtendedVehicleFlags.LimitMotorUp, true);
     }
 
-    /// <summary>
-    /// A driver's camera turned by <paramref name="yawRadians"/> about the vertical and then rolled by
-    /// <paramref name="rollRadians"/> about its own x axis, as the simulator's CameraData.CameraRotation holds it (x along
-    /// the line of sight, y to the left): its left axis then rises by the sine of the roll. InWorldz takes the camera steering's
-    /// pitch share from that rise.
-    /// </summary>
-    public static Quaternion CameraRotation(double yawRadians, double rollRadians)
-    {
-        var roll = System.Numerics.Quaternion.CreateFromAxisAngle(System.Numerics.Vector3.UnitX, (float)rollRadians);
-        var yaw = System.Numerics.Quaternion.CreateFromAxisAngle(System.Numerics.Vector3.UnitZ, (float)yawRadians);
-        var q = System.Numerics.Quaternion.Concatenate(roll, yaw);
-        return new Quaternion(q.X, q.Y, q.Z, q.W);
-    }
-
     public void Flag(ExtendedVehicleFlags flag, bool on) => Car.ProcessVehicleFlags((int)flag, !on);
 
     public void Step(double h)

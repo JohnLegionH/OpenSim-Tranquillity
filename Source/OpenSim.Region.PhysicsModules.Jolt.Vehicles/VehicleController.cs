@@ -99,11 +99,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
     /// </summary>
     /// <summary>
     /// What the vehicle knows of its driver's camera: the world direction it looks along, and whether the driver is in
-    /// mouselook (the viewer's AGENT_CONTROL_MOUSELOOK control flag, as the simulator's CameraData.MouseLook), and, when the
-    /// host has it, the camera's rotation (its x axis along At, its y axis to the left, as the simulator's
-    /// CameraData.CameraRotation), which InWorldz's camera steering takes its pitch from.
+    /// mouselook (the viewer's AGENT_CONTROL_MOUSELOOK control flag, as the simulator's CameraData.MouseLook).
     /// </summary>
-    public readonly record struct DriverView(Vector3 At, bool InMouselook, Quaternion? Rotation = null);
+    public readonly record struct DriverView(Vector3 At, bool InMouselook);
 
     public sealed class VehicleController
     {
@@ -2496,10 +2494,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// InWorldz reads the camera once in eight steps (frame number mod 8); here it is read on every step. The camera
         /// reaches the simulator some ten to twenty times a second and the motor's timescale is about a second, so a read
         /// on every step only makes the turn answer the camera sooner by under a fifth of a second; the pacing is not taken.
-        /// InWorldz measures the pitch as the vertical part of the camera's own y axis in the vehicle's frame (its sideways
-        /// axis, which a camera that is not rolled keeps level relative to the world), and so does this: the pitch share
-        /// is that axis's z, with the sign InWorldz gives it, taken from the camera's rotation when the host gives it
-        /// (<see cref="DriverView.Rotation"/>) and from a camera that is not rolled, looking along its direction, when not.
+        /// The pitch is taken from where the camera looks: the vertical part of the camera's forward axis in the vehicle's
+        /// frame, -1 for a camera looking up the vehicle's z axis to +1 for one looking down it, as InWorldz's own comment
+        /// says the value means. InWorldz's code reads the z of the camera's sideways axis there instead (VehicleDynamics.cs:808,
+        /// 820, <c>ycam = localUp.Z</c>), which a camera that is not rolled keeps level, so the pitch of its steering never
+        /// acted; that line is taken as a slip, and the rest of its steering is kept as it is.
         /// </summary>
         private void SimulateMouselookInput()
         {
@@ -2520,26 +2519,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             Vector3 d = Vector3.Normalize(in camera) * toVehicle;
             float xcam = MouselookShare(d.Y, VehFloatParam.MouselookAzimuth);
 
-            // The pitch share is the vertical part of the camera's own y axis in the vehicle's frame, as InWorldz takes it
-            // (VehicleDynamics.cs:808, 820, the z of (0,1,0) turned by the camera's rotation).
+            // The pitch share is the vertical part of the camera's forward axis in the vehicle's frame, positive for a camera
+            // looking down (a camera looking up gives a negative share, which pitches the nose up for a positive y direction).
             float ycam = (flags & ExtendedVehicleFlags.LimitRollOnly) != 0 ? 0f
-                : MouselookShare((CameraLeftAxis(view, camera) * toVehicle).Z, VehFloatParam.MouselookAltitude);
+                : MouselookShare(-d.Z, VehFloatParam.MouselookAltitude);
             Vector3 direction = _props.GetVec(VehVectorParam.AngularMotorDirection);
             if (steering && (xcam != 0f || ycam != 0f))
                 MoveAngular(new Vector3(0f, ycam * direction.Y, xcam * direction.Z));
             if (banking && xcam != 0f)
                 MoveAngular(new Vector3(-xcam * direction.X, 0f, 0f));
-        }
-
-        // The camera's own y axis (its left) in world coordinates: from its rotation when it is a rotation, else that of a camera
-        // that is not rolled and looks along 'at'.
-        private static Vector3 CameraLeftAxis(DriverView view, Vector3 at)
-        {
-            if (view.Rotation is Quaternion q && float.IsFinite(q.X) && float.IsFinite(q.Y) && float.IsFinite(q.Z) && float.IsFinite(q.W)
-                && q.LengthSquared() > 1e-6f)
-                return Vector3.UnitY * Quaternion.Normalize(in q);
-            Vector3 left = Vector3.Cross(Vector3.UnitZ, at);
-            return left.LengthSquared() < 1e-12f ? Vector3.UnitY : Vector3.Normalize(in left);
         }
 
         /// <summary>
