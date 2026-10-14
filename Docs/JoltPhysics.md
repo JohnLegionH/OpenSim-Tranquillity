@@ -966,7 +966,7 @@ the motor decay cap, which is Second Life's documented 120 s (https://wiki.secon
 | `VehicleMaxHoverTimescale` | 300 | Hover is off at or above this hover timescale (s). |
 | `VehicleMaxAttractTimescale` | 500 | The vertical attractor and banking are off at or above this timescale (s). |
 | `VehicleMaxMotorOffset` | 100 | Linear motor offset (m, each axis). |
-| `VehicleMinHoverHeight`, `VehicleMaxHoverHeight` | -128, 10000 | Hover height range (m). Second Life documents a maximum of 100 (https://wiki.secondlife.com/wiki/LlSetVehicleFloatParam). |
+| `VehicleMinHoverHeight`, `VehicleMaxHoverHeight` | -128, 10000 | Hover height range (m). Second Life documents a maximum of 100 (https://wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial). |
 | `VehicleSledAssist` | 0.045 | The sled's slope assist: a sled with its nose down is pushed along it at this share of g times the square root of the sine of its pitch (a tenth of it, back down the slope, nose up). 0.045 is what the InWorldz sled code gave at its 15 ms step; it is now the same at any step rate. 0 turns it off. |
 | `VehicleContactFriction` | 0 | The contact friction of a vehicle body (BulletSim's `VehicleFriction`, also 0 by default): 0 leaves the vehicle's friction timescales as the only friction on it. |
 | `VehicleRestSpeed` | 0.1 | The rest rule (m/s), see "Parked vehicles sleep" below. 0 turns it off. |
