@@ -237,6 +237,60 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal int HullCount => _hullCount;
         private int _hullCount = 1;
 
+        /// <summary>How many collision shapes this prim adds to its object: 1 for a plain box, sphere or cylinder, its hull count
+        /// for any other shape (<see cref="HullCount"/>), none when its physics shape type is NONE. The sum over a physical
+        /// object's parts is what [Jolt] MaxPhysicalComplexity limits and what the object reports as its physics cost. The same
+        /// count Halcyon's PhysxPrim.TotalComplexity gives (one per simple shape plus one per convex hull).</summary>
+        internal int ComplexityCount => _shapeType == (byte)PhysShapeType.none ? 0 : _hullCount;
+
+        /// <summary>The prim's collision shape count, reported as its physics cost (the scene does not scale it by size).</summary>
+        public override float PhysicsCost => ComplexityCount;
+        public override bool PhysicsCostIsShapeCount => true;
+
+        // Set while the object is being put together (core sets it on the root, then every part, then clears it): a check made
+        // before it is cleared would only see part of the object.
+        private bool _building;
+
+        public override bool Building
+        {
+            get => _building;
+            set
+            {
+                _building = value;
+                if (!value)
+                    CheckComplexity();
+            }
+        }
+
+        /// <summary>The collision shapes in this prim's whole object: its root's and every part linked to the root.</summary>
+        internal int ObjectComplexity()
+        {
+            JoltPrim root = _linkRoot ?? this;
+            int total = root.ComplexityCount;
+            System.Collections.Generic.List<JoltPrim> parts = root._linkChildren;
+            if (parts != null)
+                for (int i = 0; i < parts.Count; i++)
+                    total += parts[i].ComplexityCount;
+            return total;
+        }
+
+        // [Jolt] MaxPhysicalComplexity: when this prim's object is physical and has more collision shapes than the limit, tell
+        // core (as Halcyon's PhysxPrim does with TriggerComplexityError), which alerts the owner and makes the object non-physical.
+        // Called wherever a count can grow: a prim made physical, a part linked in, a shape or size changed, a mesh arriving, the
+        // end of building. Never inside the shape lock: core's answer takes the object out of physics.
+        private void CheckComplexity()
+        {
+            int limit = _module.MaxPhysicalComplexity;
+            if (limit <= 0 || IsRemoved)
+                return;
+            JoltPrim root = _linkRoot ?? this;
+            if (!root._isPhysical || root._building)
+                return;
+            int total = ObjectComplexity();
+            if (total > limit)
+                root.RaiseComplexityError(string.Format(System.Globalization.CultureInfo.InvariantCulture, "({0} of {1} convex hulls)", total, limit));
+        }
+
         // The real volume (m^3, at the prim's size) a physical concave prim weighs when it is cooked as cells: the volume of the
         // mesher's closed mesh, which the cells (they hold the whole solid, a little over) stand in for in collision, the
         // centre of mass and how the mass is spread. 0 when the shape's own volume is the weight: every other shape, and a
@@ -317,6 +371,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// <summary>The mesh asset this prim asked for has arrived: cook the shape from it, on the same body. Skipped when the
         /// prim has been removed or no longer uses that mesh.</summary>
         internal MeshArrival MeshAssetArrived(UUID assetId, byte[] data)
+        {
+            MeshArrival arrival = CookArrivedMesh(assetId, data);
+            if (arrival == MeshArrival.Cooked && _isPhysical)
+                CheckComplexity();
+            return arrival;
+        }
+
+        private MeshArrival CookArrivedMesh(UUID assetId, byte[] data)
         {
             lock (_shapeLock)
             {
@@ -817,6 +879,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (_size == value) return;
                 _size = value;
                 Rebuild();
+                if (_isPhysical)
+                    CheckComplexity();
             }
         }
 
@@ -826,6 +890,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 _pbs = value;
                 Rebuild();
+                if (_isPhysical)
+                    CheckComplexity();
             }
         }
 
@@ -847,6 +913,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // a physical MESH must become a convex hull (mesh Volume=0 -> mass 0), non-physical reverts
                 // to a triangle mesh. Transform + velocity carry over. No taint (Jolt is concurrent).
                 RecreateBody();
+                if (value)
+                    CheckComplexity();
             }
         }
 
@@ -1482,6 +1550,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _linkChildren.Add(child);
             child._linkRoot = this;
             _module.MarkLinksetDirty(this);
+            CheckComplexity();
         }
 
         internal void UnlinkChild(JoltPrim child)
@@ -1679,6 +1748,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _shapeType = value;
                 if ((CookAsHull != wasHull || UseHullList != wasList) && _shape.IsValid)
                     Rebuild();
+                if (_isPhysical)
+                    CheckComplexity();
             }
         }
 

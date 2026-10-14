@@ -78,6 +78,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal float PrimLinearDamping => _joltConfig.PrimLinearDamping;
         internal float PrimAngularDamping => _joltConfig.PrimAngularDamping;
         internal bool HonourConvexMesh => _joltConfig.HonourConvexMesh;
+        internal int MaxPhysicalComplexity => _joltConfig.MaxPhysicalComplexity;
 
         // The vehicle settings every vehicle controller in this region shares, built from [Jolt] in Initialise.
         internal VehicleSettings VehicleSettings { get; private set; } = VehicleSettings.Default;
