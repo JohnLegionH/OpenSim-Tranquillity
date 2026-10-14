@@ -29,7 +29,9 @@
 
 /*
  * Port of the pattern matching in lstrlib.c from Lua (https://www.lua.org). The Lua notice above is the
- * one in Lua 5.4.6 (lstrlib.c and the licence block of lua.h).
+ * one in Lua 5.4.6 (lstrlib.c and the licence block of lua.h). The code keeps Lua's own names (MAXCCALLS,
+ * MatchState, CAP_UNFINISHED), not the ones Luau's lstrlib.cpp uses (LUAI_MAXCCALLS). The Lua release it
+ * was translated from is not recorded; the licence text is the same in every 5.x release.
  * Adapted 2026 by Legion Builds
  */
 
