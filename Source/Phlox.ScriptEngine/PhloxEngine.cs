@@ -911,7 +911,8 @@ namespace Phlox.ScriptEngine
             SceneObjectPart part = m_Scene?.GetSceneObjectPart(localID);
             if (part == null) return;
 
-            // SL llDetectedGrab: "only works in the touch event"; Halcyon's touch_start carried no offset.
+            // SL llDetectedGrab (https://wiki.secondlife.com/wiki/LlDetectedGrab): usable only inside the touch
+            // event; Halcyon's touch_start carried no offset.
             var dp = BuildTouchDetectParams(TouchedPart(part, originalID), remoteClient, Vector3.Zero, surfaceArgs);
 
             PostTouchEvent(part.LocalId, "touch_start", dp);
@@ -1213,8 +1214,9 @@ namespace Phlox.ScriptEngine
             if (sp != null) m_ExeScheduler?.RequestAvatarArrived(sp.UUID);
         }
 
-        // An avatar entered a parcel: a grant it gave from an Experience ends where the Experience cannot run (SL wiki
-        // experience_permissions_denied, "The agent has moved to a parcel where the experience cannot run").
+        // An avatar entered a parcel: a grant it gave from an Experience ends where the Experience cannot run (SL
+        // wiki experience_permissions_denied, https://wiki.secondlife.com/wiki/Experience_permissions_denied: the
+        // agent moved onto a parcel that the experience cannot run on).
         private void OnAvatarEnteringNewParcelForExperiences(ScenePresence sp, int localLandID, UUID regionID)
         {
             if (sp != null && !sp.IsChildAgent) m_ExeScheduler?.RequestExperienceLandCheck(sp.UUID);
@@ -1423,9 +1425,9 @@ namespace Phlox.ScriptEngine
         // (SceneObjectPartInventory.GetScriptStates / RestoreSavedScriptState, SceneObjectGroup.GetStateSnapshot /
         // SetState). Phlox's answer is the same protobuf state its state database holds, in YEngine's envelope:
         //   <State Engine="InWorldz.Phlox" UUID="item" Asset="asset" Version="1"><ScriptState>base64</ScriptState></State>
-        // The UUID attribute is the item id the core keys a crossing's state by. SL: "A script will NOT automatically
-        // re-enter the default state state_entry event when the task is rezzed or attached (even by a new owner), nor if
-        // the task is moved to another SIM" (wiki, State).
+        // The UUID attribute is the item id the core keys a crossing's state by. SL (wiki, State,
+        // https://wiki.secondlife.com/wiki/State): the default state's state_entry event does NOT run again by itself
+        // when the object is rezzed or attached, even to a new owner, or when it moves to another SIM.
 
         /// <summary>The version of the carried-state envelope this build writes and reads.</summary>
         internal const string CarriedStateVersion = "1";
@@ -1612,8 +1614,8 @@ namespace Phlox.ScriptEngine
         };
 
         /// <summary>
-        /// on_death - "triggered on all attachments worn by an avatar when that avatar's
-        /// health reaches 0" (wiki). The region's one death hook is EventManager.OnAvatarKilled,
+        /// on_death - fires for all attachments an avatar wears once that avatar's health reaches 0 (wiki,
+        /// https://wiki.secondlife.com/wiki/On_death). The region's one death hook is EventManager.OnAvatarKilled,
         /// raised from ScenePresence.PhysicsCollisionUpdate and from llAdjustDamage / llSetHealth
         /// when Health falls to 0. Every script on every part of every attachment gets it, with no
         /// arguments. The killer's local id is not part of the SL event and is not forwarded.
@@ -1643,7 +1645,8 @@ namespace Phlox.ScriptEngine
         public const int OnDamageWaitMs = 500;
 
         /// <summary>
-        /// on_damage - "before damage has been applied" (wiki) - to every script on every
+        /// on_damage - raised before the damage is applied (wiki, https://wiki.secondlife.com/wiki/On_damage) - to
+        /// every script on every
         /// attachment the presence wears, with one DetectParams per pending entry: llDetectedKey /
         /// llDetectedOwner name the source, llDetectedDamage(n) is [amount, type, original], and
         /// llAdjustDamage(n, v) writes the entry's Amount through the AdjustDamage hook. The region
@@ -1902,8 +1905,9 @@ namespace Phlox.ScriptEngine
 
         /// <summary>
         /// A dataserver answer goes to every script in the asking script's prim, as
-        /// SL ("Dataserver requests will trigger dataserver events in all scripts within the same prim where the request
-        /// was made", wiki dataserver) and Halcyon (PostObjectEvent(m_localID, ...)). Never to another prim.
+        /// SL (wiki dataserver, https://wiki.secondlife.com/wiki/Dataserver: a request raises dataserver events in
+        /// every script of the prim it was made from) and Halcyon (PostObjectEvent(m_localID, ...)). Never to another
+        /// prim.
         /// Phlox's scripts in the prim (running or loading) get it in a stable order, by item name then item id, posted on
         /// this thread, so one script's answers still arrive in the order it asked (PostObjectEvent's pool hop would not
         /// keep that). <paramref name="skip"/> is a script that must not get it: the asker, when it is no longer owed the
