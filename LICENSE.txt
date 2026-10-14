@@ -39,3 +39,6 @@ changes and new files in the Tranquillity code base are copyright:
  Various sources in the Addons directory are copyright their individual authors.
  See the files in question for copyright/license information.
 
+This tree also includes code from InWorldz Halcyon (BSD-3-Clause license) and from
+HalcyonGrid/phlox (Apache License 2.0). The license texts are in the ThirdPartyLicenses
+directory (Halcyon.txt and Phlox.txt); the files concerned carry their own notices.
