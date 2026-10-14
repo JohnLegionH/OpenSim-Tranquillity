@@ -15,7 +15,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 
 /// <summary>
 /// Each Jolt region writes one INFO line at start-up with the [Jolt] settings it runs with (the vehicle behaviour and presets
-/// in force, the avatar push keys and the physics step rate), so an operator can check a deployment from the region log.
+/// in force, the avatar push keys, the physical complexity limit, the two rider-carrying settings and the physics step rate), so an operator can check a deployment from the region log.
 /// Serial: it swaps LoggerProvider.LoggerFactory, which is process-wide, and its regions step a real backend on the shared job pool.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
@@ -85,6 +85,9 @@ public class StartupSettingsLineTests
         Assert.Contains("AvatarPushMaxSpeed=" + JoltConfigDefault("AvatarPushMaxSpeed"), line.Message);
         Assert.Contains("AvatarObjectPushPerMomentum=" + JoltConfigDefault("AvatarObjectPushPerMomentum"), line.Message);
         Assert.Contains("AvatarObjectPushMaxForce=" + JoltConfigDefault("AvatarObjectPushMaxForce"), line.Message);
+        Assert.Contains("MaxPhysicalComplexity=0,", line.Message);
+        Assert.Contains("KeyframedMotionCarriesRiders=true,", line.Message);
+        Assert.Contains("MovedPrimsCarryRiders=false,", line.Message);
         Assert.Contains("physics step rate=45 Hz", line.Message);
     }
 
@@ -93,7 +96,8 @@ public class StartupSettingsLineTests
     {
         var lines = SettingsLines("Example Region",
             ("VehicleBehaviour", "InWorldz"), ("AvatarPushMaxSpeed", "100"), ("AvatarPushRecovery", "7.5"),
-            ("AvatarObjectPushPerMomentum", "123"), ("AvatarObjectPushMaxForce", "2000"), ("PhysicsStepRate", "0"));
+            ("AvatarObjectPushPerMomentum", "123"), ("AvatarObjectPushMaxForce", "2000"), ("PhysicsStepRate", "0"),
+            ("MaxPhysicalComplexity", "256"), ("KeyframedMotionCarriesRiders", "false"), ("MovedPrimsCarryRiders", "true"));
         string m = Assert.Single(lines).Message;
         // InWorldz behaviour with no VehiclePresets key takes the legacy presets: the effective value is what the line shows.
         Assert.Contains("VehicleBehaviour=InWorldz", m);
@@ -102,6 +106,9 @@ public class StartupSettingsLineTests
         Assert.Contains("AvatarPushRecovery=7.5,", m);
         Assert.Contains("AvatarObjectPushPerMomentum=123,", m);
         Assert.Contains("AvatarObjectPushMaxForce=2000,", m);
+        Assert.Contains("MaxPhysicalComplexity=256,", m);
+        Assert.Contains("KeyframedMotionCarriesRiders=false,", m);
+        Assert.Contains("MovedPrimsCarryRiders=true,", m);
         Assert.Contains("physics step rate=one step per heartbeat", m);
     }
 

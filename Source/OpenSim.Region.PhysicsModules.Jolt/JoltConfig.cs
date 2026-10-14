@@ -246,15 +246,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         /// <summary>
         /// The settings a region runs with, in one line for the region log, so an operator can check what a start-up read from
-        /// [Jolt] without opening the file: the vehicle behaviour and the preset values in force, the avatar push keys, and the
-        /// physics step rate the region got (<paramref name="effectiveStepRate"/>, 0 when it takes one step per heartbeat).
+        /// [Jolt] without opening the file: the vehicle behaviour and the preset values in force, the avatar push keys, the
+        /// physical complexity limit, the two rider-carrying settings, and the physics step rate the region got (<paramref name="effectiveStepRate"/>, 0 when it takes one step per heartbeat).
         /// </summary>
         internal string StartupSummary(float effectiveStepRate)
         {
             string N(float v) => v.ToString("0.###", CultureInfo.InvariantCulture);
+            string B(bool v) => v ? "true" : "false";
             return $"VehicleBehaviour={VehicleBehaviour}, VehiclePresets={EffectivePresets}, " +
                    $"AvatarPushMaxSpeed={N(AvatarPushMaxSpeed)}, AvatarPushRecovery={N(AvatarPushRecovery)}, " +
                    $"AvatarObjectPushPerMomentum={N(AvatarObjectPushPerMomentum)}, AvatarObjectPushMaxForce={N(AvatarObjectPushMaxForce)}, " +
+                   $"MaxPhysicalComplexity={MaxPhysicalComplexity}, KeyframedMotionCarriesRiders={B(KeyframedMotionCarriesRiders)}, " +
+                   $"MovedPrimsCarryRiders={B(MovedPrimsCarryRiders)}, " +
                    (effectiveStepRate > 0f ? $"physics step rate={N(effectiveStepRate)} Hz" : "physics step rate=one step per heartbeat");
         }
 
