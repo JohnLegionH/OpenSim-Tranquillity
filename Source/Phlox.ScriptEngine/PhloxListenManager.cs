@@ -492,8 +492,8 @@ namespace Phlox.ScriptEngine
             // The chat module rewrites object chat on DEBUG_CHANNEL to DebugChannel before this sees it
             // (ChatModule.DeliverChatToAvatars runs first). A Phlox script's own chat keeps the type it was spoken
             // with (SpokenType); other DebugChannel chat - another engine's run-time errors - goes as far as llSay,
-            // SL's distance for errors (wiki, DEBUG_CHANNEL: "Server-generated errors are broadcast the same distance
-            // as llSay").
+            // SL's distance for errors (wiki, DEBUG_CHANNEL, https://wiki.secondlife.com/wiki/DEBUG_CHANNEL: errors
+            // the server generates carry as far as llSay does).
             if (type == ChatTypeEnum.DebugChannel)
                 type = SpokenType ?? ChatTypeEnum.Say;
 
@@ -558,7 +558,8 @@ namespace Phlox.ScriptEngine
                 }
 
                 // Name filter (empty = wildcard). An exact, case-sensitive match: the SL wiki's llListen page
-                // says the speaker's name "must match name exactly (case sensitive)".
+                // (https://wiki.secondlife.com/wiki/LlListen) says the speaker's name has to equal name exactly, with
+                // case counting.
                 if (entry.NameRegex != null ? !RegexMatches(entry, entry.NameRegex, speakerName)
                     : entry.FilterName.Length > 0 && !string.Equals(entry.FilterName, speakerName, StringComparison.Ordinal))
                     continue;

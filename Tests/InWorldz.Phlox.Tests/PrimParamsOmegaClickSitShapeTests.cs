@@ -353,9 +353,10 @@ public class PrimParamsOmegaClickSitShapeTests
     [Fact]
     public void PrimSitTargetActiveAtAZeroOffsetAndZeroRotationIsSetAndReadsBackExactly()
     {
-        // SL PRIM_SIT_TARGET: "If it is nonzero the prim's sit target is set to the indicated offset and rotation" and
-        // "Unlike llLinkSitTarget(), an offset of <0.0, 0.0, 0.0> may be explicitly set". The core keeps the on/off
-        // state apart from the offset (SceneObjectPart.SetSitTarget), so nothing is added to the offset.
+        // SL PRIM_SIT_TARGET (https://wiki.secondlife.com/wiki/PRIM_SIT_TARGET): a nonzero setting makes the sit target the
+        // given offset and rotation, and, in contrast to llLinkSitTarget(), the offset <0.0, 0.0, 0.0> can be set
+        // deliberately. The core keeps the on/off state apart from the offset (SceneObjectPart.SetSitTarget), so nothing is
+        // added to the offset.
         using var h = new SchedulerHarness();
         var parts = TwoPrimLinkset(h);
 
@@ -545,7 +546,8 @@ public class PrimParamsOmegaClickSitShapeTests
             "llSay(0, \"ll=\" + (string)llGetLocalPos() + \"|\" + (string)llGetRot()); " +
             "llSay(0, \"pp=\" + llDumpList2String(llGetPrimitiveParams([PRIM_POS_LOCAL, PRIM_ROTATION, PRIM_ROT_LOCAL]), \"|\"));");
 
-        // SL llGetLocalPos: "the position relative to the attach point"; Halcyon GetPartLocalPos: AttachedPos.
+        // SL llGetLocalPos (https://wiki.secondlife.com/wiki/LlGetLocalPos): the position measured from the attach point;
+        // Halcyon GetPartLocalPos: AttachedPos.
         var ll = Fields(h, "ll=", 2);
         Near(offset, ll[0]);
         // SL llGetRot and PRIM_ROTATION: the wearer's rotation on an attachment's root; Halcyon GetPartRot, llGetRot.

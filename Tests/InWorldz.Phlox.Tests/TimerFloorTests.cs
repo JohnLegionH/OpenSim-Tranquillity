@@ -24,7 +24,8 @@ namespace InWorldz.Phlox.Tests;
 ///
 /// <para>
 /// <b>The floor is not from SL and not from InWorldz</b> — neither clamps. The SL wiki documents only
-/// that "Passing in 0.0 stops further timer events", and Halcyon assigns
+/// that a 0.0 interval stops further timer events (https://wiki.secondlife.com/wiki/LlSetTimerEvent), and
+/// Halcyon assigns
 /// <c>TimerInterval = (int)(sec * 1000)</c> with no minimum
 /// (<c>InWorldz.Phlox.Engine/ExecutionScheduler.cs:1846-1853</c>). The floor comes from the other engine
 /// in this very repo: upstream's <c>LSL_Api.llSetTimerEvent</c> clamps at <c>m_MinTimerInterval</c>

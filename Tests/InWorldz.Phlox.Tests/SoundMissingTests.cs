@@ -20,10 +20,10 @@ using Xunit;
 namespace InWorldz.Phlox.Tests;
 
 /// <summary>
-/// A sound the prim does not have. SL (llPlaySound, llLoopSound): "If sound is missing from the prim's inventory and it
-/// is not a UUID or it is not a sound then an error is shouted on DEBUG_CHANNEL." Halcyon also stops the prim's current
-/// sound (UpdateSound with a zero key). Both, for every call that plays a sound on the prim; the trigger calls, which
-/// play no attached sound, give only the error.
+/// A sound the prim does not have. SL (llPlaySound, llLoopSound; https://wiki.secondlife.com/wiki/LlPlaySound): when the
+/// sound is absent from the prim's inventory and either the name is not a UUID or the item is not a sound, the call
+/// shouts an error on DEBUG_CHANNEL. Halcyon also stops the prim's current sound (UpdateSound with a zero key). Both,
+/// for every call that plays a sound on the prim; the trigger calls, which play no attached sound, give only the error.
 /// </summary>
 // No test reaches a network service: the sound module is an in-memory recorder.
 // Test grouping: no process-wide state, so the class runs in parallel.
