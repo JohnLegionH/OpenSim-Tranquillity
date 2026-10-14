@@ -80,5 +80,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         /// <summary>Water height at the given position's XY.</summary>
         float GetWaterLevel(Vector3 pos);
+
+        /// <summary>
+        /// The vehicle's bounding box in its own frame, as a centre and half sizes, for the motor-height rule's down rays.
+        /// False when the host has none (the rule then never finds the vehicle high).
+        /// </summary>
+        bool TryGetBounds(out Vector3 center, out Vector3 halfSize) { center = Vector3.Zero; halfSize = Vector3.Zero; return false; }
+
+        /// <summary>
+        /// The nearest thing along a ray other than the vehicle itself (its own parts do not count): the distance from the
+        /// origin to it. False when the ray hits nothing within <paramref name="maxDistance"/>, or the host casts none.
+        /// </summary>
+        bool CastRayNearest(Vector3 origin, Vector3 direction, float maxDistance, out float distance) { distance = 0f; return false; }
     }
 }

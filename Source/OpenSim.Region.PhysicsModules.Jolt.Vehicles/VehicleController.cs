@@ -658,6 +658,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // Motors and friction, linear and angular, then the banking turn motor. They are stepped over the
             // step the engine is about to take (pTimestep), not the smoothed one: each is the exact solution
             // over that step.
+            SimulateMotorHeight(pTimestep);
             SimulateLinearMotorAndFriction(pTimestep, S.DoMotors, S.DoLinearFriction);
             float angularz = SimulateAngularMotorAndFriction(pTimestep, S.DoMotors, S.DoAngularFriction);
             float banking = S.DoVerticalAttractor ? SimulateBanking(pTimestep, tilt) : 0f;
@@ -813,6 +814,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _props.Dynamics.AngularDecayIndex += pTimestep;
             _hoverCarry = null;
             _attractorCarry = null;
+            _ownsRoll = false;
             _angularDeflectionRate = Vector3.Zero;
         }
 
@@ -992,6 +994,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             _props.Dynamics.LastVerticalAngle = 0.0f;
             _props.Dynamics.VerticalForceAdjust = 1.0f;
+
+            _ownsRoll = false;
+            _heightAbove = 0f;
+            _timeAboveHeight = 0f;
+            _motorsOffByHeight = false;
 
             // Motors off: no set to decay from
             _props.Dynamics.LinearDecayIndex = float.PositiveInfinity;
@@ -1622,11 +1629,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             bool rollOnly = (_props.Flags & ExtendedVehicleFlags.LimitRollOnly) != 0;
 
+            // The roll rate the attractor set last step turns with the vehicle: it is put back on the axis the roll is now
+            // about, so a turn about the world's vertical (banking's) cannot leave part of it across that axis as a pitch
+            // rate. Under both behaviours.
+            Vector3 worldRate = ReaxisOwnedRoll(x);
+
             // InWorldz: Halcyon's attractor, a push on the angular velocity and a share of it taken away each step, in place of
             // the documented spring below.
             if (InWorldz)
             {
-                SimulateHalcyonVerticalAttractor(h, x, y, angle, timescale, efficiency, rollOnly);
+                SimulateHalcyonVerticalAttractor(h, x, y, angle, timescale, efficiency, rollOnly, worldRate);
                 return;
             }
 
@@ -1639,8 +1651,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             bool pitchSprung = !rollOnly;
 
             // The spring's own rates: the body's, plus what the last step's turn left out of them.
-            double rollRate = Vector3.Dot(_rawWorldAngularVel, x);
-            double pitchRate = Vector3.Dot(_rawWorldAngularVel, y);
+            double rollRate = Vector3.Dot(worldRate, x);
+            double pitchRate = Vector3.Dot(worldRate, y);
             (double rollTurn, double rollCarry) = VehicleSpring.MoveOverGeneral(roll, rollRate + (_attractorCarry?.X ?? 0), stiffness, damping, h);
             // With LIMIT_ROLL_ONLY the pitch is left alone: no spring and no damping on it (any rate the last step's
             // pitch turn left out is handed back).
@@ -1652,6 +1664,46 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             // Applied whole with the motors' change (TorqueFini's per-step clean-up would stop it short).
             _attractorChange = x * (float)(rollTurn - rollRate) + y * (float)(pitchTurn - pitchRate);
             _motorTorqueVelChange += _attractorChange;
+            OwnRoll(x, worldRate + _attractorChange);
+        }
+
+        // The roll rate the attractor set along the roll axis of its last step (a scalar and that axis), kept so the next step can
+        // put it back on the roll axis the vehicle has by then. Not kept when the attractor does not act.
+        private bool _ownsRoll;
+        private float _ownedRoll;
+        private Vector3 _ownedRollAxis;
+
+        // The roll rate the attractor owns is the part of the angular velocity it has just set that is about the roll axis and
+        // is not the world's vertical turn: a turn about the vertical (yaw, banking's) has a part along the roll axis of a
+        // climbing or diving vehicle, which is that turn and not a roll, and must not be carried round with the axis.
+        private void OwnRoll(Vector3 axis, Vector3 worldRateAfter)
+        {
+            _ownsRoll = true;
+            _ownedRoll = Vector3.Dot(worldRateAfter, axis) - worldRateAfter.Z * axis.Z;
+            _ownedRollAxis = axis;
+        }
+
+        // A move of the owned roll rate smaller than this (rad/s) is rounding in the orientation, not a turn of the roll axis.
+        private const float MinRollReaxis = 1e-6f;
+
+        /// <summary>
+        /// Moves the roll rate the attractor set last step from the axis it was set about to the vehicle's roll axis now
+        /// (<paramref name="x"/>), and gives the world angular velocity with that done. The attractor sets a roll rate along
+        /// the roll axis of its step; banking then turns the vehicle about the world's vertical, the roll axis swings
+        /// away from the world vector that rate was, and the part of it that is no longer along the roll axis is
+        /// a rate about the pitch axis, which a roll-only attractor leaves alone: the vehicle pitched away
+        /// (a 30 degree roll on an airplane that banks: pitch -31 degrees by 12 s). With the rate owned by the roll axis it
+        /// belongs to, each step's roll rate is worked out against the axes the vehicle has at that step.
+        /// </summary>
+        private Vector3 ReaxisOwnedRoll(Vector3 x)
+        {
+            if (!_ownsRoll)
+                return _rawWorldAngularVel;
+            Vector3 move = (x - _ownedRollAxis) * _ownedRoll;
+            if (move.LengthSquared() < MinRollReaxis * MinRollReaxis)
+                return _rawWorldAngularVel;
+            _motorTorqueVelChange += move;
+            return _rawWorldAngularVel + move;
         }
 
         // The change of angular velocity the attractor gave the body this step (world); zero when it did not act. InWorldz's
@@ -1740,7 +1792,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// that of any other vehicle a tenth; the damping stays on both axes. Per step, as Halcyon's: a push of a fixed share
         /// each step, so it depends on the engine's step as Halcyon's did on its own.
         /// </summary>
-        private void SimulateHalcyonVerticalAttractor(float h, Vector3 x, Vector3 y, float tilt, float timescale, float efficiency, bool rollOnly)
+        private void SimulateHalcyonVerticalAttractor(float h, Vector3 x, Vector3 y, float tilt, float timescale, float efficiency, bool rollOnly,
+                                                      Vector3 worldAngularVel)
         {
             float strength = AttractorStrength(tilt, h);
             float pitchShare = 1f;
@@ -1749,12 +1802,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
             (float rollPush, float pitchPush) = HalcyonVehicleLaws.AttractorPush(y.Z, x.Z, efficiency, timescale, h, strength, pitchShare);
             float damping = HalcyonVehicleLaws.AttractorDampingShare(efficiency);
-            float rollRate = Vector3.Dot(_rawWorldAngularVel, x);
-            float pitchRate = Vector3.Dot(_rawWorldAngularVel, y);
+            float rollRate = Vector3.Dot(worldAngularVel, x);
+            float pitchRate = Vector3.Dot(worldAngularVel, y);
 
             _attractorCarry = null;
             _attractorChange = x * (rollPush - damping * rollRate) + y * (pitchPush - damping * pitchRate);
             _motorTorqueVelChange += _attractorChange;
+            OwnRoll(x, worldAngularVel + _attractorChange);
         }
 
         // The attractor hands the body back its true roll and pitch rates when it stops acting.
@@ -1763,6 +1817,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             if (_attractorCarry is Vector3 c)
                 _motorTorqueVelChange += x * c.X + y * c.Y;
             _attractorCarry = null;
+            _ownsRoll = false;
         }
 
         #endregion
@@ -1953,6 +2008,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             _props.Dynamics.LinearDecayIndex += h;
             if (hoverFights)
                 _props.Dynamics.LinearDecayIndex += HoverModerationSeconds;
+
+            // InWorldz's motor-height rule: the motor is not applied while it holds (the clock above still runs).
+            if (_motorsOffByHeight)
+                motorChange = Vector3.Zero;
             ApplyLinearVelocityChange(frictionChange + motorChange);
             _motorTorqueVelChange += MotorOffsetTurn(motorChange);
         }
@@ -2016,6 +2075,63 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 inertia.Y > 0f ? local.Y / inertia.Y : 0f,
                 inertia.Z > 0f ? local.Z / inertia.Z : 0f);
             return local * bodyRotation;
+        }
+
+        // InWorldz's motor-height rule: the last height measured below the vehicle, how long it has been above the limit, and
+        // whether the motors are off for it.
+        private float _heightAbove;
+        private float _timeAboveHeight;
+        private bool _motorsOffByHeight;
+
+        /// <summary>
+        /// InWorldz's motor-height rule (VehicleDynamics.cs:2494-2573, read, not run): a vehicle that has been more than
+        /// VEHICLE_DISABLE_MOTORS_ABOVE metres above what lies below it for VEHICLE_DISABLE_MOTORS_AFTER seconds has its
+        /// linear and angular motors switched off (friction, the attractor and gravity go on), so a car does not steer or
+        /// drive while it flies. The legacy car has 0.75 m and 2.5 s, the legacy sled and boat their own; the airplane and
+        /// the rest have 0, which is off. The rule is off for a vehicle that hovers (the hover timescale below its maximum),
+        /// has positive buoyancy, or moves slower than <see cref="HalcyonVehicleLaws.MotorHeightMinSpeed"/>, and it is
+        /// measured once in eight steps: a ray from the lower left edge of the vehicle's box, and if that finds nothing near
+        /// from the lower right edge, each starting a metre up the vehicle's own axis and going down it for three times the
+        /// limit; the height is the distance less that metre, or the limit plus one metre when nothing is hit. The vehicle's own
+        /// parts are not hit. Only under InWorldz: Second Life has no such rule.
+        /// </summary>
+        private void SimulateMotorHeight(float h)
+        {
+            _motorsOffByHeight = false;
+            if (!InWorldz)
+                return;
+
+            float limit = _props.GetFloat(VehFloatParam.DisableMotorsAbove, 0f);
+            if (_props.GetFloat(VehFloatParam.HoverTimescale, 1000f) < S.MaxHoverTimescale
+                || _props.GetFloat(VehFloatParam.Buoyancy, 0f) > 0f
+                || _localLinearVel.Length() < HalcyonVehicleLaws.MotorHeightMinSpeed)
+            {
+                _heightAbove = 0f;
+                limit = 0f;
+            }
+
+            if (limit > 0f && m_frameNum % HalcyonVehicleLaws.MotorHeightRayInterval == 0
+                && _body.TryGetBounds(out Vector3 center, out Vector3 half))
+            {
+                Quaternion rot = _body.Orientation;
+                Vector3 apos = _body.Position + center * rot;
+                Vector3 down = new Vector3(0f, 0f, -1f) * rot;
+                Vector3 up = new Vector3(0f, 0f, 1f) * rot;
+                Vector3 left = new Vector3(0f, half.Y, -half.Z) * rot;
+                Vector3 right = new Vector3(0f, -half.Y, -half.Z) * rot;
+                _heightAbove = limit + 1f;
+                if (_body.CastRayNearest(apos + left + up, down, limit * 3f, out float d))
+                    _heightAbove = d - up.Z;
+                if (_heightAbove > limit)
+                {
+                    _heightAbove = limit + 1f;
+                    if (_body.CastRayNearest(apos + right + up, down, limit * 3f, out d))
+                        _heightAbove = d - up.Z;
+                }
+            }
+
+            _motorsOffByHeight = HalcyonVehicleLaws.MotorsOffAboveHeight(_heightAbove, limit,
+                _props.GetFloat(VehFloatParam.DisableMotorsAfter, 0f), h, ref _timeAboveHeight);
         }
 
         /// <summary>
@@ -2103,6 +2219,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                 (float)VehicleMotorSolver.FrictionStep(v0.Z, frictionTs.Z, h) - v0.Z);
 
             Vector3 motorWorld = ChangeToWorld(motorChange, torqueWorldZ);
+            if (_motorsOffByHeight)
+            {
+                // The motor-height rule: no motor, and no target velocity to carry forward (VehicleDynamics.cs:2746-2749).
+                motorWorld = Vector3.Zero;
+                _props.Dynamics.AngularTargetVelocity = Vector3.Zero;
+            }
             Vector3 frictionWorld = ChangeToWorld(frictionChange, torqueWorldZ);
             if (Math.Abs(motorWorld.X) < VehicleLimits.ThresholdAngularMotorDeltaV && Math.Abs(motorWorld.Y) < VehicleLimits.ThresholdAngularMotorDeltaV)
             {
