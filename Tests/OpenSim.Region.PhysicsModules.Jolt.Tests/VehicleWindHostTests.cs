@@ -21,21 +21,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 public class VehicleWindHostTests
 {
 
-    private sealed class StubWindModule : IWindModule
+    // A stand-in wind module made at run time: a class written out for the interface would be taken by the host's region-module
+    // discovery (NotSelectedTests counts the modules of this assembly) as one more module.
+    public class StubWindModule : System.Reflection.DispatchProxy
     {
         public readonly List<(int X, int Y, int Z)> Asked = new();
-        public string Name => "stub";
-        public Type ReplaceableInterface => null;
-        public void Initialise(IConfigSource source) { }
-        public void Close() { }
-        public void AddRegion(Scene scene) { }
-        public void RemoveRegion(Scene scene) { }
-        public void RegionLoaded(Scene scene) { }
-        public Vector3 WindSpeed(int x, int y, int z) { Asked.Add((x, y, z)); return new Vector3(x, y, 0f); }
-        public void WindSet(int type, Vector3 loc, Vector3 speed) { }
-        public void WindParamSet(string plugin, string param, float value) { }
-        public float WindParamGet(string plugin, string param) => 0f;
-        public string WindActiveModelPluginName => "stub";
+
+        protected override object Invoke(System.Reflection.MethodInfo method, object[] args)
+        {
+            if (method.Name != nameof(IWindModule.WindSpeed))
+                return method.ReturnType.IsValueType && method.ReturnType != typeof(void) ? Activator.CreateInstance(method.ReturnType) : null;
+            int x = (int)args[0], y = (int)args[1], z = (int)args[2];
+            Asked.Add((x, y, z));
+            return new Vector3(x, y, 0f);
+        }
+
+        public static (IWindModule Module, StubWindModule Log) Make()
+        {
+            IWindModule module = Create<IWindModule, StubWindModule>();
+            return (module, (StubWindModule)(object)module);
+        }
     }
 
     private static JoltScene NewScene()
@@ -56,10 +61,10 @@ public class VehicleWindHostTests
         JoltScene scene = NewScene();
         try
         {
-            var module = new StubWindModule();
+            var (module, log) = StubWindModule.Make();
             scene.UseWindModule(module);
             Assert.True(scene.TryGetWind(new Vector3(40.9f, 17.2f, 23.5f), out Vector3 wind));
-            Assert.Equal((40, 17, 23), module.Asked.Single());
+            Assert.Equal((40, 17, 23), log.Asked.Single());
             Assert.Equal(new Vector3(40f, 17f, 0f), wind);
         }
         finally { scene.Dispose(); }
@@ -74,10 +79,10 @@ public class VehicleWindHostTests
             Assert.False(scene.TryGetWind(new Vector3(40f, 17f, 23f), out Vector3 none));
             Assert.Equal(Vector3.Zero, none);
 
-            var module = new StubWindModule();
+            var (module, log) = StubWindModule.Make();
             scene.UseWindModule(module);
             Assert.False(scene.TryGetWind(new Vector3(float.NaN, 17f, 23f), out _));
-            Assert.Empty(module.Asked);
+            Assert.Empty(log.Asked);
         }
         finally { scene.Dispose(); }
     }
