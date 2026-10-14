@@ -261,8 +261,7 @@ The module bounds a script cast three ways:
 - It keeps only the closest hits the script asked for, and once it has them the engine skips
   everything further along the ray. A long ray through a pile of prims costs about what the
   part of it up to those hits costs.
-- A ray is cut to the region widened by 8 m on each side (the Second Life page for `llCastRay`, https://wiki.secondlife.com/wiki/LlCastRay, says casts fail at random when a ray
-  starts or ends more than 8 m outside the region's bounds), and
+- A ray is cut to the region widened by 8 m on each side (the Second Life page for `llCastRay`, https://wiki.secondlife.com/wiki/LlCastRay, says random failures seem to happen when a ray starts or ends more than 8 m outside the current region's bounds), and
   between heights -128 and 10000 m. A ray with a non-finite start, direction or length hits nothing.
 - A cast that runs past what is left of its budget in the heartbeat, or past `RayCastMaxTestedHits`,
   is cut short; once the region has spent a budget in a heartbeat, further casts charged to it are
@@ -564,7 +563,7 @@ way after 4 tau, and it does not pass the target. The motion is the same at ever
 
 - `llMoveToTarget(target, tau)`: the object goes to the target and holds there, until
   `llStopMoveToTarget`, which lets it fall from where it was held. A target 65 m or more away does
-  nothing (the `llMoveToTarget` page gives 65 m as the limit, beyond which no movement occurs). A tau of 0 or less moves nothing (the
+  nothing (the `llMoveToTarget` page says the distance must be less than 65, or no movement occurs). A tau of 0 or less moves nothing (the
   simulator also stops an earlier target then); a tau under 2/45 s acts as 2/45 s, the smallest tau the wiki says functions.
 - `llSetHoverHeight(height, water, tau)`: the object holds its centre `height` above the ground, or
   with `water` TRUE above the ground or the water, whichever is higher. It follows the ground as it
@@ -578,7 +577,7 @@ way after 4 tau, and it does not pass the target. The motion is the same at ever
 - Each call wakes a sleeping object, and a call that reaches a linked child prim acts on the whole
   linkset. The object may sleep once it has settled where it is held.
 - On a non-physical object neither acts, but the request is kept and acts once the object is
-  physical (a user note on the `llMoveToTarget` page says a call seems to persist when physics is turned off).
+  physical (the `llMoveToTarget` page says a call appears to stay in effect even once physics is switched off).
 - A vehicle keeps its own hover and motion: neither acts while the object is a vehicle.
 - Selected in the build tool, the object is held still and neither acts. The request is kept:
   deselected, the object goes on to its target from rest where it was held, or falls if the script
@@ -657,8 +656,7 @@ with every physics engine.
 ## Avatars and physical objects
 
 Second Life documents that an avatar can push a physical object by walking or flying into it,
-that an object dragged into an avatar should move it, and that residents take damage from collisions
-with physical objects (the Push and Damage page, https://wiki.secondlife.com/wiki/Push_and_Damage). It gives no figures, so Jolt follows
+that an object dragged into an avatar should move it, and that colliding with physical objects hurts residents (the Push and Damage page, https://wiki.secondlife.com/wiki/Push_and_Damage). It gives no figures, so Jolt follows
 ubODE, where an avatar is a body that meets an object with no bounce:
 
 - An object that strikes an avatar never goes into or through it. The two go on along the line of the
@@ -704,8 +702,7 @@ The simulator takes a seated avatar out of physics (`ScenePresence.RemoveFromPhy
 engine), and the physics engine is not told who sits where. So on Jolt:
 
 - A seated avatar adds no mass or shape to what it sits on, as on ubODE: a physical seat or vehicle
-  keeps its own mass, and objects pass through where the avatar sits. Second Life documents that sitting avatars add
-  their mass to the object (`llGetObjectMass`, https://wiki.secondlife.com/wiki/LlGetObjectMass) and a seated avatar's collision volume
+  keeps its own mass, and objects pass through where the avatar sits. Second Life documents that the mass of a seated avatar counts toward the object's mass (`llGetObjectMass`, https://wiki.secondlife.com/wiki/LlGetObjectMass) and a seated avatar's collision volume
   (`SIT_FLAG_NO_COLLIDE`, `llSetLinkSitFlags`, https://wiki.secondlife.com/wiki/LlSetLinkSitFlags); neither can be done in the physics engine alone.
 - The seat's prims get a `collision_end` for the avatar when it sits, and the seated avatar's
   attachments get no collision events until it stands.
@@ -855,7 +852,7 @@ avatar.
 
 Second Life documents both (`llSetStatus` with `STATUS_PHANTOM`, https://wiki.secondlife.com/wiki/LlSetStatus, and `llVolumeDetect`, https://wiki.secondlife.com/wiki/LlVolumeDetect): objects and avatars pass
 through a phantom object, while a physical phantom one still collides with the ground but does not pass through it, and queues land
-collision events; with `llVolumeDetect` physical objects and avatars can pass through the object, which
+collision events; with `llVolumeDetect` a physical object or an avatar can go straight through the prim, which
 raises `collision_start` and `collision_end` while they interpenetrate. Jolt does this as follows:
 
 - A volume-detect prim is a sensor. Avatars and physical objects pass through it without slowing, and
