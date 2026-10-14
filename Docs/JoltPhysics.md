@@ -1520,8 +1520,9 @@ were still.
 - A vehicle with either flag never sleeps (Halcyon's sleep threshold is 0 for it).
 - Physical objects that are not vehicles get no wind: nothing outside the vehicle code reads it in Halcyon, and none does here.
 - `VEHICLE_FLAG_BLOCK_INTERFERENCE` has nothing to do with it (see "Known gaps").
-- The saved record of a vehicle (`SOPVehicle`) has no field for 12001 and 12002: a value a script set is lost on rez, copy, region
-  load and crossing, and the preset's comes back. The flags are saved.
+- The saved record of a vehicle (`SOPVehicle`) keeps 12001 and 12002 (as optional `LWEFF` and `AWEFF` elements, written only when a
+  script set them), so a value a script set survives rez, copy, region load and crossing; a record that holds none gives the
+  vehicle its type's own, and under `SecondLife`, which takes neither code, the record's values change nothing. The flags are saved.
 
 ### Known gaps against Second Life
 
