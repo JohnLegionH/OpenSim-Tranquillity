@@ -89,7 +89,7 @@ public class PrimHullProbeTests
 
     // The set the measurement is asked for. UI names: for a box, cylinder or prism "path cut" is the profile cut
     // (ProfileBegin / ProfileEnd), the pie slice; for a torus, tube or ring it is the path cut (PathBegin / PathEnd).
-    private static List<Spec> Shapes() => new List<Spec>
+    internal static List<Spec> Shapes() => new List<Spec>
     {
         new Spec { Name = "hollow box 0.5", Profile = ProfileShape.Square, Hollow = 0.5f },
         new Spec { Name = "hollow box 0.95 (thin wall)", Profile = ProfileShape.Square, Hollow = 0.95f },
@@ -119,7 +119,7 @@ public class PrimHullProbeTests
     private static readonly MethodInfo GenerateCoords =
         typeof(Meshmerizer).GetMethod("GenerateCoordsAndFacesFromPrimShapeData", BindingFlags.NonPublic | BindingFlags.Instance)!;
 
-    private static Meshmerizer NewMesher(string scratch)
+    internal static Meshmerizer NewMesher(string scratch)
     {
         var config = new IniConfigSource();
         IConfig startup = config.AddConfig("Startup");
@@ -634,7 +634,7 @@ public class PrimHullProbeTests
 
     // ------------------------------------------------------------------ the 64-hull ceiling over a parameter grid
 
-    private static IEnumerable<Spec> Grid(bool extreme)
+    internal static IEnumerable<Spec> Grid(bool extreme)
     {
         var profiles = new (ProfileShape p, bool circ, string n)[]
         {
