@@ -494,6 +494,29 @@ and no prim of it has a body of its own. These keep it one body, with the mass o
   the physics engine (`SceneObjectPart.UpdateExtraParam`), on any engine; a prim keeps its old shape
   in physics until something else rebuilds it.
 
+## Limiting how complex a physical object may be
+
+A physical object (a prim or a whole linkset) can be given a limit on its collision shapes, so that one object cannot
+bring in hundreds of convex hulls. The limit is `[Jolt] MaxPhysicalComplexity`. `0`, the default, is no limit, and nothing
+is refused; a number such as `256` (the limit Halcyon's physics engine applied) turns it on.
+
+- How it counts, over every prim of the object that has a physics shape: a plain box, sphere or cylinder counts 1; any
+  other prim counts the convex hulls its shape is made of (a hollow box 4, a torus 12, a physical mesh the hulls of its
+  physics model, one hull for a mesh without one, or a prim of shape type `CONVEX`); a prim whose physics shape type is
+  `PRIM_PHYSICS_SHAPE_NONE` counts 0.
+- An object over the limit is not made physical. It stays as it was (non-physical), every part of it, and its owner gets
+  the message "Object was too complex to be made physical: (N of M convex hulls)", where N is the object's count and M the
+  limit. The message and the count are Halcyon's.
+- It applies wherever an object becomes physical: the build tool's Physical box, `llSetStatus(STATUS_PHYSICS, TRUE)`,
+  `llSetPrimitiveParams` with `PRIM_PHYSICS`, rezzing an object that is physical, and the region loading one that was saved
+  physical (it comes up non-physical, and the flag is saved off).
+- It applies while an object is physical too: a prim linked into it, or a prim's shape, size or physics shape type changed,
+  that takes the count over the limit makes the whole object non-physical, with the same message. A prim that is not
+  physical is never refused.
+- The count is also the physics cost: `llGetObjectDetails` with `OBJECT_PHYSICS_COST` and the viewer's object cost show
+  each prim's count, whatever the limit, and a prim of shape type `NONE` costs 0. It is not scaled by the prim's size.
+  Setting a part to convex or none lowers it.
+
 ## Physics material on objects
 
 `llSetPhysicsMaterial` (and `PRIM_PHYSICS_MATERIAL`) and `PRIM_MATERIAL` on a prim, as the Second
@@ -612,6 +635,7 @@ mesher decodes, unless it has already decoded and cached that map.
 | `BodyEnhancedEdgeRemoval` | `false` | `true`: Jolt's enhanced internal edge removal for every body that moves under physics (a physical prim, a vehicle): the contacts with the shared edges inside a triangle mesh or a heightfield that can push a body off its path are removed. Costs more per contact with a mesh or the terrain. Off, nothing changes. See "Seams in triangle meshes and terrain". |
 | `AvatarEnhancedEdgeRemoval` | `false` | `true`: the same for avatars. Off, nothing changes. |
 | `HonourConvexMesh` | `false` | `true`: a non-physical mesh whose `PRIM_PHYSICS_SHAPE_TYPE` is `PRIM_PHYSICS_SHAPE_CONVEX` collides as one convex hull of its points, not its triangle mesh. The simulator gives every mesh that shape type unless the upload sets another, so with this on a hollow mesh without a physics model becomes solid. Off, nothing changes. |
+| `MaxPhysicalComplexity` | `0` | The most collision shapes one physical object may have: a plain box, sphere or cylinder counts 1, any other prim its convex hulls, a prim of shape type NONE 0. An object over it is not made physical and its owner is told "Object was too complex to be made physical: (N of M convex hulls)". `0` is no limit. See "Limiting how complex a physical object may be". |
 
 ## Seams in triangle meshes and terrain
 
