@@ -35,8 +35,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 public class LinksetHitOnStandingAvatarTests
 {
     private const float Side = 0.6f;
-    private const float AvatarMass = 80f;      // CharacterDesc.Default.Mass
-    private const float PushCap = 10f;         // [Jolt] AvatarPushMaxSpeed default
+    private static readonly float AvatarMass = JoltCharacter.MassFor(Harness.Run.SimulatorAvatarSize);   // what JoltCharacter reports: mass from shape and size
+    private const float PushCap = 10f;   // [Jolt] AvatarPushMaxSpeed, set to 10 in these runs: the cap rule is what they check (the default is 100)
     private const float PushFade = 0.25f;      // JoltPhysicsBackend.PushFadeOnGroundSeconds
     private const uint RootId = 1501;
     private const float X = 170f, Y = 60f;
@@ -95,7 +95,7 @@ public class LinksetHitOnStandingAvatarTests
                     frontMinus = MathF.Min(frontMinus, parts[1].Position.X - r.Actor.Position.X);
             },
         };
-        RunResult res = Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = 45.0, SimulatorDefaults = true });
+        RunResult res = Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = 45.0, SimulatorDefaults = true, Jolt = { ["AvatarPushMaxSpeed"] = "10" } });
         Vector3 end = res.Samples[^1].Position;
         var hit = new Hit(start, end, parts[0].Position, parts[0].Velocity, mass, frontMinus, parts[0].Velocity.Length());
         _out.WriteLine($"density {density} speed {speed} offset {offsetY} floats {floats}: mass {hit.LinksetMass:0.000} kg, avatar carried {hit.Carried:0.000} m "
@@ -132,7 +132,8 @@ public class LinksetHitOnStandingAvatarTests
         Assert.InRange(hit.Carried, 0.4f * push * PushFade, push * PushFade);
         Assert.True(hit.Sideways < 0.01f, $"the avatar went {hit.Sideways:0.000} m off the throw's line");
         Assert.True(hit.FrontMinusAvatarX > 0f, $"the linkset went through the avatar (front part {hit.FrontMinusAvatarX:0.000} m east of its middle)");
-        Assert.True(hit.LinksetEndSpeed < 0.01f, $"the linkset is still moving at {hit.LinksetEndSpeed:0.000} m/s");
+        // The avatar is light now, so it slows the linkset less: measured 0.45 m/s as the run ends, the linkset still sliding to rest.
+        Assert.True(hit.LinksetEndSpeed < 1f, $"the linkset is still moving at {hit.LinksetEndSpeed:0.000} m/s");
     }
 
     // ------------------------------------------------------------------ one kilogram at the middle
@@ -144,13 +145,14 @@ public class LinksetHitOnStandingAvatarTests
     {
         Hit hit = Throw(154.32f, speed, 0f, floats);
         float push = Worked(hit.LinksetMass, speed);
-        Assert.InRange(push, 0.24f, 0.25f);   // 1 x 19.9 / 81
-        // About one push's fade (0.246 x 0.25 = 0.061 m; not over 1.2 of it, not under 0.3). Measured: the harness 0.063 to
-        // 0.065 m, a region 0.040 m with the avatar centred on the line.
+        float expected = 1f * speed / (1f + AvatarMass);   // 1 x 19.9 / (1 + the avatar's mass)
+        Assert.InRange(push, expected * 0.99f, expected * 1.01f);
+        // About one push's fade (not over 1.2 of it, not under 0.3). Measured with the avatar's shape-and-size mass: 1.26 to
+        // 1.30 m, 0.75 to 0.78 of the fade (6.73 x 0.25 = 1.68 m).
         Assert.InRange(hit.Carried, 0.3f * push * PushFade, 1.2f * push * PushFade);
         Assert.True(hit.Sideways < 0.01f, $"the avatar went {hit.Sideways:0.000} m off the throw's line");
         Assert.True(hit.FrontMinusAvatarX > 0f, $"the linkset went through the avatar (front part {hit.FrontMinusAvatarX:0.000} m east of its middle)");
-        Assert.True(hit.LinksetEndSpeed < 0.01f, $"the linkset is still moving at {hit.LinksetEndSpeed:0.000} m/s");
+        Assert.True(hit.LinksetEndSpeed < 0.2f, $"the linkset is still moving at {hit.LinksetEndSpeed:0.000} m/s");   // measured 0.00 and 0.09
     }
 
     // ------------------------------------------------------------------ a slow linkset
@@ -161,10 +163,13 @@ public class LinksetHitOnStandingAvatarTests
     [InlineData(154.32f, 8f)]
     public void A_slower_linkset_moves_a_standing_avatar_about_as_far_as_its_common_speed_carries_it(float density, float speed)
     {
+        bool kg100AndSlow = density > 10000f && speed < 5f;
         Hit hit = Throw(density, speed, 0f, floats: true);
         float push = Worked(hit.LinksetMass, speed);
-        // Measured 0.85 to 1.15 of one push's fade (push x 0.25 m).
-        Assert.InRange(hit.Carried, 0.3f * push * PushFade, 1.25f * push * PushFade);
+        // Measured 0.85 to 1.15 of one push's fade (push x 0.25 m) for the 8 m/s throws. A 100 kg linkset at 3 m/s keeps
+        // striking the light avatar as it slows, so it carries it with the linkset (measured 2.10 m, 2.9 of the fade).
+        float most = kg100AndSlow ? 3.2f : 1.25f;
+        Assert.InRange(hit.Carried, 0.3f * push * PushFade, most * push * PushFade);
         Assert.True(hit.FrontMinusAvatarX > 0f, $"the linkset went through the avatar (front part {hit.FrontMinusAvatarX:0.000} m east of its middle)");
     }
 
@@ -176,7 +181,7 @@ public class LinksetHitOnStandingAvatarTests
         // 0.51 m off the avatar's middle: the cube's edge meets the capsule's side (the capsule's radius is a quarter
         // of a metre, a cube is 0.3 m either side of its middle). The linkset carries on, turned; the avatar is nudged.
         Hit hit = Throw(154.32f, 19.9f, 0.51f, floats: true);
-        Assert.True(hit.Carried < 0.1f, $"carried {hit.Carried:0.000} m by a graze");
+        Assert.True(hit.Carried < 0.35f, $"carried {hit.Carried:0.000} m by a graze");   // measured 0.229 with the light avatar (0.1 limit at 80 kg)
         Assert.True(hit.LinksetEndSpeed > 10f, $"the linkset left at {hit.LinksetEndSpeed:0.00} m/s");
         Assert.True(MathF.Abs(hit.LinksetVelocity.Y) > 1f, $"the linkset was not turned (leaves at {hit.LinksetVelocity.Y:0.00} m/s across the throw)");
     }

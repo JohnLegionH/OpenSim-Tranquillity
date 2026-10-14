@@ -105,6 +105,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public int RayCastMaxHits = MaxRayCastHits;                                          // hits one cast returns
         public float AvatarPushMaxSpeed = PhysicsBackendSettings.DefaultAvatarPushMaxSpeed;   // m/s; 0 = pushes do not move avatars
         public float AvatarPushRecovery = PhysicsBackendSettings.DefaultAvatarPushRecovery;   // m/s per second
+        public float AvatarObjectPushPerMomentum = PhysicsBackendSettings.DefaultAvatarObjectPushPerMomentum;   // N per kg m/s of an avatar walking into a loose object
+        public float AvatarObjectPushMaxForce = PhysicsBackendSettings.DefaultAvatarObjectPushMaxForce;         // N
 
         // What ScenePresence asks an avatar's physics for: AgentControlNormalVel (4.096 m/s) for a held movement key,
         // walking or running alike (the viewer sends running as the separate SetAlwaysRun flag), and four times that
@@ -207,6 +209,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.RayCastMaxHits = I(cfg, "RayCastMaxHits", c.RayCastMaxHits, 1, MaxRayCastHits, warnings);
             c.AvatarPushMaxSpeed = F(cfg, "AvatarPushMaxSpeed", c.AvatarPushMaxSpeed, 0f, 1000f, warnings);
             c.AvatarPushRecovery = F(cfg, "AvatarPushRecovery", c.AvatarPushRecovery, 0f, 1000f, warnings);
+            c.AvatarObjectPushPerMomentum = F(cfg, "AvatarObjectPushPerMomentum", c.AvatarObjectPushPerMomentum, 0f, 100000f, warnings);
+            c.AvatarObjectPushMaxForce = F(cfg, "AvatarObjectPushMaxForce", c.AvatarObjectPushMaxForce, 0f, 1000000f, warnings);
             return c;
         }
 
@@ -326,6 +330,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             s.RayCastMaxTestedHits = RayCastMaxTestedHits;
             s.AvatarPushMaxSpeed = AvatarPushMaxSpeed;
             s.AvatarPushRecovery = AvatarPushRecovery;
+            s.AvatarObjectPushPerMomentum = AvatarObjectPushPerMomentum;
+            s.AvatarObjectPushMaxForce = AvatarObjectPushMaxForce;
             return s;
         }
 

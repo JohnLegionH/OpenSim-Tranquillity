@@ -129,7 +129,7 @@ public class SimulatorDefaultsHarnessTests
 
     // An avatar arrives with the default appearance's box, 2.1 m tall, subscribed to collisions, with the option; 1.9 m
     // and not subscribed without it. It stands where it is put, so its centre is 0.1 m higher, half the extra height;
-    // nothing else about it changes.
+    // nothing else about it changes, but its mass, which follows the box (1.954922 for the 2.1 m default one).
     [Fact]
     public void An_avatar_gets_the_default_appearances_box_and_a_collision_subscription_and_nothing_else_changes()
     {
@@ -160,7 +160,8 @@ public class SimulatorDefaultsHarnessTests
         Assert.Equal(off.at.X, on.at.X);
         Assert.Equal(off.at.Y, on.at.Y);
         Assert.Equal(0.1f, on.at.Z - off.at.Z, 4);
-        Assert.Equal(off.mass, on.mass);
+        Assert.Equal(JoltCharacter.MassFor(off.size), off.mass, 4);
+        Assert.Equal(1.954922f, on.mass, 4);
         Assert.Equal(off.flying, on.flying);
     }
 

@@ -3099,9 +3099,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // bounce 0, ODEScene's near callback): both go on along the contact normal at their common speed, weighted by mass
         // with the avatar's mass. So the object never goes on into the avatar. The avatar takes its share as a push, held to
         // the push limits ([Jolt] AvatarPushMaxSpeed); an avatar on the ground is not pushed down into it, so an object
-        // that lands on it stops there. An avatar moving into a loose object pushes it along, level, with at most its push
-        // force (PushStrength x 100 N, Jolt's own MaxStrength) and never faster than the avatar moves that way: a light
-        // object goes along at the avatar's pace, and a heavy one, held by its friction, barely moves.
+        // that lands on it stops there. An avatar moving into a loose object pushes it along, level, with a force of its mass
+        // times its speed into the object times [Jolt] AvatarObjectPushPerMomentum (held to AvatarObjectPushMaxForce, and
+        // scaled by its PushStrength), and never faster than the avatar moves that way: a light object goes along at the
+        // avatar's pace, a heavy one is accelerated by the force less its friction, so a run pushes it harder than a walk.
         private void FinishCharacterContacts(JoltCharacterRecord rec, CharacterVirtual ch, float dt)
         {
             List<CharacterBodyContact> contacts = rec.Contacts;
@@ -3113,7 +3114,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 return;
             Vector3 vChar = rec.StepVelocity;
             bool supported = ch.GroundState == GroundState.OnGround;
-            float pushForce = MathF.Max(0f, rec.PushStrength) * PushStrengthBaseNewtons;
+            float pushScale = MathF.Max(0f, rec.PushStrength);
             for (int i = 0; i < contacts.Count; i++)
             {
                 CharacterBodyContact c = contacts[i];
@@ -3152,6 +3153,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                             float ah = Vector3.Dot(vChar, level), bh = Vector3.Dot(vBody, level);
                             if (ah > bh)
                             {
+                                // The force is the avatar's mass x its speed into the object x the per-momentum factor, held to the
+                                // maximum: running (faster) pushes harder than walking, and a heavier avatar harder than a light one.
+                                float pushForce = pushScale * MathF.Min(_settings.AvatarObjectPushMaxForce, rec.Mass * ah * _settings.AvatarObjectPushPerMomentum);
                                 float target = MathF.Min(ah, bh + pushForce * dt / other.Mass);
                                 _bodyInterface.AddLinearVelocity(jid, level * (target - bh));
                             }
@@ -3606,6 +3610,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                     wrapper.Dispose();
                     inner.Dispose();
                 }
+            }
+        }
+
+        public void SetCharacterMass(CharacterId character, float mass)
+        {
+            if (!float.IsFinite(mass) || !(mass > 0f)) { CountRejectedNonFinite(); return; }
+            lock (_characterGate)
+            {
+                if (_characters.TryGet(character.Value, out JoltCharacterRecord rec))
+                    rec.Mass = mass;   // the controller takes it on its next step (StepCharacter)
             }
         }
 

@@ -802,6 +802,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         void SetCharacterShape(CharacterId character, float capsuleHalfHeight, float capsuleRadius);
 
         /// <summary>
+        /// Sets the mass a loose object meets the avatar with, and that an avatar's push is divided by (a push is a change
+        /// of momentum, so the speed it gives is the impulse over this mass). A mass that is not finite and above 0 is ignored.
+        /// </summary>
+        void SetCharacterMass(CharacterId character, float mass);
+
+        /// <summary>
         /// Atomically (under the character gate, so it cannot race the per-step CharacterVirtual update)
         /// move a character to <paramref name="position"/> AND clear its linear velocity. Used to un-bury a
         /// standing/flying avatar after a live terrain raise swaps the heightfield body out from under it:
@@ -1039,7 +1045,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// move avatars.
         /// </summary>
         public float AvatarPushMaxSpeed;
-        public const float DefaultAvatarPushMaxSpeed = 10f;
+        public const float DefaultAvatarPushMaxSpeed = 100f;
 
         /// <summary>
         /// How fast an avatar's push allowance refills, in m/s per second. Below gravity (9.8), repeated pushes cannot
@@ -1047,6 +1053,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// </summary>
         public float AvatarPushRecovery;
         public const float DefaultAvatarPushRecovery = 5f;
+
+        /// <summary>
+        /// What an avatar walking or running into a loose object pushes it with, as a force in newtons per unit of the
+        /// avatar's momentum into the object (its mass times its speed): force = mass x speed x this, so a heavier or faster
+        /// avatar pushes harder, and running pushes harder than walking. Halcyon's rule (PhysxCharacter.KickOrRideOnPrim:
+        /// impulse = mass x distance moved x 100 each step, which is a force of mass x speed x 100). The force is held to
+        /// <see cref="AvatarObjectPushMaxForce"/>.
+        /// </summary>
+        public float AvatarObjectPushPerMomentum;
+        public const float DefaultAvatarObjectPushPerMomentum = 100f;
+
+        /// <summary>The most force, in newtons, an avatar pushes a loose object with (before the character's PushStrength).</summary>
+        public float AvatarObjectPushMaxForce;
+        public const float DefaultAvatarObjectPushMaxForce = 2000f;
 
         public static PhysicsBackendSettings Default => new PhysicsBackendSettings
         {
@@ -1067,6 +1087,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             RayCastMaxTestedHits = DefaultRayCastMaxTestedHits,
             AvatarPushMaxSpeed = DefaultAvatarPushMaxSpeed,
             AvatarPushRecovery = DefaultAvatarPushRecovery,
+            AvatarObjectPushPerMomentum = DefaultAvatarObjectPushPerMomentum,
+            AvatarObjectPushMaxForce = DefaultAvatarObjectPushMaxForce,
         };
     }
 }

@@ -61,7 +61,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // Every controller tuning knob is held here so feel is a knob-turning problem, not an architecture one.
         private float _capsuleHalfHeight;   // EXCLUDING the caps (Jolt convention)
         private float _capsuleRadius;
-        private readonly float _mass = CharacterDesc.Default.Mass;
+        private float _mass;
 
         private int _subscribedMs;
 
@@ -104,6 +104,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _flying = isFlying;
 
             CapsuleFromSize(size, out _capsuleHalfHeight, out _capsuleRadius);
+            _mass = MassFor(size);
             CreateCharacterInternal();
         }
 
@@ -116,6 +117,30 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             float totalHalf = MathF.Max(r + 0.1f, size.Z * 0.5f);   // half-height must exceed a single cap
             radius = r;
             halfHeight = MathF.Max(0.05f, totalHalf - r);
+        }
+
+        // The mass of a default-size avatar. Second Life's llGetObjectMass page: avatar mass "was fixed at 1.954922
+        // lindogram" and "is now relative to Avatar shape/size". Mass here is in the same units as a prim's (llGetMass).
+        internal const float DefaultAvatarMass = 1.954922f;
+
+        // The box core hands AddAvatar for the default appearance (X width, Y depth, Z height): the appearance's 0.45 x 0.6 x 1.9
+        // with 0.2 m added to the height (AvatarAppearance AVBOXAJUST).
+        private static readonly Vector3 DefaultAvatarSize = new Vector3(0.45f, 0.6f, 2.1f);
+
+        // Mass from shape and size: the default avatar's mass scaled by the volume of the capsule the size gives, against
+        // the default size's. Halcyon does the same by volume (PhysxCharacter: density x capsule volume); the density is
+        // set so the default avatar weighs the Second Life figure.
+        internal static float MassFor(Vector3 size)
+        {
+            float v = CapsuleVolume(size);
+            float v0 = CapsuleVolume(DefaultAvatarSize);
+            return DefaultAvatarMass * (v / v0);
+        }
+
+        private static float CapsuleVolume(Vector3 size)
+        {
+            CapsuleFromSize(size, out float hh, out float r);
+            return MathF.PI * r * r * (2f * hh + 4f / 3f * r);
         }
 
         // The stand-half for a given appearance size, WITHOUT constructing a character - the scene needs
@@ -335,8 +360,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (_size == value) return;
                 _size = value;
                 CapsuleFromSize(value, out _capsuleHalfHeight, out _capsuleRadius);
+                _mass = MassFor(value);
                 if (_character.IsValid)
+                {
+                    _backend.SetCharacterMass(_character, _mass);
                     _backend.SetCharacterShape(_character, _capsuleHalfHeight, _capsuleRadius);
+                }
             }
         }
 
@@ -393,8 +422,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override void LockAngularMotion(byte axislocks) { }
 
         // A push: llPushObject on this avatar, or an attachment's llApplyImpulse on its wearer (both reach here as an
-        // impulse). The avatar's velocity changes by impulse / mass, within the push limits the backend holds it to
-        // ([Jolt] AvatarPushMaxSpeed, AvatarPushRecovery). Second Life ignores the angular part on an avatar
+        // impulse). The avatar's velocity changes by impulse / its mass (the shape-and-size mass above), within the push
+        // limits the backend holds it to ([Jolt] AvatarPushMaxSpeed, AvatarPushRecovery). Second Life ignores the angular part on an avatar
         // (llPushObject ignores the angular impulse for agents and their attachments, wiki.secondlife.com/wiki/LlPushObject), so AddAngularForce
         // stays inert.
         public override void AddForce(Vector3 force, bool pushforce)

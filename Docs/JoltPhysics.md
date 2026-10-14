@@ -225,8 +225,10 @@ the region starts.
 | `RayCastSimulatorBudgetMs` | 5 | Time (ms) every other ray cast may take in one heartbeat: the simulator's own (rez placement, landing after login or teleport) and YEngine's `llCastRay`. |
 | `RayCastMaxTestedHits` | 1024 | Hits the engine may report to one cast before it is cut short (a mesh reports each triangle the ray crosses). |
 | `RayCastMaxHits` | 256 | Hits one cast returns, Second Life's documented maximum for `RC_MAX_HITS` (https://wiki.secondlife.com/wiki/LlCastRay). |
-| `AvatarPushMaxSpeed` | 10 | Speed (m/s) pushes can give an avatar. 0: pushes do not move avatars. |
+| `AvatarPushMaxSpeed` | 100 | The ceiling (m/s) on the speed pushes can give an avatar. A strong push reaches it; a weaker one stays below. 0: pushes do not move avatars. |
 | `AvatarPushRecovery` | 5 | How fast (m/s per second) an avatar's push allowance refills. |
+| `AvatarObjectPushPerMomentum` | 100 | Force (N) an avatar pushes a physical object with, per unit of its own momentum into the object (its mass times its speed). Halcyon's figure. |
+| `AvatarObjectPushMaxForce` | 2000 | The most force (N) an avatar pushes a physical object with. |
 
 **Ray casts.** A cast holds the region's physics lock, and the region's physics step waits for it
 while holding its job pool, so a slow cast delays that region and every region sharing its pool.
@@ -293,7 +295,7 @@ interval line (see "Job pools") gives each interval's refused casts for each bud
 writes no log line for a refused cast.
 
 **Pushes.** `llPushObject` on an avatar, and an attachment's `llApplyImpulse` on its wearer, change
-the avatar's velocity by the impulse divided by its mass (80 kg). The script engine checks the
+the avatar's velocity by the impulse divided by its mass (1.954922 for the default avatar; see Mass below). The script engine checks the
 region's and parcel's push restrictions and weakens a push from more than 17 m away before it
 reaches the module (the `llPushObject` page, https://wiki.secondlife.com/wiki/LlPushObject, says a push weakens with distance). Second Life also
 limits a push by the pushing object's script energy, which depends on its mass; the physics module
@@ -303,8 +305,11 @@ is not told which object pushed, so it bounds the avatar's side instead:
   refills at `AvatarPushRecovery` per second.
 - Pushes never take the avatar's speed past `AvatarPushMaxSpeed`, or past the speed it already had
   (a falling avatar can be slowed by a push, not sped up).
-- With the refill below gravity, repeated pushes cannot hold an avatar in the air: with the defaults
-  it rises at most 10^2 / (2 (9.8 - 5)) = 10.4 m, however many pushes it gets.
+- With the refill below gravity, repeated pushes cannot hold an avatar in the air. The ceiling is
+  what one strong push can give: at the default 100 m/s an upward push of 1000 or more lifts the
+  avatar to about 100^2 / (2 x 9.8) = 510 m, and a horizontal one throws it about 26 m along level
+  ground (the push fades in 0.25 s). A push of 10 throws it 1.3 m, 100 about 13 m, 1000 and 10000 the
+  same 26 m, as both reach the ceiling. Lower `AvatarPushMaxSpeed` to hold pushes to less.
 - The angular part is ignored, as Second Life does for avatars. Push speed fades on the ground
   (0.25 s) and when flying (1 s), is kept in the air, and is taken away by what the avatar runs into.
 
@@ -620,7 +625,9 @@ off by default for that reason and for the extra cost per contact, which was not
 
 - `llGetMass` and `llGetObjectMass` return the engine's own body mass, unscaled: the same number the engine uses in every
   force, impulse and speed figure in this document (an impulse of 10 on a mass of 2 changes the speed by 5). An avatar
-  reads 80. `llGetMassMKS` is 100 times `llGetMass`.
+  reads its mass from its shape and size: 1.954922 for the default avatar (the figure `llGetObjectMass` gave for an avatar
+  before it went by shape, https://wiki.secondlife.com/wiki/LlGetObjectMass), scaled by the volume of the avatar's capsule
+  as Halcyon scales a density by it. `llGetMassMKS` is 100 times `llGetMass`.
 - A prim's density setting is `SceneObjectPart.Density` (default 1000, accepted from 1 to 22587; `PRIM_PHYSICS_MATERIAL`
   and `llSetPhysicsMaterial` set it as given). The module multiplies it by 0.01 to get kg/m3, so a prim's mass is its
   volume (m3) x density x 0.01, and a linkset's is the sum over its prims, each at its own density.
@@ -794,15 +801,18 @@ that an object dragged into an avatar should move it, and that colliding with ph
 ubODE, where an avatar is a body that meets an object with no bounce:
 
 - An object that strikes an avatar never goes into or through it. The two go on along the line of the
-  hit at their common speed, weighted by mass, with the avatar's mass of 80 kg: a 1 kg box thrown at
-  5 m/s stops against it and barely moves it, and a 100 kg box carries it along at up to 2.8 m/s. The
+  hit at their common speed, weighted by mass, with the avatar's mass (1.95 for the default avatar): a 1 kg box thrown at
+  5 m/s carries it along at 1.7 m/s, and a 100 kg box at up to 4.9 m/s. The
   avatar's share is a push, held to `AvatarPushMaxSpeed` and the push allowance like any other; what
   it cannot take the object loses. An avatar standing on the ground is not pushed down into it: an
   object that lands on its head stops there and comes to rest on it, and falls once they part.
-- An avatar walking or running into an object pushes it along, level, with at most its push force
-  (`PushStrength` x 100 N) and never faster than the avatar moves that way. A light box goes along ahead
-  of it at its pace; a heavy one, held by its friction, barely moves and stops the avatar. The avatar
-  does not step up onto an object it is pushing.
+- An avatar walking or running into an object pushes it along, level, with a force of its mass times its
+  speed into the object times `AvatarObjectPushPerMomentum` (Halcyon's rule), held to
+  `AvatarObjectPushMaxForce` and scaled by its push strength, and never faster than the avatar moves that way.
+  Running pushes harder than walking. A light box goes along ahead of it at its pace; a 2 m cube of
+  mass 80 is moved at about 3 m/s by a walk and 5 m/s by a run; one held by more friction than the
+  force (a mass over about 340) barely moves and stops the avatar. The avatar does not step up onto
+  an object it is pushing.
 - What an avatar stands on carries it as before: it can stand on a physical object without sinking or
   sliding it away.
 - Two avatars still push each other as before, as in ubODE.
@@ -888,7 +898,7 @@ wearer. `llGroundRepel` from an attachment does nothing on either engine.
 the force to the avatar", `llSetForce`). Core keeps it on the avatar and hands it to the avatar's physics
 body (`PhysicsActor.SetConstantForce`), and again to every new body the avatar gets (standing up, a
 teleport). Second Life documents nothing more, so Jolt applies plain mechanics: the avatar accelerates by
-force / mass (80 kg) on every step, on top of whatever else moves it, until the next call.
+force / mass (the avatar's mass, 1.95 for the default avatar) on every step, on top of whatever else moves it, until the next call.
 
 - A local force is in the avatar's own axes and turns with the avatar; a region force does not.
 - Up and down, it adds to gravity (and to buoyancy's share of it). An upward force equal to the weight

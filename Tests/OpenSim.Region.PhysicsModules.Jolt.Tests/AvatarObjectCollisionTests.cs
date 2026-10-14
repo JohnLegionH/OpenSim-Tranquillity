@@ -27,12 +27,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 public class AvatarObjectCollisionTests
 {
     private const float G = 9.80665f;
-    private const float AvatarMass = 80f;                // CharacterDesc.Default.Mass, what JoltCharacter reports
-    private const float PushCap = 10f;                   // [Jolt] AvatarPushMaxSpeed default
+    private static readonly float AvatarMass = JoltCharacter.MassFor(Harness.Run.AvatarSize);   // what JoltCharacter reports: mass from shape and size
+    private const float PushCap = 10f;   // [Jolt] AvatarPushMaxSpeed, set to 10 in these runs: the cap rule is what they check (the default is 100)
     private const uint Avatar = Harness.Run.ActorLocalId;
 
     private static RunResult Run(string scenario, double physicsRate)
-        => Harness.Harness.Run(Harness.Harness.Find(scenario), new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsRate });
+        => Harness.Harness.Run(Harness.Harness.Find(scenario), new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsRate, Jolt = { ["AvatarPushMaxSpeed"] = "10" } });
 
     private static HarnessPart Box(RunResult r) => r.Parts.Single(p => p.Name == "box");
     private static CollisionWatch AvatarWatch(RunResult r) => r.Watches.Single(w => w.Name == "avatar");
@@ -196,7 +196,7 @@ public class AvatarObjectCollisionTests
                 }
             },
         };
-        RunResult r = Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsRate });
+        RunResult r = Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsRate, Jolt = { ["AvatarPushMaxSpeed"] = "10" } });
         HarnessPart box = Box(r);
         float head = r.Samples[0].Position.Z + Harness.Run.AvatarSize.Z * 0.5f;
         Assert.True(box.Trace.First(p => p.T >= 3.9).Position.Z > head, $"{r.Name}: the box was not on the head before the walk");
@@ -237,7 +237,7 @@ public class AvatarObjectCollisionTests
     {
         // The box of avatar-box-drop that lands on the head stays there; the walk scenario's boxes are set down. A box
         // dropped from 1 m (the rest-ground scenario): it strikes the ground at sqrt(2 g h), less a step of gravity at most.
-        RunResult r = Harness.Harness.Run(Harness.Harness.Find("rest-ground"), new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsRate });
+        RunResult r = Harness.Harness.Run(Harness.Harness.Find("rest-ground"), new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsRate, Jolt = { ["AvatarPushMaxSpeed"] = "10" } });
         CollisionWatch w = r.Parts.Single(p => p.Name == "box").Watch;
         float landing = MathF.Sqrt(2f * G * 1f);   // 4.43 m/s
         Assert.InRange(-w.Strikes[0], landing * 0.95f, landing * 1.05f);
