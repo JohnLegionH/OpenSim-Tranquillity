@@ -72,8 +72,8 @@ public class VehicleInWorldzTests
 
     // VehicleDynamics.cs:1278-1284: with LIMIT_ROLL_ONLY the pitch force of an airplane or balloon is zeroed, and that of
     // any other vehicle is multiplied by 0.1. A car pitched 30 degrees with the attractor at 1 s / 1: in the first step
-    // its pitch spring has the stiffness (1 + (1 + 30 / 180)^4) / 100 (the boost, then a tenth); an airplane or balloon,
-    // or any vehicle under Second Life's choice, turns not at all about its pitch axis.
+    // its pitch push is sin(30 degrees) x 0.1 x (1 + (1 + 30 / 180)^4) x pi e^3 h / 1 (the boost, then a tenth); an
+    // airplane or balloon, or any vehicle under Second Life's choice, turns not at all about its pitch axis.
     [Theory]
     [InlineData(Vehicle.TYPE_CAR, true)]
     [InlineData(Vehicle.TYPE_BOAT, true)]
@@ -100,8 +100,8 @@ public class VehicleInWorldzTests
                     continue;
                 }
                 double boost = 1.0 + Math.Pow(1.0 + 30 * Deg / Math.PI, 4.0);
-                (double move, _) = VehicleSpring.MoveOverGeneral(30 * Deg, 0, 0.1 * boost, 1.0, h);
-                Near(move, pitchRate, 1e-3, 1e-6, $"{type} at {rate} Hz: pitch rate");
+                double expected = -Math.Sin(30 * Deg) * 0.1 * boost * Math.PI * Math.Exp(3.0) * h / 1.0;
+                Near(expected, pitchRate, 1e-3, 1e-6, $"{type} at {rate} Hz: pitch rate");
                 Assert.True(pitchRate < 0f, "the nose comes up");
                 Assert.Equal(0f, rig.Body.AngularVelocity.X, 5);
             }
@@ -123,7 +123,7 @@ public class VehicleInWorldzTests
             return (float)(BehaviourRig.RollAndPitch(rig.Body.Orientation).pitch / Deg);
         }
         Assert.InRange(Pitch(SecondLife), 29.99f, 30.01f);
-        Assert.InRange(Pitch(InWorldz), 2f, 25f);
+        Assert.InRange(Pitch(InWorldz), -1f, 5f);
     }
 
     // ---------------------------------------------------------------------------------------------------------
@@ -290,8 +290,10 @@ public class VehicleInWorldzTests
     }
 
     // The motor holds its whole grip until the clock reaches zero and decays from there. An angular motor of 1 rad/s,
-    // timescale 0.2 s, decay 0.05 s: after 0.2 s, against a fine integration of dv/dt = g (M - v) / Tm with g = 1
-    // until the delay (0.0338 s) and e^(-(t - delay) / Td) after it; Second Life's with the delay 0.
+    // timescale 0.2 s, decay 0.05 s: after 0.2 s. Second Life's, against a fine integration of dv/dt = g (M - v) / Tm with
+    // g = 1 until the delay (0 for Second Life) and e^(-(t - delay) / Td) after it. InWorldz's angular motor is Halcyon's
+    // stepwise ramp, so it is checked against that ramp worked out apart from the controller, with the clock starting
+    // 0.0338 s before the set.
     [Theory]
     [MemberData(nameof(RateData))]
     public void The_decay_of_a_quick_motor_is_held_back_by_its_delay(double rate)
@@ -312,28 +314,32 @@ public class VehicleInWorldzTests
             rig.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE, 0.05f);
             rig.Car.ProcessVectorVehicleParam(Vehicle.ANGULAR_MOTOR_DIRECTION, new Vector3(0f, 0f, 1f));
             rig.Run(h, steps);
-            double expected = Integrate(0.0, 1.0, 0.2, 0.05, inWorldz ? delay : 0.0, t);
+            double expected = inWorldz
+                ? HalcyonMotorReference.Curve(0.2, 0.05, double.PositiveInfinity, h, steps, 1.0, startIndex: -delay)[steps - 1]
+                : Integrate(0.0, 1.0, 0.2, 0.05, 0.0, t);
             Near(expected, rig.Body.AngularVelocity.Z, 2e-4, 2e-5, $"{(inWorldz ? "InWorldz" : "Second Life")} at {rate} Hz, {t:0.000} s");
         }
     }
 
-    // The same motor, the same 2 s, at every rate: the delay ends inside a step at 11 Hz (0.0909 s) and the result is
-    // the same as with small steps.
+    // The same motor, the same 2 s, at every rate: the delay ends inside a step at 11 Hz (0.0909 s). Halcyon's ramp is a
+    // formula per step, so the speed is not the same at every rate (as the exact solution of Second Life's behaviour is); at each
+    // rate it is the stepwise ramp's.
     [Fact]
-    public void The_delayed_decay_gives_the_same_speed_at_every_step_rate()
+    public void The_delayed_decay_follows_the_stepwise_ramp_at_every_step_rate()
     {
-        var speeds = new List<float>();
+        double delay = -HalcyonMotorReference.DecayStart(0.2);
+        Assert.InRange(delay, 0.0338, 0.0339);
         foreach (double rate in Rates)
         {
             var rig = new BehaviourRig(InWorldz, Vehicle.TYPE_CAR, gravity: false);
             rig.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_TIMESCALE, 0.2f);
             rig.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE, 0.05f);
             rig.Car.ProcessVectorVehicleParam(Vehicle.ANGULAR_MOTOR_DIRECTION, new Vector3(0f, 0f, 1f));
-            rig.Run(1.0 / rate, (int)Math.Round(2.0 * rate));
-            speeds.Add(rig.Body.AngularVelocity.Z);
+            int steps = (int)Math.Round(2.0 * rate);
+            rig.Run(1.0 / rate, steps);
+            double expected = HalcyonMotorReference.Curve(0.2, 0.05, double.PositiveInfinity, 1.0 / rate, steps, 1.0, startIndex: -delay)[steps - 1];
+            Near(expected, rig.Body.AngularVelocity.Z, 2e-4, 2e-5, $"speed after 2 s at {rate} Hz");
         }
-        foreach (float s in speeds)
-            Near(speeds[3], s, 1e-4, 1e-6, "speed after 2 s");
     }
 
     private static double Integrate(double v0, double motor, double tm, double td, double delay, double span)
@@ -362,8 +368,8 @@ public class VehicleInWorldzTests
     public void The_strength_boost_is_one_plus_one_plus_tilt_over_pi_to_the_fourth(double tiltOverPi, double expected)
         => Assert.Equal(expected, VehicleController.InWorldzAttractorBoost((float)(tiltOverPi * Math.PI)), 4);
 
-    // The first step of a car rolled by 20, 60 or 90 degrees with the attractor at 1 s / efficiency 0.5 has the spring's
-    // stiffness times the boost; an airplane's has not.
+    // The first step of a car rolled by 20, 60 or 90 degrees with the attractor at 1 s / efficiency 0.5 turns it by
+    // sin(roll) pi e^1.5 h x the boost; an airplane's has no boost.
     [Theory]
     [InlineData(Vehicle.TYPE_CAR, 20.0)]
     [InlineData(Vehicle.TYPE_CAR, 60.0)]
@@ -381,8 +387,8 @@ public class VehicleInWorldzTests
             rig.Car.ProcessFloatVehicleParam(Vehicle.VERTICAL_ATTRACTION_EFFICIENCY, 0.5f);
             rig.Tilt(rollDegrees, 0);
             rig.Step(h);
-            (double move, _) = VehicleSpring.MoveOverGeneral(rollDegrees * Deg, 0, boost, 0.5, h);
-            Near(move, rig.Body.AngularVelocity.X, 1e-3, 1e-6, $"{type} {rollDegrees} degrees at {rate} Hz: roll rate");
+            double expected = -Math.Sin(rollDegrees * Deg) * boost * Math.PI * Math.Exp(1.5) * h / 1.0;
+            Near(expected, rig.Body.AngularVelocity.X, 1e-3, 1e-6, $"{type} {rollDegrees} degrees at {rate} Hz: roll rate");
         }
     }
 
@@ -402,8 +408,8 @@ public class VehicleInWorldzTests
         Near(expected, rig.Car.AttractorEscalation, 1e-5, 0, $"{rate} Hz, {steps} steps");
         // The first step used 1.3^(h / 0.015) of it, with the boost at 150 degrees.
         double boost = 1.0 + Math.Pow(1.0 + 150 * Deg / Math.PI, 4.0);
-        (double move, _) = VehicleSpring.MoveOverGeneral(150 * Deg, 0, boost * Math.Pow(1.3, h / 0.015) / (1.5 * 1.5), 0.6 / 1.5, h);
-        Near(move, rollRates[0], 1e-3, 1e-6, $"{rate} Hz: first step's roll rate");
+        double firstPush = -Math.Sin(150 * Deg) * boost * Math.Pow(1.3, h / 0.015) * Math.PI * Math.Exp(3 * 0.6) * h / 1.5;
+        Near(firstPush, rollRates[0], 1e-3, 1e-6, $"{rate} Hz: first step's roll rate");
         for (int i = 1; i < rollRates.Count; i++)
             Assert.True(Math.Abs(rollRates[i]) > Math.Abs(rollRates[i - 1]) * 0.999, "the turning force grows while it is held");
     }

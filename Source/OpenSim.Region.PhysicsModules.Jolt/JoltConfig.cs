@@ -69,6 +69,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float VehicleMinTimescale = VehicleLimits.MinPhysicsTimestep;        // s
         public float VehicleMaxTimescale = VehicleLimits.MaxTimescale;              // s
         public float VehicleMaxDecayTimescale = VehicleLimits.MaxDecayTimescale;    // s
+        public bool VehicleMaxDecayTimescaleSet;    // the key is set (else the behaviour chooses: 120 s, or 1000 s under InWorldz)
         public float VehicleMaxHoverTimescale = VehicleLimits.MaxHoverTimescale;    // s
         public float VehicleMaxAttractTimescale = VehicleLimits.MaxAttractTimescale;// s
         public float VehicleMaxMotorOffset = VehicleLimits.MaxLinearOffset;         // m
@@ -185,6 +186,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.VehicleMinTimescale = F(cfg, "VehicleMinTimescale", c.VehicleMinTimescale, (float)VehicleMotorSolver.MinTimescale, 1f, warnings);
             c.VehicleMaxTimescale = F(cfg, "VehicleMaxTimescale", c.VehicleMaxTimescale, 1f, VehicleLimits.MaxTimescale, warnings);
             c.VehicleMaxDecayTimescale = F(cfg, "VehicleMaxDecayTimescale", c.VehicleMaxDecayTimescale, 1f, VehicleLimits.MaxTimescale, warnings);
+            c.VehicleMaxDecayTimescaleSet = TryF(cfg.GetString("VehicleMaxDecayTimescale", null), 1f, VehicleLimits.MaxTimescale, out _);
             c.VehicleMaxHoverTimescale = F(cfg, "VehicleMaxHoverTimescale", c.VehicleMaxHoverTimescale, 1f, VehicleLimits.MaxTimescale, warnings);
             c.VehicleMaxAttractTimescale = F(cfg, "VehicleMaxAttractTimescale", c.VehicleMaxAttractTimescale, 1f, VehicleLimits.MaxTimescale, warnings);
             c.VehicleMaxMotorOffset = F(cfg, "VehicleMaxMotorOffset", c.VehicleMaxMotorOffset, 0f, 10000f, warnings);
@@ -235,6 +237,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             MinTimescale = VehicleMinTimescale,
             MaxTimescale = VehicleMaxTimescale,
             MaxDecayTimescale = VehicleMaxDecayTimescale,
+            MaxDecayTimescaleSet = VehicleMaxDecayTimescaleSet,
             MaxHoverTimescale = VehicleMaxHoverTimescale,
             MaxAttractTimescale = VehicleMaxAttractTimescale,
             MaxMotorOffset = VehicleMaxMotorOffset,

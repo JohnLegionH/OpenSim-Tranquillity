@@ -231,4 +231,13 @@ public struct VehicleData
     public float m_disableMotorsAbove;
     public float m_disableMotorsAfter;
     public float m_invertedBankingModifier;
+
+    // A value for each axis of the four motor timescales above (llSetVehicleVectorParam with VEHICLE_LINEAR_MOTOR_TIMESCALE,
+    // _LINEAR_MOTOR_DECAY_TIMESCALE, _ANGULAR_MOTOR_TIMESCALE or _ANGULAR_MOTOR_DECAY_TIMESCALE). Null means the record holds
+    // none, and the axes are all the single value of the field above, as in a record saved before these existed. The single
+    // fields are never changed by a per-axis value, so a reader that does not know these keeps what it always read.
+    public Vector3? m_linearMotorTimescaleAxes;
+    public Vector3? m_linearMotorDecayTimescaleAxes;
+    public Vector3? m_angularMotorTimescaleAxes;
+    public Vector3? m_angularMotorDecayTimescaleAxes;
 }

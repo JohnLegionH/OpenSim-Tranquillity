@@ -166,7 +166,7 @@ public class VehicleRestoreRouteTests
     /// for a region start, otherwise with the region running (heartbeat <see cref="RouteAt"/>; physics back on at
     /// <see cref="OnAt"/>). <paramref name="motor"/>: a linear motor the script set before the vehicle was saved.</summary>
     internal static Outcome RunRoute(SharedVehicle type, VehicleRoute route, Vector3? motor = null, double physicsRate = 0.0,
-                                     Vector3 handBackVelocity = default)
+                                     Vector3 handBackVelocity = default, Action<Run> moreScriptCalls = null, string behaviour = null)
     {
         var o = new Outcome();
         SOPVehicle saved = null;
@@ -199,6 +199,7 @@ public class VehicleRestoreRouteTests
                 ScriptSetup(r, type);
                 if (motor.HasValue)
                     r.SetVector(SharedVehicle.LINEAR_MOTOR_DIRECTION, motor.Value);
+                moreScriptCalls?.Invoke(r);
                 o.ScriptSet = State(r.Actor);
                 if (route == VehicleRoute.RegionStart)
                     HandBack(r);
@@ -248,7 +249,10 @@ public class VehicleRestoreRouteTests
                 }
             },
         };
-        Harness.Harness.Run(sc, new HarnessOptions { RateHz = 45.0, PhysicsRateHz = physicsRate, SimulatorDefaults = true });
+        var options = new HarnessOptions { RateHz = 45.0, PhysicsRateHz = physicsRate, SimulatorDefaults = true };
+        if (behaviour != null)
+            options.Jolt["VehicleBehaviour"] = behaviour;
+        Harness.Harness.Run(sc, options);
 
         // The controller's extension params as the type alone sets them.
         var fresh = new Scenario
@@ -262,7 +266,10 @@ public class VehicleRestoreRouteTests
                 o.FreshType = State(r.Actor);
             },
         };
-        Harness.Harness.Run(fresh, new HarnessOptions { RateHz = 45.0, PhysicsRateHz = physicsRate });
+        var freshOptions = new HarnessOptions { RateHz = 45.0, PhysicsRateHz = physicsRate };
+        if (behaviour != null)
+            freshOptions.Jolt["VehicleBehaviour"] = behaviour;
+        Harness.Harness.Run(fresh, freshOptions);
         return o;
     }
 

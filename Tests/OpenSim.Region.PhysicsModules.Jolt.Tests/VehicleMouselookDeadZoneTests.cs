@@ -19,7 +19,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// default azimuth. Measured first: with no dead zone the steering holds steady under a shaking camera and a held one
 /// (VehicleMouselookHuntingTests), so the dead zone is a matter of feel and Second Life's behaviour, the default, has none.
 /// Outside the zone the turn is the shaped share of the script's motor direction (VehicleInWorldzMouselookRulesTests); the
-/// rows here that compare it with a Second Life vehicle compare with one whose motor is set to that share.
+/// rows here that compare it with a vehicle with no flag compare with an InWorldz one whose motor is set to that share.
 /// Pure (a body with no engine), parallel.
 /// </summary>
 public class VehicleMouselookDeadZoneTests
@@ -61,10 +61,10 @@ public class VehicleMouselookDeadZoneTests
         return Math.Sign(degrees) * (Math.Exp(x) - 1.0) / (Math.E - 1.0);
     }
 
-    // A Second Life vehicle with no flags whose motor direction is set to `motor`, stepped once.
+    // An InWorldz vehicle with no flags whose motor direction is set to `motor`, stepped once.
     private static BehaviourRig Plain(Vector3 motor)
     {
-        var rig = new BehaviourRig(Settings(VehicleBehaviour.SecondLife), Vehicle.TYPE_CAR, gravity: false);
+        var rig = new BehaviourRig(Settings(VehicleBehaviour.InWorldz), Vehicle.TYPE_CAR, gravity: false);
         rig.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_TIMESCALE, 1f);
         rig.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE, 120f);
         rig.Car.ProcessVectorVehicleParam(Vehicle.ANGULAR_MOTOR_DIRECTION, motor);
@@ -164,8 +164,9 @@ public class VehicleMouselookDeadZoneTests
     }
 
     // The turn is a rate that follows the camera's offset, not an aim at the camera. A bare motor (no angular friction, no
-    // decay: nothing takes the speed off it but the shrinking share) overshoots a camera at 20 degrees and comes back, hunting
-    // about it within 5 degrees (measured: 15.8 to 24.2 after the first 5 s, a period of about 4.5 s); a car with its own
+    // decay: nothing takes the speed off it but the shrinking share) hunts about a camera at 20 degrees, within 5 degrees of it.
+    // Measured with Halcyon's stepwise ramp for the angular motor: 2.7 degrees off at most after the first 5 s
+    // (with the exact solution of the documented equation it was 15.8 to 24.2, a period of about 4.5 s); a car with its own
     // friction settles (VehicleInWorldzMouselookTurnTests).
     [Fact]
     public void A_bare_motor_steered_by_the_shaped_share_hunts_about_the_camera_within_five_degrees()
@@ -178,6 +179,6 @@ public class VehicleMouselookDeadZoneTests
             iw.Run(1.0 / 45, 45);
             worst = Math.Max(worst, Math.Abs(Heading(iw) - 20.0));
         }
-        Assert.InRange(worst, 3.0, 5.0);
+        Assert.True(worst >= 2.0 && worst <= 5.0, $"worst {worst:0.00} degrees off the camera");
     }
 }

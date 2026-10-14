@@ -107,14 +107,17 @@ public class SOPVehicle
                 if (pValue < timestep) pValue = timestep;
                 vd.m_angularDeflectionTimescale = pValue;
                 break;
+            // The motor decay timescales are kept as sent (at least one step): the record does not cap them, each physics engine
+            // applies its own limit when it takes the record. A single value sets all three axes, so it replaces any per-axis one.
             case Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE:
                 if (pValue < timestep) pValue = timestep;
-                else if (pValue > 120) pValue = 120;
                 vd.m_angularMotorDecayTimescale = pValue;
+                vd.m_angularMotorDecayTimescaleAxes = null;
                 break;
             case Vehicle.ANGULAR_MOTOR_TIMESCALE:
                 if (pValue < timestep) pValue = timestep;
                 vd.m_angularMotorTimescale = pValue;
+                vd.m_angularMotorTimescaleAxes = null;
                 break;
             case Vehicle.BANKING_EFFICIENCY:
                 if (pValue < -1f) pValue = -1f;
@@ -158,12 +161,13 @@ public class SOPVehicle
                 break;
             case Vehicle.LINEAR_MOTOR_DECAY_TIMESCALE:
                 if (pValue < timestep) pValue = timestep;
-                else if (pValue > 120) pValue = 120;
                 vd.m_linearMotorDecayTimescale = pValue;
+                vd.m_linearMotorDecayTimescaleAxes = null;
                 break;
             case Vehicle.LINEAR_MOTOR_TIMESCALE:
                 if (pValue < timestep) pValue = timestep;
                 vd.m_linearMotorTimescale = pValue;
+                vd.m_linearMotorTimescaleAxes = null;
                 break;
             case Vehicle.VERTICAL_ATTRACTION_EFFICIENCY:
                 if (pValue < 0f) pValue = 0f;
@@ -271,8 +275,34 @@ public class SOPVehicle
                 if (len > 100.0f)
                     vd.m_linearMotorOffset *= (100.0f / len);
                 break;
+
+            // A value for each axis of the four motor timescales. It is kept beside the single value, which it does not touch,
+            // so a reader that knows only the single value reads what it always did; each axis is held to at least one step.
+            // A value that is not a number is not stored.
+            case Vehicle.LINEAR_MOTOR_TIMESCALE:
+                if (PerAxis(ref pValue, timestep)) vd.m_linearMotorTimescaleAxes = pValue;
+                break;
+            case Vehicle.LINEAR_MOTOR_DECAY_TIMESCALE:
+                if (PerAxis(ref pValue, timestep)) vd.m_linearMotorDecayTimescaleAxes = pValue;
+                break;
+            case Vehicle.ANGULAR_MOTOR_TIMESCALE:
+                if (PerAxis(ref pValue, timestep)) vd.m_angularMotorTimescaleAxes = pValue;
+                break;
+            case Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE:
+                if (PerAxis(ref pValue, timestep)) vd.m_angularMotorDecayTimescaleAxes = pValue;
+                break;
         }
     }//end ProcessVectorVehicleParam
+
+    private static bool PerAxis(ref Vector3 v, float least)
+    {
+        if (!float.IsFinite(v.X) || !float.IsFinite(v.Y) || !float.IsFinite(v.Z))
+            return false;
+        if (v.X < least) v.X = least;
+        if (v.Y < least) v.Y = least;
+        if (v.Z < least) v.Z = least;
+        return true;
+    }
 
     public void ProcessRotationVehicleParam(Vehicle pParam, Quaternion pValue)
     {
@@ -302,6 +332,10 @@ public class SOPVehicle
         vd.m_angularMotorDirection = Vector3.Zero;
         vd.m_linearMotorOffset = Vector3.Zero;
         vd.m_referenceFrame = Quaternion.Identity;
+        vd.m_linearMotorTimescaleAxes = null;
+        vd.m_linearMotorDecayTimescaleAxes = null;
+        vd.m_angularMotorTimescaleAxes = null;
+        vd.m_angularMotorDecayTimescaleAxes = null;
 
         // The defaults of InWorldz's parameters (VehicleDynamics.cs:1710-1720); the types below that differ set theirs.
         vd.m_mouselookAzimuth = MathF.PI / 4f;
@@ -568,6 +602,12 @@ public class SOPVehicle
         writer.WriteEndElement();
     }
 
+    private void XWVectorIfSet(string name, Vector3? vec)
+    {
+        if (vec.HasValue)
+            XWVector(name, vec.Value);
+    }
+
     private void XWQuat(string name, Quaternion quat)
     {
         writer.WriteStartElement(name);
@@ -592,12 +632,17 @@ public class SOPVehicle
         XWfloat("LMDTIME", vd.m_linearMotorDecayTimescale);
         XWfloat("LMTIME", vd.m_linearMotorTimescale);
         XWVector("LMOFF", vd.m_linearMotorOffset);
+        // A value for each axis, written only when the vehicle has one; a simulator that does not know these skips them
+        XWVectorIfSet("LMTIMEV", vd.m_linearMotorTimescaleAxes);
+        XWVectorIfSet("LMDTIMEV", vd.m_linearMotorDecayTimescaleAxes);
 
         //Angular properties
         XWVector("AMDIR", vd.m_angularMotorDirection);
         XWfloat("AMTIME", vd.m_angularMotorTimescale);
         XWfloat("AMDTIME", vd.m_angularMotorDecayTimescale);
         XWVector("AMFTIME", vd.m_angularFrictionTimescale);
+        XWVectorIfSet("AMTIMEV", vd.m_angularMotorTimescaleAxes);
+        XWVectorIfSet("AMDTIMEV", vd.m_angularMotorDecayTimescaleAxes);
 
         //Deflection properties
         XWfloat("ADEFF", vd.m_angularDeflectionEfficiency);
@@ -782,12 +827,16 @@ public class SOPVehicle
         m_VehicleXmlProcessors.Add("LMDTIME", ProcessXR_linearMotorDecayTimescale);
         m_VehicleXmlProcessors.Add("LMTIME", ProcessXR_linearMotorTimescale);
         m_VehicleXmlProcessors.Add("LMOFF", ProcessXR_linearMotorOffset);
+        m_VehicleXmlProcessors.Add("LMTIMEV", () => { vd.m_linearMotorTimescaleAxes = XRvector(); });
+        m_VehicleXmlProcessors.Add("LMDTIMEV", () => { vd.m_linearMotorDecayTimescaleAxes = XRvector(); });
 
         //Angular properties
         m_VehicleXmlProcessors.Add("AMDIR", ProcessXR_angularMotorDirection);
         m_VehicleXmlProcessors.Add("AMTIME", ProcessXR_angularMotorTimescale);
         m_VehicleXmlProcessors.Add("AMDTIME", ProcessXR_angularMotorDecayTimescale);
         m_VehicleXmlProcessors.Add("AMFTIME", ProcessXR_angularFrictionTimescale);
+        m_VehicleXmlProcessors.Add("AMTIMEV", () => { vd.m_angularMotorTimescaleAxes = XRvector(); });
+        m_VehicleXmlProcessors.Add("AMDTIMEV", () => { vd.m_angularMotorDecayTimescaleAxes = XRvector(); });
 
         //Deflection properties
         m_VehicleXmlProcessors.Add("ADEFF", ProcessXR_angularDeflectionEfficiency);

@@ -54,8 +54,8 @@ public class VehicleInWorldzMouselookRulesTests
         => Assert.True(Math.Abs(expected - actual) <= 1e-3 * Math.Abs(expected), $"{actual:R} against {expected:R}");
 
     // The soft exponential outside the zone: 6 percent at the edge, 39 percent at 15 degrees, whole from 30 degrees. The
-    // reference is a Second Life vehicle (no flags) whose motor direction is set to that share of the script's, which is what
-    // InWorldz sets.
+    // motor direction InWorldz sets is that share of the script's, and the reference is an InWorldz vehicle (no flags) whose
+    // motor direction is set to that share by the script: the same angular motor, so the same first step.
     [Theory]
     [InlineData(2.9)]
     [InlineData(5.0)]
@@ -68,7 +68,7 @@ public class VehicleInWorldzMouselookRulesTests
     public void Outside_the_zone_the_turn_is_the_shaped_share_of_the_motor_direction(double yawDegrees)
     {
         var iw = Rig(VehicleBehaviour.InWorldz, SteerFlag, yawDegrees, 0, new Vector3(0f, 0f, 2f));
-        var reference = new BehaviourRig(new VehicleSettings { Behaviour = VehicleBehaviour.SecondLife }, Vehicle.TYPE_CAR, gravity: false);
+        var reference = new BehaviourRig(new VehicleSettings { Behaviour = VehicleBehaviour.InWorldz }, Vehicle.TYPE_CAR, gravity: false);
         reference.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_TIMESCALE, 1f);
         reference.Car.ProcessFloatVehicleParam(Vehicle.ANGULAR_MOTOR_DECAY_TIMESCALE, 120f);
         reference.Car.ProcessVectorVehicleParam(Vehicle.ANGULAR_MOTOR_DIRECTION, new Vector3(0f, 0f, (float)(2.0 * Shaped(yawDegrees))));
@@ -76,6 +76,8 @@ public class VehicleInWorldzMouselookRulesTests
         reference.Step(1.0 / 45);
         Assert.NotEqual(0f, iw.Body.AngularVelocity.Z);
         Same(reference.Body.AngularVelocity.Z, iw.Body.AngularVelocity.Z);
+        // The motor direction itself (the first step's velocity is the motor's start from rest, whatever a small direction).
+        Same(2.0 * Shaped(yawDegrees), iw.Car.AngularMotorDirectionInEffect.Z);
     }
 
     // Halcyon's turn is a rate that follows the camera's offset, not an aim at the camera: a camera 30 degrees or more off
@@ -87,7 +89,7 @@ public class VehicleInWorldzMouselookRulesTests
         {
             var r = Rig(VehicleBehaviour.InWorldz, SteerFlag, deg, 0, new Vector3(0f, 0f, 2f));
             r.Step(1.0 / 45);
-            return r.Body.AngularVelocity.Z;
+            return r.Car.AngularMotorDirectionInEffect.Z;      // the rate the motor is asked for
         }
         Assert.True(rate(5) < 0.5 * rate(15), "5 degrees turns slower than half of 15");
         Assert.True(rate(15) < 0.5 * rate(60), "15 degrees turns slower than half of the full rate");
@@ -161,7 +163,8 @@ public class VehicleInWorldzMouselookRulesTests
         none.Step(1.0 / 45);
         Assert.Equal(0f, iw.Body.AngularVelocity.X);
         Assert.Equal(none.Body.AngularVelocity.Z, sl.Body.AngularVelocity.Z);            // Second Life: the flag does nothing
-        Same(none.Body.AngularVelocity.Z * Shaped(20) / 1.0, iw.Body.AngularVelocity.Z);   // InWorldz: the shaped share of the script's
+        Assert.True(iw.Body.AngularVelocity.Z > 0f);
+        Same(2.0 * Shaped(20), iw.Car.AngularMotorDirectionInEffect.Z);                  // InWorldz: the shaped share of the script's
     }
 
     [Fact]
@@ -174,7 +177,8 @@ public class VehicleInWorldzMouselookRulesTests
         sl.Step(1.0 / 45);
         none.Step(1.0 / 45);
         Assert.Equal(none.Body.AngularVelocity.X, sl.Body.AngularVelocity.X);            // Second Life: the flag does nothing
-        Same(-none.Body.AngularVelocity.X * Shaped(20), iw.Body.AngularVelocity.X);       // InWorldz: rolls by the camera's yaw (the share, negated)
+        Assert.True(iw.Body.AngularVelocity.X < 0f);
+        Same(-2.0 * Shaped(20), iw.Car.AngularMotorDirectionInEffect.X);                  // InWorldz: rolls by the camera's yaw (the share, negated)
     }
 
     // The mouselook flags, out of mouselook, do nothing under InWorldz (the camera is not the driver's aim there).

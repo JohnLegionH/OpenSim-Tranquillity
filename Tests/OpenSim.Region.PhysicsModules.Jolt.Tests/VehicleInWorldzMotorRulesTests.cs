@@ -39,56 +39,86 @@ public class VehicleInWorldzMotorRulesTests
         return rig;
     }
 
+    // Under InWorldz the linear motor is Halcyon's stepwise ramp (HalcyonLinearReference), which starts a motor at rest at 0.04 m/s
+    // and grows its target from there whatever the vehicle does; the rule compares each step's change with gravity.
+    // (Second Life's motor pulls by a share of the direction, which is what these four tests used to compare it with.)
     [Fact]
-    public void A_small_upward_motor_does_nothing_under_InWorldz_and_lifts_under_Second_Life()
+    public void A_first_upward_step_smaller_than_gravity_is_nulled_under_InWorldz_and_Second_Life_lifts()
     {
+        const double h = 1.0 / 45;
         var iw = Lifter(VehicleBehaviour.InWorldz, 5f, 1f, 0f);
         var sl = Lifter(VehicleBehaviour.SecondLife, 5f, 1f, 0f);
         var free = Rig(VehicleBehaviour.InWorldz);                   // gravity alone
-        iw.Run(1.0 / 45, 45);
-        sl.Run(1.0 / 45, 45);
-        free.Run(1.0 / 45, 45);
-        Assert.Equal(free.Body.LinearVelocity.Z, iw.Body.LinearVelocity.Z, 3);
-        Assert.True(sl.Body.LinearVelocity.Z > free.Body.LinearVelocity.Z + 1.0, $"{sl.Body.LinearVelocity.Z} against {free.Body.LinearVelocity.Z}");
+        var want = new HalcyonLinearReference(new double[] { 0, 0, 5 }, new double[] { 1, 1, 1 }, new double[] { 120, 120, 120 });
+        iw.Step(h);
+        free.Step(h);
+        want.Step(h, -Gravity);
+        // The first step asks for 0.04 m/s, far less than gravity: nothing of it passes.
+        Assert.Equal(free.Body.LinearVelocity.Z, iw.Body.LinearVelocity.Z, 5);
+        Assert.Equal(want.V[2], iw.Body.LinearVelocity.Z, 4);
+
+        // The motor's target goes on growing, until the change it asks for outgrows gravity and passes (as Halcyon's does).
+        for (int i = 1; i < 90; i++)
+        {
+            iw.Step(h);
+            free.Step(h);
+            want.Step(h, -Gravity);
+        }
+        Assert.Equal(want.V[2], iw.Body.LinearVelocity.Z, 1);
+        Assert.True(iw.Body.LinearVelocity.Z > free.Body.LinearVelocity.Z + 1.0, $"{iw.Body.LinearVelocity.Z} against {free.Body.LinearVelocity.Z}");
+
+        sl.Run(h, 45);
+        var slFree = Rig(VehicleBehaviour.SecondLife);
+        slFree.Run(h, 45);
+        Assert.True(sl.Body.LinearVelocity.Z > slFree.Body.LinearVelocity.Z + 1.0, $"{sl.Body.LinearVelocity.Z} against {slFree.Body.LinearVelocity.Z}");
     }
 
-    // A change bigger than gravity (a 200 m/s motor with a 0.05 s timescale changes 72 m/s in a step) passes with gravity taken off it.
+    // A change bigger than gravity passes with gravity taken off it: a vehicle falling at 50 m/s, a 200 m/s motor starting at
+    // 0.04 m/s, changes the velocity by 50.04 m/s, of which 9.807 m/s are held back.
     [Fact]
     public void A_big_upward_change_passes_less_gravity()
     {
+        const double h = 1.0 / 45;
         var iw = Lifter(VehicleBehaviour.InWorldz, 200f, 0.05f, 0f);
-        var sl = Lifter(VehicleBehaviour.SecondLife, 200f, 0.05f, 0f);
-        iw.Step(1.0 / 45);
-        sl.Step(1.0 / 45);
-        Assert.Equal(Gravity, sl.Body.LinearVelocity.Z - iw.Body.LinearVelocity.Z, 1);
+        iw.Body.LinearVelocity = new Vector3(0f, 0f, -50f);
+        iw.Step(h);
+        Assert.Equal(-50.0 + (50.04 - Gravity) - Gravity * h, iw.Body.LinearVelocity.Z, 2);
     }
 
-    // The share gravity has is the share buoyancy does not carry: with buoyancy 1 nothing is nulled, with 0.5 half of it is.
+    // The share gravity has is the share buoyancy does not carry: with buoyancy 1 nothing is nulled (the 0.04 m/s of the first
+    // step is whole), with 0.5 half of it is.
     [Fact]
     public void The_nulled_gravity_is_the_share_buoyancy_does_not_carry()
     {
+        const double h = 1.0 / 45;
         var full = Lifter(VehicleBehaviour.InWorldz, 5f, 1f, 1f);
-        var fullSl = Lifter(VehicleBehaviour.SecondLife, 5f, 1f, 1f);
-        full.Run(1.0 / 45, 45);
-        fullSl.Run(1.0 / 45, 45);
-        Assert.Equal(fullSl.Body.LinearVelocity.Z, full.Body.LinearVelocity.Z, 2);
+        full.Step(h);
+        Assert.Equal(0.04, full.Body.LinearVelocity.Z, 4);
 
+        var none = Lifter(VehicleBehaviour.InWorldz, 200f, 0.05f, 0f);
         var half = Lifter(VehicleBehaviour.InWorldz, 200f, 0.05f, 0.5f);
-        var halfSl = Lifter(VehicleBehaviour.SecondLife, 200f, 0.05f, 0.5f);
-        half.Step(1.0 / 45);
-        halfSl.Step(1.0 / 45);
-        Assert.Equal(Gravity * 0.5, halfSl.Body.LinearVelocity.Z - half.Body.LinearVelocity.Z, 1);
+        none.Body.LinearVelocity = new Vector3(0f, 0f, -50f);
+        half.Body.LinearVelocity = new Vector3(0f, 0f, -50f);
+        none.Step(h);
+        half.Step(h);
+        // Half of gravity held back less, and half of the engine's gravity over the step less taken.
+        Assert.Equal(Gravity * 0.5 + Gravity * 0.5 * h, half.Body.LinearVelocity.Z - none.Body.LinearVelocity.Z, 1);
     }
 
     [Fact]
     public void A_downward_motor_is_left_alone()
     {
         // (A motor under the fall's speed would pull the vehicle up against it, which is an upward change like any other.)
+        const double h = 1.0 / 45;
         var iw = Lifter(VehicleBehaviour.InWorldz, -50f, 1f, 0f);
-        var sl = Lifter(VehicleBehaviour.SecondLife, -50f, 1f, 0f);
-        iw.Run(1.0 / 45, 45);
-        sl.Run(1.0 / 45, 45);
-        Assert.Equal(sl.Body.LinearVelocity.Z, iw.Body.LinearVelocity.Z, 1);
+        var want = new HalcyonLinearReference(new double[] { 0, 0, -50 }, new double[] { 1, 1, 1 }, new double[] { 120, 120, 120 });
+        for (int i = 0; i < 90; i++)
+        {
+            iw.Step(h);
+            want.Step(h, -Gravity);
+        }
+        Assert.Equal(want.V[2], iw.Body.LinearVelocity.Z, 1);
+        Assert.True(iw.Body.LinearVelocity.Z < -20.0, $"{iw.Body.LinearVelocity.Z}");
     }
 
     // ---- hover moderation ----
@@ -186,16 +216,16 @@ public class VehicleInWorldzMotorRulesTests
 
     // ---- the attractor's dormancy ----
 
-    private static BehaviourRig Righting(VehicleBehaviour b, double rollDegrees)
+    private static BehaviourRig Righting(VehicleBehaviour b, double rollDegrees, float timescale = 1f)
     {
         var rig = Rig(b, gravity: false);
-        rig.Car.ProcessFloatVehicleParam(Vehicle.VERTICAL_ATTRACTION_TIMESCALE, 1f);
+        rig.Car.ProcessFloatVehicleParam(Vehicle.VERTICAL_ATTRACTION_TIMESCALE, timescale);
         rig.Car.ProcessFloatVehicleParam(Vehicle.VERTICAL_ATTRACTION_EFFICIENCY, 1f);
         rig.Tilt(rollDegrees, 0);
         return rig;
     }
 
-    // How much the angular velocity changes over `steps` steps from here: the attractor's spring changes it, and nothing
+    // How much the angular velocity changes over `steps` steps from here: the attractor changes it, and nothing
     // else does (no friction, no motor, no gravity).
     private static float Change(BehaviourRig rig, double h, int steps)
     {
@@ -211,8 +241,9 @@ public class VehicleInWorldzMotorRulesTests
         {
             double h = 1.0 / rate;
             int At(double seconds) => (int)Math.Round(rate * seconds);
-            var iw = Righting(VehicleBehaviour.InWorldz, 3);
-            var sl = Righting(VehicleBehaviour.SecondLife, 3);
+            // A 5 s timescale: a 3 degree tilt takes more than 1.5 s to right itself, and moves under 0.7 degree a step.
+            var iw = Righting(VehicleBehaviour.InWorldz, 3, 5f);
+            var sl = Righting(VehicleBehaviour.SecondLife, 3, 5f);
             iw.Run(h, At(1.0));
             sl.Run(h, At(1.0));
             Assert.True(Change(iw, h, At(1.2) - At(1.0)) > 1e-4f, $"{rate} Hz: still righting at 1 s");
@@ -229,9 +260,21 @@ public class VehicleInWorldzMotorRulesTests
     [Fact]
     public void An_overturned_vehicle_is_never_dormant()
     {
-        var iw = Righting(VehicleBehaviour.InWorldz, 120);
-        iw.Run(1.0 / 45, 45 * 2);
-        Assert.True(Change(iw, 1.0 / 45, 10) > 1e-3f);
+        const double h = 1.0 / 45;
+        // Held in place (the angular velocity cleared each step), the tilt does not change, as the dormancy rule watches it.
+        float Push(double rollDegrees)
+        {
+            var rig = Righting(VehicleBehaviour.InWorldz, rollDegrees);
+            for (int i = 0; i < 90; i++)
+            {
+                rig.Car.Step((float)h);
+                rig.Body.AngularVelocity = Vector3.Zero;
+            }
+            rig.Car.Step((float)h);
+            return rig.Body.AngularVelocity.Length();
+        }
+        Assert.True(Push(120) > 1e-3f, "overturned: still acting after 2 s without a change");
+        Assert.Equal(0f, Push(80));                       // under 0.6 pi: dormant after 1.5 s without a change
     }
 
     // A vehicle that is level and still starts dormant (nothing to right); one tilted past the 0.7 degree threshold wakes it.
