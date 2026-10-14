@@ -209,4 +209,27 @@ public class SteppedMoverTests
         if (!(rider == "avatar" && up))
             Assert.True(off > 1.0, $"with the setting off the rider ended {off:0.00} m from its place: nothing was carried");
     }
+
+    // ------------------------------------------------------------------ a fast start
+
+    // An avatar on a platform that keyframed motion starts at 22, 29 or 40 m/s (6 m in 0.27, 0.2 and 0.15 s) stays on it, with regular
+    // heartbeats and with heartbeats that find up to three of the 50 ms sets (3 sets are 4.5 to 6 m at these speeds, over the 4 m a
+    // heartbeat that is taken for a jump). A running region has been seen to drop its avatar at these speeds; the harness does not
+    // reproduce it, so this holds what the harness does carry.
+    [Theory]
+    [InlineData(22f)]
+    [InlineData(29f)]
+    [InlineData(40f)]
+    public void An_avatar_on_a_platform_that_starts_fast_stays_on_it(float speed)
+    {
+        foreach (bool uneven in new[] { false, true })
+            foreach (double rate in new[] { 0.0, 45.0 })
+            {
+                RunResult run = KinematicTestRig.Run(KinematicScenarios.Motion("avatar", false, speed, true, true, 0.05, uneven ? Uneven : null), rate);
+                KinematicScenarios.Figures f = KinematicScenarios.Measure(run, false, speed);
+                Say($"FAST avatar {speed:0} m/s {(uneven ? "uneven" : "even")} rate {rate:0}: {f.Verdict}, lag {F(f.MaxLag)} slide {F(f.Slide)} sink {F(f.MaxSink)}");
+                Assert.True(f.OnAtEnd, f.Verdict);
+                Assert.True(f.Slide < 0.5, $"it slid {f.Slide:0.00} m");
+            }
+    }
 }
