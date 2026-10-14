@@ -231,7 +231,8 @@ public class PrimParamsProjectorSliceProbeTests
 
         Assert.Equal(Line(h, "before="), Line(h, "after="));
         Near(new Vector3(0.25f, 0.75f, 0), Line(h, "sliced="));
-        // SL (llSetPrimitiveParams, PRIM_TYPE): "A sliced prim will become unsliced."
+        // SL (llSetPrimitiveParams, PRIM_TYPE): a prim that was sliced ends up unsliced
+        // (https://wiki.secondlife.com/wiki/LlSetPrimitiveParams).
         Near(new Vector3(0, 1, 0), Line(h, "unsliced="));
     }
 

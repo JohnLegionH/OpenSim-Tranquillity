@@ -675,8 +675,9 @@ public class AntiAbuseSlowdownTests
     /// taken out of the asset service after the first read and the cached answers still come.
     /// </summary>
     /// <summary>One read of each kind, each asked after the last answered, reported on channel 7 as one line.</summary>
-    // Every reader in the prim gets every answer (SL), so each takes only its own (the wiki's advice:
-    // "always use the queryid key"); before, a finished first reader went on asking on the second reader's answers.
+    // Every reader in the prim gets every answer (SL), so each takes only its own (the wiki's advice,
+    // https://wiki.secondlife.com/wiki/Dataserver: rely on the queryid key every time); before, a finished first
+    // reader went on asking on the second reader's answers.
     private const string Reader = @"
         list got;
         integer step = 0;
