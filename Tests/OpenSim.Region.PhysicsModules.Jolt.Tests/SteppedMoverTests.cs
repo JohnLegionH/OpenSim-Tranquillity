@@ -31,11 +31,6 @@ public class SteppedMoverTests
 
     private static string F(double v) => v.ToString("0.000", CultureInfo.InvariantCulture);
 
-    // The follow figures below were set before the harness took an empty step ahead of each setup (HarnessOptions.WarmUpStep). That step
-    // moves the phase of the 45 Hz step accumulator against the 11 Hz heartbeat, and a cube's steady follow then reads 0.067 to 0.070 m
-    // against the 0.065 m margin. These runs leave the step out so the margins keep their meaning; set this to true to see the other phase.
-    private const bool WarmUpStep = false;
-
     private static readonly (string, string) On = ("MovedPrimsCarryRiders", "true");
 
     // How many of core's 50 ms sets each heartbeat finds: a region's heartbeat is not as regular as its timer (about 1.8 on average).
@@ -53,7 +48,7 @@ public class SteppedMoverTests
     private KinematicScenarios.Figures Measure(string rider, bool up, double rate, bool uneven, string how)
     {
         bool keyframed = how == "keyframed";
-        RunResult run = KinematicTestRig.Run(KinematicScenarios.Motion(rider, up, 2f, keyframed, keyframed, 0.05, uneven ? Uneven : null), rate, WarmUpStep,
+        RunResult run = KinematicTestRig.Run(KinematicScenarios.Motion(rider, up, 2f, keyframed, keyframed, 0.05, uneven ? Uneven : null), rate,
             how == "steps-on" ? new[] { On } : new (string, string)[0]);
         KinematicScenarios.Figures f = KinematicScenarios.Measure(run, up, 2f);
         Say($"STEP {rider} {(up ? "up" : "side")} rate {rate:0}{(uneven ? " uneven" : "")} {how}: {f.Verdict}, follow {F(f.SteadyFollow)} (whole run {F(f.MaxFollow)}, stop {F(f.StopFollow)}), sink {F(f.MaxSink)} air {F(f.MaxAir)}");
@@ -61,7 +56,11 @@ public class SteppedMoverTests
     }
 
     // A rider on a platform going up at 2 m/s stays within a few centimetres of its place while the platform moves: 0.05 m for an
-    // avatar, 0.065 for a cube (the body is kept within 0.04 m of the pose, and the cube's contact adds the rest). The run's start
+    // avatar, 0.09 for a cube. The body is kept within 0.04 m of the pose, and at 45 Hz the pose moves 2/45 = 0.044 m between two
+    // physics steps, so a cube that is a step behind reads up to about 0.084 m. Which part of a step the heartbeat's clock falls in
+    // depends on how many heartbeats the region ran before the prim was rezzed (the harness's warm-up step is one): over 0 to 10
+    // warm-up heartbeats the cube's steady follow at 45 Hz read 0.058 to 0.085 m, so the 0.065 m this test had before only held for
+    // a harness that took no warm-up step. The run's start
     // and stop are not in the figure: a platform that goes from rest to 2 m/s in one heartbeat, or back, is a change of speed any
     // rider feels, and a cube then rises up to 0.3 m (the whole-run figure).
     [Theory]
@@ -70,7 +69,7 @@ public class SteppedMoverTests
     {
         KinematicScenarios.Figures f = Measure(rider, true, rate, uneven, how);
         Assert.True(f.OnAtEnd, f.Verdict);
-        Assert.True(f.SteadyFollow <= (rider == "box" ? 0.065 : 0.05), $"{rider} moved {f.SteadyFollow:0.000} m about its place on the platform");
+        Assert.True(f.SteadyFollow <= (rider == "box" ? 0.09 : 0.05), $"{rider} moved {f.SteadyFollow:0.000} m about its place on the platform");
         Assert.True(f.MaxFollow < 0.35, $"{rider} was {f.MaxFollow:0.000} m from its place at some time in the run");
     }
 

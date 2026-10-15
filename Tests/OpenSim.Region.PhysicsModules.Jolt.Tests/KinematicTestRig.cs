@@ -47,13 +47,8 @@ internal static class KinematicTestRig
         };
 
     public static RunResult Run(Scenario sc, double physicsRate, params (string Key, string Value)[] jolt)
-        => Run(sc, physicsRate, true, jolt);
-
-    /// <summary>As <see cref="Run(Scenario, double, ValueTuple{string, string}[])"/>; <paramref name="warmUpStep"/> false leaves out the
-    /// harness's empty step before the setup (<see cref="HarnessOptions.WarmUpStep"/>), for a figure that was set without it.</summary>
-    public static RunResult Run(Scenario sc, double physicsRate, bool warmUpStep, params (string Key, string Value)[] jolt)
     {
-        var o = new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsRate, WarmUpStep = warmUpStep };
+        var o = new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsRate };
         foreach ((string key, string value) in jolt)
             o.Jolt[key] = value;
         return Harness.Harness.Run(sc, o);
