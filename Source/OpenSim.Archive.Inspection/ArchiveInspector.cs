@@ -530,7 +530,7 @@ public sealed class ArchiveInspector
                     m_report.BoxedObjects.Add(boxed);
                 else
                     m_report.Retention.BoxedTruncated = true;
-                Credit(boxed.RootCreator, 0, 0, 0, 1, null);
+                Credit(boxed.RootCreator, 0, 0, 0, 1, obj.Groups[0].Parts.First(p => p.Part.IsRoot).Part.OwnerId);
                 Emit(boxed);
             }
 
@@ -905,12 +905,14 @@ public sealed class ArchiveInspector
                 t.WithCreatorData += parts + items;
             Widen(t, date);
 
-            if (owner.HasValue && (parts + items) > 0)
+            if (owner.HasValue)
             {
                 if (!m_owners.TryGetValue(owner.Value, out PartyTotals o))
                     m_owners[owner.Value] = o = new PartyTotals { Id = owner.Value };
                 o.Parts += parts;
+                o.Linksets += linksets;
                 o.Items += items;
+                o.BoxedObjects += boxedObjects;
                 Widen(o, date);
             }
         }
