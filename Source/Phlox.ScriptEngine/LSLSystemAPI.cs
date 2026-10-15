@@ -10707,6 +10707,9 @@ public void llRezObject(string inventory, Vector3 pos, Vector3 vel, Quaternion r
         public void llRotLookAt(Quaternion target, float strength, float damping)
         {
             if (m_host?.ParentGroup == null) return;
+            // The target is a rotation: a script's llRotBetween or hand-built quaternion need not be unit length, and a
+            // zero one reads as no rotation (as llSetRot and llSetLocalRot read it), whichever way it is used below.
+            target = NormalizedRot(target);
 
             if (m_host.ParentGroup.UsesPhysics)
             {
