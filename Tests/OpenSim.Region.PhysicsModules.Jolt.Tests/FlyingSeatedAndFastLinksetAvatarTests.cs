@@ -388,8 +388,9 @@ public class FlyingSeatedAndFastLinksetAvatarTests
         Vector3 end = trace[^1].P;
         float radius = 0.3f;
         // Never thrown up, and at rest within half a second.
-        // 0.06 m with the simulator's 2.1 m avatar (the earlier 1.9 m one rose less than 0.05 m); a launch is metres.
-        Assert.True(trace.Max(p => p.P.Z) < placed.Z + 0.1f, $"{res.Name}: the avatar rose to {trace.Max(p => p.P.Z) - placed.Z:0.000} m above where it was put");
+        // The "inside" cases put the avatar 1 m above the ground (the cap on where it is put), which is 0.06 m below where the
+        // simulator's 2.1 m avatar stands: it rises that much to stand, and not more than 0.05 m beyond it. A launch is metres.
+        Assert.True(trace.Max(p => p.P.Z) < placed.Z + MathF.Max(0f, ground + half - placed.Z) + 0.05f, $"{res.Name}: the avatar rose to {trace.Max(p => p.P.Z) - placed.Z:0.000} m above where it was put");
         int halfSecond = trace.FindIndex(p => p.T >= trace[0].T + 0.5);
         for (int i = halfSecond + 1; i < trace.Count; i++)
             Assert.True(Vector3.Distance(trace[i].P, trace[i - 1].P) < 0.01f, $"{res.Name}: the avatar still moves at {trace[i].T:0.00} s");
@@ -494,7 +495,7 @@ public class FlyingSeatedAndFastLinksetAvatarTests
                 }
             },
         };
-        RunResult res = Run(sc, physicsHz, pinned: avatarIs == "flying");
+        RunResult res = Run(sc, physicsHz, pinned: avatarIs == "flying" && kg < 10f && physicsHz == 0.0);
 
         // Never through: while level with the avatar, the front part stays on its own side of it (once past, a linkset
         // thrown at a flying avatar falls away below it).

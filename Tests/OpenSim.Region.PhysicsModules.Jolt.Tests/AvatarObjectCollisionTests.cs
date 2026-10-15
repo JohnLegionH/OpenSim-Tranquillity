@@ -63,7 +63,7 @@ public class AvatarObjectCollisionTests
     [InlineData(0.0, 100f)]
     public void A_box_thrown_at_an_avatar_stops_against_it_and_moves_it_no_more_than_their_momentum_allows(double physicsRate, float kg)
     {
-        RunResult r = Run(kg < 10f ? "avatar-hit-1kg" : "avatar-hit-100kg", physicsRate, pinned: kg >= 100f);
+        RunResult r = Run(kg < 10f ? "avatar-hit-1kg" : "avatar-hit-100kg", physicsRate, pinned: kg >= 100f && physicsRate == 0.0);
         HarnessPart box = Box(r);
         float side = AvatarHitScenarios.SideFor(kg);
 

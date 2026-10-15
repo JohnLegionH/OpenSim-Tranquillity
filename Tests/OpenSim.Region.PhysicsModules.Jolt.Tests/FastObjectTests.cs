@@ -80,7 +80,8 @@ public class FastObjectTests
         Assert.Equal(0, r.Summary.Tunneled);
         // Through the slab: the ball reached the wall, 2 m beyond the slab's far face. A prim bounces (restitution 0.5), so at
         // a slow heartbeat the ball can strike the wall and be on its way back before the next sample: it also counts as
-        // having reached the wall if it is seen coming back.
+        // having reached the wall if it is seen coming back. The slab is a volume detector, which cannot turn the ball, so the
+        // wall is the only thing it can have bounced off (the start and end counts above show it went through the slab).
         Assert.Contains(r.Samples, s => s.Position.X > TunnelScenarios.TargetX - 0.05f - 0.2f || s.Velocity.X < 0f);
     }
 

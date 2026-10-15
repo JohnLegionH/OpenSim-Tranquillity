@@ -119,8 +119,10 @@ public class RestingContactAndBounceTests
     {
         RunResult r = Run("rest-vd", physicsRate);
         HarnessPart box = Part(r, "box"), detector = Part(r, "detector");
-        // A box bounces off the platform it is dropped on (prim against prim, 0.5 times 0.5), which delays its sleep by about
-        // 0.2 s against a box with no bounce: asleep half a second before the lift is the margin.
+        // A box bounces off the platform it is dropped on (a prim's restitution is 0.5, as in the simulator), which delays its
+        // sleep against a box with no bounce: at one physics step per heartbeat it sleeps at 4.18 s against 3.82 s, and at the
+        // other rates 0.36 s later too. The lift is at 5 s, so asleep half a second before it is the margin (it was a second
+        // before the bounce).
         Assert.True(box.SleptAt < Lift - 0.5, $"{r.Name}: the box fell asleep at {box.SleptAt:0.00} s");
 
         CollisionWatch w = detector.Watch;

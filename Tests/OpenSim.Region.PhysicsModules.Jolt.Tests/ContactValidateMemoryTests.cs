@@ -160,8 +160,10 @@ public class ContactValidateMemoryTests
         Assert.Equal("True", Value(line, "cleared"));
 
         // With the validate callback the 1900 steps grew about 60 MB. The allowance (2 MB, about 1 KB per step) is
-        // for heap noise.
+        // for heap noise. On Linux glibc keeps freed native memory in its arenas and the figure carries a little more of it:
+        // 2.2 MB on CI's ubuntu Release runs. 8 MB is still far under the leak.
         long grownKb = long.Parse(Value(line, "grown_kb"), CultureInfo.InvariantCulture);
-        Assert.True(grownKb < 2 * 1024, $"the pile grew {grownKb} KB over {Steps - 100} steps: {line}");
+        long allowedKb = OperatingSystem.IsWindows() ? 2 * 1024 : 8 * 1024;
+        Assert.True(grownKb < allowedKb, $"the pile grew {grownKb} KB over {Steps - 100} steps: {line}");
     }
 }

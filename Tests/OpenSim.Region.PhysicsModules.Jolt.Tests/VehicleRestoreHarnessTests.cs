@@ -78,15 +78,10 @@ public class VehicleRestoreHarnessTests
         return (p, f);
     }
 
-    // A sled and a balloon start above the ground and fall onto it, within the first seconds after their type is set. A vehicle
-    // made while the region loads is held still for the first 0.27 s (JoltPrim.StepVehicle), and one made with the region
-    // running is not (JoltPrim.VehicleType), so these two are compared in the load window, where every route is held alike.
-    private static bool InLoadWindow(string scenario) => scenario is "sled" or "balloon";
-
-    private static RunResult Drive(string scenario, double physicsRate, VehicleRoute route, string settings, bool scriptAgain = false, bool? warmUp = null)
+    private static RunResult Drive(string scenario, double physicsRate, VehicleRoute route, string settings, bool scriptAgain = false, bool warmUp = true)
     {
         var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsRate, VehicleRoute = route, VehicleScriptAgain = scriptAgain,
-                                     WarmUpStep = warmUp ?? !InLoadWindow(scenario) };
+                                     WarmUpStep = warmUp };
         (List<VehicleParamSetting> p, List<VehicleFlagSetting> f) = Settings(scenario, settings);
         o.VehicleParams.AddRange(p);
         o.VehicleFlags.AddRange(f);
