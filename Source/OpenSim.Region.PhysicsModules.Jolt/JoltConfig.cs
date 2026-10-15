@@ -93,6 +93,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // mesh. Core gives every mesh CONVEX unless the upload says otherwise, so this turns hollow mesh into solid.
         public bool HonourConvexMesh = false;
 
+        // The most collision shapes one physical object (the whole linkset) may have: 1 for each prim that is a plain box, sphere
+        // or cylinder, and for each of the others the number of convex hulls it is made of (a prim of shape type NONE has none).
+        // An object over it is refused physical status and the owner is told. 0 = no limit.
+        public int MaxPhysicalComplexity = 0;
+
         // Jolt's enhanced internal edge removal, for bodies that move under physics and for avatars: the contacts with the
         // shared edges inside a triangle mesh or a heightfield that can push a body off its path. Costs more per contact.
         public bool BodyEnhancedEdgeRemoval = false;
@@ -203,6 +208,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.VehicleRestSpeed = F(cfg, "VehicleRestSpeed", c.VehicleRestSpeed, 0f, 1f, warnings);
             c.BodyMaxLinearSpeed = F(cfg, "BodyMaxLinearSpeed", c.BodyMaxLinearSpeed, 1f, 100000f, warnings);
             c.BodyMaxAngularSpeed = F(cfg, "BodyMaxAngularSpeed", c.BodyMaxAngularSpeed, 0.1f, 10000f, warnings);
+            c.MaxPhysicalComplexity = I(cfg, "MaxPhysicalComplexity", c.MaxPhysicalComplexity, 0, 1_000_000, warnings);
             c.PrimLinearDamping = F(cfg, "PrimLinearDamping", c.PrimLinearDamping, 0f, 100f, warnings);
             c.PrimAngularDamping = F(cfg, "PrimAngularDamping", c.PrimAngularDamping, 0f, 100f, warnings);
             c.RayCastBudgetMs = F(cfg, "RayCastBudgetMs", c.RayCastBudgetMs, 0.1f, 1000f, warnings);
