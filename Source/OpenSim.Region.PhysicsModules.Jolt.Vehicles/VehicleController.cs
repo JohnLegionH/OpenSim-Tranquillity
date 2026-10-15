@@ -1135,6 +1135,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// </summary>
         private float GravityShare()
         {
+            if (HoverTurnsGravityOff())
+                return 0f;
             float buoyancy = Buoyancy();
             // (InWorldz's hover has no such rule: its buoyancy stays above the hover height.)
             if (HoverTarget(out float targetZ, out bool upOnly) && upOnly && !InWorldz && _body.Position.Z > targetZ)
@@ -1515,9 +1517,21 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             return true;
         }
 
+        /// <summary>
+        /// InWorldz: while hover acts the vehicle has no gravity, whatever its buoyancy. Halcyon's hover switches the
+        /// actor's gravity off on every step it runs (PhysxPrim.pid.cs DoHoverTarget, DoHover: _hoverDisableGravity;
+        /// PhysxPrim.cs WantsGravity), so the vehicle is held at its hover height and not below it, where Second Life's
+        /// spring would carry its weight (<see cref="SimulateHover"/>). This is what keeps a sailboat, whose preset has
+        /// buoyancy 0, on the water. Under SecondLife behaviour the documented spring stands.
+        /// </summary>
+        private bool HoverTurnsGravityOff()
+            => InWorldz && HoverTarget(out _, out _);
+
         // The gravity share under the hover height: 1 - buoyancy, times the ground factor for a ground vehicle touching.
         private float GravityShareBelow()
         {
+            if (HoverTurnsGravityOff())
+                return 0f;
             float share = 1f - Buoyancy();
             if (IsGroundVehicle && _body.HasCollision)
                 share *= GroundGravityFactor;
