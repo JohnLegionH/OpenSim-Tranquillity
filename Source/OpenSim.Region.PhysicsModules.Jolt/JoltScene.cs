@@ -43,8 +43,6 @@ using OpenSim.Region.PhysicsModules.Jolt.Backend;
 using OpenSim.Region.PhysicsModules.Jolt.Vehicles;
 // The backend speaks System.Numerics.Vector3; OpenSim speaks OpenMetaverse.Vector3 (the unqualified
 // Vector3 here). Alias the numerics one so backend calls are unambiguous.
-using Meshmerizer = OpenSim.Region.PhysicsModules.Meshing.Meshmerizer;
-using PrimProfileRings = OpenSim.Region.PhysicsModules.Meshing.PrimProfileRings;
 using SVector3 = System.Numerics.Vector3;
 using SQuaternion = System.Numerics.Quaternion;
 
@@ -1231,7 +1229,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // physical and of shape type PRIM (useHullList). Prims of one set of shape parameters share one compound, cooked at
             // unit size and scaled to each prim's size (CookPrimCellsShared); a prim that may not share cooks its own.
             bool cellsWanted = !isMesh && isPhysical && useHullList && !IsSculptPrim(pbs);
-            if (cellsWanted && share && CellShapeCacheEnabled && ScaleReusable(size, true) && m_mesher is Meshmerizer)
+            if (cellsWanted && share && CellShapeCacheEnabled && ScaleReusable(size, true) && m_mesher is IMesherShapeData)
             {
                 ShapeId shared = CookPrimCellsShared(backend, pbs, size, isPhysical, bodyIsPhysical, out kind, out hullCount, out massVolume);
                 if (shared.IsValid)
@@ -1821,8 +1819,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             cellCount = 1;
             realVolume = 0.0;
             cellPoints = null;
-            if (!(m_mesher is Meshmerizer meshmerizer))
+            // The mesher is asked for its shape data through the interface, not its class: the region server loads the mesher in a
+            // context of its own, where the class this module was built against is another type (see IMesherShapeData).
+            if (!(m_mesher is IMesherShapeData meshmerizer))
+            {
+                PrimCellsNotice("mesher", $"the mesher ({m_mesher?.GetType().FullName ?? "none"}) gives no shape data; physical prims that are not convex keep one hull.");
                 return ShapeId.Invalid;
+            }
             try
             {
                 if (!meshmerizer.TryGetPrimProfileRings("jolt-prim", pbs, size, MeshLod, out PrimProfileRings rings))
@@ -1903,7 +1906,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             kind = BoxFallbackKind;
             hullCount = 1;
             List<List<Vector3>> hulls;
-            try { hulls = (m_mesher as Meshmerizer)?.GetConvexHulls(mesh, size); }
+            try { hulls = (m_mesher as IMesherShapeData)?.GetConvexHulls(mesh, size); }
             catch (Exception e)
             {
                 m_log.LogWarning($"{LogHeader} reading the hull list of mesh asset {asset} threw ({e.GetType().Name}: {e.Message}); one hull of the points.");

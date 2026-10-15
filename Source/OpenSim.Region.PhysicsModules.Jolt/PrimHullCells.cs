@@ -31,7 +31,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
-using OpenSim.Region.PhysicsModules.Meshing;
+using OpenSim.Region.PhysicsModules.SharedBase;
 using SVector3 = System.Numerics.Vector3;
 
 namespace OpenSim.Region.PhysicsModules.Jolt
