@@ -150,7 +150,12 @@ public enum Vehicle : int
     /// <summary>The time, in seconds, a vehicle may stay above DISABLE_MOTORS_ABOVE before its motors are disabled.</summary>
     DISABLE_MOTORS_AFTER = 11005,
     /// <summary>Multiplier of the banking efficiency while the vehicle is upside down.</summary>
-    INVERTED_BANKING_MODIFIER = 11006
+    INVERTED_BANKING_MODIFIER = 11006,
+
+    /// <summary>InWorldz's linear wind efficiency vector: how much of the wind's push each axis of the vehicle takes (llSetVehicleVectorParam).</summary>
+    LINEAR_WIND_EFFICIENCY = 12001,
+    /// <summary>InWorldz's angular wind efficiency vector: how much of the wind's turning push the vehicle takes about each axis.</summary>
+    ANGULAR_WIND_EFFICIENCY = 12002
 }
 
 [Flags]
@@ -224,14 +229,6 @@ public struct VehicleData
     // Axis
     public Quaternion m_referenceFrame;
 
-    // InWorldz's float parameters 11001 to 11006
-    public float m_mouselookAzimuth;
-    public float m_mouselookAltitude;
-    public float m_bankingAzimuth;
-    public float m_disableMotorsAbove;
-    public float m_disableMotorsAfter;
-    public float m_invertedBankingModifier;
-
     // A value for each axis of the four motor timescales above (llSetVehicleVectorParam with VEHICLE_LINEAR_MOTOR_TIMESCALE,
     // _LINEAR_MOTOR_DECAY_TIMESCALE, _ANGULAR_MOTOR_TIMESCALE or _ANGULAR_MOTOR_DECAY_TIMESCALE). Null means the record holds
     // none, and the axes are all the single value of the field above, as in a record saved before these existed. The single
@@ -240,4 +237,17 @@ public struct VehicleData
     public Vector3? m_linearMotorDecayTimescaleAxes;
     public Vector3? m_angularMotorTimescaleAxes;
     public Vector3? m_angularMotorDecayTimescaleAxes;
+
+    // InWorldz's float parameters 11001 to 11006
+    public float m_mouselookAzimuth;
+    public float m_mouselookAltitude;
+    public float m_bankingAzimuth;
+    public float m_disableMotorsAbove;
+    public float m_disableMotorsAfter;
+    public float m_invertedBankingModifier;
+
+    // InWorldz's wind efficiency vectors 12001 and 12002 (llSetVehicleVectorParam). Null means the record holds none, and the
+    // engine's own value for the vehicle type stands, as in a record saved before these existed.
+    public Vector3? m_linearWindEfficiency;
+    public Vector3? m_angularWindEfficiency;
 }
