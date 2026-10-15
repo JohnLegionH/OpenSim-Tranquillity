@@ -124,9 +124,14 @@ public class ArchiveReport
     public string StopReason { get; set; }
     public ArchiveInfo Archive { get; set; } = new ArchiveInfo();
 
+    /// <summary>Linksets, parts and prim inventory items found directly in the archive (OAR object files).</summary>
     public long LinksetCount { get; set; }
     public long PartCount { get; set; }
     public long PrimItemCount { get; set; }
+    /// <summary>The same, found inside boxed objects (object assets), counted separately.</summary>
+    public long BoxedLinksetCount { get; set; }
+    public long BoxedPartCount { get; set; }
+    public long BoxedItemCount { get; set; }
     public long IarItemCount { get; set; }
     public long FolderCount { get; set; }
     public long BoxedObjectCount { get; set; }

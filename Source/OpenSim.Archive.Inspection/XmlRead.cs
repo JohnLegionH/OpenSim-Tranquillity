@@ -23,9 +23,14 @@ internal static class XmlRead
     /// </summary>
     public static XmlReader Create(byte[] data)
     {
-        string text = Encoding.UTF8.GetString(data);
+        // object assets saved by viewers and by some forks end with a NUL; the repository's readers drop it too
+        int length = data.Length;
+        while (length > 0 && data[length - 1] == 0)
+            length--;
+        string text = Encoding.UTF8.GetString(data, 0, length);
         if (text.Length > 0 && text[0] == (char)0xFEFF)
             text = text.Substring(1);
+        text = DropIllegalXmlChars(text);
 
         XmlReaderSettings settings = new XmlReaderSettings
         {
@@ -39,6 +44,27 @@ internal static class XmlRead
         };
         return XmlReader.Create(new StringReader(text), settings);
     }
+
+    /// <summary>
+    /// Characters XML 1.0 does not allow (most control characters). The reader refuses them even with character
+    /// checking off, and they have no place in a name, so they are dropped before parsing.
+    /// </summary>
+    private static string DropIllegalXmlChars(string text)
+    {
+        int bad = 0;
+        foreach (char c in text)
+            if (IsIllegal(c)) bad++;
+        if (bad == 0)
+            return text;
+
+        StringBuilder sb = new StringBuilder(text.Length - bad);
+        foreach (char c in text)
+            if (!IsIllegal(c))
+                sb.Append(c);
+        return sb.ToString();
+    }
+
+    private static bool IsIllegal(char c) => (c < ' ' && c != (char)9 && c != (char)10 && c != (char)13) || c == (char)0xFFFE || c == (char)0xFFFF;
 
     /// <summary>Text of the element the reader is on, all nested text joined; moves the reader past the element.</summary>
     public static string Text(XmlReader r)

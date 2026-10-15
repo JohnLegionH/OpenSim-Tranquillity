@@ -134,11 +134,11 @@ public static class TextReport
         foreach (RegionInfo reg in a.Regions)
             sb.AppendLine("  region " + (reg.Dir.Length > 0 ? S(reg.Dir) + " " : "") + (reg.Id.HasValue ? reg.Id.Value.ToString() : "?") + (reg.SizeX.HasValue ? "  " + reg.SizeX + "x" + reg.SizeY + " m" : ""));
         if (a.Kind == ArchiveKind.Oar)
-            sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "  linksets: {0}   parts: {1}   prim inventory items: {2}   boxed objects: {3}   parcels: {4}",
-                r.LinksetCount, r.PartCount, r.PrimItemCount, r.BoxedObjectCount, r.ParcelCount));
+            sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "  linksets: {0}   parts: {1}   prim inventory items: {2}   parcels: {3}   boxed objects: {4} (holding {5} linksets, {6} parts, {7} items)",
+                r.LinksetCount, r.PartCount, r.PrimItemCount, r.ParcelCount, r.BoxedObjectCount, r.BoxedLinksetCount, r.BoxedPartCount, r.BoxedItemCount));
         else
-            sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "  folders: {0}   items: {1}   boxed objects: {2}   parts in boxed objects: {3}",
-                r.FolderCount, r.IarItemCount, r.BoxedObjectCount, r.PartCount));
+            sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "  folders: {0}   items: {1}   boxed objects: {2} (holding {3} linksets, {4} parts, {5} items)",
+                r.FolderCount, r.IarItemCount, r.BoxedObjectCount, r.BoxedLinksetCount, r.BoxedPartCount, r.BoxedItemCount));
         sb.AppendLine();
 
         sb.AppendLine("CREATORS (" + r.Creators.Count + ")");

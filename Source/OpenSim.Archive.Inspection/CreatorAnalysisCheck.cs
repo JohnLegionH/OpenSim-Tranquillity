@@ -44,8 +44,8 @@ public sealed class CreatorAnalysisCheck : ArchiveCheckBase
     private readonly AnalysisSettings m_settings;
     private ArchiveInfo m_archive;
 
-    private long m_total, m_library, m_blank, m_counted, m_named;
-    private long m_sameAccount, m_withCreatorData;
+    private long m_total, m_library, m_blank, m_counted, m_named, m_withId;
+    private long m_sameAccount, m_withCreatorData, m_foreignCreatorData;
     private readonly Dictionary<UUID, long> m_byId = new Dictionary<UUID, long>();
     private readonly Dictionary<UUID, string> m_idNames = new Dictionary<UUID, string>();
     private readonly Dictionary<string, long> m_byName = new Dictionary<string, long>();
@@ -65,14 +65,19 @@ public sealed class CreatorAnalysisCheck : ArchiveCheckBase
     public override void OnRecord(ArchiveRecord record)
     {
         if (record is PartRecord p)
-            Add(p.Creator, p.OwnerId, p.LastOwnerId, true, p.CreationDate);
+            Add(p.Creator, p.OwnerId, p.LastOwnerId, true, p.CreationDate, p.Creator.HasData);
         else if (record is ItemRecord i)
-            Add(i.Creator, i.OwnerId, i.LastOwnerId, i.HasLastOwner, i.CreationDate);
+        {
+            // An IAR saved with --home stamps creator data on every item whose creator has an account, the
+            // owner's own items included, so there it only counts when it names someone other than the owner.
+            bool foreign = i.Source == ItemSource.InventoryArchive ? i.Creator.HasData && i.Creator.Id != i.OwnerId : i.Creator.HasData;
+            Add(i.Creator, i.OwnerId, i.LastOwnerId, i.HasLastOwner, i.CreationDate, foreign);
+        }
     }
 
     private static string NameKey(CreatorRef c) => c.Name.ToLowerInvariant() + "@" + c.Home.ToLowerInvariant();
 
-    private void Add(CreatorRef c, UUID owner, UUID lastOwner, bool hasLastOwner, int? date)
+    private void Add(CreatorRef c, UUID owner, UUID lastOwner, bool hasLastOwner, int? date, bool foreignData)
     {
         m_total++;
         if (c.IsLibrary) { m_library++; return; }
@@ -82,16 +87,11 @@ public sealed class CreatorAnalysisCheck : ArchiveCheckBase
         m_owners.Add(owner);
         if (c.Id != UUID.Zero)
         {
+            m_withId++;
             m_byId.TryGetValue(c.Id, out long n);
             m_byId[c.Id] = n + 1;
             if (c.Name.Length > 0 && !m_idNames.ContainsKey(c.Id))
                 m_idNames[c.Id] = c.Name;
-        }
-        else
-        {
-            // a creator known only by name still counts as a group of its own under the id grouping
-            m_byId.TryGetValue(UUID.Zero, out long n);
-            m_byId[UUID.Zero] = n + 1;
         }
 
         if (c.Name.Length > 0)
@@ -108,6 +108,8 @@ public sealed class CreatorAnalysisCheck : ArchiveCheckBase
             m_withCreatorData++;
             m_homeNames.Add(NameKey(c));
         }
+        if (foreignData)
+            m_foreignCreatorData++;
 
         if (c.Id != UUID.Zero && owner == c.Id && (!hasLastOwner || lastOwner == c.Id))
             m_sameAccount++;
@@ -134,7 +136,7 @@ public sealed class CreatorAnalysisCheck : ArchiveCheckBase
             NamedRecords = m_named
         };
 
-        FlagByGroup(res, "uuid", m_byId, m_counted, k => k == UUID.Zero ? "(name only)" : (m_idNames.TryGetValue(k, out string nm) ? nm + " " + k : k.ToString()), k => k == UUID.Zero ? (UUID?)null : k);
+        FlagByGroup(res, "uuid", m_byId, m_withId, k => m_idNames.TryGetValue(k, out string nm) ? nm + " " + k : k.ToString(), k => (UUID?)k);
         FlagByGroup(res, "name", m_byName, m_named, k => m_nameDisplay[k], k => null);
 
         if (res.Fired)
@@ -239,7 +241,7 @@ public sealed class CreatorAnalysisCheck : ArchiveCheckBase
 
         // 1. creator, owner and last owner are one account and there is no creator data
         double sameShare = m_counted == 0 ? 0 : (double)m_sameAccount / m_counted;
-        if (sameShare >= m_settings.SameAccountShare && m_withCreatorData == 0)
+        if (sameShare >= m_settings.SameAccountShare && m_foreignCreatorData == 0)
         {
             string loader = kind == ArchiveKind.Iar ? LoaderBehaviour.IarRewrite
                 : kind == ArchiveKind.Oar ? LoaderBehaviour.OarRewrite + " " + LoaderBehaviour.OarOwnerRewrite
@@ -248,13 +250,14 @@ public sealed class CreatorAnalysisCheck : ArchiveCheckBase
             {
                 Id = "MATCH_LOADER_REWRITE",
                 Statement = string.Format(CultureInfo.InvariantCulture,
-                    "Creator, owner and last owner are the same account on {0} of {1} records ({2}) and no record carries creator data. This matches what a loader leaves when it replaces creators it cannot resolve. {3}",
-                    m_sameAccount, m_counted, Pct(m_sameAccount, m_counted), loader),
+                    "Creator, owner and last owner are the same account on {0} of {1} records ({2}) and no record carries creator data naming a different creator ({4} records carry creator data). This matches what a loader leaves when it replaces creators it cannot resolve. {3}",
+                    m_sameAccount, m_counted, Pct(m_sameAccount, m_counted), loader, m_withCreatorData),
                 Numbers = new Dictionary<string, string>
                 {
                     ["sameAccountRecords"] = m_sameAccount.ToString(CultureInfo.InvariantCulture),
                     ["countedRecords"] = m_counted.ToString(CultureInfo.InvariantCulture),
-                    ["recordsWithCreatorData"] = m_withCreatorData.ToString(CultureInfo.InvariantCulture)
+                    ["recordsWithCreatorData"] = m_withCreatorData.ToString(CultureInfo.InvariantCulture),
+                    ["recordsWithOtherCreatorData"] = m_foreignCreatorData.ToString(CultureInfo.InvariantCulture)
                 }
             });
         }

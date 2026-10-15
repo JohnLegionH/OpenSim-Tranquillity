@@ -220,12 +220,7 @@ public sealed class ArchiveInspector
                     m_currentEntry = null;
                     h = tar.ReadNext();
                 }
-                catch (TarFormatException) when (tar.EntriesRead == 0)
-                {
-                    m_report.Status = InspectionStatus.NotAnArchive;
-                    throw;
-                }
-                catch (InvalidDataException) when (tar.EntriesRead == 0)
+                catch (Exception e) when (tar.EntriesRead == 0 && (e is TarFormatException || e is InvalidDataException || e is EndOfStreamException || e is IOException))
                 {
                     m_report.Status = InspectionStatus.NotAnArchive;
                     throw;
@@ -555,7 +550,10 @@ public sealed class ArchiveInspector
                     PrimCount = g.Parts.Count
                 };
                 Clean(ls);
-                m_report.LinksetCount++;
+                if (boxedAsset.HasValue)
+                    m_report.BoxedLinksetCount++;
+                else
+                    m_report.LinksetCount++;
                 if (!boxedAsset.HasValue && m_report.Linksets.Count < m_opt.MaxRetainedRecords)
                     m_report.Linksets.Add(ls);
                 else if (!boxedAsset.HasValue)
@@ -572,7 +570,10 @@ public sealed class ArchiveInspector
                     part.BoxedAssetId = boxedAsset;
                     part.RegionDir = regionDir;
                     Clean(part);
-                    m_report.PartCount++;
+                    if (boxedAsset.HasValue)
+                        m_report.BoxedPartCount++;
+                    else
+                        m_report.PartCount++;
                     if (m_report.Parts.Count < m_opt.MaxRetainedRecords)
                         m_report.Parts.Add(part);
                     else
@@ -593,7 +594,10 @@ public sealed class ArchiveInspector
                         item.BoxedAssetId = boxedAsset;
                         item.RegionDir = regionDir;
                         Clean(item);
-                        m_report.PrimItemCount++;
+                        if (boxedAsset.HasValue)
+                            m_report.BoxedItemCount++;
+                        else
+                            m_report.PrimItemCount++;
                         if (m_report.Items.Count < m_opt.MaxRetainedRecords)
                             m_report.Items.Add(item);
                         else
@@ -976,7 +980,14 @@ public sealed class ArchiveInspector
             if (info.Kind == ArchiveKind.Unknown && m_kindFromPaths != ArchiveKind.Unknown)
                 info.Kind = m_kindFromPaths;
 
-            if (m_report.Status == InspectionStatus.NotAnArchive || (!info.ControlFileFound && m_kindFromPaths == ArchiveKind.Unknown && info.EntryCount > 0 && m_report.PartCount + m_report.IarItemCount == 0 && m_assets.Count == 0))
+            if (info.EntryCount == 0 && m_report.Status != InspectionStatus.NotAnArchive)
+            {
+                m_report.Status = InspectionStatus.NotAnArchive;
+                m_report.StopReason ??= "the file holds no archive entries";
+                return m_report;
+            }
+
+            if (m_report.Status == InspectionStatus.NotAnArchive || (!info.ControlFileFound && m_kindFromPaths == ArchiveKind.Unknown && info.EntryCount > 0 && m_report.PartCount + m_report.BoxedPartCount + m_report.IarItemCount == 0 && m_assets.Count == 0))
             {
                 m_report.Status = InspectionStatus.NotAnArchive;
                 if (m_report.StopReason == null)
