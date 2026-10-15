@@ -28,9 +28,6 @@ public class ConsoleTeardownTests
     private static readonly System.Reflection.MethodInfo Handle =
         typeof(JoltScene).GetMethod("HandleJoltConsole", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
-    private static readonly System.Reflection.MethodInfo HandleTest =
-        typeof(JoltScene).GetMethod("HandleJoltTestConsole", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-
     private static JoltScene NewScene()
     {
         var config = new IniConfigSource();
@@ -94,54 +91,6 @@ public class ConsoleTeardownTests
                 Thread.Sleep(cycle % 5);
                 s.Dispose();
                 Assert.True(console.Join(TimeSpan.FromSeconds(30)), "the console commands did not finish after teardown");
-                Assert.True(failure == null, $"cycle {cycle}: {failure}");
-            }
-        }
-        finally { MainConsole.Instance = saved; }
-    }
-
-    // `jolt hilltest` is a test command that queries the backend once per probe point and needs no logged-in avatar or
-    // region scene, so it runs on a bare JoltScene. It reads the backend once, so one typed while the region is torn
-    // down on another thread reports misses or "no backend" and never throws.
-    [Fact]
-    public void Test_console_hilltest_typed_during_a_teardown_does_not_throw()
-    {
-        Assert.NotNull(HandleTest);
-        var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-        ICommandConsole saved = MainConsole.Instance;
-        MainConsole.Instance = new MockConsole();
-        try
-        {
-            for (int cycle = 0; cycle < 40; cycle++)
-            {
-                JoltScene s = NewScene();
-                typeof(JoltScene).GetField("_hillSet", flags).SetValue(s, true);   // as `jolt terrainhill` leaves it
-                typeof(JoltScene).GetField("_hillCx", flags).SetValue(s, Size / 2f);
-                typeof(JoltScene).GetField("_hillCy", flags).SetValue(s, Size / 2f);
-                typeof(JoltScene).GetField("_hillBase", flags).SetValue(s, 20f);
-                typeof(JoltScene).GetField("_hillAmp", flags).SetValue(s, 40f);
-                typeof(JoltScene).GetField("_hillR", flags).SetValue(s, 200f);
-                s.Simulate(Heartbeat);
-                Exception failure = null;
-                using var started = new ManualResetEventSlim();
-                var console = new Thread(() =>
-                {
-                    try
-                    {
-                        started.Set();
-                        var limit = System.Diagnostics.Stopwatch.StartNew();
-                        while (s.Backend != null && limit.Elapsed < TimeSpan.FromSeconds(20))
-                            HandleTest.Invoke(s, new object[] { "jolt", new[] { "jolt", "hilltest" } });
-                        HandleTest.Invoke(s, new object[] { "jolt", new[] { "jolt", "hilltest" } });   // and once after the backend is gone
-                    }
-                    catch (System.Reflection.TargetInvocationException e) { failure = e.InnerException; }
-                    catch (Exception e) { failure = e; }
-                });
-                console.Start();
-                started.Wait();
-                Thread.Sleep(cycle % 5);
-                s.Dispose();
-                Assert.True(console.Join(TimeSpan.FromSeconds(30)), "the test console command did not finish after teardown");
                 Assert.True(failure == null, $"cycle {cycle}: {failure}");
             }
         }

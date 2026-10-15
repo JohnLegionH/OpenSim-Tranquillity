@@ -21,6 +21,10 @@ using OpenMetaverse;
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("OpenSim.Region.PhysicsModules.Jolt.Tests")]
 // The physics test harness (Tests/JoltPhysicsHarness) builds a scene without a region and steps it.
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("JoltPhysicsHarness")]
+// The opt-in diagnostics assembly (the console test commands) and its tests. The module loads the first when
+// [Jolt] TestCommands is true; see JoltDiagnosticsLoader.cs.
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("OpenSim.Region.PhysicsModules.Jolt.Diagnostics")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("OpenSim.Region.PhysicsModules.Jolt.Diagnostics.Tests")]
 
 namespace OpenSim.Region.PhysicsModules.Jolt
 {

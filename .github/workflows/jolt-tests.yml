@@ -49,6 +49,9 @@ jobs:
       - name: Build the Jolt test project
         run: dotnet build Tests/OpenSim.Region.PhysicsModules.Jolt.Tests -c ${{ matrix.configuration }} --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false
 
+      - name: Build the Jolt diagnostics test project
+        run: dotnet build Tests/OpenSim.Region.PhysicsModules.Jolt.Diagnostics.Tests -c ${{ matrix.configuration }} --disable-build-servers -nodeReuse:false -p:UseSharedCompilation=false
+
       - name: Check the natives in the test output
         shell: pwsh
         run: ./Source/OpenSim.Region.PhysicsModules.Jolt/assert-joltc-native.ps1 -PublishDir Tests/OpenSim.Region.PhysicsModules.Jolt.Tests/bin/${{ matrix.configuration }}/net10.0
@@ -57,6 +60,12 @@ jobs:
         run: >
           dotnet test Tests/OpenSim.Region.PhysicsModules.Jolt.Tests -c ${{ matrix.configuration }} --no-build
           --logger "console;verbosity=normal" --logger "trx;LogFileName=jolt.trx"
+          --results-directory "$RUNNER_TEMP/jolt-results"
+
+      - name: Run the Jolt diagnostics suite
+        run: >
+          dotnet test Tests/OpenSim.Region.PhysicsModules.Jolt.Diagnostics.Tests -c ${{ matrix.configuration }} --no-build
+          --logger "console;verbosity=normal" --logger "trx;LogFileName=jolt-diagnostics.trx"
           --results-directory "$RUNNER_TEMP/jolt-results"
 
       - name: Upload the test results

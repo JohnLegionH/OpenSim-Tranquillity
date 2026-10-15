@@ -60,8 +60,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private bool m_Enabled = false;
         private IConfigSource m_Config;
 
-        // [Jolt] TestCommands: register the console test commands (JoltTestCommands.cs). Off by default.
+        // [Jolt] TestCommands: load the diagnostics assembly with the console test commands (the
+        // OpenSim.Region.PhysicsModules.Jolt.Diagnostics project). Off by default.
         private bool m_testCommands;
+
+        // The diagnostics assembly's object for this region; null unless TestCommands is true and the assembly loaded.
+        private IJoltDiagnostics _diagnostics;
+        internal IJoltDiagnostics Diagnostics => _diagnostics;
+
+        // Where the diagnostics assembly is looked for: the folder of this assembly. A seam for tests.
+        internal static Func<string> DiagnosticsFolder = JoltDiagnosticsLoader.ModuleFolder;
+
+        /// <summary>True when [Jolt] TestCommands is set; false (the default) leaves the test commands out.</summary>
+        internal static bool TestCommandsEnabled(IConfigSource source)
+            => source?.Configs["Jolt"]?.GetBoolean("TestCommands", false) ?? false;
 
         // The [Jolt] section, parsed once in Initialise. The defaults reproduce the earlier hardcoded constants.
         private JoltConfig _joltConfig = new JoltConfig();
@@ -126,6 +138,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal int RegionSizeX => _regionSizeX;
         internal int RegionSizeY => _regionSizeY;
         private Scene _scene;
+        /// <summary>The region's scene (the diagnostics assembly's test commands rez and delete through it).</summary>
+        internal Scene RegionScene => _scene;
 
         // Vehicle-controller world inputs: the region water plane, the last cooked terrain
         // sample field (for height-at-XY without a per-frame raycast), the world gravity handed to
@@ -190,6 +204,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // Step-drain target for physical actors. Guarded because Add/RemovePrim can arrive off
         // the heartbeat thread (the backend permits concurrent Create/Remove with Step).
         private readonly Dictionary<uint, JoltPrim> _prims = new Dictionary<uint, JoltPrim>();
+        /// <summary>The region's prims by local id; hold the dictionary's own lock to read it.</summary>
+        internal Dictionary<uint, JoltPrim> Prims => _prims;
 
         // True only before the first Simulate (the region-reload window). Used by JoltPrim to drop a restored
         // physical prim's horizontal velocity on load (so a reloaded body doesn't inherit a stale coast).
@@ -255,37 +271,20 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // Collision-mesh LOD (matches BulletSim's BSParam.MeshLOD default), and the
         // characterization of the last RAW mesher output cooked (verts/tris/degenerate/duplicate/AABB).
         private const float MeshLod = 32f;
-        private struct MeshStats
+        internal struct MeshStats
         {
             public int Verts, Tris, DegenerateTris, DuplicateVerts, OutOfRangeIndices;
             public SVector3 Min, Max;
             public float Volume;   // enclosed volume of the (closed) mesh; == convex-hull volume for a convex prim
         }
         private MeshStats _lastMeshStats;
+        internal MeshStats LastMeshStats => _lastMeshStats;
+        internal long StepCount => _stepCount;
+        internal int LastActiveBodyCount => _lastActiveBodyCount;
 
-        // Dynamics: per-frame step counter + latest active-body count (drop asserts read these), and
-        // the tracked physical drops for the `jolt droptest`/`dropmesh`/`dropstatus` test commands
-        // (JoltTestCommands.cs). _lastBoxRestZ/_lastMeshRestZ
-        // persist across drops so a re-run can report determinism (same rest height).
+        // Dynamics: per-frame step counter + latest active-body count (the console test commands read these).
         private long _stepCount;
         private int _lastActiveBodyCount;
-        private float _lastBoxRestZ = float.NaN, _lastMeshRestZ = float.NaN;
-        private sealed class DropTrack
-        {
-            public uint LocalId;
-            public string Kind;                 // "box" or "mesh"
-            public float StartZ;
-            public long StartStep;
-            public float MinZ = float.MaxValue;
-            public float LastZ, LastSpeed;
-            public int JustDeactivatedCount;
-            public float RestZ = float.NaN;
-            public long RestStep = -1;
-            public float ExpectedMass;          // box: volume*density; mesh: hull(=mesh)volume*density
-            public float ExpectedRestZ;         // terrain Z + half-height
-        }
-        private readonly List<DropTrack> _drops = new List<DropTrack>();
-        private long _logStepsUntil = -1;   // window: log per-frame dt/ActiveBodyCount/liveZ after a drop
         private long _charFrameUntil = -1;  // window: log per-frame avatar Z/support/vZ ([charframe] toggle)
 
         // Caller-owned step buffers (backend contract: nothing allocates per frame). Simulate drains all
@@ -352,6 +351,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     }
 
                     m_testCommands = TestCommandsEnabled(source);
+                    if (m_testCommands)
+                    {
+                        // The test commands live in their own assembly, which is not shipped with the region server.
+                        _diagnostics = JoltDiagnosticsLoader.Load(DiagnosticsFolder(), m_log);
+                        _diagnostics?.Attach(this);
+                    }
 
                     var warnings = new List<string>();
                     JoltConfig joltConfig = JoltConfig.FromConfig(source, warnings);
@@ -543,8 +548,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // region's route to the scene: its `jolt` commands then do nothing and the console holds no reference to
             // the scene. The other regions' handlers are theirs and stay.
             _consoleRoute?.Detach();
-            if (scene != null && ReferenceEquals(s_parityScene, scene))
-                s_parityScene = null;
+            _diagnostics?.RegionRemoved(scene);
 
             // The region is going away: tear its physics down now rather than leave it to whoever closes the scene.
             // Dispose can run again from the scene's own close; it does nothing the second time.
@@ -558,10 +562,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (!m_Enabled)
                 return;
 
-            // `jolt parity` drives only the standard Scene/SceneObjectGroup/PhysicsActor surface, so its output can be
-            // compared with another engine's (parity-<engine>.txt). It is a test command, registered only when
-            // [Jolt] TestCommands is true, and only in a region on Jolt.
-            RegisterParityConsole(scene);
+            // `jolt parity`, a test command of the diagnostics assembly: registered only when [Jolt] TestCommands is
+            // true and that assembly is loaded, and only in a region on Jolt.
+            _diagnostics?.RegisterParity(scene);
 
             // The IMesher the cook path needs; without one, prims fall back to bounding boxes.
             m_wind = scene.RequestModuleInterface<IWindModule>();
@@ -572,23 +575,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             scene.PhysicsEnabled = true;
 
-            // Test scaffolding (gated by [Startup] JoltAutoDropTest, and only when [Jolt] TestCommands is true;
-            // see AutoDropTestEnabled in JoltTestCommands.cs): auto-drop a few physical boxes so
-            // fall + settle-on-real-terrain is verifiable from the log ([dropframe] liveZ, or `jolt dropstatus`)
-            // with no viewer, and every region carries bodies for a concurrent-step load test. Uses the same
-            // DropOne code path as `jolt droptest`. NEVER runs unless the flags are set, so it cannot affect
-            // real regions.
-            if (AutoDropTestEnabled(m_Config))
-            {
-                ClearTestPrims();
-                DropOne("box", new Vector3(2f, 2f, 2f), 118f, 128f);
-                DropOne("box", new Vector3(2f, 2f, 2f), 124f, 128f);
-                DropOne("box", new Vector3(2f, 2f, 2f), 130f, 128f);
-                m_log.LogInformation($"{LogHeader} JoltAutoDropTest: dropped 3 physical boxes in '{RegionName}' (watch [dropframe] / `jolt dropstatus`).");
-            }
+            // Test scaffolding of the diagnostics assembly (gated by [Startup] JoltAutoDropTest, and only when
+            // [Jolt] TestCommands is true and that assembly is loaded): a few physical boxes dropped at region load.
+            _diagnostics?.AutoDrop(m_Config);
 
             // The `jolt` console commands (read-only diagnostics such as a straight-down raycast onto the
-            // cooked terrain, plus the test commands when [Jolt] TestCommands is true).
+            // cooked terrain, plus the test commands when the diagnostics assembly is loaded).
             //
             // REGISTERED PER REGION, not once behind a static gate. With a single registration the
             // FIRST region to boot would own the delegate and capture ITS `this` forever, so on a
@@ -605,7 +597,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal void AttachConsole(ICommands commands)
         {
             _consoleRoute ??= new ConsoleRoute(this);
-            RegisterConsoleCommands(commands, m_testCommands, _consoleRoute.Read, _consoleRoute.Test);
+            RegisterConsoleCommands(commands, _consoleRoute.Read);
+            _diagnostics?.RegisterCommands(commands);
         }
 
         // What the console is given to call. The console cannot drop a handler, so what it holds is this small object,
@@ -618,11 +611,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             public ConsoleRoute(JoltScene scene) { _scene = scene; }
             public void Detach() => _scene = null;
             public void Read(string module, string[] cmd) => _scene?.HandleJoltConsole(module, cmd);
-            public void Test(string module, string[] cmd) => _scene?.HandleJoltTestConsole(module, cmd);
         }
 
         // The `jolt` subcommands that only read and report. They never change the region, so they are always
-        // registered. The test subcommands are listed in JoltTestCommands.cs.
+        // registered. The test subcommands are in the diagnostics assembly.
         internal static readonly string[] ReadOnlyCommands =
         {
             "capacity", "metrics", "terraintest", "probe", "heights", "avatarstatus", "charframe",
@@ -633,18 +625,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             "jolt capacity | metrics | terraintest | probe <x> <y> | heights <x> <y> | avatarstatus | charframe [secs] | sitstatus | sensortest | raytest | reloadcheck | vehiclestatus";
 
         /// <summary>
-        /// Register `jolt` with its read-only subcommands, and the test subcommands only when
-        /// <paramref name="testCommands"/> is true. A test subcommand that is not registered falls through to
-        /// <paramref name="readOnly"/>, which answers with the usage line.
+        /// Register `jolt` with its read-only subcommands. A test subcommand, which the diagnostics assembly registers
+        /// as its own command, falls through to <paramref name="readOnly"/> when that assembly is not loaded, and the
+        /// handler answers with the usage line.
         /// </summary>
-        internal static void RegisterConsoleCommands(ICommands commands, bool testCommands, CommandDelegate readOnly, CommandDelegate test)
+        internal static void RegisterConsoleCommands(ICommands commands, CommandDelegate readOnly)
         {
             commands.AddCommand("Physics", false, "jolt", ReadOnlyUsage,
                 "Jolt physics diagnostics for the current region: capacity and step metrics, terrain and ray probes, "
                 + "avatar, sit, vehicle and reload status. None of them changes the region.",
                 readOnly);
-            if (testCommands)
-                RegisterTestCommands(commands, test);
         }
 
         /// <summary>
@@ -656,7 +646,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// command a whole-sim sweep. See the note in HandleJoltConsole about which commands you actually
         /// want to run that way.
         /// </summary>
-        private bool WrongConsoleScene()
+        internal bool WrongConsoleScene()
             => !(MainConsole.Instance.ConsoleScene is null || MainConsole.Instance.ConsoleScene == _scene);
 
         // Raycast straight down at XY (from well above the region) and report the hit Z - proves the
@@ -680,9 +670,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             //
             // NOTE: a root-scoped `jolt ...` is a SIM-WIDE sweep. Every subcommand handled here is read-only
             // (heights / reloadcheck / vehiclestatus ...), so that is safe. The world-mutating test commands
-            // (rezprims / droptest / clearprims / linktest / sittest ...) live in JoltTestCommands.cs, are
-            // registered only when [Jolt] TestCommands is true, and use the same region scoping - so at the
-            // root prompt they too act in EVERY region. Use `change region <name>` before those.
+            // (rezprims / droptest / clearprims / linktest / sittest ...) live in the diagnostics assembly, are
+            // registered only when [Jolt] TestCommands is true and that assembly is loaded, and use the same region
+            // scoping - so at the root prompt they too act in EVERY region. Use `change region <name>` before those.
             if (MainConsole.Instance.ConsoleScene is null)
                 MainConsole.Instance.Output($"{LogHeader} --- region '{RegionName}' ---");
 
@@ -796,37 +786,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 MainConsole.Instance.Output($"  (a) Jolt heightfield raycast : {(hit ? $"HIT z={rh.Point.Z:0.000} (n.z={rh.Normal.Z:0.00})" : "MISS - NO terrain collision here")}");
                 MainConsole.Instance.Output($"  (b) OpenSim scene heightmap  : {sceneH:0.000}");
                 MainConsole.Instance.Output($"  (d) region water height      : {water:0.000}");
-                foreach (DropTrack t in _drops)
-                {
-                    lock (_prims)
-                        if (_prims.TryGetValue(t.LocalId, out JoltPrim jp) && backend.TryGetBodyState(jp.BodyHandle, out BodyState st))
-                            MainConsole.Instance.Output($"  (c) drop {t.Kind} id={t.LocalId} : liveZ={st.Position.Z:0.000} joltActive={(((st.Flags & BodyStateFlags.Active) != 0) ? "Y" : "N")} startZ={t.StartZ:0.00}");
-                }
+                _diagnostics?.DescribeDrops(backend, line => MainConsole.Instance.Output(line));
                 MainConsole.Instance.Output($"  read: (a)==(b) => cook matches OpenSim; box rest (c) should ~= (a)+halfHeight. (c)~water while (a)!=water => box not on terrain.");
                 return;
             }
 
             MainConsole.Instance.Output("Usage: " + ReadOnlyUsage);
-        }
-
-        // Update a tracked drop from a drained BodyState (called in the Simulate drain).
-        private void UpdateDropTelemetry(in BodyState bs)
-        {
-            foreach (DropTrack t in _drops)
-            {
-                if (t.LocalId != bs.UserData) continue;
-                float z = bs.Position.Z;
-                t.LastZ = z;
-                if (z < t.MinZ) t.MinZ = z;
-                t.LastSpeed = bs.LinearVelocity.Length();
-                if ((bs.Flags & BodyStateFlags.JustDeactivated) != 0)
-                {
-                    t.JustDeactivatedCount++;    // must be EXACTLY 1 at rest (the settle update)
-                    t.RestZ = z;
-                    t.RestStep = _stepCount;
-                }
-                break;
-            }
         }
 
         // Report each logged-in avatar's CharacterVirtual state - position, IsSupported, ground normal/body,
@@ -930,10 +895,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // ground-detection, no movement integration), and "re-engage" == the walking model rebuilt.
         // A moving seat is ridden via OpenSim scene-graph parenting (the seated avatar's world position
         // tracks the prim), independent of physics. `jolt sitstatus` OBSERVES that transition; the
-        // sittest / unsit test commands (JoltTestCommands.cs) DRIVE it.
+        // sittest / unsit test commands (the diagnostics assembly) DRIVE it.
         // ---------------------------------------------------------------------
 
-        private ScenePresence FirstRootAvatar()
+        internal ScenePresence FirstRootAvatar()
         {
             if (_scene == null) return null;
             foreach (ScenePresence sp in _scene.GetScenePresences())
@@ -943,7 +908,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // Report each root avatar's SIT state (parented to a prim) vs its PHYSICS presence (a live
         // JoltCharacter). Invariant: seated => NO character (suspended); walking => character present.
-        private void SitStatus()
+        internal void SitStatus()
         {
             if (_scene == null) { MainConsole.Instance.Output($"{LogHeader} no scene."); return; }
 
@@ -2756,19 +2721,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             JoltMetrics.RecordStep(RegionName, physicsMs, r.ActiveBodyCount, in timing, gapMs, timeStep * 1000.0,   // step-time instrumentation (`jolt metrics`)
                 backend.RayCastsRefused(RayCastBudget.Script), backend.RayCastsRefused(RayCastBudget.Simulator));
 
-            // Windowed per-frame diagnostic (set by a drop): is Step advancing with a REAL dt, is the
-            // just-dropped body in our active set, and is its Z actually changing? It tells apart why a
-            // drop might hang - dt=0 => idle-step stall; active=1 but
-            // liveZ frozen => body active-but-not-integrated (deeper); active=0 => activation lost.
-            if (_stepCount <= _logStepsUntil && _drops.Count > 0)
-            {
-                DropTrack td = _drops[_drops.Count - 1];
-                float lz = float.NaN, vz = float.NaN; bool ja = false;
-                lock (_prims)
-                    if (_prims.TryGetValue(td.LocalId, out JoltPrim jd) && backend.TryGetBodyState(jd.BodyHandle, out BodyState sd))
-                    { lz = sd.Position.Z; vz = sd.LinearVelocity.Z; ja = (sd.Flags & BodyStateFlags.Active) != 0; }
-                m_log.LogDebug($"{LogHeader} [dropframe] step={_stepCount} dt={timeStep:0.0000} active={r.ActiveBodyCount} updates={r.BodyUpdateCount} box(id={td.LocalId}) liveZ={lz:0.000} vZ={vz:0.000} joltActive={ja}");
-            }
+            _diagnostics?.StepReported(backend, _stepCount, timeStep, in r);   // the test commands' per-frame drop log
 
             if (r.BodyBufferOverflowed) _bodyOverflowFrames++;
             if (r.CharacterUpdateCount >= _charBuf.Length) _charFullFrames++;
@@ -2783,8 +2736,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 lock (_prims)
                     _prims.TryGetValue(bs.UserData, out p);
                 p?.ApplyStepState(in bs);
-                if (_drops.Count > 0)
-                    UpdateDropTelemetry(in bs);
+                _diagnostics?.BodyUpdated(in bs);   // the test commands' drop tracker
             }
 
             // Character drain: the avatar equivalent of the body drain above. The backend stepped

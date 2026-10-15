@@ -1787,7 +1787,23 @@ call to take a command back, so they stay listed but do nothing; the other regio
 
 ### Test commands
 
-`[Jolt] TestCommands = true` adds commands that rez, move or delete objects and avatars, or
+The test commands are not part of the Jolt module. They are in a separate, opt-in assembly,
+`OpenSim.Region.PhysicsModules.Jolt.Diagnostics.dll`, that the region server does not reference, so
+a region server built or published as usual does not contain it. The module's own commands, the
+read-only ones above, are all it carries.
+
+To use the test commands:
+
+1. Build the assembly from the same source as the module:
+   `dotnet build Source/OpenSim.Region.PhysicsModules.Jolt.Diagnostics -c Release`.
+   The file is `OpenSim.Region.PhysicsModules.Jolt.Diagnostics.dll` in that project's
+   `bin/Release/net10.0` folder.
+2. Copy it into the region server's folder, beside `OpenSim.Region.PhysicsModules.Jolt.dll`. It needs
+   no other file. Use the copy built with the module in that folder: the assembly uses the module's
+   internal members, so one from another build can fail when a command runs.
+3. Set `[Jolt] TestCommands = true` and restart the region server.
+
+`[Jolt] TestCommands = true` then adds commands that rez, move or delete objects and avatars, or
 reshape the terrain, to exercise the engine: `jolt linktest`, `unlinktest`, `collidetest`,
 `collidelinktest`, `boattest`, `cartest`, `sledtest`, `planetest`, `balloontest`,
 `terrainslope`, `terrainhill`, `hilltest`, `rezprims`, `rayprims`, `rezmesh`, `raymesh`,
@@ -1797,9 +1813,12 @@ writes their figures to `parity-Jolt.txt` (and `parity-boat-Jolt.txt`), to set b
 engine's figures for the same scenarios. Like every `jolt` command it exists only in a region on
 Jolt. `help Physics` lists each one with a line of help.
 
-They are meant for test regions. `TestCommands` is off by default, and then none of them exists.
-`[Startup] JoltAutoDropTest = true`, which drops three boxes in every region at load, is honoured
-only when `TestCommands` is on.
+They are meant for test regions. `TestCommands` is off by default, and then none of them exists
+and the module does not look for the assembly. With `TestCommands = true` and the assembly not in
+the module's folder, the module logs one warning line (once, not once per region), registers only the
+read-only commands and carries on; an assembly file that cannot be loaded gets one warning line
+the same way. `[Startup] JoltAutoDropTest = true`, which drops three boxes in every region at load,
+is honoured only when `TestCommands` is on and the assembly is loaded.
 
 ## Physics harness
 
