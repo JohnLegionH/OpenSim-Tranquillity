@@ -1610,7 +1610,11 @@ public class ScenePresence : EntityBase, IScenePresence, IDisposable
 //
             if (m_teleportFlags == TeleportFlags.Default)
             {
-                Vector3 vel = Velocity;
+                // The velocity an avatar crossed with is its velocity in the world, which for one that stood on the
+                // object that carried it already holds the object's own. The object is held still while its riders
+                // arrive and the engine carries a standing avatar with it afterwards, so a carried avatar starts at
+                // rest relative to it; handing over the old velocity would count the object's motion twice.
+                Vector3 vel = carried ? Vector3.Zero : Velocity;
                 AddToPhysicalScene(isFlying);
                 PhysicsActor?.SetMomentum(vel);
             }
