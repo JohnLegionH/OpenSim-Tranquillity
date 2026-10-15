@@ -5,6 +5,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+using System.Globalization;
 using System.Text;
 
 namespace OpenSim.Archive.Inspection;
@@ -111,8 +112,12 @@ public sealed class TarStreamReader
             {
                 if (pax.TryGetValue("path", out string p))
                     name = p;
-                if (pax.TryGetValue("size", out string s) && long.TryParse(s, out long ps))
+                if (pax.TryGetValue("size", out string s))
+                {
+                    if (!long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out long ps) || ps < 0)
+                        throw new TarFormatException("tar PAX size record is not a valid size ('" + s + "')", name);
                     size = ps;
+                }
             }
 
             m_current = new TarEntryHeader { Name = name, Size = size, TypeFlag = type };
@@ -225,8 +230,10 @@ public sealed class TarStreamReader
     private static string ParseName(byte[] b)
     {
         string name = TrimNul(Encoding.UTF8.GetString(b, 0, 100));
-        // ustar: the directory part of a long name goes in the prefix field.
-        if (b[257] == 'u' && b[258] == 's' && b[259] == 't' && b[260] == 'a' && b[261] == 'r')
+        // POSIX ustar ("ustar" NUL, version "00"): the directory part of a long name goes in the prefix field.
+        // Old GNU headers ("ustar  " NUL) keep access and creation times at that offset, so they are left alone.
+        if (b[257] == 'u' && b[258] == 's' && b[259] == 't' && b[260] == 'a' && b[261] == 'r' && b[262] == 0
+            && b[263] == '0' && b[264] == '0')
         {
             string prefix = TrimNul(Encoding.UTF8.GetString(b, 345, 155));
             if (prefix.Length > 0)

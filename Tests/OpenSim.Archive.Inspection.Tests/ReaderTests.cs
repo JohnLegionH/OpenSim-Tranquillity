@@ -265,6 +265,95 @@ public class ReaderTests
         Assert.Null(reader.ReadNext());
     }
 
+    // ------------------------------------------------------------------ PAX size and ustar prefix
+
+    private static void FixChecksum(byte[] h)
+    {
+        for (int i = 148; i < 156; i++) h[i] = (byte)' ';
+        long sum = 0;
+        foreach (byte b in h) sum += b;
+        Encoding.ASCII.GetBytes(Convert.ToString(sum, 8).PadLeft(6, '0')).CopyTo(h, 148);
+        h[154] = 0;
+        h[155] = (byte)' ';
+    }
+
+    private static byte[] PaxRecord(string key, string value)
+    {
+        string body = " " + key + "=" + value + "\n";
+        int len = body.Length + 1;
+        while ((len.ToString().Length + body.Length) != len)
+            len = len.ToString().Length + body.Length;
+        return Encoding.UTF8.GetBytes(len + body);
+    }
+
+    private static byte[] Padded(byte[] data) => data.Concat(new byte[(512 - data.Length % 512) % 512]).ToArray();
+
+    private static byte[] TarWithPaxSize(string sizeValue, string entryName)
+    {
+        byte[] pax = PaxRecord("size", sizeValue);
+        return RawHeader("PaxHeaders/x", pax.Length, 'x')
+            .Concat(Padded(pax))
+            .Concat(RawHeader(entryName, 0))
+            .Concat(new byte[1024]).ToArray();
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("-9223372036854775808")]
+    [InlineData("12abc")]
+    [InlineData("")]
+    [InlineData("99999999999999999999")]
+    public void ABadPaxSizeRecord_IsADamagedHeaderThatNamesTheEntry(string value)
+    {
+        TarStreamReader reader = new TarStreamReader(new MemoryStream(TarWithPaxSize(value, "objects/damaged.xml")));
+        TarFormatException e = Assert.Throws<TarFormatException>(() => reader.ReadNext());
+        Assert.Equal("objects/damaged.xml", e.EntryName);
+    }
+
+    [Fact]
+    public void AValidPaxSizeRecord_StillOverridesTheHeaderSize()
+    {
+        byte[] body = Utf8("0123456789");
+        byte[] pax = PaxRecord("size", "10");
+        byte[] tar = RawHeader("PaxHeaders/x", pax.Length, 'x')
+            .Concat(Padded(pax))
+            .Concat(RawHeader("a.txt", 0))
+            .Concat(Padded(body))
+            .Concat(new byte[1024]).ToArray();
+        TarStreamReader reader = new TarStreamReader(new MemoryStream(tar));
+        TarEntryHeader h = reader.ReadNext();
+        Assert.Equal("a.txt", h.Name);
+        Assert.Equal(10, h.Size);
+        Assert.Equal("0123456789", Encoding.UTF8.GetString(reader.ReadBody()));
+        Assert.Null(reader.ReadNext());
+    }
+
+    private static byte[] HeaderWithMagicAndPrefix(string name, byte[] magicAndVersion, string prefix)
+    {
+        byte[] h = RawHeader(name, 0);
+        magicAndVersion.CopyTo(h, 257);
+        Encoding.ASCII.GetBytes(prefix).CopyTo(h, 345);
+        FixChecksum(h);
+        return h;
+    }
+
+    [Fact]
+    public void PosixUstarHeader_JoinsThePrefixToTheName()
+    {
+        byte[] magic = Encoding.ASCII.GetBytes("ustar\0" + "00");
+        byte[] tar = HeaderWithMagicAndPrefix("leaf.xml", magic, "objects/deep").Concat(new byte[1024]).ToArray();
+        Assert.Equal("objects/deep/leaf.xml", new TarStreamReader(new MemoryStream(tar)).ReadNext().Name);
+    }
+
+    [Fact]
+    public void OldGnuHeader_DoesNotTreatItsAtimeFieldAsAPrefix()
+    {
+        // Old GNU magic is "ustar  " NUL, and offset 345 holds the access time (octal digits), not a path prefix.
+        byte[] magic = Encoding.ASCII.GetBytes("ustar  \0");
+        byte[] tar = HeaderWithMagicAndPrefix("leaf.xml", magic, "14410560747").Concat(new byte[1024]).ToArray();
+        Assert.Equal("leaf.xml", new TarStreamReader(new MemoryStream(tar)).ReadNext().Name);
+    }
+
     // ------------------------------------------------------------------ bounded memory
 
     [Fact]
