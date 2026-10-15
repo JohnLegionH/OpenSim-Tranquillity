@@ -222,6 +222,15 @@ public partial class Scene : SceneBase
     /// </summary>
     public bool AllowAvatarCrossing { get; set; }
 
+    /// <summary>
+    /// [EntityTransfer] EnableStandingRiderCrossing, default false: the whole of the rider crossing feature. On, avatars
+    /// standing on an object are tracked and carried across a border with it, the object and its riders are frozen until
+    /// the crossing is complete, the receiving region holds the object until they have arrived, the sending region hides
+    /// its old copy meanwhile, and the riders' attachment scripts wait with it; the region answers yes to the
+    /// carried-rider and held-crossing questions of its neighbours. Off, an object crosses as it did before.
+    /// </summary>
+    public bool EnableStandingRiderCrossing { get; set; }
+
     /// Max prims an Physical object will hold
     /// </summary>
     ///
@@ -1120,7 +1129,10 @@ public partial class Scene : SceneBase
         {
             AllowAvatarCrossing = entityTransferConfig.GetBoolean("AllowAvatarCrossing", AllowAvatarCrossing);
             DisableObjectTransfer = entityTransferConfig.GetBoolean("DisableObjectTransfer", false);
+            EnableStandingRiderCrossing = entityTransferConfig.GetBoolean("EnableStandingRiderCrossing", false);
         }
+
+        m_log.LogInformation($"[SCENE]: {Name}: [EntityTransfer] EnableStandingRiderCrossing is {(EnableStandingRiderCrossing ? "on" : "off")}");
 
         #region Interest Management
 
@@ -1717,6 +1729,7 @@ public partial class Scene : SceneBase
                 if (Frame % 4 == 0)
                 {
                     CheckTerrainUpdates();
+                    ReleaseExpiredCrossingHolds();
                 }
 
                 if (Frame % m_update_terrain == 0)

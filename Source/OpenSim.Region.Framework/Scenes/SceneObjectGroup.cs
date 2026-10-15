@@ -767,6 +767,33 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
     }
 
     public bool inTransit = false;
+
+    /// <summary>
+    /// Set on an object that arrived with avatars while it waits for them: its scripts and keyframed motion are not
+    /// started (see Scene.IncomingCreateObject).
+    /// </summary>
+    public bool HeldForRiders { get; set; }
+
+    /// <summary>
+    /// Set on the frozen original of an object this region sent to another region, from the moment that region took it
+    /// until it reports the crossing complete (the object is then deleted) or gives it back (see <see cref="ShowToViewers"/>):
+    /// the viewers of this region are not shown it, since they would see it twice.
+    /// </summary>
+    public bool HiddenForCrossing { get; private set; }
+
+    // the scripts a crossing suspended, resumed if the object stays
+    private List<UUID> m_crossSuspendedScripts;
+
+    // what a crossing has done so far, so that a failure at any step can be undone
+    private sealed class CrossState
+    {
+        public readonly List<ScenePresence> Riders = new();
+        public readonly List<avtocrossInfo> AvsToCross = new();
+
+        // the other region took the object: whatever else fails, it is no longer ours to put back
+        public bool Committed;
+    }
+
     private delegate SceneObjectGroup SOGCrossDelegate(SceneObjectGroup sog,Vector3 pos, TeleportObjectData tpData);
 
     /// <summary>
@@ -871,7 +898,81 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         }, null, threadName, false);
     }
 
+    /// <summary>
+    /// Returns null when the object left this region, else the object, which stays. Whatever went wrong on the way,
+    /// what the crossing froze and was not handed over is given back.
+    /// </summary>
     private SceneObjectGroup CrossAsync(SceneObjectGroup sog, Vector3 val, TeleportObjectData tpdata)
+    {
+        CrossState state = new();
+        try
+        {
+            return CrossAsyncCore(sog, val, tpdata, state);
+        }
+        catch (Exception e)
+        {
+            m_log.LogError(e, $"[SCENE OBJECT]: Crossing of {sog.Name} {sog.UUID} failed with an exception");
+            return sog.RollBackCrossing(state);
+        }
+    }
+
+    private void CrossStep(string label)
+    {
+        m_scene?.CrossingStepHook?.Invoke(this, label);
+    }
+
+    /// <summary>
+    /// Undoes a crossing that failed with an exception. Before the other region took the object, everything goes
+    /// back as it was and the object stays (returned). After, the object is the other region's: the avatars that did
+    /// not cross are put back in this region and the object is reported as crossed (null).
+    /// </summary>
+    private SceneObjectGroup RollBackCrossing(CrossState state)
+    {
+        Vector3 curPos = m_rootPart.GroupPosition;
+        try
+        {
+            if (!state.Committed)
+            {
+                ReleaseStandingRiders(state.Riders, curPos);
+                foreach (ScenePresence av in GetSittingAvatars())
+                {
+                    if (av.IsNPC)
+                        continue;
+                    foreach (avtocrossInfo info in state.AvsToCross)
+                    {
+                        if (info.av == av && av.ParentID == 0)
+                            av.ParentID = info.ParentID;
+                    }
+                    av.ParentUUID = UUID.Zero;
+                    av.m_crossingFlags = 0;
+                    av.IsInLocalTransit = false;
+                    av.IsInTransit = false;
+                    av.ThawAfterCrossing();
+                }
+                return this;
+            }
+
+            foreach (ScenePresence rider in state.Riders)
+            {
+                if (!rider.IsChildAgent && !rider.CarriedByGroup.IsZero())
+                    ReleaseStandingRider(rider, curPos);
+            }
+            foreach (avtocrossInfo info in state.AvsToCross)
+            {
+                ScenePresence av = info.av;
+                if (!av.IsChildAgent && (av.m_crossingFlags & AgentData.CrossingCarried) == 0 && av.IsInTransit)
+                    StandUpAfterFailedCrossing(av, curPos, GetSittingAvatars(), 0);
+            }
+        }
+        catch (Exception e)
+        {
+            m_log.LogError(e, $"[SCENE OBJECT]: Putting back after the failed crossing of {Name} {UUID} failed");
+        }
+
+        return state.Committed ? null : this;
+    }
+
+    private SceneObjectGroup CrossAsyncCore(SceneObjectGroup sog, Vector3 val, TeleportObjectData tpdata, CrossState state)
     {
         Scene sogScene = sog.m_scene;
         SceneObjectPart root = sog.RootPart;
@@ -914,33 +1015,55 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
 //            if(!m_scene.IsRunning)
 //                return sog;
 
-        root.KeyframeMotion?.StartCrossingCheck();
-
-        root.PhysActor?.CrossingStart();
-
         IEntityTransferModule entityTransfer = sogScene.RequestModuleInterface<IEntityTransferModule>();
-
-        if (entityTransfer is null)
-            return sog;
 
         Vector3 newpos = Vector3.Zero;
         OpenSim.Services.Interfaces.GridRegion destination = null;
 
-        destination = entityTransfer.GetObjectDestination(sog, val, out newpos);
+        // the destination is looked up first (no side effects) so that the avatars standing on the object are frozen
+        // before the object's own physics body is touched: a physical object's CrossingStart takes it out of the
+        // engine, and with it the ground under them
+        if (entityTransfer is not null)
+            destination = entityTransfer.GetObjectDestination(sog, val, out newpos);
+
+        string reason = string.Empty;
+        EntityTransferContext ctx = new();
+
+        Vector3 curPos = root.GroupPosition;
+        List<ScenePresence> riders = null;
+        if (destination is not null && !isTeleport && sogScene.EnableStandingRiderCrossing)
+        {
+            sog.FreezeStandingRiders(entityTransfer, destination, newpos, ctx, val, state.Riders);
+            if (state.Riders.Count > 0)
+                riders = state.Riders;
+            sog.CrossStep("riders-frozen");
+        }
+
+        // From here until the object is sent, nothing may change what is sent: its scripts stop (the riders' attachment
+        // scripts were stopped with the riders), its motion and its physics body stop below, and the object is in
+        // transit, which keeps scripts and avatars from moving it. A crossing with nowhere to go freezes nothing.
+        if (destination is not null && sogScene.EnableStandingRiderCrossing)
+        {
+            sog.m_crossSuspendedScripts = sog.SuspendScripts(sogScene.RequestModuleInterfaces<IScriptModule>());
+            sog.CrossStep("scripts-suspended");
+        }
+
+        root.KeyframeMotion?.StartCrossingCheck();
+
+        root.PhysActor?.CrossingStart();
+
         if (destination is null)
             return sog;
 
-        if (sog.m_sittingAvatars.Count == 0)
+        sog.CrossStep("motion-stopped");
+
+        if (sog.m_sittingAvatars.Count == 0 && riders is null)
         {
             if(entityTransfer.CrossPrimGroupIntoNewRegion(destination, newpos, sog, !isTeleport, true))
                 return null;
             return sog;
         }
 
-        string reason = string.Empty;
-        EntityTransferContext ctx = new();
-
-        Vector3 curPos = root.GroupPosition;
         foreach (ScenePresence av in sog.m_sittingAvatars)
         {
             // We need to cross these agents. First, let's find
@@ -955,18 +1078,35 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                 continue;
 
             if(av.IsInTransit)
+            {
+                sog.ReleaseStandingRiders(riders, curPos);
                 return sog;
+            }
 
             if(!entityTransfer.checkAgentAccessToRegion(av, destination, newpos, ctx, out reason))
+            {
+                sog.ReleaseStandingRiders(riders, curPos);
                 return sog;
+            }
 
             m_log.LogDebug($"[SCENE OBJECT]: Avatar {av.Name} needs to be crossed to {destination.RegionName}");
+        }
+
+        // The seated avatars are frozen as the standing ones were: before the object is sent they take no input and
+        // their attachment scripts are stopped
+        if (sogScene.EnableStandingRiderCrossing)
+        {
+            foreach (ScenePresence av in sog.m_sittingAvatars)
+            {
+                if (!av.IsNPC)
+                    av.FreezeForCrossing();
+            }
         }
 
         // We unparent the SP quietly so that it won't
         // be made to stand up
 
-        List<avtocrossInfo> avsToCross = new();
+        List<avtocrossInfo> avsToCross = state.AvsToCross;
         List<ScenePresence> avsToCrossFar = new();
         ulong destHandle = destination.RegionHandle;
         List<ScenePresence> sittingAvatars = GetSittingAvatars();
@@ -1011,6 +1151,21 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
             av.ParentID = 0;
         }
 
+        if (riders is not null)
+        {
+            foreach (ScenePresence rider in riders)
+            {
+                byte cflags = (byte)(1 | AgentData.CrossingCarried);
+                avsToCross.Add(new avtocrossInfo { av = rider, ParentID = 0 });
+                if (!rider.knowsNeighbourRegion(destHandle))
+                {
+                    cflags |= 8;
+                    avsToCrossFar.Add(rider);
+                }
+                rider.m_crossingFlags = cflags;
+            }
+        }
+
         Vector3 vel = root.Velocity;
         Vector3 avel = root.AngularVelocity;
         Vector3 acc = root.Acceleration;
@@ -1031,8 +1186,39 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
             root.RotationOffset = tpdata.ori;
         }
 
-        if (entityTransfer.CrossPrimGroupIntoNewRegion(destination, newpos, sog, true, false))
+        // An object that crosses with avatars is held by the region that takes it until they have arrived, and this
+        // region keeps its frozen original until it is told so: with that, a failure after the other region took the
+        // object can still be undone. Not for a teleport, and not towards a region that does not know the messages.
+        List<UUID> expectedRiders = new();
+        foreach (avtocrossInfo info in avsToCross)
         {
+            if (!info.av.IsNPC)
+                expectedRiders.Add(info.av.UUID);
+        }
+        bool held = !isTeleport && expectedRiders.Count > 0 && entityTransfer.SupportsHeldCrossing(destination);
+
+        sog.CrossStep("before-send");
+
+        bool sent = held
+            ? entityTransfer.CrossPrimGroupIntoNewRegionHeld(destination, newpos, sog,
+                new OpenSim.Services.Interfaces.CrossingHoldRequest
+                {
+                    Source = new OpenSim.Services.Interfaces.GridRegion(sogScene.RegionInfo),
+                    ExpectedRiders = expectedRiders
+                })
+            : entityTransfer.CrossPrimGroupIntoNewRegion(destination, newpos, sog, true, false);
+
+        if (sent)
+        {
+            state.Committed = true;
+            if (held)
+            {
+                sogScene.AddPendingCrossing(sog);
+                // the other region has the object now: this copy is only kept for a recall, and not shown to anyone
+                sog.HideFromViewers(avsToCross);
+            }
+            sog.CrossStep("object-sent");
+
             if(isTeleport)
             {
                 sogScene.ForEachScenePresence(delegate(ScenePresence oav)
@@ -1060,6 +1246,9 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
             if(crossedfar)
                 Thread.Sleep(1000);
 
+            bool anyCrossed = false;
+            bool recallTried = false;
+            bool recalled = false;
             foreach (avtocrossInfo avinfo in avsToCross)
             {
                 ScenePresence av = avinfo.av;
@@ -1067,11 +1256,29 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                 av.IsInTransit = true;
                 m_log.LogDebug($"[SCENE OBJECT]: Crossing avatar {av.Name} to {val}");
 
+                bool carried = (av.m_crossingFlags & AgentData.CrossingCarried) != 0;
+
                 if(av.m_crossingFlags > 0)
-                    entityTransfer.CrossAgentToNewRegionAsync(av, newpos, destination, false, ctx);
+                {
+                    // a carried rider arrives at the same place relative to the object, wherever it lands
+                    Vector3 arrival = carried ? newpos + av.CarriedOffset : newpos;
+                    entityTransfer.CrossAgentToNewRegionAsync(av, arrival, destination, false, ctx);
+                }
+
+                if (!av.IsChildAgent && held && !anyCrossed && !recallTried)
+                {
+                    // the first avatar to cross failed and none is on its way: the other region gives the object back
+                    recallTried = true;
+                    if (entityTransfer.RecallCrossingObject(destination, sog))
+                    {
+                        recalled = true;
+                        break;
+                    }
+                }
 
                 if (av.IsChildAgent)
                 {
+                    anyCrossed = true;
                     // avatar crossed do some extra cleanup
                     if (av.ParentUUID.IsNotZero())
                     {
@@ -1083,44 +1290,33 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                     // In any case
                     av.IsInTransit = false;
                     av.m_crossingFlags = 0;
+                    av.CarriedByGroup = UUID.Zero;
+                    av.RideOn.Clear();
                     m_log.LogDebug($"[SCENE OBJECT]: Crossing agent {av.Firstname} {av.Lastname} completed.");
+                }
+                else if (carried)
+                {
+                    // the object is gone from this region, so the avatar stays where it stood, inside the region
+                    sog.ReleaseStandingRider(av, curPos);
+                    m_log.LogDebug($"[SCENE OBJECT]: Crossing agent {av.Firstname} {av.Lastname} failed.");
                 }
                 else
                 {
-                    // avatar cross failed we need do dedicated standUp
-                    // part of it was done at CrossAgentToNewRegionAsync
-                    // so for now just remove the sog controls
-                    // this may need extra care
-                    av.UnRegisterSeatControls(sog.UUID);
-                    av.ParentUUID = UUID.Zero;
-                    av.ParentPart = null;
-                    Vector3 oldp = curPos;
-                    oldp.X = Utils.Clamp(oldp.X, 0.5f, sog.m_scene.RegionInfo.RegionSizeX - 0.5f);
-                    oldp.Y = Utils.Clamp(oldp.Y, 0.5f, sog.m_scene.RegionInfo.RegionSizeY - 0.5f);
-                    av.AbsolutePosition = oldp;
-                    av.m_crossingFlags = 0;
-                    av.sitAnimation = "SIT";
-                    av.IsInTransit = false;
-
-                    av.Animator?.SetMovementAnimations("STAND");
-                    av.AddToPhysicalScene(false);
-                    sogScene.ForEachScenePresence(delegate(ScenePresence oav)
-                        {
-                            if(sittingAvatars.Contains(oav))
-                                return;
-                            if(oav.knowsNeighbourRegion(destHandle))
-                                av.SendAvatarDataToAgent(oav);
-                            else
-                            {
-                                av.SendAvatarDataToAgent(oav);
-                                av.SendAppearanceToAgent(oav);
-                                
-                                av.Animator?.SendAnimPackToClient(oav.ControllingClient);
-                                av.SendAttachmentsToAgentNF(oav); // not ok
-                            }
-                        });
+                    sog.StandUpAfterFailedCrossing(av, curPos, sittingAvatars, destHandle);
                     m_log.LogDebug($"[SCENE OBJECT]: Crossing agent {av.Firstname} {av.Lastname} failed.");
                 }
+
+                sog.CrossStep("rider-crossed");
+            }
+
+            if (recalled)
+            {
+                // nobody left, the other region discarded the object: everything here goes back as it was
+                sog.RestoreAvatarsToThisRegion(avsToCross, curPos);
+                sogScene.RemovePendingCrossing(sog.UUID);
+                state.Committed = false;
+                avsToCross.Clear();
+                return sog;
             }
 
             if(crossedfar)
@@ -1138,8 +1334,12 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
             }
             avsToCrossFar.Clear();
             avsToCross.Clear();
-            sog.RemoveScriptInstances(true);
-            sog.Dispose();
+            if (!held)
+            {
+                sog.RemoveScriptInstances(true);
+                sog.Dispose();
+            }
+            // held: this region lets go of the object when the other one reports the crossing complete
             return null;
         }
         else
@@ -1154,22 +1354,223 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                 }
                 root.RotationOffset = ori;
             }
-            foreach (avtocrossInfo avinfo in avsToCross)
-            {
-                ScenePresence av = avinfo.av;
-                av.ParentUUID = UUID.Zero;
-                av.ParentID = avinfo.ParentID;
-                av.m_crossingFlags = 0;
-            }
+            sog.RestoreAvatarsToThisRegion(avsToCross, curPos);
         }
         avsToCross.Clear();
         return sog;
+    }
+
+    /// <summary>
+    /// Gives back to this region the avatars a crossing froze that did not leave: the standing ones go back in
+    /// physics next to the object, the seated ones sit again.
+    /// </summary>
+    /// <summary>
+    /// Takes the object away from the viewers of this region, as a delete would, but keeps it here. The avatars that
+    /// cross with it are left alone: their viewers follow them to the other region.
+    /// </summary>
+    private void HideFromViewers(List<avtocrossInfo> riders)
+    {
+        HiddenForCrossing = true;
+        SceneObjectPart root = m_rootPart;
+        List<uint> rootId = new() { root.LocalId };
+
+        Scene.ForEachScenePresence(delegate (ScenePresence viewer)
+        {
+            if (viewer.IsNPC || riders.Exists(r => r.av == viewer))
+                return;
+
+            viewer.ControllingClient.SendKillObject(rootId);
+            viewer.ControllingClient.SendEntityUpdate(root, PrimUpdateFlags.Kill);
+        });
+    }
+
+    /// <summary>The other region gave the object back: it is sent to the viewers of this region again.</summary>
+    private void ShowToViewers()
+    {
+        if (!HiddenForCrossing)
+            return;
+
+        HiddenForCrossing = false;
+        if (IsDeleted || Scene is null)
+            return;
+
+        SceneObjectPart[] parts = m_parts.GetArray();
+        Scene.ForEachScenePresence(delegate (ScenePresence viewer)
+        {
+            if (viewer.IsNPC)
+                return;
+
+            foreach (SceneObjectPart part in parts)
+                viewer.ControllingClient.SendEntityUpdate(part, PrimUpdateFlags.CancelKill);
+        });
+    }
+
+    private void RestoreAvatarsToThisRegion(List<avtocrossInfo> avsToCross, Vector3 rootPos)
+    {
+        foreach (avtocrossInfo avinfo in avsToCross)
+        {
+            ScenePresence av = avinfo.av;
+            if ((av.m_crossingFlags & AgentData.CrossingCarried) != 0)
+            {
+                ReleaseStandingRider(av, rootPos);
+                continue;
+            }
+            av.ParentUUID = UUID.Zero;
+            av.ParentID = avinfo.ParentID;
+            av.m_crossingFlags = 0;
+            av.IsInLocalTransit = false;
+            av.IsInTransit = false;
+            av.ThawAfterCrossing();
+        }
+    }
+
+    /// <summary>
+    /// A seated avatar whose crossing failed after its object was given to the other region is stood up where the
+    /// object was.
+    /// </summary>
+    private void StandUpAfterFailedCrossing(ScenePresence av, Vector3 rootPos, List<ScenePresence> sittingAvatars, ulong destHandle)
+    {
+        // avatar cross failed we need do dedicated standUp
+        // part of it was done at CrossAgentToNewRegionAsync
+        // so for now just remove the sog controls
+        // this may need extra care
+        av.UnRegisterSeatControls(UUID);
+        av.ParentUUID = UUID.Zero;
+        av.ParentPart = null;
+        Vector3 oldp = rootPos;
+        oldp.X = Utils.Clamp(oldp.X, 0.5f, m_scene.RegionInfo.RegionSizeX - 0.5f);
+        oldp.Y = Utils.Clamp(oldp.Y, 0.5f, m_scene.RegionInfo.RegionSizeY - 0.5f);
+        av.AbsolutePosition = oldp;
+        av.m_crossingFlags = 0;
+        av.sitAnimation = "SIT";
+        av.IsInLocalTransit = false;
+        av.IsInTransit = false;
+        av.ThawAfterCrossing();
+
+        av.Animator?.SetMovementAnimations("STAND");
+        av.AddToPhysicalScene(false);
+        m_scene.ForEachScenePresence(delegate(ScenePresence oav)
+            {
+                if(sittingAvatars.Contains(oav))
+                    return;
+                if(oav.knowsNeighbourRegion(destHandle))
+                    av.SendAvatarDataToAgent(oav);
+                else
+                {
+                    av.SendAvatarDataToAgent(oav);
+                    av.SendAppearanceToAgent(oav);
+
+                    av.Animator?.SendAnimPackToClient(oav.ControllingClient);
+                    av.SendAttachmentsToAgentNF(oav); // not ok
+                }
+            });
+    }
+
+    /// <summary>
+    /// The avatars that stand on this object (their soft link names it) and are still on it, frozen for the crossing:
+    /// no input, no physics body, and each one's position relative to the root and its crossing state recorded. A link
+    /// whose avatar is outside the object's bounds grown by <see cref="RideOnLimits.PositionGate"/> is stale, and is
+    /// dropped. An avatar the destination would not admit is not carried. Each avatar is added to
+    /// <paramref name="riders"/> as it is frozen, so that a failure part way still leaves the caller the list to put back.
+    /// </summary>
+    private void FreezeStandingRiders(IEntityTransferModule entityTransfer,
+            OpenSim.Services.Interfaces.GridRegion destination, Vector3 newpos, EntityTransferContext ctx, Vector3 rootPos,
+            List<ScenePresence> riders)
+    {
+        GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out float minY, out float maxY, out _, out _);
+        float gate = RideOnLimits.PositionGate;
+        UUID id = UUID;
+
+        m_scene.ForEachScenePresence(delegate (ScenePresence av)
+        {
+            if (!av.RideOn.IsLinked || !av.RideOn.GroupID.Equals(id))
+                return;
+
+            if (av.IsChildAgent || av.IsNPC || av.IsInTransit || av.Flying || av.ParentID != 0 || av.ParentUUID.IsNotZero())
+                return;
+
+            Vector3 offset = av.AbsolutePosition - rootPos;
+            if (offset.X < minX - gate || offset.X > maxX + gate || offset.Y < minY - gate || offset.Y > maxY + gate)
+            {
+                av.RideOn.Clear();
+                return;
+            }
+
+            // The question also asks whether the destination can take an avatar that arrives carried. One that cannot
+            // (a region from before this existed) would take it for an ordinary crossing avatar and could send it
+            // straight back, so a rider is carried only to a region that says it can.
+            if (!entityTransfer.checkAgentAccessToRegion(av, destination, newpos + offset, ctx, out string refusal))
+            {
+                LeaveRiderBehind(av, string.IsNullOrWhiteSpace(refusal)
+                    ? $"The region ahead would not take you along with {Name}."
+                    : $"The region ahead would not take you along with {Name}: {refusal}");
+                return;
+            }
+
+            if (!ctx.CarriedRiders)
+            {
+                LeaveRiderBehind(av, $"The region ahead cannot take avatars standing on {Name}.");
+                return;
+            }
+
+            av.CarriedByGroup = id;
+            av.CarriedOffset = offset;
+            riders.Add(av);
+            av.FreezeForCrossing();
+            av.RemoveFromPhysicalScene();
+        });
+    }
+
+    /// <summary>
+    /// An avatar standing on an object that crosses, which the other region will not take: it is not touched (still
+    /// in physics, no input lost), its link to the object is ended, and it is told why the object leaves without it.
+    /// </summary>
+    private static void LeaveRiderBehind(ScenePresence rider, string reason)
+    {
+        rider.RideOn.Clear();
+        rider.ControllingClient.SendAlertMessage(reason);
+    }
+
+    private void ReleaseStandingRiders(List<ScenePresence> riders, Vector3 rootPos)
+    {
+        if (riders is null)
+            return;
+
+        foreach (ScenePresence rider in riders)
+            ReleaseStandingRider(rider, rootPos);
+    }
+
+    /// <summary>
+    /// Puts a frozen rider back in this region, at its place relative to where the object is put back
+    /// (0.5 m inside the border, as <see cref="CrossAsyncCompleted"/> does).
+    /// </summary>
+    private void ReleaseStandingRider(ScenePresence rider, Vector3 rootPos)
+    {
+        Vector3 rootBack = rootPos;
+        rootBack.X = Utils.Clamp(rootBack.X, 0.5f, m_scene.RegionInfo.RegionSizeX - 0.5f);
+        rootBack.Y = Utils.Clamp(rootBack.Y, 0.5f, m_scene.RegionInfo.RegionSizeY - 0.5f);
+        Vector3 pos = rootBack + rider.CarriedOffset;
+        pos.X = Utils.Clamp(pos.X, 0.5f, m_scene.RegionInfo.RegionSizeX - 0.5f);
+        pos.Y = Utils.Clamp(pos.Y, 0.5f, m_scene.RegionInfo.RegionSizeY - 0.5f);
+
+        rider.CarriedByGroup = UUID.Zero;
+        rider.m_crossingFlags = 0;
+        rider.AbsolutePosition = pos;
+        rider.IsInLocalTransit = false;
+        rider.IsInTransit = false;
+        rider.ThawAfterCrossing();
+        rider.AddToPhysicalScene(false);
     }
 
     public void CrossAsyncCompleted(SceneObjectGroup sog)
     {
         if (sog is null || sog.IsDeleted)
             return;
+
+        // the object stays: its scripts run again
+        List<UUID> frozenScripts = sog.m_crossSuspendedScripts;
+        sog.m_crossSuspendedScripts = null;
+        ResumeScripts(sog.m_scene.RequestModuleInterfaces<IScriptModule>(), frozenScripts);
 
         SceneObjectPart rootp = sog.m_rootPart;
 
@@ -1196,6 +1597,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         sog.RootPart.PhysActor?.CrossingFailure();
 
         sog.inTransit = false;
+        sog.ShowToViewers();
         AttachToBackup();
         sog.ScheduleGroupForUpdate(PrimUpdateFlags.FullUpdatewithAnimMatOvr);
 
@@ -1702,6 +2104,8 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         for (int i = 0; i < parts.Length; i++)
         {
             SceneObjectPart part = parts[i];
+            if (HeldForRiders)
+                part.KeyframeMotion?.HoldStart();
             part.KeyframeMotion?.UpdateSceneObject(this);
 
             if (Object.ReferenceEquals(part, m_rootPart))

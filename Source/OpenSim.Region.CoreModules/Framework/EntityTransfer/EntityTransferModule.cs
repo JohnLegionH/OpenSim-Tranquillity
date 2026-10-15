@@ -2715,6 +2715,28 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
         return successYN;
     }
 
+    public bool SupportsHeldCrossing(GridRegion destination)
+    {
+        // a region with the rider crossing feature off sends every object the old way
+        return destination is not null && m_scene.EnableStandingRiderCrossing && m_scene.SimulationService is not null
+            && m_scene.SimulationService.SupportsHeldCrossing(destination);
+    }
+
+    public bool CrossPrimGroupIntoNewRegionHeld(GridRegion destination, Vector3 newPosition, SceneObjectGroup grp, CrossingHoldRequest hold)
+    {
+        Culture.SetCurrentCulture();
+
+        grp.RootPart.ClearUpdateSchedule();
+        return destination is not null && m_scene.SimulationService is not null
+            && m_scene.SimulationService.CreateObject(destination, newPosition, grp, true, hold);
+    }
+
+    public bool RecallCrossingObject(GridRegion destination, SceneObjectGroup grp)
+    {
+        return destination is not null && m_scene.SimulationService is not null
+            && m_scene.SimulationService.RecallObject(destination, grp.UUID);
+    }
+
     #endregion
 
     #region Misc
@@ -2810,7 +2832,9 @@ public class EntityTransferModule : INonSharedRegionModule, IEntityTransferModul
             // before we restart the scripts, or else some functions won't work.
             so.RootPart.ParentGroup.CreateScriptInstances(0, false, m_scene.DefaultScriptEngine, GetStateSource(so));
 
-            so.ResumeScripts();
+            // An object that arrived with riders starts when they have arrived (Scene.IncomingCreateObject)
+            if (!so.HeldForRiders)
+                so.ResumeScripts();
 
             // AddSceneObject already does this and doing it again messes
             //if (so.RootPart.KeyframeMotion != null)
