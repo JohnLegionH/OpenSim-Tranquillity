@@ -112,12 +112,12 @@ public class CreatorAnalysisTests
     // ------------------------------------------------------------------ the three matches
 
     [Fact]
-    public void LoaderRewriteMatch_NamesTheLoaderBehaviour()
+    public void SameAccountMatch_GivesBothReadings()
     {
         // creator, owner and last owner are one account, no creator data, dates spread out
         ArchiveReport r = Parts(30, i => Dave, date: i => 1500000000 + i * 5_000_000);
         Assert.Contains(r.CreatorAnalysis.Flags, f => f.Code == "SINGLE_CREATOR");
-        AnalysisMatch m = Assert.Single(r.CreatorAnalysis.Matches, x => x.Id == "MATCH_LOADER_REWRITE");
+        AnalysisMatch m = Assert.Single(r.CreatorAnalysis.Matches, x => x.Id == "MATCH_SAME_ACCOUNT");
         Assert.Contains("30 of 30", m.Statement);
         Assert.Contains("estate owner", m.Statement);
         Assert.Contains("--no-defaultuser", m.Statement);
@@ -137,7 +137,7 @@ public class CreatorAnalysisTests
         Assert.Contains("28 of 30", m.Statement);
         Assert.Contains("24-hour", m.Statement);
         Assert.Contains("Neither loader changes CreationDate", m.Statement);
-        Assert.DoesNotContain(r.CreatorAnalysis.Matches, x => x.Id == "MATCH_LOADER_REWRITE");
+        Assert.DoesNotContain(r.CreatorAnalysis.Matches, x => x.Id == "MATCH_SAME_ACCOUNT");
         Assert.DoesNotContain(r.CreatorAnalysis.Matches, x => x.Id == "MATCH_ONE_BUILDER");
     }
 
@@ -194,13 +194,13 @@ public class CreatorAnalysisTests
     // ------------------------------------------------------------------ IAR forms
 
     [Fact]
-    public void Iar12_CreatorIsOwner_MatchesTheLoaderEvenThoughTheSaverStampedCreatorData()
+    public void Iar12_CreatorIsOwner_MatchesSameAccountEvenThoughTheSaverStampedCreatorData()
     {
         UUID owner = Dave;
         byte[] iar = IarOfItems(25, i => (owner, owner, "http://grid.example.org:8002/" + owner + ";Dave Builder", "ospa:n=Dave Builder", owner.ToString(), 1700000000 + i * 90000), "1.2");
         ArchiveReport r = Inspect(iar);
         Assert.Contains(r.CreatorAnalysis.Flags, f => f.Code == "SINGLE_CREATOR" && f.Grouping == "uuid");
-        Assert.Contains(r.CreatorAnalysis.Matches, m => m.Id == "MATCH_LOADER_REWRITE" && m.Statement.Contains("loading the archive"));
+        Assert.Contains(r.CreatorAnalysis.Matches, m => m.Id == "MATCH_SAME_ACCOUNT" && m.Statement.Contains("loading the archive"));
     }
 
     [Fact]
@@ -209,7 +209,7 @@ public class CreatorAnalysisTests
         byte[] iar = IarOfItems(25, i => (UUID.Zero, Dave, null, "ospa:n=Dave Builder", null, 1700000000 + i * 90000), "0.3");
         ArchiveReport r = Inspect(iar);
         Assert.Contains(r.CreatorAnalysis.Flags, f => f.Code == "SINGLE_CREATOR" && f.Grouping == "name");
-        Assert.DoesNotContain(r.CreatorAnalysis.Matches, m => m.Id == "MATCH_LOADER_REWRITE");   // a 0.x item names no creator id
+        Assert.DoesNotContain(r.CreatorAnalysis.Matches, m => m.Id == "MATCH_SAME_ACCOUNT");   // a 0.x item names no creator id
         Assert.Equal(3, r.ExitCode);
     }
 }

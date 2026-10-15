@@ -113,6 +113,10 @@ public class PartRecord : ArchiveRecord
     public float Y { get; set; }
     public float Z { get; set; }
     public int Depth { get; set; }
+    /// <summary>PCode of the part's shape (9 is an ordinary prim), null when the shape is absent.</summary>
+    public int? PCode { get; set; }
+    /// <summary>True for the built-in trees and grass (PCode Tree, NewTree, Grass), which carry the placer's creator but are not built content.</summary>
+    public bool IsBuiltInPlant => PCode.HasValue && (PCode.Value == (int)OpenMetaverse.PCode.Tree || PCode.Value == (int)OpenMetaverse.PCode.NewTree || PCode.Value == (int)OpenMetaverse.PCode.Grass);
 }
 
 /// <summary>A prim inventory item (in an OAR part or in a boxed object) or an IAR item.</summary>
@@ -148,6 +152,10 @@ public class FolderRecord : ArchiveRecord
     public string Name { get; set; }
     public UUID FolderId { get; set; }
     public int ItemCount { get; set; }
+    /// <summary>False when the last path segment carries no parsable folder id.</summary>
+    public bool IdParsed { get; set; }
+    /// <summary>Number of path segments from the inventory root (a top-level folder is 1).</summary>
+    public int Depth { get; set; }
 }
 
 public class ParcelRecord : ArchiveRecord
@@ -218,6 +226,27 @@ public class LegacyPayloadRecord : ArchiveRecord
     public long Bytes { get; set; }
 }
 
+/// <summary>One entry of the tar file, in file order, as the checks need to see its place and size.</summary>
+public class EntryRecord : ArchiveRecord
+{
+    /// <summary>Entry index from 1.</summary>
+    public long Index { get; set; }
+    public string Path { get; set; }
+    public long Size { get; set; }
+    public bool IsDirectory { get; set; }
+    /// <summary>First path segment after any regions/&lt;dir&gt;/ prefix, with its slash ("objects/"), or the whole name for archive.xml.</summary>
+    public string Prefix { get; set; }
+}
+
+/// <summary>Something that should have parsed and did not.</summary>
+public class ParseFailureRecord : ArchiveRecord
+{
+    /// <summary>"item", "folder", "object", "boxed-object", "control", "parcel" or "region-settings".</summary>
+    public string What { get; set; }
+    public string Message { get; set; }
+    public UUID? AssetId { get; set; }
+}
+
 public class ProblemRecord : ArchiveRecord
 {
     public string Message { get; set; }
@@ -229,6 +258,8 @@ public class TextAssetBody : ArchiveRecord
     public UUID AssetId { get; set; }
     public int AssetType { get; set; }
     public ReadOnlyMemory<byte> Bytes { get; set; }
+    /// <summary>The items (or parts) already read that hold this asset, with their creators; empty when none was seen.</summary>
+    public List<ReferrerInfo> Holders { get; set; } = new List<ReferrerInfo>();
 }
 
 public class RegionInfo

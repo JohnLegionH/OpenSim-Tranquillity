@@ -44,7 +44,7 @@ public sealed class CreatorAnalysisCheck : ArchiveCheckBase
     private readonly AnalysisSettings m_settings;
     private ArchiveInfo m_archive;
 
-    private long m_total, m_library, m_blank, m_counted, m_named, m_withId;
+    private long m_total, m_library, m_blank, m_plants, m_counted, m_named, m_withId;
     private long m_sameAccount, m_withCreatorData, m_foreignCreatorData;
     private readonly Dictionary<UUID, long> m_byId = new Dictionary<UUID, long>();
     private readonly Dictionary<UUID, string> m_idNames = new Dictionary<UUID, string>();
@@ -65,7 +65,17 @@ public sealed class CreatorAnalysisCheck : ArchiveCheckBase
     public override void OnRecord(ArchiveRecord record)
     {
         if (record is PartRecord p)
+        {
+            // Built-in trees and grass carry whoever placed them as creator; they are not built content, so they are
+            // counted apart and stay out of the shares.
+            if (p.IsBuiltInPlant)
+            {
+                m_total++;
+                m_plants++;
+                return;
+            }
             Add(p.Creator, p.OwnerId, p.LastOwnerId, true, p.CreationDate, p.Creator.HasData);
+        }
         else if (record is ItemRecord i)
         {
             // An IAR saved with --home stamps creator data on every item whose creator has an account, the
@@ -132,12 +142,46 @@ public sealed class CreatorAnalysisCheck : ArchiveCheckBase
             TotalRecords = m_total,
             LibraryRecords = m_library,
             BlankRecords = m_blank,
+            PlantRecords = m_plants,
             CountedRecords = m_counted,
             NamedRecords = m_named
         };
 
         FlagByGroup(res, "uuid", m_byId, m_withId, k => m_idNames.TryGetValue(k, out string nm) ? nm + " " + k : k.ToString(), k => (UUID?)k);
-        FlagByGroup(res, "name", m_byName, m_named, k => m_nameDisplay[k], k => null);
+
+        // Grouping by name only means something when most of the counted records carry a name at all.
+        bool nameCovered = m_counted > 0 && (double)m_named / m_counted >= m_settings.NameCoverageShare;
+        if (nameCovered)
+            FlagByGroup(res, "name", m_byName, m_named, k => m_nameDisplay[k], k => null);
+        else
+        {
+            CreatorAnalysisResult probe = new CreatorAnalysisResult();
+            FlagByGroup(probe, "name", m_byName, m_named, k => m_nameDisplay[k], k => null);
+            if (probe.Flags.Count > 0)
+            {
+                CreatorFlag would = probe.Flags[0];
+                string note = string.Format(CultureInfo.InvariantCulture,
+                    "Grouped by name, {0} would be credited on {1} of the {2} records that carry a name, but only {3} of {4} counted records ({5}) carry a name, below the {6:P0} needed for the name grouping to flag. " +
+                    "Most records here name no creator by text, so the name shares say little about the whole archive.",
+                    would.Creator, N(would.Count), N(would.Total), N(m_named), N(m_counted), Pct(m_named, m_counted), m_settings.NameCoverageShare);
+                res.Notes.Add(note);
+                findings.Add(new Finding
+                {
+                    Source = Id,
+                    Code = "NAME_COVERAGE_LOW",
+                    Severity = FindingSeverity.Info,
+                    Title = "Creator names are too sparse to group by name",
+                    Detail = note,
+                    Count = m_named,
+                    Numbers = new Dictionary<string, string>
+                    {
+                        ["recordsWithName"] = N(m_named),
+                        ["countedRecords"] = N(m_counted),
+                        ["requiredShare"] = m_settings.NameCoverageShare.ToString("0.##", CultureInfo.InvariantCulture)
+                    }
+                });
+            }
+        }
 
         if (res.Fired)
         {
@@ -146,21 +190,24 @@ public sealed class CreatorAnalysisCheck : ArchiveCheckBase
             foreach (CreatorFlag f in res.Flags)
                 findings.Add(new Finding
                 {
+                    Source = Id,
                     Code = f.Code,
                     Severity = FindingSeverity.Warning,
+                    Count = f.Count,
                     Title = f.Code == "SINGLE_CREATOR"
                         ? "One creator is credited on every part and item"
                         : "One creator is credited on most parts and items",
-                    Detail = string.Format(CultureInfo.InvariantCulture, "{0}: {1} of {2} counted records ({3:P1}), grouped by {4}.", f.Creator, f.Count, f.Total, f.Share, f.Grouping),
+                    Detail = string.Format(CultureInfo.InvariantCulture, "{0}: {1} ({2:P1}), grouped by {3}.", f.Creator, f.Coverage, f.Share, f.Grouping),
                     Numbers = new Dictionary<string, string>
                     {
                         ["count"] = f.Count.ToString(CultureInfo.InvariantCulture),
                         ["total"] = f.Total.ToString(CultureInfo.InvariantCulture),
-                        ["grouping"] = f.Grouping
+                        ["grouping"] = f.Grouping,
+                        ["countedRecords"] = m_counted.ToString(CultureInfo.InvariantCulture)
                     }
                 });
             foreach (AnalysisMatch m in res.Matches)
-                findings.Add(new Finding { Code = m.Id, Severity = FindingSeverity.Info, Title = "Pattern match", Detail = m.Statement, Numbers = m.Numbers });
+                findings.Add(new Finding { Source = Id, Code = m.Id, Severity = FindingSeverity.Info, Title = "Pattern match", Detail = m.Statement, Numbers = m.Numbers });
         }
 
         Result = res;
@@ -195,7 +242,8 @@ public sealed class CreatorAnalysisCheck : ArchiveCheckBase
             CreatorId = idOf(topKey),
             Count = top,
             Total = total,
-            Share = share
+            Share = share,
+            Coverage = Coverage(grouping, top, total)
         });
     }
 
@@ -227,6 +275,16 @@ public sealed class CreatorAnalysisCheck : ArchiveCheckBase
         return (best, bestStart);
     }
 
+    private static string N(long n) => n.ToString("N0", CultureInfo.InvariantCulture);
+
+    /// <summary>For example "3,153 of the 3,205 records that carry a name; 3,205 of 20,969 counted records carry one".</summary>
+    private string Coverage(string grouping, long count, long groupTotal)
+    {
+        string what = grouping == "name" ? "a name" : "a creator id";
+        return string.Format(CultureInfo.InvariantCulture, "{0} of the {1} records that carry {2}; {1} of {3} counted records carry one",
+            N(count), N(groupTotal), what, N(m_counted));
+    }
+
     private static string Pct(long a, long b) => b == 0 ? "0%" : (100.0 * a / b).ToString("0.#", CultureInfo.InvariantCulture) + "%";
 
     private static string Utc(long minute) =>
@@ -248,9 +306,11 @@ public sealed class CreatorAnalysisCheck : ArchiveCheckBase
                 : LoaderBehaviour.OarRewrite + " " + LoaderBehaviour.IarRewrite;
             res.Matches.Add(new AnalysisMatch
             {
-                Id = "MATCH_LOADER_REWRITE",
+                Id = "MATCH_SAME_ACCOUNT",
                 Statement = string.Format(CultureInfo.InvariantCulture,
-                    "Creator, owner and last owner are the same account on {0} of {1} records ({2}) and no record carries creator data naming a different creator ({4} records carry creator data). This matches what a loader leaves when it replaces creators it cannot resolve. {3}",
+                    "Creator, owner and last owner are the same account on {0} of {1} records ({2}) and no record carries creator data naming a different creator ({4} records carry creator data). " +
+                    "Two readings fit this. It matches what a loader leaves when it replaces creators it cannot resolve. {3} " +
+                    "It also matches one person's own work that was never sold or given away. The file cannot tell the two apart; only a check against a grid (content dated before the credited account existed) can.",
                     m_sameAccount, m_counted, Pct(m_sameAccount, m_counted), loader, m_withCreatorData),
                 Numbers = new Dictionary<string, string>
                 {
@@ -269,7 +329,7 @@ public sealed class CreatorAnalysisCheck : ArchiveCheckBase
             {
                 Id = "MATCH_BULK_DATES",
                 Statement = string.Format(CultureInfo.InvariantCulture,
-                    "{0} of {1} dated records ({2}) fall inside one {3}-hour window starting {4}. Neither loader changes CreationDate, so this matches bulk creation by an import tool or mass re-creation, not an effect of loading.",
+                    "{0} of {1} dated records ({2}) fall inside one {3}-hour window starting {4}. Neither loader changes CreationDate, so this matches bulk creation (an import tool, mass re-creation, or a rezzing or planting script run by the owner), not an effect of loading.",
                     windowCount, m_dated, Pct(windowCount, m_dated), m_settings.WindowSeconds / 3600, Utc(windowStart)),
                 Numbers = new Dictionary<string, string>
                 {

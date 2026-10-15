@@ -139,7 +139,7 @@ public class LoaderTests : OpenSimTestCase
     }
 
     [Fact]
-    public void RealCase_OarLoadedWhereTheCreatorsHaveNoAccount_AndSavedAgain_ShowsSingleCreatorWithTheLoaderMatch()
+    public void RealCase_OarLoadedWhereTheCreatorsHaveNoAccount_AndSavedAgain_ShowsSingleCreatorWithTheSameAccountMatch()
     {
         byte[] original = ManyCreators(10, out _);
         ArchiveReport before = Inspect(original);
@@ -156,7 +156,7 @@ public class LoaderTests : OpenSimTestCase
         PartyTotals only = Assert.Single(after.Creators.Where(c => c.Parts > 0));
         Assert.Equal(EstateOwner, only.Id);
         Assert.Contains(after.CreatorAnalysis.Flags, f => f.Code == "SINGLE_CREATOR" && f.CreatorId == EstateOwner);
-        AnalysisMatch m = Assert.Single(after.CreatorAnalysis.Matches, x => x.Id == "MATCH_LOADER_REWRITE");
+        AnalysisMatch m = Assert.Single(after.CreatorAnalysis.Matches, x => x.Id == "MATCH_SAME_ACCOUNT");
         Assert.Contains("30 of 30", m.Statement);
         Assert.Equal(3, after.ExitCode);
         Assert.Equal(LoaderBehaviour.Advisory, after.CreatorAnalysis.Advisory);
@@ -242,7 +242,7 @@ public class LoaderTests : OpenSimTestCase
     }
 
     [Fact]
-    public void RealCase_IarLoadedIntoAnotherUsersInventory_AndSavedAgain_ShowsSingleCreatorWithTheLoaderMatch()
+    public void RealCase_IarLoadedIntoAnotherUsersInventory_AndSavedAgain_ShowsSingleCreatorWithTheSameAccountMatch()
     {
         byte[] original = IarFromSeveralCreators(out IarWorld source, 10);
         ArchiveReport before = Inspect(original);
@@ -258,7 +258,7 @@ public class LoaderTests : OpenSimTestCase
 
         Assert.Equal(30, after.IarItemCount);
         Assert.Contains(after.CreatorAnalysis.Flags, f => f.Code == "SINGLE_CREATOR" && f.Grouping == "uuid" && f.CreatorId == loader);
-        Assert.Contains(after.CreatorAnalysis.Matches, m => m.Id == "MATCH_LOADER_REWRITE" && m.Statement.Contains("loading the archive"));
+        Assert.Contains(after.CreatorAnalysis.Matches, m => m.Id == "MATCH_SAME_ACCOUNT" && m.Statement.Contains("loading the archive"));
         Assert.Equal(3, after.ExitCode);
     }
 }

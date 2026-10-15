@@ -20,17 +20,17 @@ Gzip and plain tar files are both accepted.
 
 | Code | Meaning |
 |---|---|
-| 0 | read fully, no creator flag |
+| 0 | read fully, no Warning (Notices and Info findings do not change the code) |
 | 1 | partial: a corrupt entry, a size limit, or a truncated file; the report says which entry it stopped at |
 | 2 | not an archive, or the file could not be opened |
-| 3 | read fully and a creator flag fired (see below) |
+| 3 | read fully with at least one Warning finding; the creator flags and the checks marked Warning below are Warnings |
 | 64 | bad command line |
 
 ## What it reads
 
 OAR 0.x (single region) and 1.x (multi region), IAR 0.x (creator as `ospa:n=First Last`) and 1.x (creator data), object XML in the xml2 and
 original forms, coalesced objects, boxed objects inside object assets (followed recursively with a cycle guard and a depth limit of 8),
-parcels, region settings, and the assets (type, size, and whether each is referenced).
+parcels, region settings, and the assets (type, size, and whether each is referenced). Each part's shape PCode is read so built-in trees and grass can be counted apart.
 The bodies it parses are the control file, object files, inventory item files, parcel and region settings files, and assets of type
 object, script, notecard, gesture, wearable, material and settings. Every other body (textures, sounds, meshes, animations) is streamed past without being held.
 
@@ -39,15 +39,20 @@ Binary payloads from other forks (binary object serializations, script state of 
 ## The creator analysis
 
 Records (parts and items, boxed contents included) are grouped by creator id and, where creator data or an OSPA name gives one, by creator name.
-Library content and blank creators are counted separately and left out of the shares.
+Library content, blank creators and built-in trees and grass (parts whose shape PCode is Tree, NewTree or Grass, which carry whoever placed them as creator) are counted separately,
+listed in the report with their counts, and left out of the shares.
+
+Grouping by creator name only flags when the records that carry a name are at least 50% of the counted records (`AnalysisSettings.NameCoverageShare`).
+Below that, an Info note (`NAME_COVERAGE_LOW`) says what the name grouping would have shown instead of flagging it. Every flag and note states its coverage, for example
+"3,153 of the 3,205 records that carry a name; 3,205 of 20,969 counted records carry one".
 
 - `SINGLE_CREATOR`: one creator is credited on every counted record, and there are at least 20.
 - `DOMINANT_CREATOR`: one creator has 90% or more of the counted records, at least 20 records.
 
 When a flag fires the report also says which of these the numbers match, each with its figures:
 
-- `MATCH_LOADER_REWRITE`: creator, owner and last owner are the same account on 95% or more of the records and no creator data names a different creator. This is what a loader leaves when it replaces creators it cannot resolve.
-- `MATCH_BULK_DATES`: 80% or more of the CreationDates fall inside one 24-hour window. Neither loader changes CreationDate, so this points to bulk creation (an import tool or mass re-creation).
+- `MATCH_SAME_ACCOUNT`: creator, owner and last owner are the same account on 95% or more of the records and no creator data names a different creator. Two readings fit: it is what a loader leaves when it replaces creators it cannot resolve, and it is also what one person's own work looks like when it was never sold or given away. The file cannot tell them apart; only a check against a grid (content dated before the credited account existed) can.
+- `MATCH_BULK_DATES`: 80% or more of the CreationDates fall inside one 24-hour window. Neither loader changes CreationDate, so this points to bulk creation: an import tool, mass re-creation, or a rezzing or planting script run by the owner.
 - `MATCH_ONE_BUILDER`: creator data names one home grid and one name on 95% or more of the records, the dates are spread out and the owners vary.
 
 The thresholds are `AnalysisSettings` in the library. The analysis explains patterns; it does not judge, and it does not prove anything:
@@ -55,6 +60,46 @@ archives can be edited, so the report is a record of what the file says. An arch
 one person with everything even when that person did not build it; check with the person bringing it.
 
 For an IAR written without `--home` (version 0.x) the creator is a name only, so creator and owner cannot be compared and only the name grouping can fire.
+
+## Checks
+
+After the creator analysis the report has a Checks section, grouped by severity with Warnings first. Each finding has a code, a severity, a title, a plain statement,
+the numbers behind it, and the records it is about: the text report prints up to 20 (name, id, folder path or linkset) and the JSON carries all of them
+(`InspectorOptions.MaxFindingExamples` bounds the list; `examplesTruncated` says when it was cut). A finding says what the file holds; it is never a verdict.
+The checks read the file only. They need no grid, user or asset service.
+
+| Code | Severity | What the file holds |
+|---|---|---|
+| `IAR_ORDER` | Warning | the control file is missing or not first, or an inventory entry comes after the first asset entry (the order the IAR loader needs) |
+| `IAR_UNPARSED` | Warning | an item entry that is not valid XML, or a folder name with no folder id (the loader skips such path segments) |
+| `IAR_TYPE_DISAGREE` | Warning | an item whose asset type and inventory type are not a pair in the grid's type table |
+| `IAR_ASSET_TYPE_MISMATCH` | Warning | an item whose asset type differs from the type its asset file's extension gives |
+| `IAR_LINK_DANGLING` | Warning | a link item or folder link that points at an item or folder not in the archive |
+| `IAR_BOXED_UNPARSED` | Warning | an object asset held by an item that does not parse |
+| `IAR_SYSTEM_FOLDER` | Notice | a folder named like a single-instance system folder (My Inventory, Current Outfit, Trash, Lost And Found, My Suitcase, Favorites, Photo Album, My Outfits); a name match, because the archive records no folder type |
+| `IAR_LIMITS` | Notice | folder depth, items in one folder or total items over the bounds in `StructureSettings` (settings, not loader rules) |
+| `PERM_WIDER_THAN_BASE` | Notice | an owner, group, everyone or next-owner mask that grants copy, modify, transfer or export that the base mask does not (move is not compared) |
+| `PERM_ALL_OPEN` | Info | records whose base, owner, group, everyone and next-owner masks all have copy, modify and transfer (a count) |
+| `PERM_NO_EXPORT_HELD` | Warning | records held by someone other than their creator whose creator did not allow export, counted per creator: the base mask carries the export right and neither the owner nor the everyone mask carries the bit |
+| `PERM_NO_EXPORT_INFO` | Info | held records whose base mask has no export bit; they are not counted as refused (an archive saved before the export bit existed has none) |
+| `REF_UNKNOWN_EXTENSION` | Notice | asset files whose extension is not in the archive extension table |
+| `REF_TYPE_MISMATCH` | Warning | a part, prim item or setting that names an asset type different from the asset file's type (texture encodings, sound encodings and script text and bytecode are one family each; a sculpt field may name a texture or a mesh) |
+| `REF_DUPLICATE_ASSET` | Notice | an asset id that appears in more than one entry |
+| `REF_OBJECT_UNPARSED` | Warning | an object asset that does not parse |
+| `REF_MISSING` | Notice | an asset id the content names with no asset file (only when the archive says assets are included) |
+| `REF_NO_ASSETS` | Info | the archive was saved without assets, so references cannot be checked |
+| `REF_UNREFERENCED` | Info | asset files nothing in the archive names |
+| `AUTHOR_LINES` | Info | lines in scripts and notecards that name an author or rights holder (Copyright, (c), (C) sign, Created by, Made by, Script by, Author, All rights reserved, Do not resell, Licensed to and the like), each distinct name with how many assets carry it and the credited creator of the items that hold them. A list for a person to compare; nothing is matched |
+| `CREATOR_ID_MANY_NAMES` | Notice | one creator id with different names or homes |
+| `CREATOR_NAME_MANY_IDS` | Notice | one name and home with different creator ids |
+| `CREATOR_DATA_UNPARSED` | Notice | creator data that holds no name or a home that is not a URL, or a creator field that is neither a UUID nor an OSPA name |
+| `ARCH_UNKNOWN_PATH` | Notice | entries under no path the loaders read, with sizes (the loaders ignore them) |
+| `ARCH_DUPLICATE_ENTRY` | Notice | an entry name that repeats an earlier one |
+| `ARCH_DIRECTORY_DATA` | Notice | a directory entry that holds data |
+| `ARCH_LEGACY_PAYLOAD` | Info | binary payloads from other forks and script state that were found, counted and not decoded |
+
+The export rule: the grid's Hypergrid transfer reads the owner mask, a transfer clears export from the receiver's owner mask, and the creator's choice
+survives in the everyone mask, so a held record is counted as refused only when the base mask has the right and neither the owner nor the everyone mask has the bit.
 
 ## What the loaders do with creators they cannot resolve
 
@@ -93,8 +138,8 @@ XML is read with DTD processing prohibited and no resolver. Control characters a
 | `assetsWithoutCreator[]` | assets with no creator of their own (textures, sounds, meshes, animations, materials, ids found in text): `assetId`, `assetType`, `present`, `uncertain`, `uses`, `kinds[]`, `users[]` (`creatorId`, `creatorName`, `uses`) |
 | `parcels[]`, `regionSettings[]` | parcel owner and group, terrain texture references |
 | `legacyPayloads[]` | `kind`, `count`, `bytes` |
-| `creatorAnalysis` | `totalRecords`, `libraryRecords`, `blankRecords`, `countedRecords`, `fired`, `flags[]` (`code`, `grouping`, `creator`, `creatorId`, `count`, `total`, `share`), `matches[]` (`id`, `statement`, `numbers`), `advisory` |
-| `findings[]` | everything the registered checks reported: `code`, `severity`, `title`, `detail`, `numbers` |
+| `creatorAnalysis` | `totalRecords`, `libraryRecords`, `blankRecords`, `plantRecords`, `countedRecords`, `fired`, `flags[]` (`code`, `grouping`, `creator`, `creatorId`, `count`, `total`, `share`, `coverage`), `matches[]` (`id`, `statement`, `numbers`), `notes[]`, `advisory` |
+| `findings[]` | everything the checks and the creator analysis reported: `source` (the check), `code`, `severity` (`Info`, `Notice`, `Warning`), `title`, `detail`, `count`, `numbers`, `examples[]` (`name`, `id`, `where`, `note`) and `examplesTruncated` |
 | `loaderWarnings[]`, `editNote` | the loader behaviour and the edit-ability statement |
 | `problems[]`, `problemCount` | entries that could not be read, notes |
 | `retention` | which lists were cut at the retention limit |

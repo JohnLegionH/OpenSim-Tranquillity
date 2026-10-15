@@ -19,6 +19,62 @@ public class Finding
     public string Title { get; set; }
     public string Detail { get; set; }
     public Dictionary<string, string> Numbers { get; set; } = new Dictionary<string, string>();
+    /// <summary>Id of the check that produced the finding.</summary>
+    public string Source { get; set; }
+    /// <summary>How many records the finding is about (the examples may be fewer).</summary>
+    public long Count { get; set; }
+    /// <summary>The records the finding is about, in file order, up to InspectorOptions.MaxFindingExamples. The text report prints the first 20.</summary>
+    public List<FindingExample> Examples { get; set; } = new List<FindingExample>();
+    /// <summary>True when there were more records than the list holds.</summary>
+    public bool ExamplesTruncated { get; set; }
+}
+
+/// <summary>One record a finding points at.</summary>
+public class FindingExample
+{
+    public string Name { get; set; }
+    public string Id { get; set; }
+    /// <summary>Folder path, entry path or linkset, whichever places the record.</summary>
+    public string Where { get; set; }
+    public string Note { get; set; }
+}
+
+/// <summary>Collects the records behind one finding, counting all of them and keeping a bounded list.</summary>
+public sealed class FindingBuilder
+{
+    private readonly int m_max;
+    public long Count { get; private set; }
+    public List<FindingExample> Examples { get; } = new List<FindingExample>();
+    public bool Truncated { get; private set; }
+
+    public FindingBuilder(int max) { m_max = max; }
+
+    public void Add(string name, string id, string where, string note = null)
+    {
+        Count++;
+        if (Examples.Count < m_max)
+            Examples.Add(new FindingExample { Name = Sanitize.Text(name ?? string.Empty), Id = id ?? string.Empty, Where = Sanitize.Text(where ?? string.Empty), Note = Sanitize.Text(note) });
+        else
+            Truncated = true;
+    }
+
+    public bool Any => Count > 0;
+
+    public Finding ToFinding(string source, string code, FindingSeverity severity, string title, string detail, Dictionary<string, string> numbers = null)
+    {
+        return new Finding
+        {
+            Source = source,
+            Code = code,
+            Severity = severity,
+            Title = title,
+            Detail = detail,
+            Count = Count,
+            Numbers = numbers ?? new Dictionary<string, string>(),
+            Examples = Examples,
+            ExamplesTruncated = Truncated
+        };
+    }
 }
 
 /// <summary>
@@ -66,6 +122,16 @@ public class AnalysisSettings
     public int WindowSeconds { get; set; } = 24 * 3600;
     /// <summary>Share of counted records that carry creator data for the one-builder match.</summary>
     public double CreatorDataShare { get; set; } = 0.95;
+    /// <summary>Grouping by creator name only flags when the records that carry a name are at least this share of the counted records.</summary>
+    public double NameCoverageShare { get; set; } = 0.50;
+}
+
+/// <summary>Bounds the structure checks report against. They are settings, not rules taken from a loader.</summary>
+public class StructureSettings
+{
+    public int MaxFolderDepth { get; set; } = 32;
+    public int MaxItemsPerFolder { get; set; } = 10_000;
+    public long MaxTotalItems { get; set; } = 250_000;
 }
 
 public class InspectorOptions
@@ -85,6 +151,11 @@ public class InspectorOptions
     public int MaxReferrersPerAsset { get; set; } = 8;
     public int MaxProblems { get; set; } = 200;
     public AnalysisSettings Analysis { get; set; } = new AnalysisSettings();
+    public StructureSettings Structure { get; set; } = new StructureSettings();
+    /// <summary>Examples kept per finding (the text report prints 20; the JSON carries all kept).</summary>
+    public int MaxFindingExamples { get; set; } = 100_000;
+    /// <summary>Run the file-only checks (structure, permissions, references, author lines, creator data, integrity). Tests of a single check turn this off.</summary>
+    public bool StandardChecks { get; set; } = true;
     /// <summary>Extra checks run in the same pass, after the built-in creator analysis.</summary>
     public List<IArchiveCheck> Checks { get; set; } = new List<IArchiveCheck>();
 }

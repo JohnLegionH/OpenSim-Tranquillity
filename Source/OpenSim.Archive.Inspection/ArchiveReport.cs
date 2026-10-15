@@ -72,6 +72,8 @@ public class CreatorFlag
     public long Count { get; set; }
     public long Total { get; set; }
     public double Share { get; set; }
+    /// <summary>How many of the records carry what the grouping needs, for example "3,153 of the 3,205 records that carry a name; 3,205 of 20,969 counted records carry one".</summary>
+    public string Coverage { get; set; }
 }
 
 public class AnalysisMatch
@@ -86,11 +88,15 @@ public class CreatorAnalysisResult
     public long TotalRecords { get; set; }
     public long LibraryRecords { get; set; }
     public long BlankRecords { get; set; }
+    /// <summary>Built-in trees and grass (PCode Tree, NewTree, Grass), counted apart like library content and left out of the shares.</summary>
+    public long PlantRecords { get; set; }
     public long CountedRecords { get; set; }
     public long NamedRecords { get; set; }
     public bool Fired => Flags.Count > 0;
     public List<CreatorFlag> Flags { get; set; } = new List<CreatorFlag>();
     public List<AnalysisMatch> Matches { get; set; } = new List<AnalysisMatch>();
+    /// <summary>Notes that are not flags, such as names being too sparse to group by.</summary>
+    public List<string> Notes { get; set; } = new List<string>();
     public string Advisory { get; set; }
 }
 
@@ -180,14 +186,14 @@ public class ArchiveReport
     [System.Text.Json.Serialization.JsonIgnore]
     public HashSet<UUID> PresentAssetIds { get; set; } = new HashSet<UUID>();
 
-    /// <summary>Exit code of the command-line tool for this report: 0 read fully, 1 partial, 2 not an archive, 3 read fully with a creator flag.</summary>
+    /// <summary>Exit code of the command-line tool for this report: 0 read fully with no Warning, 1 partial, 2 not an archive, 3 read fully with at least one Warning (the creator flags are Warnings).</summary>
     public int ExitCode
     {
         get
         {
             if (Status == InspectionStatus.NotAnArchive) return 2;
             if (Status == InspectionStatus.Partial) return 1;
-            return CreatorAnalysis.Fired ? 3 : 0;
+            return Findings.Any(f => f.Severity == FindingSeverity.Warning) ? 3 : 0;
         }
     }
 }

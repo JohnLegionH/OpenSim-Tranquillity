@@ -408,6 +408,7 @@ internal static class ObjectXmlParser
 
             switch (r.Name)
             {
+                case "PCode": { if (XmlRead.TryInt(XmlRead.Text(r), out int pc)) pp.Part.PCode = pc; break; }
                 case "TextureEntry": ReadTextureEntry(XmlRead.Text(r), pp); break;
                 case "ExtraParams": ReadExtraParams(XmlRead.Text(r), pp); break;
                 case "SculptTexture":

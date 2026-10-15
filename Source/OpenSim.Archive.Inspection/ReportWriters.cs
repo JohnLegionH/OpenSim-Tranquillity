@@ -105,26 +105,33 @@ public static class TextReport
             return sb.ToString();
         }
 
-        // creator analysis first when it fires
-        if (r.CreatorAnalysis.Fired)
+        // creator analysis first when it fires or has a note
+        if (r.CreatorAnalysis.Fired || r.CreatorAnalysis.Notes.Count > 0)
         {
             sb.AppendLine("CREATOR ANALYSIS");
             foreach (CreatorFlag f in r.CreatorAnalysis.Flags)
-                sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "  {0} (grouped by {1}): {2} is credited on {3} of {4} counted records ({5:P1}).",
-                    f.Code, f.Grouping, S(f.Creator), f.Count, f.Total, f.Share));
-            sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "  Records: {0} total, {1} library content and {2} blank creators left out, {3} counted.",
-                r.CreatorAnalysis.TotalRecords, r.CreatorAnalysis.LibraryRecords, r.CreatorAnalysis.BlankRecords, r.CreatorAnalysis.CountedRecords));
+                sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "  {0} (grouped by {1}): {2} is credited on {3} ({4:P1}).",
+                    f.Code, f.Grouping, S(f.Creator), f.Coverage, f.Share));
+            sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "  Records: {0:N0} total, {1:N0} library content, {2:N0} blank creators and {3:N0} built-in trees and grass left out, {4:N0} counted.",
+                r.CreatorAnalysis.TotalRecords, r.CreatorAnalysis.LibraryRecords, r.CreatorAnalysis.BlankRecords, r.CreatorAnalysis.PlantRecords, r.CreatorAnalysis.CountedRecords));
+            foreach (string note in r.CreatorAnalysis.Notes)
+                sb.AppendLine("  Note: " + S(note));
             foreach (AnalysisMatch m in r.CreatorAnalysis.Matches)
                 sb.AppendLine("  - " + S(m.Statement));
-            sb.AppendLine("  " + r.CreatorAnalysis.Advisory);
+            if (r.CreatorAnalysis.Advisory != null)
+                sb.AppendLine("  " + r.CreatorAnalysis.Advisory);
             sb.AppendLine();
         }
+
+        AppendChecks(sb, r);
 
         sb.AppendLine("ARCHIVE");
         sb.AppendLine("  kind: " + a.Kind + (a.Version != null ? "  version " + a.Version : "") + (a.MultiRegion ? "  (multi-region)" : ""));
         sb.AppendLine("  status: " + r.Status + (r.StoppedAt != null ? "  stopped at: " + S(r.StoppedAt) : "") + (r.StopReason != null ? "  reason: " + S(r.StopReason) : ""));
         if (a.CreationTime.HasValue)
             sb.AppendLine("  created: " + DateTimeOffset.FromUnixTimeSeconds(a.CreationTime.Value).UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + " UTC");
+        if (r.CreatorAnalysis.PlantRecords > 0)
+            sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "  built-in trees and grass: {0:N0} parts (counted apart, left out of the creator shares)", r.CreatorAnalysis.PlantRecords));
         sb.AppendLine("  assets included: " + (a.AssetsIncluded.HasValue ? a.AssetsIncluded.Value.ToString() : "not stated"));
         sb.AppendLine("  size: " + Size(a.FileBytes) + " on disk, " + Size(a.UncompressedBytes) + " uncompressed (" + (a.Compressed ? "gzip" : "plain tar") + "), " + a.EntryCount + " entries");
         if (!a.ControlFileFound)
@@ -240,6 +247,54 @@ public static class TextReport
             sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "STATS  wall time {0:0.00} s, bytes read {1}, peak working set {2}", r.Stats.WallSeconds, r.Stats.BytesRead, Size(r.Stats.PeakWorkingSetBytes)));
         }
         return sb.ToString();
+    }
+
+    private const int ExamplesShown = 20;
+
+    /// <summary>The checks' findings, Warnings first, each with up to 20 example records. The creator analysis prints its own section.</summary>
+    private static void AppendChecks(StringBuilder sb, ArchiveReport r)
+    {
+        List<Finding> shown = r.Findings.Where(f => f.Source != "creator-analysis").ToList();
+        sb.AppendLine("CHECKS");
+        if (shown.Count == 0)
+        {
+            sb.AppendLine("  no findings");
+            sb.AppendLine();
+            return;
+        }
+
+        foreach (FindingSeverity sev in new[] { FindingSeverity.Warning, FindingSeverity.Notice, FindingSeverity.Info })
+        {
+            List<Finding> group = shown.Where(f => f.Severity == sev).ToList();
+            if (group.Count == 0)
+                continue;
+            sb.AppendLine("  " + sev.ToString().ToUpperInvariant() + " (" + group.Count + ")");
+            foreach (Finding f in group)
+            {
+                sb.AppendLine("    " + S(f.Code) + ": " + S(f.Title));
+                sb.AppendLine("      " + S(f.Detail));
+                foreach (KeyValuePair<string, string> kv in f.Numbers.Take(12))
+                    sb.AppendLine("      " + S(kv.Key) + ": " + S(kv.Value));
+                if (f.Numbers.Count > 12)
+                    sb.AppendLine("      ... " + (f.Numbers.Count - 12) + " more numbers in the JSON");
+                foreach (FindingExample e in f.Examples.Take(ExamplesShown))
+                    sb.AppendLine("      - " + ExampleLine(e));
+                long more = Math.Max(f.Count, f.Examples.Count) - Math.Min(f.Examples.Count, ExamplesShown);
+                if (f.Examples.Count > 0 && more > 0)
+                    sb.AppendLine("      ... " + more.ToString("N0", CultureInfo.InvariantCulture) + " more" + (f.ExamplesTruncated ? " (the JSON lists " + f.Examples.Count.ToString("N0", CultureInfo.InvariantCulture) + ")" : " in the JSON"));
+            }
+        }
+        sb.AppendLine();
+    }
+
+    private static string ExampleLine(FindingExample e)
+    {
+        List<string> bits = new List<string>();
+        if (!string.IsNullOrEmpty(e.Name)) bits.Add(Trim(S(e.Name), 70));
+        if (!string.IsNullOrEmpty(e.Id)) bits.Add(S(e.Id));
+        if (!string.IsNullOrEmpty(e.Where)) bits.Add("at " + Trim(S(e.Where), 110));
+        if (!string.IsNullOrEmpty(e.Note)) bits.Add("(" + Trim(S(e.Note), 260) + ")");
+        return string.Join("  ", bits);
     }
 
     private static string Trim(string s, int n) => s.Length <= n ? s : s.Substring(0, n - 1) + "...";

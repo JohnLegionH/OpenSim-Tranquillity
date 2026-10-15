@@ -20,8 +20,8 @@ Reads an OAR or IAR and reports who is credited for what, without extracting or 
   --all          list everything instead of the top 50 of each table
   --stats        print wall time, bytes read and peak working set
 
-Exit codes: 0 read fully, 1 partial (see the report), 2 not an archive or unreadable,
-            3 read fully and a creator flag fired, 64 bad command line.";
+Exit codes: 0 read fully with no Warning, 1 partial (see the report), 2 not an archive or unreadable,
+            3 read fully with at least one Warning (the creator flags are Warnings), 64 bad command line.";
 
     public static int Main(string[] args)
     {

@@ -27,6 +27,9 @@ public sealed class ArchiveInspector
         m_options = options ?? new InspectorOptions();
     }
 
+    /// <summary>Name of an asset type number, or "unknown" / "type N" for numbers outside the enumeration.</summary>
+    public static string TypeName(int type) => Pass.TypeName(type);
+
     public ArchiveReport Inspect(string path)
     {
         try
@@ -108,6 +111,8 @@ public sealed class ArchiveInspector
             m_input = input;
             m_analysis = new CreatorAnalysisCheck(options.Analysis);
             m_checks.Add(m_analysis);
+            if (options.StandardChecks)
+                m_checks.AddRange(StandardChecks.Create(options));
             m_checks.AddRange(options.Checks);
             m_report.Retention.MaxRetainedRecords = options.MaxRetainedRecords;
         }
@@ -231,6 +236,7 @@ public sealed class ArchiveInspector
 
                 m_currentEntry = h.Name;
                 m_report.Archive.EntryCount = tar.EntriesRead;
+                EmitEntry(h, tar.EntriesRead);
                 if (tar.EntriesRead > m_opt.MaxEntries)
                     throw new ArchiveLimitException("archive has more than " + m_opt.MaxEntries + " entries; stopped at '" + Sanitize.Text(h.Name) + "'", h.Name);
 
@@ -255,6 +261,26 @@ public sealed class ArchiveInspector
         }
 
         // ---------------------------------------------------------------- entries
+
+        private void EmitEntry(TarEntryHeader h, long index)
+        {
+            string path = Normalise(h.Name, out _);
+            string prefix;
+            if (path == ArchiveConstants.CONTROL_FILE_PATH)
+                prefix = path;
+            else
+            {
+                int slash = path.IndexOf('/');
+                prefix = slash < 0 ? path : path.Substring(0, slash + 1);
+            }
+            Emit(new EntryRecord { Entry = Sanitize.Text(h.Name), Index = index, Path = Sanitize.Text(path), Size = h.Size, IsDirectory = h.IsDirectory, Prefix = Sanitize.Text(prefix) });
+        }
+
+        private void Fail(string entry, string what, string message, UUID? assetId = null)
+        {
+            Problem(entry, message, true);
+            Emit(new ParseFailureRecord { Entry = Sanitize.Text(entry), What = what, Message = Sanitize.Text(message), AssetId = assetId });
+        }
 
         private static string Normalise(string name, out string regionDir)
         {
@@ -320,7 +346,7 @@ public sealed class ArchiveInspector
             string plain = string.Join("/", segments.Select(s => { SplitFolderSegment(s, out string n, out _); return n; }));
             SplitFolderSegment(segments[segments.Length - 1], out string name, out UUID id);
 
-            FolderRecord f = new FolderRecord { Entry = entry, Path = plain, Name = name, FolderId = id };
+            FolderRecord f = new FolderRecord { Entry = entry, Path = plain, Name = name, FolderId = id, IdParsed = id != UUID.Zero, Depth = segments.Length };
             Clean(f);
             m_folders[rel] = f;
             m_report.FolderCount++;
@@ -354,7 +380,7 @@ public sealed class ArchiveInspector
                 }
                 catch (System.Xml.XmlException e)
                 {
-                    Problem(h.Name, "control file is not valid XML: " + e.Message, true);
+                    Fail(h.Name, "control", "control file is not valid XML: " + e.Message);
                 }
                 return;
             }
@@ -391,7 +417,7 @@ public sealed class ArchiveInspector
                 }
                 catch (System.Xml.XmlException e)
                 {
-                    Problem(h.Name, "parcel file is not valid XML: " + e.Message, true);
+                    Fail(h.Name, "parcel", "parcel file is not valid XML: " + e.Message);
                 }
             }
             else if (path.StartsWith(ArchiveConstants.SETTINGS_PATH, StringComparison.Ordinal))
@@ -420,7 +446,7 @@ public sealed class ArchiveInspector
                 }
                 catch (System.Xml.XmlException e)
                 {
-                    Problem(h.Name, "region settings file is not valid XML: " + e.Message, true);
+                    Fail(h.Name, "region-settings", "region settings file is not valid XML: " + e.Message);
                 }
             }
             else
@@ -494,13 +520,13 @@ public sealed class ArchiveInspector
             }
             catch (System.Xml.XmlException e)
             {
-                Problem(entry, "object XML is not valid: " + e.Message, true);
+                Fail(entry, boxedAsset.HasValue ? "boxed-object" : "object", "object XML is not valid: " + e.Message, boxedAsset);
                 return;
             }
 
             if (obj.Groups.Count == 0)
             {
-                Problem(entry, "no parts found in object file", true);
+                Fail(entry, boxedAsset.HasValue ? "boxed-object" : "object", "no parts found in object file", boxedAsset);
                 return;
             }
 
@@ -663,7 +689,7 @@ public sealed class ArchiveInspector
             }
             catch (System.Xml.XmlException e)
             {
-                Problem(h.Name, "inventory item is not valid XML: " + e.Message, true);
+                Fail(h.Name, "item", "inventory item is not valid XML: " + e.Message);
                 return;
             }
 
@@ -806,7 +832,11 @@ public sealed class ArchiveInspector
 
         private void ProcessTextAsset(byte[] body, string entry, UUID id, int type)
         {
+            m_holders.TryGetValue(id, out List<HolderInfo> holders);
             TextAssetBody tb = new TextAssetBody { Entry = Sanitize.Text(entry), AssetId = id, AssetType = type, Bytes = body };
+            if (holders != null)
+                foreach (HolderInfo hi in holders)
+                    tb.Holders.Add(new ReferrerInfo { RecordKind = hi.Kind, Name = hi.Name, Id = hi.Id, Creator = hi.Creator, OwnerId = hi.OwnerId });
             foreach (IArchiveCheck check in m_checks)
                 Guarded(check, () => check.OnTextAsset(tb));
 
@@ -814,7 +844,6 @@ public sealed class ArchiveInspector
             if (refs.Count == 0)
                 return;
 
-            m_holders.TryGetValue(id, out List<HolderInfo> holders);
             foreach (RefInfo r in refs)
             {
                 if (holders == null || holders.Count == 0)
