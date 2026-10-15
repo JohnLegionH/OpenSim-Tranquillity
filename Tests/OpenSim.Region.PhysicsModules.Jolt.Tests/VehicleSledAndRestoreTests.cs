@@ -160,7 +160,8 @@ public class VehicleRestoreTests
     [InlineData(45.0)]
     public void A_boat_falling_when_it_is_restored_is_caught_and_floats(double rate)
     {
-        var o = new HarnessOptions { RateHz = rate, Jolt = { ["VehiclePresets"] = "legacy" } };
+        // Restored with the region: made before the region's first step, which is when the host holds a new vehicle still.
+        var o = new HarnessOptions { RateHz = rate, WarmUpStep = false, Jolt = { ["VehiclePresets"] = "legacy" } };
         RunResult r = Harness.Harness.Run(RestoredBoat, o);
         // Its fall is stopped at once, and its hover brings it down to the water without going under: at 30 m/s it
         // would reach the water within 0.4 s and plunge far below it.

@@ -2702,6 +2702,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
             SetLegacyDefaults(newType);
             if (Settings.Presets == VehiclePresetSet.Documented)
                 SetDocumentedDefaults(newType);
+            // InWorldz's balloon reacts to wind (Halcyon VehicleDynamics.cs:2001; the InWorldz Advanced Vehicle Tutorial's
+            // table of defaults gives it REACT_TO_WIND), which is what its wind efficiencies act through. Second Life's
+            // balloon has no wind flag.
+            if (InWorldz && newType == VehicleType.Balloon)
+                _props.Flags |= ExtendedVehicleFlags.ReactToWind;
         }
 
         /// <summary>

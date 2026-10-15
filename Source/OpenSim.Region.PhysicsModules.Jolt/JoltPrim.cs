@@ -117,9 +117,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // live body, makes it stick. Set when the vehicle becomes active; runtime llSetVehicleType sets it too
         // (harmless - the body is already live so it sticks first time).
         private float _reassertVehicleTime;
-        // Whether that re-assertion also zeroes the body's velocity (below, in StepVehicle): for a type a script sets, and for
-        // a saved vehicle handed back while the region is loading; not for one handed back with the region running, which
-        // keeps the velocity the simulator replays onto it (a vehicle crossing in at speed), as on ubODE.
+        // Whether that re-assertion also zeroes the body's velocity (below, in StepVehicle): for a vehicle made while the region
+        // is loading, by a script or from its saved record; not for one made with the region running (a script's type call, or a
+        // vehicle crossing in at speed, which keeps the velocity the simulator replays onto it), as on ubODE.
         private bool _reassertZeroesVelocity;
 
         // How long after a vehicle becomes active its body params are re-asserted and, with no linear motor set, its
@@ -1902,7 +1902,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     // AFTER this set) - so re-assert it on the step-thread steps of the next
                     // ReassertVehicleSeconds, where it sticks.
                     _reassertVehicleTime = ReassertVehicleSeconds;
-                    _reassertZeroesVelocity = true;
+                    // Held only while the region loads. With the region running, a type call gives the type's presets and
+                    // nothing else: Second Life's page for llSetVehicleType describes no change to the velocity, and
+                    // Halcyon's type change copies the actor's velocity into the vehicle's state without zeroing it.
+                    _reassertZeroesVelocity = _module.IsRegionLoading;
                 }
                 else
                 {

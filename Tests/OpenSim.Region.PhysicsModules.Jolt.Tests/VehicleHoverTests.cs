@@ -98,9 +98,9 @@ public class VehicleHoverTests
             RunResult r = Run(rate, ts, 1f, 6f * ts + 4f);
             float band = 0.02f * (Height - StartHeight);
             Sample first = r.Samples.First(s => Math.Abs(s.Height - Height) < band);
-            // The host holds a new vehicle still for its first ReassertVehicleSeconds (0.27 s, the guard for a vehicle
-            // restored with its region), so the spring starts from there.
-            double expected = 5.834 * ts + JoltPrim.ReassertVehicleSeconds;
+            // The type is set with the region running, which holds nothing still (the hold of the first
+            // ReassertVehicleSeconds is for a vehicle made while the region loads), so the spring starts at once.
+            double expected = 5.834 * ts;
             Assert.True(Math.Abs(first.T - expected) <= 0.02 * expected + 1.0 / rate, $"timescale {ts} at {rate} Hz: settled at {first.T:0.000} s against {expected:0.000}");
         }
     }
