@@ -44,7 +44,7 @@ using Microsoft.Extensions.Logging;
 
 namespace OpenSim.Region.PhysicsModules.Meshing;
 
-public class Meshmerizer : IMesher, INonSharedRegionModule
+public class Meshmerizer : IMesher, IMesherShapeData, INonSharedRegionModule
 {
     private static readonly ILogger m_log = LoggerProvider.CreateLogger(MethodBase.GetCurrentMethod().DeclaringType);
     private static string LogHeader = "[MESH]";
