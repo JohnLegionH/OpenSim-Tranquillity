@@ -228,6 +228,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
 
         #region Vehicle Parameter Setting — routes from LSL Vehicle wire codes to internal enums
 
+        /// <summary>
+        /// The vehicle was held still on purpose and is let go (an object held for the avatars that cross with it). The
+        /// controller was not stepped while it was held, which is not a gap in its stepping of the kind
+        /// <see cref="CheckResetMotors"/> reads as "idle or just rezzed": its motors, their decay and its hover go on from
+        /// where they were.
+        /// </summary>
+        public void ResumeAfterHold() => _props.Dynamics.LastAccessTOD = Clock();
+
         // =================================================================
         // Process vehicle type change from LSL
         // =================================================================

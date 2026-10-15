@@ -202,6 +202,13 @@ public abstract class PhysicsActor
 #pragma warning restore 67
 
 
+    /// <summary>
+    /// Set by the region for an avatar that an object carries across a border: the avatar may be outside the region's
+    /// bounds (it stands behind the object's centre, which has just crossed in) and the engine must not pull it inside.
+    /// Only avatar actors read it. Cleared as soon as the avatar is no longer carried.
+    /// </summary>
+    public bool AllowOutsideRegion { get; set; }
+
     public CameraData TryGetCameraData()
     {
         GetCameraData handler = OnPhysicsRequestingCameraData;
@@ -279,6 +286,16 @@ public abstract class PhysicsActor
 
     public virtual void CrossingStart() { }
     public abstract void CrossingFailure();
+
+    /// <summary>
+    /// Holds a physical object still where it is, keeping the velocity it has: gravity, its own motion and what touches
+    /// it do not move it, and it still stops what runs into it. An object that crossed into the region together with
+    /// avatars is held like this until they have arrived. No effect on an actor that is not physical.
+    /// </summary>
+    public virtual void HoldStill() { }
+
+    /// <summary>Ends <see cref="HoldStill"/>: the object moves on from where it is with the velocity it was held with.</summary>
+    public virtual void ReleaseHold() { }
 
     public abstract void link(PhysicsActor obj);
 

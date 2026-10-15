@@ -147,7 +147,8 @@ how often capacity warnings are logged, the physics step rate (below), the vehic
 share of gravity on a ground vehicle, the type presets, the limits and the sled's assist; see
 "Vehicles"), the engine's body speed caps, the prims' damping (see "Physics material on objects"), the limits on script ray casts and pushes (below),
 `AllowUnrecordedNative` (above), `BodyEnhancedEdgeRemoval` and `AvatarEnhancedEdgeRemoval` (see "Seams in
-triangle meshes and terrain"), and `TestCommands` (below).
+triangle meshes and terrain"), `KeyframedMotionCarriesRiders` and `MovedPrimsCarryRiders` (see "Prims that keyframed motion moves" and "Prims moved by
+plain sets"), and `TestCommands` (below).
 
 ### Physics step rate
 
@@ -637,6 +638,124 @@ mesher decodes, unless it has already decoded and cached that map.
 | `HonourConvexMesh` | `false` | `true`: a non-physical mesh whose `PRIM_PHYSICS_SHAPE_TYPE` is `PRIM_PHYSICS_SHAPE_CONVEX` collides as one convex hull of its points, not its triangle mesh. The simulator gives every mesh that shape type unless the upload sets another, so with this on a hollow mesh without a physics model becomes solid. Off, nothing changes. |
 | `MaxPhysicalComplexity` | `0` | The most collision shapes one physical object may have: a plain box, sphere or cylinder counts 1, any other prim its convex hulls, a prim of shape type NONE 0. An object over it is not made physical and its owner is told "Object was too complex to be made physical: (N of M convex hulls)". `0` is no limit. See "Limiting how complex a physical object may be". |
 
+## Prims that keyframed motion moves
+
+`llSetKeyframedMotion` works on non-physical objects only, and its wiki page has avatars standing on such an object while it
+moves ("... when standing on a moving platform"). The simulator moves the object with plain position and rotation sets, about
+every 50 ms, from the motion's own timer. A fixed body that is set to a new place has no velocity, so an avatar or a physical
+object on it stayed where it was and the platform left from under it: a rider on a platform moved 6 m sideways at 1 or 3 m/s fell
+the platform's 3 m in every case.
+
+The simulator now tells the root prim's actor while a motion plays (`PhysicsActor.MovedByKeyframedMotion`: on when the motion
+starts, off when it stops, is paused or has played out, or the object is selected; an actor made while it plays is told too).
+For that time the prim's body is a kinematic one on its own layer, `MovingStatic`, which collides exactly as a fixed prim does
+(ray casts and sensors find it as a fixed prim) but sits in the moving broad phase, so each move does not touch the large tree of
+fixed prims. Each pose set is only recorded; once per heartbeat, before the step, the body is moved to the last pose over the
+time that step covers (the whole burst, at a `PhysicsStepRate`), so it carries the linear and angular velocity of the motion.
+An avatar takes the velocity of the body under its feet and a physical object is carried by friction.
+
+- A move longer than 4 m in one heartbeat (or faster than 40 m/s over a longer one) is a jump, not a motion: the body is put
+  there with no velocity, so nothing is flung, and what rested on it is woken. Keyframed motion at 3 m/s moves 0.27 m a heartbeat,
+  a lift at 20 m/s 1.8 m.
+- A heartbeat in which no new pose arrived stops the body at the last pose: a kinematic body keeps the velocity it was given and
+  would otherwise carry on past where the motion stopped.
+- When the motion ends the body is made a fixed one again where the object is, and what rests on it is woken to settle. A
+  region that never plays a keyframed motion has no kinematic body.
+- An avatar takes the platform's velocity in the step the motion starts. The body is made again when the motion starts, and the
+  avatar's character still held the removed body as its ground and found no velocity in it, so for one step the platform left it
+  behind (after ten heartbeats at 16.5 m/s it was 1.5 m from the platform's middle at one step per heartbeat and 0.4 m at 45 Hz).
+  An avatar whose ground was removed now finds its ground again before its step; the same run ends 0.00 m from the middle.
+- A platform that turns carries a rider round: 2 m from the centre of a platform turned 90 degrees at 30 degrees a second, a
+  cube ended at 89.2 degrees and an avatar at 88.5 degrees, both at their radius (one step per heartbeat; at 45 Hz both about 89.5).
+- A linkset moves as one body: the parts' own sets, which follow the root's, change nothing, and the root's body is not made again.
+- **Known limit: an abrupt fast start on a running region.** In the harness an avatar is carried exactly (0.00 m from the
+  platform's middle) when a platform starts at 16.5, 22, 29.7 or 39.6 m/s, at one step per heartbeat and at 45 Hz. On a running
+  test region (45 Hz, heartbeats up to 110 ms apart) a platform that keyframed motion started at 16.7 m/s (5 m in 0.3 s) kept the
+  avatar on, but at 22 m/s (6.6 m in 0.3 s) the avatar was carried at about 10 m/s and fell, and at about 29 m/s (9 m in 0.3 s) it
+  moved 1.5, 1.7 and 0.3 m in successive 0.1 s samples and fell where the platform had been. The difference is not explained.
+  Keyframed motion up to about 17 m/s carries an avatar on a running region; above that it is not guaranteed.
+- **A platform that crosses into a neighbouring region.** The simulator hands a seated avatar over with the object and nothing
+  else, so what stands on a keyframed platform that crosses is left in the first region: its body goes with the object, and the
+  rider falls to the ground there (a stand-in for the crossing, one region: the platform removed once its middle is outside, an
+  avatar and a cube both end on the ground). A crossing that fails puts the object back half a metre inside the edge, stopped:
+  a rider stays on it and is carried again when the motion runs again (the avatar slid 0.6 m on the jump back, the cube 0.7 m).
+  A crossing between two real regions has not been measured.
+
+Not changed: a non-physical prim moved any other way (`llSetPos`, `llSetRegionPos`, the build tool) stays a fixed body that is set
+to each new place unless `MovedPrimsCarryRiders` is on (next section), as is a keyframed motion that the actor was not told of;
+physical objects and vehicles, phantom and volume-detect prims, and a selected object.
+
+| Key | Default | What it sets |
+|---|---|---|
+| `KeyframedMotionCarriesRiders` | `true` | `true`: what stands on a prim that keyframed motion is moving is carried with it, as above. `false`: the prim stays a fixed body for the whole motion, as before this key. |
+
+The harness scenarios `kin-box-*` and `kin-avatar-*` (a 6 x 6 x 0.5 m platform 3 m above the ground, a cube or an avatar on it,
+moved 6 m sideways or up at 1 or 3 m/s, by a set every 50 ms or every 0.2 s) and `kin-box-turn`, `kin-avatar-turn` give the figures.
+A keyframed run, the platform told, against the same run with it not told (which is what the module did before): sideways, a cube
+and an avatar stay on (slide at most 0.15 m, the cube at most 0.04 m and trailing at most 1.0 m at 3 m/s) where they fell 3 m
+before; moving up, nothing sank, and riders end at most 0.4 m above their resting height when a fast lift stops. The same
+platform moved by plain sets gave the same figures before and after.
+
+## Stepped platforms
+
+Keyframed motion sets its object's pose about every 50 ms, and a script that moves a floor with `llSetLinkPrimitiveParamsFast` does it
+10 or 20 times a second. A region's heartbeat is about 91 ms, so one heartbeat finds one set of a 20 Hz motion, the next two, and a slow
+one three. A body moved to the last pose each heartbeat would change speed by a half or more from one heartbeat to the next, and a
+cube resting on it would be thrown. While the poses come about every heartbeat the body is moved at the mean speed of the last four
+heartbeats, kept within 4 cm of the last pose, and carries on at that speed for one heartbeat in which no pose comes before it is stopped
+at the last pose. Harness figures, a platform going up at 2 m/s in steps of 0.1 m every 50 ms (regular heartbeats, and heartbeats that
+find 1 to 3 sets), how far a rider moves about its place while the platform is at speed: a cube 0.045 to 0.060 m (0.09 to 0.11 m
+before), an avatar 0.043 to 0.046 m (0 to 0.08 m before). At the start and the stop of a motion the speed changes in one heartbeat, as
+the script made it do, and a cube rises up to 0.3 m on a stop from 2 m/s (0.35 to 0.52 m with uneven heartbeats before).
+
+## Prims moved by plain sets
+
+Second Life does not carry an avatar over a non-physical prim that `llSetPos` moves (the wiki pages for `llSetPos` and
+`llSetRegionPos` say nothing of riders), so by default such a prim stays a fixed body that is set to each new place and what
+stands on it is left behind, exactly as before. `[Jolt] MovedPrimsCarryRiders = true` carries riders over a **series** of such sets
+(`llSetPos`, `llSetRegionPos`, `llSetPrimitiveParams`, dragging in the build tool) with the same kinematic body keyframed motion
+uses.
+
+- **A series** is two sets that fall in different heartbeats, at most 0.25 s apart plus one heartbeat, the second no further than 4 m
+  and no more than a quarter turn from the one before. The sets are stamped with the region's simulated time, which counts whole
+  heartbeats, so a call that waits 0.2 s (`llSetPos`) is seen as two or three heartbeats (0.18 or 0.27 s at 11 Hz) and the
+  extra heartbeat keeps both inside the rule. A single set, a set in the same heartbeat as the one before, a longer pause or a
+  longer move is a plain set.
+- **The body becomes kinematic at the second set**, put at the pose before it and moved to the set's pose by the next step, so
+  the second set already carries. A series whose sets come less often than every heartbeat and a half (`llSetPos`) glides to each new pose over
+  the time the sets have been apart (a running mean), so what stands on it feels the velocity the sets add up to and not a jolt
+  and a stop for each step; the body trails the object by up to one step of the series (0.2 m at 1 m/s, 0.6 m at 3 m/s). A series
+  whose sets come about every heartbeat (a script that calls `llSetLinkPrimitiveParamsFast` 10 or 20 times a second) is followed as
+  keyframed motion is, below.
+- **The quiet time is 0.5 s** with no set. It is above the longest gap a series allows, so a series is never cut between two of
+  its sets, and short enough that the body is fixed again soon after the last set, where the object was left, and what rests
+  on it is woken. The body is at rest at the last pose from the heartbeat after the glide ends.
+- A move further than 4 m, or more than a quarter turn, during a series is a jump: the pose is taken with no velocity.
+- **The first set carries too when something rests on the prim.** A set that is not part of a series begins one when a physical
+  prim or an avatar stands on or against the prim (an overlap test, one box query, run only for such a set); with nothing on it, the
+  prim stays a fixed body. So a single `llSetPos` of a platform with a rider on it moves the rider with it. The body takes that step
+  at no more than 3 m/s, and at least a heartbeat (a step of 0.6 m over 0.2 s), and is fixed again after the quiet time. With the setting
+  off nothing changes: a platform lifted 0.6 m by each set throws a cube standing on it.
+- A prim that keyframed motion moves is not affected: the hint decides, whatever this key says, and a keyframed prim's sets every
+  50 ms are not taken for a series. Physical prims and phantom and volume-detect prims are not moved this way; a linkset root is, and
+  keeps its body.
+- **A child prim moved on its own** (`llSetLinkPrimitiveParams` on a child, the build tool on one child of a linkset whose root is a fixed
+  prim) is part of its root's compound, so its move rebuilds the compound and cannot give its riders a velocity. With the setting on,
+  what stands on the child (physical prims within a few centimetres of it, and avatars whose feet are on its top) takes the child's
+  step with each set: it is moved by the same move and turn, keeping its velocity. A jump (over 4 m or a quarter turn) is not carried.
+  A root that is physical, or that keyframed motion moves (its body carries the whole linkset), is not affected. Harness, a child moved
+  3 m east or up in sets of 0.1 m, two a heartbeat: a cube or an avatar standing on it ends at its place on the child (0.00 m off);
+  with the setting off it is left 3 m behind (a cube, an avatar sideways).
+
+| Key | Default | What it sets |
+|---|---|---|
+| `MovedPrimsCarryRiders` | `false` | `true`: riders on a prim moved by a series of plain sets are carried, as above. `false`: such a prim is a fixed body set to each new place, as before this key. |
+
+With the setting on, the harness platform (`kin-*-setpos`, a set every 0.2 s) carries a cube and an avatar 6 m sideways at 1 and
+3 m/s (they stayed on in every run; an avatar slid at most 0.6 m, a cube at most 0.4 m) where they fell 3 m before, and moving up
+nothing sank more than 0.45 m, the cube lifted 0.6 m by each set included. With it off the 16 `kin-*-setpos` harness runs give the same sample files, byte for byte, as the build
+before the key was added.
+
 ## Seams in triangle meshes and terrain
 
 A triangle mesh (a non-physical mesh prim, a floor or road built of one) and the terrain's heightfield are made of
@@ -819,6 +938,30 @@ simulator gives, as BulletS and ubODE do: on a prim platform it stands on the pl
 falls (or stays, when flying) until it lands on what is below. Flying and velocity are kept as given.
 The one correction: a position that would put the body below the terrain is lifted to stand on the
 terrain. An arriving avatar is never moved down.
+
+An avatar made over a platform that is held at rest, or one that is already moving by keyframed motion,
+stands on it from the first step and is carried by it without a drop (measured to within 0.05 m under
+both step modes, `RidersCrossArrivalTests`). An avatar taken out of physics and made again at the same
+place on its platform, as a failed region crossing does, is carried again. While it stands on a platform
+its feet contact names the platform's root in every collision report, moving or still. Every avatar is
+also held inside the region's edges after each step, so one carried past the edge by a platform would be held
+at the edge and left behind by the platform. The region exempts an avatar that a crossing object carried in:
+it sets `AllowOutsideRegion` on the avatar's actor (a rider behind the object's centre arrives outside the
+region), and while it is set the avatar stays where the platform puts it, even with the platform wholly outside
+the region. The region clears it when the avatar leaves the object, and the edge hold then applies again.
+
+A physical object that crossed into the region together with avatars is held still until they have arrived
+(`PhysicsActor.HoldStill`, then `ReleaseHold` when the last one has, or the hold time ran out): its body is
+kept still the way a selected object's is (no gravity, no drift, nothing that touches it moves it) but stays
+solid, so an avatar made over it stands on it. Let go, it moves on with the velocity it arrived with. An
+object that is selected when the hold ends stays still until it is deselected (`HeldPhysicalPrimTests`, both
+step modes). ubODE's held body is also solid; it stops and disables the body instead.
+
+A vehicle is held the same way and takes up where it was: the vehicle step is skipped while it is held, so no motor
+or hover builds up, and the release tells the controller the gap was a hold (`ResumeAfterHold`). Without that, a
+hold of over a second looked to the controller like a vehicle that had been idle, and it released its motors
+(`HeldVehicleTests`: a balloon with a motor and a hover height, held five seconds, moves after the release as
+one that was never held does, both step modes).
 
 ## What an avatar stands on
 
@@ -1038,6 +1181,13 @@ raises nothing. Second Life says only that a volume-detect prim raises both even
 objects interpenetrate it (https://wiki.secondlife.com/wiki/LlVolumeDetect); it documents no speed beyond which a crossing
 is missed. `VolumeDetectFastCrossingTests` shoots a 0.2 m ball through a 0.1 m detector at 5, 25, 50 and
 200 m/s at one physics step per heartbeat and at 45 Hz: one start and one end each.
+
+An avatar is swept the same way after its own move: when the avatar moved further than 0.1 m in a step and the region has a
+volume-detect prim, its capsule is cast from where it was to where it is, and a detector the path crossed that the avatar's update
+did not report and the avatar does not overlap where it ended gets one `collision_start`. Without it a flying avatar that crossed a
+0.1 m detector at 48 m/s at one step per heartbeat, or at 96 m/s at either step rate, raised nothing. `VolumeDetectFastAvatarTests`
+flies an avatar through a 0.1 m detector at 16, 48 and 96 m/s at both step rates (one start and one end each) and past one without
+touching it (nothing).
 
 `FastObjectTests` shoots 0.05, 0.2 and 1 m balls at 10 to 500 m/s (`[Jolt] BodyMaxLinearSpeed`, 500 m/s
 by default, is the most a prim can move) at a fixed wall 0.01 m and 0.1 m thick, at a resting 0.5 m

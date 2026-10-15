@@ -92,8 +92,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal float FeetOffset => _feetOffset;
 
         internal JoltCharacter(JoltScene module, IPhysicsBackend backend, uint localid, string name,
-                               Vector3 position, Vector3 size, float feetOffset, bool isFlying)
+                               Vector3 position, Vector3 size, float feetOffset, bool isFlying, bool allowOutsideRegion = false)
         {
+            // set before the controller exists: it is stepped from the moment CreateCharacterInternal has made it
+            AllowOutsideRegion = allowOutsideRegion;
             _module = module;
             _backend = backend;
             LocalID = localid;
@@ -182,6 +184,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal void ApplyCharacterState(in CharacterState s)
         {
             _position = new Vector3(s.Position.X, s.Position.Y, s.Position.Z);
+            KeepInRegion();
             _velocity = new Vector3(s.LinearVelocity.X, s.LinearVelocity.Y, s.LinearVelocity.Z);
             _isSupported = s.IsSupported;
             _isSliding = s.IsSliding;
@@ -207,6 +210,27 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
 
             RequestPhysicsterseUpdate();
+        }
+
+        // The avatar's x and y are kept 0.01 m inside the region's edges after every step, as ubODE does
+        // (ODECharacter: "check outbounds forcing to be in world"). An avatar left outside (stood up from a seat that
+        // waits past the edge) would otherwise make ScenePresence.CheckForBorderCrossing start a crossing every frame.
+        // A walking or flying avatar still crosses: core reads position plus velocity times the frame time.
+        private const float EdgeMargin = 0.01f;
+
+        private void KeepInRegion()
+        {
+            // an avatar carried in by an object stands where the object puts it, possibly outside the region
+            if (AllowOutsideRegion)
+                return;
+            float maxX = _module.RegionSizeX - EdgeMargin, maxY = _module.RegionSizeY - EdgeMargin;
+            float x = Math.Clamp(_position.X, EdgeMargin, maxX), y = Math.Clamp(_position.Y, EdgeMargin, maxY);
+            if (x == _position.X && y == _position.Y)
+                return;
+            _position.X = x;
+            _position.Y = y;
+            if (_character.IsValid)
+                _backend.SetCharacterTransform(_character, ToS(_position), ToS(_orientation));
         }
 
         // One channel for all movement intent: desired velocity + a one-shot jump + the flying flag. The
