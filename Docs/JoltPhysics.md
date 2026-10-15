@@ -1235,8 +1235,8 @@ script set is lost when the vehicle is rezzed, copied, loaded with the region or
 | `VEHICLE_MOUSELOOK_AZIMUTH` | 11001 | pi / 32 to pi | The sideways range of the mouselook dead zone (`InWorldz` only). |
 | `VEHICLE_MOUSELOOK_ALTITUDE` | 11002 | pi / 32 to pi | The vertical range of the dead zone (`InWorldz` only). |
 | `VEHICLE_BANKING_AZIMUTH` | 11003 | pi / 128 to pi | The roll range banking counts as a share of (`InWorldz` only; the default pi / 2 is Second Life's). |
-| `VEHICLE_DISABLE_MOTORS_ABOVE` | 11004 | as sent | Held only. InWorldz casts a ray down about eight times a second and drops the motors above this height for the delay below; that ray and the delay are not built here. |
-| `VEHICLE_DISABLE_MOTORS_AFTER` | 11005 | as sent | Held only (see above). |
+| `VEHICLE_DISABLE_MOTORS_ABOVE` | 11004 | as sent | Under `InWorldz`: the motors go off once the vehicle has been higher than this above what lies below it for the delay below (0 is off); see "Motor height" below. Under Second Life's behaviour it is held only. |
+| `VEHICLE_DISABLE_MOTORS_AFTER` | 11005 | as sent | Under `InWorldz`: how long the vehicle must have been above the height before the motors go off (seconds). Held only under Second Life's behaviour. |
 | `VEHICLE_INVERTED_BANKING_MODIFIER` | 11006 | -10 to 10 | An airplane flying inverted banks by this factor times its banking efficiency (`InWorldz` only; no other type is marked inverted there). |
 
 Each behaviour follows Halcyon's code as read (not run: it needs PhysX); the figures its formula gives are checked in the
@@ -1355,7 +1355,17 @@ exact solution over the step the engine takes:
 - The vertical attractor is the same spring on the vehicle's roll and pitch, with
   `VEHICLE_VERTICAL_ATTRACTION_TIMESCALE` and `_EFFICIENCY` (from wobbling, 0, to exponential decay,
   1); off at 500 s. `VEHICLE_FLAG_LIMIT_ROLL_ONLY` unlocks pitch for every type: the attractor then
-  corrects roll only, so the vehicle can climb and dive.
+  corrects roll only, so the vehicle can climb and dive. The roll rate the attractor sets belongs to the
+  roll axis it was set about: each step it is put back on the axis the vehicle has by then, so a turn about
+  the world's vertical (banking's) cannot leave part of it across that axis as a pitch rate (under both
+  behaviours).
+- Motor height (`InWorldz` only; Halcyon's `VehicleDynamics.cs:2494-2573`). With `VEHICLE_DISABLE_MOTORS_ABOVE` above 0, about
+  eight steps in every sixty-four the vehicle casts a ray straight down its own axis from the lower left edge of its box
+  (and, if that finds nothing near, from the lower right), starting a metre up and reaching three times the limit; its own
+  parts are not hit. The height is the distance less that metre, or the limit plus a metre when nothing is hit. While the height
+  is above the limit the clock counts real seconds, and at `VEHICLE_DISABLE_MOTORS_AFTER` the linear and angular motors stop
+  acting (friction, the attractor and gravity go on); at or under the limit the clock clears. The rule is off for a vehicle
+  with hover on, positive buoyancy, or a speed under 0.5 m/s. The box is the root prim's size grown over the linked parts'.
 - `VEHICLE_LINEAR_MOTOR_OFFSET` moves the point the linear motor pushes at away from the centre of
   mass, so the motor also turns the vehicle: each step's motor change `dv` is an impulse `m dv` at
   the offset `r`, turning the body by `I^-1 (r x m dv)`. A thrust below the centre of mass pitches

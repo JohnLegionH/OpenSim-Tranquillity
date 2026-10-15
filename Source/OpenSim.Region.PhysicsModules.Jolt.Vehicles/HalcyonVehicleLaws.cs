@@ -53,6 +53,31 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
     /// </summary>
     public static class HalcyonVehicleLaws
     {
+        /// <summary>Steps between two down ray casts of the motor-height rule (VehicleDynamics.cs:63, NumTimeStepsPerRayCast).</summary>
+        public const int MotorHeightRayInterval = 8;
+
+        /// <summary>A vehicle slower than this (m/s) has the motor-height rule off (VehicleDynamics.cs:2509).</summary>
+        public const float MotorHeightMinSpeed = 0.5f;
+
+        /// <summary>
+        /// The motor-height rule's clock (VehicleDynamics.cs:2560-2571): while the last measured height above what is below
+        /// the vehicle is more than <paramref name="limit"/> (VEHICLE_DISABLE_MOTORS_ABOVE) the time it has been so grows by
+        /// <paramref name="elapsed"/>, and the motors are off once that reaches <paramref name="after"/>
+        /// (VEHICLE_DISABLE_MOTORS_AFTER); at or under the limit the clock is cleared and the motors are on.
+        /// Halcyon adds eight steps' time on every step, though the height is measured once in eight steps, so its clock
+        /// runs eight times fast; here the clock runs in real time, which is what the parameter says it counts.
+        /// </summary>
+        public static bool MotorsOffAboveHeight(float height, float limit, float after, float elapsed, ref float timeAbove)
+        {
+            if (height > limit)
+            {
+                timeAbove += elapsed;
+                return timeAbove >= after;
+            }
+            timeAbove = 0f;
+            return false;
+        }
+
         /// <summary>
         /// The share of a motor's effect left when its decay clock reads <paramref name="timeIndex"/> seconds
         /// (VehicleDynamics.cs:2201-2212): 1 while the clock is at or below zero, e^(-t / T) after, and 0 once that falls

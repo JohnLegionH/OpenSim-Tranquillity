@@ -1871,6 +1871,34 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // driver's control flags); null when no driver's camera is hooked up.
         private DriverView? DriverCameraAxis() => TryGetCameraData() is CameraData c ? new DriverView(c.CameraAtAxis, c.MouseLook) : null;
 
+        // The vehicle's bounding box in its own (prim) frame, for the motor-height rule's down rays: the box of the root
+        // prim's size, grown over each welded part's own size box at the part's place. A box, not the hull, as the rule
+        // only needs where the vehicle's lower edges are.
+        internal bool TryGetVehicleBounds(out Vector3 center, out Vector3 halfSize)
+        {
+            SVector3 min = ToS(_size * -0.5f), max = ToS(_size * 0.5f);
+            if (_linkChildren != null)
+            {
+                foreach (JoltPrim c in _linkChildren)
+                {
+                    if (!c._welded)
+                        continue;
+                    SVector3 half = ToS(c._size * 0.5f);
+                    for (int i = 0; i < 8; i++)
+                    {
+                        var corner = new SVector3((i & 1) == 0 ? -half.X : half.X, (i & 2) == 0 ? -half.Y : half.Y, (i & 4) == 0 ? -half.Z : half.Z);
+                        SVector3 p = c._linkOffset + SVector3.Transform(corner, c._linkRotation);
+                        min = SVector3.Min(min, p);
+                        max = SVector3.Max(max, p);
+                    }
+                }
+            }
+            SVector3 mid = (min + max) * 0.5f, h = (max - min) * 0.5f;
+            center = new Vector3(mid.X, mid.Y, mid.Z);
+            halfSize = new Vector3(h.X, h.Y, h.Z);
+            return halfSize.X > 0f && halfSize.Y > 0f && halfSize.Z > 0f;
+        }
+
         // Per-frame drive, called by JoltScene.Simulate BEFORE the physics step (the Jolt
         // equivalent of BulletSim's BeforeStep event): snapshot the live body, run the controller,
         // which pushes velocity changes/forces/torques back through the backend for this step.
