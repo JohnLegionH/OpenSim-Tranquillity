@@ -27,7 +27,10 @@
 //     the speed it had, which keeps a heartbeat that comes early from stopping a platform that is still moving): a
 //     kinematic body keeps the velocity it was given, and would carry on past where the motion stopped.
 //   - When the hint goes off (the motion stopped, was paused or played out, or the object was selected) the body is made
-//     a fixed one again where the object is.
+//     a fixed one again where the object is. Core sets the last pose and turns the hint off at its next tick, so a heartbeat
+//     can find both: the body is kept kinematic for that heartbeat, which carries the waiting pose out like the ones before it,
+//     and is made a fixed one at the start of the next (EndHint). Made a fixed body at once, it would be put at the last pose
+//     in one go and what stands on it would be left behind by the whole of that heartbeat's move (1.5 m at 30 m/s).
 // Phantom and volume-detect prims, physical prims and linkset children are not moved this way.
 
 using System;
@@ -48,6 +51,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // set across the parcel from a motion, which would otherwise throw what stands on it at 100 m/s.
         internal const float KinematicJumpDistance = 4f;
         internal const float KinematicJumpSpeed = 40f;
+
+        // Core's motion timer sets a pose every 50 ms, so a heartbeat holds the poses of a little more than the time its steps
+        // cover: one more than its length divides into, and a timer call that came late moves up to three ticks at once
+        // (KeyframeMotion.DoOnTimer). While keyframed motion moves the prim, the speed limit above is measured over the heartbeat
+        // plus two ticks: at 30 m/s a heartbeat that finds three poses has 4.5 m to carry, which is not a jump.
+        internal const float KinematicSetSlack = 0.1f;
 
         // While a motion's poses arrive about every heartbeat, the body is moved at the mean speed of the last
         // KinematicSpeedWindow heartbeats, never further than KinematicFollowBand from the last pose. A band of 4 cm keeps
@@ -77,6 +86,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // The body was moved at its last step (so it has a velocity to take away if no new pose comes).
         private bool _kinMoving;
 
+        // The hint went off while a pose was waiting for the heartbeat's move: the body stays kinematic for that heartbeat, which carries
+        // the move out, and is made a fixed one at the start of the next (EndHint). Set by the thread that turns the hint off, cleared
+        // on the step thread.
+        private volatile bool _hintEnding;
+
         // The speeds of the last heartbeats in which the body followed a motion (step thread only), the number of them, the
         // next place to write, and the heartbeats since a pose last came.
         private readonly SVector3[] _speedWindow = new SVector3[KinematicSpeedWindow];
@@ -89,13 +103,32 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             get => _keyframed;
             set
             {
-                if (_keyframed == value)
-                    return;
-                _keyframed = value;
                 if (value)
+                {
+                    _hintEnding = false;   // told to move again before the last move was out
+                    if (_keyframed)
+                        return;
+                    _keyframed = true;
                     _moveKinematic = false;   // the hint decides while keyframed motion moves the prim
+                    SyncKinematicBody();
+                    return;
+                }
+                if (!_keyframed)
+                    return;
+                if (_kinematicBody && PosePending())
+                {
+                    _hintEnding = true;   // the pose that is waiting is carried out by the next heartbeat, then EndHint
+                    return;
+                }
+                _keyframed = false;
                 SyncKinematicBody();
             }
+        }
+
+        private bool PosePending()
+        {
+            lock (_kinLock)
+                return _kinPending;
         }
 
         // A single prim or linkset root that is not physical, phantom or a volume detector, while keyframed motion moves it
@@ -113,6 +146,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // already carries what stands on the prim.
         private void SyncKinematicBody(Vector3? from = null, Quaternion? fromRotation = null)
         {
+            if (_hintEnding)
+            {
+                _hintEnding = false;   // whatever remakes the body, the motion that was ending is over
+                _keyframed = false;
+            }
             if (IsRemoved || KinematicWanted == _kinematicBody)
                 return;
             lock (_shapeLock)
@@ -339,13 +377,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 EndMove();
                 return;
             }
+            if (_hintEnding && !pending)
+            {
+                EndHint();
+                return;
+            }
             SQuaternion bodyRotation = BodyOrientationOf(rotation);
             if (pending)
             {
                 if (!_backend.TryGetBodyState(_body, out BodyState s))
                     return;
                 var from = new Vector3(s.Position.X, s.Position.Y, s.Position.Z);
-                if (Vector3.Distance(from, target) > MathF.Max(KinematicJumpDistance, KinematicJumpSpeed * seconds)
+                float jump = MathF.Max(KinematicJumpDistance, KinematicJumpSpeed * (_keyframed ? seconds + KinematicSetSlack : seconds));
+                if (Vector3.Distance(from, target) > jump
                     || (_moveKinematic && AngleBetween(s.Orientation, bodyRotation) > MoveJumpAngle))
                 {
                     _backend.SetBodyPoseAndVelocity(_body, ToS(target), bodyRotation, SVector3.Zero, SVector3.Zero);
@@ -387,6 +431,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _kinMoving = false;
                 ForgetSpeeds();
             }
+        }
+
+        // The heartbeat that carried out the last pose of keyframed motion is over: the body, within KinematicFollowBand of that pose,
+        // is made a fixed one where the object is, as when the hint goes off with no pose waiting.
+        private void EndHint()
+        {
+            _hintEnding = false;
+            _keyframed = false;
+            _kinMoving = false;
+            _segActive = false;
+            ForgetSpeeds();
+            SyncKinematicBody();
         }
     }
 }
