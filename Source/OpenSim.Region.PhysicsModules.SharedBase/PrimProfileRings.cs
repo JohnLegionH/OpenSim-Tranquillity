@@ -7,7 +7,7 @@
 
 using OpenMetaverse;
 
-namespace OpenSim.Region.PhysicsModules.Meshing;
+namespace OpenSim.Region.PhysicsModules.SharedBase;
 
 /// <summary>
 /// The rings a prim is extruded from: a profile (the outline of the prim's cross-section) copied once for every
@@ -29,7 +29,7 @@ public sealed class PrimProfileRings
     private readonly float[] m_layerTwists;
     private readonly Vector3[] m_vertices;
 
-    internal PrimProfileRings(
+    public PrimProfileRings(
         int layerCount, int layerVertexCount, bool hasCentreVertex, int outerVertexCount, int hollowVertexCount,
         IReadOnlyList<float> profileAngles, IReadOnlyList<float> layerTurns, IReadOnlyList<float> layerTwists,
         Vector3[] vertices)
