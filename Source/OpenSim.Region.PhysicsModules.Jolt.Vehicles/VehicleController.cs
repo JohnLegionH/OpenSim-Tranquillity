@@ -2998,7 +2998,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
                     _props.ParamsFloat[VehFloatParam.HoverHeight]                   = 0.0001f;
                     _props.ParamsFloat[VehFloatParam.HoverEfficiency]               = 0.8f;
                     _props.ParamsFloat[VehFloatParam.HoverTimescale]                = 0.5f;
-                    _props.ParamsFloat[VehFloatParam.Buoyancy]                      = 0f;
+                    // Under InWorldz's behaviour hover switches gravity off (HoverTurnsGravityOff), so the preset's 0 holds the hull at the
+                    // surface. Gravity stays on under Second Life's, where the spring alone would let it settle below; full
+                    // buoyancy cancels it, as the documented boat has.
+                    _props.ParamsFloat[VehFloatParam.Buoyancy]                      = InWorldz ? 0f : 1f;
                     _props.ParamsFloat[VehFloatParam.LinearDeflectionEfficiency]    = 0.5f;
                     _props.ParamsFloat[VehFloatParam.LinearDeflectionTimescale]     = 3f;
                     _props.ParamsFloat[VehFloatParam.AngularDeflectionEfficiency]   = 0.5f;

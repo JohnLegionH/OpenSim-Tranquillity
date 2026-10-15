@@ -24,7 +24,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// Under InWorldz behaviour the hover holds the hull there with no gravity (InWorldz switches gravity off while hover acts),
 /// so the sailboat, whose preset has no buoyancy, does not sink to where a spring would carry its weight (g T^2 = 2.45 m for
 /// its 0.5 s timescale). Under SecondLife behaviour the documented spring and buoyancy stand: the documented boat has full
-/// buoyancy and holds. A SecondLife sailboat (a type Second Life does not have) is not covered here. Serial with the other
+/// buoyancy and holds; the sailboat preset gets buoyancy 1 under that behaviour, so it holds too. Serial with the other
 /// native tests.
 /// </summary>
 [Collection(JoltNativeSerial.Name)]
@@ -88,6 +88,7 @@ public class VehicleWaterHoverTests
     [InlineData(SharedVehicle.TYPE_SAILBOAT, "InWorldz", Water + 0.0001f, false)]
     [InlineData(SharedVehicle.TYPE_BOAT, "InWorldz", Water + 0.5f, false)]
     [InlineData(SharedVehicle.TYPE_BOAT, "SecondLife", Water, false)]
+    [InlineData(SharedVehicle.TYPE_SAILBOAT, "SecondLife", Water + 0.0001f, false)]
     public void A_boat_set_down_on_water_stays_at_its_hover_height(SharedVehicle type, string behaviour, float expected, bool wind)
     {
         foreach (float rate in new[] { 0f, 45f })
