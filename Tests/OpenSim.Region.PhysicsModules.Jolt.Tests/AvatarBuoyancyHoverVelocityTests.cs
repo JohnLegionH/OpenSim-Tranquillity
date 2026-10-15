@@ -148,7 +148,7 @@ public class AvatarBuoyancyHoverVelocityTests
     public void Hover_from_an_attachment_holds_the_avatar_at_its_height_while_it_walks_and_the_stop_lets_it_fall(double physicsRate, float slope)
     {
         (RunResult r, List<Point> trace) = Run("avatar-hover", physicsRate, slope);
-        float standHalf = JoltCharacter.StandHalfFor(Harness.Run.AvatarSize);
+        float standHalf = JoltCharacter.StandHalfFor(Harness.Run.SimulatorAvatarSize);   // the harness's avatar is the simulator's box
         float Height(Sample s) => s.Height;
 
         // Standing until the hover is set.

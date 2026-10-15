@@ -78,9 +78,17 @@ public class VehicleRestoreHarnessTests
         return (p, f);
     }
 
-    private static RunResult Drive(string scenario, double physicsRate, VehicleRoute route, string settings, bool scriptAgain = false)
+    // A sled and a balloon start above the ground and fall onto it, within the first seconds after their type is set. A script's
+    // type change zeroes the body's velocity for those seconds, and a vehicle handed back with the region running is not zeroed
+    // (JoltPrim.SetVehicle, _reassertZeroesVelocity), so a restored sled and the same sled with its script run again differ
+    // while the region runs, and are the same while it loads. These two are compared in the load window; the difference in a
+    // running region has its own test below.
+    private static bool InLoadWindow(string scenario) => scenario is "sled" or "balloon";
+
+    private static RunResult Drive(string scenario, double physicsRate, VehicleRoute route, string settings, bool scriptAgain = false, bool? warmUp = null)
     {
-        var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsRate, VehicleRoute = route, VehicleScriptAgain = scriptAgain };
+        var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsRate, VehicleRoute = route, VehicleScriptAgain = scriptAgain,
+                                     WarmUpStep = warmUp ?? !InLoadWindow(scenario) };
         (List<VehicleParamSetting> p, List<VehicleFlagSetting> f) = Settings(scenario, settings);
         o.VehicleParams.AddRange(p);
         o.VehicleFlags.AddRange(f);
@@ -142,6 +150,22 @@ public class VehicleRestoreHarnessTests
         RunResult switched = Drive(scenario, physicsRate, VehicleRoute.PhysicsOffOn, "type");
         RunResult switchedScript = Drive(scenario, physicsRate, VehicleRoute.PhysicsOffOn, "type", scriptAgain: true);
         Assert.True(switchedScript.ToCsv() == switched.ToCsv(), $"{scenario} p{physicsRate}: physics off and on changed the vehicle");
+    }
+
+    // In a running region a sled handed back falls as a body does, and the same sled with its script run again is held by the
+    // velocity zeroing its type change starts: the first heartbeats differ, as JoltPrim.SetVehicle says they do.
+    [Theory]
+    [InlineData(45.0)]
+    [InlineData(0.0)]
+    public void A_sled_handed_back_in_a_running_region_is_not_zeroed_as_a_script_set_one_is(double physicsRate)
+    {
+        RunResult restored = Drive("sled", physicsRate, VehicleRoute.Rez, "documented", warmUp: true);
+        RunResult script = Drive("sled", physicsRate, VehicleRoute.Rez, "documented", scriptAgain: true, warmUp: true);
+        Assert.True(restored.Samples[1].Velocity.Z < script.Samples[1].Velocity.Z - 0.3f,
+            $"sled p{physicsRate}: restored {restored.Samples[1].Velocity.Z:0.000} m/s down, script {script.Samples[1].Velocity.Z:0.000}");
+        // And with the region loading, both are zeroed, and the traces are the same.
+        Assert.Equal(Drive("sled", physicsRate, VehicleRoute.Rez, "documented", scriptAgain: true, warmUp: false).ToCsv(),
+                     Drive("sled", physicsRate, VehicleRoute.Rez, "documented", warmUp: false).ToCsv());
     }
 
     // The flags a car ends with after the calls (a car alone has NoDeflectionUp, LimitRollOnly, HoverUpOnly, LimitMotorUp).

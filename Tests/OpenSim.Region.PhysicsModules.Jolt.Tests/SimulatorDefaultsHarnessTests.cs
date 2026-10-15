@@ -93,9 +93,12 @@ public class SimulatorDefaultsHarnessTests
     }
 
     [Fact]
-    public void The_option_is_off_by_default()
+    public void The_option_is_on_by_default_and_each_half_can_be_turned_off()
     {
-        Assert.False(new HarnessOptions().SimulatorDefaults);
+        Assert.True(new HarnessOptions().SimulatorDefaults);
+        var o = new HarnessOptions { SimulatorAvatars = false };
+        Assert.True(o.SimulatorPrims);
+        Assert.False(o.SimulatorDefaults);
     }
 
     // Every prim the harness builds gets the wood restitution 0.5 with the option and keeps the backend's 0 without it;
@@ -191,7 +194,7 @@ public class SimulatorDefaultsHarnessTests
     public void A_ball_shot_at_a_fixed_wall_comes_back_off_it(double physicsRate)
     {
         Scenario sc = Harness.Harness.Find("tunnel-wall-10cm");
-        RunResult off = Harness.Harness.Run(sc, new HarnessOptions { RateHz = 45.0, PhysicsRateHz = physicsRate });
+        RunResult off = Harness.Harness.Run(sc, new HarnessOptions { RateHz = 45.0, PhysicsRateHz = physicsRate, SimulatorDefaults = false });
         RunResult on = Harness.Harness.Run(sc, new HarnessOptions { RateHz = 45.0, PhysicsRateHz = physicsRate, SimulatorDefaults = true });
         Assert.Equal(0, off.Summary.Tunneled);
         Assert.Equal(0, on.Summary.Tunneled);

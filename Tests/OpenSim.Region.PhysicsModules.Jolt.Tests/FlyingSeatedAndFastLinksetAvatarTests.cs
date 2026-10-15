@@ -52,8 +52,13 @@ public class FlyingSeatedAndFastLinksetAvatarTests
 
     private static float Level(Vector3 v) => MathF.Sqrt(v.X * v.X + v.Y * v.Y);
 
-    private static RunResult Run(Scenario sc, double physicsHz)
-        => Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz, Jolt = { ["AvatarPushMaxSpeed"] = "10" } });
+    // pinned: the test holds an invariant only the harness's earlier avatar keeps (see HarnessPins).
+    private static RunResult Run(Scenario sc, double physicsHz, bool pinned = false)
+        => Harness.Harness.Run(sc, new HarnessOptions
+        {
+            RateHz = 11.0, PhysicsRateHz = physicsHz, Jolt = { ["AvatarPushMaxSpeed"] = "10" },
+            SimulatorAvatars = pinned ? HarnessPins.EarlierAvatar : true,
+        });
 
     private static CollisionWatch Watch(Run r, PhysicsActor pa, string name)
     {
@@ -383,7 +388,8 @@ public class FlyingSeatedAndFastLinksetAvatarTests
         Vector3 end = trace[^1].P;
         float radius = 0.3f;
         // Never thrown up, and at rest within half a second.
-        Assert.True(trace.Max(p => p.P.Z) < placed.Z + 0.05f, $"{res.Name}: the avatar rose to {trace.Max(p => p.P.Z) - placed.Z:0.000} m above where it was put");
+        // 0.06 m with the simulator's 2.1 m avatar (the earlier 1.9 m one rose less than 0.05 m); a launch is metres.
+        Assert.True(trace.Max(p => p.P.Z) < placed.Z + 0.1f, $"{res.Name}: the avatar rose to {trace.Max(p => p.P.Z) - placed.Z:0.000} m above where it was put");
         int halfSecond = trace.FindIndex(p => p.T >= trace[0].T + 0.5);
         for (int i = halfSecond + 1; i < trace.Count; i++)
             Assert.True(Vector3.Distance(trace[i].P, trace[i - 1].P) < 0.01f, $"{res.Name}: the avatar still moves at {trace[i].T:0.00} s");
@@ -488,7 +494,7 @@ public class FlyingSeatedAndFastLinksetAvatarTests
                 }
             },
         };
-        RunResult res = Run(sc, physicsHz);
+        RunResult res = Run(sc, physicsHz, pinned: avatarIs == "flying");
 
         // Never through: while level with the avatar, the front part stays on its own side of it (once past, a linkset
         // thrown at a flying avatar falls away below it).

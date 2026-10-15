@@ -21,6 +21,11 @@
     <ProjectReference Include="..\..\Source\OpenSim.Region.PhysicsModules.Jolt\OpenSim.Region.PhysicsModules.Jolt.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The [Jolt] section every simulator reads before its own ini; the harness starts from it. -->
+    <Content Include="..\..\Source\OpenSim.Server.RegionServer\AppData\RegionServerDefaults.ini" Link="RegionServerDefaults.ini" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <Import Project="..\..\Source\OpenSim.Region.PhysicsModules.Jolt.Backend\JoltNative.targets" />
 
 </Project>

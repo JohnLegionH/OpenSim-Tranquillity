@@ -78,8 +78,10 @@ public class FastObjectTests
         Assert.True(slab.StartsOf(BallId) >= 1, $"{r.Name}: {slab}");
         Assert.Equal(slab.StartsOf(BallId), slab.EndsOf(BallId));
         Assert.Equal(0, r.Summary.Tunneled);
-        // Through the slab: the ball reached the wall, 2 m beyond the slab's far face.
-        Assert.Contains(r.Samples, s => s.Position.X > TunnelScenarios.TargetX - 0.05f - 0.2f);
+        // Through the slab: the ball reached the wall, 2 m beyond the slab's far face. A prim bounces (restitution 0.5), so at
+        // a slow heartbeat the ball can strike the wall and be on its way back before the next sample: it also counts as
+        // having reached the wall if it is seen coming back.
+        Assert.Contains(r.Samples, s => s.Position.X > TunnelScenarios.TargetX - 0.05f - 0.2f || s.Velocity.X < 0f);
     }
 
     [Theory]

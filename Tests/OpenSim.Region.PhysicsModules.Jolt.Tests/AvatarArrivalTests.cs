@@ -403,14 +403,15 @@ public class AvatarArrivalTests
     {
         RunResult r = Harness.Harness.Run(Harness.Harness.Find(scenario), new HarnessOptions { RateHz = rate });
         float top = Ground + Harness.Harness.PlatformHeight;
+        float standHalf = JoltCharacter.StandHalfFor(Run.SimulatorAvatarSize);   // the harness's avatar is the simulator's box
         Sample last = r.Samples[^1];
-        Assert.InRange(last.Position.Z, top + StandHalf - 0.01f, top + StandHalf + 0.01f);
+        Assert.InRange(last.Position.Z, top + standHalf - 0.01f, top + standHalf + 0.01f);
         Sample first = r.Samples.First(x => x.T >= 3.0);
         Assert.InRange(MathF.Abs(last.Position.Z - first.Position.Z), 0f, 0.01f);
         Assert.Equal(0, r.Summary.NonFinite);
         if (scenario == "avatar-platform")
             Assert.InRange(r.Summary.ZRange, 0f, 0.01f);
         else
-            Assert.True(r.Samples[0].Position.Z > top + StandHalf + 2f, $"started at {r.Samples[0].Position.Z}");
+            Assert.True(r.Samples[0].Position.Z > top + standHalf + 2f, $"started at {r.Samples[0].Position.Z}");
     }
 }
