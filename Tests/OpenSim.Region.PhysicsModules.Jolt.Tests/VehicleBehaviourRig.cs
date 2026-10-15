@@ -31,7 +31,52 @@ internal sealed class BehaviourBody : IVehicleBody
     public void AddTorque(Vector3 torque) { }
     public void KeepAwake() { }
     public float GetTerrainHeight(Vector3 pos) => 0f;
-    public float GetWaterLevel(Vector3 pos) => -100f;
+    public float GetWaterLevel(Vector3 pos) => WaterLevel;
+
+    /// <summary>The water's height (far below the body by default).</summary>
+    public float WaterLevel { get; set; } = -100f;
+
+    /// <summary>The wind the region's wind module gives at a position; null (the default) is a region with no wind module.</summary>
+    public Func<Vector3, Vector3> WindAt { get; set; }
+
+    /// <summary>The times the controller asked for the wind.</summary>
+    public int WindReads { get; private set; }
+
+    public bool TryGetWind(Vector3 position, out Vector3 wind)
+    {
+        WindReads++;
+        wind = WindAt == null ? Vector3.Zero : WindAt(position);
+        return WindAt != null;
+    }
+
+    /// <summary>Half the size of the body's box; zero (the default) means the body has none, so the motor-height rule never measures.</summary>
+    public Vector3 BoundsHalfSize { get; set; }
+
+    /// <summary>The height of a flat floor the down rays hit (NaN, the default: nothing is hit).</summary>
+    public float RayFloorZ { get; set; } = float.NaN;
+
+    /// <summary>The rays cast so far.</summary>
+    public int RaysCast { get; private set; }
+
+    public bool TryGetBounds(out Vector3 center, out Vector3 halfSize)
+    {
+        center = Vector3.Zero;
+        halfSize = BoundsHalfSize;
+        return halfSize.X > 0f && halfSize.Y > 0f && halfSize.Z > 0f;
+    }
+
+    public bool CastRayNearest(Vector3 origin, Vector3 direction, float maxDistance, out float distance)
+    {
+        RaysCast++;
+        distance = 0f;
+        if (float.IsNaN(RayFloorZ) || direction.Z >= 0f)
+            return false;
+        float t = (RayFloorZ - origin.Z) / direction.Z * direction.Length();
+        if (t < 0f || t > maxDistance)
+            return false;
+        distance = t;
+        return true;
+    }
 
     /// <summary>The engine's step for this body: the gravity share over h, a move by the velocity it then has, and a
     /// turn by the angular velocity (done in System.Numerics, whose axis-angle rotation keeps the small turns of a

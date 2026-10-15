@@ -17,7 +17,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 /// The two vehicle types InWorldz has and Second Life does not: VEHICLE_TYPE_SAILBOAT (10001) and
 /// VEHICLE_TYPE_MOTORCYCLE (10002), with the preset values and flags of the InWorldz vehicle code
 /// (VehicleDynamics.cs:1886-1924 and 1806-1844; read, not run). They are the same under both preset sets and both
-/// behaviours: Second Life has no type of the name to differ from. Pure, parallel.
+/// behaviours, except the sailboat's buoyancy (1 under Second Life's behaviour, 0 under InWorldz's). Pure, parallel.
 /// </summary>
 public class VehicleInWorldzTypeTests
 {
@@ -138,7 +138,17 @@ public class VehicleInWorldzTypeTests
         Assert.True(car.IsActive);
         Assert.Equal(Vehicle.TYPE_SAILBOAT, car.Type);
         Assert.Equal(10001, (int)car.Type);
-        CheckPreset(car, SailboatVectors, SailboatFloats, SailboatFlags);
+        CheckPreset(car, SailboatVectors, SailboatFloatsFor(behaviour), SailboatFlags);
+    }
+
+    // The preset's one difference between the behaviours: under Second Life's behaviour gravity stays on while the hover
+    // acts, so the sailboat gets full buoyancy to float at the surface; under InWorldz's hover gravity is off and the
+    // preset keeps its own buoyancy of 0.
+    private static (VehFloatParam key, float value)[] SailboatFloatsFor(VehicleBehaviour behaviour)
+    {
+        if (behaviour != VehicleBehaviour.SecondLife)
+            return SailboatFloats;
+        return SailboatFloats.Select(f => f.key == VehFloatParam.Buoyancy ? (f.key, 1f) : f).ToArray();
     }
 
     // The type numbers are the InWorldz ones; the module's own internal numbers (6 and 7) are not types a script can set.
@@ -164,7 +174,7 @@ public class VehicleInWorldzTypeTests
     {
         var car = Make(presets, behaviour, Vehicle.TYPE_AIRPLANE);
         car.ProcessTypeChange(Vehicle.TYPE_SAILBOAT);
-        CheckPreset(car, SailboatVectors, SailboatFloats, SailboatFlags);
+        CheckPreset(car, SailboatVectors, SailboatFloatsFor(behaviour), SailboatFlags);
         car.ProcessTypeChange(Vehicle.TYPE_MOTORCYCLE);
         CheckPreset(car, MotorcycleVectors, MotorcycleFloats, MotorcycleFlags);
         car.ProcessTypeChange(Vehicle.TYPE_BOAT);

@@ -40,6 +40,7 @@
     <ProjectReference Include="..\..\Source\OpenSim.Region.PhysicsModules.Meshing\OpenSim.Region.PhysicsModules.Meshing.csproj" />
     <!-- The physics harness, whose scenarios run here as regression tests. -->
     <ProjectReference Include="..\JoltPhysicsHarness\JoltPhysicsHarness.csproj" />
+    <ProjectReference Include="..\OpenSim.Tests.Common\OpenSim.Tests.Common.csproj" />
   </ItemGroup>
 
 </Project>

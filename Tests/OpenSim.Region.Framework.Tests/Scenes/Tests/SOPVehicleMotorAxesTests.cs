@@ -72,6 +72,7 @@ namespace OpenSim.Region.Framework.Scenes.Tests
         [InlineData(Vehicle.TYPE_CAR)]
         [InlineData(Vehicle.TYPE_AIRPLANE)]
         [InlineData(Vehicle.TYPE_BALLOON)]
+        [InlineData(Vehicle.TYPE_MOTORCYCLE)]
         public void AnOldRecordRoundTripsUnchanged(Vehicle type)
         {
             TestHelpers.InMethod();

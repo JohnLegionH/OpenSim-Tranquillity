@@ -17,6 +17,7 @@
 // Orientation handed to the controller is the PRIM orientation (axis-correction removed), matching
 // what BulletSim's ForceOrientation reports.
 
+using System;
 using OpenMetaverse;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
 using OpenSim.Region.PhysicsModules.Jolt.Vehicles;
@@ -135,6 +136,29 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public float GetTerrainHeight(Vector3 pos) => _module.TerrainHeightAt(pos.X, pos.Y);
 
         public float GetWaterLevel(Vector3 pos) => _module.WaterLevel;
+
+        public bool TryGetWind(Vector3 position, out Vector3 wind) => _module.TryGetWind(position, out wind);
+
+        public bool TryGetBounds(out Vector3 center, out Vector3 halfSize) => _prim.TryGetVehicleBounds(out center, out halfSize);
+
+        public bool CastRayNearest(Vector3 origin, Vector3 direction, float maxDistance, out float distance)
+        {
+            distance = 0f;
+            if (!_prim.BodyHandle.IsValid)
+                return false;
+            // The hits come in distance order. The vehicle's own body (a linkset is one body) is skipped; a few of the
+            // nearest are kept, so a ray starting inside the vehicle gets past it.
+            Span<RayHit> hits = stackalloc RayHit[16];
+            int n = _backend.RayCastAll(ToS(origin), ToS(direction), maxDistance, QueryFilter.Default, hits);
+            for (int i = 0; i < n; i++)
+            {
+                if (hits[i].Body.Equals(_prim.BodyHandle))
+                    continue;
+                distance = hits[i].Distance;
+                return true;
+            }
+            return false;
+        }
 
         private static SVector3 ToS(Vector3 v) => new SVector3(v.X, v.Y, v.Z);
     }

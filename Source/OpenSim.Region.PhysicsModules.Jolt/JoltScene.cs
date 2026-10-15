@@ -76,6 +76,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal float PrimLinearDamping => _joltConfig.PrimLinearDamping;
         internal float PrimAngularDamping => _joltConfig.PrimAngularDamping;
         internal bool HonourConvexMesh => _joltConfig.HonourConvexMesh;
+        internal int MaxPhysicalComplexity => _joltConfig.MaxPhysicalComplexity;
+        internal bool KeyframedMotionCarriesRiders => _joltConfig.KeyframedMotionCarriesRiders;
+        internal bool MovedPrimsCarryRiders => _joltConfig.MovedPrimsCarryRiders;
 
         // The vehicle settings every vehicle controller in this region shares, built from [Jolt] in Initialise.
         internal VehicleSettings VehicleSettings { get; private set; } = VehicleSettings.Default;
@@ -89,6 +92,29 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
         // The region's IMesher, driving the cook path for cut/hollow/sculpt/mesh prims.
         private IMesher m_mesher;
+
+        // The region's wind module, which vehicles with REACT_TO_WIND or REACT_TO_CURRENTS ask for the wind at their position
+        // under VehicleBehaviour = InWorldz. Null when the region has none.
+        private IWindModule m_wind;
+
+        /// <summary>Gives the scene a wind module without a region (the tests and the harness; a region's is found when it loads).</summary>
+        internal void UseWindModule(IWindModule module) => m_wind = module;
+
+        /// <summary>
+        /// The wind at a region position (the water's current below the water, the surface wind above it, the wind aloft over
+        /// that), from the region's wind module. False when the region has no wind module.
+        /// </summary>
+        internal bool TryGetWind(Vector3 pos, out Vector3 wind)
+        {
+            wind = Vector3.Zero;
+            IWindModule module = m_wind;
+            if (module == null || !float.IsFinite(pos.X) || !float.IsFinite(pos.Y) || !float.IsFinite(pos.Z))
+                return false;
+            const float Limit = 1e6f;
+            wind = module.WindSpeed((int)MathF.Floor(Math.Clamp(pos.X, -Limit, Limit)), (int)MathF.Floor(Math.Clamp(pos.Y, -Limit, Limit)),
+                (int)MathF.Floor(Math.Clamp(pos.Z, -Limit, Limit)));
+            return true;
+        }
 
         public string RegionName { get; private set; }
 
@@ -178,6 +204,47 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         {
             lock (_pendingActivation)
                 if (!_pendingActivation.Contains(p)) _pendingActivation.Add(p);
+        }
+
+        // The prims whose body is kinematic because keyframed motion is moving them. Core sets their position about every
+        // 50 ms, on its own timer; the prim keeps only the last pose it was given, and once per heartbeat, before the step,
+        // each of them is moved to it over the time that step covers (JoltPrim.StepKinematic), so the body carries the
+        // velocity of the motion and what stands on it is carried.
+        private readonly HashSet<JoltPrim> _kinematicPrims = new HashSet<JoltPrim>();
+        private JoltPrim[] _kinematicSnapshot = Array.Empty<JoltPrim>();
+
+        // Simulated seconds the region has stepped (written on the step thread, read by whatever thread sets a prim's pose)
+        // and the time the last heartbeat covered. A set of a pose is stamped with this clock, so a series of sets is judged
+        // in simulated time, in whole heartbeats (see JoltPrim.NoteMoveSet).
+        private double _kinematicClock;
+        private volatile float _kinematicHeartbeat = 1f / 11f;
+        internal double KinematicClock => Volatile.Read(ref _kinematicClock);
+        internal float KinematicHeartbeat => _kinematicHeartbeat;
+
+        internal void SetKinematicTracked(JoltPrim p, bool tracked)
+        {
+            lock (_kinematicPrims)
+            {
+                if (tracked ? _kinematicPrims.Add(p) : _kinematicPrims.Remove(p))
+                    _kinematicSnapshot = _kinematicPrims.Count == 0 ? Array.Empty<JoltPrim>() : new List<JoltPrim>(_kinematicPrims).ToArray();
+            }
+        }
+
+        // Moves every kinematic prim to the pose it was last given, over `seconds` of simulation: the time the coming
+        // step (or burst of steps) covers. Runs on the step thread, first thing in the heartbeat.
+        private void StepKinematics(float seconds)
+        {
+            if (seconds > 0f)
+            {
+                Volatile.Write(ref _kinematicClock, _kinematicClock + seconds);
+                _kinematicHeartbeat = seconds;
+            }
+            JoltPrim[] prims = _kinematicSnapshot;
+            for (int i = 0; i < prims.Length; i++)
+            {
+                try { prims[i].StepKinematic(seconds); }
+                catch (Exception e) { m_log.LogError($"{LogHeader} kinematic move EXCEPTION for prim {prims[i].LocalID}: {e}"); }
+            }
         }
 
         // The logged-in avatars, keyed by their CharacterId handle (the value the character drain
@@ -432,6 +499,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (_substeps != null)
                 m_log.LogInformation($"{LogHeader} region '{RegionName}': physics steps at {_substeps.RateHz:0.##} Hz " +
                                      $"({settings.CollisionSteps} collision steps each, at most {SubstepAccumulator.MaxStepsPerFrame} per heartbeat).");
+            m_log.LogInformation($"{LogHeader} region '{RegionName}': settings: {_joltConfig.StartupSummary(stepRate)}.");
         }
 
         // The shared job pools are sized once, by the first region's request; every region reads the same
@@ -496,6 +564,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             RegisterParityConsole(scene);
 
             // The IMesher the cook path needs; without one, prims fall back to bounding boxes.
+            m_wind = scene.RequestModuleInterface<IWindModule>();
+
             m_mesher = scene.RequestModuleInterface<IMesher>();
             if (m_mesher == null)
                 m_log.LogWarning($"{LogHeader} no IMesher available - shape cooking will need it.");
@@ -1008,7 +1078,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         public override PhysicsActor AddAvatar(uint localID, string avName, Vector3 position, Vector3 size, float feetOffset, bool isFlying)
             => CreateAvatar(localID, avName, position, Vector3.Zero, size, feetOffset, isFlying);
 
-        private PhysicsActor CreateAvatar(uint localID, string avName, Vector3 position, Vector3 velocity, Vector3 size, float feetOffset, bool isFlying)
+        // The avatar of an object that carried it in, outside the region, is made with the flag set: the region steps on
+        // its own thread, and a step between the character's creation and a flag set by the caller would pull it inside.
+        public override PhysicsActor AddAvatar(uint localID, string avName, Vector3 position, Vector3 size, float feetOffset, bool isFlying, bool allowOutsideRegion)
+            => CreateAvatar(localID, avName, position, Vector3.Zero, size, feetOffset, isFlying, allowOutsideRegion);
+
+        // Test seam: called on the creating thread once the new character is registered, before the caller has it back.
+        // A test steps the scene from here, which is what another thread stepping the region could do at that moment.
+        internal Action<JoltCharacter> AvatarCreatedHook;
+
+        private PhysicsActor CreateAvatar(uint localID, string avName, Vector3 position, Vector3 velocity, Vector3 size, float feetOffset, bool isFlying, bool allowOutsideRegion = false)
         {
             IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
             if (backend == null)
@@ -1036,12 +1115,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             float centreZ = ArrivalCentreZ(position.Z, terrainZ, standHalf, feetOffset);
             var spawn = new Vector3(position.X, position.Y, centreZ);
 
-            var jc = new JoltCharacter(this, backend, localID, avName, spawn, size, feetOffset, isFlying);
+            var jc = new JoltCharacter(this, backend, localID, avName, spawn, size, feetOffset, isFlying, allowOutsideRegion);
             if (velocity != Vector3.Zero)
                 jc.SetMomentum(velocity);
 
             lock (_avatars)
                 _avatars[jc.CharacterHandle.Value] = jc;
+
+            AvatarCreatedHook?.Invoke(jc);
 
             string lifted = centreZ != position.Z ? " (lifted onto the terrain)" : "";
             m_log.LogInformation($"{LogHeader} avatar '{avName}' id={localID} placed at ({position.X:0},{position.Y:0}) askedZ={position.Z:0.000} centreZ={spawn.Z:0.000}{lifted} terrainZ={terrainZ:0.00} standHalf={standHalf:0.000} feetOffset={feetOffset:0.000} flying={isFlying}.");
@@ -2535,6 +2616,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // BulletSim draining ALL taints before PE.PhysicsStep().
             DrainPendingActivation();
 
+            // Keyframed prims take the pose their object was last given, over the time this step covers.
+            StepKinematics(timeStep);
+
             // Run each active vehicle's controller BEFORE the physics step, so its
             // velocity changes/forces/torques are consumed by THIS step (BulletSim's BeforeStep model).
             LastTimeStep = timeStep;
@@ -2759,6 +2843,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             PushForceScale = timeStep / dt;
             if (n == 0)
                 return 1f;   // nothing stepped: no reports, and no collision_end for contacts that were not re-checked
+            StepKinematics(n * dt);   // the time the steps of this heartbeat cover; a heartbeat that steps nothing leaves the pose for the next
 
             // Held for the whole heartbeat: a teardown that lands between two steps disposes the backend (whose steps
             // then return nothing) but cannot null it out from under this loop. A teardown that landed after Simulate
@@ -3102,6 +3187,70 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 lock (_prims)
                     _prims.TryGetValue(id, out prim);
                 prim?.WakeAfterSupportMoved();
+            }
+        }
+
+        // Whether a physical prim or an avatar stands on or against the box (within SupportWakeMargin of it), other than the prim
+        // `except`: something that a move of the box would leave behind or throw. Used when a fixed prim is set to a new place
+        // and [Jolt] MovedPrimsCarryRiders is on: see JoltPrim.NoteMoveSet.
+        internal bool AnythingRestsOn(SVector3 center, SVector3 half, SQuaternion orientation, uint except)
+        {
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (backend == null)
+                return false;
+            Span<BodyId> found = stackalloc BodyId[16];
+            int n = backend.OverlapBox(center, half + new SVector3(SupportWakeMargin), orientation, QueryFilter.Dynamic | QueryFilter.Avatar, found);
+            if (n == found.Length)
+                return true;   // a crowd: some of it is not the prim itself
+            for (int i = 0; i < n; i++)
+                if (!backend.TryGetBodyUserData(found[i], out uint id) || id != except)
+                    return true;
+            return false;
+        }
+
+        // A child prim of a fixed linkset has been set from (fromPos, fromRot) to (toPos, toRot), a box of `size`: what stands on it
+        // or rests on it (a physical prim, an avatar; not the prim `except`, the linkset's root, whose body is the compound) is
+        // moved with it, by the same move and turn. The compound is rebuilt with the child in its new place at the next heartbeat; a
+        // body of its own for the child would be needed to give its riders the child's velocity, so they take the child's steps
+        // instead, one with each set. Used under [Jolt] MovedPrimsCarryRiders: see JoltPrim.MoveWithinLinkset.
+        internal void CarryRidersOfChild(SVector3 fromPos, SQuaternion fromRot, SVector3 toPos, SQuaternion toRot, SVector3 size, uint except)
+        {
+            IPhysicsBackend backend = _backend;   // read once: a teardown on another thread nulls it
+            if (backend == null)
+                return;
+            SQuaternion turn = SQuaternion.Normalize(toRot * SQuaternion.Inverse(fromRot));
+            SVector3 half = size * 0.5f;
+            Span<BodyId> found = stackalloc BodyId[32];
+            int n = backend.OverlapBox(fromPos, half + new SVector3(SupportWakeMargin), fromRot, QueryFilter.Dynamic, found);
+            for (int i = 0; i < n; i++)
+            {
+                if (!backend.TryGetBodyUserData(found[i], out uint id) || id == except)
+                    continue;
+                JoltPrim prim;
+                lock (_prims)
+                    _prims.TryGetValue(id, out prim);
+                if (prim == null || !backend.TryGetBodyState(prim.BodyHandle, out BodyState st))
+                    continue;
+                SVector3 at = toPos + SVector3.Transform(st.Position - fromPos, turn);
+                backend.SetBodyPoseAndVelocity(prim.BodyHandle, at, SQuaternion.Normalize(turn * st.Orientation), st.LinearVelocity, st.AngularVelocity);
+                prim.WakeAfterSupportMoved();
+            }
+
+            // An avatar stands on the child when its feet are within SupportWakeMargin plus a step of the child's top and its middle is over
+            // the child (the backend's avatar bodies do not tell which avatar they are, so the avatars are tested by where they are).
+            JoltCharacter[] avatars;
+            lock (_avatars)
+                avatars = new List<JoltCharacter>(_avatars.Values).ToArray();
+            SQuaternion unturn = SQuaternion.Inverse(fromRot);
+            foreach (JoltCharacter avatar in avatars)
+            {
+                Vector3 now = avatar.Position;
+                SVector3 rel = SVector3.Transform(new SVector3(now.X, now.Y, now.Z) - fromPos, unturn);
+                float feet = rel.Z - avatar.Size.Z * 0.5f;
+                if (MathF.Abs(rel.X) > half.X || MathF.Abs(rel.Y) > half.Y || feet < half.Z - 0.3f || feet > half.Z + 0.3f)
+                    continue;
+                SVector3 at = toPos + SVector3.Transform(rel, turn);
+                avatar.Position = new Vector3(at.X, at.Y, at.Z);
             }
         }
 

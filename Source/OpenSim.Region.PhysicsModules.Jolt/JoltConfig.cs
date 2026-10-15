@@ -93,10 +93,26 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // mesh. Core gives every mesh CONVEX unless the upload says otherwise, so this turns hollow mesh into solid.
         public bool HonourConvexMesh = false;
 
+        // The most collision shapes one physical object (the whole linkset) may have: 1 for each prim that is a plain box, sphere
+        // or cylinder, and for each of the others the number of convex hulls it is made of (a prim of shape type NONE has none).
+        // An object over it is refused physical status and the owner is told. 0 = no limit.
+        public int MaxPhysicalComplexity = 0;
+
         // Jolt's enhanced internal edge removal, for bodies that move under physics and for avatars: the contacts with the
         // shared edges inside a triangle mesh or a heightfield that can push a body off its path. Costs more per contact.
         public bool BodyEnhancedEdgeRemoval = false;
         public bool AvatarEnhancedEdgeRemoval = false;
+
+        // true: avatars and physical objects standing on a prim that keyframed motion (llSetKeyframedMotion) is moving are
+        // carried with it, as Second Life does. false: the prim is a fixed body that is set to each new place, and what
+        // stands on it is left behind.
+        public bool KeyframedMotionCarriesRiders = true;
+
+        // true: a non-physical prim that a series of position or rotation sets moves with no keyframed-motion hint
+        // (llSetPos, llSetRegionPos, llSetPrimitiveParams, the build tool) carries what stands on it while the series lasts.
+        // false (the default): such a prim is a fixed body set to each new place and what stands on it is left behind, as in
+        // Second Life. A prim that keyframed motion moves is not affected: KeyframedMotionCarriesRiders decides.
+        public bool MovedPrimsCarryRiders = false;
 
         // Script ray casts (llCastRay) and pushes on avatars (llPushObject): limits on what scripts can make one region
         // do. They guard against abuse, so each defaults to its safe value.
@@ -160,6 +176,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.HonourConvexMesh = B(cfg, "HonourConvexMesh", c.HonourConvexMesh, warnings);
             c.BodyEnhancedEdgeRemoval = B(cfg, "BodyEnhancedEdgeRemoval", c.BodyEnhancedEdgeRemoval, warnings);
             c.AvatarEnhancedEdgeRemoval = B(cfg, "AvatarEnhancedEdgeRemoval", c.AvatarEnhancedEdgeRemoval, warnings);
+            c.KeyframedMotionCarriesRiders = B(cfg, "KeyframedMotionCarriesRiders", c.KeyframedMotionCarriesRiders, warnings);
+            c.MovedPrimsCarryRiders = B(cfg, "MovedPrimsCarryRiders", c.MovedPrimsCarryRiders, warnings);
             c.BodyUpdateBufferMax = I(cfg, "BodyUpdateBufferMax", c.BodyUpdateBufferMax, 1, 8_388_607, warnings);
             c.CharacterUpdateBufferMax = I(cfg, "CharacterUpdateBufferMax", c.CharacterUpdateBufferMax, 1, 65536, warnings);
             c.ContactBufferMax = I(cfg, "ContactBufferMax", c.ContactBufferMax, 0, 16_777_216, warnings);
@@ -203,6 +221,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             c.VehicleRestSpeed = F(cfg, "VehicleRestSpeed", c.VehicleRestSpeed, 0f, 1f, warnings);
             c.BodyMaxLinearSpeed = F(cfg, "BodyMaxLinearSpeed", c.BodyMaxLinearSpeed, 1f, 100000f, warnings);
             c.BodyMaxAngularSpeed = F(cfg, "BodyMaxAngularSpeed", c.BodyMaxAngularSpeed, 0.1f, 10000f, warnings);
+            c.MaxPhysicalComplexity = I(cfg, "MaxPhysicalComplexity", c.MaxPhysicalComplexity, 0, 1_000_000, warnings);
             c.PrimLinearDamping = F(cfg, "PrimLinearDamping", c.PrimLinearDamping, 0f, 100f, warnings);
             c.PrimAngularDamping = F(cfg, "PrimAngularDamping", c.PrimAngularDamping, 0f, 100f, warnings);
             c.RayCastBudgetMs = F(cfg, "RayCastBudgetMs", c.RayCastBudgetMs, 0.1f, 1000f, warnings);
@@ -224,6 +243,23 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             => VehiclePresetsSet ? VehiclePresets
              : VehicleBehaviour == VehicleBehaviour.InWorldz ? VehiclePresetSet.Legacy
              : VehiclePresetSet.Documented;
+
+        /// <summary>
+        /// The settings a region runs with, in one line for the region log, so an operator can check what a start-up read from
+        /// [Jolt] without opening the file: the vehicle behaviour and the preset values in force, the avatar push keys, the
+        /// physical complexity limit, the two rider-carrying settings, and the physics step rate the region got (<paramref name="effectiveStepRate"/>, 0 when it takes one step per heartbeat).
+        /// </summary>
+        internal string StartupSummary(float effectiveStepRate)
+        {
+            string N(float v) => v.ToString("0.###", CultureInfo.InvariantCulture);
+            string B(bool v) => v ? "true" : "false";
+            return $"VehicleBehaviour={VehicleBehaviour}, VehiclePresets={EffectivePresets}, " +
+                   $"AvatarPushMaxSpeed={N(AvatarPushMaxSpeed)}, AvatarPushRecovery={N(AvatarPushRecovery)}, " +
+                   $"AvatarObjectPushPerMomentum={N(AvatarObjectPushPerMomentum)}, AvatarObjectPushMaxForce={N(AvatarObjectPushMaxForce)}, " +
+                   $"MaxPhysicalComplexity={MaxPhysicalComplexity}, KeyframedMotionCarriesRiders={B(KeyframedMotionCarriesRiders)}, " +
+                   $"MovedPrimsCarryRiders={B(MovedPrimsCarryRiders)}, " +
+                   (effectiveStepRate > 0f ? $"physics step rate={N(effectiveStepRate)} Hz" : "physics step rate=one step per heartbeat");
+        }
 
         /// <summary>The vehicle settings every vehicle controller in a region with this configuration shares.</summary>
         internal VehicleSettings ToVehicleSettings() => new VehicleSettings

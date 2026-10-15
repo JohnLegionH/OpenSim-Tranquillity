@@ -118,6 +118,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         BANKING_AZIMUTH = 11003,
         DISABLE_MOTORS_ABOVE = 11004,
         DISABLE_MOTORS_AFTER = 11005,
-        INVERTED_BANKING_MODIFIER = 11006
+        INVERTED_BANKING_MODIFIER = 11006,
+        // InWorldz's two wind vector parameters (VectorParams.cs:59-60 of the Halcyon source): how much of the wind, or of the
+        // water's current, at the vehicle's position pushes it along each of its axes (linear) and rolls and pitches it
+        // (angular). Second Life has neither.
+        LINEAR_WIND_EFFICIENCY = 12001,
+        ANGULAR_WIND_EFFICIENCY = 12002
     }
 }

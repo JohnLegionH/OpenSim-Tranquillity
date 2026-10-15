@@ -147,7 +147,8 @@ how often capacity warnings are logged, the physics step rate (below), the vehic
 share of gravity on a ground vehicle, the type presets, the limits and the sled's assist; see
 "Vehicles"), the engine's body speed caps, the prims' damping (see "Physics material on objects"), the limits on script ray casts and pushes (below),
 `AllowUnrecordedNative` (above), `BodyEnhancedEdgeRemoval` and `AvatarEnhancedEdgeRemoval` (see "Seams in
-triangle meshes and terrain"), and `TestCommands` (below).
+triangle meshes and terrain"), `KeyframedMotionCarriesRiders` and `MovedPrimsCarryRiders` (see "Prims that keyframed motion moves" and "Prims moved by
+plain sets"), and `TestCommands` (below).
 
 ### Physics step rate
 
@@ -494,6 +495,29 @@ and no prim of it has a body of its own. These keep it one body, with the mass o
   the physics engine (`SceneObjectPart.UpdateExtraParam`), on any engine; a prim keeps its old shape
   in physics until something else rebuilds it.
 
+## Limiting how complex a physical object may be
+
+A physical object (a prim or a whole linkset) can be given a limit on its collision shapes, so that one object cannot
+bring in hundreds of convex hulls. The limit is `[Jolt] MaxPhysicalComplexity`. `0`, the default, is no limit, and nothing
+is refused; a number such as `256` (the limit Halcyon's physics engine applied) turns it on.
+
+- How it counts, over every prim of the object that has a physics shape: a plain box, sphere or cylinder counts 1; any
+  other prim counts the convex hulls its shape is made of (a hollow box 4, a torus 12, a physical mesh the hulls of its
+  physics model, one hull for a mesh without one, or a prim of shape type `CONVEX`); a prim whose physics shape type is
+  `PRIM_PHYSICS_SHAPE_NONE` counts 0.
+- An object over the limit is not made physical. It stays as it was (non-physical), every part of it, and its owner gets
+  the message "Object was too complex to be made physical: (N of M convex hulls)", where N is the object's count and M the
+  limit. The message and the count are Halcyon's.
+- It applies wherever an object becomes physical: the build tool's Physical box, `llSetStatus(STATUS_PHYSICS, TRUE)`,
+  `llSetPrimitiveParams` with `PRIM_PHYSICS`, rezzing an object that is physical, and the region loading one that was saved
+  physical (it comes up non-physical, and the flag is saved off).
+- It applies while an object is physical too: a prim linked into it, or a prim's shape, size or physics shape type changed,
+  that takes the count over the limit makes the whole object non-physical, with the same message. A prim that is not
+  physical is never refused.
+- The count is also the physics cost: `llGetObjectDetails` with `OBJECT_PHYSICS_COST` and the viewer's object cost show
+  each prim's count, whatever the limit, and a prim of shape type `NONE` costs 0. It is not scaled by the prim's size.
+  Setting a part to convex or none lowers it.
+
 ## Physics material on objects
 
 `llSetPhysicsMaterial` (and `PRIM_PHYSICS_MATERIAL`) and `PRIM_MATERIAL` on a prim, as the Second
@@ -612,6 +636,125 @@ mesher decodes, unless it has already decoded and cached that map.
 | `BodyEnhancedEdgeRemoval` | `false` | `true`: Jolt's enhanced internal edge removal for every body that moves under physics (a physical prim, a vehicle): the contacts with the shared edges inside a triangle mesh or a heightfield that can push a body off its path are removed. Costs more per contact with a mesh or the terrain. Off, nothing changes. See "Seams in triangle meshes and terrain". |
 | `AvatarEnhancedEdgeRemoval` | `false` | `true`: the same for avatars. Off, nothing changes. |
 | `HonourConvexMesh` | `false` | `true`: a non-physical mesh whose `PRIM_PHYSICS_SHAPE_TYPE` is `PRIM_PHYSICS_SHAPE_CONVEX` collides as one convex hull of its points, not its triangle mesh. The simulator gives every mesh that shape type unless the upload sets another, so with this on a hollow mesh without a physics model becomes solid. Off, nothing changes. |
+| `MaxPhysicalComplexity` | `0` | The most collision shapes one physical object may have: a plain box, sphere or cylinder counts 1, any other prim its convex hulls, a prim of shape type NONE 0. An object over it is not made physical and its owner is told "Object was too complex to be made physical: (N of M convex hulls)". `0` is no limit. See "Limiting how complex a physical object may be". |
+
+## Prims that keyframed motion moves
+
+`llSetKeyframedMotion` works on non-physical objects only, and its wiki page has avatars standing on such an object while it
+moves ("... when standing on a moving platform"). The simulator moves the object with plain position and rotation sets, about
+every 50 ms, from the motion's own timer. A fixed body that is set to a new place has no velocity, so an avatar or a physical
+object on it stayed where it was and the platform left from under it: a rider on a platform moved 6 m sideways at 1 or 3 m/s fell
+the platform's 3 m in every case.
+
+The simulator now tells the root prim's actor while a motion plays (`PhysicsActor.MovedByKeyframedMotion`: on when the motion
+starts, off when it stops, is paused or has played out, or the object is selected; an actor made while it plays is told too).
+For that time the prim's body is a kinematic one on its own layer, `MovingStatic`, which collides exactly as a fixed prim does
+(ray casts and sensors find it as a fixed prim) but sits in the moving broad phase, so each move does not touch the large tree of
+fixed prims. Each pose set is only recorded; once per heartbeat, before the step, the body is moved to the last pose over the
+time that step covers (the whole burst, at a `PhysicsStepRate`), so it carries the linear and angular velocity of the motion.
+An avatar takes the velocity of the body under its feet and a physical object is carried by friction.
+
+- A move longer than 4 m in one heartbeat (or faster than 40 m/s over a longer one) is a jump, not a motion: the body is put
+  there with no velocity, so nothing is flung, and what rested on it is woken. Keyframed motion at 3 m/s moves 0.27 m a heartbeat,
+  a lift at 20 m/s 1.8 m.
+- A heartbeat in which no new pose arrived stops the body at the last pose: a kinematic body keeps the velocity it was given and
+  would otherwise carry on past where the motion stopped.
+- When the motion ends the body is made a fixed one again where the object is, and what rests on it is woken to settle. A
+  region that never plays a keyframed motion has no kinematic body.
+- An avatar takes the platform's velocity in the step the motion starts. The body is made again when the motion starts, and the
+  avatar's character still held the removed body as its ground and found no velocity in it, so for one step the platform left it
+  behind (after ten heartbeats at 16.5 m/s it was 1.5 m from the platform's middle at one step per heartbeat and 0.4 m at 45 Hz).
+  An avatar whose ground was removed now finds its ground again before its step; the same run ends 0.00 m from the middle.
+- A platform that turns carries a rider round: 2 m from the centre of a platform turned 90 degrees at 30 degrees a second, a
+  cube ended at 89.2 degrees and an avatar at 88.5 degrees, both at their radius (one step per heartbeat; at 45 Hz both about 89.5).
+- A linkset moves as one body: the parts' own sets, which follow the root's, change nothing, and the root's body is not made again.
+- **Known limit: an abrupt fast start on a running region.** In the harness an avatar is carried exactly (0.00 m from the
+  platform's middle) when a platform starts at 16.5, 22, 29.7 or 39.6 m/s, at one step per heartbeat and at 45 Hz. On a running
+  test region (45 Hz, heartbeats up to 110 ms apart) a platform that keyframed motion started at 16.7 m/s (5 m in 0.3 s) kept the
+  avatar on, but at 22 m/s (6.6 m in 0.3 s) the avatar was carried at about 10 m/s and fell, and at about 29 m/s (9 m in 0.3 s) it
+  moved 1.5, 1.7 and 0.3 m in successive 0.1 s samples and fell where the platform had been. The difference is not explained.
+  Keyframed motion up to about 17 m/s carries an avatar on a running region; above that it is not guaranteed.
+- **A platform that crosses into a neighbouring region.** The simulator hands a seated avatar over with the object and nothing
+  else, so what stands on a keyframed platform that crosses is left in the first region: its body goes with the object, and the
+  rider falls to the ground there (a stand-in for the crossing, one region: the platform removed once its middle is outside, an
+  avatar and a cube both end on the ground). A crossing that fails puts the object back half a metre inside the edge, stopped:
+  a rider stays on it and is carried again when the motion runs again (the avatar slid 0.6 m on the jump back, the cube 0.7 m).
+  A crossing between two real regions has not been measured.
+
+Not changed: a non-physical prim moved any other way (`llSetPos`, `llSetRegionPos`, the build tool) stays a fixed body that is set
+to each new place unless `MovedPrimsCarryRiders` is on (next section), as is a keyframed motion that the actor was not told of;
+physical objects and vehicles, phantom and volume-detect prims, and a selected object.
+
+| Key | Default | What it sets |
+|---|---|---|
+| `KeyframedMotionCarriesRiders` | `true` | `true`: what stands on a prim that keyframed motion is moving is carried with it, as above. `false`: the prim stays a fixed body for the whole motion, as before this key. |
+
+The harness scenarios `kin-box-*` and `kin-avatar-*` (a 6 x 6 x 0.5 m platform 3 m above the ground, a cube or an avatar on it,
+moved 6 m sideways or up at 1 or 3 m/s, by a set every 50 ms or every 0.2 s) and `kin-box-turn`, `kin-avatar-turn` give the figures.
+A keyframed run, the platform told, against the same run with it not told (which is what the module did before): sideways, a cube
+and an avatar stay on (slide at most 0.15 m, the cube at most 0.04 m and trailing at most 1.0 m at 3 m/s) where they fell 3 m
+before; moving up, nothing sank, and riders end at most 0.4 m above their resting height when a fast lift stops. The same
+platform moved by plain sets gave the same figures before and after.
+
+## Stepped platforms
+
+Keyframed motion sets its object's pose about every 50 ms, and a script that moves a floor with `llSetLinkPrimitiveParamsFast` does it
+10 or 20 times a second. A region's heartbeat is about 91 ms, so one heartbeat finds one set of a 20 Hz motion, the next two, and a slow
+one three. A body moved to the last pose each heartbeat would change speed by a half or more from one heartbeat to the next, and a
+cube resting on it would be thrown. While the poses come about every heartbeat the body is moved at the mean speed of the last four
+heartbeats, kept within 4 cm of the last pose, and carries on at that speed for one heartbeat in which no pose comes before it is stopped
+at the last pose. Harness figures, a platform going up at 2 m/s in steps of 0.1 m every 50 ms (regular heartbeats, and heartbeats that
+find 1 to 3 sets), how far a rider moves about its place while the platform is at speed: a cube 0.045 to 0.060 m (0.09 to 0.11 m
+before), an avatar 0.043 to 0.046 m (0 to 0.08 m before). At the start and the stop of a motion the speed changes in one heartbeat, as
+the script made it do, and a cube rises up to 0.3 m on a stop from 2 m/s (0.35 to 0.52 m with uneven heartbeats before).
+
+## Prims moved by plain sets
+
+Second Life does not carry an avatar over a non-physical prim that `llSetPos` moves (the wiki pages for `llSetPos` and
+`llSetRegionPos` say nothing of riders), so by default such a prim stays a fixed body that is set to each new place and what
+stands on it is left behind, exactly as before. `[Jolt] MovedPrimsCarryRiders = true` carries riders over a **series** of such sets
+(`llSetPos`, `llSetRegionPos`, `llSetPrimitiveParams`, dragging in the build tool) with the same kinematic body keyframed motion
+uses.
+
+- **A series** is two sets that fall in different heartbeats, at most 0.25 s apart plus one heartbeat, the second no further than 4 m
+  and no more than a quarter turn from the one before. The sets are stamped with the region's simulated time, which counts whole
+  heartbeats, so a call that waits 0.2 s (`llSetPos`) is seen as two or three heartbeats (0.18 or 0.27 s at 11 Hz) and the
+  extra heartbeat keeps both inside the rule. A single set, a set in the same heartbeat as the one before, a longer pause or a
+  longer move is a plain set.
+- **The body becomes kinematic at the second set**, put at the pose before it and moved to the set's pose by the next step, so
+  the second set already carries. A series whose sets come less often than every heartbeat and a half (`llSetPos`) glides to each new pose over
+  the time the sets have been apart (a running mean), so what stands on it feels the velocity the sets add up to and not a jolt
+  and a stop for each step; the body trails the object by up to one step of the series (0.2 m at 1 m/s, 0.6 m at 3 m/s). A series
+  whose sets come about every heartbeat (a script that calls `llSetLinkPrimitiveParamsFast` 10 or 20 times a second) is followed as
+  keyframed motion is, below.
+- **The quiet time is 0.5 s** with no set. It is above the longest gap a series allows, so a series is never cut between two of
+  its sets, and short enough that the body is fixed again soon after the last set, where the object was left, and what rests
+  on it is woken. The body is at rest at the last pose from the heartbeat after the glide ends.
+- A move further than 4 m, or more than a quarter turn, during a series is a jump: the pose is taken with no velocity.
+- **The first set carries too when something rests on the prim.** A set that is not part of a series begins one when a physical
+  prim or an avatar stands on or against the prim (an overlap test, one box query, run only for such a set); with nothing on it, the
+  prim stays a fixed body. So a single `llSetPos` of a platform with a rider on it moves the rider with it. The body takes that step
+  at no more than 3 m/s, and at least a heartbeat (a step of 0.6 m over 0.2 s), and is fixed again after the quiet time. With the setting
+  off nothing changes: a platform lifted 0.6 m by each set throws a cube standing on it.
+- A prim that keyframed motion moves is not affected: the hint decides, whatever this key says, and a keyframed prim's sets every
+  50 ms are not taken for a series. Physical prims and phantom and volume-detect prims are not moved this way; a linkset root is, and
+  keeps its body.
+- **A child prim moved on its own** (`llSetLinkPrimitiveParams` on a child, the build tool on one child of a linkset whose root is a fixed
+  prim) is part of its root's compound, so its move rebuilds the compound and cannot give its riders a velocity. With the setting on,
+  what stands on the child (physical prims within a few centimetres of it, and avatars whose feet are on its top) takes the child's
+  step with each set: it is moved by the same move and turn, keeping its velocity. A jump (over 4 m or a quarter turn) is not carried.
+  A root that is physical, or that keyframed motion moves (its body carries the whole linkset), is not affected. Harness, a child moved
+  3 m east or up in sets of 0.1 m, two a heartbeat: a cube or an avatar standing on it ends at its place on the child (0.00 m off);
+  with the setting off it is left 3 m behind (a cube, an avatar sideways).
+
+| Key | Default | What it sets |
+|---|---|---|
+| `MovedPrimsCarryRiders` | `false` | `true`: riders on a prim moved by a series of plain sets are carried, as above. `false`: such a prim is a fixed body set to each new place, as before this key. |
+
+With the setting on, the harness platform (`kin-*-setpos`, a set every 0.2 s) carries a cube and an avatar 6 m sideways at 1 and
+3 m/s (they stayed on in every run; an avatar slid at most 0.6 m, a cube at most 0.4 m) where they fell 3 m before, and moving up
+nothing sank more than 0.45 m, the cube lifted 0.6 m by each set included. With it off the 16 `kin-*-setpos` harness runs give the same sample files, byte for byte, as the build
+before the key was added.
 
 ## Seams in triangle meshes and terrain
 
@@ -795,6 +938,30 @@ simulator gives, as BulletS and ubODE do: on a prim platform it stands on the pl
 falls (or stays, when flying) until it lands on what is below. Flying and velocity are kept as given.
 The one correction: a position that would put the body below the terrain is lifted to stand on the
 terrain. An arriving avatar is never moved down.
+
+An avatar made over a platform that is held at rest, or one that is already moving by keyframed motion,
+stands on it from the first step and is carried by it without a drop (measured to within 0.05 m under
+both step modes, `RidersCrossArrivalTests`). An avatar taken out of physics and made again at the same
+place on its platform, as a failed region crossing does, is carried again. While it stands on a platform
+its feet contact names the platform's root in every collision report, moving or still. Every avatar is
+also held inside the region's edges after each step, so one carried past the edge by a platform would be held
+at the edge and left behind by the platform. The region exempts an avatar that a crossing object carried in:
+it sets `AllowOutsideRegion` on the avatar's actor (a rider behind the object's centre arrives outside the
+region), and while it is set the avatar stays where the platform puts it, even with the platform wholly outside
+the region. The region clears it when the avatar leaves the object, and the edge hold then applies again.
+
+A physical object that crossed into the region together with avatars is held still until they have arrived
+(`PhysicsActor.HoldStill`, then `ReleaseHold` when the last one has, or the hold time ran out): its body is
+kept still the way a selected object's is (no gravity, no drift, nothing that touches it moves it) but stays
+solid, so an avatar made over it stands on it. Let go, it moves on with the velocity it arrived with. An
+object that is selected when the hold ends stays still until it is deselected (`HeldPhysicalPrimTests`, both
+step modes). ubODE's held body is also solid; it stops and disables the body instead.
+
+A vehicle is held the same way and takes up where it was: the vehicle step is skipped while it is held, so no motor
+or hover builds up, and the release tells the controller the gap was a hold (`ResumeAfterHold`). Without that, a
+hold of over a second looked to the controller like a vehicle that had been idle, and it released its motors
+(`HeldVehicleTests`: a balloon with a motor and a hover height, held five seconds, moves after the release as
+one that was never held does, both step modes).
 
 ## What an avatar stands on
 
@@ -1015,6 +1182,13 @@ objects interpenetrate it (https://wiki.secondlife.com/wiki/LlVolumeDetect); it 
 is missed. `VolumeDetectFastCrossingTests` shoots a 0.2 m ball through a 0.1 m detector at 5, 25, 50 and
 200 m/s at one physics step per heartbeat and at 45 Hz: one start and one end each.
 
+An avatar is swept the same way after its own move: when the avatar moved further than 0.1 m in a step and the region has a
+volume-detect prim, its capsule is cast from where it was to where it is, and a detector the path crossed that the avatar's update
+did not report and the avatar does not overlap where it ended gets one `collision_start`. Without it a flying avatar that crossed a
+0.1 m detector at 48 m/s at one step per heartbeat, or at 96 m/s at either step rate, raised nothing. `VolumeDetectFastAvatarTests`
+flies an avatar through a 0.1 m detector at 16, 48 and 96 m/s at both step rates (one start and one end each) and past one without
+touching it (nothing).
+
 `FastObjectTests` shoots 0.05, 0.2 and 1 m balls at 10 to 500 m/s (`[Jolt] BodyMaxLinearSpeed`, 500 m/s
 by default, is the most a prim can move) at a fixed wall 0.01 m and 0.1 m thick, at a resting 0.5 m
 box and down at the ground, at each heartbeat rate of the harness and at 11 Hz with
@@ -1148,7 +1322,7 @@ from; their values are the InWorldz source's, value for value (Halcyon's `Vehicl
 | angular motor timescale / decay | (2, 2, 0.1) / (0.3, 0.3, 0.1) | (0.1, 0.1, 0.05) / (0.2, 0.8, 0.1) |
 | linear motor offset | 0 | (0, 0, -0.1) |
 | hover height / efficiency / timescale | 0.0001 / 0.8 / 0.5 s | 0 / 0 / 1000 s (off) |
-| buoyancy | 0 | 0 |
+| buoyancy | 0 (1 under `SecondLife`) | 0 |
 | linear deflection efficiency / timescale | 0.5 / 3 s | 1 / 2 s |
 | angular deflection efficiency / timescale | 0.5 / 5 s | 0.8 / 2 s |
 | vertical attractor efficiency / timescale | 0.5 / 0.3 s | 1 / 1 s |
@@ -1157,8 +1331,8 @@ from; their values are the InWorldz source's, value for value (Halcyon's `Vehicl
 | motors disabled above / after | 0 / 0 | 1.5 m / 2.5 s |
 | flags | `NO_DEFLECTION_UP`, `HOVER_WATER_ONLY`, `LIMIT_MOTOR_UP`, `LIMIT_MOTOR_DOWN`, `REACT_TO_WIND`, `REACT_TO_CURRENTS`, `TORQUE_WORLD_Z` | `NO_DEFLECTION_UP`, `HOVER_UP_ONLY`, `LIMIT_MOTOR_UP`, `LIMIT_MOTOR_DOWN`, `LIMIT_ROLL_ONLY`, `TORQUE_WORLD_Z` |
 
-The sailboat's wind and water-current efficiencies (0.02, 0.001, 0 and 0.1, 0.01, 0) and its two react flags are stored and not
-simulated: no vehicle here reacts to wind or currents. A motorcycle is a ground vehicle where `VehicleGroundGravityFactor`
+The sailboat's wind and water-current efficiencies (0.02, 0.001, 0 and 0.1, 0.01, 0) and its two react flags act under
+`InWorldz` ("Wind and water currents" below) and are only held under Second Life's behaviour. A motorcycle is a ground vehicle where `VehicleGroundGravityFactor`
 is concerned, as InWorldz treats it as a car. A script's type number reaches the engine as it is (`llSetVehicleType` ->
 `SceneObjectPart.SetVehicleType` -> the physics actor's `VehicleType`); the Phlox script engine knows both constants and accepts
 the numbers, the YEngine takes its constants from `ScriptBaseClass` (`LSL_Constants.cs`, `XMREngine.cs:397`), which lacks both names (a script there can pass the number).
@@ -1204,6 +1378,7 @@ where it is not set, the behaviour does (`InWorldz` gives `legacy`, `SecondLife`
 | Upward linear motor | The motor pulls toward its direction on every axis. | The motor's upward change of velocity in a step has `g * (1 - buoyancy)` (g negative) added to it, and is dropped if that leaves it below zero (`VehicleDynamics.cs:2707-2712`, read, not run). The comparison is a change of velocity in one step against an acceleration, as there, so for a vehicle with no buoyancy an upward push is dropped unless it changes the velocity by more than 9.8 m/s in one step, and a push bigger than that has 9.8 m/s taken off it. | A car or boat with an upward motor component does not rise (a vehicle with buoyancy 1, a balloon, is not touched). A motor that pulls up against a fall (a motor target below the falling speed) is dropped too. |
 | Hover moderation | Hover and the linear motor act together. | While a hover flag (`HOVER_GLOBAL_HEIGHT`, `HOVER_TERRAIN_ONLY`, `HOVER_WATER_ONLY`) is set, the hover timescale is below 300 s and the motor still moves the vehicle up or down by more than 0.005 m/s in a step, the linear motor's decay clock is put on 10 s each step (`VehicleDynamics.cs:2714-2720`). | A hovering vehicle with a vertical motor loses its whole linear motor, all three axes, within a few steps. |
 | Hover at height 0 and efficiency 0 | A hover of height 0 with efficiency 0 hovers (bouncing about the ground). | It is no hover, "legacy scripts" (`VehicleDynamics.cs:1563-1564`); a hover that was on has its timescale put to 300 s as well, so a later height and efficiency do not bring it back until the script sets the timescale again. | A script that clears its hover by zeroing the height and efficiency stops hovering. |
+| Gravity while hover acts | Gravity and buoyancy act alongside the hover spring, so a vehicle with less than full buoyancy hovers below its height, where the spring holds its weight (the Linden Vehicle Tutorial: "Hover"). | Hover switches gravity off while it acts, whatever the buoyancy (`PhysxPrim.pid.cs` `DoHover`, `DoHoverTarget`: `_hoverDisableGravity`; `PhysxPrim.cs` `WantsGravity`), so the vehicle is held at its hover height itself. | A sailboat (buoyancy 0, hover height 0.0001 m, hover timescale 0.5 s) rests on the water surface; under `SecondLife` the spring alone would settle it about 2.5 m below (g times the timescale squared), so the sailboat preset gets buoyancy 1 there and floats at the surface too. A hover that is off (timescale 1000 s, or height 0 with efficiency 0) leaves gravity as it was. |
 | Attractor dormancy | The attractor acts all the time. | It goes dormant once the tilt has not changed by pi / 256 (0.7 degrees) in a step for 1.5 s, never while the tilt is 108 degrees or more, and wakes when the tilt has moved 0.7 degrees from where it went dormant (`VehicleDynamics.cs:1255-1264`). The step's change is taken per 15 ms of time while it acts, so the step rate does not decide how long it stays awake. | A vehicle that has stopped tilting stays at the lean it has (a car on a slope, a boat settled at an angle) until something moves it 0.7 degrees. |
 | Motor timescales for each axis | `llSetVehicleVectorParam` with a linear or angular motor timescale or decay timescale (codes 30, 31, 34, 35) does nothing: Second Life documents them as floats. A float sets all three axes. | The call sets each axis, each held to the range the float setter holds all three to (`VehicleDynamics.cs:406-427`, `LSLSystemAPI.cs:8572-8601`, read, not run). A float still sets all three. | A script that sets a car's throttle and steering timescales apart, or an airplane's roll and pitch, gets what it asked for. |
 | Motor decay timescale cap | 120 s, the longest the Second Life page documents. | 1000 s (`VehicleDynamics.cs:406-421`; its 120 s constant is named for these values and not used there), unless `VehicleMaxDecayTimescale` is set in the region's configuration. | A script that sets a decay of 500 s gets 500 s, not 120 s. |
@@ -1217,9 +1392,9 @@ motor direction, and `VEHICLE_FLAG_MOUSEPOINT_STEER` and `_BANK` do the same in 
 **InWorldz extension flags.** A script sends them on InWorldz's numbers: `VEHICLE_FLAG_REACT_TO_CURRENTS` 0x10000,
 `REACT_TO_WIND` 0x20000, `LIMIT_MOTOR_DOWN` 0x40000, `TORQUE_WORLD_Z` 0x80000, `MOUSEPOINT_STEER` 0x100000 and
 `MOUSEPOINT_BANK` 0x200000 (`VehicleFlags.cs:48-60`). Each reaches the engine as itself, from `llSetVehicleFlags`,
-`llRemoveVehicleFlags` and a saved vehicle (rezzed, copied, loaded with the region, crossing in). `LIMIT_MOTOR_DOWN` and
-`TORQUE_WORLD_Z` act; `MOUSEPOINT_STEER` and `MOUSEPOINT_BANK` act under `InWorldz` (camera steering, below); `REACT_TO_WIND` and
-`REACT_TO_CURRENTS` are held and read back but nothing acts on them yet. They act under either behaviour,
+`llRemoveVehicleFlags` and a saved vehicle (rezzed, copied, loaded with the region, crossing in). `MOUSEPOINT_STEER`,
+`MOUSEPOINT_BANK`, `REACT_TO_WIND` and `REACT_TO_CURRENTS` act under `InWorldz` (camera steering and wind, below) and are held and
+read back under Second Life's behaviour. `LIMIT_MOTOR_DOWN` and `TORQUE_WORLD_Z` act under either behaviour,
 because a script has to ask for them. Before this was fixed the numbers were read as another engine flag each (a script's
 `LIMIT_MOTOR_DOWN` set an unused flag, `REACT_TO_CURRENTS` set `LIMIT_MOTOR_DOWN`, `REACT_TO_WIND` set `TORQUE_WORLD_Z`, and
 `TORQUE_WORLD_Z` set `MOUSEPOINT_BANK`), so a vehicle that set one of those flags changes: it now does what the script asked.
@@ -1235,8 +1410,8 @@ script set is lost when the vehicle is rezzed, copied, loaded with the region or
 | `VEHICLE_MOUSELOOK_AZIMUTH` | 11001 | pi / 32 to pi | The sideways range of the mouselook dead zone (`InWorldz` only). |
 | `VEHICLE_MOUSELOOK_ALTITUDE` | 11002 | pi / 32 to pi | The vertical range of the dead zone (`InWorldz` only). |
 | `VEHICLE_BANKING_AZIMUTH` | 11003 | pi / 128 to pi | The roll range banking counts as a share of (`InWorldz` only; the default pi / 2 is Second Life's). |
-| `VEHICLE_DISABLE_MOTORS_ABOVE` | 11004 | as sent | Held only. InWorldz casts a ray down about eight times a second and drops the motors above this height for the delay below; that ray and the delay are not built here. |
-| `VEHICLE_DISABLE_MOTORS_AFTER` | 11005 | as sent | Held only (see above). |
+| `VEHICLE_DISABLE_MOTORS_ABOVE` | 11004 | as sent | Under `InWorldz`: the motors go off once the vehicle has been higher than this above what lies below it for the delay below (0 is off); see "Motor height" below. Under Second Life's behaviour it is held only. |
+| `VEHICLE_DISABLE_MOTORS_AFTER` | 11005 | as sent | Under `InWorldz`: how long the vehicle must have been above the height before the motors go off, on Halcyon's clock, which runs eight times fast (see "Motor height" below). Held only under Second Life's behaviour. |
 | `VEHICLE_INVERTED_BANKING_MODIFIER` | 11006 | -10 to 10 | An airplane flying inverted banks by this factor times its banking efficiency (`InWorldz` only; no other type is marked inverted there). |
 
 Each behaviour follows Halcyon's code as read (not run: it needs PhysX); the figures its formula gives are checked in the
@@ -1355,7 +1530,19 @@ exact solution over the step the engine takes:
 - The vertical attractor is the same spring on the vehicle's roll and pitch, with
   `VEHICLE_VERTICAL_ATTRACTION_TIMESCALE` and `_EFFICIENCY` (from wobbling, 0, to exponential decay,
   1); off at 500 s. `VEHICLE_FLAG_LIMIT_ROLL_ONLY` unlocks pitch for every type: the attractor then
-  corrects roll only, so the vehicle can climb and dive.
+  corrects roll only, so the vehicle can climb and dive. The roll rate the attractor sets belongs to the
+  roll axis it was set about: each step it is put back on the axis the vehicle has by then, so a turn about
+  the world's vertical (banking's) cannot leave part of it across that axis as a pitch rate (under both
+  behaviours).
+- Motor height (`InWorldz` only; Halcyon's `VehicleDynamics.cs:2494-2573`). With `VEHICLE_DISABLE_MOTORS_ABOVE` above 0, about
+  eight steps in every sixty-four the vehicle casts a ray straight down its own axis from the lower left edge of its box
+  (and, if that finds nothing near, from the lower right), starting a metre up and reaching three times the limit; its own
+  parts are not hit. The height is the distance less that metre, or the limit plus a metre when nothing is hit. While the height
+  is above the limit the clock counts, and at `VEHICLE_DISABLE_MOTORS_AFTER` the linear and angular motors stop
+  acting (friction, the attractor and gravity go on); at or under the limit the clock clears. The clock runs as Halcyon's does (`VehicleDynamics.cs:2564`, kept on purpose): it adds eight steps' time on every step, although the height is measured once in eight, so it runs eight
+  times fast and a delay set as 2.5 s, the legacy car's, runs out in about 0.3 s (15 steps at 45 Hz). A script that wants a
+  delay of `t` seconds sets `t` times eight. The rule is off for a vehicle
+  with hover on, positive buoyancy, or a speed under 0.5 m/s. The box is the root prim's size grown over the linked parts'.
 - `VEHICLE_LINEAR_MOTOR_OFFSET` moves the point the linear motor pushes at away from the centre of
   mass, so the motor also turns the vehicle: each step's motor change `dv` is an impulse `m dv` at
   the offset `r`, turning the body by `I^-1 (r x m dv)`. A thrust below the centre of mass pitches
@@ -1417,9 +1604,12 @@ at 2 s, within a degree from 4 s, within half a degree from 9.3 s at 45 Hz, and 
 Second Life's aim overshoots by 11.4 degrees and is within half a degree from 8.7 s. A bare motor with no angular friction
 or decay hunts about a camera 20 degrees off by up to 5 degrees (a period of about 4.5 s), as any rate steered by an offset
 does; a car with its own friction settles. InWorldz reads the camera once in eight frames (`VehicleDynamics.cs:796`); here it is read
-on every step, which only makes the turn answer the camera sooner by under a fifth of a second. InWorldz measures the pitch as the
-vertical part of the camera's own sideways axis (`VehicleDynamics.cs:808, 820`), which is level for a camera that is not rolled;
-the host passes the camera's direction only, and the pitch share here is the camera's pitch. It is InWorldz's alone
+on every step, which only makes the turn answer the camera sooner by under a fifth of a second. The pitch is taken from where the camera
+looks: the vertical part of the camera's forward axis in the vehicle's frame (a driver who looks up pitches the nose up, one who
+looks down pitches it down, and a level camera gives none). InWorldz's code reads the z of the camera's sideways axis there
+(`VehicleDynamics.cs:808, 820`, `ycam = localUp.Z`), although its own comment calls the value up and down; a camera that is not
+rolled keeps that axis level, so the pitch of its steering never acted. That line is taken as a slip and not followed; the dead
+zone, the curve, the azimuth and altitude ranges, `LIMIT_ROLL_ONLY` and banking are as InWorldz has them. It is InWorldz's alone
 because the engine holds steady without it: measured on the real engine (`VehicleMouselookHuntingTests`, a car driven straight with
 the camera on its heading, the camera shaking by 0.2, 0.5 and 1 degree at 15, 30 and 60 updates a second at 45 Hz physics, and at
 one step per heartbeat), the heading wobbles by less than the shake itself (a standard deviation of 0.05 to 0.2 degrees, never above
@@ -1477,12 +1667,46 @@ by its script has the documented one; a script that sets these itself is not aff
 
 The car and the airplane presets agree in every field.
 
+### Wind and water currents
+
+Under `[Jolt] VehicleBehaviour = InWorldz` a vehicle with `VEHICLE_FLAG_REACT_TO_WIND` (0x20000) or `VEHICLE_FLAG_REACT_TO_CURRENTS`
+(0x10000) set is pushed by the region's wind, as InWorldz's is (`VehicleDynamics.cs:863-992`, read, not run). Second Life has
+neither, so under `SecondLife` the flags and the two efficiencies are held and nothing reads the wind. Where the wind comes from:
+the region's wind module (`IWindModule.WindSpeed` at the vehicle's position, truncated to the metre). The ZephyrWind plugin gives
+the water's current below the water, the surface wind above it and the wind aloft over that; the default plugins give one wind
+everywhere, which a vehicle then feels as well. A region with no wind module gives no wind, and the vehicle behaves as if the air
+were still.
+
+- The wind is read once in eight steps (frame number mod 8) and held between reads.
+- It is turned into the vehicle's own frame and each axis is cut once the vehicle moves the way the wind blows faster than the wind
+  does (it "tapers off once the vehicle achieves the current wind speed"); what is left is scaled axis by axis by
+  `VEHICLE_LINEAR_WIND_EFFICIENCY` (12001, held to -10..10 on each axis) and added to the velocity over the step, as the wind
+  times that efficiency times the step: a sailboat with 0.02 in 10 m/s of wind gains 0.2 m/s every second. A push under 0.001
+  is dropped.
+- `VEHICLE_ANGULAR_WIND_EFFICIENCY` (12002, the same range) turns the vehicle: a wind along its x axis pitches it about y by the
+  wind's x part, and one along its y axis rolls it about x by minus the wind's y part, each scaled by that axis's efficiency
+  and cut by the same taper against the vehicle's angular velocity. There is no push about z.
+- A vehicle that is not moving on an axis (a velocity of exactly 0) gets the whole wind on that axis from either side. Halcyon's
+  taper takes the sign of 0 as positive, so there a boat at rest got no push from a wind along its negative axis, nor the roll
+  that a wind along +y gives; that is cured here.
+- Halcyon reads the water's current for a vehicle below the water that has either flag but pushes only for
+  `REACT_TO_WIND`, so `REACT_TO_CURRENTS` alone did nothing there. Here the current flag does what its name says: a vehicle
+  below the water is pushed by the current with either flag, and a vehicle above it by the wind with `REACT_TO_WIND` only.
+- A vehicle with either flag never sleeps (Halcyon's sleep threshold is 0 for it).
+- Physical objects that are not vehicles get no wind: nothing outside the vehicle code reads it in Halcyon, and none does here.
+- `VEHICLE_FLAG_BLOCK_INTERFERENCE` has nothing to do with it (see "Known gaps").
+- The saved record of a vehicle (`SOPVehicle`) keeps 12001 and 12002 (as optional `LWEFF` and `AWEFF` elements, written only when a
+  script set them), so a value a script set survives rez, copy, region load and crossing; a record that holds none gives the
+  vehicle its type's own, and under `SecondLife`, which takes neither code, the record's values change nothing. The flags are saved.
+
 ### Known gaps against Second Life
 
 These documented behaviours are not simulated:
 
-- `VEHICLE_FLAG_BLOCK_INTERFERENCE` (passengers' attachments cannot push the vehicle): stored, no effect.
-- Wind (`VEHICLE_LINEAR_WIND_EFFICIENCY` and the angular one): no wind is simulated.
+- `VEHICLE_FLAG_BLOCK_INTERFERENCE` (passengers' attachments cannot push the vehicle): stored, no effect. Halcyon does not
+  implement it either: neither Halcyon tree has the flag or the name at all (`VehicleFlags.cs` ends at 0x200 and the InWorldz
+  bits), and its wind code has no shield. Its push-blocking half belongs in core's push path and is not built.
+- Wind and water currents under Second Life's behaviour: Second Life has none. `InWorldz` has them ("Wind and water currents").
 
 ### Parked vehicles sleep
 
@@ -1492,7 +1716,8 @@ or the vehicle resting on something. A script setting a motor or any vehicle par
 does a collision. A vehicle with `VEHICLE_FLAG_MOUSELOOK_STEER` or `VEHICLE_FLAG_MOUSELOOK_BANK` set
 never sleeps, whether or not its driver is in mouselook: a sleeping vehicle would read no camera, and
 InWorldz keeps such a vehicle awake for that reason (its sleep threshold is 0, `VehicleDynamics.cs:784-789`,
-read, not run); under `InWorldz` a vehicle with `VEHICLE_FLAG_MOUSEPOINT_STEER` or `_BANK` set never sleeps either. Second Life's
+read, not run); under `InWorldz` a vehicle with `VEHICLE_FLAG_MOUSEPOINT_STEER`, `_BANK`, `VEHICLE_FLAG_REACT_TO_WIND` or
+`_REACT_TO_CURRENTS` set never sleeps either (a sailboat, whose preset has both, among them). Second Life's
 pages say nothing about sleeping.
 
 A vehicle body has no contact friction by default (`VehicleContactFriction` 0, as BulletSim), and

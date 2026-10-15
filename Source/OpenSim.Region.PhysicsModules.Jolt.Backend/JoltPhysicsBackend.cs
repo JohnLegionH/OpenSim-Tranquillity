@@ -366,6 +366,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         private readonly ConcurrentDictionary<uint, JoltBodyRecord> _joltToRecord =
             new ConcurrentDictionary<uint, JoltBodyRecord>();
 
+        // The Jolt ids of the bodies removed since the avatars were last stepped (only kept while there is an avatar): an avatar
+        // whose ground was one of them finds its ground again before its step (StepCharacter). Written under _simLock, read and
+        // cleared by the step.
+        private readonly ConcurrentDictionary<uint, byte> _removedBodyIds = new ConcurrentDictionary<uint, byte>();
+
         // Current terrain body (SetTerrain replaces it). BodyId.Invalid = none.
         private BodyId _terrainBody = BodyId.Invalid;
 
@@ -660,6 +665,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             PhysicsLayer.Sensor => BroadPhase.Sensor,
             PhysicsLayer.AvatarQuery => BroadPhase.Moving, // in the broadphase so queries find it; collides with nothing
             PhysicsLayer.Phantom => BroadPhase.Moving,
+            PhysicsLayer.MovingStatic => BroadPhase.Moving, // a prim keyframed motion moves: kept out of the tree of fixed prims
             _ => BroadPhase.Moving,
         };
 
@@ -681,6 +687,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // rests on the ground (llVolumeDetect's comparison of Phantom and VolumeDetect, wiki.secondlife.com).
             if (a == PhysicsLayer.Phantom || b == PhysicsLayer.Phantom)
                 return a == PhysicsLayer.Terrain || b == PhysicsLayer.Terrain;
+
+            // A prim that keyframed motion moves collides exactly as a fixed one does; only its broad phase differs.
+            if (a == PhysicsLayer.MovingStatic) a = PhysicsLayer.Static;
+            if (b == PhysicsLayer.MovingStatic) b = PhysicsLayer.Static;
 
             // Normalise so we only fill the lower triangle.
             if (a > b) (a, b) = (b, a);
@@ -2051,6 +2061,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             _bodyInterface.RemoveAndDestroyBody(joltId);
             _joltToRecord.TryRemove(rec.NativeBodyId, out _);
             _bodies.Remove(body.Value); // bumps the generation so the stale handle fails validation.
+            if (_characterList.Count > 0)
+                _removedBodyIds[rec.NativeBodyId] = 0;   // an avatar that stood on it finds its ground again in its next step (StepCharacter)
             if (rec.Layer == PhysicsLayer.Sensor)
                 Interlocked.Decrement(ref _sensorBodies);
             // _activeBodies is step-thread-owned; if this body happened to be active, the stale
@@ -2153,6 +2165,36 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 if (TryResolve(body, out _, out BodyID jid))
                     _bodyInterface.SetPositionAndRotation(jid, position, orientation,
                         activate ? Activation.Activate : Activation.DontActivate);
+            }
+        }
+
+        // BodyInterface::MoveKinematic (Body::MoveKinematic): sets the linear and angular velocity that take the body to the
+        // pose in `seconds`, and wakes it when that velocity is not zero. What stands on the body is carried by it: an
+        // avatar takes the velocity of the body under its feet (CharacterVirtual ground velocity), a dynamic body by
+        // contact friction. Only a kinematic body takes it (a static one has no motion properties).
+        public void MoveKinematicBody(BodyId body, Vector3 position, Quaternion orientation, float seconds)
+        {
+            if (!IsFinite(position) || !IsUsable(orientation) || !float.IsFinite(seconds)) { CountRejectedNonFinite(); return; }
+            if (seconds <= 0f)
+                return;
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolve(body, out JoltBodyRecord rec, out BodyID jid) && rec.MotionType == BodyMotionType.Kinematic)
+                    _bodyInterface.MoveKinematic(jid, position, orientation, seconds);
+            }
+        }
+
+        // BodyInterface::SetPositionRotationAndVelocity: the pose and the velocities at once. The body is activated when a
+        // velocity is not zero; with both zero a kinematic body stays where it is put and what rests on it is not flung.
+        public void SetBodyPoseAndVelocity(BodyId body, Vector3 position, Quaternion orientation, Vector3 linearVelocity, Vector3 angularVelocity)
+        {
+            if (!IsFinite(position) || !IsUsable(orientation) || !IsFinite(linearVelocity) || !IsFinite(angularVelocity)) { CountRejectedNonFinite(); return; }
+            lock (_simLock)
+            {
+                if (_disposed) return;
+                if (TryResolve(body, out JoltBodyRecord rec, out BodyID jid) && rec.MotionType != BodyMotionType.Static)
+                    _bodyInterface.SetPositionRotationAndVelocity(jid, position, orientation, linearVelocity, angularVelocity);
             }
         }
 
@@ -3335,6 +3377,57 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             _sensorSwept.Clear();
         }
 
+        // The same for an avatar. Its own update (CharacterVirtual::ExtendedUpdate) reports the sensors it overlaps along the
+        // move it can make in a step, and an avatar that goes through a thin detector faster than its capsule is wide in one
+        // step (flying at 48 m/s at 11 Hz with one step per heartbeat) is wholly on one side of it at one step and wholly on
+        // the other at the next, so the detector raised nothing. After the avatar's move, when the region has a sensor and the
+        // avatar went further than SensorSweepMinTravel, its capsule is cast from where it was to where it is against the sensors;
+        // a sensor the path crossed, that its update did not report and that it does not overlap where it ended (the next update
+        // finds that one), gets a begin contact among the update's, so the detector's collision_start is raised and the next
+        // heartbeat's absence is the collision_end, as for a body.
+        private void SweepCharacterAgainstSensors(JoltCharacterRecord rec, CharacterVirtual ch, Vector3 from)
+        {
+            if (Volatile.Read(ref _sensorBodies) <= 0 || rec.StandingShape == null || _system == null)
+                return;
+            Vector3 to = ch.Position;
+            Vector3 path = to - from;
+            if (!(path.Length() > SensorSweepMinTravel))
+                return;
+            Matrix4x4 start = Matrix4x4.CreateFromQuaternion(ch.Rotation);
+            start.Translation = from;
+            _sensorCastHits.Clear();
+            _system.NarrowPhaseQuery.CastShape(rec.StandingShape, Matrix4x4.Transpose(start), path, DefaultCastSettings(), Vector3.Zero,
+                CollisionCollectorType.AllHit, _sensorCastHits, null, FilterFor(QueryFilter.Sensor), null, null);
+            if (_sensorCastHits.Count == 0)
+                return;
+
+            Matrix4x4 end = Matrix4x4.CreateFromQuaternion(ch.Rotation);
+            end.Translation = to;
+            _sensorEndOverlaps.Clear();
+            _sensorsOverlappedAtEnd.Clear();
+            _system.NarrowPhaseQuery.CollideShape(rec.StandingShape, Vector3.One, Matrix4x4.Transpose(end), DefaultCollideSettings(), Vector3.Zero,
+                CollisionCollectorType.AllHit, _sensorEndOverlaps, null, FilterFor(QueryFilter.Sensor), null, null);
+            for (int k = 0; k < _sensorEndOverlaps.Count; k++)
+                _sensorsOverlappedAtEnd.Add(_sensorEndOverlaps[k].BodyID2.ID);
+
+            for (int h = 0; h < _sensorCastHits.Count; h++)
+            {
+                ShapeCastResult hit = _sensorCastHits[h];
+                uint sensorId = hit.BodyID2.ID;
+                if (_sensorsOverlappedAtEnd.Contains(sensorId) || !(hit.Fraction > 0f)
+                    || !_joltToRecord.TryGetValue(sensorId, out JoltBodyRecord? sensorRec) || sensorRec.Layer != PhysicsLayer.Sensor)
+                    continue;
+                bool reported = false;
+                for (int c = 0; c < rec.Contacts.Count && !reported; c++)
+                    reported = rec.Contacts[c].BodyJoltId == sensorId;
+                if (reported)
+                    continue;   // the update found it, or an earlier hit of this cast was one
+                float axis = hit.PenetrationAxis.Length();
+                Vector3 normal = axis > 1e-6f ? hit.PenetrationAxis / axis : Vector3.UnitZ;
+                rec.Contacts.Add(new CharacterBodyContact(sensorId, hit.SubShapeID2.Value, hit.ContactPointOn2, normal, ContactPhase.Begin, false));
+            }
+        }
+
         // An avatar meets bodies only in its own update, once per step before the simulation's update
         // (NoteCharacterBodyContact), and Jolt's cast of a fast body does not see it: its query marker is on the AvatarQuery
         // layer, which collides with nothing. So a body fast enough to cross an avatar within one update would go through
@@ -3787,6 +3880,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             if (ch == null || _system == null)
                 return;
 
+            // The body the avatar stands on was removed since its last step, as a prim's body is when the prim becomes a kinematic
+            // one (a fixed body cannot): the character still holds the removed body as its ground and finds no ground velocity
+            // in it, so a platform that began to move in this step would take the avatar along only from the next one. Finding
+            // the ground again, as after a teleport, takes the new body's velocity at once.
+            if (!_removedBodyIds.IsEmpty && ch.GroundBodyId != 0 && _removedBodyIds.ContainsKey(ch.GroundBodyId))
+                using (Enter("CharacterVirtual::RefreshContacts (joltc.cpp:8151)"))
+                    ch.RefreshContacts(new ObjectLayer((uint)PhysicsLayer.Avatar), _system, null, null);
+
             // Buoyancy scales gravity as it does on a prim: 1 floats, 0.5 falls at half gravity, above 1 rises. As in ubODE
             // (ODECharacter.MoveCharacter), it does nothing while the avatar flies or hovers. With none set, gz * 1 is gz.
             float gz = _settings.Gravity.Z * (1f - rec.Buoyancy);
@@ -3969,6 +4070,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             if (forced)
                 FinishForceCarry(rec, ch, forceStep, forceTau, newVel, startPos, dt);
 
+            SweepCharacterAgainstSensors(rec, ch, startPos);
             FinishCharacterContacts(rec, ch, dt);
 
             // Where it stands and what it touches are found again where it was left, after this update's contacts were
@@ -4553,6 +4655,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         {
             PhysicsLayer.Terrain => (filter & QueryFilter.Terrain) != 0,
             PhysicsLayer.Static => (filter & QueryFilter.Static) != 0,
+            // A prim keyframed motion moves is a fixed prim to every query.
+            PhysicsLayer.MovingStatic => (filter & QueryFilter.Static) != 0,
             PhysicsLayer.Dynamic => (filter & QueryFilter.Dynamic) != 0,
             PhysicsLayer.Avatar => (filter & QueryFilter.Avatar) != 0,
             PhysicsLayer.Sensor => (filter & QueryFilter.Sensor) != 0,
@@ -4769,6 +4873,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                         _bodyInterface.SetPositionAndRotation(
                             new BodyID(crec.MarkerBodyId), crec.Character.Position, crec.Character.Rotation, Activation.DontActivate);
                 }
+                _removedBodyIds.Clear();   // every avatar has been stepped since
             }
 
             // 2. Advance the simulation (3-arg Update, temp allocation internal).

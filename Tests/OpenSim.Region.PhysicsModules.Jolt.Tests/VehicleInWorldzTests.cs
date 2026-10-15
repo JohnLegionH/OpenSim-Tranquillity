@@ -178,12 +178,26 @@ public class VehicleInWorldzTests
     }
 
     // With no buoyancy the guard is "diff > 0": hover lifts a vehicle below its height and does nothing above it, as
-    // Second Life documents ("doesn't push down"), so the two choices agree to the bit, below the height and above.
+    // Second Life documents ("doesn't push down"). The two choices still differ in gravity: InWorldz's hover switches it off
+    // while it acts (PhysxPrim.pid.cs DoHover: _hoverDisableGravity), so above the height, with no hover force and no gravity,
+    // the vehicle stays where it is, where Second Life's falls; below it InWorldz's is held without the sag a spring needs to
+    // carry the weight.
     [Theory]
     [InlineData(3f)]
     [InlineData(8f)]
-    public void Without_buoyancy_an_up_only_hover_is_the_same_under_both_choices(float startZ)
-        => Assert.Equal(Bits(BalloonHover(SecondLife, true, 0f, startZ)), Bits(BalloonHover(InWorldz, true, 0f, startZ)));
+    public void Without_buoyancy_an_up_only_hover_has_no_gravity_under_InWorldz(float startZ)
+    {
+        float[] inWorldz = BalloonHover(InWorldz, true, 0f, startZ);
+        float[] secondLife = BalloonHover(SecondLife, true, 0f, startZ);
+        Assert.NotEqual(Bits(secondLife), Bits(inWorldz));
+        if (startZ > 5f)
+        {
+            Assert.InRange(inWorldz[10], startZ - 0.01f, startZ + 0.01f);
+            Assert.True(secondLife[10] < startZ - 0.5f, $"Second Life's vehicle did not fall: {secondLife[10]}");
+        }
+        else
+            Assert.True(inWorldz[10] > secondLife[10] + 0.05f, $"lifted {inWorldz[10]} against Second Life's {secondLife[10]}: not higher without gravity");   // after 1 s of the spring from 3 m toward 5 m
+    }
 
     // With buoyancy and the vehicle below its height, InWorldz's hover acts as it does without the flag.
     [Fact]
@@ -192,24 +206,25 @@ public class VehicleInWorldzTests
 
     // Halcyon has no rule that buoyancy vanishes above the height: a vehicle with negative buoyancy (heavier than gravity)
     // above its height keeps it, where Second Life's choice drops it to zero there. The gravity share the controller
-    // gives the engine: 1.5 against 1.
+    // gives the engine: 1.5 against 1. (With hover acting, InWorldz's gravity is off altogether: the last line below.)
     [Fact]
     public void Buoyancy_does_not_vanish_above_the_hover_height_under_InWorldz()
     {
-        float Share(VehicleSettings s)
+        float Share(VehicleSettings s, float hoverTimescale)
         {
             var rig = new BehaviourRig(s, Vehicle.TYPE_BALLOON);
             rig.Car.ProcessFloatVehicleParam(Vehicle.BUOYANCY, -0.5f);
             rig.Car.ProcessFloatVehicleParam(Vehicle.HOVER_HEIGHT, 5f);
-            rig.Car.ProcessFloatVehicleParam(Vehicle.HOVER_TIMESCALE, 2f);
+            rig.Car.ProcessFloatVehicleParam(Vehicle.HOVER_TIMESCALE, hoverTimescale);
             rig.Flag(ExtendedVehicleFlags.HoverGlobalHeight, true);
             rig.Flag(ExtendedVehicleFlags.HoverUpOnly, true);
             rig.Body.Position = new Vector3(128f, 128f, 8f);
             rig.Step(1.0 / 45);
             return rig.Body.GravityFactor;
         }
-        Assert.Equal(1f, Share(SecondLife));
-        Assert.Equal(1.5f, Share(InWorldz));
+        Assert.Equal(1f, Share(SecondLife, 2f));
+        Assert.Equal(1.5f, Share(InWorldz, 1000f));   // hover off: the 1000 s timescale
+        Assert.Equal(0f, Share(InWorldz, 2f));        // hover acting: no gravity at all
     }
 
     // ---------------------------------------------------------------------------------------------------------

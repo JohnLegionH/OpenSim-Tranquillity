@@ -213,7 +213,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private PhysicsLayer BodyLayer
             => _isVolumeDetect ? PhysicsLayer.Sensor
              : _isPhantom ? PhysicsLayer.Phantom
-             : _isPhysical ? PhysicsLayer.Dynamic : PhysicsLayer.Static;
+             : _isPhysical ? PhysicsLayer.Dynamic
+             : _kinematicBody ? PhysicsLayer.MovingStatic : PhysicsLayer.Static;
 
         // A mesher shape is cooked as a convex hull when the prim is physical (a triangle mesh has no volume, so no
         // mass), or when a non-mesh prim asks for PRIM_PHYSICS_SHAPE_CONVEX: "Use the convex hull formulas for
@@ -236,6 +237,60 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// physics complexity limit adds up (1 for a simple shape plus one for each hull).</summary>
         internal int HullCount => _hullCount;
         private int _hullCount = 1;
+
+        /// <summary>How many collision shapes this prim adds to its object: 1 for a plain box, sphere or cylinder, its hull count
+        /// for any other shape (<see cref="HullCount"/>), none when its physics shape type is NONE. The sum over a physical
+        /// object's parts is what [Jolt] MaxPhysicalComplexity limits and what the object reports as its physics cost. The same
+        /// count Halcyon's PhysxPrim.TotalComplexity gives (one per simple shape plus one per convex hull).</summary>
+        internal int ComplexityCount => _shapeType == (byte)PhysShapeType.none ? 0 : _hullCount;
+
+        /// <summary>The prim's collision shape count, reported as its physics cost (the scene does not scale it by size).</summary>
+        public override float PhysicsCost => ComplexityCount;
+        public override bool PhysicsCostIsShapeCount => true;
+
+        // Set while the object is being put together (core sets it on the root, then every part, then clears it): a check made
+        // before it is cleared would only see part of the object.
+        private bool _building;
+
+        public override bool Building
+        {
+            get => _building;
+            set
+            {
+                _building = value;
+                if (!value)
+                    CheckComplexity();
+            }
+        }
+
+        /// <summary>The collision shapes in this prim's whole object: its root's and every part linked to the root.</summary>
+        internal int ObjectComplexity()
+        {
+            JoltPrim root = _linkRoot ?? this;
+            int total = root.ComplexityCount;
+            System.Collections.Generic.List<JoltPrim> parts = root._linkChildren;
+            if (parts != null)
+                for (int i = 0; i < parts.Count; i++)
+                    total += parts[i].ComplexityCount;
+            return total;
+        }
+
+        // [Jolt] MaxPhysicalComplexity: when this prim's object is physical and has more collision shapes than the limit, tell
+        // core (as Halcyon's PhysxPrim does with TriggerComplexityError), which alerts the owner and makes the object non-physical.
+        // Called wherever a count can grow: a prim made physical, a part linked in, a shape or size changed, a mesh arriving, the
+        // end of building. Never inside the shape lock: core's answer takes the object out of physics.
+        private void CheckComplexity()
+        {
+            int limit = _module.MaxPhysicalComplexity;
+            if (limit <= 0 || IsRemoved)
+                return;
+            JoltPrim root = _linkRoot ?? this;
+            if (!root._isPhysical || root._building)
+                return;
+            int total = ObjectComplexity();
+            if (total > limit)
+                root.RaiseComplexityError(string.Format(System.Globalization.CultureInfo.InvariantCulture, "({0} of {1} convex hulls)", total, limit));
+        }
 
         // The real volume (m^3, at the prim's size) a physical concave prim weighs when it is cooked as cells: the volume of the
         // mesher's closed mesh, which the cells (they hold the whole solid, a little over) stand in for in collision, the
@@ -317,6 +372,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// <summary>The mesh asset this prim asked for has arrived: cook the shape from it, on the same body. Skipped when the
         /// prim has been removed or no longer uses that mesh.</summary>
         internal MeshArrival MeshAssetArrived(UUID assetId, byte[] data)
+        {
+            MeshArrival arrival = CookArrivedMesh(assetId, data);
+            if (arrival == MeshArrival.Cooked && _isPhysical)
+                CheckComplexity();
+            return arrival;
+        }
+
+        private MeshArrival CookArrivedMesh(UUID assetId, byte[] data)
         {
             lock (_shapeLock)
             {
@@ -417,6 +480,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _rotationalVelocity = Vector3.Zero;
             }
 
+            // A prim keyframed motion moves is made a kinematic body, which can be moved to a pose over a time and so carries
+            // what stands on it; every other non-physical prim stays a body with no motion at all.
+            _kinematicBody = KinematicWanted;
+            _module.SetKinematicTracked(this, _kinematicBody);
+            _kinMoving = false;
+            _segActive = false;
+            lock (_kinLock)
+            {
+                _kinTarget = _position;
+                _kinRotation = _orientation;
+                _kinPending = false;
+            }
+
             BodyDesc desc = BodyDesc.Default;
             desc.Shape = _compoundShape.IsValid ? _compoundShape : _shape;   // linkset root -> the compound
             desc.Position = ToS(_position);
@@ -450,6 +526,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // (AddPrimShape + SetVehicle are synchronous) AND StepVehicles has asserted the vehicle's
                 // gravity-cancellation for this frame. So a reloaded boat is NEVER a live gravity body before
                 // its buoyancy is in force -> it cannot free-fall during the load / the reload stall.
+                desc.StartActive = false;
+            }
+            else if (_kinematicBody)
+            {
+                desc.MotionType = BodyMotionType.Kinematic;
+                desc.LinearVelocity = SVector3.Zero;   // it moves only when StepKinematic moves it
+                desc.AngularVelocity = SVector3.Zero;
+                desc.Mass = 0f;
+                desc.Ccd = ContinuousCollision.Off;
                 desc.StartActive = false;
             }
             else
@@ -519,6 +604,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // viewer interpolating a rested object.
         internal void ApplyStepState(in BodyState s)
         {
+            // A kinematic prim's pose is the one its object was given (the body only follows it), and a drain that wrote the
+            // body's place back could overwrite a pose set since the step.
+            if (_kinematicBody)
+                return;
             var newPos = new Vector3(s.Position.X, s.Position.Y, s.Position.Z);
             // A position that is not a number is dropped (the last good transform is kept): handed to the simulator it
             // would become the object's position.
@@ -697,6 +786,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (_vehicle != null) { _module.UnregisterVehicle(this); _vehicle = null; _vehicleBody = null; }
             _module.SetScriptForced(this, false);
             _module.SetTargeted(this, false);
+            _module.SetKinematicTracked(this, false);
             // If welded into a parent compound, detach first (parent rebuilds without us).
             _welded = false;
             if (_linkRoot != null) { JoltPrim r = _linkRoot; _linkRoot = null; r.UnlinkChild(this); }
@@ -734,7 +824,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (_position == value) return;   // the drain writes _position directly; only a real move recreates
                 Vector3 was = _position;
                 _position = value;
-                if (_body.IsValid) { RepositionBody(); WakeWhatRestsOn(was, _orientation); }
+                if (_body.IsValid)
+                {
+                    // Keyframed motion sets the pose about every 50 ms: the body is moved to the last one at the next step.
+                    if (_kinematicBody && !_module.IsRegionLoading) NoteKinematicPose(value, null);
+                    else if (WatchesMoves && NoteMoveSet(was, _orientation)) { }   // a series of plain sets began: the body is kinematic
+                    else { RepositionBody(); WakeWhatRestsOn(was, _orientation); }
+                }
             }
         }
 
@@ -748,7 +844,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (_orientation == value) return;
                 Quaternion was = _orientation;
                 _orientation = value;
-                if (_body.IsValid) { RepositionBody(); WakeWhatRestsOn(_position, was); }
+                if (_body.IsValid)
+                {
+                    if (_kinematicBody && !_module.IsRegionLoading) NoteKinematicPose(null, value);
+                    else if (WatchesMoves && NoteMoveSet(_position, was)) { }
+                    else { RepositionBody(); WakeWhatRestsOn(_position, was); }
+                }
             }
         }
 
@@ -817,6 +918,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (_size == value) return;
                 _size = value;
                 Rebuild();
+                if (_isPhysical)
+                    CheckComplexity();
             }
         }
 
@@ -826,6 +929,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 _pbs = value;
                 Rebuild();
+                if (_isPhysical)
+                    CheckComplexity();
             }
         }
 
@@ -847,6 +952,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 // a physical MESH must become a convex hull (mesh Volume=0 -> mass 0), non-physical reverts
                 // to a triangle mesh. Transform + velocity carry over. No taint (Jolt is concurrent).
                 RecreateBody();
+                if (value)
+                    CheckComplexity();
             }
         }
 
@@ -1213,10 +1320,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             LinkOffsetOf(position ?? _position, rotation ?? _orientation, out SVector3 offset, out SQuaternion relative);
             bool moved = SVector3.Distance(offset, _linkOffset) > LinkMoveTolerance;
             bool turned = 2f * MathF.Acos(MathF.Min(1f, MathF.Abs(SQuaternion.Dot(relative, _linkRotation)))) > LinkTurnTolerance;
+            Vector3 wasAt = _position;
+            Quaternion wasTurned = _orientation;
             if (position.HasValue) _position = position.Value;
             if (rotation.HasValue) _orientation = rotation.Value;
             if (!moved && !turned)
                 return;
+            CarryRidersOfMove(wasAt, wasTurned);
             if (moved) _linkOffset = offset;
             if (turned) _linkRotation = relative;
             _module.MarkLinksetDirty(_linkRoot);
@@ -1395,22 +1505,67 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // rest. That is ubODE's (ODEPrim.DoSelectedStatus stops and disables the body; Move skips a selected prim). ubODE
         // also stops a selected object colliding; here it stays solid, as BulletSim's selected object (BSPrim.IsStatic).
         // The root holds the whole welded linkset; a welded child's flag is kept for when it is unlinked.
+        //
+        // An object held for riders that crossed with it (HoldStill) is kept still the same way, so _selected means "kept
+        // still" for either reason; _userSelected and _held say which, and the object is let go only when neither holds it.
         private volatile bool _selected;
+        private bool _userSelected;
+        private bool _held;
+        private Vector3 _heldVelocity;
+        private Vector3 _heldRotationalVelocity;
 
         public override bool Selected
         {
             set
             {
-                if (_selected == value)
-                    return;
-                _selected = value;
-                if (_linkRoot != null || !_isPhysical || !_body.IsValid)
-                    return;
-                if (value)
-                    HoldSelected();
-                else
-                    ReleaseSelected();
+                _userSelected = value;
+                SetKeptStill(value || _held);
             }
+        }
+
+        private void SetKeptStill(bool still)
+        {
+            if (_selected == still)
+                return;
+            _selected = still;
+            if (_linkRoot != null || !_isPhysical || !_body.IsValid)
+                return;
+            if (still)
+                HoldSelected();
+            else
+                ReleaseSelected();
+        }
+
+        // Held for the riders that cross with the object (PhysicsActor.HoldStill): kept still like a selected one, with the
+        // velocity it arrived with remembered for ReleaseHold. The body stays solid, so an avatar standing on it is held up.
+        public override void HoldStill()
+        {
+            if (_held || !_isPhysical || _linkRoot != null)
+                return;
+
+            _heldVelocity = _velocity;
+            _heldRotationalVelocity = _rotationalVelocity;
+            _held = true;
+            SetKeptStill(true);
+        }
+
+        // The hold ends: dynamic again with the velocity it was held with. An object that is selected stays still (it gets no
+        // velocity), and falls from rest when it is let go.
+        public override void ReleaseHold()
+        {
+            if (!_held)
+                return;
+
+            _held = false;
+            SetKeptStill(_userSelected);
+            if (_userSelected || !_body.IsValid || !_isPhysical)
+                return;
+
+            _velocity = _heldVelocity;
+            _rotationalVelocity = _heldRotationalVelocity;
+            _backend.SetBodyLinearVelocity(_body, ToS(_heldVelocity));
+            _backend.SetBodyAngularVelocity(_body, ToS(_heldRotationalVelocity));
+            _vehicle?.ResumeAfterHold();
         }
 
         // Held: the body is made kinematic (it keeps its place, nothing it touches moves it, gravity does not act) and
@@ -1482,6 +1637,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _linkChildren.Add(child);
             child._linkRoot = this;
             _module.MarkLinksetDirty(this);
+            CheckComplexity();
         }
 
         internal void UnlinkChild(JoltPrim child)
@@ -1679,6 +1835,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _shapeType = value;
                 if ((CookAsHull != wasHull || UseHullList != wasList) && _shape.IsValid)
                     Rebuild();
+                if (_isPhysical)
+                    CheckComplexity();
             }
         }
 
@@ -1692,6 +1850,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _backend.SetBodySensor(_body, _isVolumeDetect);
             if (_isPhysical)
                 _module.RegisterPendingActivation(this);
+            SyncKinematicBody();   // a phantom or volume-detect prim is not moved as a kinematic one, and is again when that ends
         }
 
         // For the contact dispatch: true when this part, or the linkset root its body belongs to, is a volume detector.
@@ -1792,6 +1951,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // preset, the record's flags in place of the preset's, each setting held to the region's limits as the same value
         // from a script is, and the reference frame. Its motors keep their saved directions and do not run until a script
         // sets them, as on ubODE.
+        //
+        // With the InWorldz presets (VehiclePresetSet.Legacy) the record is not what the script's vehicle held: the
+        // record starts from the simulator's preset for the type (SOPVehicle.ProcessTypeChange: one value for each motor
+        // timescale and decay, a type's own flags; no preset at all for the two InWorldz types) and holds what the script
+        // changed, where the vehicle starts from the InWorldz preset (per-axis timescales, the type's flags). So a value
+        // that still equals the simulator's preset is not the script's and keeps the InWorldz preset's; one that differs
+        // is the script's and is applied as the same script call is (a float timescale on all three axes). A flag is
+        // taken from the record only where the record differs from the simulator's preset flags. A script that sets a
+        // value to exactly the simulator's preset value cannot be told from one that set nothing; the InWorldz value
+        // stays. With the documented presets the record is applied whole.
         public override void SetVehicle(object pvdata)
         {
             if (pvdata is not VehicleData vd)
@@ -1800,35 +1969,76 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (_vehicle == null)
                 return;
             _reassertZeroesVelocity = _module.IsRegionLoading;
-            _vehicle.RestoreFlags((int)vd.m_flags);
 
-            _vehicle.ProcessVectorVehicleParam(VehicleCode.LINEAR_FRICTION_TIMESCALE, vd.m_linearFrictionTimescale);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_MOTOR_DECAY_TIMESCALE, vd.m_linearMotorDecayTimescale);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_MOTOR_TIMESCALE, vd.m_linearMotorTimescale);
-            _vehicle.ProcessVectorVehicleParam(VehicleCode.LINEAR_MOTOR_OFFSET, vd.m_linearMotorOffset);
+            // Also for the two InWorldz-only types (sailboat 10001, motorcycle 10002): the simulator has no preset for
+            // them, so their record is the unset type's bare values, while a script's llSetVehicleType gives them the
+            // InWorldz preset under every behaviour and presets setting. Every type the simulator has a preset for
+            // keeps the documented path (the record applied whole).
+            bool overPreset = _vehicle.Settings.Presets == VehiclePresetSet.Legacy
+                || (int)vd.m_type == (int)VehicleCode.TYPE_SAILBOAT || (int)vd.m_type == (int)VehicleCode.TYPE_MOTORCYCLE;
+            VehicleData simulatorPreset = default;
+            if (overPreset)
+            {
+                var preset = new OpenSim.Region.Framework.Scenes.SOPVehicle();
+                preset.ProcessTypeChange(vd.m_type);
+                simulatorPreset = preset.vd;
+                _vehicle.RestoreFlagsOverPreset((int)vd.m_flags, (int)simulatorPreset.m_flags);
+            }
+            else
+                _vehicle.RestoreFlags((int)vd.m_flags);
 
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_MOTOR_TIMESCALE, vd.m_angularMotorTimescale);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_MOTOR_DECAY_TIMESCALE, vd.m_angularMotorDecayTimescale);
-            _vehicle.ProcessVectorVehicleParam(VehicleCode.ANGULAR_FRICTION_TIMESCALE, vd.m_angularFrictionTimescale);
+            // Whether the record's value is the script's: always with the documented presets, otherwise when it differs.
+            bool Script(float record, float preset) => !overPreset || record != preset;
+            bool ScriptVector(Vector3 record, Vector3 preset) => !overPreset || record != preset;
 
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_DEFLECTION_EFFICIENCY, vd.m_angularDeflectionEfficiency);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_DEFLECTION_TIMESCALE, vd.m_angularDeflectionTimescale);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_DEFLECTION_EFFICIENCY, vd.m_linearDeflectionEfficiency);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_DEFLECTION_TIMESCALE, vd.m_linearDeflectionTimescale);
+            if (ScriptVector(vd.m_linearFrictionTimescale, simulatorPreset.m_linearFrictionTimescale))
+                _vehicle.ProcessVectorVehicleParam(VehicleCode.LINEAR_FRICTION_TIMESCALE, vd.m_linearFrictionTimescale);
+            if (Script(vd.m_linearMotorDecayTimescale, simulatorPreset.m_linearMotorDecayTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_MOTOR_DECAY_TIMESCALE, vd.m_linearMotorDecayTimescale);
+            if (Script(vd.m_linearMotorTimescale, simulatorPreset.m_linearMotorTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_MOTOR_TIMESCALE, vd.m_linearMotorTimescale);
+            if (ScriptVector(vd.m_linearMotorOffset, simulatorPreset.m_linearMotorOffset))
+                _vehicle.ProcessVectorVehicleParam(VehicleCode.LINEAR_MOTOR_OFFSET, vd.m_linearMotorOffset);
 
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.BANKING_EFFICIENCY, vd.m_bankingEfficiency);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.BANKING_MIX, vd.m_bankingMix);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.BANKING_TIMESCALE, vd.m_bankingTimescale);
+            if (Script(vd.m_angularMotorTimescale, simulatorPreset.m_angularMotorTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_MOTOR_TIMESCALE, vd.m_angularMotorTimescale);
+            if (Script(vd.m_angularMotorDecayTimescale, simulatorPreset.m_angularMotorDecayTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_MOTOR_DECAY_TIMESCALE, vd.m_angularMotorDecayTimescale);
+            if (ScriptVector(vd.m_angularFrictionTimescale, simulatorPreset.m_angularFrictionTimescale))
+                _vehicle.ProcessVectorVehicleParam(VehicleCode.ANGULAR_FRICTION_TIMESCALE, vd.m_angularFrictionTimescale);
 
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.HOVER_HEIGHT, vd.m_VhoverHeight);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.HOVER_EFFICIENCY, vd.m_VhoverEfficiency);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.HOVER_TIMESCALE, vd.m_VhoverTimescale);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.BUOYANCY, vd.m_VehicleBuoyancy);
+            if (Script(vd.m_angularDeflectionEfficiency, simulatorPreset.m_angularDeflectionEfficiency))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_DEFLECTION_EFFICIENCY, vd.m_angularDeflectionEfficiency);
+            if (Script(vd.m_angularDeflectionTimescale, simulatorPreset.m_angularDeflectionTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.ANGULAR_DEFLECTION_TIMESCALE, vd.m_angularDeflectionTimescale);
+            if (Script(vd.m_linearDeflectionEfficiency, simulatorPreset.m_linearDeflectionEfficiency))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_DEFLECTION_EFFICIENCY, vd.m_linearDeflectionEfficiency);
+            if (Script(vd.m_linearDeflectionTimescale, simulatorPreset.m_linearDeflectionTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.LINEAR_DEFLECTION_TIMESCALE, vd.m_linearDeflectionTimescale);
 
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.VERTICAL_ATTRACTION_EFFICIENCY, vd.m_verticalAttractionEfficiency);
-            _vehicle.ProcessFloatVehicleParam(VehicleCode.VERTICAL_ATTRACTION_TIMESCALE, vd.m_verticalAttractionTimescale);
+            if (Script(vd.m_bankingEfficiency, simulatorPreset.m_bankingEfficiency))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.BANKING_EFFICIENCY, vd.m_bankingEfficiency);
+            if (Script(vd.m_bankingMix, simulatorPreset.m_bankingMix))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.BANKING_MIX, vd.m_bankingMix);
+            if (Script(vd.m_bankingTimescale, simulatorPreset.m_bankingTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.BANKING_TIMESCALE, vd.m_bankingTimescale);
+
+            if (Script(vd.m_VhoverHeight, simulatorPreset.m_VhoverHeight))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.HOVER_HEIGHT, vd.m_VhoverHeight);
+            if (Script(vd.m_VhoverEfficiency, simulatorPreset.m_VhoverEfficiency))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.HOVER_EFFICIENCY, vd.m_VhoverEfficiency);
+            if (Script(vd.m_VhoverTimescale, simulatorPreset.m_VhoverTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.HOVER_TIMESCALE, vd.m_VhoverTimescale);
+            if (Script(vd.m_VehicleBuoyancy, simulatorPreset.m_VehicleBuoyancy))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.BUOYANCY, vd.m_VehicleBuoyancy);
+
+            if (Script(vd.m_verticalAttractionEfficiency, simulatorPreset.m_verticalAttractionEfficiency))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.VERTICAL_ATTRACTION_EFFICIENCY, vd.m_verticalAttractionEfficiency);
+            if (Script(vd.m_verticalAttractionTimescale, simulatorPreset.m_verticalAttractionTimescale))
+                _vehicle.ProcessFloatVehicleParam(VehicleCode.VERTICAL_ATTRACTION_TIMESCALE, vd.m_verticalAttractionTimescale);
 
             RestoreMotorAxes(vd);
+            RestoreWindEfficiency(vd);
             _vehicle.RestoreMotorDirections(vd.m_linearMotorDirection, vd.m_angularMotorDirection);
             _vehicle.ProcessRotationVehicleParam(VehicleCode.REFERENCE_FRAME, vd.m_referenceFrame);
             WakeVehicle();
@@ -1848,6 +2058,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _vehicle.ProcessVectorVehicleParam(VehicleCode.ANGULAR_MOTOR_TIMESCALE, at);
             if (vd.m_angularMotorDecayTimescaleAxes is Vector3 ad)
                 _vehicle.ProcessVectorVehicleParam(VehicleCode.ANGULAR_MOTOR_DECAY_TIMESCALE, ad);
+        }
+
+        // The two wind efficiency vectors, where the record holds them (a script's vector call wrote them). Where it holds none the
+        // type's own, set with the type above, stand. The controller takes these two codes only under VehicleBehaviour = InWorldz,
+        // so under SecondLife this changes nothing, as the same vector from a script changes nothing.
+        private void RestoreWindEfficiency(VehicleData vd)
+        {
+            if (vd.m_linearWindEfficiency is Vector3 lw)
+                _vehicle.ProcessVectorVehicleParam(VehicleCode.LINEAR_WIND_EFFICIENCY, lw);
+            if (vd.m_angularWindEfficiency is Vector3 aw)
+                _vehicle.ProcessVectorVehicleParam(VehicleCode.ANGULAR_WIND_EFFICIENCY, aw);
         }
 
         private void EnsureVehicle()
@@ -1870,6 +2091,34 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // OnPhysicsRequestingCameraData once a script takes the seated driver's controls, with MouseLook from the
         // driver's control flags); null when no driver's camera is hooked up.
         private DriverView? DriverCameraAxis() => TryGetCameraData() is CameraData c ? new DriverView(c.CameraAtAxis, c.MouseLook) : null;
+
+        // The vehicle's bounding box in its own (prim) frame, for the motor-height rule's down rays: the box of the root
+        // prim's size, grown over each welded part's own size box at the part's place. A box, not the hull, as the rule
+        // only needs where the vehicle's lower edges are.
+        internal bool TryGetVehicleBounds(out Vector3 center, out Vector3 halfSize)
+        {
+            SVector3 min = ToS(_size * -0.5f), max = ToS(_size * 0.5f);
+            if (_linkChildren != null)
+            {
+                foreach (JoltPrim c in _linkChildren)
+                {
+                    if (!c._welded)
+                        continue;
+                    SVector3 half = ToS(c._size * 0.5f);
+                    for (int i = 0; i < 8; i++)
+                    {
+                        var corner = new SVector3((i & 1) == 0 ? -half.X : half.X, (i & 2) == 0 ? -half.Y : half.Y, (i & 4) == 0 ? -half.Z : half.Z);
+                        SVector3 p = c._linkOffset + SVector3.Transform(corner, c._linkRotation);
+                        min = SVector3.Min(min, p);
+                        max = SVector3.Max(max, p);
+                    }
+                }
+            }
+            SVector3 mid = (min + max) * 0.5f, h = (max - min) * 0.5f;
+            center = new Vector3(mid.X, mid.Y, mid.Z);
+            halfSize = new Vector3(h.X, h.Y, h.Z);
+            return halfSize.X > 0f && halfSize.Y > 0f && halfSize.Z > 0f;
+        }
 
         // Per-frame drive, called by JoltScene.Simulate BEFORE the physics step (the Jolt
         // equivalent of BulletSim's BeforeStep event): snapshot the live body, run the controller,

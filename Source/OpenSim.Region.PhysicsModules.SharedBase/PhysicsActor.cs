@@ -173,6 +173,7 @@ public abstract class PhysicsActor
     public delegate void RequestTerseUpdate();
     public delegate void CollisionUpdate(EventArgs e);
     public delegate void OutOfBounds(Vector3 pos);
+    public delegate void ComplexityError(string detail);
     public delegate CameraData GetCameraData();
 
     // disable warning: public events
@@ -190,8 +191,23 @@ public abstract class PhysicsActor
     public event CollisionUpdate OnCollisionUpdate;
 
     public event OutOfBounds OnOutOfBounds;
+
+    /// <summary>
+    /// Raised by an engine that limits how complex a physical object may be, when the object this actor belongs to is
+    /// over that limit. The argument is the part of the owner's message after "Object was too complex to be made
+    /// physical: ", for example "(300 of 256 convex hulls)". The scene alerts the owner and makes the object
+    /// non-physical. Only the root part's actor is listened to, as for <see cref="OnOutOfBounds"/>.
+    /// </summary>
+    public event ComplexityError OnComplexityError;
 #pragma warning restore 67
 
+
+    /// <summary>
+    /// Set by the region for an avatar that an object carries across a border: the avatar may be outside the region's
+    /// bounds (it stands behind the object's centre, which has just crossed in) and the engine must not pull it inside.
+    /// Only avatar actors read it. Cleared as soon as the avatar is no longer carried.
+    /// </summary>
+    public bool AllowOutsideRegion { get; set; }
 
     public CameraData TryGetCameraData()
     {
@@ -271,6 +287,16 @@ public abstract class PhysicsActor
     public virtual void CrossingStart() { }
     public abstract void CrossingFailure();
 
+    /// <summary>
+    /// Holds a physical object still where it is, keeping the velocity it has: gravity, its own motion and what touches
+    /// it do not move it, and it still stops what runs into it. An object that crossed into the region together with
+    /// avatars is held like this until they have arrived. No effect on an actor that is not physical.
+    /// </summary>
+    public virtual void HoldStill() { }
+
+    /// <summary>Ends <see cref="HoldStill"/>: the object moves on from where it is with the velocity it was held with.</summary>
+    public virtual void ReleaseHold() { }
+
     public abstract void link(PhysicsActor obj);
 
     public abstract void delink();
@@ -285,6 +311,11 @@ public abstract class PhysicsActor
     public virtual void RaiseOutOfBounds(Vector3 pos)
     {
         OnOutOfBounds?.Invoke(pos);
+    }
+
+    public virtual void RaiseComplexityError(string detail)
+    {
+        OnComplexityError?.Invoke(detail);
     }
 
     public virtual void SendCollisionUpdate(EventArgs e)
@@ -390,6 +421,13 @@ public abstract class PhysicsActor
             return 0.1f;
         }
     }
+
+    /// <summary>
+    /// True when <see cref="PhysicsCost"/> is a count of collision shapes (the engine's own measure of how heavy the
+    /// object is to simulate) and is reported as it is. Otherwise it is a per-part weight that the scene scales up
+    /// by the part's size while the part is physical.
+    /// </summary>
+    public virtual bool PhysicsCostIsShapeCount => false;
 
     public virtual float StreamCost
     {

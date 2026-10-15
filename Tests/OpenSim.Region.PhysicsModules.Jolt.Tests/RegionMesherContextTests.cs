@@ -78,6 +78,7 @@ public class RegionMesherContextTests
                 new Vector3(CentreX, CentreY, Ground + 0.505f), Vector3.One, Quaternion.Identity, true, false, Prim, _id++);
             Step(scene, 1f);
             Assert.StartsWith(JoltScene.PrimCellsKind, KindOf(box), StringComparison.Ordinal);
+            Assert.True(((JoltPrim)box).ComplexityCount >= 4, $"hull count {((JoltPrim)box).ComplexityCount}");
 
             // A 0.2 m cube let go above the hole falls into it and rests on the ground inside.
             Vector3 at = box.Position;

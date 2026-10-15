@@ -25,7 +25,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
 public class VehicleMouselookDeadZoneTests
 {
     private const double Deg = Math.PI / 180.0;
-    private const int SteerFlag = 0x80, BankFlag = 0x100;
+    private const int SteerFlag = 0x80, BankFlag = 0x100, MousePointSteerFlag = 0x100000;
     private static readonly double[] Rates = { 11.0, 22.5, 45.0, 90.0 };
 
     private static VehicleSettings Settings(VehicleBehaviour b) => new VehicleSettings { Behaviour = b };
@@ -152,6 +152,48 @@ public class VehicleMouselookDeadZoneTests
         }
         else
             Assert.Equal(0f, iw.Body.AngularVelocity.Y);
+    }
+
+    // Under InWorldz the pitch share is the vertical part of the camera's forward axis in the vehicle's frame: a driver who
+    // looks up pitches the nose up and one who looks down pitches it down, and a level camera gives no pitch. The vehicle
+    // then turns toward the camera, so the rows look at the first third of a second, before it has caught up.
+    [Fact]
+    public void Under_InWorldz_looking_up_pitches_the_nose_up_and_looking_down_pitches_it_down()
+    {
+        var level = Car(VehicleBehaviour.InWorldz, SteerFlag, 0, 0.0, new Vector3(0f, 2f, 0f));
+        var up = Car(VehicleBehaviour.InWorldz, SteerFlag, 0, -20.0, new Vector3(0f, 2f, 0f));
+        var down = Car(VehicleBehaviour.InWorldz, SteerFlag, 0, 20.0, new Vector3(0f, 2f, 0f));
+        level.Run(1.0 / 45, 15);
+        up.Run(1.0 / 45, 15);
+        down.Run(1.0 / 45, 15);
+        // A positive turn about y takes the nose down, so a nose up is a turn the other way.
+        Assert.Equal(0f, level.Body.AngularVelocity.Y);
+        Assert.True(up.Body.AngularVelocity.Y < -0.1f, $"looking up: {up.Body.AngularVelocity.Y}");
+        Assert.True(down.Body.AngularVelocity.Y > 0.1f, $"looking down: {down.Body.AngularVelocity.Y}");
+        Assert.True((Vector3.UnitX * up.Body.Orientation).Z > 0.005f, "the nose did not rise");
+        Assert.True((Vector3.UnitX * down.Body.Orientation).Z < -0.005f, "the nose did not fall");
+    }
+
+    // Mouse-point steering acts on the script's own motor direction while the camera is inside the zone, so its level camera
+    // turns the vehicle by that direction; a camera that looks up takes the motor from it the other way.
+    [Fact]
+    public void Under_InWorldz_mouse_point_steering_pitches_the_nose_up_for_a_camera_that_looks_up()
+    {
+        var up = Car(VehicleBehaviour.InWorldz, MousePointSteerFlag, 0, -20.0, new Vector3(0f, 2f, 0f));
+        up.Run(1.0 / 45, 15);
+        Assert.True(up.Body.AngularVelocity.Y < -0.1f, $"looking up: {up.Body.AngularVelocity.Y}");
+        Assert.True((Vector3.UnitX * up.Body.Orientation).Z > 0.005f, "the nose did not rise");
+    }
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(30.0)]
+    public void Under_InWorldz_a_level_camera_gives_no_pitch(double yawDegrees)
+    {
+        var iw = Car(VehicleBehaviour.InWorldz, SteerFlag, yawDegrees, 0.0, new Vector3(0f, 2f, 0f));
+        iw.Run(1.0 / 45, 90);
+        Assert.Equal(0f, iw.Body.AngularVelocity.Y);
+        Assert.Equal(0f, (Vector3.UnitX * iw.Body.Orientation).Z, 4);
     }
 
     // The dead zone is InWorldz's alone: Second Life steers on a camera a tenth of a degree off.

@@ -166,7 +166,9 @@ public class VehicleRestoreRouteTests
     /// for a region start, otherwise with the region running (heartbeat <see cref="RouteAt"/>; physics back on at
     /// <see cref="OnAt"/>). <paramref name="motor"/>: a linear motor the script set before the vehicle was saved.</summary>
     internal static Outcome RunRoute(SharedVehicle type, VehicleRoute route, Vector3? motor = null, double physicsRate = 0.0,
-                                     Vector3 handBackVelocity = default, Action<Run> moreScriptCalls = null, string behaviour = null)
+                                     Vector3 handBackVelocity = default, Action<Run> moreScriptCalls = null, string behaviour = null,
+                                     Action<Run, SharedVehicle> setup = null,
+                                     Action<HarnessOptions> configure = null)
     {
         var o = new Outcome();
         SOPVehicle saved = null;
@@ -196,7 +198,7 @@ public class VehicleRestoreRouteTests
                 r.Actor = VehicleRestore.AddToPhysics(r.PhysicsScene, null, At, Size, Quaternion.Identity, true, phantom, false, Vector3.Zero,
                                                       Vector3.Zero, Run.ActorLocalId, a => Build(a, r));
                 r.ActorSize = Size;
-                ScriptSetup(r, type);
+                (setup ?? ScriptSetup)(r, type);
                 if (motor.HasValue)
                     r.SetVector(SharedVehicle.LINEAR_MOTOR_DIRECTION, motor.Value);
                 moreScriptCalls?.Invoke(r);
@@ -252,6 +254,7 @@ public class VehicleRestoreRouteTests
         var options = new HarnessOptions { RateHz = 45.0, PhysicsRateHz = physicsRate, SimulatorDefaults = true };
         if (behaviour != null)
             options.Jolt["VehicleBehaviour"] = behaviour;
+        configure?.Invoke(options);
         Harness.Harness.Run(sc, options);
 
         // The controller's extension params as the type alone sets them.
@@ -269,6 +272,7 @@ public class VehicleRestoreRouteTests
         var freshOptions = new HarnessOptions { RateHz = 45.0, PhysicsRateHz = physicsRate };
         if (behaviour != null)
             freshOptions.Jolt["VehicleBehaviour"] = behaviour;
+        configure?.Invoke(freshOptions);
         Harness.Harness.Run(fresh, freshOptions);
         return o;
     }
