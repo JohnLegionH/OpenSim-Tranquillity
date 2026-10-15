@@ -1157,8 +1157,8 @@ from; their values are the InWorldz source's, value for value (Halcyon's `Vehicl
 | motors disabled above / after | 0 / 0 | 1.5 m / 2.5 s |
 | flags | `NO_DEFLECTION_UP`, `HOVER_WATER_ONLY`, `LIMIT_MOTOR_UP`, `LIMIT_MOTOR_DOWN`, `REACT_TO_WIND`, `REACT_TO_CURRENTS`, `TORQUE_WORLD_Z` | `NO_DEFLECTION_UP`, `HOVER_UP_ONLY`, `LIMIT_MOTOR_UP`, `LIMIT_MOTOR_DOWN`, `LIMIT_ROLL_ONLY`, `TORQUE_WORLD_Z` |
 
-The sailboat's wind and water-current efficiencies (0.02, 0.001, 0 and 0.1, 0.01, 0) and its two react flags are stored and not
-simulated: no vehicle here reacts to wind or currents. A motorcycle is a ground vehicle where `VehicleGroundGravityFactor`
+The sailboat's wind and water-current efficiencies (0.02, 0.001, 0 and 0.1, 0.01, 0) and its two react flags act under
+`InWorldz` ("Wind and water currents" below) and are only held under Second Life's behaviour. A motorcycle is a ground vehicle where `VehicleGroundGravityFactor`
 is concerned, as InWorldz treats it as a car. A script's type number reaches the engine as it is (`llSetVehicleType` ->
 `SceneObjectPart.SetVehicleType` -> the physics actor's `VehicleType`); the Phlox script engine knows both constants and accepts
 the numbers, the YEngine takes its constants from `ScriptBaseClass` (`LSL_Constants.cs`, `XMREngine.cs:397`), which lacks both names (a script there can pass the number).
@@ -1217,9 +1217,9 @@ motor direction, and `VEHICLE_FLAG_MOUSEPOINT_STEER` and `_BANK` do the same in 
 **InWorldz extension flags.** A script sends them on InWorldz's numbers: `VEHICLE_FLAG_REACT_TO_CURRENTS` 0x10000,
 `REACT_TO_WIND` 0x20000, `LIMIT_MOTOR_DOWN` 0x40000, `TORQUE_WORLD_Z` 0x80000, `MOUSEPOINT_STEER` 0x100000 and
 `MOUSEPOINT_BANK` 0x200000 (`VehicleFlags.cs:48-60`). Each reaches the engine as itself, from `llSetVehicleFlags`,
-`llRemoveVehicleFlags` and a saved vehicle (rezzed, copied, loaded with the region, crossing in). `LIMIT_MOTOR_DOWN` and
-`TORQUE_WORLD_Z` act; `MOUSEPOINT_STEER` and `MOUSEPOINT_BANK` act under `InWorldz` (camera steering, below); `REACT_TO_WIND` and
-`REACT_TO_CURRENTS` are held and read back but nothing acts on them yet. They act under either behaviour,
+`llRemoveVehicleFlags` and a saved vehicle (rezzed, copied, loaded with the region, crossing in). `MOUSEPOINT_STEER`,
+`MOUSEPOINT_BANK`, `REACT_TO_WIND` and `REACT_TO_CURRENTS` act under `InWorldz` (camera steering and wind, below) and are held and
+read back under Second Life's behaviour. `LIMIT_MOTOR_DOWN` and `TORQUE_WORLD_Z` act under either behaviour,
 because a script has to ask for them. Before this was fixed the numbers were read as another engine flag each (a script's
 `LIMIT_MOTOR_DOWN` set an unused flag, `REACT_TO_CURRENTS` set `LIMIT_MOTOR_DOWN`, `REACT_TO_WIND` set `TORQUE_WORLD_Z`, and
 `TORQUE_WORLD_Z` set `MOUSEPOINT_BANK`), so a vehicle that set one of those flags changes: it now does what the script asked.
@@ -1236,7 +1236,7 @@ script set is lost when the vehicle is rezzed, copied, loaded with the region or
 | `VEHICLE_MOUSELOOK_ALTITUDE` | 11002 | pi / 32 to pi | The vertical range of the dead zone (`InWorldz` only). |
 | `VEHICLE_BANKING_AZIMUTH` | 11003 | pi / 128 to pi | The roll range banking counts as a share of (`InWorldz` only; the default pi / 2 is Second Life's). |
 | `VEHICLE_DISABLE_MOTORS_ABOVE` | 11004 | as sent | Under `InWorldz`: the motors go off once the vehicle has been higher than this above what lies below it for the delay below (0 is off); see "Motor height" below. Under Second Life's behaviour it is held only. |
-| `VEHICLE_DISABLE_MOTORS_AFTER` | 11005 | as sent | Under `InWorldz`: how long the vehicle must have been above the height before the motors go off (seconds). Held only under Second Life's behaviour. |
+| `VEHICLE_DISABLE_MOTORS_AFTER` | 11005 | as sent | Under `InWorldz`: how long the vehicle must have been above the height before the motors go off, on Halcyon's clock, which runs eight times fast (see "Motor height" below). Held only under Second Life's behaviour. |
 | `VEHICLE_INVERTED_BANKING_MODIFIER` | 11006 | -10 to 10 | An airplane flying inverted banks by this factor times its banking efficiency (`InWorldz` only; no other type is marked inverted there). |
 
 Each behaviour follows Halcyon's code as read (not run: it needs PhysX); the figures its formula gives are checked in the
@@ -1363,8 +1363,10 @@ exact solution over the step the engine takes:
   eight steps in every sixty-four the vehicle casts a ray straight down its own axis from the lower left edge of its box
   (and, if that finds nothing near, from the lower right), starting a metre up and reaching three times the limit; its own
   parts are not hit. The height is the distance less that metre, or the limit plus a metre when nothing is hit. While the height
-  is above the limit the clock counts real seconds, and at `VEHICLE_DISABLE_MOTORS_AFTER` the linear and angular motors stop
-  acting (friction, the attractor and gravity go on); at or under the limit the clock clears. The rule is off for a vehicle
+  is above the limit the clock counts, and at `VEHICLE_DISABLE_MOTORS_AFTER` the linear and angular motors stop
+  acting (friction, the attractor and gravity go on); at or under the limit the clock clears. The clock runs as Halcyon's does (`VehicleDynamics.cs:2564`, kept on purpose): it adds eight steps' time on every step, although the height is measured once in eight, so it runs eight
+  times fast and a delay set as 2.5 s, the legacy car's, runs out in about 0.3 s (15 steps at 45 Hz). A script that wants a
+  delay of `t` seconds sets `t` times eight. The rule is off for a vehicle
   with hover on, positive buoyancy, or a speed under 0.5 m/s. The box is the root prim's size grown over the linked parts'.
 - `VEHICLE_LINEAR_MOTOR_OFFSET` moves the point the linear motor pushes at away from the centre of
   mass, so the motor also turns the vehicle: each step's motor change `dv` is an impulse `m dv` at
@@ -1427,9 +1429,12 @@ at 2 s, within a degree from 4 s, within half a degree from 9.3 s at 45 Hz, and 
 Second Life's aim overshoots by 11.4 degrees and is within half a degree from 8.7 s. A bare motor with no angular friction
 or decay hunts about a camera 20 degrees off by up to 5 degrees (a period of about 4.5 s), as any rate steered by an offset
 does; a car with its own friction settles. InWorldz reads the camera once in eight frames (`VehicleDynamics.cs:796`); here it is read
-on every step, which only makes the turn answer the camera sooner by under a fifth of a second. InWorldz measures the pitch as the
-vertical part of the camera's own sideways axis (`VehicleDynamics.cs:808, 820`), which is level for a camera that is not rolled;
-the host passes the camera's direction only, and the pitch share here is the camera's pitch. It is InWorldz's alone
+on every step, which only makes the turn answer the camera sooner by under a fifth of a second. The pitch is taken from where the camera
+looks: the vertical part of the camera's forward axis in the vehicle's frame (a driver who looks up pitches the nose up, one who
+looks down pitches it down, and a level camera gives none). InWorldz's code reads the z of the camera's sideways axis there
+(`VehicleDynamics.cs:808, 820`, `ycam = localUp.Z`), although its own comment calls the value up and down; a camera that is not
+rolled keeps that axis level, so the pitch of its steering never acted. That line is taken as a slip and not followed; the dead
+zone, the curve, the azimuth and altitude ranges, `LIMIT_ROLL_ONLY` and banking are as InWorldz has them. It is InWorldz's alone
 because the engine holds steady without it: measured on the real engine (`VehicleMouselookHuntingTests`, a car driven straight with
 the camera on its heading, the camera shaking by 0.2, 0.5 and 1 degree at 15, 30 and 60 updates a second at 45 Hz physics, and at
 one step per heartbeat), the heading wobbles by less than the shake itself (a standard deviation of 0.05 to 0.2 degrees, never above
@@ -1487,12 +1492,46 @@ by its script has the documented one; a script that sets these itself is not aff
 
 The car and the airplane presets agree in every field.
 
+### Wind and water currents
+
+Under `[Jolt] VehicleBehaviour = InWorldz` a vehicle with `VEHICLE_FLAG_REACT_TO_WIND` (0x20000) or `VEHICLE_FLAG_REACT_TO_CURRENTS`
+(0x10000) set is pushed by the region's wind, as InWorldz's is (`VehicleDynamics.cs:863-992`, read, not run). Second Life has
+neither, so under `SecondLife` the flags and the two efficiencies are held and nothing reads the wind. Where the wind comes from:
+the region's wind module (`IWindModule.WindSpeed` at the vehicle's position, truncated to the metre). The ZephyrWind plugin gives
+the water's current below the water, the surface wind above it and the wind aloft over that; the default plugins give one wind
+everywhere, which a vehicle then feels as well. A region with no wind module gives no wind, and the vehicle behaves as if the air
+were still.
+
+- The wind is read once in eight steps (frame number mod 8) and held between reads.
+- It is turned into the vehicle's own frame and each axis is cut once the vehicle moves the way the wind blows faster than the wind
+  does (it "tapers off once the vehicle achieves the current wind speed"); what is left is scaled axis by axis by
+  `VEHICLE_LINEAR_WIND_EFFICIENCY` (12001, held to -10..10 on each axis) and added to the velocity over the step, as the wind
+  times that efficiency times the step: a sailboat with 0.02 in 10 m/s of wind gains 0.2 m/s every second. A push under 0.001
+  is dropped.
+- `VEHICLE_ANGULAR_WIND_EFFICIENCY` (12002, the same range) turns the vehicle: a wind along its x axis pitches it about y by the
+  wind's x part, and one along its y axis rolls it about x by minus the wind's y part, each scaled by that axis's efficiency
+  and cut by the same taper against the vehicle's angular velocity. There is no push about z.
+- A vehicle that is not moving on an axis (a velocity of exactly 0) gets the whole wind on that axis from either side. Halcyon's
+  taper takes the sign of 0 as positive, so there a boat at rest got no push from a wind along its negative axis, nor the roll
+  that a wind along +y gives; that is cured here.
+- Halcyon reads the water's current for a vehicle below the water that has either flag but pushes only for
+  `REACT_TO_WIND`, so `REACT_TO_CURRENTS` alone did nothing there. Here the current flag does what its name says: a vehicle
+  below the water is pushed by the current with either flag, and a vehicle above it by the wind with `REACT_TO_WIND` only.
+- A vehicle with either flag never sleeps (Halcyon's sleep threshold is 0 for it).
+- Physical objects that are not vehicles get no wind: nothing outside the vehicle code reads it in Halcyon, and none does here.
+- `VEHICLE_FLAG_BLOCK_INTERFERENCE` has nothing to do with it (see "Known gaps").
+- The saved record of a vehicle (`SOPVehicle`) keeps 12001 and 12002 (as optional `LWEFF` and `AWEFF` elements, written only when a
+  script set them), so a value a script set survives rez, copy, region load and crossing; a record that holds none gives the
+  vehicle its type's own, and under `SecondLife`, which takes neither code, the record's values change nothing. The flags are saved.
+
 ### Known gaps against Second Life
 
 These documented behaviours are not simulated:
 
-- `VEHICLE_FLAG_BLOCK_INTERFERENCE` (passengers' attachments cannot push the vehicle): stored, no effect.
-- Wind (`VEHICLE_LINEAR_WIND_EFFICIENCY` and the angular one): no wind is simulated.
+- `VEHICLE_FLAG_BLOCK_INTERFERENCE` (passengers' attachments cannot push the vehicle): stored, no effect. Halcyon does not
+  implement it either: neither Halcyon tree has the flag or the name at all (`VehicleFlags.cs` ends at 0x200 and the InWorldz
+  bits), and its wind code has no shield. Its push-blocking half belongs in core's push path and is not built.
+- Wind and water currents under Second Life's behaviour: Second Life has none. `InWorldz` has them ("Wind and water currents").
 
 ### Parked vehicles sleep
 
@@ -1502,7 +1541,8 @@ or the vehicle resting on something. A script setting a motor or any vehicle par
 does a collision. A vehicle with `VEHICLE_FLAG_MOUSELOOK_STEER` or `VEHICLE_FLAG_MOUSELOOK_BANK` set
 never sleeps, whether or not its driver is in mouselook: a sleeping vehicle would read no camera, and
 InWorldz keeps such a vehicle awake for that reason (its sleep threshold is 0, `VehicleDynamics.cs:784-789`,
-read, not run); under `InWorldz` a vehicle with `VEHICLE_FLAG_MOUSEPOINT_STEER` or `_BANK` set never sleeps either. Second Life's
+read, not run); under `InWorldz` a vehicle with `VEHICLE_FLAG_MOUSEPOINT_STEER`, `_BANK`, `VEHICLE_FLAG_REACT_TO_WIND` or
+`_REACT_TO_CURRENTS` set never sleeps either (a sailboat, whose preset has both, among them). Second Life's
 pages say nothing about sleeping.
 
 A vehicle body has no contact friction by default (`VehicleContactFriction` 0, as BulletSim), and

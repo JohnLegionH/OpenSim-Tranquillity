@@ -1829,6 +1829,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _vehicle.ProcessFloatVehicleParam(VehicleCode.VERTICAL_ATTRACTION_TIMESCALE, vd.m_verticalAttractionTimescale);
 
             RestoreMotorAxes(vd);
+            RestoreWindEfficiency(vd);
             _vehicle.RestoreMotorDirections(vd.m_linearMotorDirection, vd.m_angularMotorDirection);
             _vehicle.ProcessRotationVehicleParam(VehicleCode.REFERENCE_FRAME, vd.m_referenceFrame);
             WakeVehicle();
@@ -1848,6 +1849,17 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 _vehicle.ProcessVectorVehicleParam(VehicleCode.ANGULAR_MOTOR_TIMESCALE, at);
             if (vd.m_angularMotorDecayTimescaleAxes is Vector3 ad)
                 _vehicle.ProcessVectorVehicleParam(VehicleCode.ANGULAR_MOTOR_DECAY_TIMESCALE, ad);
+        }
+
+        // The two wind efficiency vectors, where the record holds them (a script's vector call wrote them). Where it holds none the
+        // type's own, set with the type above, stand. The controller takes these two codes only under VehicleBehaviour = InWorldz,
+        // so under SecondLife this changes nothing, as the same vector from a script changes nothing.
+        private void RestoreWindEfficiency(VehicleData vd)
+        {
+            if (vd.m_linearWindEfficiency is Vector3 lw)
+                _vehicle.ProcessVectorVehicleParam(VehicleCode.LINEAR_WIND_EFFICIENCY, lw);
+            if (vd.m_angularWindEfficiency is Vector3 aw)
+                _vehicle.ProcessVectorVehicleParam(VehicleCode.ANGULAR_WIND_EFFICIENCY, aw);
         }
 
         private void EnsureVehicle()

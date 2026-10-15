@@ -32,7 +32,8 @@
  * The stepwise motor ramp, the linear motor, the angular motor's clamp against the vertical attractor, the vertical
  * attractor itself and the angular deflection ported from InWorldz Halcyon
  * (InWorldz.PhysxPhysics/Vehicle/VehicleDynamics.cs: MovementExpDecay, GetGrowthRate, the linear motor of Simulate(),
- * the attractor clamp of the angular motor, SimulateAngularDeflection, SimulateVerticalAttractor;
+ * the attractor clamp of the angular motor, SimulateAngularDeflection, SimulateVerticalAttractor, the motor-height clock,
+ * SimulateWindForces;
  * InWorldz.PhysxPhysics/PhysUtil.cs: AngleBetween, RotBetween, Rot2Euler).
  * Adapted 2026 by Legion Builds
  */
@@ -62,20 +63,74 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// <summary>
         /// The motor-height rule's clock (VehicleDynamics.cs:2560-2571): while the last measured height above what is below
         /// the vehicle is more than <paramref name="limit"/> (VEHICLE_DISABLE_MOTORS_ABOVE) the time it has been so grows by
-        /// <paramref name="elapsed"/>, and the motors are off once that reaches <paramref name="after"/>
-        /// (VEHICLE_DISABLE_MOTORS_AFTER); at or under the limit the clock is cleared and the motors are on.
-        /// Halcyon adds eight steps' time on every step, though the height is measured once in eight steps, so its clock
-        /// runs eight times fast; here the clock runs in real time, which is what the parameter says it counts.
+        /// <paramref name="elapsed"/> times <see cref="MotorHeightRayInterval"/>, and the motors are off once that reaches
+        /// <paramref name="after"/> (VEHICLE_DISABLE_MOTORS_AFTER); at or under the limit the clock is cleared and the motors
+        /// are on. As in Halcyon, the clock adds eight steps' time on every step, though the height is measured once in
+        /// eight steps, so it runs eight times fast: the delay a script sets as 2.5 s runs out in about 0.3 s.
         /// </summary>
         public static bool MotorsOffAboveHeight(float height, float limit, float after, float elapsed, ref float timeAbove)
         {
             if (height > limit)
             {
-                timeAbove += elapsed;
+                timeAbove += elapsed * MotorHeightRayInterval;
                 return timeAbove >= after;
             }
             timeAbove = 0f;
             return false;
+        }
+
+        /// <summary>Steps between two samples of the wind at a vehicle's position (VehicleDynamics.cs:64, NumTimeStepsPerWindChk).</summary>
+        public const int WindSampleInterval = 8;
+
+        /// <summary>The largest wind efficiency a script can set on any axis, either way (VehicleDynamics.cs:448-459).</summary>
+        public const float MaxWindEfficiency = 10f;
+
+        /// <summary>
+        /// The wind's push on a vehicle's linear velocity over one step of <paramref name="h"/> seconds, in the vehicle's
+        /// own frame (VehicleDynamics.cs:921-953, SimulateWindForces). <paramref name="windLocal"/> is the wind in that frame
+        /// and <paramref name="velocityLocal"/> the vehicle's velocity in it. On each axis the push stops once the vehicle is
+        /// moving the way the wind blows faster than the wind ("tapers off once the vehicle achieves the current wind speed");
+        /// what is left is scaled axis by axis by <paramref name="efficiency"/> and, when its length is under
+        /// <see cref="VehicleLimits.MinPhysicsForce"/>, dropped. The result is the change of velocity, wind x efficiency x h.
+        /// A vehicle whose velocity on an axis is exactly 0 gets the whole wind on that axis, whichever way it blows
+        /// (Halcyon's test takes the sign of 0 as positive, so a vehicle at rest got none from a wind along its negative axis;
+        /// that is cured here).
+        /// </summary>
+        public static Vector3 WindLinearVelocityChange(Vector3 windLocal, Vector3 velocityLocal, Vector3 efficiency, float h)
+        {
+            Vector3 push = new Vector3(
+                WindTaper(velocityLocal.X, windLocal.X) * efficiency.X,
+                WindTaper(velocityLocal.Y, windLocal.Y) * efficiency.Y,
+                WindTaper(velocityLocal.Z, windLocal.Z) * efficiency.Z);
+            return push.Length() >= VehicleLimits.MinPhysicsForce ? push * h : Vector3.Zero;
+        }
+
+        /// <summary>
+        /// The wind's push on a vehicle's angular velocity over one step of <paramref name="h"/> seconds, in the vehicle's
+        /// own frame (VehicleDynamics.cs:955-991): a wind blowing along the vehicle's x axis pitches it about y, and one
+        /// along y rolls it about x (the vehicle heels away from the wind: the roll rate is minus the wind's y part and
+        /// the pitch rate its x part). The same taper as <see cref="WindLinearVelocityChange"/> acts against the vehicle's
+        /// angular velocity, the push is scaled by <paramref name="efficiency"/> on x and y, and there is none about z.
+        /// Halcyon hands the push to PhysX as an impulse worked out against the inertia tensor, which comes to this change
+        /// of angular velocity.
+        /// </summary>
+        public static Vector3 WindAngularVelocityChange(Vector3 windLocal, Vector3 angularVelocityLocal, Vector3 efficiency, float h)
+        {
+            Vector3 push = new Vector3(
+                WindTaper(angularVelocityLocal.X, -windLocal.Y) * efficiency.X,
+                WindTaper(angularVelocityLocal.Y, windLocal.X) * efficiency.Y,
+                0f);
+            return push.Length() >= VehicleLimits.MinPhysicsForce ? push * h : Vector3.Zero;
+        }
+
+        // The wind on one axis for a vehicle moving at v on it: none once the vehicle moves the way the wind blows faster than
+        // the wind does (VehicleDynamics.cs:928-935). A vehicle that is not moving on the axis is not moving the way the wind
+        // blows, so it gets the wind from either side.
+        private static float WindTaper(float v, float wind)
+        {
+            if (v != 0f && v * wind >= 0f && VehicleMath.PosNeg(v) * (v - wind) > 0f)
+                return 0f;
+            return wind;
         }
 
         /// <summary>

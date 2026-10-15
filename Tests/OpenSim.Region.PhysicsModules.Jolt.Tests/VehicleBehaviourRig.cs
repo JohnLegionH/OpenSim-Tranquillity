@@ -31,7 +31,23 @@ internal sealed class BehaviourBody : IVehicleBody
     public void AddTorque(Vector3 torque) { }
     public void KeepAwake() { }
     public float GetTerrainHeight(Vector3 pos) => 0f;
-    public float GetWaterLevel(Vector3 pos) => -100f;
+    public float GetWaterLevel(Vector3 pos) => WaterLevel;
+
+    /// <summary>The water's height (far below the body by default).</summary>
+    public float WaterLevel { get; set; } = -100f;
+
+    /// <summary>The wind the region's wind module gives at a position; null (the default) is a region with no wind module.</summary>
+    public Func<Vector3, Vector3> WindAt { get; set; }
+
+    /// <summary>The times the controller asked for the wind.</summary>
+    public int WindReads { get; private set; }
+
+    public bool TryGetWind(Vector3 position, out Vector3 wind)
+    {
+        WindReads++;
+        wind = WindAt == null ? Vector3.Zero : WindAt(position);
+        return WindAt != null;
+    }
 
     /// <summary>Half the size of the body's box; zero (the default) means the body has none, so the motor-height rule never measures.</summary>
     public Vector3 BoundsHalfSize { get; set; }

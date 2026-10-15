@@ -92,5 +92,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Vehicles
         /// origin to it. False when the ray hits nothing within <paramref name="maxDistance"/>, or the host casts none.
         /// </summary>
         bool CastRayNearest(Vector3 origin, Vector3 direction, float maxDistance, out float distance) { distance = 0f; return false; }
+
+        /// <summary>
+        /// The wind at a region position, in m/s along the world's x and y: the region's wind module gives the water's
+        /// current below the water, the surface wind above it and the wind aloft over that. False when the host has no wind
+        /// module; the vehicle then behaves as if the air were still.
+        /// </summary>
+        bool TryGetWind(Vector3 position, out Vector3 wind) { wind = Vector3.Zero; return false; }
     }
 }
