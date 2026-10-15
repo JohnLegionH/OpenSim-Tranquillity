@@ -63,7 +63,7 @@ public class AvatarObjectCollisionTests
     [InlineData(0.0, 100f)]
     public void A_box_thrown_at_an_avatar_stops_against_it_and_moves_it_no_more_than_their_momentum_allows(double physicsRate, float kg)
     {
-        RunResult r = Run(kg < 10f ? "avatar-hit-1kg" : "avatar-hit-100kg", physicsRate, pinned: true);
+        RunResult r = Run(kg < 10f ? "avatar-hit-1kg" : "avatar-hit-100kg", physicsRate, pinned: kg >= 100f);
         HarnessPart box = Box(r);
         float side = AvatarHitScenarios.SideFor(kg);
 
@@ -229,7 +229,7 @@ public class AvatarObjectCollisionTests
     [InlineData(0.0)]
     public void A_box_hitting_an_avatar_at_10_m_s_tells_core_that_speed_on_both_sides(double physicsRate)
     {
-        RunResult r = Run("avatar-hit-10ms", physicsRate, pinned: true);
+        RunResult r = Run("avatar-hit-10ms", physicsRate);
         HarnessPart box = Box(r);
         Assert.InRange(-box.Watch.Strikes[Avatar], 9.5f, 10.5f);
         Assert.InRange(-AvatarWatch(r).Strikes[box.LocalId], 9.5f, 10.5f);

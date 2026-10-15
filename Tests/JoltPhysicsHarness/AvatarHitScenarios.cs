@@ -66,7 +66,7 @@ public static class AvatarHitScenarios
     }
 
     // A box of `kg` thrown level at `speed` at the avatar's middle, from the west, starting 0.75 m from its side.
-    private static Scenario Thrown(string name, float kg, float speed) => new()
+    public static Scenario Thrown(string name, float kg, float speed) => new()
     {
         Name = name,
         Description = $"A {SideFor(kg)} m box of {kg} kg is thrown east at {speed} m/s at the middle of an avatar standing on level ground, at {At} s.",

@@ -101,6 +101,9 @@ public sealed class HarnessOptions
     public bool SimulatorPrims = true;
     /// <summary>The avatar half of <see cref="SimulatorDefaults"/> (the appearance's box, the collision subscription).</summary>
     public bool SimulatorAvatars = true;
+    /// <summary>The avatar box's height (m) in place of the one <see cref="SimulatorAvatars"/> picks, for runs that compare
+    /// avatar heights; null keeps the picked box.</summary>
+    public float? AvatarHeight;
     /// <summary>Give the scene the region's mesher, a Meshmerizer of a load context of its own (<see cref="RegionMesher"/>),
     /// as a running region does. Without it the scene has no mesher and a prim that is not a box, sphere or cylinder takes
     /// its bounding box. On by default.</summary>
@@ -450,7 +453,14 @@ public sealed class Run
     /// adds 0.2 m to the height (AVBOXAJUST).</summary>
     public static readonly Vector3 SimulatorAvatarSize = new(0.45f, 0.6f, 2.1f);
     /// <summary>The avatar box this run uses: <see cref="SimulatorAvatarSize"/> with <see cref="HarnessOptions.SimulatorDefaults"/>.</summary>
-    public Vector3 AvatarBox => Options.SimulatorAvatars ? SimulatorAvatarSize : AvatarSize;
+    public Vector3 AvatarBox
+    {
+        get
+        {
+            Vector3 box = Options.SimulatorAvatars ? SimulatorAvatarSize : AvatarSize;
+            return Options.AvatarHeight is float h ? new Vector3(box.X, box.Y, h) : box;
+        }
+    }
     /// <summary>How far an avatar's capsule centre stands above what it stands on.</summary>
     public float AvatarStandHalf => JoltCharacter.StandHalfFor(AvatarBox);
 

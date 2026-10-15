@@ -3151,7 +3151,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                         {
                             level /= len;
                             float ah = Vector3.Dot(vChar, level), bh = Vector3.Dot(vBody, level);
-                            if (ah > bh)
+                            // Only an avatar moving into the object pushes it. One moving away (ah below zero) with an object
+                            // coming at it from the side, a falling box against its rounded foot, would get a negative force
+                            // and so a push into the avatar of the force's size.
+                            if (ah > 0f && ah > bh)
                             {
                                 // The force is the avatar's mass x its speed into the object x the per-momentum factor, held to the
                                 // maximum: running (faster) pushes harder than walking, and a heavier avatar harder than a light one.
