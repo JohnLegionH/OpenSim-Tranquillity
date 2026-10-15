@@ -656,11 +656,16 @@ An avatar takes the velocity of the body under its feet and a physical object is
 
 - A move longer than 4 m in one heartbeat (or faster than 40 m/s over a longer one) is a jump, not a motion: the body is put
   there with no velocity, so nothing is flung, and what rested on it is woken. Keyframed motion at 3 m/s moves 0.27 m a heartbeat,
-  a lift at 20 m/s 1.8 m.
+  a lift at 20 m/s 1.8 m. While keyframed motion moves the prim, the 40 m/s is measured over the heartbeat plus two ticks of the
+  motion's 50 ms timer (a heartbeat holds one pose more than its length divides into, and a late timer call moves up to three
+  ticks at once): a heartbeat that finds three poses of a 30 m/s motion has 4.5 m to carry and carries it.
 - A heartbeat in which no new pose arrived stops the body at the last pose: a kinematic body keeps the velocity it was given and
   would otherwise carry on past where the motion stopped.
 - When the motion ends the body is made a fixed one again where the object is, and what rests on it is woken to settle. A
-  region that never plays a keyframed motion has no kinematic body.
+  region that never plays a keyframed motion has no kinematic body. The simulator sets the last pose and turns the hint off at the
+  motion's next tick, so a heartbeat can find both: that heartbeat still moves the body to the last pose, and the body is made a
+  fixed one at the start of the next. Made a fixed body at once, the platform was put at the last pose in one go and an avatar
+  standing on it was left behind by the whole of that heartbeat's move (0.46 m at 10 m/s, 1.06 m at 22, 1.46 m at 30; 0.21 m at 5).
 - An avatar takes the platform's velocity in the step the motion starts. The body is made again when the motion starts, and the
   avatar's character still held the removed body as its ground and found no velocity in it, so for one step the platform left it
   behind (after ten heartbeats at 16.5 m/s it was 1.5 m from the platform's middle at one step per heartbeat and 0.4 m at 45 Hz).
@@ -668,12 +673,12 @@ An avatar takes the velocity of the body under its feet and a physical object is
 - A platform that turns carries a rider round: 2 m from the centre of a platform turned 90 degrees at 30 degrees a second, a
   cube ended at 89.2 degrees and an avatar at 88.5 degrees, both at their radius (one step per heartbeat; at 45 Hz both about 89.5).
 - A linkset moves as one body: the parts' own sets, which follow the root's, change nothing, and the root's body is not made again.
-- **Known limit: an abrupt fast start on a running region.** In the harness an avatar is carried exactly (0.00 m from the
-  platform's middle) when a platform starts at 16.5, 22, 29.7 or 39.6 m/s, at one step per heartbeat and at 45 Hz. On a running
-  test region (45 Hz, heartbeats up to 110 ms apart) a platform that keyframed motion started at 16.7 m/s (5 m in 0.3 s) kept the
-  avatar on, but at 22 m/s (6.6 m in 0.3 s) the avatar was carried at about 10 m/s and fell, and at about 29 m/s (9 m in 0.3 s) it
-  moved 1.5, 1.7 and 0.3 m in successive 0.1 s samples and fell where the platform had been. The difference is not explained.
-  Keyframed motion up to about 17 m/s carries an avatar on a running region; above that it is not guaranteed.
+- **Fast starts.** An avatar standing on a platform that keyframed motion starts from rest at 2 to 30 m/s keeps its place on it
+  through the first second, at one step per heartbeat and at 45 Hz, with heartbeats that find one, two or three of the 50 ms poses,
+  standing in the middle or 0.1 m from either edge, on a 0.5 m or a 0.1 m platform. A physical object on such a platform is not
+  carried by friction at these speeds: it slides back, and a cube that slides into an avatar slows it as any body it meets does
+  (at one step per heartbeat, an avatar 1.5 m behind a 125 kg cube was left 0.8 m behind at 10 m/s and 1.4 m at 22 m/s in the harness), so an
+  avatar with a loose object in front of it on a fast platform can be left behind by that object, not by the platform.
 - **A platform that crosses into a neighbouring region.** The simulator hands a seated avatar over with the object and nothing
   else, so what stands on a keyframed platform that crosses is left in the first region: its body goes with the object, and the
   rider falls to the ground there (a stand-in for the crossing, one region: the platform removed once its middle is outside, an
