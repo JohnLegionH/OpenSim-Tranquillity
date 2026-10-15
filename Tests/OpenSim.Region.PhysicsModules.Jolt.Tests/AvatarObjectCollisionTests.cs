@@ -31,8 +31,13 @@ public class AvatarObjectCollisionTests
     private const float PushCap = 10f;   // [Jolt] AvatarPushMaxSpeed, set to 10 in these runs: the cap rule is what they check (the default is 100)
     private const uint Avatar = Harness.Run.ActorLocalId;
 
-    private static RunResult Run(string scenario, double physicsRate)
-        => Harness.Harness.Run(Harness.Harness.Find(scenario), new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsRate, Jolt = { ["AvatarPushMaxSpeed"] = "10" } });
+    // pinned: the test holds an invariant only the harness's earlier avatar keeps (see HarnessPins).
+    private static RunResult Run(string scenario, double physicsRate, bool pinned = false)
+        => Harness.Harness.Run(Harness.Harness.Find(scenario), new HarnessOptions
+        {
+            RateHz = 11.0, PhysicsRateHz = physicsRate, Jolt = { ["AvatarPushMaxSpeed"] = "10" },
+            SimulatorAvatars = pinned ? HarnessPins.EarlierAvatar : true,
+        });
 
     private static HarnessPart Box(RunResult r) => r.Parts.Single(p => p.Name == "box");
     private static CollisionWatch AvatarWatch(RunResult r) => r.Watches.Single(w => w.Name == "avatar");
@@ -58,7 +63,7 @@ public class AvatarObjectCollisionTests
     [InlineData(0.0, 100f)]
     public void A_box_thrown_at_an_avatar_stops_against_it_and_moves_it_no_more_than_their_momentum_allows(double physicsRate, float kg)
     {
-        RunResult r = Run(kg < 10f ? "avatar-hit-1kg" : "avatar-hit-100kg", physicsRate);
+        RunResult r = Run(kg < 10f ? "avatar-hit-1kg" : "avatar-hit-100kg", physicsRate, pinned: true);
         HarnessPart box = Box(r);
         float side = AvatarHitScenarios.SideFor(kg);
 
@@ -224,7 +229,7 @@ public class AvatarObjectCollisionTests
     [InlineData(0.0)]
     public void A_box_hitting_an_avatar_at_10_m_s_tells_core_that_speed_on_both_sides(double physicsRate)
     {
-        RunResult r = Run("avatar-hit-10ms", physicsRate);
+        RunResult r = Run("avatar-hit-10ms", physicsRate, pinned: true);
         HarnessPart box = Box(r);
         Assert.InRange(-box.Watch.Strikes[Avatar], 9.5f, 10.5f);
         Assert.InRange(-AvatarWatch(r).Strikes[box.LocalId], 9.5f, 10.5f);

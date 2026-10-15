@@ -44,9 +44,7 @@ public static class TunnelScenarios
     private static void AddBall(Run r, float face, float z, bool phantom = false)
     {
         float d = Ball(r);
-        r.AddSphere(d, new Vector3(face - StartGap - d * 0.5f, ShotY, z));
-        if (phantom)
-            r.Actor.Phantom = true;
+        r.AddSphere(d, new Vector3(face - StartGap - d * 0.5f, ShotY, z), phantom);
     }
 
     // Shoot on the first heartbeat after the load heartbeat.
@@ -98,9 +96,7 @@ public static class TunnelScenarios
             {
                 float ground = Ground(r);
                 r.AddOtherBox(new Vector3(BoxSize, BoxSize, BoxSize), new Vector3(TargetX, ShotY, ground + BoxSize * 0.5f),
-                              Quaternion.Identity, true);
-                if (boxPhantom)
-                    r.Other.Phantom = true;
+                              Quaternion.Identity, true, boxPhantom);
                 AddBall(r, TargetX - BoxSize * 0.5f, ground + MathF.Max(BoxSize * 0.5f, Ball(r) * 0.5f + 0.01f));
                 r.ReleaseAt = r.Dt;
             },

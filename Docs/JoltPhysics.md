@@ -1826,7 +1826,7 @@ dotnet Tests/JoltPhysicsHarness/bin/Release/net10.0/JoltPhysicsHarness.dll --sce
 | `--vparam NAME=V` or `NAME=X,Y,Z` | A vehicle parameter by its LSL name, applied after the scenario's own, e.g. `LINEAR_FRICTION_TIMESCALE=1,1,1000` (repeatable) |
 | `--vflag NAME` or `-NAME` | A vehicle flag set (or removed) after the scenario's own, e.g. `HOVER_UP_ONLY` (repeatable) |
 | `--ball M[,M..]`, `--shot-speed V[,V..]` | The `tunnel-` scenarios: the ball's diameter (m, default 0.2) and the speed it is shot at (m/s, default 25); lists run every combination |
-| `--sim-defaults` | Build every prim and avatar with the values the simulator hands the engine for a new one, instead of the harness's own (see "What the harness builds differently", below) |
+| `--no-sim-defaults`, `--no-sim-prims`, `--no-sim-avatars`, `--no-region-mesher`, `--no-warm-up-step`, `--no-shipped-config`, `--legacy-defaults` | Build a run the earlier harness's way in one respect, or in all of them. Every run is built as a simulator builds it unless one of these is given (see "How the harness builds a run", below) |
 | `--vehicle-restore ROUTE` | Vehicle scenarios: when the setup is done, hand the vehicle back from its saved settings as the simulator does: `rez`, `region-start`, `copy`, `crossing`, `detach` or `physics-off-on` (see "Vehicles handed back from their saved settings", above) |
 | `--vehicle-script-again` | After `--vehicle-restore`, the scenario's script makes its vehicle calls again: the same vehicle set up by its script, on a body with the route's history |
 | `--out DIR` | Also write a CSV per run (`<scenario>-s<slope>-r<rate>.csv`, with `-p<rate>` added when the physics rate is on) and `summary.csv` there |
@@ -1890,27 +1890,55 @@ inside each heartbeat, so the two can be compared, e.g.
 `<scenario>/p45`. The harness writes nothing unless `--out` is given. The module's test
 project runs the same scenarios as regression tests (`HarnessTests`).
 
-### What the harness builds differently
+### How the harness builds a run
 
-The harness adds its prims and avatars through the same `PhysicsScene` calls a region makes, but it
-does not set everything the simulator sets on a new one. By default:
+A run is built the way a simulator builds a region, so that a run that passes in the harness is not one a
+region would fail. Each way below has a switch that gives back the earlier harness's behaviour, for comparing
+with the rows recorded before.
 
-- A prim gets no material. `SceneObjectPart.AddToPhysics` gives every new actor its material (a new
-  prim is wood: friction 0.6, restitution 0.5), density, gravity multiplier, friction, restitution and
-  buoyancy. Without them the body keeps the backend's friction 0.6 and restitution 0.
-- A fixed prim gets no density, so it reports the mass of the backend's 1000 kg/m³, 100 times the
-  mass of the simulator's density 1000 (which the module scales by 0.01). A physical prim gets 1000.
-- An avatar is 0.45 x 0.6 x 1.9 m. For the default appearance the simulator hands `AddAvatar`
-  0.45 x 0.6 x 2.1 m (`AvatarAppearance.SetSize` adds 0.2 m to the height), and subscribes it to
-  collisions every 100 ms.
+- **Prims and avatars get the values the simulator hands the engine** (`--no-sim-prims`,
+  `--no-sim-avatars`, `--no-sim-defaults` for both). `SceneObjectPart.AddToPhysics` gives every new actor
+  its material (a new prim is wood: friction 0.6, restitution 0.5), density 1000 on every prim, fixed or
+  not, gravity multiplier, friction, restitution and buoyancy, and a root no rotation locks. An avatar is
+  0.45 x 0.6 x 2.1 m, the box the simulator hands `AddAvatar` for the default appearance
+  (`AvatarAppearance.SetSize` adds 0.2 m to the height), subscribed to collisions every 100 ms. A prim
+  that is phantom from the start is passed to `AddPrimShape` as phantom, as `AddToPhysics` does. Two
+  restitutions in a contact multiply and the terrain's is 0, so a bounce shows only between two prims: a
+  ball shot at a fixed wall comes back off it. A vehicle sets its own contact friction and restitution 0
+  while it is one, so no vehicle scenario changes. An avatar stands 0.1 m higher.
+- **The scene has the region's mesher** (`--no-region-mesher`). A region server loads each module in an
+  assembly load context of its own, so the `Meshmerizer` it hands the physics module is a second copy of the
+  class the module was built against, and a cast to that class is false there. The harness loads the
+  Meshmerizer assembly in a load context of its own, as a region does, and every other assembly (`SharedBase`,
+  where `IMesher` and `IMesherShapeData` live) comes from the default context. A test that makes its mesher
+  with `new Meshmerizer()` has the module's own class and cannot show that difference.
+- **The setup runs after the first step** (`--no-warm-up-step`). The harness steps the empty scene once
+  before a scenario's setup. The region-load window is the time before the first step (`IsRegionLoading`): a
+  prim loaded from storage is added in it, a rezzed prim and an arriving avatar after it. In the window a
+  body does not wake, a restored body's horizontal velocity is dropped, and a vehicle restored from its saved
+  settings keeps zero velocity for its first frames. The region-start vehicle restore
+  (`--vehicle-restore region-start`) is the load, so it keeps the window.
+- **The `[Jolt]` settings start from `RegionServerDefaults.ini`** (`--no-shipped-config`), which every
+  simulator reads before its own ini. The harness project copies the file next to the harness. A test
+  holds its `[Jolt]` section equal to the code's own defaults, so the section and the code cannot drift apart
+  unseen. `--jolt` keys are applied after it.
 
-`--sim-defaults` builds them as the simulator does. Two restitutions in a contact multiply and the
-terrain's is 0, so this changes a bounce only between two prims: a ball shot at a fixed wall comes back
-off it. A vehicle sets its own contact friction and restitution 0 while it is one, so no vehicle
-scenario changes. An avatar stands 0.1 m higher.
+`--legacy-defaults` turns all of the above off.
 
-What the option leaves as the harness has it:
+What the harness still builds differently, and why:
 
+- **The heartbeat and the step rate.** The harness calls `Simulate` at exactly the rate it is asked for
+  (`--rate`, the scan axis), with one physics step per heartbeat unless `--physics-rate` is given. A region
+  calls it at `[Startup] FrameTime` with the time that really passed, and the module's own step rate default is
+  45 Hz. `--rate 11 --physics-rate 45` is the region's setting. The vehicle controller's clock is the harness's
+  own simulated time, and so is the ray cast clock when a test passes one, so a run gives the same rows on
+  every machine.
+- **Assets.** The scene has no asset service (`InitialiseWithoutScene` passes no asset request), so a mesh or
+  sculpt prim must carry its data in the shape, as the scenarios and tests that use one do.
+- **Terrain.** The same `SetTerrain` and water-level calls a region makes, from a flat or ramped heightmap
+  of a 256 m region; terrain edits while a region runs are not modelled.
+- **Threads.** A region adds, removes and changes prims from script and network threads while the heartbeat
+  runs. The harness does everything on one thread.
 - A vehicle is made as a script makes one (`llSetVehicleType`, then its parameters).
   `--vehicle-restore` hands it back from its saved settings instead, through `PhysicsActor.SetVehicle`
   as the simulator does. Every route but `physics-off-on` removes the actor and builds a new one, before
@@ -1918,12 +1946,6 @@ What the option leaves as the harness has it:
   history (`--vehicle-script-again`): the engine moves a body it is given after another was removed
   slightly differently once it slows to rest, whatever the body is (the test car on 5 degrees is up to
   0.14 m from where the first body is at the same time).
-- Every prim is added before the first step, as a region adds the prims it loads at start-up, not
-  after it, as a prim rezzed later is.
-- There is no mesher, so a prim that is not a plain box, sphere or cylinder is a bounding box. Every
-  scenario uses only plain boxes and spheres.
-- The physics step rate is one step per heartbeat unless `--physics-rate` is given; the module's own
-  default is 45 Hz.
 
 ### The regression check
 

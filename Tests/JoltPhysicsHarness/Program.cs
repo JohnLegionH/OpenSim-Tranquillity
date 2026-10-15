@@ -47,9 +47,16 @@ public static class Program
   --shot-speed V[,V..]       shot scenarios: the speed the ball is shot at (m/s, default 25). Lists sweep, as above.
   --start-offset DX,DY       move the scenario's own body (car, box or prim) DX and DY metres from its start;
                              nothing else moves (default: 0,0)
-  --sim-defaults             build every prim and avatar with the values the simulator hands the engine for a new
-                             one (a prim's wood material: friction 0.6, restitution 0.5; the default avatar box,
-                             2.1 m tall) instead of the harness's own (friction 0.6, restitution 0; 1.9 m)
+  Every run is built as the simulator builds it. Each of these four switches gives back the earlier harness's way:
+  --no-sim-defaults          prims and avatars get the harness's own values (friction 0.6, restitution 0; box 1.9 m)
+                             in place of what the simulator hands the engine (a prim's wood material: friction 0.6,
+                             restitution 0.5; the default avatar box, 2.1 m tall, subscribed to collisions)
+  --no-sim-prims, --no-sim-avatars   the two halves of --no-sim-defaults
+  --no-region-mesher         the scene has no mesher, in place of a Meshmerizer of a load context of its own
+  --no-warm-up-step          the setup runs before the first step (the region-load window), in place of after one
+  --no-shipped-config        no [Jolt] keys but the run's own, in place of RegionServerDefaults.ini's [Jolt] section
+  --legacy-defaults          all four of the above
+  --sim-defaults             accepted, and does nothing more than the default
   --vehicle-restore ROUTE    vehicle scenarios: when the setup is done, hand the vehicle back from its saved record
                              as the simulator does by ROUTE: rez, region-start, copy, crossing, detach or
                              physics-off-on (see VehicleRestore.cs)
@@ -196,6 +203,13 @@ The summary table always goes to standard output. Nothing is written anywhere el
                     (o.StartOffsetX, o.StartOffsetY) = (d[0], d[1]);
                     break;
                 case "--sim-defaults": o.SimulatorDefaults = true; break;
+                case "--no-sim-defaults": o.SimulatorDefaults = false; break;
+                case "--no-sim-prims": o.SimulatorPrims = false; break;
+                case "--no-sim-avatars": o.SimulatorAvatars = false; break;
+                case "--no-region-mesher": o.RegionMesher = false; break;
+                case "--no-warm-up-step": o.WarmUpStep = false; break;
+                case "--no-shipped-config": o.ShippedConfig = false; break;
+                case "--legacy-defaults": o.SimulatorDefaults = o.RegionMesher = o.WarmUpStep = o.ShippedConfig = false; break;
                 case "--vehicle-script-again": o.VehicleScriptAgain = true; break;
                 case "--vehicle-restore":
                     string route = Next();
@@ -291,7 +305,7 @@ The summary table always goes to standard output. Nothing is written anywhere el
 
     private static HarnessOptions Copy(HarnessOptions o, double rate, float slope)
     {
-        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay, StartSpeed = o.StartSpeed, StartOffsetX = o.StartOffsetX, StartOffsetY = o.StartOffsetY, SimulatorDefaults = o.SimulatorDefaults, VehicleRoute = o.VehicleRoute, VehicleScriptAgain = o.VehicleScriptAgain };
+        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay, StartSpeed = o.StartSpeed, StartOffsetX = o.StartOffsetX, StartOffsetY = o.StartOffsetY, SimulatorPrims = o.SimulatorPrims, SimulatorAvatars = o.SimulatorAvatars, RegionMesher = o.RegionMesher, WarmUpStep = o.WarmUpStep, ShippedConfig = o.ShippedConfig, VehicleRoute = o.VehicleRoute, VehicleScriptAgain = o.VehicleScriptAgain };
         foreach (KeyValuePair<string, string> kv in o.Jolt) c.Jolt[kv.Key] = kv.Value;
         c.VehicleParams.AddRange(o.VehicleParams);
         c.VehicleFlags.AddRange(o.VehicleFlags);

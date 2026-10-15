@@ -86,13 +86,33 @@ public sealed class HarnessOptions
     public float ShotBall = TunnelScenarios.DefaultBall;
     public float ShotSpeed = TunnelScenarios.DefaultSpeed;
     /// <summary>Build every prim and avatar with the values the simulator hands the engine for a new one, instead of
-    /// the harness's own (off by default, so the recorded baselines keep their meaning). A prim gets what
+    /// the harness's own (on by default; <c>--no-sim-defaults</c> gives the earlier harness's values). A prim gets what
     /// SceneObjectPart.AddToPhysics sets on every new actor: the material (wood: friction 0.6, restitution 0.5), density
     /// 1000, gravity multiplier 1, buoyancy 0, and for a root no rotation locks, before it is linked or made a vehicle.
     /// An avatar gets the default appearance's box as ScenePresence.AddToPhysicalScene hands it to AddAvatar (0.2 m taller
     /// than the appearance's size, AvatarAppearance.SetSize), then its rotation, a 100 ms collision subscription and
     /// always-run off. Without it a prim keeps the backend's friction 0.6 and restitution 0, and an avatar is 1.9 m.</summary>
-    public bool SimulatorDefaults;
+    public bool SimulatorDefaults
+    {
+        get => SimulatorPrims && SimulatorAvatars;
+        set => SimulatorPrims = SimulatorAvatars = value;
+    }
+    /// <summary>The prim half of <see cref="SimulatorDefaults"/> (the material, density and other values a new actor gets).</summary>
+    public bool SimulatorPrims = true;
+    /// <summary>The avatar half of <see cref="SimulatorDefaults"/> (the appearance's box, the collision subscription).</summary>
+    public bool SimulatorAvatars = true;
+    /// <summary>Give the scene the region's mesher, a Meshmerizer of a load context of its own (<see cref="RegionMesher"/>),
+    /// as a running region does. Without it the scene has no mesher and a prim that is not a box, sphere or cylinder takes
+    /// its bounding box. On by default.</summary>
+    public bool RegionMesher = true;
+    /// <summary>Step the scene once, empty, before the scenario's setup, so the setup's prims and avatars are added to a
+    /// region that has already run a heartbeat, as a rezzed prim or an arriving avatar is. The simulator's region-load
+    /// window (<c>JoltScene.IsRegionLoading</c>) is the time before the first step; a prim loaded from storage is added in
+    /// it, anything else after it. Not done for the region-start vehicle restore, which is the load. On by default.</summary>
+    public bool WarmUpStep = true;
+    /// <summary>Start from the [Jolt] section of RegionServerDefaults.ini, which every simulator reads before its own ini,
+    /// instead of from no keys. On by default.</summary>
+    public bool ShippedConfig = true;
     /// <summary>Restore the scenario's vehicle from its record by this route when its setup is done, before the first
     /// heartbeat, instead of leaving it as its script set it up (<see cref="VehicleRestore"/>). Every route but the
     /// physics switch removes the actor and builds a new one from the record at the same place, as the simulator's
@@ -430,7 +450,7 @@ public sealed class Run
     /// adds 0.2 m to the height (AVBOXAJUST).</summary>
     public static readonly Vector3 SimulatorAvatarSize = new(0.45f, 0.6f, 2.1f);
     /// <summary>The avatar box this run uses: <see cref="SimulatorAvatarSize"/> with <see cref="HarnessOptions.SimulatorDefaults"/>.</summary>
-    public Vector3 AvatarBox => Options.SimulatorDefaults ? SimulatorAvatarSize : AvatarSize;
+    public Vector3 AvatarBox => Options.SimulatorAvatars ? SimulatorAvatarSize : AvatarSize;
     /// <summary>How far an avatar's capsule centre stands above what it stands on.</summary>
     public float AvatarStandHalf => JoltCharacter.StandHalfFor(AvatarBox);
 
@@ -440,7 +460,7 @@ public sealed class Run
     /// 0, set on a root only). Returns the actor.</summary>
     public PhysicsActor AsSimulatorAdds(PhysicsActor pa, bool root = true)
     {
-        if (!Options.SimulatorDefaults || pa == null)
+        if (!Options.SimulatorPrims || pa == null)
             return pa;
         pa.SetMaterial((int)Material.Wood);
         pa.Density = 1000f;
@@ -458,7 +478,11 @@ public sealed class Run
 
     /// <summary>Physics time stepped so far (s): the backend's steps times their length, which with [Jolt]
     /// PhysicsStepRate on can differ from the heartbeats' time by up to one step.</summary>
-    public double PhysicsTime => Scene.Substepping ? Scene.Substeps.Steps * (double)Scene.Substeps.StepSeconds : Heartbeats * Dt;
+    public double PhysicsTime => Scene.Substepping ? (Scene.Substeps.Steps - WarmUpSubsteps) * (double)Scene.Substeps.StepSeconds : Heartbeats * Dt;
+    /// <summary>The physics steps the warm-up heartbeat (<see cref="HarnessOptions.WarmUpStep"/>) ran, which are not the run's.</summary>
+    internal long WarmUpSubsteps;
+    /// <summary>The region's mesher (<see cref="HarnessOptions.RegionMesher"/>), or null when the run has none.</summary>
+    public IMesher Mesher { get; internal set; }
     /// <summary>Heartbeats run so far.</summary>
     public int Heartbeats;
     /// <summary>Bodies the engine has awake now.</summary>
@@ -468,11 +492,26 @@ public sealed class Run
     /// <summary>The backend's counters now: live bodies and shapes among them.</summary>
     public OpenSim.Region.PhysicsModules.Jolt.Backend.PhysicsCapacityStats Capacity => Scene.CapacityStats();
 
-    /// <summary>A physical sphere prim, as a SceneObjectPart adds one (density 1000).</summary>
-    public PhysicsActor AddSphere(float diameter, Vector3 position)
+    /// <summary>How a prim that is phantom from the start is built. The simulator passes isPhantom to AddPrimShape
+    /// (SceneObjectPart.AddToPhysics); the earlier harness built it solid and set Phantom after, which is what the
+    /// simulator does for a prim that turns phantom later. <see cref="HarnessOptions.SimulatorPrims"/> picks the first.</summary>
+    private PhysicsActor AddPrimShapeAs(string name, PrimitiveBaseShape shape, Vector3 position, Vector3 size, Quaternion rotation,
+                                        bool physical, bool phantom, uint localId)
     {
-        PhysicsActor pa = Scene.AddPrimShape("harness sphere", PrimitiveBaseShape.CreateSphere(), position,
-                                             new Vector3(diameter, diameter, diameter), Quaternion.Identity, true, ActorLocalId);
+        bool atCreation = phantom && Options.SimulatorPrims;
+        PhysicsActor pa = atCreation
+            ? Scene.AddPrimShape(name, shape, position, size, rotation, physical, true, (byte)PhysShapeType.prim, localId)
+            : Scene.AddPrimShape(name, shape, position, size, rotation, physical, localId);
+        if (phantom && !atCreation)
+            pa.Phantom = true;
+        return pa;
+    }
+
+    /// <summary>A physical sphere prim, as a SceneObjectPart adds one (density 1000).</summary>
+    public PhysicsActor AddSphere(float diameter, Vector3 position, bool phantom = false)
+    {
+        PhysicsActor pa = AddPrimShapeAs("harness sphere", PrimitiveBaseShape.CreateSphere(), position,
+                                         new Vector3(diameter, diameter, diameter), Quaternion.Identity, true, phantom, ActorLocalId);
         AsSimulatorAdds(pa);
         pa.Density = 1000f;
         Actor = pa;
@@ -493,9 +532,9 @@ public sealed class Run
     }
 
     /// <summary>The second object: a box prim, physical (density 1000) or not (a fixed wall).</summary>
-    public PhysicsActor AddOtherBox(Vector3 size, Vector3 position, Quaternion rotation, bool physical)
+    public PhysicsActor AddOtherBox(Vector3 size, Vector3 position, Quaternion rotation, bool physical, bool phantom = false)
     {
-        PhysicsActor pa = Scene.AddPrimShape("harness other", PrimitiveBaseShape.CreateBox(), position, size, rotation, physical, OtherLocalId);
+        PhysicsActor pa = AddPrimShapeAs("harness other", PrimitiveBaseShape.CreateBox(), position, size, rotation, physical, phantom, OtherLocalId);
         AsSimulatorAdds(pa);
         if (physical)
             pa.Density = 1000f;
@@ -556,7 +595,7 @@ public sealed class Run
     public PhysicsActor AddAvatarAt(Vector3 position, bool flying)
     {
         PhysicsActor pa = Scene.AddAvatar(ActorLocalId, "Test User", position, AvatarBox, 0f, flying);
-        if (Options.SimulatorDefaults)
+        if (Options.SimulatorAvatars)
         {
             // ScenePresence.AddToPhysicalScene, after AddAvatar: the body's rotation (none for a new arrival), a 100 ms
             // collision subscription, and always-run as the agent last set it (off).
@@ -1617,6 +1656,24 @@ public static class Harness
     private const double RestSeconds = 1.0;
     private static readonly DateTime ClockEpoch = new(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
+    /// <summary>The name of the shipped defaults file, which the harness project copies next to the harness.</summary>
+    public const string ShippedDefaultsFile = "RegionServerDefaults.ini";
+
+    private static IConfig _shippedJolt;
+
+    /// <summary>The [Jolt] section of RegionServerDefaults.ini, which every simulator reads before its own ini.</summary>
+    public static IConfig ShippedJolt()
+    {
+        if (_shippedJolt != null)
+            return _shippedJolt;
+        string path = Path.Combine(AppContext.BaseDirectory, ShippedDefaultsFile);
+        if (!File.Exists(path))
+            throw new FileNotFoundException($"{ShippedDefaultsFile} is not next to the harness; the harness project copies it from Source/OpenSim.Server.RegionServer/AppData.", path);
+        IConfig section = new IniConfigSource(path).Configs["Jolt"]
+            ?? throw new InvalidDataException($"{ShippedDefaultsFile} has no [Jolt] section.");
+        return _shippedJolt = section;
+    }
+
     /// <summary>Runs one scenario at one rate and slope. Writes nothing; the caller decides where output goes.</summary>
     public static RunResult Run(Scenario sc, HarnessOptions o)
     {
@@ -1635,6 +1692,9 @@ public static class Harness
         startup.Set("physics", "Jolt");
         startup.Set("meshing", "Meshmerizer");
         IConfig jolt = config.AddConfig("Jolt");
+        if (o.ShippedConfig)
+            foreach (string key in ShippedJolt().GetKeys())
+                jolt.Set(key, ShippedJolt().Get(key));
         // 0 is one step per heartbeat, set as such: the module's own default is 45 Hz. A --jolt key overrides it.
         jolt.Set("PhysicsStepRate", "0");
         foreach (KeyValuePair<string, string> kv in o.Jolt)
@@ -1657,6 +1717,17 @@ public static class Harness
         try
         {
             r.Clock = -r.Dt * 0.5;
+            if (o.RegionMesher)
+            {
+                r.Mesher = RegionMesher.Create(Path.Combine(Path.GetTempPath(), "harness-sculpt-cache"));
+                r.UseMesher(r.Mesher);
+            }
+            if (o.WarmUpStep && o.VehicleRoute != VehicleRoute.RegionStart)
+            {
+                scene.Simulate((float)r.Dt);
+                if (scene.Substepping)
+                    r.WarmUpSubsteps = scene.Substeps.Steps;
+            }
             sc.Setup(r);
             if (o.VehicleRoute != VehicleRoute.None)
                 RestoreVehicle(r, o.VehicleRoute);

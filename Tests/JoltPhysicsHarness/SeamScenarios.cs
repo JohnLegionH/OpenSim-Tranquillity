@@ -171,11 +171,15 @@ public static class SeamScenarios
         pbs.SculptTexture = UUID.Random();
         pbs.SculptData = MeshAsset(verts, tris);
         float ground = r.GroundAt(FloorX, FloorY);
-        var config = new IniConfigSource();
-        config.AddConfig("Startup").Set("DecodedSculptMapPath", Path.Combine(Path.GetTempPath(), "harness-sculpt-cache"));
-        var mesher = new Meshmerizer();
-        mesher.Initialise(config);
-        r.UseMesher(mesher);
+        if (r.Mesher == null)
+        {
+            // The run has no region mesher (--no-region-mesher): the module's own class, as the earlier harness made it.
+            var config = new IniConfigSource();
+            config.AddConfig("Startup").Set("DecodedSculptMapPath", Path.Combine(Path.GetTempPath(), "harness-sculpt-cache"));
+            var mesher = new Meshmerizer();
+            mesher.Initialise(config);
+            r.UseMesher(mesher);
+        }
         PhysicsActor floor = r.Scene.AddPrimShape("harness floor", pbs, new Vector3(FloorX, FloorY, ground + FloorThickness * 0.5f),
                                                   Vector3.One, Quaternion.Identity, false, false, (byte)PhysShapeType.prim, 2000u);
         if (floor == null || floor == PhysicsActor.Null)
