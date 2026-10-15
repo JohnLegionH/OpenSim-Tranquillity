@@ -18,14 +18,23 @@ using OpenSim.Region.PhysicsModules.Jolt.Backend;
 using SVector3 = System.Numerics.Vector3;
 using SQuaternion = System.Numerics.Quaternion;
 
-namespace OpenSim.Region.PhysicsModules.Jolt
+using static OpenSim.Region.PhysicsModules.Jolt.JoltScene;
+
+namespace OpenSim.Region.PhysicsModules.Jolt.Diagnostics
 {
     // The console test commands. Each of these rezzes, moves or deletes objects or avatars in the region,
     // reshapes its terrain, or reads state that only those commands create, so none of them belongs on a
-    // production console by default. They are registered only when [Jolt] TestCommands is true; the
-    // read-only `jolt` diagnostics in JoltScene.cs are always available.
-    public sealed partial class JoltScene
+    // production console by default. They live in this assembly, which the region server does not ship; the
+    // Jolt module loads it when [Jolt] TestCommands is true (JoltDiagnosticsLoader.cs there). The read-only `jolt`
+    // diagnostics in the module's JoltScene.cs are always available.
+    internal sealed partial class JoltDiagnostics : IJoltDiagnostics
     {
+        // The scene this object serves (Attach). Everything the commands read from it is listed in
+        // JoltDiagnostics.Scene.cs.
+        private JoltScene _s;
+
+        public void Attach(JoltScene scene) => _s = scene;
+
         // Name, syntax and one-line help for every test subcommand of `jolt`. Each is registered as its own
         // console command, so `help` lists them only when they exist.
         internal static readonly (string Name, string Syntax, string Help)[] TestCommands =
@@ -56,10 +65,6 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             ("clearprims", "jolt clearprims", "Test: delete the prims rezzed by the test commands."),
         };
 
-        /// <summary>True when [Jolt] TestCommands is set; false (the default) leaves the test commands out.</summary>
-        internal static bool TestCommandsEnabled(IConfigSource source)
-            => source?.Configs["Jolt"]?.GetBoolean("TestCommands", false) ?? false;
-
         /// <summary>
         /// True when the [Startup] JoltAutoDropTest drop should run at region load. It is a test command in all
         /// but name, so it is honoured only when [Jolt] TestCommands is true.
@@ -75,14 +80,34 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 commands.AddCommand("Physics", false, "jolt " + name, syntax, help, fn);
         }
 
-        /// <summary>
-        /// Register `jolt parity`, the engine-agnostic comparison harness, when <paramref name="testCommands"/>
-        /// is true. Returns whether it was registered.
-        /// </summary>
-        internal static bool RegisterParityCommand(ICommands commands, bool testCommands, CommandDelegate fn)
+        // What the console is given to call. The console cannot drop a handler, so what it holds is this small object,
+        // and RegionRemoved cuts the scene out of it (the module's `jolt` handler does the same).
+        private TestRoute _route;
+
+        private sealed class TestRoute
         {
-            if (!testCommands)
-                return false;
+            private volatile JoltDiagnostics _owner;
+            public TestRoute(JoltDiagnostics owner) { _owner = owner; }
+            public void Detach() => _owner = null;
+            public void Test(string module, string[] cmd) => _owner?.HandleJoltTestConsole(module, cmd);
+        }
+
+        public void RegisterCommands(ICommands commands)
+        {
+            _route ??= new TestRoute(this);
+            RegisterTestCommands(commands, _route.Test);
+        }
+
+        public void RegionRemoved(Scene scene)
+        {
+            _route?.Detach();
+            if (scene != null && ReferenceEquals(s_parityScene, scene))
+                s_parityScene = null;
+        }
+
+        /// <summary>Register `jolt parity`, the engine-agnostic comparison harness. Returns whether it was registered.</summary>
+        internal static bool RegisterParityCommand(ICommands commands, CommandDelegate fn)
+        {
             commands.AddCommand("Physics", false, "jolt parity",
                 "jolt parity [terrain|ramp|drop|core|boat]",
                 "Test: drop a box and a meshed prism (or drive a boat) through the standard physics surface and report "
@@ -1913,11 +1938,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private static bool s_parityRegistered;
         private static Scene s_parityScene;
 
-        private void RegisterParityConsole(Scene scene)
+        public void RegisterParity(Scene scene)
         {
             if (scene != null) s_parityScene = scene;   // one region expected; last wins
             if (MainConsole.Instance == null || s_parityRegistered) return;
-            s_parityRegistered = RegisterParityCommand(MainConsole.Instance.Commands, m_testCommands, HandleParityConsole);
+            s_parityRegistered = RegisterParityCommand(MainConsole.Instance.Commands, HandleParityConsole);
         }
 
         private void HandleParityConsole(string module, string[] cmd)
