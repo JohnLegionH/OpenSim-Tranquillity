@@ -28,6 +28,7 @@
 using System.Timers;
 using OpenMetaverse;
 using OpenSim.Framework;
+using OpenSim.Region.PhysicsModules.SharedBase;
 using Microsoft.Extensions.Logging;
 using Timer = System.Timers.Timer;
 
@@ -279,6 +280,7 @@ public class KeyframeMotion
             m_isCrossing = false;
             m_waitingCrossing = false;
             m_selected = value;
+            UpdatePhysicsHint();
         }
     }
 
@@ -508,6 +510,18 @@ public class KeyframeMotion
         m_waitingCrossing = false;
         m_frames.Clear();
         m_keyframes = null;
+        UpdatePhysicsHint();
+    }
+
+    /// <summary>
+    /// Tells the root prim's physics actor whether this motion is moving it now (PhysicsActor.MovedByKeyframedMotion):
+    /// running, and not held still by a selection. Also called when the actor is made, which can be after the start.
+    /// </summary>
+    public void UpdatePhysicsHint()
+    {
+        PhysicsActor pa = m_group?.RootPart?.PhysActor;
+        if (pa is not null)
+            pa.MovedByKeyframedMotion = m_running && !m_selected;
     }
 
     public void Start()
@@ -525,12 +539,14 @@ public class KeyframeMotion
 
             StartTimer();
             m_running = true;
+            UpdatePhysicsHint();
             m_group.Scene.EventManager.TriggerMovingStartEvent(m_group.RootPart.LocalId);
         }
         else
         {
             StopTimer();
             m_running = false;
+            UpdatePhysicsHint();
         }
     }
 
@@ -564,6 +580,7 @@ public class KeyframeMotion
         m_basePosition = m_group.AbsolutePosition;
         m_baseRotation = m_group.GroupRotation;
 
+        UpdatePhysicsHint();
         m_group.RootPart.Velocity = Vector3.Zero;
         m_group.RootPart.AngularVelocity = Vector3.Zero;
 //            m_group.SendGroupRootTerseUpdate();
@@ -579,6 +596,7 @@ public class KeyframeMotion
         bool running = m_running;
         m_running = false;
 
+        UpdatePhysicsHint();
         m_group.RootPart.Velocity = Vector3.Zero;
         m_group.RootPart.AngularVelocity = Vector3.Zero;
 //            m_skippedUpdates = 1000;
@@ -731,6 +749,7 @@ public class KeyframeMotion
         m_basePosition = m_group.AbsolutePosition;
         m_baseRotation = m_group.GroupRotation;
 
+        UpdatePhysicsHint();
         m_group.RootPart.Velocity = Vector3.Zero;
         m_group.RootPart.AngularVelocity = Vector3.Zero;
 //            m_group.SendGroupRootTerseUpdate();
