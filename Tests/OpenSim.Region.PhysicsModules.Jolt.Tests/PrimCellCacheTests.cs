@@ -275,7 +275,7 @@ public class PrimCellCacheTests
     }
 
     // N prims made, the native memory they hold while alive, then removed and what is left: one scene, one scenario.
-    private static (long held, long left, int cooked, int live, long managed) Scenario(string scratch, bool cache, bool different, int prims)
+    private static (long held, long left, int cooked, int live, long managed, int liveLeft, int entriesLeft) Scenario(string scratch, bool cache, bool different, int prims)
     {
         JoltScene scene = NewScene(scratch);
         scene.CellShapeCacheEnabled = cache;
@@ -295,6 +295,7 @@ public class PrimCellCacheTests
             foreach (JoltPrim p in warm)
                 scene.RemovePrim(p);
             long start = NativeBytes();
+            int liveStart = Live(scene);
             long managedStart = GC.GetTotalMemory(true);
             int cookedStart = scene.PrimCellShapesCooked;
             var list = new List<JoltPrim>();
@@ -307,7 +308,7 @@ public class PrimCellCacheTests
             foreach (JoltPrim p in list)
                 scene.RemovePrim(p);
             long left = NativeBytes() - start;
-            return (held, left, cooked, live, managed);
+            return (held, left, cooked, live, managed, Live(scene) - liveStart, scene.SharedShapeCount);
         }
         finally { scene.Dispose(); }
     }
@@ -324,15 +325,19 @@ public class PrimCellCacheTests
         {
             // the worse of two runs of the same scenario is left out: the first of a kind takes the heap's growth
             Scenario(scratch, cache, different, 40);
-            var (held, left, cooked, live, managed) = Scenario(scratch, cache, different, 200);
-            parts.Add(string.Create(CultureInfo.InvariantCulture, $"{name}_kb={held / 1024} {name}_left_kb={left / 1024} {name}_cooks={cooked} {name}_live_shapes={live} {name}_managed_kb={managed / 1024}"));
+            var (held, left, cooked, live, managed, liveLeft, entriesLeft) = Scenario(scratch, cache, different, 200);
+            parts.Add(string.Create(CultureInfo.InvariantCulture, $"{name}_kb={held / 1024} {name}_left_kb={left / 1024} {name}_cooks={cooked} {name}_live_shapes={live} {name}_managed_kb={managed / 1024} {name}_live_left={liveLeft} {name}_entries_left={entriesLeft}"));
         }
         // regions started and stopped: what the native heap keeps across them
         long before = NativeBytes();
+        int restartShapesLeft = 0;
         for (int r = 0; r < 20; r++)
-            Scenario(scratch, true, false, 50);
+        {
+            var run = Scenario(scratch, true, false, 50);
+            restartShapesLeft += run.liveLeft + run.entriesLeft;
+        }
         long after = NativeBytes();
-        parts.Add(string.Create(CultureInfo.InvariantCulture, $"restarts_x20_kb={(after - before) / 1024}"));
+        parts.Add(string.Create(CultureInfo.InvariantCulture, $"restarts_x20_kb={(after - before) / 1024} restarts_x20_shapes_left={restartShapesLeft}"));
         Console.WriteLine("PRIM-CELL-CACHE-MEMORY " + string.Join(" ", parts));
     }
 
@@ -391,13 +396,33 @@ public class PrimCellCacheTests
         Assert.Equal(1, Value(line, "identical_cache_cooks"));
         Assert.Equal(200, Value(line, "different_cache_cooks"));
         Assert.Equal(200, Value(line, "identical_nocache_cooks"));
-        // identical prims: one compound and two hundred small wrappers against two hundred compounds
-        Assert.True(idYes * 4 < idNo, $"the cache saved too little: {idYes} against {idNo} KB");
-        // different prims: a unit compound and a wrapper each against one compound: no more than a quarter over
-        Assert.True(diYes < diNo * 1.25 + 512, $"the cache cost too much with nothing to share: {diYes} against {diNo} KB");
-        // everything made is given back (the allowance is heap noise, as in the shape settings memory test)
+        // What the cache holds is counted, not weighed: the shapes alive while the prims exist, and none left once they are gone.
+        // One compound and one wrapper per prim would be 201; the shared case is the compound and a shared base.
+        Assert.Equal(201, Value(line, "identical_nocache_live_shapes"));
+        Assert.Equal(2, Value(line, "identical_cache_live_shapes"));
+        // different prims share nothing, so the cache adds no shape of its own
+        Assert.Equal(Value(line, "different_nocache_live_shapes"), Value(line, "different_cache_live_shapes"));
         foreach (string run in new[] { "identical_nocache", "identical_cache", "different_nocache", "different_cache" })
-            Assert.True(Value(line, run + "_left_kb") < 4 * 1024, $"{run} kept {Value(line, run + "_left_kb")} KB after its prims were removed");
-        Assert.True(Value(line, "restarts_x20_kb") < 8 * 1024, $"twenty region starts and stops kept {Value(line, "restarts_x20_kb")} KB");
+        {
+            Assert.True(Value(line, run + "_live_left") == 0, $"{run} left {Value(line, run + "_live_left")} shapes alive after its prims were removed");
+            Assert.True(Value(line, run + "_entries_left") == 0, $"{run} left {Value(line, run + "_entries_left")} cache entries after its prims were removed");
+        }
+        Assert.True(Value(line, "restarts_x20_shapes_left") == 0, $"twenty region starts and stops left {Value(line, "restarts_x20_shapes_left")} shapes or entries");
+        // identical prims: one compound and two hundred small wrappers against two hundred compounds. The saving is about
+        // seventeen megabytes against a few hundred kilobytes, far beyond allocator noise on any platform.
+        Assert.True(idYes * 4 < idNo, $"the cache saved too little: {idYes} against {idNo} KB");
+        // The byte figures below are the process's private memory less the managed heap. Windows returns freed native memory to
+        // the OS, so they hold there. glibc keeps freed memory in its arenas, so on Linux they move by megabytes either way
+        // with nothing to do with the cache (a run with the cache off "kept" 18 MB, another with it on cost 1 MB more than
+        // without). The counts above carry the same checks on every platform.
+        if (OperatingSystem.IsWindows())
+        {
+            // different prims: a unit compound and a wrapper each against one compound: no more than a quarter over
+            Assert.True(diYes < diNo * 1.25 + 512, $"the cache cost too much with nothing to share: {diYes} against {diNo} KB");
+            // everything made is given back (the allowance is heap noise, as in the shape settings memory test)
+            foreach (string run in new[] { "identical_nocache", "identical_cache", "different_nocache", "different_cache" })
+                Assert.True(Value(line, run + "_left_kb") < 4 * 1024, $"{run} kept {Value(line, run + "_left_kb")} KB after its prims were removed");
+            Assert.True(Value(line, "restarts_x20_kb") < 8 * 1024, $"twenty region starts and stops kept {Value(line, "restarts_x20_kb")} KB");
+        }
     }
 }
