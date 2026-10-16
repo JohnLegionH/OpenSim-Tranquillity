@@ -42,10 +42,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Diagnostics
 
         /// <summary>
         /// The sled's speed (m/s) at <see cref="Times"/>: the harness's sled scenario at 45 Hz with 2 collision steps, the
-        /// documented sled let go at rest on its 15 degree slope (2.766 5.395 7.938 10.397; at 64 Hz with 2 collision steps
-        /// 2.769 5.399 7.942 10.402), whose figures agree at every rate within 0.1%.
+        /// documented sled let go at rest on its 15 degree slope on the module's shipped defaults, with the ground's friction
+        /// at 0 (2.741 5.291 7.709 10.001), whose figures agree at every rate within 0.1%. Before the prim damping of 0.02 the
+        /// figures were 2.772 5.400 7.943 10.402 (this build; 2.766 5.395 7.938 10.397 when first recorded). The damping alone
+        /// accounts for the difference: the same acceleration as before, less 0.02 x the speed (dv/dt = a(t) - 0.02 v, solved over
+        /// the earlier run's accelerations) gives 2.740 5.289 7.701 9.984, within 0.2% of the run. The ramp the console test
+        /// rezzes has friction 0: a sled's contact friction is 0, and two surfaces now combine as their average, so a ramp of the
+        /// prim default (wood, 0.6) would hold a sled that a 15 degree slope (tan 0.27) cannot move against 0.3.
         /// </summary>
-        public static readonly double[] Speeds = { 2.766, 5.395, 7.938, 10.397 };
+        public static readonly double[] Speeds = { 2.741, 5.291, 7.709, 10.001 };
 
         /// <summary>The pass line: the largest error of a reading, as a percent of the figure it is read against.</summary>
         public const double TolerancePercent = 2.0;
