@@ -34,6 +34,8 @@ public static class Program
   --keydelay S               region feed: seconds from physics on to the first key event (default: 0)
   --startspeed V             heartbeat feed: a car's forward speed (m/s) just before its key goes down,
                              which then goes down one heartbeat later
+  --terrain FILE             scenarios that take one (sled-drop): the ground from a raw float32 file, 256 x 256, x fastest
+  --trace-dir DIR            scenarios that trace their collision steps (sled-drop): write the trace there
   --jolt KEY=VALUE           a [Jolt] config key, as in the region's ini (repeatable)
   --vparam NAME=V|X,Y,Z      a vehicle param applied after the scenario's own, by its LSL name,
                              e.g. LINEAR_FRICTION_TIMESCALE=1,1,1000 (repeatable)
@@ -184,6 +186,8 @@ The summary table always goes to standard output. Nothing is written anywhere el
                         _ => throw new ArgumentException($"--feed '{feed}': expected heartbeat or region"),
                     };
                     break;
+                case "--terrain": o.TerrainFile = Next(); break;
+                case "--trace-dir": o.TraceDir = Next(); break;
                 case "--jolt":
                     string kv = Next();
                     int eq = kv.IndexOf('=');
@@ -305,7 +309,7 @@ The summary table always goes to standard output. Nothing is written anywhere el
 
     private static HarnessOptions Copy(HarnessOptions o, double rate, float slope)
     {
-        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay, StartSpeed = o.StartSpeed, StartOffsetX = o.StartOffsetX, StartOffsetY = o.StartOffsetY, SimulatorPrims = o.SimulatorPrims, SimulatorAvatars = o.SimulatorAvatars, RegionMesher = o.RegionMesher, WarmUpStep = o.WarmUpStep, ShippedConfig = o.ShippedConfig, VehicleRoute = o.VehicleRoute, VehicleScriptAgain = o.VehicleScriptAgain };
+        var c = new HarnessOptions { RateHz = rate, SlopeDeg = slope, Duration = o.Duration, Hold = o.Hold, KeyRepeat = o.KeyRepeat, Feed = o.Feed, KeyDelay = o.KeyDelay, StartSpeed = o.StartSpeed, StartOffsetX = o.StartOffsetX, StartOffsetY = o.StartOffsetY, SimulatorPrims = o.SimulatorPrims, SimulatorAvatars = o.SimulatorAvatars, RegionMesher = o.RegionMesher, WarmUpStep = o.WarmUpStep, ShippedConfig = o.ShippedConfig, VehicleRoute = o.VehicleRoute, VehicleScriptAgain = o.VehicleScriptAgain, TerrainFile = o.TerrainFile, TraceDir = o.TraceDir };
         foreach (KeyValuePair<string, string> kv in o.Jolt) c.Jolt[kv.Key] = kv.Value;
         c.VehicleParams.AddRange(o.VehicleParams);
         c.VehicleFlags.AddRange(o.VehicleFlags);

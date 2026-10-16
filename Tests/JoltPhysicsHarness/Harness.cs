@@ -40,6 +40,10 @@ public sealed class HarnessOptions
     public double PhysicsRateHz = DefaultPhysicsRate();
     public float? SlopeDeg;
     public float? Duration;
+    /// <summary>A raw float32 terrain file (256 x 256, x fastest) for the scenarios that take one (<see cref="Scenario.AllowsTerrainFile"/>).</summary>
+    public string TerrainFile;
+    /// <summary>A folder for the per-collision-step trace of the scenarios that write one (sled-drop).</summary>
+    public string TraceDir;
     public float? Hold;
     /// <summary>How often a held key re-sends the motor, as a script's control event does while a key is down.</summary>
     public float KeyRepeat = 0.1f;
@@ -759,6 +763,8 @@ public sealed class Scenario
     public Func<Run, Sample, bool> PassedThrough;
     /// <summary>A shot scenario: it takes the ball's diameter and speed from the options, and its run is named by them.</summary>
     public bool UsesShot;
+    /// <summary>The scenario can take its ground from <see cref="HarnessOptions.TerrainFile"/>.</summary>
+    public bool AllowsTerrainFile;
 }
 
 public static class Harness
@@ -1502,7 +1508,7 @@ public static class Harness
             Gap = GapBelow,
             PassedThrough = (r, s) => s.Position.Z < r.GroundAt(s.Position.X, s.Position.Y),
         },
-    }.Concat(PhantomScenarios.All).Concat(ContactScenarios.All).Concat(AvatarHitScenarios.All).Concat(TunnelScenarios.All).Concat(AvatarForceScenarios.All).Concat(GrabScenarios.All).Concat(SpinScenarios.All).Concat(SeamScenarios.All).Concat(KinematicScenarios.All).ToList();
+    }.Concat(PhantomScenarios.All).Concat(ContactScenarios.All).Concat(AvatarHitScenarios.All).Concat(TunnelScenarios.All).Concat(AvatarForceScenarios.All).Concat(GrabScenarios.All).Concat(SpinScenarios.All).Concat(SeamScenarios.All).Concat(KinematicScenarios.All).Concat(SledScenarios.All).ToList();
 
     private static readonly Quaternion West = Quaternion.CreateFromEulers(0f, 0f, MathF.PI);
     private static readonly Vector3 CrashMotor = new(20f, 0f, 0f);
@@ -1717,6 +1723,8 @@ public static class Harness
         scene.Initialise(config);
         scene.VehicleClock = () => ClockEpoch.AddTicks((long)Math.Round(r.Clock * TimeSpan.TicksPerSecond));
         (float[] heights, float water) = sc.World(slope);
+        if (sc.AllowsTerrainFile && o.TerrainFile != null)
+            heights = SledScenarios.LoadTerrain(o.TerrainFile);
         scene.InitialiseWithoutScene("Harness", Course.Size, Course.Size, heights, water, (float)r.Dt);
 
         var result = new RunResult { Scenario = sc.Name, RateHz = o.RateHz, PhysicsRateHz = scene.Substepping ? scene.Substeps.RateHz : 0, SlopeDeg = slope };
