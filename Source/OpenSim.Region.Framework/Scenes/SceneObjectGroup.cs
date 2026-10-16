@@ -914,10 +914,20 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
             m_log.LogError(e, $"[SCENE OBJECT]: Crossing of {sog.Name} {sog.UUID} failed with an exception");
             return sog.RollBackCrossing(state);
         }
+        finally
+        {
+            sog.m_crossWatch = null;
+        }
     }
+
+    // running while a crossing that carries standing riders is under way; only for the timing lines at Debug level
+    private System.Diagnostics.Stopwatch m_crossWatch;
+    private string m_crossDestinationName;
 
     private void CrossStep(string label)
     {
+        if (m_crossWatch is not null)
+            m_log.LogDebug($"[SCENE OBJECT]: Crossing {Name} from {m_scene?.Name} to {m_crossDestinationName}: {label} at {m_crossWatch.ElapsedMilliseconds} ms");
         m_scene?.CrossingStepHook?.Invoke(this, label);
     }
 
@@ -1033,9 +1043,16 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         List<ScenePresence> riders = null;
         if (destination is not null && !isTeleport && sogScene.EnableStandingRiderCrossing)
         {
+            if (m_log.IsEnabled(LogLevel.Debug))
+            {
+                sog.m_crossDestinationName = destination.RegionName;
+                sog.m_crossWatch = System.Diagnostics.Stopwatch.StartNew();
+            }
             sog.FreezeStandingRiders(entityTransfer, destination, newpos, ctx, val, state.Riders);
             if (state.Riders.Count > 0)
                 riders = state.Riders;
+            else
+                sog.m_crossWatch = null;
             sog.CrossStep("riders-frozen");
         }
 
@@ -1262,6 +1279,8 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                 {
                     // a carried rider arrives at the same place relative to the object, wherever it lands
                     Vector3 arrival = carried ? newpos + av.CarriedOffset : newpos;
+                    if (carried)
+                        m_log.LogDebug($"[SCENE OBJECT]: Crossing rider {av.Name} from {sogScene.Name} to {destination.RegionName}: arrival {arrival} (object at {newpos}, offset {av.CarriedOffset})");
                     entityTransfer.CrossAgentToNewRegionAsync(av, arrival, destination, false, ctx);
                 }
 
