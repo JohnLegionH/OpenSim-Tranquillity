@@ -67,6 +67,19 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         /// <summary>Adds <paramref name="delta"/> to the angular velocity (a velocity change, applied once).</summary>
         public void AddAngularVelocity(Vector3 delta) => _bodies.SetAngularVelocity(_id, _bodies.GetAngularVelocity(_id) + delta);
 
+        /// <summary>
+        /// Changes the linear velocity by <c>impulse / mass</c>, once. Jolt's AddImpulse changes the velocity at once and leaves
+        /// no force behind, so it is safe from OnStep. A force held over a collision step is <c>force * deltaTime</c>.
+        /// </summary>
+        public void AddImpulse(Vector3 impulse) => _bodies.AddImpulse(_id, impulse);
+
+        /// <summary>
+        /// Changes the angular velocity by the inverse inertia tensor times <paramref name="impulse"/> (about the body's
+        /// principal axes, as Jolt has them), once, as <see cref="AddImpulse"/>. A torque held over a collision step is
+        /// <c>torque * deltaTime</c>.
+        /// </summary>
+        public void AddAngularImpulse(Vector3 impulse) => _bodies.AddAngularImpulse(_id, impulse);
+
         public void SetLinearVelocity(Vector3 velocity) => _bodies.SetLinearVelocity(_id, velocity);
         public void SetAngularVelocity(Vector3 velocity) => _bodies.SetAngularVelocity(_id, velocity);
 

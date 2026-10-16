@@ -785,6 +785,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // Drop out of the scene's per-frame vehicle drive (no-op if never a vehicle).
             if (_vehicle != null) { _module.UnregisterVehicle(this); DetachVehicleStepProvider(); _vehicle = null; _vehicleBody = null; _vehicleStepProvider = null; }
             _module.SetScriptForced(this, false);
+            _scriptForceProvider?.Detach();
             _module.SetTargeted(this, false);
             _module.SetKinematicTracked(this, false);
             // If welded into a parent compound, detach first (parent rebuilds without us).
@@ -1380,6 +1381,13 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private float _buoyancy;       // the body feels (1 - buoyancy) of the region's gravity
         private byte _rotationLocks;   // SceneObjectGroup.axisSelect bits: 0x02 X, 0x04 Y, 0x08 Z locked
 
+        // A force or torque the script gave in the object's own axes (llSetForce, llSetTorque with local = TRUE): the vector
+        // in the prim's frame, turned with the body in every collision step (ScriptForceStepProvider). _force and _torque
+        // above stay the region-axes vectors as of the call. Under _scriptForceLock.
+        private bool _forceLocal, _torqueLocal;
+        private Vector3 _forceInBody, _torqueInBody;
+        private ScriptForceStepProvider _scriptForceProvider;
+
         public override Vector3 Torque
         {
             get { if (_linkRoot != null) return _linkRoot.Torque; lock (_scriptForceLock) return _torque; }
@@ -1388,9 +1396,46 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Torque", value.ToString()); return; }
                 if (_linkRoot != null) { _linkRoot.Torque = value; return; }
                 bool on;
-                lock (_scriptForceLock) { _torque = value; on = _force != Vector3.Zero || _torque != Vector3.Zero; }
+                lock (_scriptForceLock) { _torque = value; _torqueLocal = false; on = _force != Vector3.Zero || _torque != Vector3.Zero; }
                 _module.SetScriptForced(this, on);
+                if (!on) _scriptForceProvider?.Detach();   // no per-Update call will come for a prim that is out of the set
             }
+        }
+
+        // llSetTorque and llSetForce as the script layer hands them over (PhysicsActor.SetScriptForce / SetScriptTorque): the
+        // region-axes vector as of the call. A local one is also kept in the root's own axes, so it turns with the body.
+        public override void SetScriptTorque(Vector3 torque, bool local)
+        {
+            if (!NonFiniteGuard.Ok(torque)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Torque", torque.ToString()); return; }
+            if (_linkRoot != null) { _linkRoot.SetScriptTorque(torque, local); return; }
+            Quaternion rotation = Orientation;
+            bool on;
+            lock (_scriptForceLock)
+            {
+                _torque = torque;
+                _torqueLocal = local;
+                _torqueInBody = local ? torque * Quaternion.Inverse(rotation) : Vector3.Zero;
+                on = _force != Vector3.Zero || _torque != Vector3.Zero;
+            }
+            _module.SetScriptForced(this, on);
+            if (!on) _scriptForceProvider?.Detach();   // no per-Update call will come for a prim that is out of the set
+        }
+
+        public override void SetScriptForce(Vector3 force, bool local)
+        {
+            if (!NonFiniteGuard.Ok(force)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Force", force.ToString()); return; }
+            if (_linkRoot != null) { _linkRoot.SetScriptForce(force, local); return; }
+            Quaternion rotation = Orientation;
+            bool on;
+            lock (_scriptForceLock)
+            {
+                _force = force;
+                _forceLocal = local;
+                _forceInBody = local ? force * Quaternion.Inverse(rotation) : Vector3.Zero;
+                on = _force != Vector3.Zero || _torque != Vector3.Zero;
+            }
+            _module.SetScriptForced(this, on);
+            if (!on) _scriptForceProvider?.Detach();   // no per-Update call will come for a prim that is out of the set
         }
 
         public override Vector3 Force
@@ -1401,8 +1446,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (!NonFiniteGuard.Ok(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Force", value.ToString()); return; }
                 if (_linkRoot != null) { _linkRoot.Force = value; return; }
                 bool on;
-                lock (_scriptForceLock) { _force = value; on = _force != Vector3.Zero || _torque != Vector3.Zero; }
+                lock (_scriptForceLock) { _force = value; _forceLocal = false; on = _force != Vector3.Zero || _torque != Vector3.Zero; }
                 _module.SetScriptForced(this, on);
+                if (!on) _scriptForceProvider?.Detach();   // no per-Update call will come for a prim that is out of the set
             }
         }
 
@@ -1411,16 +1457,59 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // AddTorque wake a sleeping body. Vehicles keep their own forces: ubODE does not add a vehicle's set force or
         // torque (ODEPrim.Move hands a vehicle to its controller before it adds them) and core does not hand them to a
         // vehicle when it sets its physics up (SceneObjectPart.ApplyPhysics).
+        //
+        // A force or torque in the world's axes is applied here, as an engine force: Jolt adds it in every collision step of
+        // the Update, so it holds at any step rate. One the script gave in the object's own axes turns with the body, so it
+        // is handed to the body's step provider (ScriptForceStepProvider), which turns it by the body's rotation at the start
+        // of each collision step and applies it as a change of velocity.
         internal void StepScriptForces(float timeStep)
         {
             if (!_isPhysical || !_body.IsValid || _selected || (_vehicle != null && _vehicle.IsActive))
+            {
+                _scriptForceProvider?.Disarm();
                 return;
-            Vector3 force, torque;
-            lock (_scriptForceLock) { force = _force; torque = _torque; }
-            if (force != Vector3.Zero)
+            }
+            Vector3 force, torque, forceInBody = Vector3.Zero, torqueInBody = Vector3.Zero;
+            bool forceLocal, torqueLocal;
+            lock (_scriptForceLock)
+            {
+                force = _force; torque = _torque;
+                forceLocal = _forceLocal; torqueLocal = _torqueLocal;
+                if (forceLocal) forceInBody = _forceInBody;
+                if (torqueLocal) torqueInBody = _torqueInBody;
+            }
+            if (force != Vector3.Zero && !forceLocal)
                 _backend.ApplyForce(_body, LimitForce(ToS(force), timeStep));
-            if (torque != Vector3.Zero)
+            if (torque != Vector3.Zero && !torqueLocal)
                 _backend.ApplyTorque(_body, LimitTorque(ToS(torque), timeStep));
+
+            if (forceInBody == Vector3.Zero && torqueInBody == Vector3.Zero)
+            {
+                _scriptForceProvider?.Detach();
+                return;
+            }
+            _scriptForceProvider ??= new ScriptForceStepProvider(this, _backend);
+            SVector3 inertia = _backend.GetBodyInertiaDiagonal(_body);
+            float smallest = float.MaxValue;
+            if (inertia.X > 0f) smallest = MathF.Min(smallest, inertia.X);
+            if (inertia.Y > 0f) smallest = MathF.Min(smallest, inertia.Y);
+            if (inertia.Z > 0f) smallest = MathF.Min(smallest, inertia.Z);
+            // The impulses over one collision step that bring the body from rest to the engine's speed cap, as LimitForce
+            // and LimitTorque do for a whole Update: an absurd force is cut to that, so the engine's arithmetic stays finite.
+            float maxImpulse = _module.BodyMaxLinearSpeed * _backend.GetBodyMass(_body);
+            float maxAngularImpulse = smallest == float.MaxValue ? 0f : _module.BodyMaxAngularSpeed * smallest;
+            if (_scriptForceProvider.Arm(_body, ToS(forceInBody), ToS(torqueInBody), maxImpulse, maxAngularImpulse))
+            {
+                // The engine calls a provider only for an awake body; AddForce wakes a sleeping one, and so does this.
+                _backend.ActivateBody(_body);
+                return;
+            }
+            // A backend that takes no step providers: the vector turned by the body's rotation now, once per Update.
+            Quaternion rotation = Orientation;
+            if (forceInBody != Vector3.Zero)
+                _backend.ApplyForce(_body, LimitForce(ToS(forceInBody * rotation), timeStep));
+            if (torqueInBody != Vector3.Zero)
+                _backend.ApplyTorque(_body, LimitTorque(ToS(torqueInBody * rotation), timeStep));
         }
 
         // An absurd but finite force or torque is cut to the one that brings the body from rest to the engine's speed cap
