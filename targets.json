@@ -194,13 +194,32 @@
       "tests": "FullyQualifiedName~PGSQLInventoryMoveItemTests|FullyQualifiedName~PGSQLAuthenticationSetDataItemTests"
     },
     {
+      "name": "viewer-address-grid-red",
+      "repo": "OpenSim-NGC/OpenSim-Tranquillity",
+      "ref": "02329bb34d2fb26c1fc0649122dba73527639a91",
+      "baseline_repo": "",
+      "baseline_ref": "",
+      "checks": "general,grid",
+      "expect": [
+        "GridStore:regions.viewerLocalAddress"
+      ],
+      "restore_repo": "",
+      "restore_ref": "",
+      "restore_paths": "",
+      "overlay_paths": "",
+      "tests_project": "",
+      "tests": ""
+    },
+    {
       "name": "viewer-address-rework",
       "repo": "JohnLegionH/OpenSim-Tranquillity",
       "ref": "001c2c3d0b8d8c226f58c845c8ad1ac2f77c1a4e",
-      "baseline_repo": "",
-      "baseline_ref": "",
-      "checks": "general",
-      "expect": [],
+      "baseline_repo": "OpenSim-NGC/OpenSim-Tranquillity",
+      "baseline_ref": "02329bb34d2fb26c1fc0649122dba73527639a91",
+      "checks": "general,grid",
+      "expect": [
+        "GridStore:regions.viewerLocalAddress"
+      ],
       "restore_repo": "",
       "restore_ref": "",
       "restore_paths": "",
