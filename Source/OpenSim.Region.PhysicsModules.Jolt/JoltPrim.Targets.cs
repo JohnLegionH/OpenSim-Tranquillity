@@ -282,7 +282,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 away = MathF.Abs(pos.Z - HoverTargetAt(pos.X, pos.Y, height, type));
             if (!awake)
             {
-                if (!changed && away < HoldTolerance)
+                // Halcyon's controllers stop pushing inside 0.05 m of the target (its butter zone, its at-target radius).
+                if (!changed && away < (plan.InWorldz ? HalcyonBasicForces.AtTargetTolerance : HoldTolerance))
                     return true;   // asleep where it is held
                 _backend.ActivateBody(_body);
                 plan.ResetLinear();
