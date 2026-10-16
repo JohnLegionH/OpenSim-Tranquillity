@@ -1,9 +1,15 @@
+# Copyright (c) 2026 Legion Builds
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 # Harness runs for the Jolt harness workflow (.github/workflows/jolt-harness.yml), on every runner in its matrix.
 # One run per line: a name (letters, digits, - and _), a colon, then the harness arguments. Each run writes its
 # per-heartbeat traces and summary.csv under <name>/ in the uploaded artifact. Lines starting with # are skipped.
 
-# The scenarios of the tests that came out differently on Linux and Windows before the natives were built with
-# CROSS_PLATFORM_DETERMINISTIC.
+# Scenarios whose results are set side by side between Linux and Windows; earlier joltc builds gave different
+# results on the two.
 crash-headon-11: --scenario crash-headon --rate 11
 crash-box-11: --scenario crash-box --rate 11
 crash-all: --scenario crash-wall,crash-box,crash-headon,crash-drop --rate 11,45

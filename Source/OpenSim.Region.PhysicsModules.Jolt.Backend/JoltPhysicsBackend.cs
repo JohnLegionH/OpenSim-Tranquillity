@@ -602,8 +602,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // ---------------------------------------------------------------------
         // The pool gate rule.
         //
-        // Several regions can share one job pool, and on a joltc without the per-system allocator patch (the stock
-        // JoltPhysics.Native) every PhysicsSystem draws on ONE process-wide TempAllocatorImpl. Two regions on one pool
+        // Several regions can share one job pool, and with the stock joltc of the
+        // JoltPhysics.Native package every PhysicsSystem draws on ONE process-wide TempAllocatorImpl. Two regions on one pool
         // are then safe only because every use of that allocator happens inside the pool's gate, which admits one
         // Step at a time: PhysicsSystem::Update and CharacterVirtual::ExtendedUpdate are called only from Step, under
         // the gate. CharacterVirtual::SetShape is the one call outside it, and it never reaches the allocator (see

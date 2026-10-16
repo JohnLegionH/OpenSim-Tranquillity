@@ -32,7 +32,7 @@ public class AvatarOnKinematicStartTests
     private static string F(double v) => v.ToString("0.000", CultureInfo.InvariantCulture);
 
     // The platform is set 1.5 m along x in each of ten heartbeats (16.5 m/s at 11 Hz) with the hint turned on at the first of them:
-    // the abrupt fast start of the ledger row. The offset is read two heartbeats after the last set.
+    // an abrupt fast start of the platform, with no ramp-up. The offset is read two heartbeats after the last set.
     private double OffsetAfterAbruptStart(double physicsRate, bool hintFirst, float stepMetres = 1.5f, params (string, string)[] jolt)
     {
         double across = double.NaN;
