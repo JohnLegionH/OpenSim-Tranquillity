@@ -1055,6 +1055,10 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         if (destination is null)
             return sog;
 
+        // A vehicle's motors go on across the border: the engine writes their running state into the record that is sent
+        if (root.VehicleParams is not null && root.PhysActor is not null)
+            root.PhysActor.CaptureVehicleRunningState(ref root.VehicleParams.vd);
+
         sog.CrossStep("motion-stopped");
 
         if (sog.m_sittingAvatars.Count == 0 && riders is null)
@@ -1595,6 +1599,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
 
         sog.m_rootPart.KeyframeMotion?.CrossingFailure();
         sog.RootPart.PhysActor?.CrossingFailure();
+        sog.RootPart.VehicleParams?.ClearRunningState();
 
         sog.inTransit = false;
         sog.ShowToViewers();
