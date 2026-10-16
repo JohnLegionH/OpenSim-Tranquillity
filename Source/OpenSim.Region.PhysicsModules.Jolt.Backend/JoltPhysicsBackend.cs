@@ -201,8 +201,116 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             public long Queued => Interlocked.Read(ref _nextTicket) - Interlocked.Read(ref _serving);
         }
 
+        // ALL POOL GATES, for creating and destroying a physics system.
+        //
+        // joltc keeps every physics system in one process-wide map (s_PhysicsSystems, joltc.cpp): Create inserts,
+        // Destroy erases, and a step listener's OnStep reads it (joltc.cpp:5396) with no lock. An Update on any pool
+        // can call OnStep, so a system may be created or destroyed only while NO pool is inside an Update: the
+        // caller holds every pool's gate. Step holds one gate, so waiting for all of them waits for the Updates in
+        // flight (one frame at most) and holds off every region's next step while the native call runs.
+        //
+        // LOCK ORDER, whole backend: pool gates in ascending pool index (all of them, or the one a Step takes),
+        // then a region's _simLock, then _characterGate; s_systemMapGate and s_foundationGate are leaves taken
+        // last, and nothing takes a gate while holding any of them. Step takes a single gate, so two takers of
+        // all gates cannot invert, and a Step holding gate k never waits for a gate. Dispose takes the gates
+        // BEFORE _simLock (the order Step uses); Initialize takes them for the system create only, and holds no
+        // _simLock then. A fair gate is not re-entrant: do not create or dispose a region on a thread inside
+        // its own Step.
+        private readonly struct AllPoolGates : IDisposable
+        {
+            private readonly JobPool[] _held;
+            private AllPoolGates(JobPool[] held) { _held = held; }
+
+            public static AllPoolGates Take(JobPool[] pools, string? name)
+            {
+                int taken = 0;
+                try
+                {
+                    for (; taken < pools.Length; taken++)
+                        pools[taken].Enter(name, out _, out _);
+                    return new AllPoolGates(pools);
+                }
+                catch
+                {
+                    for (int i = taken - 1; i >= 0; i--)
+                        pools[i].Exit();
+                    throw;
+                }
+            }
+
+            public void Dispose()
+            {
+                if (_held == null)
+                    return;   // default(AllPoolGates): nothing was taken
+                for (int i = _held.Length - 1; i >= 0; i--)
+                    _held[i].Exit();
+            }
+        }
+
+        /// <summary>
+        /// TEST-ONLY: the lock order of AllPoolGates on <paramref name="poolCount"/> stand-alone pools (the stock native
+        /// runs one pool, so a real two-pool process cannot be built here). Two threads take every gate and
+        /// <paramref name="poolCount"/> x 2 threads each take one gate as Step does, <paramref name="rounds"/> times; a
+        /// holder of all gates must never find a Step inside, and a Step must never run while all gates are held. Returns
+        /// false for Completed when the threads did not finish within <paramref name="limit"/> (a deadlock). Needs Foundation
+        /// up, as any live backend has it.
+        /// </summary>
+        internal static (bool Completed, int Violations) AllGatesProbeForTest(int poolCount, bool fair, int rounds, TimeSpan limit)
+        {
+            var pools = new JobPool[poolCount];
+            for (int i = 0; i < poolCount; i++)
+                pools[i] = new JobPool(i, new JobSystemThreadPool(new JobSystemThreadPoolConfig
+                    { maxJobs = JoltMaxJobs, maxBarriers = JoltMaxBarriers, numThreads = 1 }), fair);
+            var inside = new int[poolCount];
+            int allHeld = 0, violations = 0;
+            var threads = new List<Thread>();
+            for (int k = 0; k < 2; k++)
+                threads.Add(new Thread(() =>
+                {
+                    for (int r = 0; r < rounds; r++)
+                        using (AllPoolGates.Take(pools, "probe"))
+                        {
+                            Volatile.Write(ref allHeld, 1);
+                            for (int p = 0; p < poolCount; p++)
+                                if (Volatile.Read(ref inside[p]) != 0)
+                                    Interlocked.Increment(ref violations);
+                            Thread.SpinWait(200);
+                            Volatile.Write(ref allHeld, 0);
+                        }
+                }) { IsBackground = true, Name = "probe-all-gates" });
+            for (int k = 0; k < poolCount * 2; k++)
+            {
+                int p = k % poolCount;
+                threads.Add(new Thread(() =>
+                {
+                    for (int r = 0; r < rounds * 2; r++)
+                    {
+                        pools[p].Enter("probe-step", out _, out _);
+                        try
+                        {
+                            Interlocked.Increment(ref inside[p]);
+                            if (Volatile.Read(ref allHeld) != 0)
+                                Interlocked.Increment(ref violations);
+                            Thread.SpinWait(100);
+                            Interlocked.Decrement(ref inside[p]);
+                        }
+                        finally { pools[p].Exit(); }
+                    }
+                }) { IsBackground = true, Name = "probe-step" });
+            }
+            foreach (Thread th in threads) th.Start();
+            var deadline = DateTime.UtcNow + limit;
+            bool completed = true;
+            foreach (Thread th in threads)
+                completed &= th.Join(Math.Max(0, (int)(deadline - DateTime.UtcNow).TotalMilliseconds));
+            if (completed)
+                foreach (JobPool p in pools)
+                    DestroyJobSystem(p.System);
+            return (completed, Volatile.Read(ref violations));
+        }
+
         public const int MaxJobPools = 64;
-        private const int JoltMaxJobs = 2048;       // PhysicsSettings.h cMaxPhysicsJobs (one Update per pool)
+        private const int JoltMaxJobs = 2048;     // PhysicsSettings.h cMaxPhysicsJobs (one Update per pool)
         private const int JoltMaxBarriers = 8;      // PhysicsSettings.h cMaxPhysicsBarriers
         private static JobPool[]? s_pools;
         private static int s_jobThreads;            // the resolved total the pools were sized from (capacity stat)
@@ -864,7 +972,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
                 ObjectVsBroadPhaseLayerFilter = _objectVsBroadPhaseFilter,
             };
 
-            // JPH_PhysicsSystem_Create inserts into joltc's global map of systems; see s_systemMapGate.
+            // JPH_PhysicsSystem_Create inserts into joltc's global map of systems, which an Update on any pool may
+            // read; so no pool may be inside an Update (AllPoolGates). The reference this region took above keeps
+            // s_pools alive until its own Dispose.
+            using (AllPoolGates.Take(s_pools!, settings.RegionName))
             lock (s_systemMapGate)
             {
                 _system = new PhysicsSystem(systemSettings);
@@ -929,6 +1040,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // touching any now-freed native object. _disposed is set BEFORE any native free.
             // Deadlock-free: Step never blocks on anything Dispose holds, so a Dispose waiting on _simLock
             // waits at most one step, then proceeds. Lock order _simLock -> _characterGate is preserved.
+            // Every pool gate first, then _simLock (see AllPoolGates): DisposeNative destroys the physics system,
+            // which erases it from joltc's map while no Update may be reading it. A backend that never took a pool
+            // (Initialize did not get that far) has no system to destroy and takes no gate.
+            JobPool[]? pools = _pool != null ? s_pools : null;
+            using (pools != null ? AllPoolGates.Take(pools, _settings.RegionName) : default)
             lock (_simLock)
             {
                 if (_disposed)
@@ -1053,7 +1169,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         // joltc keeps every system in a global map, s_PhysicsSystems: JPH_PhysicsSystem_Create inserts and
         // JPH_PhysicsSystem_Destroy erases. Regions are created and torn down on different threads. The native this
         // module runs on, the stock joltc of the JoltPhysics.Native package, has no lock on it. Both calls
-        // are taken under s_systemMapGate, and this module uses no step listener, so the map is never read concurrently.
+        // are taken under s_systemMapGate, and with every pool's gate held (AllPoolGates), so no Update is running that
+        // could read the map from a step listener's OnStep.
         // =====================================================================
         private static readonly object s_systemMapGate = new object();
 
@@ -4787,7 +4904,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             // LOCK ORDER pool gate -> _simLock. The pool's gate (ONE Update at a time per pool)
             // is taken BEFORE this region's _simLock and held for the whole step, so a region waiting for its
             // pool does not hold _simLock - its scene-thread body ops and queries run meanwhile (with the gate
-            // inside _simLock, a multi-region crossing test went from under 5 s to ~2 min). Only Step takes a gate,
+            // inside _simLock, a multi-region crossing test went from under 5 s to ~2 min). Only Step (one gate) and
+            // the physics-system create and destroy (all gates, in pool order; see AllPoolGates) take a gate,
             // and nothing takes a gate while holding any _simLock, so the order cannot invert. If Dispose runs
             // while we wait, StepLocked's _disposed check returns once we have the gate and _simLock.
             JobPool? pool = _pool;
