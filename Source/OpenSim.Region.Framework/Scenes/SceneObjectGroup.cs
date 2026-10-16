@@ -769,6 +769,14 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
     public bool inTransit = false;
 
     /// <summary>
+    /// The object is deleted, not returned, when it reaches a region edge with no neighbouring region. Set for an
+    /// object rezzed by a script when Scene.ScriptRezzedObjectsDieAtEdge is on; llSetStatus(STATUS_DIE_AT_EDGE, FALSE)
+    /// clears it. Unlike DIE_AT_EDGE it does not act when the object crosses into a neighbouring region, and it is
+    /// not stored.
+    /// </summary>
+    public bool DieAtVoidEdge;
+
+    /// <summary>
     /// Set on an object that arrived with avatars while it waits for them: its scripts and keyframed motion are not
     /// started (see Scene.IncomingCreateObject).
     /// </summary>
@@ -899,6 +907,27 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
     }
 
     /// <summary>
+    /// Stand up every avatar seated on this object and keep it inside the region, for an object that is about to be
+    /// deleted or returned at the region's edge. A stand-up beside a seat near the edge can land past it, and the
+    /// avatar would be left outside the region with no region to take it.
+    /// </summary>
+    private void StandSittersUpInsideRegion()
+    {
+        float maxX = m_scene.RegionInfo.RegionSizeX - 0.5f;
+        float maxY = m_scene.RegionInfo.RegionSizeY - 0.5f;
+
+        foreach (ScenePresence av in GetSittingAvatars())
+        {
+            av.StandUp();
+
+            Vector3 pos = av.AbsolutePosition;
+            Vector3 inside = new(Utils.Clamp(pos.X, 0.5f, maxX), Utils.Clamp(pos.Y, 0.5f, maxY), pos.Z);
+            if (inside != pos)
+                av.AbsolutePosition = inside;
+        }
+    }
+
+    /// <summary>
     /// Returns null when the object left this region, else the object, which stays. Whatever went wrong on the way,
     /// what the crossing froze and was not handed over is given back.
     /// </summary>
@@ -985,6 +1014,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
             {
                 try
                 {
+                    sog.StandSittersUpInsideRegion();
                     sogScene.DeleteSceneObject(sog, false);
                 }
                 catch (Exception)
@@ -1000,6 +1030,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                 try
                 {
                     List<uint> localIDs = new(){root.LocalId};
+                    sog.StandSittersUpInsideRegion();
                     sogScene.AddReturn(sog.OwnerID, sog.Name, sog.AbsolutePosition,
                         "Returned at region cross");
                     sogScene.DeRezObjects(null, localIDs, UUID.Zero, DeRezAction.Return, UUID.Zero, false);
@@ -1053,7 +1084,22 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         root.PhysActor?.CrossingStart();
 
         if (destination is null)
+        {
+            // No region beyond: the object has gone off world
+            if (sog.DieAtVoidEdge && !isTeleport)
+            {
+                try
+                {
+                    sog.StandSittersUpInsideRegion();
+                    sogScene.DeleteSceneObject(sog, false);
+                }
+                catch (Exception)
+                {
+                    m_log.LogWarning("[SCENE]: exception when trying to remove the prim that went off world.");
+                }
+            }
             return sog;
+        }
 
         sog.CrossStep("motion-stopped");
 
