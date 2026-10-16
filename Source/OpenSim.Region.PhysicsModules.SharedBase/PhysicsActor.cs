@@ -486,6 +486,12 @@ public abstract class PhysicsActor
     public abstract PIDHoverType PIDHoverType { set;}
     public abstract float PIDHoverTau { set;}
 
+    /// <summary>
+    /// llGroundRepel: with a hover set, the hover only pushes the object up (it never pulls it down to its height). Set
+    /// before PIDHoverActive, as the hover's other members are. An engine that does not tell a repel from a hover ignores it.
+    /// </summary>
+    public virtual bool PIDHoverRepel { set { return; } }
+
     // For RotLookAt
     public abstract Quaternion APIDTarget { set;}
     public abstract bool APIDActive { set;}
