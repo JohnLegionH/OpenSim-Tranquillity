@@ -783,7 +783,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private void DestroyLocked()
         {
             // Drop out of the scene's per-frame vehicle drive (no-op if never a vehicle).
-            if (_vehicle != null) { _module.UnregisterVehicle(this); _vehicle = null; _vehicleBody = null; }
+            if (_vehicle != null) { _module.UnregisterVehicle(this); DetachVehicleStepProvider(); _vehicle = null; _vehicleBody = null; _vehicleStepProvider = null; }
             _module.SetScriptForced(this, false);
             _module.SetTargeted(this, false);
             _module.SetKinematicTracked(this, false);
@@ -1913,6 +1913,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                     RestoreVehicleBodyParams();
                     _vehicle = null;
                     _vehicleBody = null;
+                    _vehicleStepProvider = null;
                 }
             }
         }
@@ -2086,6 +2087,10 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (clock != null)
                     _vehicle.Clock = clock;
                 _vehicle.DriverCamera = DriverCameraAxis;
+                // A script's motor set waits for the next Update, so it never changes the motors' running state while the
+                // engine steps; the controller's steps run in the engine's collision steps.
+                _vehicle.DeferMotorSets = true;
+                _vehicleStepProvider = new VehicleStepProvider(_module, this, _vehicle);
             }
         }
 
@@ -2128,6 +2133,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         // which pushes velocity changes/forces/torques back through the backend for this step.
         internal void StepVehicle(float timeStep)
         {
+            _vehicleStepProvider?.Disarm();   // armed for one Update at a time, and only by the branch below that steps the vehicle
             if (_vehicle == null || !_vehicle.IsActive || !_isPhysical || !_body.IsValid || _selected)
                 return;
             // Assert buoyancy on restart: re-assert the vehicle body params on the step-thread steps
@@ -2201,7 +2207,72 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             else
             {
                 _vehicleHeldTime = 0f;
+                StepVehicleInEngine(timeStep);
+            }
+        }
+
+        // The vehicle's step: its Update-rate part now, and the rest in the engine's collision steps (VehicleStepProvider).
+        // A backend that takes no step force providers gets the whole step now, as the controller always ran.
+        private void StepVehicleInEngine(float timeStep)
+        {
+            if (!EnsureVehicleStepProvider())
+            {
                 _vehicle.Step(timeStep);
+                return;
+            }
+            // The engine calls a provider only for an awake body, and a vehicle that is not idle is awake: the Update-rate
+            // path wakes it as it always has (a velocity written to a sleeping body woke it).
+            if (!_vehicleBody.IsAwake)
+                _backend.ActivateBody(_body);
+            _vehicle.BeginUpdate(timeStep);
+            Vector3 inertia = _vehicleBody.InertiaDiagonal;
+            _vehicleStepProvider.Arm(_vehicle.BodyMass, inertia, IsColliding);
+        }
+
+        // The vehicle's step force provider and its attachment to the body it was made for. A body that is recreated
+        // (reposition, reshape, weld) takes its providers with it, so the attachment is made again for the new one.
+        private VehicleStepProvider _vehicleStepProvider;
+        private IDisposable _vehicleStepAttachment;
+        private BodyId _vehicleStepBody;
+        private bool _vehicleStepUnavailable;
+        private readonly object _vehicleStepGate = new object();
+
+        // True when the provider is attached to the current body.
+        private bool EnsureVehicleStepProvider()
+        {
+            if (_vehicleStepProvider == null || _vehicleStepUnavailable || !_body.IsValid)
+                return false;
+            lock (_vehicleStepGate)
+            {
+                if (_vehicleStepAttachment != null && _vehicleStepBody.Equals(_body))
+                    return true;
+                _vehicleStepAttachment?.Dispose();
+                _vehicleStepAttachment = null;
+                try
+                {
+                    _vehicleStepAttachment = _backend.AttachStepForceProvider(_body, _vehicleStepProvider);
+                    _vehicleStepBody = _body;
+                    return true;
+                }
+                catch (Exception e) when (e is NotSupportedException || e is NotImplementedException)
+                {
+                    _vehicleStepUnavailable = true;
+                    return false;
+                }
+                catch (Exception e) when (e is ArgumentException || e is ObjectDisposedException)
+                {
+                    return false;   // the body is gone from the backend (removed meanwhile): nothing to step this Update
+                }
+            }
+        }
+
+        private void DetachVehicleStepProvider()
+        {
+            lock (_vehicleStepGate)
+            {
+                _vehicleStepProvider?.Disarm();
+                _vehicleStepAttachment?.Dispose();
+                _vehicleStepAttachment = null;
             }
         }
 
@@ -2246,10 +2317,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _backend.SetBodyContinuousCollision(_body, ContinuousCollision.On);
             _vehicleMaySleep = false;
             _backend.ActivateBody(_body);
+            EnsureVehicleStepProvider();
         }
 
         private void RestoreVehicleBodyParams()
         {
+            DetachVehicleStepProvider();
             if (!_body.IsValid)
                 return;
             // Back to the prims' own physics material, and a prim's damping.

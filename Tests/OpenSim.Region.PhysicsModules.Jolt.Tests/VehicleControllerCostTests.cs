@@ -65,9 +65,11 @@ public class VehicleControllerCostTests
         }
     }
 
-    /// <summary>Microseconds of controller drive per vehicle per physics step, over <paramref name="seconds"/> of simulated
-    /// time after a warm-up.</summary>
-    internal static (double microsPerVehicleStep, double microsPerVehicleSecond, long steps) Measure(int vehicles, float rate, double seconds)
+    /// <summary>Microseconds of controller drive per vehicle per physics step (Update), over <paramref name="seconds"/> of
+    /// simulated time after a warm-up: the whole, the part that runs once per Update and the part that runs in the
+    /// collision steps.</summary>
+    internal static (double microsPerVehicleStep, double microsPerVehicleSecond, long steps, double updatePart, double collisionPart, long onStepCalls) Measure(
+        int vehicles, float rate, double seconds)
     {
         JoltScene scene = NewScene(rate);
         try
@@ -75,7 +77,8 @@ public class VehicleControllerCostTests
             AddCars(scene, vehicles);
             for (int i = 0; i < 33; i++)   // 3 s: the cars are driving, the JIT has run
                 scene.Simulate(Heartbeat);
-            long ticks0 = scene.VehicleDriveTicks, calls0 = scene.VehicleStepCalls;
+            long ticks0 = scene.VehicleDriveTicks, calls0 = scene.VehicleStepCalls, update0 = scene.VehicleStepTicks, onStep0 = scene.VehicleOnStepTicks;
+            long onStepCalls0 = scene.VehicleOnStepCalls;
             double simulated = 0;
             while (simulated < seconds)
             {
@@ -85,7 +88,9 @@ public class VehicleControllerCostTests
             long ticks = scene.VehicleDriveTicks - ticks0, calls = scene.VehicleStepCalls - calls0;
             Assert.True(calls >= vehicles, "the vehicles were not driven");
             double micros = ticks * 1e6 / Stopwatch.Frequency;
-            return (micros / calls, micros / simulated / vehicles, calls / vehicles);
+            double updateMicros = (scene.VehicleStepTicks - update0) * 1e6 / Stopwatch.Frequency;
+            double onStepMicros = (scene.VehicleOnStepTicks - onStep0) * 1e6 / Stopwatch.Frequency;
+            return (micros / calls, micros / simulated / vehicles, calls / vehicles, updateMicros / calls, onStepMicros / calls, scene.VehicleOnStepCalls - onStepCalls0);
         }
         finally
         {
@@ -98,14 +103,15 @@ public class VehicleControllerCostTests
     [InlineData(50)]
     public void The_drive_costs_this_much_at_64_hz_with_two_collision_steps(int vehicles)
     {
-        var best = (double.MaxValue, double.MaxValue, 0L);
+        var best = (microsPerVehicleStep: double.MaxValue, microsPerVehicleSecond: double.MaxValue, steps: 0L, updatePart: 0.0, collisionPart: 0.0, onStepCalls: 0L);
         for (int run = 0; run < 3; run++)
         {
             var m = Measure(vehicles, 64f, 6.0);
-            if (m.microsPerVehicleStep < best.Item1)
+            if (m.microsPerVehicleStep < best.microsPerVehicleStep)
                 best = m;
         }
-        Say($"[cost] {vehicles} vehicles, 64 Hz x 2: {best.Item1:0.00} us per vehicle per Update, {best.Item2:0.0} us per vehicle per second " +
-            $"({best.Item3} Updates in the best run of 3)");
+        Say($"[cost] {vehicles} vehicles, 64 Hz x 2: {best.microsPerVehicleStep:0.00} us per vehicle per Update " +
+            $"({best.updatePart:0.00} at Update rate, {best.collisionPart:0.00} in the collision steps), {best.microsPerVehicleSecond:0.0} us per vehicle per second " +
+            $"({best.steps} Updates and {best.onStepCalls} collision-step calls in the best run of 3)");
     }
 }

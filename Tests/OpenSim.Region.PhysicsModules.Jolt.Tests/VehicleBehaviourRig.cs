@@ -139,6 +139,21 @@ internal sealed class BehaviourRig
             Step(h);
     }
 
+    /// <summary>One engine step of <paramref name="h"/> seconds split into <paramref name="collisionSteps"/> collision steps, as
+    /// the engine's step listener runs the controller: the Update-rate part once, then the per-step part before each collision
+    /// step, the body advancing by the collision step between them.</summary>
+    public void StepUpdate(double h, int collisionSteps)
+    {
+        Car.BeginUpdate((float)h);
+        double sub = h / collisionSteps;
+        for (int i = 0; i < collisionSteps; i++)
+        {
+            Car.StepOnce((float)sub, Body);
+            Body.Advance(sub);
+            _now += sub;
+        }
+    }
+
     /// <summary>A body rolled about its own x axis, then pitched about the world's y (the nose down).</summary>
     public void Tilt(double rollDegrees, double pitchDegrees)
         => Body.Orientation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, (float)(pitchDegrees * Deg)) * Quaternion.CreateFromAxisAngle(Vector3.UnitX, (float)(rollDegrees * Deg));

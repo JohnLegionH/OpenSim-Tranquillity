@@ -2453,7 +2453,18 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private long _vehicleStepTicks, _vehicleStepCalls;
         internal long VehicleStepTicks => Interlocked.Read(ref _vehicleStepTicks);
         internal long VehicleStepCalls => Interlocked.Read(ref _vehicleStepCalls);
-        internal long VehicleDriveTicks => VehicleStepTicks;
+        // The time the vehicles' step force providers have taken inside the collision steps (Stopwatch ticks).
+        private long _vehicleOnStepTicks, _vehicleOnStepCalls;
+        internal void AddVehicleStepTicks(long ticks)
+        {
+            Interlocked.Add(ref _vehicleOnStepTicks, ticks);
+            Interlocked.Increment(ref _vehicleOnStepCalls);
+        }
+        internal long VehicleOnStepTicks => Interlocked.Read(ref _vehicleOnStepTicks);
+        internal long VehicleOnStepCalls => Interlocked.Read(ref _vehicleOnStepCalls);
+
+        // Everything the vehicle drive costs: the Update-rate part and the collision steps' part.
+        internal long VehicleDriveTicks => VehicleStepTicks + VehicleOnStepTicks;
 
         // Prims with a script force or torque set (llSetForce, llSetTorque): each is applied before every backend step,
         // next to the vehicle drive, until the script sets it back to zero.

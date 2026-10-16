@@ -69,6 +69,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
 
         public void SetLinearVelocity(Vector3 velocity) => _bodies.SetLinearVelocity(_id, velocity);
         public void SetAngularVelocity(Vector3 velocity) => _bodies.SetAngularVelocity(_id, velocity);
+
+        /// <summary>
+        /// Sets the share of gravity the engine applies to the body. The engine reads it when it applies gravity, after the
+        /// step listeners, so a change made here is the gravity of this collision step.
+        /// </summary>
+        public void SetGravityFactor(float factor) => _bodies.SetGravityFactor(_id, factor);
     }
 
     /// <summary>
