@@ -1,6 +1,6 @@
 # Store checks
 
-Runs the region, estate and inventory stores of the trees named in `targets.json` against MySQL 8.0 and
+Runs the region, estate, inventory and (with the `grid` check) grid stores of the trees named in `targets.json` against MySQL 8.0 and
 8.4, MariaDB 10.11 and 11.4, PostgreSQL 15 and 17 (service containers on GitHub's runners) and SQLite.
 
 For each target and server:
@@ -17,6 +17,16 @@ For each target and server:
   settings and the manager, access, group and ban lists, including a removal; inventory folders and items,
   including a move, an update and a delete) and `sit` (sit target states and the stored SitTargetActive
   value), each written by one store instance and read back by a second one.
+- **grid** (MySQL and PostgreSQL): adds the grid store, opened as `MySqlRegionData` / `PGSQLRegionData` on the
+  `regions` table so its `GridStore` migrations run. The schema check then replays every step of that migration
+  text (tables created, dropped or renamed; columns added) and requires each table and column it leaves behind.
+  The baseline writes two region rows (name, position, size, server URI, flags and the other fields the grid
+  service sends); after the upgrade they must read back unchanged by id, by name and by position, with no
+  `viewerLocalAddress`. The round trip stores a region with `viewerLocalAddress` `10.20.30.40` and reads it back
+  by id, name and position; stores it again with `fd00::10` (the UPDATE path); stores
+  `ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255` (45 characters, the longest address text) and reads it back
+  intact; and stores a region without the key, which reads back with no value (null, empty or absent). SQLite has
+  no grid store: the check is reported as `NOT APPLICABLE` there and never fails.
 
 The harness (`harness/StoreCheck`) is built on the runner against each checked-out tree. Nothing connects to
 any database outside the runner.
@@ -28,7 +38,9 @@ Each push to `ci/store-checks` (or a manual run) checks every target in `targets
 
 - `repo`, `ref`: the tree checked; pin `ref` to a commit when a result has to name the code it ran on.
 - `baseline_repo`, `baseline_ref`: when set, the upgrade check also runs from that tree.
-- `checks`: the harness round trips (`general`, `sit`); `expect`: columns that must exist (`Store:table.column`).
+- `checks`: the harness round trips (`general`, `sit`, `grid`); `expect`: columns that must exist
+  (`Store:table.column`, where `Store` is the migration name: `RegionStore`, `EstateStore`, `InventoryStore`,
+  `GridStore`).
 - `restore_repo`, `restore_ref`, `restore_paths`: files (space separated) copied from that tree over the target
   before the build, e.g. develop's version of a store file, to show a test red against the unfixed code.
 - `overlay_paths`: files copied from this branch's `overlay/<path>` over the target before the build.
