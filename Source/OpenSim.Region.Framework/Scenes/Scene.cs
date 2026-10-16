@@ -242,6 +242,14 @@ public partial class Scene : SceneBase
     /// </summary>
     public bool DisableObjectTransfer { get; set; }
 
+    /// <summary>
+    /// When true, an object rezzed by a script (llRezObject, llRezAtRoot) is deleted, not returned, when it reaches a
+    /// region edge with no neighbouring region (SceneObjectGroup.DieAtVoidEdge), as the llSetStatus documentation
+    /// describes for STATUS_DIE_AT_EDGE. It crosses into a neighbouring region as usual. The script can clear it with
+    /// llSetStatus. Off by default.
+    /// </summary>
+    public bool ScriptRezzedObjectsDieAtEdge { get; set; }
+
     public bool m_useFlySlow;
     public bool m_useTrashOnDelete = true;
 
@@ -1130,6 +1138,7 @@ public partial class Scene : SceneBase
             AllowAvatarCrossing = entityTransferConfig.GetBoolean("AllowAvatarCrossing", AllowAvatarCrossing);
             DisableObjectTransfer = entityTransferConfig.GetBoolean("DisableObjectTransfer", false);
             EnableStandingRiderCrossing = entityTransferConfig.GetBoolean("EnableStandingRiderCrossing", false);
+            ScriptRezzedObjectsDieAtEdge = entityTransferConfig.GetBoolean("ScriptRezzedObjectsDieAtEdge", false);
         }
 
         m_log.LogInformation($"[SCENE]: {Name}: [EntityTransfer] EnableStandingRiderCrossing is {(EnableStandingRiderCrossing ? "on" : "off")}");
@@ -4989,8 +4998,15 @@ Label_GroupsDone:
         }
 
         ScenePresence sp = GetScenePresence(remoteClient.AgentId);
-        if (sp is null || sp.IsDeleted || sp.IsInTransit)
+        if (sp is null || sp.IsDeleted)
             return;
+
+        // a border crossing is waiting for the neighbour: answer, or the viewer's teleport never ends
+        if (sp.IsInTransit)
+        {
+            remoteClient.SendTeleportFailed("Previous teleport process incomplete.  Please retry shortly.");
+            return;
+        }
 
         ulong regionHandle = 0;
         if(regionName == RegionInfo.RegionName)
@@ -5030,8 +5046,15 @@ Label_GroupsDone:
         }
 
         ScenePresence sp = GetScenePresence(remoteClient.AgentId);
-        if (sp is null || sp.IsDeleted || sp.IsInTransit)
+        if (sp is null || sp.IsDeleted)
             return;
+
+        // a border crossing is waiting for the neighbour: answer, or the viewer's teleport never ends
+        if (sp.IsInTransit)
+        {
+            remoteClient.SendTeleportFailed("Previous teleport process incomplete.  Please retry shortly.");
+            return;
+        }
 
         EntityTransferModule.Teleport(sp, regionHandle, position, lookAt, teleportFlags);
     }
@@ -5045,8 +5068,16 @@ Label_GroupsDone:
         }
 
         ScenePresence sp = GetScenePresence(remoteClient.AgentId);
-        if (sp is null || sp.IsDeleted || sp.IsInTransit)
+        if (sp is null || sp.IsDeleted)
             return;
+
+        // a border crossing is waiting for the neighbour: answer, or the viewer's teleport never ends
+        if (sp.IsInTransit)
+        {
+            remoteClient.SendTeleportFailed("Previous teleport process incomplete.  Please retry shortly.");
+            return;
+        }
+
         EntityTransferModule.RequestTeleportLandmark(remoteClient, lm, lookAt);
     }
 
