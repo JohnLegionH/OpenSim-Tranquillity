@@ -24,9 +24,16 @@
 // PIDHoverType says, and follows the ground's height along the object's path, so it holds its height over a slope.
 // Move to target wins when both are on, as in ubODE.
 //
-// Not here: llGroundRepel reaches the actor as the same four hover members, with no flag that tells it apart, so it
-// acts as llSetHoverHeight does (it also pulls an object down to its height). A vehicle keeps its own hover and
-// motion: neither controller acts on an active vehicle.
+// llGroundRepel reaches the actor as the same hover members plus PIDHoverRepel. The spring above does not tell it apart, so
+// under SecondLife it acts as llSetHoverHeight does (it also pulls an object down to its height); under InWorldz it only
+// pushes up (Halcyon, PhysxPrim.pid.cs DoGroundRepel). A vehicle keeps its own hover and motion: neither controller acts on
+// an active vehicle.
+//
+// Where the work is done. This file is the Update-rate half: it reads the script's settings, decides whether a controller
+// acts and arms BasicForcesStepProvider, which works the controller out in every collision step as a change of velocity over
+// the step's own length. The spring above is stepped exactly over that step, so the motion does not depend
+// on the physics rate or the number of collision steps. Under [Jolt] BasicForcesBehaviour = InWorldz (the default) the laws
+// are Halcyon's, in HalcyonBasicForces.
 
 using System;
 using OpenMetaverse;
@@ -65,12 +72,11 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         private PIDHoverType _hoverType;
         private float _hoverTau;
         private bool _hoverActive;
+        private bool _hoverRepel;       // llGroundRepel: the hover only pushes up
         private bool _targetsChanged;   // a member changed since the last step: wake the body
 
         // Step thread only.
         private bool _heldByTarget;     // a controller acted in the last step (the body's gravity is off)
-        private Vector3 _moveCarry;     // what the last move-to-target step left out of the spring's velocity
-        private float _hoverCarry;      // the same for hover (vertical)
         private bool _lastWasMove;
         private BodyId _noSleepBody = BodyId.Invalid;   // the body a controller has told the engine not to put to sleep
         private bool _linApproaching;   // move to target or hover is still bringing the object in
@@ -142,6 +148,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             }
         }
 
+        public override bool PIDHoverRepel
+        {
+            set
+            {
+                if (_linkRoot != null) { _linkRoot.PIDHoverRepel = value; return; }
+                lock (_targetLock) { _hoverRepel = value; _targetsChanged = true; }
+            }
+        }
+
         public override bool PIDHoverActive
         {
             get { if (_linkRoot != null) return _linkRoot.PIDHoverActive; lock (_targetLock) return _hoverActive; }
@@ -154,26 +169,50 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         }
 
         /// <summary>
-        /// Called by JoltScene before every backend step for a prim that has asked for a target or a hover height.
-        /// Returns false once neither is asked for and the body has been let go, so the scene stops stepping it.
+        /// Called by JoltScene before every backend step (every Update) for a prim that has asked for a target or a hover
+        /// height. It is the Update-rate half of the controllers: it reads what the script asked for, decides whether a
+        /// controller acts, wakes or lets go of the body, and arms the step provider (BasicForcesStepProvider) with the plan
+        /// that the collision steps carry out. Returns false once neither is asked for and the body has been let go, so the
+        /// scene stops stepping it.
         /// </summary>
         internal bool StepTargets(float timeStep)
         {
-            bool angular = StepAngularTarget(timeStep);
-            bool linear = StepLinearTargets(timeStep);
+            _basicForces ??= new BasicForcesStepProvider(_module, this, _backend);
+            BasicForcesStepProvider plan = _basicForces;
+            plan.Move = plan.Hover = plan.Angular = false;
+            plan.InWorldz = _module.BasicForcesBehaviour == JoltConfig.BasicForces.InWorldz;
+            bool angular = PrepareAngularTarget(plan);
+            bool linear = PrepareLinearTargets(plan);
+            if (plan.Move || plan.Hover || plan.Angular)
+            {
+                plan.LinearDamping = _backend.GetBodyLinearDamping(_body);
+                plan.AngularDamping = _module.PrimAngularDamping;
+                plan.ScriptGravity = ScriptGravityFactor;
+                plan.MaxLinearSpeed = _module.BodyMaxLinearSpeed;
+                plan.MaxAngularSpeed = _module.BodyMaxAngularSpeed;
+                if (plan.Move || plan.Hover)
+                    plan.ScriptAcceleration = ScriptAcceleration();
+                // The engine calls a provider only for an awake body; the Update-rate path wakes a sleeping one.
+                if (!plan.Arm(_body))
+                    plan.Detach();
+            }
+            else
+                plan.Detach();
             return angular || linear;
         }
 
-        private bool StepLinearTargets(float timeStep)
+        private BasicForcesStepProvider _basicForces;
+
+        private bool PrepareLinearTargets(BasicForcesStepProvider plan)
         {
             Vector3 target;
             float tau, height, hoverTau;
-            bool move, hover, changed;
+            bool move, hover, changed, repel;
             PIDHoverType type;
             lock (_targetLock)
             {
                 target = _pidTarget; tau = _pidTau; move = _pidActive;
-                height = _hoverHeight; hoverTau = _hoverTau; type = _hoverType; hover = _hoverActive;
+                height = _hoverHeight; hoverTau = _hoverTau; type = _hoverType; hover = _hoverActive; repel = _hoverRepel;
                 changed = _targetsChanged;
                 _targetsChanged = false;
             }
@@ -194,21 +233,31 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             // stopped meanwhile, it gets its gravity back once it is let go.
             if (_selected)
             {
-                _moveCarry = Vector3.Zero;
-                _hoverCarry = 0f;
+                plan.MoveCarry = SVector3.Zero;
+                plan.HoverCarry = 0f;
                 if (changed)
                     lock (_targetLock) _targetsChanged = true;
                 return move || hover || _heldByTarget;
             }
 
             Vector3 pos = new Vector3(s.Position.X, s.Position.Y, s.Position.Z);
-            Vector3 vel = new Vector3(s.LinearVelocity.X, s.LinearVelocity.Y, s.LinearVelocity.Z);
             bool awake = (s.Flags & BodyStateFlags.Active) != 0;
 
-            // A tau of 0 or less does nothing: the call silently fails (wiki.secondlife.com/wiki/LlMoveToTarget);
-            // the hover's is refused the same way, as ubODE's is.
-            bool moving = move && tau > 0f && (target - pos).Length() < MaxTargetDistance;
-            bool hovering = !moving && hover && hoverTau > 0f && height != 0f;
+            // The Second Life wiki: a tau of 0 or less does nothing (the call silently fails), the target must be less than
+            // 65 m away, and a move target wins over a hover (wiki.secondlife.com/wiki/LlMoveToTarget). Halcyon: a tau up to
+            // two of its steps does nothing, there is no distance limit, and the move target and the hover both act
+            // (PhysxPrim.pid.cs DoPIDMoveTarget, DoHoverTarget).
+            bool moving, hovering;
+            if (plan.InWorldz)
+            {
+                moving = move && tau > HalcyonBasicForces.MinTau;
+                hovering = hover && hoverTau >= HalcyonBasicForces.MinTau && height != 0f;
+            }
+            else
+            {
+                moving = move && tau > 0f && (target - pos).Length() < MaxTargetDistance;
+                hovering = !moving && hover && hoverTau > 0f && height != 0f;
+            }
             if (!moving && !hovering)
             {
                 LetGo(false);
@@ -217,95 +266,43 @@ namespace OpenSim.Region.PhysicsModules.Jolt
 
             if (!_heldByTarget || moving != _lastWasMove)
             {
-                _moveCarry = Vector3.Zero;
-                _hoverCarry = 0f;
+                plan.ResetLinear();
+                plan.LinearApproaching = true;
             }
             _heldByTarget = true;
             _lastWasMove = moving;
-            _backend.SetBodyGravityFactor(_body, 0f);
 
+            // How far the controller that is acting is from where it holds the body: a body asleep that close is left asleep.
+            float away;
             if (moving)
-                StepMoveToTarget(target, MathF.Max(tau, MinTau), pos, vel, awake, changed, timeStep);
+                away = (pos - target).Length();
+            else if (plan.InWorldz)
+                away = MathF.Abs(HalcyonBasicForces.HeightAbove(type, pos.Z, _module.TerrainHeightAt(pos.X, pos.Y), _module.WaterLevel) - height);
             else
-                StepHover(height, type, MathF.Max(hoverTau, MinTau), pos, vel, awake, changed, timeStep);
+                away = MathF.Abs(pos.Z - HoverTargetAt(pos.X, pos.Y, height, type));
+            if (!awake)
+            {
+                if (!changed && away < HoldTolerance)
+                    return true;   // asleep where it is held
+                _backend.ActivateBody(_body);
+                plan.ResetLinear();
+                plan.LinearApproaching = true;
+            }
+
+            plan.Move = moving;
+            plan.Hover = hovering;
+            plan.MoveTarget = ToS(target);
+            plan.MoveTau = plan.InWorldz ? tau : MathF.Max(tau, MinTau);
+            plan.HoverHeight = height;
+            plan.HoverTau = plan.InWorldz ? hoverTau : MathF.Max(hoverTau, MinTau);
+            plan.HoverType = type;
+            plan.HoverRepel = repel && plan.InWorldz;
+            KeepAwakeWhile(plan.LinearApproaching);
             return true;
         }
 
-        private void StepMoveToTarget(Vector3 target, float tau, Vector3 pos, Vector3 vel, bool awake, bool changed, float h)
-        {
-            Vector3 e0 = pos - target;
-            if (!awake)
-            {
-                if (!changed && e0.Length() < HoldTolerance)
-                    return;   // asleep where it is held
-                _backend.ActivateBody(_body);
-                vel = Vector3.Zero;
-                _moveCarry = Vector3.Zero;
-            }
-            Vector3 v0 = vel + _moveCarry;
-            KeepAwakeWhile(e0.Length() >= HoldTolerance || v0.Length() > SettledSpeed);
-            // A set force's acceleration a is part of the spring's step: e'' = -e / tau^2 - 2 e' / tau + a is the same spring
-            // about e = a tau^2.
-            Vector3 a = ScriptAcceleration();
-            Vector3 shift = a * (tau * tau);
-            (double mx, double cx) = VehicleSpring.MoveOver(e0.X - shift.X, v0.X, tau, 1.0, h);
-            (double my, double cy) = VehicleSpring.MoveOver(e0.Y - shift.Y, v0.Y, tau, 1.0, h);
-            (double mz, double cz) = VehicleSpring.MoveOver(e0.Z - shift.Z, v0.Z, tau, 1.0, h);
-            // The spring's velocity at the end of the step, and the velocity that, through the engine's damping and with the
-            // force's own share of the motion, moves the body to the spring's position.
-            var springEnd = new Vector3((float)(mx + cx), (float)(my + cy), (float)(mz + cz));
-            Damping d = DampingOver(h);
-            var moveVel = (new Vector3((float)mx, (float)my, (float)mz) - a * (d.ForceMean * h)) / d.Mean;
-            _moveCarry = springEnd - moveVel * d.End - a * (d.ForceEnd * h);
-
-            // The engine caps a body's speed ([Jolt] BodyMaxLinearSpeed); past it the spring starts again from the
-            // body's own state at the next step.
-            float max = _module.BodyMaxLinearSpeed;
-            float len = moveVel.Length();
-            if (len > max)
-            {
-                moveVel *= max / len;
-                _moveCarry = Vector3.Zero;
-            }
-            _backend.SetBodyLinearVelocity(_body, ToS(moveVel));
-        }
-
-        private void StepHover(float height, PIDHoverType type, float tau, Vector3 pos, Vector3 vel, bool awake, bool changed, float h)
-        {
-            // Where the target is now, and where it will be under the object at the end of the step: the spring acts
-            // on the height above the ground, so on a slope the object rises with the ground as it moves.
-            float targetNow = HoverTargetAt(pos.X, pos.Y, height, type);
-            float targetNext = HoverTargetAt(pos.X + vel.X * h, pos.Y + vel.Y * h, height, type);
-            float e0 = pos.Z - targetNow;
-            if (!awake)
-            {
-                if (!changed && MathF.Abs(e0) < HoldTolerance)
-                    return;
-                _backend.ActivateBody(_body);
-                vel = Vector3.Zero;
-                targetNext = targetNow;
-                _hoverCarry = 0f;
-            }
-            float rise = (targetNext - targetNow) / h;
-            double ve0 = vel.Z + _hoverCarry - rise;
-            KeepAwakeWhile(MathF.Abs(e0) >= HoldTolerance || Math.Abs(ve0) > SettledSpeed);
-            float az = ScriptAcceleration().Z;
-            (double move, double carry) = VehicleSpring.MoveOver(e0 - az * tau * tau, ve0, tau, 1.0, h);
-            Damping d = DampingOver(h);
-            float vz = (rise + (float)move - az * d.ForceMean * h) / d.Mean;
-            // Next step's error rate starts from the body's vertical velocity plus this, less the ground's rise then.
-            _hoverCarry = (float)(move + carry) + rise - vz * d.End - az * d.ForceEnd * h;
-            float max = _module.BodyMaxLinearSpeed;
-            if (MathF.Abs(vz) > max)
-            {
-                vz = MathF.CopySign(max, vz);
-                _hoverCarry = 0f;
-            }
-            _backend.SetBodyLinearVelocity(_body, new SVector3(vel.X, vel.Y, vz));
-        }
-
         // A speed (m/s) under which an object at its target has settled there.
-        private const float SettledSpeed = 0.01f;
+        internal const float SettledSpeed = 0.01f;
 
         // While a controller is still bringing the object in, the engine must not put it to sleep: that would stop the
         // spring part way. Once it has settled where it is held it may sleep, and the controller wakes it if it is moved.
@@ -328,44 +325,15 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             _noSleepBody = forbid ? _body : BodyId.Invalid;
         }
 
-        // The acceleration of the script's set force (llSetForce), which the engine applies through this step.
-        private Vector3 ScriptAcceleration()
+        // The acceleration of the script's set force (llSetForce), which the engine applies through the step.
+        private SVector3 ScriptAcceleration()
         {
             Vector3 force;
             lock (_scriptForceLock) force = _force;
             if (force == Vector3.Zero)
-                return Vector3.Zero;
+                return SVector3.Zero;
             float mass = _backend.GetBodyMass(_body);
-            return mass > 0f ? force / mass : Vector3.Zero;
-        }
-
-        /// <summary>
-        /// How a step of h moves a body, per unit of what it is given. Jolt splits the step into n collision sub-steps;
-        /// in each it adds the acceleration, damps the velocity, v = (v + a h / n) (1 - c h / n), and moves the body by
-        /// that velocity (MotionProperties::ApplyForceTorqueAndDragInternal, then the position integration). A velocity
-        /// v set before the step moves the body by v h Mean and leaves it at v End; a steady acceleration a from rest
-        /// moves it by a h^2 ForceMean and leaves it at a h ForceEnd.
-        /// </summary>
-        private readonly record struct Damping(float Mean, float End, float ForceMean, float ForceEnd);
-
-        private Damping DampingOver(float h) => DampingFor(_backend.GetBodyLinearDamping(_body), h);
-
-        // The same for a damping c (1/s), linear or angular: Jolt damps both as v x (1 - c h / n) in each sub-step.
-        private Damping DampingFor(float c, float h)
-        {
-            int n = _module.CollisionSteps;
-            double q = 1.0 - Math.Max(c, 0f) * h / n;
-            if (q <= 0.0)
-                q = 1.0;
-            double qi = 1.0, sum = 0.0, u = 0.0, usum = 0.0;
-            for (int i = 0; i < n; i++)
-            {
-                qi *= q;
-                sum += qi;
-                u = (u + 1.0 / n) * q;
-                usum += u;
-            }
-            return new Damping((float)(sum / n), (float)qi, (float)(usum / n), (float)u);
+            return mass > 0f ? ToS(force) / mass : SVector3.Zero;
         }
 
         /// <summary>
@@ -375,7 +343,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         /// region's zero. Unless volume detect is on, a negative height with water FALSE does not take the object below the
         /// ground: no target is under the ground unless the prim is volume detect.
         /// </summary>
-        private float HoverTargetAt(float x, float y, float height, PIDHoverType type)
+        internal float HoverTargetAt(float x, float y, float height, PIDHoverType type)
         {
             float ground = _module.TerrainHeightAt(x, y);
             float water = _module.WaterLevel;
@@ -399,6 +367,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (!_heldByTarget)
                 return;
             _heldByTarget = false;
+            BasicForcesStepProvider plan = _basicForces;
             // A body that is no longer physical was recreated static, and a physical one is recreated with the script's
             // gravity; only a body still held here needs it back.
             // A vehicle sets its own sleeping rule (JoltPrim.ApplyVehicleBodyParams).
@@ -410,13 +379,12 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             if (_body.IsValid && _isPhysical && !vehicle)
             {
                 _backend.SetBodyGravityFactor(_body, ScriptGravityFactor);
-                Vector3 carry = _lastWasMove ? _moveCarry : new Vector3(0f, 0f, _hoverCarry);
-                if (carry != Vector3.Zero && _backend.TryGetBodyState(_body, out BodyState s))
-                    _backend.SetBodyLinearVelocity(_body, s.LinearVelocity + ToS(carry));
+                SVector3 carry = plan == null ? SVector3.Zero : _lastWasMove ? plan.MoveCarry : new SVector3(0f, 0f, plan.HoverCarry);
+                if (carry != SVector3.Zero && _backend.TryGetBodyState(_body, out BodyState s))
+                    _backend.SetBodyLinearVelocity(_body, s.LinearVelocity + carry);
                 _backend.ActivateBody(_body);
             }
-            _moveCarry = Vector3.Zero;
-            _hoverCarry = 0f;
+            plan?.ResetLinear();
         }
     }
 }

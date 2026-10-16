@@ -1579,6 +1579,9 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             {
                 if (!float.IsFinite(value)) { NonFiniteGuard.Rejected(ref _nonFiniteLogTicks, "prim", LocalID, "Buoyancy", value.ToString()); return; }
                 if (_linkRoot != null) { _linkRoot.Buoyancy = value; return; }
+                // InWorldz: a buoyancy from 0.977 up to 1 is taken as 1 (HalcyonBasicForces.LegacyBuoyancy).
+                if (_module.BasicForcesBehaviour == JoltConfig.BasicForces.InWorldz)
+                    value = HalcyonBasicForces.LegacyBuoyancy(value);
                 if (_buoyancy == value) return;
                 _buoyancy = value;
                 ApplyScriptGravity();

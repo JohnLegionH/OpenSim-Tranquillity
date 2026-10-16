@@ -2469,6 +2469,16 @@ namespace OpenSim.Region.PhysicsModules.Jolt
             Interlocked.Add(ref _vehicleOnStepTicks, ticks);
             Interlocked.Increment(ref _vehicleOnStepCalls);
         }
+        // The time the target controllers' step provider (move to target, hover, look-at) has taken inside the collision steps
+        // (Stopwatch ticks), and the calls.
+        private long _basicForcesOnStepTicks, _basicForcesOnStepCalls;
+        internal void AddBasicForcesStepTicks(long ticks)
+        {
+            Interlocked.Add(ref _basicForcesOnStepTicks, ticks);
+            Interlocked.Increment(ref _basicForcesOnStepCalls);
+        }
+        internal long BasicForcesOnStepTicks => Interlocked.Read(ref _basicForcesOnStepTicks);
+        internal long BasicForcesOnStepCalls => Interlocked.Read(ref _basicForcesOnStepCalls);
         internal long VehicleOnStepTicks => Interlocked.Read(ref _vehicleOnStepTicks);
         internal long VehicleOnStepCalls => Interlocked.Read(ref _vehicleOnStepCalls);
 
@@ -2529,6 +2539,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 prims = new JoltPrim[_targeted.Count];
                 _targeted.CopyTo(prims);
             }
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
             foreach (JoltPrim p in prims)
             {
                 bool keep = true;
@@ -2540,7 +2551,14 @@ namespace OpenSim.Region.PhysicsModules.Jolt
                 if (!keep)
                     lock (_targeted) _targeted.Remove(p);
             }
+            Interlocked.Add(ref _basicForcesUpdateTicks, System.Diagnostics.Stopwatch.GetTimestamp() - started);
+            Interlocked.Add(ref _basicForcesUpdateCalls, prims.Length);
         }
+
+        // The time the Update-rate part of the target controllers has taken (Stopwatch ticks) and the prims it made a step for.
+        private long _basicForcesUpdateTicks, _basicForcesUpdateCalls;
+        internal long BasicForcesUpdateTicks => Interlocked.Read(ref _basicForcesUpdateTicks);
+        internal long BasicForcesUpdateCalls => Interlocked.Read(ref _basicForcesUpdateCalls);
 
         internal void MarkLinksetDirty(JoltPrim root)
         {
