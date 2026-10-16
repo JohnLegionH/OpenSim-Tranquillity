@@ -2062,6 +2062,20 @@ public static class Harness
     private static void SummariseCollision(Run r, Scenario sc, List<Sample> samples, Summary m)
     {
         int impact = samples.FindIndex(s => sc.Gap(r, s) < ContactGap);
+        // A sample is read after its step. A hard hit in the middle of a step can leave the two objects further apart than
+        // ContactGap again by the end of it (the second one thrown ahead faster than the first follows), so no sample ever
+        // reads as touching. The step also counts as the impact when, at the speed they had at its start, the objects
+        // would have met within it.
+        for (int i = 1; i < samples.Count && (impact < 0 || i < impact); i++)
+        {
+            Sample before = samples[i - 1];
+            float closing = (before.Velocity - before.OtherVelocity).Length();
+            if (sc.Gap(r, before) >= ContactGap && sc.Gap(r, before) < closing * (samples[i].T - before.T))
+            {
+                impact = i;
+                break;
+            }
+        }
         if (impact < 0)
             return;
         double t0 = samples[impact].T;
