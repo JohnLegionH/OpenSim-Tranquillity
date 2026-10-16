@@ -72,8 +72,10 @@ public class HarnessTests
     {
         Summary m = Run("testcar", slope: 0f).Summary;
         Assert.InRange(m.ReleaseSpeed, 3.74f, 3.84f);             // 3.792 (before 6.150, was 5.134; 45 Hz now 3.788)
-        Assert.InRange(m.DistanceBeforeRelease, 9.41f, 9.51f);    // 9.462 (before 8.282, was 5.909; 45 Hz now 9.453)
-        Assert.InRange(m.TimeToRest, 3.05, 3.3);                   // 3.182 s after release (before 4.818, was 3.727)
+        // 9.363 with the vehicle run in each collision step (9.462 run once per heartbeat; 45 Hz 9.453 then, 9.367 now with the feed below):
+        // at one step per heartbeat it now gives the 45 Hz figure to within 0.1%.
+        Assert.InRange(m.DistanceBeforeRelease, 9.31f, 9.41f);
+        Assert.InRange(m.TimeToRest, 3.05, 3.45);                  // 3.182 s after release (before 4.818, was 3.727); 3.364 with the vehicle run in each collision step: one 11 Hz heartbeat (0.091 s) later
         Assert.InRange(m.MaxTilt, 0f, 1f);
     }
 
@@ -84,7 +86,7 @@ public class HarnessTests
     // The car's drop from where it was rezzed no longer changes the drive (the motor's equation does not depend on
     // the starting speed), so they equal the heartbeat feed's.
     [Theory]
-    [InlineData(0.0, 9.462f, 3.792f)]
+    [InlineData(0.0, 9.363f, 3.792f)]   // 9.462 before the vehicle ran in each collision step; now the same as at 45 Hz
     [InlineData(45.0, 9.367f, 3.785f)]
     public void Region_feed_drives_the_pad_as_a_region_does(double physicsRate, float distance, float releaseSpeed)
     {

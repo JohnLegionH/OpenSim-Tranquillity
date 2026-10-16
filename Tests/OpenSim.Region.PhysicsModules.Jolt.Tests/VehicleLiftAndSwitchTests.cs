@@ -59,7 +59,13 @@ public class VehicleLiftAndSwitchTests
     public void A_level_airplane_sinks_and_a_nose_up_one_holds_or_gains_height(string behaviour, double physicsRate)
     {
         float lastEnd = float.MinValue;
-        foreach (float pitch in new[] { 0f, 10f, 20f, 30f, 40f })
+        // Under InWorldz an airplane held 10 degrees nose up holds its nose: the attractor goes dormant once the tilt has stopped
+        // changing (VehicleDynamics.cs:1255-1264), and it flies on at its height (ends 88.7 m at one step per heartbeat, 67.6 m at
+        // 45 Hz, from 85 m), where at 15 degrees and up the tilt keeps changing, the attractor stays awake and the nose comes
+        // down. The controller run once per step had the tilt jitter by more than the dormancy limit at 10 degrees and so was
+        // never dormant there (25.5 m and 29.8 m). The ends rise with the pitch from 15 degrees on, so that is where InWorldz is read.
+        float[] pitches = behaviour == "InWorldz" ? new[] { 0f, 15f, 20f, 30f, 40f } : new[] { 0f, 10f, 20f, 30f, 40f };
+        foreach (float pitch in pitches)
         {
             RunResult run = FlyAirplane(pitch, physicsRate, behaviour);
             Sample at2 = run.Samples.First(s => s.T >= 2.0), at4 = run.Samples.First(s => s.T >= 4.0), end = run.Samples[^1];
