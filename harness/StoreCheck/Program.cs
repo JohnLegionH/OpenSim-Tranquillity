@@ -33,7 +33,8 @@
 // Modes (one process per mode; the upgrade check runs "baseline" with the baseline tree's build and then
 // "upgrade" with the target tree's build against the same database):
 //   fresh    : empty database; every store migrates from its first step; checks version, newest step,
-//              expected columns; then the round trips named by --checks.
+//              expected columns; then the round trips named by --checks. With the "grid" check, on MySQL and
+//              PostgreSQL, the grid store (the regions table, GridStore migrations) is opened and checked too.
 //   baseline : empty database; the stores create the schema and write a fixed data set; writes a snapshot
 //              (raw rows and what the stores load back) to --snap.
 //   upgrade  : opens the baseline's database with this tree's stores; same migration checks; the baseline's
@@ -153,8 +154,16 @@ public sealed class Report
     private readonly List<string> m_failures = new();
     private readonly List<string> m_passes = new();
     private readonly List<string> m_known = new();
+    private readonly List<string> m_notApplicable = new();
 
     public Report(Options opts) { m_opts = opts; }
+
+    /// <summary>A requested check this database kind has nothing to check for. Reported, never a failure.</summary>
+    public void NotApplicable(string check, string why)
+    {
+        m_notApplicable.Add($"{check}: {why}");
+        Console.WriteLine($"  NOT APPLICABLE {check}: {why}");
+    }
 
     public void Section(string title) => Console.WriteLine($"\n===== {title} =====");
     public void Info(string s) => Console.WriteLine("  " + s);
@@ -205,6 +214,8 @@ public sealed class Report
             Console.WriteLine("  FAIL " + f);
         foreach (var f in m_known)
             Console.WriteLine("  KNOWN " + f);
+        foreach (var f in m_notApplicable)
+            Console.WriteLine("  NOT APPLICABLE " + f);
         string summary = Environment.GetEnvironmentVariable("GITHUB_STEP_SUMMARY");
         if (!string.IsNullOrEmpty(summary))
         {
@@ -215,6 +226,8 @@ public sealed class Report
                 sb.AppendLine("- FAIL " + f.Split('\n')[0]);
             foreach (var f in m_known)
                 sb.AppendLine("- KNOWN " + f.Split('\n')[0]);
+            foreach (var f in m_notApplicable)
+                sb.AppendLine("- NOT APPLICABLE " + f);
             File.AppendAllText(summary, sb.ToString());
         }
         return m_failures.Count == 0 ? 0 : 1;
@@ -266,7 +279,7 @@ public static class Capture
 // Database context: connections, store construction, schema reads, raw dumps
 // ---------------------------------------------------------------------------------------------------------
 
-public enum StoreKind { Region, Estate, Inventory }
+public enum StoreKind { Region, Estate, Inventory, Grid }
 
 public sealed class Ctx
 {
@@ -312,6 +325,19 @@ public sealed class Ctx
         _ => throw new InvalidOperationException()
     };
 
+    /// <summary>The grid store (the regions table) is checked when asked for, on the servers that have one.</summary>
+    public bool GridApplies => Opts.Checks.Contains("grid") && Db != "sqlite";
+
+    /// <summary>The stores this run opens and checks: the three always, the grid store with the "grid" check.</summary>
+    public StoreKind[] ActiveKinds => GridApplies ? new[] { StoreKind.Region, StoreKind.Estate, StoreKind.Inventory, StoreKind.Grid } : Kinds;
+
+    /// <summary>Says that a requested grid check has nothing to run on this database kind.</summary>
+    public void NoteGridNotApplicable(Report report)
+    {
+        if (Opts.Checks.Contains("grid") && Db == "sqlite")
+            report.NotApplicable("grid", "SQLite has no grid store (there is no SQLite implementation of IRegionData)");
+    }
+
     public DbConnection OpenRaw(StoreKind kind)
     {
         DbConnection c = Db switch
@@ -332,6 +358,7 @@ public sealed class Ctx
         StoreKind.Region => "RegionStore",
         StoreKind.Estate => "EstateStore",
         StoreKind.Inventory => Db == "sqlite" ? "XInventoryStore" : "InventoryStore",
+        StoreKind.Grid => "GridStore",
         _ => throw new InvalidOperationException()
     };
 
@@ -377,8 +404,17 @@ public sealed class Ctx
         _ => throw new InvalidOperationException()
     };
 
+    /// <summary>The grid store on the "regions" table, as Robust opens it; its constructor runs the GridStore migrations.</summary>
+    public IRegionData NewGridStore() => Db switch
+    {
+        "mysql" => new MySqlRegionData(ConnFor(StoreKind.Grid), "regions"),
+        "pgsql" => new PGSQLRegionData(ConnFor(StoreKind.Grid), "regions"),
+        _ => throw new NotSupportedException("no grid store for " + Db)
+    };
+
     public object NewStore(StoreKind kind) => kind switch
     {
+        StoreKind.Grid => NewGridStore(),
         StoreKind.Region => NewRegionStore(),
         StoreKind.Estate => NewEstateStore(),
         StoreKind.Inventory => NewInventoryStore(),
@@ -572,7 +608,7 @@ public static class MigrationText
     /// </summary>
     public static void CheckSchema(Ctx ctx, Report report, string check)
     {
-        foreach (StoreKind kind in Ctx.Kinds)
+        foreach (StoreKind kind in ctx.ActiveKinds)
         {
             string name = ctx.MigrationName(kind);
             var steps = Steps(ctx.StoreAssembly, name);
@@ -619,13 +655,130 @@ public static class MigrationText
                 else
                     report.Pass(check, $"expected column {e.table}.{e.column}: type {col.Type}, nullable, default {col.Default ?? "none"}");
             }
+
+            if (kind == StoreKind.Grid)
+                CheckAllSteps(ctx, report, check, c, name, steps);
         }
+    }
+
+    private static readonly Regex s_notAColumn = new(@"^(CONSTRAINT|INDEX|KEY|UNIQUE|PRIMARY|FOREIGN|FULLTEXT|SPATIAL|CHECK)$", RegexOptions.IgnoreCase);
+
+    private static string BodyOf(string stmt)
+    {
+        int open = stmt.IndexOf('(');
+        if (open < 0) return "";
+        int depth = 0;
+        for (int i = open; i < stmt.Length; i++)
+        {
+            if (stmt[i] == '(') depth++;
+            else if (stmt[i] == ')' && --depth == 0) return stmt.Substring(open + 1, i - open - 1);
+        }
+        return stmt.Substring(open + 1);
+    }
+
+    /// <summary>Column names of a CREATE TABLE body: the first word of each top-level comma separated part.</summary>
+    private static IEnumerable<string> BodyColumns(string body)
+    {
+        var parts = new List<string>();
+        int depth = 0, from = 0;
+        for (int i = 0; i < body.Length; i++)
+        {
+            if (body[i] == '(') depth++;
+            else if (body[i] == ')') depth--;
+            else if (body[i] == ',' && depth == 0) { parts.Add(body.Substring(from, i - from)); from = i + 1; }
+        }
+        parts.Add(body.Substring(from));
+        foreach (string part in parts)
+        {
+            var m = Regex.Match(part, @"^\s*([`""\[\]\w]+)");
+            if (!m.Success) continue;
+            string word = Unquote(m.Groups[1].Value);
+            if (!s_notAColumn.IsMatch(word))
+                yield return word;
+        }
+    }
+
+    /// <summary>
+    /// Replays every step of a store's text in order (CREATE TABLE, DROP TABLE, RENAME TO, ADD and DROP COLUMN) and
+    /// returns the tables and columns that must exist at the end. A table a later step drops is not expected; one
+    /// it renames is followed under its new name.
+    /// </summary>
+    public static Dictionary<string, HashSet<string>> Replay(SortedList<int, string> steps)
+    {
+        var live = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (string raw in steps.Values)
+        {
+            string text = Regex.Replace(Regex.Replace(raw, @"/\*.*?\*/", "", RegexOptions.Singleline), @"--[^\n]*", "");
+            foreach (string stmt in text.Split(';'))
+            {
+                var create = Regex.Match(stmt, @"^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`""\[\]\w\.]+)", RegexOptions.IgnoreCase);
+                if (create.Success)
+                {
+                    string t = LastPart(create.Groups[1].Value);
+                    if (!live.TryGetValue(t, out var set)) live[t] = set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (string col in BodyColumns(BodyOf(stmt.Substring(create.Length))))
+                        set.Add(col);
+                    continue;
+                }
+                var drop = Regex.Match(stmt, @"^\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([`""\[\]\w\.]+)", RegexOptions.IgnoreCase);
+                if (drop.Success)
+                {
+                    live.Remove(LastPart(drop.Groups[1].Value));
+                    continue;
+                }
+                var alter = Regex.Match(stmt, @"^\s*ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?([`""\[\]\w\.]+)(.*)$", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                if (!alter.Success) continue;
+                string table = LastPart(alter.Groups[1].Value);
+                string rest = alter.Groups[2].Value;
+                var rename = Regex.Match(rest, @"^\s*RENAME\s+(?:TO\s+)?([`""\[\]\w\.]+)\s*$", RegexOptions.IgnoreCase);
+                if (rename.Success)
+                {
+                    if (live.Remove(table, out var moved))
+                        live[LastPart(rename.Groups[1].Value)] = moved;
+                    continue;
+                }
+                if (!live.TryGetValue(table, out var cols)) continue;
+                foreach (Match a in Regex.Matches(rest, @"\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([`""\[\]\w]+)", RegexOptions.IgnoreCase))
+                {
+                    string col = Unquote(a.Groups[1].Value);
+                    if (!s_notAColumn.IsMatch(col))
+                        cols.Add(col);
+                }
+                foreach (Match d in Regex.Matches(rest, @"\bDROP\s+COLUMN\s+([`""\[\]\w]+)", RegexOptions.IgnoreCase))
+                    cols.Remove(Unquote(d.Groups[1].Value));
+            }
+        }
+        return live;
+    }
+
+    /// <summary>Every table and column the store's whole migration text leaves behind exists in the database.</summary>
+    private static void CheckAllSteps(Ctx ctx, Report report, string check, DbConnection c, string name, SortedList<int, string> steps)
+    {
+        var expected = Replay(steps);
+        var tables = ctx.Tables(c);
+        int tablesOk = 0, columnsOk = 0;
+        foreach (var (t, wanted) in expected.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            if (!tables.Any(x => string.Equals(x, t, StringComparison.OrdinalIgnoreCase)))
+            {
+                report.Fail(check, $"{name} (all {steps.Count} steps): table {t} missing");
+                continue;
+            }
+            tablesOk++;
+            var have = ctx.Columns(c, t);
+            foreach (string col in wanted.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            {
+                if (have.Any(x => string.Equals(x.Name, col, StringComparison.OrdinalIgnoreCase))) columnsOk++;
+                else report.Fail(check, $"{name} (all {steps.Count} steps): column {t}.{col} missing (table has {have.Count} columns)");
+            }
+        }
+        report.Pass(check, $"{name} (all {steps.Count} steps): {tablesOk} of {expected.Count} tables and {columnsOk} columns the text defines exist");
     }
 
     /// <summary>Opens every store once (running its migrations) and fails on any failed migration command.</summary>
     public static void OpenAll(Ctx ctx, Report report, string check)
     {
-        foreach (StoreKind kind in Ctx.Kinds)
+        foreach (StoreKind kind in ctx.ActiveKinds)
         {
             int mark = Capture.Mark;
             object store = null;
@@ -657,6 +810,7 @@ public static class Modes
     public static void Fresh(Ctx ctx, Report report)
     {
         report.Section("fresh: migrate an empty database");
+        ctx.NoteGridNotApplicable(report);
         MigrationText.OpenAll(ctx, report, "fresh");
         MigrationText.CheckSchema(ctx, report, "fresh");
         RoundTrips.Run(ctx, report, "fresh");
@@ -665,6 +819,7 @@ public static class Modes
     public static void Baseline(Ctx ctx, Report report)
     {
         report.Section("baseline: create the schema and write the data set");
+        ctx.NoteGridNotApplicable(report);
         MigrationText.OpenAll(ctx, report, "baseline");
         BaselineData.Write(ctx, report);
         int mark = Capture.Mark;
@@ -681,6 +836,7 @@ public static class Modes
         var snap = JsonSerializer.Deserialize<Snapshot>(File.ReadAllText(ctx.Opts.Snap));
 
         report.Section("upgrade: open the baseline's database with this tree's stores");
+        ctx.NoteGridNotApplicable(report);
         var before = ctx.DumpAll();
         CompareRaw(report, "upgrade raw (before opening)", snap.Raw, before, strictColumns: true);
 
@@ -708,6 +864,9 @@ public static class Modes
         foreach (var k in loaded.Keys.Except(snap.Loaded.Keys))
             report.Fail("upgrade load", $"{k}: present after the upgrade, not in the baseline");
         report.Pass("upgrade load", $"{same} of {snap.Loaded.Count} loaded values equal to the baseline's");
+
+        if (ctx.GridApplies)
+            BaselineData.CheckGridAfterUpgrade(ctx, report);
 
         RoundTrips.Run(ctx, report, "upgrade");
     }
@@ -860,6 +1019,79 @@ public static class BaselineData
         Part(report, "baseline write region", () => WriteRegion(ctx));
         Part(report, "baseline write estate", () => WriteEstate(ctx));
         Part(report, "baseline write inventory", () => WriteInventory(ctx));
+        if (ctx.GridApplies)
+            Part(report, "baseline write grid", () => WriteGrid(ctx));
+    }
+
+    public static readonly UUID GridRegion1 = Id(0x601), GridRegion2 = Id(0x602);
+    private const string GridName1 = "Example Region One", GridName2 = "Example Region Two";
+
+    /// <summary>
+    /// A grid store row with the fields the grid service sends (GridRegion.ToKeyValuePairs plus the handle and
+    /// owner it adds). viewerLocalAddress is only put in the data when given, as the grid service does.
+    /// </summary>
+    public static RegionData GridRow(UUID id, string name, int x, int y, int size, int flags, string viewerLocalAddress)
+    {
+        var d = new RegionData { RegionID = id, ScopeID = UUID.Zero, RegionName = name, posX = x, posY = y, sizeX = size, sizeY = size, Data = new Dictionary<string, object>() };
+        d.Data["regionHandle"] = Utils.UIntsToLong((uint)x, (uint)y);
+        d.Data["serverIP"] = "grid.example.org";
+        d.Data["serverHttpPort"] = "9000";
+        d.Data["serverURI"] = "http://grid.example.org:9000/";
+        d.Data["serverPort"] = "9000";
+        d.Data["regionMapTexture"] = Id(0x610).ToString();
+        d.Data["parcelMapTexture"] = Id(0x611).ToString();
+        d.Data["access"] = "21";
+        d.Data["regionSecret"] = "example-secret";
+        d.Data["owner_uuid"] = Owner.ToString();
+        d.Data["Token"] = "example-token";
+        d.Data["flags"] = flags.ToString();
+        d.Data["last_seen"] = 1700000000;
+        if (viewerLocalAddress is not null)
+            d.Data["viewerLocalAddress"] = viewerLocalAddress;
+        return d;
+    }
+
+    private static void WriteGrid(Ctx ctx)
+    {
+        var gs = ctx.NewGridStore();
+        int online = (int)OpenSim.Framework.RegionFlags.RegionOnline;
+        int defaultRegion = online | (int)OpenSim.Framework.RegionFlags.DefaultRegion;
+        if (!gs.Store(GridRow(GridRegion1, GridName1, 256000, 256000, 256, online, null)))
+            throw new Exception("Store returned false for " + GridName1);
+        if (!gs.Store(GridRow(GridRegion2, GridName2, 257024, 256000, 512, defaultRegion, null)))
+            throw new Exception("Store returned false for " + GridName2);
+        Ctx.Close(gs);
+    }
+
+    /// <summary>A grid row as a comparable string. viewerLocalAddress is left out: it is checked on its own.</summary>
+    public static string GridString(RegionData r) =>
+        r is null ? "null" : $"{r.RegionID} scope={r.ScopeID} name={r.RegionName} pos={r.posX},{r.posY} size={r.sizeX}x{r.sizeY} " +
+            string.Join(" ", r.Data.Where(kv => kv.Key != "viewerLocalAddress").OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => kv.Key + "=" + Ctx.Val(kv.Value)));
+
+    /// <summary>The viewerLocalAddress a row reads back with: null when the key is absent, null or empty.</summary>
+    public static string GridAddress(RegionData r) =>
+        r?.Data is not null && r.Data.TryGetValue("viewerLocalAddress", out object v) && v is not null && v.ToString().Length > 0 ? v.ToString() : null;
+
+    /// <summary>After the target's migrations: the baseline's grid rows have no viewerLocalAddress.</summary>
+    public static void CheckGridAfterUpgrade(Ctx ctx, Report report)
+    {
+        const string check = "upgrade grid";
+        report.Section("upgrade: the baseline's grid rows have no viewer local address");
+        int mark = Capture.Mark;
+        var gs = ctx.NewGridStore();
+        foreach (var id in new[] { GridRegion1, GridRegion2 })
+        {
+            var r = gs.Get(id, UUID.Zero);
+            if (r is null) { report.Fail(check, $"region {id}: not read back"); continue; }
+            bool present = r.Data.TryGetValue("viewerLocalAddress", out object raw);
+            string addr = GridAddress(r);
+            if (addr is null)
+                report.Pass(check, $"{r.RegionName}: viewerLocalAddress {(present ? "present, " + (raw is null ? "null" : "empty") : "absent")}");
+            else
+                report.Fail(check, $"{r.RegionName}: viewerLocalAddress is '{addr}', expected none");
+        }
+        Ctx.Close(gs);
+        report.CheckLog(check, mark);
     }
 
     private static void WriteRegion(Ctx ctx)
@@ -945,6 +1177,16 @@ public static class BaselineData
         d["inventory folders"] = string.Join("\n", inv.GetFolders(new[] { "agentID" }, new[] { Agent.ToString() }).OrderBy(f => f.folderID.ToString()).Select(FolderString));
         d["inventory items"] = string.Join("\n", inv.GetItems(new[] { "avatarID" }, new[] { Agent.ToString() }).OrderBy(i => i.inventoryID.ToString()).Select(ItemString));
         Ctx.Close(inv);
+
+        if (ctx.GridApplies)
+        {
+            var gs = ctx.NewGridStore();
+            foreach (var id in new[] { GridRegion1, GridRegion2 })
+                d["grid region " + id] = GridString(gs.Get(id, UUID.Zero));
+            d["grid by name"] = string.Join("\n", gs.Get("Example Region%", UUID.Zero).OrderBy(r => r.RegionID.ToString()).Select(GridString));
+            d["grid by position"] = GridString(gs.Get(256000 + 5, 256000 + 5, UUID.Zero)) + "\n" + GridString(gs.Get(257024 + 300, 256000 + 300, UUID.Zero));
+            Ctx.Close(gs);
+        }
         return d;
     }
 
@@ -992,6 +1234,69 @@ public static class RoundTrips
         }
         if (ctx.Opts.Checks.Contains("sit"))
             Guarded(report, phase + " sit target round trip", () => SitTargets(ctx, report, phase + " sit target round trip"));
+        if (ctx.GridApplies)
+            Guarded(report, phase + " grid round trip", () => Grid(ctx, report, phase + " grid round trip"));
+    }
+
+    private static void Grid(Ctx ctx, Report report, string check)
+    {
+        const string ipv4 = "10.20.30.40", ipv6 = "fd00::10", longest = "ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255";
+        Expect(report, check, "longest address text length", 45, longest.Length);
+        UUID id1 = UUID.Random(), id2 = UUID.Random(), id3 = UUID.Random();
+        string name1 = "rt-grid-1-" + id1, name2 = "rt-grid-2-" + id2, name3 = "rt-grid-3-" + id3;
+        int x1 = 300032, x2 = 300288, x3 = 300544, y = 300032, flags = (int)OpenSim.Framework.RegionFlags.RegionOnline;
+
+        var a = ctx.NewGridStore();
+        Expect(report, check, "store region 1 with " + ipv4, true, a.Store(BaselineData.GridRow(id1, name1, x1, y, 256, flags, ipv4)));
+        Expect(report, check, "store region 2 with the longest address", true, a.Store(BaselineData.GridRow(id2, name2, x2, y, 256, flags, longest)));
+        Expect(report, check, "store region 3 without the key", true, a.Store(BaselineData.GridRow(id3, name3, x3, y, 256, flags, null)));
+        Ctx.Close(a);
+
+        var b = ctx.NewGridStore();
+        var byId = b.Get(id1, UUID.Zero);
+        if (byId is null) report.Fail(check, "region 1 not read back by id");
+        else
+        {
+            Expect(report, check, "by id: name", name1, byId.RegionName);
+            Expect(report, check, "by id: position", $"{x1},{y}", $"{byId.posX},{byId.posY}");
+            Expect(report, check, "by id: size", 256, byId.sizeX);
+            Expect(report, check, "by id: flags", flags.ToString(), byId.Data["flags"]);
+            Expect(report, check, "by id: serverURI", "http://grid.example.org:9000/", byId.Data["serverURI"]);
+            Expect(report, check, "by id: viewerLocalAddress", ipv4, BaselineData.GridAddress(byId));
+        }
+        var byName = b.Get(name1, UUID.Zero);
+        Expect(report, check, "by name: count", 1, byName.Count);
+        if (byName.Count == 1)
+        {
+            Expect(report, check, "by name: id", id1, byName[0].RegionID);
+            Expect(report, check, "by name: viewerLocalAddress", ipv4, BaselineData.GridAddress(byName[0]));
+        }
+        var byPos = b.Get(x1 + 10, y + 10, UUID.Zero);
+        Expect(report, check, "by position: id", id1, byPos?.RegionID ?? UUID.Zero);
+        Expect(report, check, "by position: viewerLocalAddress", ipv4, BaselineData.GridAddress(byPos));
+
+        // The same region stored again takes the UPDATE path.
+        Expect(report, check, "store region 1 again with " + ipv6, true, b.Store(BaselineData.GridRow(id1, name1, x1, y, 256, flags, ipv6)));
+        Ctx.Close(b);
+
+        var c = ctx.NewGridStore();
+        Expect(report, check, "after the update, by id: viewerLocalAddress", ipv6, BaselineData.GridAddress(c.Get(id1, UUID.Zero)));
+        var againByName = c.Get(name1, UUID.Zero);
+        Expect(report, check, "after the update, by name: count (updated, not a second row)", 1, againByName.Count);
+        Expect(report, check, "after the update, by name: viewerLocalAddress", ipv6, againByName.Count == 1 ? BaselineData.GridAddress(againByName[0]) : null);
+        Expect(report, check, "after the update, by position: viewerLocalAddress", ipv6, BaselineData.GridAddress(c.Get(x1 + 10, y + 10, UUID.Zero)));
+
+        var r2 = c.Get(id2, UUID.Zero);
+        Expect(report, check, "longest address: length read back", 45, BaselineData.GridAddress(r2)?.Length ?? -1);
+        Expect(report, check, "longest address: value", longest, BaselineData.GridAddress(r2));
+        var r2ByName = c.Get(name2, UUID.Zero);
+        Expect(report, check, "longest address, by name", longest, r2ByName.Count == 1 ? BaselineData.GridAddress(r2ByName[0]) : null);
+
+        var r3 = c.Get(id3, UUID.Zero);
+        Expect(report, check, "stored without the key: region read back", id3, r3?.RegionID ?? UUID.Zero);
+        Expect(report, check, "stored without the key: viewerLocalAddress", "<none>", BaselineData.GridAddress(r3) ?? "<none>");
+        Expect(report, check, "stored without the key, by position", "<none>", BaselineData.GridAddress(c.Get(x3 + 10, y + 10, UUID.Zero)) ?? "<none>");
+        Ctx.Close(c);
     }
 
     private static void Guarded(Report report, string check, Action a)
