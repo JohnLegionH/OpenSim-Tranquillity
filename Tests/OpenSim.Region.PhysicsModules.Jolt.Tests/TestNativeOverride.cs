@@ -22,6 +22,8 @@ internal static class TestNativeOverride
     [ModuleInitializer]
     internal static void Apply()
     {
+        // Tests of a vehicle controller's laws run on bodies only the controller acts on; see MaterialPins.
+        OpenSim.Region.PhysicsModules.Jolt.Harness.MaterialPins.Enabled = true;
         if (Environment.GetEnvironmentVariable(Variable) == "1")
             JoltNative.AcceptUnrecordedForTest = true;
     }

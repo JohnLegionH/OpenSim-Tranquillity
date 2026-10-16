@@ -85,6 +85,7 @@ namespace OpenSim.Region.PhysicsModules.Jolt
         internal float VehicleGroundGravityFactor => _joltConfig.VehicleGroundGravityFactor;
         internal float BodyMaxLinearSpeed => _joltConfig.BodyMaxLinearSpeed;
         internal float BodyMaxAngularSpeed => _joltConfig.BodyMaxAngularSpeed;
+        internal JoltConfig.BasicForces BasicForcesBehaviour => _joltConfig.BasicForcesBehaviour;
         internal float PrimLinearDamping => _joltConfig.PrimLinearDamping;
         internal float PrimAngularDamping => _joltConfig.PrimAngularDamping;
         internal bool HonourConvexMesh => _joltConfig.HonourConvexMesh;

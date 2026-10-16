@@ -62,7 +62,7 @@ public class AngularTargetTests
                 act?.Invoke(r, r.PhysicsTime);
             },
         };
-        Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz });
+        Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz, Jolt = { ["PrimLinearDamping"] = "0.05", ["PrimAngularDamping"] = "0.05" } });
         return trace;
     }
 

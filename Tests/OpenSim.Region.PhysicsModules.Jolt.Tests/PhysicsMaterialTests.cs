@@ -56,6 +56,9 @@ public class PhysicsMaterialTests
             },
         };
         var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsHz };
+        // The module's damping, with the earlier combine rules and terrain the harness pins (see MaterialPins).
+        o.Jolt["PrimLinearDamping"] = JoltConfig.DefaultPrimLinearDamping.ToString(CultureInfo.InvariantCulture);
+        o.Jolt["PrimAngularDamping"] = JoltConfig.DefaultPrimAngularDamping.ToString(CultureInfo.InvariantCulture);
         foreach ((string key, string value) in jolt)
             o.Jolt[key] = value;
         Harness.Harness.Run(sc, o);
@@ -494,6 +497,7 @@ public class PhysicsMaterialTests
     public void A_coasting_box_loses_speed_and_spin_as_its_damping_gives(double physicsHz, float? damping)
     {
         double c = damping ?? JoltConfig.DefaultPrimLinearDamping;
+        double ca = damping ?? JoltConfig.DefaultPrimAngularDamping;
         double h = Substep(physicsHz);
         double start = double.NaN;
         List<Point> trace = Run(physicsHz, 2.5f, r =>
@@ -512,15 +516,15 @@ public class PhysicsMaterialTests
         Point end = At(trace, start + 2.0);
         double keep = Math.Pow(1 - c * h, Math.Round((end.T - start) / h));
         Within((float)(5 * keep), 1f, end.Velocity.X);
-        Within((float)(2 * keep), 1f, end.Spin.Z);
+        Within((float)(2 * Math.Pow(1 - ca * h, Math.Round((end.T - start) / h))), 1f, end.Spin.Z);
     }
 
     [Fact]
-    public void The_damping_settings_default_to_0_05_and_are_read_from_Jolt()
+    public void The_damping_settings_default_to_0_02_and_0_05_and_are_read_from_Jolt()
     {
         var warnings = new List<string>();
         JoltConfig d = JoltConfig.FromConfig(new Nini.Config.IniConfigSource(), warnings);
-        Assert.Equal(0.05f, d.PrimLinearDamping);
+        Assert.Equal(0.02f, d.PrimLinearDamping);
         Assert.Equal(0.05f, d.PrimAngularDamping);
 
         var src = new Nini.Config.IniConfigSource();
@@ -535,7 +539,7 @@ public class PhysicsMaterialTests
         cfg.Set("PrimLinearDamping", "-1");
         cfg.Set("PrimAngularDamping", "abc");
         JoltConfig bad = JoltConfig.FromConfig(src, warnings);
-        Assert.Equal(0.05f, bad.PrimLinearDamping);
+        Assert.Equal(0.02f, bad.PrimLinearDamping);
         Assert.Equal(0.05f, bad.PrimAngularDamping);
         Assert.Equal(2, warnings.Count);
     }
@@ -593,11 +597,10 @@ public class PhysicsMaterialTests
     [InlineData("crash-wall", 0.0)]
     [InlineData("crash-drop", 45.0)]
     [InlineData("crash-drop", 0.0)]
-    public void A_vehicle_keeps_its_own_damping_and_contact_material(string scenario, double physicsHz)
+    public void A_vehicle_ignores_the_gravity_multiplier(string scenario, double physicsHz)
     {
-        // The same vehicle run, with the prim damping settings at 0.5 and the car's own physics material set to rubber
-        // with a gravity multiplier of 2, gives the same trace to the bit: a vehicle has no damping and its own contact
-        // friction and restitution, and its gravity is the vehicle's.
+        // The same vehicle run, with a gravity multiplier of 2, gives the same trace to the bit: a vehicle's gravity is
+        // the vehicle's own. (Its damping and contact materials are those of any prim; MaterialsTests checks them.)
         Scenario sc = Harness.Harness.Find(scenario);
         RunResult Once(bool changed)
         {
@@ -610,18 +613,10 @@ public class PhysicsMaterialTests
                 {
                     sc.Setup(r);
                     if (changed)
-                    {
-                        r.Actor.SetMaterial(6);
                         r.Actor.GravModifier = 2f;
-                    }
                 },
             };
             var o = new HarnessOptions { RateHz = Heartbeat, PhysicsRateHz = physicsHz };
-            if (changed)
-            {
-                o.Jolt["PrimLinearDamping"] = "0.5";
-                o.Jolt["PrimAngularDamping"] = "0.5";
-            }
             return Harness.Harness.Run(wrapped, o);
         }
         RunResult plain = Once(false), changedRun = Once(true);

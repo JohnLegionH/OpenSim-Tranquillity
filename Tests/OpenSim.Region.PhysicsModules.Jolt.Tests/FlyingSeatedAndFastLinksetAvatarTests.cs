@@ -56,7 +56,7 @@ public class FlyingSeatedAndFastLinksetAvatarTests
     private static RunResult Run(Scenario sc, double physicsHz, bool pinned = false)
         => Harness.Harness.Run(sc, new HarnessOptions
         {
-            RateHz = 11.0, PhysicsRateHz = physicsHz, Jolt = { ["AvatarPushMaxSpeed"] = "10" },
+            RateHz = 11.0, PhysicsRateHz = physicsHz, Jolt = { ["AvatarPushMaxSpeed"] = "10", ["PrimLinearDamping"] = "0.05", ["PrimAngularDamping"] = "0.05" },
             SimulatorAvatars = pinned ? HarnessPins.EarlierAvatar : true,
         });
 

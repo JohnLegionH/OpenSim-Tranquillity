@@ -526,16 +526,22 @@ Life wiki documents them (`llSetPhysicsMaterial`, https://wiki.secondlife.com/wi
 - Friction (0 to 255), restitution (0 to 1), the gravity multiplier (-1 to 28) and density (1 to
   22587 kg/m^3) each act on the object; a value outside its range is clamped to it, and one that is
   not a number is refused and logged. A change wakes a sleeping object.
-- `PRIM_MATERIAL` sets the material's friction and restitution: stone 0.8 / 0.4, metal 0.3 / 0.4,
-  glass 0.2 / 0.7, wood 0.6 / 0.5, flesh 0.9 / 0.3, plastic 0.4 / 0.7, rubber 0.9 / 0.9, light
-  0.6 / 0.5. A new prim gets the friction and restitution the simulator keeps for it (wood by
+- `PRIM_MATERIAL` sets the material's friction and restitution. `[Jolt] BasicForcesBehaviour` picks
+  the table: `InWorldz` (the default, InWorldz's own presets; Second Life's behaviour with InWorldz's
+  fixes) or `SecondLife` (the wiki's). Wiki table: stone 0.8 / 0.4, metal 0.3 / 0.4, glass 0.2 / 0.7,
+  wood 0.6 / 0.5, flesh 0.9 / 0.3, plastic 0.4 / 0.7, rubber 0.9 / 0.9, light 0.6 / 0.5. The InWorldz
+  table differs from it in one row: stone is 0.5 / 0.05 (a road acts mostly like the ground). It
+  maps light to wood, whose figures are the wiki's light ones. PhysX has a static and a dynamic friction
+  where Jolt has one, so the static one is used. A new prim gets the friction and restitution the simulator keeps for it (wood by
   default). The simulator's own table gives rubber a restitution of 0.95 and light 0 / 0, so a
   rubber or light prim rezzed or loaded has those until a script sets its material again.
-- Two touching surfaces combine as in ubODE (the wiki gives no rule): friction is the square root of
-  the product of the two, restitution the product. A box sliding on a surface of the same friction
-  `f` therefore feels `f`. A bounce needs a closing speed of at least 1 m/s (Jolt's
-  `MinVelocityForRestitution`). The terrain has friction 0.6 and restitution 0, so nothing bounces
-  off the ground.
+- Two touching surfaces combine by `[Jolt] FrictionCombine` and `RestitutionCombine` (the wiki gives
+  no rule): `Average` (the default, what PhysX does when no mode is set), `GeometricMean` (Jolt's own
+  rule for friction), `Multiply` (ubODE's rule for restitution), `Min` or `Max` (Jolt's own rule for
+  restitution). A box sliding on a surface of the same friction `f` feels `f` under every rule. A
+  bounce needs a closing speed of at least 1 m/s (Jolt's `MinVelocityForRestitution`). The terrain
+  has friction 0.4 and restitution 0.05 (`TerrainFriction`, `TerrainRestitution`; InWorldz's ground),
+  so a ball of restitution 0.9 dropped on it rises to 0.475 squared, 23 percent, of its drop.
 - A dropped object rebounds to its restitution squared times the height it fell (less its damping),
   within 5 percent, for restitution 0.1 to 0.9, drops of 0.5 to 10 m and step rates of 11 to 90 Hz.
   Jolt bounces a body from wherever its step finds it, up to one step's travel above or into the
@@ -555,15 +561,19 @@ Life wiki documents them (`llSetPhysicsMaterial`, https://wiki.secondlife.com/wi
   inertia, follow each prim's density too, so a heavy prim at one end pulls the centre of mass
   toward it, and `llGetCenterOfMass` reports that same point. The root prim's gravity multiplier
   applies to the whole linkset, as in ubODE.
-- A vehicle sets its own contact friction (`VehicleContactFriction`), restitution (0) and damping
-  (0) and ignores the gravity multiplier; the prim's values come back when the vehicle type is
-  removed.
+- A vehicle keeps each part's own friction and restitution. While it slides in contact it slows by that
+  friction plus its own friction timescales (v(t) = (v0 + mu g T) e^(-t/T) - mu g T along an axis of
+  timescale T); in the air only the timescales act. `[Jolt] VehicleContactFriction`, when set, replaces
+  every part's friction. A sled's parts all take `SledContactFriction` (0 by default) and keep their own
+  restitution, density and gravity multiplier; when the type changes to another or to none, each part's
+  material friction comes back. A vehicle is damped as any physical prim is, and ignores the gravity
+  multiplier.
 
 Damping is two `[Jolt]` keys:
 
 | Key | Default | What it sets |
 |---|---|---|
-| `PrimLinearDamping`, `PrimAngularDamping` | 0.05, 0.05 | Linear and angular damping of a physical prim that is not a vehicle, per second (0 to 100): a moving object loses about that share of its speed and spin each second. The same at every step rate. ubODE's, as a rate, are 0.1001 and 0.0250 (dBodySetDamping .002 and .0005 per 0.020 s step). |
+| `PrimLinearDamping`, `PrimAngularDamping` | 0.02, 0.05 | Linear and angular damping of a physical prim, vehicles included, per second (0 to 100): a moving object loses about that share of its speed and spin each second. The same at every step rate. These are InWorldz's figures for every physical object. ubODE's, as a rate, are 0.1001 and 0.0250 (dBodySetDamping .002 and .0005 per 0.020 s step). |
 
 ## Mesh prims
 
@@ -1461,7 +1471,11 @@ the motor decay cap, which is Second Life's documented 120 s under `SecondLife` 
 | `VehicleMaxMotorOffset` | 100 | Linear motor offset (m, each axis). |
 | `VehicleMinHoverHeight`, `VehicleMaxHoverHeight` | -128, 10000 | Hover height range (m). Second Life documents a maximum of 100 (https://wiki.secondlife.com/wiki/Linden_Vehicle_Tutorial). |
 | `VehicleSledAssist` | 0.045 | The sled's slope assist: a sled with its nose down is pushed along it at this share of g times the square root of the sine of its pitch (a tenth of it, back down the slope, nose up). 0.045 is what the InWorldz sled code gave at its 15 ms step; it is now the same at any step rate. 0 turns it off. |
-| `VehicleContactFriction` | 0 | The contact friction of a vehicle body (BulletSim's `VehicleFriction`, also 0 by default): 0 leaves the vehicle's friction timescales as the only friction on it. |
+| `VehicleContactFriction` | unset | Left unset, each part of a vehicle keeps its own material's friction, which adds to the vehicle's friction timescales while it slides in contact. A number (0 to 10) replaces every part's friction; 0 leaves the timescales as the only friction on a vehicle in contact. |
+| `SledContactFriction` | 0 | The contact friction of every part of a sled, whatever its material (0 to 10). |
+| `BasicForcesBehaviour` | InWorldz | `InWorldz` or `SecondLife`: which preset table `PRIM_MATERIAL` uses (see "Physics material on objects"). |
+| `FrictionCombine`, `RestitutionCombine` | Average, Average | How two surfaces combine: `Average`, `GeometricMean`, `Multiply`, `Min` or `Max`. |
+| `TerrainFriction`, `TerrainRestitution` | 0.4, 0.05 | The terrain's friction (0 to 255) and restitution (0 to 1). |
 | `VehicleRestSpeed` | 0.1 | The rest rule (m/s), see "Parked vehicles sleep" below. 0 turns it off. |
 | `BodyMaxLinearSpeed`, `BodyMaxAngularSpeed` | 500, 47.12389 | The physics engine's own cap on every moving body, vehicle or not (Jolt's defaults). Keep it above `VehicleMaxLinearSpeed`. |
 
@@ -1725,7 +1739,6 @@ read, not run); under `InWorldz` a vehicle with `VEHICLE_FLAG_MOUSEPOINT_STEER`,
 `_REACT_TO_CURRENTS` set never sleeps either (a sailboat, whose preset has both, among them). Second Life's
 pages say nothing about sleeping.
 
-A vehicle body has no contact friction by default (`VehicleContactFriction` 0, as BulletSim), and
 Second Life's vehicle friction is a velocity decay with no static part, so without more a car that
 comes to rest a fraction of a degree tilted (inside the engine's 2 cm contact allowance) slides along
 the tilt at a few centimetres a second. The rest rule holds such a vehicle still: when no motor is

@@ -29,6 +29,39 @@ using SOPVehicle = OpenSim.Region.Framework.Scenes.SOPVehicle;
 namespace OpenSim.Region.PhysicsModules.Jolt.Harness;
 
 /// <summary>What to run. Unset values take the scenario's defaults.</summary>
+/// <summary>
+/// [Jolt] material keys a test assembly may pin to the values the module had before vehicles kept their parts' materials
+/// and the combine rules, terrain, damping and preset defaults changed: a vehicle with no contact friction, no damping, the
+/// geometric-mean and product combine rules, terrain 0.6 / 0 and the Second Life preset table. The tests of a controller's
+/// laws (a friction timescale's decay, a motor's ramp, a rest rule) need a vehicle that only its controller acts on. Off
+/// unless <see cref="Enabled"/> is set, so the harness program and the baselines use the module's defaults.
+/// </summary>
+public static class MaterialPins
+{
+    public static bool Enabled;
+    private static readonly (string Key, string Value)[] Pins =
+    {
+        ("VehicleContactFriction", "0"), ("PrimLinearDamping", "0"), ("PrimAngularDamping", "0"),
+        ("FrictionCombine", "GeometricMean"), ("RestitutionCombine", "Multiply"),
+        ("TerrainFriction", "0.6"), ("TerrainRestitution", "0"), ("BasicForcesBehaviour", "SecondLife"),
+    };
+
+    /// <summary>A vehicle that bounces off what it hits only through its material: its restitution 0, as a vehicle's was.</summary>
+    public static void PinVehicle(OpenSim.Region.PhysicsModules.SharedBase.PhysicsActor vehicle)
+    {
+        if (Enabled)
+            vehicle.Restitution = 0f;
+    }
+
+    public static void Apply(Nini.Config.IConfig jolt)
+    {
+        if (!Enabled)
+            return;
+        foreach ((string key, string value) in Pins)
+            jolt.Set(key, value);
+    }
+}
+
 public sealed class HarnessOptions
 {
     /// <summary>The environment variable that sets <see cref="PhysicsRateHz"/>'s default, so a whole test run can
@@ -120,6 +153,8 @@ public sealed class HarnessOptions
     /// <summary>Start from the [Jolt] section of RegionServerDefaults.ini, which every simulator reads before its own ini,
     /// instead of from no keys. On by default.</summary>
     public bool ShippedConfig = true;
+    /// <summary>Run with the module's own material defaults even where <see cref="MaterialPins"/> holds the earlier ones.</summary>
+    public bool UseDefaults;
     /// <summary>Restore the scenario's vehicle from its record by this route when its setup is done, before the first
     /// heartbeat, instead of leaving it as its script set it up (<see cref="VehicleRestore"/>). Every route but the
     /// physics switch removes the actor and builds a new one from the record at the same place, as the simulator's
@@ -634,7 +669,7 @@ public sealed class Run
     {
         VehiclePart ??= VehicleRestore.NewRecord(Actor);
         VehiclePart.SetVehicleType((int)type);
-        VehicleCalls.Add(a => a.VehicleType = (int)type);
+        VehicleCalls.Add(a => { MaterialPins.PinVehicle(a); a.VehicleType = (int)type; });
     }
 
     public void SetFloat(Vehicle code, float v)
@@ -1474,6 +1509,7 @@ public static class Harness
             {
                 SetupCrashCar(r);
                 r.AddOtherBox(CarSize, new Vector3(CrashStartX + 60f, 85f, Course.Ground + CarSize.Z * 0.5f + 0.02f), West, true);
+                MaterialPins.PinVehicle(r.Other);
                 r.Other.VehicleType = (int)Vehicle.TYPE_CAR;
                 r.AlsoDriven.Add(r.Other);
             },
@@ -1713,6 +1749,8 @@ public static class Harness
                 jolt.Set(key, ShippedJolt().Get(key));
         // 0 is one step per heartbeat, set as such: the module's own default is 45 Hz. A --jolt key overrides it.
         jolt.Set("PhysicsStepRate", "0");
+        if (!o.UseDefaults)
+            MaterialPins.Apply(jolt);
         foreach (KeyValuePair<string, string> kv in o.Jolt)
             jolt.Set(kv.Key, kv.Value);
         if (o.PhysicsRateHz > 0)

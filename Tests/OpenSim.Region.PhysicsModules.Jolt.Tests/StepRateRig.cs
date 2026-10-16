@@ -13,6 +13,7 @@ using OpenSim.Framework;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.PhysicsModules.Jolt.Backend;
 using OpenSim.Region.PhysicsModules.Jolt.Vehicles;
+using OpenSim.Region.PhysicsModules.Jolt.Harness;
 using Xunit;
 
 namespace OpenSim.Region.PhysicsModules.Jolt.Tests;
@@ -67,6 +68,7 @@ internal sealed class StepRateRig : IDisposable
         IConfig jolt = config.AddConfig("Jolt");
         jolt.Set("PhysicsStepRate", rate.ToString(CultureInfo.InvariantCulture));
         jolt.Set("PhysicsStepCollisionSteps", collisionSteps.ToString(CultureInfo.InvariantCulture));
+        MaterialPins.Apply(jolt);
         more?.Invoke(jolt);
         Scene = new JoltScene();
         Scene.Initialise(config);

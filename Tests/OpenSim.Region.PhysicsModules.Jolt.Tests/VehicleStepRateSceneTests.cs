@@ -11,6 +11,7 @@ using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Region.PhysicsModules.Jolt.Harness;
 using OpenSim.Region.PhysicsModules.Jolt.Vehicles;
+using OpenSim.Region.PhysicsModules.Jolt.Harness;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -59,6 +60,7 @@ public class VehicleStepRateSceneTests
             IConfig jolt = config.AddConfig("Jolt");
             jolt.Set("PhysicsStepRate", rate.ToString(CultureInfo.InvariantCulture));
             jolt.Set("PhysicsStepCollisionSteps", collisionSteps.ToString(CultureInfo.InvariantCulture));
+            MaterialPins.Apply(jolt);
             more?.Invoke(jolt);
             Scene = new JoltScene();
             Scene.Initialise(config);

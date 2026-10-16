@@ -36,7 +36,7 @@ public class SpinKeepsTurningTests
     /// Runs the scene for <paramref name="seconds"/>, gives the prim <paramref name="impulse"/> (about region z) at the fifth
     /// heartbeat and returns its spin about z and rotation before every heartbeat, with the physics time since the impulse.
     /// </summary>
-    private List<Point> Spin(float seconds, double physicsHz, Action<Run> setup, float impulse, Action<Run> beforeImpulse = null)
+    private List<Point> Spin(float seconds, double physicsHz, Action<Run> setup, float impulse, Action<Run> beforeImpulse = null, bool pinned = false)
     {
         var trace = new List<Point>();
         double t0 = -1;
@@ -57,7 +57,7 @@ public class SpinKeepsTurningTests
                     trace.Add(new Point(r.PhysicsTime - t0, r.Actor.RotationalVelocity.Z, r.Actor.Orientation, r.AwakeBodies, r.Actor.Position.Z));
             },
         };
-        Harness.Harness.Run(sc, new HarnessOptions { RateHz = 11.0, PhysicsRateHz = physicsHz, SimulatorDefaults = true });
+        Harness.Harness.Run(sc, new HarnessOptions { UseDefaults = !pinned, RateHz = 11.0, PhysicsRateHz = physicsHz, SimulatorDefaults = true });
         foreach (Point p in trace.Where((_, i) => i % 5 == 0))
             _out.WriteLine($"t {p.T:F2} spin {p.Spin:F3} awake {p.Awake}");
         return trace;
@@ -130,7 +130,7 @@ public class SpinKeepsTurningTests
                 r.Actor.VehicleType = (int)Vehicle.TYPE_BALLOON;
                 r.Actor.VehicleFloatParam((int)Vehicle.BUOYANCY, 1f);
                 r.Actor.VehicleVectorParam((int)Vehicle.ANGULAR_FRICTION_TIMESCALE, new Vector3(timescale, timescale, timescale));
-            }, 0.1f);
+            }, 0.1f, pinned: true);
         float w1 = At(trace, 0.5).Spin;
         Assert.True(w1 > 0.5f, $"it never turned (spin {w1})");
         float expected = w1 * MathF.Exp(-4f / timescale);
@@ -156,7 +156,7 @@ public class SpinKeepsTurningTests
                 r.AddBox(new Vector3(0.5f, 0.5f, 0.5f), new Vector3(128f, 128f, ground + 12f), Quaternion.Identity);
             },
             0.1f,
-            beforeImpulse: r => r.Actor.Buoyancy = 1f);   // after four heartbeats of free fall
+            beforeImpulse: r => r.Actor.Buoyancy = 1f, pinned: true);   // after four heartbeats of free fall
         foreach (Point p in trace)
         {
             if (p.Height < ground + 0.3f) landed.Add(p);

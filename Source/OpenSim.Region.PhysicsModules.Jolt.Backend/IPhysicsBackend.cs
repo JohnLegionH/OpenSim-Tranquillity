@@ -961,9 +961,36 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
             Span<ContactReport> contacts);
     }
 
+    /// <summary>How the materials of two touching surfaces combine into the one value a contact uses.</summary>
+    public enum MaterialCombine
+    {
+        /// <summary>(a + b) / 2. PhysX's default combine mode, which Halcyon's tree never changes.</summary>
+        Average = 0,
+        /// <summary>sqrt(a x b). Jolt's own rule for friction.</summary>
+        GeometricMean,
+        /// <summary>a x b. The ubODE rule for restitution.</summary>
+        Multiply,
+        Min,
+        /// <summary>Jolt's own rule for restitution.</summary>
+        Max,
+    }
+
     public struct PhysicsBackendSettings
     {
         public Vector3 Gravity;
+
+        /// <summary>How two surfaces' friction combines in a contact. <see cref="MaterialCombine.Average"/> in an unset struct.</summary>
+        public MaterialCombine FrictionCombine;
+
+        /// <summary>How two surfaces' restitution combines in a contact. <see cref="MaterialCombine.Average"/> in an unset struct.</summary>
+        public MaterialCombine RestitutionCombine;
+
+        /// <summary>The terrain body's friction and restitution (<see cref="DefaultTerrainFriction"/> and
+        /// <see cref="DefaultTerrainRestitution"/> in <see cref="Default"/>; 0 in an unset struct).</summary>
+        public float TerrainFriction;
+        public float TerrainRestitution;
+        public const float DefaultTerrainFriction = 0.4f;
+        public const float DefaultTerrainRestitution = 0.05f;
 
         /// <summary>Upper bound on bodies. Jolt preallocates; size for worst case.</summary>
         public int MaxBodies;
@@ -1101,6 +1128,8 @@ namespace OpenSim.Region.PhysicsModules.Jolt.Backend
         public static PhysicsBackendSettings Default => new PhysicsBackendSettings
         {
             Gravity = new Vector3(0f, 0f, -9.80665f),
+            TerrainFriction = DefaultTerrainFriction,
+            TerrainRestitution = DefaultTerrainRestitution,
             MaxBodies = 65536,
             MaxBodyPairs = 65536,
             MaxContactConstraints = 16384,
