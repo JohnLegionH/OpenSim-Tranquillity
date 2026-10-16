@@ -767,6 +767,15 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
     }
 
     public bool inTransit = false;
+
+    /// <summary>
+    /// The object is deleted, not returned, when it reaches a region edge with no neighbouring region. Set for an
+    /// object rezzed by a script when Scene.ScriptRezzedObjectsDieAtEdge is on; llSetStatus(STATUS_DIE_AT_EDGE, FALSE)
+    /// clears it. Unlike DIE_AT_EDGE it does not act when the object crosses into a neighbouring region, and it is
+    /// not stored.
+    /// </summary>
+    public bool DieAtVoidEdge;
+
     private delegate SceneObjectGroup SOGCrossDelegate(SceneObjectGroup sog,Vector3 pos, TeleportObjectData tpData);
 
     /// <summary>
@@ -871,6 +880,27 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
         }, null, threadName, false);
     }
 
+    /// <summary>
+    /// Stand up every avatar seated on this object and keep it inside the region, for an object that is about to be
+    /// deleted or returned at the region's edge. A stand-up beside a seat near the edge can land past it, and the
+    /// avatar would be left outside the region with no region to take it.
+    /// </summary>
+    private void StandSittersUpInsideRegion()
+    {
+        float maxX = m_scene.RegionInfo.RegionSizeX - 0.5f;
+        float maxY = m_scene.RegionInfo.RegionSizeY - 0.5f;
+
+        foreach (ScenePresence av in GetSittingAvatars())
+        {
+            av.StandUp();
+
+            Vector3 pos = av.AbsolutePosition;
+            Vector3 inside = new(Utils.Clamp(pos.X, 0.5f, maxX), Utils.Clamp(pos.Y, 0.5f, maxY), pos.Z);
+            if (inside != pos)
+                av.AbsolutePosition = inside;
+        }
+    }
+
     private SceneObjectGroup CrossAsync(SceneObjectGroup sog, Vector3 val, TeleportObjectData tpdata)
     {
         Scene sogScene = sog.m_scene;
@@ -884,6 +914,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
             {
                 try
                 {
+                    sog.StandSittersUpInsideRegion();
                     sogScene.DeleteSceneObject(sog, false);
                 }
                 catch (Exception)
@@ -899,6 +930,7 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
                 try
                 {
                     List<uint> localIDs = new(){root.LocalId};
+                    sog.StandSittersUpInsideRegion();
                     sogScene.AddReturn(sog.OwnerID, sog.Name, sog.AbsolutePosition,
                         "Returned at region cross");
                     sogScene.DeRezObjects(null, localIDs, UUID.Zero, DeRezAction.Return, UUID.Zero, false);
@@ -928,7 +960,22 @@ public partial class SceneObjectGroup : EntityBase, ISceneObject, IDisposable
 
         destination = entityTransfer.GetObjectDestination(sog, val, out newpos);
         if (destination is null)
+        {
+            // No region beyond: the object has gone off world
+            if (sog.DieAtVoidEdge && !isTeleport)
+            {
+                try
+                {
+                    sog.StandSittersUpInsideRegion();
+                    sogScene.DeleteSceneObject(sog, false);
+                }
+                catch (Exception)
+                {
+                    m_log.LogWarning("[SCENE]: exception when trying to remove the prim that went off world.");
+                }
+            }
             return sog;
+        }
 
         if (sog.m_sittingAvatars.Count == 0)
         {
@@ -2951,7 +2998,8 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
         SceneObjectPart rootpart = m_rootPart;
         if (rootpart is not null)
         {
-            if (rootpart.PhysActor is not null)
+            // a target core gave the actor is switched off by the part, unless a rotate-drag holds it
+            if (rootpart.PhysActor is not null && !rootpart.HasGivenRotationTarget)
             {
                 rootpart.PhysActor.APIDActive = false;
             }
@@ -4149,6 +4197,7 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
     // mouse moves, so the turn steers the root with the look-at controller (SceneObjectPart.UpdateLookAt, the one
     // llRotLookAt uses) toward that rotation instead of pushing it with an angular force per update.
     internal const float SpinStrength = 1.0f; // llRotLookAt strength: a time constant of 1/pi s, no overshoot at the heartbeat's rate
+    internal const float SpinTargetSeconds = 0.1f; // strength and damping given to an engine with a rotation target: a short lag behind the mouse
     private readonly object m_spinLock = new();
     private bool m_spinning;
     private UUID m_spinAgent;
@@ -4242,11 +4291,16 @@ public void GetAxisAlignedBoundingBoxRaw(out float minX, out float maxX, out flo
             m_scene.EventManager.OnRemovePresence -= SpinHolderRemoved;
             m_scene.EventManager.OnMakeChildAgent -= SpinHolderMadeChild;
 
+            // an engine with a rotation target stops the turn when the target is switched off
+            bool switchedOff = m_rootPart.ReleaseRotationTarget();
+
             PhysicsActor pa = m_rootPart.PhysActor;
             if (pa is null || !pa.IsPhysical)
                 return;
 
-            m_rootPart.AngularVelocity = Vector3.Zero;
+            if (!switchedOff)
+                m_rootPart.AngularVelocity = Vector3.Zero;
+
             if (m_scriptOmegaSet)
                 m_rootPart.ApplyAngularVelocity(m_scriptOmega); // not compared with the part's copy, which may be stale
             else

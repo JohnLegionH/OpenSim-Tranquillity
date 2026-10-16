@@ -1,3 +1,10 @@
+/* Copyright (c) 2026 Legion Builds
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 using System.Reflection;
 using Xunit;
 using Xunit.Abstractions;
@@ -17,11 +24,12 @@ namespace InWorldz.Phlox.Tests;
 ///
 /// <para>
 /// <b>The floor is not from SL and not from InWorldz</b> — neither clamps. The SL wiki documents only
-/// that "Passing in 0.0 stops further timer events", and Halcyon assigns
+/// that a 0.0 interval stops further timer events (https://wiki.secondlife.com/wiki/LlSetTimerEvent), and
+/// Halcyon assigns
 /// <c>TimerInterval = (int)(sec * 1000)</c> with no minimum
 /// (<c>InWorldz.Phlox.Engine/ExecutionScheduler.cs:1846-1853</c>). The floor comes from the other engine
 /// in this very repo: upstream's <c>LSL_Api.llSetTimerEvent</c> clamps at <c>m_MinTimerInterval</c>
-/// (<c>LSL_Api.cs:4005-4011</c>), whose shipped value in <c>OpenSimDefaults.ini</c> <c>[YEngine]</c> is
+/// (<c>LSL_Api.cs:4005-4011</c>), whose shipped value in <c>RegionServerDefaults.ini</c> <c>[YEngine]</c> is
 /// <b>0.1</b> — and that is what a region on the shipped defaults runs. Before this, the same call behaved differently
 /// depending on which engine happened to run the script.
 /// </para>
